@@ -7,6 +7,9 @@ function parseJsonResponse(raw: string) {
   return JSON.parse(fenced?.[1] ?? trimmed) as unknown;
 }
 
+const MAX_PROVIDER_RESPONSE_BYTES = 1_000_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 export class OpenAiCompatibleProvider implements AiProvider {
   id = "openai_compatible";
   name = "OpenAI-compatible Provider";
@@ -28,8 +31,11 @@ export class OpenAiCompatibleProvider implements AiProvider {
     let lastError: unknown;
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS);
       const response = await fetch(`${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
+        signal: controller.signal,
         headers: {
           "content-type": "application/json",
           ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {})
@@ -50,14 +56,19 @@ export class OpenAiCompatibleProvider implements AiProvider {
             }
           ]
         })
-      });
+      }).finally(() => clearTimeout(timeout));
 
       if (!response.ok) {
         const body = await response.text();
         throw new Error(`OpenAI-compatible provider failed with ${response.status}: ${body}`);
       }
 
-      const payload = (await response.json()) as {
+      const rawPayload = await response.text();
+      if (rawPayload.length > MAX_PROVIDER_RESPONSE_BYTES) {
+        throw new Error("OpenAI-compatible provider response exceeded the maximum allowed size.");
+      }
+
+      const payload = JSON.parse(rawPayload) as {
         choices?: { message?: { content?: string } }[];
       };
       const content = payload.choices?.[0]?.message?.content;

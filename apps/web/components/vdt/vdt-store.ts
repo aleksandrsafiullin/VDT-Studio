@@ -62,6 +62,7 @@ interface VdtStudioState {
   prepareDeepenPreview: (nodeId: string) => void;
   clearDeepenPreview: () => void;
   applyDeepenPreview: () => void;
+  replaceProject: (project: VdtProject) => void;
 }
 
 function buildInitialProject() {
@@ -105,6 +106,17 @@ function ensureScenario(project: VdtProject) {
     ...project,
     scenarios: [defaultScenario()]
   };
+}
+
+function persistedProviderConfig(config: Partial<OpenAiCompatibleProviderConfig>) {
+  const nextConfig: Partial<OpenAiCompatibleProviderConfig> = {};
+  if (config.baseUrl !== undefined) {
+    nextConfig.baseUrl = config.baseUrl;
+  }
+  if (config.model !== undefined) {
+    nextConfig.model = config.model;
+  }
+  return nextConfig;
 }
 
 export const useVdtStudioStore = create<VdtStudioState>()(
@@ -184,6 +196,16 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           project,
           selectedNodeId: project.rootNodeId,
           activeScenarioId: project.scenarios[0]?.id ?? "",
+          aiError: undefined,
+          deepenPreview: undefined
+        });
+      },
+      replaceProject: (project) => {
+        const nextProject = ensureScenario(project);
+        set({
+          project: nextProject,
+          selectedNodeId: nextProject.rootNodeId,
+          activeScenarioId: nextProject.scenarios[0]?.id ?? "",
           aiError: undefined,
           deepenPreview: undefined
         });
@@ -389,8 +411,18 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         activeScenarioId: state.activeScenarioId,
         brief: state.brief,
         providerId: state.providerId,
-        providerConfig: state.providerConfig
-      })
+        providerConfig: persistedProviderConfig(state.providerConfig)
+      }),
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<VdtStudioState> | undefined;
+        const providerConfig = persistedProviderConfig(persisted?.providerConfig ?? currentState.providerConfig);
+
+        return {
+          ...currentState,
+          ...persisted,
+          providerConfig
+        };
+      }
     }
   )
 );

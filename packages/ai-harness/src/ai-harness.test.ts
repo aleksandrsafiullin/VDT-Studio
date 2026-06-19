@@ -41,6 +41,9 @@ describe("AI harness", () => {
     };
 
     expect(calculateGraph(withValues).rootValue).toBeCloseTo(114048, 5);
+    expect(project.aiReview?.assumptions).toContain("Production volume is measured as useful output, not gross material movement.");
+    expect(project.aiReview?.questionsForUser.length).toBeGreaterThan(0);
+    expect(project.aiReview?.warnings[0]?.message).toContain("Yield factor");
   });
 
   it("generates a project through the mock provider", async () => {

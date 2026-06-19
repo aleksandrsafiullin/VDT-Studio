@@ -9,6 +9,15 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { formatNumber } from "@/lib/format";
 import { useVdtStudioStore } from "./vdt-store";
 
+function parseFiniteInput(value: string) {
+  if (value === "") {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export function NodeInspector() {
   const project = useVdtStudioStore((state) => state.project);
   const selectedNodeId = useVdtStudioStore((state) => state.selectedNodeId);
@@ -98,9 +107,7 @@ export function NodeInspector() {
               <TextInput
                 type="number"
                 value={node.baselineValue ?? node.value ?? ""}
-                onChange={(event) =>
-                  updateNodeBaselineValue(node.id, event.target.value === "" ? undefined : Number(event.target.value))
-                }
+                onChange={(event) => updateNodeBaselineValue(node.id, parseFiniteInput(event.target.value))}
               />
             </Field>
             <Field label="Description">
@@ -144,6 +151,42 @@ export function NodeInspector() {
                 </div>
               </div>
             </div>
+
+            {project.aiReview ? (
+              <div className="rounded-md border border-line bg-white p-3">
+                <h3 className="text-sm font-semibold text-ink">Model review artifacts</h3>
+                {project.aiReview.assumptions.length > 0 ? (
+                  <div className="mt-3">
+                    <div className="text-xs font-semibold uppercase tracking-normal text-muted">Assumptions</div>
+                    <ul className="mt-2 space-y-1 text-sm leading-5 text-muted">
+                      {project.aiReview.assumptions.map((assumption) => (
+                        <li key={assumption}>{assumption}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {project.aiReview.questionsForUser.length > 0 ? (
+                  <div className="mt-3">
+                    <div className="text-xs font-semibold uppercase tracking-normal text-muted">Questions</div>
+                    <ul className="mt-2 space-y-1 text-sm leading-5 text-muted">
+                      {project.aiReview.questionsForUser.map((question) => (
+                        <li key={question}>{question}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {project.aiReview.warnings.length > 0 ? (
+                  <div className="mt-3">
+                    <div className="text-xs font-semibold uppercase tracking-normal text-muted">Warnings</div>
+                    <ul className="mt-2 space-y-1 text-sm leading-5 text-muted">
+                      {project.aiReview.warnings.map((warning) => (
+                        <li key={warning.id}>{warning.message}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {deepenPreview?.parentNodeId === node.id ? (
               <div className="rounded-md border border-blue-200 bg-blue-50 p-3">

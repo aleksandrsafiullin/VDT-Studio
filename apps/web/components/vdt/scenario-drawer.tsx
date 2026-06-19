@@ -1,12 +1,41 @@
 "use client";
 
 import { Plus, Route, Sigma } from "lucide-react";
-import { calculateGraph, calculateScenario } from "@vdt-studio/vdt-core";
+import { calculateGraph, calculateScenario, type VdtImpactNode } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Metric } from "@/components/ui/metric";
 import { SelectInput, TextInput } from "@/components/ui/field";
 import { formatChange, formatNumber, formatPercent } from "@/lib/format";
 import { useVdtStudioStore } from "./vdt-store";
+
+function parseFiniteInput(value: string) {
+  if (value === "") {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function sortImpacts(impacts: VdtImpactNode[]) {
+  return [...impacts].sort((left, right) => Math.abs(right.absoluteChange ?? 0) - Math.abs(left.absoluteChange ?? 0));
+}
+
+function buildScenarioExplanation(rootName: string, impacts: VdtImpactNode[], absoluteChange?: number, percentageChange?: number) {
+  if (impacts.length === 0 || absoluteChange === undefined) {
+    return "Mock AI summary: add scenario overrides to see the root impact and the main changed drivers.";
+  }
+
+  const topDrivers = sortImpacts(impacts)
+    .filter((impact) => impact.nodeName !== rootName)
+    .slice(0, 2)
+    .map((impact) => impact.nodeName);
+
+  const driverText = topDrivers.length > 0 ? topDrivers.join(" and ") : rootName;
+  return `Mock AI summary: ${rootName} moves by ${formatChange(absoluteChange)} (${formatPercent(
+    percentageChange
+  )}), mainly through ${driverText}.`;
+}
 
 export function ScenarioDrawer() {
   const project = useVdtStudioStore((state) => state.project);
@@ -20,6 +49,14 @@ export function ScenarioDrawer() {
   const scenarioResult = activeScenario ? calculateScenario(project, activeScenario) : undefined;
   const inputNodes = project.graph.nodes.filter((node) => node.type === "input" || node.type === "data_mapped");
   const traceItems = scenarioResult?.calculationTrace ?? baseline.trace;
+  const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+  const impactedNodes = sortImpacts(scenarioResult?.impactedNodes ?? []).slice(0, 5);
+  const scenarioExplanation = buildScenarioExplanation(
+    rootNode?.name ?? project.rootNodeId,
+    scenarioResult?.impactedNodes ?? [],
+    scenarioResult?.absoluteChange,
+    scenarioResult?.percentageChange
+  );
 
   return (
     <div className="h-[248px] border-t border-line bg-white">
@@ -52,7 +89,7 @@ export function ScenarioDrawer() {
 
         <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
           <div className="grid h-full min-w-[900px] grid-cols-[250px_minmax(300px,1fr)_310px] overflow-hidden">
-          <div className="border-r border-line px-4 py-3">
+          <div className="min-w-0 overflow-auto border-r border-line px-4 py-3">
             <div className="grid grid-cols-2 gap-4">
               <Metric label="Baseline" value={formatNumber(scenarioResult?.baselineValue ?? baseline.rootValue)} />
               <Metric label="Scenario" value={formatNumber(scenarioResult?.scenarioValue)} tone="positive" />
@@ -60,8 +97,28 @@ export function ScenarioDrawer() {
               <Metric label="Percent" value={formatPercent(scenarioResult?.percentageChange)} tone="positive" />
             </div>
             <p className="mt-3 text-xs leading-5 text-muted">
-              Mock AI summary: the main impact is driven by changed input values and propagated through formula references.
+              {scenarioExplanation}
             </p>
+            <div className="mt-3 border-t border-line pt-3">
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-normal text-muted">Impacted drivers</div>
+              <div className="space-y-2">
+                {impactedNodes.length === 0 ? (
+                  <div className="rounded-md border border-line bg-white px-3 py-2 text-xs text-muted">No changed drivers yet.</div>
+                ) : (
+                  impactedNodes.map((impact) => (
+                    <div key={impact.nodeId} className="rounded-md border border-line bg-white px-3 py-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="truncate text-xs font-semibold text-ink">{impact.nodeName}</span>
+                        <span className="shrink-0 text-xs font-semibold text-ink">{formatChange(impact.absoluteChange)}</span>
+                      </div>
+                      <div className="mt-1 truncate text-[11px] text-muted">
+                        {formatNumber(impact.baselineValue)} to {formatNumber(impact.scenarioValue)} {impact.unit ?? ""}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="min-w-0 overflow-auto px-4 py-3">
@@ -88,7 +145,7 @@ export function ScenarioDrawer() {
                             ? updateScenarioOverride(
                                 activeScenario.id,
                                 node.id,
-                                event.target.value === "" ? undefined : Number(event.target.value)
+                                parseFiniteInput(event.target.value)
                               )
                             : undefined
                         }

@@ -59,6 +59,12 @@ export function calculateGraph(input: VdtProject | VdtGraph, options: CalculateG
       return undefined;
     }
 
+    if (node.status === "rejected") {
+      addError(nodeId, "invalid_graph", `Rejected node ${node.name} is excluded from calculation.`);
+      visited.add(nodeId);
+      return undefined;
+    }
+
     const circularIndex = visiting.indexOf(nodeId);
     if (circularIndex >= 0) {
       const cycle = [...visiting.slice(circularIndex), nodeId].join(" -> ");
@@ -71,6 +77,13 @@ export function calculateGraph(input: VdtProject | VdtGraph, options: CalculateG
     if (overrides.has(nodeId)) {
       const overrideValue = overrides.get(nodeId);
       if (overrideValue !== undefined) {
+        if (!Number.isFinite(overrideValue)) {
+          addError(nodeId, "invalid_value", `Scenario override for ${node.name} must be a finite number.`);
+          visiting.pop();
+          visited.add(nodeId);
+          return undefined;
+        }
+
         values[nodeId] = overrideValue;
         traceByNode.set(nodeId, {
           nodeId,
@@ -89,6 +102,13 @@ export function calculateGraph(input: VdtProject | VdtGraph, options: CalculateG
       const value = node.baselineValue ?? node.value;
       if (value === undefined) {
         addError(nodeId, "missing_value", `Missing value for ${node.name}.`);
+        visiting.pop();
+        visited.add(nodeId);
+        return undefined;
+      }
+
+      if (!Number.isFinite(value)) {
+        addError(nodeId, "invalid_value", `Value for ${node.name} must be a finite number.`);
         visiting.pop();
         visited.add(nodeId);
         return undefined;
@@ -122,6 +142,13 @@ export function calculateGraph(input: VdtProject | VdtGraph, options: CalculateG
       }
 
       const value = evaluateAst(expression, (reference) => values[reference]);
+      if (!Number.isFinite(value)) {
+        addError(nodeId, "invalid_value", `Calculated value for ${node.name} must be a finite number.`);
+        visiting.pop();
+        visited.add(nodeId);
+        return undefined;
+      }
+
       values[nodeId] = value;
       traceByNode.set(nodeId, {
         nodeId,

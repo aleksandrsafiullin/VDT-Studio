@@ -3,8 +3,10 @@ import {
   calculateGraph,
   calculateScenario,
   evaluateFormula,
+  exportProjectSvg,
   exportProjectJson,
   exportProjectMarkdown,
+  importProjectJson,
   productionVolumeProject,
   validateGraph,
   type VdtProject
@@ -148,6 +150,34 @@ describe("graph validation", () => {
     expect(circularResult.valid).toBe(false);
     expect(circularResult.errors.some((error) => error.type === "circular_dependency")).toBe(true);
   });
+
+  it("warns on obvious unit mismatches", () => {
+    const graph = {
+      ...productionVolumeProject.graph,
+      nodes: productionVolumeProject.graph.nodes.map((node) =>
+        node.id === "effective_working_time" ? { ...node, formula: "calendar_time + nominal_rate" } : node
+      )
+    };
+
+    const result = validateGraph(graph, productionVolumeProject.rootNodeId);
+
+    expect(result.warnings.some((warning) => warning.type === "unit_mismatch")).toBe(true);
+  });
+
+  it("treats rejected nodes as invalid active model dependencies", () => {
+    const graph = {
+      ...productionVolumeProject.graph,
+      nodes: productionVolumeProject.graph.nodes.map((node) =>
+        node.id === "average_productivity" ? { ...node, status: "rejected" as const } : node
+      )
+    };
+
+    const validation = validateGraph(graph, productionVolumeProject.rootNodeId);
+    const calculation = calculateGraph({ ...productionVolumeProject, graph });
+
+    expect(validation.errors.some((error) => error.message.includes("rejected node"))).toBe(true);
+    expect(calculation.errors.some((error) => error.message.includes("Rejected node"))).toBe(true);
+  });
 });
 
 describe("calculation failures", () => {
@@ -218,16 +248,80 @@ describe("calculation failures", () => {
 
     expect(result.errors?.some((error) => error.message.includes("typo_node"))).toBe(true);
   });
+
+  it("rejects non-finite baseline values and scenario overrides", () => {
+    const invalidBaseline: VdtProject = {
+      ...productionVolumeProject,
+      graph: {
+        ...productionVolumeProject.graph,
+        nodes: productionVolumeProject.graph.nodes.map((node) =>
+          node.id === "calendar_time" ? { ...node, baselineValue: Infinity } : node
+        )
+      }
+    };
+
+    const baselineResult = calculateGraph(invalidBaseline);
+    const scenarioResult = calculateScenario(productionVolumeProject, {
+      ...productionVolumeProject.scenarios[0]!,
+      overrides: [{ nodeId: "unplanned_downtime", value: Infinity }]
+    });
+
+    expect(baselineResult.errors.some((error) => error.type === "invalid_value")).toBe(true);
+    expect(scenarioResult.errors?.some((error) => error.type === "invalid_value")).toBe(true);
+  });
 });
 
 describe("exports", () => {
-  it("exports project JSON and Markdown summary", () => {
+  it("exports and imports project JSON", () => {
     const json = exportProjectJson(productionVolumeProject);
-    const markdown = exportProjectMarkdown(productionVolumeProject);
+    const imported = importProjectJson(json);
 
-    expect(JSON.parse(json).rootNodeId).toBe("production_volume");
+    expect(imported.rootNodeId).toBe("production_volume");
+    expect(imported.graph.nodes).toHaveLength(productionVolumeProject.graph.nodes.length);
+    expect(imported.graph.edges).toHaveLength(productionVolumeProject.graph.edges.length);
+  });
+
+  it("rejects malformed imported projects before they enter the graph", () => {
+    expect(() => importProjectJson("{")).toThrow("Project JSON could not be parsed.");
+    expect(() =>
+      importProjectJson(
+        JSON.stringify({
+          ...productionVolumeProject,
+          graph: {
+            ...productionVolumeProject.graph,
+            edges: [
+              ...productionVolumeProject.graph.edges,
+              {
+                id: "bad",
+                sourceNodeId: "production_volume",
+                targetNodeId: "missing",
+                relation: "positive_driver",
+                aiGenerated: false
+              }
+            ]
+          }
+        })
+      )
+    ).toThrow("missing target");
+    expect(() =>
+      importProjectJson(
+        JSON.stringify({
+          ...productionVolumeProject,
+          scenarios: [{ ...productionVolumeProject.scenarios[0], overrides: "not-array" }]
+        })
+      )
+    ).toThrow("scenario overrides");
+  });
+
+  it("exports Markdown summary and deterministic SVG canvas", () => {
+    const markdown = exportProjectMarkdown(productionVolumeProject);
+    const svg = exportProjectSvg(productionVolumeProject);
+
     expect(markdown).toContain("# Production Volume Driver Model");
     expect(markdown).toContain("Production Volume");
     expect(markdown).toContain("Calculation Trace");
+    expect(svg).toContain("<svg");
+    expect(svg).toContain("Production Volume Driver Model");
+    expect(svg).toContain("effective_working_time");
   });
 });

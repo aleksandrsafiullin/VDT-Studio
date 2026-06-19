@@ -45,6 +45,7 @@ export interface OpenAiCompatibleProviderConfig {
   baseUrl: string;
   apiKey?: string | undefined;
   model: string;
+  timeoutMs?: number | undefined;
 }
 
 export interface LocalHttpProviderConfig {

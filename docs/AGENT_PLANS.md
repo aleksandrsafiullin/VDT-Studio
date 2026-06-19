@@ -71,3 +71,29 @@ Review gate:
 ## Final Review Note
 
 Fresh re-review agents could not be started because the available subagent quota was exhausted. The remaining review pass was completed locally against the same findings, with lint, typecheck, unit tests, production build, API smoke tests, local-runner smoke tests and browser screenshot verification.
+
+## Orchestration Wave D - Production Readiness
+
+Status: complete - implemented, reviewed by subagents and locally verified.
+
+Agents:
+- Spec Gap Analyst `Kepler`: compared the full DOCX specification to the current MVP and identified remaining production-readiness gaps.
+- Production Readiness Reviewer `Einstein`: reviewed security, import safety, deterministic calculation behavior, responsive risks and missing e2e coverage.
+- Programmer Agent LR `Bohr`: implemented local-runner `/providers` and safe `/run` MVP stubs with tests.
+
+Implemented scope:
+1. Added validated JSON import and deterministic SVG canvas export.
+2. Added guarded project import for scenarios, data sources, AI settings and AI review metadata.
+3. Preserved AI assumptions, questions and model warnings in `project.aiReview`, Markdown export and the inspector AI tab.
+4. Hardened OpenAI-compatible API route against production SSRF/provider-proxy risk with request limits, production URL gates and custom-base-url API key requirements.
+5. Stopped persisting BYOK API keys in localStorage and stripped legacy persisted API keys on rehydrate.
+6. Added provider timeout and response-size cap.
+7. Added finite-number guards for baseline values and scenario overrides.
+8. Made rejected nodes invalid active calculation dependencies instead of cosmetic-only state.
+9. Added conservative unit mismatch validation for additive formulas.
+10. Expanded scenario mode with dynamic mock-AI explanation and top impacted drivers.
+11. Added Playwright e2e coverage for desktop generation, scenario impact, export artifacts and narrow/mobile primary flow.
+
+Review gate:
+- Reviewer findings for unauthenticated provider proxy risk, BYOK localStorage persistence, unsafe nested JSON import, non-finite calculation values, cosmetic rejection behavior and missing e2e coverage were addressed with code changes and regression tests.
+- Browser plugin was unavailable in this session (`iab` was not available), so rendered UI verification used Playwright fallback.

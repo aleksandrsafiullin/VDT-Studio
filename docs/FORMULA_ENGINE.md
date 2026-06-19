@@ -17,4 +17,7 @@ The engine reports:
 - Circular dependencies.
 - Division by zero.
 - Parse errors.
+- Non-finite values such as `NaN` and `Infinity`.
+- Rejected nodes that remain referenced by active formulas.
+- Obvious unit mismatches for additive formulas.
 - Calculation trace items with resolved formulas and input values.

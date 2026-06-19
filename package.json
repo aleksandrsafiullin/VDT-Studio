@@ -12,12 +12,14 @@
     "lint": "pnpm --filter @vdt-studio/web lint",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "test:watch": "vitest",
     "dev:all": "concurrently \"pnpm dev\" \"pnpm local-runner:start\"",
     "local-runner:start": "tsx packages/local-runner/src/server/index.ts"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",
+    "@playwright/test": "^1.61.0",
     "@types/node": "^24.0.0",
     "concurrently": "^9.1.2",
     "tsx": "^4.19.4",

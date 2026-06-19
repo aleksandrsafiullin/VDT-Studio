@@ -1,5 +1,5 @@
 import type { VdtProject, VdtWarning } from "@vdt-studio/vdt-core";
-import { validateGraph, nowIso } from "@vdt-studio/vdt-core";
+import { validateGraph, nowIso, warning } from "@vdt-studio/vdt-core";
 import type { GenerateVdtInput } from "../types";
 import type { GenerateVdtOutput } from "../schemas/generate-vdt";
 import { validateGenerateVdtOutput } from "./validate-ai-output";
@@ -54,6 +54,19 @@ export function generateVdtOutputToProject(output: GenerateVdtOutput, input: Gen
     dataSources: [],
     aiSettings: {
       defaultProviderId: "mock"
+    },
+    aiReview: {
+      assumptions: validated.assumptions,
+      questionsForUser: validated.questionsForUser,
+      warnings: validated.warnings.map((item) =>
+        warning({
+          severity: item.severity,
+          type: "weak_business_logic",
+          message: item.message,
+          nodeId: item.nodeId,
+          edgeId: item.edgeId
+        })
+      )
     },
     versions: [],
     createdAt: now,

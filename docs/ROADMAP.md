@@ -8,11 +8,14 @@
 - Node review and editing.
 - Deterministic formula engine.
 - Scenario impact analysis.
-- JSON and Markdown export.
+- JSON, Markdown and SVG export.
+- Browser-local JSON import.
+- Safe local-runner `/providers` and `/run` MVP stubs.
+- Playwright smoke coverage for core web flows.
 
 ## Next
 
-- SVG/PNG canvas export.
+- PNG canvas export.
 - SQLite-backed local project storage.
 - Desktop packaging with Tauri.
 - Excel calculation model export.

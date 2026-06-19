@@ -32,6 +32,7 @@ export interface VdtProject {
   scenarios: VdtScenario[];
   dataSources: VdtDataSource[];
   aiSettings: AiExecutionSettings;
+  aiReview?: VdtAiReviewArtifacts | undefined;
   versions: VdtVersion[];
   createdAt: string;
   updatedAt: string;
@@ -93,6 +94,7 @@ export interface VdtWarning {
     | "weak_business_logic"
     | "missing_data_source"
     | "invalid_graph"
+    | "invalid_value"
     | "formula_parse_error"
     | "unknown_reference"
     | "division_by_zero";
@@ -158,6 +160,12 @@ export interface CalculationTraceItem {
 export interface AiExecutionSettings {
   defaultProviderId: string;
   taskRouting?: Partial<Record<string, string>>;
+}
+
+export interface VdtAiReviewArtifacts {
+  assumptions: string[];
+  questionsForUser: string[];
+  warnings: VdtWarning[];
 }
 
 export interface VdtDataSource {

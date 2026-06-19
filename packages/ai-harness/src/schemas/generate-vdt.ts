@@ -14,13 +14,13 @@ const relationSchema = z.enum([
 
 export const aiVdtNodeSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9_]*$/),
-  name: z.string().min(1),
-  description: z.string().min(1),
+  name: z.string().min(1).max(120),
+  description: z.string().min(1).max(1_000),
   type: nodeTypeSchema,
-  unit: z.string().optional(),
-  formula: z.string().optional(),
+  unit: z.string().max(80).optional(),
+  formula: z.string().max(500).optional(),
   aiConfidence: z.number().min(0).max(1),
-  aiRationale: z.string().min(1),
+  aiRationale: z.string().min(1).max(1_000),
   controllability: z.enum(["high", "medium", "low", "none"]).optional(),
   materiality: z.enum(["high", "medium", "low", "unknown"]).optional()
 });
@@ -30,26 +30,26 @@ export const aiVdtEdgeSchema = z.object({
   sourceNodeId: z.string().regex(/^[a-z][a-z0-9_]*$/),
   targetNodeId: z.string().regex(/^[a-z][a-z0-9_]*$/),
   relation: relationSchema,
-  label: z.string().optional(),
+  label: z.string().max(80).optional(),
   aiConfidence: z.number().min(0).max(1).optional()
 });
 
 export const aiModelWarningSchema = z.object({
   severity: z.enum(["info", "warning", "error"]).default("warning"),
-  message: z.string().min(1),
+  message: z.string().min(1).max(1_000),
   nodeId: z.string().optional(),
   edgeId: z.string().optional()
 });
 
 export const generateVdtOutputSchema = z
   .object({
-    projectTitle: z.string().min(1),
+    projectTitle: z.string().min(1).max(160),
     rootNodeId: z.string().regex(/^[a-z][a-z0-9_]*$/),
-    nodes: z.array(aiVdtNodeSchema).min(1),
-    edges: z.array(aiVdtEdgeSchema),
-    assumptions: z.array(z.string()),
-    questionsForUser: z.array(z.string()),
-    warnings: z.array(aiModelWarningSchema)
+    nodes: z.array(aiVdtNodeSchema).min(1).max(60),
+    edges: z.array(aiVdtEdgeSchema).max(120),
+    assumptions: z.array(z.string().max(500)).max(30),
+    questionsForUser: z.array(z.string().max(500)).max(30),
+    warnings: z.array(aiModelWarningSchema).max(30)
   })
   .superRefine((output, context) => {
     const nodeIds = new Set(output.nodes.map((node) => node.id));

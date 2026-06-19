@@ -1,4 +1,10 @@
 export function downloadTextFile(filename: string, text: string, type: string) {
+  const testWindow = window as Window & {
+    __vdtCaptureDownload?: (artifact: { filename: string; text: string; type: string }) => void;
+  };
+
+  testWindow.__vdtCaptureDownload?.({ filename, text, type });
+
   const blob = new Blob([text], { type });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -7,7 +13,9 @@ export function downloadTextFile(filename: string, text: string, type: string) {
   anchor.download = filename;
   document.body.append(anchor);
   anchor.click();
-  anchor.remove();
 
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => {
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, 0);
 }

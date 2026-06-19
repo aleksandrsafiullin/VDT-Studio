@@ -15,7 +15,8 @@ The product helps analysts and consultants move from a KPI question to an explai
 - Scenario impact analysis.
 - BYOK and OpenAI-compatible model support.
 - Local model and CLI runner architecture.
-- JSON and Markdown export.
+- JSON, Markdown and SVG export.
+- Browser-local JSON import.
 
 ## Quickstart
 
@@ -39,6 +40,7 @@ pnpm dev
 pnpm build
 pnpm typecheck
 pnpm test
+pnpm test:e2e
 pnpm dev:all
 ```
 
@@ -69,7 +71,8 @@ Example projects live under `examples/`:
 
 ## Roadmap
 
-- SVG/PNG canvas export.
+- PNG canvas export.
+- SQLite-backed local project storage.
 - Excel calculation model export.
 - PowerPoint summary export.
 - PDF report generation.
