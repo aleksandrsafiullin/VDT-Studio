@@ -1,82 +1,69 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { LayoutGrid } from "lucide-react";
 import {
   Background,
   Controls,
   ReactFlow,
+  useNodesState,
   type Edge,
   type Node,
   type NodeTypes
 } from "@xyflow/react";
-import { calculateGraph, type VdtGraph } from "@vdt-studio/vdt-core";
+import { calculateGraph, DEFAULT_CANVAS_LAYOUT, layoutGraph } from "@vdt-studio/vdt-core";
+import { Button } from "@/components/ui/button";
 import { VdtNodeCard, type VdtNodeCardData } from "./vdt-node-card";
+import { collectExistingPositions } from "./layout-positions";
 import { useVdtStudioStore } from "./vdt-store";
 
 const nodeTypes: NodeTypes = {
   vdtNode: VdtNodeCard
 };
 
-function layoutGraph(graph: VdtGraph, rootNodeId: string) {
-  const childIdsByParent = new Map<string, string[]>();
-  for (const edge of graph.edges) {
-    childIdsByParent.set(edge.sourceNodeId, [...(childIdsByParent.get(edge.sourceNodeId) ?? []), edge.targetNodeId]);
-  }
-
-  const depthByNode = new Map<string, number>([[rootNodeId, 0]]);
-  const queue = [rootNodeId];
-
-  while (queue.length > 0) {
-    const parentId = queue.shift()!;
-    const parentDepth = depthByNode.get(parentId) ?? 0;
-    for (const childId of childIdsByParent.get(parentId) ?? []) {
-      if (!depthByNode.has(childId)) {
-        depthByNode.set(childId, parentDepth + 1);
-        queue.push(childId);
-      }
-    }
-  }
-
-  const levels = new Map<number, string[]>();
-  for (const node of graph.nodes) {
-    const depth = depthByNode.get(node.id) ?? 0;
-    levels.set(depth, [...(levels.get(depth) ?? []), node.id]);
-  }
-
-  const positions = new Map<string, { x: number; y: number }>();
-  for (const [depth, nodeIds] of levels.entries()) {
-    const yOffset = -((nodeIds.length - 1) * 53);
-    nodeIds.forEach((nodeId, index) => {
-      positions.set(nodeId, {
-        x: depth * 245,
-        y: yOffset + index * 106
-      });
-    });
-  }
-
-  return positions;
-}
-
 export function VdtCanvas() {
   const project = useVdtStudioStore((state) => state.project);
   const selectNode = useVdtStudioStore((state) => state.selectNode);
+  const autoDistributeLayout = useVdtStudioStore((state) => state.autoDistributeLayout);
+  const updateNodePosition = useVdtStudioStore((state) => state.updateNodePosition);
   const calculation = useMemo(() => calculateGraph(project), [project]);
 
-  const positions = useMemo(() => layoutGraph(project.graph, project.rootNodeId), [project.graph, project.rootNodeId]);
+  const fallbackPositions = useMemo(() => {
+    const existingPositions = collectExistingPositions(project.graph.nodes);
+    return layoutGraph(project.graph, project.rootNodeId, {
+      ...DEFAULT_CANVAS_LAYOUT,
+      existingPositions
+    }).positions;
+  }, [project.graph, project.rootNodeId]);
 
-  const nodes: Node<VdtNodeCardData, "vdtNode">[] = useMemo(
+  const storeNodes: Node<VdtNodeCardData, "vdtNode">[] = useMemo(
     () =>
       project.graph.nodes.map((node) => ({
         id: node.id,
         type: "vdtNode" as const,
-        position: node.position ?? positions.get(node.id) ?? { x: 0, y: 0 },
+        position: node.position ?? fallbackPositions.get(node.id) ?? { x: 0, y: 0 },
         data: {
           node,
           value: calculation.values[node.id],
           onSelect: selectNode
-        },
+        }
       })),
-    [calculation.values, positions, project.graph.nodes, selectNode]
+    [calculation.values, fallbackPositions, project.graph.nodes, selectNode]
+  );
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
+  const isDraggingRef = useRef(false);
+
+  const onNodeDragStart = useCallback(() => {
+    isDraggingRef.current = true;
+  }, []);
+
+  const onNodeDragStop = useCallback(
+    (_event: MouseEvent | TouchEvent, node: Node<VdtNodeCardData>) => {
+      updateNodePosition(node.id, node.position);
+      isDraggingRef.current = false;
+    },
+    [updateNodePosition]
   );
 
   const edges: Edge[] = useMemo(
@@ -101,10 +88,27 @@ export function VdtCanvas() {
     [project.graph.edges]
   );
 
+  useEffect(() => {
+    if (isDraggingRef.current) {
+      return;
+    }
+    setNodes(storeNodes);
+  }, [setNodes, storeNodes]);
+
   return (
-    <div className="relative h-full min-h-[360px] overflow-hidden bg-canvas">
-      <div className="absolute left-4 top-4 z-10 rounded-md border border-line bg-white/95 px-3 py-2 text-xs text-muted shadow-sm backdrop-blur">
-        Visual flow: root to drivers.
+    <div className="relative h-full min-h-[360px] flex-1 overflow-hidden bg-canvas" data-testid="vdt-canvas">
+      <div className="absolute left-4 top-4 z-10 flex items-center gap-2">
+        <div className="rounded-md border border-line bg-white/95 px-3 py-2 text-xs text-muted shadow-sm backdrop-blur">
+          Visual flow: root to drivers.
+        </div>
+        <Button
+          size="sm"
+          data-testid="auto-distribute-layout"
+          icon={<LayoutGrid className="h-4 w-4" />}
+          onClick={autoDistributeLayout}
+        >
+          Auto-distribute
+        </Button>
       </div>
       <ReactFlow
         nodes={nodes}
@@ -113,7 +117,10 @@ export function VdtCanvas() {
         defaultViewport={{ x: 46, y: 194, zoom: 0.68 }}
         minZoom={0.34}
         maxZoom={1.5}
+        onNodesChange={onNodesChange}
         onNodeClick={(_, node) => selectNode(node.id)}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDragStop={onNodeDragStop}
         nodesDraggable
         panOnScroll
       >

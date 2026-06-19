@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { downloadTextFile } from "@/lib/download";
 import { formatNumber } from "@/lib/format";
+import { SettingsPopover } from "./settings-popover";
 import { useVdtStudioStore } from "./vdt-store";
 
 export function TopBar() {
@@ -90,6 +91,7 @@ export function TopBar() {
         >
           Markdown
         </Button>
+        <SettingsPopover />
       </div>
       {importError ? (
         <div

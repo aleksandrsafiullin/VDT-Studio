@@ -11,7 +11,7 @@ export function Metric({
 }) {
   return (
     <div className="min-w-0">
-      <div className="text-[11px] font-medium uppercase tracking-normal text-muted">{label}</div>
+      <div className="text-xs font-medium uppercase tracking-normal text-muted">{label}</div>
       <div
         className={clsx("mt-1 truncate text-base font-semibold", {
           "text-ink": tone === "neutral",

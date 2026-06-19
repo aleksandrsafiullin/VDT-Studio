@@ -3,7 +3,8 @@
 import { Bot, Database, RotateCcw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextArea, TextInput } from "@/components/ui/field";
-import { Panel, PanelHeader } from "@/components/ui/panel";
+import { Panel, PanelCollapseButton, PanelCollapseTab, PanelHeader } from "@/components/ui/panel";
+import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { useVdtStudioStore } from "./vdt-store";
 
 export function SetupRail() {
@@ -12,15 +13,41 @@ export function SetupRail() {
   const providerConfig = useVdtStudioStore((state) => state.providerConfig);
   const isGenerating = useVdtStudioStore((state) => state.isGenerating);
   const aiError = useVdtStudioStore((state) => state.aiError);
+  const leftPanelCollapsed = useVdtStudioStore((state) => state.ui.leftPanelCollapsed);
+  const isDesktop = useDesktopLayout();
+  const showCollapsed = isDesktop && leftPanelCollapsed;
   const setBriefField = useVdtStudioStore((state) => state.setBriefField);
   const setProviderId = useVdtStudioStore((state) => state.setProviderId);
   const setProviderConfigField = useVdtStudioStore((state) => state.setProviderConfigField);
   const generateWithAi = useVdtStudioStore((state) => state.generateWithAi);
   const loadExample = useVdtStudioStore((state) => state.loadExample);
+  const toggleLeftPanel = useVdtStudioStore((state) => state.toggleLeftPanel);
+
+  if (showCollapsed) {
+    return (
+      <PanelCollapseTab
+        label="Setup"
+        side="left"
+        testId="collapse-left-panel"
+        expandTestId="expand-left-panel"
+        onToggle={toggleLeftPanel}
+      />
+    );
+  }
 
   return (
     <Panel className="flex h-full min-h-0 flex-col border-r">
-      <PanelHeader title="New VDT" subtitle="Project brief and model provider" />
+      <PanelHeader
+        title="New VDT"
+        subtitle="Project brief and model provider"
+        action={
+          <PanelCollapseButton
+            side="left"
+            testId="collapse-left-panel"
+            onToggle={toggleLeftPanel}
+          />
+        }
+      />
       <div className="flex-1 space-y-4 overflow-auto px-4 py-4">
         <div className="space-y-3">
           <Field label="Root KPI">

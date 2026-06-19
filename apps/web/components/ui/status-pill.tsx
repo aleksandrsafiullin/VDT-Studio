@@ -16,7 +16,7 @@ export function StatusPill({ status, className }: { status: string; className?: 
   return (
     <span
       className={clsx(
-        "inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-4",
+        "inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-xs font-semibold leading-4",
         toneByStatus[status] ?? "border-slate-200 bg-slate-50 text-slate-700",
         className
       )}

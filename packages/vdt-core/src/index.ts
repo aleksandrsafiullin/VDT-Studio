@@ -4,6 +4,7 @@ export * from "./formula/parser";
 export * from "./formula/evaluator";
 export * from "./formula/calculate";
 export * from "./graph/validation";
+export * from "./graph/layout";
 export * from "./scenario/scenario";
 export * from "./export/export";
 export * from "./examples/production-volume";

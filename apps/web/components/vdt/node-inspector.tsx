@@ -4,8 +4,9 @@ import { Check, GitBranchPlus, Info, Trash2, X } from "lucide-react";
 import { calculateGraph } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextArea, TextInput } from "@/components/ui/field";
-import { Panel, PanelHeader } from "@/components/ui/panel";
+import { Panel, PanelCollapseButton, PanelCollapseTab, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
+import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { formatNumber } from "@/lib/format";
 import { useVdtStudioStore } from "./vdt-store";
 
@@ -31,25 +32,60 @@ export function NodeInspector() {
   const prepareDeepenPreview = useVdtStudioStore((state) => state.prepareDeepenPreview);
   const clearDeepenPreview = useVdtStudioStore((state) => state.clearDeepenPreview);
   const applyDeepenPreview = useVdtStudioStore((state) => state.applyDeepenPreview);
+  const rightPanelCollapsed = useVdtStudioStore((state) => state.ui.rightPanelCollapsed);
+  const isDesktop = useDesktopLayout();
+  const showCollapsed = isDesktop && rightPanelCollapsed;
+  const toggleRightPanel = useVdtStudioStore((state) => state.toggleRightPanel);
 
   const node = project.graph.nodes.find((candidate) => candidate.id === selectedNodeId) ?? project.graph.nodes[0];
   const calculation = calculateGraph(project);
   const nodeErrors = calculation.errors.filter((error) => error.nodeId === node?.id);
 
+  if (showCollapsed) {
+    return (
+      <PanelCollapseTab
+        label="Inspector"
+        side="right"
+        testId="collapse-right-panel"
+        expandTestId="expand-right-panel"
+        onToggle={toggleRightPanel}
+      />
+    );
+  }
+
   if (!node) {
     return (
-      <Panel className="h-full border-l">
-        <PanelHeader title="Inspector" subtitle="Select a node on the canvas" />
+      <Panel className="flex h-full min-h-0 flex-col border-l" data-testid="right-panel">
+        <PanelHeader
+          title="Inspector"
+          subtitle="Select a node on the canvas"
+          action={
+            <PanelCollapseButton
+              side="right"
+              testId="collapse-right-panel"
+              onToggle={toggleRightPanel}
+            />
+          }
+        />
       </Panel>
     );
   }
 
   return (
-    <Panel className="flex h-full min-h-0 flex-col border-l">
+    <Panel className="flex h-full min-h-0 flex-col border-l" data-testid="right-panel">
       <PanelHeader
         title="Node Inspector"
         subtitle={node.id}
-        action={<StatusPill status={node.status} />}
+        action={
+          <div className="flex items-center gap-1">
+            <StatusPill status={node.status} />
+            <PanelCollapseButton
+              side="right"
+              testId="collapse-right-panel"
+              onToggle={toggleRightPanel}
+            />
+          </div>
+        }
       />
       <div className="flex gap-1 border-b border-line px-4 py-2" role="tablist" aria-label="Node inspector tabs">
         {["properties", "ai", "warnings"].map((tab) => (
@@ -72,11 +108,11 @@ export function NodeInspector() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3 rounded-md border border-line bg-slate-50 p-3">
               <div>
-                <div className="text-[11px] font-medium uppercase tracking-normal text-muted">Calculated value</div>
+                <div className="text-xs font-medium uppercase tracking-normal text-muted">Calculated value</div>
                 <div className="mt-1 text-lg font-semibold text-ink">{formatNumber(calculation.values[node.id])}</div>
               </div>
               <div>
-                <div className="text-[11px] font-medium uppercase tracking-normal text-muted">Unit</div>
+                <div className="text-xs font-medium uppercase tracking-normal text-muted">Unit</div>
                 <div className="mt-1 truncate text-lg font-semibold text-ink">{node.unit ?? "n/a"}</div>
               </div>
             </div>

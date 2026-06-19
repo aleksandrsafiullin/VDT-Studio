@@ -5,6 +5,8 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import {
   calculateGraph,
   cloneProject,
+  DEFAULT_CANVAS_LAYOUT,
+  layoutGraph,
   productionVolumeProject,
   type VdtEdge,
   type VdtNode,
@@ -13,6 +15,26 @@ import {
 } from "@vdt-studio/vdt-core";
 import type { GenerateVdtInput, OpenAiCompatibleProviderConfig } from "@vdt-studio/ai-harness";
 import { makeId, slugifyId } from "@/lib/id";
+import {
+  applyUiPreference,
+  DEFAULT_UI,
+  mergeUiPreferences,
+  type UiPreferences
+} from "./ui-preferences";
+import { collectExistingPositions } from "./layout-positions";
+
+export {
+  BASE_LEFT_PANEL_WIDTH,
+  BASE_RIGHT_PANEL_WIDTH,
+  BASE_SCENARIO_DRAWER_HEIGHT,
+  BASE_WORKSPACE_SECTION_MIN_HEIGHT,
+  COLLAPSED_PANEL_WIDTH,
+  DEFAULT_UI,
+  SCENARIO_DRAWER_COLLAPSED_HEIGHT,
+  scaledPanelWidth,
+  scaledScenarioDrawerCollapsedHeight,
+  type UiPreferences
+} from "./ui-preferences";
 
 type ProviderId = "mock" | "openai_compatible";
 
@@ -36,6 +58,7 @@ interface VdtStudioState {
   brief: BriefState;
   providerId: ProviderId;
   providerConfig: Partial<OpenAiCompatibleProviderConfig>;
+  ui: UiPreferences;
   isGenerating: boolean;
   aiError?: string | undefined;
   deepenPreview?: {
@@ -48,6 +71,13 @@ interface VdtStudioState {
     field: K,
     value: OpenAiCompatibleProviderConfig[K]
   ) => void;
+  setUiPreference: <K extends keyof UiPreferences>(field: K, value: UiPreferences[K]) => void;
+  toggleLeftPanel: () => void;
+  toggleRightPanel: () => void;
+  toggleScenarioDrawer: () => void;
+  resetUiPreferences: () => void;
+  autoDistributeLayout: () => void;
+  updateNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
   generateWithAi: () => Promise<void>;
   loadExample: () => void;
   selectNode: (nodeId: string) => void;
@@ -140,7 +170,56 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         baseUrl: "https://api.openai.com/v1",
         model: "gpt-4.1-mini"
       },
+      ui: { ...DEFAULT_UI },
       isGenerating: false,
+      setUiPreference: (field, value) =>
+        set((state) => ({
+          ui: applyUiPreference(state.ui, field, value)
+        })),
+      toggleLeftPanel: () =>
+        set((state) => ({
+          ui: { ...state.ui, leftPanelCollapsed: !state.ui.leftPanelCollapsed }
+        })),
+      toggleRightPanel: () =>
+        set((state) => ({
+          ui: { ...state.ui, rightPanelCollapsed: !state.ui.rightPanelCollapsed }
+        })),
+      toggleScenarioDrawer: () =>
+        set((state) => ({
+          ui: { ...state.ui, scenarioDrawerCollapsed: !state.ui.scenarioDrawerCollapsed }
+        })),
+      resetUiPreferences: () => set({ ui: { ...DEFAULT_UI } }),
+      autoDistributeLayout: () =>
+        set((state) => {
+          const existingPositions = collectExistingPositions(state.project.graph.nodes);
+          const layout = layoutGraph(state.project.graph, state.project.rootNodeId, {
+            ...DEFAULT_CANVAS_LAYOUT,
+            existingPositions
+          });
+          const updatedAt = nowIso();
+          return {
+            project: {
+              ...state.project,
+              updatedAt,
+              graph: {
+                ...state.project.graph,
+                nodes: state.project.graph.nodes.map((node) => ({
+                  ...node,
+                  position: layout.positions.get(node.id) ?? node.position ?? { x: 0, y: 0 },
+                  updatedAt
+                }))
+              }
+            }
+          };
+        }),
+      updateNodePosition: (nodeId, position) =>
+        set((state) => ({
+          project: updateProjectNode(state.project, nodeId, (node) => ({
+            ...node,
+            position,
+            updatedAt: nowIso()
+          }))
+        })),
       setBriefField: (field, value) =>
         set((state) => ({
           brief: {
@@ -411,16 +490,19 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         activeScenarioId: state.activeScenarioId,
         brief: state.brief,
         providerId: state.providerId,
-        providerConfig: persistedProviderConfig(state.providerConfig)
+        providerConfig: persistedProviderConfig(state.providerConfig),
+        ui: state.ui
       }),
       merge: (persistedState, currentState) => {
         const persisted = persistedState as Partial<VdtStudioState> | undefined;
         const providerConfig = persistedProviderConfig(persisted?.providerConfig ?? currentState.providerConfig);
+        const ui = mergeUiPreferences(persisted?.ui);
 
         return {
           ...currentState,
           ...persisted,
-          providerConfig
+          providerConfig,
+          ui
         };
       }
     }

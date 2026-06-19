@@ -34,3 +34,44 @@ select {
 .react-flow__attribution {
   display: none;
 }
+
+@media (min-width: 1024px) {
+  .vdt-workspace-grid {
+    grid-template-columns: var(--vdt-left-panel, 255px) minmax(0, 1fr) var(--vdt-right-panel, 279px);
+  }
+}
+
+.vdt-ui-scale {
+  font-size: calc(1rem * var(--vdt-font-scale, 1));
+}
+
+.vdt-ui-scale :where(.text-2xs) {
+  font-size: 0.6875em;
+}
+
+.vdt-ui-scale :where(.text-xs) {
+  font-size: 0.75em;
+}
+
+.vdt-ui-scale :where(.text-sm) {
+  font-size: 0.875em;
+}
+
+.vdt-ui-scale :where(.text-lg) {
+  font-size: 1.125em;
+}
+
+.vdt-ui-scale :where(.text-base) {
+  font-size: 1em;
+}
+
+.vdt-vertical-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-size: 0.75em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #667085;
+}

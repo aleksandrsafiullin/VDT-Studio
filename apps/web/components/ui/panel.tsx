@@ -1,10 +1,12 @@
-import type { HTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes } from "react";
 import { clsx } from "clsx";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { Button } from "./button";
 
 export function Panel({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <section
-      className={clsx("border-line bg-white shadow-panel", className)}
+      className={clsx("vdt-ui-scale border-line bg-white shadow-panel", className)}
       {...props}
     />
   );
@@ -27,5 +29,61 @@ export function PanelHeader({
       </div>
       {action}
     </div>
+  );
+}
+
+export function PanelCollapseTab({
+  label,
+  side,
+  onToggle,
+  testId,
+  expandTestId
+}: {
+  label: string;
+  side: "left" | "right";
+  onToggle: () => void;
+  testId?: string;
+  expandTestId?: string;
+}) {
+  const Icon = side === "left" ? ChevronRight : ChevronLeft;
+
+  return (
+    <Panel className={clsx("flex h-full min-h-0 flex-col items-center py-3", side === "left" ? "border-r" : "border-l")}>
+      <Button
+        size="icon"
+        variant="ghost"
+        aria-label={`Expand ${label}`}
+        data-testid={expandTestId ?? testId}
+        icon={<Icon className="h-4 w-4" />}
+        onClick={onToggle}
+      />
+      <span className="vdt-vertical-label mt-3">{label}</span>
+    </Panel>
+  );
+}
+
+export function PanelCollapseButton({
+  side,
+  onToggle,
+  testId,
+  ...props
+}: {
+  side: "left" | "right";
+  onToggle: () => void;
+  testId?: string;
+} & ButtonHTMLAttributes<HTMLButtonElement>) {
+  const Icon = side === "left" ? ChevronLeft : ChevronRight;
+
+  return (
+    <Button
+      size="icon"
+      variant="ghost"
+      className="hidden lg:inline-flex"
+      aria-label={side === "left" ? "Collapse setup panel" : "Collapse inspector panel"}
+      data-testid={testId}
+      icon={<Icon className="h-4 w-4" />}
+      onClick={onToggle}
+      {...props}
+    />
   );
 }

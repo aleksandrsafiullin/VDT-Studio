@@ -1,4 +1,5 @@
 import { calculateGraph } from "../formula/calculate";
+import { DEFAULT_SVG_LAYOUT, layoutGraph } from "../graph/layout";
 import { validateGraph } from "../graph/validation";
 import type {
   VdtDataSource,
@@ -172,6 +173,25 @@ function readOptionalNumber(source: Record<string, unknown>, key: string) {
   throw new Error(`Imported project field ${key} must be a finite number.`);
 }
 
+function readOptionalPosition(source: Record<string, unknown>) {
+  const value = source.position;
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const x = value.x;
+  const y = value.y;
+  if (typeof x !== "number" || !Number.isFinite(x) || typeof y !== "number" || !Number.isFinite(y)) {
+    return undefined;
+  }
+
+  return { x, y };
+}
+
 function readNumber(source: Record<string, unknown>, key: string, label: string) {
   const value = source[key];
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -205,6 +225,8 @@ function readRecordArray(source: Record<string, unknown>, key: string, label: st
 }
 
 function readNode(value: Record<string, unknown>, fallbackDate: string): VdtNode {
+  const position = readOptionalPosition(value);
+
   return {
     id: readString(value, "id", "node id"),
     name: readString(value, "name", "node name"),
@@ -222,6 +244,7 @@ function readNode(value: Record<string, unknown>, fallbackDate: string): VdtNode
     assumptions: readOptionalStringArray(value, "assumptions"),
     tags: readOptionalStringArray(value, "tags"),
     owner: readOptionalString(value, "owner"),
+    ...(position ? { position } : {}),
     createdAt: readOptionalString(value, "createdAt") ?? fallbackDate,
     updatedAt: readOptionalString(value, "updatedAt") ?? fallbackDate
   };
@@ -410,62 +433,42 @@ function truncateText(value: string, maxLength: number) {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
 }
 
-function layoutGraph(graph: VdtGraph, rootNodeId: string) {
-  const childrenByParent = new Map<string, string[]>();
-  for (const edge of graph.edges) {
-    childrenByParent.set(edge.sourceNodeId, [...(childrenByParent.get(edge.sourceNodeId) ?? []), edge.targetNodeId]);
-  }
+function resolveExportLayout(project: VdtProject) {
+  const layout = layoutGraph(project.graph, project.rootNodeId, DEFAULT_SVG_LAYOUT);
+  const positions = new Map<string, { x: number; y: number }>();
 
-  const depthByNode = new Map<string, number>([[rootNodeId, 0]]);
-  const queue = [rootNodeId];
-  while (queue.length > 0) {
-    const parentId = queue.shift()!;
-    const parentDepth = depthByNode.get(parentId) ?? 0;
-    for (const childId of childrenByParent.get(parentId) ?? []) {
-      if (!depthByNode.has(childId)) {
-        depthByNode.set(childId, parentDepth + 1);
-        queue.push(childId);
-      }
+  for (const node of project.graph.nodes) {
+    const position = node.position ?? layout.positions.get(node.id);
+    if (position) {
+      positions.set(node.id, position);
     }
   }
 
-  const levels = new Map<number, string[]>();
-  for (const node of graph.nodes) {
-    const depth = depthByNode.get(node.id) ?? 0;
-    levels.set(depth, [...(levels.get(depth) ?? []), node.id]);
+  const { cardWidth, cardHeight, margin } = {
+    cardWidth: layout.cardWidth,
+    cardHeight: layout.cardHeight,
+    margin: DEFAULT_SVG_LAYOUT.margin
+  };
+
+  let maxX = layout.width;
+  let maxY = layout.height;
+  for (const position of positions.values()) {
+    maxX = Math.max(maxX, position.x + cardWidth + margin);
+    maxY = Math.max(maxY, position.y + cardHeight + margin);
   }
-
-  const cardWidth = 260;
-  const cardHeight = 118;
-  const xGap = 315;
-  const yGap = 156;
-  const margin = 48;
-  const positions = new Map<string, { x: number; y: number }>();
-
-  for (const [depth, nodeIds] of levels.entries()) {
-    nodeIds.forEach((nodeId, index) => {
-      positions.set(nodeId, {
-        x: margin + depth * xGap,
-        y: margin + index * yGap
-      });
-    });
-  }
-
-  const maxDepth = Math.max(0, ...Array.from(levels.keys()));
-  const maxRows = Math.max(1, ...Array.from(levels.values()).map((nodeIds) => nodeIds.length));
 
   return {
     cardWidth,
     cardHeight,
     positions,
-    width: margin * 2 + cardWidth + maxDepth * xGap,
-    height: margin * 2 + cardHeight + (maxRows - 1) * yGap
+    width: maxX,
+    height: maxY
   };
 }
 
 export function exportProjectSvg(project: VdtProject) {
   const calculation = calculateGraph(project);
-  const layout = layoutGraph(project.graph, project.rootNodeId);
+  const layout = resolveExportLayout(project);
   const nodesById = new Map(project.graph.nodes.map((node) => [node.id, node]));
   const edgePaths = project.graph.edges
     .map((edge) => {
