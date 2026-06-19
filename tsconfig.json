@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./packages/vdt-core" },
+    { "path": "./packages/ai-harness" },
+    { "path": "./packages/local-runner" },
+    { "path": "./packages/ui" },
+    { "path": "./apps/web" }
+  ]
+}

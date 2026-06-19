@@ -1,0 +1,27 @@
+{
+  "name": "vdt-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-first, local-first Value Driver Tree workspace for editable and calculable KPI driver models.",
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "dev": "pnpm --filter @vdt-studio/web dev",
+    "build": "pnpm --filter @vdt-studio/web build",
+    "start": "pnpm --filter @vdt-studio/web start",
+    "lint": "pnpm --filter @vdt-studio/web lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev:all": "concurrently \"pnpm dev\" \"pnpm local-runner:start\"",
+    "local-runner:start": "tsx packages/local-runner/src/server/index.ts"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
+    "@types/node": "^24.0.0",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

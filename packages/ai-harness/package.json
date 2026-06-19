@@ -1,0 +1,17 @@
+{
+  "name": "@vdt-studio/ai-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@vdt-studio/vdt-core": "workspace:*",
+    "zod": "^3.25.64"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run src"
+  }
+}

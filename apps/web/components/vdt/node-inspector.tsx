@@ -1,0 +1,201 @@
+"use client";
+
+import { Check, GitBranchPlus, Info, Trash2, X } from "lucide-react";
+import { calculateGraph } from "@vdt-studio/vdt-core";
+import { Button } from "@/components/ui/button";
+import { Field, SelectInput, TextArea, TextInput } from "@/components/ui/field";
+import { Panel, PanelHeader } from "@/components/ui/panel";
+import { StatusPill } from "@/components/ui/status-pill";
+import { formatNumber } from "@/lib/format";
+import { useVdtStudioStore } from "./vdt-store";
+
+export function NodeInspector() {
+  const project = useVdtStudioStore((state) => state.project);
+  const selectedNodeId = useVdtStudioStore((state) => state.selectedNodeId);
+  const selectedPanelTab = useVdtStudioStore((state) => state.selectedPanelTab);
+  const deepenPreview = useVdtStudioStore((state) => state.deepenPreview);
+  const updateNode = useVdtStudioStore((state) => state.updateNode);
+  const updateNodeBaselineValue = useVdtStudioStore((state) => state.updateNodeBaselineValue);
+  const acceptNode = useVdtStudioStore((state) => state.acceptNode);
+  const rejectNode = useVdtStudioStore((state) => state.rejectNode);
+  const deleteNode = useVdtStudioStore((state) => state.deleteNode);
+  const prepareDeepenPreview = useVdtStudioStore((state) => state.prepareDeepenPreview);
+  const clearDeepenPreview = useVdtStudioStore((state) => state.clearDeepenPreview);
+  const applyDeepenPreview = useVdtStudioStore((state) => state.applyDeepenPreview);
+
+  const node = project.graph.nodes.find((candidate) => candidate.id === selectedNodeId) ?? project.graph.nodes[0];
+  const calculation = calculateGraph(project);
+  const nodeErrors = calculation.errors.filter((error) => error.nodeId === node?.id);
+
+  if (!node) {
+    return (
+      <Panel className="h-full border-l">
+        <PanelHeader title="Inspector" subtitle="Select a node on the canvas" />
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel className="flex h-full min-h-0 flex-col border-l">
+      <PanelHeader
+        title="Node Inspector"
+        subtitle={node.id}
+        action={<StatusPill status={node.status} />}
+      />
+      <div className="flex gap-1 border-b border-line px-4 py-2" role="tablist" aria-label="Node inspector tabs">
+        {["properties", "ai", "warnings"].map((tab) => (
+          <button
+            key={tab}
+            role="tab"
+            aria-selected={selectedPanelTab === tab}
+            className={[
+              "rounded-md px-2.5 py-1.5 text-xs font-semibold capitalize transition",
+              selectedPanelTab === tab ? "bg-slate-900 text-white" : "text-muted hover:bg-slate-100"
+            ].join(" ")}
+            onClick={() => useVdtStudioStore.setState({ selectedPanelTab: tab as "properties" })}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+      <div className="flex-1 overflow-auto px-4 py-4">
+        {selectedPanelTab === "properties" ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 rounded-md border border-line bg-slate-50 p-3">
+              <div>
+                <div className="text-[11px] font-medium uppercase tracking-normal text-muted">Calculated value</div>
+                <div className="mt-1 text-lg font-semibold text-ink">{formatNumber(calculation.values[node.id])}</div>
+              </div>
+              <div>
+                <div className="text-[11px] font-medium uppercase tracking-normal text-muted">Unit</div>
+                <div className="mt-1 truncate text-lg font-semibold text-ink">{node.unit ?? "n/a"}</div>
+              </div>
+            </div>
+
+            <Field label="Name">
+              <TextInput value={node.name} onChange={(event) => updateNode(node.id, { name: event.target.value })} />
+            </Field>
+            <Field label="Type">
+              <SelectInput value={node.type} onChange={(event) => updateNode(node.id, { type: event.target.value as typeof node.type })}>
+                <option value="root_kpi">Root KPI</option>
+                <option value="calculated">Calculated</option>
+                <option value="input">Input</option>
+                <option value="assumption">Assumption</option>
+                <option value="external_factor">External factor</option>
+                <option value="data_mapped">Data mapped</option>
+              </SelectInput>
+            </Field>
+            <Field label="Unit">
+              <TextInput value={node.unit ?? ""} onChange={(event) => updateNode(node.id, { unit: event.target.value })} />
+            </Field>
+            <Field label="Formula" hint="Use node IDs. Example: effective_working_time * average_productivity">
+              <TextArea
+                value={node.formula ?? ""}
+                onChange={(event) => updateNode(node.id, { formula: event.target.value || undefined })}
+              />
+            </Field>
+            <Field label="Baseline value">
+              <TextInput
+                type="number"
+                value={node.baselineValue ?? node.value ?? ""}
+                onChange={(event) =>
+                  updateNodeBaselineValue(node.id, event.target.value === "" ? undefined : Number(event.target.value))
+                }
+              />
+            </Field>
+            <Field label="Description">
+              <TextArea
+                value={node.description ?? ""}
+                onChange={(event) => updateNode(node.id, { description: event.target.value })}
+              />
+            </Field>
+
+            <div className="grid grid-cols-2 gap-2">
+              <Button icon={<Check className="h-4 w-4" />} onClick={() => acceptNode(node.id)}>
+                Accept
+              </Button>
+              <Button variant="danger" icon={<X className="h-4 w-4" />} onClick={() => rejectNode(node.id)}>
+                Reject
+              </Button>
+              <Button icon={<GitBranchPlus className="h-4 w-4" />} onClick={() => prepareDeepenPreview(node.id)}>
+                Deepen with AI
+              </Button>
+              <Button
+                variant="ghost"
+                icon={<Trash2 className="h-4 w-4" />}
+                disabled={node.id === project.rootNodeId}
+                onClick={() => deleteNode(node.id)}
+              >
+                Delete
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {selectedPanelTab === "ai" ? (
+          <div className="space-y-4">
+            <div className="rounded-md border border-line bg-slate-50 p-3">
+              <div className="flex items-start gap-2">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+                <div>
+                  <h3 className="text-sm font-semibold text-ink">AI rationale</h3>
+                  <p className="mt-1 text-sm leading-6 text-muted">{node.aiRationale ?? "No AI rationale is attached."}</p>
+                  <p className="mt-2 text-xs text-muted">Confidence: {formatNumber(node.aiConfidence, { style: "percent" })}</p>
+                </div>
+              </div>
+            </div>
+
+            {deepenPreview?.parentNodeId === node.id ? (
+              <div className="rounded-md border border-blue-200 bg-blue-50 p-3">
+                <h3 className="text-sm font-semibold text-blue-900">Preview: AI structural suggestion</h3>
+                <p className="mt-1 text-sm leading-5 text-blue-800">
+                  AI proposes adding child drivers. The model will not change until you apply this preview.
+                </p>
+                <div className="mt-3 space-y-2">
+                  {deepenPreview.suggestions.map((suggestion) => (
+                    <div key={suggestion.id} className="rounded-md border border-blue-200 bg-white px-3 py-2 text-sm text-blue-900">
+                      {suggestion.name}
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <Button size="sm" variant="primary" onClick={applyDeepenPreview}>
+                    Apply all
+                  </Button>
+                  <Button size="sm" onClick={clearDeepenPreview}>
+                    Reject
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-2">
+                <Button icon={<GitBranchPlus className="h-4 w-4" />} onClick={() => prepareDeepenPreview(node.id)}>
+                  Ask AI to deepen node
+                </Button>
+                <Button variant="ghost" onClick={() => prepareDeepenPreview(node.id)}>
+                  Suggest alternative decomposition
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {selectedPanelTab === "warnings" ? (
+          <div className="space-y-3">
+            {nodeErrors.length === 0 ? (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                No formula errors for this node.
+              </div>
+            ) : (
+              nodeErrors.map((error) => (
+                <div key={error.id} className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800">
+                  {error.message}
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
+      </div>
+    </Panel>
+  );
+}
