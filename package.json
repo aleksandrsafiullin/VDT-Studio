@@ -7,7 +7,9 @@
   "packageManager": "pnpm@10.33.2",
   "scripts": {
     "dev": "pnpm --filter @vdt-studio/web dev",
-    "build": "pnpm --filter @vdt-studio/web build",
+    "build": "pnpm build:cli && pnpm build:web",
+    "build:cli": "pnpm --filter @vdt-studio/cli build",
+    "build:web": "pnpm --filter @vdt-studio/web build",
     "start": "pnpm --filter @vdt-studio/web start",
     "lint": "pnpm --filter @vdt-studio/web lint",
     "typecheck": "pnpm -r typecheck",

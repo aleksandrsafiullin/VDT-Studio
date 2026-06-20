@@ -67,29 +67,37 @@ export function TopBar() {
           accept=".json,application/json"
           onChange={(event) => void handleProjectImport(event)}
         />
-        <Button size="sm" icon={<Upload className="h-4 w-4" />} onClick={() => fileInputRef.current?.click()}>
-          Import
+        <Button
+          size="sm"
+          aria-label="Import"
+          icon={<Upload className="h-4 w-4" />}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <span className="hidden sm:inline">Import</span>
         </Button>
         <Button
           size="sm"
+          aria-label="JSON"
           icon={<FileJson className="h-4 w-4" />}
           onClick={() => downloadTextFile(`${project.id}.json`, exportProjectJson(project), "application/json")}
         >
-          JSON
+          <span className="hidden sm:inline">JSON</span>
         </Button>
         <Button
           size="sm"
+          aria-label="SVG"
           icon={<FileImage className="h-4 w-4" />}
           onClick={() => downloadTextFile(`${project.id}.svg`, exportProjectSvg(project), "image/svg+xml")}
         >
-          SVG
+          <span className="hidden sm:inline">SVG</span>
         </Button>
         <Button
           size="sm"
+          aria-label="Markdown"
           icon={<Download className="h-4 w-4" />}
           onClick={() => downloadTextFile(`${project.id}.md`, exportProjectMarkdown(project), "text/markdown")}
         >
-          Markdown
+          <span className="hidden sm:inline">Markdown</span>
         </Button>
         <SettingsPopover />
       </div>

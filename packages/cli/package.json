@@ -1,15 +1,20 @@
 {
   "name": "@vdt-studio/cli",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "bin": {
-    "vdt": "./bin/vdt.mjs"
+    "vdt": "./dist/cli.mjs"
   },
-  "dependencies": {
-    "@vdt-studio/vdt-core": "workspace:*"
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "devDependencies": {
+    "esbuild": "^0.28.1"
   },
   "scripts": {
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/cli.mjs --banner:js=\"#!/usr/bin/env node\" && node -e \"const fs=require('node:fs');fs.chmodSync('dist/cli.mjs',0o755);fs.cpSync('../../skills','dist/skills',{recursive:true})\"",
     "start": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --root ../.. packages/cli/src"

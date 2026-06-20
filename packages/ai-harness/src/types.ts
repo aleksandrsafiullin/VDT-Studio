@@ -15,20 +15,32 @@ export interface AiExecutionSettings {
   taskRouting?: Partial<Record<AiTaskType, string>>;
 }
 
+export interface AiCompletionParams<TInput> {
+  taskType: AiTaskType;
+  input: TInput;
+  schema: unknown;
+  systemPrompt: string;
+  userPrompt: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  signal?: AbortSignal;
+}
+
 export interface AiProvider {
   id: string;
   name: string;
-  type: "mock" | "openai_compatible" | "custom_http" | "local_http" | "local_runner" | "cli";
-  completeStructured<TInput, TOutput>(params: {
-    taskType: AiTaskType;
-    input: TInput;
-    schema: unknown;
-    systemPrompt: string;
-    userPrompt: string;
-    model?: string;
-    temperature?: number;
-    maxTokens?: number;
-  }): Promise<TOutput>;
+  type:
+    | "mock"
+    | "openai_compatible"
+    | "anthropic"
+    | "azure_openai"
+    | "gemini"
+    | "custom_http"
+    | "local_http"
+    | "local_runner"
+    | "cli";
+  completeStructured<TInput, TOutput>(params: AiCompletionParams<TInput>): Promise<TOutput>;
 }
 
 export interface GenerateVdtInput {
@@ -46,6 +58,37 @@ export interface OpenAiCompatibleProviderConfig {
   apiKey?: string | undefined;
   model: string;
   timeoutMs?: number | undefined;
+}
+
+export type AiProviderFetch = typeof globalThis.fetch;
+
+export interface AnthropicProviderConfig {
+  apiKey: string;
+  model: string;
+  baseUrl?: string;
+  anthropicVersion?: string;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
+  fetch?: AiProviderFetch;
+}
+
+export interface AzureOpenAiProviderConfig {
+  endpoint: string;
+  apiKey: string;
+  deployment: string;
+  apiVersion: string;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
+  fetch?: AiProviderFetch;
+}
+
+export interface GeminiProviderConfig {
+  apiKey: string;
+  model: string;
+  baseUrl?: string;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
+  fetch?: AiProviderFetch;
 }
 
 export interface LocalHttpProviderConfig {

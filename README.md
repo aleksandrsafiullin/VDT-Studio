@@ -17,6 +17,7 @@ The product helps analysts and consultants move from a KPI question to an explai
 - Local model and CLI runner architecture.
 - Agent-facing CLI and MCP install surface.
 - JSON, Markdown and SVG export.
+- Bundled skills, stdio MCP and 21-agent runtime catalog with direct, ACP and Pi RPC transports.
 - Browser-local JSON import.
 
 ## Quickstart
@@ -48,7 +49,7 @@ pnpm vdt -- --help
 
 ## AI Model Configuration
 
-The app ships with a deterministic mock provider for local development and tests. OpenAI-compatible endpoints are configured in the app settings or through environment variables:
+The app ships with a deterministic mock provider for local development and tests. OpenAI-compatible endpoints are configured from `Settings -> AI`, the setup rail, or through environment variables:
 
 ```bash
 OPENAI_COMPATIBLE_BASE_URL=https://api.openai.com/v1
@@ -78,11 +79,13 @@ pnpm local-runner:start
 
 ## CLI and MCP
 
-`packages/cli` exposes a headless VDT Studio CLI and read-only stdio MCP server for coding agents.
+`packages/cli` builds an installable Node 24 CLI with a stdio MCP server, native agent configuration, a 21-agent runtime catalog and distributable VDT skills.
 
 ```bash
 pnpm vdt -- mcp install codex --print
 pnpm vdt -- mcp install cursor --print
+pnpm vdt -- agents detect
+pnpm vdt -- skill install codex --print
 ```
 
 See [docs/MCP_AND_CLI.md](docs/MCP_AND_CLI.md).

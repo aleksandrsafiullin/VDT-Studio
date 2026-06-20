@@ -107,6 +107,41 @@ describe("generate VDT API route", () => {
     expect(body.error).toBe("Request-supplied OpenAI-compatible base URLs are disabled in production.");
   });
 
+  it.each([
+    ["anthropic", { baseUrl: "https://custom.example", model: "claude-test" }, "ANTHROPIC_API_KEY"],
+    ["azure_openai", { endpoint: "https://custom.example", deployment: "deployment" }, "AZURE_OPENAI_API_KEY"],
+    ["gemini", { baseUrl: "https://custom.example", model: "gemini-test" }, "GEMINI_API_KEY"]
+  ])("does not forward an environment key to a request-supplied %s endpoint", async (providerId, providerConfig, envKey) => {
+    vi.stubEnv(envKey, "server-secret");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await POST(jsonRequest({ rootKpi: "Production Volume", providerId, providerConfig }));
+    expect(response.status).toBe(400);
+    expect((await readJson(response)).error).toContain("must also provide its own API key");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("requires a request API key when Azure custom endpoint is supplied through baseUrl", async () => {
+    vi.stubEnv("AZURE_OPENAI_API_KEY", "server-secret");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(jsonRequest({
+      rootKpi: "Production Volume",
+      providerId: "azure_openai",
+      providerConfig: {
+        baseUrl: "https://azure-alias.example",
+        deployment: "deployment"
+      }
+    }));
+
+    expect(response.status).toBe(400);
+    expect((await readJson(response)).error).toBe(
+      "A request-supplied Azure OpenAI endpoint must also provide its own API key."
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("generates through a local runner provider response", async () => {
     const fetchMock = vi.fn(async () => {
       return new Response(JSON.stringify({ ok: true, output: productionVolumeAiOutput }), {
@@ -139,6 +174,49 @@ describe("generate VDT API route", () => {
         method: "POST"
       })
     );
+  });
+
+  it.each([
+    {
+      providerId: "anthropic",
+      config: { apiKey: "anthropic-key", model: "claude-test" },
+      response: { content: [{ type: "tool_use", name: "return_structured_output", input: productionVolumeAiOutput }] },
+      url: "https://api.anthropic.com/v1/messages"
+    },
+    {
+      providerId: "azure_openai",
+      config: {
+        endpoint: "https://example.openai.azure.com",
+        apiKey: "azure-key",
+        deployment: "vdt-deployment",
+        apiVersion: "2024-10-21"
+      },
+      response: { choices: [{ message: { content: JSON.stringify(productionVolumeAiOutput) } }] },
+      url: "https://example.openai.azure.com/openai/deployments/vdt-deployment/chat/completions?api-version=2024-10-21"
+    },
+    {
+      providerId: "gemini",
+      config: { apiKey: "gemini-key", model: "gemini-test" },
+      response: { candidates: [{ content: { parts: [{ text: JSON.stringify(productionVolumeAiOutput) }] } }] },
+      url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent"
+    }
+  ])("generates through the $providerId provider", async ({ providerId, config, response: providerResponse, url }) => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(providerResponse), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(jsonRequest({
+      rootKpi: "Production Volume",
+      providerId,
+      providerConfig: config
+    }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(body.project?.rootNodeId).toBe("production_volume");
+    expect(fetchMock).toHaveBeenCalledWith(url, expect.objectContaining({ method: "POST" }));
   });
 
   it("blocks remote request-supplied local runner URLs in production", async () => {

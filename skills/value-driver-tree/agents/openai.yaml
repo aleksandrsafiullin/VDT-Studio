@@ -1,0 +1,4 @@
+interface:
+  display_name: "Value Driver Tree"
+  short_description: "Build rigorous KPI driver models"
+  default_prompt: "Use $value-driver-tree to build and validate a Value Driver Tree for my KPI."

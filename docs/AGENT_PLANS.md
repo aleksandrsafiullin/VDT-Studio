@@ -108,7 +108,7 @@ Review gate:
 
 ## Orchestration Wave E - Agent and MCP Connectivity
 
-Status: in progress - headless MCP/CLI surface and first real local-runner model execution paths implemented and locally verified.
+Status: in progress - production CLI packaging, skills, MCP platform installation, the 21-agent runtime catalog and direct/ACP/Pi execution transports are implemented. The first Wave E review rejected the slice; its findings have been addressed and repeat review is required before completion.
 
 Reference:
 - `nexu-io/open-design` was reviewed as the target pattern for `od mcp install <agent>`, stdio MCP and per-agent config adapters.
@@ -120,9 +120,9 @@ Implemented scope:
    - `get_example`
    - `validate_project`
 3. Added `vdt mcp install <agent>` planner for:
-   - CLI-driven installs: `claude`, `codex`, `gemini`, `kimi`.
-   - JSON config installs: `cursor`, `copilot`, `opencode`, `openclaw`, `antigravity`, `cline`, `trae`.
-   - Manual print-only snippets: `pi`, `vibe`, `hermes`.
+   - CLI-driven installs: `claude`, `codex`, `gemini`, `kimi`, `hermes`.
+   - JSON config installs: `cursor`, `copilot`, `opencode`, `openclaw`, `antigravity`, `cline`, `trae`, `pi`.
+   - Managed TOML install: `vibe`.
 4. Added safe JSON config merge/remove helpers that preserve unrelated user config.
 5. Added tests for agent install planning, JSON merge/remove behavior and MCP tools.
 6. Documented the new CLI/MCP contract in `docs/MCP_AND_CLI.md`, README, architecture and roadmap.
@@ -133,11 +133,27 @@ Implemented scope:
 11. Added local-runner provider presets for Ollama, LM Studio, vLLM and a guarded custom CLI JSON stdout adapter.
 12. Upgraded `/test-provider` from a CLI description stub into real diagnostics: local HTTP checks OpenAI-compatible `/models`, CLI probes remain disabled unless `VDT_LOCAL_RUNNER_ENABLE_CLI=true`.
 13. Added setup-rail preset selection and a `Test connection` control for local-runner adapters, with Playwright coverage for preset application and diagnostic success feedback.
+14. Added global `Settings -> AI` provider configuration using the same shared controls and state as the setup rail, including OpenAI-compatible, local-runner presets, CLI adapter fields and connection diagnostics.
+15. Added Playwright coverage for Settings-to-setup synchronization, persistence of non-secret provider fields and removal of API keys after reload.
+16. Replaced all manual MCP targets with executable install/uninstall plans and added a typed 21-agent runtime registry plus `vdt agents list/detect`.
+17. Added the `value-driver-tree` skill bundle with atomic native/fallback install/uninstall through `vdt skill install <agent>`.
+18. Converted `@vdt-studio/cli` from a private TypeScript/dev-runner package into a bundled Node 24 executable whose MCP launch specs point at the built artifact.
+19. Added provider-specific Anthropic, Azure OpenAI and Gemini generation adapters plus a normalized six-target BYOK streaming proxy.
+20. Added pinned-address upstream transport, request/stream/frame limits, custom-endpoint key isolation and per-provider browser settings state.
+21. Added per-agent environment filtering, explicit dangerous-permission gates and bounded process termination.
+22. Added native ACP JSON-RPC execution for ACP runtimes and native Pi RPC JSONL execution for Pi, including cancellation and fail-closed client/UI requests.
+23. Hardened MCP and skill installation with atomic writes, ownership checks, checksum-aware uninstall and symlink rejection.
 
 Review gate:
+- Reviewer G rejected the first complete Wave E candidate on standalone packaging, proxy DNS rebinding/resource limits, custom-endpoint key leakage, agent credential leakage/permission flags, missing ACP/Pi execution, installer ownership/symlink safety, provider state leakage and overstated structured-output claims.
+- The follow-up implementation removed the runtime workspace dependency from the tarball, pinned proxy sockets to validated DNS answers, added bounded streams/timeouts, isolated custom endpoint credentials, filtered runtime environments, gated dangerous flags, implemented ACP/Pi protocols, hardened installers and separated provider profiles.
+- The sequential Node 24 gate after those fixes passed lint, typecheck, 186 Vitest tests and production build. The bundled tarball also passed clean offline installation and reported all 21 runtime entries.
+- Repeat independent review remains required. Rendered UI verification is still blocked in this sandbox: `iab` is unavailable and the Playwright fallback cannot bind `127.0.0.1:3100` (`listen EPERM`).
 - Subagent quota was exhausted before this wave, so the initial review gate is local: focused unit tests, typecheck, CLI dry-run install previews and stdio MCP framing smoke.
-- Local verification passed for lint, typecheck, 80 Vitest tests, production build, Playwright e2e (18 passed, 18 intentionally skipped), CLI dry-run install previews, stdio MCP framing smoke and runtime local-runner `/providers` plus `/run local_http_stub` smoke against a fake loopback OpenAI-compatible server.
+- Earlier local verification passed lint, typecheck, production build, the established Playwright baseline, CLI install previews, stdio MCP framing and local-runner smoke. Current test counts must be taken from the final sequential Wave E gate rather than this historical checkpoint.
 - The current presets/diagnostics slice also passed runtime local-runner `/providers` smoke with preset IDs, non-JSON POST rejection, bad-Origin rejection and `/test-provider cli_stub` fail-closed smoke.
 - Reviewer E initially blocked the presets/diagnostics slice on request-controlled CLI execution, response-only CORS, setup-rail generation-payload mismatch and narrow dev-origin support. The fixes added CLI command allowlisting, pre-execution Host/Origin/content-type gates, separated local-runner provider state from OpenAI-compatible provider state, and configurable/3001 dev origins.
 - Reviewer E re-review approved the scoped fixes with one residual operational note: allowlist only dedicated adapter binaries, not general-purpose interpreters.
+- Reviewer F initially blocked the Settings slice because legacy provider secrets could remain in the raw persisted record. The fix added a versioned Zustand migration that rewrites stored state without provider secrets, shared stale-safe connection-test status, complete tab/focus semantics and mobile Settings coverage.
+- Reviewer F re-review approved the Settings slice. The new Settings Playwright cases are checked in but could not execute in the current restricted sandbox because the configured web server could not bind `127.0.0.1:3100` (`listen EPERM`).
 - The CLI adapter can execute real commands only when `VDT_LOCAL_RUNNER_ENABLE_CLI=true` and `VDT_LOCAL_RUNNER_ALLOWED_CLI_COMMANDS` includes the reviewed binary; no shell execution is used. Next remaining Wave E work is first-class connector packages and richer runtime-specific adapters beyond the generic OpenAI-compatible HTTP and JSON stdin/stdout CLI contracts.

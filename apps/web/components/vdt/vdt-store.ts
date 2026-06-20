@@ -23,6 +23,7 @@ import {
   type UiPreferences
 } from "./ui-preferences";
 import { collectExistingPositions } from "./layout-positions";
+import { scrubPersistedProviderSecrets } from "./provider-persistence";
 import inventoryLevelExample from "../../../../examples/inventory-level.json";
 import maintenanceCostExample from "../../../../examples/maintenance-cost.json";
 import oeeExample from "../../../../examples/oee.json";
@@ -40,7 +41,7 @@ export {
   type UiPreferences
 } from "./ui-preferences";
 
-export type ProviderId = "mock" | "openai_compatible" | "local_runner";
+export type ProviderId = "mock" | "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "local_runner";
 export type ExampleProjectId = "production_volume" | "oee" | "inventory_level" | "maintenance_cost";
 export type LocalRunnerPresetId = "ollama_openai" | "lm_studio_openai" | "vllm_openai" | "custom_cli_json";
 
@@ -54,7 +55,22 @@ export interface LocalRunnerPreset {
   argsText?: string | undefined;
 }
 
+export interface ProviderTestStatus {
+  kind: "success" | "error";
+  message: string;
+}
+
 interface ProviderConfigState extends Partial<OpenAiCompatibleProviderConfig> {
+  openAiBaseUrl?: string | undefined;
+  openAiModel?: string | undefined;
+  anthropicBaseUrl?: string | undefined;
+  anthropicModel?: string | undefined;
+  geminiBaseUrl?: string | undefined;
+  geminiModel?: string | undefined;
+  endpoint?: string | undefined;
+  deployment?: string | undefined;
+  apiVersion?: string | undefined;
+  anthropicVersion?: string | undefined;
   localRunnerPresetId?: LocalRunnerPresetId | undefined;
   runnerUrl?: string | undefined;
   runnerProviderId?: "local_http_stub" | "cli_stub" | undefined;
@@ -130,6 +146,8 @@ interface VdtStudioState {
   brief: BriefState;
   providerId: ProviderId;
   providerConfig: ProviderConfigState;
+  isTestingProvider: boolean;
+  providerTestStatus?: ProviderTestStatus | undefined;
   ui: UiPreferences;
   isGenerating: boolean;
   aiError?: string | undefined;
@@ -143,6 +161,7 @@ interface VdtStudioState {
     field: K,
     value: ProviderConfigState[K]
   ) => void;
+  setProviderTestState: (isTestingProvider: boolean, providerTestStatus?: ProviderTestStatus) => void;
   setUiPreference: <K extends keyof UiPreferences>(field: K, value: UiPreferences[K]) => void;
   toggleLeftPanel: () => void;
   toggleRightPanel: () => void;
@@ -242,6 +261,21 @@ function persistedProviderConfig(config: ProviderConfigState) {
   if (config.model !== undefined) {
     nextConfig.model = config.model;
   }
+  for (const field of ["openAiBaseUrl", "openAiModel", "anthropicBaseUrl", "anthropicModel", "geminiBaseUrl", "geminiModel"] as const) {
+    if (config[field] !== undefined) nextConfig[field] = config[field];
+  }
+  if (config.endpoint !== undefined) {
+    nextConfig.endpoint = config.endpoint;
+  }
+  if (config.deployment !== undefined) {
+    nextConfig.deployment = config.deployment;
+  }
+  if (config.apiVersion !== undefined) {
+    nextConfig.apiVersion = config.apiVersion;
+  }
+  if (config.anthropicVersion !== undefined) {
+    nextConfig.anthropicVersion = config.anthropicVersion;
+  }
   if (config.runnerUrl !== undefined) {
     nextConfig.runnerUrl = config.runnerUrl;
   }
@@ -284,8 +318,12 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       },
       providerId: "mock",
       providerConfig: {
-        baseUrl: "https://api.openai.com/v1",
-        model: "gpt-4.1-mini",
+        openAiBaseUrl: "https://api.openai.com/v1",
+        openAiModel: "gpt-4.1-mini",
+        anthropicBaseUrl: "https://api.anthropic.com",
+        anthropicModel: "claude-sonnet-4-5",
+        geminiBaseUrl: "https://generativelanguage.googleapis.com",
+        geminiModel: "gemini-2.5-pro",
         localRunnerPresetId: "ollama_openai",
         runnerUrl: "http://127.0.0.1:8765",
         runnerProviderId: "local_http_stub",
@@ -293,6 +331,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         localModel: "qwen3",
         timeoutSec: 60
       },
+      isTestingProvider: false,
       ui: { ...DEFAULT_UI },
       isGenerating: false,
       setUiPreference: (field, value) =>
@@ -350,14 +389,21 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             [field]: value
           }
         })),
-      setProviderId: (providerId) => set({ providerId }),
+      setProviderId: (providerId) => set({
+        providerId,
+        providerConfig: { ...get().providerConfig, apiKey: undefined },
+        providerTestStatus: undefined
+      }),
       setProviderConfigField: (field, value) =>
         set((state) => ({
           providerConfig: {
             ...state.providerConfig,
             [field]: value
-          }
+          },
+          providerTestStatus: undefined
         })),
+      setProviderTestState: (isTestingProvider, providerTestStatus) =>
+        set({ isTestingProvider, providerTestStatus }),
       generateWithAi: async () => {
         const { brief, providerId, providerConfig } = get();
         set({ isGenerating: true, aiError: undefined, deepenPreview: undefined });
@@ -371,7 +417,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
                   model: providerConfig.localModel,
                   apiKey: providerConfig.localApiKey
                 }
-              : providerConfig;
+              : providerId === "openai_compatible"
+                ? { ...providerConfig, baseUrl: providerConfig.openAiBaseUrl, model: providerConfig.openAiModel }
+                : providerId === "anthropic"
+                  ? { ...providerConfig, baseUrl: providerConfig.anthropicBaseUrl, model: providerConfig.anthropicModel }
+                  : providerId === "gemini"
+                    ? { ...providerConfig, baseUrl: providerConfig.geminiBaseUrl, model: providerConfig.geminiModel }
+                    : providerConfig;
           const response = await fetch("/api/ai/generate-vdt", {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -616,7 +668,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
     }),
     {
       name: "vdt-studio-state",
+      version: 1,
       storage: createJSONStorage(() => localStorage),
+      migrate: (persistedState) => scrubPersistedProviderSecrets(persistedState) as Partial<VdtStudioState>,
       partialize: (state) => ({
         project: state.project,
         selectedNodeId: state.selectedNodeId,

@@ -1,17 +1,19 @@
 import { NextResponse } from "next/server";
 import {
+  AnthropicProvider,
+  AzureOpenAiProvider,
   generateVdtProject,
+  GeminiProvider,
   LocalRunnerProvider,
   MockProvider,
   OpenAiCompatibleProvider,
   type GenerateVdtInput,
-  type LocalRunnerProviderConfig,
-  type OpenAiCompatibleProviderConfig
+  type LocalRunnerProviderConfig
 } from "@vdt-studio/ai-harness";
 
 interface GenerateVdtRequest extends GenerateVdtInput {
-  providerId?: "mock" | "openai_compatible" | "local_runner";
-  providerConfig?: Partial<OpenAiCompatibleProviderConfig> & Record<string, unknown>;
+  providerId?: "mock" | "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "local_runner";
+  providerConfig?: Record<string, unknown>;
 }
 
 const MAX_FIELD_LENGTHS: Partial<Record<keyof GenerateVdtInput, number>> = {
@@ -54,13 +56,13 @@ function readLimitedString(
   return trimmed || undefined;
 }
 
-function readProviderConfig(value: unknown): Partial<OpenAiCompatibleProviderConfig> {
+function readProviderConfig(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
   }
 
   const config = value as Record<string, unknown>;
-  const providerConfig: Partial<OpenAiCompatibleProviderConfig> = {};
+  const providerConfig: Record<string, string> = {};
   if (typeof config.baseUrl === "string" && config.baseUrl.trim()) {
     providerConfig.baseUrl = config.baseUrl.trim();
   }
@@ -69,6 +71,11 @@ function readProviderConfig(value: unknown): Partial<OpenAiCompatibleProviderCon
   }
   if (typeof config.model === "string" && config.model.trim()) {
     providerConfig.model = config.model.trim().slice(0, 120);
+  }
+  for (const key of ["endpoint", "deployment", "apiVersion", "anthropicVersion"] as const) {
+    if (typeof config[key] === "string" && config[key].trim()) {
+      providerConfig[key] = config[key].trim().slice(0, key === "endpoint" ? 2_048 : 160);
+    }
   }
 
   return providerConfig;
@@ -259,6 +266,70 @@ export async function POST(request: Request) {
         apiKey,
         model: providerConfig.model ?? process.env.OPENAI_COMPATIBLE_MODEL ?? "gpt-4.1-mini"
       });
+    } else if (body.providerId === "anthropic") {
+      const providerConfig = readProviderConfig(body.providerConfig);
+      const envBaseUrl = process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com";
+      const baseUrl = providerConfig.baseUrl ?? envBaseUrl;
+      assertRequestBaseUrlAllowed(baseUrl, envBaseUrl);
+      if (providerConfig.baseUrl && providerConfig.baseUrl !== envBaseUrl && !providerConfig.apiKey) {
+        throw new Error("A request-supplied Anthropic base URL must also provide its own API key.");
+      }
+      const apiKey = providerConfig.apiKey ?? process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) {
+        throw new Error("Anthropic API key is required.");
+      }
+      provider = new AnthropicProvider({
+        baseUrl,
+        apiKey,
+        model: providerConfig.model ?? process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
+        anthropicVersion: providerConfig.anthropicVersion ?? "2023-06-01"
+      });
+    } else if (body.providerId === "azure_openai") {
+      const providerConfig = readProviderConfig(body.providerConfig);
+      const envEndpoint = process.env.AZURE_OPENAI_ENDPOINT ?? "";
+      const requestEndpoint = providerConfig.endpoint ?? providerConfig.baseUrl;
+      const endpoint = requestEndpoint ?? envEndpoint;
+      if (!endpoint) {
+        throw new Error("Azure OpenAI endpoint is required.");
+      }
+      assertRequestBaseUrlAllowed(endpoint, envEndpoint);
+      const usesRequestEndpoint = Boolean(requestEndpoint && requestEndpoint !== envEndpoint);
+      if (usesRequestEndpoint && !providerConfig.apiKey) {
+        throw new Error("A request-supplied Azure OpenAI endpoint must also provide its own API key.");
+      }
+      const apiKey = usesRequestEndpoint
+        ? providerConfig.apiKey
+        : providerConfig.apiKey ?? process.env.AZURE_OPENAI_API_KEY;
+      const deployment = providerConfig.deployment ?? providerConfig.model ?? process.env.AZURE_OPENAI_DEPLOYMENT;
+      if (!apiKey) {
+        throw new Error("Azure OpenAI API key is required.");
+      }
+      if (!deployment) {
+        throw new Error("Azure OpenAI deployment is required.");
+      }
+      provider = new AzureOpenAiProvider({
+        endpoint,
+        apiKey,
+        deployment,
+        apiVersion: providerConfig.apiVersion ?? process.env.AZURE_OPENAI_API_VERSION ?? "2024-10-21"
+      });
+    } else if (body.providerId === "gemini") {
+      const providerConfig = readProviderConfig(body.providerConfig);
+      const envBaseUrl = process.env.GEMINI_BASE_URL ?? "https://generativelanguage.googleapis.com";
+      const baseUrl = providerConfig.baseUrl ?? envBaseUrl;
+      assertRequestBaseUrlAllowed(baseUrl, envBaseUrl);
+      if (providerConfig.baseUrl && providerConfig.baseUrl !== envBaseUrl && !providerConfig.apiKey) {
+        throw new Error("A request-supplied Google Gemini base URL must also provide its own API key.");
+      }
+      const apiKey = providerConfig.apiKey ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
+      if (!apiKey) {
+        throw new Error("Google Gemini API key is required.");
+      }
+      provider = new GeminiProvider({
+        baseUrl,
+        apiKey,
+        model: providerConfig.model ?? process.env.GEMINI_MODEL ?? "gemini-2.5-pro"
+      });
     } else if (body.providerId === "local_runner") {
       provider = new LocalRunnerProvider(readLocalRunnerProviderConfig(body.providerConfig));
     } else {
@@ -274,6 +345,8 @@ export async function POST(request: Request) {
         error.message.includes("Local runner URL") ||
         error.message.includes("local runner URLs") ||
         error.message.includes("provider URLs") ||
+        error.message.includes("must also provide") ||
+        error.message.includes("endpoint") ||
         error.message.includes("must be") ||
         error.message.includes("is required"))
     ) {

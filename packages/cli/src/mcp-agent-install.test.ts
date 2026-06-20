@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_SLUGS,
   applyJsonInstall,
+  applyTextInstall,
   isAgentSlug,
   planAgentInstall,
   removeJsonInstall,
+  removeTextInstall,
+  verifyCliUninstallEntry,
   type JsonInstallPlan,
   type McpLaunchSpec
 } from "./mcp-agent-install";
@@ -86,16 +89,10 @@ describe("VDT MCP agent install planner", () => {
     });
   });
 
-  it("keeps unverified agent formats print-only", () => {
-    for (const slug of ["pi", "vibe", "hermes"] as const) {
-      const plan = planAgentInstall(slug, SPEC, ctx());
-      expect(plan.kind).toBe("manual");
-      if (plan.kind !== "manual") {
-        throw new Error("expected manual plan");
-      }
-      expect(plan.snippet).toContain("vdt-studio");
-      expect(plan.reason).toContain("manually");
-    }
+  it("provides executable install plans for Pi, Vibe and Hermes", () => {
+    expect(planAgentInstall("pi", SPEC, ctx()).kind).toBe("json");
+    expect(planAgentInstall("vibe", SPEC, ctx()).kind).toBe("text");
+    expect(planAgentInstall("hermes", SPEC, ctx())).toMatchObject({ kind: "cli", bin: "hermes" });
   });
 
   it("deep-merges and removes JSON install entries idempotently", () => {
@@ -119,5 +116,55 @@ describe("VDT MCP agent install planner", () => {
     const removed = JSON.parse(removeJsonInstall(once, plan) ?? "{}") as { mcpServers: Record<string, unknown> };
     expect(removed.mcpServers.other).toEqual({ command: "other-bin" });
     expect(removed.mcpServers["vdt-studio"]).toBeUndefined();
+  });
+
+  it("refuses to overwrite or remove a same-name foreign MCP entry", () => {
+    const plan = planAgentInstall("cursor", SPEC, ctx()) as JsonInstallPlan;
+    const foreign = JSON.stringify({ mcpServers: { "vdt-studio": { command: "foreign" } } });
+    expect(() => applyJsonInstall(foreign, plan)).toThrow("Refusing to overwrite");
+    expect(() => removeJsonInstall(foreign, plan)).toThrow("not managed");
+  });
+
+  it("installs and removes a managed Vibe TOML block idempotently", () => {
+    const plan = planAgentInstall("vibe", SPEC, ctx());
+    if (plan.kind !== "text") {
+      throw new Error("expected text plan");
+    }
+    const existing = 'active_model = "devstral"\n';
+    const once = applyTextInstall(existing, plan);
+    expect(applyTextInstall(once, plan)).toBe(once);
+    expect(once).toContain('active_model = "devstral"');
+    expect(once).toContain('name = "vdt-studio"');
+    expect(once).toMatch(/# ownership: vdt-studio sha256:[a-f0-9]{64}/);
+    expect(removeTextInstall(once, plan)).toBe(existing);
+  });
+
+  it("refuses to replace or remove foreign or modified Vibe marker content", () => {
+    const plan = planAgentInstall("vibe", SPEC, ctx());
+    if (plan.kind !== "text") throw new Error("expected text plan");
+    const foreign = `# BEGIN ${plan.marker}\nforeign = true\n# END ${plan.marker}\n`;
+    expect(() => applyTextInstall(foreign, plan)).toThrow("ownership fingerprint is invalid");
+    expect(() => removeTextInstall(foreign, plan)).toThrow("ownership fingerprint is invalid");
+
+    const managed = applyTextInstall(null, plan).replace(SPEC.command, "/foreign/node");
+    expect(() => applyTextInstall(managed, plan)).toThrow("ownership fingerprint is invalid");
+    expect(() => removeTextInstall(managed, plan)).toThrow("ownership fingerprint is invalid");
+  });
+
+  it("verifies a CLI-backed same-name entry against the expected launch spec", () => {
+    const plan = planAgentInstall("codex", SPEC, ctx());
+    if (plan.kind !== "cli") throw new Error("expected CLI plan");
+    const output = `${plan.serverName}\ncommand: ${SPEC.command}\nargs: ${SPEC.args.join(" ")}\nenv: VDT_STUDIO_HOME=/tmp/vdt`;
+    expect(() => verifyCliUninstallEntry(plan, output)).not.toThrow();
+    expect(() => verifyCliUninstallEntry(plan, `${plan.serverName}\ncommand: foreign`)).toThrow("does not match");
+  });
+
+  it("requires force when a CLI exposes only an unscoped list", () => {
+    for (const slug of ["gemini", "hermes"] as const) {
+      const plan = planAgentInstall(slug, SPEC, ctx());
+      if (plan.kind !== "cli") throw new Error("expected CLI plan");
+      expect(plan.uninstallVerification).toBe("force-required");
+      expect(() => verifyCliUninstallEntry(plan, `${plan.serverName} ${SPEC.command}`)).toThrow("pass --force");
+    }
   });
 });

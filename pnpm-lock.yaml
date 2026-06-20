@@ -92,10 +92,10 @@ importers:
         version: 3.25.76
 
   packages/cli:
-    dependencies:
-      '@vdt-studio/vdt-core':
-        specifier: workspace:*
-        version: link:../vdt-core
+    devDependencies:
+      esbuild:
+        specifier: ^0.28.1
+        version: 0.28.1
 
   packages/local-runner: {}
 

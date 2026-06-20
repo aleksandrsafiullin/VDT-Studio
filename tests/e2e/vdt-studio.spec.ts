@@ -325,6 +325,72 @@ test("configures and tests local runner presets", async ({ page }, testInfo) => 
 
   await setupRail.getByRole("button", { name: "Test connection" }).click();
   await expect(setupRail.getByText("Connection test passed. Models: qwen3.")).toBeVisible();
+
+  await page.getByTestId("settings-button").click();
+  const settings = page.getByRole("dialog", { name: "Workspace settings" });
+  await settings.getByRole("tab", { name: "AI" }).click();
+  await expect(settings.getByText("Connection test passed. Models: qwen3.")).toBeVisible();
+  await settings.getByRole("textbox", { name: "Model" }).fill("qwen3.1");
+  await expect(settings.getByText("Connection test passed. Models: qwen3.")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(setupRail.getByText("Connection test passed. Models: qwen3.")).toHaveCount(0);
+});
+
+test("configures AI providers from workspace settings without persisting API keys", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "AI settings smoke runs on desktop viewport.");
+  const setupRail = page.locator("section").filter({ hasText: "New VDT" }).first();
+
+  await page.getByTestId("settings-button").click();
+  const settings = page.getByRole("dialog", { name: "Workspace settings" });
+  await settings.getByRole("tab", { name: "AI" }).click();
+  await settings.getByRole("combobox", { name: "Provider" }).selectOption("openai_compatible");
+  await settings.getByRole("textbox", { name: "Base URL" }).fill("https://models.example.test/v1");
+  await settings.getByRole("textbox", { name: "Model" }).fill("vdt-production-model");
+  await settings.getByLabel("API key").fill("session-only-key");
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("vdt-studio-state") ?? ""))
+    .not.toContain("session-only-key");
+  await page.keyboard.press("Escape");
+
+  await expect(setupRail.getByRole("combobox", { name: "Provider" })).toHaveValue("openai_compatible");
+  await expect(setupRail.getByRole("textbox", { name: "Base URL" })).toHaveValue("https://models.example.test/v1");
+  await expect(setupRail.getByRole("textbox", { name: "Model" })).toHaveValue("vdt-production-model");
+  await expect(setupRail.getByLabel("API key")).toHaveValue("session-only-key");
+
+  await page.reload();
+  await page.getByTestId("settings-button").click();
+  const reloadedSettings = page.getByRole("dialog", { name: "Workspace settings" });
+  await reloadedSettings.getByRole("tab", { name: "AI" }).click();
+  await expect(reloadedSettings.getByRole("combobox", { name: "Provider" })).toHaveValue("openai_compatible");
+  await expect(reloadedSettings.getByRole("textbox", { name: "Base URL" })).toHaveValue(
+    "https://models.example.test/v1"
+  );
+  await expect(reloadedSettings.getByRole("textbox", { name: "Model" })).toHaveValue("vdt-production-model");
+  await expect(reloadedSettings.getByLabel("API key")).toHaveValue("");
+
+  await page.evaluate(() => {
+    const raw = localStorage.getItem("vdt-studio-state");
+    if (!raw) {
+      throw new Error("Missing persisted VDT state");
+    }
+    const persisted = JSON.parse(raw) as {
+      version?: number;
+      state?: { providerConfig?: Record<string, unknown> };
+    };
+    persisted.version = 0;
+    persisted.state ??= {};
+    persisted.state.providerConfig ??= {};
+    persisted.state.providerConfig.apiKey = "legacy-openai-secret";
+    persisted.state.providerConfig.localApiKey = "legacy-local-secret";
+    localStorage.setItem("vdt-studio-state", JSON.stringify(persisted));
+  });
+  await page.reload();
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("vdt-studio-state") ?? ""))
+    .not.toContain("legacy-openai-secret");
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("vdt-studio-state") ?? ""))
+    .not.toContain("legacy-local-secret");
 });
 
 test("runs the downtime scenario and shows impacted drivers", async ({ page }, testInfo) => {
@@ -373,6 +439,24 @@ test("keeps the primary creation flow usable on mobile", async ({ page }, testIn
   await expect(page.getByText("New VDT")).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Generate VDT with AI/i })).toBeVisible();
+});
+
+test("keeps AI settings reachable and usable on mobile", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-chrome", "Mobile AI settings smoke only runs on the mobile project.");
+
+  await page.getByTestId("settings-button").click();
+  const settings = page.getByRole("dialog", { name: "Workspace settings" });
+  await expect(settings).toBeVisible();
+  await settings.getByRole("tab", { name: "AI" }).click();
+  await settings.getByRole("combobox", { name: "Provider" }).selectOption("local_runner");
+  await expect(settings.getByRole("textbox", { name: "Runner URL" })).toBeVisible();
+  await expect(settings.getByRole("combobox", { name: "Preset" })).toBeVisible();
+
+  const [dialogBox, viewport] = await Promise.all([settings.boundingBox(), Promise.resolve(page.viewportSize())]);
+  expect(dialogBox).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(dialogBox!.x).toBeGreaterThanOrEqual(0);
+  expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(viewport!.width);
 });
 
 test("persists font and panel scale from settings", async ({ page }, testInfo) => {
