@@ -1,4 +1,165 @@
 {
+  "id": "project_inventory_level",
   "name": "Inventory Level Driver Model",
-  "status": "roadmap_example_placeholder"
+  "description": "Demo model for month-end inventory in an operations planning context.",
+  "industry": "Manufacturing / Supply Chain",
+  "businessContext": "Inventory planning and working-capital analysis",
+  "rootNodeId": "inventory_level",
+  "graph": {
+    "nodes": [
+      {
+        "id": "inventory_level",
+        "name": "Inventory Level",
+        "description": "Expected inventory at the end of the planning period.",
+        "type": "root_kpi",
+        "status": "ai_suggested",
+        "unit": "tonnes",
+        "formula": "opening_inventory + inbound_receipts - outbound_consumption",
+        "aiGenerated": true,
+        "aiConfidence": 0.9,
+        "aiRationale": "Ending inventory is driven by opening stock, receipts and consumption.",
+        "controllability": "medium",
+        "materiality": "high",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "id": "opening_inventory",
+        "name": "Opening Inventory",
+        "description": "Inventory available at the start of the period.",
+        "type": "input",
+        "status": "ai_suggested",
+        "unit": "tonnes",
+        "baselineValue": 12000,
+        "aiGenerated": true,
+        "aiConfidence": 0.86,
+        "aiRationale": "Opening inventory is the base stock position.",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "id": "inbound_receipts",
+        "name": "Inbound Receipts",
+        "description": "Material received during the period.",
+        "type": "calculated",
+        "status": "ai_suggested",
+        "unit": "tonnes",
+        "formula": "supplier_deliveries + internal_transfers",
+        "aiGenerated": true,
+        "aiConfidence": 0.84,
+        "aiRationale": "Receipts combine external supplier deliveries and internal stock transfers.",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "id": "outbound_consumption",
+        "name": "Outbound Consumption",
+        "description": "Inventory consumed or shipped during the period.",
+        "type": "calculated",
+        "status": "ai_suggested",
+        "unit": "tonnes",
+        "formula": "production_consumption + customer_shipments + scrap_losses",
+        "aiGenerated": true,
+        "aiConfidence": 0.84,
+        "aiRationale": "Consumption combines production usage, shipments and losses.",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "id": "supplier_deliveries",
+        "name": "Supplier Deliveries",
+        "description": "External deliveries received from suppliers.",
+        "type": "input",
+        "status": "ai_suggested",
+        "unit": "tonnes",
+        "baselineValue": 5200,
+        "aiGenerated": true,
+        "aiConfidence": 0.8,
+        "aiRationale": "Supplier deliveries are the main external inventory inflow.",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "id": "internal_transfers",
+        "name": "Internal Transfers",
+        "description": "Inventory moved from other sites or stock points.",
+        "type": "input",
+        "status": "ai_suggested",
+        "unit": "tonnes",
+        "baselineValue": 800,
+        "aiGenerated": true,
+        "aiConfidence": 0.76,
+        "aiRationale": "Internal transfers can materially change the local inventory position.",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "id": "production_consumption",
+        "name": "Production Consumption",
+        "description": "Material consumed by production during the period.",
+        "type": "input",
+        "status": "ai_suggested",
+        "unit": "tonnes",
+        "baselineValue": 6400,
+        "aiGenerated": true,
+        "aiConfidence": 0.82,
+        "aiRationale": "Production consumption is usually the largest inventory outflow.",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "id": "customer_shipments",
+        "name": "Customer Shipments",
+        "description": "Material shipped to customers from stock.",
+        "type": "input",
+        "status": "ai_suggested",
+        "unit": "tonnes",
+        "baselineValue": 3000,
+        "aiGenerated": true,
+        "aiConfidence": 0.78,
+        "aiRationale": "Shipments reduce available inventory.",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "id": "scrap_losses",
+        "name": "Scrap Losses",
+        "description": "Inventory lost to scrap, shrinkage or write-off.",
+        "type": "input",
+        "status": "ai_suggested",
+        "unit": "tonnes",
+        "baselineValue": 150,
+        "aiGenerated": true,
+        "aiConfidence": 0.72,
+        "aiRationale": "Scrap and shrinkage reduce usable inventory.",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    "edges": [
+      { "id": "edge_inventory_level_opening_inventory", "sourceNodeId": "inventory_level", "targetNodeId": "opening_inventory", "relation": "additive_component", "label": "starts from", "aiGenerated": true, "aiConfidence": 0.86 },
+      { "id": "edge_inventory_level_inbound_receipts", "sourceNodeId": "inventory_level", "targetNodeId": "inbound_receipts", "relation": "additive_component", "label": "adds", "aiGenerated": true, "aiConfidence": 0.84 },
+      { "id": "edge_inventory_level_outbound_consumption", "sourceNodeId": "inventory_level", "targetNodeId": "outbound_consumption", "relation": "subtractive_component", "label": "less", "aiGenerated": true, "aiConfidence": 0.84 },
+      { "id": "edge_inbound_receipts_supplier_deliveries", "sourceNodeId": "inbound_receipts", "targetNodeId": "supplier_deliveries", "relation": "additive_component", "label": "adds", "aiGenerated": true, "aiConfidence": 0.8 },
+      { "id": "edge_inbound_receipts_internal_transfers", "sourceNodeId": "inbound_receipts", "targetNodeId": "internal_transfers", "relation": "additive_component", "label": "adds", "aiGenerated": true, "aiConfidence": 0.76 },
+      { "id": "edge_outbound_consumption_production_consumption", "sourceNodeId": "outbound_consumption", "targetNodeId": "production_consumption", "relation": "additive_component", "label": "adds", "aiGenerated": true, "aiConfidence": 0.82 },
+      { "id": "edge_outbound_consumption_customer_shipments", "sourceNodeId": "outbound_consumption", "targetNodeId": "customer_shipments", "relation": "additive_component", "label": "adds", "aiGenerated": true, "aiConfidence": 0.78 },
+      { "id": "edge_outbound_consumption_scrap_losses", "sourceNodeId": "outbound_consumption", "targetNodeId": "scrap_losses", "relation": "additive_component", "label": "adds", "aiGenerated": true, "aiConfidence": 0.72 }
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "scenario_delayed_delivery",
+      "name": "Delayed supplier delivery",
+      "description": "Model impact of a 700 tonne delivery delay.",
+      "overrides": [{ "nodeId": "supplier_deliveries", "value": 4500 }],
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "dataSources": [],
+  "aiSettings": { "defaultProviderId": "mock" },
+  "versions": [],
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "updatedAt": "2026-01-01T00:00:00.000Z"
 }

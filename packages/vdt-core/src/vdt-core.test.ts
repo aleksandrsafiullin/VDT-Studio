@@ -1,3 +1,4 @@
+import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   calculateGraph,
@@ -51,6 +52,34 @@ describe("production volume example", () => {
     expect(result.absoluteChange).toBeCloseTo(3801.6, 5);
     expect(result.percentageChange).toBeCloseTo(3.333333, 4);
     expect(result.impactedNodes.map((node) => node.nodeId)).toContain("unplanned_downtime");
+  });
+});
+
+describe("checked-in examples", () => {
+  const examplesDir = new URL("../../../examples/", import.meta.url);
+  const exampleFiles = readdirSync(examplesDir).filter((filename) => filename.endsWith(".json")).sort();
+
+  it.each(exampleFiles)("imports, validates and calculates %s", (filename) => {
+    const raw = readFileSync(new URL(filename, examplesDir), "utf8");
+    const project = importProjectJson(raw);
+    const validation = validateGraph(project.graph, project.rootNodeId);
+    const calculation = calculateGraph(project);
+
+    expect(validation.errors).toHaveLength(0);
+    expect(calculation.errors).toHaveLength(0);
+    expect(calculation.rootValue).toEqual(expect.any(Number));
+    expect(Number.isFinite(calculation.rootValue)).toBe(true);
+  });
+
+  it("keeps the OEE demo on a 0-100 percentage scale", () => {
+    const project = importProjectJson(readFileSync(new URL("oee.json", examplesDir), "utf8"));
+    const calculation = calculateGraph(project);
+
+    expect(calculation.errors).toHaveLength(0);
+    expect(calculation.values.availability).toBeCloseTo(83.333333, 5);
+    expect(calculation.values.performance).toBeCloseTo(81.818181, 5);
+    expect(calculation.values.quality).toBeCloseTo(95, 5);
+    expect(calculation.rootValue).toBeCloseTo(64.772727, 5);
   });
 });
 

@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:watch": "vitest",
+    "vdt": "tsx packages/cli/src/cli.ts",
     "dev:all": "concurrently \"pnpm dev\" \"pnpm local-runner:start\"",
     "local-runner:start": "tsx packages/local-runner/src/server/index.ts"
   },

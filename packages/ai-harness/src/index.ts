@@ -3,6 +3,7 @@ export * from "./schemas/generate-vdt";
 export * from "./prompts/generate-vdt";
 export * from "./providers/mock-provider";
 export * from "./providers/openai-compatible-provider";
+export * from "./providers/local-runner-provider";
 export * from "./routing/router";
 export * from "./validation/validate-ai-output";
 export * from "./validation/to-project";

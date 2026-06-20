@@ -6,6 +6,7 @@ import {
   calculateGraph,
   cloneProject,
   DEFAULT_CANVAS_LAYOUT,
+  importProjectJson,
   layoutGraph,
   productionVolumeProject,
   type VdtEdge,
@@ -22,6 +23,9 @@ import {
   type UiPreferences
 } from "./ui-preferences";
 import { collectExistingPositions } from "./layout-positions";
+import inventoryLevelExample from "../../../../examples/inventory-level.json";
+import maintenanceCostExample from "../../../../examples/maintenance-cost.json";
+import oeeExample from "../../../../examples/oee.json";
 
 export {
   BASE_LEFT_PANEL_WIDTH,
@@ -36,7 +40,75 @@ export {
   type UiPreferences
 } from "./ui-preferences";
 
-type ProviderId = "mock" | "openai_compatible";
+export type ProviderId = "mock" | "openai_compatible" | "local_runner";
+export type ExampleProjectId = "production_volume" | "oee" | "inventory_level" | "maintenance_cost";
+export type LocalRunnerPresetId = "ollama_openai" | "lm_studio_openai" | "vllm_openai" | "custom_cli_json";
+
+export interface LocalRunnerPreset {
+  id: LocalRunnerPresetId;
+  label: string;
+  runnerProviderId: "local_http_stub" | "cli_stub";
+  baseUrl?: string | undefined;
+  model?: string | undefined;
+  command?: string | undefined;
+  argsText?: string | undefined;
+}
+
+interface ProviderConfigState extends Partial<OpenAiCompatibleProviderConfig> {
+  localRunnerPresetId?: LocalRunnerPresetId | undefined;
+  runnerUrl?: string | undefined;
+  runnerProviderId?: "local_http_stub" | "cli_stub" | undefined;
+  localBaseUrl?: string | undefined;
+  localModel?: string | undefined;
+  localApiKey?: string | undefined;
+  command?: string | undefined;
+  argsText?: string | undefined;
+  timeoutSec?: number | undefined;
+}
+
+export const EXAMPLE_PROJECT_OPTIONS: { id: ExampleProjectId; label: string }[] = [
+  { id: "production_volume", label: "Production Volume" },
+  { id: "oee", label: "OEE" },
+  { id: "inventory_level", label: "Inventory Level" },
+  { id: "maintenance_cost", label: "Maintenance Cost" }
+];
+
+export const LOCAL_RUNNER_PRESETS: LocalRunnerPreset[] = [
+  {
+    id: "ollama_openai",
+    label: "Ollama",
+    runnerProviderId: "local_http_stub",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    model: "qwen3"
+  },
+  {
+    id: "lm_studio_openai",
+    label: "LM Studio",
+    runnerProviderId: "local_http_stub",
+    baseUrl: "http://127.0.0.1:1234/v1",
+    model: "local-model"
+  },
+  {
+    id: "vllm_openai",
+    label: "vLLM",
+    runnerProviderId: "local_http_stub",
+    baseUrl: "http://127.0.0.1:8000/v1",
+    model: "local-model"
+  },
+  {
+    id: "custom_cli_json",
+    label: "CLI JSON stdout",
+    runnerProviderId: "cli_stub",
+    command: "vdt-model-adapter",
+    argsText: ""
+  }
+];
+
+const exampleProjectJsonById: Record<Exclude<ExampleProjectId, "production_volume">, unknown> = {
+  oee: oeeExample,
+  inventory_level: inventoryLevelExample,
+  maintenance_cost: maintenanceCostExample
+};
 
 interface BriefState extends GenerateVdtInput {
   rootKpi: string;
@@ -57,7 +129,7 @@ interface VdtStudioState {
   activeScenarioId: string;
   brief: BriefState;
   providerId: ProviderId;
-  providerConfig: Partial<OpenAiCompatibleProviderConfig>;
+  providerConfig: ProviderConfigState;
   ui: UiPreferences;
   isGenerating: boolean;
   aiError?: string | undefined;
@@ -67,9 +139,9 @@ interface VdtStudioState {
   } | undefined;
   setBriefField: <K extends keyof BriefState>(field: K, value: BriefState[K]) => void;
   setProviderId: (providerId: ProviderId) => void;
-  setProviderConfigField: <K extends keyof OpenAiCompatibleProviderConfig>(
+  setProviderConfigField: <K extends keyof ProviderConfigState>(
     field: K,
-    value: OpenAiCompatibleProviderConfig[K]
+    value: ProviderConfigState[K]
   ) => void;
   setUiPreference: <K extends keyof UiPreferences>(field: K, value: UiPreferences[K]) => void;
   toggleLeftPanel: () => void;
@@ -79,7 +151,7 @@ interface VdtStudioState {
   autoDistributeLayout: () => void;
   updateNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
   generateWithAi: () => Promise<void>;
-  loadExample: () => void;
+  loadExample: (exampleId?: ExampleProjectId) => void;
   selectNode: (nodeId: string) => void;
   updateNode: (nodeId: string, patch: Partial<VdtNode>) => void;
   updateNodeBaselineValue: (nodeId: string, value?: number) => void;
@@ -97,6 +169,27 @@ interface VdtStudioState {
 
 function buildInitialProject() {
   return cloneProject(productionVolumeProject);
+}
+
+function buildExampleProject(exampleId: ExampleProjectId = "production_volume") {
+  if (exampleId === "production_volume") {
+    return buildInitialProject();
+  }
+
+  return importProjectJson(JSON.stringify(exampleProjectJsonById[exampleId]));
+}
+
+function briefFromProject(project: VdtProject): BriefState {
+  const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+  return {
+    rootKpi: rootNode?.name ?? project.name,
+    industry: project.industry ?? "",
+    businessContext: project.businessContext ?? "",
+    unit: rootNode?.unit ?? "",
+    timePeriod: "monthly",
+    goal: project.description ?? "",
+    levelOfDetail: "medium"
+  };
 }
 
 function nowIso() {
@@ -138,13 +231,37 @@ function ensureScenario(project: VdtProject) {
   };
 }
 
-function persistedProviderConfig(config: Partial<OpenAiCompatibleProviderConfig>) {
-  const nextConfig: Partial<OpenAiCompatibleProviderConfig> = {};
+function persistedProviderConfig(config: ProviderConfigState) {
+  const nextConfig: ProviderConfigState = {};
+  if (config.localRunnerPresetId !== undefined) {
+    nextConfig.localRunnerPresetId = config.localRunnerPresetId;
+  }
   if (config.baseUrl !== undefined) {
     nextConfig.baseUrl = config.baseUrl;
   }
   if (config.model !== undefined) {
     nextConfig.model = config.model;
+  }
+  if (config.runnerUrl !== undefined) {
+    nextConfig.runnerUrl = config.runnerUrl;
+  }
+  if (config.runnerProviderId !== undefined) {
+    nextConfig.runnerProviderId = config.runnerProviderId;
+  }
+  if (config.localBaseUrl !== undefined) {
+    nextConfig.localBaseUrl = config.localBaseUrl;
+  }
+  if (config.localModel !== undefined) {
+    nextConfig.localModel = config.localModel;
+  }
+  if (config.command !== undefined) {
+    nextConfig.command = config.command;
+  }
+  if (config.argsText !== undefined) {
+    nextConfig.argsText = config.argsText;
+  }
+  if (config.timeoutSec !== undefined) {
+    nextConfig.timeoutSec = config.timeoutSec;
   }
   return nextConfig;
 }
@@ -168,7 +285,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       providerId: "mock",
       providerConfig: {
         baseUrl: "https://api.openai.com/v1",
-        model: "gpt-4.1-mini"
+        model: "gpt-4.1-mini",
+        localRunnerPresetId: "ollama_openai",
+        runnerUrl: "http://127.0.0.1:8765",
+        runnerProviderId: "local_http_stub",
+        localBaseUrl: "http://127.0.0.1:11434/v1",
+        localModel: "qwen3",
+        timeoutSec: 60
       },
       ui: { ...DEFAULT_UI },
       isGenerating: false,
@@ -240,13 +363,22 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         set({ isGenerating: true, aiError: undefined, deepenPreview: undefined });
 
         try {
+          const requestProviderConfig =
+            providerId === "local_runner"
+              ? {
+                  ...providerConfig,
+                  baseUrl: providerConfig.localBaseUrl,
+                  model: providerConfig.localModel,
+                  apiKey: providerConfig.localApiKey
+                }
+              : providerConfig;
           const response = await fetch("/api/ai/generate-vdt", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               ...brief,
               providerId,
-              providerConfig: providerId === "openai_compatible" ? providerConfig : undefined
+              providerConfig: providerId === "mock" ? undefined : requestProviderConfig
             })
           });
 
@@ -269,10 +401,11 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           });
         }
       },
-      loadExample: () => {
-        const project = buildInitialProject();
+      loadExample: (exampleId = "production_volume") => {
+        const project = buildExampleProject(exampleId);
         set({
           project,
+          brief: briefFromProject(project),
           selectedNodeId: project.rootNodeId,
           activeScenarioId: project.scenarios[0]?.id ?? "",
           aiError: undefined,

@@ -1,14 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { calculateGraph } from "@vdt-studio/vdt-core";
 import {
   generateVdtOutputSchema,
   generateVdtOutputToProject,
   generateVdtProject,
+  LocalRunnerProvider,
   MockProvider,
   productionVolumeAiOutput
 } from "./index";
 
 describe("AI harness", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("validates deterministic mock output", () => {
     const output = generateVdtOutputSchema.parse(productionVolumeAiOutput);
 
@@ -57,6 +62,43 @@ describe("AI harness", () => {
 
     expect(project.name).toBe("Production Volume Driver Model");
     expect(project.rootNodeId).toBe("production_volume");
+  });
+
+  it("generates a project through a local runner provider", async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(JSON.stringify({ ok: true, output: productionVolumeAiOutput }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const project = await generateVdtProject(
+      new LocalRunnerProvider({
+        runnerUrl: "http://127.0.0.1:8765",
+        runnerProviderId: "local_http_stub",
+        providerConfig: {
+          baseUrl: "http://127.0.0.1:11434/v1",
+          model: "qwen3"
+        },
+        timeoutSec: 30
+      }),
+      {
+        rootKpi: "Production Volume",
+        industry: "Mining / Processing Plant",
+        unit: "tonnes/month",
+        goal: "Understand what drives production decrease",
+        levelOfDetail: "medium"
+      }
+    );
+
+    expect(project.name).toBe("Production Volume Driver Model");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:8765/run",
+      expect.objectContaining({
+        method: "POST"
+      })
+    );
   });
 
   it("rejects invalid AI output", () => {

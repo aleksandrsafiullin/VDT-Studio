@@ -7,6 +7,25 @@ export interface CliProviderConfig {
   timeoutSec: number;
 }
 
+export interface LocalHttpProviderConfig {
+  baseUrl: string;
+  apiKey?: string | undefined;
+  model: string;
+  timeoutSec?: number | undefined;
+}
+
+export type LocalRunnerProviderPresetKind = "local_http" | "cli";
+
+export interface LocalRunnerProviderPreset {
+  id: string;
+  label: string;
+  providerId: "local_http_stub" | "cli_stub";
+  kind: LocalRunnerProviderPresetKind;
+  description: string;
+  providerConfig: LocalHttpProviderConfig | CliProviderConfig;
+  notes?: string[] | undefined;
+}
+
 export interface CliProviderTestResult {
   ok: boolean;
   provider: string;
@@ -18,13 +37,13 @@ export interface LocalRunnerProvider {
   id: string;
   name: string;
   kind: "cli" | "local_http" | "mock";
-  status: "stub";
-  runMode: "disabled" | "mock";
+  status: "stub" | "configurable";
+  runMode: "disabled" | "mock" | "local_http" | "cli";
   taskTypes: string[];
   description: string;
   safety: {
-    executesShell: false;
-    performsNetworkRequests: false;
+    executesShell: boolean;
+    performsNetworkRequests: boolean;
     returnsMockDataOnly: boolean;
   };
 }
@@ -34,6 +53,10 @@ export interface LocalRunnerRunRequest {
   taskType: string;
   input?: unknown;
   schema?: unknown;
+  systemPrompt?: string;
+  userPrompt?: string;
+  model?: string;
+  providerConfig?: unknown;
   timeoutSec?: number;
 }
 
@@ -52,11 +75,14 @@ export interface LocalRunnerRunSuccess {
   providerId: string;
   taskType: string;
   result: {
-    mode: "stub";
+    mode: "stub" | "local_http" | "cli";
     message: string;
-    input: LocalRunnerRunSummary;
-    schema: LocalRunnerRunSummary;
+    input?: LocalRunnerRunSummary;
+    schema?: LocalRunnerRunSummary;
   };
+  output?: unknown;
+  rawOutput?: string;
+  latencyMs?: number;
   diagnostics?: LocalRunnerRunDiagnostics;
 }
 
@@ -72,8 +98,8 @@ export interface LocalRunnerRunFailure {
 }
 
 export interface LocalRunnerRunDiagnostics {
-  executed: false;
-  shellExecution: false;
-  remoteExecution: false;
+  executed: boolean;
+  shellExecution: boolean;
+  remoteExecution: boolean;
   timeoutSec?: number;
 }

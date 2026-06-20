@@ -265,6 +265,68 @@ test("renders the workspace and can regenerate the mock VDT", async ({ page }, t
   expect(consoleErrors).toEqual([]);
 });
 
+test("opens checked-in examples and syncs the setup brief", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Example selector smoke runs on desktop viewport.");
+  const setupRail = page.locator("section").filter({ hasText: "New VDT" }).first();
+
+  await setupRail.getByRole("combobox", { name: "Example model" }).selectOption("oee");
+  await setupRail.getByRole("button", { name: "Open example" }).click();
+
+  await expect(page.getByRole("heading", { name: "OEE Driver Model" })).toBeVisible();
+  await expect(setupRail.getByRole("textbox", { name: "Root KPI" })).toHaveValue("Overall Equipment Effectiveness");
+  await expect(setupRail.getByRole("textbox", { name: "Industry" })).toHaveValue("Manufacturing / Industrial Operations");
+  await expect(setupRail.getByRole("textbox", { name: "Unit" })).toHaveValue("%");
+  await expect(reactFlowNode(page, "oee")).toBeVisible();
+});
+
+test("configures and tests local runner presets", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Local runner provider UI smoke runs on desktop viewport.");
+  const setupRail = page.locator("section").filter({ hasText: "New VDT" }).first();
+  let generateRequestBody: {
+    providerId?: string;
+    providerConfig?: { baseUrl?: string; model?: string };
+  } | undefined;
+
+  await setupRail.getByRole("combobox", { name: "Provider" }).selectOption("local_runner");
+  await setupRail.getByRole("combobox", { name: "Preset" }).selectOption("vllm_openai");
+
+  await expect(setupRail.getByRole("textbox", { name: "Base URL" })).toHaveValue("http://127.0.0.1:8000/v1");
+  await expect(setupRail.getByRole("textbox", { name: "Model" })).toHaveValue("local-model");
+  await page.route("**/api/ai/generate-vdt", async (route) => {
+    generateRequestBody = route.request().postDataJSON() as typeof generateRequestBody;
+    await route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: false, error: "Captured by e2e." })
+    });
+  });
+  await setupRail.getByRole("button", { name: /Generate VDT with AI/i }).click();
+  await expect.poll(() => generateRequestBody?.providerConfig?.baseUrl).toBe("http://127.0.0.1:8000/v1");
+  expect(generateRequestBody?.providerId).toBe("local_runner");
+  expect(generateRequestBody?.providerConfig?.model).toBe("local-model");
+
+  await setupRail.getByRole("combobox", { name: "Preset" }).selectOption("custom_cli_json");
+  await expect(setupRail.getByRole("combobox", { name: "Runner adapter" })).toHaveValue("cli_stub");
+  await expect(setupRail.getByRole("textbox", { name: "Command" })).toHaveValue("vdt-model-adapter");
+
+  await setupRail.getByRole("combobox", { name: "Preset" }).selectOption("ollama_openai");
+  await page.route("http://127.0.0.1:8765/test-provider", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        providerId: "local_http_stub",
+        taskType: "connection_test",
+        models: ["qwen3"]
+      })
+    });
+  });
+
+  await setupRail.getByRole("button", { name: "Test connection" }).click();
+  await expect(setupRail.getByText("Connection test passed. Models: qwen3.")).toBeVisible();
+});
+
 test("runs the downtime scenario and shows impacted drivers", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Detailed scenario smoke runs on desktop viewport.");
 

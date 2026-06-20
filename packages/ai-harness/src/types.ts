@@ -62,3 +62,10 @@ export interface CliProviderConfig {
   outputMode: "stdout_json";
   timeoutSec: number;
 }
+
+export interface LocalRunnerProviderConfig {
+  runnerUrl: string;
+  runnerProviderId: "local_http_stub" | "cli_stub" | "mock_stub" | string;
+  providerConfig?: LocalHttpProviderConfig | CliProviderConfig | undefined;
+  timeoutSec?: number | undefined;
+}

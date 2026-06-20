@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
 import {
   generateVdtProject,
+  LocalRunnerProvider,
   MockProvider,
   OpenAiCompatibleProvider,
   type GenerateVdtInput,
+  type LocalRunnerProviderConfig,
   type OpenAiCompatibleProviderConfig
 } from "@vdt-studio/ai-harness";
 
 interface GenerateVdtRequest extends GenerateVdtInput {
-  providerId?: "mock" | "openai_compatible";
-  providerConfig?: Partial<OpenAiCompatibleProviderConfig>;
+  providerId?: "mock" | "openai_compatible" | "local_runner";
+  providerConfig?: Partial<OpenAiCompatibleProviderConfig> & Record<string, unknown>;
 }
 
 const MAX_FIELD_LENGTHS: Partial<Record<keyof GenerateVdtInput, number>> = {
@@ -72,6 +74,53 @@ function readProviderConfig(value: unknown): Partial<OpenAiCompatibleProviderCon
   return providerConfig;
 }
 
+function readLocalRunnerProviderConfig(value: unknown): LocalRunnerProviderConfig {
+  const envRunnerUrl = process.env.VDT_LOCAL_RUNNER_URL ?? "http://127.0.0.1:8765";
+  const config = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const requestRunnerUrl = typeof config.runnerUrl === "string" && config.runnerUrl.trim() ? config.runnerUrl.trim() : undefined;
+  const runnerUrl = requestRunnerUrl ?? envRunnerUrl;
+  assertLocalRunnerUrlAllowed(runnerUrl, envRunnerUrl);
+
+  const runnerProviderId =
+    typeof config.runnerProviderId === "string" && config.runnerProviderId.trim()
+      ? config.runnerProviderId.trim()
+      : "local_http_stub";
+  const timeoutSec =
+    typeof config.timeoutSec === "number" && Number.isFinite(config.timeoutSec) && config.timeoutSec > 0
+      ? Math.min(config.timeoutSec, 120)
+      : 60;
+
+  if (runnerProviderId === "cli_stub") {
+    const command = typeof config.command === "string" ? config.command.trim() : "";
+    return {
+      runnerUrl,
+      runnerProviderId,
+      providerConfig: {
+        name: typeof config.name === "string" && config.name.trim() ? config.name.trim() : "Local CLI Model",
+        command,
+        args: readArgs(config.args, config.argsText),
+        inputMode: "stdin",
+        outputMode: "stdout_json",
+        timeoutSec
+      },
+      timeoutSec
+    };
+  }
+
+  const baseUrl = typeof config.baseUrl === "string" && config.baseUrl.trim() ? config.baseUrl.trim() : "http://127.0.0.1:11434/v1";
+  const model = typeof config.model === "string" && config.model.trim() ? config.model.trim().slice(0, 120) : "qwen3";
+  return {
+    runnerUrl,
+    runnerProviderId,
+    providerConfig: {
+      baseUrl,
+      model,
+      ...(typeof config.apiKey === "string" && config.apiKey ? { apiKey: config.apiKey } : {})
+    },
+    timeoutSec
+  };
+}
+
 function isPrivateOrLocalHost(hostname: string) {
   const normalized = hostname.toLowerCase();
   if (normalized === "localhost" || normalized === "::1" || normalized === "[::1]" || normalized.endsWith(".local")) {
@@ -120,6 +169,40 @@ function assertRequestBaseUrlAllowed(baseUrl: string, envBaseUrl: string) {
   if (!privateUrlsAllowed && isPrivateOrLocalHost(parsed.hostname)) {
     throw new Error("Private or localhost provider URLs are disabled in production.");
   }
+}
+
+function assertLocalRunnerUrlAllowed(runnerUrl: string, envRunnerUrl: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(runnerUrl);
+  } catch {
+    throw new Error("Local runner URL must be a valid URL.");
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Local runner URL must use http or https.");
+  }
+
+  const usesRequestRunnerUrl = runnerUrl !== envRunnerUrl;
+  const requestUrlsAllowed = process.env.VDT_ALLOW_REQUEST_LOCAL_RUNNER_URLS === "true" || process.env.NODE_ENV !== "production";
+  if (usesRequestRunnerUrl && !requestUrlsAllowed) {
+    throw new Error("Request-supplied local runner URLs are disabled in production.");
+  }
+
+  const remoteUrlsAllowed = process.env.VDT_ALLOW_REMOTE_LOCAL_RUNNER_URLS === "true";
+  if (!remoteUrlsAllowed && !isPrivateOrLocalHost(parsed.hostname)) {
+    throw new Error("Local runner URL must point to localhost or a private network host.");
+  }
+}
+
+function readArgs(args: unknown, argsText: unknown): string[] | undefined {
+  if (Array.isArray(args) && args.every((item) => typeof item === "string")) {
+    return args;
+  }
+  if (typeof argsText === "string" && argsText.trim()) {
+    return argsText.split(/\s+/).filter(Boolean);
+  }
+  return undefined;
 }
 
 export async function POST(request: Request) {
@@ -176,6 +259,8 @@ export async function POST(request: Request) {
         apiKey,
         model: providerConfig.model ?? process.env.OPENAI_COMPATIBLE_MODEL ?? "gpt-4.1-mini"
       });
+    } else if (body.providerId === "local_runner") {
+      provider = new LocalRunnerProvider(readLocalRunnerProviderConfig(body.providerConfig));
     } else {
       provider = new MockProvider();
     }
@@ -186,6 +271,8 @@ export async function POST(request: Request) {
     if (
       error instanceof Error &&
       (error.message.includes("base URL") ||
+        error.message.includes("Local runner URL") ||
+        error.message.includes("local runner URLs") ||
         error.message.includes("provider URLs") ||
         error.message.includes("must be") ||
         error.message.includes("is required"))

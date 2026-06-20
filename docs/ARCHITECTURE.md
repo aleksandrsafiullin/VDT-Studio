@@ -14,6 +14,7 @@ User Interface
 - `packages/vdt-core`: graph model, formula parser/evaluator, validation, scenario calculation and export.
 - `packages/ai-harness`: task routing, provider abstraction, mock/OpenAI-compatible providers and schema validation.
 - `packages/local-runner`: localhost runner for local HTTP and CLI provider integration.
+- `packages/cli`: headless CLI, stdio MCP server and per-agent MCP install planner.
 - `packages/ui`: reserved for shared UI primitives as the project grows.
 
 ## Design Principles

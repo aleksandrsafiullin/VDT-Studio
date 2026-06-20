@@ -1,0 +1,17 @@
+{
+  "name": "@vdt-studio/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "vdt": "./bin/vdt.mjs"
+  },
+  "dependencies": {
+    "@vdt-studio/vdt-core": "workspace:*"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/cli/src"
+  }
+}
