@@ -35,9 +35,9 @@ importers:
       '@vdt-studio/ai-harness':
         specifier: workspace:*
         version: link:../../packages/ai-harness
-      '@vdt-studio/cli':
+      '@vdt-studio/model-bridge':
         specifier: workspace:*
-        version: link:../../packages/cli
+        version: link:../../packages/model-bridge
       '@vdt-studio/vdt-core':
         specifier: workspace:*
         version: link:../../packages/vdt-core
@@ -96,6 +96,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@vdt-studio/local-runner':
+        specifier: workspace:*
+        version: link:../local-runner
       '@vdt-studio/vdt-core':
         specifier: workspace:*
         version: link:../vdt-core
@@ -104,7 +107,13 @@ importers:
         specifier: ^0.28.1
         version: 0.28.1
 
-  packages/local-runner: {}
+  packages/local-runner:
+    dependencies:
+      '@vdt-studio/model-bridge':
+        specifier: workspace:*
+        version: link:../model-bridge
+
+  packages/model-bridge: {}
 
   packages/ui: {}
 

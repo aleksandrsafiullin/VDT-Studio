@@ -204,8 +204,8 @@ describe("generate VDT API route", () => {
         providerId: "local_runner",
         providerConfig: {
           runnerUrl: "http://127.0.0.1:8765",
-          runnerProviderId: "local_http_stub",
-          baseUrl: "http://127.0.0.1:11434/v1",
+          backendId: "ollama",
+          pairingToken: "session-token",
           model: "qwen3"
         }
       })
@@ -216,7 +216,7 @@ describe("generate VDT API route", () => {
     expect(body.ok).toBe(true);
     expect(body.project?.rootNodeId).toBe("production_volume");
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:8765/run",
+      "http://127.0.0.1:8765/v1/completions",
       expect.objectContaining({
         method: "POST"
       })
@@ -278,8 +278,8 @@ describe("generate VDT API route", () => {
         providerId: "local_runner",
         providerConfig: {
           runnerUrl: "http://127.0.0.1:8765",
-          runnerProviderId: "local_http_stub",
-          baseUrl: "http://127.0.0.1:11434/v1",
+          backendId: "ollama",
+          pairingToken: "session-token",
           model: "qwen3"
         }
       })
@@ -289,7 +289,7 @@ describe("generate VDT API route", () => {
     expect(response.status).toBe(503);
     expect(body.ok).toBe(false);
     expect(body.error).toContain("Local runner is offline");
-    expect(body.error).toContain("pnpm local-runner:start");
+    expect(body.error).toContain("vdt runner start");
     expect(body.error).not.toContain("fetch failed");
   });
 
@@ -303,8 +303,8 @@ describe("generate VDT API route", () => {
         providerId: "local_runner",
         providerConfig: {
           runnerUrl: "https://example.com",
-          runnerProviderId: "local_http_stub",
-          baseUrl: "http://127.0.0.1:11434/v1",
+          backendId: "ollama",
+          pairingToken: "session-token",
           model: "qwen3"
         }
       })

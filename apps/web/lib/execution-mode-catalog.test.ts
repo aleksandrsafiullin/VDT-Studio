@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { CODING_AGENT_IDS } from "../../../packages/cli/src/agent-runtime";
 import {
   BYOK_GATEWAY_PRESETS,
   CLI_AGENT_IDS,
@@ -16,12 +15,12 @@ import {
 } from "./execution-mode-catalog";
 
 describe("execution-mode-catalog", () => {
-  it("covers all 21 CLI agents with required display metadata", () => {
-    expect(CLI_CATALOG).toHaveLength(21);
-    expect([...CLI_AGENT_IDS]).toEqual([...CODING_AGENT_IDS]);
+  it("covers the five release-target subscription CLIs with required display metadata", () => {
+    expect(CLI_CATALOG).toHaveLength(5);
+    expect(CLI_AGENT_IDS).toEqual(["cursor-agent", "codex", "claude", "gemini", "copilot"]);
 
     const ids = CLI_CATALOG.map((entry) => entry.id);
-    expect(new Set(ids).size).toBe(21);
+    expect(new Set(ids).size).toBe(5);
 
     for (const entry of CLI_CATALOG) {
       expect(entry.displayName.trim().length).toBeGreaterThan(0);
@@ -39,7 +38,6 @@ describe("execution-mode-catalog", () => {
     expect(getCliCatalogEntry("codex").suggestedModels.length).toBeGreaterThan(0);
     expect(getCliCatalogEntry("gemini").suggestedModels).toContain("gemini-3.5-flash");
     expect(getCliCatalogEntry("cursor-agent").suggestedModels.length).toBeGreaterThan(0);
-    expect(getCliCatalogEntry("opencode").suggestedModels.length).toBeGreaterThan(0);
     expect(getCliCatalogEntry("copilot").suggestedModels.length).toBeGreaterThan(0);
   });
 

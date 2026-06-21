@@ -1,42 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route";
 
-const { detectAgents, detectAgent, discoverAgentModels, isCodingAgentId } = vi.hoisted(() => ({
-  detectAgents: vi.fn(),
-  detectAgent: vi.fn(),
-  discoverAgentModels: vi.fn().mockResolvedValue([]),
-  isCodingAgentId: vi.fn((value: string) =>
-    [
-      "claude",
-      "codex",
-      "opencode",
-      "hermes",
-      "antigravity",
-      "gemini",
-      "grok-build",
-      "kimi",
-      "cursor-agent",
-      "qwen",
-      "qoder",
-      "copilot",
-      "pi",
-      "kiro",
-      "kilo",
-      "vibe",
-      "deepseek",
-      "reasonix",
-      "aider",
-      "devin",
-      "trae"
-    ].includes(value)
+const { detectSubscriptionClis, detectSubscriptionCli, discoverSubscriptionCliModels, isSubscriptionCliId } = vi.hoisted(() => ({
+  detectSubscriptionClis: vi.fn(),
+  detectSubscriptionCli: vi.fn(),
+  discoverSubscriptionCliModels: vi.fn().mockResolvedValue([]),
+  isSubscriptionCliId: vi.fn((value: string) =>
+    ["cursor-agent", "codex", "claude", "gemini", "copilot"].includes(value)
   )
 }));
 
-vi.mock("@vdt-studio/cli", () => ({
-  detectAgents,
-  detectAgent,
-  discoverAgentModels,
-  isCodingAgentId
+vi.mock("@vdt-studio/model-bridge/node", () => ({
+  detectSubscriptionClis,
+  detectSubscriptionCli,
+  discoverSubscriptionCliModels,
+  isSubscriptionCliId
 }));
 
 async function readJson(response: Response) {
@@ -53,7 +31,7 @@ describe("detect CLIs API route", () => {
   });
 
   it("returns all detected agents", async () => {
-    detectAgents.mockResolvedValue([
+    detectSubscriptionClis.mockResolvedValue([
       {
         id: "claude",
         installed: true,
@@ -76,12 +54,12 @@ describe("detect CLIs API route", () => {
     expect(response.status).toBe(200);
     expect(body.agents).toHaveLength(2);
     expect(body.agents?.[0]?.installed).toBe(true);
-    expect(detectAgents).toHaveBeenCalledOnce();
-    expect(detectAgent).not.toHaveBeenCalled();
+    expect(detectSubscriptionClis).toHaveBeenCalledOnce();
+    expect(detectSubscriptionCli).not.toHaveBeenCalled();
   });
 
   it("returns live models exposed by an installed CLI", async () => {
-    detectAgents.mockResolvedValue([
+    detectSubscriptionClis.mockResolvedValue([
       {
         id: "cursor-agent",
         installed: true,
@@ -90,17 +68,17 @@ describe("detect CLIs API route", () => {
         version: "1.0.0"
       }
     ]);
-    discoverAgentModels.mockResolvedValue(["auto", "gpt-5.5-high"]);
+    discoverSubscriptionCliModels.mockResolvedValue(["auto", "gpt-5.5-high"]);
 
     const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis"));
     const body = await readJson(response);
 
     expect(body.modelsByAgent).toEqual({ "cursor-agent": ["auto", "gpt-5.5-high"] });
-    expect(discoverAgentModels).toHaveBeenCalledWith("cursor-agent", "/usr/local/bin/cursor-agent");
+    expect(discoverSubscriptionCliModels).toHaveBeenCalledWith("cursor-agent", "/usr/local/bin/cursor-agent");
   });
 
   it("rescans a single agent when id is provided", async () => {
-    detectAgent.mockResolvedValue({
+    detectSubscriptionCli.mockResolvedValue({
       id: "codex",
       installed: true,
       executable: "/usr/local/bin/codex",
@@ -121,8 +99,8 @@ describe("detect CLIs API route", () => {
         version: "0.9.0"
       }
     ]);
-    expect(detectAgent).toHaveBeenCalledWith("codex");
-    expect(detectAgents).not.toHaveBeenCalled();
+    expect(detectSubscriptionCli).toHaveBeenCalledWith("codex");
+    expect(detectSubscriptionClis).not.toHaveBeenCalled();
   });
 
   it("rejects unknown agent ids", async () => {
@@ -131,11 +109,11 @@ describe("detect CLIs API route", () => {
 
     expect(response.status).toBe(400);
     expect(body.error).toBe("Unknown CLI agent: unknown-agent");
-    expect(detectAgent).not.toHaveBeenCalled();
+    expect(detectSubscriptionCli).not.toHaveBeenCalled();
   });
 
   it("returns a server error when detection throws", async () => {
-    detectAgents.mockRejectedValue(new Error("PATH scan failed"));
+    detectSubscriptionClis.mockRejectedValue(new Error("PATH scan failed"));
 
     const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis"));
     const body = await readJson(response);

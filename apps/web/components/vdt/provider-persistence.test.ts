@@ -12,7 +12,9 @@ describe("provider persistence", () => {
           apiKey: "legacy-openai-secret",
           localBaseUrl: "http://127.0.0.1:11434/v1",
           localModel: "qwen3",
-          localApiKey: "legacy-local-secret"
+          localApiKey: "legacy-local-secret",
+          pairingToken: "legacy-runner-secret",
+          accessToken: "legacy-provider-secret"
         }
       })
     ).toEqual({
@@ -33,6 +35,8 @@ describe("provider persistence", () => {
           executionMode: "byok",
           apiKey: "session-only",
           localApiKey: "also-session-only",
+          runnerPairingToken: "runner-session-only",
+          providerToken: "provider-session-only",
           baseUrl: "https://api.openai.com/v1"
         }
       })

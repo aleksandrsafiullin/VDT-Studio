@@ -14,10 +14,9 @@ The product helps analysts and consultants move from a KPI question to an explai
 - Deterministic formula engine with trace output.
 - Scenario impact analysis.
 - BYOK and OpenAI-compatible model support.
-- Local model and CLI runner architecture.
-- Agent-facing CLI and MCP install surface.
+- API, local-model and selected subscription backend architecture.
+- Bounded model backend contract with deterministic validation.
 - JSON, Markdown and SVG export.
-- Bundled skills, stdio MCP and 21-agent runtime catalog with direct, ACP and Pi RPC transports.
 - Browser-local JSON import.
 
 ## Quickstart
@@ -57,38 +56,30 @@ OPENAI_COMPATIBLE_API_KEY=...
 OPENAI_COMPATIBLE_MODEL=gpt-4.1-mini
 ```
 
-The app stores browser-entered BYOK settings locally and sends them only to the configured generation route for the active request.
+The app keeps browser-entered API keys in memory for the active session and sends them only to the configured generation route. Secrets are not persisted in project files or browser local storage.
 
-Local runner routing is also available from the provider selector. Use its Ollama, LM Studio, vLLM and CLI JSON stdout presets, then run `Test connection` before generation:
-
-```bash
-pnpm local-runner:start
-```
-
-CLI model adapters are guarded and require:
+Local runner routing is also available from the provider selector. Start the runner, enter the short-lived terminal pairing code, select an Ollama, LM Studio, vLLM or subscription backend, then run `Test connection`:
 
 ```bash
-VDT_LOCAL_RUNNER_ENABLE_CLI=true \
-VDT_LOCAL_RUNNER_ALLOWED_CLI_COMMANDS=vdt-model-adapter \
 pnpm local-runner:start
 ```
 
 ## Local Runner
 
-`packages/local-runner` exposes a localhost service for local HTTP and CLI model adapters. Local HTTP targets are restricted to localhost/private model servers by default; CLI adapters are disabled until explicitly enabled and allowlisted. `GET /providers` returns adapter metadata and presets, while `POST /test-provider` performs short local HTTP `/models` or gated CLI diagnostics.
+`packages/local-runner` exposes a paired, loopback-only v1 service. The browser sends a registered backend ID and bounded task/schema input; executable names, arguments, environment and endpoints remain in reviewed server manifests. Subscription CLI manifests fail closed until separately certified. See [Local Runner](docs/LOCAL_RUNNER.md).
 
-## CLI and MCP
+## Product CLI
 
-`packages/cli` builds an installable Node 24 CLI with a stdio MCP server, native agent configuration, a 21-agent runtime catalog and distributable VDT skills.
+`packages/cli` builds a narrow Node CLI for deterministic project operations and the localhost runner launcher.
 
 ```bash
-pnpm vdt -- mcp install codex --print
-pnpm vdt -- mcp install cursor --print
-pnpm vdt -- agents detect
-pnpm vdt -- skill install codex --print
+pnpm vdt -- validate examples/production-volume.json
+pnpm vdt -- calculate examples/production-volume.json
+pnpm vdt -- export examples/production-volume.json --format markdown
+pnpm vdt -- doctor
 ```
 
-See [docs/MCP_AND_CLI.md](docs/MCP_AND_CLI.md).
+External agents, MCP installation, skill distribution and repository control are not product features. See [ADR-001](docs/adr/ADR-001-model-backends-not-agent-orchestration.md).
 
 ## Examples
 
@@ -106,7 +97,7 @@ Example projects live under `examples/`:
 - Excel calculation model export.
 - PowerPoint summary export.
 - PDF report generation.
-- MCP access to browser/local project storage.
+- Individually certified subscription-backend adapters and desktop OS sandbox profiles.
 - Tauri desktop packaging.
 
 ## Contributing

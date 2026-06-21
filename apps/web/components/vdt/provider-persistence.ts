@@ -6,6 +6,10 @@ function scrubSecretFields(config: Record<string, unknown>) {
   const nextConfig = { ...config };
   delete nextConfig.apiKey;
   delete nextConfig.localApiKey;
+  delete nextConfig.pairingToken;
+  delete nextConfig.runnerPairingToken;
+  delete nextConfig.accessToken;
+  delete nextConfig.providerToken;
   return nextConfig;
 }
 

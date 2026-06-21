@@ -21,7 +21,7 @@ describe("execution-mode-resolver", () => {
     ).toEqual({ providerId: "mock" });
   });
 
-  it("resolves local_cli cli_stub with selected agent command", () => {
+  it("routes subscription CLI execution through the local runner", () => {
     expect(
       resolveExecutionSettings({
         ...DEFAULT_EXECUTION_SETTINGS,
@@ -34,11 +34,12 @@ describe("execution-mode-resolver", () => {
         timeoutSec: 60
       })
     ).toEqual({
-      providerId: "local_cli",
+      providerId: "local_runner",
       providerConfig: {
-        agentId: "claude",
+        runnerUrl: "http://127.0.0.1:8765",
+        backendId: "claude_subscription",
         model: undefined,
-        timeoutSec: 60
+        timeoutMs: 60_000
       }
     });
   });
@@ -58,11 +59,9 @@ describe("execution-mode-resolver", () => {
       providerId: "local_runner",
       providerConfig: {
         runnerUrl: "http://127.0.0.1:8765",
-        runnerProviderId: "local_http_stub",
-        baseUrl: "http://127.0.0.1:11434/v1",
+        backendId: "ollama",
         model: "qwen3",
-        timeoutSec: 60,
-        apiKey: "local-key"
+        timeoutMs: 60_000
       }
     });
   });
@@ -82,10 +81,9 @@ describe("execution-mode-resolver", () => {
       providerId: "local_runner",
       providerConfig: {
         runnerUrl: "http://127.0.0.1:8765",
-        runnerProviderId: "local_http_stub",
-        baseUrl: "http://127.0.0.1:11434/v1",
+        backendId: "ollama",
         model: "qwen3",
-        timeoutSec: 60
+        timeoutMs: 60_000
       }
     });
   });

@@ -97,18 +97,11 @@ export interface LocalHttpProviderConfig {
   model: string;
 }
 
-export interface CliProviderConfig {
-  name: string;
-  command: string;
-  args?: string[] | undefined;
-  inputMode: "stdin";
-  outputMode: "stdout_json";
-  timeoutSec: number;
-}
-
 export interface LocalRunnerProviderConfig {
   runnerUrl: string;
-  runnerProviderId: "local_http_stub" | "cli_stub" | "mock_stub" | string;
-  providerConfig?: LocalHttpProviderConfig | CliProviderConfig | undefined;
-  timeoutSec?: number | undefined;
+  backendId: string;
+  pairingToken: string;
+  origin: string;
+  model?: string | undefined;
+  timeoutMs?: number | undefined;
 }

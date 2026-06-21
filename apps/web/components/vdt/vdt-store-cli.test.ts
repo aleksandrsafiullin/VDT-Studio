@@ -52,7 +52,8 @@ describe("vdt-store cli rescan", () => {
         command: "claude",
         timeoutSec: 60
       },
-      providerId: "local_runner"
+      providerId: "local_runner",
+      runnerPairingToken: "test-session-token"
     });
   });
 
@@ -144,6 +145,7 @@ describe("vdt-store cli rescan", () => {
     });
 
     useVdtStudioStore.setState({
+      runnerPairingToken: "test-session-token",
       cliDetectionAgents: [
         {
           id: "claude",
@@ -173,15 +175,19 @@ describe("vdt-store cli rescan", () => {
       providerId?: string;
       operation?: string;
       providerConfig?: {
-        agentId?: string;
-        timeoutSec?: number;
+        backendId?: string;
+        pairingToken?: string;
+        timeoutMs?: number;
       };
     };
 
     expect(body.operation).toBe("connection_test");
-    expect(body.providerId).toBe("local_cli");
-    expect(body.providerConfig?.agentId).toBe("claude");
-    expect(body.providerConfig?.timeoutSec).toBe(60);
+    expect(body.providerId).toBe("local_runner");
+    expect(body.providerConfig).toMatchObject({
+      backendId: "claude_subscription",
+      pairingToken: "test-session-token",
+      timeoutMs: 60_000
+    });
 
     const state = useVdtStudioStore.getState();
     expect(state.cliTestStatusByAgent.claude?.kind).toBe("success");
@@ -196,6 +202,7 @@ describe("vdt-store cli rescan", () => {
     } as Response);
 
     useVdtStudioStore.setState({
+      runnerPairingToken: "test-session-token",
       cliDetectionAgents: [
         {
           id: "claude",
@@ -233,6 +240,8 @@ describe("vdt-store cli rescan", () => {
         json: async () => ({ agents: [] })
       } as Response;
     });
+
+    useVdtStudioStore.setState({ runnerPairingToken: "test-session-token" });
 
     await useVdtStudioStore.getState().generateWithAi();
 

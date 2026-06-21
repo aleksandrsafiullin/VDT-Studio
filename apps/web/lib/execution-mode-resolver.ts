@@ -438,30 +438,35 @@ function resolveLocalCli(settings: ExecutionSettings): ResolvedExecutionProvider
   }
 
   if (runnerProviderId === "cli_stub") {
+    const backendByAgent: Record<CliAgentId, string> = {
+      "cursor-agent": "cursor_subscription",
+      codex: "codex_subscription",
+      claude: "claude_subscription",
+      gemini: "gemini_subscription",
+      copilot: "copilot_subscription"
+    };
     return {
-      providerId: "local_cli",
+      providerId: "local_runner",
       providerConfig: {
-        agentId: settings.selectedCliAgentId,
+        runnerUrl: settings.runnerUrl ?? "http://127.0.0.1:8765",
+        backendId: settings.selectedCliAgentId ? backendByAgent[settings.selectedCliAgentId] : "",
         model:
           settings.cliModelSelection?.source === "custom"
             ? settings.cliModelSelection.customModel
             : undefined,
-        timeoutSec: settings.timeoutSec ?? 60
+        timeoutMs: (settings.timeoutSec ?? 60) * 1_000
       }
     };
   }
 
   const providerConfig: Record<string, unknown> = {
     runnerUrl: settings.runnerUrl ?? "http://127.0.0.1:8765",
-    runnerProviderId,
-    baseUrl: settings.localBaseUrl ?? preset.baseUrl ?? "http://127.0.0.1:11434/v1",
+    backendId:
+      presetId === "lm_studio_openai" ? "lm_studio" :
+      presetId === "vllm_openai" ? "vllm" : "ollama",
     model: settings.localModel ?? preset.model ?? "qwen3",
-    timeoutSec: settings.timeoutSec ?? 60
+    timeoutMs: (settings.timeoutSec ?? 60) * 1_000
   };
-
-  if (settings.localApiKey) {
-    providerConfig.apiKey = settings.localApiKey;
-  }
 
   return {
     providerId: "local_runner",

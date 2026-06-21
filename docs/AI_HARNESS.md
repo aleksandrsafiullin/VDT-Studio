@@ -10,13 +10,13 @@ Generation providers:
 - `azure_openai`: Azure OpenAI chat completions.
 - `gemini`: Google Gemini generate-content API.
 - `custom_http`
-- `local_runner`: routes structured tasks through the localhost local runner `/run` endpoint.
-- `local_http`: exposed through `local_runner` as `local_http_stub`.
-- `cli`: exposed through `local_runner` as `cli_stub`.
+- `local_runner`: routes structured tasks through paired `/v1/completions` requests containing only a registered backend ID and task/schema input.
+- `local_http`: exposed through fixed `ollama`, `lm_studio` and `vllm` manifests.
+- subscription backends: registered as fail-closed manifests pending adapter-specific certification.
 
-The first agent-facing integration layer lives in `packages/cli`: `vdt mcp` starts a read-only stdio MCP server, and `vdt mcp install <agent>` wires that server into supported coding agents.
+`packages/model-bridge` defines the product-facing model backend contract. External agent control, MCP and skill installation are outside product scope.
 
-The first local model execution layer lives in `packages/local-runner`: `local_http_stub` calls local OpenAI-compatible servers, and `cli_stub` can execute reviewed JSON-stdin/stdout CLI providers when explicitly enabled with `VDT_LOCAL_RUNNER_ENABLE_CLI=true` and `VDT_LOCAL_RUNNER_ALLOWED_CLI_COMMANDS`. The runner exposes Ollama, LM Studio, vLLM and custom CLI presets through `GET /providers`; `POST /test-provider` runs short connection diagnostics before a generation request.
+The local execution layer lives in `packages/local-runner`. Its backend registry owns endpoints, executable aliases and arguments. Public backend metadata omits those fields. Pairing is required before discovery, testing, completion, cancellation or run inspection.
 
 All providers implement the same `completeStructured` interface and must return schema-validated output before it is converted into a project graph.
 
@@ -35,6 +35,7 @@ Production safety notes:
 - AI output schemas cap string lengths and graph size before graph conversion.
 - Top-level AI assumptions, questions and model warnings are preserved in `project.aiReview`.
 - Local-runner POST requests require `application/json`; browser-origin requests are checked before any provider execution.
-- Local-runner CLI commands are request-configurable only within an explicit server-side allowlist.
+- Local-runner commands, arguments, environment, working directories, endpoints and schemas are never browser-configurable.
+- Subscription CLI execution is never performed by `apps/web`; uncertified manifests fail closed.
 
 Provider responses are always validated locally with Zod before graph conversion. Anthropic/Gemini provider-side schema constraints are used when callers supply JSON Schema directly; conversion of arbitrary Zod schemas into provider JSON Schema remains a follow-up, so local validation is the authoritative gate.

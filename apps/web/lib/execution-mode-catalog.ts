@@ -8,30 +8,7 @@ export type ByokGateway = "none" | "ollama" | "senseaudio" | "aihubmix";
 
 export type CliAgentBadge = "official" | "lower-cost" | "many-models";
 
-export const CLI_AGENT_IDS = [
-  "claude",
-  "codex",
-  "opencode",
-  "hermes",
-  "antigravity",
-  "gemini",
-  "grok-build",
-  "kimi",
-  "cursor-agent",
-  "qwen",
-  "qoder",
-  "copilot",
-  "pi",
-  "kiro",
-  "kilo",
-  "vibe",
-  "deepseek",
-  "reasonix",
-  "aider",
-  "devin",
-  "trae"
-] as const;
-
+export const CLI_AGENT_IDS = ["cursor-agent", "codex", "claude", "gemini", "copilot"] as const;
 export type CliAgentId = (typeof CLI_AGENT_IDS)[number];
 
 export type LocalRunnerPresetId = "ollama_openai" | "lm_studio_openai" | "vllm_openai" | "custom_cli_json";
@@ -140,7 +117,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
   {
     id: "claude",
     displayName: "Claude Code",
-    subtitle: "Anthropic's official coding agent with MCP and skills",
+    subtitle: "Claude subscription backend with tools disabled",
     primaryCommand: "claude",
     badges: ["official"],
     docsUrl: "https://docs.anthropic.com/en/docs/claude-code",
@@ -158,36 +135,6 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     suggestedModels: ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"]
   },
   {
-    id: "opencode",
-    displayName: "OpenCode",
-    subtitle: "Open-source agent with broad model support",
-    primaryCommand: "opencode",
-    badges: ["many-models"],
-    docsUrl: "https://github.com/opencode-ai/opencode",
-    installHint: "npm install -g opencode-cli",
-    suggestedModels: ["claude-sonnet-4-5", "gpt-4.1", "gemini-2.5-pro"]
-  },
-  {
-    id: "hermes",
-    displayName: "Hermes Agent",
-    subtitle: "ACP-native agent with session resume",
-    primaryCommand: "hermes",
-    badges: [],
-    docsUrl: "https://github.com/anthropics/hermes",
-    installHint: "Follow the Hermes install guide for your platform",
-    suggestedModels: ["claude-sonnet-4-5", "hermes-4"]
-  },
-  {
-    id: "antigravity",
-    displayName: "Antigravity",
-    subtitle: "Gemini-powered experimental coding agent",
-    primaryCommand: "antigravity",
-    badges: [],
-    docsUrl: "https://antigravity.google",
-    installHint: "Install from the Antigravity distribution page",
-    suggestedModels: ["gemini-2.5-pro", "gemini-2.5-flash"]
-  },
-  {
     id: "gemini",
     displayName: "Gemini CLI",
     subtitle: "Google's official Gemini terminal agent",
@@ -198,54 +145,14 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     suggestedModels: ["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3-flash-preview"]
   },
   {
-    id: "grok-build",
-    displayName: "Grok Build",
-    subtitle: "xAI Grok coding workflow in the terminal",
-    primaryCommand: "grok-build",
-    badges: [],
-    docsUrl: "https://docs.x.ai",
-    installHint: "Install the Grok Build CLI from xAI",
-    suggestedModels: ["grok-3", "grok-3-mini"]
-  },
-  {
-    id: "kimi",
-    displayName: "Kimi CLI",
-    subtitle: "Moonshot Kimi agent with ACP transport",
-    primaryCommand: "kimi",
-    badges: [],
-    docsUrl: "https://platform.moonshot.cn/docs",
-    installHint: "npm install -g @moonshot-ai/kimi-cli",
-    suggestedModels: ["kimi-k2", "moonshot-v1-8k"]
-  },
-  {
     id: "cursor-agent",
     displayName: "Cursor Agent",
-    subtitle: "Cursor's headless agent for terminal workflows",
-    primaryCommand: "cursor-agent",
+    subtitle: "Cursor subscription backend isolated by the local runner",
+    primaryCommand: "agent",
     badges: ["official"],
     docsUrl: "https://docs.cursor.com/agent",
     installHint: "Install via Cursor settings or cursor.com/cli",
     suggestedModels: ["claude-sonnet-4-5", "gpt-4.1", "gpt-4.1-mini"]
-  },
-  {
-    id: "qwen",
-    displayName: "Qwen Code",
-    subtitle: "Alibaba Qwen coding agent with local and cloud models",
-    primaryCommand: "qwen",
-    badges: ["lower-cost", "many-models"],
-    docsUrl: "https://github.com/QwenLM/qwen-code",
-    installHint: "npm install -g @qwen-code/qwen-code",
-    suggestedModels: ["qwen3-coder", "qwen-max", "qwen-plus"]
-  },
-  {
-    id: "qoder",
-    displayName: "Qoder CLI",
-    subtitle: "Structured-output friendly coding CLI",
-    primaryCommand: "qoder",
-    badges: [],
-    docsUrl: "https://qoder.com",
-    installHint: "npm install -g qodercli",
-    suggestedModels: ["qoder-default", "claude-sonnet-4-5"]
   },
   {
     id: "copilot",
@@ -256,96 +163,6 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     docsUrl: "https://docs.github.com/en/copilot",
     installHint: "gh extension install github/gh-copilot",
     suggestedModels: ["gpt-4.1", "claude-sonnet-4-5", "gpt-4.1-mini"]
-  },
-  {
-    id: "pi",
-    displayName: "Pi Coding Agent",
-    subtitle: "Pi RPC agent with extension tooling",
-    primaryCommand: "pi",
-    badges: [],
-    docsUrl: "https://github.com/badlogic/pi-mono",
-    installHint: "npm install -g @mariozechner/pi-coding-agent",
-    suggestedModels: ["claude-sonnet-4-5", "gpt-4.1-mini"]
-  },
-  {
-    id: "kiro",
-    displayName: "Kiro CLI",
-    subtitle: "ACP agent with session management",
-    primaryCommand: "kiro",
-    badges: [],
-    docsUrl: "https://kiro.dev",
-    installHint: "npm install -g @kiro/cli",
-    suggestedModels: ["claude-sonnet-4-5", "gpt-4.1"]
-  },
-  {
-    id: "kilo",
-    displayName: "Kilo Code",
-    subtitle: "ACP coding agent for multi-model workflows",
-    primaryCommand: "kilo",
-    badges: [],
-    docsUrl: "https://kilocode.ai",
-    installHint: "npm install -g @kilocode/cli",
-    suggestedModels: ["claude-sonnet-4-5", "gpt-4.1", "deepseek-chat"]
-  },
-  {
-    id: "vibe",
-    displayName: "Mistral Vibe CLI",
-    subtitle: "Mistral's ACP-native terminal agent",
-    primaryCommand: "vibe",
-    badges: [],
-    docsUrl: "https://docs.mistral.ai",
-    installHint: "npm install -g @mistralai/mistral-vibe-cli",
-    suggestedModels: ["mistral-large-latest", "codestral-latest"]
-  },
-  {
-    id: "deepseek",
-    displayName: "DeepSeek CLI",
-    subtitle: "DeepSeek coding agent with competitive pricing",
-    primaryCommand: "deepseek",
-    badges: ["lower-cost"],
-    docsUrl: "https://platform.deepseek.com",
-    installHint: "npm install -g deepseek-cli",
-    suggestedModels: ["deepseek-chat", "deepseek-reasoner"]
-  },
-  {
-    id: "reasonix",
-    displayName: "Reasonix",
-    subtitle: "Reasoning-focused terminal coding agent",
-    primaryCommand: "reasonix",
-    badges: [],
-    docsUrl: "https://reasonix.ai",
-    installHint: "Install Reasonix from the vendor distribution",
-    suggestedModels: ["reasonix-default", "claude-sonnet-4-5"]
-  },
-  {
-    id: "aider",
-    displayName: "Aider",
-    subtitle: "Pair-programming CLI for git-aware edits",
-    primaryCommand: "aider",
-    badges: [],
-    docsUrl: "https://aider.chat",
-    installHint: "pip install aider-chat",
-    suggestedModels: ["gpt-4.1", "claude-sonnet-4-5", "deepseek-chat"]
-  },
-  {
-    id: "devin",
-    displayName: "Devin CLI",
-    subtitle: "Cognition Devin agent via ACP",
-    primaryCommand: "devin",
-    badges: [],
-    docsUrl: "https://devin.ai",
-    installHint: "Install Devin CLI from Cognition",
-    suggestedModels: ["devin-default"]
-  },
-  {
-    id: "trae",
-    displayName: "Trae Agent",
-    subtitle: "ByteDance Trae coding agent",
-    primaryCommand: "trae-agent",
-    badges: [],
-    docsUrl: "https://www.trae.ai",
-    installHint: "Install Trae Agent from trae.ai",
-    suggestedModels: ["trae-default", "claude-sonnet-4-5"]
   }
 ];
 

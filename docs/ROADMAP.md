@@ -10,11 +10,11 @@
 - Scenario impact analysis.
 - JSON, Markdown and SVG export.
 - Browser-local JSON import.
-- Safe local-runner `/providers` and `/run` MVP stubs.
+- Paired local-runner v1 API with backend-ID-only execution.
 - Local-runner presets and diagnostics for Ollama, LM Studio, vLLM and guarded CLI JSON stdout adapters.
-- Installable bundled CLI, read-only stdio MCP server and executable `vdt mcp install <agent>` support for 14 MCP platforms.
-- Distributable Value Driver Tree skill bundle with native/fallback agent installation.
-- Typed 21-agent runtime catalog with safe PATH detection and capability metadata.
+- Product CLI for validate, calculate, export, runner start and doctor workflows.
+- Shared model-backend contract, registry, bounded parsing and fake backend.
+- Detection metadata for Cursor, Codex, Claude, Gemini and Copilot subscription CLIs.
 - Playwright smoke coverage for core web flows.
 
 ## Next
@@ -26,6 +26,6 @@
 - Desktop packaging with Tauri.
 - Excel calculation model export.
 - PowerPoint and PDF report generation.
-- MCP access to user-created browser/local projects.
-- Independent approval of streaming run/cancel/resume adapters and event parsers for all cataloged coding-agent CLIs.
+- Paired, sandboxed local-runner execution for selected subscription backends.
+- Independent certification of each supported subscription backend.
 - Independent approval of the multi-provider BYOK streaming proxy and per-target SSRF controls.

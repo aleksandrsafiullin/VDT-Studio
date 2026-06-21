@@ -29,8 +29,9 @@ type TestProviderRequestBody = {
   providerId?: string;
   operation?: string;
   providerConfig?: {
-    agentId?: string;
-    timeoutSec?: number;
+    backendId?: string;
+    pairingToken?: string;
+    timeoutMs?: number;
   };
 };
 
@@ -55,9 +56,24 @@ async function readPersistedExecutionSettings(page: Page) {
 
 function assertExpectedCliTestProviderBody(body: TestProviderRequestBody | undefined) {
   expect(body?.operation).toBe("connection_test");
-  expect(body?.providerId).toBe("local_cli");
-  expect(body?.providerConfig?.agentId).toBe("claude");
-  expect(body?.providerConfig?.timeoutSec).toBe(60);
+  expect(body?.providerId).toBe("local_runner");
+  expect(body?.providerConfig?.backendId).toBe("claude_subscription");
+  expect(body?.providerConfig?.pairingToken).toBe("e2e-session-token");
+  expect(body?.providerConfig?.timeoutMs).toBe(60_000);
+}
+
+async function pairLocalRunner(page: Page) {
+  await page.route("http://127.0.0.1:8765/v1/pair", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({ code: "123456" });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, session: { token: "e2e-session-token", expiresAt: "2099-01-01T00:00:00.000Z" } })
+    });
+  });
+  await page.getByTestId("local-runner-pairing-code").fill("123456");
+  await page.getByTestId("local-runner-pair").click();
+  await expect(page.getByTestId("local-runner-pairing-status")).toContainText("paired for this browser session");
 }
 
 async function readNodePosition(page: Page, nodeId: string) {
@@ -426,7 +442,6 @@ test("detects installed CLI and tests it through the application API", async ({ 
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        ok: true,
         ok: true
       })
     });
@@ -436,6 +451,8 @@ test("detects installed CLI and tests it through the application API", async ({ 
   await page.getByTestId("execution-mode-tab-local-cli").click();
   await expect(page.getByTestId("execution-mode-panel-local-cli")).toBeVisible();
   await expect(page.getByTestId("cli-agent-card-claude")).toBeVisible({ timeout: 10_000 });
+  await pairLocalRunner(page);
+  expect(JSON.stringify(await readPersistedState(page))).not.toContain("e2e-session-token");
 
   await page.getByTestId("cli-agent-select-claude").click();
   await page.getByTestId("cli-agent-test-claude").click();
@@ -475,6 +492,7 @@ test("shows a real Local CLI connection error without falling back to mock", asy
   await openSettingsModal(page);
   await page.getByTestId("execution-mode-tab-local-cli").click();
   await expect(page.getByTestId("cli-agent-card-claude")).toBeVisible({ timeout: 10_000 });
+  await pairLocalRunner(page);
 
   await page.getByTestId("cli-agent-select-claude").click();
   await expect(page.getByText("Catalog suggestions")).toBeVisible();

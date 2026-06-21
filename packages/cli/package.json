@@ -14,13 +14,14 @@
     "README.md"
   ],
   "dependencies": {
+    "@vdt-studio/local-runner": "workspace:*",
     "@vdt-studio/vdt-core": "workspace:*"
   },
   "devDependencies": {
     "esbuild": "^0.28.1"
   },
   "scripts": {
-    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/cli.mjs --banner:js=\"#!/usr/bin/env node\" && node -e \"const fs=require('node:fs');fs.chmodSync('dist/cli.mjs',0o755);fs.cpSync('../../skills','dist/skills',{recursive:true})\"",
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/cli.mjs --banner:js=\"#!/usr/bin/env node\" && node -e \"require('node:fs').chmodSync('dist/cli.mjs',0o755)\"",
     "start": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --root ../.. packages/cli/src"

@@ -77,12 +77,11 @@ describe("AI harness", () => {
     const project = await generateVdtProject(
       new LocalRunnerProvider({
         runnerUrl: "http://127.0.0.1:8765",
-        runnerProviderId: "local_http_stub",
-        providerConfig: {
-          baseUrl: "http://127.0.0.1:11434/v1",
-          model: "qwen3"
-        },
-        timeoutSec: 30
+        backendId: "ollama",
+        pairingToken: "session-token",
+        origin: "http://127.0.0.1:3000",
+        model: "qwen3",
+        timeoutMs: 30_000
       }),
       {
         rootKpi: "Production Volume",
@@ -97,7 +96,7 @@ describe("AI harness", () => {
 
     expect(project.name).toBe("Production Volume Driver Model");
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:8765/run",
+      "http://127.0.0.1:8765/v1/completions",
       expect.objectContaining({
         method: "POST"
       })

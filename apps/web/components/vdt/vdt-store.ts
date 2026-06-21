@@ -214,6 +214,9 @@ interface VdtStudioState {
   cliDiscoveredModelsByAgent: Partial<Record<CliAgentId, string[]>>;
   cliTestStatusByAgent: Partial<Record<CliAgentId, ProviderTestStatus>>;
   isTestingCliByAgent: Partial<Record<CliAgentId, boolean>>;
+  runnerPairingToken?: string | undefined;
+  runnerPairingStatus?: ProviderTestStatus | undefined;
+  isPairingRunner: boolean;
   isTestingProvider: boolean;
   providerTestStatus?: ProviderTestStatus | undefined;
   byokFieldErrors?: ByokFieldErrors | undefined;
@@ -245,6 +248,8 @@ interface VdtStudioState {
   setCliModelForAgent: (agentId: CliAgentId, selection: CliModelSelection) => void;
   rescanClis: (agentId?: CliAgentId) => Promise<void>;
   testCli: (agentId: CliAgentId) => Promise<void>;
+  pairRunner: (code: string) => Promise<void>;
+  unpairRunner: () => Promise<void>;
   setProviderTestState: (isTestingProvider: boolean, providerTestStatus?: ProviderTestStatus) => void;
   setByokFieldErrors: (byokFieldErrors: ByokFieldErrors | undefined) => void;
   setUiPreference: <K extends keyof UiPreferences>(field: K, value: UiPreferences[K]) => void;
@@ -438,6 +443,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       cliDiscoveredModelsByAgent: {},
       cliTestStatusByAgent: {},
       isTestingCliByAgent: {},
+      runnerPairingToken: undefined,
+      runnerPairingStatus: undefined,
+      isPairingRunner: false,
       isTestingProvider: false,
       byokFieldErrors: undefined,
       ui: { ...DEFAULT_UI },
@@ -717,6 +725,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         const modelSelection = state.cliModelByAgent[agentId];
         const model = modelSelection?.source === "custom" ? modelSelection.customModel : undefined;
         const testFingerprint = JSON.stringify({ agentId, model, timeoutSec });
+        const resolved = resolveExecutionSettings({
+          ...state.executionSettings,
+          executionMode: "local_cli",
+          selectedCliAgentId: agentId,
+          command: resolveCliCommandForAgent(agentId, state.cliDetectionAgents),
+          cliModelSelection: model ? { source: "custom", customModel: model } : { source: "agent_default" }
+        });
 
         set((current) => ({
           isTestingCliByAgent: {
@@ -732,17 +747,16 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         let nextStatus: ProviderTestStatus | undefined;
 
         try {
+          if (!state.runnerPairingToken) {
+            throw new Error("Pair the local runner before testing a subscription backend.");
+          }
           const response = await fetch("/api/ai/generate-vdt", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               operation: "connection_test",
-              providerId: "local_cli",
-              providerConfig: {
-                agentId,
-                ...(model ? { model } : {}),
-                timeoutSec
-              }
+              providerId: resolved.providerId,
+              providerConfig: { ...resolved.providerConfig, pairingToken: state.runnerPairingToken }
             })
           });
 
@@ -789,6 +803,52 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }));
         }
       },
+      pairRunner: async (code) => {
+        const runnerUrl = get().executionSettings.runnerUrl ?? "http://127.0.0.1:8765";
+        set({ isPairingRunner: true, runnerPairingStatus: undefined, runnerPairingToken: undefined });
+        try {
+          const response = await fetch(`${runnerUrl.replace(/\/$/, "")}/v1/pair`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ code })
+          });
+          const payload = (await response.json()) as {
+            ok?: boolean;
+            session?: { token?: string };
+            error?: { message?: string };
+          };
+          const token = payload.session?.token;
+          if (!response.ok || !payload.ok || !token) {
+            throw new Error(payload.error?.message ?? "Runner pairing failed.");
+          }
+          set({
+            runnerPairingToken: token,
+            runnerPairingStatus: { kind: "success", message: "Local runner paired for this browser session." },
+            isPairingRunner: false
+          });
+        } catch (error) {
+          set({
+            runnerPairingToken: undefined,
+            runnerPairingStatus: { kind: "error", message: error instanceof Error ? error.message : "Runner pairing failed." },
+            isPairingRunner: false
+          });
+        }
+      },
+      unpairRunner: async () => {
+        const state = get();
+        const token = state.runnerPairingToken;
+        if (!token) return;
+        const runnerUrl = state.executionSettings.runnerUrl ?? "http://127.0.0.1:8765";
+        try {
+          await fetch(`${runnerUrl.replace(/\/$/, "")}/v1/unpair`, {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+            body: "{}"
+          });
+        } finally {
+          set({ runnerPairingToken: undefined, runnerPairingStatus: undefined });
+        }
+      },
       setProviderTestState: (isTestingProvider, providerTestStatus) =>
         set({ isTestingProvider, providerTestStatus }),
       setByokFieldErrors: (byokFieldErrors) => set({ byokFieldErrors }),
@@ -813,6 +873,11 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         }
 
         const { providerId, providerConfig } = resolveExecutionSettings(executionSettings);
+        const runnerPairingToken = get().runnerPairingToken;
+        if (providerId === "local_runner" && !runnerPairingToken) {
+          set({ aiError: "Pair the local runner before generating." });
+          return;
+        }
         set({ isGenerating: true, aiError: undefined, deepenPreview: undefined, byokFieldErrors: undefined });
 
         try {
@@ -822,7 +887,12 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             body: JSON.stringify({
               ...brief,
               providerId,
-              providerConfig: providerId === "mock" ? undefined : providerConfig
+              providerConfig:
+                providerId === "mock"
+                  ? undefined
+                  : providerId === "local_runner"
+                    ? { ...providerConfig, pairingToken: runnerPairingToken }
+                    : providerConfig
             })
           });
 

@@ -12,7 +12,6 @@ import {
   type GenerateVdtInput,
   type LocalRunnerProviderConfig
 } from "@vdt-studio/ai-harness";
-import { LocalCliAiProvider } from "@/lib/local-cli-ai-provider";
 import {
   DEFAULT_ANTHROPIC_FALLBACK_MODEL,
   DEFAULT_OPENAI_COMPATIBLE_FALLBACK_MODEL
@@ -22,21 +21,6 @@ interface GenerateVdtRequest extends GenerateVdtInput {
   providerId?: "mock" | "local_cli" | "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "local_runner";
   providerConfig?: Record<string, unknown>;
   operation?: "generate" | "connection_test";
-}
-
-function readLocalCliConfig(value: unknown) {
-  const config = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-  const agentId = typeof config.agentId === "string" ? config.agentId.trim() : "";
-  if (!agentId) {
-    throw new Error("Select an installed Local CLI before generating.");
-  }
-  return {
-    agentId,
-    ...(typeof config.model === "string" && config.model.trim() ? { model: config.model.trim().slice(0, 120) } : {}),
-    ...(typeof config.timeoutSec === "number" && Number.isFinite(config.timeoutSec)
-      ? { timeoutSec: Math.min(Math.max(config.timeoutSec, 10), 900) }
-      : {})
-  };
 }
 
 const MAX_FIELD_LENGTHS: Partial<Record<keyof GenerateVdtInput, number>> = {
@@ -117,50 +101,30 @@ function readMaxTokens(value: unknown): number | undefined {
   return Math.min(Math.floor(maxTokens), 1_000_000);
 }
 
-function readLocalRunnerProviderConfig(value: unknown): LocalRunnerProviderConfig {
+function readLocalRunnerProviderConfig(value: unknown, origin: string): LocalRunnerProviderConfig {
   const envRunnerUrl = process.env.VDT_LOCAL_RUNNER_URL ?? "http://127.0.0.1:8765";
   const config = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   const requestRunnerUrl = typeof config.runnerUrl === "string" && config.runnerUrl.trim() ? config.runnerUrl.trim() : undefined;
   const runnerUrl = requestRunnerUrl ?? envRunnerUrl;
   assertLocalRunnerUrlAllowed(runnerUrl, envRunnerUrl);
 
-  const runnerProviderId =
-    typeof config.runnerProviderId === "string" && config.runnerProviderId.trim()
-      ? config.runnerProviderId.trim()
-      : "local_http_stub";
-  const timeoutSec =
-    typeof config.timeoutSec === "number" && Number.isFinite(config.timeoutSec) && config.timeoutSec > 0
-      ? Math.min(config.timeoutSec, 120)
-      : 60;
-
-  if (runnerProviderId === "cli_stub") {
-    const command = typeof config.command === "string" ? config.command.trim() : "";
-    return {
-      runnerUrl,
-      runnerProviderId,
-      providerConfig: {
-        name: typeof config.name === "string" && config.name.trim() ? config.name.trim() : "Local CLI Model",
-        command,
-        args: readArgs(config.args, config.argsText),
-        inputMode: "stdin",
-        outputMode: "stdout_json",
-        timeoutSec
-      },
-      timeoutSec
-    };
+  for (const forbidden of ["command", "args", "argsText", "providerConfig", "baseUrl", "runnerProviderId"]) {
+    if (forbidden in config) throw new Error(`Local runner provider config must not include ${forbidden}.`);
   }
-
-  const baseUrl = typeof config.baseUrl === "string" && config.baseUrl.trim() ? config.baseUrl.trim() : "http://127.0.0.1:11434/v1";
-  const model = typeof config.model === "string" && config.model.trim() ? config.model.trim().slice(0, 120) : "qwen3";
+  const backendId = typeof config.backendId === "string" ? config.backendId.trim() : "";
+  const pairingToken = typeof config.pairingToken === "string" ? config.pairingToken : "";
+  if (!backendId) throw new Error("Local runner backendId is required.");
+  if (!pairingToken) throw new Error("Pair the local runner before using a local backend.");
+  const timeoutMs = typeof config.timeoutMs === "number" && Number.isSafeInteger(config.timeoutMs)
+    ? Math.min(Math.max(config.timeoutMs, 1_000), 120_000)
+    : 60_000;
   return {
     runnerUrl,
-    runnerProviderId,
-    providerConfig: {
-      baseUrl,
-      model,
-      ...(typeof config.apiKey === "string" && config.apiKey ? { apiKey: config.apiKey } : {})
-    },
-    timeoutSec
+    backendId,
+    pairingToken,
+    origin,
+    ...(typeof config.model === "string" && config.model.trim() ? { model: config.model.trim().slice(0, 160) } : {}),
+    timeoutMs
   };
 }
 
@@ -238,16 +202,6 @@ function assertLocalRunnerUrlAllowed(runnerUrl: string, envRunnerUrl: string) {
   }
 }
 
-function readArgs(args: unknown, argsText: unknown): string[] | undefined {
-  if (Array.isArray(args) && args.every((item) => typeof item === "string")) {
-    return args;
-  }
-  if (typeof argsText === "string" && argsText.trim()) {
-    return argsText.split(/\s+/).filter(Boolean);
-  }
-  return undefined;
-}
-
 export async function POST(request: Request) {
   let body: (GenerateVdtRequest & Record<string, unknown>) | undefined;
   try {
@@ -276,7 +230,7 @@ export async function POST(request: Request) {
 
     let provider;
     if (body.providerId === "local_cli") {
-      provider = new LocalCliAiProvider(readLocalCliConfig(body.providerConfig));
+      throw new Error("Subscription CLI execution must be routed through the local runner.");
     } else if (body.providerId === "openai_compatible") {
       const envBaseUrl = process.env.OPENAI_COMPATIBLE_BASE_URL ?? "https://api.openai.com/v1";
       const providerConfig = readProviderConfig(body.providerConfig);
@@ -370,7 +324,7 @@ export async function POST(request: Request) {
         model: providerConfig.model ?? process.env.GEMINI_MODEL ?? "gemini-2.5-pro"
       });
     } else if (body.providerId === "local_runner") {
-      provider = new LocalRunnerProvider(readLocalRunnerProviderConfig(body.providerConfig));
+      provider = new LocalRunnerProvider(readLocalRunnerProviderConfig(body.providerConfig, new URL(request.url).origin));
     } else if (body.providerId === "mock" && process.env.NODE_ENV === "test") {
       provider = new MockProvider();
     } else {
@@ -378,10 +332,7 @@ export async function POST(request: Request) {
     }
 
     if (connectionTest) {
-      if (provider instanceof LocalCliAiProvider) {
-        await provider.testConnection();
-      } else {
-        const output = await provider.completeStructured({
+      const output = await provider.completeStructured({
           taskType: "generate_vdt",
           input: { probe: true },
           schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false },
@@ -389,10 +340,9 @@ export async function POST(request: Request) {
           userPrompt: 'Connection test. Return exactly {"ok":true}.',
           temperature: 0,
           maxTokens: 32
-        }) as { ok?: unknown };
-        if (output?.ok !== true) {
-          throw new Error("Provider responded, but did not return the expected connection-test JSON.");
-        }
+      }) as { ok?: unknown };
+      if (output?.ok !== true) {
+        throw new Error("Provider responded, but did not return the expected connection-test JSON.");
       }
       return NextResponse.json({ ok: true });
     }
@@ -429,7 +379,7 @@ export async function POST(request: Request) {
     if (error instanceof Error && isLocalRunnerConnectionFailure(error)) {
       const runnerUrl =
         body?.providerId === "local_runner"
-          ? readLocalRunnerProviderConfig(body.providerConfig).runnerUrl
+          ? readLocalRunnerProviderConfig(body.providerConfig, new URL(request.url).origin).runnerUrl
           : (process.env.VDT_LOCAL_RUNNER_URL ?? "http://127.0.0.1:8765");
       return NextResponse.json(
         {

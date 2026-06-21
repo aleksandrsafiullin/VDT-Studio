@@ -5,8 +5,6 @@ import {
   Cpu,
   Monitor,
   Palette,
-  Plug,
-  Sparkles,
   type LucideIcon
 } from "lucide-react";
 import { clsx } from "clsx";
@@ -14,8 +12,6 @@ import { clsx } from "clsx";
 export type SettingsSectionId =
   | "execution"
   | "memory"
-  | "skills"
-  | "mcp"
   | "appearance"
   | "display";
 
@@ -29,8 +25,6 @@ export interface SettingsSectionConfig {
 export const SETTINGS_SECTIONS: SettingsSectionConfig[] = [
   { id: "execution", label: "Execution mode", icon: Cpu, enabled: true },
   { id: "memory", label: "Memory", icon: Brain, enabled: false },
-  { id: "skills", label: "Skills", icon: Sparkles, enabled: false },
-  { id: "mcp", label: "MCP", icon: Plug, enabled: false },
   { id: "appearance", label: "Appearance", icon: Palette, enabled: false },
   { id: "display", label: "Display", icon: Monitor, enabled: true }
 ];
@@ -46,14 +40,6 @@ export const SETTINGS_SECTION_META: Record<
   memory: {
     title: "Memory",
     subtitle: "Configure how the workspace remembers context."
-  },
-  skills: {
-    title: "Skills",
-    subtitle: "Manage installable agent skills."
-  },
-  mcp: {
-    title: "MCP",
-    subtitle: "Connect Model Context Protocol servers."
   },
   appearance: {
     title: "Appearance",
