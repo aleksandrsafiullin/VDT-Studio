@@ -27,12 +27,9 @@ type PersistedVdtState = {
 
 type TestProviderRequestBody = {
   providerId?: string;
-  timeoutSec?: number;
+  operation?: string;
   providerConfig?: {
-    name?: string;
-    command?: string;
-    inputMode?: string;
-    outputMode?: string;
+    agentId?: string;
     timeoutSec?: number;
   };
 };
@@ -57,13 +54,10 @@ async function readPersistedExecutionSettings(page: Page) {
 }
 
 function assertExpectedCliTestProviderBody(body: TestProviderRequestBody | undefined) {
-  expect(body?.providerId).toBe("cli_stub");
-  expect(body?.providerConfig?.command).toBe("/usr/local/bin/claude");
-  expect(body?.providerConfig?.name).toBe("Claude Code");
-  expect(body?.providerConfig?.inputMode).toBe("stdin");
-  expect(body?.providerConfig?.outputMode).toBe("stdout_json");
+  expect(body?.operation).toBe("connection_test");
+  expect(body?.providerId).toBe("local_cli");
+  expect(body?.providerConfig?.agentId).toBe("claude");
   expect(body?.providerConfig?.timeoutSec).toBe(60);
-  expect(body?.timeoutSec).toBe(60);
 }
 
 async function readNodePosition(page: Page, nodeId: string) {
@@ -289,7 +283,7 @@ test.beforeEach(async ({ page }) => {
   await page.reload();
 });
 
-test("renders the workspace and can regenerate the mock VDT", async ({ page }, testInfo) => {
+test("renders the workspace without invoking a mock provider", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Full workspace smoke runs on desktop viewport.");
 
   const consoleErrors: string[] = [];
@@ -302,8 +296,6 @@ test("renders the workspace and can regenerate the mock VDT", async ({ page }, t
   await expect(page).toHaveTitle(/VDT Studio/);
   await expect(page.getByRole("button", { name: /Generate VDT with AI/i })).toBeVisible();
   await expect(page.getByText("Visual flow: root to drivers.")).toBeVisible();
-
-  await page.getByRole("button", { name: /Generate VDT with AI/i }).click();
 
   await expect(page.getByRole("heading", { name: "Production Volume Driver Model" })).toBeVisible();
   await expect(page.getByText("Model graph valid")).toBeVisible();
@@ -390,7 +382,7 @@ test("setup rail Configure opens settings modal on execution mode", async ({ pag
   await expect(page.getByTestId("execution-mode-tab-byok")).toBeVisible();
 });
 
-test("detects installed CLI and tests connection via local runner", async ({ page }, testInfo) => {
+test("detects installed CLI and tests it through the application API", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Local CLI settings smoke runs on desktop viewport.");
 
   let testProviderRequestBody: TestProviderRequestBody | undefined;
@@ -413,15 +405,7 @@ test("detects installed CLI and tests connection via local runner", async ({ pag
     });
   });
 
-  await page.route("http://127.0.0.1:8765/health", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ ok: true, service: "vdt-studio-local-runner" })
-    });
-  });
-
-  await page.route("http://127.0.0.1:8765/test-provider", async (route) => {
+  await page.route("**/api/ai/generate-vdt", async (route) => {
     testProviderRequestBody = route.request().postDataJSON() as TestProviderRequestBody;
 
     try {
@@ -432,7 +416,7 @@ test("detects installed CLI and tests connection via local runner", async ({ pag
         contentType: "application/json",
         body: JSON.stringify({
           ok: false,
-          error: { message: error instanceof Error ? error.message : "Unexpected test-provider body." }
+          error: error instanceof Error ? error.message : "Unexpected Local CLI test body."
         })
       });
       return;
@@ -443,9 +427,7 @@ test("detects installed CLI and tests connection via local runner", async ({ pag
       contentType: "application/json",
       body: JSON.stringify({
         ok: true,
-        providerId: "cli_stub",
-        taskType: "connection_test",
-        models: ["claude-sonnet-4-5"]
+        ok: true
       })
     });
   });
@@ -457,11 +439,11 @@ test("detects installed CLI and tests connection via local runner", async ({ pag
 
   await page.getByTestId("cli-agent-select-claude").click();
   await page.getByTestId("cli-agent-test-claude").click();
-  await expect(page.getByText("Connection test passed. Models: claude-sonnet-4-5.")).toBeVisible();
+  await expect(page.getByText("Claude Code connection test passed.")).toBeVisible();
   assertExpectedCliTestProviderBody(testProviderRequestBody);
 });
 
-test("shows setup guidance when local runner is offline", async ({ page }, testInfo) => {
+test("shows a real Local CLI connection error without falling back to mock", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Local CLI settings smoke runs on desktop viewport.");
 
   await page.route("**/api/ai/detect-clis**", async (route) => {
@@ -482,8 +464,12 @@ test("shows setup guidance when local runner is offline", async ({ page }, testI
     });
   });
 
-  await page.route("http://127.0.0.1:8765/health", async (route) => {
-    await route.abort("connectionrefused");
+  await page.route("**/api/ai/generate-vdt", async (route) => {
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: false, error: "Claude Code authentication failed." })
+    });
   });
 
   await openSettingsModal(page);
@@ -492,14 +478,12 @@ test("shows setup guidance when local runner is offline", async ({ page }, testI
 
   await page.getByTestId("cli-agent-select-claude").click();
   await expect(page.getByText("Catalog suggestions")).toBeVisible();
-  await expect(page.getByTestId("cli-agent-model-claude").locator("option")).toContainText([
-    "auto",
-    "claude-sonnet-4-5"
-  ]);
+  await expect(page.getByTestId("cli-agent-model-claude")).toContainText("claude-opus-4-8");
+  await expect(page.getByTestId("cli-agent-model-claude")).toContainText("claude-sonnet-4-6");
 
   await page.getByTestId("cli-agent-test-claude").click();
-  await expect(page.getByText(/on PATH/i)).toBeVisible();
-  await expect(page.getByText(/Failed to fetch/i)).toHaveCount(0);
+  await expect(page.getByText("Claude Code authentication failed.")).toBeVisible();
+  await expect(page.getByText("Claude Code connection test passed.")).toHaveCount(0);
 });
 
 test("configures BYOK Anthropic without persisting API keys", async ({ page }, testInfo) => {

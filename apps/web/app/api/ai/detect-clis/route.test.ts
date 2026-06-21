@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route";
 
-const { detectAgents, detectAgent, isCodingAgentId } = vi.hoisted(() => ({
+const { detectAgents, detectAgent, discoverAgentModels, isCodingAgentId } = vi.hoisted(() => ({
   detectAgents: vi.fn(),
   detectAgent: vi.fn(),
+  discoverAgentModels: vi.fn().mockResolvedValue([]),
   isCodingAgentId: vi.fn((value: string) =>
     [
       "claude",
@@ -34,12 +35,14 @@ const { detectAgents, detectAgent, isCodingAgentId } = vi.hoisted(() => ({
 vi.mock("@vdt-studio/cli", () => ({
   detectAgents,
   detectAgent,
+  discoverAgentModels,
   isCodingAgentId
 }));
 
 async function readJson(response: Response) {
   return (await response.json()) as {
     agents?: Array<{ id: string; installed: boolean; version: string | null }>;
+    modelsByAgent?: Record<string, string[]>;
     error?: string;
   };
 }
@@ -75,6 +78,25 @@ describe("detect CLIs API route", () => {
     expect(body.agents?.[0]?.installed).toBe(true);
     expect(detectAgents).toHaveBeenCalledOnce();
     expect(detectAgent).not.toHaveBeenCalled();
+  });
+
+  it("returns live models exposed by an installed CLI", async () => {
+    detectAgents.mockResolvedValue([
+      {
+        id: "cursor-agent",
+        installed: true,
+        executable: "/usr/local/bin/cursor-agent",
+        alias: "cursor-agent",
+        version: "1.0.0"
+      }
+    ]);
+    discoverAgentModels.mockResolvedValue(["auto", "gpt-5.5-high"]);
+
+    const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis"));
+    const body = await readJson(response);
+
+    expect(body.modelsByAgent).toEqual({ "cursor-agent": ["auto", "gpt-5.5-high"] });
+    expect(discoverAgentModels).toHaveBeenCalledWith("cursor-agent", "/usr/local/bin/cursor-agent");
   });
 
   it("rescans a single agent when id is provided", async () => {

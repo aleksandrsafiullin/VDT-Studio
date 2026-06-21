@@ -109,6 +109,29 @@ describe("generate VDT API route", () => {
     expect(body.error).toBe("A request-supplied OpenAI-compatible base URL must also provide its own API key.");
   });
 
+  it("performs a real BYOK connection request instead of configuration-only validation", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: '{"ok":true}' } }]
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(jsonRequest({
+      operation: "connection_test",
+      providerId: "openai_compatible",
+      providerConfig: {
+        apiKey: "test-key",
+        model: "gpt-5.5"
+      }
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await readJson(response)).toMatchObject({ ok: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/chat/completions",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
   it("disables request-supplied provider URLs in production unless explicitly allowed", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("VDT_ALLOW_REQUEST_PROVIDER_URLS", "false");

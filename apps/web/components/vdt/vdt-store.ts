@@ -80,7 +80,7 @@ export {
   type UiPreferences
 } from "./ui-preferences";
 
-export type ProviderId = "mock" | "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "local_runner";
+export type ProviderId = "mock" | "local_cli" | "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "local_runner";
 export type ExampleProjectId = "production_volume" | "oee" | "inventory_level" | "maintenance_cost";
 export type LocalRunnerPresetId = "ollama_openai" | "lm_studio_openai" | "vllm_openai" | "custom_cli_json";
 
@@ -108,22 +108,6 @@ export interface LocalRunnerPreset {
 export interface ProviderTestStatus {
   kind: "success" | "error" | "info";
   message: string;
-}
-
-const RUNNER_HEALTH_PROBE_MS = 3_000;
-
-async function probeLocalRunnerHealth(runnerUrl: string): Promise<boolean> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), RUNNER_HEALTH_PROBE_MS);
-
-  try {
-    const response = await fetch(`${runnerUrl}/health`, { signal: controller.signal });
-    return response.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 export interface CliAgentDetectionSnapshot {
@@ -664,6 +648,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           const response = await fetch(url);
           const payload = (await response.json()) as {
             agents?: CliAgentDetectionSnapshot[];
+            modelsByAgent?: Partial<Record<CliAgentId, string[]>>;
             error?: string;
           };
 
@@ -696,6 +681,12 @@ export const useVdtStudioStore = create<VdtStudioState>()(
 
             const scanUpdate = {
               cliDetectionAgents,
+              cliDiscoveredModelsByAgent: agentId
+                ? {
+                    ...state.cliDiscoveredModelsByAgent,
+                    [agentId]: payload.modelsByAgent?.[agentId] ?? []
+                  }
+                : payload.modelsByAgent ?? {},
               cliDetectionError: undefined,
               isRescanningClis: false,
               rescanningCliId: undefined
@@ -722,10 +713,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       testCli: async (agentId) => {
         const state = get();
         const catalog = getCliCatalogEntry(agentId);
-        const command = resolveCliCommandForAgent(agentId, state.cliDetectionAgents);
-        const runnerUrl = (state.executionSettings.runnerUrl ?? "http://127.0.0.1:8765").replace(/\/$/, "");
         const timeoutSec = state.executionSettings.timeoutSec ?? 60;
-        const testFingerprint = JSON.stringify({ agentId, command, runnerUrl, timeoutSec });
+        const modelSelection = state.cliModelByAgent[agentId];
+        const model = modelSelection?.source === "custom" ? modelSelection.customModel : undefined;
+        const testFingerprint = JSON.stringify({ agentId, model, timeoutSec });
 
         set((current) => ({
           isTestingCliByAgent: {
@@ -741,68 +732,32 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         let nextStatus: ProviderTestStatus | undefined;
 
         try {
-          const runnerOnline = await probeLocalRunnerHealth(runnerUrl);
-          if (!runnerOnline) {
-            const cliDetected = state.cliDetectionAgents?.some(
-              (agent) => agent.id === agentId && agent.installed
-            );
-            nextStatus = {
-              kind: "info",
-              message: cliDetected
-                ? `${catalog.displayName} is on PATH. Start local-runner for a full connection probe — see docs/LOCAL_RUNNER.md.`
-                : `Local runner is offline. Install ${catalog.displayName}, start local-runner, then test again — see docs/LOCAL_RUNNER.md.`
-            };
-            return;
-          }
-
-          const response = await fetch(`${runnerUrl}/test-provider`, {
+          const response = await fetch("/api/ai/generate-vdt", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
-              providerId: "cli_stub",
+              operation: "connection_test",
+              providerId: "local_cli",
               providerConfig: {
-                name: catalog.displayName,
-                command,
-                inputMode: "stdin",
-                outputMode: "stdout_json",
+                agentId,
+                ...(model ? { model } : {}),
                 timeoutSec
-              },
-              timeoutSec
+              }
             })
           });
 
           const payload = (await response.json()) as {
             ok?: boolean;
-            models?: string[];
-            error?: { message?: string; code?: string };
+            error?: string;
           };
 
           if (!response.ok || !payload.ok) {
-            if (payload.error?.code === "CLI_EXECUTION_DISABLED") {
-              nextStatus = {
-                kind: "info",
-                message:
-                  "CLI execution is disabled on local-runner. Set VDT_LOCAL_RUNNER_ENABLE_CLI=true and review the command allowlist."
-              };
-              return;
-            }
-            throw new Error(payload.error?.message ?? `CLI test failed with ${response.status}.`);
+            throw new Error(payload.error ?? `CLI test failed with ${response.status}.`);
           }
 
-          const models = payload.models ?? [];
-          if (models.length > 0) {
-            set((current) => ({
-              cliDiscoveredModelsByAgent: {
-                ...current.cliDiscoveredModelsByAgent,
-                [agentId]: models
-              }
-            }));
-          }
-
-          const modelList = models.length ? ` Models: ${models.slice(0, 3).join(", ")}.` : "";
           nextStatus = {
             kind: "success",
-            message: `Connection test passed.${modelList}`
+            message: `${catalog.displayName} connection test passed.`
           };
         } catch (error) {
           const message = error instanceof Error ? error.message : "CLI test failed.";
@@ -812,10 +767,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           };
         } finally {
           const currentState = get();
+          const currentModelSelection = currentState.cliModelByAgent[agentId];
           const currentFingerprint = JSON.stringify({
             agentId,
-            command,
-            runnerUrl: (currentState.executionSettings.runnerUrl ?? "http://127.0.0.1:8765").replace(/\/$/, ""),
+            model: currentModelSelection?.source === "custom" ? currentModelSelection.customModel : undefined,
             timeoutSec: currentState.executionSettings.timeoutSec ?? 60
           });
 

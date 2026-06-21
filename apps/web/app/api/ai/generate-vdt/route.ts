@@ -12,14 +12,31 @@ import {
   type GenerateVdtInput,
   type LocalRunnerProviderConfig
 } from "@vdt-studio/ai-harness";
+import { LocalCliAiProvider } from "@/lib/local-cli-ai-provider";
 import {
   DEFAULT_ANTHROPIC_FALLBACK_MODEL,
   DEFAULT_OPENAI_COMPATIBLE_FALLBACK_MODEL
 } from "@/lib/execution-mode-catalog";
 
 interface GenerateVdtRequest extends GenerateVdtInput {
-  providerId?: "mock" | "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "local_runner";
+  providerId?: "mock" | "local_cli" | "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "local_runner";
   providerConfig?: Record<string, unknown>;
+  operation?: "generate" | "connection_test";
+}
+
+function readLocalCliConfig(value: unknown) {
+  const config = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const agentId = typeof config.agentId === "string" ? config.agentId.trim() : "";
+  if (!agentId) {
+    throw new Error("Select an installed Local CLI before generating.");
+  }
+  return {
+    agentId,
+    ...(typeof config.model === "string" && config.model.trim() ? { model: config.model.trim().slice(0, 120) } : {}),
+    ...(typeof config.timeoutSec === "number" && Number.isFinite(config.timeoutSec)
+      ? { timeoutSec: Math.min(Math.max(config.timeoutSec, 10), 900) }
+      : {})
+  };
 }
 
 const MAX_FIELD_LENGTHS: Partial<Record<keyof GenerateVdtInput, number>> = {
@@ -244,8 +261,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "Request body must be an object." }, { status: 400 });
     }
 
+    const connectionTest = body.operation === "connection_test";
     const input: GenerateVdtInput = {
-      rootKpi: readLimitedString(body, "rootKpi", true)!,
+      rootKpi: readLimitedString(body, "rootKpi", !connectionTest) ?? "Connection test",
       levelOfDetail: readLimitedString(body, "levelOfDetail") ?? "medium"
     };
     const optionalInputFields: (keyof GenerateVdtInput)[] = ["industry", "businessContext", "unit", "timePeriod", "goal"];
@@ -257,7 +275,9 @@ export async function POST(request: Request) {
     }
 
     let provider;
-    if (body.providerId === "openai_compatible") {
+    if (body.providerId === "local_cli") {
+      provider = new LocalCliAiProvider(readLocalCliConfig(body.providerConfig));
+    } else if (body.providerId === "openai_compatible") {
       const envBaseUrl = process.env.OPENAI_COMPATIBLE_BASE_URL ?? "https://api.openai.com/v1";
       const providerConfig = readProviderConfig(body.providerConfig);
       const requestBaseUrl = providerConfig.baseUrl;
@@ -351,8 +371,30 @@ export async function POST(request: Request) {
       });
     } else if (body.providerId === "local_runner") {
       provider = new LocalRunnerProvider(readLocalRunnerProviderConfig(body.providerConfig));
-    } else {
+    } else if (body.providerId === "mock" && process.env.NODE_ENV === "test") {
       provider = new MockProvider();
+    } else {
+      throw new Error("Select a configured Local CLI or BYOK provider before generating.");
+    }
+
+    if (connectionTest) {
+      if (provider instanceof LocalCliAiProvider) {
+        await provider.testConnection();
+      } else {
+        const output = await provider.completeStructured({
+          taskType: "generate_vdt",
+          input: { probe: true },
+          schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false },
+          systemPrompt: "Return only structured JSON. Do not add commentary.",
+          userPrompt: 'Connection test. Return exactly {"ok":true}.',
+          temperature: 0,
+          maxTokens: 32
+        }) as { ok?: unknown };
+        if (output?.ok !== true) {
+          throw new Error("Provider responded, but did not return the expected connection-test JSON.");
+        }
+      }
+      return NextResponse.json({ ok: true });
     }
 
     const project = await generateVdtProject(provider, input, {

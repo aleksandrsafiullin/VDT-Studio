@@ -104,8 +104,8 @@ describe("CliAgentCard", () => {
 
     expect(html).toContain("Catalog suggestions");
     expect(html).not.toContain("Live from CLI");
-    expect(html).toContain("claude-sonnet-4-5");
-    expect(html).toContain("claude-opus-4-5");
+    expect(html).toContain("claude-sonnet-4-6");
+    expect(html).toContain("claude-opus-4-8");
   });
 
   it("exposes async test status to assistive tech with distinct info styling", () => {

@@ -62,6 +62,7 @@ describe("AI harness", () => {
 
     expect(project.name).toBe("Production Volume Driver Model");
     expect(project.rootNodeId).toBe("production_volume");
+    expect(project.aiSettings.defaultProviderId).toBe("mock");
   });
 
   it("generates a project through a local runner provider", async () => {
@@ -91,6 +92,8 @@ describe("AI harness", () => {
         levelOfDetail: "medium"
       }
     );
+
+    expect(project.aiSettings.defaultProviderId).toBe("local_runner");
 
     expect(project.name).toBe("Production Volume Driver Model");
     expect(fetchMock).toHaveBeenCalledWith(

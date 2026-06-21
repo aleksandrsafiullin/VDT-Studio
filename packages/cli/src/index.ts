@@ -15,3 +15,8 @@ export {
   type SkillInjectionStrategy,
   type VersionProbeResult
 } from "./agent-runtime";
+export {
+  runAgent,
+  type AgentRunnerOptions
+} from "./agent-runner";
+export { discoverAgentModels, parseCursorModelList } from "./agent-models";

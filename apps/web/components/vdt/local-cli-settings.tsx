@@ -208,14 +208,6 @@ export function LocalCliSettings() {
           </div>
         )}
 
-        {process.env.NODE_ENV !== "production" && cliDetectionError ? (
-          <article
-            data-testid="local-cli-mock-stub"
-            className="rounded-lg border border-dashed border-line bg-slate-50 p-3 text-xs text-muted"
-          >
-            Dev stub: mock Claude card for offline UI tests. Select a real CLI after rescan succeeds.
-          </article>
-        ) : null}
       </div>
 
       <AccordionSection

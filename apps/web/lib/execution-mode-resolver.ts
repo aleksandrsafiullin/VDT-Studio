@@ -15,6 +15,7 @@ import {
 
 export type ResolvedProviderId =
   | "mock"
+  | "local_cli"
   | "openai_compatible"
   | "anthropic"
   | "azure_openai"
@@ -186,6 +187,12 @@ function isStaleDefaultMockExecution(
   );
 }
 
+function isUntouchedDefaultExecution(settings: ExecutionSettings): boolean {
+  return (Object.keys(DEFAULT_EXECUTION_SETTINGS) as Array<keyof ExecutionSettings>).every((key) =>
+    JSON.stringify(settings[key]) === JSON.stringify(DEFAULT_EXECUTION_SETTINGS[key])
+  );
+}
+
 export function reconcilePersistedExecutionSettings(
   providerId: ResolvedProviderId | undefined,
   providerConfig: LegacyProviderConfig | undefined,
@@ -203,6 +210,14 @@ export function reconcilePersistedExecutionSettings(
 
   if (isStaleDefaultMockExecution(merged, providerId)) {
     return fromLegacy;
+  }
+
+  if (providerId !== undefined && providerId !== "mock" && isUntouchedDefaultExecution(merged)) {
+    return fromLegacy;
+  }
+
+  if (merged.useMockProvider === true || merged.gatewayPresetId === "mock") {
+    return providerId && providerId !== "mock" ? fromLegacy : applyGatewayPreset(merged, "openai-default");
   }
 
   return merged;
@@ -252,6 +267,21 @@ export function syncLegacyProviderFromExecutionSettings(
           existingConfig.argsText,
         timeoutSec: executionSettings.timeoutSec ?? existingConfig.timeoutSec,
         localApiKey: preserveLocalApiKey
+      }
+    };
+  }
+
+  if (providerId === "local_cli") {
+    return {
+      providerId: "local_runner",
+      providerConfig: {
+        ...existingConfig,
+        localRunnerPresetId: executionSettings.localRunnerPresetId ?? "custom_cli_json",
+        runnerUrl: executionSettings.runnerUrl ?? existingConfig.runnerUrl,
+        runnerProviderId: "cli_stub",
+        command: executionSettings.command ?? existingConfig.command,
+        argsText: executionSettings.argsText ?? existingConfig.argsText,
+        timeoutSec: executionSettings.timeoutSec ?? existingConfig.timeoutSec
       }
     };
   }
@@ -409,12 +439,13 @@ function resolveLocalCli(settings: ExecutionSettings): ResolvedExecutionProvider
 
   if (runnerProviderId === "cli_stub") {
     return {
-      providerId: "local_runner",
+      providerId: "local_cli",
       providerConfig: {
-        runnerUrl: settings.runnerUrl ?? "http://127.0.0.1:8765",
-        runnerProviderId,
-        command: settings.command ?? preset.command ?? "",
-        argsText: settings.argsText ?? preset.argsText ?? "",
+        agentId: settings.selectedCliAgentId,
+        model:
+          settings.cliModelSelection?.source === "custom"
+            ? settings.cliModelSelection.customModel
+            : undefined,
         timeoutSec: settings.timeoutSec ?? 60
       }
     };

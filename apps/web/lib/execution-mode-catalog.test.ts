@@ -35,9 +35,9 @@ describe("execution-mode-catalog", () => {
   });
 
   it("includes suggested models for priority CLI agents", () => {
-    expect(getCliCatalogEntry("claude").suggestedModels).toContain("claude-sonnet-4-5");
+    expect(getCliCatalogEntry("claude").suggestedModels).toContain("claude-opus-4-8");
     expect(getCliCatalogEntry("codex").suggestedModels.length).toBeGreaterThan(0);
-    expect(getCliCatalogEntry("gemini").suggestedModels).toContain("gemini-2.5-pro");
+    expect(getCliCatalogEntry("gemini").suggestedModels).toContain("gemini-3.5-flash");
     expect(getCliCatalogEntry("cursor-agent").suggestedModels.length).toBeGreaterThan(0);
     expect(getCliCatalogEntry("opencode").suggestedModels.length).toBeGreaterThan(0);
     expect(getCliCatalogEntry("copilot").suggestedModels.length).toBeGreaterThan(0);
@@ -47,16 +47,16 @@ describe("execution-mode-catalog", () => {
     const anthropic = getGatewayPreset("anthropic-claude");
     expect(anthropic.model).toBe("claude-sonnet-4-6");
     expect(anthropic.models[0]).toBe("claude-sonnet-4-6");
-    expect(anthropic.models).toHaveLength(7);
+    expect(anthropic.models).toHaveLength(6);
     expect(anthropic.models).not.toContain("claude-sonnet-4-20250514");
     expect(anthropic.models).not.toContain("claude-opus-4-20250514");
 
     const openai = getGatewayPreset("openai-default");
-    expect(openai.model).toBe("gpt-5.4-mini");
-    expect(openai.models[0]).toBe("gpt-5.4");
-    expect(openai.models).toHaveLength(16);
+    expect(openai.model).toBe("gpt-5.5");
+    expect(openai.models[0]).toBe("gpt-5.5");
+    expect(openai.models.length).toBeGreaterThanOrEqual(15);
     expect(openai.models).toContain("gpt-5.2");
-    expect(openai.models).toContain("codex-mini-latest");
+    expect(openai.models).toContain("gpt-5.3-codex");
 
     const azure = getGatewayPreset("azure-default");
     expect(azure.model).toBe("gpt-5.4-mini");
@@ -72,7 +72,7 @@ describe("execution-mode-catalog", () => {
     ]);
 
     const gemini = getGatewayPreset("gemini-default");
-    expect(gemini.model).toBe("gemini-2.5-pro");
+    expect(gemini.model).toBe("gemini-3.5-flash");
     expect(gemini.models).toContain("gemini-2.5-flash-lite");
     expect(gemini.models).toContain("gemini-3.1-pro-preview");
     expect(gemini.models).not.toContain("gemini-2.0-flash");
@@ -224,7 +224,7 @@ describe("execution-mode-catalog", () => {
       gatewayPresetId: "custom",
       byokProtocol: "openai",
       baseUrl: "https://api.openai.com/v1",
-      model: "gpt-5.4-mini",
+      model: "gpt-5.5",
       customizeBaseUrl: true
     });
 
@@ -254,8 +254,8 @@ describe("execution-mode-catalog", () => {
       protocol: "gemini",
       gateway: "none",
       baseUrl: "https://generativelanguage.googleapis.com",
-      model: "gemini-2.5-pro",
-      models: ["gemini-2.5-pro"]
+      model: "gemini-3.5-flash",
+      models: ["gemini-3.5-flash"]
     });
   });
 

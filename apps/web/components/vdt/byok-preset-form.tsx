@@ -34,7 +34,6 @@ interface ByokPresetFormProps {
   onFieldChange: <K extends keyof ExecutionSettings>(field: K, value: ExecutionSettings[K]) => void;
   onFieldErrorsChange?: (errors: ByokFieldErrors | undefined) => void;
   onTest: () => void;
-  onUseMock?: () => void;
 }
 
 function SectionTitle({ protocol }: { protocol: ByokProtocol }) {
@@ -127,11 +126,9 @@ export function ByokPresetForm({
   onFieldChange,
   onFieldErrorsChange,
   onTest,
-  onUseMock,
   fieldErrors = {}
 }: ByokPresetFormProps) {
   const [showApiKey, setShowApiKey] = useState(false);
-  const isMock = executionSettings.useMockProvider || executionSettings.gatewayPresetId === "mock";
   const customizeBaseUrl = executionSettings.customizeBaseUrl ?? false;
   const maxTokensPlaceholder =
     preset.maxTokens?.toString() ?? getGatewayPreset(executionSettings.gatewayPresetId ?? "openai-default").maxTokens?.toString() ?? "64000";
@@ -150,29 +147,6 @@ export function ByokPresetForm({
     }
 
     onTest();
-  }
-
-  if (isMock) {
-    return (
-      <div className="space-y-4 rounded-lg border border-line bg-white p-4" data-testid="byok-mock-form">
-        <SectionTitle protocol={protocol} />
-        <p className="text-sm text-muted">
-          Mock provider is active for offline development. Generation uses the built-in mock harness without network
-          calls.
-        </p>
-        <Button
-          size="sm"
-          variant="secondary"
-          data-testid="byok-test-connection"
-          disabled={isTesting}
-          icon={<PlugZap className="h-4 w-4" />}
-          onClick={handleTest}
-        >
-          {isTesting ? "Testing..." : "Test connection"}
-        </Button>
-        {testStatus ? <TestStatusBanner status={testStatus} /> : null}
-      </div>
-    );
   }
 
   return (
@@ -359,17 +333,6 @@ export function ByokPresetForm({
           onFieldChange("model", value);
         }}
       />
-
-      {executionSettings.gatewayPresetId === "custom" && onUseMock ? (
-        <button
-          type="button"
-          className="text-xs text-muted hover:text-ink hover:underline"
-          data-testid="byok-use-mock"
-          onClick={onUseMock}
-        >
-          Use mock provider (offline dev)
-        </button>
-      ) : null}
 
       <Button
         className="w-full"

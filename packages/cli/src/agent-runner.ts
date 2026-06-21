@@ -271,7 +271,7 @@ function buildEnv(
   for (const key of Object.keys(requested ?? {})) {
     if (!allowed.has(key)) throw new Error(`Agent environment variable is not allowed: ${key}`);
   }
-  const env: NodeJS.ProcessEnv = {};
+  const env = {} as NodeJS.ProcessEnv;
   const inherited = new Set([...COMMON_INHERITED_ENV, ...(AGENT_INHERITED_ENV[agentId] ?? [])]);
   for (const key of allowed) {
     const value = requested?.[key] ?? (inherited.has(key) ? baseEnv[key] : undefined);

@@ -13,7 +13,11 @@ function idFromName(value: string) {
     .replace(/_{2,}/g, "_");
 }
 
-export function generateVdtOutputToProject(output: GenerateVdtOutput, input: GenerateVdtInput): VdtProject {
+export function generateVdtOutputToProject(
+  output: GenerateVdtOutput,
+  input: GenerateVdtInput,
+  providerId = "unknown"
+): VdtProject {
   const validated = validateGenerateVdtOutput(output);
   const now = nowIso();
   const project: VdtProject = {
@@ -53,7 +57,7 @@ export function generateVdtOutputToProject(output: GenerateVdtOutput, input: Gen
     scenarios: [],
     dataSources: [],
     aiSettings: {
-      defaultProviderId: "mock"
+      defaultProviderId: providerId
     },
     aiReview: {
       assumptions: validated.assumptions,

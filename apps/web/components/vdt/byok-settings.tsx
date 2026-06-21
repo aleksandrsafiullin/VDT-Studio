@@ -50,28 +50,34 @@ export function ByokSettings() {
     setProviderTestState(true);
 
     try {
-      if (executionSettings.useMockProvider || executionSettings.gatewayPresetId === "mock") {
-        nextStatus = { kind: "success", message: "Mock provider is ready for offline generation." };
-      } else if (executionSettings.gatewayPresetId === "custom") {
+      if (executionSettings.gatewayPresetId === "custom") {
         const validationErrors = validateByokSettings(executionSettings, preset);
         if (hasByokFieldErrors(validationErrors)) {
           throw new Error(Object.values(validationErrors)[0] ?? "Configuration is invalid.");
         }
-        nextStatus = { kind: "success", message: "Configuration looks valid. Ready to generate." };
+        const resolved = resolveExecutionSettings(executionSettings);
+        const response = await fetch("/api/ai/generate-vdt", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ operation: "connection_test", ...resolved })
+        });
+        const payload = await response.json() as { ok?: boolean; error?: string };
+        if (!response.ok || !payload.ok) throw new Error(payload.error ?? "Connection test failed.");
+        nextStatus = { kind: "success", message: "Connection test passed." };
       } else {
         const resolved = resolveExecutionSettings(executionSettings);
-        if (resolved.providerId === "mock") {
-          nextStatus = { kind: "success", message: "Mock provider is ready for offline generation." };
-        } else {
-          const validationErrors = validateByokSettings(executionSettings, preset);
-          if (hasByokFieldErrors(validationErrors)) {
-            throw new Error(Object.values(validationErrors)[0] ?? "Configuration is invalid.");
-          }
-          nextStatus = {
-            kind: "success",
-            message: `Configuration looks valid for ${resolved.providerId.replace(/_/g, " ")}.`
-          };
+        const validationErrors = validateByokSettings(executionSettings, preset);
+        if (hasByokFieldErrors(validationErrors)) {
+          throw new Error(Object.values(validationErrors)[0] ?? "Configuration is invalid.");
         }
+        const response = await fetch("/api/ai/generate-vdt", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ operation: "connection_test", ...resolved })
+        });
+        const payload = await response.json() as { ok?: boolean; error?: string };
+        if (!response.ok || !payload.ok) throw new Error(payload.error ?? "Connection test failed.");
+        nextStatus = { kind: "success", message: "Connection test passed." };
       }
     } catch (error) {
       nextStatus = {
@@ -114,7 +120,6 @@ export function ByokSettings() {
         fieldErrors={byokFieldErrors}
         onFieldErrorsChange={setByokFieldErrors}
         onTest={() => void testConnection()}
-        onUseMock={() => setGatewayPreset("mock")}
       />
     </div>
   );

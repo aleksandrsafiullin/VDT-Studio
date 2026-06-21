@@ -3,11 +3,11 @@ import { DEFAULT_EXECUTION_SETTINGS } from "./execution-mode-catalog";
 import { formatExecutionModeSummary } from "./format-execution-summary";
 
 describe("formatExecutionModeSummary", () => {
-  it("summarizes mock BYOK execution", () => {
+  it("summarizes the default real BYOK execution", () => {
     expect(formatExecutionModeSummary(DEFAULT_EXECUTION_SETTINGS)).toEqual({
       modeLabel: "BYOK",
-      primary: "Built-in mock",
-      secondary: "Offline development"
+      primary: "OpenAI · OpenAI",
+      secondary: "gpt-5.5"
     });
   });
 

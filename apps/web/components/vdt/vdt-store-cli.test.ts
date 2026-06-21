@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { localRunnerOfflineMessage } from "@vdt-studio/ai-harness";
 import { DEFAULT_EXECUTION_SETTINGS, getCliCatalogEntry } from "@/lib/execution-mode-catalog";
 
 const localStorageMock = (() => {
@@ -21,27 +20,6 @@ const localStorageMock = (() => {
 vi.stubGlobal("localStorage", localStorageMock);
 
 const { useVdtStudioStore } = await import("./vdt-store");
-
-function mockRunnerHealth(fetchMock: ReturnType<typeof vi.fn>, online: boolean) {
-  fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url.endsWith("/health")) {
-      if (!online) {
-        throw new TypeError("Failed to fetch");
-      }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ ok: true })
-      } as Response;
-    }
-    return {
-      ok: false,
-      status: 404,
-      json: async () => ({ ok: false })
-    } as Response;
-  });
-}
 
 describe("vdt-store cli rescan", () => {
   beforeEach(() => {
@@ -118,25 +96,42 @@ describe("vdt-store cli rescan", () => {
     expect(state.cliDetectionError).toBeUndefined();
   });
 
-  it("posts expected cli_stub payload to local runner test-provider", async () => {
+  it("stores live models returned by CLI detection", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        agents: [
+          {
+            id: "cursor-agent",
+            installed: true,
+            executable: "/usr/local/bin/cursor-agent",
+            alias: "cursor-agent",
+            version: "1.0.0"
+          }
+        ],
+        modelsByAgent: { "cursor-agent": ["auto", "gpt-5.5-high"] }
+      })
+    } as Response);
+
+    await useVdtStudioStore.getState().rescanClis();
+
+    expect(useVdtStudioStore.getState().cliDiscoveredModelsByAgent["cursor-agent"]).toEqual([
+      "auto",
+      "gpt-5.5-high"
+    ]);
+  });
+
+  it("posts a real Local CLI connection test to the application API", async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/health")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ ok: true })
-        } as Response;
-      }
-
-      if (String(url).endsWith("/test-provider")) {
+      if (url.endsWith("/api/ai/generate-vdt")) {
         return {
           ok: true,
           status: 200,
           json: async () => ({
-            ok: true,
-            models: ["claude-sonnet-4-5"]
+            ok: true
           })
         } as Response;
       }
@@ -170,38 +165,35 @@ describe("vdt-store cli rescan", () => {
 
     await useVdtStudioStore.getState().testCli("claude");
 
-    const testProviderCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/test-provider"));
+    const testProviderCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/ai/generate-vdt"));
     expect(testProviderCall).toBeDefined();
 
     const [, requestInit] = testProviderCall!;
     const body = JSON.parse(String(requestInit?.body)) as {
       providerId?: string;
-      timeoutSec?: number;
+      operation?: string;
       providerConfig?: {
-        name?: string;
-        command?: string;
-        inputMode?: string;
-        outputMode?: string;
+        agentId?: string;
         timeoutSec?: number;
       };
     };
 
-    expect(body.providerId).toBe("cli_stub");
-    expect(body.providerConfig?.command).toBe("/usr/local/bin/claude");
-    expect(body.providerConfig?.name).toBe("Claude Code");
-    expect(body.providerConfig?.inputMode).toBe("stdin");
-    expect(body.providerConfig?.outputMode).toBe("stdout_json");
+    expect(body.operation).toBe("connection_test");
+    expect(body.providerId).toBe("local_cli");
+    expect(body.providerConfig?.agentId).toBe("claude");
     expect(body.providerConfig?.timeoutSec).toBe(60);
-    expect(body.timeoutSec).toBe(60);
 
     const state = useVdtStudioStore.getState();
     expect(state.cliTestStatusByAgent.claude?.kind).toBe("success");
-    expect(state.cliDiscoveredModelsByAgent.claude).toEqual(["claude-sonnet-4-5"]);
   });
 
-  it("shows setup info when local runner is offline", async () => {
+  it("shows a real CLI test error from the application API", async () => {
     const fetchMock = vi.mocked(fetch);
-    mockRunnerHealth(fetchMock, false);
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => ({ ok: false, error: "Claude Code authentication failed." })
+    } as Response);
 
     useVdtStudioStore.setState({
       cliDetectionAgents: [
@@ -218,25 +210,21 @@ describe("vdt-store cli rescan", () => {
     await useVdtStudioStore.getState().testCli("claude");
 
     const state = useVdtStudioStore.getState();
-    expect(state.cliTestStatusByAgent.claude?.kind).toBe("info");
-    expect(state.cliTestStatusByAgent.claude?.message).toContain("on PATH");
-    expect(state.cliTestStatusByAgent.claude?.message).not.toContain("Failed to fetch");
-
-    const testProviderCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/test-provider"));
-    expect(testProviderCall).toBeUndefined();
+    expect(state.cliTestStatusByAgent.claude?.kind).toBe("error");
+    expect(state.cliTestStatusByAgent.claude?.message).toContain("authentication failed");
   });
 
-  it("generateWithAi shows friendly error when local runner is offline", async () => {
+  it("generateWithAi surfaces provider errors", async () => {
     const fetchMock = vi.mocked(fetch);
-    const offlineMessage = localRunnerOfflineMessage("http://127.0.0.1:8765");
+    const providerMessage = "Claude Code authentication failed.";
 
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/ai/generate-vdt")) {
         return {
           ok: false,
-          status: 503,
-          json: async () => ({ ok: false, error: offlineMessage })
+          status: 502,
+          json: async () => ({ ok: false, error: providerMessage })
         } as Response;
       }
       return {
@@ -249,60 +237,19 @@ describe("vdt-store cli rescan", () => {
     await useVdtStudioStore.getState().generateWithAi();
 
     const state = useVdtStudioStore.getState();
-    expect(state.aiError).toContain("Local runner is offline");
-    expect(state.aiError).toContain("pnpm local-runner:start");
-    expect(state.aiError).not.toContain("fetch failed");
+    expect(state.aiError).toContain(providerMessage);
     expect(state.isGenerating).toBe(false);
 
     const generateCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/ai/generate-vdt"));
     expect(generateCall).toBeDefined();
   });
 
-  it("shows env guidance when CLI execution is disabled on runner", async () => {
-    const fetchMock = vi.mocked(fetch);
-    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith("/health")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ ok: true })
-        } as Response;
-      }
-
-      if (String(url).endsWith("/test-provider")) {
-        return {
-          ok: false,
-          status: 403,
-          json: async () => ({
-            ok: false,
-            error: {
-              code: "CLI_EXECUTION_DISABLED",
-              message: "CLI execution is disabled."
-            }
-          })
-        } as Response;
-      }
-
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ agents: [] })
-      } as Response;
-    });
-
-    await useVdtStudioStore.getState().testCli("claude");
-
-    const state = useVdtStudioStore.getState();
-    expect(state.cliTestStatusByAgent.claude?.kind).toBe("info");
-    expect(state.cliTestStatusByAgent.claude?.message).toContain("VDT_LOCAL_RUNNER_ENABLE_CLI=true");
-  });
 });
 
 describe("vdt-store cli catalog models", () => {
   it("exposes catalog suggestions for model selection without runner probe", () => {
     const claudeModels = getCliCatalogEntry("claude").suggestedModels;
-    expect(claudeModels).toContain("claude-sonnet-4-5");
+    expect(claudeModels).toContain("claude-sonnet-4-6");
     expect(claudeModels.length).toBeGreaterThan(0);
   });
 });

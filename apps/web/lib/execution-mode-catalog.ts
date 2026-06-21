@@ -145,7 +145,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     badges: ["official"],
     docsUrl: "https://docs.anthropic.com/en/docs/claude-code",
     installHint: "npm install -g @anthropic-ai/claude-code",
-    suggestedModels: ["claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5"]
+    suggestedModels: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"]
   },
   {
     id: "codex",
@@ -155,7 +155,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     badges: ["official"],
     docsUrl: "https://developers.openai.com/codex/cli",
     installHint: "npm install -g @openai/codex",
-    suggestedModels: ["gpt-4.1", "gpt-4.1-mini", "o4-mini"]
+    suggestedModels: ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"]
   },
   {
     id: "opencode",
@@ -195,7 +195,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     badges: ["official", "many-models"],
     docsUrl: "https://github.com/google-gemini/gemini-cli",
     installHint: "npm install -g @google/gemini-cli",
-    suggestedModels: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+    suggestedModels: ["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3-flash-preview"]
   },
   {
     id: "grok-build",
@@ -419,7 +419,6 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     maxTokens: 64_000,
     models: [
       "claude-sonnet-4-6",
-      "claude-fable-5",
       "claude-opus-4-8",
       "claude-opus-4-7",
       "claude-opus-4-6",
@@ -496,25 +495,25 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     gateway: "none",
     proxyProvider: "openai",
     baseUrl: "https://api.openai.com/v1",
-    model: "gpt-5.4-mini",
+    model: "gpt-5.5",
     maxTokens: 32_768,
     models: [
+      "gpt-5.5",
+      "gpt-5.5-pro",
       "gpt-5.4",
+      "gpt-5.4-pro",
       "gpt-5.4-mini",
       "gpt-5.4-nano",
       "gpt-5.2",
       "gpt-5.2-chat-latest",
       "gpt-5.1",
-      "gpt-5.1-codex",
+      "gpt-5.3-codex",
       "gpt-5",
       "gpt-5-mini",
       "gpt-5-nano",
       "gpt-4.1",
       "gpt-4.1-mini",
-      "gpt-4.1-nano",
-      "o3",
-      "o4-mini",
-      "codex-mini-latest"
+      "o3"
     ],
     apiKeyUrl: "https://platform.openai.com/api-keys"
   },
@@ -540,15 +539,16 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     gateway: "none",
     proxyProvider: "google",
     baseUrl: "https://generativelanguage.googleapis.com",
-    model: "gemini-2.5-pro",
+    model: "gemini-3.5-flash",
     maxTokens: 65_536,
     models: [
+      "gemini-3.5-flash",
+      "gemini-3.1-pro-preview",
+      "gemini-3-flash-preview",
+      "gemini-3.1-flash-lite",
       "gemini-2.5-pro",
       "gemini-2.5-flash",
-      "gemini-2.5-flash-lite",
-      "gemini-3.1-pro-preview",
-      "gemini-3.5-flash",
-      "gemini-3.1-flash-lite"
+      "gemini-2.5-flash-lite"
     ],
     apiKeyUrl: "https://aistudio.google.com/apikey"
   },
@@ -682,9 +682,9 @@ function protocolCustomDefaults(protocol: ByokProtocol): Pick<
         protocol: "openai",
         gateway: "none",
         baseUrl: "https://api.openai.com/v1",
-        model: "gpt-5.4-mini",
+        model: "gpt-5.5",
         maxTokens: 32_768,
-        models: ["gpt-5.4-mini"]
+        models: ["gpt-5.5"]
       };
     case "azure":
       return {
@@ -703,9 +703,9 @@ function protocolCustomDefaults(protocol: ByokProtocol): Pick<
         protocol: "gemini",
         gateway: "none",
         baseUrl: "https://generativelanguage.googleapis.com",
-        model: "gemini-2.5-pro",
+        model: "gemini-3.5-flash",
         maxTokens: 65_536,
-        models: ["gemini-2.5-pro"]
+        models: ["gemini-3.5-flash"]
       };
   }
 }
@@ -733,8 +733,8 @@ export function listPresetsForProtocol(protocol: ByokProtocol): readonly ByokGat
 
 export const DEFAULT_EXECUTION_SETTINGS: ExecutionSettings = {
   executionMode: "byok",
-  gatewayPresetId: "mock",
-  useMockProvider: true,
+  gatewayPresetId: "openai-default",
+  useMockProvider: false,
   byokProtocol: "openai",
   byokGateway: "none",
   memoryModelMode: "same_as_chat",
@@ -746,7 +746,7 @@ export const DEFAULT_EXECUTION_SETTINGS: ExecutionSettings = {
   localModel: "qwen3",
   timeoutSec: 60,
   baseUrl: "https://api.openai.com/v1",
-  model: "gpt-5.4-mini",
+  model: "gpt-5.5",
   anthropicVersion: "2023-06-01",
   apiVersion: "2024-10-21"
 };

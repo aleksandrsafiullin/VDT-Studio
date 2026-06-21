@@ -19,5 +19,5 @@ export async function generateVdtProject(
     ...(options?.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {})
   });
 
-  return generateVdtOutputToProject(output, input);
+  return generateVdtOutputToProject(output, input, provider.id);
 }

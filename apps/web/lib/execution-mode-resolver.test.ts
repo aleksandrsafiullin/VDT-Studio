@@ -34,12 +34,10 @@ describe("execution-mode-resolver", () => {
         timeoutSec: 60
       })
     ).toEqual({
-      providerId: "local_runner",
+      providerId: "local_cli",
       providerConfig: {
-        runnerUrl: "http://127.0.0.1:8765",
-        runnerProviderId: "cli_stub",
-        command: "/usr/local/bin/claude",
-        argsText: "",
+        agentId: "claude",
+        model: undefined,
         timeoutSec: 60
       }
     });
@@ -270,7 +268,7 @@ describe("execution-mode-resolver", () => {
         apiKey: "byok-key"
       }).providerConfig
     ).toMatchObject({
-      model: "gpt-5.4-mini"
+      model: "gpt-5.5"
     });
 
     expect(
