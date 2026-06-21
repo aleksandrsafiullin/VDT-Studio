@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@vdt-studio/ai-harness": "workspace:*",
+    "@vdt-studio/cli": "workspace:*",
     "@vdt-studio/vdt-core": "workspace:*",
     "@xyflow/react": "^12.8.4",
     "clsx": "^2.1.1",

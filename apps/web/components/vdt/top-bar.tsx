@@ -13,7 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { downloadTextFile } from "@/lib/download";
 import { formatNumber } from "@/lib/format";
-import { SettingsPopover } from "./settings-popover";
+import { SettingsModal } from "./settings-modal";
 import { useVdtStudioStore } from "./vdt-store";
 
 export function TopBar() {
@@ -99,7 +99,7 @@ export function TopBar() {
         >
           <span className="hidden sm:inline">Markdown</span>
         </Button>
-        <SettingsPopover />
+        <SettingsModal />
       </div>
       {importError ? (
         <div

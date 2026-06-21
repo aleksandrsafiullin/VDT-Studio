@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const nextConfig = {
   devIndicators: false,
   outputFileTracingRoot: path.join(__dirname, "../.."),
-  transpilePackages: ["@vdt-studio/vdt-core", "@vdt-studio/ai-harness", "@vdt-studio/ui"]
+  transpilePackages: ["@vdt-studio/vdt-core", "@vdt-studio/ai-harness", "@vdt-studio/cli", "@vdt-studio/ui"]
 };
 
 export default nextConfig;

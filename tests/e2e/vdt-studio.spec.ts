@@ -9,11 +9,31 @@ type PersistedVdtState = {
       rightPanelCollapsed?: boolean;
       scenarioDrawerCollapsed?: boolean;
     };
+    executionSettings?: {
+      byokProtocol?: string;
+      gatewayPresetId?: string;
+      model?: string;
+      baseUrl?: string;
+      apiKey?: string;
+      localApiKey?: string;
+    };
     project?: {
       graph?: {
         nodes?: Array<{ id: string; position?: { x: number; y: number } }>;
       };
     };
+  };
+};
+
+type TestProviderRequestBody = {
+  providerId?: string;
+  timeoutSec?: number;
+  providerConfig?: {
+    name?: string;
+    command?: string;
+    inputMode?: string;
+    outputMode?: string;
+    timeoutSec?: number;
   };
 };
 
@@ -29,6 +49,21 @@ async function readPersistedState(page: Page): Promise<PersistedVdtState | null>
       return null;
     }
   });
+}
+
+async function readPersistedExecutionSettings(page: Page) {
+  const persisted = await readPersistedState(page);
+  return persisted?.state?.executionSettings;
+}
+
+function assertExpectedCliTestProviderBody(body: TestProviderRequestBody | undefined) {
+  expect(body?.providerId).toBe("cli_stub");
+  expect(body?.providerConfig?.command).toBe("/usr/local/bin/claude");
+  expect(body?.providerConfig?.name).toBe("Claude Code");
+  expect(body?.providerConfig?.inputMode).toBe("stdin");
+  expect(body?.providerConfig?.outputMode).toBe("stdout_json");
+  expect(body?.providerConfig?.timeoutSec).toBe(60);
+  expect(body?.timeoutSec).toBe(60);
 }
 
 async function readNodePosition(page: Page, nodeId: string) {
@@ -231,6 +266,16 @@ async function readPersistedUi(page: Page) {
   return persisted?.state?.ui;
 }
 
+async function openSettingsModal(page: Page, section: "execution" | "display" = "execution") {
+  await page.getByTestId("settings-button").click();
+  const modal = page.getByTestId("settings-modal");
+  await expect(modal).toBeVisible();
+  if (section === "display") {
+    await page.getByTestId("settings-nav-display").click();
+  }
+  return modal;
+}
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     const capturedExports: { filename: string; type: string; text: string }[] = [];
@@ -279,19 +324,205 @@ test("opens checked-in examples and syncs the setup brief", async ({ page }, tes
   await expect(reactFlowNode(page, "oee")).toBeVisible();
 });
 
-test("configures and tests local runner presets", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "chromium", "Local runner provider UI smoke runs on desktop viewport.");
+test("opens settings modal on execution mode with Local CLI and BYOK tabs", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Settings modal smoke runs on desktop viewport.");
+
+  const modal = await openSettingsModal(page);
+  await expect(modal.getByRole("heading", { name: "Execution mode" })).toBeVisible();
+  await expect(page.getByTestId("execution-mode-tab-local-cli")).toBeVisible();
+  await expect(page.getByTestId("execution-mode-tab-byok")).toBeVisible();
+  await expect(page.getByTestId("execution-mode-panel-byok")).toBeVisible();
+});
+
+test("settings modal keeps stable size across sections", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Settings modal size stability runs on desktop viewport.");
+
+  const modal = await openSettingsModal(page, "execution");
+  await expect(modal.getByRole("heading", { name: "Execution mode" })).toBeVisible();
+  await expect(page.getByTestId("execution-mode-panel-byok")).toBeVisible();
+
+  const executionBox = await modal.boundingBox();
+  expect(executionBox).not.toBeNull();
+
+  await page.getByTestId("execution-mode-tab-local-cli").click();
+  await expect(page.getByTestId("execution-mode-panel-local-cli")).toBeVisible();
+
+  const localCliBox = await modal.boundingBox();
+  expect(localCliBox).not.toBeNull();
+  expect(Math.abs(localCliBox!.height - executionBox!.height)).toBeLessThanOrEqual(2);
+  expect(localCliBox!.width).toBe(executionBox!.width);
+
+  await page.getByTestId("execution-mode-tab-byok").click();
+  await expect(page.getByTestId("execution-mode-panel-byok")).toBeVisible();
+
+  const byokBox = await modal.boundingBox();
+  expect(byokBox).not.toBeNull();
+  expect(Math.abs(byokBox!.height - executionBox!.height)).toBeLessThanOrEqual(2);
+  expect(byokBox!.width).toBe(executionBox!.width);
+
+  await page.getByTestId("settings-nav-display").click();
+  await expect(modal.getByRole("heading", { name: "Display" })).toBeVisible();
+
+  const displayBox = await modal.boundingBox();
+  expect(displayBox).not.toBeNull();
+  expect(Math.abs(displayBox!.height - executionBox!.height)).toBeLessThanOrEqual(2);
+  expect(displayBox!.width).toBe(executionBox!.width);
+
+  await page.getByTestId("settings-nav-execution").click();
+  await expect(modal.getByRole("heading", { name: "Execution mode" })).toBeVisible();
+
+  const executionAgainBox = await modal.boundingBox();
+  expect(executionAgainBox).not.toBeNull();
+  expect(Math.abs(executionAgainBox!.height - executionBox!.height)).toBeLessThanOrEqual(2);
+  expect(executionAgainBox!.width).toBe(executionBox!.width);
+});
+
+test("setup rail Configure opens settings modal on execution mode", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Setup rail configure runs on desktop viewport.");
   const setupRail = page.locator("section").filter({ hasText: "New VDT" }).first();
+
+  await setupRail.getByTestId("execution-mode-configure").click();
+
+  const modal = page.getByTestId("settings-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal.getByRole("heading", { name: "Execution mode" })).toBeVisible();
+  await expect(page.getByTestId("execution-mode-tab-local-cli")).toBeVisible();
+  await expect(page.getByTestId("execution-mode-tab-byok")).toBeVisible();
+});
+
+test("detects installed CLI and tests connection via local runner", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Local CLI settings smoke runs on desktop viewport.");
+
+  let testProviderRequestBody: TestProviderRequestBody | undefined;
+
+  await page.route("**/api/ai/detect-clis**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agents: [
+          {
+            id: "claude",
+            installed: true,
+            executable: "/usr/local/bin/claude",
+            alias: "/usr/local/bin/claude",
+            version: "1.0.0"
+          }
+        ]
+      })
+    });
+  });
+
+  await page.route("http://127.0.0.1:8765/health", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, service: "vdt-studio-local-runner" })
+    });
+  });
+
+  await page.route("http://127.0.0.1:8765/test-provider", async (route) => {
+    testProviderRequestBody = route.request().postDataJSON() as TestProviderRequestBody;
+
+    try {
+      assertExpectedCliTestProviderBody(testProviderRequestBody);
+    } catch (error) {
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: false,
+          error: { message: error instanceof Error ? error.message : "Unexpected test-provider body." }
+        })
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        providerId: "cli_stub",
+        taskType: "connection_test",
+        models: ["claude-sonnet-4-5"]
+      })
+    });
+  });
+
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-local-cli").click();
+  await expect(page.getByTestId("execution-mode-panel-local-cli")).toBeVisible();
+  await expect(page.getByTestId("cli-agent-card-claude")).toBeVisible({ timeout: 10_000 });
+
+  await page.getByTestId("cli-agent-select-claude").click();
+  await page.getByTestId("cli-agent-test-claude").click();
+  await expect(page.getByText("Connection test passed. Models: claude-sonnet-4-5.")).toBeVisible();
+  assertExpectedCliTestProviderBody(testProviderRequestBody);
+});
+
+test("shows setup guidance when local runner is offline", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Local CLI settings smoke runs on desktop viewport.");
+
+  await page.route("**/api/ai/detect-clis**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agents: [
+          {
+            id: "claude",
+            installed: true,
+            executable: "/usr/local/bin/claude",
+            alias: "/usr/local/bin/claude",
+            version: "1.0.0"
+          }
+        ]
+      })
+    });
+  });
+
+  await page.route("http://127.0.0.1:8765/health", async (route) => {
+    await route.abort("connectionrefused");
+  });
+
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-local-cli").click();
+  await expect(page.getByTestId("cli-agent-card-claude")).toBeVisible({ timeout: 10_000 });
+
+  await page.getByTestId("cli-agent-select-claude").click();
+  await expect(page.getByText("Catalog suggestions")).toBeVisible();
+  await expect(page.getByTestId("cli-agent-model-claude").locator("option")).toContainText([
+    "auto",
+    "claude-sonnet-4-5"
+  ]);
+
+  await page.getByTestId("cli-agent-test-claude").click();
+  await expect(page.getByText(/on PATH/i)).toBeVisible();
+  await expect(page.getByText(/Failed to fetch/i)).toHaveCount(0);
+});
+
+test("configures BYOK Anthropic without persisting API keys", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "BYOK settings smoke runs on desktop viewport.");
+
   let generateRequestBody: {
     providerId?: string;
-    providerConfig?: { baseUrl?: string; model?: string };
+    providerConfig?: { baseUrl?: string; model?: string; apiKey?: string };
   } | undefined;
 
-  await setupRail.getByRole("combobox", { name: "Provider" }).selectOption("local_runner");
-  await setupRail.getByRole("combobox", { name: "Preset" }).selectOption("vllm_openai");
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-byok").click();
+  await page.getByTestId("byok-protocol-anthropic").click();
+  await expect(page.getByTestId("byok-preset-form")).toBeVisible();
 
-  await expect(setupRail.getByRole("textbox", { name: "Base URL" })).toHaveValue("http://127.0.0.1:8000/v1");
-  await expect(setupRail.getByRole("textbox", { name: "Model" })).toHaveValue("local-model");
+  await page.getByTestId("byok-api-key").fill("session-only-key");
+  await page.getByTestId("byok-model-select").selectOption("__custom__");
+  await page.getByTestId("byok-model-custom").fill("vdt-production-model");
+
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("vdt-studio-state") ?? ""))
+    .not.toContain("session-only-key");
+
   await page.route("**/api/ai/generate-vdt", async (route) => {
     generateRequestBody = route.request().postDataJSON() as typeof generateRequestBody;
     await route.fulfill({
@@ -300,73 +531,28 @@ test("configures and tests local runner presets", async ({ page }, testInfo) => 
       body: JSON.stringify({ ok: false, error: "Captured by e2e." })
     });
   });
-  await setupRail.getByRole("button", { name: /Generate VDT with AI/i }).click();
-  await expect.poll(() => generateRequestBody?.providerConfig?.baseUrl).toBe("http://127.0.0.1:8000/v1");
-  expect(generateRequestBody?.providerId).toBe("local_runner");
-  expect(generateRequestBody?.providerConfig?.model).toBe("local-model");
 
-  await setupRail.getByRole("combobox", { name: "Preset" }).selectOption("custom_cli_json");
-  await expect(setupRail.getByRole("combobox", { name: "Runner adapter" })).toHaveValue("cli_stub");
-  await expect(setupRail.getByRole("textbox", { name: "Command" })).toHaveValue("vdt-model-adapter");
-
-  await setupRail.getByRole("combobox", { name: "Preset" }).selectOption("ollama_openai");
-  await page.route("http://127.0.0.1:8765/test-provider", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        providerId: "local_http_stub",
-        taskType: "connection_test",
-        models: ["qwen3"]
-      })
-    });
-  });
-
-  await setupRail.getByRole("button", { name: "Test connection" }).click();
-  await expect(setupRail.getByText("Connection test passed. Models: qwen3.")).toBeVisible();
-
-  await page.getByTestId("settings-button").click();
-  const settings = page.getByRole("dialog", { name: "Workspace settings" });
-  await settings.getByRole("tab", { name: "AI" }).click();
-  await expect(settings.getByText("Connection test passed. Models: qwen3.")).toBeVisible();
-  await settings.getByRole("textbox", { name: "Model" }).fill("qwen3.1");
-  await expect(settings.getByText("Connection test passed. Models: qwen3.")).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await expect(setupRail.getByText("Connection test passed. Models: qwen3.")).toHaveCount(0);
-});
-
-test("configures AI providers from workspace settings without persisting API keys", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "chromium", "AI settings smoke runs on desktop viewport.");
-  const setupRail = page.locator("section").filter({ hasText: "New VDT" }).first();
-
-  await page.getByTestId("settings-button").click();
-  const settings = page.getByRole("dialog", { name: "Workspace settings" });
-  await settings.getByRole("tab", { name: "AI" }).click();
-  await settings.getByRole("combobox", { name: "Provider" }).selectOption("openai_compatible");
-  await settings.getByRole("textbox", { name: "Base URL" }).fill("https://models.example.test/v1");
-  await settings.getByRole("textbox", { name: "Model" }).fill("vdt-production-model");
-  await settings.getByLabel("API key").fill("session-only-key");
-  await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("vdt-studio-state") ?? ""))
-    .not.toContain("session-only-key");
-  await page.keyboard.press("Escape");
-
-  await expect(setupRail.getByRole("combobox", { name: "Provider" })).toHaveValue("openai_compatible");
-  await expect(setupRail.getByRole("textbox", { name: "Base URL" })).toHaveValue("https://models.example.test/v1");
-  await expect(setupRail.getByRole("textbox", { name: "Model" })).toHaveValue("vdt-production-model");
-  await expect(setupRail.getByLabel("API key")).toHaveValue("session-only-key");
+  await page.getByRole("button", { name: /Generate VDT with AI/i }).click();
+  await expect.poll(() => generateRequestBody?.providerId).toBe("anthropic");
+  expect(generateRequestBody?.providerConfig?.baseUrl).toBe("https://api.anthropic.com");
+  expect(generateRequestBody?.providerConfig?.model).toBe("vdt-production-model");
+  expect(generateRequestBody?.providerConfig?.apiKey).toBe("session-only-key");
 
   await page.reload();
-  await page.getByTestId("settings-button").click();
-  const reloadedSettings = page.getByRole("dialog", { name: "Workspace settings" });
-  await reloadedSettings.getByRole("tab", { name: "AI" }).click();
-  await expect(reloadedSettings.getByRole("combobox", { name: "Provider" })).toHaveValue("openai_compatible");
-  await expect(reloadedSettings.getByRole("textbox", { name: "Base URL" })).toHaveValue(
-    "https://models.example.test/v1"
-  );
-  await expect(reloadedSettings.getByRole("textbox", { name: "Model" })).toHaveValue("vdt-production-model");
-  await expect(reloadedSettings.getByLabel("API key")).toHaveValue("");
+
+  const persistedAfterReload = await readPersistedExecutionSettings(page);
+  expect(persistedAfterReload?.byokProtocol).toBe("anthropic");
+  expect(persistedAfterReload?.gatewayPresetId).toBe("anthropic-claude");
+  expect(persistedAfterReload?.model).toBe("vdt-production-model");
+  expect(persistedAfterReload?.baseUrl).toBe("https://api.anthropic.com");
+  expect(persistedAfterReload?.apiKey).toBeUndefined();
+  expect(persistedAfterReload?.localApiKey).toBeUndefined();
+
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-byok").click();
+  await page.getByTestId("byok-protocol-anthropic").click();
+  await expect(page.getByTestId("byok-api-key")).toHaveValue("");
 
   await page.evaluate(() => {
     const raw = localStorage.getItem("vdt-studio-state");
@@ -375,13 +561,19 @@ test("configures AI providers from workspace settings without persisting API key
     }
     const persisted = JSON.parse(raw) as {
       version?: number;
-      state?: { providerConfig?: Record<string, unknown> };
+      state?: {
+        providerConfig?: Record<string, unknown>;
+        executionSettings?: Record<string, unknown>;
+      };
     };
     persisted.version = 0;
     persisted.state ??= {};
     persisted.state.providerConfig ??= {};
     persisted.state.providerConfig.apiKey = "legacy-openai-secret";
     persisted.state.providerConfig.localApiKey = "legacy-local-secret";
+    persisted.state.executionSettings ??= {};
+    persisted.state.executionSettings.apiKey = "legacy-execution-secret";
+    persisted.state.executionSettings.localApiKey = "legacy-execution-local-secret";
     localStorage.setItem("vdt-studio-state", JSON.stringify(persisted));
   });
   await page.reload();
@@ -391,6 +583,25 @@ test("configures AI providers from workspace settings without persisting API key
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("vdt-studio-state") ?? ""))
     .not.toContain("legacy-local-secret");
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("vdt-studio-state") ?? ""))
+    .not.toContain("legacy-execution-secret");
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("vdt-studio-state") ?? ""))
+    .not.toContain("legacy-execution-local-secret");
+});
+
+test("blocks BYOK test connection when required fields are missing", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "BYOK validation smoke runs on desktop viewport.");
+
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-byok").click();
+  await page.getByTestId("byok-protocol-anthropic").click();
+  await expect(page.getByTestId("byok-preset-form")).toBeVisible();
+
+  await page.getByTestId("byok-test-connection").click();
+  await expect(page.getByTestId("byok-api-key")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByRole("status")).toHaveCount(0);
 });
 
 test("runs the downtime scenario and shows impacted drivers", async ({ page }, testInfo) => {
@@ -441,28 +652,33 @@ test("keeps the primary creation flow usable on mobile", async ({ page }, testIn
   await expect(page.getByRole("button", { name: /Generate VDT with AI/i })).toBeVisible();
 });
 
-test("keeps AI settings reachable and usable on mobile", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "mobile-chrome", "Mobile AI settings smoke only runs on the mobile project.");
+test("keeps execution settings reachable on mobile", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-chrome", "Mobile execution settings smoke only runs on the mobile project.");
 
-  await page.getByTestId("settings-button").click();
-  const settings = page.getByRole("dialog", { name: "Workspace settings" });
-  await expect(settings).toBeVisible();
-  await settings.getByRole("tab", { name: "AI" }).click();
-  await settings.getByRole("combobox", { name: "Provider" }).selectOption("local_runner");
-  await expect(settings.getByRole("textbox", { name: "Runner URL" })).toBeVisible();
-  await expect(settings.getByRole("combobox", { name: "Preset" })).toBeVisible();
+  const modal = await openSettingsModal(page);
+  await expect(modal.getByRole("heading", { name: "Execution mode" })).toBeVisible();
+  await expect(page.getByTestId("execution-mode-tab-local-cli")).toBeVisible();
+  await expect(page.getByTestId("execution-mode-tab-byok")).toBeVisible();
+  await page.getByTestId("execution-mode-tab-local-cli").click();
+  await expect(page.getByTestId("local-cli-settings")).toBeVisible();
 
-  const [dialogBox, viewport] = await Promise.all([settings.boundingBox(), Promise.resolve(page.viewportSize())]);
+  await page.getByTestId("execution-mode-tab-byok").click();
+  await expect(page.getByTestId("execution-mode-panel-byok")).toBeVisible();
+  await expect(page.getByTestId("byok-settings")).toBeVisible();
+
+  const [dialogBox, viewport] = await Promise.all([modal.boundingBox(), Promise.resolve(page.viewportSize())]);
   expect(dialogBox).not.toBeNull();
   expect(viewport).not.toBeNull();
   expect(dialogBox!.x).toBeGreaterThanOrEqual(0);
-  expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(viewport!.width);
+  expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(viewport!.width + 1);
+  expect(dialogBox!.y).toBeGreaterThanOrEqual(0);
+  expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(viewport!.height + 1);
 });
 
 test("persists font and panel scale from settings", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Settings persistence runs on desktop viewport.");
 
-  await page.getByTestId("settings-button").click();
+  await openSettingsModal(page, "display");
   await page.getByTestId("font-scale-slider").fill("80");
   await page.getByTestId("panel-scale-slider").fill("75");
   await page.keyboard.press("Escape");
@@ -655,7 +871,7 @@ test("persists dragged node positions after reload", async ({ page }, testInfo) 
 test("resets display preferences to defaults", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Reset UI preferences runs on desktop viewport.");
 
-  await page.getByTestId("settings-button").click();
+  await openSettingsModal(page, "display");
   await page.getByTestId("font-scale-slider").fill("80");
   await page.getByTestId("panel-scale-slider").fill("75");
   await page.keyboard.press("Escape");
@@ -664,7 +880,7 @@ test("resets display preferences to defaults", async ({ page }, testInfo) => {
   await page.getByTestId("collapse-right-panel").click();
   await page.getByTestId("collapse-scenario-drawer").click();
 
-  await page.getByTestId("settings-button").click();
+  await openSettingsModal(page, "display");
   await page.getByTestId("reset-ui-preferences").click();
   await page.keyboard.press("Escape");
 

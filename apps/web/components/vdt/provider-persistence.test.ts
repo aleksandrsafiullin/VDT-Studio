@@ -26,6 +26,24 @@ describe("provider persistence", () => {
     });
   });
 
+  it("removes execution settings secrets without changing other fields", () => {
+    expect(
+      scrubPersistedProviderSecrets({
+        executionSettings: {
+          executionMode: "byok",
+          apiKey: "session-only",
+          localApiKey: "also-session-only",
+          baseUrl: "https://api.openai.com/v1"
+        }
+      })
+    ).toEqual({
+      executionSettings: {
+        executionMode: "byok",
+        baseUrl: "https://api.openai.com/v1"
+      }
+    });
+  });
+
   it("leaves unrelated legacy payloads unchanged", () => {
     expect(scrubPersistedProviderSecrets({ providerId: "mock" })).toEqual({ providerId: "mock" });
     expect(scrubPersistedProviderSecrets(undefined)).toBeUndefined();

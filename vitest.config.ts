@@ -2,9 +2,12 @@ import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
 export default defineConfig({
+  esbuild: {
+    jsx: "automatic"
+  },
   test: {
     environment: "node",
-    include: ["packages/**/*.test.ts", "apps/**/*.test.ts"],
+    include: ["packages/**/*.test.ts", "packages/**/*.test.tsx", "apps/**/*.test.ts", "apps/**/*.test.tsx"],
     coverage: {
       reporter: ["text", "html"]
     }
@@ -12,7 +15,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@vdt-studio/vdt-core": fileURLToPath(new URL("./packages/vdt-core/src/index.ts", import.meta.url)),
-      "@vdt-studio/ai-harness": fileURLToPath(new URL("./packages/ai-harness/src/index.ts", import.meta.url))
+      "@vdt-studio/ai-harness": fileURLToPath(new URL("./packages/ai-harness/src/index.ts", import.meta.url)),
+      "@vdt-studio/cli": fileURLToPath(new URL("./packages/cli/src/index.ts", import.meta.url)),
+      "@": fileURLToPath(new URL("./apps/web", import.meta.url))
     }
   }
 });

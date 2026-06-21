@@ -35,6 +35,9 @@ importers:
       '@vdt-studio/ai-harness':
         specifier: workspace:*
         version: link:../../packages/ai-harness
+      '@vdt-studio/cli':
+        specifier: workspace:*
+        version: link:../../packages/cli
       '@vdt-studio/vdt-core':
         specifier: workspace:*
         version: link:../../packages/vdt-core
@@ -92,6 +95,10 @@ importers:
         version: 3.25.76
 
   packages/cli:
+    dependencies:
+      '@vdt-studio/vdt-core':
+        specifier: workspace:*
+        version: link:../vdt-core
     devDependencies:
       esbuild:
         specifier: ^0.28.1

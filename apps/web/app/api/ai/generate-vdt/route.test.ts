@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as aiHarness from "@vdt-studio/ai-harness";
 import { productionVolumeAiOutput } from "@vdt-studio/ai-harness";
 import { POST } from "./route";
 
@@ -31,6 +32,29 @@ describe("generate VDT API route", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+  });
+
+  it("passes maxTokens from providerConfig to generateVdtProject", async () => {
+    const generateSpy = vi.spyOn(aiHarness, "generateVdtProject");
+
+    try {
+      const response = await POST(
+        jsonRequest({
+          rootKpi: "Production Volume",
+          providerId: "mock",
+          providerConfig: { maxTokens: 8_192 }
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(generateSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ rootKpi: "Production Volume" }),
+        expect.objectContaining({ maxTokens: 8_192 })
+      );
+    } finally {
+      generateSpy.mockRestore();
+    }
   });
 
   it("generates a validated mock-provider project with AI review artifacts", async () => {
@@ -217,6 +241,33 @@ describe("generate VDT API route", () => {
     expect(response.status).toBe(200);
     expect(body.project?.rootNodeId).toBe("production_volume");
     expect(fetchMock).toHaveBeenCalledWith(url, expect.objectContaining({ method: "POST" }));
+  });
+
+  it("returns a friendly error when local runner fetch fails", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(
+      jsonRequest({
+        rootKpi: "Production Volume",
+        providerId: "local_runner",
+        providerConfig: {
+          runnerUrl: "http://127.0.0.1:8765",
+          runnerProviderId: "local_http_stub",
+          baseUrl: "http://127.0.0.1:11434/v1",
+          model: "qwen3"
+        }
+      })
+    );
+    const body = await readJson(response);
+
+    expect(response.status).toBe(503);
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("Local runner is offline");
+    expect(body.error).toContain("pnpm local-runner:start");
+    expect(body.error).not.toContain("fetch failed");
   });
 
   it("blocks remote request-supplied local runner URLs in production", async () => {

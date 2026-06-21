@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": false,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "bin": {
     "vdt": "./dist/cli.mjs"
   },
@@ -10,6 +13,9 @@
     "dist",
     "README.md"
   ],
+  "dependencies": {
+    "@vdt-studio/vdt-core": "workspace:*"
+  },
   "devDependencies": {
     "esbuild": "^0.28.1"
   },

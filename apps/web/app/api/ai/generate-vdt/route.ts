@@ -4,12 +4,18 @@ import {
   AzureOpenAiProvider,
   generateVdtProject,
   GeminiProvider,
+  isLocalRunnerConnectionFailure,
   LocalRunnerProvider,
+  localRunnerOfflineMessage,
   MockProvider,
   OpenAiCompatibleProvider,
   type GenerateVdtInput,
   type LocalRunnerProviderConfig
 } from "@vdt-studio/ai-harness";
+import {
+  DEFAULT_ANTHROPIC_FALLBACK_MODEL,
+  DEFAULT_OPENAI_COMPATIBLE_FALLBACK_MODEL
+} from "@/lib/execution-mode-catalog";
 
 interface GenerateVdtRequest extends GenerateVdtInput {
   providerId?: "mock" | "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "local_runner";
@@ -79,6 +85,19 @@ function readProviderConfig(value: unknown) {
   }
 
   return providerConfig;
+}
+
+function readMaxTokens(value: unknown): number | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const maxTokens = (value as Record<string, unknown>).maxTokens;
+  if (typeof maxTokens !== "number" || !Number.isFinite(maxTokens) || maxTokens <= 0) {
+    return undefined;
+  }
+
+  return Math.min(Math.floor(maxTokens), 1_000_000);
 }
 
 function readLocalRunnerProviderConfig(value: unknown): LocalRunnerProviderConfig {
@@ -213,8 +232,8 @@ function readArgs(args: unknown, argsText: unknown): string[] | undefined {
 }
 
 export async function POST(request: Request) {
+  let body: (GenerateVdtRequest & Record<string, unknown>) | undefined;
   try {
-    let body: GenerateVdtRequest & Record<string, unknown>;
     try {
       body = (await request.json()) as GenerateVdtRequest & Record<string, unknown>;
     } catch {
@@ -264,7 +283,7 @@ export async function POST(request: Request) {
       provider = new OpenAiCompatibleProvider({
         baseUrl: requestBaseUrl ?? envBaseUrl,
         apiKey,
-        model: providerConfig.model ?? process.env.OPENAI_COMPATIBLE_MODEL ?? "gpt-4.1-mini"
+        model: providerConfig.model ?? process.env.OPENAI_COMPATIBLE_MODEL ?? DEFAULT_OPENAI_COMPATIBLE_FALLBACK_MODEL
       });
     } else if (body.providerId === "anthropic") {
       const providerConfig = readProviderConfig(body.providerConfig);
@@ -281,7 +300,7 @@ export async function POST(request: Request) {
       provider = new AnthropicProvider({
         baseUrl,
         apiKey,
-        model: providerConfig.model ?? process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
+        model: providerConfig.model ?? process.env.ANTHROPIC_MODEL ?? DEFAULT_ANTHROPIC_FALLBACK_MODEL,
         anthropicVersion: providerConfig.anthropicVersion ?? "2023-06-01"
       });
     } else if (body.providerId === "azure_openai") {
@@ -336,7 +355,9 @@ export async function POST(request: Request) {
       provider = new MockProvider();
     }
 
-    const project = await generateVdtProject(provider, input);
+    const project = await generateVdtProject(provider, input, {
+      maxTokens: readMaxTokens(body.providerConfig)
+    });
     return NextResponse.json({ ok: true, project });
   } catch (error) {
     if (
@@ -360,6 +381,22 @@ export async function POST(request: Request) {
           error: error.name === "ZodError" ? "AI response failed schema validation." : error.message
         },
         { status: 422 }
+      );
+    }
+
+    if (error instanceof Error && isLocalRunnerConnectionFailure(error)) {
+      const runnerUrl =
+        body?.providerId === "local_runner"
+          ? readLocalRunnerProviderConfig(body.providerConfig).runnerUrl
+          : (process.env.VDT_LOCAL_RUNNER_URL ?? "http://127.0.0.1:8765");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: error.message.startsWith("Local runner is offline")
+            ? error.message
+            : localRunnerOfflineMessage(runnerUrl)
+        },
+        { status: 503 }
       );
     }
 

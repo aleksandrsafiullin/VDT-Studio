@@ -11,10 +11,12 @@ import {
   useVdtStudioStore,
   type ExampleProjectId
 } from "./vdt-store";
-import { AiProviderSettings } from "./ai-provider-settings";
+import { ExecutionModeSummaryCard } from "./execution-mode-summary";
+import { SettingsModal } from "./settings-modal";
 
 export function SetupRail() {
   const [selectedExampleId, setSelectedExampleId] = useState<ExampleProjectId>("production_volume");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const brief = useVdtStudioStore((state) => state.brief);
   const isGenerating = useVdtStudioStore((state) => state.isGenerating);
   const aiError = useVdtStudioStore((state) => state.aiError);
@@ -42,7 +44,7 @@ export function SetupRail() {
     <Panel className="flex h-full min-h-0 flex-col border-r">
       <PanelHeader
         title="New VDT"
-        subtitle="Project brief and model provider"
+        subtitle="Project brief and execution mode"
         action={
           <PanelCollapseButton
             side="left"
@@ -92,9 +94,9 @@ export function SetupRail() {
         <div className="border-t border-line pt-4">
           <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
             <Bot className="h-4 w-4 text-accent" />
-            AI model harness
+            Execution mode
           </div>
-          <AiProviderSettings />
+          <ExecutionModeSummaryCard onConfigure={() => setSettingsOpen(true)} />
         </div>
 
         {aiError ? (
@@ -131,6 +133,12 @@ export function SetupRail() {
           Browser-local state is saved automatically.
         </div>
       </div>
+      <SettingsModal
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        initialSection="execution"
+        hideTrigger
+      />
     </Panel>
   );
 }

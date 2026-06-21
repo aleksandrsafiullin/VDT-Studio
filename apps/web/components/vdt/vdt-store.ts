@@ -14,7 +14,10 @@ import {
   type VdtProject,
   type VdtScenario
 } from "@vdt-studio/vdt-core";
-import type { GenerateVdtInput, OpenAiCompatibleProviderConfig } from "@vdt-studio/ai-harness";
+import {
+  type GenerateVdtInput,
+  type OpenAiCompatibleProviderConfig
+} from "@vdt-studio/ai-harness";
 import { makeId, slugifyId } from "@/lib/id";
 import {
   applyUiPreference,
@@ -24,6 +27,42 @@ import {
 } from "./ui-preferences";
 import { collectExistingPositions } from "./layout-positions";
 import { scrubPersistedProviderSecrets } from "./provider-persistence";
+import {
+  applyGatewayPreset,
+  applyLocalRunnerPreset,
+  DEFAULT_EXECUTION_SETTINGS,
+  DEFAULT_PRESET_BY_PROTOCOL,
+  GATEWAY_TO_PRESET,
+  getCliCatalogEntry,
+  persistedExecutionSettings,
+  type ExecutionSettings,
+  type GatewayPresetId,
+  type CliAgentId,
+  type ByokGateway,
+  type ByokProtocol,
+  type ExecutionMode,
+  type MemoryModelMode,
+  type CliModelSelection
+} from "@/lib/execution-mode-catalog";
+import {
+  migrateLegacyProviderToExecutionSettings,
+  migratePersistedStateToV2,
+  reconcilePersistedExecutionSettings,
+  resolveExecutionSettings,
+  syncLegacyProviderFromExecutionSettings,
+  validateExecutionForGenerate
+} from "@/lib/execution-mode-resolver";
+import {
+  clearByokFieldError,
+  hasByokFieldErrors,
+  validateByokSettings,
+  type ByokFieldErrors
+} from "@/lib/byok-validation";
+import {
+  mergeCliDetectionAgents,
+  patchSelectedCliCommandAfterRescan,
+  resolveCliCommandForAgent
+} from "@/lib/cli-detection";
 import inventoryLevelExample from "../../../../examples/inventory-level.json";
 import maintenanceCostExample from "../../../../examples/maintenance-cost.json";
 import oeeExample from "../../../../examples/oee.json";
@@ -45,6 +84,17 @@ export type ProviderId = "mock" | "openai_compatible" | "anthropic" | "azure_ope
 export type ExampleProjectId = "production_volume" | "oee" | "inventory_level" | "maintenance_cost";
 export type LocalRunnerPresetId = "ollama_openai" | "lm_studio_openai" | "vllm_openai" | "custom_cli_json";
 
+export type {
+  ExecutionMode,
+  ByokProtocol,
+  ByokGateway,
+  GatewayPresetId,
+  CliAgentId,
+  MemoryModelMode,
+  CliModelSelection,
+  ExecutionSettings
+} from "@/lib/execution-mode-catalog";
+
 export interface LocalRunnerPreset {
   id: LocalRunnerPresetId;
   label: string;
@@ -56,8 +106,33 @@ export interface LocalRunnerPreset {
 }
 
 export interface ProviderTestStatus {
-  kind: "success" | "error";
+  kind: "success" | "error" | "info";
   message: string;
+}
+
+const RUNNER_HEALTH_PROBE_MS = 3_000;
+
+async function probeLocalRunnerHealth(runnerUrl: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RUNNER_HEALTH_PROBE_MS);
+
+  try {
+    const response = await fetch(`${runnerUrl}/health`, { signal: controller.signal });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export interface CliAgentDetectionSnapshot {
+  id: CliAgentId;
+  installed: boolean;
+  executable: string | null;
+  alias: string | null;
+  version: string | null;
+  error?: string | undefined;
 }
 
 interface ProviderConfigState extends Partial<OpenAiCompatibleProviderConfig> {
@@ -146,8 +221,18 @@ interface VdtStudioState {
   brief: BriefState;
   providerId: ProviderId;
   providerConfig: ProviderConfigState;
+  executionSettings: ExecutionSettings;
+  cliDetectionAgents?: CliAgentDetectionSnapshot[] | undefined;
+  cliDetectionError?: string | undefined;
+  isRescanningClis: boolean;
+  rescanningCliId?: CliAgentId | undefined;
+  cliModelByAgent: Partial<Record<CliAgentId, CliModelSelection>>;
+  cliDiscoveredModelsByAgent: Partial<Record<CliAgentId, string[]>>;
+  cliTestStatusByAgent: Partial<Record<CliAgentId, ProviderTestStatus>>;
+  isTestingCliByAgent: Partial<Record<CliAgentId, boolean>>;
   isTestingProvider: boolean;
   providerTestStatus?: ProviderTestStatus | undefined;
+  byokFieldErrors?: ByokFieldErrors | undefined;
   ui: UiPreferences;
   isGenerating: boolean;
   aiError?: string | undefined;
@@ -161,7 +246,23 @@ interface VdtStudioState {
     field: K,
     value: ProviderConfigState[K]
   ) => void;
+  setExecutionMode: (executionMode: ExecutionMode) => void;
+  setExecutionSettingsField: <K extends keyof ExecutionSettings>(
+    field: K,
+    value: ExecutionSettings[K]
+  ) => void;
+  setSelectedCliAgentId: (agentId: CliAgentId) => void;
+  setLocalRunnerPreset: (presetId: LocalRunnerPresetId) => void;
+  setByokProtocol: (protocol: ByokProtocol) => void;
+  setByokGateway: (gateway: ByokGateway) => void;
+  setGatewayPreset: (presetId: GatewayPresetId) => void;
+  setMemoryModelMode: (mode: MemoryModelMode, cliAgentId?: CliAgentId) => void;
+  setCliModelSelection: (selection: CliModelSelection) => void;
+  setCliModelForAgent: (agentId: CliAgentId, selection: CliModelSelection) => void;
+  rescanClis: (agentId?: CliAgentId) => Promise<void>;
+  testCli: (agentId: CliAgentId) => Promise<void>;
   setProviderTestState: (isTestingProvider: boolean, providerTestStatus?: ProviderTestStatus) => void;
+  setByokFieldErrors: (byokFieldErrors: ByokFieldErrors | undefined) => void;
   setUiPreference: <K extends keyof UiPreferences>(field: K, value: UiPreferences[K]) => void;
   toggleLeftPanel: () => void;
   toggleRightPanel: () => void;
@@ -300,6 +401,19 @@ function persistedProviderConfig(config: ProviderConfigState) {
   return nextConfig;
 }
 
+function withSyncedLegacyProvider(
+  executionSettings: ExecutionSettings,
+  existingConfig: ProviderConfigState
+): Pick<VdtStudioState, "executionSettings" | "providerId" | "providerConfig" | "providerTestStatus"> {
+  const synced = syncLegacyProviderFromExecutionSettings(executionSettings, existingConfig);
+  return {
+    executionSettings,
+    providerId: synced.providerId,
+    providerConfig: synced.providerConfig as ProviderConfigState,
+    providerTestStatus: undefined
+  };
+}
+
 export const useVdtStudioStore = create<VdtStudioState>()(
   persist(
     (set, get) => ({
@@ -319,9 +433,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       providerId: "mock",
       providerConfig: {
         openAiBaseUrl: "https://api.openai.com/v1",
-        openAiModel: "gpt-4.1-mini",
+        openAiModel: "gpt-5.4-mini",
         anthropicBaseUrl: "https://api.anthropic.com",
-        anthropicModel: "claude-sonnet-4-5",
+        anthropicModel: "claude-sonnet-4-6",
         geminiBaseUrl: "https://generativelanguage.googleapis.com",
         geminiModel: "gemini-2.5-pro",
         localRunnerPresetId: "ollama_openai",
@@ -331,7 +445,17 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         localModel: "qwen3",
         timeoutSec: 60
       },
+      executionSettings: { ...DEFAULT_EXECUTION_SETTINGS },
+      cliDetectionAgents: undefined,
+      cliDetectionError: undefined,
+      isRescanningClis: false,
+      rescanningCliId: undefined,
+      cliModelByAgent: {},
+      cliDiscoveredModelsByAgent: {},
+      cliTestStatusByAgent: {},
+      isTestingCliByAgent: {},
       isTestingProvider: false,
+      byokFieldErrors: undefined,
       ui: { ...DEFAULT_UI },
       isGenerating: false,
       setUiPreference: (field, value) =>
@@ -389,48 +513,361 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             [field]: value
           }
         })),
-      setProviderId: (providerId) => set({
-        providerId,
-        providerConfig: { ...get().providerConfig, apiKey: undefined },
-        providerTestStatus: undefined
-      }),
+      setProviderId: (providerId) => {
+        const providerConfig = { ...get().providerConfig, apiKey: undefined };
+        set({
+          providerId,
+          providerConfig,
+          providerTestStatus: undefined,
+          executionSettings: migrateLegacyProviderToExecutionSettings(providerId, providerConfig)
+        });
+      },
       setProviderConfigField: (field, value) =>
-        set((state) => ({
-          providerConfig: {
+        set((state) => {
+          const providerConfig = {
             ...state.providerConfig,
             [field]: value
-          },
-          providerTestStatus: undefined
+          };
+          return {
+            providerConfig,
+            providerTestStatus: undefined,
+            executionSettings: migrateLegacyProviderToExecutionSettings(state.providerId, providerConfig)
+          };
+        }),
+      setExecutionMode: (executionMode) =>
+        set((state) => ({
+          ...withSyncedLegacyProvider({ ...state.executionSettings, executionMode }, state.providerConfig),
+          byokFieldErrors: undefined
         })),
-      setProviderTestState: (isTestingProvider, providerTestStatus) =>
-        set({ isTestingProvider, providerTestStatus }),
-      generateWithAi: async () => {
-        const { brief, providerId, providerConfig } = get();
-        set({ isGenerating: true, aiError: undefined, deepenPreview: undefined });
+      setExecutionSettingsField: (field, value) =>
+        set((state) => ({
+          ...withSyncedLegacyProvider(
+            {
+              ...state.executionSettings,
+              [field]: value
+            },
+            state.providerConfig
+          ),
+          byokFieldErrors: clearByokFieldError(state.byokFieldErrors, field)
+        })),
+      setSelectedCliAgentId: (agentId) =>
+        set((state) => {
+          const command = resolveCliCommandForAgent(agentId, state.cliDetectionAgents);
+          const cliModelSelection =
+            state.cliModelByAgent[agentId] ??
+            state.executionSettings.cliModelSelection ?? { source: "agent_default" };
+
+          return withSyncedLegacyProvider(
+            {
+              ...state.executionSettings,
+              selectedCliAgentId: agentId,
+              executionMode: "local_cli",
+              localRunnerPresetId: "custom_cli_json",
+              runnerProviderId: "cli_stub",
+              command,
+              cliModelSelection
+            },
+            state.providerConfig
+          );
+        }),
+      setLocalRunnerPreset: (presetId) =>
+        set((state) =>
+          withSyncedLegacyProvider(
+            applyLocalRunnerPreset(state.executionSettings, presetId),
+            state.providerConfig
+          )
+        ),
+      setByokProtocol: (protocol) =>
+        set((state) => ({
+          ...withSyncedLegacyProvider(
+            applyGatewayPreset(
+              {
+                ...state.executionSettings,
+                byokProtocol: protocol,
+                byokGateway: "none"
+              },
+              DEFAULT_PRESET_BY_PROTOCOL[protocol]
+            ),
+            state.providerConfig
+          ),
+          byokFieldErrors: undefined
+        })),
+      setByokGateway: (gateway) =>
+        set((state) => {
+          const nextState =
+            gateway === "none"
+              ? withSyncedLegacyProvider(
+                  applyGatewayPreset(
+                    state.executionSettings,
+                    DEFAULT_PRESET_BY_PROTOCOL[state.executionSettings.byokProtocol ?? "openai"]
+                  ),
+                  state.providerConfig
+                )
+              : withSyncedLegacyProvider(
+                  applyGatewayPreset(state.executionSettings, GATEWAY_TO_PRESET[gateway]),
+                  state.providerConfig
+                );
+
+          return {
+            ...nextState,
+            byokFieldErrors: undefined
+          };
+        }),
+      setGatewayPreset: (presetId) =>
+        set((state) => ({
+          ...withSyncedLegacyProvider(applyGatewayPreset(state.executionSettings, presetId), state.providerConfig),
+          byokFieldErrors: undefined
+        })),
+      setMemoryModelMode: (mode, cliAgentId) =>
+        set((state) => ({
+          executionSettings: {
+            ...state.executionSettings,
+            memoryModelMode: mode,
+            memoryCliAgentId: mode === "selected_cli" ? cliAgentId : undefined
+          }
+        })),
+      setCliModelSelection: (selection) =>
+        set((state) => ({
+          executionSettings: {
+            ...state.executionSettings,
+            cliModelSelection: selection
+          }
+        })),
+      setCliModelForAgent: (agentId, selection) =>
+        set((state) => {
+          const cliModelByAgent = {
+            ...state.cliModelByAgent,
+            [agentId]: selection
+          };
+          const executionSettings =
+            state.executionSettings.selectedCliAgentId === agentId
+              ? {
+                  ...state.executionSettings,
+                  cliModelSelection: selection
+                }
+              : state.executionSettings;
+
+          return {
+            cliModelByAgent,
+            executionSettings
+          };
+        }),
+      rescanClis: async (agentId) => {
+        set({
+          isRescanningClis: true,
+          rescanningCliId: agentId,
+          cliDetectionError: undefined
+        });
 
         try {
-          const requestProviderConfig =
-            providerId === "local_runner"
-              ? {
-                  ...providerConfig,
-                  baseUrl: providerConfig.localBaseUrl,
-                  model: providerConfig.localModel,
-                  apiKey: providerConfig.localApiKey
-                }
-              : providerId === "openai_compatible"
-                ? { ...providerConfig, baseUrl: providerConfig.openAiBaseUrl, model: providerConfig.openAiModel }
-                : providerId === "anthropic"
-                  ? { ...providerConfig, baseUrl: providerConfig.anthropicBaseUrl, model: providerConfig.anthropicModel }
-                  : providerId === "gemini"
-                    ? { ...providerConfig, baseUrl: providerConfig.geminiBaseUrl, model: providerConfig.geminiModel }
-                    : providerConfig;
+          const url = agentId ? `/api/ai/detect-clis?id=${encodeURIComponent(agentId)}` : "/api/ai/detect-clis";
+          const response = await fetch(url);
+          const payload = (await response.json()) as {
+            agents?: CliAgentDetectionSnapshot[];
+            error?: string;
+          };
+
+          if (!response.ok || !payload.agents) {
+            throw new Error(payload.error ?? `CLI detection failed with ${response.status}.`);
+          }
+
+          set((state) => {
+            let cliDetectionAgents: CliAgentDetectionSnapshot[];
+
+            if (!agentId) {
+              cliDetectionAgents = payload.agents!;
+            } else {
+              const nextAgent = payload.agents![0];
+              if (!nextAgent) {
+                return {
+                  isRescanningClis: false,
+                  rescanningCliId: undefined
+                };
+              }
+
+              cliDetectionAgents = mergeCliDetectionAgents(state.cliDetectionAgents, nextAgent, agentId);
+            }
+
+            const patchedExecutionSettings = patchSelectedCliCommandAfterRescan(
+              state.executionSettings,
+              cliDetectionAgents,
+              agentId
+            );
+
+            const scanUpdate = {
+              cliDetectionAgents,
+              cliDetectionError: undefined,
+              isRescanningClis: false,
+              rescanningCliId: undefined
+            };
+
+            if (patchedExecutionSettings === state.executionSettings) {
+              return scanUpdate;
+            }
+
+            return {
+              ...scanUpdate,
+              ...withSyncedLegacyProvider(patchedExecutionSettings, state.providerConfig)
+            };
+          });
+        } catch (error) {
+          set({
+            cliDetectionAgents: [],
+            cliDetectionError: error instanceof Error ? error.message : "CLI detection failed.",
+            isRescanningClis: false,
+            rescanningCliId: undefined
+          });
+        }
+      },
+      testCli: async (agentId) => {
+        const state = get();
+        const catalog = getCliCatalogEntry(agentId);
+        const command = resolveCliCommandForAgent(agentId, state.cliDetectionAgents);
+        const runnerUrl = (state.executionSettings.runnerUrl ?? "http://127.0.0.1:8765").replace(/\/$/, "");
+        const timeoutSec = state.executionSettings.timeoutSec ?? 60;
+        const testFingerprint = JSON.stringify({ agentId, command, runnerUrl, timeoutSec });
+
+        set((current) => ({
+          isTestingCliByAgent: {
+            ...current.isTestingCliByAgent,
+            [agentId]: true
+          },
+          cliTestStatusByAgent: {
+            ...current.cliTestStatusByAgent,
+            [agentId]: undefined
+          }
+        }));
+
+        let nextStatus: ProviderTestStatus | undefined;
+
+        try {
+          const runnerOnline = await probeLocalRunnerHealth(runnerUrl);
+          if (!runnerOnline) {
+            const cliDetected = state.cliDetectionAgents?.some(
+              (agent) => agent.id === agentId && agent.installed
+            );
+            nextStatus = {
+              kind: "info",
+              message: cliDetected
+                ? `${catalog.displayName} is on PATH. Start local-runner for a full connection probe — see docs/LOCAL_RUNNER.md.`
+                : `Local runner is offline. Install ${catalog.displayName}, start local-runner, then test again — see docs/LOCAL_RUNNER.md.`
+            };
+            return;
+          }
+
+          const response = await fetch(`${runnerUrl}/test-provider`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              providerId: "cli_stub",
+              providerConfig: {
+                name: catalog.displayName,
+                command,
+                inputMode: "stdin",
+                outputMode: "stdout_json",
+                timeoutSec
+              },
+              timeoutSec
+            })
+          });
+
+          const payload = (await response.json()) as {
+            ok?: boolean;
+            models?: string[];
+            error?: { message?: string; code?: string };
+          };
+
+          if (!response.ok || !payload.ok) {
+            if (payload.error?.code === "CLI_EXECUTION_DISABLED") {
+              nextStatus = {
+                kind: "info",
+                message:
+                  "CLI execution is disabled on local-runner. Set VDT_LOCAL_RUNNER_ENABLE_CLI=true and review the command allowlist."
+              };
+              return;
+            }
+            throw new Error(payload.error?.message ?? `CLI test failed with ${response.status}.`);
+          }
+
+          const models = payload.models ?? [];
+          if (models.length > 0) {
+            set((current) => ({
+              cliDiscoveredModelsByAgent: {
+                ...current.cliDiscoveredModelsByAgent,
+                [agentId]: models
+              }
+            }));
+          }
+
+          const modelList = models.length ? ` Models: ${models.slice(0, 3).join(", ")}.` : "";
+          nextStatus = {
+            kind: "success",
+            message: `Connection test passed.${modelList}`
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "CLI test failed.";
+          nextStatus = {
+            kind: "error",
+            message
+          };
+        } finally {
+          const currentState = get();
+          const currentFingerprint = JSON.stringify({
+            agentId,
+            command,
+            runnerUrl: (currentState.executionSettings.runnerUrl ?? "http://127.0.0.1:8765").replace(/\/$/, ""),
+            timeoutSec: currentState.executionSettings.timeoutSec ?? 60
+          });
+
+          set((current) => ({
+            isTestingCliByAgent: {
+              ...current.isTestingCliByAgent,
+              [agentId]: false
+            },
+            cliTestStatusByAgent:
+              currentFingerprint === testFingerprint
+                ? {
+                    ...current.cliTestStatusByAgent,
+                    [agentId]: nextStatus
+                  }
+                : current.cliTestStatusByAgent
+          }));
+        }
+      },
+      setProviderTestState: (isTestingProvider, providerTestStatus) =>
+        set({ isTestingProvider, providerTestStatus }),
+      setByokFieldErrors: (byokFieldErrors) => set({ byokFieldErrors }),
+      generateWithAi: async () => {
+        const { brief, executionSettings, cliDetectionAgents } = get();
+
+        if (executionSettings.executionMode === "byok") {
+          const validationErrors = validateByokSettings(executionSettings);
+          if (hasByokFieldErrors(validationErrors)) {
+            set({
+              byokFieldErrors: validationErrors,
+              aiError: "Fix BYOK settings before generating."
+            });
+            return;
+          }
+        }
+
+        const executionError = validateExecutionForGenerate(executionSettings, cliDetectionAgents);
+        if (executionError) {
+          set({ aiError: executionError });
+          return;
+        }
+
+        const { providerId, providerConfig } = resolveExecutionSettings(executionSettings);
+        set({ isGenerating: true, aiError: undefined, deepenPreview: undefined, byokFieldErrors: undefined });
+
+        try {
           const response = await fetch("/api/ai/generate-vdt", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               ...brief,
               providerId,
-              providerConfig: providerId === "mock" ? undefined : requestProviderConfig
+              providerConfig: providerId === "mock" ? undefined : providerConfig
             })
           });
 
@@ -668,9 +1105,16 @@ export const useVdtStudioStore = create<VdtStudioState>()(
     }),
     {
       name: "vdt-studio-state",
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => localStorage),
-      migrate: (persistedState) => scrubPersistedProviderSecrets(persistedState) as Partial<VdtStudioState>,
+      migrate: (persistedState, version) => {
+        // v2: legacy providerId/providerConfig hydrate into executionSettings via migratePersistedStateToV2.
+        let state = scrubPersistedProviderSecrets(persistedState);
+        if (version < 2) {
+          state = migratePersistedStateToV2(state);
+        }
+        return state as Partial<VdtStudioState>;
+      },
       partialize: (state) => ({
         project: state.project,
         selectedNodeId: state.selectedNodeId,
@@ -678,17 +1122,26 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         brief: state.brief,
         providerId: state.providerId,
         providerConfig: persistedProviderConfig(state.providerConfig),
+        executionSettings: persistedExecutionSettings(state.executionSettings),
         ui: state.ui
       }),
       merge: (persistedState, currentState) => {
         const persisted = persistedState as Partial<VdtStudioState> | undefined;
         const providerConfig = persistedProviderConfig(persisted?.providerConfig ?? currentState.providerConfig);
         const ui = mergeUiPreferences(persisted?.ui);
+        const executionSettings = reconcilePersistedExecutionSettings(
+          persisted?.providerId,
+          providerConfig,
+          persisted?.executionSettings
+        );
+        const synced = syncLegacyProviderFromExecutionSettings(executionSettings, providerConfig);
 
         return {
           ...currentState,
           ...persisted,
-          providerConfig,
+          providerId: synced.providerId,
+          providerConfig: persistedProviderConfig(synced.providerConfig as ProviderConfigState),
+          executionSettings,
           ui
         };
       }
