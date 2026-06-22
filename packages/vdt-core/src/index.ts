@@ -1,4 +1,8 @@
 export * from "./types";
+export * from "./changeset/types";
+export * from "./changeset/preview";
+export * from "./changeset/apply";
+export * from "./changeset/diff";
 export * from "./formula/ast";
 export * from "./formula/parser";
 export * from "./formula/evaluator";
@@ -8,4 +12,5 @@ export * from "./graph/layout";
 export * from "./scenario/scenario";
 export * from "./export/export";
 export * from "./examples/production-volume";
+export * from "./versioning/snapshot";
 export * from "./utils";

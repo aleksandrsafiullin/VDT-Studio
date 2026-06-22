@@ -1,55 +1,25 @@
 import { z } from "zod";
+import { TASK_LIMITS } from "../tasks/registry";
+import {
+  aiAssumptionsSchema,
+  aiNodeIdSchema,
+  aiQuestionsForUserSchema,
+  aiVdtEdgeSchema,
+  aiVdtNodeSchema,
+  aiWarningsSchema
+} from "./shared";
 
-const nodeTypeSchema = z.enum(["root_kpi", "calculated", "input", "assumption", "external_factor"]);
-const relationSchema = z.enum([
-  "positive_driver",
-  "negative_driver",
-  "multiplicative_driver",
-  "divisive_driver",
-  "additive_component",
-  "subtractive_component",
-  "contextual_influence",
-  "formula_dependency"
-]);
-
-export const aiVdtNodeSchema = z.object({
-  id: z.string().regex(/^[a-z][a-z0-9_]*$/),
-  name: z.string().min(1).max(120),
-  description: z.string().min(1).max(1_000),
-  type: nodeTypeSchema,
-  unit: z.string().max(80).optional(),
-  formula: z.string().max(500).optional(),
-  aiConfidence: z.number().min(0).max(1),
-  aiRationale: z.string().min(1).max(1_000),
-  controllability: z.enum(["high", "medium", "low", "none"]).optional(),
-  materiality: z.enum(["high", "medium", "low", "unknown"]).optional()
-});
-
-export const aiVdtEdgeSchema = z.object({
-  id: z.string().regex(/^[a-z][a-z0-9_]*$/),
-  sourceNodeId: z.string().regex(/^[a-z][a-z0-9_]*$/),
-  targetNodeId: z.string().regex(/^[a-z][a-z0-9_]*$/),
-  relation: relationSchema,
-  label: z.string().max(80).optional(),
-  aiConfidence: z.number().min(0).max(1).optional()
-});
-
-export const aiModelWarningSchema = z.object({
-  severity: z.enum(["info", "warning", "error"]).default("warning"),
-  message: z.string().min(1).max(1_000),
-  nodeId: z.string().optional(),
-  edgeId: z.string().optional()
-});
+const generateTreeLimits = TASK_LIMITS.generate_tree;
 
 export const generateVdtOutputSchema = z
   .object({
     projectTitle: z.string().min(1).max(160),
-    rootNodeId: z.string().regex(/^[a-z][a-z0-9_]*$/),
-    nodes: z.array(aiVdtNodeSchema).min(1).max(60),
-    edges: z.array(aiVdtEdgeSchema).max(120),
-    assumptions: z.array(z.string().max(500)).max(30),
-    questionsForUser: z.array(z.string().max(500)).max(30),
-    warnings: z.array(aiModelWarningSchema).max(30)
+    rootNodeId: aiNodeIdSchema,
+    nodes: z.array(aiVdtNodeSchema).min(1).max(generateTreeLimits.maxNodes!),
+    edges: z.array(aiVdtEdgeSchema).max(generateTreeLimits.maxEdges!),
+    assumptions: aiAssumptionsSchema,
+    questionsForUser: aiQuestionsForUserSchema,
+    warnings: aiWarningsSchema
   })
   .superRefine((output, context) => {
     const nodeIds = new Set(output.nodes.map((node) => node.id));
@@ -82,6 +52,6 @@ export const generateVdtOutputSchema = z
   });
 
 export type GenerateVdtOutput = z.infer<typeof generateVdtOutputSchema>;
-export type AiVdtNode = z.infer<typeof aiVdtNodeSchema>;
-export type AiVdtEdge = z.infer<typeof aiVdtEdgeSchema>;
-export type AiModelWarning = z.infer<typeof aiModelWarningSchema>;
+
+export type { AiVdtNode, AiVdtEdge, AiModelWarning } from "./shared";
+export { aiVdtNodeSchema, aiVdtEdgeSchema, aiModelWarningSchema } from "./shared";

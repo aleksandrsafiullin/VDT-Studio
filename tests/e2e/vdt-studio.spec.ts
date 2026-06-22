@@ -21,6 +21,7 @@ type PersistedVdtState = {
       graph?: {
         nodes?: Array<{ id: string; position?: { x: number; y: number } }>;
       };
+      versions?: Array<{ id: string; name?: string }>;
     };
   };
 };
@@ -47,6 +48,10 @@ async function readPersistedState(page: Page): Promise<PersistedVdtState | null>
       return null;
     }
   });
+}
+
+async function readCanvasNodeCount(page: Page) {
+  return page.locator(".react-flow__node").count();
 }
 
 async function readPersistedExecutionSettings(page: Page) {
@@ -797,6 +802,45 @@ test("blocks BYOK test connection when required fields are missing", async ({ pa
   await expect(page.getByRole("status")).toHaveCount(0);
 });
 
+test("shows a real BYOK connection error without falling back to mock", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "BYOK failure smoke runs on desktop viewport.");
+
+  let generateRequestBody: {
+    providerId?: string;
+    operation?: string;
+    providerConfig?: { apiKey?: string };
+  } | undefined;
+
+  await page.route("**/api/ai/generate-vdt", async (route) => {
+    generateRequestBody = route.request().postDataJSON() as typeof generateRequestBody;
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: false, error: "Anthropic authentication failed." })
+    });
+  });
+
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-byok").click();
+  await page.getByTestId("byok-protocol-anthropic").click();
+  await expect(page.getByTestId("byok-preset-form")).toBeVisible();
+
+  await page.getByTestId("byok-api-key").fill("session-only-key");
+  await page.getByTestId("byok-model-select").selectOption("__custom__");
+  await page.getByTestId("byok-model-custom").fill("vdt-production-model");
+
+  await page.getByTestId("byok-test-connection").click();
+  await expect(page.getByText("Anthropic authentication failed.")).toBeVisible();
+  await expect(page.getByText("Connection test passed.")).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: /Generate VDT with AI/i }).click();
+  await expect(page.getByText("Anthropic authentication failed.")).toBeVisible();
+  await expect.poll(() => generateRequestBody?.providerId).toBe("anthropic");
+  expect(generateRequestBody?.providerId).not.toBe("mock");
+  await expect(page.getByRole("heading", { name: "Production Volume Driver Model" })).toBeVisible();
+});
+
 test("runs the downtime scenario and shows impacted drivers", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Detailed scenario smoke runs on desktop viewport.");
 
@@ -809,12 +853,17 @@ test("runs the downtime scenario and shows impacted drivers", async ({ page }, t
 
   await expect(page.getByText("117,849.6").first()).toBeVisible();
   await expect(page.getByText("Impacted drivers")).toBeVisible();
-  await expect(page.getByText(/mainly through/i)).toBeVisible();
   await expect(page.getByText("Unplanned Downtime").last()).toBeVisible();
 });
 
-test("generates JSON and SVG export artifacts", async ({ page }, testInfo) => {
+test("generates JSON and SVG export artifacts without session credentials", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Export artifact smoke runs on desktop viewport.");
+
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-byok").click();
+  await page.getByTestId("byok-protocol-anthropic").click();
+  await page.getByTestId("byok-api-key").fill("session-only-export-key");
+  await page.keyboard.press("Escape");
 
   await expect(page.getByText("Model graph valid")).toBeVisible();
   await expect(page.getByRole("button", { name: "JSON" })).toBeVisible();
@@ -826,6 +875,14 @@ test("generates JSON and SVG export artifacts", async ({ page }, testInfo) => {
   const json = JSON.parse(jsonArtifact.text) as { rootNodeId?: string };
   expect(jsonArtifact.type).toBe("application/json");
   expect(json.rootNodeId).toBe("production_volume");
+  expect(jsonArtifact.text).not.toContain("session-only-export-key");
+  for (const field of ["apiKey", "localApiKey", "pairingToken", "runnerPairingToken", "accessToken", "providerToken"]) {
+    expect(jsonArtifact.text).not.toMatch(new RegExp(`"${field}"\\s*:`));
+  }
+
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("vdt-studio-state") ?? ""))
+    .not.toContain("session-only-export-key");
 
   await page.getByRole("button", { name: "SVG" }).click();
   await expect
@@ -1154,4 +1211,234 @@ test("shows full setup rail on mobile when left panel was collapsed on desktop",
   await expect(page.getByText("New VDT")).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
   await expect(page.getByTestId("expand-left-panel")).toHaveCount(0);
+});
+
+test("updates execution mode summary when settings change without reload", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Execution mode summary sync runs on desktop viewport.");
+
+  const setupRail = page.locator("section").filter({ hasText: "New VDT" }).first();
+  const summary = setupRail.getByTestId("execution-mode-summary");
+
+  await expect(summary).toContainText("BYOK");
+  await expect(summary).toContainText("Built-in mock");
+
+  await setupRail.getByTestId("execution-mode-configure").click();
+  await expect(page.getByTestId("settings-modal")).toBeVisible();
+
+  await page.getByTestId("execution-mode-tab-local-cli").click();
+  await expect(summary).toContainText("Local CLI");
+  await expect(summary).toContainText("Ollama");
+  await expect(summary).toContainText("qwen3");
+
+  await page.getByTestId("execution-mode-tab-byok").click();
+  await page.getByTestId("byok-protocol-openai").click();
+  await page.getByTestId("byok-gateway-preset").selectOption("alibaba-coding-plan");
+  await expect(summary).toContainText("BYOK");
+  await expect(summary).toContainText("Alibaba Cloud Coding Plan");
+  await expect(summary).toContainText("qwen3-coder-plus");
+});
+
+test("configures Alibaba Coding Plan BYOK and tests connection via openai_compatible", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Alibaba BYOK smoke runs on desktop viewport.");
+
+  let testProviderRequestBody:
+    | {
+        operation?: string;
+        providerId?: string;
+        providerConfig?: { baseUrl?: string; apiKey?: string; model?: string };
+      }
+    | undefined;
+
+  await page.route("**/api/ai/generate-vdt", async (route) => {
+    testProviderRequestBody = route.request().postDataJSON() as typeof testProviderRequestBody;
+
+    if (testProviderRequestBody?.operation !== "connection_test") {
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: false, error: "Expected connection_test operation." })
+      });
+      return;
+    }
+
+    if (
+      testProviderRequestBody.providerId !== "openai_compatible" ||
+      testProviderRequestBody.providerConfig?.baseUrl !== "https://coding.dashscope.aliyuncs.com/v1"
+    ) {
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: false, error: "Unexpected Alibaba connection test body." })
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true })
+    });
+  });
+
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-byok").click();
+  await page.getByTestId("byok-protocol-openai").click();
+  await expect(page.getByTestId("byok-gateway-preset")).toBeVisible();
+  await page.getByTestId("byok-gateway-preset").selectOption("alibaba-coding-plan");
+  await expect(page.getByTestId("byok-release-status-badge")).toContainText("Beta");
+  await page.getByTestId("byok-api-key").fill("sk-sp-e2e-session-key");
+
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("vdt-studio-state") ?? ""))
+    .not.toContain("sk-sp-e2e-session-key");
+
+  await page.getByTestId("byok-test-connection").click();
+  await expect(page.getByText("Connection test passed.")).toBeVisible();
+
+  expect(testProviderRequestBody?.operation).toBe("connection_test");
+  expect(testProviderRequestBody?.providerId).toBe("openai_compatible");
+  expect(testProviderRequestBody?.providerConfig?.baseUrl).toBe("https://coding.dashscope.aliyuncs.com/v1");
+  expect(testProviderRequestBody?.providerConfig?.apiKey).toBe("sk-sp-e2e-session-key");
+  expect(testProviderRequestBody?.providerConfig?.model).toBe("qwen3-coder-plus");
+});
+
+test("deepens a node with mock AI, applies preview, and creates a version snapshot", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "AI deepen workflow runs on desktop viewport.");
+
+  await expect(page.getByTestId("vdt-canvas")).toBeVisible();
+  const initialNodeCount = await readCanvasNodeCount(page);
+  await reactFlowNode(page, "unplanned_downtime").click();
+  await page.getByRole("tab", { name: "ai" }).click();
+  await page.getByTestId("deepen-node-button").click();
+
+  const preview = page.getByTestId("change-set-preview");
+  await expect(preview).toBeVisible();
+  await expect(page.getByTestId("change-set-row-add_equipment_failure_downtime")).toBeVisible();
+
+  const equipmentCheckbox = page
+    .getByTestId("change-set-row-add_equipment_failure_downtime")
+    .getByRole("checkbox");
+  await equipmentCheckbox.uncheck();
+  await equipmentCheckbox.check();
+
+  await page.getByTestId("change-set-apply").click();
+  await expect(reactFlowNode(page, "equipment_failure_downtime")).toBeVisible();
+  await expect(reactFlowNode(page, "process_interruption_downtime")).toBeVisible();
+  await expect.poll(async () => readCanvasNodeCount(page)).toBe(initialNodeCount + 2);
+  await expect(page.getByTestId("version-history-count")).toContainText("1");
+  await expect(page.getByTestId("vdt-canvas")).toBeVisible();
+});
+
+test("reviews the model with mock AI without changing the graph", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "AI review workflow runs on desktop viewport.");
+
+  const initialNodeCount = await readCanvasNodeCount(page);
+  if ((await page.getByTestId("expand-right-panel").count()) > 0) {
+    await page.getByTestId("expand-right-panel").click();
+  }
+
+  await Promise.all([
+    page.waitForResponse(
+      (response) => response.url().includes("/api/ai/run-task") && response.ok()
+    ),
+    page.getByTestId("review-model-button").click()
+  ]);
+
+  const panel = page.getByTestId("advisory-findings-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.getByText(/utilization_factor and yield_factor/i)).toBeVisible();
+  await expect(page.getByTestId("change-set-apply")).toHaveCount(0);
+  await expect.poll(async () => readCanvasNodeCount(page)).toBe(initialNodeCount);
+});
+
+test("explains a node with mock AI without apply controls", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "AI explain workflow runs on desktop viewport.");
+
+  const initialNodeCount = await readCanvasNodeCount(page);
+  await reactFlowNode(page, "production_volume").click();
+  await page.getByRole("tab", { name: "ai" }).click();
+  await page.getByTestId("explain-node-button").click();
+
+  const panel = page.getByTestId("explanation-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "Node explanation" })).toBeVisible();
+  await expect(panel.getByText("Effective Working Time", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("change-set-apply")).toHaveCount(0);
+  await expect.poll(async () => readCanvasNodeCount(page)).toBe(initialNodeCount);
+});
+
+test("surfaces AI action errors from run-task", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "AI error surfacing runs on desktop viewport.");
+
+  await page.route("**/api/ai/run-task", async (route) => {
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: false, error: "Mock AI task failure for e2e." })
+    });
+  });
+
+  await reactFlowNode(page, "unplanned_downtime").click();
+  await page.getByRole("tab", { name: "ai" }).click();
+  await page.getByTestId("deepen-node-button").click();
+  await expect(page.getByText("Mock AI task failure for e2e.")).toBeVisible();
+});
+
+test("shows usage limits copy on subscription CLI cards", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Subscription usage copy runs on desktop viewport.");
+
+  await page.route("**/api/ai/detect-clis**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agents: [
+          {
+            id: "claude",
+            installed: true,
+            executable: "/usr/local/bin/claude",
+            alias: "/usr/local/bin/claude",
+            version: "1.2.0",
+            status: "ready",
+            authSummary: "Claude subscription is authenticated and ready.",
+            diagnostics: []
+          }
+        ]
+      })
+    });
+  });
+
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-local-cli").click();
+  await expect(page.getByTestId("cli-agent-card-claude")).toBeVisible({ timeout: 10_000 });
+
+  const usageNote = page.getByTestId("provider-usage-note-claude");
+  await expect(usageNote).toBeVisible();
+  await expect(usageNote).toContainText("Usage and limits are managed by the provider");
+  await expect(usageNote).toContainText("selected model");
+});
+
+test("shows explicit error when generating with unpaired local runner", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Unpaired runner generate guard runs on desktop viewport.");
+
+  let generateCalled = false;
+
+  await page.route("**/api/ai/generate-vdt", async (route) => {
+    generateCalled = true;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true })
+    });
+  });
+
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-local-cli").click();
+  await expect(page.getByTestId("execution-mode-panel-local-cli")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: /Generate VDT with AI/i }).click();
+  await expect(page.getByText("Pair the local runner before generating.")).toBeVisible();
+  expect(generateCalled).toBe(false);
+  await expect(page.getByRole("heading", { name: "Production Volume Driver Model" })).toBeVisible();
 });

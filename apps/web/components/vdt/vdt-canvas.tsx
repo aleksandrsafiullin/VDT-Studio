@@ -23,6 +23,7 @@ const nodeTypes: NodeTypes = {
 
 export function VdtCanvas() {
   const project = useVdtStudioStore((state) => state.project);
+  const highlightedNodeIds = useVdtStudioStore((state) => state.highlightedNodeIds);
   const selectNode = useVdtStudioStore((state) => state.selectNode);
   const autoDistributeLayout = useVdtStudioStore((state) => state.autoDistributeLayout);
   const updateNodePosition = useVdtStudioStore((state) => state.updateNodePosition);
@@ -36,6 +37,8 @@ export function VdtCanvas() {
     }).positions;
   }, [project.graph, project.rootNodeId]);
 
+  const highlightedSet = useMemo(() => new Set(highlightedNodeIds), [highlightedNodeIds]);
+
   const storeNodes: Node<VdtNodeCardData, "vdtNode">[] = useMemo(
     () =>
       project.graph.nodes.map((node) => ({
@@ -45,10 +48,11 @@ export function VdtCanvas() {
         data: {
           node,
           value: calculation.values[node.id],
+          highlighted: highlightedSet.has(node.id),
           onSelect: selectNode
         }
       })),
-    [calculation.values, fallbackPositions, project.graph.nodes, selectNode]
+    [calculation.values, fallbackPositions, highlightedSet, project.graph.nodes, selectNode]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);

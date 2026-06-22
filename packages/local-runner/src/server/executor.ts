@@ -15,6 +15,37 @@ import {
 import { wrapSandbox } from "../sandbox";
 import type { BackendManifest, CompletionRequest } from "../cli/types";
 
+const advisoryStub = Object.freeze({
+  assumptions: [] as string[],
+  questionsForUser: [] as string[],
+  warnings: [] as Record<string, unknown>[]
+});
+
+const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
+  "connection-test-v1": { ok: true },
+  "generate-tree-v1": { projectTitle: "Mock tree", rootNodeId: "root", nodes: [{}], edges: [], ...advisoryStub },
+  "deepen-node-v1": { targetNodeId: "node-1", nodes: [{}], edges: [], ...advisoryStub },
+  "simplify-branch-v1": { branchRootNodeId: "node-1", nodeRemovals: [], edgeChanges: [], rationale: "Mock", ...advisoryStub },
+  "suggest-alternative-v1": { targetNodeId: "node-1", nodes: [{}], edges: [], rationale: "Mock", ...advisoryStub },
+  "suggest-formula-v1": { nodeId: "node-1", proposedFormula: "1", aiRationale: "Mock", confidence: 0.5, ...advisoryStub },
+  "review-model-v1": { findings: [], ...advisoryStub },
+  "check-units-v1": { unitFindings: [], ...advisoryStub },
+  "identify-missing-drivers-v1": { missingDrivers: [], ...advisoryStub },
+  "identify-duplicate-drivers-v1": { duplicateClusters: [], ...advisoryStub },
+  "explain-node-v1": { nodeId: "node-1", explanation: "Mock", keyDrivers: [], assumptions: [], questionsForUser: [] },
+  "explain-scenario-v1": { scenarioId: "scenario-1", narrative: "Mock", impactHighlights: [], assumptions: [], questionsForUser: [] },
+  "generate-executive-summary-v1": { headline: "Mock", keyDrivers: [], risks: [], recommendations: [] }
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mockOutput(schemaId: VdtSchemaId, input: unknown): Record<string, unknown> {
+  if (isRecord(input) && validateRegisteredSchema(schemaId, input)) return input;
+  return MOCK_STUB_OUTPUT[schemaId];
+}
+
 export const EXECUTION_LIMITS = Object.freeze({
   maxPromptBytes: 512 * 1024,
   maxLineBytes: 1024 * 1024,
@@ -503,9 +534,7 @@ export async function executeCompletion(
     throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
   }
   if (manifest.kind === "mock") {
-    const output = request.schemaId === "connection-test-v1"
-      ? { ok: true }
-      : request.input;
+    const output = mockOutput(request.schemaId, request.input);
     const schemaValid = validateRegisteredSchema(request.schemaId, output);
     if (!schemaValid) throw Object.assign(new Error("Mock input failed registered schema validation."), { code: "SCHEMA_INVALID" });
     return { output, outputBytes: byteLength(JSON.stringify(output)), schemaValid };

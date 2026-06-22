@@ -156,6 +156,38 @@ The parser extracts exactly one bounded JSON document from the official headless
 
 Google's 2026 transition means the original Phase 5 personal-allowance criterion cannot be completed through `gemini` after 2026-06-18. Antigravity CLI support is a separate future backend and is not silently substituted here.
 
+## Alibaba Cloud Coding Plan (`openai_compatible` / BYOK preset)
+
+| Field | Value |
+| --- | --- |
+| Preset id | `alibaba-coding-plan` |
+| Protocol | OpenAI-compatible (`openai_compatible` provider) |
+| Base URL | `https://coding.dashscope.aliyuncs.com/v1` |
+| Default model | `qwen3-coder-plus` |
+| Credential mode | Session-only API key (never persisted to localStorage or export) |
+| Release status | **Beta** |
+| Tested in CI | Catalog/resolver unit tests; mocked BYOK connection e2e |
+| Maintainer live verification | Pending — optional maintainer gate with a real Coding Plan key |
+
+### Configuration
+
+Select **BYOK → OpenAI → Gateway preset: Alibaba Cloud Coding Plan (Beta)** in Settings. Enter a Coding Plan API key for the browser session only. Connection tests route through `/api/ai/generate-vdt` with `providerId: openai_compatible` and the DashScope coding base URL.
+
+`inferGatewayPresetId` recognizes `coding.dashscope` and `coding-intl.dashscope` URLs and maps them to `alibaba-coding-plan`.
+
+### Limitations
+
+- Beta preset — model list is limited to catalog suggestions (`qwen3-coder-plus`, `qwen3-coder-next`)
+- No separate Qwen agent or local-runner backend; OpenAI-compatible HTTP only
+- Usage and limits are managed by Alibaba Cloud and the user's Coding Plan policy (no numeric quota surfaced in VDT Studio)
+- Structured VDT output is validated locally after the provider response
+
+### Not supported
+
+- Persisting Coding Plan API keys across reloads or including them in project JSON/SVG export
+- Silent fallback to mock or another provider when the DashScope endpoint fails
+- Arbitrary base URL overrides without explicit user customization in BYOK settings
+
 ## GitHub Copilot CLI (`copilot_subscription`)
 
 | Field | Value |

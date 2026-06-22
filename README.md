@@ -44,6 +44,8 @@ pnpm test
 pnpm test:e2e
 pnpm dev:all
 pnpm vdt -- --help
+pnpm package:alpha
+pnpm package:verify
 ```
 
 ## AI Model Configuration
@@ -64,6 +66,21 @@ Local runner routing is also available from the provider selector. Start the run
 pnpm local-runner:start
 ```
 
+## AI Actions
+
+VDT Studio exposes 12 bounded AI tasks. Tree generation uses `/api/ai/generate-vdt`; all other tasks use `/api/ai/run-task` with preview-before-apply for graph mutations.
+
+| Category | Tasks |
+| --- | --- |
+| Generate | `generate_tree` |
+| Graph mutate | `deepen_node`, `simplify_branch`, `suggest_alternative`, `suggest_formula` |
+| Advisory | `review_model`, `check_units`, `identify_missing_drivers`, `identify_duplicate_drivers` |
+| Explain | `explain_node`, `explain_scenario`, `generate_executive_summary` |
+
+Graph-mutating actions show a change-set preview in the node inspector; applying creates a version snapshot you can restore from the History control in the top bar. Advisory and explain tasks are read-only.
+
+The built-in mock provider covers all 12 tasks for local development and automated tests.
+
 ## Local Runner
 
 `packages/local-runner` exposes a paired, loopback-only v1 service. The browser sends a registered backend ID and bounded task/schema input; executable names, arguments, environment and endpoints remain in reviewed server manifests. Subscription CLI manifests fail closed until separately certified. See [Local Runner](docs/LOCAL_RUNNER.md) and [Provider compatibility](docs/provider-compatibility.md).
@@ -80,6 +97,17 @@ pnpm vdt -- doctor
 ```
 
 External agents, MCP installation, skill distribution and repository control are not product features. See [ADR-001](docs/adr/ADR-001-model-backends-not-agent-orchestration.md).
+
+## Alpha Release Package
+
+The alpha artifact is a clean, self-contained Node 24 CLI tarball. It includes the paired local runner behind `vdt runner start`; no separate runner install is required.
+
+```bash
+pnpm package:alpha
+pnpm package:verify
+```
+
+The clean-install gate installs the tarball into a temporary project and verifies `vdt --help`, `vdt doctor`, project validation, package exports, runner startup, and `/v1/health`. Artifacts, SHA-256 checksums, and the release manifest are written under `output/release/`. See [Alpha release](docs/RELEASE.md).
 
 ## Examples
 

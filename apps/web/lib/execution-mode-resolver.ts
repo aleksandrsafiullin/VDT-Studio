@@ -73,6 +73,10 @@ function inferGatewayPresetId(providerId: ResolvedProviderId, config: LegacyProv
     if (baseUrl.includes("ollama.com")) {
       return "ollama-cloud";
     }
+    const normalized = baseUrl.toLowerCase();
+    if (normalized.includes("coding.dashscope") || normalized.includes("coding-intl.dashscope")) {
+      return "alibaba-coding-plan";
+    }
     return "openai-default";
   }
 
@@ -98,13 +102,32 @@ function inferGatewayPresetId(providerId: ResolvedProviderId, config: LegacyProv
     return "gemini-default";
   }
 
-  return "mock";
+  return "custom";
 }
 
 export function migrateLegacyProviderToExecutionSettings(
   providerId: ResolvedProviderId,
   providerConfig: LegacyProviderConfig = {}
 ): ExecutionSettings {
+  if (providerId === "local_cli") {
+    const presetId = providerConfig.localRunnerPresetId ?? "custom_cli_json";
+    const migrated = applyLocalRunnerPreset(
+      {
+        selectedCliAgentId: "claude",
+        runnerUrl: providerConfig.runnerUrl ?? "http://127.0.0.1:8765",
+        timeoutSec: providerConfig.timeoutSec ?? 60,
+        memoryModelMode: "same_as_chat",
+        cliModelSelection: { source: "agent_default" }
+      },
+      presetId
+    );
+    return {
+      ...migrated,
+      command: providerConfig.command ?? migrated.command,
+      argsText: providerConfig.argsText ?? migrated.argsText
+    };
+  }
+
   if (providerId === "local_runner") {
     const presetId = providerConfig.localRunnerPresetId ?? "ollama_openai";
     return applyLocalRunnerPreset(
@@ -217,7 +240,10 @@ export function reconcilePersistedExecutionSettings(
   }
 
   if (merged.useMockProvider === true || merged.gatewayPresetId === "mock") {
-    return providerId && providerId !== "mock" ? fromLegacy : applyGatewayPreset(merged, "openai-default");
+    if (providerId && providerId !== "mock") {
+      return fromLegacy;
+    }
+    return applyGatewayPreset(merged, "mock");
   }
 
   return merged;
@@ -422,7 +448,7 @@ export function validateExecutionForGenerate(
   const detection = cliDetectionAgents.find((agent) => agent.id === settings.selectedCliAgentId);
   if (detection?.installed === false) {
     const agentName = getCliCatalogEntry(settings.selectedCliAgentId).displayName;
-    return `${agentName} is not installed. Install it from Execution mode settings or choose a local HTTP preset.`;
+    return `${agentName} is not installed. Install it from Execution mode settings or switch to a local HTTP preset.`;
   }
 
   return undefined;
@@ -461,9 +487,7 @@ function resolveLocalCli(settings: ExecutionSettings): ResolvedExecutionProvider
 
   const providerConfig: Record<string, unknown> = {
     runnerUrl: settings.runnerUrl ?? "http://127.0.0.1:8765",
-    backendId:
-      presetId === "lm_studio_openai" ? "lm_studio" :
-      presetId === "vllm_openai" ? "vllm" : "ollama",
+    backendId: preset.modelBackendId ?? "ollama",
     model: settings.localModel ?? preset.model ?? "qwen3",
     timeoutMs: (settings.timeoutSec ?? 60) * 1_000
   };

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { schemaIdForTask } from "@vdt-studio/model-bridge";
 import type { AiProvider, AiTaskType, LocalRunnerProviderConfig } from "../types";
 
 export function localRunnerOfflineMessage(runnerUrl: string): string {
@@ -22,19 +23,6 @@ interface CompletionResponse {
   output?: unknown;
   error?: { code?: string; message?: string };
 }
-
-const taskMap: Record<AiTaskType, string> = {
-  generate_vdt: "generate_tree",
-  deepen_node: "deepen_node",
-  simplify_branch: "simplify_branch",
-  suggest_alternative_decomposition: "suggest_alternative",
-  review_model: "review_model",
-  check_units: "check_units",
-  suggest_formula: "suggest_formula",
-  explain_node: "explain_node",
-  generate_scenario_summary: "explain_scenario",
-  generate_executive_summary: "generate_executive_summary"
-};
 
 export class LocalRunnerProvider implements AiProvider {
   id = "local_runner";
@@ -70,8 +58,8 @@ export class LocalRunnerProvider implements AiProvider {
         body: JSON.stringify({
           requestId: randomUUID(),
           backendId: this.config.backendId,
-          taskType: taskMap[params.taskType],
-          schemaId: connectionTest ? "connection-test-v1" : "generate-tree-v1",
+          taskType: params.taskType,
+          schemaId: connectionTest ? "connection-test-v1" : schemaIdForTask(params.taskType),
           input: connectionTest
             ? { probe: true }
             : { data: params.input, systemPrompt: params.systemPrompt, userPrompt: params.userPrompt },

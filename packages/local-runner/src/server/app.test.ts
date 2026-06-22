@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AuditEvent, BackendManifest } from "../cli/types";
+import { schemaTasks, VDT_SCHEMA_IDS } from "@vdt-studio/model-bridge";
 import { createLocalRunnerServer, getRunnerPairingInfo, type LocalRunnerServer } from "./app";
 
 const origin = "http://127.0.0.1:3000";
@@ -123,6 +124,63 @@ describe("Phase 2 transport and pairing", () => {
     expect(preflight.headers["access-control-allow-headers"]).toContain("authorization");
     const badHost = await call(server, "/v1/health", { origin: "omit", headers: { host: "evil.example" } });
     expect(badHost.body.error.code).toBe("INVALID_HOST");
+  });
+});
+
+describe("schema allowlist", () => {
+  it.each(VDT_SCHEMA_IDS)("accepts mock completion for schema %s", async (schemaId) => {
+    const server = await start();
+    const token = await pair(server);
+    const response = await call(server, "/v1/completions", {
+      method: "POST",
+      token,
+      body: {
+        requestId: crypto.randomUUID(),
+        backendId: "mock",
+        taskType: schemaTasks[schemaId],
+        schemaId,
+        input: {}
+      }
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.run.status).toBe("succeeded");
+    expect(response.body.output).toBeDefined();
+  });
+
+  it("rejects unknown schema ID", async () => {
+    const server = await start();
+    const token = await pair(server);
+    const response = await call(server, "/v1/completions", {
+      method: "POST",
+      token,
+      body: {
+        requestId: crypto.randomUUID(),
+        backendId: "mock",
+        taskType: "generate_tree",
+        schemaId: "not-a-registered-schema-v1",
+        input: {}
+      }
+    });
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("INVALID_SCHEMA_ID");
+  });
+
+  it("rejects schema/task mismatch", async () => {
+    const server = await start();
+    const token = await pair(server);
+    const response = await call(server, "/v1/completions", {
+      method: "POST",
+      token,
+      body: {
+        requestId: crypto.randomUUID(),
+        backendId: "mock",
+        taskType: "review_model",
+        schemaId: "generate-tree-v1",
+        input: {}
+      }
+    });
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("INVALID_SCHEMA_ID");
   });
 });
 

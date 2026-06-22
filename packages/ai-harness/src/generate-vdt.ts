@@ -10,7 +10,7 @@ export async function generateVdtProject(
   options?: { maxTokens?: number | undefined }
 ): Promise<VdtProject> {
   const output = await provider.completeStructured<GenerateVdtInput, GenerateVdtOutput>({
-    taskType: "generate_vdt",
+    taskType: "generate_tree",
     input,
     schema: generateVdtOutputSchema,
     systemPrompt: generateVdtSystemPrompt,

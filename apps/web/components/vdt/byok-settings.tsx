@@ -113,6 +113,7 @@ export function ByokSettings() {
         preset={preset}
         protocol={protocol}
         showPresetSelect={showPresetSelect}
+        showPresetLabel={!showPresetSelect}
         isTesting={isTestingProvider}
         testStatus={providerTestStatus}
         onPresetChange={(nextPresetId: GatewayPresetId) => setGatewayPreset(nextPresetId)}

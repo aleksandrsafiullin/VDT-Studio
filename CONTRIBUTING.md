@@ -17,6 +17,9 @@ Before opening a pull request, run:
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm security:audit
+pnpm package:alpha
+pnpm package:verify
 ```
 
 ## Architecture Expectations

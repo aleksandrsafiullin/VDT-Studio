@@ -111,6 +111,7 @@ describe("CliAgentCard", () => {
     expect(html).not.toContain("Live from CLI");
     expect(html).toContain("claude-sonnet-4-6");
     expect(html).toContain("claude-opus-4-8");
+    expect(html).toContain("Usage and limits are managed by the provider");
   });
 
   it("exposes async test status to assistive tech with distinct info styling", () => {
@@ -139,6 +140,7 @@ describe("CliAgentCard", () => {
     expect(html).toContain('role="status"');
     expect(html).toContain('aria-live="polite"');
     expect(html).toContain("CLI responded; model list unavailable.");
+    expect(html).toContain('data-testid="provider-test-status-claude"');
     expect(html).toContain("border-slate-200");
     expect(html).toContain("bg-slate-50");
   });

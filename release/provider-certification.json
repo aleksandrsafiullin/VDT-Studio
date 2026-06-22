@@ -1,0 +1,21 @@
+{
+  "release": "0.1.0-alpha.0",
+  "asOf": "2026-06-22",
+  "backends": [
+    { "id": "mock", "status": "supported", "liveVerified": true, "evidence": "Deterministic unit and Playwright coverage" },
+    { "id": "openai_compatible", "status": "supported", "liveVerified": false, "evidence": "Protocol fixtures, SSRF controls, and mocked E2E" },
+    { "id": "anthropic", "status": "supported", "liveVerified": false, "evidence": "Structured provider unit tests" },
+    { "id": "gemini_api", "status": "supported", "liveVerified": false, "evidence": "Structured provider unit tests" },
+    { "id": "azure_openai", "status": "supported", "liveVerified": false, "evidence": "Structured provider unit tests" },
+    { "id": "alibaba_coding_plan", "status": "beta", "liveVerified": false, "evidence": "Catalog, session-secret, and mocked connection coverage" },
+    { "id": "ollama", "status": "supported", "liveVerified": false, "evidence": "Local-runner manifest and schema integration tests" },
+    { "id": "lm_studio", "status": "supported", "liveVerified": false, "evidence": "Local-runner manifest and schema integration tests" },
+    { "id": "vllm", "status": "beta", "liveVerified": false, "evidence": "Local-runner manifest and schema integration tests" },
+    { "id": "cursor_subscription", "status": "beta-blocked", "liveVerified": true, "evidence": "Auth probe passed; sandbox blocks required provider-state write" },
+    { "id": "codex_subscription", "status": "alpha", "liveVerified": false, "evidence": "Fake executable, parser, auth, schema, and executor tests" },
+    { "id": "claude_subscription", "status": "alpha", "liveVerified": false, "evidence": "Fake executable, parser, auth, schema, and executor tests" },
+    { "id": "gemini_subscription", "status": "experimental", "liveVerified": false, "evidence": "Fake executable and deny-all policy tests; CLI unavailable locally" },
+    { "id": "copilot_subscription", "status": "experimental", "liveVerified": false, "evidence": "Fake executable and tool-free manifest tests; CLI unavailable locally" },
+    { "id": "custom_cli", "status": "experimental-disabled", "liveVerified": false, "evidence": "Not exposed as a certified alpha backend" }
+  ]
+}

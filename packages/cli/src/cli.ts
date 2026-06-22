@@ -112,8 +112,3 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
   if (command === "doctor") return doctorCommand();
   throw new Error(`Unknown vdt command: ${command}`);
 }
-
-runCli().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});

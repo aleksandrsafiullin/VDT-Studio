@@ -1,5 +1,20 @@
+import {
+  averageProductivitySimplifyOutput,
+  effectiveWorkingTimeAlternativeOutput,
+  productionVolumeCheckUnitsOutput,
+  productionVolumeDuplicateDriversOutput,
+  productionVolumeExecutiveSummaryOutput,
+  productionVolumeExplainNodeOutput,
+  productionVolumeFormulaOutput,
+  productionVolumeMissingDriversOutput,
+  productionVolumeReviewOutput,
+  reduceDowntimeExplainScenarioOutput,
+  unplannedDowntimeDeepenOutput
+} from "../fixtures/mock";
 import { generateVdtOutputSchema, type GenerateVdtOutput } from "../schemas/generate-vdt";
-import type { AiProvider } from "../types";
+import type { DeepenNodeInput } from "../schemas/deepen-node";
+import type { ExplainNodeInput } from "../schemas/explain-node";
+import type { AiCompletionParams, AiProvider, AiTaskType } from "../types";
 
 export const productionVolumeAiOutput: GenerateVdtOutput = generateVdtOutputSchema.parse({
   projectTitle: "Production Volume Driver Model",
@@ -193,12 +208,53 @@ export const productionVolumeAiOutput: GenerateVdtOutput = generateVdtOutputSche
   ]
 });
 
+const MOCK_OUTPUT_BY_TASK: Record<AiTaskType, unknown> = {
+  generate_tree: productionVolumeAiOutput,
+  deepen_node: unplannedDowntimeDeepenOutput,
+  simplify_branch: averageProductivitySimplifyOutput,
+  suggest_alternative: effectiveWorkingTimeAlternativeOutput,
+  suggest_formula: productionVolumeFormulaOutput,
+  review_model: productionVolumeReviewOutput,
+  check_units: productionVolumeCheckUnitsOutput,
+  identify_missing_drivers: productionVolumeMissingDriversOutput,
+  identify_duplicate_drivers: productionVolumeDuplicateDriversOutput,
+  explain_node: productionVolumeExplainNodeOutput,
+  explain_scenario: reduceDowntimeExplainScenarioOutput,
+  generate_executive_summary: productionVolumeExecutiveSummaryOutput
+};
+
+function resolveMockOutput<TInput>(params: AiCompletionParams<TInput>): unknown {
+  if (params.taskType === "deepen_node") {
+    const input = params.input as DeepenNodeInput;
+    if (input.targetNodeId === "unplanned_downtime" || input.targetNodeId === unplannedDowntimeDeepenOutput.targetNodeId) {
+      return unplannedDowntimeDeepenOutput;
+    }
+  }
+
+  if (params.taskType === "explain_node") {
+    const input = params.input as ExplainNodeInput;
+    if (input.nodeId !== productionVolumeExplainNodeOutput.nodeId) {
+      return {
+        ...productionVolumeExplainNodeOutput,
+        nodeId: input.nodeId,
+        explanation: `## ${input.nodeId}\n\nMock explanation for **${input.nodeId}** in the production volume model.`
+      };
+    }
+  }
+
+  const output = MOCK_OUTPUT_BY_TASK[params.taskType];
+  if (output === undefined) {
+    throw new Error(`MockProvider has no stub for task: ${params.taskType}`);
+  }
+  return output;
+}
+
 export class MockProvider implements AiProvider {
   id = "mock";
   name = "Built-in Mock Provider";
   type = "mock" as const;
 
-  async completeStructured<TInput, TOutput>(): Promise<TOutput> {
-    return productionVolumeAiOutput as TOutput;
+  async completeStructured<TInput, TOutput>(params: AiCompletionParams<TInput>): Promise<TOutput> {
+    return resolveMockOutput(params) as TOutput;
   }
 }

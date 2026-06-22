@@ -76,4 +76,21 @@ describe("formatExecutionModeSummary", () => {
       secondary: "gpt-5.4-mini"
     });
   });
+
+  it("summarizes Alibaba Cloud Coding Plan BYOK preset", () => {
+    expect(
+      formatExecutionModeSummary({
+        ...DEFAULT_EXECUTION_SETTINGS,
+        executionMode: "byok",
+        useMockProvider: false,
+        gatewayPresetId: "alibaba-coding-plan",
+        byokProtocol: "openai",
+        model: "qwen3-coder-plus"
+      })
+    ).toEqual({
+      modeLabel: "BYOK",
+      primary: "OpenAI · Alibaba Cloud Coding Plan",
+      secondary: "qwen3-coder-plus"
+    });
+  });
 });

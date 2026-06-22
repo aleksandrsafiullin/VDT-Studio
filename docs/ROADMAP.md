@@ -17,11 +17,12 @@
 - Detection metadata for Cursor, Codex, Claude, Gemini and Copilot subscription CLIs.
 - Certified Codex/Claude subscription adapters and beta macOS Gemini/Copilot adapters with tool-free structured output.
 - Playwright smoke coverage for core web flows.
+- Bounded AI actions (12 task types) with preview/apply for graph mutations.
+- Version snapshot history and restore after change-set apply.
+- Reproducible alpha CLI/runner package with clean-install, checksum, CI, security, and provider-certification gates.
 
 ## Next
 
-- Version snapshot creation, selection and restore workflow.
-- Complete AI actions and scenario explanation beyond the current deepen preview.
 - PNG canvas export.
 - SQLite-backed local project storage.
 - Desktop packaging with Tauri.

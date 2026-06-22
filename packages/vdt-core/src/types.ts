@@ -1,3 +1,17 @@
+export type VdtAiTaskType =
+  | "generate_tree"
+  | "deepen_node"
+  | "simplify_branch"
+  | "suggest_alternative"
+  | "suggest_formula"
+  | "review_model"
+  | "check_units"
+  | "identify_missing_drivers"
+  | "identify_duplicate_drivers"
+  | "explain_node"
+  | "explain_scenario"
+  | "generate_executive_summary";
+
 export type VdtNodeType = "root_kpi" | "calculated" | "input" | "assumption" | "external_factor" | "data_mapped";
 
 export type VdtNodeStatus =
@@ -185,6 +199,7 @@ export interface VdtVersion {
   id: string;
   name: string;
   description?: string | undefined;
+  taskType?: VdtAiTaskType | undefined;
   projectSnapshot: VdtProject;
   createdAt: string;
 }

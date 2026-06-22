@@ -1,7 +1,7 @@
 "use client";
 
 import { clsx } from "clsx";
-import { CheckCircle2, Info, Loader2, TriangleAlert } from "lucide-react";
+import { Info, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextInput } from "@/components/ui/field";
 import {
@@ -11,6 +11,7 @@ import {
   type CliCatalogEntry,
   type CliModelSelection
 } from "@/lib/execution-mode-catalog";
+import { ProviderTestStatusBanner, ProviderUsageNote } from "./provider-diagnostics";
 import type { ProviderTestStatus } from "./vdt-store";
 
 export type CliAgentBackendStatus =
@@ -143,6 +144,7 @@ export function CliAgentCard({
               ))}
             </span>
             <span className="mt-0.5 block text-xs leading-5 text-muted">{catalog.subtitle}</span>
+            <ProviderUsageNote className="mt-1" testId={`provider-usage-note-${catalog.id}`} />
             {detection.version ? (
               <span className="mt-1 flex flex-wrap items-center gap-2">
                 <span className="font-mono text-[11px] text-slate-500">{detection.version}</span>
@@ -212,31 +214,14 @@ export function CliAgentCard({
               <span>{detection.authSummary}</span>
             </span>
           ) : null}
-          {testStatus ? (
-            <span
-              role="status"
-              aria-live="polite"
-              className={clsx(
-                "flex max-w-[180px] items-start gap-1 rounded border px-2 py-1 text-[11px] leading-4",
-                testStatus.kind === "success"
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                  : testStatus.kind === "info"
-                    ? "border-slate-200 bg-slate-50 text-slate-700"
-                    : "border-red-200 bg-red-50 text-red-700"
-              )}
-            >
-              {testStatus.kind === "success" ? (
-                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              ) : testStatus.kind === "info" ? (
-                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              ) : (
-                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              )}
-              <span>{testStatus.message}</span>
-            </span>
-          ) : null}
         </div>
       </div>
+
+      {testStatus ? (
+        <div className="border-t border-line px-3 py-2">
+          <ProviderTestStatusBanner status={testStatus} testId={`provider-test-status-${catalog.id}`} />
+        </div>
+      ) : null}
 
       {selected ? (
         <div className="border-t border-line px-3 py-3">

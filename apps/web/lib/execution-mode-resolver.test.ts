@@ -89,19 +89,19 @@ describe("execution-mode-resolver", () => {
   });
 
   it("blocks generation when a required CLI agent is not installed", () => {
-    expect(
-      validateExecutionForGenerate(
-        {
-          ...DEFAULT_EXECUTION_SETTINGS,
-          executionMode: "local_cli",
-          selectedCliAgentId: "claude",
-          localRunnerPresetId: "custom_cli_json",
-          runnerProviderId: "cli_stub",
-          command: "claude"
-        },
-        [{ id: "claude", installed: false }]
-      )
-    ).toContain("Claude Code is not installed");
+    const message = validateExecutionForGenerate(
+      {
+        ...DEFAULT_EXECUTION_SETTINGS,
+        executionMode: "local_cli",
+        selectedCliAgentId: "claude",
+        localRunnerPresetId: "custom_cli_json",
+        runnerProviderId: "cli_stub",
+        command: "claude"
+      },
+      [{ id: "claude", installed: false }]
+    );
+    expect(message).toContain("Claude Code is not installed");
+    expect(message).not.toMatch(/BYOK/i);
   });
 
   it("allows cli_stub generation when CLI detection has not run yet", () => {
@@ -164,6 +164,30 @@ describe("execution-mode-resolver", () => {
         [{ id: "claude", installed: false }]
       )
     ).toBeUndefined();
+  });
+
+  it("resolves alibaba-coding-plan BYOK settings to openai_compatible", () => {
+    expect(
+      resolveExecutionSettings({
+        ...DEFAULT_EXECUTION_SETTINGS,
+        executionMode: "byok",
+        useMockProvider: false,
+        gatewayPresetId: "alibaba-coding-plan",
+        byokProtocol: "openai",
+        byokGateway: "none",
+        baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
+        model: "qwen3-coder-plus",
+        apiKey: "sk-sp-test-key"
+      })
+    ).toEqual({
+      providerId: "openai_compatible",
+      providerConfig: {
+        baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
+        model: "qwen3-coder-plus",
+        maxTokens: 32_768,
+        apiKey: "sk-sp-test-key"
+      }
+    });
   });
 
   it("resolves openai_compatible BYOK settings", () => {
@@ -370,6 +394,31 @@ describe("execution-mode-resolver", () => {
     });
 
     expect(
+      migrateLegacyProviderToExecutionSettings("openai_compatible", {
+        openAiBaseUrl: "https://coding.dashscope.aliyuncs.com/v1",
+        openAiModel: "qwen3-coder-plus",
+        apiKey: "sk-sp-test-key"
+      })
+    ).toMatchObject({
+      executionMode: "byok",
+      gatewayPresetId: "alibaba-coding-plan",
+      baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
+      model: "qwen3-coder-plus",
+      apiKey: "sk-sp-test-key"
+    });
+
+    expect(
+      migrateLegacyProviderToExecutionSettings("openai_compatible", {
+        openAiBaseUrl: "https://coding-intl.dashscope.aliyuncs.com/v1",
+        openAiModel: "qwen3-coder-next"
+      })
+    ).toMatchObject({
+      gatewayPresetId: "alibaba-coding-plan",
+      baseUrl: "https://coding-intl.dashscope.aliyuncs.com/v1",
+      model: "qwen3-coder-next"
+    });
+
+    expect(
       migrateLegacyProviderToExecutionSettings("anthropic", {
         anthropicBaseUrl: "https://api.anthropic.com",
         anthropicModel: "claude-opus-4-5"
@@ -412,6 +461,60 @@ describe("execution-mode-resolver", () => {
       gatewayPresetId: "anthropic-claude",
       baseUrl: "https://api.anthropic.com",
       model: "claude-opus-4-5"
+    });
+  });
+
+  it("preserves explicit mock execution settings without upgrading to openai-default", () => {
+    expect(
+      reconcilePersistedExecutionSettings(
+        "mock",
+        {},
+        {
+          ...DEFAULT_EXECUTION_SETTINGS,
+          useMockProvider: true,
+          gatewayPresetId: "mock"
+        }
+      )
+    ).toMatchObject({
+      executionMode: "byok",
+      gatewayPresetId: "mock",
+      useMockProvider: true
+    });
+  });
+
+  it("reconciles mock markers to legacy BYOK selection when providerId disagrees", () => {
+    expect(
+      reconcilePersistedExecutionSettings(
+        "openai_compatible",
+        { openAiBaseUrl: "https://api.aihubmix.com/v1", openAiModel: "gpt-4.1-mini" },
+        {
+          ...DEFAULT_EXECUTION_SETTINGS,
+          useMockProvider: true,
+          gatewayPresetId: "mock"
+        }
+      )
+    ).toMatchObject({
+      gatewayPresetId: "aihubmix",
+      baseUrl: "https://api.aihubmix.com/v1",
+      model: "gpt-4.1-mini",
+      useMockProvider: false
+    });
+  });
+
+  it("migrates legacy local_cli provider state into execution settings", () => {
+    expect(
+      migrateLegacyProviderToExecutionSettings("local_cli", {
+        command: "/usr/local/bin/claude",
+        runnerUrl: "http://127.0.0.1:8765",
+        timeoutSec: 45
+      })
+    ).toMatchObject({
+      executionMode: "local_cli",
+      localRunnerPresetId: "custom_cli_json",
+      runnerProviderId: "cli_stub",
+      command: "/usr/local/bin/claude",
+      runnerUrl: "http://127.0.0.1:8765",
+      timeoutSec: 45
     });
   });
 

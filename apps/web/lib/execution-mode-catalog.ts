@@ -1,4 +1,5 @@
 import type { ProxyProvider } from "./provider-target-security";
+import { stripSessionOnlySecrets } from "./session-secrets";
 
 export type ExecutionMode = "local_cli" | "byok";
 
@@ -12,6 +13,12 @@ export const CLI_AGENT_IDS = ["cursor-agent", "codex", "claude", "gemini", "copi
 export type CliAgentId = (typeof CLI_AGENT_IDS)[number];
 
 export type LocalRunnerPresetId = "ollama_openai" | "lm_studio_openai" | "vllm_openai" | "custom_cli_json";
+
+export type LocalHttpModelBackendId = "ollama" | "lm_studio" | "vllm";
+
+export type ByokCredentialMode = "session_only";
+
+export type ByokReleaseStatus = "supported" | "beta" | "experimental";
 
 export type MemoryModelMode = "same_as_chat" | "selected_cli";
 
@@ -27,7 +34,7 @@ export type AnthropicPresetId =
   | "minimax-anthropic"
   | "mimo-anthropic";
 
-export type OpenAiPresetId = "openai-default" | "custom";
+export type OpenAiPresetId = "openai-default" | "alibaba-coding-plan" | "custom";
 
 export type AzurePresetId = "azure-default" | "custom";
 
@@ -71,12 +78,15 @@ export interface ByokGatewayPreset {
   endpoint?: string | undefined;
   deployment?: string | undefined;
   apiVersion?: string | undefined;
+  credentialMode?: ByokCredentialMode | undefined;
+  releaseStatus?: ByokReleaseStatus | undefined;
 }
 
 export interface LocalRunnerPresetCatalogEntry {
   id: LocalRunnerPresetId;
   label: string;
   runnerProviderId: "local_http_stub" | "cli_stub";
+  modelBackendId?: LocalHttpModelBackendId | undefined;
   baseUrl?: string | undefined;
   model?: string | undefined;
   command?: string | undefined;
@@ -189,6 +199,7 @@ export const LOCAL_RUNNER_PRESET_CATALOG: readonly LocalRunnerPresetCatalogEntry
     id: "ollama_openai",
     label: "Ollama",
     runnerProviderId: "local_http_stub",
+    modelBackendId: "ollama",
     baseUrl: "http://127.0.0.1:11434/v1",
     model: "qwen3"
   },
@@ -196,6 +207,7 @@ export const LOCAL_RUNNER_PRESET_CATALOG: readonly LocalRunnerPresetCatalogEntry
     id: "lm_studio_openai",
     label: "LM Studio",
     runnerProviderId: "local_http_stub",
+    modelBackendId: "lm_studio",
     baseUrl: "http://127.0.0.1:1234/v1",
     model: "local-model"
   },
@@ -203,6 +215,7 @@ export const LOCAL_RUNNER_PRESET_CATALOG: readonly LocalRunnerPresetCatalogEntry
     id: "vllm_openai",
     label: "vLLM",
     runnerProviderId: "local_http_stub",
+    modelBackendId: "vllm",
     baseUrl: "http://127.0.0.1:8000/v1",
     model: "local-model"
   },
@@ -234,6 +247,7 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     baseUrl: "https://api.anthropic.com",
     model: "claude-sonnet-4-6",
     maxTokens: 64_000,
+    credentialMode: "session_only",
     models: [
       "claude-sonnet-4-6",
       "claude-opus-4-8",
@@ -254,6 +268,7 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     baseUrl: "https://api.deepseek.com/anthropic",
     model: "deepseek-v4-pro",
     maxTokens: 64_000,
+    credentialMode: "session_only",
     models: ["deepseek-v4-pro", "deepseek-v4-flash"],
     apiKeyUrl: "https://platform.deepseek.com/api_keys",
     anthropicVersion: "2023-06-01"
@@ -267,6 +282,7 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     baseUrl: "https://api.minimax.chat/anthropic/v1",
     model: "MiniMax-M3",
     maxTokens: 64_000,
+    credentialMode: "session_only",
     models: [
       "MiniMax-M3",
       "MiniMax-M2.7",
@@ -289,6 +305,7 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     baseUrl: "https://api.xiaomimimo.com/anthropic",
     model: "mimo-v2-flash",
     maxTokens: 64_000,
+    credentialMode: "session_only",
     models: ["mimo-v2-flash"],
     apiKeyUrl: "https://platform.xiaomimimo.com",
     anthropicVersion: "2023-06-01"
@@ -302,6 +319,7 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     baseUrl: "https://api.anthropic.com",
     model: "claude-sonnet-4-6",
     maxTokens: 64_000,
+    credentialMode: "session_only",
     models: ["claude-sonnet-4-6"],
     anthropicVersion: "2023-06-01"
   },
@@ -314,6 +332,7 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-5.5",
     maxTokens: 32_768,
+    credentialMode: "session_only",
     models: [
       "gpt-5.5",
       "gpt-5.5-pro",
@@ -335,6 +354,20 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     apiKeyUrl: "https://platform.openai.com/api-keys"
   },
   {
+    id: "alibaba-coding-plan",
+    label: "Alibaba Cloud Coding Plan",
+    protocol: "openai",
+    gateway: "none",
+    proxyProvider: "openai",
+    baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
+    model: "qwen3-coder-plus",
+    maxTokens: 32_768,
+    credentialMode: "session_only",
+    releaseStatus: "beta",
+    models: ["qwen3-coder-plus", "qwen3-coder-next"],
+    apiKeyUrl: "https://modelstudio.console.alibabacloud.com/ap-southeast-1/?tab=globalset#/efm/coding_plan"
+  },
+  {
     id: "azure-default",
     label: "Azure OpenAI",
     protocol: "azure",
@@ -346,6 +379,7 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     model: "gpt-5.4-mini",
     apiVersion: "2024-10-21",
     maxTokens: 32_768,
+    credentialMode: "session_only",
     models: ["gpt-5.4-mini", "gpt-5.2", "gpt-5-mini", "gpt-4.1", "gpt-4.1-mini", "o4-mini", "o3"],
     apiKeyUrl: "https://portal.azure.com"
   },
@@ -358,6 +392,7 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     baseUrl: "https://generativelanguage.googleapis.com",
     model: "gemini-3.5-flash",
     maxTokens: 65_536,
+    credentialMode: "session_only",
     models: [
       "gemini-3.5-flash",
       "gemini-3.1-pro-preview",
@@ -378,6 +413,7 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     baseUrl: "https://ollama.com/v1",
     model: "qwen3",
     maxTokens: 32_768,
+    credentialMode: "session_only",
     models: ["qwen3", "llama3.3", "deepseek-r1"],
     apiKeyUrl: "https://ollama.com/settings/keys"
   },
@@ -390,6 +426,7 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     baseUrl: "https://api.senseaudio.cn/v1",
     model: "sense-chat",
     maxTokens: 32_768,
+    credentialMode: "session_only",
     models: ["sense-chat"],
     apiKeyUrl: "https://senseaudio.cn"
   },
@@ -402,6 +439,7 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     baseUrl: "https://api.aihubmix.com/v1",
     model: "gpt-5.4-mini",
     maxTokens: 32_768,
+    credentialMode: "session_only",
     models: [
       "gpt-5.4-mini",
       "gpt-5.4",
@@ -613,8 +651,5 @@ export function applyLocalRunnerPreset(
 }
 
 export function persistedExecutionSettings(settings: ExecutionSettings): ExecutionSettings {
-  const next: ExecutionSettings = { ...settings };
-  delete next.apiKey;
-  delete next.localApiKey;
-  return next;
+  return stripSessionOnlySecrets({ ...settings }) as ExecutionSettings;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CheckCircle2, ExternalLink, Eye, EyeOff, Info, PlugZap, TriangleAlert } from "lucide-react";
+import { ExternalLink, Eye, EyeOff, Info, PlugZap } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextInput } from "@/components/ui/field";
@@ -17,16 +17,34 @@ import {
   PROTOCOL_SECTION_LABELS,
   type ByokGatewayPreset,
   type ByokProtocol,
+  type ByokReleaseStatus,
   type ExecutionSettings,
   type GatewayPresetId
 } from "@/lib/execution-mode-catalog";
+import { ProviderTestStatusBanner, ProviderUsageNote } from "./provider-diagnostics";
 import type { ProviderTestStatus } from "./vdt-store";
+
+export function ByokReleaseStatusBadge({ status }: { status?: ByokReleaseStatus | undefined }) {
+  if (status !== "beta") {
+    return null;
+  }
+
+  return (
+    <span
+      data-testid="byok-release-status-badge"
+      className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800"
+    >
+      Beta
+    </span>
+  );
+}
 
 interface ByokPresetFormProps {
   executionSettings: ExecutionSettings;
   preset: ByokGatewayPreset;
   protocol: ByokProtocol;
   showPresetSelect: boolean;
+  showPresetLabel?: boolean;
   isTesting: boolean;
   testStatus?: ProviderTestStatus | undefined;
   fieldErrors?: ByokFieldErrors | undefined;
@@ -120,6 +138,7 @@ export function ByokPresetForm({
   preset,
   protocol,
   showPresetSelect,
+  showPresetLabel = false,
   isTesting,
   testStatus,
   onPresetChange,
@@ -155,23 +174,49 @@ export function ByokPresetForm({
 
       {showPresetSelect ? (
         <Field label="Gateway preset">
-          <SelectInput
-            data-testid="byok-gateway-preset"
-            value={executionSettings.gatewayPresetId ?? preset.id}
-            onChange={(event) => onPresetChange(event.target.value as GatewayPresetId)}
-          >
-            {presetOptions.map((candidate) => (
-              <option key={candidate.id} value={candidate.id}>
-                {candidate.label}
-              </option>
-            ))}
-          </SelectInput>
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <SelectInput
+                data-testid="byok-gateway-preset"
+                className="min-w-0 flex-1"
+                value={executionSettings.gatewayPresetId ?? preset.id}
+                onChange={(event) => onPresetChange(event.target.value as GatewayPresetId)}
+              >
+                {presetOptions.map((candidate) => (
+                  <option
+                    key={candidate.id}
+                    value={candidate.id}
+                    data-testid={candidate.id === "alibaba-coding-plan" ? "byok-preset-alibaba-coding-plan" : undefined}
+                  >
+                    {candidate.label}
+                    {candidate.releaseStatus === "beta" ? " (Beta)" : ""}
+                  </option>
+                ))}
+              </SelectInput>
+              <ByokReleaseStatusBadge status={preset.releaseStatus} />
+            </div>
+          </div>
         </Field>
+      ) : showPresetLabel && preset.releaseStatus === "beta" ? (
+        <div
+          className="flex flex-wrap items-center gap-2"
+          data-testid="byok-preset-beta-banner"
+        >
+          <span className="text-sm font-medium text-ink">{preset.label}</span>
+          <ByokReleaseStatusBadge status={preset.releaseStatus} />
+        </div>
       ) : null}
 
       <Field
         label="API key"
-        {...(fieldErrors.apiKey ? { hint: fieldErrors.apiKey } : { hint: "Stored only in this browser." })}
+        {...(fieldErrors.apiKey
+          ? { hint: fieldErrors.apiKey }
+          : {
+              hint:
+                preset.credentialMode === "session_only"
+                  ? "Session only — cleared on reload and never saved to localStorage."
+                  : "Session only — not included in project export."
+            })}
       >
         <div className="flex gap-2">
           <TextInput
@@ -345,28 +390,9 @@ export function ByokPresetForm({
         {isTesting ? "Testing..." : "Test connection"}
       </Button>
 
-      {testStatus ? <TestStatusBanner status={testStatus} /> : null}
-    </div>
-  );
-}
+      <ProviderUsageNote className="mt-1" />
 
-function TestStatusBanner({ status }: { status: ProviderTestStatus }) {
-  return (
-    <div
-      className={
-        status.kind === "success"
-          ? "flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-800"
-          : "flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700"
-      }
-      role="status"
-      aria-live="polite"
-    >
-      {status.kind === "success" ? (
-        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-      ) : (
-        <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-      )}
-      <span>{status.message}</span>
+      {testStatus ? <ProviderTestStatusBanner status={testStatus} /> : null}
     </div>
   );
 }

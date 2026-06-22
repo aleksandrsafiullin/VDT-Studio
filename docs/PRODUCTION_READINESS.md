@@ -19,15 +19,19 @@ Source of truth: `Technical Specification for Codex.docx`, checked against the r
 
 - Independently certify each subscription CLI adapter and its OS isolation profile before enabling execution.
 - Complete independent security review of BYOK proxy target pinning, credential isolation, timeouts and stream limits.
-- Re-run browser E2E and visual checks in an environment that permits a loopback web server to bind.
-- Run the complete sequential `lint`, `typecheck`, `test`, `build`, package and clean-install gate after protocol integration.
+
+## Alpha Release Gates Completed
+
+- Sequential lint, typecheck, 497-test unit/integration suite, production build, packaging, and clean-install verification on Node 24.
+- Chromium desktop/mobile E2E plus WebKit release smoke.
+- High/critical production dependency audit, provider-certification completeness, SHA-256 checksums, and tag-driven SBOM workflow.
 
 ## Remaining Product Gaps
 
 These items are present in the full specification but are not required to claim the original core MVP loop complete:
 
-- Version snapshot creation, selection, comparison and restore UI. The data type exists, but the user workflow does not.
-- First-class AI actions for simplify branch, alternative decomposition, model review, unit checking, formula suggestion, executive summary and scenario explanation. The current deepen/alternative controls share a bounded preview implementation.
+- Version comparison is future scope; snapshot creation, listing and restore are implemented.
+- Live-provider certification remains open even though all 12 bounded AI actions and their mock-provider workflows are implemented.
 - PNG canvas export. SVG export is implemented.
 - Durable SQLite project storage. Current web persistence is browser-local.
 - Desktop packaging with Tauri and production installers.
@@ -37,3 +41,5 @@ These items are present in the full specification but are not required to claim 
 ## Release Rule
 
 Do not label the repository production-ready while any production gate above is open. Executable detection is not proof that a subscription backend has passed execution and sandbox certification.
+
+The `0.1.0-alpha.0` package is a prerelease, not a production-readiness claim. Its release gate is documented in [RELEASE.md](RELEASE.md).

@@ -1,3 +1,7 @@
+import type { VdtAiTaskType } from "@vdt-studio/vdt-core";
+
+export type { VdtAiTaskType };
+
 export type ModelBackendMode = "api" | "subscription_cli" | "local_http" | "custom_cli";
 
 export type ModelBackendStatus =
@@ -10,20 +14,6 @@ export type ModelBackendStatus =
   | "unsafe_configuration"
   | "unavailable"
   | "error";
-
-export type VdtAiTaskType =
-  | "generate_tree"
-  | "deepen_node"
-  | "simplify_branch"
-  | "suggest_alternative"
-  | "suggest_formula"
-  | "review_model"
-  | "check_units"
-  | "identify_missing_drivers"
-  | "identify_duplicate_drivers"
-  | "explain_node"
-  | "explain_scenario"
-  | "generate_executive_summary";
 
 export interface ModelBackendCapabilities {
   structuredOutput: boolean;

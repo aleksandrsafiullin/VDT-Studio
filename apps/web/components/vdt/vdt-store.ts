@@ -3,22 +3,31 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
+  applyChangeSet,
   calculateGraph,
   cloneProject,
+  createVersionSnapshot,
   DEFAULT_CANVAS_LAYOUT,
+  diffChangeSet,
   importProjectJson,
   layoutGraph,
   productionVolumeProject,
-  type VdtEdge,
+  restoreVersionSnapshot as restoreProjectVersionSnapshot,
+  type VdtAiTaskType,
+  type VdtChangeSet,
   type VdtNode,
   type VdtProject,
   type VdtScenario
 } from "@vdt-studio/vdt-core";
 import {
+  type AiAdvisoryResult,
+  type AiExplanationResult,
   type GenerateVdtInput,
-  type OpenAiCompatibleProviderConfig
+  type OpenAiCompatibleProviderConfig,
+  type RunAiTaskInputMap,
+  type RunAiTaskResult
 } from "@vdt-studio/ai-harness";
-import { makeId, slugifyId } from "@/lib/id";
+import { makeId } from "@/lib/id";
 import {
   applyUiPreference,
   DEFAULT_UI,
@@ -42,7 +51,8 @@ import {
   type ByokProtocol,
   type ExecutionMode,
   type MemoryModelMode,
-  type CliModelSelection
+  type CliModelSelection,
+  type LocalRunnerPresetId
 } from "@/lib/execution-mode-catalog";
 import {
   migrateLegacyProviderToExecutionSettings,
@@ -82,7 +92,10 @@ export {
 
 export type ProviderId = "mock" | "local_cli" | "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "local_runner";
 export type ExampleProjectId = "production_volume" | "oee" | "inventory_level" | "maintenance_cost";
-export type LocalRunnerPresetId = "ollama_openai" | "lm_studio_openai" | "vllm_openai" | "custom_cli_json";
+
+export {
+  LOCAL_RUNNER_PRESET_CATALOG as LOCAL_RUNNER_PRESETS
+} from "@/lib/execution-mode-catalog";
 
 export type {
   ExecutionMode,
@@ -92,18 +105,10 @@ export type {
   CliAgentId,
   MemoryModelMode,
   CliModelSelection,
-  ExecutionSettings
+  ExecutionSettings,
+  LocalRunnerPresetId,
+  LocalRunnerPresetCatalogEntry as LocalRunnerPreset
 } from "@/lib/execution-mode-catalog";
-
-export interface LocalRunnerPreset {
-  id: LocalRunnerPresetId;
-  label: string;
-  runnerProviderId: "local_http_stub" | "cli_stub";
-  baseUrl?: string | undefined;
-  model?: string | undefined;
-  command?: string | undefined;
-  argsText?: string | undefined;
-}
 
 export interface ProviderTestStatus {
   kind: "success" | "error" | "info";
@@ -161,37 +166,6 @@ export const EXAMPLE_PROJECT_OPTIONS: { id: ExampleProjectId; label: string }[] 
   { id: "maintenance_cost", label: "Maintenance Cost" }
 ];
 
-export const LOCAL_RUNNER_PRESETS: LocalRunnerPreset[] = [
-  {
-    id: "ollama_openai",
-    label: "Ollama",
-    runnerProviderId: "local_http_stub",
-    baseUrl: "http://127.0.0.1:11434/v1",
-    model: "qwen3"
-  },
-  {
-    id: "lm_studio_openai",
-    label: "LM Studio",
-    runnerProviderId: "local_http_stub",
-    baseUrl: "http://127.0.0.1:1234/v1",
-    model: "local-model"
-  },
-  {
-    id: "vllm_openai",
-    label: "vLLM",
-    runnerProviderId: "local_http_stub",
-    baseUrl: "http://127.0.0.1:8000/v1",
-    model: "local-model"
-  },
-  {
-    id: "custom_cli_json",
-    label: "CLI JSON stdout",
-    runnerProviderId: "cli_stub",
-    command: "vdt-model-adapter",
-    argsText: ""
-  }
-];
-
 const exampleProjectJsonById: Record<Exclude<ExampleProjectId, "production_volume">, unknown> = {
   oee: oeeExample,
   inventory_level: inventoryLevelExample,
@@ -202,12 +176,25 @@ interface BriefState extends GenerateVdtInput {
   rootKpi: string;
 }
 
-interface DeepenSuggestion {
-  id: string;
-  name: string;
-  unit?: string | undefined;
-  relation: VdtEdge["relation"];
-}
+export type RunAiActionTaskType = Exclude<VdtAiTaskType, "generate_tree">;
+
+export type RunAiActionInput<T extends RunAiActionTaskType = RunAiActionTaskType> = Omit<
+  RunAiTaskInputMap[T],
+  "project" | "maxTokens" | "signal"
+>;
+
+const ADVISORY_AI_TASKS = new Set<RunAiActionTaskType>([
+  "review_model",
+  "check_units",
+  "identify_missing_drivers",
+  "identify_duplicate_drivers"
+]);
+
+const EXPLANATION_AI_TASKS = new Set<RunAiActionTaskType>([
+  "explain_node",
+  "explain_scenario",
+  "generate_executive_summary"
+]);
 
 interface VdtStudioState {
   project: VdtProject;
@@ -236,10 +223,15 @@ interface VdtStudioState {
   ui: UiPreferences;
   isGenerating: boolean;
   aiError?: string | undefined;
-  deepenPreview?: {
-    parentNodeId: string;
-    suggestions: DeepenSuggestion[];
-  } | undefined;
+  pendingChangeSet?: VdtChangeSet | undefined;
+  changeSetSelection: Set<string>;
+  pendingAdvisoryResult?: AiAdvisoryResult | undefined;
+  pendingAdvisoryTaskType?: RunAiActionTaskType | undefined;
+  pendingExplanation?: AiExplanationResult | undefined;
+  pendingExplanationTaskType?: RunAiActionTaskType | undefined;
+  highlightedNodeIds: string[];
+  isRunningAiAction: boolean;
+  aiActionError?: string | undefined;
   setBriefField: <K extends keyof BriefState>(field: K, value: BriefState[K]) => void;
   setProviderId: (providerId: ProviderId) => void;
   setProviderConfigField: <K extends keyof ProviderConfigState>(
@@ -283,9 +275,13 @@ interface VdtStudioState {
   createScenario: () => void;
   setActiveScenarioId: (scenarioId: string) => void;
   updateScenarioOverride: (scenarioId: string, nodeId: string, value?: number) => void;
-  prepareDeepenPreview: (nodeId: string) => void;
-  clearDeepenPreview: () => void;
-  applyDeepenPreview: () => void;
+  runAiAction: <T extends RunAiActionTaskType>(taskType: T, input: RunAiActionInput<T>) => Promise<void>;
+  toggleChangeSelection: (changeId: string) => void;
+  applyPendingChangeSet: () => void;
+  discardPendingChangeSet: () => void;
+  saveAdvisoryToProject: () => void;
+  applyAdvisorySuggestedChanges: () => void;
+  restoreVersionSnapshot: (versionId: string) => void;
   replaceProject: (project: VdtProject) => void;
 }
 
@@ -316,6 +312,163 @@ function briefFromProject(project: VdtProject): BriefState {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function collectChangeEntryIds(changeSet: VdtChangeSet): Set<string> {
+  return new Set([
+    ...changeSet.additions.map((entry) => entry.id),
+    ...changeSet.updates.map((entry) => entry.id),
+    ...changeSet.deletions.map((entry) => entry.id),
+    ...changeSet.edgeChanges.map((entry) => entry.id)
+  ]);
+}
+
+function computeHighlightedNodeIds(project: VdtProject, changeSet: VdtChangeSet): string[] {
+  const diff = diffChangeSet(project, changeSet);
+  return [...diff.addedNodeIds, ...diff.updatedNodeIds, ...diff.removedNodeIds];
+}
+
+function readAdvisorySuggestedChanges(result: AiAdvisoryResult): VdtChangeSet | undefined {
+  if ("suggestedChanges" in result && result.suggestedChanges) {
+    return result.suggestedChanges;
+  }
+  return undefined;
+}
+
+function mapAiWarningToProjectWarning(
+  warning: { severity: "info" | "warning" | "error"; message: string; nodeId?: string | undefined; edgeId?: string | undefined },
+  index: number
+) {
+  return {
+    id: `ai_warning_${index}_${warning.message.slice(0, 24).replace(/\s+/g, "_")}`,
+    severity: warning.severity,
+    type: "weak_business_logic" as const,
+    message: warning.message,
+    ...(warning.nodeId !== undefined ? { nodeId: warning.nodeId } : {}),
+    ...(warning.edgeId !== undefined ? { edgeId: warning.edgeId } : {})
+  };
+}
+
+function mergeAdvisoryIntoReview(
+  existing: VdtProject["aiReview"],
+  result: AiAdvisoryResult
+): NonNullable<VdtProject["aiReview"]> {
+  const mergedAssumptions = [...new Set([...(existing?.assumptions ?? []), ...result.assumptions])];
+  const mergedQuestions = [...new Set([...(existing?.questionsForUser ?? []), ...result.questionsForUser])];
+  const mergedWarnings = [...(existing?.warnings ?? [])];
+  for (const [index, warning] of result.warnings.entries()) {
+    const mapped = mapAiWarningToProjectWarning(warning, index);
+    if (!mergedWarnings.some((entry) => entry.message === mapped.message)) {
+      mergedWarnings.push(mapped);
+    }
+  }
+  return {
+    assumptions: mergedAssumptions,
+    questionsForUser: mergedQuestions,
+    warnings: mergedWarnings
+  };
+}
+
+function layoutProjectGraph(project: VdtProject): VdtProject {
+  const existingPositions = collectExistingPositions(project.graph.nodes);
+  const layout = layoutGraph(project.graph, project.rootNodeId, {
+    ...DEFAULT_CANVAS_LAYOUT,
+    existingPositions
+  });
+  const updatedAt = nowIso();
+  return {
+    ...project,
+    updatedAt,
+    graph: {
+      ...project.graph,
+      nodes: project.graph.nodes.map((node) => ({
+        ...node,
+        position: layout.positions.get(node.id) ?? node.position ?? { x: 0, y: 0 },
+        updatedAt
+      }))
+    }
+  };
+}
+
+function clearPendingAiActionState() {
+  return {
+    pendingChangeSet: undefined,
+    changeSetSelection: new Set<string>(),
+    pendingAdvisoryResult: undefined,
+    pendingAdvisoryTaskType: undefined,
+    pendingExplanation: undefined,
+    pendingExplanationTaskType: undefined,
+    highlightedNodeIds: [] as string[],
+    aiActionError: undefined
+  };
+}
+
+async function runAiTask<T extends RunAiActionTaskType>(
+  taskType: T,
+  input: RunAiActionInput<T>,
+  state: Pick<VdtStudioState, "executionSettings" | "cliDetectionAgents" | "project" | "runnerPairingToken">
+): Promise<RunAiTaskResult> {
+  if (state.executionSettings.executionMode === "byok") {
+    const validationErrors = validateByokSettings(state.executionSettings);
+    if (hasByokFieldErrors(validationErrors)) {
+      throw new Error("Fix BYOK settings before running this AI action.");
+    }
+  }
+
+  const executionError = validateExecutionForGenerate(state.executionSettings, state.cliDetectionAgents);
+  if (executionError) {
+    throw new Error(executionError);
+  }
+
+  const { providerId, providerConfig } = resolveExecutionSettings(state.executionSettings);
+  if (providerId === "local_runner" && !state.runnerPairingToken) {
+    throw new Error("Pair the local runner before running this AI action.");
+  }
+
+  const response = await fetch("/api/ai/run-task", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      taskType,
+      input: {
+        project: state.project,
+        ...input
+      },
+      providerId,
+      providerConfig:
+        providerId === "mock"
+          ? undefined
+          : providerId === "local_runner"
+            ? { ...providerConfig, pairingToken: state.runnerPairingToken }
+            : providerConfig
+    })
+  });
+
+  const payload = (await response.json()) as { ok: boolean; result?: RunAiTaskResult; error?: string };
+  if (!response.ok || !payload.ok || !payload.result) {
+    throw new Error(payload.error ?? "AI task response could not be parsed.");
+  }
+
+  return payload.result;
+}
+
+export function isAdvisoryAiTaskType(taskType: RunAiActionTaskType): boolean {
+  return ADVISORY_AI_TASKS.has(taskType);
+}
+
+export function isExplanationAiTaskType(taskType: RunAiActionTaskType): boolean {
+  return EXPLANATION_AI_TASKS.has(taskType);
+}
+
+export async function runAdvisoryOrExplainAiTask<T extends RunAiActionTaskType>(
+  taskType: T,
+  input: RunAiActionInput<T>
+): Promise<void> {
+  if (!isAdvisoryAiTaskType(taskType) && !isExplanationAiTaskType(taskType)) {
+    throw new Error(`${taskType} is not an advisory or explanation task.`);
+  }
+
+  await useVdtStudioStore.getState().runAiAction(taskType, input);
 }
 
 function updateProjectNode(project: VdtProject, nodeId: string, update: (node: VdtNode) => VdtNode): VdtProject {
@@ -463,6 +616,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       byokFieldErrors: undefined,
       ui: { ...DEFAULT_UI },
       isGenerating: false,
+      changeSetSelection: new Set<string>(),
+      highlightedNodeIds: [],
+      isRunningAiAction: false,
       setUiPreference: (field, value) =>
         set((state) => ({
           ui: applyUiPreference(state.ui, field, value)
@@ -891,7 +1047,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           set({ aiError: "Pair the local runner before generating." });
           return;
         }
-        set({ isGenerating: true, aiError: undefined, deepenPreview: undefined, byokFieldErrors: undefined });
+        set({ isGenerating: true, aiError: undefined, ...clearPendingAiActionState(), byokFieldErrors: undefined });
 
         try {
           const response = await fetch("/api/ai/generate-vdt", {
@@ -936,7 +1092,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           selectedNodeId: project.rootNodeId,
           activeScenarioId: project.scenarios[0]?.id ?? "",
           aiError: undefined,
-          deepenPreview: undefined
+          ...clearPendingAiActionState()
         });
       },
       replaceProject: (project) => {
@@ -946,7 +1102,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           selectedNodeId: nextProject.rootNodeId,
           activeScenarioId: nextProject.scenarios[0]?.id ?? "",
           aiError: undefined,
-          deepenPreview: undefined
+          ...clearPendingAiActionState()
         });
       },
       selectNode: (nodeId) => set({ selectedNodeId: nodeId }),
@@ -1051,94 +1207,168 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             })
           }
         })),
-      prepareDeepenPreview: (nodeId) => {
-        const node = get().project.graph.nodes.find((candidate) => candidate.id === nodeId);
-        if (!node) {
-          return;
-        }
-
-        const base = slugifyId(node.name);
-        const suggestions: DeepenSuggestion[] = [
-          {
-            id: `${base}_process_loss`,
-            name: "Process Loss",
-            unit: node.unit,
-            relation: "negative_driver"
-          },
-          {
-            id: `${base}_equipment_loss`,
-            name: "Equipment Loss",
-            unit: node.unit,
-            relation: "negative_driver"
-          },
-          {
-            id: `${base}_operating_practice`,
-            name: "Operating Practice",
-            relation: "contextual_influence"
-          }
-        ];
-
+      runAiAction: async (taskType, input) => {
         set({
-          deepenPreview: {
-            parentNodeId: nodeId,
-            suggestions
-          },
-          selectedPanelTab: "ai"
+          isRunningAiAction: true,
+          aiActionError: undefined,
+          pendingAdvisoryResult: undefined,
+          pendingAdvisoryTaskType: undefined,
+          pendingExplanation: undefined,
+          pendingExplanationTaskType: undefined
         });
+
+        try {
+          const result = await runAiTask(taskType, input, get());
+          const project = get().project;
+
+          switch (result.kind) {
+            case "change_set":
+              set({
+                pendingChangeSet: result.changeSet,
+                changeSetSelection: collectChangeEntryIds(result.changeSet),
+                highlightedNodeIds: computeHighlightedNodeIds(project, result.changeSet),
+                pendingAdvisoryResult: undefined,
+                pendingAdvisoryTaskType: undefined,
+                pendingExplanation: undefined,
+                pendingExplanationTaskType: undefined,
+                selectedPanelTab: "ai",
+                isRunningAiAction: false
+              });
+              return;
+            case "advisory":
+              set({
+                pendingChangeSet: undefined,
+                changeSetSelection: new Set<string>(),
+                highlightedNodeIds: [],
+                pendingExplanation: undefined,
+                pendingExplanationTaskType: undefined,
+                pendingAdvisoryResult: result.result,
+                pendingAdvisoryTaskType: taskType,
+                aiActionError: undefined,
+                selectedPanelTab: "ai",
+                isRunningAiAction: false
+              });
+              return;
+            case "explanation":
+              set({
+                pendingChangeSet: undefined,
+                changeSetSelection: new Set<string>(),
+                highlightedNodeIds: [],
+                pendingAdvisoryResult: undefined,
+                pendingAdvisoryTaskType: undefined,
+                pendingExplanation: result.result,
+                pendingExplanationTaskType: taskType,
+                aiActionError: undefined,
+                selectedPanelTab: "ai",
+                isRunningAiAction: false
+              });
+              return;
+            case "project":
+              throw new Error("Unexpected project result from run-task.");
+            default: {
+              const exhaustive: never = result;
+              throw new Error(`Unsupported AI task result: ${String(exhaustive)}`);
+            }
+          }
+        } catch (error) {
+          set({
+            aiActionError: error instanceof Error ? error.message : "AI task failed.",
+            isRunningAiAction: false
+          });
+        }
       },
-      clearDeepenPreview: () => set({ deepenPreview: undefined }),
-      applyDeepenPreview: () =>
+      toggleChangeSelection: (changeId) =>
         set((state) => {
-          if (!state.deepenPreview) {
+          const changeSetSelection = new Set(state.changeSetSelection);
+          if (changeSetSelection.has(changeId)) {
+            changeSetSelection.delete(changeId);
+          } else {
+            changeSetSelection.add(changeId);
+          }
+          return { changeSetSelection };
+        }),
+      applyPendingChangeSet: () =>
+        set((state) => {
+          if (!state.pendingChangeSet || state.changeSetSelection.size === 0) {
             return {};
           }
 
-          const existingIds = new Set(state.project.graph.nodes.map((node) => node.id));
-          const parent = state.project.graph.nodes.find((node) => node.id === state.deepenPreview?.parentNodeId);
-          if (!parent) {
-            return { deepenPreview: undefined };
+          const taskType = state.pendingChangeSet.taskType;
+          const snapshotted = createVersionSnapshot(state.project, {
+            name: `Before ${taskType} apply`,
+            taskType
+          });
+          const applied = applyChangeSet(snapshotted, state.pendingChangeSet, state.changeSetSelection);
+          if (!applied.success) {
+            return {
+              aiActionError:
+                applied.warnings.map((warningItem) => warningItem.message).join("; ") ||
+                "Change set could not be applied."
+            };
           }
 
-          const createdAt = nowIso();
-          const newNodes: VdtNode[] = state.deepenPreview.suggestions
-            .filter((suggestion) => !existingIds.has(suggestion.id))
-            .map((suggestion) => ({
-              id: suggestion.id,
-              name: suggestion.name,
-              description: `AI-proposed driver to review under ${parent.name}.`,
-              type: suggestion.relation === "contextual_influence" ? "external_factor" : "input",
-              status: "ai_suggested",
-              unit: suggestion.unit,
-              aiGenerated: true,
-              aiConfidence: 0.68,
-              aiRationale: "Suggested as a plausible deeper driver. Review before accepting.",
-              createdAt,
-              updatedAt: createdAt
-            }));
-
-          const newEdges: VdtEdge[] = newNodes.map((node) => ({
-            id: `edge_${parent.id}_${node.id}`,
-            sourceNodeId: parent.id,
-            targetNodeId: node.id,
-            relation:
-              state.deepenPreview?.suggestions.find((suggestion) => suggestion.id === node.id)?.relation ??
-              "contextual_influence",
-            label: "AI preview",
-            aiGenerated: true,
-            aiConfidence: 0.68
-          }));
+          const laidOut = layoutProjectGraph(applied.project);
+          calculateGraph(laidOut);
 
           return {
-            deepenPreview: undefined,
+            project: laidOut,
+            ...clearPendingAiActionState()
+          };
+        }),
+      discardPendingChangeSet: () => set(clearPendingAiActionState()),
+      saveAdvisoryToProject: () =>
+        set((state) => {
+          if (!state.pendingAdvisoryResult) {
+            return {};
+          }
+
+          return {
             project: {
               ...state.project,
               updatedAt: nowIso(),
-              graph: {
-                nodes: [...state.project.graph.nodes, ...newNodes],
-                edges: [...state.project.graph.edges, ...newEdges]
-              }
+              aiReview: mergeAdvisoryIntoReview(state.project.aiReview, state.pendingAdvisoryResult)
             }
           };
+        }),
+      applyAdvisorySuggestedChanges: () =>
+        set((state) => {
+          if (!state.pendingAdvisoryResult) {
+            return {};
+          }
+
+          const suggestedChanges = readAdvisorySuggestedChanges(state.pendingAdvisoryResult);
+          if (!suggestedChanges) {
+            return {
+              aiActionError: "This advisory result does not include a change-set draft."
+            };
+          }
+
+          return {
+            pendingChangeSet: suggestedChanges,
+            changeSetSelection: collectChangeEntryIds(suggestedChanges),
+            highlightedNodeIds: computeHighlightedNodeIds(state.project, suggestedChanges),
+            aiActionError: undefined,
+            selectedPanelTab: "ai"
+          };
+        }),
+      restoreVersionSnapshot: (versionId) =>
+        set((state) => {
+          try {
+            const restored = restoreProjectVersionSnapshot(state.project, versionId);
+            const laidOut = layoutProjectGraph(restored);
+            calculateGraph(laidOut);
+
+            return {
+              project: laidOut,
+              selectedNodeId: laidOut.rootNodeId,
+              ...clearPendingAiActionState()
+            };
+          } catch (error) {
+            return {
+              aiActionError:
+                error instanceof Error ? error.message : "Version snapshot could not be restored."
+            };
+          }
         })
     }),
     {
@@ -1153,6 +1383,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         }
         return state as Partial<VdtStudioState>;
       },
+      // Session/ephemeral fields are intentionally omitted: runnerPairingToken, cliTestStatusByAgent,
+      // providerTestStatus (see PARTIALIZE_EPHEMERAL_STATE_KEYS in provider-persistence.ts).
       partialize: (state) => ({
         project: state.project,
         selectedNodeId: state.selectedNodeId,

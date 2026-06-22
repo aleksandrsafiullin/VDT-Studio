@@ -6,7 +6,7 @@ import { GeminiProvider } from "./gemini-provider";
 
 const outputSchema = z.object({ answer: z.string() });
 const params = {
-  taskType: "generate_vdt" as const,
+  taskType: "generate_tree" as const,
   input: {},
   schema: outputSchema,
   systemPrompt: "System prompt",

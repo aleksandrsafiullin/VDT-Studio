@@ -9,6 +9,7 @@ import { formatNumber } from "@/lib/format";
 export interface VdtNodeCardData extends Record<string, unknown> {
   node: VdtNode;
   value?: number | undefined;
+  highlighted?: boolean | undefined;
   onSelect?: ((nodeId: string) => void) | undefined;
 }
 
@@ -16,12 +17,13 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
   const nodeData = data as unknown as VdtNodeCardData;
   const node = nodeData.node;
   const value = nodeData.value;
+  const highlighted = nodeData.highlighted === true;
 
   return (
     <div
       className={[
         "min-h-[88px] w-[238px] rounded-lg border bg-white px-3 py-2 shadow-node transition",
-        selected ? "border-accent ring-4 ring-blue-100" : "border-line",
+        selected ? "border-accent ring-4 ring-blue-100" : highlighted ? "border-amber-400 ring-4 ring-amber-100" : "border-line",
         node.status === "rejected" ? "opacity-55" : ""
       ].join(" ")}
       role="button"

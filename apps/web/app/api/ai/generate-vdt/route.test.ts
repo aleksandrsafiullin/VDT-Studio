@@ -34,6 +34,51 @@ describe("generate VDT API route", () => {
     vi.unstubAllGlobals();
   });
 
+  it("rejects unknown providerId with 400 before provider execution", async () => {
+    const response = await POST(
+      jsonRequest({
+        rootKpi: "Production Volume",
+        providerId: "unknown_provider"
+      })
+    );
+    const body = await readJson(response);
+
+    expect(response.status).toBe(400);
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("Unsupported providerId: unknown_provider");
+  });
+
+  it("rejects missing providerId with 400 before provider execution", async () => {
+    const response = await POST(jsonRequest({ rootKpi: "Production Volume" }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(400);
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("Select a configured Local CLI or BYOK provider before generating.");
+  });
+
+  it("returns provider failure without falling back to mock", async () => {
+    const fetchMock = vi.fn(async () => new Response("upstream failed", { status: 502 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(
+      jsonRequest({
+        rootKpi: "Production Volume",
+        providerId: "openai_compatible",
+        providerConfig: {
+          apiKey: "test-key",
+          model: "gpt-5.5"
+        }
+      })
+    );
+    const body = await readJson(response);
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.error).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("passes maxTokens from providerConfig to generateVdtProject", async () => {
     const generateSpy = vi.spyOn(aiHarness, "generateVdtProject");
 
@@ -128,6 +173,30 @@ describe("generate VDT API route", () => {
     expect(await readJson(response)).toMatchObject({ ok: true });
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.openai.com/v1/chat/completions",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("performs a dashscope connection test through openai_compatible", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: '{"ok":true}' } }]
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(jsonRequest({
+      operation: "connection_test",
+      providerId: "openai_compatible",
+      providerConfig: {
+        apiKey: "sk-sp-test-key",
+        baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
+        model: "qwen3-coder-plus"
+      }
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await readJson(response)).toMatchObject({ ok: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://coding.dashscope.aliyuncs.com/v1/chat/completions",
       expect.objectContaining({ method: "POST" })
     );
   });

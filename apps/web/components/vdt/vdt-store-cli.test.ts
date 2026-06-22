@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cloneProject, productionVolumeProject, type VdtChangeSet } from "@vdt-studio/vdt-core";
+import { productionVolumeReviewOutput } from "@vdt-studio/ai-harness";
 import { DEFAULT_EXECUTION_SETTINGS, getCliCatalogEntry } from "@/lib/execution-mode-catalog";
 
 const localStorageMock = (() => {
@@ -20,6 +22,240 @@ const localStorageMock = (() => {
 vi.stubGlobal("localStorage", localStorageMock);
 
 const { useVdtStudioStore } = await import("./vdt-store");
+
+function mockDeepenChangeSet(): VdtChangeSet {
+  return {
+    id: "changeset_deepen_unplanned_downtime",
+    taskType: "deepen_node",
+    backendId: "mock",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    additions: [
+      {
+        id: "add_equipment_failure_downtime",
+        nodeId: "equipment_failure_downtime",
+        parentNodeId: "unplanned_downtime",
+        relation: "negative_driver",
+        name: "Equipment Failure Downtime",
+        unit: "hours/month",
+        baselineValue: 12
+      },
+      {
+        id: "add_process_interruption_downtime",
+        nodeId: "process_interruption_downtime",
+        parentNodeId: "unplanned_downtime",
+        relation: "negative_driver",
+        name: "Process Interruption Downtime",
+        unit: "hours/month",
+        baselineValue: 8
+      }
+    ],
+    updates: [],
+    deletions: [],
+    edgeChanges: [],
+    assumptions: [],
+    questions: [],
+    warnings: []
+  };
+}
+
+describe("vdt-store change-set workflow", () => {
+  beforeEach(() => {
+    localStorageMock.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ agents: [] })
+      })
+    );
+    useVdtStudioStore.setState({
+      project: cloneProject(productionVolumeProject),
+      selectedNodeId: "unplanned_downtime",
+      changeSetSelection: new Set<string>(),
+      pendingChangeSet: undefined,
+      pendingAdvisoryResult: undefined,
+      pendingExplanation: undefined,
+      isRunningAiAction: false,
+      aiActionError: undefined,
+      providerId: "mock",
+      executionSettings: {
+        ...DEFAULT_EXECUTION_SETTINGS,
+        useMockProvider: true,
+        gatewayPresetId: "mock"
+      }
+    });
+  });
+
+  it("runAiAction posts deepen_node to /api/ai/run-task and stores pending change set", async () => {
+    const changeSet = mockDeepenChangeSet();
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/ai/run-task")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            result: { kind: "change_set", changeSet }
+          })
+        } as Response;
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ agents: [] })
+      } as Response;
+    });
+
+    await useVdtStudioStore.getState().runAiAction("deepen_node", { nodeId: "unplanned_downtime" });
+
+    const runTaskCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/ai/run-task"));
+    expect(runTaskCall).toBeDefined();
+
+    const [, requestInit] = runTaskCall!;
+    const body = JSON.parse(String(requestInit?.body)) as {
+      taskType?: string;
+      input?: { nodeId?: string; project?: { id?: string } };
+      providerId?: string;
+    };
+
+    expect(body.taskType).toBe("deepen_node");
+    expect(body.input?.nodeId).toBe("unplanned_downtime");
+    expect(body.input?.project?.id).toBe(productionVolumeProject.id);
+    expect(body.providerId).toBe("mock");
+
+    const state = useVdtStudioStore.getState();
+    expect(state.pendingChangeSet?.id).toBe(changeSet.id);
+    expect(state.changeSetSelection).toEqual(
+      new Set(["add_equipment_failure_downtime", "add_process_interruption_downtime"])
+    );
+    expect(state.isRunningAiAction).toBe(false);
+    expect(state.selectedPanelTab).toBe("ai");
+  });
+
+  it("toggleChangeSelection updates selected change entry ids", () => {
+    const changeSet = mockDeepenChangeSet();
+    useVdtStudioStore.setState({
+      pendingChangeSet: changeSet,
+      changeSetSelection: new Set(["add_equipment_failure_downtime", "add_process_interruption_downtime"])
+    });
+
+    useVdtStudioStore.getState().toggleChangeSelection("add_equipment_failure_downtime");
+
+    expect(useVdtStudioStore.getState().changeSetSelection).toEqual(
+      new Set(["add_process_interruption_downtime"])
+    );
+
+    useVdtStudioStore.getState().toggleChangeSelection("add_equipment_failure_downtime");
+
+    expect(useVdtStudioStore.getState().changeSetSelection).toEqual(
+      new Set(["add_process_interruption_downtime", "add_equipment_failure_downtime"])
+    );
+  });
+
+  it("applyPendingChangeSet appends a version snapshot and applies selected additions", () => {
+    const changeSet = mockDeepenChangeSet();
+    useVdtStudioStore.setState({
+      pendingChangeSet: changeSet,
+      changeSetSelection: new Set(["add_equipment_failure_downtime"])
+    });
+
+    const initialVersionCount = useVdtStudioStore.getState().project.versions.length;
+    const initialNodeCount = useVdtStudioStore.getState().project.graph.nodes.length;
+
+    useVdtStudioStore.getState().applyPendingChangeSet();
+
+    const state = useVdtStudioStore.getState();
+    expect(state.pendingChangeSet).toBeUndefined();
+    expect(state.changeSetSelection.size).toBe(0);
+    expect(state.project.versions.length).toBe(initialVersionCount + 1);
+    expect(state.project.versions.at(-1)?.name).toBe("Before deepen_node apply");
+    expect(state.project.versions.at(-1)?.taskType).toBe("deepen_node");
+    expect(state.project.graph.nodes.length).toBe(initialNodeCount + 1);
+    expect(state.project.graph.nodes.map((node) => node.id)).toContain("equipment_failure_downtime");
+    expect(state.project.graph.nodes.map((node) => node.id)).not.toContain("process_interruption_downtime");
+  });
+
+  it("discardPendingChangeSet clears pending change-set state", () => {
+    useVdtStudioStore.setState({
+      pendingChangeSet: mockDeepenChangeSet(),
+      changeSetSelection: new Set(["add_equipment_failure_downtime"]),
+      aiActionError: "stale error"
+    });
+
+    useVdtStudioStore.getState().discardPendingChangeSet();
+
+    const state = useVdtStudioStore.getState();
+    expect(state.pendingChangeSet).toBeUndefined();
+    expect(state.changeSetSelection.size).toBe(0);
+    expect(state.aiActionError).toBeUndefined();
+  });
+
+  it("restoreVersionSnapshot reverts graph and discards pending change set", () => {
+    const changeSet = mockDeepenChangeSet();
+    const initialNodeCount = useVdtStudioStore.getState().project.graph.nodes.length;
+
+    useVdtStudioStore.setState({
+      pendingChangeSet: changeSet,
+      changeSetSelection: new Set([
+        "add_equipment_failure_downtime",
+        "add_process_interruption_downtime"
+      ])
+    });
+    useVdtStudioStore.getState().applyPendingChangeSet();
+
+    const versionId = useVdtStudioStore.getState().project.versions.at(-1)!.id;
+    expect(useVdtStudioStore.getState().project.graph.nodes.length).toBe(initialNodeCount + 2);
+
+    useVdtStudioStore.setState({
+      pendingChangeSet: changeSet,
+      changeSetSelection: new Set(["add_equipment_failure_downtime"]),
+      aiActionError: "stale preview"
+    });
+
+    useVdtStudioStore.getState().restoreVersionSnapshot(versionId);
+
+    const state = useVdtStudioStore.getState();
+    expect(state.pendingChangeSet).toBeUndefined();
+    expect(state.changeSetSelection.size).toBe(0);
+    expect(state.aiActionError).toBeUndefined();
+    expect(state.project.graph.nodes.length).toBe(initialNodeCount);
+    expect(state.project.graph.nodes.map((node) => node.id)).not.toContain("equipment_failure_downtime");
+  });
+
+  it("runAiAction stores advisory results for review_model", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/ai/run-task")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            result: { kind: "advisory", result: productionVolumeReviewOutput }
+          })
+        } as Response;
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ agents: [] })
+      } as Response;
+    });
+
+    await useVdtStudioStore.getState().runAiAction("review_model", {});
+
+    const state = useVdtStudioStore.getState();
+    expect(state.pendingAdvisoryResult).toEqual(productionVolumeReviewOutput);
+    expect(state.pendingChangeSet).toBeUndefined();
+    expect(state.aiActionError).toBeUndefined();
+  });
+});
 
 describe("vdt-store cli rescan", () => {
   beforeEach(() => {

@@ -1,10 +1,19 @@
 {
   "name": "vdt-studio",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.0",
   "private": true,
   "description": "AI-first, local-first Value Driver Tree workspace for editable and calculable KPI driver models.",
   "license": "MIT",
+  "engines": {
+    "node": ">=24 <25",
+    "pnpm": ">=10.33 <11"
+  },
   "packageManager": "pnpm@10.33.2",
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.15"
+    }
+  },
   "scripts": {
     "dev": "pnpm --filter @vdt-studio/web dev",
     "build": "pnpm build:cli && pnpm build:web",
@@ -16,9 +25,14 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:watch": "vitest",
-    "vdt": "tsx packages/cli/src/cli.ts",
+    "vdt": "tsx packages/cli/src/bin.ts",
     "dev:all": "concurrently \"pnpm dev\" \"pnpm local-runner:start\"",
-    "local-runner:start": "tsx packages/local-runner/src/server/index.ts"
+    "local-runner:start": "tsx packages/local-runner/src/server/index.ts",
+    "security:audit": "pnpm audit --prod --audit-level high",
+    "certification:verify": "node scripts/verify-provider-certification.mjs",
+    "package:alpha": "node scripts/package-alpha.mjs",
+    "package:verify": "node scripts/verify-cli-package.mjs",
+    "release:verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm security:audit && pnpm certification:verify && pnpm package:alpha && pnpm package:verify"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",

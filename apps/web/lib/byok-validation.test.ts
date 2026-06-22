@@ -101,4 +101,20 @@ describe("byok-validation", () => {
     expect(errors.model).toBeUndefined();
     expect(hasByokFieldErrors(errors)).toBe(true);
   });
+
+  it("requires apiKey for Alibaba Coding Plan preset", () => {
+    const errors = validateByokSettings({
+      ...DEFAULT_EXECUTION_SETTINGS,
+      executionMode: "byok",
+      useMockProvider: false,
+      gatewayPresetId: "alibaba-coding-plan",
+      byokProtocol: "openai",
+      apiKey: "",
+      model: "qwen3-coder-plus"
+    });
+
+    expect(errors.apiKey).toBe("API key is required.");
+    expect(errors.model).toBeUndefined();
+    expect(hasByokFieldErrors(errors)).toBe(true);
+  });
 });

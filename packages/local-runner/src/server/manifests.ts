@@ -1,10 +1,19 @@
+import {
+  VDT_OUTPUT_SCHEMA_IDS,
+  VDT_SCHEMA_IDS,
+  schemaTasks,
+  type VdtAiTaskType
+} from "@vdt-studio/model-bridge";
 import type { BackendManifest } from "../cli/types";
 
 const isDarwin = process.platform === "darwin";
 const cursorSupportLevel = "beta" as const;
 
-const generateTasks = ["generate_tree", "deepen_node", "review_model"] as const;
-const schemas = ["connection-test-v1", "generate-tree-v1", "deepen-node-v1", "review-model-v1"] as const;
+/** All 12 canonical VDT AI task types (one per output schema). */
+export const ALL_VDT_TASK_TYPES = VDT_OUTPUT_SCHEMA_IDS.map((schemaId) => schemaTasks[schemaId]) as readonly VdtAiTaskType[];
+
+/** All 13 registered schema IDs (12 output schemas + connection-test-v1). */
+export const ALL_VDT_SCHEMA_IDS = VDT_SCHEMA_IDS;
 
 export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.freeze([
   {
@@ -12,8 +21,8 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     label: "Safe Mock",
     kind: "mock",
     supportLevel: "supported",
-    taskTypes: generateTasks,
-    schemaIds: schemas,
+    taskTypes: ALL_VDT_TASK_TYPES,
+    schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: false,
     safety: { toolsDisabled: true, requiresOsSandbox: false, certified: true }
   },
@@ -22,8 +31,8 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     label: "Ollama",
     kind: "local_http",
     supportLevel: "supported",
-    taskTypes: generateTasks,
-    schemaIds: schemas,
+    taskTypes: ALL_VDT_TASK_TYPES,
+    schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,
     localHttp: { baseUrl: "http://127.0.0.1:11434/v1", defaultModel: "qwen3" },
     safety: { toolsDisabled: true, requiresOsSandbox: false, certified: true }
@@ -33,8 +42,8 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     label: "LM Studio",
     kind: "local_http",
     supportLevel: "supported",
-    taskTypes: generateTasks,
-    schemaIds: schemas,
+    taskTypes: ALL_VDT_TASK_TYPES,
+    schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,
     localHttp: { baseUrl: "http://127.0.0.1:1234/v1", defaultModel: "local-model" },
     safety: { toolsDisabled: true, requiresOsSandbox: false, certified: true }
@@ -44,8 +53,8 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     label: "vLLM",
     kind: "local_http",
     supportLevel: "beta",
-    taskTypes: generateTasks,
-    schemaIds: schemas,
+    taskTypes: ALL_VDT_TASK_TYPES,
+    schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,
     localHttp: { baseUrl: "http://127.0.0.1:8000/v1", defaultModel: "local-model" },
     safety: { toolsDisabled: true, requiresOsSandbox: false, certified: true }
@@ -55,8 +64,8 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     label: "Cursor Agent",
     kind: "subscription_cli",
     supportLevel: cursorSupportLevel,
-    taskTypes: generateTasks,
-    schemaIds: schemas,
+    taskTypes: ALL_VDT_TASK_TYPES,
+    schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,
     cli: {
       executableAliases: ["agent", "cursor-agent", "cursor"],
@@ -76,8 +85,8 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     label: "Codex CLI",
     kind: "subscription_cli",
     supportLevel: "supported",
-    taskTypes: generateTasks,
-    schemaIds: schemas,
+    taskTypes: ALL_VDT_TASK_TYPES,
+    schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,
     cli: {
       executableAliases: ["codex"],
@@ -91,8 +100,8 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     label: "Claude Code",
     kind: "subscription_cli",
     supportLevel: "supported",
-    taskTypes: generateTasks,
-    schemaIds: schemas,
+    taskTypes: ALL_VDT_TASK_TYPES,
+    schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,
     cli: {
       executableAliases: ["claude"],
@@ -116,8 +125,8 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     label: "Gemini CLI",
     kind: "subscription_cli",
     supportLevel: isDarwin ? "beta" : "experimental",
-    taskTypes: generateTasks,
-    schemaIds: schemas,
+    taskTypes: ALL_VDT_TASK_TYPES,
+    schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,
     cli: {
       executableAliases: ["gemini"],
@@ -136,8 +145,8 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     label: "GitHub Copilot CLI",
     kind: "subscription_cli",
     supportLevel: isDarwin ? "beta" : "experimental",
-    taskTypes: generateTasks,
-    schemaIds: schemas,
+    taskTypes: ALL_VDT_TASK_TYPES,
+    schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,
     cli: {
       executableAliases: ["copilot"],

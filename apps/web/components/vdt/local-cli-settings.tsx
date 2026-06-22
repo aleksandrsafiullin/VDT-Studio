@@ -14,6 +14,7 @@ import {
 } from "@/lib/execution-mode-catalog";
 import { CliAgentCard, type CliAgentDetectionView } from "./cli-agent-card";
 import { CliInstallGrid } from "./cli-install-grid";
+import { ProviderTestStatusBanner } from "./provider-diagnostics";
 import { useVdtStudioStore } from "./vdt-store";
 
 function buildDetectionFallback(): CliAgentDetectionView[] {
@@ -182,12 +183,11 @@ export function LocalCliSettings() {
           </div>
         ) : null}
         {runnerPairingStatus ? (
-          <p
-            className={clsx("mt-3 text-xs", runnerPairingStatus.kind === "success" ? "text-emerald-700" : "text-red-700")}
-            data-testid="local-runner-pairing-status"
-          >
-            {runnerPairingStatus.message}
-          </p>
+          <ProviderTestStatusBanner
+            className="mt-3"
+            status={runnerPairingStatus}
+            testId="local-runner-pairing-status"
+          />
         ) : null}
       </section>
 

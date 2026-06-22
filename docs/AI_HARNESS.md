@@ -28,6 +28,7 @@ Production safety notes:
 - Production private or localhost provider URLs require `VDT_ALLOW_PRIVATE_PROVIDER_URLS=true`.
 - Request-supplied custom base URLs must provide their own API key.
 - Browser-entered BYOK API keys are kept in memory for the active session and are not persisted in localStorage.
+- Scrubbed session-only fields: `apiKey`, `localApiKey`, `pairingToken`, `runnerPairingToken`, `accessToken`, `providerToken` (including Alibaba Cloud Coding Plan BYOK keys).
 - Provider calls use a timeout and response-size cap.
 - The BYOK streaming proxy supports Anthropic, OpenAI, Azure OpenAI, Google Gemini, Ollama and OpenAI-compatible SenseAudio targets.
 - Proxy targets are DNS-resolved once and the upstream socket is pinned to the validated public address; redirects, private/link-local/CGNAT targets, oversized bodies, frames and streams are rejected.

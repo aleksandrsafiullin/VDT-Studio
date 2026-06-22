@@ -1,11 +1,12 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Plus, Route, Sigma } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, Route, Sigma, Sparkles } from "lucide-react";
 import { calculateGraph, calculateScenario, type VdtImpactNode } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Metric } from "@/components/ui/metric";
 import { SelectInput, TextInput } from "@/components/ui/field";
 import { formatChange, formatNumber, formatPercent } from "@/lib/format";
+import { ExplanationPanel } from "./explanation-panel";
 import {
   BASE_SCENARIO_DRAWER_HEIGHT,
   scaledPanelWidth,
@@ -26,22 +27,6 @@ function sortImpacts(impacts: VdtImpactNode[]) {
   return [...impacts].sort((left, right) => Math.abs(right.absoluteChange ?? 0) - Math.abs(left.absoluteChange ?? 0));
 }
 
-function buildScenarioExplanation(rootName: string, impacts: VdtImpactNode[], absoluteChange?: number, percentageChange?: number) {
-  if (impacts.length === 0 || absoluteChange === undefined) {
-    return "Mock AI summary: add scenario overrides to see the root impact and the main changed drivers.";
-  }
-
-  const topDrivers = sortImpacts(impacts)
-    .filter((impact) => impact.nodeName !== rootName)
-    .slice(0, 2)
-    .map((impact) => impact.nodeName);
-
-  const driverText = topDrivers.length > 0 ? topDrivers.join(" and ") : rootName;
-  return `Mock AI summary: ${rootName} moves by ${formatChange(absoluteChange)} (${formatPercent(
-    percentageChange
-  )}), mainly through ${driverText}.`;
-}
-
 export function ScenarioDrawer() {
   const project = useVdtStudioStore((state) => state.project);
   const activeScenarioId = useVdtStudioStore((state) => state.activeScenarioId);
@@ -52,23 +37,43 @@ export function ScenarioDrawer() {
   const setActiveScenarioId = useVdtStudioStore((state) => state.setActiveScenarioId);
   const updateScenarioOverride = useVdtStudioStore((state) => state.updateScenarioOverride);
   const toggleScenarioDrawer = useVdtStudioStore((state) => state.toggleScenarioDrawer);
+  const runAiAction = useVdtStudioStore((state) => state.runAiAction);
+  const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
+  const pendingExplanation = useVdtStudioStore((state) => state.pendingExplanation);
+  const pendingExplanationTaskType = useVdtStudioStore((state) => state.pendingExplanationTaskType);
 
   const baseline = calculateGraph(project);
   const activeScenario = project.scenarios.find((scenario) => scenario.id === activeScenarioId) ?? project.scenarios[0];
   const scenarioResult = activeScenario ? calculateScenario(project, activeScenario) : undefined;
   const inputNodes = project.graph.nodes.filter((node) => node.type === "input" || node.type === "data_mapped");
   const traceItems = scenarioResult?.calculationTrace ?? baseline.trace;
-  const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
   const impactedNodes = sortImpacts(scenarioResult?.impactedNodes ?? []).slice(0, 5);
-  const scenarioExplanation = buildScenarioExplanation(
-    rootNode?.name ?? project.rootNodeId,
-    scenarioResult?.impactedNodes ?? [],
-    scenarioResult?.absoluteChange,
-    scenarioResult?.percentageChange
-  );
+  const showScenarioExplanation =
+    pendingExplanation && pendingExplanationTaskType === "explain_scenario";
   const expandedHeight = scaledPanelWidth(BASE_SCENARIO_DRAWER_HEIGHT, panelScale);
   const collapsedHeight = scaledScenarioDrawerCollapsedHeight(panelScale, fontScale);
   const drawerHeight = scenarioDrawerCollapsed ? collapsedHeight : expandedHeight;
+
+  function explainScenario() {
+    if (!activeScenario) {
+      return;
+    }
+
+    void runAiAction("explain_scenario", {
+      scenarioId: activeScenario.id,
+      calculationSummary: {
+        rootNodeId: project.rootNodeId,
+        baselineRootValue: baseline.rootValue,
+        scenarioRootValue: scenarioResult?.scenarioValue,
+        rootDelta: scenarioResult?.absoluteChange,
+        nodeValues: (scenarioResult?.impactedNodes ?? []).slice(0, 20).map((impact) => ({
+          nodeId: impact.nodeId,
+          baselineValue: impact.baselineValue,
+          scenarioValue: impact.scenarioValue
+        }))
+      }
+    });
+  }
 
   return (
     <div
@@ -141,7 +146,20 @@ export function ScenarioDrawer() {
                     <Metric label="Absolute" value={formatChange(scenarioResult?.absoluteChange)} tone="positive" />
                     <Metric label="Percent" value={formatPercent(scenarioResult?.percentageChange)} tone="positive" />
                   </div>
-                  <p className="mt-3 text-xs leading-5 text-muted">{scenarioExplanation}</p>
+                  <Button
+                    size="sm"
+                    className="mt-3"
+                    icon={<Sparkles className="h-4 w-4" />}
+                    disabled={isRunningAiAction || !activeScenario}
+                    onClick={explainScenario}
+                  >
+                    Explain scenario
+                  </Button>
+                  {showScenarioExplanation && pendingExplanationTaskType ? (
+                    <div className="mt-3">
+                      <ExplanationPanel taskType={pendingExplanationTaskType} result={pendingExplanation} />
+                    </div>
+                  ) : null}
                   <div className="mt-3 border-t border-line pt-3">
                     <div className="mb-2 text-2xs font-semibold uppercase tracking-normal text-muted">Impacted drivers</div>
                     <div className="space-y-2">

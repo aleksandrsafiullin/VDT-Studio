@@ -1,11 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Bot, Database, RotateCcw, Sparkles } from "lucide-react";
+import { Bot, ClipboardList, Database, FileText, RotateCcw, Scale, Search, Sparkles } from "lucide-react";
+import { calculateGraph } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextArea, TextInput } from "@/components/ui/field";
 import { Panel, PanelCollapseButton, PanelCollapseTab, PanelHeader } from "@/components/ui/panel";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
+import { AdvisoryFindingsPanel } from "./advisory-findings-panel";
+import { ExplanationPanel } from "./explanation-panel";
 import {
   EXAMPLE_PROJECT_OPTIONS,
   useVdtStudioStore,
@@ -27,6 +30,42 @@ export function SetupRail() {
   const generateWithAi = useVdtStudioStore((state) => state.generateWithAi);
   const loadExample = useVdtStudioStore((state) => state.loadExample);
   const toggleLeftPanel = useVdtStudioStore((state) => state.toggleLeftPanel);
+  const runAiAction = useVdtStudioStore((state) => state.runAiAction);
+  const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
+  const pendingAdvisoryResult = useVdtStudioStore((state) => state.pendingAdvisoryResult);
+  const pendingAdvisoryTaskType = useVdtStudioStore((state) => state.pendingAdvisoryTaskType);
+  const pendingExplanation = useVdtStudioStore((state) => state.pendingExplanation);
+  const pendingExplanationTaskType = useVdtStudioStore((state) => state.pendingExplanationTaskType);
+  const saveAdvisoryToProject = useVdtStudioStore((state) => state.saveAdvisoryToProject);
+  const applyAdvisorySuggestedChanges = useVdtStudioStore((state) => state.applyAdvisorySuggestedChanges);
+  const selectNode = useVdtStudioStore((state) => state.selectNode);
+  const project = useVdtStudioStore((state) => state.project);
+
+  const setupAdvisoryTasks = new Set(["check_units", "identify_missing_drivers", "identify_duplicate_drivers"]);
+  const showSetupAdvisory =
+    pendingAdvisoryResult &&
+    pendingAdvisoryTaskType &&
+    setupAdvisoryTasks.has(pendingAdvisoryTaskType);
+  const showExecutiveSummary =
+    pendingExplanation &&
+    pendingExplanationTaskType === "generate_executive_summary";
+
+  function runExecutiveSummary() {
+    const calculation = calculateGraph(project);
+    const topDrivers = project.graph.nodes
+      .filter((node) => node.id !== project.rootNodeId)
+      .slice(0, 5)
+      .map((node) => ({
+        nodeId: node.id,
+        name: node.name,
+        contributionSummary: node.description
+      }));
+
+    void runAiAction("generate_executive_summary", {
+      rootValue: calculation.rootValue,
+      topDrivers
+    });
+  }
 
   if (showCollapsed) {
     return (
@@ -89,6 +128,66 @@ export function SetupRail() {
               <option value="high">High</option>
             </SelectInput>
           </Field>
+        </div>
+
+        <div className="border-t border-line pt-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
+            <ClipboardList className="h-4 w-4 text-accent" />
+            AI analysis
+          </div>
+          <div className="grid gap-2">
+            <Button
+              size="sm"
+              icon={<Scale className="h-4 w-4" />}
+              disabled={isRunningAiAction}
+              onClick={() => void runAiAction("check_units", {})}
+            >
+              Check units
+            </Button>
+            <Button
+              size="sm"
+              icon={<Search className="h-4 w-4" />}
+              disabled={isRunningAiAction}
+              onClick={() => void runAiAction("identify_missing_drivers", {})}
+            >
+              Find missing drivers
+            </Button>
+            <Button
+              size="sm"
+              icon={<Search className="h-4 w-4" />}
+              disabled={isRunningAiAction}
+              onClick={() => void runAiAction("identify_duplicate_drivers", {})}
+            >
+              Find duplicates
+            </Button>
+            <Button
+              size="sm"
+              icon={<FileText className="h-4 w-4" />}
+              disabled={isRunningAiAction}
+              onClick={runExecutiveSummary}
+            >
+              Executive summary
+            </Button>
+          </div>
+
+          {showSetupAdvisory && pendingAdvisoryTaskType ? (
+            <div className="mt-3">
+              <AdvisoryFindingsPanel
+                taskType={pendingAdvisoryTaskType}
+                result={pendingAdvisoryResult}
+                isRunning={isRunningAiAction}
+                onSaveToProject={saveAdvisoryToProject}
+                onApplySuggestedChanges={applyAdvisorySuggestedChanges}
+                onSelectNode={selectNode}
+              />
+            </div>
+          ) : null}
+
+          {showExecutiveSummary && pendingExplanationTaskType ? (
+            <div className="mt-3">
+              <ExplanationPanel taskType={pendingExplanationTaskType} result={pendingExplanation} />
+            </div>
+          ) : null}
         </div>
 
         <div className="border-t border-line pt-4">

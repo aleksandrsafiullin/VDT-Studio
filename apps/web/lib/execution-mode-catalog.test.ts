@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { MODEL_BACKEND_DEFINITIONS } from "@vdt-studio/model-bridge";
 import {
   BYOK_GATEWAY_PRESETS,
   CLI_AGENT_IDS,
   CLI_CATALOG,
   DEFAULT_EXECUTION_SETTINGS,
+  LOCAL_RUNNER_PRESET_CATALOG,
   applyGatewayPreset,
   applyLocalRunnerPreset,
   getCliCatalogEntry,
@@ -90,6 +92,15 @@ describe("execution-mode-catalog", () => {
     expect(aihubmix.models).toContain("claude-sonnet-4-6");
     expect(aihubmix.models).toContain("deepseek-v4-pro");
     expect(aihubmix.models).not.toContain("deepseek-chat");
+
+    const alibaba = getGatewayPreset("alibaba-coding-plan");
+    expect(alibaba.protocol).toBe("openai");
+    expect(alibaba.baseUrl).toBe("https://coding.dashscope.aliyuncs.com/v1");
+    expect(alibaba.credentialMode).toBe("session_only");
+    expect(alibaba.releaseStatus).toBe("beta");
+    expect(alibaba.model).toBe("qwen3-coder-plus");
+    expect(alibaba.models).toEqual(["qwen3-coder-plus", "qwen3-coder-next"]);
+    expect(alibaba.apiKeyUrl).toMatch(/^https:\/\//);
   });
 
   it("merges suggested and discovered models with deduplication", () => {
@@ -111,6 +122,7 @@ describe("execution-mode-catalog", () => {
         "minimax-anthropic",
         "mimo-anthropic",
         "openai-default",
+        "alibaba-coding-plan",
         "azure-default",
         "gemini-default",
         "ollama-cloud",
@@ -141,15 +153,26 @@ describe("execution-mode-catalog", () => {
     expect(aihubmix.gateway).toBe("aihubmix");
   });
 
-  it("strips secret fields from persisted execution settings", () => {
+  it("strips all session-only secret fields from persisted execution settings", () => {
+    const secrets = {
+      apiKey: "secret",
+      localApiKey: "local-secret",
+      pairingToken: "pairing-secret",
+      runnerPairingToken: "runner-secret",
+      accessToken: "access-secret",
+      providerToken: "provider-secret"
+    };
     const persisted = persistedExecutionSettings({
       ...DEFAULT_EXECUTION_SETTINGS,
-      apiKey: "secret",
-      localApiKey: "local-secret"
+      gatewayPresetId: "alibaba-coding-plan",
+      ...secrets
     });
-    expect(persisted).not.toHaveProperty("apiKey");
-    expect(persisted).not.toHaveProperty("localApiKey");
+
+    for (const field of Object.keys(secrets)) {
+      expect(persisted).not.toHaveProperty(field);
+    }
     expect(persisted.executionMode).toBe(DEFAULT_EXECUTION_SETTINGS.executionMode);
+    expect(persisted.gatewayPresetId).toBe("alibaba-coding-plan");
   });
 
   it("applies gateway and local runner presets", () => {
@@ -261,6 +284,38 @@ describe("execution-mode-catalog", () => {
     for (const protocol of ["anthropic", "openai", "azure", "gemini"] as const) {
       const presetIds = listPresetsForProtocol(protocol).map((preset) => preset.id);
       expect(presetIds).toContain("custom");
+    }
+  });
+
+  it("aligns local HTTP preset modelBackendId values with model-bridge registry", () => {
+    const registryIds = new Set(MODEL_BACKEND_DEFINITIONS.map((backend) => backend.id));
+
+    for (const preset of LOCAL_RUNNER_PRESET_CATALOG) {
+      if (preset.modelBackendId === undefined) {
+        continue;
+      }
+      expect(registryIds.has(preset.modelBackendId)).toBe(true);
+    }
+
+    expect(
+      LOCAL_RUNNER_PRESET_CATALOG.filter((preset) => preset.modelBackendId !== undefined).map(
+        (preset) => preset.modelBackendId
+      )
+    ).toEqual(["ollama", "lm_studio", "vllm"]);
+  });
+
+  it("lists Alibaba Coding Plan under the OpenAI protocol presets", () => {
+    const openAiPresetIds = listPresetsForProtocol("openai").map((preset) => preset.id);
+    expect(openAiPresetIds).toContain("alibaba-coding-plan");
+  });
+
+  it("defaults BYOK API-key presets to session-only credential mode", () => {
+    for (const preset of BYOK_GATEWAY_PRESETS) {
+      if (preset.id === "mock") {
+        expect(preset.credentialMode).toBeUndefined();
+        continue;
+      }
+      expect(preset.credentialMode).toBe("session_only");
     }
   });
 });

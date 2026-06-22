@@ -1,10 +1,10 @@
 {
   "name": "@vdt-studio/cli",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.0",
   "private": false,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./dist/index.mjs"
   },
   "bin": {
     "vdt": "./dist/cli.mjs"
@@ -13,16 +13,18 @@
     "dist",
     "README.md"
   ],
-  "dependencies": {
-    "@vdt-studio/local-runner": "workspace:*",
-    "@vdt-studio/vdt-core": "workspace:*"
+  "engines": {
+    "node": ">=24 <25"
   },
   "devDependencies": {
+    "@vdt-studio/local-runner": "workspace:*",
+    "@vdt-studio/vdt-core": "workspace:*",
     "esbuild": "^0.28.1"
   },
   "scripts": {
-    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/cli.mjs --banner:js=\"#!/usr/bin/env node\" && node -e \"require('node:fs').chmodSync('dist/cli.mjs',0o755)\"",
-    "start": "tsx src/cli.ts",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "pnpm clean && esbuild src/index.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/index.mjs && esbuild src/bin.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/cli.mjs && node -e \"require('node:fs').chmodSync('dist/cli.mjs',0o755)\"",
+    "start": "tsx src/bin.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --root ../.. packages/cli/src"
   }

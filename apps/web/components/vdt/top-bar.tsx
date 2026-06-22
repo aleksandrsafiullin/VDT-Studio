@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, type ChangeEvent } from "react";
-import { Download, FileImage, FileJson, GitBranch, ShieldCheck, Upload } from "lucide-react";
+import { Download, FileImage, FileJson, GitBranch, ShieldCheck, Sparkles, Upload } from "lucide-react";
 import {
   calculateGraph,
   exportProjectJson,
@@ -14,11 +14,14 @@ import { Button } from "@/components/ui/button";
 import { downloadTextFile } from "@/lib/download";
 import { formatNumber } from "@/lib/format";
 import { SettingsModal } from "./settings-modal";
+import { VersionHistoryPanel } from "./version-history-panel";
 import { useVdtStudioStore } from "./vdt-store";
 
 export function TopBar() {
   const project = useVdtStudioStore((state) => state.project);
   const replaceProject = useVdtStudioStore((state) => state.replaceProject);
+  const runAiAction = useVdtStudioStore((state) => state.runAiAction);
+  const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string>();
   const calculation = calculateGraph(project);
@@ -60,6 +63,15 @@ export function TopBar() {
           <ShieldCheck className="h-4 w-4 text-teal" />
           {validation.valid ? "Model graph valid" : `${validation.errors.length} graph issues`}
         </div>
+        <Button
+          size="sm"
+          data-testid="review-model-button"
+          icon={<Sparkles className="h-4 w-4" />}
+          disabled={isRunningAiAction}
+          onClick={() => void runAiAction("review_model", {})}
+        >
+          <span className="hidden sm:inline">Review model</span>
+        </Button>
         <input
           ref={fileInputRef}
           className="hidden"
@@ -99,6 +111,7 @@ export function TopBar() {
         >
           <span className="hidden sm:inline">Markdown</span>
         </Button>
+        <VersionHistoryPanel />
         <SettingsModal />
       </div>
       {importError ? (

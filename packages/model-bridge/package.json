@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@vdt-studio/vdt-core": "workspace:*"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./node": "./src/node.ts"

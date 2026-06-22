@@ -3,7 +3,7 @@ import { z } from "zod";
 import { OpenAiCompatibleProvider } from "./openai-compatible-provider";
 
 const params = {
-  taskType: "generate_vdt" as const,
+  taskType: "generate_tree" as const,
   input: {},
   schema: z.object({ answer: z.string() }),
   systemPrompt: "System prompt",

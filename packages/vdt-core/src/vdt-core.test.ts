@@ -1,17 +1,26 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  applyChangeSet,
   calculateGraph,
   calculateScenario,
+  createVersionSnapshot,
+  diffChangeSet,
   evaluateFormula,
   exportProjectSvg,
   exportProjectJson,
   exportProjectMarkdown,
   importProjectJson,
   layoutGraph,
+  listVersions,
+  MAX_VERSION_SNAPSHOTS,
   DEFAULT_CANVAS_LAYOUT,
+  previewChangeSet,
   productionVolumeProject,
+  restoreVersionSnapshot,
   validateGraph,
+  VersionNotFoundError,
+  type VdtChangeSet,
   type VdtProject
 } from "./index";
 
@@ -966,5 +975,861 @@ describe("graph layout", () => {
     expect(uniqueCoords.size).toBe(coords.length);
 
     assertNoOverlappingBoxes(layout.positions, layout.cardWidth, layout.cardHeight);
+  });
+});
+
+describe("change set apply, preview, and diff", () => {
+  const timestamp = "2026-06-22T00:00:00.000Z";
+
+  function minimalProject(): VdtProject {
+    return {
+      id: "project_changeset_smoke",
+      name: "Change Set Smoke",
+      rootNodeId: "root",
+      graph: {
+        nodes: [
+          {
+            id: "root",
+            name: "Root KPI",
+            type: "root_kpi",
+            status: "accepted",
+            unit: "units",
+            formula: "driver_a",
+            aiGenerated: false,
+            position: { x: 400, y: 100 },
+            createdAt: timestamp,
+            updatedAt: timestamp
+          },
+          {
+            id: "driver_a",
+            name: "Driver A",
+            type: "input",
+            status: "accepted",
+            unit: "units",
+            baselineValue: 10,
+            aiGenerated: false,
+            position: { x: 100, y: 100 },
+            createdAt: timestamp,
+            updatedAt: timestamp
+          }
+        ],
+        edges: [
+          {
+            id: "edge_root_driver_a",
+            sourceNodeId: "root",
+            targetNodeId: "driver_a",
+            relation: "positive_driver",
+            aiGenerated: false
+          }
+        ]
+      },
+      scenarios: [],
+      dataSources: [],
+      aiSettings: { defaultProviderId: "mock" },
+      versions: [],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+  }
+
+  function baseChangeSet(overrides?: Partial<VdtChangeSet>): VdtChangeSet {
+    return {
+      id: "changeset_smoke",
+      taskType: "deepen_node",
+      backendId: "mock",
+      createdAt: timestamp,
+      additions: [],
+      updates: [],
+      deletions: [],
+      edgeChanges: [],
+      assumptions: [],
+      questions: [],
+      warnings: [],
+      ...overrides
+    };
+  }
+
+  it("previews node addition with parent edge and diff ids", () => {
+    const project = minimalProject();
+    const changeSet = baseChangeSet({
+      additions: [
+        {
+          id: "add_driver_b",
+          nodeId: "driver_b",
+          parentNodeId: "root",
+          relation: "positive_driver",
+          name: "Driver B",
+          unit: "units",
+          baselineValue: 5
+        }
+      ]
+    });
+
+    const diff = diffChangeSet(project, changeSet);
+    expect(diff).toEqual({
+      addedNodeIds: ["driver_b"],
+      updatedNodeIds: [],
+      removedNodeIds: [],
+      addedEdgeIds: ["edge_root_driver_b"],
+      updatedEdgeIds: [],
+      removedEdgeIds: []
+    });
+
+    const originalNodeCount = project.graph.nodes.length;
+    const preview = previewChangeSet(project, changeSet);
+
+    expect(project.graph.nodes).toHaveLength(originalNodeCount);
+    expect(preview.graph.nodes.map((node) => node.id)).toContain("driver_b");
+    expect(preview.graph.edges.some((edge) => edge.id === "edge_root_driver_b")).toBe(true);
+    expect(preview.graph.nodes.find((node) => node.id === "driver_b")).toMatchObject({
+      status: "ai_suggested",
+      aiGenerated: true
+    });
+    expect(preview.graph.nodes.find((node) => node.id === "root")?.position).toEqual({ x: 400, y: 100 });
+
+    const validation = validateGraph(preview.graph, preview.rootNodeId);
+    expect(validation.valid).toBe(true);
+  });
+
+  it("applies only selected change entries", () => {
+    const project = minimalProject();
+    const changeSet = baseChangeSet({
+      additions: [
+        {
+          id: "add_driver_b",
+          nodeId: "driver_b",
+          parentNodeId: "root",
+          relation: "positive_driver",
+          name: "Driver B",
+          baselineValue: 5
+        },
+        {
+          id: "add_driver_c",
+          nodeId: "driver_c",
+          parentNodeId: "root",
+          relation: "positive_driver",
+          name: "Driver C",
+          baselineValue: 7
+        }
+      ]
+    });
+
+    const result = applyChangeSet(project, changeSet, new Set(["add_driver_b"]));
+
+    expect(result.success).toBe(true);
+    expect(result.project.graph.nodes.map((node) => node.id)).toEqual(
+      expect.arrayContaining(["root", "driver_a", "driver_b"])
+    );
+    expect(result.project.graph.nodes.map((node) => node.id)).not.toContain("driver_c");
+    expect(result.project.graph.edges.some((edge) => edge.id === "edge_root_driver_b")).toBe(true);
+    expect(result.project.graph.edges.some((edge) => edge.id === "edge_root_driver_c")).toBe(false);
+    expect(validateGraph(result.project.graph, result.project.rootNodeId).valid).toBe(true);
+  });
+
+  it("rejects invalid formula updates with warnings", () => {
+    const project = minimalProject();
+    const changeSet = baseChangeSet({
+      updates: [
+        {
+          id: "update_root_formula",
+          nodeId: "root",
+          patch: { formula: "driver_a +" }
+        }
+      ]
+    });
+
+    const result = applyChangeSet(project, changeSet, new Set(["update_root_formula"]));
+
+    expect(result.success).toBe(false);
+    expect(result.project).toEqual(project);
+    expect(result.warnings.some((entry) => entry.type === "formula_parse_error")).toBe(true);
+  });
+
+  describe("comprehensive edge cases", () => {
+    it("applies a single node addition with parent edge", () => {
+      const project = minimalProject();
+      const changeSet = baseChangeSet({
+        additions: [
+          {
+            id: "add_driver_b",
+            nodeId: "driver_b",
+            parentNodeId: "root",
+            relation: "positive_driver",
+            name: "Driver B",
+            unit: "units",
+            baselineValue: 5
+          }
+        ]
+      });
+
+      const result = applyChangeSet(project, changeSet, new Set(["add_driver_b"]));
+
+      expect(result.success).toBe(true);
+      expect(result.project.graph.nodes).toHaveLength(3);
+      expect(result.project.graph.nodes.find((node) => node.id === "driver_b")).toMatchObject({
+        name: "Driver B",
+        status: "ai_suggested",
+        aiGenerated: true,
+        baselineValue: 5
+      });
+      expect(result.project.graph.edges.some((edge) => edge.id === "edge_root_driver_b")).toBe(true);
+      expect(result.project.updatedAt).not.toBe(project.updatedAt);
+      expect(project.graph.nodes).toHaveLength(2);
+    });
+
+    it("keys selection by change entry id, not node id alone", () => {
+      const project = minimalProject();
+      const changeSet = baseChangeSet({
+        updates: [
+          {
+            id: "rename_root",
+            nodeId: "root",
+            patch: { name: "Renamed Root" }
+          },
+          {
+            id: "rename_driver",
+            nodeId: "driver_a",
+            patch: { name: "Renamed Driver" }
+          }
+        ]
+      });
+
+      const result = applyChangeSet(project, changeSet, new Set(["rename_driver"]));
+
+      expect(result.success).toBe(true);
+      expect(result.project.graph.nodes.find((node) => node.id === "root")?.name).toBe("Root KPI");
+      expect(result.project.graph.nodes.find((node) => node.id === "driver_a")?.name).toBe(
+        "Renamed Driver"
+      );
+    });
+
+    it("skips unselected change ids during partial apply", () => {
+      const project = minimalProject();
+      const changeSet = baseChangeSet({
+        additions: [
+          {
+            id: "add_driver_b",
+            nodeId: "driver_b",
+            parentNodeId: "root",
+            relation: "positive_driver",
+            name: "Driver B",
+            baselineValue: 5
+          }
+        ],
+        updates: [
+          {
+            id: "update_root_formula",
+            nodeId: "root",
+            patch: { formula: "driver_a + driver_b" }
+          }
+        ]
+      });
+
+      const result = applyChangeSet(project, changeSet, new Set(["add_driver_b"]));
+
+      expect(result.success).toBe(true);
+      expect(result.project.graph.nodes.map((node) => node.id)).toContain("driver_b");
+      expect(result.project.graph.nodes.find((node) => node.id === "root")?.formula).toBe("driver_a");
+    });
+
+    it("preview with partial selection leaves unselected changes out", () => {
+      const project = minimalProject();
+      const changeSet = baseChangeSet({
+        additions: [
+          {
+            id: "add_driver_b",
+            nodeId: "driver_b",
+            parentNodeId: "root",
+            relation: "positive_driver",
+            name: "Driver B",
+            baselineValue: 5
+          },
+          {
+            id: "add_driver_c",
+            nodeId: "driver_c",
+            parentNodeId: "root",
+            relation: "positive_driver",
+            name: "Driver C",
+            baselineValue: 7
+          }
+        ]
+      });
+
+      const preview = previewChangeSet(project, changeSet, new Set(["add_driver_c"]));
+
+      expect(project.graph.nodes).toHaveLength(2);
+      expect(preview.graph.nodes.map((node) => node.id)).toContain("driver_c");
+      expect(preview.graph.nodes.map((node) => node.id)).not.toContain("driver_b");
+    });
+
+    it("rejects duplicate change entry ids", () => {
+      const project = minimalProject();
+      const changeSet = baseChangeSet({
+        additions: [
+          {
+            id: "dup_entry",
+            nodeId: "driver_b",
+            parentNodeId: "root",
+            relation: "positive_driver",
+            name: "Driver B",
+            baselineValue: 5
+          },
+          {
+            id: "dup_entry",
+            nodeId: "driver_c",
+            parentNodeId: "root",
+            relation: "positive_driver",
+            name: "Driver C",
+            baselineValue: 7
+          }
+        ]
+      });
+
+      const result = applyChangeSet(project, changeSet, new Set(["dup_entry"]));
+
+      expect(result.success).toBe(false);
+      expect(result.project).toEqual(project);
+      expect(result.warnings.some((entry) => entry.message.includes("Duplicate change entry id"))).toBe(
+        true
+      );
+    });
+
+    it("rejects duplicate proposed node ids within selected additions", () => {
+      const project = minimalProject();
+      const changeSet = baseChangeSet({
+        additions: [
+          {
+            id: "add_driver_b_a",
+            nodeId: "driver_b",
+            parentNodeId: "root",
+            relation: "positive_driver",
+            name: "Driver B",
+            baselineValue: 5
+          },
+          {
+            id: "add_driver_b_b",
+            nodeId: "driver_b",
+            parentNodeId: "root",
+            relation: "positive_driver",
+            name: "Driver B duplicate",
+            baselineValue: 9
+          }
+        ]
+      });
+
+      const result = applyChangeSet(
+        project,
+        changeSet,
+        new Set(["add_driver_b_a", "add_driver_b_b"])
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.project).toEqual(project);
+      expect(
+        result.warnings.some((entry) => entry.message.includes("Duplicate proposed node id"))
+      ).toBe(true);
+    });
+
+    it("rejects additions that target an existing node id", () => {
+      const project = minimalProject();
+      const changeSet = baseChangeSet({
+        additions: [
+          {
+            id: "add_existing",
+            nodeId: "driver_a",
+            parentNodeId: "root",
+            relation: "positive_driver",
+            name: "Duplicate Driver A",
+            baselineValue: 99
+          }
+        ]
+      });
+
+      const result = applyChangeSet(project, changeSet, new Set(["add_existing"]));
+
+      expect(result.success).toBe(false);
+      expect(result.project).toEqual(project);
+      expect(
+        result.warnings.some((entry) => entry.message.includes("Addition targets existing node id"))
+      ).toBe(true);
+    });
+
+    it("handles deletion of a missing node as a no-op", () => {
+      const project = minimalProject();
+      const changeSet = baseChangeSet({
+        deletions: [
+          {
+            id: "delete_missing",
+            nodeId: "driver_missing",
+            cascadeEdges: true
+          }
+        ]
+      });
+
+      const result = applyChangeSet(project, changeSet, new Set(["delete_missing"]));
+
+      expect(result.success).toBe(true);
+      expect(result.project.graph.nodes.map((node) => node.id)).toEqual(["root", "driver_a"]);
+      expect(result.project.graph.edges).toHaveLength(1);
+    });
+
+    it("applies node deletion with cascadeEdges", () => {
+      const project = minimalProject();
+      const changeSet = baseChangeSet({
+        deletions: [
+          {
+            id: "delete_driver_a",
+            nodeId: "driver_a",
+            cascadeEdges: true
+          }
+        ]
+      });
+
+      const result = applyChangeSet(project, changeSet, new Set(["delete_driver_a"]));
+
+      expect(result.success).toBe(false);
+      expect(result.project).toEqual(project);
+      expect(result.warnings.some((entry) => entry.severity === "error")).toBe(true);
+    });
+
+    it("diff identifies updates, deletions, and edge changes for existing graph ids", () => {
+      const project = minimalProject();
+      const changeSet = baseChangeSet({
+        additions: [
+          {
+            id: "add_driver_b",
+            nodeId: "driver_b",
+            parentNodeId: "root",
+            relation: "positive_driver",
+            name: "Driver B",
+            baselineValue: 5
+          }
+        ],
+        updates: [{ id: "update_root", nodeId: "root", patch: { name: "Updated Root" } }],
+        deletions: [
+          { id: "delete_driver_a", nodeId: "driver_a" },
+          { id: "delete_missing", nodeId: "driver_missing" }
+        ],
+        edgeChanges: [
+          {
+            id: "edge_add",
+            action: "add",
+            edge: {
+              id: "edge_manual",
+              sourceNodeId: "root",
+              targetNodeId: "driver_b",
+              relation: "positive_driver"
+            }
+          },
+          {
+            id: "edge_update",
+            action: "update",
+            edgeId: "edge_root_driver_a",
+            patch: { relation: "negative_driver" }
+          },
+          {
+            id: "edge_remove",
+            action: "remove",
+            edgeId: "edge_root_driver_a"
+          },
+          {
+            id: "edge_remove_missing",
+            action: "remove",
+            edgeId: "edge_missing"
+          }
+        ]
+      });
+
+      expect(diffChangeSet(project, changeSet)).toEqual({
+        addedNodeIds: ["driver_b"],
+        updatedNodeIds: ["root"],
+        removedNodeIds: ["driver_a"],
+        addedEdgeIds: ["edge_manual", "edge_root_driver_b"],
+        updatedEdgeIds: ["edge_root_driver_a"],
+        removedEdgeIds: ["edge_root_driver_a"]
+      });
+    });
+
+    it("applies edge add, update, and remove changes", () => {
+      const project = minimalProject();
+      const withExtraNode: VdtProject = {
+        ...project,
+        graph: {
+          nodes: [
+            ...project.graph.nodes,
+            {
+              id: "driver_b",
+              name: "Driver B",
+              type: "input",
+              status: "accepted",
+              unit: "units",
+              baselineValue: 5,
+              aiGenerated: false,
+              position: { x: 100, y: 220 },
+              createdAt: timestamp,
+              updatedAt: timestamp
+            }
+          ],
+          edges: [
+            ...project.graph.edges,
+            {
+              id: "edge_root_driver_b",
+              sourceNodeId: "root",
+              targetNodeId: "driver_b",
+              relation: "positive_driver",
+              aiGenerated: false
+            }
+          ]
+        }
+      };
+
+      const changeSet = baseChangeSet({
+        edgeChanges: [
+          {
+            id: "edge_update",
+            action: "update",
+            edgeId: "edge_root_driver_b",
+            patch: { relation: "negative_driver", label: "inhibitor" }
+          },
+          {
+            id: "edge_remove",
+            action: "remove",
+            edgeId: "edge_root_driver_a"
+          }
+        ]
+      });
+
+      const result = applyChangeSet(
+        withExtraNode,
+        changeSet,
+        new Set(["edge_update", "edge_remove"])
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.project.graph.edges.find((edge) => edge.id === "edge_root_driver_b")).toMatchObject({
+        relation: "negative_driver",
+        label: "inhibitor"
+      });
+      expect(result.project.graph.edges.some((edge) => edge.id === "edge_root_driver_a")).toBe(false);
+    });
+
+    it("does not modify node positions when applying field updates", () => {
+      const project = minimalProject();
+      const changeSet = baseChangeSet({
+        updates: [
+          {
+            id: "update_driver_name",
+            nodeId: "driver_a",
+            patch: { name: "Driver A renamed", baselineValue: 42 }
+          }
+        ]
+      });
+
+      const result = applyChangeSet(project, changeSet, new Set(["update_driver_name"]));
+
+      expect(result.success).toBe(true);
+      expect(result.project.graph.nodes.find((node) => node.id === "driver_a")?.position).toEqual({
+        x: 100,
+        y: 100
+      });
+    });
+
+    it("preview clones source project without mutating it", () => {
+      const project = minimalProject();
+      const originalNodes = project.graph.nodes;
+      const originalEdges = project.graph.edges;
+      const changeSet = baseChangeSet({
+        updates: [{ id: "rename_root", nodeId: "root", patch: { name: "Preview Only" } }]
+      });
+
+      const preview = previewChangeSet(project, changeSet);
+
+      expect(preview.graph.nodes.find((node) => node.id === "root")?.name).toBe("Preview Only");
+      expect(project.graph.nodes.find((node) => node.id === "root")?.name).toBe("Root KPI");
+      expect(project.graph.nodes).toBe(originalNodes);
+      expect(project.graph.edges).toBe(originalEdges);
+    });
+  });
+});
+
+describe("version snapshot utilities", () => {
+  const timestamp = "2026-06-22T00:00:00.000Z";
+
+  function minimalProject(): VdtProject {
+    return {
+      id: "project_version_smoke",
+      name: "Version Smoke",
+      rootNodeId: "root",
+      graph: {
+        nodes: [
+          {
+            id: "root",
+            name: "Root KPI",
+            type: "root_kpi",
+            status: "accepted",
+            unit: "units",
+            formula: "driver_a",
+            aiGenerated: false,
+            position: { x: 400, y: 100 },
+            createdAt: timestamp,
+            updatedAt: timestamp
+          },
+          {
+            id: "driver_a",
+            name: "Driver A",
+            type: "input",
+            status: "accepted",
+            unit: "units",
+            baselineValue: 10,
+            aiGenerated: false,
+            position: { x: 100, y: 100 },
+            createdAt: timestamp,
+            updatedAt: timestamp
+          }
+        ],
+        edges: [
+          {
+            id: "edge_root_driver_a",
+            sourceNodeId: "root",
+            targetNodeId: "driver_a",
+            relation: "positive_driver",
+            aiGenerated: false
+          }
+        ]
+      },
+      scenarios: [],
+      dataSources: [],
+      aiSettings: { defaultProviderId: "mock" },
+      versions: [],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+  }
+
+  it("create → mutate → restore round-trips graph state", () => {
+    const original = minimalProject();
+    const snapshotted = createVersionSnapshot(original, {
+      name: "Before deepen",
+      description: "Pre-apply checkpoint",
+      taskType: "deepen_node"
+    });
+
+    expect(snapshotted.versions).toHaveLength(1);
+    expect(snapshotted.versions[0]).toMatchObject({
+      name: "Before deepen",
+      description: "Pre-apply checkpoint",
+      taskType: "deepen_node"
+    });
+    expect(snapshotted.versions[0]?.projectSnapshot.graph.nodes).toHaveLength(2);
+    expect(snapshotted.versions[0]?.projectSnapshot.versions).toEqual([]);
+    expect(snapshotted.versions[0]?.projectSnapshot).not.toBe(original);
+    expect(snapshotted.versions[0]?.projectSnapshot.graph).not.toBe(original.graph);
+
+    const mutated = {
+      ...snapshotted,
+      graph: {
+        ...snapshotted.graph,
+        nodes: [
+          ...snapshotted.graph.nodes,
+          {
+            id: "driver_b",
+            name: "Driver B",
+            type: "input" as const,
+            status: "accepted" as const,
+            unit: "units",
+            baselineValue: 5,
+            aiGenerated: false,
+            position: { x: 100, y: 220 },
+            createdAt: timestamp,
+            updatedAt: timestamp
+          }
+        ],
+        edges: [
+          ...snapshotted.graph.edges,
+          {
+            id: "edge_root_driver_b",
+            sourceNodeId: "root",
+            targetNodeId: "driver_b",
+            relation: "positive_driver" as const,
+            aiGenerated: false
+          }
+        ]
+      },
+      updatedAt: "2026-06-22T01:00:00.000Z"
+    };
+
+    expect(mutated.graph.nodes).toHaveLength(3);
+
+    const restored = restoreVersionSnapshot(mutated, snapshotted.versions[0]!.id);
+
+    expect(restored.graph.nodes.map((node) => node.id)).toEqual(["root", "driver_a"]);
+    expect(restored.graph.edges).toHaveLength(1);
+    expect(restored.id).toBe(original.id);
+    expect(restored.name).toBe(original.name);
+    expect(restored.aiSettings).toEqual(original.aiSettings);
+    expect(restored.versions).toHaveLength(1);
+    expect(restored.versions[0]?.id).toBe(snapshotted.versions[0]?.id);
+    expect(restored.updatedAt).not.toBe(mutated.updatedAt);
+  });
+
+  it("lists versions newest-first", () => {
+    const project = createVersionSnapshot(minimalProject(), { name: "First" });
+    const withSecond = createVersionSnapshot(
+      { ...project, updatedAt: "2026-06-22T01:00:00.000Z" },
+      { name: "Second" }
+    );
+
+    expect(listVersions(withSecond).map((version) => version.name)).toEqual(["Second", "First"]);
+  });
+
+  it("throws when restoring an unknown version id", () => {
+    expect(() => restoreVersionSnapshot(minimalProject(), "version_missing")).toThrow(
+      VersionNotFoundError
+    );
+  });
+
+  it("evicts oldest snapshot when FIFO cap is exceeded", () => {
+    let project = createVersionSnapshot(minimalProject(), { name: "v1" });
+    const firstVersionId = project.versions[0]!.id;
+
+    for (let index = 2; index <= MAX_VERSION_SNAPSHOTS; index += 1) {
+      project = createVersionSnapshot(project, { name: `v${index}` });
+    }
+    expect(project.versions).toHaveLength(MAX_VERSION_SNAPSHOTS);
+    expect(project.versions.some((entry) => entry.id === firstVersionId)).toBe(true);
+
+    project = createVersionSnapshot(project, { name: `v${MAX_VERSION_SNAPSHOTS + 1}` });
+
+    expect(project.versions).toHaveLength(MAX_VERSION_SNAPSHOTS);
+    expect(project.versions.some((entry) => entry.id === firstVersionId)).toBe(false);
+    expect(project.versions[0]?.name).toBe("v2");
+    expect(project.versions[MAX_VERSION_SNAPSHOTS - 1]?.name).toBe(
+      `v${MAX_VERSION_SNAPSHOTS + 1}`
+    );
+  });
+
+  it("clears aiReview on restore when snapshot had none", () => {
+    const withReview: VdtProject = {
+      ...minimalProject(),
+      aiReview: {
+        assumptions: ["baseline holds"],
+        questionsForUser: [],
+        warnings: []
+      }
+    };
+    const snapshotted = createVersionSnapshot(withReview, { name: "with review" });
+    const mutated: VdtProject = {
+      ...snapshotted,
+      aiReview: {
+        assumptions: ["mutated"],
+        questionsForUser: ["question?"],
+        warnings: []
+      }
+    };
+
+    const restored = restoreVersionSnapshot(mutated, snapshotted.versions[0]!.id);
+
+    expect(restored.aiReview).toEqual(withReview.aiReview);
+    expect(restored.aiReview).not.toBe(mutated.aiReview);
+  });
+
+  it("sets aiReview to undefined when restoring snapshot without review", () => {
+    const snapshotted = createVersionSnapshot(minimalProject(), { name: "no review" });
+    const mutated: VdtProject = {
+      ...snapshotted,
+      aiReview: {
+        assumptions: ["stale"],
+        questionsForUser: [],
+        warnings: []
+      }
+    };
+
+    const restored = restoreVersionSnapshot(mutated, snapshotted.versions[0]!.id);
+
+    expect(restored.aiReview).toBeUndefined();
+  });
+
+  describe("comprehensive edge cases", () => {
+    it("does not mutate the input project when creating a snapshot", () => {
+      const original = minimalProject();
+      const originalVersions = original.versions;
+
+      const snapshotted = createVersionSnapshot(original, { name: "Checkpoint" });
+
+      expect(original.versions).toBe(originalVersions);
+      expect(original.versions).toHaveLength(0);
+      expect(snapshotted.versions).toHaveLength(1);
+    });
+
+    it("round-trips scenarios and dataSources on restore", () => {
+      const original: VdtProject = {
+        ...minimalProject(),
+        scenarios: [
+          {
+            id: "scenario_upside",
+            name: "Upside",
+            overrides: [{ nodeId: "driver_a", value: 15 }],
+            createdAt: timestamp,
+            updatedAt: timestamp
+          }
+        ],
+        dataSources: [
+          {
+            id: "ds_erp",
+            name: "ERP",
+            type: "manual"
+          }
+        ]
+      };
+
+      const snapshotted = createVersionSnapshot(original, { name: "with scenarios" });
+      const mutated: VdtProject = {
+        ...snapshotted,
+        scenarios: [],
+        dataSources: [],
+        graph: {
+          ...snapshotted.graph,
+          nodes: snapshotted.graph.nodes.filter((node) => node.id !== "driver_a")
+        }
+      };
+
+      const restored = restoreVersionSnapshot(mutated, snapshotted.versions[0]!.id);
+
+      expect(restored.scenarios).toEqual(original.scenarios);
+      expect(restored.dataSources).toEqual(original.dataSources);
+      expect(restored.graph.nodes.map((node) => node.id)).toEqual(["root", "driver_a"]);
+      expect(restored.scenarios).not.toBe(mutated.scenarios);
+    });
+
+    it("preserves full version history when restoring an older snapshot", () => {
+      const first = createVersionSnapshot(minimalProject(), { name: "v1" });
+      const second = createVersionSnapshot(
+        { ...first, updatedAt: "2026-06-22T01:00:00.000Z" },
+        { name: "v2" }
+      );
+      const third = createVersionSnapshot(
+        { ...second, updatedAt: "2026-06-22T02:00:00.000Z" },
+        { name: "v3" }
+      );
+
+      const restored = restoreVersionSnapshot(third, second.versions[1]!.id);
+
+      expect(restored.versions).toHaveLength(3);
+      expect(listVersions(restored).map((version) => version.name)).toEqual(["v3", "v2", "v1"]);
+      expect(restored.graph.nodes).toHaveLength(2);
+    });
+
+    it("returns an empty list from listVersions when no snapshots exist", () => {
+      expect(listVersions(minimalProject())).toEqual([]);
+    });
+
+    it("stores nested version history only inside the snapshot clone", () => {
+      const withFirst = createVersionSnapshot(minimalProject(), { name: "first" });
+      const withSecond = createVersionSnapshot(withFirst, { name: "second" });
+
+      const snapshot = withSecond.versions[1]!.projectSnapshot;
+      expect(snapshot.versions).toEqual([]);
+      expect(withSecond.versions).toHaveLength(2);
+    });
   });
 });

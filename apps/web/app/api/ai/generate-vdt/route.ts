@@ -16,6 +16,7 @@ import {
   DEFAULT_ANTHROPIC_FALLBACK_MODEL,
   DEFAULT_OPENAI_COMPATIBLE_FALLBACK_MODEL
 } from "@/lib/execution-mode-catalog";
+import { isMockProviderAllowed } from "@/lib/ai-route-provider";
 
 interface GenerateVdtRequest extends GenerateVdtInput {
   providerId?: "mock" | "local_cli" | "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "local_runner";
@@ -325,15 +326,29 @@ export async function POST(request: Request) {
       });
     } else if (body.providerId === "local_runner") {
       provider = new LocalRunnerProvider(readLocalRunnerProviderConfig(body.providerConfig, new URL(request.url).origin));
-    } else if (body.providerId === "mock" && process.env.NODE_ENV === "test") {
+    } else if (body.providerId === "mock") {
+      if (!isMockProviderAllowed()) {
+        return NextResponse.json(
+          { ok: false, error: "Mock provider is only available in automated tests." },
+          { status: 400 }
+        );
+      }
       provider = new MockProvider();
+    } else if (!body.providerId) {
+      return NextResponse.json(
+        { ok: false, error: "Select a configured Local CLI or BYOK provider before generating." },
+        { status: 400 }
+      );
     } else {
-      throw new Error("Select a configured Local CLI or BYOK provider before generating.");
+      return NextResponse.json(
+        { ok: false, error: `Unsupported providerId: ${body.providerId}` },
+        { status: 400 }
+      );
     }
 
     if (connectionTest) {
       const output = await provider.completeStructured({
-          taskType: "generate_vdt",
+          taskType: "generate_tree",
           input: { probe: true },
           schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false },
           systemPrompt: "Return only structured JSON. Do not add commentary.",

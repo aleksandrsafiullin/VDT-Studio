@@ -14,7 +14,8 @@ export default defineConfig({
   },
   reporter: [["list"]],
   webServer: {
-    command: "pnpm --filter @vdt-studio/web dev --hostname 127.0.0.1 --port 3100",
+    command:
+      "VDT_ALLOW_MOCK_PROVIDER=true pnpm --filter @vdt-studio/web dev --hostname 127.0.0.1 --port 3100",
     url: "http://127.0.0.1:3100",
     reuseExistingServer: true,
     timeout: 120_000
@@ -27,6 +28,10 @@ export default defineConfig({
     {
       name: "mobile-chrome",
       use: { ...devices["Pixel 5"] }
+    },
+    {
+      name: "webkit",
+      use: { ...devices["Desktop Safari"] }
     }
   ]
 });

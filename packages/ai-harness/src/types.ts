@@ -1,14 +1,24 @@
-export type AiTaskType =
-  | "generate_vdt"
-  | "deepen_node"
-  | "simplify_branch"
-  | "suggest_alternative_decomposition"
-  | "review_model"
-  | "check_units"
-  | "suggest_formula"
-  | "explain_node"
-  | "generate_scenario_summary"
-  | "generate_executive_summary";
+import type { VdtAiTaskType } from "@vdt-studio/vdt-core";
+
+export type { VdtAiTaskType } from "@vdt-studio/vdt-core";
+
+export type AiTaskType = VdtAiTaskType;
+
+/** Legacy ai-harness task names mapped to canonical VdtAiTaskType values. */
+export const LEGACY_AI_TASK_ALIASES = {
+  generate_vdt: "generate_tree",
+  suggest_alternative_decomposition: "suggest_alternative",
+  generate_scenario_summary: "explain_scenario"
+} as const satisfies Record<string, VdtAiTaskType>;
+
+export type LegacyAiTaskType = keyof typeof LEGACY_AI_TASK_ALIASES;
+
+export function resolveAiTaskType(taskType: string): VdtAiTaskType {
+  if (taskType in LEGACY_AI_TASK_ALIASES) {
+    return LEGACY_AI_TASK_ALIASES[taskType as LegacyAiTaskType];
+  }
+  return taskType as VdtAiTaskType;
+}
 
 export interface AiExecutionSettings {
   defaultProviderId: string;
