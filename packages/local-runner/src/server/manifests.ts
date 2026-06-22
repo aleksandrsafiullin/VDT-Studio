@@ -1,5 +1,8 @@
 import type { BackendManifest } from "../cli/types";
 
+const isDarwin = process.platform === "darwin";
+const cursorSupportLevel = isDarwin ? ("supported" as const) : ("beta" as const);
+
 const generateTasks = ["generate_tree", "deepen_node", "review_model"] as const;
 const schemas = ["connection-test-v1", "generate-tree-v1", "deepen-node-v1", "review-model-v1"] as const;
 
@@ -47,10 +50,67 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     localHttp: { baseUrl: "http://127.0.0.1:8000/v1", defaultModel: "local-model" },
     safety: { toolsDisabled: true, requiresOsSandbox: false, certified: true }
   },
+  {
+    id: "cursor_subscription",
+    label: "Cursor Agent",
+    kind: "subscription_cli",
+    supportLevel: cursorSupportLevel,
+    taskTypes: generateTasks,
+    schemaIds: schemas,
+    modelSelection: true,
+    cli: {
+      executableAliases: ["agent", "cursor-agent", "cursor"],
+      args: ["--print", "--output-format", "stream-json", "--stream-partial-output"],
+      versionArgs: ["--version"]
+    },
+    safety: {
+      toolsDisabled: true,
+      requiresOsSandbox: true,
+      certified: true,
+      sandboxProfile: "darwin-v1"
+    }
+  },
+  {
+    id: "codex_subscription",
+    label: "Codex CLI",
+    kind: "subscription_cli",
+    supportLevel: "supported",
+    taskTypes: generateTasks,
+    schemaIds: schemas,
+    modelSelection: true,
+    cli: {
+      executableAliases: ["codex"],
+      args: ["exec", "--json", "--color", "never", "--ephemeral", "--sandbox", "read-only"],
+      versionArgs: ["--version"]
+    },
+    safety: { toolsDisabled: true, requiresOsSandbox: false, certified: true }
+  },
+  {
+    id: "claude_subscription",
+    label: "Claude Code",
+    kind: "subscription_cli",
+    supportLevel: "supported",
+    taskTypes: generateTasks,
+    schemaIds: schemas,
+    modelSelection: true,
+    cli: {
+      executableAliases: ["claude"],
+      args: [
+        "-p",
+        "--output-format",
+        "json",
+        "--no-session-persistence",
+        "--tools",
+        "",
+        "--disallowedTools",
+        "*",
+        "--strict-mcp-config"
+      ],
+      versionArgs: ["--version"]
+    },
+    safety: { toolsDisabled: true, requiresOsSandbox: false, certified: true }
+  },
   ...[
-    ["cursor_subscription", "Cursor Agent", ["agent", "cursor-agent", "cursor"]],
-    ["codex_subscription", "Codex CLI", ["codex"]],
-    ["claude_subscription", "Claude Code", ["claude"]],
     ["gemini_subscription", "Gemini CLI", ["gemini"]],
     ["copilot_subscription", "GitHub Copilot CLI", ["copilot"]]
   ].map(([id, label, aliases]) => ({
@@ -79,7 +139,15 @@ export function createManifestRegistry(additional: readonly BackendManifest[] = 
   return registry;
 }
 
+function isPublicSandboxCertified(manifest: BackendManifest): boolean {
+  const profile = manifest.safety.sandboxProfile;
+  if (!manifest.safety.requiresOsSandbox || profile === undefined) return false;
+  if (profile === "darwin-v1") return process.platform === "darwin";
+  return false;
+}
+
 export function publicManifest(manifest: BackendManifest) {
+  const sandboxCertified = isPublicSandboxCertified(manifest);
   return {
     id: manifest.id,
     label: manifest.label,
@@ -88,6 +156,11 @@ export function publicManifest(manifest: BackendManifest) {
     taskTypes: manifest.taskTypes,
     schemaIds: manifest.schemaIds,
     modelSelection: manifest.modelSelection,
-    safety: manifest.safety
+    safety: {
+      toolsDisabled: manifest.safety.toolsDisabled,
+      requiresOsSandbox: manifest.safety.requiresOsSandbox,
+      certified: manifest.safety.certified,
+      ...(sandboxCertified ? { sandboxCertified: true as const } : {})
+    }
   };
 }

@@ -13,6 +13,17 @@ import {
 } from "@/lib/execution-mode-catalog";
 import type { ProviderTestStatus } from "./vdt-store";
 
+export type CliAgentBackendStatus =
+  | "not_installed"
+  | "installed"
+  | "authentication_required"
+  | "ready"
+  | "rate_limited"
+  | "unsupported_version"
+  | "unsafe_configuration"
+  | "unavailable"
+  | "error";
+
 export interface CliAgentDetectionView {
   id: CliAgentId;
   installed: boolean;
@@ -20,6 +31,9 @@ export interface CliAgentDetectionView {
   alias: string | null;
   version: string | null;
   error?: string | undefined;
+  status?: CliAgentBackendStatus | undefined;
+  authSummary?: string | undefined;
+  diagnostics?: string[] | undefined;
 }
 
 const BADGE_LABELS: Record<CliAgentBadge, string> = {
@@ -30,6 +44,23 @@ const BADGE_LABELS: Record<CliAgentBadge, string> = {
 
 function agentInitial(name: string) {
   return name.trim().charAt(0).toUpperCase() || "?";
+}
+
+function isTestDisabled(detection: CliAgentDetectionView, isTesting: boolean): boolean {
+  if (isTesting) return true;
+  if (!detection.installed) return true;
+  if (detection.status === "not_installed" || detection.status === "unsupported_version") return true;
+  return false;
+}
+
+function versionCompatibilityLabel(detection: CliAgentDetectionView): "compatible" | "incompatible" | "unknown" | null {
+  if (!detection.version) return null;
+  if (detection.status === "unsupported_version") return "incompatible";
+  if (detection.status === "not_installed") return null;
+  if (detection.status === "ready" || detection.status === "installed" || detection.status === "authentication_required") {
+    return "compatible";
+  }
+  return "unknown";
 }
 
 interface CliAgentCardProps {
@@ -67,6 +98,10 @@ export function CliAgentCard({
   const dropdownModels = mergeCliModelOptions(catalog.suggestedModels, discoveredModels);
   const hasLiveModels = discoveredModels.length > 0;
   const showManualEntry = modelValue !== "auto" && !dropdownModels.includes(modelValue);
+  const versionLabel = versionCompatibilityLabel(detection);
+  const testDisabled = isTestDisabled(detection, isTesting);
+  const showAuthGuidance =
+    detection.status === "authentication_required" && detection.authSummary && !testStatus;
 
   return (
     <article
@@ -109,10 +144,42 @@ export function CliAgentCard({
             </span>
             <span className="mt-0.5 block text-xs leading-5 text-muted">{catalog.subtitle}</span>
             {detection.version ? (
-              <span className="mt-1 block font-mono text-[11px] text-slate-500">{detection.version}</span>
+              <span className="mt-1 flex flex-wrap items-center gap-2">
+                <span className="font-mono text-[11px] text-slate-500">{detection.version}</span>
+                {versionLabel ? (
+                  <span
+                    data-testid={`cli-agent-version-chip-${catalog.id}`}
+                    className={clsx(
+                      "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                      versionLabel === "compatible"
+                        ? "bg-emerald-50 text-emerald-700"
+                        : versionLabel === "incompatible"
+                          ? "bg-amber-50 text-amber-800"
+                          : "bg-slate-100 text-muted"
+                    )}
+                  >
+                    {versionLabel === "compatible"
+                      ? "Compatible"
+                      : versionLabel === "incompatible"
+                        ? "Incompatible"
+                        : "Unknown"}
+                  </span>
+                ) : null}
+              </span>
+            ) : null}
+            {detection.authSummary ? (
+              <span
+                data-testid={`cli-agent-auth-summary-${catalog.id}`}
+                className="mt-1 block text-xs leading-5 text-slate-600"
+              >
+                {detection.authSummary}
+              </span>
             ) : null}
             {detection.error ? (
               <span className="mt-1 block text-xs text-amber-700">{detection.error}</span>
+            ) : null}
+            {detection.diagnostics?.length ? (
+              <span className="mt-1 block text-[11px] leading-4 text-slate-500">{detection.diagnostics[0]}</span>
             ) : null}
           </span>
         </button>
@@ -122,7 +189,7 @@ export function CliAgentCard({
             size="sm"
             variant="secondary"
             data-testid={`cli-agent-test-${catalog.id}`}
-            disabled={isTesting}
+            disabled={testDisabled}
             onClick={onTest}
           >
             {isTesting ? (
@@ -134,6 +201,17 @@ export function CliAgentCard({
               "Test"
             )}
           </Button>
+          {showAuthGuidance ? (
+            <span
+              role="status"
+              aria-live="polite"
+              data-testid={`cli-agent-auth-guidance-${catalog.id}`}
+              className="flex max-w-[180px] items-start gap-1 rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] leading-4 text-slate-700"
+            >
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span>{detection.authSummary}</span>
+            </span>
+          ) : null}
           {testStatus ? (
             <span
               role="status"

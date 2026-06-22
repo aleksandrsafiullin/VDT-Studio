@@ -117,6 +117,19 @@ export interface CliAgentDetectionSnapshot {
   alias: string | null;
   version: string | null;
   error?: string | undefined;
+  status?:
+    | "not_installed"
+    | "installed"
+    | "authentication_required"
+    | "ready"
+    | "rate_limited"
+    | "unsupported_version"
+    | "unsafe_configuration"
+    | "unavailable"
+    | "error"
+    | undefined;
+  authSummary?: string | undefined;
+  diagnostics?: string[] | undefined;
 }
 
 interface ProviderConfigState extends Partial<OpenAiCompatibleProviderConfig> {

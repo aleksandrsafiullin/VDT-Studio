@@ -62,6 +62,22 @@ function assertExpectedCliTestProviderBody(body: TestProviderRequestBody | undef
   expect(body?.providerConfig?.timeoutMs).toBe(60_000);
 }
 
+function assertExpectedCursorTestProviderBody(body: TestProviderRequestBody | undefined) {
+  expect(body?.operation).toBe("connection_test");
+  expect(body?.providerId).toBe("local_runner");
+  expect(body?.providerConfig?.backendId).toBe("cursor_subscription");
+  expect(body?.providerConfig?.pairingToken).toBe("e2e-session-token");
+  expect(body?.providerConfig?.timeoutMs).toBe(60_000);
+}
+
+function assertExpectedCodexTestProviderBody(body: TestProviderRequestBody | undefined) {
+  expect(body?.operation).toBe("connection_test");
+  expect(body?.providerId).toBe("local_runner");
+  expect(body?.providerConfig?.backendId).toBe("codex_subscription");
+  expect(body?.providerConfig?.pairingToken).toBe("e2e-session-token");
+  expect(body?.providerConfig?.timeoutMs).toBe(60_000);
+}
+
 async function pairLocalRunner(page: Page) {
   await page.route("http://127.0.0.1:8765/v1/pair", async (route) => {
     expect(route.request().postDataJSON()).toEqual({ code: "123456" });
@@ -414,7 +430,10 @@ test("detects installed CLI and tests it through the application API", async ({ 
             installed: true,
             executable: "/usr/local/bin/claude",
             alias: "/usr/local/bin/claude",
-            version: "1.0.0"
+            version: "1.2.0",
+            status: "ready",
+            authSummary: "Claude subscription is authenticated and ready.",
+            diagnostics: []
           }
         ]
       })
@@ -451,6 +470,8 @@ test("detects installed CLI and tests it through the application API", async ({ 
   await page.getByTestId("execution-mode-tab-local-cli").click();
   await expect(page.getByTestId("execution-mode-panel-local-cli")).toBeVisible();
   await expect(page.getByTestId("cli-agent-card-claude")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId("cli-agent-version-chip-claude")).toContainText("Compatible");
+  await expect(page.getByTestId("cli-agent-auth-summary-claude")).toContainText("authenticated");
   await pairLocalRunner(page);
   expect(JSON.stringify(await readPersistedState(page))).not.toContain("e2e-session-token");
 
@@ -458,6 +479,176 @@ test("detects installed CLI and tests it through the application API", async ({ 
   await page.getByTestId("cli-agent-test-claude").click();
   await expect(page.getByText("Claude Code connection test passed.")).toBeVisible();
   assertExpectedCliTestProviderBody(testProviderRequestBody);
+});
+
+test("detects Codex CLI with version badge and passes connection test", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Local CLI settings smoke runs on desktop viewport.");
+
+  let testProviderRequestBody: TestProviderRequestBody | undefined;
+
+  await page.route("**/api/ai/detect-clis**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agents: [
+          {
+            id: "codex",
+            installed: true,
+            executable: "/usr/local/bin/codex",
+            alias: "codex",
+            version: "0.25.0",
+            status: "ready",
+            authSummary: "ChatGPT subscription is authenticated and ready.",
+            diagnostics: []
+          }
+        ]
+      })
+    });
+  });
+
+  await page.route("**/api/ai/generate-vdt", async (route) => {
+    testProviderRequestBody = route.request().postDataJSON() as TestProviderRequestBody;
+
+    try {
+      assertExpectedCodexTestProviderBody(testProviderRequestBody);
+    } catch (error) {
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: false,
+          error: error instanceof Error ? error.message : "Unexpected Local CLI test body."
+        })
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true })
+    });
+  });
+
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-local-cli").click();
+  await expect(page.getByTestId("cli-agent-card-codex")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId("cli-agent-version-chip-codex")).toContainText("Compatible");
+  await expect(page.getByTestId("cli-agent-auth-summary-codex")).toContainText("authenticated");
+  await pairLocalRunner(page);
+
+  await page.getByTestId("cli-agent-select-codex").click();
+  await page.getByTestId("cli-agent-test-codex").click();
+  await expect(page.getByText("Codex CLI connection test passed.")).toBeVisible();
+  assertExpectedCodexTestProviderBody(testProviderRequestBody);
+});
+
+test("detects Cursor CLI with version badge and passes connection test", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Local CLI settings smoke runs on desktop viewport.");
+
+  let testProviderRequestBody: TestProviderRequestBody | undefined;
+
+  await page.route("**/api/ai/detect-clis**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agents: [
+          {
+            id: "cursor-agent",
+            installed: true,
+            executable: "/usr/local/bin/agent",
+            alias: "agent",
+            version: "0.46.0",
+            status: "ready",
+            authSummary: "Cursor account is authenticated and ready.",
+            diagnostics: []
+          }
+        ],
+        modelsByAgent: { "cursor-agent": ["auto", "gpt-5.5-high"] }
+      })
+    });
+  });
+
+  await page.route("**/api/ai/generate-vdt", async (route) => {
+    testProviderRequestBody = route.request().postDataJSON() as TestProviderRequestBody;
+
+    try {
+      assertExpectedCursorTestProviderBody(testProviderRequestBody);
+    } catch (error) {
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: false,
+          error: error instanceof Error ? error.message : "Unexpected Local CLI test body."
+        })
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true })
+    });
+  });
+
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-local-cli").click();
+  await expect(page.getByTestId("cli-agent-card-cursor-agent")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId("cli-agent-version-chip-cursor-agent")).toContainText("Compatible");
+  await expect(page.getByTestId("cli-agent-auth-summary-cursor-agent")).toContainText("authenticated");
+  await pairLocalRunner(page);
+
+  await page.getByTestId("cli-agent-select-cursor-agent").click();
+  await expect(page.getByText("Live from CLI")).toBeVisible();
+  await page.getByTestId("cli-agent-test-cursor-agent").click();
+  await expect(page.getByText("Cursor Agent connection test passed.")).toBeVisible();
+  assertExpectedCursorTestProviderBody(testProviderRequestBody);
+});
+
+test("shows unsupported Cursor version and disables misleading test success", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Local CLI settings smoke runs on desktop viewport.");
+
+  await page.route("**/api/ai/detect-clis**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agents: [
+          {
+            id: "cursor-agent",
+            installed: true,
+            executable: "/usr/local/bin/agent",
+            alias: "agent",
+            version: "0.40.0",
+            status: "unsupported_version",
+            authSummary: "Cursor Agent CLI version is not supported.",
+            diagnostics: ["Cursor Agent 0.40.0 is below the minimum supported version 0.45.0."]
+          }
+        ]
+      })
+    });
+  });
+
+  await page.route("**/api/ai/generate-vdt", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true })
+    });
+  });
+
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-local-cli").click();
+  await expect(page.getByTestId("cli-agent-card-cursor-agent")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId("cli-agent-version-chip-cursor-agent")).toContainText("Incompatible");
+  await expect(page.getByTestId("cli-agent-auth-summary-cursor-agent")).toContainText("not supported");
+
+  await expect(page.getByTestId("cli-agent-test-cursor-agent")).toBeDisabled();
+  await expect(page.getByText("Cursor Agent connection test passed.")).toHaveCount(0);
 });
 
 test("shows a real Local CLI connection error without falling back to mock", async ({ page }, testInfo) => {

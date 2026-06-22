@@ -52,9 +52,15 @@ export const MODEL_BACKEND_DEFINITIONS: readonly ModelBackendDefinition[] = Obje
   { id: "ollama", label: "Ollama", mode: "local_http", capabilities: localHttp, releaseStatus: "supported" },
   { id: "lm_studio", label: "LM Studio", mode: "local_http", capabilities: localHttp, releaseStatus: "supported" },
   { id: "vllm", label: "vLLM", mode: "local_http", capabilities: localHttp, releaseStatus: "beta" },
-  { id: "cursor_subscription", label: "Cursor Agent", mode: "subscription_cli", capabilities: subscription(true), releaseStatus: "experimental" },
-  { id: "codex_subscription", label: "Codex CLI", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "experimental" },
-  { id: "claude_subscription", label: "Claude Code", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "experimental" },
+  {
+    id: "cursor_subscription",
+    label: "Cursor Agent",
+    mode: "subscription_cli",
+    capabilities: subscription(true),
+    releaseStatus: process.platform === "darwin" ? "supported" : "beta"
+  },
+  { id: "codex_subscription", label: "Codex CLI", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "supported" },
+  { id: "claude_subscription", label: "Claude Code", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "supported" },
   { id: "gemini_subscription", label: "Gemini CLI", mode: "subscription_cli", capabilities: subscription(true), releaseStatus: "experimental" },
   { id: "copilot_subscription", label: "GitHub Copilot CLI", mode: "subscription_cli", capabilities: subscription(true), releaseStatus: "experimental" },
   { id: "custom_cli", label: "Custom JSON CLI", mode: "custom_cli", capabilities: subscription(true), releaseStatus: "experimental" }

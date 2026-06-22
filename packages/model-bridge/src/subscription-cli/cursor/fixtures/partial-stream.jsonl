@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/tmp","session_id":"sess-2","model":"auto","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Generate tree"}]},"session_id":"sess-2"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"{\"projectTitle\":\"VD"}]},"session_id":"sess-2","timestamp_ms":1}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"T\""}]},"session_id":"sess-2","timestamp_ms":2}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"{\"projectTitle\":\"VDT\",\"rootNodeId\":\"root\",\"nodes\":[],\"edges\":[],\"assumptions\":[],\"questionsForUser\":[],\"warnings\":[]}"}]},"session_id":"sess-2"}
+{"type":"result","subtype":"success","duration_ms":240,"duration_api_ms":240,"is_error":false,"result":"{\"projectTitle\":\"VDT\",\"rootNodeId\":\"root\",\"nodes\":[],\"edges\":[],\"assumptions\":[],\"questionsForUser\":[],\"warnings\":[]}","session_id":"sess-2"}

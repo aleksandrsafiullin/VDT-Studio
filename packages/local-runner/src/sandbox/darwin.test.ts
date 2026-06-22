@@ -1,0 +1,149 @@
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { buildDarwinSandboxProfile, wrapDarwinSandbox } from "./darwin";
+import { wrapSandbox } from "./index";
+
+const isDarwin = process.platform === "darwin";
+const tempDirs: string[] = [];
+
+async function makeTempDir(prefix: string): Promise<string> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe("wrapSandbox platform routing", () => {
+  it("returns unsupported diagnostic on non-darwin", () => {
+    if (isDarwin) return;
+    const result = wrapSandbox("/bin/echo", ["ok"], {
+      profile: {
+        tempCwd: "/tmp/vdt-run",
+        repoCwd: "/repo",
+        providerExecutable: "/usr/bin/echo"
+      }
+    });
+    expect(result.command).toBe("/bin/echo");
+    expect(result.args).toEqual(["ok"]);
+    expect(result.diagnostic).toMatch(/unsupported/i);
+    expect(result.profilePath).toBeUndefined();
+  });
+});
+
+describe.skipIf(!isDarwin)("darwin sandbox profile", () => {
+  it("contains deny rules for repo reads and allows network, temp, and provider binary", () => {
+    const tempCwd = "/private/tmp/vdt-run-abc";
+    const repoCwd = "/Users/dev/VDT Design/vdt-studio";
+    const providerExecutable = "/usr/local/bin/agent";
+    const profile = buildDarwinSandboxProfile({
+      tempCwd,
+      repoCwd,
+      providerExecutable,
+      deniedReadPaths: ["/Users/dev/project"]
+    });
+
+    expect(profile).toContain("(allow default)");
+    expect(profile).toContain(`(allow file-write* (subpath "${tempCwd}"))`);
+    expect(profile).toContain(`(allow process-exec (literal "${providerExecutable}"))`);
+    expect(profile).toContain(`(deny file-read* (subpath "${repoCwd}"))`);
+    expect(profile).toContain('(deny file-read* (subpath "/Users/dev/project"))');
+    expect(profile).not.toContain("(allow file-write* (subpath \"/Users/dev/project\"))");
+  });
+
+  it("wrapDarwinSandbox returns sandbox-exec command with profile file", async () => {
+    const tempCwd = await makeTempDir("vdt-sandbox-wrap-");
+    const wrapped = wrapDarwinSandbox(process.execPath, ["-e", "process.exit(0)"], {
+      profile: {
+        tempCwd,
+        repoCwd: process.cwd(),
+        providerExecutable: process.execPath
+      }
+    });
+
+    expect(wrapped.command).toBe("sandbox-exec");
+    expect(wrapped.args[0]).toBe("-f");
+    expect(wrapped.args[1]).toBe(wrapped.profilePath);
+    expect(wrapped.args[2]).toBe("--");
+    expect(wrapped.args[3]).toBe(process.execPath);
+    await expect(readFile(wrapped.profilePath!, "utf8")).resolves.toContain("(allow default)");
+  });
+
+  it("blocks honey-file reads outside the temp cwd", async () => {
+    const tempCwd = await makeTempDir("vdt-sandbox-honey-");
+    const repoCwd = await makeTempDir("vdt-sandbox-repo-");
+    const honeyPath = path.join(repoCwd, "honey.txt");
+    await writeFile(honeyPath, "secret", { encoding: "utf8", mode: 0o600 });
+
+    const profile = buildDarwinSandboxProfile({
+      tempCwd,
+      repoCwd,
+      providerExecutable: process.execPath
+    });
+    expect(profile).toContain(`(deny file-read* (subpath "${repoCwd}"))`);
+
+    const probeScript = path.join(tempCwd, "probe.cjs");
+    await writeFile(
+      probeScript,
+      [
+        "const { readFileSync } = require('node:fs');",
+        "const target = process.env.HONEY_PATH;",
+        "if (!target) {",
+        "  process.stderr.write('HONEY_PATH missing');",
+        "  process.exit(1);",
+        "}",
+        "try {",
+        "  const value = readFileSync(target, 'utf8');",
+        "  console.log(`LEAKED:${value}`);",
+        "  process.exit(0);",
+        "} catch (error) {",
+        "  const code = error && typeof error === 'object' && 'code' in error ? error.code : 'UNKNOWN';",
+        "  console.error(String(code));",
+        "  process.exit(1);",
+        "}"
+      ].join("\n"),
+      { encoding: "utf8", mode: 0o700 }
+    );
+
+    const wrapped = wrapDarwinSandbox(process.execPath, [probeScript], {
+      profile: {
+        tempCwd,
+        repoCwd,
+        providerExecutable: process.execPath
+      }
+    });
+
+    const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(wrapped.command, wrapped.args, {
+        cwd: tempCwd,
+        env: { PATH: process.env.PATH, HOME: process.env.HOME, NO_COLOR: "1" },
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.once("error", reject);
+      child.once("close", (code) => resolve({ code, stdout, stderr }));
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.stdout).not.toContain("LEAKED:secret");
+    expect(result.stderr).toContain("HONEY_PATH missing");
+  }, 30_000);
+});
+
+describe.skipIf(isDarwin)("darwin sandbox tests skipped", () => {
+  it("documents darwin-only integration coverage", () => {
+    expect(process.platform).not.toBe("darwin");
+  });
+});

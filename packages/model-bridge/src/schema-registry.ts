@@ -28,6 +28,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function getRegisteredJsonSchema(schemaId: VdtSchemaId): Record<string, unknown> {
+  if (schemaId === "connection-test-v1") {
+    return {
+      type: "object",
+      properties: { ok: { type: "boolean", const: true } },
+      required: ["ok"],
+      additionalProperties: false
+    };
+  }
+  if (schemaId === "generate-tree-v1") {
+    return {
+      type: "object",
+      properties: {
+        projectTitle: { type: "string" },
+        rootNodeId: { type: "string" },
+        nodes: { type: "array", minItems: 1, items: { type: "object" } },
+        edges: { type: "array", items: { type: "object" } },
+        assumptions: { type: "array" },
+        questionsForUser: { type: "array" },
+        warnings: { type: "array", items: { type: "object" } }
+      },
+      required: ["projectTitle", "rootNodeId", "nodes", "edges", "assumptions", "questionsForUser", "warnings"],
+      additionalProperties: true
+    };
+  }
+  return { type: "object", additionalProperties: true };
+}
+
 export function validateRegisteredSchema(schemaId: VdtSchemaId, output: unknown): boolean {
   if (!isRecord(output)) return false;
   if (schemaId === "connection-test-v1") return output.ok === true;

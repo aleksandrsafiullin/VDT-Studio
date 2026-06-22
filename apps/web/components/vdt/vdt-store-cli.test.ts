@@ -97,6 +97,35 @@ describe("vdt-store cli rescan", () => {
     expect(state.cliDetectionError).toBeUndefined();
   });
 
+  it("stores enriched detection fields from the detect-clis API", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        agents: [
+          {
+            id: "cursor-agent",
+            installed: true,
+            executable: "/usr/local/bin/agent",
+            alias: "agent",
+            version: "0.46.0",
+            status: "ready",
+            authSummary: "Cursor account is authenticated and ready.",
+            diagnostics: []
+          }
+        ],
+        modelsByAgent: { "cursor-agent": ["auto"] }
+      })
+    } as Response);
+
+    await useVdtStudioStore.getState().rescanClis();
+
+    const agent = useVdtStudioStore.getState().cliDetectionAgents?.find((entry) => entry.id === "cursor-agent");
+    expect(agent?.status).toBe("ready");
+    expect(agent?.authSummary).toMatch(/authenticated/i);
+    expect(useVdtStudioStore.getState().cliDiscoveredModelsByAgent["cursor-agent"]).toEqual(["auto"]);
+  });
+
   it("stores live models returned by CLI detection", async () => {
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: true,
@@ -191,6 +220,66 @@ describe("vdt-store cli rescan", () => {
 
     const state = useVdtStudioStore.getState();
     expect(state.cliTestStatusByAgent.claude?.kind).toBe("success");
+  });
+
+  it("posts a real Local CLI connection test for codex", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/ai/generate-vdt")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true })
+        } as Response;
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ agents: [] })
+      } as Response;
+    });
+
+    useVdtStudioStore.setState({
+      runnerPairingToken: "test-session-token",
+      cliDetectionAgents: [
+        {
+          id: "codex",
+          installed: true,
+          executable: "/usr/local/bin/codex",
+          alias: "/usr/local/bin/codex",
+          version: "0.25.0",
+          status: "ready",
+          authSummary: "ChatGPT subscription is authenticated and ready."
+        }
+      ],
+      executionSettings: {
+        ...DEFAULT_EXECUTION_SETTINGS,
+        executionMode: "local_cli",
+        selectedCliAgentId: "codex",
+        localRunnerPresetId: "custom_cli_json",
+        runnerProviderId: "cli_stub",
+        command: "/usr/local/bin/codex"
+      }
+    });
+
+    await useVdtStudioStore.getState().testCli("codex");
+
+    const testProviderCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/ai/generate-vdt"));
+    expect(testProviderCall).toBeDefined();
+
+    const [, requestInit] = testProviderCall!;
+    const body = JSON.parse(String(requestInit?.body)) as {
+      operation?: string;
+      providerId?: string;
+      providerConfig?: { backendId?: string };
+    };
+
+    expect(body.operation).toBe("connection_test");
+    expect(body.providerId).toBe("local_runner");
+    expect(body.providerConfig?.backendId).toBe("codex_subscription");
+    expect(useVdtStudioStore.getState().cliTestStatusByAgent.codex?.kind).toBe("success");
   });
 
   it("shows a real CLI test error from the application API", async () => {

@@ -1,0 +1,15 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "Generated tree.",
+  "structured_output": {
+    "projectTitle": "VDT",
+    "rootNodeId": "root",
+    "nodes": [{ "id": "root" }],
+    "edges": [],
+    "assumptions": [],
+    "questionsForUser": [],
+    "warnings": []
+  }
+}

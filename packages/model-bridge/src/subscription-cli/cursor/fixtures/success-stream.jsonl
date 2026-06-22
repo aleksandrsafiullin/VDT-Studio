@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/tmp","session_id":"sess-1","model":"auto","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Return only JSON: {\"ok\":true}"}]},"session_id":"sess-1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"{\"ok\":true}"}]},"session_id":"sess-1"}
+{"type":"result","subtype":"success","duration_ms":120,"duration_api_ms":120,"is_error":false,"result":"{\"ok\":true}","session_id":"sess-1"}

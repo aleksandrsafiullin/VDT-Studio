@@ -24,6 +24,7 @@ export interface BackendManifest {
     toolsDisabled: boolean;
     requiresOsSandbox: boolean;
     certified: boolean;
+    sandboxProfile?: "darwin-v1";
   };
 }
 

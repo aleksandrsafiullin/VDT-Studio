@@ -1,0 +1,6 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "structured_output": { "invalid": true }
+}

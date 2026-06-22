@@ -1,5 +1,5 @@
 import { request as httpRequest, type Server } from "node:http";
-import { lstat, mkdtemp, readdir, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,10 @@ import { createLocalRunnerServer, getRunnerPairingInfo, type LocalRunnerServer }
 const origin = "http://127.0.0.1:3000";
 const servers: Server[] = [];
 const fixture = fileURLToPath(new URL("./fixtures/fake-backend.mjs", import.meta.url));
+const fakeCursor = fileURLToPath(new URL("./fixtures/fake-cursor.cjs", import.meta.url));
+const fakeCodex = fileURLToPath(new URL("./fixtures/fake-codex.cjs", import.meta.url));
+const fakeClaude = fileURLToPath(new URL("./fixtures/fake-claude.cjs", import.meta.url));
+const isDarwin = process.platform === "darwin";
 
 async function start(options: Parameters<typeof createLocalRunnerServer>[0] = { host: "127.0.0.1", port: 0 }) {
   const server = createLocalRunnerServer({ ...options, auditSink: options.auditSink ?? (() => undefined) });
@@ -169,7 +173,7 @@ describe("Phase 2 completion contract", () => {
     expect(JSON.stringify(audit[0])).not.toContain("projectTitle");
   });
 
-  it("rejects duplicate request ids and uncertified subscription execution", async () => {
+  it("rejects duplicate request ids and uncertified subscription backends", async () => {
     const server = await start();
     const token = await pair(server);
     const requestId = crypto.randomUUID();
@@ -177,8 +181,187 @@ describe("Phase 2 completion contract", () => {
     expect((await call(server, "/v1/completions", { method: "POST", token, body })).status).toBe(200);
     expect((await call(server, "/v1/completions", { method: "POST", token, body })).body.error.code).toBe("DUPLICATE_REQUEST_ID");
 
-    const unsafe = await call(server, "/v1/backends/cursor_subscription/test", { method: "POST", token, body: {} });
-    expect(unsafe.body.error.code).toBe("UNSAFE_CONFIGURATION");
+    const uncertified = await call(server, "/v1/backends/gemini_subscription/test", { method: "POST", token, body: {} });
+    expect(uncertified.body.error.code).toBe("UNSAFE_CONFIGURATION");
+  });
+});
+
+describe.skipIf(!isDarwin)("cursor subscription backend", () => {
+  const cursorExecutor = {
+    resolveExecutable: async (manifest: BackendManifest) =>
+      manifest.id === "cursor_subscription" ? fakeCursor : process.execPath
+  };
+
+  it("runs certified cursor connection test with fake executable override", async () => {
+    const server = await start({ host: "127.0.0.1", port: 0, executor: cursorExecutor });
+    const token = await pair(server);
+    const response = await call(server, "/v1/backends/cursor_subscription/test", { method: "POST", token, body: {} });
+    expect(response.body.error?.code).not.toBe("UNSAFE_CONFIGURATION");
+    expect(response.status).toBe(200);
+    expect(response.body.output).toMatchObject({ ok: true });
+  });
+
+  it("completes generate-tree-v1 through cursor fake stream-json", async () => {
+    const audit: AuditEvent[] = [];
+    const server = await start({ host: "127.0.0.1", port: 0, executor: cursorExecutor, auditSink: (event) => audit.push(event) });
+    const token = await pair(server);
+    const requestId = crypto.randomUUID();
+    const response = await call(server, "/v1/completions", {
+      method: "POST",
+      token,
+      body: {
+        requestId,
+        backendId: "cursor_subscription",
+        taskType: "generate_tree",
+        schemaId: "generate-tree-v1",
+        input: { prompt: "Build a tree" }
+      }
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.run.status).toBe("succeeded");
+    expect(response.body.output).toMatchObject({ projectTitle: "Fake Cursor tree", rootNodeId: "root" });
+    expect(audit).toHaveLength(1);
+    expect(JSON.stringify(audit[0])).not.toContain("Build a tree");
+  });
+
+  it("cancels slow cursor completions", async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "vdt-runner-cursor-"));
+    const server = await start({
+      host: "127.0.0.1",
+      port: 0,
+      executor: {
+        tempRoot,
+        env: { ...process.env, VDT_FAKE_CURSOR_MODE: "slow" },
+        resolveExecutable: async (manifest) => (manifest.id === "cursor_subscription" ? fakeCursor : process.execPath)
+      }
+    });
+    const token = await pair(server);
+    const requestId = crypto.randomUUID();
+    const completion = call(server, "/v1/completions", {
+      method: "POST",
+      token,
+      body: {
+        requestId,
+        backendId: "cursor_subscription",
+        taskType: "generate_tree",
+        schemaId: "generate-tree-v1",
+        input: {}
+      }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect((await call(server, `/v1/completions/${requestId}/cancel`, { method: "POST", token, body: {} })).status).toBe(202);
+    const completed = await completion;
+    expect(completed.body.error.code).toBe("CANCELLED");
+    expect((await call(server, `/v1/runs/${requestId}`, { token })).body.run.status).toBe("cancelled");
+    await rm(tempRoot, { recursive: true, force: true });
+  });
+
+  it.skipIf(!isDarwin)("blocks honey-file env from filtered child environment on darwin", async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "vdt-runner-cursor-honey-"));
+    const repoDir = await mkdtemp(path.join(os.tmpdir(), "vdt-runner-cursor-repo-"));
+    const honeyPath = path.join(repoDir, "honey.txt");
+    await writeFile(honeyPath, "secret", { encoding: "utf8", mode: 0o600 });
+    const server = await start({
+      host: "127.0.0.1",
+      port: 0,
+      executor: {
+        tempRoot,
+        env: { ...process.env, HONEY_PATH: honeyPath },
+        resolveExecutable: async (manifest) => (manifest.id === "cursor_subscription" ? fakeCursor : process.execPath)
+      }
+    });
+    const token = await pair(server);
+    const response = await call(server, "/v1/backends/cursor_subscription/test", { method: "POST", token, body: {} });
+    expect(response.status).toBe(200);
+    expect(response.body.output.envKeys).not.toContain("HONEY_PATH");
+    expect(JSON.stringify(response.body.output)).not.toContain("secret");
+    expect(JSON.stringify(response.body.output)).not.toContain("LEAKED:");
+    await rm(tempRoot, { recursive: true, force: true });
+    await rm(repoDir, { recursive: true, force: true });
+  }, 30_000);
+});
+
+describe.skipIf(isDarwin)("cursor subscription backend without darwin sandbox", () => {
+  const cursorExecutor = {
+    resolveExecutable: async (manifest: BackendManifest) =>
+      manifest.id === "cursor_subscription" ? fakeCursor : process.execPath
+  };
+
+  it("rejects cursor with UNSAFE_CONFIGURATION when OS sandbox is unavailable", async () => {
+    const server = await start({ host: "127.0.0.1", port: 0, executor: cursorExecutor });
+    const token = await pair(server);
+    const response = await call(server, "/v1/backends/cursor_subscription/test", { method: "POST", token, body: {} });
+    expect(response.body.error?.code).toBe("UNSAFE_CONFIGURATION");
+  });
+});
+
+describe("codex subscription backend", () => {
+  const codexExecutor = {
+    resolveExecutable: async (manifest: BackendManifest) =>
+      manifest.id === "codex_subscription" ? fakeCodex : process.execPath
+  };
+
+  it("runs certified codex connection test with fake executable override", async () => {
+    const server = await start({ host: "127.0.0.1", port: 0, executor: codexExecutor });
+    const token = await pair(server);
+    const response = await call(server, "/v1/backends/codex_subscription/test", { method: "POST", token, body: {} });
+    expect(response.body.error?.code).not.toBe("UNSAFE_CONFIGURATION");
+    expect(response.status).toBe(200);
+    expect(response.body.output).toMatchObject({ ok: true });
+  });
+
+  it("completes generate-tree-v1 through codex fake JSONL", async () => {
+    const server = await start({ host: "127.0.0.1", port: 0, executor: codexExecutor });
+    const token = await pair(server);
+    const response = await call(server, "/v1/completions", {
+      method: "POST",
+      token,
+      body: {
+        requestId: crypto.randomUUID(),
+        backendId: "codex_subscription",
+        taskType: "generate_tree",
+        schemaId: "generate-tree-v1",
+        input: { prompt: "Build a tree" }
+      }
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.run.status).toBe("succeeded");
+    expect(response.body.output).toMatchObject({ projectTitle: "Fake Codex tree", rootNodeId: "root" });
+  });
+});
+
+describe("claude subscription backend", () => {
+  const claudeExecutor = {
+    resolveExecutable: async (manifest: BackendManifest) =>
+      manifest.id === "claude_subscription" ? fakeClaude : process.execPath
+  };
+
+  it("runs certified claude connection test with fake executable override", async () => {
+    const server = await start({ host: "127.0.0.1", port: 0, executor: claudeExecutor });
+    const token = await pair(server);
+    const response = await call(server, "/v1/backends/claude_subscription/test", { method: "POST", token, body: {} });
+    expect(response.body.error?.code).not.toBe("UNSAFE_CONFIGURATION");
+    expect(response.status).toBe(200);
+    expect(response.body.output).toMatchObject({ ok: true });
+  });
+
+  it("completes generate-tree-v1 through claude fake JSON", async () => {
+    const server = await start({ host: "127.0.0.1", port: 0, executor: claudeExecutor });
+    const token = await pair(server);
+    const response = await call(server, "/v1/completions", {
+      method: "POST",
+      token,
+      body: {
+        requestId: crypto.randomUUID(),
+        backendId: "claude_subscription",
+        taskType: "generate_tree",
+        schemaId: "generate-tree-v1",
+        input: { prompt: "Build a tree" }
+      }
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.run.status).toBe("succeeded");
+    expect(response.body.output).toMatchObject({ projectTitle: "Fake Claude tree", rootNodeId: "root" });
   });
 });
 
@@ -193,6 +376,41 @@ describe("manifest-driven CLI execution", () => {
     modelSelection: false,
     cli: { executableAliases: ["fake"], args: [fixture, mode], versionArgs: ["--version"] },
     safety: { toolsDisabled: true, requiresOsSandbox: false, certified: true }
+  });
+
+  const sandboxManifest = (): BackendManifest => ({
+    id: "sandbox_certified",
+    label: "Sandbox Certified",
+    kind: "custom_cli",
+    supportLevel: "experimental",
+    taskTypes: ["generate_tree"],
+    schemaIds: ["connection-test-v1", "generate-tree-v1"],
+    modelSelection: false,
+    cli: { executableAliases: ["fake"], args: [fixture, "valid"], versionArgs: ["--version"] },
+    safety: { toolsDisabled: true, requiresOsSandbox: true, certified: true, sandboxProfile: "darwin-v1" }
+  });
+
+  it("passes the safety gate for certified sandbox manifests on darwin", async () => {
+    if (!isDarwin) {
+      const server = await start({
+        host: "127.0.0.1", port: 0, manifests: [sandboxManifest()],
+        executor: { resolveExecutable: async () => process.execPath }
+      });
+      const token = await pair(server);
+      const response = await call(server, "/v1/backends/sandbox_certified/test", { method: "POST", token, body: {} });
+      expect(response.body.error?.code).toBe("UNSAFE_CONFIGURATION");
+      return;
+    }
+
+    const server = await start({
+      host: "127.0.0.1", port: 0, manifests: [sandboxManifest()],
+      executor: { resolveExecutable: async () => process.execPath }
+    });
+    const token = await pair(server);
+    const response = await call(server, "/v1/backends/sandbox_certified/test", { method: "POST", token, body: {} });
+    expect(response.body.error?.code).not.toBe("UNSAFE_CONFIGURATION");
+    expect(response.status).toBe(200);
+    expect(response.body.run?.status ?? response.body.output).toBeDefined();
   });
 
   it("executes only reviewed manifest args with a filtered environment and cleans the temp cwd", async () => {

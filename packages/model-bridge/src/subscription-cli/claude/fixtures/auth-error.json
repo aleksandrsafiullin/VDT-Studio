@@ -1,0 +1,6 @@
+{
+  "type": "result",
+  "subtype": "error",
+  "is_error": true,
+  "result": "Authentication required. Please run claude login."
+}

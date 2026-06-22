@@ -35,7 +35,7 @@ All endpoints except health and pair require `Authorization: Bearer <session-tok
 }
 ```
 
-The browser may choose only a registered `backendId`, task, schema, input, model and bounded timeout. It cannot provide a command, executable, arguments, environment, working directory, endpoint or arbitrary schema. Backend manifests are server-owned. Subscription CLI manifests remain fail-closed until their individual adapters and isolation profiles are certified in later phases.
+Subscription CLI manifests fail closed until their individual adapters and isolation profiles are certified in later phases. See [Provider compatibility](provider-compatibility.md) for tested Cursor versions, platform matrix, and maintainer live gates.
 
 ## Security contract
 

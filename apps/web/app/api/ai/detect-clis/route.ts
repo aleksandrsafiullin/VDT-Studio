@@ -3,8 +3,10 @@ import {
   detectSubscriptionCli,
   detectSubscriptionClis,
   discoverSubscriptionCliModels,
+  enrichSubscriptionCliDetections,
   isSubscriptionCliId,
-  type SubscriptionCliDetectionResult
+  type SubscriptionCliDetectionResult,
+  type SubscriptionCliId
 } from "@vdt-studio/model-bridge/node";
 
 async function discoverModels(agents: SubscriptionCliDetectionResult[]) {
@@ -25,6 +27,14 @@ async function discoverModels(agents: SubscriptionCliDetectionResult[]) {
   return Object.fromEntries(entries.filter(([, models]) => models.length > 0));
 }
 
+async function detectAndEnrichAgents(agentId?: SubscriptionCliId) {
+  const baseAgents = agentId
+    ? [await detectSubscriptionCli(agentId)]
+    : await detectSubscriptionClis();
+  const agents = await enrichSubscriptionCliDetections(baseAgents, { probeTimeoutMs: 5_000 });
+  return { agents, modelsByAgent: await discoverModels(baseAgents) };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const agentId = searchParams.get("id");
@@ -35,12 +45,10 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: `Unknown CLI agent: ${agentId}` }, { status: 400 });
       }
 
-      const agents = [await detectSubscriptionCli(agentId)];
-      return NextResponse.json({ agents, modelsByAgent: await discoverModels(agents) });
+      return NextResponse.json(await detectAndEnrichAgents(agentId));
     }
 
-    const agents = await detectSubscriptionClis();
-    return NextResponse.json({ agents, modelsByAgent: await discoverModels(agents) });
+    return NextResponse.json(await detectAndEnrichAgents());
   } catch (error) {
     return NextResponse.json(
       {

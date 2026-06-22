@@ -1,13 +1,18 @@
-import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { execFile, spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import {
+  assertArgsSafe,
   extractBoundedJson,
+  getSubscriptionCliAdapter,
+  getRegisteredJsonSchema,
   isVdtSchemaId,
   validateRegisteredSchema,
   type VdtSchemaId
 } from "@vdt-studio/model-bridge";
+import { wrapSandbox } from "../sandbox";
 import type { BackendManifest, CompletionRequest } from "../cli/types";
 
 export const EXECUTION_LIMITS = Object.freeze({
@@ -21,7 +26,8 @@ export const EXECUTION_LIMITS = Object.freeze({
 });
 
 const ALLOWED_ENV_KEYS = [
-  "PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "LC_CTYPE", "NO_COLOR"
+  "PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "LC_CTYPE", "NO_COLOR",
+  "VDT_FAKE_CURSOR_MODE", "VDT_FAKE_CODEX_MODE", "VDT_FAKE_CLAUDE_MODE"
 ] as const;
 
 export interface ExecutionResult {
@@ -85,9 +91,23 @@ async function defaultResolveExecutable(manifest: BackendManifest, env: NodeJS.P
   });
 }
 
+function isOsSandboxAvailable(profile: NonNullable<BackendManifest["safety"]["sandboxProfile"]>): boolean {
+  if (profile === "darwin-v1") return process.platform === "darwin";
+  return false;
+}
+
+function isSandboxCertified(manifest: BackendManifest): boolean {
+  const profile = manifest.safety.sandboxProfile;
+  if (!manifest.safety.requiresOsSandbox || profile === undefined) return false;
+  return isOsSandboxAvailable(profile);
+}
+
 function assertManifestSafe(manifest: BackendManifest): void {
   if (manifest.kind !== "subscription_cli" && manifest.kind !== "custom_cli") return;
-  if (!manifest.safety.certified || !manifest.safety.toolsDisabled || manifest.safety.requiresOsSandbox) {
+  if (manifest.cli?.args) assertArgsSafe(manifest.cli.args);
+  const { certified, toolsDisabled, requiresOsSandbox } = manifest.safety;
+  const sandboxCertified = isSandboxCertified(manifest);
+  if (!certified || !toolsDisabled || (requiresOsSandbox && !sandboxCertified)) {
     throw Object.assign(new Error(`${manifest.label} is not certified for isolated execution.`), {
       code: "UNSAFE_CONFIGURATION"
     });
@@ -102,6 +122,54 @@ function assertLineLimit(value: string): void {
   }
 }
 
+async function localizeSandboxScripts(
+  args: readonly string[],
+  cwd: string,
+  allowedReadPaths: string[]
+): Promise<string[]> {
+  const localized = [...args];
+  for (let index = 0; index < localized.length; index += 1) {
+    const arg = localized[index];
+    if (typeof arg !== "string" || !path.isAbsolute(arg) || !/\.(?:mjs|cjs|js)$/i.test(arg)) continue;
+    if (arg === cwd || arg.startsWith(`${cwd}${path.sep}`)) continue;
+    const localScript = path.join(cwd, `script-${index}-${path.basename(arg)}`);
+    await copyFile(arg, localScript);
+    await chmod(localScript, 0o700);
+    localized[index] = localScript;
+    allowedReadPaths.push(localScript);
+  }
+  return localized;
+}
+
+function buildSubscriptionPrompt(request: CompletionRequest): string {
+  return [
+    `Return only JSON matching approved schema ${request.schemaId} for VDT task ${request.taskType}.`,
+    "Do not include markdown fences or commentary.",
+    JSON.stringify({
+      schemaId: request.schemaId,
+      taskType: request.taskType,
+      input: request.input,
+      ...(request.model ? { model: request.model } : {})
+    })
+  ].join("\n");
+}
+
+async function probeExecutableVersion(executable: string, versionArgs: readonly string[]): Promise<string | undefined> {
+  try {
+    const result = await promisify(execFile)(executable, [...versionArgs], {
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 64 * 1024,
+      windowsHide: true,
+      shell: false
+    });
+    const combined = `${result.stdout}\n${result.stderr}`.trim();
+    return combined || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function executeCli(
   manifest: BackendManifest,
   request: CompletionRequest,
@@ -109,6 +177,7 @@ async function executeCli(
   options: ExecutorOptions
 ): Promise<ExecutionResult> {
   assertManifestSafe(manifest);
+  const adapter = manifest.kind === "subscription_cli" ? getSubscriptionCliAdapter(manifest.id) : undefined;
   const envSource = options.env ?? process.env;
   const executable = await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource);
   if (!path.isAbsolute(executable) || executable.includes("\0")) {
@@ -130,12 +199,83 @@ async function executeCli(
   await mkdir(tempRoot, { recursive: true });
   const cwd = await mkdtemp(path.join(tempRoot, "vdt-run-"));
   await chmod(cwd, 0o700);
-  await writeFile(path.join(cwd, "request.json"), payload, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  const requestPath = path.join(cwd, "request.json");
+  await writeFile(requestPath, payload, { encoding: "utf8", mode: 0o600, flag: "wx" });
 
-  const child = (options.spawn ?? ((command, args, spawnOptions) =>
-    nodeSpawn(command, [...args], spawnOptions) as ChildProcessWithoutNullStreams))(
-    executable,
-    manifest.cli?.args ?? [],
+  const promptPath = path.join(cwd, "prompt.txt");
+  const prompt = buildSubscriptionPrompt(request);
+  if (byteLength(prompt) > EXECUTION_LIMITS.maxPromptBytes) {
+    throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
+  }
+  await writeFile(promptPath, prompt, { encoding: "utf8", mode: 0o600, flag: "wx" });
+
+  const schemaPath = path.join(cwd, "schema.json");
+  await writeFile(schemaPath, `${JSON.stringify(getRegisteredJsonSchema(request.schemaId as VdtSchemaId), null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+    flag: "wx"
+  });
+  const outputPath = path.join(cwd, "last-message.json");
+  const promptText = await readFile(promptPath, "utf8");
+
+  const staticArgs = manifest.cli?.args ?? [];
+  const dynamicArgs = adapter
+    ? adapter.buildArgs({
+        ...(request.model ? { model: request.model } : {}),
+        promptPath,
+        promptText,
+        schemaPath,
+        outputPath
+      })
+    : [];
+  let command = executable;
+  let providerExecutable = executable;
+  let spawnArgs = [...staticArgs, ...dynamicArgs];
+  assertArgsSafe(spawnArgs);
+
+  const allowedReadPaths: string[] = [];
+  const sandboxCertified = isSandboxCertified(manifest);
+
+  if (/\.(?:mjs|cjs|js)$/i.test(executable)) {
+    const localScript = path.join(cwd, path.basename(executable));
+    await copyFile(executable, localScript);
+    await chmod(localScript, 0o700);
+    command = process.execPath;
+    providerExecutable = process.execPath;
+    spawnArgs = [localScript, ...spawnArgs];
+  } else if (sandboxCertified) {
+    spawnArgs = await localizeSandboxScripts(spawnArgs, cwd, allowedReadPaths);
+  }
+
+  let finalArgs = spawnArgs;
+  if (sandboxCertified) {
+    const wrapped = wrapSandbox(command, spawnArgs, {
+      profile: {
+        tempCwd: cwd,
+        repoCwd: process.cwd(),
+        providerExecutable,
+        ...(allowedReadPaths.length > 0 ? { allowedReadPaths } : {})
+      }
+    });
+    if (wrapped.diagnostic) {
+      throw Object.assign(
+        new Error(`${manifest.label} requires an OS sandbox that is unavailable on this platform.`),
+        { code: "UNSAFE_CONFIGURATION" }
+      );
+    }
+    command = wrapped.command;
+    finalArgs = wrapped.args;
+  }
+
+  const executableVersion =
+    manifest.cli?.versionArgs?.length && !/\.(?:mjs|cjs|js)$/i.test(executable)
+      ? await probeExecutableVersion(executable, manifest.cli.versionArgs)
+      : undefined;
+
+  const child = (options.spawn ?? ((spawnCommand, args, spawnOptions) =>
+    nodeSpawn(spawnCommand, [...args], spawnOptions) as ChildProcessWithoutNullStreams))(
+    command,
+    finalArgs,
     { cwd, env: safeEnvironment(envSource), shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
   );
 
@@ -178,7 +318,15 @@ async function executeCli(
 
   try {
     if (signal.aborted) terminate();
-    child.stdin.end(payload);
+    if (adapter) {
+      if (adapter.spawnHints?.stdin === "prompt") {
+        child.stdin.end(promptText);
+      } else {
+        child.stdin.end();
+      }
+    } else {
+      child.stdin.end(payload);
+    }
     const exitCode = await completion;
     if (cancelled) {
       if (byteLength(stdout) > EXECUTION_LIMITS.maxStdoutBytes || byteLength(stderr) > EXECUTION_LIMITS.maxStderrBytes) {
@@ -194,13 +342,22 @@ async function executeCli(
       });
     }
     assertLineLimit(stdout);
-    if (byteLength(stdout) > EXECUTION_LIMITS.maxResultBytes) {
+    if (byteLength(stdout) > EXECUTION_LIMITS.maxResultBytes && !adapter) {
       throw Object.assign(new Error("Backend result exceeds the configured limit."), { code: "OUTPUT_TOO_LARGE" });
     }
-    const output = extractBoundedJson(stdout, EXECUTION_LIMITS.maxResultBytes);
+    const output = adapter
+      ? adapter.parseOutput(stdout, stderr, request.schemaId as VdtSchemaId)
+      : extractBoundedJson(stdout, EXECUTION_LIMITS.maxResultBytes);
     const schemaValid = validateRegisteredSchema(request.schemaId as VdtSchemaId, output);
     if (!schemaValid) throw Object.assign(new Error("Backend output failed registered schema validation."), { code: "SCHEMA_INVALID" });
-    return { output, rawText: stdout, outputBytes: byteLength(stdout), schemaValid, exitCode };
+    return {
+      output,
+      rawText: stdout,
+      outputBytes: byteLength(stdout),
+      schemaValid,
+      exitCode,
+      ...(executableVersion === undefined ? {} : { executableVersion })
+    };
   } catch (error) {
     if (outputLimitExceeded) {
       throw Object.assign(new Error("Backend output exceeded the configured limit."), { code: "OUTPUT_TOO_LARGE" });

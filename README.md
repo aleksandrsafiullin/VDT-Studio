@@ -66,7 +66,7 @@ pnpm local-runner:start
 
 ## Local Runner
 
-`packages/local-runner` exposes a paired, loopback-only v1 service. The browser sends a registered backend ID and bounded task/schema input; executable names, arguments, environment and endpoints remain in reviewed server manifests. Subscription CLI manifests fail closed until separately certified. See [Local Runner](docs/LOCAL_RUNNER.md).
+`packages/local-runner` exposes a paired, loopback-only v1 service. The browser sends a registered backend ID and bounded task/schema input; executable names, arguments, environment and endpoints remain in reviewed server manifests. Subscription CLI manifests fail closed until separately certified. See [Local Runner](docs/LOCAL_RUNNER.md) and [Provider compatibility](docs/provider-compatibility.md).
 
 ## Product CLI
 
