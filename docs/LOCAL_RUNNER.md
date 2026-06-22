@@ -35,15 +35,16 @@ All endpoints except health and pair require `Authorization: Bearer <session-tok
 }
 ```
 
-Subscription CLI manifests fail closed until their individual adapters and isolation profiles are certified in later phases. See [Provider compatibility](provider-compatibility.md) for tested Cursor versions, platform matrix, and maintainer live gates.
+Subscription CLIs are enabled only through reviewed per-provider adapters. Codex and Claude have certified tool/session restrictions; Gemini and Copilot require both tool-denial flags/policies and the macOS sandbox. Cursor is beta because its current CLI requires a state write outside the temp workspace and therefore fails closed under the hardened profile. See [Provider compatibility](provider-compatibility.md).
 
 ## Security contract
 
 - Bind only to `127.0.0.1`; reject non-local `Host` headers.
 - Require an allowlisted browser `Origin` for mutations and keep CORS enabled in addition to pairing.
 - Accept JSON only and cap request bodies at 1 MB and serialized prompts at 512 KB.
-- Resolve only reviewed executable aliases to absolute regular non-symlink files and spawn with `shell: false`.
+- Resolve reviewed executable aliases through symlinks to regular files outside the repository and spawn with `shell: false`.
 - Create a new owner-only temporary working directory per request and delete it after success, failure, timeout or cancellation.
+- On macOS, deny repository reads, arbitrary home-file contents and writes outside the temporary run directory; allow only reviewed provider auth/config read paths.
 - Pass only `PATH`, `HOME`, `USER`, `LOGNAME`, temp and locale variables; force `NO_COLOR=1`.
 - Cap a line at 1 MB, stdout at 4 MB, stderr at 1 MB and validated result JSON at 1 MB.
 - Cap execution at 120 seconds. Cancellation and timeout send `SIGTERM`, wait three seconds, then send `SIGKILL`.

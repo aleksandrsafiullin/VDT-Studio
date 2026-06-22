@@ -19,23 +19,25 @@ describe("cursorSubscriptionCliAdapter", () => {
 
   describe("buildArgs snapshots", () => {
     it("builds prompt-only dynamic args", () => {
-      expect(buildCursorDynamicArgs({ promptPath: "/tmp/vdt-run-abc/prompt.txt" })).toMatchInlineSnapshot(`
+      expect(buildCursorDynamicArgs({ promptPath: "/tmp/vdt-run-abc/prompt.txt", promptText: "return json" })).toMatchInlineSnapshot(`
         [
-          "-p",
-          "/tmp/vdt-run-abc/prompt.txt",
+          "--workspace",
+          "/tmp/vdt-run-abc",
+          "return json",
         ]
       `);
     });
 
     it("builds model and prompt dynamic args", () => {
       expect(
-        buildCursorDynamicArgs({ model: "gpt-5.5-high", promptPath: "/tmp/vdt-run-abc/prompt.txt" })
+        buildCursorDynamicArgs({ model: "gpt-5.5-high", promptPath: "/tmp/vdt-run-abc/prompt.txt", promptText: "return json" })
       ).toMatchInlineSnapshot(`
         [
           "--model",
           "gpt-5.5-high",
-          "-p",
-          "/tmp/vdt-run-abc/prompt.txt",
+          "--workspace",
+          "/tmp/vdt-run-abc",
+          "return json",
         ]
       `);
     });
@@ -43,14 +45,15 @@ describe("cursorSubscriptionCliAdapter", () => {
     it("passes assertArgsSafe on reviewed dynamic args", () => {
       const args = cursorSubscriptionCliAdapter.buildArgs({
         model: "auto",
-        promptPath: "/private/tmp/vdt-run-xyz/prompt.txt"
+        promptPath: "/private/tmp/vdt-run-xyz/prompt.txt",
+        promptText: "return json"
       });
       expect(() => assertArgsSafe(args)).not.toThrow();
     });
 
     it("rejects dangerous flags if they sneak into buildArgs input paths", () => {
       expect(() =>
-        cursorSubscriptionCliAdapter.buildArgs({ promptPath: "--force" })
+        cursorSubscriptionCliAdapter.buildArgs({ model: "--force", promptText: "return json" })
       ).toThrow(/Forbidden CLI argument/);
     });
   });

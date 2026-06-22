@@ -174,14 +174,25 @@ describe("Phase 2 completion contract", () => {
   });
 
   it("rejects duplicate request ids and uncertified subscription backends", async () => {
-    const server = await start();
+    const unsafeManifest: BackendManifest = {
+      id: "unsafe_subscription",
+      label: "Unsafe test backend",
+      kind: "subscription_cli",
+      supportLevel: "experimental",
+      taskTypes: ["generate_tree"],
+      schemaIds: ["connection-test-v1", "generate-tree-v1"],
+      modelSelection: false,
+      cli: { executableAliases: ["unsafe-test"], args: [], versionArgs: ["--version"] },
+      safety: { toolsDisabled: false, requiresOsSandbox: true, certified: false }
+    };
+    const server = await start({ host: "127.0.0.1", port: 0, manifests: [unsafeManifest], executor: { resolveExecutable: async () => fixture } });
     const token = await pair(server);
     const requestId = crypto.randomUUID();
     const body = { requestId, backendId: "mock", taskType: "generate_tree", schemaId: "generate-tree-v1", input: { projectTitle: "x", rootNodeId: "r", nodes: [{}], edges: [], assumptions: [], questionsForUser: [], warnings: [] } };
     expect((await call(server, "/v1/completions", { method: "POST", token, body })).status).toBe(200);
     expect((await call(server, "/v1/completions", { method: "POST", token, body })).body.error.code).toBe("DUPLICATE_REQUEST_ID");
 
-    const uncertified = await call(server, "/v1/backends/gemini_subscription/test", { method: "POST", token, body: {} });
+    const uncertified = await call(server, "/v1/backends/unsafe_subscription/test", { method: "POST", token, body: {} });
     expect(uncertified.body.error.code).toBe("UNSAFE_CONFIGURATION");
   });
 });

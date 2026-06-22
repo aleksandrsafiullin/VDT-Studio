@@ -45,6 +45,8 @@ describe.skipIf(!isDarwin)("darwin sandbox profile", () => {
       tempCwd,
       repoCwd,
       providerExecutable,
+      homeDir: "/Users/dev",
+      allowedReadPaths: ["/Users/dev/.cursor"],
       deniedReadPaths: ["/Users/dev/project"]
     });
 
@@ -52,6 +54,8 @@ describe.skipIf(!isDarwin)("darwin sandbox profile", () => {
     expect(profile).toContain(`(allow file-write* (subpath "${tempCwd}"))`);
     expect(profile).toContain(`(allow process-exec (literal "${providerExecutable}"))`);
     expect(profile).toContain(`(deny file-read* (subpath "${repoCwd}"))`);
+    expect(profile).toContain(`(require-not (subpath "${tempCwd}"))`);
+    expect(profile).toContain('(require-not (subpath "/Users/dev/.cursor"))');
     expect(profile).toContain('(deny file-read* (subpath "/Users/dev/project"))');
     expect(profile).not.toContain("(allow file-write* (subpath \"/Users/dev/project\"))");
   });
@@ -85,7 +89,7 @@ describe.skipIf(!isDarwin)("darwin sandbox profile", () => {
       repoCwd,
       providerExecutable: process.execPath
     });
-    expect(profile).toContain(`(deny file-read* (subpath "${repoCwd}"))`);
+    expect(profile).toContain(path.basename(repoCwd));
 
     const probeScript = path.join(tempCwd, "probe.cjs");
     await writeFile(
@@ -121,7 +125,7 @@ describe.skipIf(!isDarwin)("darwin sandbox profile", () => {
     const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
       const child = spawn(wrapped.command, wrapped.args, {
         cwd: tempCwd,
-        env: { PATH: process.env.PATH, HOME: process.env.HOME, NO_COLOR: "1" },
+        env: { PATH: process.env.PATH, HOME: process.env.HOME, NO_COLOR: "1", HONEY_PATH: honeyPath },
         stdio: ["ignore", "pipe", "pipe"]
       });
       let stdout = "";
@@ -138,7 +142,33 @@ describe.skipIf(!isDarwin)("darwin sandbox profile", () => {
 
     expect(result.code).not.toBe(0);
     expect(result.stdout).not.toContain("LEAKED:secret");
-    expect(result.stderr).toContain("HONEY_PATH missing");
+    expect(result.stderr).toMatch(/operation not permitted|eperm|eacces/i);
+  }, 30_000);
+
+  it("blocks writes outside the ephemeral temp cwd", async () => {
+    const tempCwd = await makeTempDir("vdt-sandbox-write-");
+    const outsideDir = await makeTempDir("vdt-sandbox-outside-");
+    const outsidePath = path.join(outsideDir, "should-not-exist.txt");
+    const probeScript = path.join(tempCwd, "write-probe.cjs");
+    await writeFile(
+      probeScript,
+      "require('node:fs').writeFileSync(process.env.OUTSIDE_PATH, 'unsafe');",
+      { encoding: "utf8", mode: 0o700 }
+    );
+    const wrapped = wrapDarwinSandbox(process.execPath, [probeScript], {
+      profile: { tempCwd, repoCwd: process.cwd(), providerExecutable: process.execPath }
+    });
+    const result = await new Promise<number | null>((resolve, reject) => {
+      const child = spawn(wrapped.command, wrapped.args, {
+        cwd: tempCwd,
+        env: { PATH: process.env.PATH, OUTSIDE_PATH: outsidePath },
+        stdio: "ignore"
+      });
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
+    expect(result).not.toBe(0);
+    await expect(readFile(outsidePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   }, 30_000);
 });
 

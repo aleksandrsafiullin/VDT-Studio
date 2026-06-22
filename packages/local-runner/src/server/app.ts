@@ -244,7 +244,12 @@ function publicError(error: unknown): { code: string; message: string } {
     BACKEND_NOT_INSTALLED: "Backend executable is not installed.",
     UNSAFE_CONFIGURATION: "Backend is not certified for isolated execution.",
     LOCAL_HTTP_FAILED: "Local model endpoint failed.",
-    INVALID_PROVIDER_RESPONSE: "Local model returned an invalid response."
+    INVALID_PROVIDER_RESPONSE: "Local model returned an invalid response.",
+    AUTH_REQUIRED: "Backend account authentication is required.",
+    RATE_LIMITED: "Backend account allowance or request limit was reached.",
+    POLICY_DISABLED: "Backend access is disabled by the current plan or organization policy.",
+    BACKEND_PARSE_FAILED: "Backend output could not be parsed as the required structured response.",
+    BACKEND_EXIT_FAILED: "Backend process exited before producing a valid response."
   };
   return { code, message: messages[code] ?? "Backend execution failed." };
 }

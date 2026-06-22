@@ -3,14 +3,8 @@ const { readFileSync } = require("node:fs");
 
 const mode = process.env.VDT_FAKE_CURSOR_MODE ?? "stream-json";
 
-function promptPathFromArgs() {
-  const index = process.argv.indexOf("-p");
-  return index >= 0 ? process.argv[index + 1] : undefined;
-}
-
-function readPromptPayload(promptPath) {
-  if (!promptPath) return {};
-  const text = readFileSync(promptPath, "utf8");
+function readPromptPayload() {
+  const text = process.argv.at(-1) ?? "";
   const lines = text.trim().split(/\r?\n/);
   const lastLine = lines[lines.length - 1] ?? "";
   try {
@@ -55,8 +49,7 @@ function writeStreamJson(result) {
 }
 
 function main() {
-  const promptPath = promptPathFromArgs();
-  const payload = readPromptPayload(promptPath);
+  const payload = readPromptPayload();
 
   if (mode === "slow") {
     setTimeout(() => process.exit(0), 30_000);

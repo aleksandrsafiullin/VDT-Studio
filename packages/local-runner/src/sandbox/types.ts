@@ -11,6 +11,8 @@ export interface SandboxProfile {
   repoCwd: string;
   /** Resolved provider CLI binary — execute and read allowed. */
   providerExecutable: string;
+  /** User home root. Reads are denied except explicit provider auth paths. */
+  homeDir?: string;
   /** Optional user project or other paths denied for read. */
   deniedReadPaths?: readonly string[];
   /** Additional absolute paths allowed for read (e.g. node script argv). */

@@ -27,7 +27,7 @@ export const EXECUTION_LIMITS = Object.freeze({
 
 const ALLOWED_ENV_KEYS = [
   "PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "LC_CTYPE", "NO_COLOR",
-  "VDT_FAKE_CURSOR_MODE", "VDT_FAKE_CODEX_MODE", "VDT_FAKE_CLAUDE_MODE"
+  "VDT_FAKE_CURSOR_MODE", "VDT_FAKE_CODEX_MODE", "VDT_FAKE_CLAUDE_MODE", "VDT_FAKE_GEMINI_MODE", "VDT_FAKE_COPILOT_MODE"
 ] as const;
 
 export interface ExecutionResult {
@@ -75,9 +75,11 @@ async function defaultResolveExecutable(manifest: BackendManifest, env: NodeJS.P
       const candidate = path.resolve(directory, alias);
       try {
         const info = await lstat(candidate);
-        if (info.isSymbolicLink() || !info.isFile()) continue;
+        if (!info.isSymbolicLink() && !info.isFile()) continue;
         const resolved = await realpath(candidate);
         if (!path.isAbsolute(resolved)) continue;
+        const resolvedInfo = await lstat(resolved);
+        if (!resolvedInfo.isFile()) continue;
         const projectRoot = path.resolve(process.cwd());
         if (resolved === projectRoot || resolved.startsWith(`${projectRoot}${path.sep}`)) continue;
         return resolved;
@@ -104,10 +106,10 @@ function isSandboxCertified(manifest: BackendManifest): boolean {
 
 function assertManifestSafe(manifest: BackendManifest): void {
   if (manifest.kind !== "subscription_cli" && manifest.kind !== "custom_cli") return;
-  if (manifest.cli?.args) assertArgsSafe(manifest.cli.args);
+  if (manifest.cli?.args) assertArgsSafe(manifest.cli.args, { allowScopedTrust: manifest.safety.trustEphemeralWorkspace === true });
   const { certified, toolsDisabled, requiresOsSandbox } = manifest.safety;
   const sandboxCertified = isSandboxCertified(manifest);
-  if (!certified || !toolsDisabled || (requiresOsSandbox && !sandboxCertified)) {
+  if (!certified || (!toolsDisabled && !sandboxCertified) || (requiresOsSandbox && !sandboxCertified)) {
     throw Object.assign(new Error(`${manifest.label} is not certified for isolated execution.`), {
       code: "UNSAFE_CONFIGURATION"
     });
@@ -152,6 +154,22 @@ function buildSubscriptionPrompt(request: CompletionRequest): string {
       ...(request.model ? { model: request.model } : {})
     })
   ].join("\n");
+}
+
+function providerAuthReadPaths(backendId: string, home: string | undefined): string[] {
+  if (!home || !path.isAbsolute(home)) return [];
+  if (backendId === "cursor_subscription") {
+    return [
+      path.join(home, ".cursor"),
+      path.join(home, ".cursor-agent"),
+      path.join(home, "Library", "Application Support", "Cursor")
+    ];
+  }
+  if (backendId === "gemini_subscription") return [path.join(home, ".gemini")];
+  if (backendId === "copilot_subscription") {
+    return [path.join(home, ".copilot"), path.join(home, ".config", "github-copilot")];
+  }
+  return [];
 }
 
 async function probeExecutableVersion(executable: string, versionArgs: readonly string[]): Promise<string | undefined> {
@@ -216,6 +234,12 @@ async function executeCli(
     flag: "wx"
   });
   const outputPath = path.join(cwd, "last-message.json");
+  const toolPolicyPath = path.join(cwd, "deny-all-tools.toml");
+  await writeFile(
+    toolPolicyPath,
+    '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n',
+    { encoding: "utf8", mode: 0o600, flag: "wx" }
+  );
   const promptText = await readFile(promptPath, "utf8");
 
   const staticArgs = manifest.cli?.args ?? [];
@@ -225,18 +249,19 @@ async function executeCli(
         promptPath,
         promptText,
         schemaPath,
-        outputPath
+        outputPath,
+        toolPolicyPath
       })
     : [];
   let command = executable;
   let providerExecutable = executable;
   let spawnArgs = [...staticArgs, ...dynamicArgs];
-  assertArgsSafe(spawnArgs);
+  assertArgsSafe(spawnArgs, { allowScopedTrust: manifest.safety.trustEphemeralWorkspace === true });
 
-  const allowedReadPaths: string[] = [];
+  const allowedReadPaths = [path.dirname(executable), ...providerAuthReadPaths(manifest.id, envSource.HOME)];
   const sandboxCertified = isSandboxCertified(manifest);
 
-  if (/\.(?:mjs|cjs|js)$/i.test(executable)) {
+  if (/\.(?:mjs|cjs|js)$/i.test(executable) && options.resolveExecutable !== undefined) {
     const localScript = path.join(cwd, path.basename(executable));
     await copyFile(executable, localScript);
     await chmod(localScript, 0o700);
@@ -254,6 +279,7 @@ async function executeCli(
         tempCwd: cwd,
         repoCwd: process.cwd(),
         providerExecutable,
+        ...(envSource.HOME && path.isAbsolute(envSource.HOME) ? { homeDir: envSource.HOME } : {}),
         ...(allowedReadPaths.length > 0 ? { allowedReadPaths } : {})
       }
     });
@@ -272,11 +298,16 @@ async function executeCli(
       ? await probeExecutableVersion(executable, manifest.cli.versionArgs)
       : undefined;
 
+  const childEnv = safeEnvironment(envSource);
+  if (manifest.id === "cursor_subscription") {
+    childEnv.CURSOR_CONFIG_DIR = path.join(cwd, "cursor-config");
+    childEnv.NODE_COMPILE_CACHE = path.join(cwd, "node-compile-cache");
+  }
   const child = (options.spawn ?? ((spawnCommand, args, spawnOptions) =>
     nodeSpawn(spawnCommand, [...args], spawnOptions) as ChildProcessWithoutNullStreams))(
     command,
     finalArgs,
-    { cwd, env: safeEnvironment(envSource), shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
+    { cwd, env: childEnv, shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
   );
 
   let stdout = "";
@@ -336,6 +367,13 @@ async function executeCli(
       throw Object.assign(new Error("Backend timed out."), { code: "TIMEOUT" });
     }
     if (exitCode !== 0) {
+      if (adapter) {
+        try {
+          adapter.parseOutput(stdout, stderr, request.schemaId as VdtSchemaId);
+        } catch (error) {
+          throw error;
+        }
+      }
       throw Object.assign(new Error(`Backend exited with code ${exitCode}; stderr contained ${byteLength(stderr)} bytes.`), {
         code: "BACKEND_EXIT_FAILED",
         exitCode

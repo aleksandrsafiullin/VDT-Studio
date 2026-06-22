@@ -15,6 +15,7 @@
 - Product CLI for validate, calculate, export, runner start and doctor workflows.
 - Shared model-backend contract, registry, bounded parsing and fake backend.
 - Detection metadata for Cursor, Codex, Claude, Gemini and Copilot subscription CLIs.
+- Certified Codex/Claude subscription adapters and beta macOS Gemini/Copilot adapters with tool-free structured output.
 - Playwright smoke coverage for core web flows.
 
 ## Next
@@ -26,6 +27,6 @@
 - Desktop packaging with Tauri.
 - Excel calculation model export.
 - PowerPoint and PDF report generation.
-- Paired, sandboxed local-runner execution for selected subscription backends.
-- Independent certification of each supported subscription backend.
+- Live subscription verification for Gemini and Copilot on authenticated maintainer accounts.
+- Cursor state-directory isolation that preserves subscription auth while keeping all writes inside the request temp directory.
 - Independent approval of the multi-provider BYOK streaming proxy and per-target SSRF controls.

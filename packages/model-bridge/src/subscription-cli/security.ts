@@ -15,9 +15,10 @@ export const DANGEROUS_CLI_FLAG_PATTERNS = Object.freeze([
   /^yolo$/i
 ] as const satisfies readonly RegExp[]);
 
-export function assertArgsSafe(args: readonly string[]): void {
+export function assertArgsSafe(args: readonly string[], options: { allowScopedTrust?: boolean } = {}): void {
   for (const arg of args) {
     for (const pattern of DANGEROUS_CLI_FLAG_PATTERNS) {
+      if (options.allowScopedTrust === true && arg === "--trust" && pattern.test(arg)) continue;
       if (pattern.test(arg)) {
         throw Object.assign(new Error(`Forbidden CLI argument: ${arg}`), {
           code: "UNSAFE_CLI_ARGS",

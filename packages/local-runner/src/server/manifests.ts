@@ -1,7 +1,7 @@
 import type { BackendManifest } from "../cli/types";
 
 const isDarwin = process.platform === "darwin";
-const cursorSupportLevel = isDarwin ? ("supported" as const) : ("beta" as const);
+const cursorSupportLevel = "beta" as const;
 
 const generateTasks = ["generate_tree", "deepen_node", "review_model"] as const;
 const schemas = ["connection-test-v1", "generate-tree-v1", "deepen-node-v1", "review-model-v1"] as const;
@@ -60,14 +60,15 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     modelSelection: true,
     cli: {
       executableAliases: ["agent", "cursor-agent", "cursor"],
-      args: ["--print", "--output-format", "stream-json", "--stream-partial-output"],
+      args: ["--print", "--output-format", "stream-json", "--stream-partial-output", "--mode", "ask", "--sandbox", "enabled", "--trust"],
       versionArgs: ["--version"]
     },
     safety: {
-      toolsDisabled: true,
+      toolsDisabled: false,
       requiresOsSandbox: true,
       certified: true,
-      sandboxProfile: "darwin-v1"
+      sandboxProfile: "darwin-v1",
+      trustEphemeralWorkspace: true
     }
   },
   {
@@ -110,24 +111,54 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     },
     safety: { toolsDisabled: true, requiresOsSandbox: false, certified: true }
   },
-  ...[
-    ["gemini_subscription", "Gemini CLI", ["gemini"]],
-    ["copilot_subscription", "GitHub Copilot CLI", ["copilot"]]
-  ].map(([id, label, aliases]) => ({
-    id: id as string,
-    label: label as string,
-    kind: "subscription_cli" as const,
-    supportLevel: "experimental" as const,
+  {
+    id: "gemini_subscription",
+    label: "Gemini CLI",
+    kind: "subscription_cli",
+    supportLevel: isDarwin ? "beta" : "experimental",
     taskTypes: generateTasks,
     schemaIds: schemas,
     modelSelection: true,
     cli: {
-      executableAliases: aliases as [string, ...string[]],
-      args: [],
+      executableAliases: ["gemini"],
+      args: ["--output-format", "json", "--approval-mode", "default"],
       versionArgs: ["--version"]
     },
-    safety: { toolsDisabled: false, requiresOsSandbox: true, certified: false }
-  }))
+    safety: {
+      toolsDisabled: true,
+      requiresOsSandbox: true,
+      certified: true,
+      sandboxProfile: "darwin-v1"
+    }
+  },
+  {
+    id: "copilot_subscription",
+    label: "GitHub Copilot CLI",
+    kind: "subscription_cli",
+    supportLevel: isDarwin ? "beta" : "experimental",
+    taskTypes: generateTasks,
+    schemaIds: schemas,
+    modelSelection: true,
+    cli: {
+      executableAliases: ["copilot"],
+      args: [
+        "--output-format=json",
+        "--stream=off",
+        "--available-tools=",
+        "--disable-builtin-mcps",
+        "--no-custom-instructions",
+        "--no-ask-user",
+        "--no-auto-update"
+      ],
+      versionArgs: ["--version"]
+    },
+    safety: {
+      toolsDisabled: true,
+      requiresOsSandbox: true,
+      certified: true,
+      sandboxProfile: "darwin-v1"
+    }
+  }
 ]);
 
 export function createManifestRegistry(additional: readonly BackendManifest[] = []): ReadonlyMap<string, BackendManifest> {

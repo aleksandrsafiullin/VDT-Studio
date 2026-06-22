@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { SandboxProfile, SandboxResult, SandboxSpawnOptions } from "./types";
 
@@ -8,13 +8,22 @@ function quoteSandboxString(value: string): string {
 }
 
 function resolveSandboxPath(value: string): string {
-  return path.resolve(value);
+  const resolved = path.resolve(value);
+  try {
+    return realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 export function buildDarwinSandboxProfile(profile: SandboxProfile): string {
   const tempCwd = quoteSandboxString(resolveSandboxPath(profile.tempCwd));
   const repoCwd = quoteSandboxString(resolveSandboxPath(profile.repoCwd));
   const providerExecutable = quoteSandboxString(resolveSandboxPath(profile.providerExecutable));
+  const homeDir = profile.homeDir ? quoteSandboxString(resolveSandboxPath(profile.homeDir)) : undefined;
+  const allowedReadPaths = (profile.allowedReadPaths ?? []).map((entry) =>
+    quoteSandboxString(resolveSandboxPath(entry))
+  );
   const deniedReadPaths = (profile.deniedReadPaths ?? []).map((entry) =>
     quoteSandboxString(resolveSandboxPath(entry))
   );
@@ -35,9 +44,19 @@ export function buildDarwinSandboxProfile(profile: SandboxProfile): string {
     `(allow process-exec (literal ${providerExecutable}))`,
     `(allow file-read* (literal ${providerExecutable}))`,
     "",
+    "; Writes are confined to the ephemeral run directory",
+    `(deny file-write* (require-all (require-not (subpath ${tempCwd})) (require-not (literal "/dev/null"))))`,
+    "",
     "; Deny VDT repo reads",
     `(deny file-read* (subpath ${repoCwd}))`
   ];
+
+  if (homeDir) {
+    const exceptions = [tempCwd, ...allowedReadPaths]
+      .map((entry) => `(require-not (subpath ${entry}))`)
+      .join(" ");
+    lines.push("", "; Deny arbitrary home file contents except reviewed provider auth paths", `(deny file-read-data (require-all (subpath ${homeDir}) ${exceptions}))`);
+  }
 
   for (const deniedPath of deniedReadPaths) {
     lines.push(`(deny file-read* (subpath ${deniedPath}))`);

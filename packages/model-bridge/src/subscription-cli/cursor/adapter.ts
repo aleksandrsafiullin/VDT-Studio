@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { ModelBackendDetectionResult } from "../../contract";
 import type { VdtSchemaId } from "../../schema-registry";
 import { assertArgsSafe } from "../security";
@@ -11,7 +12,12 @@ import { evaluateCursorVersion, parseCursorVersionOutput } from "./version";
 export function buildCursorDynamicArgs(input: SubscriptionCliBuildArgsInput): readonly string[] {
   const args: string[] = [];
   if (input.model) args.push("--model", input.model);
-  if (input.promptPath) args.push("-p", input.promptPath);
+  if (input.promptPath) {
+    args.push("--workspace", path.dirname(input.promptPath));
+  }
+  const prompt = input.promptText?.trim();
+  if (!prompt) throw Object.assign(new Error("Cursor subscription prompt text is required."), { code: "PROMPT_REQUIRED" });
+  args.push(prompt);
   assertArgsSafe(args);
   return Object.freeze(args);
 }

@@ -15,6 +15,7 @@ export interface SubscriptionCliBuildArgsInput {
   promptText?: string;
   schemaPath?: string;
   outputPath?: string;
+  toolPolicyPath?: string;
 }
 
 export interface SubscriptionCliSpawnHints {

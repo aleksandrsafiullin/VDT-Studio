@@ -25,6 +25,8 @@ export interface BackendManifest {
     requiresOsSandbox: boolean;
     certified: boolean;
     sandboxProfile?: "darwin-v1";
+    /** Allows adapter-owned --trust only because cwd is a fresh runner temp directory. */
+    trustEphemeralWorkspace?: boolean;
   };
 }
 
