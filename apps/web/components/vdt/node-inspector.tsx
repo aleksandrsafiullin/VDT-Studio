@@ -4,7 +4,7 @@ import { Check, GitBranchPlus, Info, Scissors, Sparkles, Trash2, Wand2, X } from
 import { calculateGraph } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextArea, TextInput } from "@/components/ui/field";
-import { Panel, PanelCollapseButton, PanelCollapseTab, PanelHeader } from "@/components/ui/panel";
+import { Panel, PanelCollapseTab, PanelToggleButton, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { formatNumber } from "@/lib/format";
@@ -60,7 +60,7 @@ export function NodeInspector() {
     return (
       <PanelCollapseTab
         label="Inspector"
-        side="right"
+        panel="right"
         testId="collapse-right-panel"
         expandTestId="expand-right-panel"
         onToggle={toggleRightPanel}
@@ -75,8 +75,8 @@ export function NodeInspector() {
           title="Inspector"
           subtitle="Select a node on the canvas"
           action={
-            <PanelCollapseButton
-              side="right"
+            <PanelToggleButton
+              panel="right"
               testId="collapse-right-panel"
               onToggle={toggleRightPanel}
             />
@@ -94,8 +94,8 @@ export function NodeInspector() {
         action={
           <div className="flex items-center gap-1">
             <StatusPill status={node.status} />
-            <PanelCollapseButton
-              side="right"
+            <PanelToggleButton
+              panel="right"
               testId="collapse-right-panel"
               onToggle={toggleRightPanel}
             />

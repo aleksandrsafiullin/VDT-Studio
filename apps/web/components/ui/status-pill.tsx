@@ -1,4 +1,5 @@
 import { clsx } from "clsx";
+import { getStatusIcon, VdtIcon } from "@/components/vdt/vdt-icons";
 
 const toneByStatus: Record<string, string> = {
   ai_suggested: "border-blue-200 bg-blue-50 text-blue-700",
@@ -13,15 +14,20 @@ const toneByStatus: Record<string, string> = {
 };
 
 export function StatusPill({ status, className }: { status: string; className?: string }) {
+  const icon = getStatusIcon(status);
+
   return (
     <span
+      role="img"
+      aria-label={icon.label}
+      title={icon.label}
       className={clsx(
-        "inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-xs font-semibold leading-4",
+        "inline-flex max-w-full items-center justify-center rounded-full border p-1 leading-none",
         toneByStatus[status] ?? "border-slate-200 bg-slate-50 text-slate-700",
         className
       )}
     >
-      {status.replaceAll("_", " ")}
+      <VdtIcon display={icon} variant="status" />
     </span>
   );
 }

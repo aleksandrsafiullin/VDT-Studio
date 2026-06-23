@@ -44,7 +44,7 @@ Subscription CLIs are enabled only through reviewed per-provider adapters. Codex
 - Accept JSON only and cap request bodies at 1 MB and serialized prompts at 512 KB.
 - Resolve reviewed executable aliases through symlinks to regular files outside the repository and spawn with `shell: false`.
 - Create a new owner-only temporary working directory per request and delete it after success, failure, timeout or cancellation.
-- On macOS, deny repository reads, arbitrary home-file contents and writes outside the temporary run directory; allow only reviewed provider auth/config read paths.
+- On macOS, run subscription backends that require isolation under the default-deny `darwin-v1` profile. The profile permits provider execution in the request temp directory, preserves reviewed provider auth/config read paths, and denies repository reads, arbitrary home-file contents, temp-root reads outside the request, writes outside temp, and unrelated shell execution.
 - Pass only `PATH`, `HOME`, `USER`, `LOGNAME`, temp and locale variables; force `NO_COLOR=1`.
 - Cap a line at 1 MB, stdout at 4 MB, stderr at 1 MB and validated result JSON at 1 MB.
 - Cap execution at 120 seconds. Cancellation and timeout send `SIGTERM`, wait three seconds, then send `SIGKILL`.

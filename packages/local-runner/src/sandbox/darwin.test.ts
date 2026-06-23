@@ -50,7 +50,7 @@ describe.skipIf(!isDarwin)("darwin sandbox profile", () => {
       deniedReadPaths: ["/Users/dev/project"]
     });
 
-    expect(profile).toContain("(allow default)");
+    expect(profile).toContain("(deny default)");
     expect(profile).toContain(`(allow file-write* (subpath "${tempCwd}"))`);
     expect(profile).toContain(`(allow process-exec (literal "${providerExecutable}"))`);
     expect(profile).toContain(`(deny file-read* (subpath "${repoCwd}"))`);
@@ -75,8 +75,46 @@ describe.skipIf(!isDarwin)("darwin sandbox profile", () => {
     expect(wrapped.args[1]).toBe(wrapped.profilePath);
     expect(wrapped.args[2]).toBe("--");
     expect(wrapped.args[3]).toBe(process.execPath);
-    await expect(readFile(wrapped.profilePath!, "utf8")).resolves.toContain("(allow default)");
+    await expect(readFile(wrapped.profilePath!, "utf8")).resolves.toContain("(deny default)");
   });
+
+  it("allows the provider executable to read and write inside the temp cwd", async () => {
+    const tempCwd = await makeTempDir("vdt-sandbox-positive-");
+    const probeScript = path.join(tempCwd, "positive-probe.cjs");
+    const outputPath = path.join(tempCwd, "result.txt");
+    await writeFile(
+      probeScript,
+      [
+        "const { readFileSync, writeFileSync } = require('node:fs');",
+        "const value = readFileSync(__filename, 'utf8');",
+        "writeFileSync(process.env.OUTPUT_PATH, value.includes('positive-probe') ? 'ok' : 'bad');",
+        "process.stdout.write('ok');"
+      ].join("\n"),
+      { encoding: "utf8", mode: 0o700 }
+    );
+    const wrapped = wrapDarwinSandbox(process.execPath, [probeScript], {
+      profile: { tempCwd, repoCwd: process.cwd(), providerExecutable: process.execPath }
+    });
+    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(wrapped.command, wrapped.args, {
+        cwd: tempCwd,
+        env: { PATH: process.env.PATH, NO_COLOR: "1", OUTPUT_PATH: outputPath },
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.once("error", reject);
+      child.once("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+    });
+    expect(result).toMatchObject({ code: 0, signal: null, stdout: "ok" });
+    await expect(readFile(outputPath, "utf8")).resolves.toBe("ok");
+  }, 30_000);
 
   it("blocks honey-file reads outside the temp cwd", async () => {
     const tempCwd = await makeTempDir("vdt-sandbox-honey-");
@@ -142,7 +180,52 @@ describe.skipIf(!isDarwin)("darwin sandbox profile", () => {
 
     expect(result.code).not.toBe(0);
     expect(result.stdout).not.toContain("LEAKED:secret");
-    expect(result.stderr).toMatch(/operation not permitted|eperm|eacces/i);
+    expect(result.stderr).not.toContain("secret");
+  }, 30_000);
+
+  it("blocks reads from the temp root outside the request directory", async () => {
+    const tempCwd = await makeTempDir("vdt-sandbox-temp-read-");
+    const outsideDir = await makeTempDir("vdt-sandbox-temp-outside-");
+    const outsidePath = path.join(outsideDir, "outside.txt");
+    await writeFile(outsidePath, "temp-secret", { encoding: "utf8", mode: 0o600 });
+
+    const probeScript = path.join(tempCwd, "temp-read-probe.cjs");
+    await writeFile(
+      probeScript,
+      [
+        "const { readFileSync } = require('node:fs');",
+        "try {",
+        "  process.stdout.write(`LEAKED:${readFileSync(process.env.OUTSIDE_PATH, 'utf8')}`);",
+        "  process.exit(0);",
+        "} catch (error) {",
+        "  process.stderr.write(String(error && error.code ? error.code : 'blocked'));",
+        "  process.exit(1);",
+        "}"
+      ].join("\n"),
+      { encoding: "utf8", mode: 0o700 }
+    );
+    const wrapped = wrapDarwinSandbox(process.execPath, [probeScript], {
+      profile: { tempCwd, repoCwd: process.cwd(), providerExecutable: process.execPath }
+    });
+    const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(wrapped.command, wrapped.args, {
+        cwd: tempCwd,
+        env: { PATH: process.env.PATH, NO_COLOR: "1", OUTSIDE_PATH: outsidePath },
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.once("error", reject);
+      child.once("close", (code) => resolve({ code, stdout, stderr }));
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.stdout).not.toContain("LEAKED:temp-secret");
   }, 30_000);
 
   it("blocks writes outside the ephemeral temp cwd", async () => {
@@ -169,6 +252,47 @@ describe.skipIf(!isDarwin)("darwin sandbox profile", () => {
     });
     expect(result).not.toBe(0);
     await expect(readFile(outsidePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  }, 30_000);
+
+  it("blocks unrelated shell execution", async () => {
+    const tempCwd = await makeTempDir("vdt-sandbox-shell-");
+    const probeScript = path.join(tempCwd, "shell-probe.cjs");
+    await writeFile(
+      probeScript,
+      [
+        "const { spawnSync } = require('node:child_process');",
+        "const result = spawnSync('/bin/sh', ['-c', 'echo unsafe'], { encoding: 'utf8' });",
+        "if (result.status === 0) {",
+        "  process.stdout.write(result.stdout);",
+        "  process.exit(0);",
+        "}",
+        "process.stderr.write(String(result.error?.code || result.status || 'blocked'));",
+        "process.exit(1);"
+      ].join("\n"),
+      { encoding: "utf8", mode: 0o700 }
+    );
+    const wrapped = wrapDarwinSandbox(process.execPath, [probeScript], {
+      profile: { tempCwd, repoCwd: process.cwd(), providerExecutable: process.execPath }
+    });
+    const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(wrapped.command, wrapped.args, {
+        cwd: tempCwd,
+        env: { PATH: process.env.PATH, NO_COLOR: "1" },
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.once("error", reject);
+      child.once("close", (code) => resolve({ code, stdout, stderr }));
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.stdout).not.toContain("unsafe");
   }, 30_000);
 });
 

@@ -1,38 +1,53 @@
 import { describe, expect, it } from "vitest";
 import {
   applyUiPreference,
+  BASE_LEFT_PANEL_WIDTH,
+  BASE_RIGHT_PANEL_WIDTH,
+  BASE_SCENARIO_DRAWER_HEIGHT,
+  DEFAULT_LEFT_PANEL_WIDTH,
+  DEFAULT_RIGHT_PANEL_WIDTH,
   DEFAULT_UI,
   mergeUiPreferences,
-  scaledPanelWidth,
-  scaledScenarioDrawerCollapsedHeight,
+  scenarioDrawerCollapsedHeight,
+  setPanelWidth,
   UI_PERSIST_KEYS,
   type UiPreferences
 } from "./ui-preferences";
 
 describe("ui-preferences", () => {
-  it("scales panel width with rounding", () => {
-    expect(scaledPanelWidth(300, 0.85)).toBe(255);
-    expect(scaledPanelWidth(328, 1)).toBe(328);
+  it("uses default panel widths derived from legacy scale", () => {
+    expect(DEFAULT_LEFT_PANEL_WIDTH).toBe(255);
+    expect(DEFAULT_RIGHT_PANEL_WIDTH).toBe(279);
   });
 
-  it("scales collapsed scenario drawer height within 40–52px", () => {
-    expect(scaledScenarioDrawerCollapsedHeight(0.85, 0.9)).toBe(40);
-    expect(scaledScenarioDrawerCollapsedHeight(1, 1.1)).toBe(46);
-    expect(scaledScenarioDrawerCollapsedHeight(1, 1)).toBe(44);
+  it("computes scenario drawer collapsed height from fontScale within 40–52px", () => {
+    expect(scenarioDrawerCollapsedHeight(0.75)).toBe(40);
+    expect(scenarioDrawerCollapsedHeight(0.9)).toBe(40);
+    expect(scenarioDrawerCollapsedHeight(1.1)).toBe(48);
+    expect(scenarioDrawerCollapsedHeight(1)).toBe(44);
   });
 
-  it("clamps fontScale and panelScale via setUiPreference helper", () => {
+  it("keeps expanded scenario drawer height fixed at base height", () => {
+    expect(BASE_SCENARIO_DRAWER_HEIGHT).toBe(248);
+  });
+
+  it("clamps fontScale and panel widths via applyUiPreference helper", () => {
     const ui = applyUiPreference(DEFAULT_UI, "fontScale", 0.5);
     expect(ui.fontScale).toBe(0.75);
 
     const ui2 = applyUiPreference(ui, "fontScale", 2);
     expect(ui2.fontScale).toBe(1.1);
 
-    const ui3 = applyUiPreference(ui2, "panelScale", 0.5);
-    expect(ui3.panelScale).toBe(0.7);
+    const ui3 = applyUiPreference(ui2, "leftPanelWidth", 100);
+    expect(ui3.leftPanelWidth).toBe(220);
 
-    const ui4 = applyUiPreference(ui3, "panelScale", 1.5);
-    expect(ui4.panelScale).toBe(1);
+    const ui4 = applyUiPreference(ui3, "rightPanelWidth", 900);
+    expect(ui4.rightPanelWidth).toBe(520);
+  });
+
+  it("clamps panel widths via setPanelWidth", () => {
+    expect(setPanelWidth(DEFAULT_UI, "left", 500).leftPanelWidth).toBe(480);
+    expect(setPanelWidth(DEFAULT_UI, "right", 200).rightPanelWidth).toBe(240);
   });
 
   it("merges persisted ui without clobbering defaults for missing keys", () => {
@@ -44,16 +59,41 @@ describe("ui-preferences", () => {
     });
   });
 
-  it("clamps out-of-range fontScale and panelScale on hydrate", () => {
-    expect(mergeUiPreferences({ fontScale: 0.5, panelScale: 0.5 })).toEqual({
+  it("migrates legacy panelScale when explicit widths are absent", () => {
+    expect(mergeUiPreferences({ panelScale: 0.75 })).toEqual({
       ...DEFAULT_UI,
-      fontScale: 0.75,
-      panelScale: 0.7
+      leftPanelWidth: Math.round(BASE_LEFT_PANEL_WIDTH * 0.75),
+      rightPanelWidth: Math.round(BASE_RIGHT_PANEL_WIDTH * 0.75)
     });
-    expect(mergeUiPreferences({ fontScale: 2, panelScale: 1.5 })).toEqual({
+  });
+
+  it("prefers explicit widths over legacy panelScale", () => {
+    expect(
+      mergeUiPreferences({
+        leftPanelWidth: 320,
+        rightPanelWidth: 360,
+        panelScale: 0.75
+      })
+    ).toEqual({
       ...DEFAULT_UI,
-      fontScale: 1.1,
-      panelScale: 1
+      leftPanelWidth: 320,
+      rightPanelWidth: 360
+    });
+  });
+
+  it("does not expose panelScale in merged output shape", () => {
+    const ui = mergeUiPreferences({ panelScale: 0.8 });
+    expect("panelScale" in ui).toBe(false);
+  });
+
+  it("clamps out-of-range fontScale on hydrate", () => {
+    expect(mergeUiPreferences({ fontScale: 0.5 })).toEqual({
+      ...DEFAULT_UI,
+      fontScale: 0.75
+    });
+    expect(mergeUiPreferences({ fontScale: 2 })).toEqual({
+      ...DEFAULT_UI,
+      fontScale: 1.1
     });
   });
 
@@ -61,16 +101,16 @@ describe("ui-preferences", () => {
     expect(
       mergeUiPreferences({
         fontScale: undefined,
-        panelScale: undefined
+        leftPanelWidth: undefined
       } as unknown as Partial<UiPreferences>)
     ).toEqual(DEFAULT_UI);
     expect(
       mergeUiPreferences({
         fontScale: "large" as unknown as number,
-        panelScale: null as unknown as number
+        leftPanelWidth: null as unknown as number
       })
     ).toEqual(DEFAULT_UI);
-    expect(mergeUiPreferences({ fontScale: Number.NaN, panelScale: Number.POSITIVE_INFINITY })).toEqual(
+    expect(mergeUiPreferences({ fontScale: Number.NaN, rightPanelWidth: Number.POSITIVE_INFINITY })).toEqual(
       DEFAULT_UI
     );
   });
@@ -100,7 +140,8 @@ describe("ui-preferences", () => {
   it("defines the full persist shape for ui preferences", () => {
     expect(UI_PERSIST_KEYS).toEqual([
       "fontScale",
-      "panelScale",
+      "leftPanelWidth",
+      "rightPanelWidth",
       "leftPanelCollapsed",
       "rightPanelCollapsed",
       "scenarioDrawerCollapsed"

@@ -5,6 +5,7 @@ import { ChevronDown, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextInput } from "@/components/ui/field";
+import { hasStandaloneRunnerUi, resolveVdtAppMode } from "@/lib/app-mode";
 import {
   CLI_CATALOG,
   getCliCatalogEntry,
@@ -83,6 +84,7 @@ export function LocalCliSettings() {
   const selectedCliAgentId = executionSettings.selectedCliAgentId;
   const memoryModelMode = executionSettings.memoryModelMode ?? "same_as_chat";
   const memoryCliAgentId = executionSettings.memoryCliAgentId;
+  const showStandaloneRunner = hasStandaloneRunnerUi(resolveVdtAppMode());
 
   const detectionById = new Map(
     buildDetectionFallback().map((fallback) => {
@@ -147,49 +149,58 @@ export function LocalCliSettings() {
 
   return (
     <div className="space-y-4" data-testid="local-cli-settings">
-      <section className="rounded-lg border border-line bg-white px-4 py-4" data-testid="local-runner-pairing">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-sm font-semibold text-ink">Local runner</h3>
-            <p className="mt-1 text-xs leading-5 text-muted">
-              Start <code>vdt runner start</code>, then enter its short-lived pairing code. The session token stays in memory only.
-            </p>
-          </div>
-          {runnerPairingToken ? (
-            <Button size="sm" variant="secondary" data-testid="local-runner-unpair" onClick={() => void unpairRunner()}>
-              Unpair
-            </Button>
-          ) : null}
-        </div>
-        {!runnerPairingToken ? (
-          <div className="mt-3 flex items-end gap-2">
-            <Field label="Pairing code">
-              <TextInput
-                data-testid="local-runner-pairing-code"
-                value={pairingCode}
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="000000"
-                onChange={(event) => setPairingCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-              />
-            </Field>
-            <Button
-              data-testid="local-runner-pair"
-              disabled={pairingCode.length !== 6 || isPairingRunner}
-              onClick={() => void pairRunner(pairingCode)}
-            >
-              {isPairingRunner ? "Pairing…" : "Pair"}
-            </Button>
-          </div>
-        ) : null}
-        {runnerPairingStatus ? (
-          <ProviderTestStatusBanner
-            className="mt-3"
-            status={runnerPairingStatus}
-            testId="local-runner-pairing-status"
-          />
-        ) : null}
+      <section className="rounded-lg border border-line bg-slate-50 px-4 py-3" data-testid="desktop-local-ai-managed">
+        <h3 className="text-sm font-semibold text-ink">Your subscriptions</h3>
+        <p className="mt-1 text-xs leading-5 text-muted">
+          Local AI is managed automatically by VDT Studio Desktop. Provider sign-in remains provider-owned.
+        </p>
       </section>
+
+      {showStandaloneRunner ? (
+        <section className="rounded-lg border border-line bg-white px-4 py-4" data-testid="local-runner-pairing">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">Standalone runner</h3>
+              <p className="mt-1 text-xs leading-5 text-muted">
+                Development fallback for local web testing. Start <code>vdt runner start</code>, then enter its code.
+              </p>
+            </div>
+            {runnerPairingToken ? (
+              <Button size="sm" variant="secondary" data-testid="local-runner-unpair" onClick={() => void unpairRunner()}>
+                Unpair
+              </Button>
+            ) : null}
+          </div>
+          {!runnerPairingToken ? (
+            <div className="mt-3 flex items-end gap-2">
+              <Field label="Pairing code">
+                <TextInput
+                  data-testid="local-runner-pairing-code"
+                  value={pairingCode}
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="000000"
+                  onChange={(event) => setPairingCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                />
+              </Field>
+              <Button
+                data-testid="local-runner-pair"
+                disabled={pairingCode.length !== 6 || isPairingRunner}
+                onClick={() => void pairRunner(pairingCode)}
+              >
+                {isPairingRunner ? "Pairing..." : "Pair"}
+              </Button>
+            </div>
+          ) : null}
+          {runnerPairingStatus ? (
+            <ProviderTestStatusBanner
+              className="mt-3"
+              status={runnerPairingStatus}
+              testId="local-runner-pairing-status"
+            />
+          ) : null}
+        </section>
+      ) : null}
 
       {cliDetectionError ? (
         <div
@@ -210,7 +221,7 @@ export function LocalCliSettings() {
 
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-ink">Your CLIs ({installedAgents.length})</h3>
+          <h3 className="text-sm font-semibold text-ink">Your subscriptions ({installedAgents.length})</h3>
           <Button
             size="sm"
             variant="secondary"

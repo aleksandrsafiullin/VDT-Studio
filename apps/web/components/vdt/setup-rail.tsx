@@ -5,7 +5,7 @@ import { Bot, ClipboardList, Database, FileText, RotateCcw, Scale, Search, Spark
 import { calculateGraph } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextArea, TextInput } from "@/components/ui/field";
-import { Panel, PanelCollapseButton, PanelCollapseTab, PanelHeader } from "@/components/ui/panel";
+import { Panel, PanelCollapseTab, PanelToggleButton, PanelHeader } from "@/components/ui/panel";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { AdvisoryFindingsPanel } from "./advisory-findings-panel";
 import { ExplanationPanel } from "./explanation-panel";
@@ -71,7 +71,7 @@ export function SetupRail() {
     return (
       <PanelCollapseTab
         label="Setup"
-        side="left"
+        panel="left"
         testId="collapse-left-panel"
         expandTestId="expand-left-panel"
         onToggle={toggleLeftPanel}
@@ -85,8 +85,8 @@ export function SetupRail() {
         title="New VDT"
         subtitle="Project brief and execution mode"
         action={
-          <PanelCollapseButton
-            side="left"
+          <PanelToggleButton
+            panel="left"
             testId="collapse-left-panel"
             onToggle={toggleLeftPanel}
           />

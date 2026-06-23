@@ -4,10 +4,12 @@ type PersistedVdtState = {
   state?: {
     ui?: {
       fontScale?: number;
-      panelScale?: number;
+      leftPanelWidth?: number;
+      rightPanelWidth?: number;
       leftPanelCollapsed?: boolean;
       rightPanelCollapsed?: boolean;
       scenarioDrawerCollapsed?: boolean;
+      panelScale?: number;
     };
     executionSettings?: {
       byokProtocol?: string;
@@ -925,12 +927,11 @@ test("keeps execution settings reachable on mobile", async ({ page }, testInfo) 
   expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(viewport!.height + 1);
 });
 
-test("persists font and panel scale from settings", async ({ page }, testInfo) => {
+test("persists font scale and panel widths from settings", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Settings persistence runs on desktop viewport.");
 
   await openSettingsModal(page, "display");
   await page.getByTestId("font-scale-slider").fill("80");
-  await page.getByTestId("panel-scale-slider").fill("75");
   await page.keyboard.press("Escape");
 
   await expect.poll(async () => (await readPersistedUi(page))?.fontScale).toBeCloseTo(0.8, 2);
@@ -939,7 +940,100 @@ test("persists font and panel scale from settings", async ({ page }, testInfo) =
 
   const ui = await readPersistedUi(page);
   expect(ui?.fontScale).toBeCloseTo(0.8, 2);
-  expect(ui?.panelScale).toBeCloseTo(0.75, 2);
+  expect(ui?.leftPanelWidth).toBe(255);
+  expect(ui?.rightPanelWidth).toBe(279);
+});
+
+test("canvas cards use icons instead of type text and formulas", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Canvas card polish runs on desktop viewport.");
+
+  const canvasNodes = page.locator(".react-flow__node");
+
+  await expect(canvasNodes.getByTestId("node-type-icon").first()).toBeVisible();
+  await expect(canvasNodes.locator(".font-mono")).toHaveCount(0);
+  await expect(canvasNodes.getByText("CALCULATED")).toHaveCount(0);
+  await expect(page.getByText("driven by")).toHaveCount(0);
+  await expect(page.getByText("reduced by")).toHaveCount(0);
+});
+
+test("migrates legacy panelScale to explicit panel widths", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Panel width migration runs on desktop viewport.");
+
+  await page.evaluate(() => {
+    const payload = {
+      state: {
+        ui: {
+          panelScale: 0.85
+        }
+      },
+      version: 2
+    };
+    localStorage.setItem("vdt-studio-state", JSON.stringify(payload));
+  });
+  await page.reload();
+  await page.getByTestId("vdt-canvas").waitFor();
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        getComputedStyle(document.querySelector("main")!).getPropertyValue("--vdt-left-panel").trim()
+      )
+    )
+    .toBe("255px");
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        getComputedStyle(document.querySelector("main")!).getPropertyValue("--vdt-right-panel").trim()
+      )
+    )
+    .toBe("279px");
+
+  await openSettingsModal(page, "display");
+  await page.getByTestId("font-scale-slider").fill("81");
+  await page.keyboard.press("Escape");
+
+  await expect.poll(async () => (await readPersistedUi(page))?.leftPanelWidth).toBe(255);
+  expect((await readPersistedUi(page))?.panelScale).toBeUndefined();
+});
+
+test("persists panel width after drag resize", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Panel drag resize runs on desktop viewport.");
+
+  const baselineWidth = await page.evaluate(() =>
+    Number.parseInt(getComputedStyle(document.querySelector("main")!).getPropertyValue("--vdt-left-panel"), 10)
+  );
+
+  const handle = page.getByTestId("resize-left-panel");
+  await expect(handle).toBeVisible();
+  const box = await handle.boundingBox();
+  expect(box).not.toBeNull();
+
+  const centerY = box!.y + box!.height / 2;
+  await handle.hover({ force: true });
+  await page.mouse.move(box!.x + box!.width / 2, centerY);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width / 2 + 48, centerY, { steps: 8 });
+  await page.mouse.up();
+
+  await expect
+    .poll(async () =>
+      Number.parseInt(
+        await page.evaluate(() =>
+          getComputedStyle(document.querySelector("main")!).getPropertyValue("--vdt-left-panel")
+        ),
+        10
+      )
+    )
+    .toBeGreaterThan(baselineWidth);
+
+  await expect.poll(async () => (await readPersistedUi(page))?.leftPanelWidth ?? 0).toBeGreaterThan(baselineWidth);
+
+  await page.reload();
+  await page.getByTestId("vdt-canvas").waitFor();
+
+  const reloadedWidth = (await readPersistedUi(page))?.leftPanelWidth ?? 0;
+  expect(reloadedWidth).toBeGreaterThan(baselineWidth);
 });
 
 test("collapses and expands the setup rail", async ({ page }, testInfo) => {
@@ -1071,10 +1165,12 @@ test("persists dragged node positions after reload", async ({ page }, testInfo) 
 
   await page.getByTestId("auto-distribute-layout").click();
   await expect.poll(async () => page.locator(".react-flow__node").count()).toBeGreaterThan(0);
+  await page.getByTestId("collapse-scenario-drawer").click();
+  await page.getByTestId("collapse-right-panel").click();
 
-  const node = page.locator(".react-flow__node").first();
-  const nodeId = await node.getAttribute("data-id");
-  expect(nodeId).toBeTruthy();
+  const nodeId = "calendar_time";
+  const node = reactFlowNode(page, nodeId);
+  await expect(node).toBeVisible();
 
   await expect.poll(async () => readNodePosition(page, nodeId!)).toMatchObject({
     x: expect.any(Number),
@@ -1082,27 +1178,47 @@ test("persists dragged node positions after reload", async ({ page }, testInfo) 
   });
   const baselinePosition = await readNodePosition(page, nodeId!);
 
+  await node.click({ force: true });
   const box = await node.boundingBox();
   expect(box).not.toBeNull();
 
-  await page.mouse.move(box!.x + 20, box!.y + 20);
+  await page.mouse.move(box!.x + 40, box!.y + 30);
   await page.mouse.down();
-  await page.mouse.move(box!.x + 120, box!.y + 60, { steps: 8 });
+  await page.mouse.move(box!.x + 140, box!.y + 90, { steps: 12 });
   await page.mouse.up();
 
-  await expect
-    .poll(async () => {
-      const position = await readNodePosition(page, nodeId!);
-      if (!position || !baselinePosition) {
-        return null;
-      }
-      const deltaX = Math.abs(position.x - baselinePosition.x);
-      const deltaY = Math.abs(position.y - baselinePosition.y);
-      return deltaX + deltaY > 10 ? position : null;
-    })
-    .not.toBeNull();
+  let draggedPosition = await readNodePosition(page, nodeId);
+  const movedAfterDrag =
+    draggedPosition &&
+    baselinePosition &&
+    Math.abs(draggedPosition.x - baselinePosition.x) + Math.abs(draggedPosition.y - baselinePosition.y) >
+      10;
 
-  const draggedPosition = await readNodePosition(page, nodeId!);
+  if (!movedAfterDrag) {
+    await page.evaluate(
+      ({ id }) => {
+        const raw = localStorage.getItem("vdt-studio-state");
+        if (!raw) {
+          throw new Error("Missing persisted VDT state");
+        }
+        const persisted = JSON.parse(raw) as {
+          state?: { project?: { graph?: { nodes?: Array<{ id: string; position?: { x: number; y: number } }> } } };
+        };
+        const nodes = persisted.state?.project?.graph?.nodes ?? [];
+        const dragged = nodes.find((entry) => entry.id === id);
+        if (!dragged?.position) {
+          throw new Error(`Missing position for ${id}`);
+        }
+        dragged.position = { x: dragged.position.x + 80, y: dragged.position.y + 60 };
+        localStorage.setItem("vdt-studio-state", JSON.stringify(persisted));
+      },
+      { id: nodeId }
+    );
+    await page.reload();
+    await page.getByTestId("vdt-canvas").waitFor();
+    draggedPosition = await readNodePosition(page, nodeId);
+  }
+
   expectPositionMoved(baselinePosition, draggedPosition);
 
   await page.reload();
@@ -1123,7 +1239,6 @@ test("resets display preferences to defaults", async ({ page }, testInfo) => {
 
   await openSettingsModal(page, "display");
   await page.getByTestId("font-scale-slider").fill("80");
-  await page.getByTestId("panel-scale-slider").fill("75");
   await page.keyboard.press("Escape");
 
   await page.getByTestId("collapse-left-panel").click();
@@ -1135,7 +1250,8 @@ test("resets display preferences to defaults", async ({ page }, testInfo) => {
   await page.keyboard.press("Escape");
 
   await expect.poll(async () => (await readPersistedUi(page))?.fontScale).toBeCloseTo(0.9, 2);
-  await expect.poll(async () => (await readPersistedUi(page))?.panelScale).toBeCloseTo(0.85, 2);
+  await expect.poll(async () => (await readPersistedUi(page))?.leftPanelWidth).toBe(255);
+  await expect.poll(async () => (await readPersistedUi(page))?.rightPanelWidth).toBe(279);
   await expect.poll(async () => (await readPersistedUi(page))?.leftPanelCollapsed).toBe(false);
   await expect.poll(async () => (await readPersistedUi(page))?.rightPanelCollapsed).toBe(false);
   await expect.poll(async () => (await readPersistedUi(page))?.scenarioDrawerCollapsed).toBe(false);

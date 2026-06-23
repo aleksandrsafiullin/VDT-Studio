@@ -1,7 +1,13 @@
 import type { VdtAiTaskType } from "@vdt-studio/model-bridge";
 
 export type BackendKind = "mock" | "local_http" | "subscription_cli" | "custom_cli";
-export type BackendSupportLevel = "supported" | "beta" | "experimental";
+export type BackendSupportLevel =
+  | "supported"
+  | "beta"
+  | "alpha"
+  | "experimental"
+  | "beta-blocked"
+  | "experimental-disabled";
 
 export interface BackendManifest {
   id: string;
@@ -54,6 +60,7 @@ export interface RunSnapshot {
   latencyMs?: number;
   outputBytes?: number;
   schemaValid?: boolean;
+  repaired?: boolean;
   output?: unknown;
   error?: { code: string; message: string };
 }
@@ -69,5 +76,6 @@ export interface AuditEvent {
   exitCode?: number;
   outputBytes: number;
   schemaValid: boolean;
+  repaired?: boolean;
   errorCode?: string;
 }

@@ -62,7 +62,7 @@ describe("codex subscription executor", () => {
         backendId: "codex_subscription",
         taskType: "generate_tree",
         schemaId: "generate-tree-v1",
-        input: { prompt: "Build a tree" }
+        input: { prompt: "Build a tree", businessContext: "repair-secret" }
       },
       new AbortController().signal,
       fakeCodexExecutor()
@@ -86,6 +86,25 @@ describe("codex subscription executor", () => {
         fakeCodexExecutor({ ...process.env, VDT_FAKE_CODEX_MODE: "bad-schema" })
       )
     ).rejects.toMatchObject({ code: "SCHEMA_INVALID" });
+  });
+
+  it("repairs one invalid codex schema response", async () => {
+    const result = await executeCompletion(
+      codexManifest(),
+      {
+        requestId: crypto.randomUUID(),
+        backendId: "codex_subscription",
+        taskType: "generate_tree",
+        schemaId: "generate-tree-v1",
+        input: { prompt: "Build a tree", businessContext: "repair-secret" }
+      },
+      new AbortController().signal,
+      fakeCodexExecutor({ ...process.env, VDT_FAKE_CODEX_MODE: "repairable" })
+    );
+
+    expect(result.schemaValid).toBe(true);
+    expect(result.repaired).toBe(true);
+    expect(result.output).toMatchObject({ projectTitle: "Fake Codex tree", rootNodeId: "root" });
   });
 
   it("cancels slow fake codex runs", async () => {
@@ -135,7 +154,7 @@ describe("claude subscription executor", () => {
         backendId: "claude_subscription",
         taskType: "generate_tree",
         schemaId: "generate-tree-v1",
-        input: { prompt: "Build a tree" }
+        input: { prompt: "Build a tree", businessContext: "repair-secret" }
       },
       new AbortController().signal,
       fakeClaudeExecutor()
@@ -159,6 +178,25 @@ describe("claude subscription executor", () => {
         fakeClaudeExecutor({ ...process.env, VDT_FAKE_CLAUDE_MODE: "bad-schema" })
       )
     ).rejects.toMatchObject({ code: "SCHEMA_INVALID" });
+  });
+
+  it("repairs one invalid claude schema response", async () => {
+    const result = await executeCompletion(
+      claudeManifest(),
+      {
+        requestId: crypto.randomUUID(),
+        backendId: "claude_subscription",
+        taskType: "generate_tree",
+        schemaId: "generate-tree-v1",
+        input: { prompt: "Build a tree", businessContext: "repair-secret" }
+      },
+      new AbortController().signal,
+      fakeClaudeExecutor({ ...process.env, VDT_FAKE_CLAUDE_MODE: "repairable" })
+    );
+
+    expect(result.schemaValid).toBe(true);
+    expect(result.repaired).toBe(true);
+    expect(result.output).toMatchObject({ projectTitle: "Fake Claude tree", rootNodeId: "root" });
   });
 
   it("cancels slow fake claude runs", async () => {

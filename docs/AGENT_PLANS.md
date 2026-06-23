@@ -39,6 +39,6 @@ Implemented as beta macOS adapters:
 - Gemini headless JSON with a temp supplemental admin policy denying every tool;
 - Copilot JSONL with an empty available-tool set, built-in MCP and custom instructions disabled;
 - auth/quota/plan/policy diagnostics, version gates, parsers, fake executors, cancellation/schema validation and opt-in live tests;
-- shared macOS sandbox hardened to deny repo reads, arbitrary home-file contents and writes outside temp.
+- shared macOS sandbox hardened to default-deny provider execution while blocking repo reads, arbitrary home-file contents, temp-root reads outside the request, writes outside temp and unrelated shell execution.
 
 Live subscription acceptance remains pending because neither CLI is installed on the maintainer machine. In addition, Google ended Gemini CLI service for individual free/Google AI Pro/Ultra accounts on 2026-06-18, so the original personal-allowance criterion now applies only to enterprise Gemini Code Assist; Antigravity CLI requires a separate future adapter. Linux and Windows remain experimental and fail closed until certified sandbox profiles exist.

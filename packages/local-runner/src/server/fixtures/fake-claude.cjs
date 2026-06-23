@@ -44,7 +44,8 @@ function writeEnvelope(structuredOutput, isError = false) {
 }
 
 function main() {
-  const payload = parsePromptPayload(promptFromArgs());
+  const prompt = promptFromArgs();
+  const payload = parsePromptPayload(prompt);
 
   if (mode === "slow") {
     setTimeout(() => process.exit(0), 30_000);
@@ -60,6 +61,13 @@ function main() {
   if (mode === "bad-schema") {
     writeEnvelope({ invalid: true });
     process.exit(0);
+  }
+
+  if (mode === "repairable") {
+    if (!payload.invalidJsonExcerpt || prompt.includes("repair-secret")) {
+      writeEnvelope({ invalid: true });
+      process.exit(0);
+    }
   }
 
   writeEnvelope(buildOutput(payload));

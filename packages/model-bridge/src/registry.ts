@@ -5,7 +5,7 @@ export interface ModelBackendDefinition {
   label: string;
   mode: ModelBackendMode;
   capabilities: ModelBackendCapabilities;
-  releaseStatus: "supported" | "beta" | "experimental";
+  releaseStatus: "supported" | "beta" | "alpha" | "experimental" | "beta-blocked" | "experimental-disabled";
 }
 
 const capabilities = (
@@ -57,13 +57,13 @@ export const MODEL_BACKEND_DEFINITIONS: readonly ModelBackendDefinition[] = Obje
     label: "Cursor Agent",
     mode: "subscription_cli",
     capabilities: subscription(true),
-    releaseStatus: process.platform === "darwin" ? "supported" : "beta"
+    releaseStatus: "beta-blocked"
   },
-  { id: "codex_subscription", label: "Codex CLI", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "supported" },
-  { id: "claude_subscription", label: "Claude Code", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "supported" },
+  { id: "codex_subscription", label: "Codex CLI", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "alpha" },
+  { id: "claude_subscription", label: "Claude Code", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "alpha" },
   { id: "gemini_subscription", label: "Gemini CLI", mode: "subscription_cli", capabilities: subscription(true), releaseStatus: "experimental" },
   { id: "copilot_subscription", label: "GitHub Copilot CLI", mode: "subscription_cli", capabilities: subscription(true), releaseStatus: "experimental" },
-  { id: "custom_cli", label: "Custom JSON CLI", mode: "custom_cli", capabilities: subscription(true), releaseStatus: "experimental" }
+  { id: "custom_cli", label: "Custom JSON CLI", mode: "custom_cli", capabilities: subscription(true), releaseStatus: "experimental-disabled" }
 ]);
 
 const registry = new Map(MODEL_BACKEND_DEFINITIONS.map((backend) => [backend.id, backend]));

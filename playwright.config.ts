@@ -15,7 +15,7 @@ export default defineConfig({
   reporter: [["list"]],
   webServer: {
     command:
-      "VDT_ALLOW_MOCK_PROVIDER=true pnpm --filter @vdt-studio/web dev --hostname 127.0.0.1 --port 3100",
+      "VDT_ALLOW_MOCK_PROVIDER=true NEXT_PUBLIC_VDT_ENABLE_STANDALONE_RUNNER=true pnpm --filter @vdt-studio/web dev --hostname 127.0.0.1 --port 3100",
     url: "http://127.0.0.1:3100",
     reuseExistingServer: true,
     timeout: 120_000

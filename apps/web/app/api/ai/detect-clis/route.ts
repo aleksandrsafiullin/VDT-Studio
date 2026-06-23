@@ -1,60 +1,61 @@
 import { NextResponse } from "next/server";
-import {
-  detectSubscriptionCli,
-  detectSubscriptionClis,
-  discoverSubscriptionCliModels,
-  enrichSubscriptionCliDetections,
-  isSubscriptionCliId,
-  type SubscriptionCliDetectionResult,
-  type SubscriptionCliId
-} from "@vdt-studio/model-bridge/node";
+import { resolveVdtAppMode } from "@/lib/app-mode";
 
-async function discoverModels(agents: SubscriptionCliDetectionResult[]) {
-  const entries = await Promise.all(
-    agents.map(async (agent) => {
-      if (!agent.installed || !agent.executable) {
-        return [agent.id, []] as const;
-      }
+const SUBSCRIPTION_CLI_AGENTS = [
+  { id: "cursor-agent", backendId: "cursor_subscription" },
+  { id: "codex", backendId: "codex_subscription" },
+  { id: "claude", backendId: "claude_subscription" },
+  { id: "gemini", backendId: "gemini_subscription" },
+  { id: "copilot", backendId: "copilot_subscription" }
+] as const;
 
-      try {
-        return [agent.id, await discoverSubscriptionCliModels(agent.id, agent.executable)] as const;
-      } catch {
-        return [agent.id, []] as const;
-      }
-    })
-  );
+type SubscriptionCliAgent = (typeof SUBSCRIPTION_CLI_AGENTS)[number];
+type SubscriptionCliAgentId = SubscriptionCliAgent["id"];
 
-  return Object.fromEntries(entries.filter(([, models]) => models.length > 0));
+const agentIds = new Set<string>(SUBSCRIPTION_CLI_AGENTS.map((agent) => agent.id));
+
+function isSubscriptionCliAgentId(value: string): value is SubscriptionCliAgentId {
+  return agentIds.has(value);
 }
 
-async function detectAndEnrichAgents(agentId?: SubscriptionCliId) {
-  const baseAgents = agentId
-    ? [await detectSubscriptionCli(agentId)]
-    : await detectSubscriptionClis();
-  const agents = await enrichSubscriptionCliDetections(baseAgents, { probeTimeoutMs: 5_000 });
-  return { agents, modelsByAgent: await discoverModels(baseAgents) };
+function hostedWebDetection(agent: SubscriptionCliAgent) {
+  return {
+    id: agent.id,
+    backendId: agent.backendId,
+    installed: false,
+    executable: null,
+    alias: null,
+    version: null,
+    status: "unavailable",
+    authSummary: "Local subscriptions are available in VDT Studio Desktop.",
+    diagnostics: ["Hosted web cannot detect or execute local subscription CLIs."]
+  };
+}
+
+function desktopDetectionUnavailable(agent: SubscriptionCliAgent) {
+  return {
+    ...hostedWebDetection(agent),
+    authSummary: "Desktop CLI detection must use the VDT Studio desktop bridge.",
+    diagnostics: ["The hosted Next.js route is not allowed to scan PATH or execute provider CLIs."]
+  };
 }
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const agentId = searchParams.get("id");
+  const appMode = resolveVdtAppMode(process.env.VDT_APP_MODE ?? process.env.NEXT_PUBLIC_VDT_APP_MODE ?? "hosted_web");
 
-  try {
-    if (agentId) {
-      if (!isSubscriptionCliId(agentId)) {
-        return NextResponse.json({ error: `Unknown CLI agent: ${agentId}` }, { status: 400 });
-      }
-
-      return NextResponse.json(await detectAndEnrichAgents(agentId));
-    }
-
-    return NextResponse.json(await detectAndEnrichAgents());
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "CLI detection failed."
-      },
-      { status: 500 }
-    );
+  if (agentId && !isSubscriptionCliAgentId(agentId)) {
+    return NextResponse.json({ error: `Unknown CLI agent: ${agentId}` }, { status: 400 });
   }
+
+  const agents = agentId
+    ? SUBSCRIPTION_CLI_AGENTS.filter((agent) => agent.id === agentId)
+    : SUBSCRIPTION_CLI_AGENTS;
+
+  return NextResponse.json({
+    appMode,
+    agents: agents.map(appMode === "desktop" ? desktopDetectionUnavailable : hostedWebDetection),
+    modelsByAgent: {}
+  });
 }

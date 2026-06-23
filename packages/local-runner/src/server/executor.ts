@@ -52,6 +52,8 @@ export const EXECUTION_LIMITS = Object.freeze({
   maxStdoutBytes: 4 * 1024 * 1024,
   maxStderrBytes: 1024 * 1024,
   maxResultBytes: 1024 * 1024,
+  maxRepairExcerptBytes: 16 * 1024,
+  repairTimeoutMs: 30_000,
   timeoutMs: 120_000,
   killGraceMs: 3_000
 });
@@ -66,6 +68,7 @@ export interface ExecutionResult {
   rawText?: string;
   outputBytes: number;
   schemaValid: boolean;
+  repaired?: boolean;
   exitCode?: number;
   executableVersion?: string;
 }
@@ -155,6 +158,53 @@ function assertLineLimit(value: string): void {
   }
 }
 
+function truncateForRepair(value: string): string {
+  if (byteLength(value) <= EXECUTION_LIMITS.maxRepairExcerptBytes) return value;
+  let end = Math.min(value.length, EXECUTION_LIMITS.maxRepairExcerptBytes);
+  while (end > 0 && byteLength(value.slice(0, end)) > EXECUTION_LIMITS.maxRepairExcerptBytes) {
+    end -= 1;
+  }
+  return `${value.slice(0, end)}\n[truncated]`;
+}
+
+function validationSummary(schemaId: VdtSchemaId, output: unknown): string[] {
+  const schema = getRegisteredJsonSchema(schemaId);
+  const required = Array.isArray(schema.required) ? schema.required.filter((key): key is string => typeof key === "string") : [];
+  const missing = isRecord(output) ? required.filter((key) => !(key in output)) : required;
+  return [
+    `Output must be one JSON object for schema ${schemaId}.`,
+    ...(missing.length > 0 ? [`Missing required keys: ${missing.join(", ")}.`] : []),
+    "Nested values must match the registered VDT runtime schema."
+  ];
+}
+
+function buildRepairMessages(
+  schemaId: VdtSchemaId,
+  request: CompletionRequest,
+  invalidJson: string,
+  parsedOutput: unknown
+): Array<{ role: "system" | "user"; content: string }> {
+  return [
+    {
+      role: "system",
+      content: [
+        "Repair one invalid VDT JSON response.",
+        "Return exactly one corrected JSON object.",
+        "Do not include markdown fences, commentary, file paths, environment values, credentials, or tokens."
+      ].join(" ")
+    },
+    {
+      role: "user",
+      content: JSON.stringify({
+        taskType: request.taskType,
+        schemaId,
+        validationErrors: validationSummary(schemaId, parsedOutput),
+        invalidJsonExcerpt: truncateForRepair(invalidJson)
+      })
+    }
+  ];
+}
+
 async function localizeSandboxScripts(
   args: readonly string[],
   cwd: string,
@@ -183,6 +233,20 @@ function buildSubscriptionPrompt(request: CompletionRequest): string {
       taskType: request.taskType,
       input: request.input,
       ...(request.model ? { model: request.model } : {})
+    })
+  ].join("\n");
+}
+
+function buildRepairPrompt(request: CompletionRequest, invalidJson: string, parsedOutput: unknown): string {
+  return [
+    `Repair JSON for approved schema ${request.schemaId} and VDT task ${request.taskType}.`,
+    "Return exactly one corrected JSON object.",
+    "Do not include markdown fences, commentary, file paths, environment values, credentials, or tokens.",
+    JSON.stringify({
+      taskType: request.taskType,
+      schemaId: request.schemaId,
+      validationErrors: validationSummary(request.schemaId as VdtSchemaId, parsedOutput),
+      invalidJsonExcerpt: truncateForRepair(invalidJson)
     })
   ].join("\n");
 }
@@ -232,7 +296,6 @@ async function executeCli(
   if (!path.isAbsolute(executable) || executable.includes("\0")) {
     throw Object.assign(new Error("Resolved executable must be an absolute path without NUL bytes."), { code: "UNSAFE_EXECUTABLE" });
   }
-
   const payload = JSON.stringify({
     requestId: request.requestId,
     taskType: request.taskType,
@@ -244,200 +307,243 @@ async function executeCli(
     throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
   }
 
-  const tempRoot = options.tempRoot ?? os.tmpdir();
-  await mkdir(tempRoot, { recursive: true });
-  const cwd = await mkdtemp(path.join(tempRoot, "vdt-run-"));
-  await chmod(cwd, 0o700);
-  const requestPath = path.join(cwd, "request.json");
-  await writeFile(requestPath, payload, { encoding: "utf8", mode: 0o600, flag: "wx" });
-
-  const promptPath = path.join(cwd, "prompt.txt");
-  const prompt = buildSubscriptionPrompt(request);
-  if (byteLength(prompt) > EXECUTION_LIMITS.maxPromptBytes) {
-    throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
-  }
-  await writeFile(promptPath, prompt, { encoding: "utf8", mode: 0o600, flag: "wx" });
-
-  const schemaPath = path.join(cwd, "schema.json");
-  await writeFile(schemaPath, `${JSON.stringify(getRegisteredJsonSchema(request.schemaId as VdtSchemaId), null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-    flag: "wx"
-  });
-  const outputPath = path.join(cwd, "last-message.json");
-  const toolPolicyPath = path.join(cwd, "deny-all-tools.toml");
-  await writeFile(
-    toolPolicyPath,
-    '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n',
-    { encoding: "utf8", mode: 0o600, flag: "wx" }
-  );
-  const promptText = await readFile(promptPath, "utf8");
-
-  const staticArgs = manifest.cli?.args ?? [];
-  const dynamicArgs = adapter
-    ? adapter.buildArgs({
-        ...(request.model ? { model: request.model } : {}),
-        promptPath,
-        promptText,
-        schemaPath,
-        outputPath,
-        toolPolicyPath
-      })
-    : [];
-  let command = executable;
-  let providerExecutable = executable;
-  let spawnArgs = [...staticArgs, ...dynamicArgs];
-  assertArgsSafe(spawnArgs, { allowScopedTrust: manifest.safety.trustEphemeralWorkspace === true });
-
-  const allowedReadPaths = [path.dirname(executable), ...providerAuthReadPaths(manifest.id, envSource.HOME)];
-  const sandboxCertified = isSandboxCertified(manifest);
-
-  if (/\.(?:mjs|cjs|js)$/i.test(executable) && options.resolveExecutable !== undefined) {
-    const localScript = path.join(cwd, path.basename(executable));
-    await copyFile(executable, localScript);
-    await chmod(localScript, 0o700);
-    command = process.execPath;
-    providerExecutable = process.execPath;
-    spawnArgs = [localScript, ...spawnArgs];
-  } else if (sandboxCertified) {
-    spawnArgs = await localizeSandboxScripts(spawnArgs, cwd, allowedReadPaths);
-  }
-
-  let finalArgs = spawnArgs;
-  if (sandboxCertified) {
-    const wrapped = wrapSandbox(command, spawnArgs, {
-      profile: {
-        tempCwd: cwd,
-        repoCwd: process.cwd(),
-        providerExecutable,
-        ...(envSource.HOME && path.isAbsolute(envSource.HOME) ? { homeDir: envSource.HOME } : {}),
-        ...(allowedReadPaths.length > 0 ? { allowedReadPaths } : {})
-      }
-    });
-    if (wrapped.diagnostic) {
-      throw Object.assign(
-        new Error(`${manifest.label} requires an OS sandbox that is unavailable on this platform.`),
-        { code: "UNSAFE_CONFIGURATION" }
-      );
-    }
-    command = wrapped.command;
-    finalArgs = wrapped.args;
-  }
-
   const executableVersion =
     manifest.cli?.versionArgs?.length && !/\.(?:mjs|cjs|js)$/i.test(executable)
       ? await probeExecutableVersion(executable, manifest.cli.versionArgs)
       : undefined;
 
-  const childEnv = safeEnvironment(envSource);
-  if (manifest.id === "cursor_subscription") {
-    childEnv.CURSOR_CONFIG_DIR = path.join(cwd, "cursor-config");
-    childEnv.NODE_COMPILE_CACHE = path.join(cwd, "node-compile-cache");
-  }
-  const child = (options.spawn ?? ((spawnCommand, args, spawnOptions) =>
-    nodeSpawn(spawnCommand, [...args], spawnOptions) as ChildProcessWithoutNullStreams))(
-    command,
-    finalArgs,
-    { cwd, env: childEnv, shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
-  );
-
-  let stdout = "";
-  let stderr = "";
-  let timeout: NodeJS.Timeout | undefined;
-  let forceKill: NodeJS.Timeout | undefined;
-  let cancelled = false;
-  let outputLimitExceeded = false;
-
-  const terminate = () => {
-    cancelled = true;
-    child.kill("SIGTERM");
-    forceKill = setTimeout(() => child.kill("SIGKILL"), EXECUTION_LIMITS.killGraceMs);
-    forceKill.unref?.();
-  };
-  signal.addEventListener("abort", terminate, { once: true });
-  const effectiveTimeout = Math.min(request.timeoutMs ?? EXECUTION_LIMITS.timeoutMs, EXECUTION_LIMITS.timeoutMs);
-  timeout = setTimeout(terminate, effectiveTimeout);
-  timeout.unref?.();
-
-  const completion = new Promise<number>((resolve, reject) => {
-    child.once("error", reject);
-    child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout += chunk.toString();
-      if (byteLength(stdout) > EXECUTION_LIMITS.maxStdoutBytes) {
-        outputLimitExceeded = true;
-        terminate();
-      }
-    });
-    child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-      if (byteLength(stderr) > EXECUTION_LIMITS.maxStderrBytes) {
-        outputLimitExceeded = true;
-        terminate();
-      }
-    });
-    child.once("close", (code) => resolve(code ?? -1));
-  });
-
-  try {
-    if (signal.aborted) terminate();
-    if (adapter) {
-      if (adapter.spawnHints?.stdin === "prompt") {
-        child.stdin.end(promptText);
-      } else {
-        child.stdin.end();
-      }
-    } else {
-      child.stdin.end(payload);
+  async function runCliAttempt(prompt: string, timeoutMs: number, requestJson = payload): Promise<ExecutionResult> {
+    if (byteLength(prompt) > EXECUTION_LIMITS.maxPromptBytes) {
+      throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
     }
-    const exitCode = await completion;
-    if (cancelled) {
-      if (byteLength(stdout) > EXECUTION_LIMITS.maxStdoutBytes || byteLength(stderr) > EXECUTION_LIMITS.maxStderrBytes) {
+
+    const tempRoot = options.tempRoot ?? os.tmpdir();
+    await mkdir(tempRoot, { recursive: true });
+    const cwd = await mkdtemp(path.join(tempRoot, "vdt-run-"));
+    await chmod(cwd, 0o700);
+    const requestPath = path.join(cwd, "request.json");
+    await writeFile(requestPath, requestJson, { encoding: "utf8", mode: 0o600, flag: "wx" });
+
+    const promptPath = path.join(cwd, "prompt.txt");
+    await writeFile(promptPath, prompt, { encoding: "utf8", mode: 0o600, flag: "wx" });
+
+    const schemaPath = path.join(cwd, "schema.json");
+    await writeFile(schemaPath, `${JSON.stringify(getRegisteredJsonSchema(request.schemaId as VdtSchemaId), null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx"
+    });
+    const outputPath = path.join(cwd, "last-message.json");
+    const toolPolicyPath = path.join(cwd, "deny-all-tools.toml");
+    await writeFile(
+      toolPolicyPath,
+      '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n',
+      { encoding: "utf8", mode: 0o600, flag: "wx" }
+    );
+    const promptText = await readFile(promptPath, "utf8");
+
+    const staticArgs = manifest.cli?.args ?? [];
+    const dynamicArgs = adapter
+      ? adapter.buildArgs({
+          ...(request.model ? { model: request.model } : {}),
+          promptPath,
+          promptText,
+          schemaPath,
+          outputPath,
+          toolPolicyPath
+        })
+      : [];
+    let command = executable;
+    let providerExecutable = executable;
+    let spawnArgs = [...staticArgs, ...dynamicArgs];
+    assertArgsSafe(spawnArgs, { allowScopedTrust: manifest.safety.trustEphemeralWorkspace === true });
+
+    const allowedReadPaths = [path.dirname(executable), ...providerAuthReadPaths(manifest.id, envSource.HOME)];
+    const sandboxCertified = isSandboxCertified(manifest);
+
+    if (/\.(?:mjs|cjs|js)$/i.test(executable) && options.resolveExecutable !== undefined) {
+      const localScript = path.join(cwd, path.basename(executable));
+      await copyFile(executable, localScript);
+      await chmod(localScript, 0o700);
+      command = process.execPath;
+      providerExecutable = process.execPath;
+      spawnArgs = [localScript, ...spawnArgs];
+    } else if (sandboxCertified) {
+      spawnArgs = await localizeSandboxScripts(spawnArgs, cwd, allowedReadPaths);
+    }
+
+    let finalArgs = spawnArgs;
+    if (sandboxCertified) {
+      const wrapped = wrapSandbox(command, spawnArgs, {
+        profile: {
+          tempCwd: cwd,
+          repoCwd: process.cwd(),
+          providerExecutable,
+          ...(envSource.HOME && path.isAbsolute(envSource.HOME) ? { homeDir: envSource.HOME } : {}),
+          ...(allowedReadPaths.length > 0 ? { allowedReadPaths } : {})
+        }
+      });
+      if (wrapped.diagnostic) {
+        throw Object.assign(
+          new Error(`${manifest.label} requires an OS sandbox that is unavailable on this platform.`),
+          { code: "UNSAFE_CONFIGURATION" }
+        );
+      }
+      command = wrapped.command;
+      finalArgs = wrapped.args;
+    }
+
+    const childEnv = safeEnvironment(envSource);
+    if (manifest.id === "cursor_subscription") {
+      childEnv.CURSOR_CONFIG_DIR = path.join(cwd, "cursor-config");
+      childEnv.NODE_COMPILE_CACHE = path.join(cwd, "node-compile-cache");
+    }
+    const child = (options.spawn ?? ((spawnCommand, args, spawnOptions) =>
+      nodeSpawn(spawnCommand, [...args], spawnOptions) as ChildProcessWithoutNullStreams))(
+      command,
+      finalArgs,
+      { cwd, env: childEnv, shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
+    );
+
+    let stdout = "";
+    let stderr = "";
+    let timeout: NodeJS.Timeout | undefined;
+    let forceKill: NodeJS.Timeout | undefined;
+    let cancelled = false;
+    let outputLimitExceeded = false;
+
+    const terminate = () => {
+      cancelled = true;
+      child.kill("SIGTERM");
+      forceKill = setTimeout(() => child.kill("SIGKILL"), EXECUTION_LIMITS.killGraceMs);
+      forceKill.unref?.();
+    };
+    signal.addEventListener("abort", terminate, { once: true });
+    const effectiveTimeout = Math.min(timeoutMs, EXECUTION_LIMITS.timeoutMs);
+    timeout = setTimeout(terminate, effectiveTimeout);
+    timeout.unref?.();
+
+    const completion = new Promise<number>((resolve, reject) => {
+      child.once("error", reject);
+      child.stdout.on("data", (chunk: Buffer | string) => {
+        stdout += chunk.toString();
+        if (byteLength(stdout) > EXECUTION_LIMITS.maxStdoutBytes) {
+          outputLimitExceeded = true;
+          terminate();
+        }
+      });
+      child.stderr.on("data", (chunk: Buffer | string) => {
+        stderr += chunk.toString();
+        if (byteLength(stderr) > EXECUTION_LIMITS.maxStderrBytes) {
+          outputLimitExceeded = true;
+          terminate();
+        }
+      });
+      child.once("close", (code) => resolve(code ?? -1));
+    });
+
+    try {
+      if (signal.aborted) terminate();
+      if (adapter) {
+        if (adapter.spawnHints?.stdin === "prompt") {
+          child.stdin.end(promptText);
+        } else {
+          child.stdin.end();
+        }
+      } else {
+        child.stdin.end(requestJson);
+      }
+      const exitCode = await completion;
+      if (cancelled) {
+        if (byteLength(stdout) > EXECUTION_LIMITS.maxStdoutBytes || byteLength(stderr) > EXECUTION_LIMITS.maxStderrBytes) {
+          throw Object.assign(new Error("Backend output exceeded the configured limit."), { code: "OUTPUT_TOO_LARGE" });
+        }
+        if (signal.aborted) throw abortError();
+        throw Object.assign(new Error("Backend timed out."), { code: "TIMEOUT" });
+      }
+      if (exitCode !== 0) {
+        if (adapter) {
+          try {
+            adapter.parseOutput(stdout, stderr, request.schemaId as VdtSchemaId);
+          } catch (error) {
+            throw error;
+          }
+        }
+        throw Object.assign(new Error(`Backend exited with code ${exitCode}; stderr contained ${byteLength(stderr)} bytes.`), {
+          code: "BACKEND_EXIT_FAILED",
+          exitCode
+        });
+      }
+      assertLineLimit(stdout);
+      if (byteLength(stdout) > EXECUTION_LIMITS.maxResultBytes && !adapter) {
+        throw Object.assign(new Error("Backend result exceeds the configured limit."), { code: "OUTPUT_TOO_LARGE" });
+      }
+      const output = adapter
+        ? adapter.parseOutput(stdout, stderr, request.schemaId as VdtSchemaId)
+        : extractBoundedJson(stdout, EXECUTION_LIMITS.maxResultBytes);
+      const schemaValid = validateRegisteredSchema(request.schemaId as VdtSchemaId, output);
+      if (!schemaValid) {
+        throw Object.assign(new Error("Backend output failed registered schema validation."), {
+          code: "SCHEMA_INVALID",
+          output,
+          rawText: stdout
+        });
+      }
+      return {
+        output,
+        rawText: stdout,
+        outputBytes: byteLength(stdout),
+        schemaValid,
+        exitCode,
+        ...(executableVersion === undefined ? {} : { executableVersion })
+      };
+    } catch (error) {
+      if (outputLimitExceeded) {
         throw Object.assign(new Error("Backend output exceeded the configured limit."), { code: "OUTPUT_TOO_LARGE" });
       }
-      if (signal.aborted) throw abortError();
-      throw Object.assign(new Error("Backend timed out."), { code: "TIMEOUT" });
-    }
-    if (exitCode !== 0) {
-      if (adapter) {
-        try {
-          adapter.parseOutput(stdout, stderr, request.schemaId as VdtSchemaId);
-        } catch (error) {
-          throw error;
-        }
+      if (
+        error instanceof Error &&
+        !("rawText" in error) &&
+        (error as { code?: unknown }).code === "BACKEND_PARSE_FAILED"
+      ) {
+        throw Object.assign(error, { rawText: stdout });
       }
-      throw Object.assign(new Error(`Backend exited with code ${exitCode}; stderr contained ${byteLength(stderr)} bytes.`), {
-        code: "BACKEND_EXIT_FAILED",
-        exitCode
-      });
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", terminate);
+      if (timeout) clearTimeout(timeout);
+      if (forceKill) clearTimeout(forceKill);
+      await rm(cwd, { recursive: true, force: true });
     }
-    assertLineLimit(stdout);
-    if (byteLength(stdout) > EXECUTION_LIMITS.maxResultBytes && !adapter) {
-      throw Object.assign(new Error("Backend result exceeds the configured limit."), { code: "OUTPUT_TOO_LARGE" });
-    }
-    const output = adapter
-      ? adapter.parseOutput(stdout, stderr, request.schemaId as VdtSchemaId)
-      : extractBoundedJson(stdout, EXECUTION_LIMITS.maxResultBytes);
-    const schemaValid = validateRegisteredSchema(request.schemaId as VdtSchemaId, output);
-    if (!schemaValid) throw Object.assign(new Error("Backend output failed registered schema validation."), { code: "SCHEMA_INVALID" });
-    return {
-      output,
-      rawText: stdout,
-      outputBytes: byteLength(stdout),
-      schemaValid,
-      exitCode,
-      ...(executableVersion === undefined ? {} : { executableVersion })
-    };
-  } catch (error) {
-    if (outputLimitExceeded) {
-      throw Object.assign(new Error("Backend output exceeded the configured limit."), { code: "OUTPUT_TOO_LARGE" });
-    }
-    throw error;
-  } finally {
-    signal.removeEventListener("abort", terminate);
-    if (timeout) clearTimeout(timeout);
-    if (forceKill) clearTimeout(forceKill);
-    await rm(cwd, { recursive: true, force: true });
   }
+
+  const first = await runCliAttempt(buildSubscriptionPrompt(request), request.timeoutMs ?? EXECUTION_LIMITS.timeoutMs).catch(
+    async (error: unknown) => {
+      const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+      if (code !== "SCHEMA_INVALID" && code !== "BACKEND_PARSE_FAILED") throw error;
+      const parsedOutput = typeof error === "object" && error !== null && "output" in error ? (error as { output?: unknown }).output : undefined;
+      const invalidText =
+        parsedOutput === undefined
+          ? typeof error === "object" && error !== null && "rawText" in error && typeof (error as { rawText?: unknown }).rawText === "string"
+            ? (error as { rawText: string }).rawText
+            : error instanceof Error
+              ? error.message
+              : "Invalid provider output."
+          : JSON.stringify(parsedOutput);
+      const repaired = await runCliAttempt(
+        buildRepairPrompt(request, invalidText, parsedOutput),
+        Math.min(EXECUTION_LIMITS.repairTimeoutMs, request.timeoutMs ?? EXECUTION_LIMITS.repairTimeoutMs),
+        JSON.stringify({
+          requestId: request.requestId,
+          taskType: request.taskType,
+          schemaId: request.schemaId,
+          repair: true
+        })
+      );
+      return { ...repaired, outputBytes: repaired.outputBytes + byteLength(invalidText), repaired: true };
+    }
+  );
+  return first;
 }
 
 async function readBoundedResponse(response: Response): Promise<string> {
@@ -463,17 +569,19 @@ async function readBoundedResponse(response: Response): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function executeLocalHttp(
+async function postLocalHttpChat(
   manifest: BackendManifest,
-  request: CompletionRequest,
+  messages: Array<{ role: "system" | "user"; content: string }>,
   signal: AbortSignal,
-  options: ExecutorOptions
-): Promise<ExecutionResult> {
+  options: ExecutorOptions,
+  request: CompletionRequest,
+  timeoutMs: number
+): Promise<string> {
   if (!manifest.localHttp) throw Object.assign(new Error("Backend has no local HTTP manifest."), { code: "INVALID_MANIFEST" });
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal.addEventListener("abort", abort, { once: true });
-  const timeout = setTimeout(abort, Math.min(request.timeoutMs ?? EXECUTION_LIMITS.timeoutMs, EXECUTION_LIMITS.timeoutMs));
+  const timeout = setTimeout(abort, Math.min(timeoutMs, EXECUTION_LIMITS.timeoutMs));
   timeout.unref?.();
   let response: Response;
   let rawResponse: string;
@@ -487,10 +595,7 @@ async function executeLocalHttp(
         model: request.model ?? manifest.localHttp.defaultModel,
         temperature: 0,
         response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: `Return one JSON object for VDT task ${request.taskType} matching approved schema ${request.schemaId}.` },
-          { role: "user", content: JSON.stringify(request.input) }
-        ]
+        messages
       })
     });
     rawResponse = await readBoundedResponse(response);
@@ -509,10 +614,53 @@ async function executeLocalHttp(
   const envelope = JSON.parse(rawResponse) as { choices?: Array<{ message?: { content?: unknown } }> };
   const content = envelope.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw Object.assign(new Error("Local provider response did not contain message content."), { code: "INVALID_PROVIDER_RESPONSE" });
-  const output = extractBoundedJson(content, EXECUTION_LIMITS.maxResultBytes);
-  const schemaValid = validateRegisteredSchema(request.schemaId as VdtSchemaId, output);
-  if (!schemaValid) throw Object.assign(new Error("Backend output failed registered schema validation."), { code: "SCHEMA_INVALID" });
-  return { output, outputBytes: byteLength(content), schemaValid };
+  return content;
+}
+
+async function executeLocalHttp(
+  manifest: BackendManifest,
+  request: CompletionRequest,
+  signal: AbortSignal,
+  options: ExecutorOptions
+): Promise<ExecutionResult> {
+  const schemaId = request.schemaId as VdtSchemaId;
+  const content = await postLocalHttpChat(
+    manifest,
+    [
+      { role: "system", content: `Return one JSON object for VDT task ${request.taskType} matching approved schema ${request.schemaId}.` },
+      { role: "user", content: JSON.stringify(request.input) }
+    ],
+    signal,
+    options,
+    request,
+    request.timeoutMs ?? EXECUTION_LIMITS.timeoutMs
+  );
+  let output: unknown;
+  let schemaValid = false;
+  try {
+    output = extractBoundedJson(content, EXECUTION_LIMITS.maxResultBytes);
+    schemaValid = validateRegisteredSchema(schemaId, output);
+  } catch {
+    output = undefined;
+  }
+  if (schemaValid) return { output, outputBytes: byteLength(content), schemaValid };
+
+  const repairedContent = await postLocalHttpChat(
+    manifest,
+    buildRepairMessages(schemaId, request, output === undefined ? content : JSON.stringify(output), output),
+    signal,
+    options,
+    request,
+    Math.min(EXECUTION_LIMITS.repairTimeoutMs, request.timeoutMs ?? EXECUTION_LIMITS.repairTimeoutMs)
+  );
+  const repairedOutput = extractBoundedJson(repairedContent, EXECUTION_LIMITS.maxResultBytes);
+  const repairedSchemaValid = validateRegisteredSchema(schemaId, repairedOutput);
+  if (!repairedSchemaValid) {
+    throw Object.assign(new Error("Backend output failed registered schema validation after one repair attempt."), {
+      code: "SCHEMA_INVALID"
+    });
+  }
+  return { output: repairedOutput, outputBytes: byteLength(content) + byteLength(repairedContent), schemaValid: true, repaired: true };
 }
 
 export async function executeCompletion(

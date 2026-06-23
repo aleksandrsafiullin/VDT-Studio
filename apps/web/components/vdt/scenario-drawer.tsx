@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Plus, Route, Sigma, Sparkles } from "lucide-react";
+import { Plus, Route, Sigma, Sparkles } from "lucide-react";
+import { PanelToggleButton } from "@/components/ui/panel";
 import { calculateGraph, calculateScenario, type VdtImpactNode } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Metric } from "@/components/ui/metric";
@@ -9,8 +10,7 @@ import { formatChange, formatNumber, formatPercent } from "@/lib/format";
 import { ExplanationPanel } from "./explanation-panel";
 import {
   BASE_SCENARIO_DRAWER_HEIGHT,
-  scaledPanelWidth,
-  scaledScenarioDrawerCollapsedHeight,
+  scenarioDrawerCollapsedHeight,
   useVdtStudioStore
 } from "./vdt-store";
 
@@ -31,7 +31,6 @@ export function ScenarioDrawer() {
   const project = useVdtStudioStore((state) => state.project);
   const activeScenarioId = useVdtStudioStore((state) => state.activeScenarioId);
   const scenarioDrawerCollapsed = useVdtStudioStore((state) => state.ui.scenarioDrawerCollapsed);
-  const panelScale = useVdtStudioStore((state) => state.ui.panelScale);
   const fontScale = useVdtStudioStore((state) => state.ui.fontScale);
   const createScenario = useVdtStudioStore((state) => state.createScenario);
   const setActiveScenarioId = useVdtStudioStore((state) => state.setActiveScenarioId);
@@ -50,8 +49,8 @@ export function ScenarioDrawer() {
   const impactedNodes = sortImpacts(scenarioResult?.impactedNodes ?? []).slice(0, 5);
   const showScenarioExplanation =
     pendingExplanation && pendingExplanationTaskType === "explain_scenario";
-  const expandedHeight = scaledPanelWidth(BASE_SCENARIO_DRAWER_HEIGHT, panelScale);
-  const collapsedHeight = scaledScenarioDrawerCollapsedHeight(panelScale, fontScale);
+  const expandedHeight = BASE_SCENARIO_DRAWER_HEIGHT;
+  const collapsedHeight = scenarioDrawerCollapsedHeight(fontScale);
   const drawerHeight = scenarioDrawerCollapsed ? collapsedHeight : expandedHeight;
 
   function explainScenario() {
@@ -91,14 +90,11 @@ export function ScenarioDrawer() {
                 <span className="text-sm font-medium text-ink">{activeScenario?.name ?? "No scenario"}</span>
               </div>
             </div>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="shrink-0"
-              aria-label="Expand scenario drawer"
-              data-testid="expand-scenario-drawer"
-              icon={<ChevronUp className="h-4 w-4" />}
-              onClick={toggleScenarioDrawer}
+            <PanelToggleButton
+              panel="bottom"
+              expanded={false}
+              testId="expand-scenario-drawer"
+              onToggle={toggleScenarioDrawer}
             />
           </div>
         ) : (
@@ -126,13 +122,10 @@ export function ScenarioDrawer() {
                 <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={createScenario}>
                   New
                 </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label="Collapse scenario drawer"
-                  data-testid="collapse-scenario-drawer"
-                  icon={<ChevronDown className="h-4 w-4" />}
-                  onClick={toggleScenarioDrawer}
+                <PanelToggleButton
+                  panel="bottom"
+                  testId="collapse-scenario-drawer"
+                  onToggle={toggleScenarioDrawer}
                 />
               </div>
             </div>

@@ -83,6 +83,25 @@ describe("cursor subscription executor", () => {
     ).rejects.toMatchObject({ code: "SCHEMA_INVALID" });
   });
 
+  it("repairs one invalid cursor schema response", async () => {
+    const result = await executeCompletion(
+      cursorManifest(),
+      {
+        requestId: crypto.randomUUID(),
+        backendId: "cursor_subscription",
+        taskType: "generate_tree",
+        schemaId: "generate-tree-v1",
+        input: { prompt: "Build a tree", businessContext: "repair-secret" }
+      },
+      new AbortController().signal,
+      fakeCursorExecutor({ ...process.env, VDT_FAKE_CURSOR_MODE: "repairable" })
+    );
+
+    expect(result.schemaValid).toBe(true);
+    expect(result.repaired).toBe(true);
+    expect(result.output).toMatchObject({ projectTitle: "Fake Cursor tree", rootNodeId: "root" });
+  });
+
   it("cancels slow fake cursor runs", async () => {
     const controller = new AbortController();
     const tempRoot = await makeTempDir("vdt-cursor-cancel-");

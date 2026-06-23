@@ -8,9 +8,11 @@ import {
   ReactFlow,
   useNodesState,
   type Edge,
+  type EdgeTypes,
   type Node,
   type NodeTypes
 } from "@xyflow/react";
+import { VdtRelationEdge, type VdtEdgeData } from "./vdt-edge";
 import { calculateGraph, DEFAULT_CANVAS_LAYOUT, layoutGraph } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { VdtNodeCard, type VdtNodeCardData } from "./vdt-node-card";
@@ -19,6 +21,10 @@ import { useVdtStudioStore } from "./vdt-store";
 
 const nodeTypes: NodeTypes = {
   vdtNode: VdtNodeCard
+};
+
+const edgeTypes: EdgeTypes = {
+  vdtEdge: VdtRelationEdge
 };
 
 export function VdtCanvas() {
@@ -70,24 +76,15 @@ export function VdtCanvas() {
     [updateNodePosition]
   );
 
-  const edges: Edge[] = useMemo(
+  const edges: Edge<VdtEdgeData>[] = useMemo(
     () =>
       project.graph.edges.map((edge) => ({
         id: edge.id,
+        type: "vdtEdge",
         source: edge.sourceNodeId,
         target: edge.targetNodeId,
-        label: edge.label,
-        type: "smoothstep",
-        animated: edge.aiGenerated,
-        style: {
-          stroke: edge.relation === "subtractive_component" ? "#d97706" : "#6b7a90",
-          strokeWidth: 1.5
-        },
-        labelStyle: {
-          fill: "#667085",
-          fontSize: 11,
-          fontWeight: 600
-        }
+        data: { relation: edge.relation, aiGenerated: edge.aiGenerated },
+        animated: edge.aiGenerated
       })),
     [project.graph.edges]
   );
@@ -118,6 +115,7 @@ export function VdtCanvas() {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         defaultViewport={{ x: 46, y: 194, zoom: 0.68 }}
         minZoom={0.34}
         maxZoom={1.5}

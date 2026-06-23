@@ -8,7 +8,7 @@ See also [Local Runner](LOCAL_RUNNER.md) for pairing and API details.
 
 - **Unit / integration:** Fake executables under `packages/local-runner/src/server/fixtures/` and parser fixtures under `packages/model-bridge/src/subscription-cli/*/fixtures/`.
 - **Playwright e2e:** Mocked `/api/ai/detect-clis` enrichment and local-runner pairing; no real CLI install required in CI.
-- **Darwin sandbox:** `packages/local-runner/src/sandbox/` integration tests run only on macOS (Cursor).
+- **Darwin sandbox:** `packages/local-runner/src/sandbox/` integration tests run only on macOS and assert the `darwin-v1` profile is default-deny, permits provider execution in the request temp directory, and blocks repo reads, temp-root reads outside the request, writes outside temp, and unrelated shell execution.
 - **Maintainer live gate:** Optional real CLI probes behind `VDT_LIVE_*=1` env vars (never run in default CI).
 
 Certification labels in manifests/registry reflect fake-backend + schema validation gates. Maintainer live verification dates are recorded per backend when run.
@@ -31,7 +31,7 @@ Certification labels in manifests/registry reflect fake-backend + schema validat
 | Minimum version | `0.45.0` (`CURSOR_CLI_MIN_VERSION`) |
 | Tested in CI | Fake backend + sandbox tests (macOS); mocked e2e |
 | Maintainer live verification | **2026-06-22:** version/auth probe passed (`ready`) on macOS; protected generate failed because the CLI requires a write under `~/.cursor/projects` |
-| OS sandbox | **Required on macOS** — `darwin-v1` denies repo reads, arbitrary home file contents and writes outside temp |
+| OS sandbox | **Required on macOS** — `darwin-v1` is default-deny, permits provider execution in the request temp directory, and denies repo reads, arbitrary home file contents, temp-root reads outside the request, writes outside temp, and unrelated shell execution |
 | CLI tool mode | `ask` is read-only but still exposes provider tools; certification therefore depends on the OS sandbox, not a false tools-disabled claim |
 | Platform matrix | **Beta:** macOS while the provider-state write conflict remains. **Experimental:** Linux/Windows; runner fails closed without a certified sandbox. |
 

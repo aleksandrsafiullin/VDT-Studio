@@ -49,6 +49,7 @@ function writeStreamJson(result) {
 }
 
 function main() {
+  const prompt = process.argv.at(-1) ?? "";
   const payload = readPromptPayload();
 
   if (mode === "slow") {
@@ -90,6 +91,13 @@ function main() {
     }
     process.stdout.write(JSON.stringify(invalid));
     process.exit(0);
+  }
+
+  if (mode === "repairable") {
+    if (!payload.invalidJsonExcerpt || prompt.includes("repair-secret")) {
+      writeStreamJson({ invalid: true });
+      process.exit(0);
+    }
   }
 
   const output = buildOutput(payload);

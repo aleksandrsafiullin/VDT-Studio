@@ -286,12 +286,14 @@ async function runCompletion(request: CompletionRequest, context: LocalRunnerCon
     run.output = result.output;
     run.outputBytes = result.outputBytes;
     run.schemaValid = result.schemaValid;
+    if (result.repaired === true) run.repaired = true;
     run.finishedAt = new Date().toISOString();
     run.latencyMs = Date.now() - started;
     context.auditSink({
       requestId: run.requestId, backendId: run.backendId, adapterVersion: LOCAL_RUNNER_VERSION,
       taskType: run.taskType, startedAt: run.startedAt!, latencyMs: run.latencyMs,
       outputBytes: result.outputBytes, schemaValid: result.schemaValid,
+      ...(result.repaired === true ? { repaired: true } : {}),
       ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
       ...(result.executableVersion === undefined ? {} : { executableVersion: result.executableVersion })
     });

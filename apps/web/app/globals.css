@@ -37,7 +37,12 @@ select {
 
 @media (min-width: 1024px) {
   .vdt-workspace-grid {
-    grid-template-columns: var(--vdt-left-panel, 255px) minmax(0, 1fr) var(--vdt-right-panel, 279px);
+    grid-template-columns:
+      var(--vdt-left-panel, 255px)
+      var(--vdt-left-handle, 6px)
+      minmax(0, 1fr)
+      var(--vdt-right-handle, 6px)
+      var(--vdt-right-panel, 279px);
   }
 }
 

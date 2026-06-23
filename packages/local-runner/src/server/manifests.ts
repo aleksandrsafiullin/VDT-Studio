@@ -6,9 +6,6 @@ import {
 } from "@vdt-studio/model-bridge";
 import type { BackendManifest } from "../cli/types";
 
-const isDarwin = process.platform === "darwin";
-const cursorSupportLevel = "beta" as const;
-
 /** All 12 canonical VDT AI task types (one per output schema). */
 export const ALL_VDT_TASK_TYPES = VDT_OUTPUT_SCHEMA_IDS.map((schemaId) => schemaTasks[schemaId]) as readonly VdtAiTaskType[];
 
@@ -63,7 +60,7 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     id: "cursor_subscription",
     label: "Cursor Agent",
     kind: "subscription_cli",
-    supportLevel: cursorSupportLevel,
+    supportLevel: "beta-blocked",
     taskTypes: ALL_VDT_TASK_TYPES,
     schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,
@@ -84,7 +81,7 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     id: "codex_subscription",
     label: "Codex CLI",
     kind: "subscription_cli",
-    supportLevel: "supported",
+    supportLevel: "alpha",
     taskTypes: ALL_VDT_TASK_TYPES,
     schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,
@@ -99,7 +96,7 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     id: "claude_subscription",
     label: "Claude Code",
     kind: "subscription_cli",
-    supportLevel: "supported",
+    supportLevel: "alpha",
     taskTypes: ALL_VDT_TASK_TYPES,
     schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,
@@ -124,7 +121,7 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     id: "gemini_subscription",
     label: "Gemini CLI",
     kind: "subscription_cli",
-    supportLevel: isDarwin ? "beta" : "experimental",
+    supportLevel: "experimental",
     taskTypes: ALL_VDT_TASK_TYPES,
     schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,
@@ -144,7 +141,7 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     id: "copilot_subscription",
     label: "GitHub Copilot CLI",
     kind: "subscription_cli",
-    supportLevel: isDarwin ? "beta" : "experimental",
+    supportLevel: "experimental",
     taskTypes: ALL_VDT_TASK_TYPES,
     schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,

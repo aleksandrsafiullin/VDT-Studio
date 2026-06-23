@@ -77,6 +77,13 @@ function main() {
     process.exit(0);
   }
 
+  if (mode === "repairable") {
+    if (!payload.invalidJsonExcerpt || prompt.includes("repair-secret")) {
+      writeJsonl({ invalid: true });
+      process.exit(0);
+    }
+  }
+
   const output = buildOutput(payload);
 
   if (mode === "structured") {

@@ -35,7 +35,7 @@ export const SETTINGS_SECTION_META: Record<
 > = {
   execution: {
     title: "Execution mode",
-    subtitle: "Choose Local CLI or BYOK."
+    subtitle: "Choose API keys or desktop local AI."
   },
   memory: {
     title: "Memory",
@@ -47,7 +47,7 @@ export const SETTINGS_SECTION_META: Record<
   },
   display: {
     title: "Display",
-    subtitle: "Adjust font and panel scale for this workspace."
+    subtitle: "Adjust font scale and panel layout for this workspace."
   }
 };
 

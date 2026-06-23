@@ -28,10 +28,12 @@ import {
   type RunAiTaskResult
 } from "@vdt-studio/ai-harness";
 import { makeId } from "@/lib/id";
+import { hasLocalAiUi, resolveVdtAppMode } from "@/lib/app-mode";
 import {
   applyUiPreference,
   DEFAULT_UI,
   mergeUiPreferences,
+  setPanelWidth as applyPanelWidth,
   type UiPreferences
 } from "./ui-preferences";
 import { collectExistingPositions } from "./layout-positions";
@@ -77,16 +79,19 @@ import inventoryLevelExample from "../../../../examples/inventory-level.json";
 import maintenanceCostExample from "../../../../examples/maintenance-cost.json";
 import oeeExample from "../../../../examples/oee.json";
 
+const HOSTED_WEB_LOCAL_AI_MESSAGE = "Local subscriptions and local models are available in VDT Studio Desktop.";
+
 export {
   BASE_LEFT_PANEL_WIDTH,
   BASE_RIGHT_PANEL_WIDTH,
   BASE_SCENARIO_DRAWER_HEIGHT,
   BASE_WORKSPACE_SECTION_MIN_HEIGHT,
   COLLAPSED_PANEL_WIDTH,
+  DEFAULT_LEFT_PANEL_WIDTH,
+  DEFAULT_RIGHT_PANEL_WIDTH,
   DEFAULT_UI,
   SCENARIO_DRAWER_COLLAPSED_HEIGHT,
-  scaledPanelWidth,
-  scaledScenarioDrawerCollapsedHeight,
+  scenarioDrawerCollapsedHeight,
   type UiPreferences
 } from "./ui-preferences";
 
@@ -258,6 +263,7 @@ interface VdtStudioState {
   setProviderTestState: (isTestingProvider: boolean, providerTestStatus?: ProviderTestStatus) => void;
   setByokFieldErrors: (byokFieldErrors: ByokFieldErrors | undefined) => void;
   setUiPreference: <K extends keyof UiPreferences>(field: K, value: UiPreferences[K]) => void;
+  setPanelWidth: (side: "left" | "right", width: number) => void;
   toggleLeftPanel: () => void;
   toggleRightPanel: () => void;
   toggleScenarioDrawer: () => void;
@@ -408,6 +414,10 @@ async function runAiTask<T extends RunAiActionTaskType>(
   input: RunAiActionInput<T>,
   state: Pick<VdtStudioState, "executionSettings" | "cliDetectionAgents" | "project" | "runnerPairingToken">
 ): Promise<RunAiTaskResult> {
+  if (state.executionSettings.executionMode === "local_cli" && !hasLocalAiUi(resolveVdtAppMode())) {
+    throw new Error(HOSTED_WEB_LOCAL_AI_MESSAGE);
+  }
+
   if (state.executionSettings.executionMode === "byok") {
     const validationErrors = validateByokSettings(state.executionSettings);
     if (hasByokFieldErrors(validationErrors)) {
@@ -622,6 +632,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       setUiPreference: (field, value) =>
         set((state) => ({
           ui: applyUiPreference(state.ui, field, value)
+        })),
+      setPanelWidth: (side, width) =>
+        set((state) => ({
+          ui: applyPanelWidth(state.ui, side, width)
         })),
       toggleLeftPanel: () =>
         set((state) => ({
@@ -1023,6 +1037,11 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       setByokFieldErrors: (byokFieldErrors) => set({ byokFieldErrors }),
       generateWithAi: async () => {
         const { brief, executionSettings, cliDetectionAgents } = get();
+
+        if (executionSettings.executionMode === "local_cli" && !hasLocalAiUi(resolveVdtAppMode())) {
+          set({ aiError: HOSTED_WEB_LOCAL_AI_MESSAGE });
+          return;
+        }
 
         if (executionSettings.executionMode === "byok") {
           const validationErrors = validateByokSettings(executionSettings);

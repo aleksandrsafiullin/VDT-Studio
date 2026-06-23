@@ -2,6 +2,7 @@
 
 import { Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { hasLocalAiUi, resolveVdtAppMode } from "@/lib/app-mode";
 import { formatExecutionModeSummary } from "@/lib/format-execution-summary";
 import { useVdtStudioStore } from "./vdt-store";
 
@@ -11,7 +12,15 @@ interface ExecutionModeSummaryCardProps {
 
 export function ExecutionModeSummaryCard({ onConfigure }: ExecutionModeSummaryCardProps) {
   const executionSettings = useVdtStudioStore((state) => state.executionSettings);
-  const summary = formatExecutionModeSummary(executionSettings);
+  const localAiAvailable = hasLocalAiUi(resolveVdtAppMode());
+  const summary =
+    executionSettings.executionMode === "local_cli" && !localAiAvailable
+      ? {
+          modeLabel: "API keys",
+          primary: "Hosted web",
+          secondary: "Local AI is available in VDT Studio Desktop"
+        }
+      : formatExecutionModeSummary(executionSettings);
 
   return (
     <div

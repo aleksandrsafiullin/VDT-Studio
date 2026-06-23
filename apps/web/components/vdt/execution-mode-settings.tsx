@@ -3,6 +3,7 @@
 import { useEffect, useId, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { clsx } from "clsx";
 import type { ExecutionMode } from "@/lib/execution-mode-catalog";
+import { hasLocalAiUi, resolveVdtAppMode } from "@/lib/app-mode";
 import { LocalCliSettings } from "./local-cli-settings";
 import { ByokSettings } from "./byok-settings";
 import { useVdtStudioStore } from "./vdt-store";
@@ -15,11 +16,18 @@ export function ExecutionModeSettings() {
   const byokPanelId = `${panelId}-byok-panel`;
   const executionMode = useVdtStudioStore((state) => state.executionSettings.executionMode);
   const setExecutionMode = useVdtStudioStore((state) => state.setExecutionMode);
-  const [activeTab, setActiveTab] = useState<ExecutionMode>(executionMode);
+  const localAiAvailable = hasLocalAiUi(resolveVdtAppMode());
+  const [activeTab, setActiveTab] = useState<ExecutionMode>(localAiAvailable ? executionMode : "byok");
 
   useEffect(() => {
-    setActiveTab(executionMode);
-  }, [executionMode]);
+    if (!localAiAvailable && executionMode === "local_cli") {
+      setExecutionMode("byok");
+      setActiveTab("byok");
+      return;
+    }
+
+    setActiveTab(localAiAvailable ? executionMode : "byok");
+  }, [executionMode, localAiAvailable, setExecutionMode]);
 
   function selectTab(nextTab: ExecutionMode) {
     setActiveTab(nextTab);
@@ -32,6 +40,10 @@ export function ExecutionModeSettings() {
     }
 
     event.preventDefault();
+    if (!localAiAvailable) {
+      return;
+    }
+
     const nextTab: ExecutionMode = activeTab === "local_cli" ? "byok" : "local_cli";
     selectTab(nextTab);
     requestAnimationFrame(() => {
@@ -46,25 +58,27 @@ export function ExecutionModeSettings() {
         role="tablist"
         aria-label="Execution mode"
       >
-        <button
-          id={localCliTabId}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "local_cli"}
-          aria-controls={localCliPanelId}
-          tabIndex={activeTab === "local_cli" ? 0 : -1}
-          data-testid="execution-mode-tab-local-cli"
-          className={clsx(
-            "rounded px-4 py-1.5 text-xs font-semibold transition",
-            activeTab === "local_cli"
-              ? "bg-white text-ink shadow-sm"
-              : "text-muted hover:text-ink"
-          )}
-          onClick={() => selectTab("local_cli")}
-          onKeyDown={handleTabKeyDown}
-        >
-          Local CLI
-        </button>
+        {localAiAvailable ? (
+          <button
+            id={localCliTabId}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "local_cli"}
+            aria-controls={localCliPanelId}
+            tabIndex={activeTab === "local_cli" ? 0 : -1}
+            data-testid="execution-mode-tab-local-cli"
+            className={clsx(
+              "rounded px-4 py-1.5 text-xs font-semibold transition",
+              activeTab === "local_cli"
+                ? "bg-white text-ink shadow-sm"
+                : "text-muted hover:text-ink"
+            )}
+            onClick={() => selectTab("local_cli")}
+            onKeyDown={handleTabKeyDown}
+          >
+            Local AI
+          </button>
+        ) : null}
         <button
           id={byokTabId}
           type="button"
@@ -80,7 +94,7 @@ export function ExecutionModeSettings() {
           onClick={() => selectTab("byok")}
           onKeyDown={handleTabKeyDown}
         >
-          BYOK
+          API keys
         </button>
       </div>
 
@@ -100,6 +114,14 @@ export function ExecutionModeSettings() {
           aria-labelledby={byokTabId}
           data-testid="execution-mode-panel-byok"
         >
+          {!localAiAvailable ? (
+            <div
+              data-testid="hosted-web-local-ai-note"
+              className="mb-4 rounded-lg border border-line bg-slate-50 px-4 py-3 text-sm leading-5 text-slate-700"
+            >
+              Local subscriptions and local models are available in VDT Studio Desktop.
+            </div>
+          ) : null}
           <ByokSettings />
         </div>
       )}

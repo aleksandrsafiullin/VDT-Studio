@@ -5,6 +5,7 @@ import { Handle, Position } from "@xyflow/react";
 import type { VdtNode } from "@vdt-studio/vdt-core";
 import { StatusPill } from "@/components/ui/status-pill";
 import { formatNumber } from "@/lib/format";
+import { getNodeTypeIcon, VdtIcon } from "./vdt-icons";
 
 export interface VdtNodeCardData extends Record<string, unknown> {
   node: VdtNode;
@@ -18,11 +19,12 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
   const node = nodeData.node;
   const value = nodeData.value;
   const highlighted = nodeData.highlighted === true;
+  const typeIcon = getNodeTypeIcon(node.type);
 
   return (
     <div
       className={[
-        "min-h-[88px] w-[238px] rounded-lg border bg-white px-3 py-2 shadow-node transition",
+        "min-h-[80px] w-[238px] rounded-lg border bg-white px-3 py-2 shadow-node transition",
         selected ? "border-accent ring-4 ring-blue-100" : highlighted ? "border-amber-400 ring-4 ring-amber-100" : "border-line",
         node.status === "rejected" ? "opacity-55" : ""
       ].join(" ")}
@@ -39,9 +41,17 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
     >
       <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-slate-400" />
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-[10px] font-semibold uppercase tracking-normal text-muted">{node.type}</p>
-          <h3 className="mt-0.5 line-clamp-2 text-sm font-semibold leading-5 text-ink">{node.name}</h3>
+        <div className="flex min-w-0 items-start gap-1.5">
+          <span
+            data-testid="node-type-icon"
+            role="img"
+            aria-label={typeIcon.label}
+            title={typeIcon.label}
+            className="mt-0.5 shrink-0 text-muted"
+          >
+            <VdtIcon display={typeIcon} variant="nodeType" />
+          </span>
+          <h3 className="line-clamp-2 text-sm font-semibold leading-5 text-ink">{node.name}</h3>
         </div>
         <StatusPill status={node.status} className="shrink-0" />
       </div>
@@ -52,7 +62,6 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
         </div>
         <p className="max-w-[76px] truncate text-right text-xs font-medium text-muted">{node.unit ?? "unit n/a"}</p>
       </div>
-      {node.formula ? <p className="mt-1.5 truncate font-mono text-[10px] text-slate-500">{node.formula}</p> : null}
       <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-accent" />
     </div>
   );

@@ -1,12 +1,11 @@
 import type { ButtonHTMLAttributes, HTMLAttributes } from "react";
 import { clsx } from "clsx";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { Button } from "./button";
+import { PanelToggleIcon, type PanelToggleTarget } from "./panel-toggle-icons";
 
 export function Panel({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <section
-      className={clsx("vdt-ui-scale border-line bg-white shadow-panel", className)}
+      className={clsx("vdt-ui-scale relative border-line bg-white shadow-panel", className)}
       {...props}
     />
   );
@@ -32,58 +31,79 @@ export function PanelHeader({
   );
 }
 
+function panelToggleLabel(panel: PanelToggleTarget, expanded: boolean) {
+  if (panel === "left") {
+    return expanded ? "Collapse setup panel" : "Expand setup panel";
+  }
+  if (panel === "right") {
+    return expanded ? "Collapse inspector panel" : "Expand inspector panel";
+  }
+  return expanded ? "Collapse scenario drawer" : "Expand scenario drawer";
+}
+
+export function PanelToggleButton({
+  panel,
+  expanded = true,
+  onToggle,
+  testId,
+  className,
+  ...props
+}: {
+  panel: PanelToggleTarget;
+  expanded?: boolean;
+  onToggle: () => void;
+  testId?: string | undefined;
+} & ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      aria-label={panelToggleLabel(panel, expanded)}
+      data-testid={testId}
+      className={clsx(
+        "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition",
+        "hover:bg-slate-100 hover:text-ink",
+        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        "disabled:cursor-not-allowed disabled:opacity-45",
+        className
+      )}
+      onClick={onToggle}
+      {...props}
+    >
+      <PanelToggleIcon panel={panel} className="h-4 w-4" />
+    </button>
+  );
+}
+
+/** @deprecated Use PanelToggleButton */
+export const PanelEdgeToggle = PanelToggleButton;
+
 export function PanelCollapseTab({
   label,
-  side,
+  panel,
   onToggle,
   testId,
   expandTestId
 }: {
   label: string;
-  side: "left" | "right";
+  panel: PanelToggleTarget;
   onToggle: () => void;
   testId?: string;
   expandTestId?: string;
 }) {
-  const Icon = side === "left" ? ChevronRight : ChevronLeft;
-
   return (
-    <Panel className={clsx("flex h-full min-h-0 flex-col items-center py-3", side === "left" ? "border-r" : "border-l")}>
-      <Button
-        size="icon"
-        variant="ghost"
-        aria-label={`Expand ${label}`}
-        data-testid={expandTestId ?? testId}
-        icon={<Icon className="h-4 w-4" />}
-        onClick={onToggle}
+    <Panel
+      className={clsx(
+        "flex h-full min-h-0 flex-col items-center py-3",
+        panel === "left" ? "border-r" : panel === "right" ? "border-l" : "border-t"
+      )}
+    >
+      <PanelToggleButton
+        panel={panel}
+        expanded={false}
+        testId={expandTestId ?? testId}
+        onToggle={onToggle}
       />
       <span className="vdt-vertical-label mt-3">{label}</span>
     </Panel>
-  );
-}
-
-export function PanelCollapseButton({
-  side,
-  onToggle,
-  testId,
-  ...props
-}: {
-  side: "left" | "right";
-  onToggle: () => void;
-  testId?: string;
-} & ButtonHTMLAttributes<HTMLButtonElement>) {
-  const Icon = side === "left" ? ChevronLeft : ChevronRight;
-
-  return (
-    <Button
-      size="icon"
-      variant="ghost"
-      className="hidden lg:inline-flex"
-      aria-label={side === "left" ? "Collapse setup panel" : "Collapse inspector panel"}
-      data-testid={testId}
-      icon={<Icon className="h-4 w-4" />}
-      onClick={onToggle}
-      {...props}
-    />
   );
 }
