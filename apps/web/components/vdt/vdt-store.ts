@@ -30,6 +30,11 @@ import {
 import { makeId } from "@/lib/id";
 import { hasLocalAiUi, resolveVdtAppMode } from "@/lib/app-mode";
 import {
+  createAiExecutionClient,
+  HOSTED_WEB_LOCAL_AI_MESSAGE,
+  type CliAgentDetectionSnapshot
+} from "@/lib/ai-execution-client";
+import {
   applyUiPreference,
   DEFAULT_UI,
   mergeUiPreferences,
@@ -79,8 +84,6 @@ import inventoryLevelExample from "../../../../examples/inventory-level.json";
 import maintenanceCostExample from "../../../../examples/maintenance-cost.json";
 import oeeExample from "../../../../examples/oee.json";
 
-const HOSTED_WEB_LOCAL_AI_MESSAGE = "Local subscriptions and local models are available in VDT Studio Desktop.";
-
 export {
   BASE_LEFT_PANEL_WIDTH,
   BASE_RIGHT_PANEL_WIDTH,
@@ -118,28 +121,6 @@ export type {
 export interface ProviderTestStatus {
   kind: "success" | "error" | "info";
   message: string;
-}
-
-export interface CliAgentDetectionSnapshot {
-  id: CliAgentId;
-  installed: boolean;
-  executable: string | null;
-  alias: string | null;
-  version: string | null;
-  error?: string | undefined;
-  status?:
-    | "not_installed"
-    | "installed"
-    | "authentication_required"
-    | "ready"
-    | "rate_limited"
-    | "unsupported_version"
-    | "unsafe_configuration"
-    | "unavailable"
-    | "error"
-    | undefined;
-  authSummary?: string | undefined;
-  diagnostics?: string[] | undefined;
 }
 
 interface ProviderConfigState extends Partial<OpenAiCompatibleProviderConfig> {
@@ -435,31 +416,20 @@ async function runAiTask<T extends RunAiActionTaskType>(
     throw new Error("Pair the local runner before running this AI action.");
   }
 
-  const response = await fetch("/api/ai/run-task", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      taskType,
-      input: {
-        project: state.project,
-        ...input
-      },
-      providerId,
-      providerConfig:
-        providerId === "mock"
-          ? undefined
-          : providerId === "local_runner"
-            ? { ...providerConfig, pairingToken: state.runnerPairingToken }
-            : providerConfig
-    })
+  return createAiExecutionClient().complete({
+    taskType,
+    input: {
+      project: state.project,
+      ...input
+    },
+    providerId,
+    providerConfig:
+      providerId === "mock"
+        ? undefined
+        : providerId === "local_runner"
+          ? { ...providerConfig, pairingToken: state.runnerPairingToken }
+          : providerConfig
   });
-
-  const payload = (await response.json()) as { ok: boolean; result?: RunAiTaskResult; error?: string };
-  if (!response.ok || !payload.ok || !payload.result) {
-    throw new Error(payload.error ?? "AI task response could not be parsed.");
-  }
-
-  return payload.result;
 }
 
 export function isAdvisoryAiTaskType(taskType: RunAiActionTaskType): boolean {
@@ -514,6 +484,10 @@ function ensureScenario(project: VdtProject) {
     ...project,
     scenarios: [defaultScenario()]
   };
+}
+
+function requiresStandaloneRunnerPairing(providerId: ProviderId, appMode = resolveVdtAppMode()): boolean {
+  return providerId === "local_runner" && appMode === "development_web";
 }
 
 function persistedProviderConfig(config: ProviderConfigState) {
@@ -835,25 +809,15 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         });
 
         try {
-          const url = agentId ? `/api/ai/detect-clis?id=${encodeURIComponent(agentId)}` : "/api/ai/detect-clis";
-          const response = await fetch(url);
-          const payload = (await response.json()) as {
-            agents?: CliAgentDetectionSnapshot[];
-            modelsByAgent?: Partial<Record<CliAgentId, string[]>>;
-            error?: string;
-          };
-
-          if (!response.ok || !payload.agents) {
-            throw new Error(payload.error ?? `CLI detection failed with ${response.status}.`);
-          }
+          const payload = await createAiExecutionClient().detectSubscriptionClis(agentId);
 
           set((state) => {
             let cliDetectionAgents: CliAgentDetectionSnapshot[];
 
             if (!agentId) {
-              cliDetectionAgents = payload.agents!;
+              cliDetectionAgents = payload.agents;
             } else {
-              const nextAgent = payload.agents![0];
+              const nextAgent = payload.agents[0];
               if (!nextAgent) {
                 return {
                   isRescanningClis: false,
@@ -930,27 +894,17 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         let nextStatus: ProviderTestStatus | undefined;
 
         try {
-          if (!state.runnerPairingToken) {
+          const needsPairing = requiresStandaloneRunnerPairing(resolved.providerId);
+          if (needsPairing && !state.runnerPairingToken) {
             throw new Error("Pair the local runner before testing a subscription backend.");
           }
-          const response = await fetch("/api/ai/generate-vdt", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              operation: "connection_test",
-              providerId: resolved.providerId,
-              providerConfig: { ...resolved.providerConfig, pairingToken: state.runnerPairingToken }
-            })
+          await createAiExecutionClient().testBackend(String(resolved.providerConfig?.backendId ?? agentId), {
+            providerId: resolved.providerId,
+            providerConfig: {
+              ...resolved.providerConfig,
+              ...(needsPairing ? { pairingToken: state.runnerPairingToken } : {})
+            }
           });
-
-          const payload = (await response.json()) as {
-            ok?: boolean;
-            error?: string;
-          };
-
-          if (!response.ok || !payload.ok) {
-            throw new Error(payload.error ?? `CLI test failed with ${response.status}.`);
-          }
 
           nextStatus = {
             kind: "success",
@@ -990,20 +944,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         const runnerUrl = get().executionSettings.runnerUrl ?? "http://127.0.0.1:8765";
         set({ isPairingRunner: true, runnerPairingStatus: undefined, runnerPairingToken: undefined });
         try {
-          const response = await fetch(`${runnerUrl.replace(/\/$/, "")}/v1/pair`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ code })
-          });
-          const payload = (await response.json()) as {
-            ok?: boolean;
-            session?: { token?: string };
-            error?: { message?: string };
-          };
-          const token = payload.session?.token;
-          if (!response.ok || !payload.ok || !token) {
-            throw new Error(payload.error?.message ?? "Runner pairing failed.");
-          }
+          const { token } = await createAiExecutionClient().pairStandaloneRunner(runnerUrl, code);
           set({
             runnerPairingToken: token,
             runnerPairingStatus: { kind: "success", message: "Local runner paired for this browser session." },
@@ -1023,11 +964,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         if (!token) return;
         const runnerUrl = state.executionSettings.runnerUrl ?? "http://127.0.0.1:8765";
         try {
-          await fetch(`${runnerUrl.replace(/\/$/, "")}/v1/unpair`, {
-            method: "POST",
-            headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-            body: "{}"
-          });
+          await createAiExecutionClient().unpairStandaloneRunner(runnerUrl, token);
         } finally {
           set({ runnerPairingToken: undefined, runnerPairingStatus: undefined });
         }
@@ -1062,34 +999,26 @@ export const useVdtStudioStore = create<VdtStudioState>()(
 
         const { providerId, providerConfig } = resolveExecutionSettings(executionSettings);
         const runnerPairingToken = get().runnerPairingToken;
-        if (providerId === "local_runner" && !runnerPairingToken) {
+        const needsPairing = requiresStandaloneRunnerPairing(providerId);
+        if (needsPairing && !runnerPairingToken) {
           set({ aiError: "Pair the local runner before generating." });
           return;
         }
         set({ isGenerating: true, aiError: undefined, ...clearPendingAiActionState(), byokFieldErrors: undefined });
 
         try {
-          const response = await fetch("/api/ai/generate-vdt", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
+          const project = ensureScenario(
+            await createAiExecutionClient().generateTree({
               ...brief,
               providerId,
               providerConfig:
                 providerId === "mock"
                   ? undefined
-                  : providerId === "local_runner"
+                  : needsPairing
                     ? { ...providerConfig, pairingToken: runnerPairingToken }
                     : providerConfig
             })
-          });
-
-          const payload = (await response.json()) as { ok: boolean; project?: VdtProject; error?: string };
-          if (!response.ok || !payload.ok || !payload.project) {
-            throw new Error(payload.error ?? "AI response could not be parsed.");
-          }
-
-          const project = ensureScenario(payload.project);
+          );
           set({
             project,
             selectedNodeId: project.rootNodeId,

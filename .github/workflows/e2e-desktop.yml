@@ -1,0 +1,26 @@
+name: Desktop E2E Foundation
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  desktop-foundation:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm desktop:verify
+      - run: pnpm vitest run scripts/verify-desktop-shell.test.ts scripts/verify-desktop-sidecar.test.ts packages/local-runner/src/server/runtime.test.ts

@@ -8,11 +8,13 @@ import {
   extractBoundedJson,
   getSubscriptionCliAdapter,
   getRegisteredJsonSchema,
+  getStrictResponseJsonSchema,
   isVdtSchemaId,
+  validateRegisteredSchemaDetailed,
   validateRegisteredSchema,
+  type ExecFileProbe,
   type VdtSchemaId
 } from "@vdt-studio/model-bridge";
-import { wrapSandbox } from "../sandbox";
 import type { BackendManifest, CompletionRequest } from "../cli/types";
 
 const advisoryStub = Object.freeze({
@@ -21,12 +23,24 @@ const advisoryStub = Object.freeze({
   warnings: [] as Record<string, unknown>[]
 });
 
+const mockNode = Object.freeze({
+  id: "root",
+  name: "Root KPI",
+  description: "Mock root KPI.",
+  type: "root_kpi",
+  unit: "units",
+  aiConfidence: 0.9,
+  aiRationale: "Mock schema-valid node.",
+  controllability: "medium",
+  materiality: "high"
+});
+
 const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
   "connection-test-v1": { ok: true },
-  "generate-tree-v1": { projectTitle: "Mock tree", rootNodeId: "root", nodes: [{}], edges: [], ...advisoryStub },
-  "deepen-node-v1": { targetNodeId: "node-1", nodes: [{}], edges: [], ...advisoryStub },
+  "generate-tree-v1": { projectTitle: "Mock tree", rootNodeId: "root", nodes: [mockNode], edges: [], ...advisoryStub },
+  "deepen-node-v1": { targetNodeId: "node-1", nodes: [{ ...mockNode, id: "child_a", name: "Child A" }], edges: [], ...advisoryStub },
   "simplify-branch-v1": { branchRootNodeId: "node-1", nodeRemovals: [], edgeChanges: [], rationale: "Mock", ...advisoryStub },
-  "suggest-alternative-v1": { targetNodeId: "node-1", nodes: [{}], edges: [], rationale: "Mock", ...advisoryStub },
+  "suggest-alternative-v1": { targetNodeId: "node-1", nodes: [{ ...mockNode, id: "alternative_a", name: "Alternative A" }], edges: [], rationale: "Mock", ...advisoryStub },
   "suggest-formula-v1": { nodeId: "node-1", proposedFormula: "1", aiRationale: "Mock", confidence: 0.5, ...advisoryStub },
   "review-model-v1": { findings: [], ...advisoryStub },
   "check-units-v1": { unitFindings: [], ...advisoryStub },
@@ -63,12 +77,16 @@ const ALLOWED_ENV_KEYS = [
   "VDT_FAKE_CURSOR_MODE", "VDT_FAKE_CODEX_MODE", "VDT_FAKE_CLAUDE_MODE", "VDT_FAKE_GEMINI_MODE", "VDT_FAKE_COPILOT_MODE"
 ] as const;
 
+const CODEX_HOME_COPY_FILES = ["auth.json", "installation_id", "models_cache.json"] as const;
+
 export interface ExecutionResult {
   output: unknown;
   rawText?: string;
   outputBytes: number;
   schemaValid: boolean;
   repaired?: boolean;
+  repairAttempted?: boolean;
+  repairSucceeded?: boolean;
   exitCode?: number;
   executableVersion?: string;
 }
@@ -127,23 +145,80 @@ async function defaultResolveExecutable(manifest: BackendManifest, env: NodeJS.P
   });
 }
 
-function isOsSandboxAvailable(profile: NonNullable<BackendManifest["safety"]["sandboxProfile"]>): boolean {
-  if (profile === "darwin-v1") return process.platform === "darwin";
-  return false;
+async function normalizeResolvedExecutable(executable: string): Promise<string> {
+  if (!path.isAbsolute(executable) || executable.includes("\0")) {
+    throw Object.assign(new Error("Resolved executable must be an absolute path without NUL bytes."), { code: "UNSAFE_EXECUTABLE" });
+  }
+  try {
+    return await realpath(executable);
+  } catch {
+    return executable;
+  }
 }
 
-function isSandboxCertified(manifest: BackendManifest): boolean {
-  const profile = manifest.safety.sandboxProfile;
-  if (!manifest.safety.requiresOsSandbox || profile === undefined) return false;
-  return isOsSandboxAvailable(profile);
+function isJavaScriptExecutable(executable: string): boolean {
+  return /\.(?:mjs|cjs|js)$/i.test(executable);
+}
+
+function isPathInside(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function shouldLocalizeJavaScriptExecutable(executable: string, options: ExecutorOptions): boolean {
+  return options.resolveExecutable !== undefined && isPathInside(process.cwd(), executable);
+}
+
+function errorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
+}
+
+async function copyCodexHomeFile(sourceDir: string, targetDir: string, fileName: string): Promise<void> {
+  try {
+    const targetPath = path.join(targetDir, fileName);
+    await copyFile(path.join(sourceDir, fileName), targetPath);
+    await chmod(targetPath, 0o600);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return;
+    throw error;
+  }
+}
+
+async function prepareEphemeralCodexHome(cwd: string, envSource: NodeJS.ProcessEnv): Promise<string | undefined> {
+  const sourceCodexHome = envSource.CODEX_HOME ?? (envSource.HOME ? path.join(envSource.HOME, ".codex") : undefined);
+  if (!sourceCodexHome) return undefined;
+
+  const codexHome = path.join(cwd, "codex-home");
+  await mkdir(codexHome, { recursive: true, mode: 0o700 });
+  await chmod(codexHome, 0o700);
+  for (const fileName of CODEX_HOME_COPY_FILES) {
+    await copyCodexHomeFile(sourceCodexHome, codexHome, fileName);
+  }
+  return codexHome;
+}
+
+function isEphemeralWorkspaceCertified(manifest: BackendManifest): boolean {
+  return (
+    manifest.id === "cursor_subscription" &&
+    manifest.kind === "subscription_cli" &&
+    manifest.safety.ephemeralWorkspaceOnly === true &&
+    manifest.safety.trustEphemeralWorkspace === true &&
+    manifest.safety.requiresOsSandbox === false
+  );
 }
 
 function assertManifestSafe(manifest: BackendManifest): void {
   if (manifest.kind !== "subscription_cli" && manifest.kind !== "custom_cli") return;
-  if (manifest.cli?.args) assertArgsSafe(manifest.cli.args, { allowScopedTrust: manifest.safety.trustEphemeralWorkspace === true });
+  if (manifest.cli?.args) {
+    assertArgsSafe(manifest.cli.args, {
+      allowScopedTrust: manifest.safety.trustEphemeralWorkspace === true
+    });
+  }
   const { certified, toolsDisabled, requiresOsSandbox } = manifest.safety;
-  const sandboxCertified = isSandboxCertified(manifest);
-  if (!certified || (!toolsDisabled && !sandboxCertified) || (requiresOsSandbox && !sandboxCertified)) {
+  const ephemeralWorkspaceCertified = isEphemeralWorkspaceCertified(manifest);
+  if (!certified || requiresOsSandbox || (!toolsDisabled && !ephemeralWorkspaceCertified)) {
     throw Object.assign(new Error(`${manifest.label} is not certified for isolated execution.`), {
       code: "UNSAFE_CONFIGURATION"
     });
@@ -167,13 +242,35 @@ function truncateForRepair(value: string): string {
   return `${value.slice(0, end)}\n[truncated]`;
 }
 
+function tailForDiagnostics(value: string, maxBytes = 2_048): string {
+  if (!value.trim()) return "";
+  let start = Math.max(0, value.length - maxBytes);
+  while (start < value.length && byteLength(value.slice(start)) > maxBytes) {
+    start += 1;
+  }
+  return value.slice(start).replace(/\s+/g, " ").trim();
+}
+
+function timeoutDiagnostic(stdout: string, stderr: string, timeoutMs: number): string {
+  const stdoutBytes = byteLength(stdout);
+  const stderrBytes = byteLength(stderr);
+  const parts = [`after ${timeoutMs}ms`, `stdout=${stdoutBytes} bytes`, `stderr=${stderrBytes} bytes`];
+  const stderrTail = tailForDiagnostics(stderr);
+  const stdoutTail = tailForDiagnostics(stdout);
+  if (stderrTail) parts.push(`stderrTail=${JSON.stringify(stderrTail)}`);
+  if (stdoutTail) parts.push(`stdoutTail=${JSON.stringify(stdoutTail)}`);
+  return parts.join("; ");
+}
+
 function validationSummary(schemaId: VdtSchemaId, output: unknown): string[] {
   const schema = getRegisteredJsonSchema(schemaId);
   const required = Array.isArray(schema.required) ? schema.required.filter((key): key is string => typeof key === "string") : [];
   const missing = isRecord(output) ? required.filter((key) => !(key in output)) : required;
+  const detailed = validateRegisteredSchemaDetailed(schemaId, output).errors;
   return [
     `Output must be one JSON object for schema ${schemaId}.`,
     ...(missing.length > 0 ? [`Missing required keys: ${missing.join(", ")}.`] : []),
+    ...detailed.slice(0, 12),
     "Nested values must match the registered VDT runtime schema."
   ];
 }
@@ -205,32 +302,16 @@ function buildRepairMessages(
   ];
 }
 
-async function localizeSandboxScripts(
-  args: readonly string[],
-  cwd: string,
-  allowedReadPaths: string[]
-): Promise<string[]> {
-  const localized = [...args];
-  for (let index = 0; index < localized.length; index += 1) {
-    const arg = localized[index];
-    if (typeof arg !== "string" || !path.isAbsolute(arg) || !/\.(?:mjs|cjs|js)$/i.test(arg)) continue;
-    if (arg === cwd || arg.startsWith(`${cwd}${path.sep}`)) continue;
-    const localScript = path.join(cwd, `script-${index}-${path.basename(arg)}`);
-    await copyFile(arg, localScript);
-    await chmod(localScript, 0o700);
-    localized[index] = localScript;
-    allowedReadPaths.push(localScript);
-  }
-  return localized;
-}
-
 function buildSubscriptionPrompt(request: CompletionRequest): string {
+  const schemaId = request.schemaId as VdtSchemaId;
   return [
     `Return only JSON matching approved schema ${request.schemaId} for VDT task ${request.taskType}.`,
     "Do not include markdown fences or commentary.",
+    "Do not use tools, run commands, inspect files, edit files, or wait for user input. Answer directly from the provided request.",
     JSON.stringify({
       schemaId: request.schemaId,
       taskType: request.taskType,
+      outputJsonSchema: getRegisteredJsonSchema(schemaId),
       input: request.input,
       ...(request.model ? { model: request.model } : {})
     })
@@ -251,22 +332,6 @@ function buildRepairPrompt(request: CompletionRequest, invalidJson: string, pars
   ].join("\n");
 }
 
-function providerAuthReadPaths(backendId: string, home: string | undefined): string[] {
-  if (!home || !path.isAbsolute(home)) return [];
-  if (backendId === "cursor_subscription") {
-    return [
-      path.join(home, ".cursor"),
-      path.join(home, ".cursor-agent"),
-      path.join(home, "Library", "Application Support", "Cursor")
-    ];
-  }
-  if (backendId === "gemini_subscription") return [path.join(home, ".gemini")];
-  if (backendId === "copilot_subscription") {
-    return [path.join(home, ".copilot"), path.join(home, ".config", "github-copilot")];
-  }
-  return [];
-}
-
 async function probeExecutableVersion(executable: string, versionArgs: readonly string[]): Promise<string | undefined> {
   try {
     const result = await promisify(execFile)(executable, [...versionArgs], {
@@ -283,6 +348,21 @@ async function probeExecutableVersion(executable: string, versionArgs: readonly 
   }
 }
 
+async function executableHelpIncludes(executable: string, needle: string): Promise<boolean> {
+  try {
+    const result = await promisify(execFile)(executable, ["--help"], {
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 256 * 1024,
+      windowsHide: true,
+      shell: false
+    });
+    return `${result.stdout}\n${result.stderr}`.includes(needle);
+  } catch {
+    return false;
+  }
+}
+
 async function executeCli(
   manifest: BackendManifest,
   request: CompletionRequest,
@@ -292,10 +372,7 @@ async function executeCli(
   assertManifestSafe(manifest);
   const adapter = manifest.kind === "subscription_cli" ? getSubscriptionCliAdapter(manifest.id) : undefined;
   const envSource = options.env ?? process.env;
-  const executable = await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource);
-  if (!path.isAbsolute(executable) || executable.includes("\0")) {
-    throw Object.assign(new Error("Resolved executable must be an absolute path without NUL bytes."), { code: "UNSAFE_EXECUTABLE" });
-  }
+  const executable = await normalizeResolvedExecutable(await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource));
   const payload = JSON.stringify({
     requestId: request.requestId,
     taskType: request.taskType,
@@ -308,7 +385,7 @@ async function executeCli(
   }
 
   const executableVersion =
-    manifest.cli?.versionArgs?.length && !/\.(?:mjs|cjs|js)$/i.test(executable)
+    manifest.cli?.versionArgs?.length && !isJavaScriptExecutable(executable)
       ? await probeExecutableVersion(executable, manifest.cli.versionArgs)
       : undefined;
 
@@ -328,7 +405,7 @@ async function executeCli(
     await writeFile(promptPath, prompt, { encoding: "utf8", mode: 0o600, flag: "wx" });
 
     const schemaPath = path.join(cwd, "schema.json");
-    await writeFile(schemaPath, `${JSON.stringify(getRegisteredJsonSchema(request.schemaId as VdtSchemaId), null, 2)}\n`, {
+    await writeFile(schemaPath, `${JSON.stringify(getStrictResponseJsonSchema(request.schemaId as VdtSchemaId), null, 2)}\n`, {
       encoding: "utf8",
       mode: 0o600,
       flag: "wx"
@@ -346,57 +423,44 @@ async function executeCli(
     const dynamicArgs = adapter
       ? adapter.buildArgs({
           ...(request.model ? { model: request.model } : {}),
+          cwd,
           promptPath,
           promptText,
           schemaPath,
           outputPath,
-          toolPolicyPath
+          toolPolicyPath,
+          enableWorkspaceTrust:
+            manifest.id === "cursor_subscription" &&
+            manifest.safety.trustEphemeralWorkspace === true &&
+            await executableHelpIncludes(executable, "--trust")
         })
       : [];
     let command = executable;
-    let providerExecutable = executable;
     let spawnArgs = [...staticArgs, ...dynamicArgs];
-    assertArgsSafe(spawnArgs, { allowScopedTrust: manifest.safety.trustEphemeralWorkspace === true });
+    assertArgsSafe(spawnArgs, {
+      allowScopedTrust: manifest.safety.trustEphemeralWorkspace === true
+    });
 
-    const allowedReadPaths = [path.dirname(executable), ...providerAuthReadPaths(manifest.id, envSource.HOME)];
-    const sandboxCertified = isSandboxCertified(manifest);
-
-    if (/\.(?:mjs|cjs|js)$/i.test(executable) && options.resolveExecutable !== undefined) {
-      const localScript = path.join(cwd, path.basename(executable));
-      await copyFile(executable, localScript);
-      await chmod(localScript, 0o700);
+    if (isJavaScriptExecutable(executable)) {
+      let scriptPath = executable;
+      if (shouldLocalizeJavaScriptExecutable(executable, options)) {
+        scriptPath = path.join(cwd, path.basename(executable));
+        await copyFile(executable, scriptPath);
+        await chmod(scriptPath, 0o700);
+      }
       command = process.execPath;
-      providerExecutable = process.execPath;
-      spawnArgs = [localScript, ...spawnArgs];
-    } else if (sandboxCertified) {
-      spawnArgs = await localizeSandboxScripts(spawnArgs, cwd, allowedReadPaths);
+      spawnArgs = [scriptPath, ...spawnArgs];
     }
 
     let finalArgs = spawnArgs;
-    if (sandboxCertified) {
-      const wrapped = wrapSandbox(command, spawnArgs, {
-        profile: {
-          tempCwd: cwd,
-          repoCwd: process.cwd(),
-          providerExecutable,
-          ...(envSource.HOME && path.isAbsolute(envSource.HOME) ? { homeDir: envSource.HOME } : {}),
-          ...(allowedReadPaths.length > 0 ? { allowedReadPaths } : {})
-        }
-      });
-      if (wrapped.diagnostic) {
-        throw Object.assign(
-          new Error(`${manifest.label} requires an OS sandbox that is unavailable on this platform.`),
-          { code: "UNSAFE_CONFIGURATION" }
-        );
-      }
-      command = wrapped.command;
-      finalArgs = wrapped.args;
-    }
 
     const childEnv = safeEnvironment(envSource);
     if (manifest.id === "cursor_subscription") {
-      childEnv.CURSOR_CONFIG_DIR = path.join(cwd, "cursor-config");
       childEnv.NODE_COMPILE_CACHE = path.join(cwd, "node-compile-cache");
+    }
+    if (manifest.id === "codex_subscription") {
+      const codexHome = await prepareEphemeralCodexHome(cwd, envSource);
+      if (codexHome) childEnv.CODEX_HOME = codexHome;
     }
     const child = (options.spawn ?? ((spawnCommand, args, spawnOptions) =>
       nodeSpawn(spawnCommand, [...args], spawnOptions) as ChildProcessWithoutNullStreams))(
@@ -423,23 +487,84 @@ async function executeCli(
     timeout = setTimeout(terminate, effectiveTimeout);
     timeout.unref?.();
 
-    const completion = new Promise<number>((resolve, reject) => {
-      child.once("error", reject);
+    type CompletionEvent =
+      | { type: "exit"; exitCode: number }
+      | { type: "stream"; result: ExecutionResult };
+
+    let completionSettled = false;
+    let streamingResult: ExecutionResult | undefined;
+    let streamingError: unknown;
+    const stopChildAfterStreamingResult = () => {
+      child.kill("SIGTERM");
+      const streamKill = setTimeout(() => child.kill("SIGKILL"), 50);
+      streamKill.unref?.();
+      child.once("close", () => clearTimeout(streamKill));
+    };
+
+    const completion = new Promise<CompletionEvent>((resolve, reject) => {
+      const settle = (event: CompletionEvent) => {
+        if (completionSettled) return;
+        completionSettled = true;
+        resolve(event);
+      };
+      const fail = (error: unknown) => {
+        if (completionSettled) return;
+        completionSettled = true;
+        reject(error);
+      };
+      const trySettleFromStream = () => {
+        if (!adapter?.parseStreamingOutput) return;
+        if (streamingResult || streamingError !== undefined) return;
+        let output: unknown;
+        try {
+          output = adapter.parseStreamingOutput(stdout, stderr, request.schemaId as VdtSchemaId);
+        } catch (error) {
+          streamingError = error;
+          stopChildAfterStreamingResult();
+          return;
+        }
+        if (output === undefined || !validateRegisteredSchema(request.schemaId as VdtSchemaId, output)) return;
+        streamingResult = {
+          output,
+          rawText: stdout,
+          outputBytes: byteLength(stdout),
+          schemaValid: true,
+          exitCode: 0,
+          ...(executableVersion === undefined ? {} : { executableVersion })
+        };
+        stopChildAfterStreamingResult();
+      };
+
+      child.once("error", fail);
       child.stdout.on("data", (chunk: Buffer | string) => {
         stdout += chunk.toString();
         if (byteLength(stdout) > EXECUTION_LIMITS.maxStdoutBytes) {
           outputLimitExceeded = true;
           terminate();
+          return;
         }
+        trySettleFromStream();
       });
       child.stderr.on("data", (chunk: Buffer | string) => {
         stderr += chunk.toString();
         if (byteLength(stderr) > EXECUTION_LIMITS.maxStderrBytes) {
           outputLimitExceeded = true;
           terminate();
+          return;
         }
+        trySettleFromStream();
       });
-      child.once("close", (code) => resolve(code ?? -1));
+      child.once("close", (code) => {
+        if (streamingError !== undefined) {
+          fail(streamingError);
+          return;
+        }
+        if (streamingResult) {
+          settle({ type: "stream", result: streamingResult });
+          return;
+        }
+        settle({ type: "exit", exitCode: code ?? -1 });
+      });
     });
 
     try {
@@ -453,13 +578,18 @@ async function executeCli(
       } else {
         child.stdin.end(requestJson);
       }
-      const exitCode = await completion;
+      const completed = await completion;
+      if (completed.type === "stream") return completed.result;
+      const exitCode = completed.exitCode;
       if (cancelled) {
         if (byteLength(stdout) > EXECUTION_LIMITS.maxStdoutBytes || byteLength(stderr) > EXECUTION_LIMITS.maxStderrBytes) {
           throw Object.assign(new Error("Backend output exceeded the configured limit."), { code: "OUTPUT_TOO_LARGE" });
         }
         if (signal.aborted) throw abortError();
-        throw Object.assign(new Error("Backend timed out."), { code: "TIMEOUT" });
+        throw Object.assign(new Error(`Backend timed out (${timeoutDiagnostic(stdout, stderr, effectiveTimeout)}).`), {
+          code: "TIMEOUT",
+          rawText: stdout
+        });
       }
       if (exitCode !== 0) {
         if (adapter) {
@@ -530,17 +660,31 @@ async function executeCli(
               ? error.message
               : "Invalid provider output."
           : JSON.stringify(parsedOutput);
-      const repaired = await runCliAttempt(
-        buildRepairPrompt(request, invalidText, parsedOutput),
-        Math.min(EXECUTION_LIMITS.repairTimeoutMs, request.timeoutMs ?? EXECUTION_LIMITS.repairTimeoutMs),
-        JSON.stringify({
-          requestId: request.requestId,
-          taskType: request.taskType,
-          schemaId: request.schemaId,
-          repair: true
-        })
-      );
-      return { ...repaired, outputBytes: repaired.outputBytes + byteLength(invalidText), repaired: true };
+      let repaired: ExecutionResult;
+      try {
+        repaired = await runCliAttempt(
+          buildRepairPrompt(request, invalidText, parsedOutput),
+          Math.min(EXECUTION_LIMITS.repairTimeoutMs, request.timeoutMs ?? EXECUTION_LIMITS.repairTimeoutMs),
+          JSON.stringify({
+            requestId: request.requestId,
+            taskType: request.taskType,
+            schemaId: request.schemaId,
+            repair: true
+          })
+        );
+      } catch (repairError) {
+        if (repairError instanceof Error) {
+          throw Object.assign(repairError, { repairAttempted: true, repairSucceeded: false });
+        }
+        throw repairError;
+      }
+      return {
+        ...repaired,
+        outputBytes: repaired.outputBytes + byteLength(invalidText),
+        repaired: true,
+        repairAttempted: true,
+        repairSucceeded: true
+      };
     }
   );
   return first;
@@ -645,22 +789,38 @@ async function executeLocalHttp(
   }
   if (schemaValid) return { output, outputBytes: byteLength(content), schemaValid };
 
-  const repairedContent = await postLocalHttpChat(
-    manifest,
-    buildRepairMessages(schemaId, request, output === undefined ? content : JSON.stringify(output), output),
-    signal,
-    options,
-    request,
-    Math.min(EXECUTION_LIMITS.repairTimeoutMs, request.timeoutMs ?? EXECUTION_LIMITS.repairTimeoutMs)
-  );
-  const repairedOutput = extractBoundedJson(repairedContent, EXECUTION_LIMITS.maxResultBytes);
-  const repairedSchemaValid = validateRegisteredSchema(schemaId, repairedOutput);
-  if (!repairedSchemaValid) {
-    throw Object.assign(new Error("Backend output failed registered schema validation after one repair attempt."), {
-      code: "SCHEMA_INVALID"
-    });
+  let repairedContent: string;
+  let repairedOutput: unknown;
+  try {
+    repairedContent = await postLocalHttpChat(
+      manifest,
+      buildRepairMessages(schemaId, request, output === undefined ? content : JSON.stringify(output), output),
+      signal,
+      options,
+      request,
+      Math.min(EXECUTION_LIMITS.repairTimeoutMs, request.timeoutMs ?? EXECUTION_LIMITS.repairTimeoutMs)
+    );
+    repairedOutput = extractBoundedJson(repairedContent, EXECUTION_LIMITS.maxResultBytes);
+    const repairedSchemaValid = validateRegisteredSchema(schemaId, repairedOutput);
+    if (!repairedSchemaValid) {
+      throw Object.assign(new Error("Backend output failed registered schema validation after one repair attempt."), {
+        code: "SCHEMA_INVALID"
+      });
+    }
+  } catch (repairError) {
+    if (repairError instanceof Error) {
+      throw Object.assign(repairError, { repairAttempted: true, repairSucceeded: false });
+    }
+    throw repairError;
   }
-  return { output: repairedOutput, outputBytes: byteLength(content) + byteLength(repairedContent), schemaValid: true, repaired: true };
+  return {
+    output: repairedOutput,
+    outputBytes: byteLength(content) + byteLength(repairedContent),
+    schemaValid: true,
+    repaired: true,
+    repairAttempted: true,
+    repairSucceeded: true
+  };
 }
 
 export async function executeCompletion(
@@ -689,4 +849,30 @@ export async function executeCompletion(
   }
   if (manifest.kind === "local_http") return executeLocalHttp(manifest, request, signal, options);
   return executeCli(manifest, request, signal, options);
+}
+
+export async function listBackendModels(
+  manifest: BackendManifest,
+  signal: AbortSignal,
+  options: ExecutorOptions = {}
+): Promise<readonly string[]> {
+  if (!manifest.modelSelection) return [];
+  if (signal.aborted) throw abortError("Model listing was cancelled.");
+  if (manifest.kind !== "subscription_cli") return [];
+
+  const adapter = getSubscriptionCliAdapter(manifest.id);
+  if (!adapter?.listModels) return [];
+
+  const envSource = options.env ?? process.env;
+  const executable = await normalizeResolvedExecutable(await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource));
+
+  const fixtureExecFile =
+    isJavaScriptExecutable(executable)
+      ? (async (_executable, args, execOptions) => {
+          const result = await promisify(execFile)(process.execPath, [executable, ...args], execOptions);
+          return { stdout: result.stdout, stderr: result.stderr };
+        }) satisfies ExecFileProbe
+      : undefined;
+
+  return adapter.listModels(executable, { signal, ...(fixtureExecFile ? { execFile: fixtureExecFile } : {}) });
 }

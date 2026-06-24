@@ -34,4 +34,5 @@ jobs:
             output/release/v*/vdt-studio-cli-*.tgz
             output/release/v*/SHA256SUMS
             output/release/v*/manifest.json
+            output/release/v*/sbom.spdx.json
             output/release/sbom.spdx.json

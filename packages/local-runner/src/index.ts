@@ -3,3 +3,7 @@ export * from "./server/app";
 export * from "./server/executor";
 export * from "./server/manifests";
 export * from "./server/pairing";
+export * from "./server/runtime";
+export * from "./sidecar/host";
+export * from "./sidecar/protocol";
+export * from "./sidecar/runtime";

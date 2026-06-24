@@ -1,4 +1,5 @@
 import {
+  CLI_CATALOG,
   getCliCatalogEntry,
   type CliAgentId,
   type ExecutionSettings
@@ -6,8 +7,12 @@ import {
 
 export interface CliAgentDetectionLike {
   id: CliAgentId;
+  installed?: boolean | undefined;
   alias: string | null;
+  status?: string | undefined;
 }
+
+const CLI_AUTO_SELECT_PRIORITY: readonly CliAgentId[] = ["cursor-agent", "codex", "claude", "gemini", "copilot"];
 
 export function resolveCliCommandForAgent(
   agentId: CliAgentId,
@@ -24,9 +29,40 @@ export function patchSelectedCliCommandAfterRescan(
   rescannedAgentId?: CliAgentId
 ): ExecutionSettings {
   const selectedId = executionSettings.selectedCliAgentId;
-  if (!selectedId) {
-    return executionSettings;
+  const usableAgents = detectionAgents.filter((agent) =>
+    agent.installed !== false &&
+    agent.status !== "not_installed" &&
+    agent.status !== "unavailable"
+  );
+  const selectedAgent = selectedId ? usableAgents.find((agent) => agent.id === selectedId) : undefined;
+
+  if (!selectedId || (!selectedAgent && rescannedAgentId === undefined)) {
+    const preferredId =
+      CLI_AUTO_SELECT_PRIORITY.find((id) => usableAgents.some((agent) => agent.id === id)) ??
+      CLI_CATALOG.find((entry) => usableAgents.some((agent) => agent.id === entry.id))?.id;
+    if (!preferredId) {
+      return executionSettings;
+    }
+    const command = resolveCliCommandForAgent(preferredId, detectionAgents);
+    if (
+      executionSettings.selectedCliAgentId === preferredId &&
+      executionSettings.command === command &&
+      executionSettings.localRunnerPresetId === "custom_cli_json" &&
+      executionSettings.runnerProviderId === "cli_stub"
+    ) {
+      return executionSettings;
+    }
+    return {
+      ...executionSettings,
+      executionMode: "local_cli",
+      selectedCliAgentId: preferredId,
+      localRunnerPresetId: "custom_cli_json",
+      runnerProviderId: "cli_stub",
+      command,
+      cliModelSelection: executionSettings.cliModelSelection ?? { source: "agent_default" }
+    };
   }
+
   if (rescannedAgentId !== undefined && rescannedAgentId !== selectedId) {
     return executionSettings;
   }

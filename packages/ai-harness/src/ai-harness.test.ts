@@ -127,6 +127,21 @@ describe("AI harness", () => {
     expect(project.aiSettings.defaultProviderId).toBe("mock");
   });
 
+  it("adapts mock generation to the requested root KPI", async () => {
+    const project = await generateVdtProject(new MockProvider(), {
+      rootKpi: "Maintenance Cost",
+      industry: "Asset Management",
+      unit: "USD/month",
+      goal: "Reduce reactive maintenance spend",
+      levelOfDetail: "medium"
+    });
+
+    const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+    expect(project.name).toBe("Maintenance Cost Driver Model");
+    expect(project.rootNodeId).toBe("maintenance_cost");
+    expect(rootNode).toMatchObject({ name: "Maintenance Cost", unit: "USD/month", type: "root_kpi" });
+  });
+
   it("generates a project through a local runner provider", async () => {
     const fetchMock = vi.fn(async () => {
       return new Response(JSON.stringify({ ok: true, output: productionVolumeAiOutput }), {

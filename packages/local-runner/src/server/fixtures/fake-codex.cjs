@@ -23,12 +23,24 @@ function parsePromptPayload(text) {
 
 function buildOutput(payload) {
   if (payload.schemaId === "connection-test-v1") {
-    return { ok: true, cwd: process.cwd(), envKeys: Object.keys(process.env).sort() };
+    return { ok: true };
   }
   return {
     projectTitle: "Fake Codex tree",
     rootNodeId: "root",
-    nodes: [{ id: "root" }],
+    nodes: [
+      {
+        id: "root",
+        name: "Root KPI",
+        description: "Synthetic root KPI for executor tests.",
+        type: "root_kpi",
+        unit: "units",
+        aiConfidence: 0.9,
+        aiRationale: "Fixture output for schema-valid tests.",
+        controllability: "medium",
+        materiality: "high"
+      }
+    ],
     edges: [],
     assumptions: [],
     questionsForUser: [],
@@ -53,6 +65,11 @@ function writeJsonl(result) {
 }
 
 function main() {
+  if (process.argv.includes("debug") && process.argv.includes("models")) {
+    process.stdout.write(`${JSON.stringify({ models: [{ slug: "gpt-5.5" }, { id: "gpt-5.2" }, { id: "gpt-5.3-codex" }, { id: "codex-auto-review" }] })}\n`);
+    process.exit(0);
+  }
+
   const prompt = readStdinPrompt();
   const payload = parsePromptPayload(prompt);
 

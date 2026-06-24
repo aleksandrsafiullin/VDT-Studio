@@ -46,6 +46,32 @@ describe("probeCodexAuth", () => {
     expect(result.authSummary).toMatch(/authenticated/i);
   });
 
+  it("falls back to text login status when --json is unsupported", async () => {
+    const result = await probeCodexAuth("/usr/bin/codex", {
+      execFileImpl: mockExec({
+        "/usr/bin/codex login status --json": Object.assign(new Error("unexpected argument '--json' found"), {
+          stderr: "error: unexpected argument '--json' found\nUsage: codex login status [OPTIONS]",
+          code: 2
+        }),
+        "/usr/bin/codex login status": { stdout: "Logged in using ChatGPT\n", stderr: "" }
+      })
+    });
+    expect(result.status).toBe("ready");
+  });
+
+  it("retries status with fast service tier for legacy default config files", async () => {
+    const result = await probeCodexAuth("/usr/bin/codex", {
+      execFileImpl: mockExec({
+        "/usr/bin/codex login status --json": Object.assign(new Error("unknown variant `default`"), {
+          stderr: "Error loading configuration: unknown variant `default`, expected `fast` or `flex`",
+          code: 1
+        }),
+        '/usr/bin/codex login status --json -c service_tier="fast"': { stdout: '{"loggedIn":true}', stderr: "" }
+      })
+    });
+    expect(result.status).toBe("ready");
+  });
+
   it("maps ChatGPT sign-in required from status stderr patterns", async () => {
     const execFileImpl: ExecFileProbe = async () => {
       throw Object.assign(new Error("login required"), { stderr: "Please sign in to ChatGPT", code: 1 });
@@ -56,11 +82,16 @@ describe("probeCodexAuth", () => {
   });
 
   it("uses exec connection test when status command is unavailable", async () => {
+    const execCalls: string[][] = [];
     const execFileImpl: ExecFileProbe = async (_executable, args) => {
+      execCalls.push([...args]);
       if (args[0] === "login") throw Object.assign(new Error("invalid command"), { stderr: "invalid command login" });
       return { stdout: successJsonl, stderr: "" };
     };
     const result = await probeCodexAuth("/usr/bin/codex", { execFileImpl });
     expect(result.status).toBe("ready");
+    expect(execCalls.some((args) => args[0] === "exec" && args.includes("--ephemeral"))).toBe(true);
+    expect(execCalls.some((args) => args[0] === "exec" && args.includes("--ignore-rules"))).toBe(true);
+    expect(execCalls.some((args) => args[0] === "exec" && args.includes("--model") && args.includes("gpt-5.5"))).toBe(true);
   });
 });

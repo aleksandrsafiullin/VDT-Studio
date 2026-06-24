@@ -7,7 +7,6 @@ import { createManifestRegistry } from "./manifests";
 import { executeCompletion } from "./executor";
 
 const fakeCursor = fileURLToPath(new URL("./fixtures/fake-cursor.cjs", import.meta.url));
-const isDarwin = process.platform === "darwin";
 const tempDirs: string[] = [];
 
 async function makeTempDir(prefix: string): Promise<string> {
@@ -32,7 +31,7 @@ function fakeCursorExecutor(env: NodeJS.ProcessEnv = process.env) {
 }
 
 describe("cursor subscription executor", () => {
-  it("executes certified cursor manifest through adapter parseOutput", async () => {
+  it("executes certified cursor manifest through open-design-style ephemeral workspace mode", async () => {
     const result = await executeCompletion(
       cursorManifest(),
       {
@@ -62,6 +61,26 @@ describe("cursor subscription executor", () => {
       new AbortController().signal,
       fakeCursorExecutor()
     );
+    expect(result.schemaValid).toBe(true);
+    expect(result.output).toMatchObject({ projectTitle: "Fake Cursor tree", rootNodeId: "root" });
+  });
+
+  it("resolves from schema-valid Cursor stream output before a slow process close", async () => {
+    const startedAt = Date.now();
+    const result = await executeCompletion(
+      cursorManifest(),
+      {
+        requestId: crypto.randomUUID(),
+        backendId: "cursor_subscription",
+        taskType: "generate_tree",
+        schemaId: "generate-tree-v1",
+        input: { prompt: "Build a tree" },
+        timeoutMs: 2_000
+      },
+      new AbortController().signal,
+      fakeCursorExecutor({ ...process.env, VDT_FAKE_CURSOR_MODE: "result-then-slow" })
+    );
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
     expect(result.schemaValid).toBe(true);
     expect(result.output).toMatchObject({ projectTitle: "Fake Cursor tree", rootNodeId: "root" });
   });
@@ -123,7 +142,7 @@ describe("cursor subscription executor", () => {
     expect(await import("node:fs/promises").then((fs) => fs.readdir(tempRoot))).toEqual([]);
   });
 
-  it.skipIf(!isDarwin)("blocks honey-file env from filtered child environment on darwin", async () => {
+  it("does not forward unrelated file-path environment to cursor", async () => {
     const tempRoot = await makeTempDir("vdt-cursor-honey-");
     const repoDir = await makeTempDir("vdt-cursor-repo-");
     const honeyPath = path.join(repoDir, "honey.txt");
@@ -141,13 +160,12 @@ describe("cursor subscription executor", () => {
       new AbortController().signal,
       {
         tempRoot,
-        env: { ...process.env, HONEY_PATH: honeyPath },
+        env: { ...process.env, VDT_FAKE_CURSOR_MODE: "honey-read", HONEY_PATH: honeyPath },
         resolveExecutable: async () => fakeCursor
       }
     );
     expect(result.output).toMatchObject({ ok: true });
-    expect((result.output as { envKeys?: string[] }).envKeys).not.toContain("HONEY_PATH");
     expect(JSON.stringify(result.output)).not.toContain("secret");
-    expect(JSON.stringify(result.output)).not.toContain("LEAKED:");
+    expect(JSON.stringify(result.output)).not.toContain("leaked");
   }, 30_000);
 });

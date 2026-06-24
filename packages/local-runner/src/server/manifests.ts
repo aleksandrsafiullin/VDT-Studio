@@ -60,20 +60,20 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     id: "cursor_subscription",
     label: "Cursor Agent",
     kind: "subscription_cli",
-    supportLevel: "beta-blocked",
+    supportLevel: "beta",
     taskTypes: ALL_VDT_TASK_TYPES,
     schemaIds: ALL_VDT_SCHEMA_IDS,
     modelSelection: true,
     cli: {
       executableAliases: ["agent", "cursor-agent", "cursor"],
-      args: ["--print", "--output-format", "stream-json", "--stream-partial-output", "--mode", "ask", "--sandbox", "enabled", "--trust"],
+      args: ["--print", "--output-format", "stream-json", "--stream-partial-output", "--mode", "ask"],
       versionArgs: ["--version"]
     },
     safety: {
       toolsDisabled: false,
-      requiresOsSandbox: true,
+      requiresOsSandbox: false,
       certified: true,
-      sandboxProfile: "darwin-v1",
+      ephemeralWorkspaceOnly: true,
       trustEphemeralWorkspace: true
     }
   },
@@ -87,7 +87,21 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     modelSelection: true,
     cli: {
       executableAliases: ["codex"],
-      args: ["exec", "--json", "--color", "never", "--ephemeral", "--sandbox", "read-only"],
+      args: [
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--skip-git-repo-check",
+        "--ignore-rules",
+        "--sandbox",
+        "workspace-write",
+        "-c",
+        "sandbox_workspace_write.network_access=true",
+        "-c",
+        "service_tier=\"fast\""
+      ],
       versionArgs: ["--version"]
     },
     safety: { toolsDisabled: true, requiresOsSandbox: false, certified: true }
@@ -132,9 +146,8 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     },
     safety: {
       toolsDisabled: true,
-      requiresOsSandbox: true,
-      certified: true,
-      sandboxProfile: "darwin-v1"
+      requiresOsSandbox: false,
+      certified: true
     }
   },
   {
@@ -160,9 +173,8 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     },
     safety: {
       toolsDisabled: true,
-      requiresOsSandbox: true,
-      certified: true,
-      sandboxProfile: "darwin-v1"
+      requiresOsSandbox: false,
+      certified: true
     }
   }
 ]);
@@ -176,20 +188,18 @@ export function createManifestRegistry(additional: readonly BackendManifest[] = 
   return registry;
 }
 
-function isPublicSandboxCertified(manifest: BackendManifest): boolean {
-  const profile = manifest.safety.sandboxProfile;
-  if (!manifest.safety.requiresOsSandbox || profile === undefined) return false;
-  if (profile === "darwin-v1") return process.platform === "darwin";
-  return false;
-}
-
 export function publicManifest(manifest: BackendManifest) {
-  const sandboxCertified = isPublicSandboxCertified(manifest);
+  const unavailable =
+    manifest.supportLevel === "beta-blocked" || manifest.supportLevel === "experimental-disabled";
   return {
     id: manifest.id,
+    backendId: manifest.id,
     label: manifest.label,
     kind: manifest.kind,
+    mode: manifest.kind === "mock" ? "local_http" : manifest.kind,
     supportLevel: manifest.supportLevel,
+    status: unavailable ? "unavailable" : "available",
+    ...(unavailable ? { message: "Backend is present but not enabled for normal execution." } : {}),
     taskTypes: manifest.taskTypes,
     schemaIds: manifest.schemaIds,
     modelSelection: manifest.modelSelection,
@@ -197,7 +207,7 @@ export function publicManifest(manifest: BackendManifest) {
       toolsDisabled: manifest.safety.toolsDisabled,
       requiresOsSandbox: manifest.safety.requiresOsSandbox,
       certified: manifest.safety.certified,
-      ...(sandboxCertified ? { sandboxCertified: true as const } : {})
+      ...(manifest.safety.ephemeralWorkspaceOnly === true ? { ephemeralWorkspaceOnly: true as const } : {})
     }
   };
 }

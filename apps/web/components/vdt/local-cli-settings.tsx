@@ -5,13 +5,16 @@ import { ChevronDown, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextInput } from "@/components/ui/field";
-import { hasStandaloneRunnerUi, resolveVdtAppMode } from "@/lib/app-mode";
+import { createAiExecutionClient } from "@/lib/ai-execution-client";
+import { hasStandaloneRunnerUi, resolveVdtAppMode, type VdtAppMode } from "@/lib/app-mode";
 import {
   CLI_CATALOG,
+  LOCAL_RUNNER_PRESET_CATALOG,
   getCliCatalogEntry,
   type CliAgentId,
   type CliCatalogEntry,
-  type CliModelSelection
+  type CliModelSelection,
+  type LocalRunnerPresetCatalogEntry
 } from "@/lib/execution-mode-catalog";
 import { CliAgentCard, type CliAgentDetectionView } from "./cli-agent-card";
 import { CliInstallGrid } from "./cli-install-grid";
@@ -57,6 +60,101 @@ function AccordionSection({
   );
 }
 
+function LocalModelCard({
+  preset,
+  selected,
+  onSelect
+}: {
+  preset: LocalRunnerPresetCatalogEntry;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <article
+      data-testid={`local-model-card-${preset.id}`}
+      className={clsx(
+        "rounded-lg border bg-white p-3 transition",
+        selected ? "border-accent ring-2 ring-blue-100" : "border-line hover:border-slate-300"
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-ink">{preset.label}</p>
+          <p className="mt-1 text-xs leading-5 text-muted">Local model server managed by the desktop runtime.</p>
+          <p className="mt-2 truncate rounded-md bg-slate-50 px-2 py-1.5 font-mono text-[11px] text-slate-600">
+            {preset.baseUrl}
+          </p>
+          {preset.model ? <p className="mt-1 text-xs text-slate-500">Default model: {preset.model}</p> : null}
+        </div>
+        <Button
+          size="sm"
+          variant={selected ? "primary" : "secondary"}
+          data-testid={`local-model-select-${preset.id}`}
+          onClick={onSelect}
+        >
+          {selected ? "Selected" : "Select"}
+        </Button>
+      </div>
+    </article>
+  );
+}
+
+function backendIdForCliAgent(agentId: CliAgentId): string {
+  if (agentId === "cursor-agent") return "cursor_subscription";
+  return `${agentId}_subscription`;
+}
+
+export function LocalAiRuntimeErrorBanner({
+  message,
+  appMode
+}: {
+  message: string;
+  appMode: VdtAppMode;
+}) {
+  const desktopMode = appMode === "desktop";
+  return (
+    <div
+      role="alert"
+      data-testid="local-cli-detection-error"
+      className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+    >
+      <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+      <div>
+        <p className="font-medium">{desktopMode ? "Desktop runtime unavailable" : "Could not scan installed CLIs"}</p>
+        <p className="mt-0.5 text-xs leading-5">{message}</p>
+        <p className="mt-1 text-xs leading-5 text-amber-800">
+          {desktopMode
+            ? "Local AI is temporarily unavailable. API key providers remain available while the desktop runtime recovers."
+            : "You can still configure agents below. Rescan when the detection service is available."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export function LocalModelCards({
+  selectedPresetId,
+  onSelectPreset
+}: {
+  selectedPresetId?: string | undefined;
+  onSelectPreset: (presetId: LocalRunnerPresetCatalogEntry["id"]) => void;
+}) {
+  const localModelPresets = LOCAL_RUNNER_PRESET_CATALOG.filter((preset) => preset.runnerProviderId === "local_http_stub");
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-3" data-testid="local-model-cards">
+      {localModelPresets.map((preset) => (
+        <LocalModelCard
+          key={preset.id}
+          preset={preset}
+          selected={selectedPresetId === preset.id}
+          onSelect={() => onSelectPreset(preset.id)}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function LocalCliSettings() {
   const executionSettings = useVdtStudioStore((state) => state.executionSettings);
   const cliDetectionAgents = useVdtStudioStore((state) => state.cliDetectionAgents);
@@ -68,6 +166,7 @@ export function LocalCliSettings() {
   const cliTestStatusByAgent = useVdtStudioStore((state) => state.cliTestStatusByAgent);
   const isTestingCliByAgent = useVdtStudioStore((state) => state.isTestingCliByAgent);
   const setSelectedCliAgentId = useVdtStudioStore((state) => state.setSelectedCliAgentId);
+  const setLocalRunnerPreset = useVdtStudioStore((state) => state.setLocalRunnerPreset);
   const setCliModelForAgent = useVdtStudioStore((state) => state.setCliModelForAgent);
   const setMemoryModelMode = useVdtStudioStore((state) => state.setMemoryModelMode);
   const rescanClis = useVdtStudioStore((state) => state.rescanClis);
@@ -84,7 +183,8 @@ export function LocalCliSettings() {
   const selectedCliAgentId = executionSettings.selectedCliAgentId;
   const memoryModelMode = executionSettings.memoryModelMode ?? "same_as_chat";
   const memoryCliAgentId = executionSettings.memoryCliAgentId;
-  const showStandaloneRunner = hasStandaloneRunnerUi(resolveVdtAppMode());
+  const appMode = resolveVdtAppMode();
+  const showStandaloneRunner = hasStandaloneRunnerUi(appMode);
 
   const detectionById = new Map(
     buildDetectionFallback().map((fallback) => {
@@ -147,6 +247,17 @@ export function LocalCliSettings() {
     setInstallToast(`Copied ${entry.primaryCommand}`);
   }
 
+  async function handleAuthenticate(entry: CliCatalogEntry) {
+    try {
+      const action = await createAiExecutionClient().openProviderAuth(backendIdForCliAgent(entry.id));
+      window.open(action.docsUrl ?? entry.docsUrl, "_blank", "noopener,noreferrer");
+      setInstallToast(action.label ?? `Opened ${entry.displayName} authentication help`);
+    } catch {
+      window.open(entry.docsUrl, "_blank", "noopener,noreferrer");
+      setInstallToast(`Opened ${entry.displayName} authentication help`);
+    }
+  }
+
   return (
     <div className="space-y-4" data-testid="local-cli-settings">
       <section className="rounded-lg border border-line bg-slate-50 px-4 py-3" data-testid="desktop-local-ai-managed">
@@ -155,6 +266,13 @@ export function LocalCliSettings() {
           Local AI is managed automatically by VDT Studio Desktop. Provider sign-in remains provider-owned.
         </p>
       </section>
+
+      <AccordionSection title="Local model servers" testId="local-model-servers-accordion">
+        <LocalModelCards
+          selectedPresetId={executionSettings.localRunnerPresetId}
+          onSelectPreset={setLocalRunnerPreset}
+        />
+      </AccordionSection>
 
       {showStandaloneRunner ? (
         <section className="rounded-lg border border-line bg-white px-4 py-4" data-testid="local-runner-pairing">
@@ -202,22 +320,7 @@ export function LocalCliSettings() {
         </section>
       ) : null}
 
-      {cliDetectionError ? (
-        <div
-          role="alert"
-          data-testid="local-cli-detection-error"
-          className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
-        >
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          <div>
-            <p className="font-medium">Could not scan installed CLIs</p>
-            <p className="mt-0.5 text-xs leading-5">{cliDetectionError}</p>
-            <p className="mt-1 text-xs leading-5 text-amber-800">
-              You can still configure agents below. Rescan when the detection service is available.
-            </p>
-          </div>
-        </div>
-      ) : null}
+      {cliDetectionError ? <LocalAiRuntimeErrorBanner message={cliDetectionError} appMode={appMode} /> : null}
 
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
@@ -263,6 +366,7 @@ export function LocalCliSettings() {
                   isTesting={Boolean(isTestingCliByAgent[entry.id])}
                   onSelect={() => setSelectedCliAgentId(entry.id)}
                   onTest={() => void testCli(entry.id)}
+                  onAuthenticate={() => void handleAuthenticate(entry)}
                   onModelSelectionChange={(selection) => setCliModelForAgent(entry.id, selection)}
                 />
               );

@@ -1,25 +1,25 @@
-import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import {
-  isVdtSchemaId,
-  schemaSupportsTask,
-  type VdtAiTaskType
-} from "@vdt-studio/model-bridge";
-import type { AuditEvent, BackendManifest, CompletionRequest, RunSnapshot } from "../cli/types";
-import { executeCompletion, EXECUTION_LIMITS, type ExecutorOptions } from "./executor";
-import { createManifestRegistry, publicManifest } from "./manifests";
+import type { AuditEvent, BackendManifest } from "../cli/types";
+import type { ExecutorOptions } from "./executor";
 import { PairingManager, type PairingOptions } from "./pairing";
+import {
+  LOCAL_RUNTIME_VERSION,
+  LocalRuntimeError,
+  cancelRuntimeRequest,
+  completeRuntime,
+  createLocalRuntimeContext,
+  getRuntimeRun,
+  listRuntimeBackends,
+  parseCompletionPayload,
+  testRuntimeBackend,
+  type LocalRuntimeContext,
+  type RuntimeResult
+} from "./runtime";
 
-export const LOCAL_RUNNER_VERSION = "0.2.0";
+export const LOCAL_RUNNER_VERSION = LOCAL_RUNTIME_VERSION;
 export const DEFAULT_LOCAL_RUNNER_PORT = 8765;
 export const DEFAULT_LOCAL_RUNNER_HOST = "127.0.0.1";
 const MAX_BODY_BYTES = 1024 * 1024;
-const MAX_RETAINED_RUNS = 200;
-const TASK_TYPES = new Set<VdtAiTaskType>([
-  "generate_tree", "deepen_node", "simplify_branch", "suggest_alternative", "suggest_formula",
-  "review_model", "check_units", "identify_missing_drivers", "identify_duplicate_drivers",
-  "explain_node", "explain_scenario", "generate_executive_summary"
-]);
 
 export interface LocalRunnerConfig {
   host: string;
@@ -31,24 +31,13 @@ export interface LocalRunnerConfig {
   auditSink?: (event: AuditEvent) => void;
 }
 
-interface ActiveRun extends RunSnapshot {
-  controller: AbortController;
-}
-
 export interface LocalRunnerContext {
   config: LocalRunnerConfig;
   pairing: PairingManager;
-  manifests: ReadonlyMap<string, BackendManifest>;
-  runs: Map<string, ActiveRun>;
-  auditSink: (event: AuditEvent) => void;
+  runtime: LocalRuntimeContext;
 }
 
 export type LocalRunnerServer = Server & { vdtRunnerContext: LocalRunnerContext };
-
-interface RouteResult {
-  statusCode: number;
-  payload?: unknown;
-}
 
 class HttpError extends Error {
   constructor(readonly statusCode: number, readonly code: string, message: string) {
@@ -70,12 +59,16 @@ export function readLocalRunnerConfig(env: NodeJS.ProcessEnv = process.env): Loc
 
 function createContext(config: LocalRunnerConfig): LocalRunnerContext {
   if (config.host !== "127.0.0.1") throw new Error("Local runner must bind only to 127.0.0.1.");
+  const runtimeConfig = {
+    adapterVersion: LOCAL_RUNNER_VERSION,
+    ...(config.manifests === undefined ? {} : { manifests: config.manifests }),
+    ...(config.executor === undefined ? {} : { executor: config.executor }),
+    ...(config.auditSink === undefined ? {} : { auditSink: config.auditSink })
+  };
   return {
     config,
     pairing: new PairingManager(config.pairing),
-    manifests: createManifestRegistry(config.manifests),
-    runs: new Map(),
-    auditSink: config.auditSink ?? ((event) => process.stdout.write(`${JSON.stringify({ event: "vdt_runner_audit", ...event })}\n`))
+    runtime: createLocalRuntimeContext(runtimeConfig)
   };
 }
 
@@ -189,133 +182,7 @@ function assertEmptyBody(value: unknown): void {
   }
 }
 
-function parseCompletion(value: unknown): CompletionRequest {
-  if (!isRecord(value)) throw new HttpError(400, "INVALID_BODY", "Completion body must be an object.");
-  for (const forbidden of ["command", "args", "providerConfig", "schema", "systemPrompt", "userPrompt", "cwd", "env", "extraArgs"]) {
-    if (forbidden in value) throw new HttpError(400, "FORBIDDEN_FIELD", `Completion body must not include ${forbidden}.`);
-  }
-  const allowed = new Set(["requestId", "backendId", "taskType", "schemaId", "input", "model", "timeoutMs"]);
-  for (const key of Object.keys(value)) {
-    if (!allowed.has(key)) throw new HttpError(400, "UNKNOWN_FIELD", `Unknown completion field: ${key}.`);
-  }
-  const requestId = typeof value.requestId === "string" ? value.requestId : "";
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
-    throw new HttpError(400, "INVALID_REQUEST_ID", "requestId must be a UUID.");
-  }
-  const backendId = typeof value.backendId === "string" ? value.backendId : "";
-  const taskType = typeof value.taskType === "string" && TASK_TYPES.has(value.taskType as VdtAiTaskType)
-    ? value.taskType as VdtAiTaskType
-    : undefined;
-  const schemaId = typeof value.schemaId === "string" && isVdtSchemaId(value.schemaId) ? value.schemaId : undefined;
-  if (!backendId) throw new HttpError(400, "INVALID_BACKEND_ID", "backendId is required.");
-  if (!taskType) throw new HttpError(400, "INVALID_TASK_TYPE", "taskType is not approved.");
-  if (!schemaId || !schemaSupportsTask(schemaId, taskType)) throw new HttpError(400, "INVALID_SCHEMA_ID", "schemaId is not approved for this task.");
-  const timeoutMs = value.timeoutMs;
-  if (timeoutMs !== undefined && (typeof timeoutMs !== "number" || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > EXECUTION_LIMITS.timeoutMs)) {
-    throw new HttpError(400, "INVALID_TIMEOUT", `timeoutMs must be at most ${EXECUTION_LIMITS.timeoutMs}.`);
-  }
-  if (value.model !== undefined && (typeof value.model !== "string" || value.model.length > 160 || value.model.includes("\0"))) {
-    throw new HttpError(400, "INVALID_MODEL", "model must be a bounded string.");
-  }
-  return {
-    requestId,
-    backendId,
-    taskType,
-    schemaId,
-    input: value.input,
-    ...(typeof value.model === "string" ? { model: value.model } : {}),
-    ...(typeof timeoutMs === "number" ? { timeoutMs } : {})
-  };
-}
-
-function publicRun(run: ActiveRun): RunSnapshot {
-  const { controller: _controller, ...snapshot } = run;
-  return snapshot;
-}
-
-function publicError(error: unknown): { code: string; message: string } {
-  const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "EXECUTION_FAILED";
-  const messages: Record<string, string> = {
-    CANCELLED: "Completion was cancelled.",
-    TIMEOUT: "Backend execution timed out.",
-    OUTPUT_TOO_LARGE: "Backend output exceeded the configured limit.",
-    OUTPUT_LINE_TOO_LARGE: "Backend output line exceeded the configured limit.",
-    SCHEMA_INVALID: "Backend output failed schema validation.",
-    BACKEND_NOT_INSTALLED: "Backend executable is not installed.",
-    UNSAFE_CONFIGURATION: "Backend is not certified for isolated execution.",
-    LOCAL_HTTP_FAILED: "Local model endpoint failed.",
-    INVALID_PROVIDER_RESPONSE: "Local model returned an invalid response.",
-    AUTH_REQUIRED: "Backend account authentication is required.",
-    RATE_LIMITED: "Backend account allowance or request limit was reached.",
-    POLICY_DISABLED: "Backend access is disabled by the current plan or organization policy.",
-    BACKEND_PARSE_FAILED: "Backend output could not be parsed as the required structured response.",
-    BACKEND_EXIT_FAILED: "Backend process exited before producing a valid response."
-  };
-  return { code, message: messages[code] ?? "Backend execution failed." };
-}
-
-async function runCompletion(request: CompletionRequest, context: LocalRunnerContext): Promise<RouteResult> {
-  if (context.runs.has(request.requestId)) throw new HttpError(409, "DUPLICATE_REQUEST_ID", "requestId already exists.");
-  if (context.runs.size >= MAX_RETAINED_RUNS) {
-    const completedId = [...context.runs].find(([, run]) => run.status !== "running")?.[0];
-    if (!completedId) throw new HttpError(503, "RUN_CAPACITY_REACHED", "Local runner is at its active run limit.");
-    context.runs.delete(completedId);
-  }
-  const manifest = context.manifests.get(request.backendId);
-  if (!manifest) throw new HttpError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
-  if (!manifest.taskTypes.includes(request.taskType) || !manifest.schemaIds.includes(request.schemaId)) {
-    throw new HttpError(400, "UNSUPPORTED_CONTRACT", "Backend does not support this task/schema contract.");
-  }
-  const createdAt = new Date().toISOString();
-  const controller = new AbortController();
-  const run: ActiveRun = {
-    requestId: request.requestId,
-    backendId: request.backendId,
-    taskType: request.taskType,
-    schemaId: request.schemaId,
-    status: "running",
-    createdAt,
-    startedAt: createdAt,
-    controller
-  };
-  context.runs.set(request.requestId, run);
-  const started = Date.now();
-  try {
-    const result = await executeCompletion(manifest, request, controller.signal, context.config.executor);
-    run.status = "succeeded";
-    run.output = result.output;
-    run.outputBytes = result.outputBytes;
-    run.schemaValid = result.schemaValid;
-    if (result.repaired === true) run.repaired = true;
-    run.finishedAt = new Date().toISOString();
-    run.latencyMs = Date.now() - started;
-    context.auditSink({
-      requestId: run.requestId, backendId: run.backendId, adapterVersion: LOCAL_RUNNER_VERSION,
-      taskType: run.taskType, startedAt: run.startedAt!, latencyMs: run.latencyMs,
-      outputBytes: result.outputBytes, schemaValid: result.schemaValid,
-      ...(result.repaired === true ? { repaired: true } : {}),
-      ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
-      ...(result.executableVersion === undefined ? {} : { executableVersion: result.executableVersion })
-    });
-    return { statusCode: 200, payload: { ok: true, run: publicRun(run), output: result.output } };
-  } catch (error) {
-    const normalized = publicError(error);
-    run.status = normalized.code === "CANCELLED" ? "cancelled" : "failed";
-    run.error = normalized;
-    run.outputBytes = 0;
-    run.schemaValid = false;
-    run.finishedAt = new Date().toISOString();
-    run.latencyMs = Date.now() - started;
-    context.auditSink({
-      requestId: run.requestId, backendId: run.backendId, adapterVersion: LOCAL_RUNNER_VERSION,
-      taskType: run.taskType, startedAt: run.startedAt!, latencyMs: run.latencyMs,
-      outputBytes: 0, schemaValid: false, errorCode: normalized.code
-    });
-    return { statusCode: normalized.code === "CANCELLED" ? 409 : 502, payload: { ok: false, run: publicRun(run), error: normalized } };
-  }
-}
-
-export async function routeLocalRunnerRequest(request: IncomingMessage, context: LocalRunnerContext): Promise<RouteResult> {
+export async function routeLocalRunnerRequest(request: IncomingMessage, context: LocalRunnerContext): Promise<RuntimeResult> {
   validateTransport(request, context);
   const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
   if (request.method === "OPTIONS") return { statusCode: 204 };
@@ -342,40 +209,33 @@ export async function routeLocalRunnerRequest(request: IncomingMessage, context:
     return { statusCode: 200, payload: { ok: true } };
   }
   if (request.method === "GET" && url.pathname === "/v1/backends") {
-    return { statusCode: 200, payload: { ok: true, backends: [...context.manifests.values()].map(publicManifest) } };
+    return listRuntimeBackends(context.runtime);
   }
   const testMatch = url.pathname.match(/^\/v1\/backends\/([^/]+)\/test$/);
   if (request.method === "POST" && testMatch) {
     assertEmptyBody(await readJson(request));
     const backendId = decodeURIComponent(testMatch[1]!);
-    return runCompletion({
-      requestId: randomUUID(), backendId, taskType: "generate_tree", schemaId: "connection-test-v1", input: { probe: true }, timeoutMs: 30_000
-    }, context);
+    return testRuntimeBackend(backendId, context.runtime);
   }
   if (request.method === "POST" && url.pathname === "/v1/completions") {
-    return runCompletion(parseCompletion(await readJson(request)), context);
+    return completeRuntime(parseCompletionPayload(await readJson(request)), context.runtime);
   }
   const cancelMatch = url.pathname.match(/^\/v1\/completions\/([^/]+)\/cancel$/);
   if (request.method === "POST" && cancelMatch) {
     await readJson(request);
     const requestId = decodeURIComponent(cancelMatch[1]!);
-    const run = context.runs.get(requestId);
-    if (!run) throw new HttpError(404, "RUN_NOT_FOUND", "Run was not found.");
-    if (run.status !== "running") throw new HttpError(409, "RUN_NOT_ACTIVE", "Run is not active.");
-    run.controller.abort();
-    return { statusCode: 202, payload: { ok: true, requestId, status: "cancelling" } };
+    return cancelRuntimeRequest(requestId, context.runtime);
   }
   const runMatch = url.pathname.match(/^\/v1\/runs\/([^/]+)$/);
   if (request.method === "GET" && runMatch) {
-    const run = context.runs.get(decodeURIComponent(runMatch[1]!));
-    if (!run) throw new HttpError(404, "RUN_NOT_FOUND", "Run was not found.");
-    return { statusCode: 200, payload: { ok: true, run: publicRun(run) } };
+    return getRuntimeRun(decodeURIComponent(runMatch[1]!), context.runtime);
   }
   throw new HttpError(404, "ROUTE_NOT_FOUND", "Local runner route was not found.");
 }
 
 function normalizeError(error: unknown): HttpError {
   if (error instanceof HttpError) return error;
+  if (error instanceof LocalRuntimeError) return new HttpError(error.statusCode, error.code, error.message);
   return new HttpError(500, "LOCAL_RUNNER_ERROR", "Local runner failed safely.");
 }
 

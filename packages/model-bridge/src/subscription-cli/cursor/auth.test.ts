@@ -64,12 +64,16 @@ describe("probeCursorAuth", () => {
       '{"type":"system","subtype":"init","session_id":"s1"}',
       '{"type":"result","subtype":"success","is_error":false,"result":"{\\"ok\\":true}","session_id":"s1"}'
     ].join("\n");
+    const calls: string[][] = [];
     const execFileImpl: ExecFileProbe = async (_executable, args) => {
+      calls.push([...args]);
       if (args[0] === "status") throw Object.assign(new Error("invalid command"), { stderr: "invalid command status" });
       return { stdout: stream, stderr: "" };
     };
     const result = await probeCursorAuth("/usr/bin/agent", { execFileImpl });
     expect(result.status).toBe("ready");
+    expect(calls[1]).toEqual(expect.arrayContaining(["--mode", "ask"]));
+    expect(calls[1]).not.toContain("--force");
   });
 
   it("returns error for generic probe failures", async () => {

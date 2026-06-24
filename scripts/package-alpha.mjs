@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { generateReleaseSbom } from "./generate-release-sbom.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(readFileSync(join(root, "packages/cli/package.json"), "utf8"));
@@ -35,6 +36,8 @@ writeFileSync(join(releaseDir, "manifest.json"), `${JSON.stringify({
   version: manifest.version,
   node: manifest.engines.node,
   artifact: tarballs[0],
-  sha256: digest
+  sha256: digest,
+  sbom: "sbom.spdx.json"
 }, null, 2)}\n`, "utf8");
+generateReleaseSbom(root);
 process.stdout.write(`${tarball}\n`);

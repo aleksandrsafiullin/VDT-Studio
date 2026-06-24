@@ -142,7 +142,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     badges: ["official"],
     docsUrl: "https://developers.openai.com/codex/cli",
     installHint: "npm install -g @openai/codex",
-    suggestedModels: ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"]
+    suggestedModels: ["gpt-5.5", "gpt-5.4", "gpt-5.2"]
   },
   {
     id: "gemini",

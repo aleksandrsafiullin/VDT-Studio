@@ -22,3 +22,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - run: pnpm ci:verify
+      - run: pnpm phase7:verify
+      - run: pnpm docs:verify
+      - run: pnpm evaluation:verify
+      - run: pnpm desktop:verify

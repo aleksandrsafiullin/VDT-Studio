@@ -32,13 +32,13 @@ const localHttp = capabilities({
   requiresOsSandbox: false
 });
 
-const subscription = (requiresOsSandbox: boolean) => capabilities({
+const subscription = (requiresOsSandbox: boolean, toolsCanBeDisabled = !requiresOsSandbox) => capabilities({
   structuredOutput: true,
   streaming: true,
   modelSelection: true,
   accountBasedUsage: true,
   localExecution: true,
-  toolsCanBeDisabled: !requiresOsSandbox,
+  toolsCanBeDisabled,
   requiresOsSandbox
 });
 
@@ -56,13 +56,13 @@ export const MODEL_BACKEND_DEFINITIONS: readonly ModelBackendDefinition[] = Obje
     id: "cursor_subscription",
     label: "Cursor Agent",
     mode: "subscription_cli",
-    capabilities: subscription(true),
-    releaseStatus: "beta-blocked"
+    capabilities: subscription(false, false),
+    releaseStatus: "beta"
   },
   { id: "codex_subscription", label: "Codex CLI", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "alpha" },
   { id: "claude_subscription", label: "Claude Code", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "alpha" },
-  { id: "gemini_subscription", label: "Gemini CLI", mode: "subscription_cli", capabilities: subscription(true), releaseStatus: "experimental" },
-  { id: "copilot_subscription", label: "GitHub Copilot CLI", mode: "subscription_cli", capabilities: subscription(true), releaseStatus: "experimental" },
+  { id: "gemini_subscription", label: "Gemini CLI", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "experimental" },
+  { id: "copilot_subscription", label: "GitHub Copilot CLI", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "experimental" },
   { id: "custom_cli", label: "Custom JSON CLI", mode: "custom_cli", capabilities: subscription(true), releaseStatus: "experimental-disabled" }
 ]);
 

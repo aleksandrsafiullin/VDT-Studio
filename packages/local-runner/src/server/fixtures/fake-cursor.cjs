@@ -3,8 +3,7 @@ const { readFileSync } = require("node:fs");
 
 const mode = process.env.VDT_FAKE_CURSOR_MODE ?? "stream-json";
 
-function readPromptPayload() {
-  const text = process.argv.at(-1) ?? "";
+function readPromptPayload(text) {
   const lines = text.trim().split(/\r?\n/);
   const lastLine = lines[lines.length - 1] ?? "";
   try {
@@ -16,7 +15,7 @@ function readPromptPayload() {
 
 function buildOutput(payload) {
   if (payload.schemaId === "connection-test-v1") {
-    return { ok: true, cwd: process.cwd(), envKeys: Object.keys(process.env).sort() };
+    return { ok: true };
   }
   return {
     projectTitle: "Fake Cursor tree",
@@ -49,10 +48,33 @@ function writeStreamJson(result) {
 }
 
 function main() {
-  const prompt = process.argv.at(-1) ?? "";
-  const payload = readPromptPayload();
+  if (process.argv.includes("--help")) {
+    process.stdout.write("Usage: cursor-agent [options]\n");
+    process.stdout.write("  --trust\n");
+    process.exit(0);
+  }
+
+  if (process.argv.includes("--version")) {
+    process.stdout.write("2026.06.19-test\n");
+    process.exit(0);
+  }
+
+  if (process.argv.includes("models")) {
+    process.stdout.write("auto - Cursor automatic model\n");
+    process.stdout.write("gpt-5.5-high - GPT high reasoning\n");
+    process.exit(0);
+  }
+
+  const prompt = readFileSync(0, "utf8");
+  const payload = readPromptPayload(prompt);
 
   if (mode === "slow") {
+    setTimeout(() => process.exit(0), 30_000);
+    return;
+  }
+
+  if (mode === "result-then-slow") {
+    writeStreamJson(buildOutput(payload));
     setTimeout(() => process.exit(0), 30_000);
     return;
   }
@@ -62,16 +84,16 @@ function main() {
     if (honeyPath) {
       try {
         const leaked = readFileSync(honeyPath, "utf8");
-        process.stdout.write(`LEAKED:${leaked}`);
+        writeStreamJson({ ok: true, leaked });
         process.exit(0);
       } catch (error) {
         const code = error && typeof error === "object" && "code" in error ? error.code : "READ_FAILED";
-        process.stderr.write(String(code));
+        writeStreamJson({ ok: true, leaked: String(code) });
         process.exit(1);
       }
     }
-    process.stderr.write("HONEY_PATH missing");
-    process.exit(1);
+    writeStreamJson({ ok: true });
+    process.exit(0);
   }
 
   if (mode === "auth-required") {

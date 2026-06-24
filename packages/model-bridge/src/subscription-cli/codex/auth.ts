@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import type { ModelBackendDetectionResult, ModelBackendStatus } from "../../contract";
 import { validateRegisteredSchema } from "../../schema-registry";
 import type { ExecFileProbe } from "../types";
-import { CODEX_BACKEND_ID } from "./adapter";
+import { CODEX_BACKEND_ID, CODEX_CHATGPT_DEFAULT_MODEL, CODEX_FAST_SERVICE_TIER_ARGS } from "./constants";
 import { parseCodexExecJson } from "./parser";
 import type { CodexVersionEvaluation } from "./version";
 
@@ -66,6 +66,24 @@ function parseStatusJson(stdout: string): ModelBackendStatus | undefined {
   }
 }
 
+function parseStatusText(output: string): ModelBackendStatus | undefined {
+  const text = output.toLowerCase();
+  if (/logged in|authenticated|using chatgpt/.test(text)) return "ready";
+  if (/not logged|log in|login required|sign.?in|authenticate/.test(text)) return "authentication_required";
+  if (/rate.?limit|quota|usage limit/.test(text)) return "rate_limited";
+  return undefined;
+}
+
+function isUnsupportedJsonFlag(error: NodeJS.ErrnoException & { stdout?: string; stderr?: string }): boolean {
+  const text = `${error.stderr ?? ""}\n${error.stdout ?? ""}\n${error.message ?? ""}`;
+  return /unexpected argument '--json'|unknown option.*--json|unrecognized.*--json/i.test(text);
+}
+
+function isLegacyServiceTierConfigError(error: NodeJS.ErrnoException & { stdout?: string; stderr?: string }): boolean {
+  const text = `${error.stderr ?? ""}\n${error.stdout ?? ""}\n${error.message ?? ""}`;
+  return /service_tier|unknown variant `default`|unknown variant "default"/i.test(text);
+}
+
 async function runExec(
   executable: string,
   args: readonly string[],
@@ -86,14 +104,31 @@ async function runExec(
   return { stdout: result.stdout, stderr: result.stderr };
 }
 
+async function runExecWithConfigFallback(
+  executable: string,
+  args: readonly string[],
+  options: ProbeCodexAuthOptions,
+  input?: string
+): Promise<ExecResult> {
+  try {
+    return await runExec(executable, args, options, input);
+  } catch (error) {
+    const execError = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+    if (!isLegacyServiceTierConfigError(execError)) throw error;
+    return runExec(executable, [...args, ...CODEX_FAST_SERVICE_TIER_ARGS], options, input);
+  }
+}
+
 async function probeWithStatusCommand(
   executable: string,
   options: ProbeCodexAuthOptions
 ): Promise<ModelBackendDetectionResult | null> {
   try {
-    const result = await runExec(executable, ["login", "status", "--json"], options);
+    const result = await runExecWithConfigFallback(executable, ["login", "status", "--json"], options);
     const mapped =
-      parseStatusJson(result.stdout) ?? (result.stderr ? classifyAuthFailure(result.stderr, result.stdout, 0) : "ready");
+      parseStatusJson(result.stdout) ??
+      parseStatusText(`${result.stdout}\n${result.stderr}`) ??
+      (result.stderr ? classifyAuthFailure(result.stderr, result.stdout, 0) : "ready");
     return {
       backendId: CODEX_BACKEND_ID,
       status: mapped,
@@ -102,6 +137,32 @@ async function probeWithStatusCommand(
     };
   } catch (error) {
     const execError = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; code?: number | string };
+    if (isUnsupportedJsonFlag(execError)) {
+      try {
+        const result = await runExecWithConfigFallback(executable, ["login", "status"], options);
+        const mapped =
+          parseStatusText(`${result.stdout}\n${result.stderr}`) ??
+          parseStatusJson(result.stdout) ??
+          (result.stderr ? classifyAuthFailure(result.stderr, result.stdout, 0) : "ready");
+        return {
+          backendId: CODEX_BACKEND_ID,
+          status: mapped,
+          authSummary: authSummaryForStatus(mapped),
+          diagnostics: mapped === "ready" ? [] : [result.stderr.trim() || result.stdout.trim()].filter(Boolean)
+        };
+      } catch (fallbackError) {
+        const fallbackExecError = fallbackError as NodeJS.ErrnoException & { stdout?: string; stderr?: string; code?: number | string };
+        const stderr = fallbackExecError.stderr ?? "";
+        const stdout = fallbackExecError.stdout ?? "";
+        const status = classifyAuthFailure(stderr, stdout, typeof fallbackExecError.code === "number" ? fallbackExecError.code : undefined);
+        return {
+          backendId: CODEX_BACKEND_ID,
+          status,
+          authSummary: authSummaryForStatus(status),
+          diagnostics: [stderr.trim() || fallbackExecError.message || "Codex status probe failed."].filter(Boolean)
+        };
+      }
+    }
     if (
       execError.code === "ENOENT" ||
       /unknown command|invalid command|unrecognized|not a codex command/i.test(String(execError.stderr ?? execError.message))
@@ -122,9 +183,24 @@ async function probeWithStatusCommand(
 
 async function probeWithConnectionTest(executable: string, options: ProbeCodexAuthOptions): Promise<ModelBackendDetectionResult> {
   try {
-    const result = await runExec(
+    const result = await runExecWithConfigFallback(
       executable,
-      ["exec", "--json", "--color", "never", "--ephemeral", "--sandbox", "read-only", "-"],
+      [
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--skip-git-repo-check",
+        "--ignore-rules",
+        "--sandbox",
+        "workspace-write",
+        "--model",
+        CODEX_CHATGPT_DEFAULT_MODEL,
+        "-c",
+        "sandbox_workspace_write.network_access=true",
+        ...CODEX_FAST_SERVICE_TIER_ARGS
+      ],
       options,
       CODEX_CONNECTION_TEST_PROMPT
     );

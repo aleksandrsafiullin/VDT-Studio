@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+SIDECAR_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ENTRYPOINT="$SIDECAR_DIR/vdt-local-runtime.mjs"
+
+if [ ! -f "$ENTRYPOINT" ]; then
+  echo "VDT desktop sidecar runtime bundle is missing." >&2
+  exit 127
+fi
+
+exec "${VDT_NODE:-node}" "$ENTRYPOINT"

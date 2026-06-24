@@ -74,6 +74,7 @@ interface CliAgentCardProps {
   isTesting: boolean;
   onSelect: () => void;
   onTest: () => void;
+  onAuthenticate?: (() => void) | undefined;
   onModelSelectionChange: (selection: CliModelSelection) => void;
 }
 
@@ -87,6 +88,7 @@ export function CliAgentCard({
   isTesting,
   onSelect,
   onTest,
+  onAuthenticate,
   onModelSelectionChange
 }: CliAgentCardProps) {
   const modelValue =
@@ -213,6 +215,16 @@ export function CliAgentCard({
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span>{detection.authSummary}</span>
             </span>
+          ) : null}
+          {detection.status === "authentication_required" && onAuthenticate ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              data-testid={`cli-agent-authenticate-${catalog.id}`}
+              onClick={onAuthenticate}
+            >
+              Authenticate
+            </Button>
           ) : null}
         </div>
       </div>

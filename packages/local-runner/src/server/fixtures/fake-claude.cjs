@@ -18,12 +18,24 @@ function parsePromptPayload(text) {
 
 function buildOutput(payload) {
   if (payload.schemaId === "connection-test-v1") {
-    return { ok: true, cwd: process.cwd(), envKeys: Object.keys(process.env).sort() };
+    return { ok: true };
   }
   return {
     projectTitle: "Fake Claude tree",
     rootNodeId: "root",
-    nodes: [{ id: "root" }],
+    nodes: [
+      {
+        id: "root",
+        name: "Root KPI",
+        description: "Synthetic root KPI for executor tests.",
+        type: "root_kpi",
+        unit: "units",
+        aiConfidence: 0.9,
+        aiRationale: "Fixture output for schema-valid tests.",
+        controllability: "medium",
+        materiality: "high"
+      }
+    ],
     edges: [],
     assumptions: [],
     questionsForUser: [],

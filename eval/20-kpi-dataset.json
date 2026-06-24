@@ -1,0 +1,387 @@
+{
+  "schemaVersion": 1,
+  "name": "VDT Studio 20-KPI Provider Evaluation Dataset",
+  "description": "Credential-free KPI briefs and deterministic expectations for provider evaluation. The KPI set mirrors Workstream J in the seamless local AI and alpha plan.",
+  "cases": [
+    {
+      "id": "production-volume",
+      "rootKpi": "Production Volume",
+      "industry": "Mining",
+      "expectedRootUnit": "tonnes/month",
+      "timePeriod": "monthly",
+      "goal": "Increase saleable monthly output without adding new equipment.",
+      "businessContext": "Open-pit operation with planned maintenance, unplanned downtime and variable plant productivity.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Effective Working Time", "Average Productivity", "Downtime"],
+        "prohibitedDuplicatePatterns": ["production volume repeated as an input driver", "downtime split into identical duplicate nodes"],
+        "formulaExpectations": ["Production Volume should connect productive time and productivity/rate drivers."],
+        "unitConsistencyExpectations": ["Root unit should remain a volume per period."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "overall-equipment-effectiveness",
+      "rootKpi": "Overall Equipment Effectiveness",
+      "industry": "Manufacturing",
+      "expectedRootUnit": "%",
+      "timePeriod": "daily",
+      "goal": "Lift OEE for a bottleneck production line.",
+      "businessContext": "Line losses come from availability, speed losses, quality defects and changeover time.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Availability", "Performance", "Quality"],
+        "prohibitedDuplicatePatterns": ["availability and uptime as separate identical drivers", "quality rate and good count ratio duplicated"],
+        "formulaExpectations": ["OEE should be represented as availability multiplied by performance and quality."],
+        "unitConsistencyExpectations": ["Root and component rates should use percentage or ratio units consistently."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "availability",
+      "rootKpi": "Availability",
+      "industry": "Energy",
+      "expectedRootUnit": "%",
+      "timePeriod": "monthly",
+      "goal": "Increase generating asset availability during peak demand months.",
+      "businessContext": "Availability is driven by planned outages, forced outages, maintenance duration and startup reliability.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Scheduled Time", "Planned Outage", "Forced Outage"],
+        "prohibitedDuplicatePatterns": ["downtime repeated under multiple names without distinct causes"],
+        "formulaExpectations": ["Availability should compare available operating time with scheduled or calendar time."],
+        "unitConsistencyExpectations": ["Time components should use compatible hour-based units."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "maintenance-cost",
+      "rootKpi": "Maintenance Cost",
+      "industry": "Asset Management",
+      "expectedRootUnit": "USD/month",
+      "timePeriod": "monthly",
+      "goal": "Reduce maintenance spend without increasing equipment risk.",
+      "businessContext": "Cost is influenced by labor, parts, contractor work, planned work mix and emergency repairs.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Labor Cost", "Spare Parts Cost", "Contractor Cost", "Emergency Work"],
+        "prohibitedDuplicatePatterns": ["planned maintenance and scheduled maintenance as identical children"],
+        "formulaExpectations": ["Maintenance cost should add cost categories and may separate planned versus reactive work."],
+        "unitConsistencyExpectations": ["Cost components should use the same currency per period."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "unit-cost",
+      "rootKpi": "Unit Cost",
+      "industry": "Processing",
+      "expectedRootUnit": "USD/tonne",
+      "timePeriod": "monthly",
+      "goal": "Lower cost per tonne while preserving throughput and recovery.",
+      "businessContext": "Unit cost depends on total operating cost, production volume, energy, reagents, labor and maintenance.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Operating Cost", "Production Volume", "Energy Cost", "Labor Cost"],
+        "prohibitedDuplicatePatterns": ["total cost repeated as a child of itself", "volume and throughput duplicated without distinction"],
+        "formulaExpectations": ["Unit Cost should divide total cost by production or throughput volume."],
+        "unitConsistencyExpectations": ["Numerator should be currency per period and denominator should be volume per period."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "inventory-level",
+      "rootKpi": "Inventory Level",
+      "industry": "Supply Chain",
+      "expectedRootUnit": "units",
+      "timePeriod": "weekly",
+      "goal": "Reduce excess inventory while maintaining fulfillment reliability.",
+      "businessContext": "Inventory changes with beginning stock, receipts, demand, returns, scrap and safety stock policy.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Opening Inventory", "Receipts", "Demand", "Safety Stock"],
+        "prohibitedDuplicatePatterns": ["demand and sales used as duplicate outflow nodes"],
+        "formulaExpectations": ["Inventory should reconcile opening stock plus inflows minus outflows."],
+        "unitConsistencyExpectations": ["Inventory, receipts and demand should use compatible unit counts."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "service-level",
+      "rootKpi": "Service Level",
+      "industry": "Logistics",
+      "expectedRootUnit": "%",
+      "timePeriod": "weekly",
+      "goal": "Improve customer service level across regional lanes.",
+      "businessContext": "Service is affected by order fill, on-time delivery, stockouts, carrier capacity and exception handling.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Order Fill Rate", "On-Time Delivery", "Stock Availability"],
+        "prohibitedDuplicatePatterns": ["on-time delivery repeated as service level itself"],
+        "formulaExpectations": ["Service Level should be framed as successful orders or deliveries over total demand."],
+        "unitConsistencyExpectations": ["Rate components should use percentage or count-over-count logic."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "working-capital",
+      "rootKpi": "Working Capital",
+      "industry": "Finance",
+      "expectedRootUnit": "USD",
+      "timePeriod": "monthly",
+      "goal": "Release cash tied up in operations without disrupting supply.",
+      "businessContext": "Working capital is shaped by receivables, inventory, payables, payment terms and forecast accuracy.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Accounts Receivable", "Inventory", "Accounts Payable"],
+        "prohibitedDuplicatePatterns": ["cash and working capital shown as the same root calculation"],
+        "formulaExpectations": ["Working Capital should combine receivables and inventory less payables."],
+        "unitConsistencyExpectations": ["Balance-sheet components should use the same currency."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "ebitda",
+      "rootKpi": "EBITDA",
+      "industry": "Corporate Performance",
+      "expectedRootUnit": "USD/month",
+      "timePeriod": "monthly",
+      "goal": "Improve EBITDA through revenue growth and operating cost control.",
+      "businessContext": "EBITDA depends on revenue, cost of goods sold, operating expenses, mix and one-off adjustments.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Revenue", "Cost of Goods Sold", "Operating Expenses"],
+        "prohibitedDuplicatePatterns": ["gross profit and EBITDA used as interchangeable duplicate nodes"],
+        "formulaExpectations": ["EBITDA should subtract operating costs from revenue before financing, tax, depreciation and amortization effects."],
+        "unitConsistencyExpectations": ["Revenue and cost components should use the same currency per period."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "revenue",
+      "rootKpi": "Revenue",
+      "industry": "Retail",
+      "expectedRootUnit": "USD/month",
+      "timePeriod": "monthly",
+      "goal": "Grow monthly revenue without relying solely on discounts.",
+      "businessContext": "Revenue is affected by traffic, conversion, average order value, price, product mix and returns.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Volume", "Average Price", "Returns", "Product Mix"],
+        "prohibitedDuplicatePatterns": ["sales and revenue as identical siblings"],
+        "formulaExpectations": ["Revenue should connect sales volume and price, with returns or discounts where relevant."],
+        "unitConsistencyExpectations": ["Price and volume should resolve to currency per period."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "retention",
+      "rootKpi": "Retention",
+      "industry": "SaaS",
+      "expectedRootUnit": "%",
+      "timePeriod": "quarterly",
+      "goal": "Improve customer retention across enterprise accounts.",
+      "businessContext": "Retention depends on renewals, churn, product adoption, support quality and account expansion risk.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Renewals", "Churn", "Product Adoption", "Customer Success"],
+        "prohibitedDuplicatePatterns": ["retention and renewal rate duplicated without a clear distinction"],
+        "formulaExpectations": ["Retention should compare retained customers or revenue with the starting base."],
+        "unitConsistencyExpectations": ["Customer-count or revenue-base denominators should be explicit."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "conversion-rate",
+      "rootKpi": "Conversion Rate",
+      "industry": "Ecommerce",
+      "expectedRootUnit": "%",
+      "timePeriod": "weekly",
+      "goal": "Increase purchase conversion from site visits.",
+      "businessContext": "Conversion is influenced by qualified traffic, product availability, checkout friction, pricing and page speed.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Qualified Traffic", "Purchases", "Checkout Completion", "Product Availability"],
+        "prohibitedDuplicatePatterns": ["orders and conversions repeated as separate identical drivers"],
+        "formulaExpectations": ["Conversion Rate should divide successful conversions by eligible visitors or sessions."],
+        "unitConsistencyExpectations": ["Numerator and denominator should be compatible counts."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "delivery-time",
+      "rootKpi": "Delivery Time",
+      "industry": "Logistics",
+      "expectedRootUnit": "days",
+      "timePeriod": "weekly",
+      "goal": "Shorten average customer delivery time without increasing expedite cost.",
+      "businessContext": "Delivery time includes order processing, warehouse pick/pack, dispatch wait, transit and last-mile handoff.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Order Processing Time", "Warehouse Time", "Transit Time", "Last-Mile Time"],
+        "prohibitedDuplicatePatterns": ["lead time and delivery time used as identical sibling drivers"],
+        "formulaExpectations": ["Delivery Time should add sequential time components or weighted lane times."],
+        "unitConsistencyExpectations": ["All time components should use compatible time units."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "safety-incident-rate",
+      "rootKpi": "Safety Incident Rate",
+      "industry": "Industrial Operations",
+      "expectedRootUnit": "incidents/200k hours",
+      "timePeriod": "monthly",
+      "goal": "Reduce recordable incident rate across operating crews.",
+      "businessContext": "Incident rate is affected by exposure hours, unsafe conditions, training compliance, permit quality and near-miss reporting.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Recordable Incidents", "Exposure Hours", "Training Compliance", "Hazard Controls"],
+        "prohibitedDuplicatePatterns": ["incident count duplicated as incident rate"],
+        "formulaExpectations": ["Safety Incident Rate should normalize incidents by exposure hours."],
+        "unitConsistencyExpectations": ["Incident count and exposure-hour denominator should be explicit."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "energy-consumption",
+      "rootKpi": "Energy Consumption",
+      "industry": "Utilities",
+      "expectedRootUnit": "MWh/month",
+      "timePeriod": "monthly",
+      "goal": "Reduce energy consumption while preserving production output.",
+      "businessContext": "Energy use is driven by equipment load, operating hours, efficiency, standby losses and process conditions.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Operating Hours", "Equipment Load", "Efficiency", "Standby Losses"],
+        "prohibitedDuplicatePatterns": ["power and energy used interchangeably without time conversion"],
+        "formulaExpectations": ["Energy Consumption should connect power/load with operating time and efficiency losses."],
+        "unitConsistencyExpectations": ["Power multiplied by time should resolve to energy units."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "recovery",
+      "rootKpi": "Recovery",
+      "industry": "Mineral Processing",
+      "expectedRootUnit": "%",
+      "timePeriod": "weekly",
+      "goal": "Improve metal recovery while keeping throughput stable.",
+      "businessContext": "Recovery depends on feed grade, grind size, reagent dosing, residence time and circuit stability.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Recovered Metal", "Feed Metal", "Grind Size", "Reagent Dosing"],
+        "prohibitedDuplicatePatterns": ["recovery and yield duplicated without process distinction"],
+        "formulaExpectations": ["Recovery should compare recovered valuable material with material available in feed."],
+        "unitConsistencyExpectations": ["Recovered and feed metal should use compatible mass units."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "throughput",
+      "rootKpi": "Throughput",
+      "industry": "Processing",
+      "expectedRootUnit": "tonnes/hour",
+      "timePeriod": "daily",
+      "goal": "Increase plant throughput while staying within quality constraints.",
+      "businessContext": "Throughput is influenced by feed availability, equipment capacity, bottleneck utilization, downtime and process constraints.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Feed Availability", "Bottleneck Capacity", "Utilization", "Downtime"],
+        "prohibitedDuplicatePatterns": ["capacity and throughput duplicated without utilization logic"],
+        "formulaExpectations": ["Throughput should connect available operating time, capacity/rate and utilization losses."],
+        "unitConsistencyExpectations": ["Rate, time and output units should be internally consistent."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "yield",
+      "rootKpi": "Yield",
+      "industry": "Manufacturing",
+      "expectedRootUnit": "%",
+      "timePeriod": "daily",
+      "goal": "Increase first-pass yield on a high-volume line.",
+      "businessContext": "Yield is affected by input material quality, process settings, defects, rework and scrap.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Good Output", "Total Input", "Scrap", "Rework"],
+        "prohibitedDuplicatePatterns": ["yield and quality rate duplicated without a defined difference"],
+        "formulaExpectations": ["Yield should compare good output with total input or started units."],
+        "unitConsistencyExpectations": ["Good output, scrap and input should use compatible units."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "procurement-savings",
+      "rootKpi": "Procurement Savings",
+      "industry": "Procurement",
+      "expectedRootUnit": "USD/month",
+      "timePeriod": "monthly",
+      "goal": "Increase realized procurement savings without increasing supply risk.",
+      "businessContext": "Savings depend on negotiated price changes, volume compliance, demand management, supplier rebates and leakage.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Baseline Spend", "Negotiated Price Reduction", "Compliance", "Leakage"],
+        "prohibitedDuplicatePatterns": ["savings and cost avoidance merged without labeling"],
+        "formulaExpectations": ["Procurement Savings should compare baseline and actual spend with volume/compliance treatment."],
+        "unitConsistencyExpectations": ["Baseline, actual and savings values should use the same currency per period."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    },
+    {
+      "id": "workforce-productivity",
+      "rootKpi": "Workforce Productivity",
+      "industry": "Operations",
+      "expectedRootUnit": "units/FTE",
+      "timePeriod": "monthly",
+      "goal": "Increase output per FTE while preserving quality and safety.",
+      "businessContext": "Productivity depends on output volume, staffing, effective working time, skill mix, absenteeism and rework.",
+      "levelOfDetail": "medium",
+      "expectations": {
+        "minimumDepth": 2,
+        "acceptableNodeCountRange": [6, 16],
+        "requiredBusinessDrivers": ["Output Volume", "FTE Count", "Effective Working Time", "Skill Mix"],
+        "prohibitedDuplicatePatterns": ["headcount and FTE repeated as identical nodes"],
+        "formulaExpectations": ["Workforce Productivity should divide output by FTE, hours or labor input."],
+        "unitConsistencyExpectations": ["Output and labor denominator should produce a productivity ratio."]
+      },
+      "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }
+    }
+  ]
+}

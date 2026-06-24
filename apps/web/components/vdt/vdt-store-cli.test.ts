@@ -518,6 +518,250 @@ describe("vdt-store cli rescan", () => {
     expect(useVdtStudioStore.getState().cliTestStatusByAgent.codex?.kind).toBe("success");
   });
 
+  it("generates with Cursor Agent through desktop sidecar without standalone pairing", async () => {
+    vi.stubEnv("NEXT_PUBLIC_VDT_APP_MODE", "desktop");
+    const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      expect(command).toBe("ai_complete");
+      expect(JSON.stringify(args)).not.toContain("pairingToken");
+      expect(args?.request).toMatchObject({
+        providerId: "local_runner",
+        backendId: "cursor_subscription",
+        taskType: "generate_tree",
+        schemaId: "generate-tree-v1",
+        timeoutMs: 60_000
+      });
+      return {
+        output: {
+          projectTitle: "Revenue Value Driver Tree",
+          rootNodeId: "revenue",
+          nodes: [
+            {
+              id: "revenue",
+              name: "Revenue",
+              description: "Total business revenue.",
+              type: "root_kpi",
+              unit: "USD/month",
+              aiConfidence: 0.9,
+              aiRationale: "Revenue is the requested root KPI.",
+              controllability: "medium",
+              materiality: "high"
+            },
+            {
+              id: "price",
+              name: "Price",
+              description: "Average selling price.",
+              type: "input",
+              unit: "USD/unit",
+              aiConfidence: 0.8,
+              aiRationale: "Price directly affects revenue.",
+              controllability: "medium",
+              materiality: "high"
+            },
+            {
+              id: "volume",
+              name: "Volume",
+              description: "Units sold.",
+              type: "input",
+              unit: "units/month",
+              aiConfidence: 0.8,
+              aiRationale: "Volume directly affects revenue.",
+              controllability: "high",
+              materiality: "high"
+            }
+          ],
+          edges: [
+            {
+              id: "edge_revenue_price",
+              sourceNodeId: "revenue",
+              targetNodeId: "price",
+              relation: "multiplicative_driver",
+              aiConfidence: 0.8
+            },
+            {
+              id: "edge_revenue_volume",
+              sourceNodeId: "revenue",
+              targetNodeId: "volume",
+              relation: "multiplicative_driver",
+              aiConfidence: 0.8
+            }
+          ],
+          assumptions: [],
+          questionsForUser: [],
+          warnings: []
+        }
+      };
+    });
+
+    vi.stubGlobal("__TAURI__", { core: { invoke } });
+
+    try {
+      useVdtStudioStore.setState({
+        runnerPairingToken: undefined,
+        cliDetectionAgents: [
+          {
+            id: "cursor-agent",
+            installed: true,
+            executable: "/Users/aks/.local/bin/agent",
+            alias: "agent",
+            version: "2026.06.19",
+            status: "ready",
+            authSummary: "Cursor account is authenticated and ready."
+          }
+        ],
+        executionSettings: {
+          ...DEFAULT_EXECUTION_SETTINGS,
+          executionMode: "local_cli",
+          selectedCliAgentId: "cursor-agent",
+          localRunnerPresetId: "custom_cli_json",
+          runnerProviderId: "cli_stub",
+          timeoutSec: 60,
+          cliModelSelection: { source: "agent_default" }
+        },
+        providerId: "local_runner",
+        providerConfig: {
+          localRunnerPresetId: "custom_cli_json",
+          runnerProviderId: "cli_stub",
+          timeoutSec: 60
+        }
+      });
+
+      await useVdtStudioStore.getState().generateWithAi();
+
+      expect(invoke).toHaveBeenCalledTimes(1);
+      const state = useVdtStudioStore.getState();
+      expect(state.aiError).toBeUndefined();
+      expect(state.project.name).toBe("Revenue Value Driver Tree");
+      expect(state.project.rootNodeId).toBe("revenue");
+      expect(state.isGenerating).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.stubGlobal("__TAURI__", previousTauri);
+    }
+  });
+
+  it("generates with Codex CLI through desktop sidecar without standalone pairing", async () => {
+    vi.stubEnv("NEXT_PUBLIC_VDT_APP_MODE", "desktop");
+    const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      expect(command).toBe("ai_complete");
+      expect(JSON.stringify(args)).not.toContain("pairingToken");
+      expect(args?.request).toMatchObject({
+        providerId: "local_runner",
+        backendId: "codex_subscription",
+        taskType: "generate_tree",
+        schemaId: "generate-tree-v1",
+        timeoutMs: 60_000
+      });
+      return {
+        output: {
+          projectTitle: "Revenue Value Driver Tree",
+          rootNodeId: "revenue",
+          nodes: [
+            {
+              id: "revenue",
+              name: "Revenue",
+              description: "Total business revenue.",
+              type: "root_kpi",
+              unit: "USD/month",
+              aiConfidence: 0.9,
+              aiRationale: "Revenue is the requested root KPI.",
+              controllability: "medium",
+              materiality: "high"
+            },
+            {
+              id: "price",
+              name: "Price",
+              description: "Average selling price.",
+              type: "input",
+              unit: "USD/unit",
+              aiConfidence: 0.8,
+              aiRationale: "Price directly affects revenue.",
+              controllability: "medium",
+              materiality: "high"
+            },
+            {
+              id: "volume",
+              name: "Volume",
+              description: "Units sold.",
+              type: "input",
+              unit: "units/month",
+              aiConfidence: 0.8,
+              aiRationale: "Volume directly affects revenue.",
+              controllability: "high",
+              materiality: "high"
+            }
+          ],
+          edges: [
+            {
+              id: "edge_revenue_price",
+              sourceNodeId: "revenue",
+              targetNodeId: "price",
+              relation: "multiplicative_driver",
+              aiConfidence: 0.8
+            },
+            {
+              id: "edge_revenue_volume",
+              sourceNodeId: "revenue",
+              targetNodeId: "volume",
+              relation: "multiplicative_driver",
+              aiConfidence: 0.8
+            }
+          ],
+          assumptions: [],
+          questionsForUser: [],
+          warnings: []
+        }
+      };
+    });
+
+    vi.stubGlobal("__TAURI__", { core: { invoke } });
+
+    try {
+      useVdtStudioStore.setState({
+        runnerPairingToken: undefined,
+        cliDetectionAgents: [
+          {
+            id: "codex",
+            installed: true,
+            executable: "/usr/local/bin/codex",
+            alias: "codex",
+            version: "0.128.0",
+            status: "ready",
+            authSummary: "ChatGPT subscription is authenticated and ready."
+          }
+        ],
+        executionSettings: {
+          ...DEFAULT_EXECUTION_SETTINGS,
+          executionMode: "local_cli",
+          selectedCliAgentId: "codex",
+          localRunnerPresetId: "custom_cli_json",
+          runnerProviderId: "cli_stub",
+          timeoutSec: 60,
+          cliModelSelection: { source: "agent_default" }
+        },
+        providerId: "local_runner",
+        providerConfig: {
+          localRunnerPresetId: "custom_cli_json",
+          runnerProviderId: "cli_stub",
+          timeoutSec: 60
+        }
+      });
+
+      await useVdtStudioStore.getState().generateWithAi();
+
+      expect(invoke).toHaveBeenCalledTimes(1);
+      const state = useVdtStudioStore.getState();
+      expect(state.aiError).toBeUndefined();
+      expect(state.project.name).toBe("Revenue Value Driver Tree");
+      expect(state.project.rootNodeId).toBe("revenue");
+      expect(state.isGenerating).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.stubGlobal("__TAURI__", previousTauri);
+    }
+  });
+
   it("shows a real CLI test error from the application API", async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue({

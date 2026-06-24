@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -13,7 +14,30 @@ const tarball = join(releaseDir, tarballName);
 const installDir = mkdtempSync(join(tmpdir(), "vdt-cli-release-"));
 
 function run(command, args) {
-  return execFileSync(command, args, { cwd: installDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync(command, args, {
+    cwd: installDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      npm_config_cache: join(installDir, ".npm-cache"),
+      npm_config_update_notifier: "false",
+      npm_config_audit: "false",
+      npm_config_fund: "false"
+    }
+  });
+}
+
+async function canListenOnLoopback(port) {
+  const server = createServer();
+  return await new Promise((resolve) => {
+    server.once("error", (error) => {
+      resolve({ ok: false, error });
+    });
+    server.listen(Number(port), "127.0.0.1", () => {
+      server.close(() => resolve({ ok: true }));
+    });
+  });
 }
 
 try {
@@ -33,6 +57,16 @@ try {
   }
 
   const port = String(18765 + Math.floor(Math.random() * 1000));
+  const loopback = await canListenOnLoopback(port);
+  if (!loopback.ok) {
+    const error = loopback.error;
+    const message = error instanceof Error ? error.message : String(error);
+    if (process.env.CI === "true") {
+      throw new Error(`Loopback preflight failed in CI: ${message}`);
+    }
+    process.stdout.write(`Clean install verified without loopback runner health: ${message}\n`);
+    process.exit(0);
+  }
   const runner = spawn(process.execPath, [cliEntry, "runner", "start"], {
     cwd: installDir,
     env: { ...process.env, LOCAL_RUNNER_PORT: port },

@@ -23,4 +23,5 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm package:alpha
+      - run: pnpm release:bundle:verify
       - run: pnpm package:verify

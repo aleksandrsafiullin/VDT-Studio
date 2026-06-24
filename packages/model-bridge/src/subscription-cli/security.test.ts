@@ -59,4 +59,22 @@ describe("subscription CLI security denylist", () => {
       assertArgsSafe(["--output-format", "json", "--force", "/tmp/prompt.txt"])
     ).toThrow(/Forbidden CLI argument: --force/);
   });
+
+  it("allows scoped Cursor trust but never force", () => {
+    expect(() => assertArgsSafe(["--trust"])).toThrow(/Forbidden CLI argument/);
+    expect(() => assertArgsSafe(["--force"])).toThrow(/Forbidden CLI argument/);
+    expect(() => assertArgsSafe(["--trust"], { allowScopedTrust: true })).not.toThrow();
+    expect(() => assertArgsSafe(["--force"], { allowScopedTrust: true })).toThrow(/Forbidden CLI argument/);
+  });
+
+  it("rejects NUL bytes and path traversal in argv tokens", () => {
+    for (const arg of ["safe\0unsafe", "../secret", "/tmp/vdt/../secret", "nested\\..\\secret"]) {
+      expect(() => assertArgsSafe([arg])).toThrow(/Forbidden CLI argument/);
+      try {
+        assertArgsSafe([arg]);
+      } catch (error) {
+        expect(error).toMatchObject({ code: "UNSAFE_CLI_ARGS", arg });
+      }
+    }
+  });
 });

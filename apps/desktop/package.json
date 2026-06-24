@@ -1,0 +1,11 @@
+{
+  "name": "@vdt-studio/desktop",
+  "version": "0.1.0-alpha.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "verify": "node ../../scripts/verify-desktop-shell.mjs"
+  }
+}

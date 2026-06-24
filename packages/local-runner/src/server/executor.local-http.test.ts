@@ -57,6 +57,8 @@ describe("local HTTP executor repair", () => {
 
     expect(result.schemaValid).toBe(true);
     expect(result.repaired).toBe(true);
+    expect(result.repairAttempted).toBe(true);
+    expect(result.repairSucceeded).toBe(true);
     expect(result.output).toMatchObject({ projectTitle: "Repaired tree", rootNodeId: "root" });
     expect(bodies).toHaveLength(2);
 
@@ -128,7 +130,7 @@ describe("local HTTP executor repair", () => {
         new AbortController().signal,
         { fetch: fetchMock }
       )
-    ).rejects.toMatchObject({ code: "SCHEMA_INVALID" });
+    ).rejects.toMatchObject({ code: "SCHEMA_INVALID", repairAttempted: true, repairSucceeded: false });
 
     expect(calls).toBe(2);
   });

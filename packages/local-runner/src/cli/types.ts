@@ -30,7 +30,8 @@ export interface BackendManifest {
     toolsDisabled: boolean;
     requiresOsSandbox: boolean;
     certified: boolean;
-    sandboxProfile?: "darwin-v1";
+    /** Allows tool-capable provider CLIs only when VDT passes a fresh temp workspace and no repo/project cwd. */
+    ephemeralWorkspaceOnly?: boolean;
     /** Allows adapter-owned --trust only because cwd is a fresh runner temp directory. */
     trustEphemeralWorkspace?: boolean;
   };
@@ -61,6 +62,8 @@ export interface RunSnapshot {
   outputBytes?: number;
   schemaValid?: boolean;
   repaired?: boolean;
+  repairAttempted?: boolean;
+  repairSucceeded?: boolean;
   output?: unknown;
   error?: { code: string; message: string };
 }
@@ -77,5 +80,7 @@ export interface AuditEvent {
   outputBytes: number;
   schemaValid: boolean;
   repaired?: boolean;
+  repairAttempted?: boolean;
+  repairSucceeded?: boolean;
   errorCode?: string;
 }

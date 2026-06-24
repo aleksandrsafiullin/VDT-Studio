@@ -11,15 +11,22 @@ export type ExecFileProbe = (
 
 export interface SubscriptionCliBuildArgsInput {
   model?: string;
+  cwd?: string;
   promptPath?: string;
   promptText?: string;
   schemaPath?: string;
   outputPath?: string;
   toolPolicyPath?: string;
+  enableWorkspaceTrust?: boolean;
 }
 
 export interface SubscriptionCliSpawnHints {
   readonly stdin?: "prompt";
+}
+
+export interface SubscriptionCliModelProbeOptions {
+  readonly signal?: AbortSignal;
+  readonly execFile?: ExecFileProbe;
 }
 
 export interface SubscriptionCliParseResult {
@@ -34,5 +41,7 @@ export interface SubscriptionCliAdapter {
   readonly spawnHints?: SubscriptionCliSpawnHints;
   buildArgs(input: SubscriptionCliBuildArgsInput): readonly string[];
   parseOutput(stdout: string, stderr: string, schemaId: VdtSchemaId): unknown;
+  parseStreamingOutput?(stdout: string, stderr: string, schemaId: VdtSchemaId): unknown | undefined;
   probeAuth?(executable: string, signal?: AbortSignal): Promise<ModelBackendDetectionResult>;
+  listModels?(executable: string, options?: SubscriptionCliModelProbeOptions): Promise<readonly string[]>;
 }

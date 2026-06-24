@@ -5,7 +5,6 @@ import { executeCompletion } from "./executor";
 
 const fakeGemini = fileURLToPath(new URL("./fixtures/fake-gemini.cjs", import.meta.url));
 const fakeCopilot = fileURLToPath(new URL("./fixtures/fake-copilot.cjs", import.meta.url));
-const isDarwin = process.platform === "darwin";
 
 function request(backendId: string, schemaId = "generate-tree-v1") {
   return {
@@ -53,12 +52,4 @@ describe("Gemini and Copilot subscription executors", () => {
     });
   }
 
-  it.skipIf(isDarwin)("fails closed for both providers when the required OS sandbox is unavailable", async () => {
-    for (const id of ["gemini_subscription", "copilot_subscription"]) {
-      await expect(executeCompletion(
-        createManifestRegistry().get(id)!, request(id, "connection-test-v1"), new AbortController().signal,
-        { resolveExecutable: async () => (id === "gemini_subscription" ? fakeGemini : fakeCopilot) }
-      )).rejects.toMatchObject({ code: "UNSAFE_CONFIGURATION" });
-    }
-  });
 });

@@ -126,7 +126,8 @@ export function parseCursorModelList(output: string): string[] {
   const models: string[] = [];
   const seen = new Set<string>();
   for (const line of output.split(/\r?\n/)) {
-    const model = line.match(/^([a-zA-Z0-9][a-zA-Z0-9._:[\]-]*)\s+-\s+.+$/)?.[1];
+    const text = line.trim().replace(/^[-*]\s+/, "");
+    const model = text.match(/^([a-zA-Z0-9][a-zA-Z0-9._:/-]*)(?:\s+-\s+|\s{2,})/)?.[1];
     if (model && !seen.has(model)) {
       seen.add(model);
       models.push(model);
@@ -135,14 +136,62 @@ export function parseCursorModelList(output: string): string[] {
   return models;
 }
 
+function parseGenericModelList(output: string): string[] {
+  const models: string[] = [];
+  const seen = new Set<string>();
+  const add = (model: unknown) => {
+    if (typeof model !== "string") return;
+    const trimmed = model.trim();
+    if (trimmed && !seen.has(trimmed)) {
+      seen.add(trimmed);
+      models.push(trimmed);
+    }
+  };
+  const fromRecord = (value: unknown) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+    const record = value as Record<string, unknown>;
+    for (const key of ["slug", "id", "model", "name"]) add(record[key]);
+  };
+  const trimmed = output.trim();
+  if (!trimmed) return models;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) {
+      parsed.forEach((entry) => typeof entry === "string" ? add(entry) : fromRecord(entry));
+      return models;
+    }
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      const nested = (parsed as Record<string, unknown>).models ?? (parsed as Record<string, unknown>).data;
+      if (Array.isArray(nested)) {
+        nested.forEach((entry) => typeof entry === "string" ? add(entry) : fromRecord(entry));
+        return models;
+      }
+      fromRecord(parsed);
+      if (models.length > 0) return models;
+    }
+  } catch {
+    // Continue with line output.
+  }
+  for (const line of trimmed.split(/\r?\n/)) {
+    const model = line.trim().match(/^([a-zA-Z0-9][a-zA-Z0-9._:/-]*)(?:\s+-\s+|\s{2,}|$)/)?.[1];
+    if (model && !["model", "models", "name", "id"].includes(model.toLowerCase())) add(model);
+  }
+  return models;
+}
+
 export async function discoverSubscriptionCliModels(id: SubscriptionCliId, executable: string): Promise<string[]> {
-  if (id !== "cursor-agent") return [];
-  const result = await execFileAsync(executable, ["--list-models"], {
+  const args = id === "cursor-agent"
+    ? ["models"]
+    : id === "codex"
+      ? ["debug", "models"]
+      : undefined;
+  if (!args) return [];
+  const result = await execFileAsync(executable, args, {
     encoding: "utf8",
     timeout: 10_000,
     maxBuffer: 512 * 1024,
     windowsHide: true,
     shell: false
   });
-  return parseCursorModelList(result.stdout);
+  return id === "cursor-agent" ? parseCursorModelList(result.stdout) : parseGenericModelList(`${result.stdout}\n${result.stderr}`);
 }

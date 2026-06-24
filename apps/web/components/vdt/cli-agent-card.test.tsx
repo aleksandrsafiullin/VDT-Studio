@@ -193,11 +193,14 @@ describe("CliAgentCard", () => {
         isTesting={false}
         onSelect={() => undefined}
         onTest={() => undefined}
+        onAuthenticate={() => undefined}
         onModelSelectionChange={() => undefined}
       />
     );
 
     expect(html).toContain('data-testid="cli-agent-auth-guidance-cursor-agent"');
+    expect(html).toContain('data-testid="cli-agent-authenticate-cursor-agent"');
+    expect(html).toContain("Authenticate");
     expect(html).toContain("Cursor sign-in required");
     expect(html).toContain("Compatible");
     expect(html).not.toMatch(/data-testid="cli-agent-test-cursor-agent"[^>]*disabled/);

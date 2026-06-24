@@ -26,7 +26,7 @@ Implemented:
 
 ## Phase 3 — Cursor end-to-end
 
-Partially complete. Detection, version/auth probes, parser, settings card, fake/live tests and macOS sandbox exist. On 2026-06-22 the installed Cursor CLI authenticated successfully, but protected generation failed closed because Cursor requires a write under `~/.cursor/projects`. The phase is not done until that state is redirected into temp and generate/deepen/review pass live.
+Partially complete. Detection, version/auth probes, parser, settings card and fake/live tests exist. On 2026-06-22 the installed Cursor CLI authenticated successfully, but protected generation failed closed under the old OS-specific sandbox experiment because Cursor required provider state outside the temp workspace. On 2026-06-24 Cursor was switched to the open-design-style adapter posture: VDT delegates the agent loop to Cursor, passes a fresh temp `--workspace`, does not pass the repo cwd or VDT MCP config, and validates the returned schema locally; the phase is not done until generate/deepen/review pass live.
 
 ## Phase 4 — Codex and Claude
 
@@ -34,11 +34,11 @@ Implementation complete: both adapters use subscription login, bounded structure
 
 ## Phase 5 — Gemini and Copilot
 
-Implemented as beta macOS adapters:
+Implemented as experimental cross-platform adapters:
 
 - Gemini headless JSON with a temp supplemental admin policy denying every tool;
 - Copilot JSONL with an empty available-tool set, built-in MCP and custom instructions disabled;
 - auth/quota/plan/policy diagnostics, version gates, parsers, fake executors, cancellation/schema validation and opt-in live tests;
-- shared macOS sandbox hardened to default-deny provider execution while blocking repo reads, arbitrary home-file contents, temp-root reads outside the request, writes outside temp and unrelated shell execution.
+- no macOS-only sandbox dependency; VDT relies on reviewed tool-denial flags/policies, fresh temp request directories, filtered environment and local schema validation.
 
-Live subscription acceptance remains pending because neither CLI is installed on the maintainer machine. In addition, Google ended Gemini CLI service for individual free/Google AI Pro/Ultra accounts on 2026-06-18, so the original personal-allowance criterion now applies only to enterprise Gemini Code Assist; Antigravity CLI requires a separate future adapter. Linux and Windows remain experimental and fail closed until certified sandbox profiles exist.
+Live subscription acceptance remains pending because neither CLI is installed on the maintainer machine. In addition, Google ended Gemini CLI service for individual free/Google AI Pro/Ultra accounts on 2026-06-18, so the original personal-allowance criterion now applies only to enterprise Gemini Code Assist; Antigravity CLI requires a separate future adapter. Linux and Windows use the same experimental manifest path as macOS.

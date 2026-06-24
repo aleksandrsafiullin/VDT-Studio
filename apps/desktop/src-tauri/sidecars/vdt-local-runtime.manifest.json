@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "kind": "node-runtime-bundle",
+  "protocolVersion": 1,
+  "launcher": "vdt-local-runtime",
+  "entrypoint": "sidecars/vdt-local-runtime.mjs",
+  "launcherSha256": "53a53dba0485fecb6509bd859d35c0d7a6357428ef074c36b406d218eb369923",
+  "windowsLauncherSha256": "f77472174de2c14660011fc4b0545cd77ba9ad831906098957dacdc35901daa0",
+  "bundleSha256": "402a52356f8162194ee84a65a520ab378a6eb8437c222a4530b098a4f47a40d6",
+  "selfContained": false,
+  "requiresNode": ">=24 <25"
+}

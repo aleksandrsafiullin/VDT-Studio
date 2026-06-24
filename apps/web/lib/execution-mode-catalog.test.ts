@@ -37,7 +37,8 @@ describe("execution-mode-catalog", () => {
 
   it("includes suggested models for priority CLI agents", () => {
     expect(getCliCatalogEntry("claude").suggestedModels).toContain("claude-opus-4-8");
-    expect(getCliCatalogEntry("codex").suggestedModels.length).toBeGreaterThan(0);
+    expect(getCliCatalogEntry("codex").suggestedModels).toContain("gpt-5.5");
+    expect(getCliCatalogEntry("codex").suggestedModels).not.toContain("gpt-5.3-codex");
     expect(getCliCatalogEntry("gemini").suggestedModels).toContain("gemini-3.5-flash");
     expect(getCliCatalogEntry("cursor-agent").suggestedModels.length).toBeGreaterThan(0);
     expect(getCliCatalogEntry("copilot").suggestedModels.length).toBeGreaterThan(0);

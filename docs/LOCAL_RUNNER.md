@@ -35,7 +35,7 @@ All endpoints except health and pair require `Authorization: Bearer <session-tok
 }
 ```
 
-Subscription CLIs are enabled only through reviewed per-provider adapters. Codex and Claude have certified tool/session restrictions; Gemini and Copilot require both tool-denial flags/policies and the macOS sandbox. Cursor is beta because its current CLI requires a state write outside the temp workspace and therefore fails closed under the hardened profile. See [Provider compatibility](provider-compatibility.md).
+Subscription CLIs are enabled only through reviewed per-provider adapters. Codex and Claude have certified tool/session restrictions; Gemini and Copilot use tool-denial flags/policies without a macOS-only sandbox dependency. Cursor is beta in an open-design-style mode: VDT delegates the agent loop to Cursor, passes a fresh temp `--workspace`, does not pass the repo cwd or VDT MCP config, and validates the returned schema locally. See [Provider compatibility](provider-compatibility.md).
 
 ## Security contract
 
@@ -44,7 +44,7 @@ Subscription CLIs are enabled only through reviewed per-provider adapters. Codex
 - Accept JSON only and cap request bodies at 1 MB and serialized prompts at 512 KB.
 - Resolve reviewed executable aliases through symlinks to regular files outside the repository and spawn with `shell: false`.
 - Create a new owner-only temporary working directory per request and delete it after success, failure, timeout or cancellation.
-- On macOS, run subscription backends that require isolation under the default-deny `darwin-v1` profile. The profile permits provider execution in the request temp directory, preserves reviewed provider auth/config read paths, and denies repository reads, arbitrary home-file contents, temp-root reads outside the request, writes outside temp, and unrelated shell execution.
+- Keep Local AI execution cross-platform: reviewed subscription manifests must either disable provider tools through CLI flags/policies or use the explicit Cursor ephemeral-workspace beta boundary. OS-specific sandbox-required manifests are rejected with `UNSAFE_CONFIGURATION`.
 - Pass only `PATH`, `HOME`, `USER`, `LOGNAME`, temp and locale variables; force `NO_COLOR=1`.
 - Cap a line at 1 MB, stdout at 4 MB, stderr at 1 MB and validated result JSON at 1 MB.
 - Cap execution at 120 seconds. Cancellation and timeout send `SIGTERM`, wait three seconds, then send `SIGKILL`.

@@ -69,7 +69,8 @@ function parseStatusJson(stdout: string): ModelBackendStatus | undefined {
 async function runExec(
   executable: string,
   args: readonly string[],
-  options: ProbeCursorAuthOptions
+  options: ProbeCursorAuthOptions,
+  input?: string
 ): Promise<ExecResult> {
   const execImpl = options.execFileImpl ?? execFileAsync;
   const execOptions: ExecFileOptionsWithStringEncoding = {
@@ -78,7 +79,8 @@ async function runExec(
     maxBuffer: 512 * 1024,
     windowsHide: true,
     shell: false,
-    signal: options.signal
+    signal: options.signal,
+    ...(input === undefined ? {} : { input })
   };
   const result = await execImpl(executable, [...args], execOptions);
   return { stdout: result.stdout, stderr: result.stderr };
@@ -115,8 +117,9 @@ async function probeWithConnectionTest(executable: string, options: ProbeCursorA
   try {
     const result = await runExec(
       executable,
-      ["--print", "--output-format", "stream-json", "--stream-partial-output", CURSOR_CONNECTION_TEST_PROMPT],
-      options
+      ["--print", "--output-format", "stream-json", "--stream-partial-output", "--mode", "ask"],
+      options,
+      CURSOR_CONNECTION_TEST_PROMPT
     );
     const parsed = parseCursorStreamJson(result.stdout);
     if (parsed.error) {
