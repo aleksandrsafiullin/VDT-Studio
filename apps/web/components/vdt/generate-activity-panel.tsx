@@ -63,13 +63,16 @@ function technicalRows(activity: GenerateActivityState): Array<[string, string |
 
 export function GenerateActivityPanel({
   activity,
-  onCancel
+  onCancel,
+  onAnswer
 }: {
   activity: GenerateActivityState;
   onCancel: () => void;
+  onAnswer?: (answers: Record<string, string | number | string[]>) => void;
 }) {
   const [elapsed, setElapsed] = useState(() => formatElapsed(activity.startedAt, activity.completedAt));
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setElapsed(formatElapsed(activity.startedAt, activity.completedAt));
@@ -82,6 +85,7 @@ export function GenerateActivityPanel({
 
   const events = useMemo(() => activity.agentEvents ?? activity.agentRun?.events ?? [], [activity.agentEvents, activity.agentRun]);
   const selectedSkills = activity.selectedSkills ?? activity.agentRun?.selectedSkills ?? [];
+  const structuredQuestions = activity.agentQuestions ?? [];
   const questions = activity.questionsForUser ?? activity.agentRun?.questionsForUser ?? [];
   const finalReport = activity.finalReport ?? activity.agentRun?.finalReport;
   const phase = activity.agentRun?.phase ? formatPhase(activity.agentRun.phase) : formatPhase(activity.phase);
@@ -159,14 +163,63 @@ export function GenerateActivityPanel({
         </div>
       ) : null}
 
-      {activity.status === "needs_user_input" && questions.length > 0 ? (
+      {activity.status === "needs_user_input" && (structuredQuestions.length > 0 || questions.length > 0) ? (
         <div className="mt-5" data-testid="generate-questions">
           <div className="text-sm font-semibold text-ink">Questions</div>
-          <ul className="mt-2 space-y-2 text-sm leading-6 text-ink">
-            {questions.map((question) => (
-              <li key={question}>{question}</li>
-            ))}
-          </ul>
+          {structuredQuestions.length > 0 ? (
+            <form
+              className="mt-3 space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const payload = Object.fromEntries(
+                  structuredQuestions.map((question) => [question.id, answers[question.id] ?? question.defaultValue ?? ""])
+                );
+                onAnswer?.(payload);
+              }}
+            >
+              {structuredQuestions.map((question) => (
+                <label key={question.id} className="block text-sm text-ink">
+                  <span className="font-medium">{question.question}</span>
+                  {question.options && question.options.length > 0 ? (
+                    <select
+                      className="mt-2 w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink"
+                      value={answers[question.id] ?? ""}
+                      onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
+                      data-testid={`agent-answer-${question.id}`}
+                    >
+                      <option value="">Select...</option>
+                      {question.options.map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      className="mt-2 w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink"
+                      value={answers[question.id] ?? String(question.defaultValue ?? "")}
+                      onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
+                      data-testid={`agent-answer-${question.id}`}
+                    />
+                  )}
+                  <span className="mt-1 block text-xs leading-5 text-muted">{question.reason}</span>
+                </label>
+              ))}
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={!onAnswer || structuredQuestions.some((question) => question.required && !(answers[question.id] ?? question.defaultValue))}
+                onClick={() => undefined}
+                data-testid="continue-agent"
+              >
+                Continue agent
+              </Button>
+            </form>
+          ) : (
+            <ul className="mt-2 space-y-2 text-sm leading-6 text-ink">
+              {questions.map((question) => (
+                <li key={question}>{question}</li>
+              ))}
+            </ul>
+          )}
         </div>
       ) : null}
 

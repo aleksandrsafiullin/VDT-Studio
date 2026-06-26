@@ -28,6 +28,13 @@ import {
   type RunAiTaskResult
 } from "@vdt-studio/ai-harness";
 import { makeId } from "@/lib/id";
+import {
+  createAgentClient,
+  type ManualProjectChange,
+  type VdtAgentEvent as RuntimeAgentEvent,
+  type VdtAgentQuestion as RuntimeAgentQuestion,
+  type VdtAgentRunSnapshot as RuntimeAgentRunSnapshot
+} from "@/lib/agent-client";
 import { hasLocalAiUi, resolveVdtAppMode } from "@/lib/app-mode";
 import { formatExecutionModeSummary } from "@/lib/format-execution-summary";
 import {
@@ -37,6 +44,7 @@ import {
   type AiExecutionProgressPhase,
   type CliAgentDetectionSnapshot,
   type VdtAgentEvent,
+  type VdtAgentPhase,
   type VdtAgentRun,
   type VdtAgentSelectedSkill
 } from "@/lib/ai-execution-client";
@@ -156,6 +164,7 @@ export interface GenerateActivityState {
   agentRun?: VdtAgentRun | undefined;
   selectedSkills?: VdtAgentSelectedSkill[] | undefined;
   agentEvents?: VdtAgentEvent[] | undefined;
+  agentQuestions?: RuntimeAgentQuestion[] | undefined;
   questionsForUser?: string[] | undefined;
   finalReport?: string | undefined;
   timeoutMs?: number | undefined;
@@ -275,6 +284,13 @@ interface VdtStudioState {
   scenarioModalOpen: boolean;
   isGenerating: boolean;
   generateActivity?: GenerateActivityState | undefined;
+  activeAgentRunId?: string | undefined;
+  agentRun?: RuntimeAgentRunSnapshot | undefined;
+  agentEvents: RuntimeAgentEvent[];
+  agentConnectionStatus: "idle" | "connecting" | "connected" | "disconnected" | "error";
+  agentPendingQuestions?: RuntimeAgentQuestion[] | undefined;
+  agentError?: string | undefined;
+  projectRevision: number;
   aiError?: string | undefined;
   pendingChangeSet?: VdtChangeSet | undefined;
   changeSetSelection: Set<string>;
@@ -320,6 +336,12 @@ interface VdtStudioState {
   resetUiPreferences: () => void;
   autoDistributeLayout: () => void;
   updateNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
+  startAgentRun: () => Promise<void>;
+  connectAgentEvents: (runId: string) => void;
+  sendAgentAnswers: (answers: Record<string, string | number | string[]>) => Promise<void>;
+  sendManualProjectChange: (change: ManualProjectChange) => Promise<void>;
+  applyAgentGraphPatch: (snapshot: RuntimeAgentRunSnapshot) => void;
+  cancelAgentRun: () => Promise<void>;
   generateWithAi: () => Promise<void>;
   cancelGenerate: () => void;
   loadExample: (exampleId?: ExampleProjectId) => void;
@@ -489,6 +511,7 @@ function clearPendingAiActionState() {
 
 let activeGenerateAbortController: AbortController | undefined;
 let activeGenerateRunId: string | undefined;
+let activeAgentEventUnsubscribe: (() => void) | undefined;
 
 function generateRunId() {
   return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -715,6 +738,136 @@ function mergeAgentRun(activity: GenerateActivityState, incoming: VdtAgentRun | 
     questionsForUser,
     finalReport
   };
+}
+
+function legacyAgentRunFromRuntimeSnapshot(snapshot: RuntimeAgentRunSnapshot): VdtAgentRun {
+  const input = snapshot.request.input;
+  const request: VdtAgentRun["request"] = {
+    rootKpi: input.rootKpi ?? input.prompt ?? snapshot.project?.name ?? "Value driver tree",
+    ...(input.industry !== undefined ? { industry: input.industry } : {}),
+    ...(input.businessContext !== undefined ? { businessContext: input.businessContext } : {}),
+    ...(input.unit !== undefined ? { unit: input.unit } : {}),
+    ...(input.timePeriod !== undefined ? { timePeriod: input.timePeriod } : {}),
+    ...(input.goal !== undefined ? { goal: input.goal } : {}),
+      ...(input.levelOfDetail !== undefined ? { levelOfDetail: input.levelOfDetail } : {})
+  };
+  const resultProjectId = snapshot.project?.id ?? snapshot.draftProject?.id;
+  return {
+    runId: snapshot.runId,
+    status: snapshot.status === "queued" || snapshot.status === "waiting_approval" ? "running" : snapshot.status,
+    phase: mapRuntimeAgentPhase(snapshot.phase),
+    request,
+    selectedSkills: snapshot.selectedSkills.map((skill) => ({
+      id: skill.id,
+      path: skill.path,
+      reason: skill.reason
+    })),
+    events: snapshot.events.map((event) => ({
+      id: event.id,
+      timestamp: event.timestamp,
+      type: mapRuntimeAgentEventType(event.type),
+      title: event.title,
+      message: event.message,
+      ...(event.metadata !== undefined ? { metadata: event.metadata } : {})
+    })),
+    ...(snapshot.pendingQuestions ? { questionsForUser: snapshot.pendingQuestions.map((question) => question.question) } : {}),
+    ...(snapshot.draftProject !== undefined ? { draftGraph: snapshot.draftProject } : {}),
+    ...(resultProjectId !== undefined ? { resultProjectId } : {}),
+    ...(snapshot.finalReport !== undefined ? { finalReport: snapshot.finalReport } : {}),
+    ...(snapshot.error !== undefined ? { error: snapshot.error } : {})
+  };
+}
+
+function mapRuntimeAgentPhase(phase: RuntimeAgentRunSnapshot["phase"]): VdtAgentPhase {
+  switch (phase) {
+    case "building_graph":
+      return "generating_graph";
+    case "applying_graph":
+      return "applying_graph";
+    case "repairing_graph":
+      return "validating_graph";
+    default:
+      return phase;
+  }
+}
+
+function mapRuntimeAgentEventType(type: RuntimeAgentEvent["type"]): VdtAgentEvent["type"] {
+  switch (type) {
+    case "run_started":
+    case "user_answer_received":
+    case "plan_proposed":
+    case "tool_call_started":
+    case "tool_call_completed":
+    case "manual_change_observed":
+    case "repair_started":
+    case "run_completed":
+      return type === "plan_proposed" ? "planning_decomposition" : type === "tool_call_started" ? "model_call_started" : type === "tool_call_completed" ? "model_call_completed" : "graph_patch";
+    default:
+      return type;
+  }
+}
+
+function mapRuntimeStatus(snapshot: RuntimeAgentRunSnapshot): GenerateActivityStatus {
+  if (snapshot.status === "needs_user_input") return "needs_user_input";
+  if (snapshot.status === "succeeded") return "ready";
+  if (snapshot.status === "failed") return "error";
+  if (snapshot.status === "cancelled") return "cancelled";
+  return "running";
+}
+
+function applyAgentSnapshot(
+  set: (partial: Partial<VdtStudioState> | ((state: VdtStudioState) => Partial<VdtStudioState>)) => void,
+  snapshot: RuntimeAgentRunSnapshot
+) {
+  set((state) => {
+    if (state.activeAgentRunId && state.activeAgentRunId !== snapshot.runId) {
+      return {};
+    }
+    const project = snapshot.project ?? snapshot.draftProject;
+    const status = mapRuntimeStatus(snapshot);
+    const now = nowIso();
+    const activity = state.generateActivity?.runId === snapshot.runId
+      ? state.generateActivity
+      : buildGenerateActivity(
+          snapshot.runId,
+          state.executionSettings,
+          state.providerId,
+          state.providerConfig as Record<string, unknown>
+        );
+    const legacyRun = legacyAgentRunFromRuntimeSnapshot(snapshot);
+    return {
+      ...(project
+        ? {
+            project,
+            selectedNodeId: project.rootNodeId,
+            activeScenarioId: project.scenarios[0]?.id ?? "",
+            projectRevision: state.projectRevision + 1
+          }
+        : {}),
+      activeAgentRunId: status === "ready" || status === "error" || status === "cancelled" ? undefined : snapshot.runId,
+      agentRun: snapshot,
+      agentEvents: snapshot.events,
+      agentPendingQuestions: snapshot.pendingQuestions,
+      agentError: snapshot.error?.message,
+      isGenerating: status === "running" || status === "needs_user_input",
+      generateActivity: {
+        ...activity,
+        status,
+        phase: status === "ready" ? "ready" : activity.phase,
+        canCancel: status === "running" || status === "needs_user_input",
+        agentRun: legacyRun,
+        selectedSkills: legacyRun.selectedSkills,
+        agentEvents: legacyRun.events,
+        agentQuestions: snapshot.pendingQuestions,
+        questionsForUser: snapshot.pendingQuestions?.map((question) => question.question),
+        finalReport: snapshot.finalReport,
+        summary: snapshot.finalReport ?? activity.summary,
+        message: snapshot.error?.message ?? activity.message,
+        completedAt: snapshot.completedAt ?? (status === "ready" || status === "error" || status === "cancelled" ? now : activity.completedAt),
+        updatedAt: snapshot.updatedAt
+      }
+    };
+  });
 }
 
 function applyGenerateProgressEvent(
@@ -1025,6 +1178,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       scenarioModalOpen: false,
       isGenerating: false,
       generateActivity: undefined,
+      activeAgentRunId: undefined,
+      agentRun: undefined,
+      agentEvents: [],
+      agentConnectionStatus: "idle",
+      agentPendingQuestions: undefined,
+      agentError: undefined,
+      projectRevision: 0,
       changeSetSelection: new Set<string>(),
       highlightedNodeIds: [],
       isRunningAiAction: false,
@@ -1071,14 +1231,22 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             }
           };
         }),
-      updateNodePosition: (nodeId, position) =>
+      updateNodePosition: (nodeId, position) => {
         set((state) => ({
           project: updateProjectNode(state.project, nodeId, (node) => ({
             ...node,
             position,
             updatedAt: nowIso()
-          }))
-        })),
+          })),
+          projectRevision: state.projectRevision + 1
+        }));
+        void get().sendManualProjectChange({
+          kind: "node_position_updated",
+          nodeId,
+          patch: { position },
+          summary: `User moved node "${nodeId}".`
+        });
+      },
       setBriefField: (field, value) =>
         set((state) => ({
           brief: {
@@ -1398,7 +1566,128 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       setProviderTestState: (isTestingProvider, providerTestStatus) =>
         set({ isTestingProvider, providerTestStatus }),
       setByokFieldErrors: (byokFieldErrors) => set({ byokFieldErrors }),
+      connectAgentEvents: (runId) => {
+        activeAgentEventUnsubscribe?.();
+        set({ agentConnectionStatus: "connecting" });
+        activeAgentEventUnsubscribe = createAgentClient().subscribe(runId, {
+          onOpen: () => set({ agentConnectionStatus: "connected" }),
+          onEvent: (event) =>
+            set((state) => {
+              if (state.agentRun?.runId !== runId && state.activeAgentRunId !== runId) return {};
+              const byId = new Map(state.agentEvents.map((entry) => [entry.id, entry]));
+              byId.set(event.id, event);
+              const agentEvents = [...byId.values()].sort((left, right) => left.seq - right.seq);
+              const legacyEvents = agentEvents.map((entry) => ({
+                id: entry.id,
+                timestamp: entry.timestamp,
+                type: mapRuntimeAgentEventType(entry.type),
+                title: entry.title,
+                message: entry.message,
+                ...(entry.metadata !== undefined ? { metadata: entry.metadata } : {})
+              }));
+              return {
+                agentEvents,
+                generateActivity: state.generateActivity?.runId === runId
+                  ? {
+                      ...state.generateActivity,
+                      agentEvents: legacyEvents,
+                      updatedAt: event.timestamp
+                    }
+                  : state.generateActivity
+              };
+            }),
+          onError: () => set({ agentConnectionStatus: "error" })
+        });
+      },
+      startAgentRun: async () => {
+        if (get().isGenerating) return;
+        const state = get();
+        const { providerId, providerConfig } = resolveExecutionSettings(state.executionSettings);
+        set({
+          isGenerating: true,
+          aiError: undefined,
+          agentError: undefined,
+          agentEvents: [],
+          agentPendingQuestions: undefined,
+          agentConnectionStatus: "connecting",
+          ...clearPendingAiActionState()
+        });
+        try {
+          const response = await createAgentClient().startRun({
+            mode: "generate_vdt",
+            input: state.brief,
+            providerId,
+            providerConfig: providerId === "mock" ? undefined : providerConfig,
+            options: {
+              autoApplyPatches: true,
+              continueWithAssumptions: false,
+              maxSteps: 30
+            }
+          });
+          set({ activeAgentRunId: response.runId });
+          applyAgentSnapshot(set, response.snapshot);
+          get().connectAgentEvents(response.runId);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Agent run could not be started.";
+          set({
+            aiError: message,
+            agentError: message,
+            isGenerating: false,
+            agentConnectionStatus: "error"
+          });
+        }
+      },
+      sendAgentAnswers: async (answers) => {
+        const runId = get().agentRun?.runId ?? get().activeAgentRunId;
+        if (!runId) return;
+        try {
+          const snapshot = await createAgentClient().sendMessage(runId, {
+            type: "user_answer",
+            answers
+          });
+          applyAgentSnapshot(set, snapshot);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Agent answers could not be sent.";
+          set({ agentError: message, aiError: message });
+        }
+      },
+      sendManualProjectChange: async (change) => {
+        const runId = get().activeAgentRunId;
+        if (!runId) return;
+        try {
+          const snapshot = await createAgentClient().sendMessage(runId, {
+            type: "manual_project_change",
+            projectRevision: get().projectRevision,
+            change
+          });
+          applyAgentSnapshot(set, snapshot);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Manual change could not be sent to the agent.";
+          set({ agentError: message });
+        }
+      },
+      applyAgentGraphPatch: (snapshot) => applyAgentSnapshot(set, snapshot),
+      cancelAgentRun: async () => {
+        const runId = get().activeAgentRunId ?? get().agentRun?.runId;
+        if (!runId) return;
+        try {
+          await createAgentClient().cancel(runId);
+          const snapshot = await createAgentClient().getRun(runId);
+          applyAgentSnapshot(set, snapshot);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Agent run could not be cancelled.";
+          set({ agentError: message, aiError: message });
+        } finally {
+          activeAgentEventUnsubscribe?.();
+          activeAgentEventUnsubscribe = undefined;
+          set({ agentConnectionStatus: "disconnected" });
+        }
+      },
       cancelGenerate: () => {
+        if (get().activeAgentRunId) {
+          void get().cancelAgentRun();
+          return;
+        }
         const activity = get().generateActivity;
         if (!activity || (activity.status !== "running" && activity.status !== "needs_user_input")) return;
         const completedAt = nowIso();
@@ -1578,26 +1867,39 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       },
       replaceProject: (project) => {
         const nextProject = ensureScenario(project);
-        set({
+        set((state) => ({
           project: nextProject,
           selectedNodeId: nextProject.rootNodeId,
           activeScenarioId: nextProject.scenarios[0]?.id ?? "",
           generateActivity: undefined,
           aiError: undefined,
+          projectRevision: state.projectRevision + 1,
           ...clearPendingAiActionState()
+        }));
+        void get().sendManualProjectChange({
+          kind: "project_replaced",
+          summary: "User replaced the current project."
         });
       },
       selectNode: (nodeId) => set({ selectedNodeId: nodeId }),
-      updateNode: (nodeId, patch) =>
+      updateNode: (nodeId, patch) => {
         set((state) => ({
           project: updateProjectNode(state.project, nodeId, (node) => ({
             ...node,
             ...patch,
             status: patch.status ?? (node.aiGenerated ? "edited" : node.status),
             updatedAt: nowIso()
-          }))
-        })),
-      updateNodeBaselineValue: (nodeId, value) =>
+          })),
+          projectRevision: state.projectRevision + 1
+        }));
+        void get().sendManualProjectChange({
+          kind: "node_updated",
+          nodeId,
+          patch,
+          summary: `User updated node "${nodeId}".`
+        });
+      },
+      updateNodeBaselineValue: (nodeId, value) => {
         set((state) => ({
           project: updateProjectNode(state.project, nodeId, (node) => {
             if (value === undefined) {
@@ -1613,8 +1915,16 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               status: node.aiGenerated ? "edited" : node.status,
               updatedAt: nowIso()
             };
-          })
-        })),
+          }),
+          projectRevision: state.projectRevision + 1
+        }));
+        void get().sendManualProjectChange({
+          kind: "node_updated",
+          nodeId,
+          patch: { baselineValue: value },
+          summary: `User updated node "${nodeId}" baseline value.`
+        });
+      },
       acceptNode: (nodeId) =>
         set((state) => ({
           project: updateProjectNode(state.project, nodeId, (node) => ({
@@ -1631,7 +1941,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             updatedAt: nowIso()
           }))
         })),
-      deleteNode: (nodeId) =>
+      deleteNode: (nodeId) => {
+        let deleted = false;
         set((state) => {
           if (nodeId === state.project.rootNodeId) {
             return {};
@@ -1648,11 +1959,21 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             }
           };
 
+          deleted = true;
           return {
             project,
-            selectedNodeId: project.rootNodeId
+            selectedNodeId: project.rootNodeId,
+            projectRevision: state.projectRevision + 1
           };
-        }),
+        });
+        if (deleted) {
+          void get().sendManualProjectChange({
+            kind: "node_deleted",
+            nodeId,
+            summary: `User deleted node "${nodeId}".`
+          });
+        }
+      },
       createScenario: () =>
         set((state) => {
           const scenario = defaultScenario();
@@ -1910,7 +2231,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
           return { changeSetSelection };
         }),
-      applyPendingChangeSet: () =>
+      applyPendingChangeSet: () => {
+        let appliedChangeSetId: string | undefined;
         set((state) => {
           if (!state.pendingChangeSet || state.changeSetSelection.size === 0) {
             return {};
@@ -1933,11 +2255,20 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           const laidOut = layoutProjectGraph(applied.project, state.ui);
           calculateGraph(laidOut);
 
+          appliedChangeSetId = state.pendingChangeSet.id;
           return {
             project: laidOut,
+            projectRevision: state.projectRevision + 1,
             ...clearPendingAiActionState()
           };
-        }),
+        });
+        if (appliedChangeSetId) {
+          void get().sendManualProjectChange({
+            kind: "change_set_applied",
+            summary: `User applied change set "${appliedChangeSetId}".`
+          });
+        }
+      },
       discardPendingChangeSet: () => set(clearPendingAiActionState()),
       saveAdvisoryToProject: () =>
         set((state) => {

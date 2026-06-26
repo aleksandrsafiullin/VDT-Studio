@@ -29,6 +29,8 @@ export function SetupRail() {
   const isDesktop = useDesktopLayout();
   const showCollapsed = isDesktop && leftPanelCollapsed;
   const setBriefField = useVdtStudioStore((state) => state.setBriefField);
+  const startAgentRun = useVdtStudioStore((state) => state.startAgentRun);
+  const sendAgentAnswers = useVdtStudioStore((state) => state.sendAgentAnswers);
   const generateWithAi = useVdtStudioStore((state) => state.generateWithAi);
   const cancelGenerate = useVdtStudioStore((state) => state.cancelGenerate);
   const loadExample = useVdtStudioStore((state) => state.loadExample);
@@ -207,11 +209,20 @@ export function SetupRail() {
       </div>
       <div className="space-y-2 border-t border-line px-4 py-4">
         {generateActivity ? (
-          <GenerateActivityPanel activity={generateActivity} onCancel={cancelGenerate} />
+          <GenerateActivityPanel activity={generateActivity} onCancel={cancelGenerate} onAnswer={(answers) => void sendAgentAnswers(answers)} />
         ) : null}
         <Button
           className="w-full"
           variant="primary"
+          icon={<Bot className="h-4 w-4" />}
+          disabled={isGenerating}
+          onClick={() => void startAgentRun()}
+          data-testid="start-vdt-agent"
+        >
+          {isGenerating ? "Agent running..." : "Start VDT Agent"}
+        </Button>
+        <Button
+          className="w-full"
           icon={<Sparkles className="h-4 w-4" />}
           disabled={isGenerating}
           onClick={() => void generateWithAi()}

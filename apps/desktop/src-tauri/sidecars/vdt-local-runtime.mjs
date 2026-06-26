@@ -2932,7 +2932,7 @@ function issue(id, severity, type, message, nodeId, edgeId) {
 function error(id, type, message, nodeId, edgeId) {
   return issue(id, "error", type, message, nodeId, edgeId);
 }
-function warning2(id, type, message, nodeId, edgeId) {
+function warning(id, type, message, nodeId, edgeId) {
   return issue(id, "warning", type, message, nodeId, edgeId);
 }
 function getRootNodeId(input, rootNodeId) {
@@ -2962,7 +2962,7 @@ function collectUnitWarnings(node, expression, nodeById, warnings, path6 = "root
   const rightUnit = collectUnitWarnings(node, expression.right, nodeById, warnings, `${path6}-right`);
   if ((expression.operator === "+" || expression.operator === "-") && leftUnit && rightUnit && !unitsCompatible(leftUnit, rightUnit)) {
     warnings.push(
-      warning2(
+      warning(
         `validation-unit-mismatch-${node.id}-${path6}`,
         "unit_mismatch",
         `Formula for "${node.name}" combines incompatible units with "${expression.operator}": "${leftUnit}" and "${rightUnit}"`,
@@ -3036,7 +3036,7 @@ function validateGraph(input, rootNodeId) {
     const pair = `${edge.sourceNodeId}->${edge.targetNodeId}`;
     if (edgePairs.has(pair)) {
       warnings.push(
-        warning2(
+        warning(
           `validation-duplicate-edge-pair-${edge.sourceNodeId}-${edge.targetNodeId}`,
           "invalid_graph",
           `Duplicate edge pair "${edge.sourceNodeId}" -> "${edge.targetNodeId}"`,

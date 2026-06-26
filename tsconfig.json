@@ -5,6 +5,7 @@
     { "path": "./packages/cli" },
     { "path": "./packages/vdt-core" },
     { "path": "./packages/vdt-agent" },
+    { "path": "./packages/vdt-agent-runtime" },
     { "path": "./packages/ai-harness" },
     { "path": "./packages/local-runner" },
     { "path": "./packages/ui" },

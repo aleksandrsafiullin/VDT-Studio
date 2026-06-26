@@ -697,17 +697,23 @@ function agentRunFromCompletionResult(value: unknown): VdtAgentRun | undefined {
 }
 
 async function readJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
-  const raw = await response.text();
   let payload: T & { error?: unknown };
 
-  try {
-    payload = (raw ? JSON.parse(raw) : {}) as T & { error?: unknown };
-  } catch {
-    const contentType = response.headers.get("content-type") ?? "unknown content type";
-    const responseKind = contentType.includes("text/html")
-      ? "The server returned HTML instead of JSON."
-      : `The server returned ${contentType} instead of JSON.`;
-    throw new Error(`${fallbackMessage} HTTP ${response.status}. ${responseKind}`);
+  if (typeof response.text === "function") {
+    const raw = await response.text();
+    try {
+      payload = (raw ? JSON.parse(raw) : {}) as T & { error?: unknown };
+    } catch {
+      const contentType = response.headers.get("content-type") ?? "unknown content type";
+      const responseKind = contentType.includes("text/html")
+        ? "The server returned HTML instead of JSON."
+        : `The server returned ${contentType} instead of JSON.`;
+      throw new Error(`${fallbackMessage} HTTP ${response.status}. ${responseKind}`);
+    }
+  } else if (typeof (response as { json?: unknown }).json === "function") {
+    payload = await (response as { json: () => Promise<T & { error?: unknown }> }).json();
+  } else {
+    throw new Error(`${fallbackMessage} HTTP ${response.status}. The server returned an unreadable response.`);
   }
 
   if (!response.ok) {

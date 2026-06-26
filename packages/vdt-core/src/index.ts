@@ -1,4 +1,5 @@
 export * from "./types";
+export * from "./builder";
 export * from "./changeset/types";
 export * from "./changeset/preview";
 export * from "./changeset/apply";

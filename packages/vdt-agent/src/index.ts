@@ -1,6 +1,9 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+export * from "./skill-questions";
+export * from "./skill-recipe";
+
 export type VdtAgentStatus = "running" | "needs_user_input" | "succeeded" | "failed" | "cancelled";
 
 export type VdtAgentPhase =
