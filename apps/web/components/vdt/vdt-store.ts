@@ -333,6 +333,7 @@ interface VdtStudioState {
   setActiveScenarioId: (scenarioId: string) => void;
   renameScenario: (scenarioId: string, name: string) => void;
   deleteScenario: (scenarioId: string) => void;
+  cloneScenario: (scenarioId: string) => void;
   updateScenarioOverride: (scenarioId: string, nodeId: string, value?: number) => void;
   runAiAction: <T extends RunAiActionTaskType>(taskType: T, input: RunAiActionInput<T>) => Promise<void>;
   toggleChangeSelection: (changeId: string) => void;
@@ -878,6 +879,20 @@ function defaultScenario(): VdtScenario {
     createdAt,
     updatedAt: createdAt
   };
+}
+
+function uniqueScenarioCopyName(baseName: string, scenarios: VdtScenario[]): string {
+  const root = `${baseName} copy`;
+  if (!scenarios.some((scenario) => scenario.name === root)) {
+    return root;
+  }
+
+  let suffix = 2;
+  while (scenarios.some((scenario) => scenario.name === `${root} (${suffix})`)) {
+    suffix += 1;
+  }
+
+  return `${root} (${suffix})`;
 }
 
 function ensureScenario(project: VdtProject) {
@@ -1696,6 +1711,32 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             project: {
               ...state.project,
               scenarios,
+              updatedAt: nowIso()
+            }
+          };
+        }),
+      cloneScenario: (scenarioId) =>
+        set((state) => {
+          const source = state.project.scenarios.find((candidate) => candidate.id === scenarioId);
+          if (!source) {
+            return state;
+          }
+
+          const now = nowIso();
+          const clone: VdtScenario = {
+            id: makeId("scenario"),
+            name: uniqueScenarioCopyName(source.name, state.project.scenarios),
+            description: source.description ?? defaultScenario().description,
+            overrides: source.overrides.map((override) => ({ ...override })),
+            createdAt: now,
+            updatedAt: now
+          };
+
+          return {
+            activeScenarioId: clone.id,
+            project: {
+              ...state.project,
+              scenarios: [...state.project.scenarios, clone],
               updatedAt: nowIso()
             }
           };

@@ -12,7 +12,7 @@ import {
   type RefObject
 } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { Plus, Pencil, Route, Sigma, Sparkles, Trash2, X } from "lucide-react";
+import { Plus, Pencil, Copy, Route, Sigma, Sparkles, Trash2, X } from "lucide-react";
 import { clsx } from "clsx";
 import {
   calculateGraph,
@@ -20,12 +20,12 @@ import {
   calculateScenario,
   calculateScenarioMultiplicativeEffect,
   rankScenarioInputNodes,
-  type VdtImpactNode,
   type VdtInputSensitivity
 } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Metric } from "@/components/ui/metric";
 import { SelectInput, TextInput } from "@/components/ui/field";
+import { Tooltip } from "@/components/ui/tooltip";
 import { formatChange, formatNumber, formatPercent } from "@/lib/format";
 import { ExplanationPanel } from "./explanation-panel";
 import { useVdtStudioStore } from "./vdt-store";
@@ -80,10 +80,6 @@ function parseFiniteInput(value: string) {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function sortImpacts(impacts: VdtImpactNode[]) {
-  return [...impacts].sort((left, right) => Math.abs(right.absoluteChange ?? 0) - Math.abs(left.absoluteChange ?? 0));
-}
-
 function commitOverrideValue(
   updateScenarioOverride: (scenarioId: string, nodeId: string, value?: number) => void,
   scenarioId: string,
@@ -134,10 +130,10 @@ function ScenarioOverrideRow({
         <span className="block truncate text-xs font-semibold text-ink">{node.nodeName}</span>
       </td>
       <td className={OVERRIDE_TABLE_CELL_CLASS}>
-        <span className="block truncate text-xs text-muted">{node.unit ?? "—"}</span>
+        <span className="block whitespace-nowrap text-xs text-muted">{node.unit ?? "—"}</span>
       </td>
       <td className={clsx(OVERRIDE_TABLE_CELL_CLASS, "text-right")}>
-        <span className="text-xs font-medium text-ink tabular-nums">
+        <span className="whitespace-nowrap text-xs font-medium text-ink tabular-nums">
           {baselineValue !== undefined ? formatNumber(baselineValue) : "n/a"}
         </span>
       </td>
@@ -163,7 +159,7 @@ function ScenarioOverrideRow({
         />
       </td>
       <td className={clsx(OVERRIDE_TABLE_CELL_CLASS, "text-right")}>
-        <span className="text-xs font-semibold text-ink tabular-nums">
+        <span className="whitespace-nowrap text-xs font-semibold text-ink tabular-nums">
           {differsFromBaseline && isolatedEffect !== undefined ? formatChange(isolatedEffect) : "—"}
         </span>
       </td>
@@ -191,11 +187,11 @@ function ScenarioOverridesTable({
     >
       <table className="w-full table-fixed border-collapse">
         <colgroup>
-          <col />
-          <col className="w-[3.5rem]" />
-          <col className="w-[4.5rem]" />
-          <col className="w-[6rem]" />
-          <col className="w-[4.5rem]" />
+          <col className="w-[40%]" />
+          <col className="w-[15%]" />
+          <col className="w-[15%]" />
+          <col className="w-[15%]" />
+          <col className="w-[15%]" />
         </colgroup>
         <thead className="border-b border-line bg-slate-50">
           <tr>
@@ -251,7 +247,6 @@ function ScenarioModalContent() {
   const scenarioResult = activeScenario ? calculateScenario(project, activeScenario) : undefined;
   const rankedInputNodes = useMemo(() => rankScenarioInputNodes(project), [project]);
   const traceItems = scenarioResult?.calculationTrace ?? baseline.trace;
-  const impactedNodes = sortImpacts(scenarioResult?.impactedNodes ?? []);
   const isolatedEffects = useMemo(() => {
     const entries = rankedInputNodes.flatMap((node) => {
       const override = activeScenario?.overrides.find((candidate) => candidate.nodeId === node.nodeId);
@@ -295,77 +290,36 @@ function ScenarioModalContent() {
   }
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(220px,280px)_minmax(320px,1fr)_minmax(260px,320px)]">
-      <div className="min-h-0 overflow-y-auto border-b border-line px-4 py-4 lg:border-b-0 lg:border-r lg:py-3">
-        <div className="grid grid-cols-2 gap-4">
-          <Metric label="Baseline" value={formatNumber(scenarioResult?.baselineValue ?? baseline.rootValue)} />
-          <Metric label="Scenario" value={formatNumber(scenarioResult?.scenarioValue)} tone="positive" />
-          <Metric label="Absolute" value={formatChange(scenarioResult?.absoluteChange)} tone="positive" />
-          <Metric label="Percent" value={formatPercent(scenarioResult?.percentageChange)} tone="positive" />
+    <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(320px,1fr)_minmax(260px,320px)]">
+      <div
+        className="min-h-0 overflow-y-auto border-b border-line px-4 py-4 lg:border-b-0 lg:border-r lg:py-3"
+        data-testid="scenario-middle-column"
+      >
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+          <div
+            className="grid min-w-0 flex-1 grid-cols-2 gap-4 sm:grid-cols-4"
+            data-testid="scenario-totals-metrics"
+          >
+            <Metric label="Baseline" value={formatNumber(scenarioResult?.baselineValue ?? baseline.rootValue)} />
+            <Metric label="Scenario" value={formatNumber(scenarioResult?.scenarioValue)} tone="positive" />
+            <Metric label="Absolute" value={formatChange(scenarioResult?.absoluteChange)} tone="positive" />
+            <Metric label="Percent" value={formatPercent(scenarioResult?.percentageChange)} tone="positive" />
+          </div>
+          <Button
+            size="sm"
+            className="shrink-0"
+            icon={<Sparkles className="h-4 w-4" />}
+            disabled={isRunningAiAction || !activeScenario}
+            onClick={explainScenario}
+          >
+            Explain scenario
+          </Button>
         </div>
-        <Button
-          size="sm"
-          className="mt-3"
-          icon={<Sparkles className="h-4 w-4" />}
-          disabled={isRunningAiAction || !activeScenario}
-          onClick={explainScenario}
-        >
-          Explain scenario
-        </Button>
         {showScenarioExplanation && pendingExplanationTaskType ? (
-          <div className="mt-3">
+          <div className="mb-4">
             <ExplanationPanel taskType={pendingExplanationTaskType} result={pendingExplanation} />
           </div>
         ) : null}
-        <div className="mt-3 border-t border-line pt-3">
-          <div className="mb-2 text-2xs font-semibold uppercase tracking-normal text-muted">Impacted drivers</div>
-          <div className="space-y-2">
-            {impactedNodes.length === 0 ? (
-              <div className="rounded-md border border-line bg-white px-3 py-2 text-xs text-muted">
-                No changed drivers yet.
-              </div>
-            ) : (
-              impactedNodes.map((impact) => (
-                <div key={impact.nodeId} className="rounded-md border border-line bg-white px-3 py-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="truncate text-xs font-semibold text-ink">{impact.nodeName}</span>
-                    <span className="shrink-0 text-xs font-semibold text-ink">
-                      {formatChange(impact.absoluteChange)}
-                    </span>
-                  </div>
-                  <div className="mt-1 truncate text-2xs text-muted">
-                    {formatNumber(impact.baselineValue)} to {formatNumber(impact.scenarioValue)}{" "}
-                    {impact.unit ?? ""}
-                  </div>
-                </div>
-              ))
-            )}
-            {hasScenarioOverrides && multiplicativeEffect ? (
-              <div
-                className="rounded-md border border-accent/30 bg-blue-50/60 px-3 py-2"
-                data-testid="scenario-multiplicative-effect"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="truncate text-xs font-semibold text-ink">Multiplicative effect</span>
-                  <span className="shrink-0 text-xs font-semibold text-ink">
-                    {multiplicativeEffect.multiplicativeEffect !== undefined &&
-                    Math.abs(multiplicativeEffect.multiplicativeEffect) > OVERRIDE_EPSILON
-                      ? formatChange(multiplicativeEffect.multiplicativeEffect)
-                      : "—"}
-                  </span>
-                </div>
-                <p className="mt-1 text-2xs leading-4 text-muted">
-                  Combined root impact minus the sum of isolated driver effects (
-                  {formatChange(multiplicativeEffect.totalRootEffect)} −{" "}
-                  {formatChange(multiplicativeEffect.sumOfIsolatedEffects)})
-                </p>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      <div className="min-h-0 overflow-y-auto border-b border-line px-4 py-4 lg:border-b-0 lg:py-3">
         <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-normal text-muted">
           <Sigma className="h-4 w-4" />
           Overrides
@@ -377,9 +331,30 @@ function ScenarioModalContent() {
           isolatedEffects={isolatedEffects}
           updateScenarioOverride={updateScenarioOverride}
         />
+        {hasScenarioOverrides && multiplicativeEffect ? (
+          <div
+            className="mt-3 rounded-md border border-accent/30 bg-blue-50/60 px-3 py-2"
+            data-testid="scenario-multiplicative-effect"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="truncate text-xs font-semibold text-ink">Multiplicative effect</span>
+              <span className="shrink-0 text-xs font-semibold text-ink">
+                {multiplicativeEffect.multiplicativeEffect !== undefined &&
+                Math.abs(multiplicativeEffect.multiplicativeEffect) > OVERRIDE_EPSILON
+                  ? formatChange(multiplicativeEffect.multiplicativeEffect)
+                  : "—"}
+              </span>
+            </div>
+            <p className="mt-1 text-2xs leading-4 text-muted">
+              Combined root impact minus the sum of isolated driver effects (
+              {formatChange(multiplicativeEffect.totalRootEffect)} −{" "}
+              {formatChange(multiplicativeEffect.sumOfIsolatedEffects)})
+            </p>
+          </div>
+        ) : null}
       </div>
 
-      <div className="min-h-0 overflow-y-auto px-4 py-4 lg:border-l lg:py-3">
+      <div className="min-h-0 overflow-y-auto px-4 py-4 lg:py-3">
         <div className="mb-2 text-xs font-semibold uppercase tracking-normal text-muted">Calculation trace</div>
         <div className="space-y-2">
           {traceItems.map((item) => (
@@ -435,13 +410,13 @@ export function ScenarioModal({
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
-  const subtitleId = useId();
   const project = useVdtStudioStore((state) => state.project);
   const activeScenarioId = useVdtStudioStore((state) => state.activeScenarioId);
   const createScenario = useVdtStudioStore((state) => state.createScenario);
   const setActiveScenarioId = useVdtStudioStore((state) => state.setActiveScenarioId);
   const renameScenario = useVdtStudioStore((state) => state.renameScenario);
   const deleteScenario = useVdtStudioStore((state) => state.deleteScenario);
+  const cloneScenario = useVdtStudioStore((state) => state.cloneScenario);
 
   const activeScenario = project.scenarios.find((scenario) => scenario.id === activeScenarioId) ?? project.scenarios[0];
   const canDeleteScenario = project.scenarios.length > 1;
@@ -449,11 +424,12 @@ export function ScenarioModal({
   const [scenarioNameDraft, setScenarioNameDraft] = useState(activeScenario?.name ?? "");
   const renameInputRef = useRef<HTMLInputElement>(null);
   const cancelRenameRef = useRef(false);
-  const renameOpenedAtRef = useRef(0);
+  const skipRenameBlurRef = useRef(false);
 
   useEffect(() => {
     if (!open) {
       setIsRenamingScenario(false);
+      skipRenameBlurRef.current = false;
       return;
     }
 
@@ -466,6 +442,9 @@ export function ScenarioModal({
     }
 
     renameInputRef.current?.focus({ preventScroll: true });
+    requestAnimationFrame(() => {
+      skipRenameBlurRef.current = false;
+    });
   }, [isRenamingScenario]);
 
   const commitScenarioRename = useCallback(() => {
@@ -553,7 +532,6 @@ export function ScenarioModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        aria-describedby={subtitleId}
         data-testid="scenario-modal"
         className={clsx(
           "vdt-ui-scale relative z-10 flex h-[min(90vh,820px)] w-full max-w-[1200px] flex-col overflow-hidden rounded-lg border border-slate-200/80 bg-white shadow-[0_30px_80px_rgba(15,23,42,0.26)]"
@@ -568,50 +546,70 @@ export function ScenarioModal({
               <h2 id={titleId} className="text-xl font-semibold text-ink">
                 Scenario Mode
               </h2>
-              <p id={subtitleId} className="mt-1 text-sm leading-5 text-muted">
-                Override inputs and inspect deterministic impact.
-              </p>
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              data-testid="edit-scenario-name"
-              aria-label="Edit scenario name"
-              icon={<Pencil className="h-4 w-4" />}
-              disabled={!activeScenario || isRenamingScenario}
-              onClick={() => {
-                flushSync(() => {
-                  setIsRenamingScenario(true);
-                });
-                renameOpenedAtRef.current = Date.now();
-              }}
-            >
-              Edit
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<Plus className="h-4 w-4" />}
-              onClick={createScenario}
-            >
-              New
-            </Button>
-            <Button
-              size="sm"
-              variant="danger"
-              data-testid="delete-scenario"
-              icon={<Trash2 className="h-4 w-4" />}
-              disabled={!activeScenario || !canDeleteScenario || isRenamingScenario}
-              onClick={handleDeleteScenario}
-            >
-              Delete
-            </Button>
+          <div className="flex min-w-0 flex-1 max-w-3xl items-center justify-end gap-2">
+            {!isRenamingScenario ? (
+              <Tooltip label="Edit scenario name">
+                <Button
+                  size="icon"
+                  variant="secondary"
+                  data-testid="edit-scenario-name"
+                  aria-label="Edit scenario name"
+                  icon={<Pencil className="h-4 w-4" />}
+                  disabled={!activeScenario}
+                  className="shrink-0"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    skipRenameBlurRef.current = true;
+                    flushSync(() => {
+                      setIsRenamingScenario(true);
+                    });
+                  }}
+                />
+              </Tooltip>
+            ) : null}
+            <Tooltip label="New scenario">
+              <Button
+                size="icon"
+                variant="secondary"
+                data-testid="new-scenario"
+                aria-label="New scenario"
+                icon={<Plus className="h-4 w-4" />}
+                disabled={isRenamingScenario}
+                className="shrink-0"
+                onClick={createScenario}
+              />
+            </Tooltip>
+            <Tooltip label="Clone scenario">
+              <Button
+                size="icon"
+                variant="secondary"
+                data-testid="clone-scenario"
+                aria-label="Clone scenario"
+                icon={<Copy className="h-4 w-4" />}
+                disabled={!activeScenario || isRenamingScenario}
+                className="shrink-0"
+                onClick={() => activeScenario && cloneScenario(activeScenario.id)}
+              />
+            </Tooltip>
+            <Tooltip label="Delete scenario">
+              <Button
+                size="icon"
+                variant="danger"
+                data-testid="delete-scenario"
+                aria-label="Delete scenario"
+                icon={<Trash2 className="h-4 w-4" />}
+                disabled={!activeScenario || !canDeleteScenario || isRenamingScenario}
+                className="shrink-0"
+                onClick={handleDeleteScenario}
+              />
+            </Tooltip>
             {isRenamingScenario ? (
               <TextInput
                 ref={renameInputRef}
-                className="min-w-[14rem] text-sm"
+                autoFocus
+                className="min-w-[14rem] max-w-[25rem] w-auto flex-1 text-sm focus-visible:ring-2 focus-visible:ring-accent"
                 aria-label="Scenario name"
                 data-testid="scenario-name-input"
                 value={scenarioNameDraft}
@@ -619,11 +617,7 @@ export function ScenarioModal({
                 onChange={(event) => setScenarioNameDraft(event.target.value)}
                 onBlur={() => {
                   window.setTimeout(() => {
-                    if (Date.now() - renameOpenedAtRef.current < 250) {
-                      return;
-                    }
-
-                    if (document.activeElement === renameInputRef.current) {
+                    if (skipRenameBlurRef.current) {
                       return;
                     }
 
@@ -653,7 +647,7 @@ export function ScenarioModal({
               />
             ) : (
               <SelectInput
-                className="min-w-[14rem] text-sm"
+                className="min-w-[14rem] max-w-[25rem] w-auto flex-1 text-sm"
                 data-testid="scenario-select"
                 value={activeScenario?.id ?? ""}
                 title={activeScenario?.name}
@@ -671,7 +665,7 @@ export function ScenarioModal({
               variant="ghost"
               aria-label="Close scenario mode"
               data-testid="scenario-modal-close"
-              className="text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              className="shrink-0 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
               icon={<X className="h-4 w-4" />}
               onClick={closeModal}
             />

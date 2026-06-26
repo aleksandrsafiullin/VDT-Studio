@@ -1426,3 +1426,51 @@ describe("vdt-store deleteScenario", () => {
     expect(useVdtStudioStore.getState().activeScenarioId).toBe(scenarioId);
   });
 });
+
+describe("vdt-store cloneScenario", () => {
+  const scenarioId = "scenario_reduce_unplanned_downtime";
+  const originalName = "Reduce unplanned downtime";
+
+  beforeEach(() => {
+    localStorageMock.clear();
+    useVdtStudioStore.setState({
+      project: cloneProject(productionVolumeProject),
+      activeScenarioId: scenarioId
+    });
+  });
+
+  it("clones overrides and activates the new scenario", () => {
+    const sourceOverrides = productionVolumeProject.scenarios.find((s) => s.id === scenarioId)?.overrides;
+
+    useVdtStudioStore.getState().cloneScenario(scenarioId);
+
+    const state = useVdtStudioStore.getState();
+    const clone = state.project.scenarios.find((scenario) => scenario.id === state.activeScenarioId);
+
+    expect(state.project.scenarios).toHaveLength(2);
+    expect(clone?.name).toBe(`${originalName} copy`);
+    expect(clone?.overrides).toEqual(sourceOverrides);
+    expect(clone?.results).toBeUndefined();
+    expect(clone?.baselineScenarioId).toBeUndefined();
+    expect(state.activeScenarioId).toBe(clone?.id);
+    expect(state.project.updatedAt).not.toBe(productionVolumeProject.updatedAt);
+  });
+
+  it("dedupes clone names when a copy already exists", () => {
+    useVdtStudioStore.getState().cloneScenario(scenarioId);
+    useVdtStudioStore.getState().cloneScenario(scenarioId);
+
+    const names = useVdtStudioStore.getState().project.scenarios.map((scenario) => scenario.name);
+    expect(names).toContain(`${originalName} copy`);
+    expect(names).toContain(`${originalName} copy (2)`);
+  });
+
+  it("no-ops on unknown scenario id", () => {
+    const before = useVdtStudioStore.getState().project;
+
+    useVdtStudioStore.getState().cloneScenario("scenario_unknown");
+
+    expect(useVdtStudioStore.getState().project).toBe(before);
+    expect(useVdtStudioStore.getState().activeScenarioId).toBe(scenarioId);
+  });
+});

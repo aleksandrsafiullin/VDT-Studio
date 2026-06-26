@@ -1028,17 +1028,30 @@ test("shows a real BYOK connection error without falling back to mock", async ({
   await expect(page.getByRole("heading", { name: "Production Volume Driver Model" })).toBeVisible();
 });
 
-test("runs the downtime scenario and shows impacted drivers", async ({ page }, testInfo) => {
+test("runs the downtime scenario and shows updated totals in middle column", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Detailed scenario smoke runs on desktop viewport.");
 
   await openScenarioModal(page);
 
   await fillScenarioOverride(page, "unplanned_downtime", "60");
 
+  await expect(page.getByText("Impacted drivers")).toHaveCount(0);
+  await expect(page.getByTestId("scenario-totals-metrics")).toBeVisible();
   await expect(page.getByText("117,849.6").first()).toBeVisible();
-  await expect(page.getByText("Impacted drivers")).toBeVisible();
-  await expect(page.getByText("Unplanned Downtime").last()).toBeVisible();
   await expect(scenarioOverrideCard(page, "unplanned_downtime")).toBeVisible();
+
+  const middleColumn = page.getByTestId("scenario-middle-column");
+  const totalsIndex = await middleColumn.getByTestId("scenario-totals-metrics").evaluate((element) => {
+    const parent = element.parentElement;
+    return parent ? Array.from(parent.children).indexOf(element) : -1;
+  });
+  const overridesIndex = await middleColumn.getByTestId("scenario-overrides-table").evaluate((element) => {
+    const parent = element.parentElement;
+    return parent ? Array.from(parent.children).indexOf(element) : -1;
+  });
+  expect(totalsIndex).toBeGreaterThanOrEqual(0);
+  expect(overridesIndex).toBeGreaterThan(totalsIndex);
+
   await closeScenarioModal(page);
 });
 
@@ -1054,6 +1067,7 @@ test("persists scenario rename across reload", async ({ page }, testInfo) => {
   await editButton.click();
   const nameInput = modal.getByTestId("scenario-name-input");
   await expect(nameInput).toBeVisible();
+  await expect(nameInput).toBeFocused();
   await nameInput.fill("Optimized downtime plan");
   await nameInput.press("Enter");
 
@@ -1087,6 +1101,25 @@ test("escape cancels scenario rename without closing the modal", async ({ page }
   );
 });
 
+test("blur cancels scenario rename without saving", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Scenario rename blur cancel runs on desktop viewport.");
+
+  await openScenarioModal(page);
+
+  const modal = page.getByTestId("scenario-modal");
+  const select = page.getByTestId("scenario-select");
+  const originalName = (await select.locator("option:checked").textContent())?.trim();
+
+  await modal.getByTestId("edit-scenario-name").click();
+  const nameInput = modal.getByTestId("scenario-name-input");
+  await expect(nameInput).toBeFocused();
+  await nameInput.fill("Blur should not save this");
+  await scenarioOverrideCard(page, "unplanned_downtime").locator("input").click();
+
+  await expect(page.getByTestId("scenario-name-input")).toHaveCount(0);
+  await expect(select.locator("option:checked")).toHaveText(originalName ?? "");
+});
+
 test("shows multiplicative effect when multiple overrides combine", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario multiplicative effect runs on desktop viewport.");
 
@@ -1096,13 +1129,43 @@ test("shows multiplicative effect when multiple overrides combine", async ({ pag
 
   await expect(page.getByTestId("scenario-multiplicative-effect")).toBeVisible();
   await expect(page.getByText("Multiplicative effect")).toBeVisible();
+
+  const middleColumn = page.getByTestId("scenario-middle-column");
+  const overridesIndex = await middleColumn.getByTestId("scenario-overrides-table").evaluate((element) => {
+    const parent = element.parentElement;
+    return parent ? Array.from(parent.children).indexOf(element) : -1;
+  });
+  const multiplicativeIndex = await middleColumn.getByTestId("scenario-multiplicative-effect").evaluate((element) => {
+    const parent = element.parentElement;
+    return parent ? Array.from(parent.children).indexOf(element) : -1;
+  });
+  expect(multiplicativeIndex).toBeGreaterThan(overridesIndex);
+});
+
+test("clones scenario with overrides", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Scenario clone runs on desktop viewport.");
+
+  await openScenarioModal(page);
+  await fillScenarioOverride(page, "unplanned_downtime", "60");
+
+  const select = page.getByTestId("scenario-select");
+  const originalName = (await select.locator("option:checked").textContent())?.trim();
+
+  await page.getByTestId("clone-scenario").click();
+  await expect(select.locator("option:checked")).toHaveText(`${originalName} copy`);
+  await expect(scenarioOverrideCard(page, "unplanned_downtime").locator("input")).toHaveValue("60");
+
+  await page.reload();
+  await openScenarioModal(page);
+  await expect(page.getByTestId("scenario-select").locator("option:checked")).toHaveText(/copy/);
+  await expect(scenarioOverrideCard(page, "unplanned_downtime").locator("input")).toHaveValue("60");
 });
 
 test("deletes a scenario after confirmation", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario delete runs on desktop viewport.");
 
   await openScenarioModal(page);
-  await page.getByRole("button", { name: "New" }).click();
+  await page.getByTestId("new-scenario").click();
 
   const select = page.getByTestId("scenario-select");
   const beforeCount = await select.locator("option").count();
@@ -1119,7 +1182,7 @@ test("cancels scenario delete when confirmation is dismissed", async ({ page }, 
   test.skip(testInfo.project.name !== "chromium", "Scenario delete cancel runs on desktop viewport.");
 
   await openScenarioModal(page);
-  await page.getByRole("button", { name: "New" }).click();
+  await page.getByTestId("new-scenario").click();
 
   const select = page.getByTestId("scenario-select");
   const beforeCount = await select.locator("option").count();
@@ -1137,9 +1200,9 @@ test("reassigns active scenario after deleting the selected scenario", async ({ 
 
   const select = page.getByTestId("scenario-select");
   const originalScenarioId = await select.inputValue();
-  await page.getByRole("button", { name: "New" }).click();
+  await page.getByTestId("new-scenario").click();
   const secondScenarioId = await select.inputValue();
-  await page.getByRole("button", { name: "New" }).click();
+  await page.getByTestId("new-scenario").click();
   const deletedId = await select.inputValue();
 
   page.once("dialog", (dialog) => dialog.accept());
@@ -1161,7 +1224,7 @@ test("persists scenario delete across reload", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario delete persistence runs on desktop viewport.");
 
   await openScenarioModal(page);
-  await page.getByRole("button", { name: "New" }).click();
+  await page.getByTestId("new-scenario").click();
 
   const select = page.getByTestId("scenario-select");
   const deletedId = await select.inputValue();
