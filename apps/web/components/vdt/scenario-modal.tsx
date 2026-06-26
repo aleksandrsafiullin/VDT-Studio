@@ -26,7 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Metric } from "@/components/ui/metric";
 import { SelectInput, TextInput } from "@/components/ui/field";
 import { Tooltip } from "@/components/ui/tooltip";
-import { formatChange, formatNumber, formatPercent } from "@/lib/format";
+import { formatChange, formatNumber, formatPercent, getStepFromDecimalPlaces, countDecimalPlacesFromNumber, countDecimalPlacesFromString } from "@/lib/format";
 import { ExplanationPanel } from "./explanation-panel";
 import { useVdtStudioStore } from "./vdt-store";
 
@@ -100,6 +100,16 @@ function commitOverrideValue(
   updateScenarioOverride(scenarioId, nodeId, parsed);
 }
 
+function initialStepDecimalPlaces(
+  overrideValue: number | undefined,
+  baselineValue: number | undefined
+) {
+  return Math.max(
+    countDecimalPlacesFromNumber(overrideValue ?? baselineValue),
+    countDecimalPlacesFromNumber(baselineValue)
+  );
+}
+
 function ScenarioOverrideRow({
   node,
   overrideValue,
@@ -118,6 +128,13 @@ function ScenarioOverrideRow({
   const baselineValue = node.baselineValue;
   const scenarioValue = overrideValue ?? baselineValue;
   const displayValue = scenarioValue !== undefined ? String(scenarioValue) : "";
+  const [stepDecimalPlaces, setStepDecimalPlaces] = useState(() =>
+    initialStepDecimalPlaces(overrideValue, baselineValue)
+  );
+
+  useEffect(() => {
+    setStepDecimalPlaces(initialStepDecimalPlaces(overrideValue, baselineValue));
+  }, [node.nodeId, activeScenarioId]);
 
   const differsFromBaseline =
     scenarioValue !== undefined &&
@@ -141,21 +158,28 @@ function ScenarioOverrideRow({
         <TextInput
           className="h-8 w-full max-w-full py-1 text-right text-xs tabular-nums"
           type="number"
+          step={getStepFromDecimalPlaces(stepDecimalPlaces)}
           placeholder={baselineValue === undefined ? "n/a" : String(baselineValue)}
           value={displayValue}
           disabled={disabled || !activeScenarioId}
           aria-label={`Scenario value for ${node.nodeName}`}
-          onChange={(event) =>
-            activeScenarioId
-              ? commitOverrideValue(
-                  updateScenarioOverride,
-                  activeScenarioId,
-                  node.nodeId,
-                  baselineValue,
-                  event.target.value
-                )
-              : undefined
-          }
+          onChange={(event) => {
+            const rawValue = event.target.value;
+            const fromString = countDecimalPlacesFromString(rawValue);
+            if (fromString !== undefined) {
+              setStepDecimalPlaces((current) => Math.max(current, fromString));
+            }
+
+            if (activeScenarioId) {
+              commitOverrideValue(
+                updateScenarioOverride,
+                activeScenarioId,
+                node.nodeId,
+                baselineValue,
+                rawValue
+              );
+            }
+          }}
         />
       </td>
       <td className={clsx(OVERRIDE_TABLE_CELL_CLASS, "text-right")}>
