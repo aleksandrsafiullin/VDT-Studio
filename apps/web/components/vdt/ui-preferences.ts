@@ -1,7 +1,5 @@
 export const BASE_LEFT_PANEL_WIDTH = 300;
 export const BASE_RIGHT_PANEL_WIDTH = 328;
-export const BASE_SCENARIO_DRAWER_HEIGHT = 248;
-export const SCENARIO_DRAWER_COLLAPSED_HEIGHT = 44;
 export const BASE_WORKSPACE_SECTION_MIN_HEIGHT = 820;
 export const COLLAPSED_PANEL_WIDTH = 32;
 
@@ -12,23 +10,31 @@ export const MIN_LEFT_PANEL_WIDTH = 220;
 export const MAX_LEFT_PANEL_WIDTH = 480;
 export const MIN_RIGHT_PANEL_WIDTH = 240;
 export const MAX_RIGHT_PANEL_WIDTH = 520;
+export const DEFAULT_KPI_HORIZONTAL_GAP = 220;
+export const DEFAULT_KPI_VERTICAL_GAP = 36;
+export const MIN_KPI_HORIZONTAL_GAP = 120;
+export const MAX_KPI_HORIZONTAL_GAP = 520;
+export const MIN_KPI_VERTICAL_GAP = 16;
+export const MAX_KPI_VERTICAL_GAP = 220;
 
 export interface UiPreferences {
   fontScale: number;
+  kpiHorizontalGap: number;
+  kpiVerticalGap: number;
   leftPanelWidth: number;
   rightPanelWidth: number;
   leftPanelCollapsed: boolean;
   rightPanelCollapsed: boolean;
-  scenarioDrawerCollapsed: boolean;
 }
 
 export const DEFAULT_UI: UiPreferences = {
   fontScale: 0.9,
+  kpiHorizontalGap: DEFAULT_KPI_HORIZONTAL_GAP,
+  kpiVerticalGap: DEFAULT_KPI_VERTICAL_GAP,
   leftPanelWidth: DEFAULT_LEFT_PANEL_WIDTH,
   rightPanelWidth: DEFAULT_RIGHT_PANEL_WIDTH,
   leftPanelCollapsed: false,
-  rightPanelCollapsed: false,
-  scenarioDrawerCollapsed: false
+  rightPanelCollapsed: false
 };
 
 export function clampLeftPanelWidth(value: number) {
@@ -39,14 +45,16 @@ export function clampRightPanelWidth(value: number) {
   return Math.min(MAX_RIGHT_PANEL_WIDTH, Math.max(MIN_RIGHT_PANEL_WIDTH, Math.round(value)));
 }
 
-/** Collapsed scenario drawer chrome height, scaled by fontScale and clamped to 40–52px. */
-export function scenarioDrawerCollapsedHeight(fontScale: number) {
-  const scaled = Math.round(SCENARIO_DRAWER_COLLAPSED_HEIGHT * fontScale);
-  return Math.min(52, Math.max(40, scaled));
-}
-
 export function clampFontScale(value: number) {
   return Math.min(1.1, Math.max(0.75, value));
+}
+
+export function clampKpiHorizontalGap(value: number) {
+  return Math.min(MAX_KPI_HORIZONTAL_GAP, Math.max(MIN_KPI_HORIZONTAL_GAP, Math.round(value)));
+}
+
+export function clampKpiVerticalGap(value: number) {
+  return Math.min(MAX_KPI_VERTICAL_GAP, Math.max(MIN_KPI_VERTICAL_GAP, Math.round(value)));
 }
 
 function sanitizeScale(
@@ -91,20 +99,30 @@ function resolvePanelWidths(persisted: Partial<UiPreferences> & { panelScale?: n
   };
 }
 
-export function mergeUiPreferences(persisted?: Partial<UiPreferences> & { panelScale?: number }): UiPreferences {
-  const merged = { ...DEFAULT_UI, ...persisted };
+export function mergeUiPreferences(
+  persisted?: Partial<UiPreferences> & { panelScale?: number; scenarioDrawerCollapsed?: unknown }
+): UiPreferences {
+  const { scenarioDrawerCollapsed: _legacyScenarioDrawerCollapsed, ...rest } = persisted ?? {};
+  void _legacyScenarioDrawerCollapsed;
+  const merged = { ...DEFAULT_UI, ...rest };
   const widths = resolvePanelWidths(persisted ?? {});
 
   return {
     fontScale: sanitizeScale(merged.fontScale, clampFontScale, DEFAULT_UI.fontScale),
+    kpiHorizontalGap: sanitizeScale(
+      merged.kpiHorizontalGap,
+      clampKpiHorizontalGap,
+      DEFAULT_UI.kpiHorizontalGap
+    ),
+    kpiVerticalGap: sanitizeScale(
+      merged.kpiVerticalGap,
+      clampKpiVerticalGap,
+      DEFAULT_UI.kpiVerticalGap
+    ),
     leftPanelWidth: widths.leftPanelWidth,
     rightPanelWidth: widths.rightPanelWidth,
     leftPanelCollapsed: sanitizeBoolean(merged.leftPanelCollapsed, DEFAULT_UI.leftPanelCollapsed),
-    rightPanelCollapsed: sanitizeBoolean(merged.rightPanelCollapsed, DEFAULT_UI.rightPanelCollapsed),
-    scenarioDrawerCollapsed: sanitizeBoolean(
-      merged.scenarioDrawerCollapsed,
-      DEFAULT_UI.scenarioDrawerCollapsed
-    )
+    rightPanelCollapsed: sanitizeBoolean(merged.rightPanelCollapsed, DEFAULT_UI.rightPanelCollapsed)
   };
 }
 
@@ -116,6 +134,12 @@ export function applyUiPreference<K extends keyof UiPreferences>(
   let nextValue = value;
   if (field === "fontScale" && typeof value === "number") {
     nextValue = clampFontScale(value) as UiPreferences[K];
+  }
+  if (field === "kpiHorizontalGap" && typeof value === "number") {
+    nextValue = clampKpiHorizontalGap(value) as UiPreferences[K];
+  }
+  if (field === "kpiVerticalGap" && typeof value === "number") {
+    nextValue = clampKpiVerticalGap(value) as UiPreferences[K];
   }
   if (field === "leftPanelWidth" && typeof value === "number") {
     nextValue = clampLeftPanelWidth(value) as UiPreferences[K];
@@ -139,9 +163,10 @@ export function setPanelWidth(
 
 export const UI_PERSIST_KEYS: (keyof UiPreferences)[] = [
   "fontScale",
+  "kpiHorizontalGap",
+  "kpiVerticalGap",
   "leftPanelWidth",
   "rightPanelWidth",
   "leftPanelCollapsed",
-  "rightPanelCollapsed",
-  "scenarioDrawerCollapsed"
+  "rightPanelCollapsed"
 ];

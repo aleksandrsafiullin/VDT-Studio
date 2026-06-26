@@ -1,0 +1,13 @@
+{
+  "name": "@vdt-studio/vdt-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/vdt-agent/src"
+  }
+}

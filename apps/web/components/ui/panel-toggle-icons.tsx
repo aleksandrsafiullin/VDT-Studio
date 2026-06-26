@@ -24,22 +24,11 @@ export function InsetFilledRightThirdRectangle({ className }: IconProps) {
   );
 }
 
-/** SF Symbol: inset.filled.bottomthird.rectangle */
-export function InsetFilledBottomThirdRectangle({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 16 16" className={clsx("shrink-0", className)} aria-hidden>
-      <rect x="2" y="3.5" width="12" height="9" rx="1.75" fill="none" stroke="currentColor" strokeWidth="1.15" />
-      <rect x="2.55" y="9.35" width="10.9" height="2.6" rx="1.15" fill="currentColor" />
-    </svg>
-  );
-}
-
-export type PanelToggleTarget = "left" | "right" | "bottom";
+export type PanelToggleTarget = "left" | "right";
 
 const ICON_BY_PANEL: Record<PanelToggleTarget, typeof InsetFilledLeftHalfRectangle> = {
   left: InsetFilledLeftHalfRectangle,
-  right: InsetFilledRightThirdRectangle,
-  bottom: InsetFilledBottomThirdRectangle
+  right: InsetFilledRightThirdRectangle
 };
 
 export function PanelToggleIcon({

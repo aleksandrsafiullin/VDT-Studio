@@ -92,21 +92,26 @@ export function ByokSettings() {
 
   return (
     <div className="space-y-4" data-testid="byok-settings">
-      <SettingsChipRow
-        label="Protocol"
-        options={PROTOCOL_CHIPS}
-        value={protocol}
-        testIdPrefix="byok-protocol"
-        onChange={(nextProtocol) => setByokProtocol(nextProtocol)}
-      />
+      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <h3 className="text-sm font-semibold text-ink">Provider routing</h3>
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          <SettingsChipRow
+            label="Protocol"
+            options={PROTOCOL_CHIPS}
+            value={protocol}
+            testIdPrefix="byok-protocol"
+            onChange={(nextProtocol) => setByokProtocol(nextProtocol)}
+          />
 
-      <SettingsChipRow
-        label="Gateway"
-        options={GATEWAY_CHIPS}
-        value={gateway}
-        testIdPrefix="byok-gateway"
-        onChange={(nextGateway) => setByokGateway(nextGateway)}
-      />
+          <SettingsChipRow
+            label="Gateway"
+            options={GATEWAY_CHIPS}
+            value={gateway}
+            testIdPrefix="byok-gateway"
+            onChange={(nextGateway) => setByokGateway(nextGateway)}
+          />
+        </div>
+      </section>
 
       <ByokPresetForm
         executionSettings={executionSettings}

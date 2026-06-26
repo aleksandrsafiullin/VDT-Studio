@@ -8,6 +8,7 @@ const tempDirs: string[] = [];
 
 const commands = [
   "ai_list_backends",
+  "ai_detect_subscription_clis",
   "ai_test_backend",
   "ai_list_models",
   "ai_complete",
@@ -55,7 +56,8 @@ async function writeFixture(options: {
           "sidecars/vdt-local-runtime",
           "sidecars/vdt-local-runtime.cmd",
           "sidecars/vdt-local-runtime.mjs",
-          "sidecars/vdt-local-runtime.manifest.json"
+          "sidecars/vdt-local-runtime.manifest.json",
+          "sidecars/vdt-agent-skills"
         ],
         macOS: { signingIdentity: "-" }
       }
@@ -74,6 +76,7 @@ async function writeFixture(options: {
       ...(options.directProcessSpawn ? ["use std::process::Command;"] : []),
       ...commands.map((command) => `fn ${command}() {}`),
       "fn checked_auth(backend_id: String, runtime: DesktopRuntime) { runtime.open_provider_auth(&backend_id); }",
+      "fn checked_detect(agent_id: Option<String>, runtime: DesktopRuntime) { runtime.detect_subscription_clis(agent_id.as_deref()); }",
       options.missingAutoStart
         ? "fn run() { tauri::Builder::default().manage(DesktopRuntime::default()); }"
         : "fn run() { tauri::Builder::default().manage(DesktopRuntime::default()).setup(|app| { let runtime = app.state::<DesktopRuntime>(); let resource_dir = app.path().resource_dir().unwrap(); runtime.set_resource_dir(resource_dir); runtime.start(); Ok(()) }); }"
@@ -95,7 +98,7 @@ async function writeFixture(options: {
       "const STARTUP_HANDSHAKE_TIMEOUT_MS: u64 = 5000;",
       "const MAX_CRASH_RESTARTS: usize = 3;",
       "const SIDECAR_CRASH_LOOP: &str = \"SIDECAR_CRASH_LOOP\";",
-      "impl DesktopRuntime { pub fn set_resource_dir(&self, resource_dir: std::path::PathBuf) {} pub fn start(&self) { self.lock_or_start()?; } fn lock_or_start(&self) {} }",
+      "impl DesktopRuntime { pub fn set_resource_dir(&self, resource_dir: std::path::PathBuf) {} pub fn start(&self) { self.lock_or_start()?; } fn lock_or_start(&self) {} pub fn detect_subscription_clis(&self, agent_id: Option<&str>) { self.request(\"detect_clis\", agent_id); } fn request(&self, method: &str, payload: Option<&str>) {} }",
       ...(options.missingRuntimeCleanup ? [] : ["impl Drop for DesktopRuntime { fn drop(&mut self) { let mut sidecar = Some(()); drop(sidecar.take()); } }"]),
       "fn complete(mut request: serde_json::Value) { let payload = request.as_object_mut().unwrap(); payload.remove(\"requestId\"); payload.remove(\"providerId\"); }",
       "struct SidecarManifest { launcher_sha256: String, windows_launcher_sha256: String, bundle_sha256: String, sidecar_sha256: String }",
@@ -117,7 +120,7 @@ afterEach(async () => {
 
 describe("verify-desktop-shell", () => {
   it("passes the current desktop scaffold", () => {
-    expect(verifyDesktopShell()).toMatchObject({ commandCount: 8 });
+    expect(verifyDesktopShell()).toMatchObject({ commandCount: 9 });
   });
 
   it("fails if a generic native permission is enabled", async () => {

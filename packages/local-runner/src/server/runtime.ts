@@ -4,7 +4,25 @@ import {
   schemaSupportsTask,
   type VdtAiTaskType
 } from "@vdt-studio/model-bridge";
-import type { AuditEvent, BackendManifest, CompletionRequest, RunSnapshot } from "../cli/types";
+import {
+  detectSubscriptionCli,
+  detectSubscriptionClis,
+  enrichSubscriptionCliDetections,
+  isSubscriptionCliId,
+  type DetectionOptions,
+  type SubscriptionCliId
+} from "@vdt-studio/model-bridge/node";
+import { validateGraph, type VdtGraph, type VdtProject, type VdtWarning } from "@vdt-studio/vdt-core";
+import {
+  appendAgenticVdtRunEvent,
+  finalizeAgenticVdtRun,
+  loadDefaultSkillLibrary,
+  prepareAgenticVdtRun,
+  type AgenticPromptPackage,
+  type GenerateVdtInputLike,
+  type VdtAgentRun
+} from "@vdt-studio/vdt-agent";
+import type { AuditEvent, BackendManifest, CompletionRequest, RunProgressPhase, RunSnapshot, RunStatus } from "../cli/types";
 import { executeCompletion, EXECUTION_LIMITS, listBackendModels, type ExecutorOptions } from "./executor";
 import { createManifestRegistry, publicManifest } from "./manifests";
 
@@ -19,6 +37,7 @@ const TASK_TYPES = new Set<VdtAiTaskType>([
 export interface LocalRuntimeConfig {
   manifests?: readonly BackendManifest[];
   executor?: ExecutorOptions;
+  detection?: DetectionOptions & { probeTimeoutMs?: number };
   auditSink?: (event: AuditEvent) => void;
   adapterVersion?: string;
 }
@@ -26,6 +45,18 @@ export interface LocalRuntimeConfig {
 interface ActiveRun extends RunSnapshot {
   controller: AbortController;
 }
+
+const PROGRESS_LABELS: Record<RunProgressPhase, string> = {
+  preparing_request: "Preparing request",
+  starting_backend: "Starting backend",
+  waiting_for_provider: "Waiting for CLI/provider",
+  validating_schema: "Validating schema",
+  repairing_output: "Repairing/normalizing output",
+  building_project: "Building project",
+  complete: "Complete",
+  error: "Error",
+  cancelled: "Cancelled"
+};
 
 export interface LocalRuntimeContext {
   config: LocalRuntimeConfig;
@@ -47,6 +78,15 @@ export class LocalRuntimeError extends Error {
   }
 }
 
+function setRunProgress(run: ActiveRun, phase: RunProgressPhase, status: RunStatus = run.status): void {
+  run.progress = {
+    phase,
+    label: PROGRESS_LABELS[phase],
+    updatedAt: new Date().toISOString()
+  };
+  run.status = status;
+}
+
 export function createLocalRuntimeContext(config: LocalRuntimeConfig = {}): LocalRuntimeContext {
   return {
     config,
@@ -59,6 +99,55 @@ export function createLocalRuntimeContext(config: LocalRuntimeConfig = {}): Loca
 
 export function listRuntimeBackends(context: LocalRuntimeContext): RuntimeResult {
   return { statusCode: 200, payload: { ok: true, backends: [...context.manifests.values()].map(publicManifest) } };
+}
+
+export async function detectRuntimeSubscriptionClis(
+  context: LocalRuntimeContext,
+  agentId?: string
+): Promise<RuntimeResult> {
+  if (agentId !== undefined && !isSubscriptionCliId(agentId)) {
+    throw new LocalRuntimeError(400, "UNKNOWN_CLI_AGENT", `Unknown CLI agent: ${agentId}`);
+  }
+
+  const detectionOptions = context.config.detection ?? {};
+  const detected = agentId
+    ? [await detectSubscriptionCli(agentId as SubscriptionCliId, detectionOptions)]
+    : await detectSubscriptionClis(detectionOptions);
+  const enrichmentOptions = detectionOptions.probeTimeoutMs === undefined
+    ? {}
+    : { probeTimeoutMs: detectionOptions.probeTimeoutMs };
+  const agents = await enrichSubscriptionCliDetections(detected, enrichmentOptions);
+  const modelsByAgent: Partial<Record<SubscriptionCliId, string[]>> = {};
+
+  await Promise.all(
+    agents.map(async (agent) => {
+      if (!agent.installed || !agent.executable) {
+        modelsByAgent[agent.id] = [];
+        return;
+      }
+      const manifest = context.manifests.get(agent.backendId);
+      if (!manifest) {
+        modelsByAgent[agent.id] = [];
+        return;
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15_000);
+      try {
+        modelsByAgent[agent.id] = [
+          ...await listBackendModels(manifest, controller.signal, {
+            ...(context.config.executor ?? {}),
+            resolveExecutable: async () => agent.executable!
+          })
+        ];
+      } catch {
+        modelsByAgent[agent.id] = [];
+      } finally {
+        clearTimeout(timer);
+      }
+    })
+  );
+
+  return { statusCode: 200, payload: { ok: true, agents, modelsByAgent } };
 }
 
 export async function listRuntimeModels(backendId: string, context: LocalRuntimeContext): Promise<RuntimeResult> {
@@ -113,14 +202,26 @@ export async function completeRuntime(request: CompletionRequest, context: Local
     status: "running",
     createdAt,
     startedAt: createdAt,
+    progress: { phase: "starting_backend", label: PROGRESS_LABELS.starting_backend, updatedAt: createdAt },
     controller
   };
   context.runs.set(request.requestId, run);
   const started = Date.now();
+  let executionRequest = request;
   try {
-    const result = await executeCompletion(manifest, request, controller.signal, context.config.executor);
+    setRunProgress(run, "preparing_request");
+    const preparedAgent = await prepareRuntimeAgentRun(request);
+    if (preparedAgent) {
+      executionRequest = preparedAgent.request;
+      run.agentRun = preparedAgent.agentRun;
+    }
+    setRunProgress(run, "waiting_for_provider");
+    const result = await executeCompletion(manifest, executionRequest, controller.signal, context.config.executor);
     run.status = "succeeded";
     run.output = result.output;
+    if (run.agentRun) {
+      run.agentRun = finalizeRuntimeAgentRun(run.agentRun, request, result.output);
+    }
     run.outputBytes = result.outputBytes;
     run.schemaValid = result.schemaValid;
     if (result.repaired === true) run.repaired = true;
@@ -128,6 +229,7 @@ export async function completeRuntime(request: CompletionRequest, context: Local
     if (result.repairSucceeded === true) run.repairSucceeded = true;
     run.finishedAt = new Date().toISOString();
     run.latencyMs = Date.now() - started;
+    setRunProgress(run, "complete", "succeeded");
     context.auditSink({
       requestId: run.requestId, backendId: run.backendId, adapterVersion: context.adapterVersion,
       taskType: run.taskType, startedAt: run.startedAt!, latencyMs: run.latencyMs,
@@ -149,8 +251,21 @@ export async function completeRuntime(request: CompletionRequest, context: Local
       run.repairAttempted = true;
       run.repairSucceeded = false;
     }
+    if (run.agentRun) {
+      run.agentRun = appendAgenticVdtRunEvent(
+        run.agentRun,
+        {
+          type: "error",
+          title: normalized.code === "CANCELLED" ? "Provider execution cancelled" : "Provider execution failed",
+          message: normalized.message,
+          metadata: { code: normalized.code }
+        },
+        { phase: "reporting", status: normalized.code === "CANCELLED" ? "cancelled" : "failed" }
+      );
+    }
     run.finishedAt = new Date().toISOString();
     run.latencyMs = Date.now() - started;
+    setRunProgress(run, normalized.code === "CANCELLED" ? "cancelled" : "error", run.status);
     context.auditSink({
       requestId: run.requestId, backendId: run.backendId, adapterVersion: context.adapterVersion,
       taskType: run.taskType, startedAt: run.startedAt!, latencyMs: run.latencyMs,
@@ -160,6 +275,267 @@ export async function completeRuntime(request: CompletionRequest, context: Local
     });
     return { statusCode: normalized.code === "CANCELLED" ? 409 : 502, payload: { ok: false, run: publicRun(run), error: normalized } };
   }
+}
+
+interface PreparedRuntimeAgentRun {
+  request: CompletionRequest;
+  agentRun: VdtAgentRun;
+}
+
+async function prepareRuntimeAgentRun(request: CompletionRequest): Promise<PreparedRuntimeAgentRun | undefined> {
+  if (request.schemaId === "connection-test-v1") return undefined;
+  if (request.taskType !== "generate_tree" && request.taskType !== "deepen_node") return undefined;
+
+  const agentRequest = request.taskType === "generate_tree"
+    ? generateInputFromCompletionInput(request.input)
+    : deepenInputFromCompletionInput(request.input);
+  if (!agentRequest) return undefined;
+
+  const library = await loadDefaultSkillLibrary();
+  const prepared = prepareAgenticVdtRun(agentRequest, library);
+  const agentRun = appendAgenticVdtRunEvent(
+    prepared.run,
+    {
+      type: "model_call_started",
+      title: request.taskType === "generate_tree" ? "Model call started" : "Deepen model call started",
+      message:
+        request.taskType === "generate_tree"
+          ? `Generating graph from ${prepared.skillExcerpts.length} selected skill${prepared.skillExcerpts.length === 1 ? "" : "s"}.`
+          : `Generating deepen patch from ${prepared.skillExcerpts.length} selected skill${prepared.skillExcerpts.length === 1 ? "" : "s"}.`,
+      metadata: {
+        taskType: request.taskType,
+        selectedSkillIds: prepared.prompt.decompositionPlan.selectedSkillIds
+      }
+    },
+    { phase: "generating_graph" }
+  );
+
+  return {
+    request: request.taskType === "generate_tree" || request.taskType === "deepen_node"
+      ? { ...request, input: enrichAgenticCompletionInput(request.input, prepared.prompt) }
+      : request,
+    agentRun
+  };
+}
+
+function finalizeRuntimeAgentRun(agentRun: VdtAgentRun, request: CompletionRequest, output: unknown): VdtAgentRun {
+  const resultProjectId = outputProjectId(output) ?? request.requestId;
+  if (request.taskType === "generate_tree") {
+    const validation = graphValidationSummaryFromGenerateOutput(output);
+    return finalizeAgenticVdtRun(agentRun, {
+      resultProjectId,
+      finalReport: runtimeFinalReport(
+        agentRun,
+        "Generated a candidate VDT graph through the local runtime.",
+        validation.message
+      ),
+      validationSummary: validation.message,
+      draftGraph: output
+    });
+  }
+
+  const withPatch = appendAgenticVdtRunEvent(
+    agentRun,
+    {
+      type: "graph_patch",
+      title: "Graph patch returned",
+      message: "Deepen operation returned a candidate change set payload.",
+      metadata: { targetNodeId: isRecord(output) ? output.targetNodeId : undefined }
+    },
+    { phase: "validating_graph" }
+  );
+  const withCompleted = appendAgenticVdtRunEvent(
+    withPatch,
+    {
+      type: "model_call_completed",
+      title: "Deepen model call completed",
+      message: validationSummaryFromOutput(output),
+      metadata: { targetNodeId: isRecord(output) ? output.targetNodeId : undefined }
+    },
+    { phase: "reporting" }
+  );
+  const validationSummary = validationSummaryFromOutput(output);
+  const withReport = appendAgenticVdtRunEvent(
+    withCompleted,
+    {
+      type: "final_report",
+      title: "Deepen report prepared",
+      message: "Prepared deepen run report after provider schema validation.",
+      metadata: { targetNodeId: isRecord(output) ? output.targetNodeId : undefined }
+    },
+    { phase: "reporting", status: "succeeded" }
+  );
+  return {
+    ...withReport,
+    resultProjectId,
+    finalReport: runtimeFinalReport(
+      withReport,
+      "Generated a candidate deepen patch through the local runtime.",
+      validationSummary
+    ),
+    draftGraph: output
+  };
+}
+
+function unwrapTaskInput(input: unknown): unknown {
+  if (isRecord(input) && "data" in input) return input.data;
+  return input;
+}
+
+function generateInputFromCompletionInput(input: unknown): GenerateVdtInputLike | undefined {
+  const data = unwrapTaskInput(input);
+  if (!isRecord(data)) return undefined;
+  const rootKpi = boundedString(data.rootKpi) ?? boundedString(data.projectTitle) ?? boundedString(data.prompt);
+  if (!rootKpi) return undefined;
+  const request: GenerateVdtInputLike = { rootKpi };
+  const industry = boundedString(data.industry);
+  const businessContext = boundedString(data.businessContext);
+  const unit = boundedString(data.unit);
+  const timePeriod = boundedString(data.timePeriod);
+  const goal = boundedString(data.goal);
+  const levelOfDetail = boundedString(data.levelOfDetail);
+  if (industry) request.industry = industry;
+  if (businessContext) request.businessContext = businessContext;
+  if (unit) request.unit = unit;
+  if (timePeriod) request.timePeriod = timePeriod;
+  if (goal) request.goal = goal;
+  if (levelOfDetail) request.levelOfDetail = levelOfDetail;
+  return request;
+}
+
+function deepenInputFromCompletionInput(input: unknown): GenerateVdtInputLike | undefined {
+  const data = unwrapTaskInput(input);
+  if (!isRecord(data)) return undefined;
+  const project = projectFromDeepenInput(data);
+  const targetNodeId = boundedString(data.targetNodeId) ?? boundedString(data.nodeId);
+  const targetName = targetNameFromDeepenInput(data);
+  const rootKpi = targetName ?? targetNodeId;
+  if (!rootKpi) return undefined;
+  const context = isRecord(data.context) ? data.context : undefined;
+  const request: GenerateVdtInputLike = { rootKpi };
+  const industry = boundedString(data.industry) ?? boundedString(project?.industry);
+  const businessContext = boundedString(data.businessContext) ?? boundedString(project?.businessContext) ?? boundedString(project?.description);
+  const goal = boundedString(context?.goal);
+  const targetUnit = targetUnitFromDeepenInput(data);
+  if (industry) request.industry = industry;
+  if (businessContext) request.businessContext = businessContext;
+  if (targetUnit) request.unit = targetUnit;
+  if (goal) request.goal = goal;
+  return request;
+}
+
+function targetNameFromDeepenInput(data: Record<string, unknown>): string | undefined {
+  const targetNodeId = boundedString(data.targetNodeId) ?? boundedString(data.nodeId);
+  const excerpt = isRecord(data.excerpt) ? data.excerpt : undefined;
+  const project = projectFromDeepenInput(data);
+  const graph = isRecord(project?.graph) ? project.graph : undefined;
+  const nodes = Array.isArray(excerpt?.nodes)
+    ? excerpt.nodes
+    : Array.isArray(graph?.nodes)
+      ? graph.nodes
+      : [];
+  const target = nodes.find((node): node is Record<string, unknown> => isRecord(node) && node.id === targetNodeId);
+  return boundedString(target?.name);
+}
+
+function targetUnitFromDeepenInput(data: Record<string, unknown>): string | undefined {
+  const targetNodeId = boundedString(data.targetNodeId) ?? boundedString(data.nodeId);
+  const excerpt = isRecord(data.excerpt) ? data.excerpt : undefined;
+  const project = projectFromDeepenInput(data);
+  const graph = isRecord(project?.graph) ? project.graph : undefined;
+  const nodes = Array.isArray(excerpt?.nodes)
+    ? excerpt.nodes
+    : Array.isArray(graph?.nodes)
+      ? graph.nodes
+      : [];
+  const target = nodes.find((node): node is Record<string, unknown> => isRecord(node) && node.id === targetNodeId);
+  return boundedString(target?.unit, 80);
+}
+
+function projectFromDeepenInput(data: Record<string, unknown>): Partial<VdtProject> | undefined {
+  const project = data.project;
+  return isRecord(project) ? project as Partial<VdtProject> : undefined;
+}
+
+function enrichAgenticCompletionInput(input: unknown, prompt: AgenticPromptPackage): unknown {
+  const context = {
+    selectedSkillIds: prompt.decompositionPlan.selectedSkillIds,
+    decompositionPlan: prompt.decompositionPlan
+  };
+  if (isRecord(input)) {
+    const hasAgenticPrompt = typeof input.userPrompt === "string" && input.userPrompt.includes("Agentic VDT preparation");
+    return {
+      ...input,
+      agenticContext: context,
+      ...(typeof input.systemPrompt === "string" && !hasAgenticPrompt
+        ? { systemPrompt: `${input.systemPrompt}\n\n${prompt.systemPromptAddition}` }
+        : {}),
+      ...(typeof input.userPrompt === "string" && !hasAgenticPrompt
+        ? { userPrompt: `${input.userPrompt}\n\n${prompt.userPromptAddition}` }
+        : {})
+    };
+  }
+  return {
+    data: input,
+    systemPrompt: prompt.systemPromptAddition,
+    userPrompt: prompt.userPromptAddition,
+    agenticContext: context
+  };
+}
+
+function boundedString(value: unknown, maxLength = 2_000): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : undefined;
+}
+
+function outputProjectId(output: unknown): string | undefined {
+  if (!isRecord(output)) return undefined;
+  return boundedString(output.projectId) ?? boundedString(output.rootNodeId) ?? boundedString(output.projectTitle);
+}
+
+function validationSummaryFromOutput(output: unknown): string {
+  if (!isRecord(output)) return "Provider output passed registered schema validation.";
+  const nodes = Array.isArray(output.nodes) ? output.nodes.length : undefined;
+  const edges = Array.isArray(output.edges) ? output.edges.length : undefined;
+  if (nodes !== undefined && edges !== undefined) {
+    return `Provider output passed registered schema validation: ${nodes} nodes, ${edges} edges.`;
+  }
+  return "Provider output passed registered schema validation.";
+}
+
+function graphValidationSummaryFromGenerateOutput(output: unknown): { valid: boolean; message: string } {
+  if (!isRecord(output) || typeof output.rootNodeId !== "string" || !Array.isArray(output.nodes) || !Array.isArray(output.edges)) {
+    return { valid: false, message: "Graph validation failed: provider output was not a graph-shaped generate_tree payload." };
+  }
+
+  const validation = validateGraph(
+    {
+      nodes: output.nodes,
+      edges: output.edges
+    } as VdtGraph,
+    output.rootNodeId
+  );
+  if (validation.valid && validation.warnings.length === 0) {
+    return {
+      valid: true,
+      message: `Graph validation passed: ${output.nodes.length} nodes, ${output.edges.length} decomposition edges.`
+    };
+  }
+
+  const issues = [...validation.errors, ...validation.warnings].map((issue: VdtWarning) => issue.message).slice(0, 6);
+  return {
+    valid: false,
+    message: `Graph validation failed: ${issues.join("; ")}`
+  };
+}
+
+function runtimeFinalReport(agentRun: VdtAgentRun, headline: string, validationSummary: string): string {
+  return [
+    headline,
+    `Selected skills: ${agentRun.selectedSkills.map((skill) => skill.id).join(", ") || "none"}.`,
+    `Validation result: ${validationSummary}`
+  ].join("\n");
 }
 
 function hasRepairAttempt(error: unknown): boolean {
@@ -176,6 +552,7 @@ export function cancelRuntimeRequest(requestId: string, context: LocalRuntimeCon
   if (!run) throw new LocalRuntimeError(404, "RUN_NOT_FOUND", "Run was not found.");
   if (run.status !== "running") throw new LocalRuntimeError(409, "RUN_NOT_ACTIVE", "Run is not active.");
   run.controller.abort();
+  setRunProgress(run, "cancelled");
   return { statusCode: 202, payload: { ok: true, requestId, status: "cancelling" } };
 }
 

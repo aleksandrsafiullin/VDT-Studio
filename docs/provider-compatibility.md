@@ -52,6 +52,7 @@ Run live probes from a normal developer terminal, not from a sandboxed CI contai
 ```
 pnpm --dir "/Users/aks/Documents/Apps/VDT Design/vdt-studio" live:codex
 pnpm --dir "/Users/aks/Documents/Apps/VDT Design/vdt-studio" live:cursor
+pnpm --dir "/Users/aks/Documents/Apps/VDT Design/vdt-studio" live:copilot -- --connection-only
 ```
 
 For a cheaper auth/connection-only check, append `-- --connection-only`.
@@ -241,7 +242,7 @@ Select **BYOK → OpenAI → Gateway preset: Alibaba Cloud Coding Plan (Beta)** 
 | Minimum version | `1.0.0` (`COPILOT_CLI_MIN_VERSION`) |
 | Release status | **Experimental** |
 | Tested in CI | Parser/auth/unit tests + `fake-copilot.cjs` executor integration |
-| Maintainer live verification | Pending; CLI is not installed on the 2026-06-22 maintainer machine |
+| Maintainer live verification | Pending; `pnpm live:copilot -- --connection-only` now reaches the Copilot SLI install gate, but `copilot` is not installed on PATH on the 2026-06-24 maintainer machine |
 | Account mode | GitHub Copilot plan authentication; organization policy must allow Copilot CLI |
 | Tool boundary | Empty `--available-tools`, built-in MCP disabled, project instructions disabled, no allow-all flags |
 | OS sandbox | Not required in manifest — tools/MCP/project instructions are disabled through reviewed CLI flags and output is locally schema-validated |

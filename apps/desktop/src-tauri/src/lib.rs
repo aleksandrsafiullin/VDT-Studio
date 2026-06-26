@@ -29,6 +29,13 @@ fn ai_list_backends(runtime: State<'_, DesktopRuntime>) -> Result<Vec<RuntimeBac
 }
 
 #[tauri::command]
+fn ai_detect_subscription_clis(agent_id: Option<String>, runtime: State<'_, DesktopRuntime>) -> Result<serde_json::Value, String> {
+    runtime
+        .detect_subscription_clis(agent_id.as_deref())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn ai_test_backend(backend_id: String, runtime: State<'_, DesktopRuntime>) -> Result<serde_json::Value, String> {
     runtime
         .test_backend(&backend_id)
@@ -104,6 +111,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ai_list_backends,
+            ai_detect_subscription_clis,
             ai_test_backend,
             ai_list_models,
             ai_complete,

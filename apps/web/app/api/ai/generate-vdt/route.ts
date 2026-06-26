@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import {
   AnthropicProvider,
   AzureOpenAiProvider,
-  generateVdtProject,
+  generateAgenticVdtProject,
   GeminiProvider,
   isLocalRunnerConnectionFailure,
   LocalRunnerProvider,
@@ -362,10 +362,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    const project = await generateVdtProject(provider, input, {
+    const { project, agentRun } = await generateAgenticVdtProject(provider, input, {
       maxTokens: readMaxTokens(body.providerConfig)
     });
-    return NextResponse.json({ ok: true, project });
+    return NextResponse.json({ ok: true, project, agentRun });
   } catch (error) {
     if (
       error instanceof Error &&

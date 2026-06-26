@@ -7,6 +7,7 @@ const DEFAULT_ROOT = resolve(dirname(SCRIPT_PATH), "..");
 
 const REQUIRED_COMMANDS = [
   "ai_list_backends",
+  "ai_detect_subscription_clis",
   "ai_test_backend",
   "ai_list_models",
   "ai_complete",
@@ -68,6 +69,9 @@ export function verifyDesktopShell(root = DEFAULT_ROOT) {
   if (!resources.includes("sidecars/vdt-local-runtime.manifest.json")) {
     fail("desktop bundle must include the sidecar integrity manifest resource.");
   }
+  if (!resources.includes("sidecars/vdt-agent-skills")) {
+    fail("desktop bundle must include the packaged VDT agent skill library resource.");
+  }
   if (tauriConfig.bundle?.macOS?.signingIdentity !== "-") fail("macOS signing identity placeholder must be explicit.");
 
   const capability = JSON.parse(read(root, "apps/desktop/src-tauri/capabilities/default.json"));
@@ -91,6 +95,9 @@ export function verifyDesktopShell(root = DEFAULT_ROOT) {
   if (rustSource.includes("DESKTOP_LOCAL_AI_PLACEHOLDER")) fail("desktop command surface still returns placeholder local AI responses.");
   if (!rustSource.includes(".open_provider_auth(&backend_id)")) {
     fail("open_provider_auth must delegate to the reviewed desktop runtime sidecar host.");
+  }
+  if (!rustSource.includes(".detect_subscription_clis(agent_id.as_deref())")) {
+    fail("ai_detect_subscription_clis must delegate to the reviewed desktop runtime sidecar host.");
   }
   if (rustSource.includes("std::process") || rustSource.includes("Command::new")) {
     fail("desktop command surface must not spawn processes directly.");
@@ -139,6 +146,9 @@ export function verifyDesktopShell(root = DEFAULT_ROOT) {
   }
   if (!sidecarHost.includes("pub fn start(&self)") || !sidecarHost.includes("self.lock_or_start()?")) {
     fail("desktop runtime must expose an explicit auto-start entrypoint.");
+  }
+  if (!sidecarHost.includes('self.request("detect_clis"')) {
+    fail("desktop runtime must expose subscription CLI detection through the sidecar protocol.");
   }
   if (!sidecarHost.includes("impl Drop for DesktopRuntime") || !sidecarHost.includes("sidecar.take()")) {
     fail("desktop runtime must clean up the sidecar process on shutdown.");

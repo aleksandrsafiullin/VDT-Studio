@@ -1,5 +1,5 @@
 // ../local-runner/src/sidecar/index.ts
-import { fileURLToPath } from "node:url";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // ../local-runner/src/sidecar/runtime.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
@@ -433,6 +433,149 @@ var advisoryRequired = ["assumptions", "questionsForUser", "warnings"];
 function validateAdvisoryArrays(output) {
   return isStringArray(output.assumptions) && isStringArray(output.questionsForUser) && isObjectArray(output.warnings);
 }
+function validateGenerateTreeGraph(output) {
+  const errors = [];
+  const rootId = typeof output.rootNodeId === "string" ? output.rootNodeId : "";
+  const nodes = isObjectArray(output.nodes) ? output.nodes : [];
+  const edges = isObjectArray(output.edges) ? output.edges : [];
+  const nodeIds = /* @__PURE__ */ new Set();
+  const nodeTypes = /* @__PURE__ */ new Map();
+  for (const [index, node] of nodes.entries()) {
+    if (typeof node.id !== "string" || node.id.length === 0) {
+      errors.push(`$.nodes[${index}].id must be a non-empty string.`);
+      continue;
+    }
+    if (nodeIds.has(node.id)) {
+      errors.push(`Duplicate node id "${node.id}".`);
+    }
+    nodeIds.add(node.id);
+    nodeTypes.set(node.id, node.type);
+  }
+  if (!rootId) {
+    errors.push("$.rootNodeId must be a non-empty string.");
+  } else if (!nodeIds.has(rootId)) {
+    errors.push(`$.rootNodeId must reference an existing node: ${rootId}.`);
+  }
+  const childrenBySource = /* @__PURE__ */ new Map();
+  const edgePairs = /* @__PURE__ */ new Set();
+  for (const [index, edge] of edges.entries()) {
+    const sourceNodeId = typeof edge.sourceNodeId === "string" ? edge.sourceNodeId : "";
+    const targetNodeId = typeof edge.targetNodeId === "string" ? edge.targetNodeId : "";
+    if (!sourceNodeId || !nodeIds.has(sourceNodeId)) {
+      errors.push(`$.edges[${index}].sourceNodeId must reference an existing node: ${sourceNodeId || "(missing)"}.`);
+      continue;
+    }
+    if (!targetNodeId || !nodeIds.has(targetNodeId)) {
+      errors.push(`$.edges[${index}].targetNodeId must reference an existing node: ${targetNodeId || "(missing)"}.`);
+      continue;
+    }
+    const edgePairKey = `${sourceNodeId}\0${targetNodeId}`;
+    if (edgePairs.has(edgePairKey)) {
+      errors.push(`Duplicate edge pair "${sourceNodeId}" -> "${targetNodeId}".`);
+    }
+    edgePairs.add(edgePairKey);
+    childrenBySource.set(sourceNodeId, [...childrenBySource.get(sourceNodeId) ?? [], targetNodeId]);
+  }
+  if (rootId && nodeIds.has(rootId)) {
+    const reachable = /* @__PURE__ */ new Set();
+    const stack = [rootId];
+    while (stack.length > 0) {
+      const nodeId = stack.pop();
+      if (!nodeId || reachable.has(nodeId)) continue;
+      reachable.add(nodeId);
+      for (const childId of childrenBySource.get(nodeId) ?? []) {
+        if (!reachable.has(childId)) stack.push(childId);
+      }
+    }
+    for (const nodeId of nodeIds) {
+      if (nodeId !== rootId && nodeTypes.get(nodeId) !== "external_factor" && !reachable.has(nodeId)) {
+        errors.push(`Node "${nodeId}" must be reachable from root "${rootId}" through visual decomposition edges.`);
+      }
+    }
+  }
+  return { valid: errors.length === 0, errors };
+}
+function shouldPreferDuplicateEdge(candidate, current) {
+  const candidateIsFormula = candidate.relation === "formula_dependency";
+  const currentIsFormula = current.relation === "formula_dependency";
+  if (currentIsFormula && !candidateIsFormula) return true;
+  return false;
+}
+function dedupeGenerateTreeEdges(edges) {
+  const orderedKeys = [];
+  const edgeByPair = /* @__PURE__ */ new Map();
+  for (const edge of edges) {
+    const sourceNodeId = typeof edge.sourceNodeId === "string" ? edge.sourceNodeId : "";
+    const targetNodeId = typeof edge.targetNodeId === "string" ? edge.targetNodeId : "";
+    const key = `${sourceNodeId}\0${targetNodeId}`;
+    const current = edgeByPair.get(key);
+    if (!current) {
+      orderedKeys.push(key);
+      edgeByPair.set(key, edge);
+      continue;
+    }
+    if (shouldPreferDuplicateEdge(edge, current)) {
+      edgeByPair.set(key, edge);
+    }
+  }
+  return orderedKeys.flatMap((key) => {
+    const edge = edgeByPair.get(key);
+    return edge ? [edge] : [];
+  });
+}
+function orientGenerateTreeEdgesFromRoot(output) {
+  if (validateGenerateTreeGraph(output).valid) return output;
+  const rootId = typeof output.rootNodeId === "string" ? output.rootNodeId : "";
+  const nodes = isObjectArray(output.nodes) ? output.nodes : [];
+  const edges = isObjectArray(output.edges) ? output.edges : [];
+  const nodeTypes = /* @__PURE__ */ new Map();
+  const nodeIds = /* @__PURE__ */ new Set();
+  for (const node of nodes) {
+    if (typeof node.id !== "string" || node.id.length === 0) continue;
+    nodeIds.add(node.id);
+    nodeTypes.set(node.id, node.type);
+  }
+  if (!rootId || !nodeIds.has(rootId) || edges.length === 0) return output;
+  const neighbors = /* @__PURE__ */ new Map();
+  for (const edge of edges) {
+    const sourceNodeId = typeof edge.sourceNodeId === "string" ? edge.sourceNodeId : "";
+    const targetNodeId = typeof edge.targetNodeId === "string" ? edge.targetNodeId : "";
+    if (!nodeIds.has(sourceNodeId) || !nodeIds.has(targetNodeId)) return output;
+    neighbors.set(sourceNodeId, [...neighbors.get(sourceNodeId) ?? [], targetNodeId]);
+    neighbors.set(targetNodeId, [...neighbors.get(targetNodeId) ?? [], sourceNodeId]);
+  }
+  const depth = /* @__PURE__ */ new Map([[rootId, 0]]);
+  const queue = [rootId];
+  while (queue.length > 0) {
+    const nodeId = queue.shift();
+    if (!nodeId) continue;
+    const nextDepth = (depth.get(nodeId) ?? 0) + 1;
+    for (const neighbor of neighbors.get(nodeId) ?? []) {
+      if (depth.has(neighbor)) continue;
+      depth.set(neighbor, nextDepth);
+      queue.push(neighbor);
+    }
+  }
+  for (const nodeId of nodeIds) {
+    if (nodeId !== rootId && nodeTypes.get(nodeId) !== "external_factor" && !depth.has(nodeId)) return output;
+  }
+  const orientedEdges = edges.map((edge) => {
+    const sourceDepth = typeof edge.sourceNodeId === "string" ? depth.get(edge.sourceNodeId) : void 0;
+    const targetDepth = typeof edge.targetNodeId === "string" ? depth.get(edge.targetNodeId) : void 0;
+    if (sourceDepth === void 0 || targetDepth === void 0 || sourceDepth <= targetDepth) return edge;
+    return {
+      ...edge,
+      sourceNodeId: edge.targetNodeId,
+      targetNodeId: edge.sourceNodeId
+    };
+  });
+  const normalized = { ...output, edges: dedupeGenerateTreeEdges(orientedEdges) };
+  return validateGenerateTreeGraph(normalized).valid ? normalized : output;
+}
+function normalizeRegisteredSchemaOutput(schemaId, output) {
+  if (schemaId === "generate-tree-v1" && isRecord(output)) return orientGenerateTreeEdgesFromRoot(output);
+  return output;
+}
 var jsonSchemas = {
   "connection-test-v1": {
     type: "object",
@@ -588,7 +731,7 @@ function getStrictResponseJsonSchema(schemaId) {
 }
 var validators = {
   "connection-test-v1": (output) => output.ok === true,
-  "generate-tree-v1": (output) => typeof output.projectTitle === "string" && typeof output.rootNodeId === "string" && isObjectArray(output.nodes) && output.nodes.length > 0 && isObjectArray(output.edges) && validateAdvisoryArrays(output),
+  "generate-tree-v1": (output) => typeof output.projectTitle === "string" && typeof output.rootNodeId === "string" && isObjectArray(output.nodes) && output.nodes.length > 0 && isObjectArray(output.edges) && validateAdvisoryArrays(output) && validateGenerateTreeGraph(output).valid,
   "deepen-node-v1": (output) => typeof output.targetNodeId === "string" && isObjectArray(output.nodes) && output.nodes.length > 0 && isObjectArray(output.edges) && validateAdvisoryArrays(output),
   "simplify-branch-v1": (output) => typeof output.branchRootNodeId === "string" && isObjectArray(output.nodeRemovals) && isObjectArray(output.edgeChanges) && typeof output.rationale === "string" && validateAdvisoryArrays(output),
   "suggest-alternative-v1": (output) => typeof output.targetNodeId === "string" && isObjectArray(output.nodes) && output.nodes.length > 0 && isObjectArray(output.edges) && typeof output.rationale === "string" && validateAdvisoryArrays(output),
@@ -612,15 +755,19 @@ function validateRegisteredSchemaDetailed(schemaId, output) {
   if (!schema) return { valid: false, errors: [`Unknown schema ${schemaId}.`] };
   const subset = validateJsonSchemaSubset(schema, output);
   if (!subset.valid) return subset;
+  if (schemaId === "generate-tree-v1" && isRecord(output)) {
+    const graph = validateGenerateTreeGraph(output);
+    if (!graph.valid) return graph;
+  }
   if (!isRecord(output) || !validators[schemaId](output)) {
     return { valid: false, errors: [`$ does not satisfy registered semantic validator for ${schemaId}.`] };
   }
   return { valid: true, errors: [] };
 }
-function validateJsonSchemaSubset(schema, value, path5 = "$") {
+function validateJsonSchemaSubset(schema, value, path6 = "$") {
   if (!isRecord(schema)) return { valid: true, errors: [] };
   if (Array.isArray(schema.anyOf)) {
-    const branchResults = schema.anyOf.map((branch) => validateJsonSchemaSubset(branch, value, path5));
+    const branchResults = schema.anyOf.map((branch) => validateJsonSchemaSubset(branch, value, path6));
     if (branchResults.some((result) => result.valid)) {
       return { valid: true, errors: [] };
     }
@@ -633,57 +780,57 @@ function validateJsonSchemaSubset(schema, value, path5 = "$") {
   const type = schema.type;
   if (type === "object") {
     if (!isRecord(value)) {
-      return { valid: false, errors: [`${path5} must be an object.`] };
+      return { valid: false, errors: [`${path6} must be an object.`] };
     }
     const properties = isRecord(schema.properties) ? schema.properties : {};
     const required = Array.isArray(schema.required) ? schema.required.filter((key) => typeof key === "string") : [];
     for (const key of required) {
-      if (!(key in value)) errors.push(`${path5}.${key} is required.`);
+      if (!(key in value)) errors.push(`${path6}.${key} is required.`);
     }
     if (schema.additionalProperties === false) {
       for (const key of Object.keys(value)) {
-        if (!(key in properties)) errors.push(`${path5}.${key} is not an approved field.`);
+        if (!(key in properties)) errors.push(`${path6}.${key} is not an approved field.`);
       }
     }
     for (const [key, propertySchema] of Object.entries(properties)) {
-      if (key in value) errors.push(...validateJsonSchemaSubset(propertySchema, value[key], `${path5}.${key}`).errors);
+      if (key in value) errors.push(...validateJsonSchemaSubset(propertySchema, value[key], `${path6}.${key}`).errors);
     }
   } else if (type === "array") {
     if (!Array.isArray(value)) {
-      return { valid: false, errors: [`${path5} must be an array.`] };
+      return { valid: false, errors: [`${path6} must be an array.`] };
     }
     if (typeof schema.minItems === "number" && value.length < schema.minItems) {
-      errors.push(`${path5} must contain at least ${schema.minItems} item(s).`);
+      errors.push(`${path6} must contain at least ${schema.minItems} item(s).`);
     }
     if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
-      errors.push(`${path5} must contain at most ${schema.maxItems} item(s).`);
+      errors.push(`${path6} must contain at most ${schema.maxItems} item(s).`);
     }
     value.forEach((item, index) => {
-      errors.push(...validateJsonSchemaSubset(schema.items, item, `${path5}[${index}]`).errors);
+      errors.push(...validateJsonSchemaSubset(schema.items, item, `${path6}[${index}]`).errors);
     });
   } else if (type === "string") {
     if (typeof value !== "string") {
-      return { valid: false, errors: [`${path5} must be a string.`] };
+      return { valid: false, errors: [`${path6} must be a string.`] };
     }
     if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
-      errors.push(`${path5} must be at most ${schema.maxLength} character(s).`);
+      errors.push(`${path6} must be at most ${schema.maxLength} character(s).`);
     }
   } else if (type === "number") {
     if (typeof value !== "number" || !Number.isFinite(value)) {
-      return { valid: false, errors: [`${path5} must be a finite number.`] };
+      return { valid: false, errors: [`${path6} must be a finite number.`] };
     }
     if (typeof schema.minimum === "number" && value < schema.minimum) {
-      errors.push(`${path5} must be at least ${schema.minimum}.`);
+      errors.push(`${path6} must be at least ${schema.minimum}.`);
     }
     if (typeof schema.maximum === "number" && value > schema.maximum) {
-      errors.push(`${path5} must be at most ${schema.maximum}.`);
+      errors.push(`${path6} must be at most ${schema.maximum}.`);
     }
   } else if (type === "boolean") {
     if (typeof value !== "boolean") {
-      return { valid: false, errors: [`${path5} must be a boolean.`] };
+      return { valid: false, errors: [`${path6} must be a boolean.`] };
     }
   }
-  if ("const" in schema && value !== schema.const) errors.push(`${path5} must equal ${String(schema.const)}.`);
+  if ("const" in schema && value !== schema.const) errors.push(`${path6} must equal ${String(schema.const)}.`);
   return { valid: errors.length === 0, errors };
 }
 
@@ -863,8 +1010,8 @@ async function probeWithStatusCommand(executable, options) {
       authSummary: authSummaryForStatus(mapped),
       diagnostics: mapped === "ready" ? [] : [result.stderr.trim() || result.stdout.trim()].filter(Boolean)
     };
-  } catch (error) {
-    const execError = error;
+  } catch (error2) {
+    const execError = error2;
     if (execError.code === "ENOENT" || /unknown command|invalid command|unrecognized|not found/i.test(String(execError.stderr ?? execError.message))) {
       return null;
     }
@@ -922,8 +1069,8 @@ ${parsed.error}`);
       authSummary: authSummaryForStatus("error"),
       diagnostics: ["Claude connection test did not return { ok: true } JSON."]
     };
-  } catch (error) {
-    const execError = error;
+  } catch (error2) {
+    const execError = error2;
     const stderr = execError.stderr ?? "";
     const stdout = execError.stdout ?? "";
     const status = classifyAuthFailure(stderr, stdout, typeof execError.code === "number" ? execError.code : void 0);
@@ -1238,16 +1385,16 @@ function parseStatusText(output) {
   if (/rate.?limit|quota|usage limit/.test(text)) return "rate_limited";
   return void 0;
 }
-function isUnsupportedJsonFlag(error) {
-  const text = `${error.stderr ?? ""}
-${error.stdout ?? ""}
-${error.message ?? ""}`;
+function isUnsupportedJsonFlag(error2) {
+  const text = `${error2.stderr ?? ""}
+${error2.stdout ?? ""}
+${error2.message ?? ""}`;
   return /unexpected argument '--json'|unknown option.*--json|unrecognized.*--json/i.test(text);
 }
-function isLegacyServiceTierConfigError(error) {
-  const text = `${error.stderr ?? ""}
-${error.stdout ?? ""}
-${error.message ?? ""}`;
+function isLegacyServiceTierConfigError(error2) {
+  const text = `${error2.stderr ?? ""}
+${error2.stdout ?? ""}
+${error2.message ?? ""}`;
   return /service_tier|unknown variant `default`|unknown variant "default"/i.test(text);
 }
 async function runExec2(executable, args, options, input) {
@@ -1267,9 +1414,9 @@ async function runExec2(executable, args, options, input) {
 async function runExecWithConfigFallback(executable, args, options, input) {
   try {
     return await runExec2(executable, args, options, input);
-  } catch (error) {
-    const execError = error;
-    if (!isLegacyServiceTierConfigError(execError)) throw error;
+  } catch (error2) {
+    const execError = error2;
+    if (!isLegacyServiceTierConfigError(execError)) throw error2;
     return runExec2(executable, [...args, ...CODEX_FAST_SERVICE_TIER_ARGS], options, input);
   }
 }
@@ -1284,8 +1431,8 @@ ${result.stderr}`) ?? (result.stderr ? classifyAuthFailure2(result.stderr, resul
       authSummary: authSummaryForStatus2(mapped),
       diagnostics: mapped === "ready" ? [] : [result.stderr.trim() || result.stdout.trim()].filter(Boolean)
     };
-  } catch (error) {
-    const execError = error;
+  } catch (error2) {
+    const execError = error2;
     if (isUnsupportedJsonFlag(execError)) {
       try {
         const result = await runExecWithConfigFallback(executable, ["login", "status"], options);
@@ -1372,8 +1519,8 @@ ${parsed.error}`);
       authSummary: authSummaryForStatus2("error"),
       diagnostics: ["Codex connection test did not return { ok: true } JSON."]
     };
-  } catch (error) {
-    const execError = error;
+  } catch (error2) {
+    const execError = error2;
     const stderr = execError.stderr ?? "";
     const stdout = execError.stdout ?? "";
     const status = classifyAuthFailure2(stderr, stdout, typeof execError.code === "number" ? execError.code : void 0);
@@ -1536,9 +1683,9 @@ async function listCodexModels(executable, options = {}) {
   let result;
   try {
     result = await execFile8(executable, ["debug", "models"], execOptions);
-  } catch (error) {
-    const text = error instanceof Error ? error.message : String(error);
-    if (!/service_tier|unknown variant `default`|unknown variant "default"/i.test(text)) throw error;
+  } catch (error2) {
+    const text = error2 instanceof Error ? error2.message : String(error2);
+    if (!/service_tier|unknown variant `default`|unknown variant "default"/i.test(text)) throw error2;
     result = await execFile8(executable, ["debug", "models", ...CODEX_FAST_SERVICE_TIER_ARGS], execOptions);
   }
   return parseCodexModelList(`${result.stdout}
@@ -1607,7 +1754,7 @@ ${result.stderr}`.trim())?.raw ?? null;
 }
 
 // ../model-bridge/src/subscription-cli/cursor/adapter.ts
-import path from "node:path";
+import path2 from "node:path";
 
 // ../model-bridge/src/subscription-cli/cursor/auth.ts
 import { execFile as execFile4 } from "node:child_process";
@@ -1704,7 +1851,11 @@ function parseCursorStreamJson(stdout, limits = DEFAULT_CURSOR_STREAM_PARSE_LIMI
 
 // ../model-bridge/src/detection.ts
 import { execFile as execFile3 } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
+import { access } from "node:fs/promises";
+import path from "node:path";
 import { promisify as promisify3 } from "node:util";
+var SUBSCRIPTION_CLI_IDS = ["cursor-agent", "codex", "claude", "gemini", "copilot"];
 var SUBSCRIPTION_CLI_DEFINITIONS = Object.freeze([
   { id: "cursor-agent", backendId: "cursor_subscription", aliases: ["agent", "cursor-agent", "cursor"], versionArgs: ["--version"] },
   { id: "codex", backendId: "codex_subscription", aliases: ["codex"], versionArgs: ["--version"] },
@@ -1714,6 +1865,71 @@ var SUBSCRIPTION_CLI_DEFINITIONS = Object.freeze([
 ]);
 var execFileAsync3 = promisify3(execFile3);
 var definitions = new Map(SUBSCRIPTION_CLI_DEFINITIONS.map((definition) => [definition.id, definition]));
+function isSubscriptionCliId(value) {
+  return definitions.has(value);
+}
+var defaultExecutableCheck = async (candidate) => {
+  try {
+    await access(candidate, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+var defaultVersionProbe = async (executable, args) => {
+  const result = await execFileAsync3(executable, [...args], {
+    encoding: "utf8",
+    timeout: 5e3,
+    maxBuffer: 64 * 1024,
+    windowsHide: true,
+    shell: false
+  });
+  return { stdout: result.stdout, stderr: result.stderr };
+};
+async function findExecutableOnPath(aliases, options = {}) {
+  const platform = options.platform ?? process.platform;
+  const pathValue = options.path ?? process.env.PATH ?? "";
+  const pathExt = options.pathExt ?? process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
+  const check = options.executableCheck ?? defaultExecutableCheck;
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const directories = pathValue.split(platform === "win32" ? ";" : ":").filter(Boolean);
+  for (const alias of aliases) {
+    if (pathApi.basename(alias) !== alias || alias === "." || alias === "..") continue;
+    const extensions = platform === "win32" && pathApi.extname(alias) === "" ? ["", ...pathExt.split(";").map((value) => value.trim().toLowerCase()).filter(Boolean)] : [""];
+    for (const directory of directories) {
+      for (const extension of extensions) {
+        const executable = pathApi.resolve(directory, `${alias}${extension}`);
+        if (await check(executable)) return { executable, alias };
+      }
+    }
+  }
+  return null;
+}
+async function detectSubscriptionCli(id, options = {}) {
+  const definition = definitions.get(id);
+  if (!definition) throw new Error(`Unknown subscription CLI: ${id}`);
+  const match = await findExecutableOnPath(definition.aliases, options);
+  if (!match) return { id, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
+  try {
+    const result = await (options.versionProbe ?? defaultVersionProbe)(match.executable, definition.versionArgs);
+    const version = `${result.stdout}
+${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim() || null;
+    return { id, backendId: definition.backendId, installed: true, executable: match.executable, alias: match.alias, version };
+  } catch (error2) {
+    return {
+      id,
+      backendId: definition.backendId,
+      installed: true,
+      executable: match.executable,
+      alias: match.alias,
+      version: null,
+      error: error2 instanceof Error ? error2.message : String(error2)
+    };
+  }
+}
+async function detectSubscriptionClis(options = {}) {
+  return Promise.all(SUBSCRIPTION_CLI_IDS.map((id) => detectSubscriptionCli(id, options)));
+}
 
 // ../model-bridge/src/subscription-cli/cursor/version.ts
 var CURSOR_CLI_MIN_VERSION = "0.45.0";
@@ -1844,8 +2060,8 @@ async function probeWithStatusCommand3(executable, options) {
       authSummary: authSummaryForStatus3(mapped),
       diagnostics: mapped === "ready" ? [] : [result.stderr.trim() || result.stdout.trim()].filter(Boolean)
     };
-  } catch (error) {
-    const execError = error;
+  } catch (error2) {
+    const execError = error2;
     if (execError.code === "ENOENT" || /unknown command|invalid command|unrecognized/i.test(String(execError.stderr ?? execError.message))) {
       return null;
     }
@@ -1893,8 +2109,8 @@ ${parsed.error}`);
       authSummary: authSummaryForStatus3("error"),
       diagnostics: ["Cursor connection test did not return { ok: true } JSON."]
     };
-  } catch (error) {
-    const execError = error;
+  } catch (error2) {
+    const execError = error2;
     const stderr = execError.stderr ?? "";
     const stdout = execError.stdout ?? "";
     const status = classifyAuthFailure3(stderr, stdout, typeof execError.code === "number" ? execError.code : void 0);
@@ -1925,7 +2141,7 @@ function buildCursorDynamicArgs(input) {
   const args = [];
   if (input.enableWorkspaceTrust) args.push("--trust");
   if (input.model) args.push("--model", input.model);
-  const workspace = input.cwd ?? (input.promptPath ? path.dirname(input.promptPath) : void 0);
+  const workspace = input.cwd ?? (input.promptPath ? path2.dirname(input.promptPath) : void 0);
   if (workspace) args.push("--workspace", workspace);
   assertArgsSafe(args, { allowScopedTrust: input.enableWorkspaceTrust === true });
   return Object.freeze(args);
@@ -2069,7 +2285,7 @@ ${result.stderr}`.trim())?.raw ?? null;
 import { execFile as execFile5 } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
-import path2 from "node:path";
+import path3 from "node:path";
 import { promisify as promisify5 } from "node:util";
 
 // ../model-bridge/src/subscription-cli/gemini/parser.ts
@@ -2078,10 +2294,10 @@ var byteLength5 = (value) => Buffer.byteLength(value, "utf8");
 function isRecord7(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function errorText(error) {
-  if (typeof error === "string") return error;
-  if (!isRecord7(error)) return void 0;
-  return [error.message, error.type, error.code].filter((value) => typeof value === "string").join(": ") || void 0;
+function errorText(error2) {
+  if (typeof error2 === "string") return error2;
+  if (!isRecord7(error2)) return void 0;
+  return [error2.message, error2.type, error2.code].filter((value) => typeof value === "string").join(": ") || void 0;
 }
 function parseGeminiJsonOutput(stdout, stderr, maxBytes = MAX_BYTES) {
   if (byteLength5(stdout) > maxBytes) throw new Error(`Gemini JSON output exceeds ${maxBytes} bytes.`);
@@ -2130,8 +2346,8 @@ async function probeGeminiAuth(executable, options = {}) {
   if (options.versionStatus?.status === "unsupported_version") {
     return { backendId: GEMINI_BACKEND_ID, status: "unsupported_version", authSummary: summary("unsupported_version"), diagnostics: [...options.versionStatus.diagnostics] };
   }
-  const cwd = await mkdtemp(path2.join(os.tmpdir(), "vdt-gemini-probe-"));
-  const policyPath = path2.join(cwd, "deny-all-tools.toml");
+  const cwd = await mkdtemp(path3.join(os.tmpdir(), "vdt-gemini-probe-"));
+  const policyPath = path3.join(cwd, "deny-all-tools.toml");
   await writeFile(policyPath, '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n', { encoding: "utf8", mode: 384 });
   try {
     const probe = options.execFileImpl ?? promisify5(execFile5);
@@ -2144,8 +2360,8 @@ async function probeGeminiAuth(executable, options = {}) {
     const message = parsed.error ?? result.stderr ?? "Gemini connection response was invalid.";
     const status = classify(message);
     return { backendId: GEMINI_BACKEND_ID, status, authSummary: summary(status), diagnostics: [message].filter(Boolean) };
-  } catch (error) {
-    const execError = error;
+  } catch (error2) {
+    const execError = error2;
     const message = `${execError.stderr ?? ""}
 ${execError.stdout ?? ""}
 ${execError.message}`.trim();
@@ -2241,7 +2457,7 @@ ${result.stderr}`)?.raw ?? null;
 import { execFile as execFile6 } from "node:child_process";
 import { mkdtemp as mkdtemp2, rm as rm2 } from "node:fs/promises";
 import os2 from "node:os";
-import path3 from "node:path";
+import path4 from "node:path";
 import { promisify as promisify6 } from "node:util";
 
 // ../model-bridge/src/subscription-cli/copilot/parser.ts
@@ -2322,7 +2538,7 @@ async function probeCopilotAuth(executable, options = {}) {
   if (options.versionStatus?.status === "unsupported_version") {
     return { backendId: COPILOT_BACKEND_ID, status: "unsupported_version", authSummary: summary2("unsupported_version"), diagnostics: [...options.versionStatus.diagnostics] };
   }
-  const cwd = await mkdtemp2(path3.join(os2.tmpdir(), "vdt-copilot-probe-"));
+  const cwd = await mkdtemp2(path4.join(os2.tmpdir(), "vdt-copilot-probe-"));
   try {
     const probe = options.execFileImpl ?? promisify6(execFile6);
     const execOptions = { encoding: "utf8", cwd, timeout: options.timeoutMs ?? 15e3, maxBuffer: 512 * 1024, windowsHide: true, shell: false, signal: options.signal };
@@ -2335,8 +2551,8 @@ async function probeCopilotAuth(executable, options = {}) {
     const message = parsed.error ?? result.stderr ?? "Copilot connection response was invalid.";
     const status = classify2(message);
     return { backendId: COPILOT_BACKEND_ID, status, authSummary: summary2(status), diagnostics: [message].filter(Boolean) };
-  } catch (error) {
-    const execError = error;
+  } catch (error2) {
+    const execError = error2;
     const message = `${execError.stderr ?? ""}
 ${execError.stdout ?? ""}
 ${execError.message}`.trim();
@@ -2437,11 +2653,1206 @@ function getSubscriptionCliAdapter(backendId) {
   return ADAPTERS.get(backendId);
 }
 
+// ../model-bridge/src/enrich-detection.ts
+async function enrichSubscriptionCliDetection(agent, options = {}) {
+  if (!agent.installed || !agent.executable) {
+    return {
+      ...agent,
+      status: "not_installed",
+      diagnostics: []
+    };
+  }
+  const adapter = getSubscriptionCliAdapter(agent.backendId);
+  if (adapter?.probeAuth) {
+    try {
+      const probe = await adapter.probeAuth(agent.executable, options.signal);
+      return {
+        ...agent,
+        status: probe.status,
+        ...probe.authSummary ? { authSummary: probe.authSummary } : {},
+        diagnostics: probe.diagnostics
+      };
+    } catch (error2) {
+      if (options.signal?.aborted) {
+        return {
+          ...agent,
+          status: "installed",
+          authSummary: "Authentication probe timed out.",
+          diagnostics: ["CLI enrichment timed out before auth could be verified."]
+        };
+      }
+      return {
+        ...agent,
+        status: "error",
+        diagnostics: [error2 instanceof Error ? error2.message : "Auth probe failed."]
+      };
+    }
+  }
+  const diagnostics = [];
+  if (agent.error) diagnostics.push(`Version probe failed: ${agent.error}`);
+  return {
+    ...agent,
+    status: "installed",
+    diagnostics
+  };
+}
+async function enrichSubscriptionCliDetections(agents, options = {}) {
+  const probeTimeoutMs = options.probeTimeoutMs ?? 5e3;
+  return Promise.all(
+    agents.map(async (agent) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), probeTimeoutMs);
+      try {
+        return await enrichSubscriptionCliDetection(agent, { signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+    })
+  );
+}
+
+// ../vdt-core/src/formula/ast.ts
+var FormulaParseError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "FormulaParseError";
+  }
+};
+
+// ../vdt-core/src/formula/parser.ts
+function isDigit(char) {
+  return /[0-9]/.test(char);
+}
+function isIdentifierStart(char) {
+  return /[A-Za-z_]/.test(char);
+}
+function isIdentifierPart(char) {
+  return /[A-Za-z0-9_]/.test(char);
+}
+function tokenizeFormula(formula) {
+  const tokens = [];
+  let index = 0;
+  while (index < formula.length) {
+    const char = formula[index];
+    if (!char) {
+      break;
+    }
+    if (/\s/.test(char)) {
+      index += 1;
+      continue;
+    }
+    if (isDigit(char) || char === ".") {
+      const start = index;
+      let hasDot = char === ".";
+      index += 1;
+      while (index < formula.length) {
+        const next = formula[index];
+        if (!next) {
+          break;
+        }
+        if (next === ".") {
+          if (hasDot) {
+            throw new FormulaParseError(`Invalid number literal near "${formula.slice(start, index + 1)}".`);
+          }
+          hasDot = true;
+          index += 1;
+          continue;
+        }
+        if (!isDigit(next)) {
+          break;
+        }
+        index += 1;
+      }
+      const numericRaw = formula.slice(start, index);
+      if (numericRaw === ".") {
+        throw new FormulaParseError("A number cannot be only a decimal point.");
+      }
+      let raw = numericRaw;
+      let value = Number(numericRaw);
+      if (formula[index] === "%") {
+        raw = `${numericRaw}%`;
+        value /= 100;
+        index += 1;
+      }
+      if (!Number.isFinite(value)) {
+        throw new FormulaParseError(`Invalid number literal: ${raw}`);
+      }
+      tokens.push({ type: "number", value, raw });
+      continue;
+    }
+    if (isIdentifierStart(char)) {
+      const start = index;
+      index += 1;
+      while (index < formula.length && isIdentifierPart(formula[index] ?? "")) {
+        index += 1;
+      }
+      tokens.push({ type: "identifier", value: formula.slice(start, index) });
+      continue;
+    }
+    if (char === "+" || char === "-" || char === "*" || char === "/") {
+      tokens.push({ type: "operator", value: char });
+      index += 1;
+      continue;
+    }
+    if (char === "(") {
+      tokens.push({ type: "left_paren" });
+      index += 1;
+      continue;
+    }
+    if (char === ")") {
+      tokens.push({ type: "right_paren" });
+      index += 1;
+      continue;
+    }
+    throw new FormulaParseError(`Unsupported token "${char}" in formula.`);
+  }
+  tokens.push({ type: "eof" });
+  return tokens;
+}
+var FormulaParser = class {
+  constructor(tokens) {
+    this.tokens = tokens;
+  }
+  tokens;
+  cursor = 0;
+  parse() {
+    const expression = this.parseAdditive();
+    if (this.peek().type !== "eof") {
+      throw new FormulaParseError("Unexpected token after formula expression.");
+    }
+    return expression;
+  }
+  parseAdditive() {
+    let expression = this.parseMultiplicative();
+    while (true) {
+      const next = this.peek();
+      if (next.type !== "operator" || next.value !== "+" && next.value !== "-") {
+        break;
+      }
+      const operator = this.advance();
+      expression = {
+        type: "binary",
+        operator: operator.value,
+        left: expression,
+        right: this.parseMultiplicative()
+      };
+    }
+    return expression;
+  }
+  parseMultiplicative() {
+    let expression = this.parseUnary();
+    while (true) {
+      const next = this.peek();
+      if (next.type !== "operator" || next.value !== "*" && next.value !== "/") {
+        break;
+      }
+      const operator = this.advance();
+      expression = {
+        type: "binary",
+        operator: operator.value,
+        left: expression,
+        right: this.parseUnary()
+      };
+    }
+    return expression;
+  }
+  parseUnary() {
+    const next = this.peek();
+    if (next.type === "operator" && next.value === "-") {
+      this.advance();
+      return {
+        type: "unary",
+        operator: "-",
+        expression: this.parseUnary()
+      };
+    }
+    return this.parsePrimary();
+  }
+  parsePrimary() {
+    const token = this.advance();
+    if (token.type === "number") {
+      return { type: "number", value: token.value, raw: token.raw };
+    }
+    if (token.type === "identifier") {
+      return { type: "reference", name: token.value };
+    }
+    if (token.type === "left_paren") {
+      const expression = this.parseAdditive();
+      if (this.peek().type !== "right_paren") {
+        throw new FormulaParseError("Missing closing parenthesis.");
+      }
+      this.advance();
+      return expression;
+    }
+    throw new FormulaParseError("Expected a number, reference, or parenthesized expression.");
+  }
+  peek() {
+    return this.tokens[this.cursor] ?? { type: "eof" };
+  }
+  advance() {
+    const token = this.peek();
+    this.cursor += 1;
+    return token;
+  }
+};
+function parseFormula(formula) {
+  if (!formula.trim()) {
+    throw new FormulaParseError("Formula cannot be empty.");
+  }
+  return new FormulaParser(tokenizeFormula(formula)).parse();
+}
+
+// ../vdt-core/src/formula/evaluator.ts
+function extractReferencesFromAst(expression, references = /* @__PURE__ */ new Set()) {
+  if (expression.type === "reference") {
+    references.add(expression.name);
+  } else if (expression.type === "unary") {
+    extractReferencesFromAst(expression.expression, references);
+  } else if (expression.type === "binary") {
+    extractReferencesFromAst(expression.left, references);
+    extractReferencesFromAst(expression.right, references);
+  }
+  return [...references];
+}
+
+// ../vdt-core/src/graph/validation.ts
+function isProject(input) {
+  return "graph" in input && "rootNodeId" in input;
+}
+function issue(id, severity, type, message, nodeId, edgeId) {
+  return {
+    id,
+    severity,
+    type,
+    message,
+    ...nodeId ? { nodeId } : {},
+    ...edgeId ? { edgeId } : {}
+  };
+}
+function error(id, type, message, nodeId, edgeId) {
+  return issue(id, "error", type, message, nodeId, edgeId);
+}
+function warning2(id, type, message, nodeId, edgeId) {
+  return issue(id, "warning", type, message, nodeId, edgeId);
+}
+function getRootNodeId(input, rootNodeId) {
+  if (rootNodeId) return rootNodeId;
+  if (isProject(input)) return input.rootNodeId;
+  const roots = input.nodes.filter((node) => node.type === "root_kpi");
+  return roots.length === 1 ? roots[0]?.id : void 0;
+}
+function normalizeUnit(unit) {
+  const normalized = unit?.trim().toLowerCase();
+  return normalized ? normalized : void 0;
+}
+function unitsCompatible(left, right) {
+  return normalizeUnit(left) === normalizeUnit(right);
+}
+function collectUnitWarnings(node, expression, nodeById, warnings, path6 = "root") {
+  if (expression.type === "number") {
+    return void 0;
+  }
+  if (expression.type === "reference") {
+    return normalizeUnit(nodeById.get(expression.name)?.unit);
+  }
+  if (expression.type === "unary") {
+    return collectUnitWarnings(node, expression.expression, nodeById, warnings, `${path6}-unary`);
+  }
+  const leftUnit = collectUnitWarnings(node, expression.left, nodeById, warnings, `${path6}-left`);
+  const rightUnit = collectUnitWarnings(node, expression.right, nodeById, warnings, `${path6}-right`);
+  if ((expression.operator === "+" || expression.operator === "-") && leftUnit && rightUnit && !unitsCompatible(leftUnit, rightUnit)) {
+    warnings.push(
+      warning2(
+        `validation-unit-mismatch-${node.id}-${path6}`,
+        "unit_mismatch",
+        `Formula for "${node.name}" combines incompatible units with "${expression.operator}": "${leftUnit}" and "${rightUnit}"`,
+        node.id
+      )
+    );
+  }
+  if (expression.operator === "+" || expression.operator === "-") {
+    return leftUnit ?? rightUnit;
+  }
+  return void 0;
+}
+function validateGraph(input, rootNodeId) {
+  const graph = isProject(input) ? input.graph : input;
+  const rootId = getRootNodeId(input, rootNodeId);
+  const errors = [];
+  const warnings = [];
+  const nodeIds = /* @__PURE__ */ new Set();
+  const nodeById = /* @__PURE__ */ new Map();
+  for (const node of graph.nodes) {
+    if (nodeIds.has(node.id)) {
+      errors.push(
+        error(
+          `validation-duplicate-node-${node.id}`,
+          "invalid_graph",
+          `Duplicate node id "${node.id}"`,
+          node.id
+        )
+      );
+    }
+    nodeIds.add(node.id);
+    nodeById.set(node.id, node);
+  }
+  const edgeIds = /* @__PURE__ */ new Set();
+  const edgePairs = /* @__PURE__ */ new Set();
+  for (const edge of graph.edges) {
+    if (edgeIds.has(edge.id)) {
+      errors.push(
+        error(
+          `validation-duplicate-edge-${edge.id}`,
+          "invalid_graph",
+          `Duplicate edge id "${edge.id}"`,
+          void 0,
+          edge.id
+        )
+      );
+    }
+    edgeIds.add(edge.id);
+    if (!nodeIds.has(edge.sourceNodeId)) {
+      errors.push(
+        error(
+          `validation-edge-source-${edge.id}`,
+          "invalid_graph",
+          `Edge "${edge.id}" references missing source node "${edge.sourceNodeId}"`,
+          edge.sourceNodeId,
+          edge.id
+        )
+      );
+    }
+    if (!nodeIds.has(edge.targetNodeId)) {
+      errors.push(
+        error(
+          `validation-edge-target-${edge.id}`,
+          "invalid_graph",
+          `Edge "${edge.id}" references missing target node "${edge.targetNodeId}"`,
+          edge.targetNodeId,
+          edge.id
+        )
+      );
+    }
+    const pair = `${edge.sourceNodeId}->${edge.targetNodeId}`;
+    if (edgePairs.has(pair)) {
+      warnings.push(
+        warning2(
+          `validation-duplicate-edge-pair-${edge.sourceNodeId}-${edge.targetNodeId}`,
+          "invalid_graph",
+          `Duplicate edge pair "${edge.sourceNodeId}" -> "${edge.targetNodeId}"`,
+          void 0,
+          edge.id
+        )
+      );
+    }
+    edgePairs.add(pair);
+  }
+  if (!rootId) {
+    errors.push(
+      error(
+        "validation-root-missing",
+        "invalid_graph",
+        "Graph must define a root node id or contain exactly one root_kpi node"
+      )
+    );
+  } else if (!nodeIds.has(rootId)) {
+    errors.push(
+      error(
+        `validation-root-not-found-${rootId}`,
+        "invalid_graph",
+        `Root node "${rootId}" does not exist`,
+        rootId
+      )
+    );
+  }
+  const formulaReferencesByNode = /* @__PURE__ */ new Map();
+  for (const node of graph.nodes) {
+    if (!node.formula?.trim()) continue;
+    try {
+      const expression = parseFormula(node.formula);
+      const references = extractReferencesFromAst(expression);
+      formulaReferencesByNode.set(node.id, references);
+      for (const reference of references) {
+        if (!nodeIds.has(reference)) {
+          errors.push(
+            error(
+              `validation-formula-reference-${node.id}-${reference}`,
+              "unknown_reference",
+              `The formula for "${node.name}" references missing node "${reference}"`,
+              node.id
+            )
+          );
+        }
+      }
+      collectUnitWarnings(node, expression, nodeById, warnings);
+    } catch (caught) {
+      if (!(caught instanceof FormulaParseError)) {
+        throw caught;
+      }
+      errors.push(
+        error(
+          `validation-formula-parse-${node.id}`,
+          "formula_parse_error",
+          `The formula for "${node.name}" cannot be parsed: ${caught.message}`,
+          node.id
+        )
+      );
+    }
+  }
+  const formulaVisitState = /* @__PURE__ */ new Map();
+  const formulaStack = [];
+  const circularFormulaIds = /* @__PURE__ */ new Set();
+  const validateFormulaNode = (nodeId) => {
+    const state = formulaVisitState.get(nodeId);
+    if (state === "visited") return;
+    if (state === "visiting") {
+      const cycleStart = formulaStack.indexOf(nodeId);
+      const cycle = [...formulaStack.slice(cycleStart >= 0 ? cycleStart : 0), nodeId];
+      const cycleId = cycle.join("->");
+      if (!circularFormulaIds.has(cycleId)) {
+        circularFormulaIds.add(cycleId);
+        errors.push(
+          error(
+            `validation-formula-cycle-${cycleId}`,
+            "circular_dependency",
+            `Circular formula dependency detected: ${cycle.join(" -> ")}`,
+            nodeId
+          )
+        );
+      }
+      return;
+    }
+    formulaVisitState.set(nodeId, "visiting");
+    formulaStack.push(nodeId);
+    for (const reference of formulaReferencesByNode.get(nodeId) ?? []) {
+      if (!nodeIds.has(reference)) continue;
+      validateFormulaNode(reference);
+    }
+    formulaStack.pop();
+    formulaVisitState.set(nodeId, "visited");
+  };
+  for (const node of graph.nodes) {
+    validateFormulaNode(node.id);
+  }
+  if (rootId && nodeIds.has(rootId)) {
+    const childrenBySource = /* @__PURE__ */ new Map();
+    for (const edge of graph.edges) {
+      if (!nodeIds.has(edge.sourceNodeId) || !nodeIds.has(edge.targetNodeId)) continue;
+      const children = childrenBySource.get(edge.sourceNodeId) ?? [];
+      children.push(edge.targetNodeId);
+      childrenBySource.set(edge.sourceNodeId, children);
+    }
+    for (const [nodeId, references] of formulaReferencesByNode) {
+      const children = childrenBySource.get(nodeId) ?? [];
+      for (const reference of references) {
+        if (nodeIds.has(reference)) {
+          children.push(reference);
+        }
+      }
+      childrenBySource.set(nodeId, children);
+    }
+    const reachable = /* @__PURE__ */ new Set();
+    const queue = [rootId];
+    while (queue.length > 0) {
+      const nodeId = queue.shift();
+      if (!nodeId || reachable.has(nodeId)) continue;
+      reachable.add(nodeId);
+      for (const child of childrenBySource.get(nodeId) ?? []) queue.push(child);
+    }
+    for (const node of graph.nodes) {
+      if (reachable.has(node.id) && node.status === "rejected") {
+        errors.push(
+          error(
+            `validation-rejected-active-node-${node.id}`,
+            "invalid_graph",
+            `Active model depends on rejected node "${node.name}"`,
+            node.id
+          )
+        );
+      }
+      if (node.id === rootId || node.type === "external_factor") continue;
+      if (!reachable.has(node.id)) {
+        errors.push(
+          error(
+            `validation-unreachable-${node.id}`,
+            "invalid_graph",
+            `Node "${node.id}" is not reachable from root "${rootId}" through visual or formula dependency edges`,
+            node.id
+          )
+        );
+      }
+    }
+  }
+  return { valid: errors.length === 0, errors, warnings };
+}
+
+// ../vdt-core/src/graph/layout.ts
+var DEFAULT_CANVAS_LAYOUT = Object.freeze({
+  margin: 48,
+  cardWidth: 260,
+  cardHeight: 132,
+  horizontalGap: 220,
+  verticalGap: 36
+});
+var DEFAULT_SVG_LAYOUT = Object.freeze({
+  margin: 48,
+  cardWidth: 240,
+  cardHeight: 120,
+  horizontalGap: 180,
+  verticalGap: 32
+});
+
+// ../vdt-agent/src/index.ts
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+var DOMAIN_TERMS = {
+  mining: [
+    "mine",
+    "mining",
+    "ore",
+    "tonne",
+    "tons",
+    "haulage",
+    "truck",
+    "payload",
+    "pit",
+    "dump",
+    "crusher",
+    "throughput",
+    "production volume"
+  ],
+  finance: [
+    "revenue",
+    "profit",
+    "margin",
+    "ebitda",
+    "cost",
+    "price",
+    "discount",
+    "refund",
+    "sales",
+    "gross profit",
+    "operating profit"
+  ],
+  saas: [
+    "saas",
+    "arr",
+    "mrr",
+    "churn",
+    "retention",
+    "signup",
+    "activation",
+    "trial",
+    "conversion",
+    "arpa",
+    "arpu",
+    "nrr",
+    "funnel"
+  ],
+  generic: []
+};
+var FIELD_LABELS = {
+  rootKpi: "Root KPI",
+  industry: "Industry",
+  businessContext: "Business context",
+  unit: "Unit",
+  timePeriod: "Time period",
+  goal: "Business goal",
+  levelOfDetail: "Desired level of detail"
+};
+function parseFrontmatter(markdown) {
+  const normalized = markdown.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  if (lines[0] !== "---") {
+    throw new Error("Markdown skill must start with YAML frontmatter.");
+  }
+  const closeIndex = lines.findIndex((line, index) => index > 0 && line === "---");
+  if (closeIndex === -1) {
+    throw new Error("Markdown skill frontmatter is missing a closing marker.");
+  }
+  const attributes = {};
+  const frontmatterLines = lines.slice(1, closeIndex);
+  for (let index = 0; index < frontmatterLines.length; index += 1) {
+    const line = frontmatterLines[index];
+    if (!line.trim() || line.trimStart().startsWith("#")) {
+      continue;
+    }
+    const keyMatch = /^([A-Za-z0-9_-]+):(?:\s*(.*))?$/.exec(line);
+    if (!keyMatch) {
+      throw new Error(`Unsupported frontmatter line: ${line}`);
+    }
+    const key = keyMatch[1];
+    const inlineValue = keyMatch[2] ?? "";
+    if (inlineValue.trim()) {
+      attributes[key] = parseScalarFrontmatterValue(inlineValue.trim());
+      continue;
+    }
+    const values = [];
+    while (frontmatterLines[index + 1]?.match(/^\s*-\s+/)) {
+      index += 1;
+      values.push(parseStringValue(frontmatterLines[index].replace(/^\s*-\s+/, "")));
+    }
+    attributes[key] = values;
+  }
+  return {
+    attributes,
+    body: lines.slice(closeIndex + 1).join("\n").trim()
+  };
+}
+function parseSkillMarkdown(path6, markdown) {
+  const parsed = parseFrontmatter(markdown);
+  const frontmatter = normalizeSkillFrontmatter(parsed.attributes, path6);
+  return {
+    id: frontmatter.id,
+    path: path6,
+    title: frontmatter.title,
+    domain: frontmatter.domain,
+    frontmatter,
+    body: parsed.body,
+    raw: markdown
+  };
+}
+function parseRegistryMarkdown(markdown) {
+  const rows = markdown.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.startsWith("|") && line.endsWith("|"));
+  const headerIndex = rows.findIndex((line) => normalizeHeaderCells(splitMarkdownTableRow(line)).includes("skill id"));
+  if (headerIndex === -1 || !rows[headerIndex + 2]) {
+    return [];
+  }
+  const header = normalizeHeaderCells(splitMarkdownTableRow(rows[headerIndex]));
+  return rows.slice(headerIndex + 2).map((row) => {
+    const cells = splitMarkdownTableRow(row);
+    const cell = (name) => cells[header.indexOf(name)]?.trim() ?? "";
+    return {
+      id: cell("skill id"),
+      path: cell("path"),
+      domain: cell("domain"),
+      matchingTerms: splitListCell(cell("matching terms")),
+      kpiPatterns: splitListCell(cell("primary kpi patterns")),
+      inputRequirements: splitListCell(cell("input requirements")),
+      expectedOutputs: splitListCell(cell("expected outputs")),
+      confidenceHints: cell("confidence hints"),
+      whenNotToUse: cell("when not to use")
+    };
+  });
+}
+function loadSkillLibraryFromMemory(sources) {
+  const registrySource = sources["registry.md"] ?? sources["skills/registry.md"];
+  if (!registrySource) {
+    throw new Error("Skill library source map must include registry.md.");
+  }
+  const registry2 = parseRegistryMarkdown(registrySource);
+  const skillPaths = Object.keys(sources).filter((path6) => path6 !== "registry.md" && path6 !== "skills/registry.md");
+  const skills = skillPaths.sort().map((path6) => parseSkillMarkdown(path6, sources[path6]));
+  assertRegistryCoversSkills(registry2, skills);
+  return {
+    registry: registry2,
+    skills,
+    byId: new Map(skills.map((skill) => [skill.id, skill]))
+  };
+}
+async function loadSkillLibraryFromFs(rootDir) {
+  const [{ readdir, readFile: readFile2 }, { join: join2, relative }] = await Promise.all([import("node:fs/promises"), import("node:path")]);
+  const registryPath = join2(rootDir, "registry.md");
+  const registrySource = await readFile2(registryPath, "utf8");
+  const markdownPaths = await collectMarkdownFiles(rootDir, readdir, join2);
+  const sources = { "registry.md": registrySource };
+  await Promise.all(
+    markdownPaths.filter((path6) => !path6.endsWith("registry.md")).map(async (path6) => {
+      sources[relative(rootDir, path6).replaceAll("\\", "/")] = await readFile2(path6, "utf8");
+    })
+  );
+  return loadSkillLibraryFromMemory(sources);
+}
+var defaultSkillLibraryPromise;
+function loadDefaultSkillLibrary() {
+  defaultSkillLibraryPromise ??= resolveDefaultSkillRoot().then((rootDir) => loadSkillLibraryFromFs(rootDir));
+  return defaultSkillLibraryPromise;
+}
+async function resolveDefaultSkillRoot() {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(moduleDir, "vdt-agent-skills"),
+    join(dirname(moduleDir), "vdt-agent-skills"),
+    join(dirname(moduleDir), "skills")
+  ];
+  const { access: access2 } = await import("node:fs/promises");
+  for (const candidate of candidates) {
+    try {
+      await access2(join(candidate, "registry.md"));
+      return candidate;
+    } catch {
+    }
+  }
+  throw new Error(`Default VDT skill library was not found. Checked: ${candidates.join(", ")}`);
+}
+function classifyVdtRequest(request) {
+  const haystack = normalizeText(
+    [
+      request.rootKpi,
+      request.industry ?? "",
+      request.businessContext ?? "",
+      request.unit ?? "",
+      request.timePeriod ?? "",
+      request.goal ?? ""
+    ].join(" ")
+  );
+  const scored = Object.keys(DOMAIN_TERMS).filter((domain) => domain !== "generic").map((domain) => {
+    const matchedTerms = DOMAIN_TERMS[domain].filter((term) => includesTerm(haystack, term));
+    return { domain, matchedTerms, score: matchedTerms.length };
+  }).sort((a, b) => b.score - a.score || a.domain.localeCompare(b.domain));
+  const winner = scored[0];
+  if (!winner || winner.score === 0) {
+    return {
+      domain: "generic",
+      pattern: "logical_kpi_decomposition",
+      confidence: 0.35,
+      matchedTerms: []
+    };
+  }
+  return {
+    domain: winner.domain,
+    pattern: inferPattern(winner.domain, haystack),
+    confidence: Math.min(0.95, 0.5 + winner.score * 0.12),
+    matchedTerms: winner.matchedTerms
+  };
+}
+function retrieveSkills(request, library, options = {}) {
+  const classification = options.classification ?? classifyVdtRequest(request);
+  const haystack = normalizeText(
+    [request.rootKpi, request.industry ?? "", request.businessContext ?? "", request.goal ?? ""].join(" ")
+  );
+  const registryById = new Map(library.registry.map((entry) => [entry.id, entry]));
+  const scored = library.skills.map((skill) => {
+    const entry = registryById.get(skill.id);
+    const terms = [
+      ...skill.frontmatter.patterns,
+      ...skill.frontmatter.kpiPatterns,
+      ...entry?.matchingTerms ?? [],
+      ...entry?.kpiPatterns ?? [],
+      ...skill.frontmatter.outputs,
+      ...entry?.expectedOutputs ?? []
+    ];
+    const matchedTerms = uniqueStrings(terms.filter((term) => includesTerm(haystack, term)));
+    const hasExplicitMatch = matchedTerms.length > 0;
+    const isGenericFallback = skill.domain === "generic";
+    const domainScore = skill.domain === classification.domain && hasExplicitMatch ? 8 : isGenericFallback ? 1 : 0;
+    const patternScore = matchedTerms.length * 3;
+    const outputScore = skill.frontmatter.outputs.some((output) => matchedTerms.includes(output)) ? 2 : 0;
+    const score = domainScore + patternScore + outputScore;
+    return {
+      skill,
+      score,
+      matchedTerms,
+      reason: buildSelectionReason(skill, classification, matchedTerms)
+    };
+  }).filter(
+    (candidate) => candidate.skill.domain === "generic" || candidate.skill.domain === classification.domain && candidate.matchedTerms.length > 0
+  ).filter((candidate) => candidate.score > 0).sort((a, b) => b.score - a.score || a.skill.id.localeCompare(b.skill.id));
+  const domainSpecific = scored.filter((candidate) => candidate.skill.domain !== "generic");
+  if (domainSpecific.length > 0) {
+    return domainSpecific.slice(0, options.maxSkills ?? 3);
+  }
+  const generic = library.skills.find((skill) => skill.id === "generic.logical_kpi_decomposition");
+  return generic ? [
+    {
+      skill: generic,
+      score: 1,
+      matchedTerms: [],
+      reason: "Selected as fallback because no domain-specific skill matched the request."
+    }
+  ] : [];
+}
+function readSkillExcerpts(skills, maxChars = 1800) {
+  return skills.map((item) => {
+    const skill = "skill" in item ? item.skill : item;
+    const reason = "reason" in item ? item.reason : void 0;
+    const excerpt = {
+      id: skill.id,
+      path: skill.path,
+      title: skill.title,
+      domain: skill.domain,
+      excerpt: createSkillExcerpt(skill, maxChars),
+      outputs: skill.frontmatter.outputs,
+      questions: skill.frontmatter.questions
+    };
+    if (reason) {
+      excerpt.reason = reason;
+    }
+    return excerpt;
+  });
+}
+function planDecomposition(request, classification, skillExcerpts) {
+  const formulas = uniqueStrings(skillExcerpts.flatMap((skill) => extractFormulaTemplates(skill.excerpt))).slice(0, 8);
+  const firstLevelDrivers = uniqueStrings(skillExcerpts.flatMap((skill) => skill.outputs ?? [])).slice(0, 8);
+  const questionsForUser = buildClarifyingQuestions(request, skillExcerpts).slice(0, 3);
+  return {
+    rootKpi: request.rootKpi,
+    domain: classification.domain,
+    pattern: classification.pattern,
+    selectedSkillIds: skillExcerpts.map((skill) => skill.id),
+    firstLevelDrivers,
+    formulaTemplates: formulas,
+    assumptions: [
+      "Use provided brief fields as authoritative.",
+      "State any missing numeric inputs as assumptions instead of inventing values.",
+      "Keep decomposition edges directed from parent KPI to child driver."
+    ],
+    questionsForUser
+  };
+}
+function createAgenticGeneratePrompt(request, selectedSkillExcerpts, classification = classifyVdtRequest(request)) {
+  const decompositionPlan = planDecomposition(request, classification, selectedSkillExcerpts);
+  const requestLines = Object.keys(FIELD_LABELS).map((key) => `${FIELD_LABELS[key]}: ${request[key] || "Not specified"}`).join("\n");
+  const skillLines = selectedSkillExcerpts.map((skill) => [`Skill ${skill.id} (${skill.path})`, skill.excerpt].join("\n")).join("\n\n---\n\n");
+  return {
+    systemPromptAddition: [
+      "Use the selected VDT skills as grounded decomposition guidance.",
+      "Do not expose hidden chain-of-thought or invent progress messages.",
+      "Return only the requested structured output when the provider call is made by the caller."
+    ].join("\n"),
+    userPromptAddition: [
+      "Agentic VDT preparation",
+      requestLines,
+      "",
+      `Classified domain: ${classification.domain}`,
+      `Decomposition pattern: ${classification.pattern}`,
+      "",
+      "Selected skill excerpts:",
+      skillLines || "No skill excerpts selected.",
+      "",
+      "Deterministic decomposition plan:",
+      JSON.stringify(decompositionPlan, null, 2)
+    ].join("\n"),
+    decompositionPlan,
+    finalReportSeed: buildFinalReportSeed(request, decompositionPlan)
+  };
+}
+function prepareAgenticVdtRun(request, library, options = {}) {
+  const runId = options.runId ?? `vdt-agent-${stableHash(JSON.stringify(request)).slice(0, 8)}`;
+  const now = options.now ?? (() => /* @__PURE__ */ new Date());
+  let eventIndex = 0;
+  const events = [];
+  const addEvent = (event) => {
+    eventIndex += 1;
+    events.push(createRunEvent(runId, eventIndex, now, event));
+  };
+  const classification = classifyVdtRequest(request);
+  addEvent({
+    type: "classification",
+    title: "Request classified",
+    message: `Classified request as ${classification.domain} / ${classification.pattern}.`,
+    metadata: { ...classification }
+  });
+  const retrieveOptions = { classification };
+  if (options.maxSkills !== void 0) {
+    retrieveOptions.maxSkills = options.maxSkills;
+  }
+  const retrievedSkills = retrieveSkills(request, library, retrieveOptions);
+  addEvent({
+    type: "skill_search",
+    title: "Skill search completed",
+    message: `Found ${retrievedSkills.length} candidate skill${retrievedSkills.length === 1 ? "" : "s"}.`,
+    metadata: {
+      candidates: retrievedSkills.map((candidate) => ({
+        id: candidate.skill.id,
+        score: candidate.score,
+        matchedTerms: candidate.matchedTerms
+      }))
+    }
+  });
+  for (const candidate of retrievedSkills) {
+    addEvent({
+      type: "skill_selected",
+      title: "Skill selected",
+      message: `Selected ${candidate.skill.id}: ${candidate.reason}`,
+      metadata: { id: candidate.skill.id, path: candidate.skill.path, score: candidate.score }
+    });
+  }
+  const skillExcerpts = readSkillExcerpts(retrievedSkills);
+  for (const skill of skillExcerpts) {
+    addEvent({
+      type: "skill_read",
+      title: "Skill read",
+      message: `Read ${skill.id}: ${summarizeExcerpt(skill.excerpt)}.`,
+      metadata: { id: skill.id, path: skill.path, excerptLength: skill.excerpt.length }
+    });
+  }
+  const questions = buildClarifyingQuestions(request, skillExcerpts).slice(0, 3);
+  const continueWithAssumptions = options.continueWithAssumptions ?? true;
+  addEvent({
+    type: "clarifying_questions",
+    title: "Clarifying questions evaluated",
+    message: questions.length === 0 ? "No clarifying questions required before drafting the first decomposition." : continueWithAssumptions ? `Prepared ${questions.length} question${questions.length === 1 ? "" : "s"}; continuing with explicit assumptions.` : `Prepared ${questions.length} question${questions.length === 1 ? "" : "s"} before graph generation.`,
+    metadata: { questions, continueWithAssumptions }
+  });
+  const prompt = createAgenticGeneratePrompt(request, skillExcerpts, classification);
+  addEvent({
+    type: "planning_decomposition",
+    title: "Decomposition plan prepared",
+    message: `Prepared plan from ${prompt.decompositionPlan.selectedSkillIds.length} skill${prompt.decompositionPlan.selectedSkillIds.length === 1 ? "" : "s"}.`,
+    metadata: { ...prompt.decompositionPlan }
+  });
+  addEvent({
+    type: "planning_decomposition",
+    title: "Report seed prepared",
+    message: "Prepared a report seed for the eventual generated VDT.",
+    metadata: { selectedSkillIds: prompt.decompositionPlan.selectedSkillIds }
+  });
+  const run = {
+    runId,
+    status: questions.length > 0 && !continueWithAssumptions ? "needs_user_input" : "running",
+    phase: questions.length > 0 && !continueWithAssumptions ? "asking_clarifying_questions" : "generating_graph",
+    request,
+    selectedSkills: retrievedSkills.map((candidate) => ({
+      id: candidate.skill.id,
+      path: candidate.skill.path,
+      reason: candidate.reason
+    })),
+    events
+  };
+  if (questions.length > 0 && !continueWithAssumptions) {
+    run.questionsForUser = questions;
+  }
+  return { run, classification, skillExcerpts, prompt };
+}
+function finalizeAgenticVdtRun(run, input) {
+  const now = input.now ?? (() => /* @__PURE__ */ new Date());
+  const nextEvents = [...run.events];
+  const addEvent = (event) => {
+    nextEvents.push(createRunEvent(run.runId, nextEvents.length + 1, now, event));
+  };
+  addEvent({
+    type: "model_call_completed",
+    title: "Model call completed",
+    message: "Graph generation completed and returned a candidate VDT.",
+    metadata: { resultProjectId: input.resultProjectId }
+  });
+  addEvent({
+    type: "graph_validation",
+    title: "Graph validation completed",
+    message: input.validationSummary,
+    metadata: { resultProjectId: input.resultProjectId }
+  });
+  addEvent({
+    type: "final_report",
+    title: "Final report prepared",
+    message: "Prepared final VDT report after graph generation and validation.",
+    metadata: { resultProjectId: input.resultProjectId }
+  });
+  const finalized = {
+    ...run,
+    status: "succeeded",
+    phase: "reporting",
+    resultProjectId: input.resultProjectId,
+    finalReport: input.finalReport,
+    events: nextEvents
+  };
+  if (input.draftGraph !== void 0) {
+    finalized.draftGraph = input.draftGraph;
+  }
+  return finalized;
+}
+function appendAgenticVdtRunEvent(run, event, options = {}) {
+  const now = options.now ?? (() => /* @__PURE__ */ new Date());
+  return {
+    ...run,
+    ...options.phase ? { phase: options.phase } : {},
+    ...options.status ? { status: options.status } : {},
+    events: [...run.events, createRunEvent(run.runId, run.events.length + 1, now, event)]
+  };
+}
+function parseScalarFrontmatterValue(value) {
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  if (/^-?\d+(\.\d+)?$/.test(value)) {
+    return Number(value);
+  }
+  return parseStringValue(value);
+}
+function parseStringValue(value) {
+  return value.replace(/^["']|["']$/g, "").trim();
+}
+function normalizeSkillFrontmatter(attributes, path6) {
+  const getString = (key) => {
+    const value = attributes[key];
+    if (typeof value !== "string" || !value.trim()) {
+      throw new Error(`Skill ${path6} is missing required string frontmatter: ${key}.`);
+    }
+    return value.trim();
+  };
+  const getStringArray = (key) => {
+    const value = attributes[key];
+    if (!Array.isArray(value)) {
+      throw new Error(`Skill ${path6} is missing required list frontmatter: ${key}.`);
+    }
+    const values = value.map((item) => item.trim()).filter(Boolean);
+    if (values.length === 0) {
+      throw new Error(`Skill ${path6} must define at least one value for frontmatter list: ${key}.`);
+    }
+    return values;
+  };
+  const version = attributes.version;
+  const frontmatter = {
+    id: getString("id"),
+    title: getString("title"),
+    domain: getString("domain"),
+    patterns: getStringArray("patterns"),
+    kpiPatterns: getStringArray("kpi_patterns"),
+    requires: getStringArray("requires"),
+    outputs: getStringArray("outputs"),
+    questions: getStringArray("questions")
+  };
+  if (typeof version === "number") {
+    frontmatter.version = version;
+  }
+  return frontmatter;
+}
+function splitMarkdownTableRow(row) {
+  return row.slice(1, -1).split("|").map((cell) => cell.trim());
+}
+function normalizeHeaderCells(cells) {
+  return cells.map((cell) => cell.toLowerCase().replace(/\s+/g, " "));
+}
+function splitListCell(cell) {
+  return cell.split(/[,;]/).map((value) => value.trim()).filter(Boolean);
+}
+function assertRegistryCoversSkills(registry2, skills) {
+  const registryById = new Map(registry2.map((entry) => [entry.id, entry]));
+  const missing = skills.filter((skill) => registryById.get(skill.id)?.path !== skill.path);
+  if (missing.length > 0) {
+    throw new Error(`Registry does not reference skill paths: ${missing.map((skill) => skill.path).join(", ")}`);
+  }
+  const incomplete = registry2.filter(
+    (entry) => entry.matchingTerms.length === 0 || entry.kpiPatterns.length === 0 || entry.inputRequirements.length === 0 || entry.expectedOutputs.length === 0 || !entry.confidenceHints || !entry.whenNotToUse
+  );
+  if (incomplete.length > 0) {
+    throw new Error(`Registry entries are missing required contract fields: ${incomplete.map((entry) => entry.id).join(", ")}`);
+  }
+}
+function createRunEvent(runId, eventIndex, now, event) {
+  return {
+    id: `${runId}-event-${String(eventIndex).padStart(3, "0")}`,
+    timestamp: now().toISOString(),
+    ...event
+  };
+}
+async function collectMarkdownFiles(rootDir, readdir, join2) {
+  const entries = await readdir(rootDir, { withFileTypes: true });
+  const nested = await Promise.all(
+    entries.map(async (entry) => {
+      const path6 = join2(rootDir, entry.name);
+      if (entry.isDirectory()) {
+        return collectMarkdownFiles(path6, readdir, join2);
+      }
+      return entry.isFile() && entry.name.endsWith(".md") ? [path6] : [];
+    })
+  );
+  return nested.flat().sort();
+}
+function normalizeText(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+function includesTerm(haystack, term) {
+  const normalizedTerm = normalizeText(term);
+  return normalizedTerm.length > 0 && ` ${haystack} `.includes(` ${normalizedTerm} `);
+}
+function inferPattern(domain, haystack) {
+  if (domain === "mining" && (includesTerm(haystack, "haulage") || includesTerm(haystack, "truck"))) {
+    return "haulage_truck_cycle";
+  }
+  if (domain === "mining") {
+    return "production_volume";
+  }
+  if (domain === "finance") {
+    return "revenue_profit";
+  }
+  if (domain === "saas") {
+    return "funnel_growth";
+  }
+  return "logical_kpi_decomposition";
+}
+function uniqueStrings(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+function buildSelectionReason(skill, classification, matchedTerms) {
+  const reasonParts = [];
+  if (skill.domain === classification.domain) {
+    reasonParts.push(`domain matched ${classification.domain}`);
+  }
+  if (matchedTerms.length > 0) {
+    reasonParts.push(`matched ${matchedTerms.slice(0, 4).join(", ")}`);
+  }
+  if (skill.domain === "generic" && reasonParts.length === 0) {
+    reasonParts.push("generic fallback coverage");
+  }
+  return reasonParts.join("; ") || "registry candidate selected by deterministic scoring";
+}
+function createSkillExcerpt(skill, maxChars) {
+  const sections = ["When To Use", "Decomposition Pattern", "Formula Templates", "Required Inputs", "Warnings And Edge Cases"];
+  const selected = sections.map((section) => extractMarkdownSection(skill.body, section)).filter(Boolean).join("\n\n");
+  const excerpt = selected || skill.body;
+  return excerpt.length > maxChars ? `${excerpt.slice(0, maxChars - 3).trimEnd()}...` : excerpt;
+}
+function extractMarkdownSection(markdown, title) {
+  const pattern = new RegExp(`(^|\\n)## ${escapeRegExp(title)}\\n([\\s\\S]*?)(?=\\n## |$)`);
+  return pattern.exec(markdown)?.[0].trim() ?? "";
+}
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function extractFormulaTemplates(excerpt) {
+  return excerpt.split(/\r?\n/).map((line) => line.replace(/^[-*]\s+/, "").trim()).filter((line) => /^[a-z][a-z0-9_]*\s*=/.test(line));
+}
+function buildClarifyingQuestions(request, skillExcerpts) {
+  const questions = [];
+  if (!request.timePeriod) {
+    questions.push("What time period should the VDT use?");
+  }
+  if (!request.unit) {
+    questions.push("What unit should the root KPI use?");
+  }
+  if (!request.businessContext && skillExcerpts[0]?.questions?.[0]) {
+    questions.push(skillExcerpts[0].questions[0]);
+  }
+  return uniqueStrings(questions);
+}
+function summarizeExcerpt(excerpt) {
+  if (excerpt.includes("Formula Templates")) {
+    return "found formula templates and decomposition guidance";
+  }
+  return "found decomposition guidance";
+}
+function buildFinalReportSeed(request, plan) {
+  return [
+    `Root KPI: ${request.rootKpi}`,
+    `Domain classification: ${plan.domain} / ${plan.pattern}`,
+    `Selected skills: ${plan.selectedSkillIds.join(", ") || "none"}`,
+    `First-level driver families: ${plan.firstLevelDrivers.join(", ") || "to be generated"}`,
+    `Formula families: ${plan.formulaTemplates.slice(0, 4).join("; ") || "to be generated"}`,
+    `Assumptions: ${plan.assumptions.join(" ")}`,
+    `Questions: ${plan.questionsForUser.join(" ") || "none for initial draft"}`,
+    "Validation result: pending graph generation and validator execution.",
+    "Recommended next deepen action: inspect weak or assumption-heavy first-level drivers."
+  ].join("\n");
+}
+function stableHash(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
 // ../local-runner/src/server/executor.ts
 import { execFile as execFile7, spawn as nodeSpawn } from "node:child_process";
 import { chmod, copyFile, lstat, mkdir, mkdtemp as mkdtemp3, readFile, realpath, rm as rm3, writeFile as writeFile2 } from "node:fs/promises";
 import os3 from "node:os";
-import path4 from "node:path";
+import path5 from "node:path";
 import { promisify as promisify7 } from "node:util";
 var advisoryStub = Object.freeze({
   assumptions: [],
@@ -2488,7 +3899,7 @@ var EXECUTION_LIMITS = Object.freeze({
   maxStderrBytes: 1024 * 1024,
   maxResultBytes: 1024 * 1024,
   maxRepairExcerptBytes: 16 * 1024,
-  repairTimeoutMs: 3e4,
+  repairTimeoutMs: 6e4,
   timeoutMs: 12e4,
   killGraceMs: 3e3
 });
@@ -2531,18 +3942,18 @@ async function defaultResolveExecutable(manifest, env) {
   if (!cli) throw Object.assign(new Error("Backend has no executable manifest."), { code: "INVALID_MANIFEST" });
   const pathValue = env.PATH ?? "";
   for (const alias of cli.executableAliases) {
-    if (alias.includes("\0") || path4.basename(alias) !== alias || alias === "." || alias === "..") continue;
-    for (const directory of pathValue.split(path4.delimiter).filter((entry) => path4.isAbsolute(entry))) {
-      const candidate = path4.resolve(directory, alias);
+    if (alias.includes("\0") || path5.basename(alias) !== alias || alias === "." || alias === "..") continue;
+    for (const directory of pathValue.split(path5.delimiter).filter((entry) => path5.isAbsolute(entry))) {
+      const candidate = path5.resolve(directory, alias);
       try {
         const info = await lstat(candidate);
         if (!info.isSymbolicLink() && !info.isFile()) continue;
         const resolved = await realpath(candidate);
-        if (!path4.isAbsolute(resolved)) continue;
+        if (!path5.isAbsolute(resolved)) continue;
         const resolvedInfo = await lstat(resolved);
         if (!resolvedInfo.isFile()) continue;
-        const projectRoot = path4.resolve(process.cwd());
-        if (resolved === projectRoot || resolved.startsWith(`${projectRoot}${path4.sep}`)) continue;
+        const projectRoot = path5.resolve(process.cwd());
+        if (resolved === projectRoot || resolved.startsWith(`${projectRoot}${path5.sep}`)) continue;
         return resolved;
       } catch {
       }
@@ -2553,7 +3964,7 @@ async function defaultResolveExecutable(manifest, env) {
   });
 }
 async function normalizeResolvedExecutable(executable) {
-  if (!path4.isAbsolute(executable) || executable.includes("\0")) {
+  if (!path5.isAbsolute(executable) || executable.includes("\0")) {
     throw Object.assign(new Error("Resolved executable must be an absolute path without NUL bytes."), { code: "UNSAFE_EXECUTABLE" });
   }
   try {
@@ -2566,29 +3977,29 @@ function isJavaScriptExecutable(executable) {
   return /\.(?:mjs|cjs|js)$/i.test(executable);
 }
 function isPathInside(root, candidate) {
-  const relative = path4.relative(path4.resolve(root), path4.resolve(candidate));
-  return relative === "" || !!relative && !relative.startsWith("..") && !path4.isAbsolute(relative);
+  const relative = path5.relative(path5.resolve(root), path5.resolve(candidate));
+  return relative === "" || !!relative && !relative.startsWith("..") && !path5.isAbsolute(relative);
 }
 function shouldLocalizeJavaScriptExecutable(executable, options) {
   return options.resolveExecutable !== void 0 && isPathInside(process.cwd(), executable);
 }
-function errorCode(error) {
-  return typeof error === "object" && error !== null && "code" in error ? String(error.code) : void 0;
+function errorCode(error2) {
+  return typeof error2 === "object" && error2 !== null && "code" in error2 ? String(error2.code) : void 0;
 }
 async function copyCodexHomeFile(sourceDir, targetDir, fileName) {
   try {
-    const targetPath = path4.join(targetDir, fileName);
-    await copyFile(path4.join(sourceDir, fileName), targetPath);
+    const targetPath = path5.join(targetDir, fileName);
+    await copyFile(path5.join(sourceDir, fileName), targetPath);
     await chmod(targetPath, 384);
-  } catch (error) {
-    if (errorCode(error) === "ENOENT") return;
-    throw error;
+  } catch (error2) {
+    if (errorCode(error2) === "ENOENT") return;
+    throw error2;
   }
 }
 async function prepareEphemeralCodexHome(cwd, envSource) {
-  const sourceCodexHome = envSource.CODEX_HOME ?? (envSource.HOME ? path4.join(envSource.HOME, ".codex") : void 0);
+  const sourceCodexHome = envSource.CODEX_HOME ?? (envSource.HOME ? path5.join(envSource.HOME, ".codex") : void 0);
   if (!sourceCodexHome) return void 0;
-  const codexHome = path4.join(cwd, "codex-home");
+  const codexHome = path5.join(cwd, "codex-home");
   await mkdir(codexHome, { recursive: true, mode: 448 });
   await chmod(codexHome, 448);
   for (const fileName of CODEX_HOME_COPY_FILES) {
@@ -2690,7 +4101,7 @@ function buildSubscriptionPrompt(request) {
     JSON.stringify({
       schemaId: request.schemaId,
       taskType: request.taskType,
-      outputJsonSchema: getRegisteredJsonSchema(schemaId),
+      outputJsonSchema: getStrictResponseJsonSchema(schemaId),
       input: request.input,
       ...request.model ? { model: request.model } : {}
     })
@@ -2762,21 +4173,21 @@ async function executeCli(manifest, request, signal, options) {
     }
     const tempRoot = options.tempRoot ?? os3.tmpdir();
     await mkdir(tempRoot, { recursive: true });
-    const cwd = await mkdtemp3(path4.join(tempRoot, "vdt-run-"));
+    const cwd = await mkdtemp3(path5.join(tempRoot, "vdt-run-"));
     await chmod(cwd, 448);
-    const requestPath = path4.join(cwd, "request.json");
+    const requestPath = path5.join(cwd, "request.json");
     await writeFile2(requestPath, requestJson, { encoding: "utf8", mode: 384, flag: "wx" });
-    const promptPath = path4.join(cwd, "prompt.txt");
+    const promptPath = path5.join(cwd, "prompt.txt");
     await writeFile2(promptPath, prompt, { encoding: "utf8", mode: 384, flag: "wx" });
-    const schemaPath = path4.join(cwd, "schema.json");
+    const schemaPath = path5.join(cwd, "schema.json");
     await writeFile2(schemaPath, `${JSON.stringify(getStrictResponseJsonSchema(request.schemaId), null, 2)}
 `, {
       encoding: "utf8",
       mode: 384,
       flag: "wx"
     });
-    const outputPath = path4.join(cwd, "last-message.json");
-    const toolPolicyPath = path4.join(cwd, "deny-all-tools.toml");
+    const outputPath = path5.join(cwd, "last-message.json");
+    const toolPolicyPath = path5.join(cwd, "deny-all-tools.toml");
     await writeFile2(
       toolPolicyPath,
       '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n',
@@ -2802,7 +4213,7 @@ async function executeCli(manifest, request, signal, options) {
     if (isJavaScriptExecutable(executable)) {
       let scriptPath = executable;
       if (shouldLocalizeJavaScriptExecutable(executable, options)) {
-        scriptPath = path4.join(cwd, path4.basename(executable));
+        scriptPath = path5.join(cwd, path5.basename(executable));
         await copyFile(executable, scriptPath);
         await chmod(scriptPath, 448);
       }
@@ -2812,7 +4223,7 @@ async function executeCli(manifest, request, signal, options) {
     let finalArgs = spawnArgs;
     const childEnv = safeEnvironment(envSource);
     if (manifest.id === "cursor_subscription") {
-      childEnv.NODE_COMPILE_CACHE = path4.join(cwd, "node-compile-cache");
+      childEnv.NODE_COMPILE_CACHE = path5.join(cwd, "node-compile-cache");
     }
     if (manifest.id === "codex_subscription") {
       const codexHome = await prepareEphemeralCodexHome(cwd, envSource);
@@ -2854,19 +4265,22 @@ async function executeCli(manifest, request, signal, options) {
         completionSettled = true;
         resolve(event);
       };
-      const fail = (error) => {
+      const fail = (error2) => {
         if (completionSettled) return;
         completionSettled = true;
-        reject(error);
+        reject(error2);
       };
       const trySettleFromStream = () => {
         if (!adapter?.parseStreamingOutput) return;
         if (streamingResult || streamingError !== void 0) return;
         let output;
         try {
-          output = adapter.parseStreamingOutput(stdout, stderr, request.schemaId);
-        } catch (error) {
-          streamingError = error;
+          output = normalizeRegisteredSchemaOutput(
+            request.schemaId,
+            adapter.parseStreamingOutput(stdout, stderr, request.schemaId)
+          );
+        } catch (error2) {
+          streamingError = error2;
           stopChildAfterStreamingResult();
           return;
         }
@@ -2940,8 +4354,8 @@ async function executeCli(manifest, request, signal, options) {
         if (adapter) {
           try {
             adapter.parseOutput(stdout, stderr, request.schemaId);
-          } catch (error) {
-            throw error;
+          } catch (error2) {
+            throw error2;
           }
         }
         throw Object.assign(new Error(`Backend exited with code ${exitCode}; stderr contained ${byteLength7(stderr)} bytes.`), {
@@ -2953,7 +4367,8 @@ async function executeCli(manifest, request, signal, options) {
       if (byteLength7(stdout) > EXECUTION_LIMITS.maxResultBytes && !adapter) {
         throw Object.assign(new Error("Backend result exceeds the configured limit."), { code: "OUTPUT_TOO_LARGE" });
       }
-      const output = adapter ? adapter.parseOutput(stdout, stderr, request.schemaId) : extractBoundedJson(stdout, EXECUTION_LIMITS.maxResultBytes);
+      const parsedOutput = adapter ? adapter.parseOutput(stdout, stderr, request.schemaId) : extractBoundedJson(stdout, EXECUTION_LIMITS.maxResultBytes);
+      const output = normalizeRegisteredSchemaOutput(request.schemaId, parsedOutput);
       const schemaValid = validateRegisteredSchema(request.schemaId, output);
       if (!schemaValid) {
         throw Object.assign(new Error("Backend output failed registered schema validation."), {
@@ -2970,14 +4385,14 @@ async function executeCli(manifest, request, signal, options) {
         exitCode,
         ...executableVersion === void 0 ? {} : { executableVersion }
       };
-    } catch (error) {
+    } catch (error2) {
       if (outputLimitExceeded) {
         throw Object.assign(new Error("Backend output exceeded the configured limit."), { code: "OUTPUT_TOO_LARGE" });
       }
-      if (error instanceof Error && !("rawText" in error) && error.code === "BACKEND_PARSE_FAILED") {
-        throw Object.assign(error, { rawText: stdout });
+      if (error2 instanceof Error && !("rawText" in error2) && error2.code === "BACKEND_PARSE_FAILED") {
+        throw Object.assign(error2, { rawText: stdout });
       }
-      throw error;
+      throw error2;
     } finally {
       signal.removeEventListener("abort", terminate);
       if (timeout) clearTimeout(timeout);
@@ -2986,11 +4401,11 @@ async function executeCli(manifest, request, signal, options) {
     }
   }
   const first = await runCliAttempt(buildSubscriptionPrompt(request), request.timeoutMs ?? EXECUTION_LIMITS.timeoutMs).catch(
-    async (error) => {
-      const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
-      if (code !== "SCHEMA_INVALID" && code !== "BACKEND_PARSE_FAILED") throw error;
-      const parsedOutput = typeof error === "object" && error !== null && "output" in error ? error.output : void 0;
-      const invalidText = parsedOutput === void 0 ? typeof error === "object" && error !== null && "rawText" in error && typeof error.rawText === "string" ? error.rawText : error instanceof Error ? error.message : "Invalid provider output." : JSON.stringify(parsedOutput);
+    async (error2) => {
+      const code = typeof error2 === "object" && error2 !== null && "code" in error2 ? String(error2.code) : "";
+      if (code !== "SCHEMA_INVALID" && code !== "BACKEND_PARSE_FAILED") throw error2;
+      const parsedOutput = typeof error2 === "object" && error2 !== null && "output" in error2 ? error2.output : void 0;
+      const invalidText = parsedOutput === void 0 ? typeof error2 === "object" && error2 !== null && "rawText" in error2 && typeof error2.rawText === "string" ? error2.rawText : error2 instanceof Error ? error2.message : "Invalid provider output." : JSON.stringify(parsedOutput);
       let repaired;
       try {
         repaired = await runCliAttempt(
@@ -3066,12 +4481,12 @@ async function postLocalHttpChat(manifest, messages, signal, options, request, t
     });
     rawResponse = await readBoundedResponse(response);
     assertLineLimit(rawResponse);
-  } catch (error) {
+  } catch (error2) {
     if (controller.signal.aborted) {
       if (signal.aborted) throw abortError();
       throw Object.assign(new Error("Local provider timed out."), { code: "TIMEOUT" });
     }
-    throw error;
+    throw error2;
   } finally {
     clearTimeout(timeout);
     signal.removeEventListener("abort", abort);
@@ -3098,7 +4513,7 @@ async function executeLocalHttp(manifest, request, signal, options) {
   let output;
   let schemaValid = false;
   try {
-    output = extractBoundedJson(content, EXECUTION_LIMITS.maxResultBytes);
+    output = normalizeRegisteredSchemaOutput(schemaId, extractBoundedJson(content, EXECUTION_LIMITS.maxResultBytes));
     schemaValid = validateRegisteredSchema(schemaId, output);
   } catch {
     output = void 0;
@@ -3115,7 +4530,10 @@ async function executeLocalHttp(manifest, request, signal, options) {
       request,
       Math.min(EXECUTION_LIMITS.repairTimeoutMs, request.timeoutMs ?? EXECUTION_LIMITS.repairTimeoutMs)
     );
-    repairedOutput = extractBoundedJson(repairedContent, EXECUTION_LIMITS.maxResultBytes);
+    repairedOutput = normalizeRegisteredSchemaOutput(
+      schemaId,
+      extractBoundedJson(repairedContent, EXECUTION_LIMITS.maxResultBytes)
+    );
     const repairedSchemaValid = validateRegisteredSchema(schemaId, repairedOutput);
     if (!repairedSchemaValid) {
       throw Object.assign(new Error("Backend output failed registered schema validation after one repair attempt."), {
@@ -3391,6 +4809,17 @@ var TASK_TYPES = /* @__PURE__ */ new Set([
   "explain_scenario",
   "generate_executive_summary"
 ]);
+var PROGRESS_LABELS = {
+  preparing_request: "Preparing request",
+  starting_backend: "Starting backend",
+  waiting_for_provider: "Waiting for CLI/provider",
+  validating_schema: "Validating schema",
+  repairing_output: "Repairing/normalizing output",
+  building_project: "Building project",
+  complete: "Complete",
+  error: "Error",
+  cancelled: "Cancelled"
+};
 var LocalRuntimeError = class extends Error {
   constructor(statusCode, code, message) {
     super(message);
@@ -3401,6 +4830,14 @@ var LocalRuntimeError = class extends Error {
   statusCode;
   code;
 };
+function setRunProgress(run, phase, status = run.status) {
+  run.progress = {
+    phase,
+    label: PROGRESS_LABELS[phase],
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  run.status = status;
+}
 function createLocalRuntimeContext(config = {}) {
   return {
     config,
@@ -3414,6 +4851,44 @@ function createLocalRuntimeContext(config = {}) {
 function listRuntimeBackends(context) {
   return { statusCode: 200, payload: { ok: true, backends: [...context.manifests.values()].map(publicManifest) } };
 }
+async function detectRuntimeSubscriptionClis(context, agentId) {
+  if (agentId !== void 0 && !isSubscriptionCliId(agentId)) {
+    throw new LocalRuntimeError(400, "UNKNOWN_CLI_AGENT", `Unknown CLI agent: ${agentId}`);
+  }
+  const detectionOptions = context.config.detection ?? {};
+  const detected = agentId ? [await detectSubscriptionCli(agentId, detectionOptions)] : await detectSubscriptionClis(detectionOptions);
+  const enrichmentOptions = detectionOptions.probeTimeoutMs === void 0 ? {} : { probeTimeoutMs: detectionOptions.probeTimeoutMs };
+  const agents = await enrichSubscriptionCliDetections(detected, enrichmentOptions);
+  const modelsByAgent = {};
+  await Promise.all(
+    agents.map(async (agent) => {
+      if (!agent.installed || !agent.executable) {
+        modelsByAgent[agent.id] = [];
+        return;
+      }
+      const manifest = context.manifests.get(agent.backendId);
+      if (!manifest) {
+        modelsByAgent[agent.id] = [];
+        return;
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15e3);
+      try {
+        modelsByAgent[agent.id] = [
+          ...await listBackendModels(manifest, controller.signal, {
+            ...context.config.executor ?? {},
+            resolveExecutable: async () => agent.executable
+          })
+        ];
+      } catch {
+        modelsByAgent[agent.id] = [];
+      } finally {
+        clearTimeout(timer);
+      }
+    })
+  );
+  return { statusCode: 200, payload: { ok: true, agents, modelsByAgent } };
+}
 async function listRuntimeModels(backendId, context) {
   const manifest = context.manifests.get(backendId);
   if (!manifest) throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
@@ -3423,11 +4898,11 @@ async function listRuntimeModels(backendId, context) {
   try {
     const models = await listBackendModels(manifest, controller.signal, context.config.executor);
     return { statusCode: 200, payload: { ok: true, backendId, models } };
-  } catch (error) {
-    if (isSoftModelListFailure(error)) {
+  } catch (error2) {
+    if (isSoftModelListFailure(error2)) {
       return { statusCode: 200, payload: { ok: true, backendId, models: [] } };
     }
-    throw error;
+    throw error2;
   } finally {
     clearTimeout(timeout);
   }
@@ -3464,14 +4939,26 @@ async function completeRuntime(request, context) {
     status: "running",
     createdAt,
     startedAt: createdAt,
+    progress: { phase: "starting_backend", label: PROGRESS_LABELS.starting_backend, updatedAt: createdAt },
     controller
   };
   context.runs.set(request.requestId, run);
   const started = Date.now();
+  let executionRequest = request;
   try {
-    const result = await executeCompletion(manifest, request, controller.signal, context.config.executor);
+    setRunProgress(run, "preparing_request");
+    const preparedAgent = await prepareRuntimeAgentRun(request);
+    if (preparedAgent) {
+      executionRequest = preparedAgent.request;
+      run.agentRun = preparedAgent.agentRun;
+    }
+    setRunProgress(run, "waiting_for_provider");
+    const result = await executeCompletion(manifest, executionRequest, controller.signal, context.config.executor);
     run.status = "succeeded";
     run.output = result.output;
+    if (run.agentRun) {
+      run.agentRun = finalizeRuntimeAgentRun(run.agentRun, request, result.output);
+    }
     run.outputBytes = result.outputBytes;
     run.schemaValid = result.schemaValid;
     if (result.repaired === true) run.repaired = true;
@@ -3479,6 +4966,7 @@ async function completeRuntime(request, context) {
     if (result.repairSucceeded === true) run.repairSucceeded = true;
     run.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
     run.latencyMs = Date.now() - started;
+    setRunProgress(run, "complete", "succeeded");
     context.auditSink({
       requestId: run.requestId,
       backendId: run.backendId,
@@ -3495,18 +4983,31 @@ async function completeRuntime(request, context) {
       ...result.executableVersion === void 0 ? {} : { executableVersion: result.executableVersion }
     });
     return { statusCode: 200, payload: { ok: true, run: publicRun(run), output: result.output } };
-  } catch (error) {
-    const normalized = publicRuntimeError(error);
+  } catch (error2) {
+    const normalized = publicRuntimeError(error2);
     run.status = normalized.code === "CANCELLED" ? "cancelled" : "failed";
     run.error = normalized;
     run.outputBytes = 0;
     run.schemaValid = false;
-    if (hasRepairAttempt(error)) {
+    if (hasRepairAttempt(error2)) {
       run.repairAttempted = true;
       run.repairSucceeded = false;
     }
+    if (run.agentRun) {
+      run.agentRun = appendAgenticVdtRunEvent(
+        run.agentRun,
+        {
+          type: "error",
+          title: normalized.code === "CANCELLED" ? "Provider execution cancelled" : "Provider execution failed",
+          message: normalized.message,
+          metadata: { code: normalized.code }
+        },
+        { phase: "reporting", status: normalized.code === "CANCELLED" ? "cancelled" : "failed" }
+      );
+    }
     run.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
     run.latencyMs = Date.now() - started;
+    setRunProgress(run, normalized.code === "CANCELLED" ? "cancelled" : "error", run.status);
     context.auditSink({
       requestId: run.requestId,
       backendId: run.backendId,
@@ -3516,17 +5017,238 @@ async function completeRuntime(request, context) {
       latencyMs: run.latencyMs,
       outputBytes: 0,
       schemaValid: false,
-      ...hasRepairAttempt(error) ? { repairAttempted: true, repairSucceeded: false } : {},
+      ...hasRepairAttempt(error2) ? { repairAttempted: true, repairSucceeded: false } : {},
       errorCode: normalized.code
     });
     return { statusCode: normalized.code === "CANCELLED" ? 409 : 502, payload: { ok: false, run: publicRun(run), error: normalized } };
   }
 }
-function hasRepairAttempt(error) {
-  return typeof error === "object" && error !== null && error.repairAttempted === true;
+async function prepareRuntimeAgentRun(request) {
+  if (request.schemaId === "connection-test-v1") return void 0;
+  if (request.taskType !== "generate_tree" && request.taskType !== "deepen_node") return void 0;
+  const agentRequest = request.taskType === "generate_tree" ? generateInputFromCompletionInput(request.input) : deepenInputFromCompletionInput(request.input);
+  if (!agentRequest) return void 0;
+  const library = await loadDefaultSkillLibrary();
+  const prepared = prepareAgenticVdtRun(agentRequest, library);
+  const agentRun = appendAgenticVdtRunEvent(
+    prepared.run,
+    {
+      type: "model_call_started",
+      title: request.taskType === "generate_tree" ? "Model call started" : "Deepen model call started",
+      message: request.taskType === "generate_tree" ? `Generating graph from ${prepared.skillExcerpts.length} selected skill${prepared.skillExcerpts.length === 1 ? "" : "s"}.` : `Generating deepen patch from ${prepared.skillExcerpts.length} selected skill${prepared.skillExcerpts.length === 1 ? "" : "s"}.`,
+      metadata: {
+        taskType: request.taskType,
+        selectedSkillIds: prepared.prompt.decompositionPlan.selectedSkillIds
+      }
+    },
+    { phase: "generating_graph" }
+  );
+  return {
+    request: request.taskType === "generate_tree" || request.taskType === "deepen_node" ? { ...request, input: enrichAgenticCompletionInput(request.input, prepared.prompt) } : request,
+    agentRun
+  };
 }
-function isSoftModelListFailure(error) {
-  const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+function finalizeRuntimeAgentRun(agentRun, request, output) {
+  const resultProjectId = outputProjectId(output) ?? request.requestId;
+  if (request.taskType === "generate_tree") {
+    const validation = graphValidationSummaryFromGenerateOutput(output);
+    return finalizeAgenticVdtRun(agentRun, {
+      resultProjectId,
+      finalReport: runtimeFinalReport(
+        agentRun,
+        "Generated a candidate VDT graph through the local runtime.",
+        validation.message
+      ),
+      validationSummary: validation.message,
+      draftGraph: output
+    });
+  }
+  const withPatch = appendAgenticVdtRunEvent(
+    agentRun,
+    {
+      type: "graph_patch",
+      title: "Graph patch returned",
+      message: "Deepen operation returned a candidate change set payload.",
+      metadata: { targetNodeId: isRecord10(output) ? output.targetNodeId : void 0 }
+    },
+    { phase: "validating_graph" }
+  );
+  const withCompleted = appendAgenticVdtRunEvent(
+    withPatch,
+    {
+      type: "model_call_completed",
+      title: "Deepen model call completed",
+      message: validationSummaryFromOutput(output),
+      metadata: { targetNodeId: isRecord10(output) ? output.targetNodeId : void 0 }
+    },
+    { phase: "reporting" }
+  );
+  const validationSummary2 = validationSummaryFromOutput(output);
+  const withReport = appendAgenticVdtRunEvent(
+    withCompleted,
+    {
+      type: "final_report",
+      title: "Deepen report prepared",
+      message: "Prepared deepen run report after provider schema validation.",
+      metadata: { targetNodeId: isRecord10(output) ? output.targetNodeId : void 0 }
+    },
+    { phase: "reporting", status: "succeeded" }
+  );
+  return {
+    ...withReport,
+    resultProjectId,
+    finalReport: runtimeFinalReport(
+      withReport,
+      "Generated a candidate deepen patch through the local runtime.",
+      validationSummary2
+    ),
+    draftGraph: output
+  };
+}
+function unwrapTaskInput(input) {
+  if (isRecord10(input) && "data" in input) return input.data;
+  return input;
+}
+function generateInputFromCompletionInput(input) {
+  const data = unwrapTaskInput(input);
+  if (!isRecord10(data)) return void 0;
+  const rootKpi = boundedString(data.rootKpi) ?? boundedString(data.projectTitle) ?? boundedString(data.prompt);
+  if (!rootKpi) return void 0;
+  const request = { rootKpi };
+  const industry = boundedString(data.industry);
+  const businessContext = boundedString(data.businessContext);
+  const unit = boundedString(data.unit);
+  const timePeriod = boundedString(data.timePeriod);
+  const goal = boundedString(data.goal);
+  const levelOfDetail = boundedString(data.levelOfDetail);
+  if (industry) request.industry = industry;
+  if (businessContext) request.businessContext = businessContext;
+  if (unit) request.unit = unit;
+  if (timePeriod) request.timePeriod = timePeriod;
+  if (goal) request.goal = goal;
+  if (levelOfDetail) request.levelOfDetail = levelOfDetail;
+  return request;
+}
+function deepenInputFromCompletionInput(input) {
+  const data = unwrapTaskInput(input);
+  if (!isRecord10(data)) return void 0;
+  const project = projectFromDeepenInput(data);
+  const targetNodeId = boundedString(data.targetNodeId) ?? boundedString(data.nodeId);
+  const targetName = targetNameFromDeepenInput(data);
+  const rootKpi = targetName ?? targetNodeId;
+  if (!rootKpi) return void 0;
+  const context = isRecord10(data.context) ? data.context : void 0;
+  const request = { rootKpi };
+  const industry = boundedString(data.industry) ?? boundedString(project?.industry);
+  const businessContext = boundedString(data.businessContext) ?? boundedString(project?.businessContext) ?? boundedString(project?.description);
+  const goal = boundedString(context?.goal);
+  const targetUnit = targetUnitFromDeepenInput(data);
+  if (industry) request.industry = industry;
+  if (businessContext) request.businessContext = businessContext;
+  if (targetUnit) request.unit = targetUnit;
+  if (goal) request.goal = goal;
+  return request;
+}
+function targetNameFromDeepenInput(data) {
+  const targetNodeId = boundedString(data.targetNodeId) ?? boundedString(data.nodeId);
+  const excerpt = isRecord10(data.excerpt) ? data.excerpt : void 0;
+  const project = projectFromDeepenInput(data);
+  const graph = isRecord10(project?.graph) ? project.graph : void 0;
+  const nodes = Array.isArray(excerpt?.nodes) ? excerpt.nodes : Array.isArray(graph?.nodes) ? graph.nodes : [];
+  const target = nodes.find((node) => isRecord10(node) && node.id === targetNodeId);
+  return boundedString(target?.name);
+}
+function targetUnitFromDeepenInput(data) {
+  const targetNodeId = boundedString(data.targetNodeId) ?? boundedString(data.nodeId);
+  const excerpt = isRecord10(data.excerpt) ? data.excerpt : void 0;
+  const project = projectFromDeepenInput(data);
+  const graph = isRecord10(project?.graph) ? project.graph : void 0;
+  const nodes = Array.isArray(excerpt?.nodes) ? excerpt.nodes : Array.isArray(graph?.nodes) ? graph.nodes : [];
+  const target = nodes.find((node) => isRecord10(node) && node.id === targetNodeId);
+  return boundedString(target?.unit, 80);
+}
+function projectFromDeepenInput(data) {
+  const project = data.project;
+  return isRecord10(project) ? project : void 0;
+}
+function enrichAgenticCompletionInput(input, prompt) {
+  const context = {
+    selectedSkillIds: prompt.decompositionPlan.selectedSkillIds,
+    decompositionPlan: prompt.decompositionPlan
+  };
+  if (isRecord10(input)) {
+    const hasAgenticPrompt = typeof input.userPrompt === "string" && input.userPrompt.includes("Agentic VDT preparation");
+    return {
+      ...input,
+      agenticContext: context,
+      ...typeof input.systemPrompt === "string" && !hasAgenticPrompt ? { systemPrompt: `${input.systemPrompt}
+
+${prompt.systemPromptAddition}` } : {},
+      ...typeof input.userPrompt === "string" && !hasAgenticPrompt ? { userPrompt: `${input.userPrompt}
+
+${prompt.userPromptAddition}` } : {}
+    };
+  }
+  return {
+    data: input,
+    systemPrompt: prompt.systemPromptAddition,
+    userPrompt: prompt.userPromptAddition,
+    agenticContext: context
+  };
+}
+function boundedString(value, maxLength = 2e3) {
+  if (typeof value !== "string") return void 0;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : void 0;
+}
+function outputProjectId(output) {
+  if (!isRecord10(output)) return void 0;
+  return boundedString(output.projectId) ?? boundedString(output.rootNodeId) ?? boundedString(output.projectTitle);
+}
+function validationSummaryFromOutput(output) {
+  if (!isRecord10(output)) return "Provider output passed registered schema validation.";
+  const nodes = Array.isArray(output.nodes) ? output.nodes.length : void 0;
+  const edges = Array.isArray(output.edges) ? output.edges.length : void 0;
+  if (nodes !== void 0 && edges !== void 0) {
+    return `Provider output passed registered schema validation: ${nodes} nodes, ${edges} edges.`;
+  }
+  return "Provider output passed registered schema validation.";
+}
+function graphValidationSummaryFromGenerateOutput(output) {
+  if (!isRecord10(output) || typeof output.rootNodeId !== "string" || !Array.isArray(output.nodes) || !Array.isArray(output.edges)) {
+    return { valid: false, message: "Graph validation failed: provider output was not a graph-shaped generate_tree payload." };
+  }
+  const validation = validateGraph(
+    {
+      nodes: output.nodes,
+      edges: output.edges
+    },
+    output.rootNodeId
+  );
+  if (validation.valid && validation.warnings.length === 0) {
+    return {
+      valid: true,
+      message: `Graph validation passed: ${output.nodes.length} nodes, ${output.edges.length} decomposition edges.`
+    };
+  }
+  const issues = [...validation.errors, ...validation.warnings].map((issue2) => issue2.message).slice(0, 6);
+  return {
+    valid: false,
+    message: `Graph validation failed: ${issues.join("; ")}`
+  };
+}
+function runtimeFinalReport(agentRun, headline, validationSummary2) {
+  return [
+    headline,
+    `Selected skills: ${agentRun.selectedSkills.map((skill) => skill.id).join(", ") || "none"}.`,
+    `Validation result: ${validationSummary2}`
+  ].join("\n");
+}
+function hasRepairAttempt(error2) {
+  return typeof error2 === "object" && error2 !== null && error2.repairAttempted === true;
+}
+function isSoftModelListFailure(error2) {
+  const code = typeof error2 === "object" && error2 !== null && "code" in error2 ? String(error2.code) : "";
   return code === "BACKEND_NOT_INSTALLED" || code === "AUTH_REQUIRED" || code === "CANCELLED";
 }
 function cancelRuntimeRequest(requestId, context) {
@@ -3534,6 +5256,7 @@ function cancelRuntimeRequest(requestId, context) {
   if (!run) throw new LocalRuntimeError(404, "RUN_NOT_FOUND", "Run was not found.");
   if (run.status !== "running") throw new LocalRuntimeError(409, "RUN_NOT_ACTIVE", "Run is not active.");
   run.controller.abort();
+  setRunProgress(run, "cancelled");
   return { statusCode: 202, payload: { ok: true, requestId, status: "cancelling" } };
 }
 function getRuntimeRun(requestId, context) {
@@ -3595,8 +5318,8 @@ function publicRun(run) {
   const { controller: _controller, ...snapshot } = run;
   return snapshot;
 }
-function publicRuntimeError(error) {
-  const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "EXECUTION_FAILED";
+function publicRuntimeError(error2) {
+  const code = typeof error2 === "object" && error2 !== null && "code" in error2 ? String(error2.code) : "EXECUTION_FAILED";
   const messages = {
     CANCELLED: "Completion was cancelled.",
     TIMEOUT: "Backend execution timed out.",
@@ -3667,6 +5390,7 @@ var SIDECAR_PROTOCOL_VERSION = 1;
 var DEFAULT_SIDECAR_MAX_FRAME_BYTES = 1024 * 1024;
 var SIDECAR_REQUEST_METHODS = [
   "list_backends",
+  "detect_clis",
   "test_backend",
   "list_models",
   "complete",
@@ -3749,6 +5473,7 @@ var MESSAGE_TYPES = /* @__PURE__ */ new Set(["hello", "ready", "request", "respo
 var EMPTY_PAYLOAD_METHODS = /* @__PURE__ */ new Set(["list_backends", "get_app_mode"]);
 var METHOD_PAYLOAD_KEYS = {
   list_backends: [],
+  detect_clis: ["agentId"],
   test_backend: ["backendId"],
   list_models: ["backendId"],
   complete: ["backendId", "taskType", "schemaId", "input", "model", "timeoutMs"],
@@ -3839,10 +5564,10 @@ function validateResponse(object) {
   const requestId = requireRequestId(object.requestId);
   if (typeof object.ok !== "boolean") throw new SidecarProtocolError("INVALID_MESSAGE", "Response ok must be a boolean.");
   if (object.error !== void 0) {
-    const error = asObject(object.error, "Response error must be a JSON object.");
-    assertKnownKeys(error, ["code", "message"]);
-    const code = requireBoundedString(error.code, "error.code", 120);
-    const message = requireBoundedString(error.message, "error.message", 500);
+    const error2 = asObject(object.error, "Response error must be a JSON object.");
+    assertKnownKeys(error2, ["code", "message"]);
+    const code = requireBoundedString(error2.code, "error.code", 120);
+    const message = requireBoundedString(error2.message, "error.message", 500);
     if (object.ok) throw new SidecarProtocolError("INVALID_MESSAGE", "Successful responses must not include error.");
     return { protocolVersion: SIDECAR_PROTOCOL_VERSION, type: "response", requestId, ok: false, error: { code, message } };
   }
@@ -3869,7 +5594,7 @@ function validateRequestPayload(method, payload) {
   if (EMPTY_PAYLOAD_METHODS.has(method) && Object.keys(payload).length > 0) {
     throw new SidecarProtocolError("UNKNOWN_FIELD", `${method} payload must be empty.`);
   }
-  for (const key of ["backendId", "taskType", "schemaId", "model", "runRequestId"]) {
+  for (const key of ["agentId", "backendId", "taskType", "schemaId", "model", "runRequestId"]) {
     if (key in payload) requireBoundedString(payload[key], key, 180);
   }
   if ("timeoutMs" in payload && (!Number.isSafeInteger(payload.timeoutMs) || Number(payload.timeoutMs) <= 0)) {
@@ -3940,8 +5665,8 @@ async function handleSidecarRequest(message, context) {
   try {
     const result = await routeSidecarRequest(message, context);
     return runtimeResultToSidecarResult(result);
-  } catch (error) {
-    return { ok: false, error: normalizeSidecarRuntimeError(error) };
+  } catch (error2) {
+    return { ok: false, error: normalizeSidecarRuntimeError(error2) };
   }
 }
 function handleSidecarCancel(message, context) {
@@ -3966,8 +5691,8 @@ function runLocalRuntimeSidecar(options = {}) {
   function write(message) {
     stdout.write(serializeSidecarMessage(message));
   }
-  function fail(error) {
-    const normalized = error instanceof SidecarProtocolError ? { code: error.code, message: error.message } : normalizeSidecarRuntimeError(error);
+  function fail(error2) {
+    const normalized = error2 instanceof SidecarProtocolError ? { code: error2.code, message: error2.message } : normalizeSidecarRuntimeError(error2);
     stderr.write(`${JSON.stringify({ event: "vdt_sidecar_error", error: normalized })}
 `);
     process.exitCode = 1;
@@ -3977,8 +5702,8 @@ function runLocalRuntimeSidecar(options = {}) {
     let messages;
     try {
       messages = decoder.push(chunk);
-    } catch (error) {
-      fail(error);
+    } catch (error2) {
+      fail(error2);
       return;
     }
     for (const message of messages) {
@@ -3994,8 +5719,8 @@ function runLocalRuntimeSidecar(options = {}) {
       if (message.type === "cancel") {
         try {
           handleSidecarCancel(message, context);
-        } catch (error) {
-          fail(error);
+        } catch (error2) {
+          fail(error2);
         }
         continue;
       }
@@ -4015,12 +5740,16 @@ function runLocalRuntimeSidecar(options = {}) {
           ok: false,
           error: result.error
         });
-      }).catch((error) => fail(error));
+      }).catch((error2) => fail(error2));
     }
   });
 }
 async function routeSidecarRequest(message, context) {
   if (message.method === "list_backends") return listRuntimeBackends(context);
+  if (message.method === "detect_clis") {
+    const agentId = typeof message.payload.agentId === "string" ? message.payload.agentId : void 0;
+    return detectRuntimeSubscriptionClis(context, agentId);
+  }
   if (message.method === "test_backend") return testRuntimeBackend(requireBackendId(message.payload), context);
   if (message.method === "complete") {
     return completeRuntime(parseCompletionPayload({ ...message.payload, requestId: message.requestId }), context);
@@ -4041,16 +5770,16 @@ async function routeSidecarRequest(message, context) {
 function runtimeResultToSidecarResult(result) {
   const payload = toJsonValue(result.payload);
   if (result.statusCode >= 400) {
-    const error = asPayloadError(payload) ?? { code: "RUNTIME_FAILED", message: "Runtime request failed." };
-    return { ok: false, error };
+    const error2 = asPayloadError(payload) ?? { code: "RUNTIME_FAILED", message: "Runtime request failed." };
+    return { ok: false, error: error2 };
   }
   return payload === void 0 ? { ok: true } : { ok: true, payload };
 }
 function asPayloadError(value) {
   if (!isJsonObject(value)) return void 0;
-  const error = value.error;
-  if (!isJsonObject(error) || typeof error.code !== "string" || typeof error.message !== "string") return void 0;
-  return { code: error.code, message: error.message };
+  const error2 = value.error;
+  if (!isJsonObject(error2) || typeof error2.code !== "string" || typeof error2.message !== "string") return void 0;
+  return { code: error2.code, message: error2.message };
 }
 function requireBackendId(payload) {
   const backendId = payload.backendId;
@@ -4059,10 +5788,10 @@ function requireBackendId(payload) {
   }
   return backendId;
 }
-function normalizeSidecarRuntimeError(error) {
-  if (error instanceof LocalRuntimeError) return { code: error.code, message: error.message };
-  if (error instanceof SidecarProtocolError) return { code: error.code, message: error.message };
-  return { code: "SIDECAR_RUNTIME_ERROR", message: error instanceof Error ? error.message : "Sidecar runtime failed safely." };
+function normalizeSidecarRuntimeError(error2) {
+  if (error2 instanceof LocalRuntimeError) return { code: error2.code, message: error2.message };
+  if (error2 instanceof SidecarProtocolError) return { code: error2.code, message: error2.message };
+  return { code: "SIDECAR_RUNTIME_ERROR", message: error2 instanceof Error ? error2.message : "Sidecar runtime failed safely." };
 }
 function toJsonValue(value) {
   if (value === void 0) return void 0;
@@ -4084,7 +5813,7 @@ function isJsonObject(value) {
 }
 
 // ../local-runner/src/sidecar/index.ts
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (process.argv[1] && fileURLToPath2(import.meta.url) === process.argv[1]) {
   runLocalRuntimeSidecar();
 }
 export {

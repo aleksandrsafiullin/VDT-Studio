@@ -40,6 +40,7 @@
     "evaluation:verify": "node --import tsx scripts/evaluate-providers.mjs",
     "live:codex": "node --import tsx scripts/live-subscription-cli-smoke.mjs --backend codex_subscription",
     "live:cursor": "node --import tsx scripts/live-subscription-cli-smoke.mjs --backend cursor_subscription",
+    "live:copilot": "node --import tsx scripts/live-subscription-cli-smoke.mjs --backend copilot_subscription",
     "live:local-ai": "node --import tsx scripts/live-subscription-cli-smoke.mjs --backend all",
     "desktop:verify": "node scripts/verify-desktop-shell.mjs && node scripts/verify-desktop-sidecar.mjs",
     "release:bundle:verify": "node scripts/verify-release-bundle.mjs",

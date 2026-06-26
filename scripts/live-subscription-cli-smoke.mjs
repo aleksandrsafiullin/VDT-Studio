@@ -1,18 +1,10 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
-import {
-  getSubscriptionCliAdapter,
-  validateRegisteredSchema
-} from "../packages/model-bridge/src/index.ts";
-import { detectSubscriptionCli } from "../packages/model-bridge/src/detection.ts";
-import {
-  createManifestRegistry,
-  executeCompletion
-} from "../packages/local-runner/src/index.ts";
 
 const BACKENDS = Object.freeze({
   codex_subscription: Object.freeze({ label: "Codex CLI", cliId: "codex" }),
-  cursor_subscription: Object.freeze({ label: "Cursor Agent", cliId: "cursor-agent" })
+  cursor_subscription: Object.freeze({ label: "Cursor Agent", cliId: "cursor-agent" }),
+  copilot_subscription: Object.freeze({ label: "GitHub Copilot CLI", cliId: "copilot" })
 });
 
 function usage() {
@@ -20,7 +12,7 @@ function usage() {
     "Usage: node --import tsx scripts/live-subscription-cli-smoke.mjs [options]",
     "",
     "Options:",
-    "  --backend <id|all>        codex_subscription, cursor_subscription, or all (default: all)",
+    "  --backend <id|all>        codex_subscription, cursor_subscription, copilot_subscription, or all (default: all)",
     "  --model <model>           Optional model id passed to the provider CLI",
     "  --timeout-ms <number>     Per completion timeout, max 120000 (default: 120000)",
     "  --connection-only         Skip generate-tree and run install/auth/models/connection only",
@@ -29,6 +21,7 @@ function usage() {
     "Examples:",
     "  pnpm live:codex",
     "  pnpm live:cursor",
+    "  pnpm live:copilot -- --connection-only",
     "  pnpm live:local-ai -- --connection-only"
   ].join("\n");
 }
@@ -116,10 +109,27 @@ function summarizeGenerateOutput(output) {
   return `${projectTitle}; nodes=${nodes}; edges=${edges}`;
 }
 
+async function loadRuntime() {
+  const [modelBridge, detection, executor, manifests] = await Promise.all([
+    import("../packages/model-bridge/src/index.ts"),
+    import("../packages/model-bridge/src/detection.ts"),
+    import("../packages/local-runner/src/server/executor.ts"),
+    import("../packages/local-runner/src/server/manifests.ts")
+  ]);
+  return {
+    getSubscriptionCliAdapter: modelBridge.getSubscriptionCliAdapter,
+    validateRegisteredSchema: modelBridge.validateRegisteredSchema,
+    detectSubscriptionCli: detection.detectSubscriptionCli,
+    executeCompletion: executor.executeCompletion,
+    createManifestRegistry: manifests.createManifestRegistry
+  };
+}
+
 async function runBackend(backendId, options) {
+  const runtime = await loadRuntime();
   const spec = BACKENDS[backendId];
-  const manifest = createManifestRegistry().get(backendId);
-  const adapter = getSubscriptionCliAdapter(backendId);
+  const manifest = runtime.createManifestRegistry().get(backendId);
+  const adapter = runtime.getSubscriptionCliAdapter(backendId);
   let failed = false;
 
   process.stdout.write(`\n== ${spec.label} (${backendId}) ==\n`);
@@ -133,7 +143,7 @@ async function runBackend(backendId, options) {
     return false;
   }
 
-  const install = await step("detect executable", () => detectSubscriptionCli(spec.cliId), {
+  const install = await step("detect executable", () => runtime.detectSubscriptionCli(spec.cliId), {
     describe: (result) => result.installed && result.executable
       ? `${result.alias ?? spec.cliId} -> ${result.executable}${result.version ? ` (${result.version})` : ""}`
       : "not installed"
@@ -172,7 +182,7 @@ async function runBackend(backendId, options) {
   }
 
   const executorOptions = { resolveExecutable: async () => executable };
-  const connection = await step("connection-test-v1", () => executeCompletion(
+  const connection = await step("connection-test-v1", () => runtime.executeCompletion(
     manifest,
     {
       requestId: randomUUID(),
@@ -186,14 +196,14 @@ async function runBackend(backendId, options) {
     new AbortController().signal,
     executorOptions
   ), {
-    describe: (result) => validateRegisteredSchema("connection-test-v1", result.output)
+    describe: (result) => runtime.validateRegisteredSchema("connection-test-v1", result.output)
       ? `schemaValid=${result.schemaValid}`
       : "invalid connection output"
   });
   if (!connection.ok || !connection.value.schemaValid) failed = true;
 
   if (!options.connectionOnly) {
-    const generate = await step("generate-tree-v1", () => executeCompletion(
+    const generate = await step("generate-tree-v1", () => runtime.executeCompletion(
       manifest,
       {
         requestId: randomUUID(),
@@ -233,7 +243,9 @@ async function main() {
   if (passed !== results.length) process.exitCode = 1;
 }
 
-main().catch((error) => {
+main().then(() => {
+  process.exit(process.exitCode ?? 0);
+}).catch((error) => {
   process.stderr.write(`live-subscription-cli-smoke failed: ${errorMessage(error)}\n`);
-  process.exitCode = 1;
+  process.exit(1);
 });

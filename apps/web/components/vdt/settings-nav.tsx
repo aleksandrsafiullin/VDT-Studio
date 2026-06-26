@@ -73,9 +73,9 @@ export function SettingsNav({
       aria-label="Settings sections"
       className={clsx(
         isResponsive
-          ? "flex gap-1 overflow-x-auto pb-1 md:flex-col md:gap-0.5 md:overflow-visible md:pb-0"
+          ? "grid grid-cols-2 gap-2 md:flex md:flex-col md:gap-2"
           : isVertical
-            ? "flex flex-col gap-0.5"
+            ? "flex flex-col gap-2"
             : "flex gap-1 overflow-x-auto pb-1",
         className
       )}
@@ -83,7 +83,7 @@ export function SettingsNav({
       {SETTINGS_SECTIONS.map((section) => {
         const Icon = section.icon;
         const isActive = section.enabled && activeSection === section.id;
-        const itemLayout = isResponsive ? "responsive" : layout;
+        const isStacked = isVertical || isResponsive;
 
         if (!section.enabled) {
           return (
@@ -94,9 +94,9 @@ export function SettingsNav({
               tabIndex={0}
               data-testid={`settings-nav-${section.id}`}
               className={clsx(
-                "flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium",
-                "cursor-not-allowed text-muted opacity-60",
-                itemLayout !== "vertical" && "whitespace-nowrap"
+                "flex shrink-0 items-center gap-2 rounded-lg border border-transparent px-3 py-2.5 text-left text-sm font-medium",
+                "cursor-not-allowed text-slate-400/75",
+                layout === "horizontal" && "whitespace-nowrap"
               )}
               onClick={(event) => event.preventDefault()}
               onKeyDown={(event) => {
@@ -105,10 +105,10 @@ export function SettingsNav({
                 }
               }}
             >
-              <Icon className="h-4 w-4 shrink-0" aria-hidden />
+              <Icon className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
               <span className="min-w-0 flex-1">{section.label}</span>
-              <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted">
-                Coming soon
+              <span className="hidden shrink-0 rounded-full border border-white/10 bg-white/[0.08] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-normal text-slate-300 sm:inline-flex md:inline-flex">
+                Soon
               </span>
             </div>
           );
@@ -121,24 +121,27 @@ export function SettingsNav({
             aria-current={isActive ? "page" : undefined}
             data-testid={`settings-nav-${section.id}`}
             className={clsx(
-              "relative flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium transition",
-              itemLayout !== "vertical" && "whitespace-nowrap",
+              "relative flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm font-medium transition",
+              layout === "horizontal" && "whitespace-nowrap",
               isActive
-                ? "bg-slate-100 text-ink"
-                : "text-muted hover:bg-slate-50 hover:text-ink"
+                ? "border-white/15 bg-white/[0.13] text-white shadow-[0_10px_28px_rgba(0,0,0,0.18)]"
+                : "border-transparent text-slate-300 hover:bg-white/[0.08] hover:text-white"
             )}
             onClick={() => onSelect(section.id)}
           >
-            {isActive && (isVertical || isResponsive) ? (
+            {isActive && isStacked ? (
               <span
                 className={clsx(
-                  "absolute bottom-1 left-0 top-1 w-0.5 rounded-full bg-accent",
+                  "absolute bottom-2 left-0 top-2 w-0.5 rounded-full bg-[#7dd3fc]",
                   isResponsive && "hidden md:block"
                 )}
                 aria-hidden
               />
             ) : null}
-            <Icon className="h-4 w-4 shrink-0" aria-hidden />
+            <Icon
+              className={clsx("h-4 w-4 shrink-0", isActive ? "text-blue-100" : "text-slate-400")}
+              aria-hidden
+            />
             <span>{section.label}</span>
           </button>
         );

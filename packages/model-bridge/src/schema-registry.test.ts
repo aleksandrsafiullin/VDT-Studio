@@ -3,6 +3,7 @@ import { INVALID_SCHEMA_FIXTURES, VALID_SCHEMA_FIXTURES } from "./fixtures/schem
 import {
   getRegisteredJsonSchema,
   getStrictResponseJsonSchema,
+  normalizeRegisteredSchemaOutput,
   schemaIdForTask,
   schemaSupportsTask,
   schemaTasks,
@@ -92,6 +93,87 @@ describe("schema registry", () => {
     expect(validateRegisteredSchema("generate-tree-v1", output)).toBe(false);
     expect(result.valid).toBe(false);
     expect(result.errors).toContain("$.unapprovedProviderField is not an approved field.");
+  });
+
+  it("rejects disconnected generate-tree nodes before project conversion", () => {
+    const output = {
+      ...(VALID_SCHEMA_FIXTURES["generate-tree-v1"] as Record<string, unknown>),
+      nodes: [
+        { id: "production_volume", name: "Production Volume", type: "root_kpi" },
+        { id: "number_of_trucks", name: "Number of trucks", type: "input" }
+      ],
+      edges: []
+    };
+
+    const result = validateRegisteredSchemaDetailed("generate-tree-v1", output);
+
+    expect(validateRegisteredSchema("generate-tree-v1", output)).toBe(false);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain(
+      'Node "number_of_trucks" must be reachable from root "production_volume" through visual decomposition edges.'
+    );
+  });
+
+  it("orients reversible generate-tree edges from the root", () => {
+    const output = {
+      ...(VALID_SCHEMA_FIXTURES["generate-tree-v1"] as Record<string, unknown>),
+      rootNodeId: "production_volume",
+      nodes: [
+        { id: "production_volume", name: "Production Volume", type: "root_kpi" },
+        { id: "number_of_trucks", name: "Number of trucks", type: "input" }
+      ],
+      edges: [
+        {
+          id: "edge_child_root",
+          sourceNodeId: "number_of_trucks",
+          targetNodeId: "production_volume",
+          relation: "positive_driver"
+        }
+      ]
+    };
+
+    expect(validateRegisteredSchema("generate-tree-v1", output)).toBe(false);
+
+    const normalized = normalizeRegisteredSchemaOutput("generate-tree-v1", output) as Record<string, unknown>;
+
+    expect(validateRegisteredSchema("generate-tree-v1", normalized)).toBe(true);
+    expect(normalized.edges).toEqual([
+      expect.objectContaining({ sourceNodeId: "production_volume", targetNodeId: "number_of_trucks" })
+    ]);
+  });
+
+  it("deduplicates generate-tree visual edge pairs", () => {
+    const output = {
+      ...(VALID_SCHEMA_FIXTURES["generate-tree-v1"] as Record<string, unknown>),
+      rootNodeId: "production_volume",
+      nodes: [
+        { id: "production_volume", name: "Production Volume", type: "root_kpi" },
+        { id: "number_of_trucks", name: "Number of trucks", type: "input" }
+      ],
+      edges: [
+        {
+          id: "edge_formula",
+          sourceNodeId: "production_volume",
+          targetNodeId: "number_of_trucks",
+          relation: "formula_dependency"
+        },
+        {
+          id: "edge_driver",
+          sourceNodeId: "production_volume",
+          targetNodeId: "number_of_trucks",
+          relation: "multiplicative_driver"
+        }
+      ]
+    };
+
+    expect(validateRegisteredSchema("generate-tree-v1", output)).toBe(false);
+
+    const normalized = normalizeRegisteredSchemaOutput("generate-tree-v1", output) as Record<string, unknown>;
+
+    expect(validateRegisteredSchema("generate-tree-v1", normalized)).toBe(true);
+    expect(normalized.edges).toEqual([
+      expect.objectContaining({ id: "edge_driver", relation: "multiplicative_driver" })
+    ]);
   });
 
   it("enforces registered nested string and array caps", () => {

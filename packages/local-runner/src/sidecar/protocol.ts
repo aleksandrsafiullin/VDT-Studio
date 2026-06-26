@@ -3,6 +3,7 @@ export const DEFAULT_SIDECAR_MAX_FRAME_BYTES = 1024 * 1024;
 
 export const SIDECAR_REQUEST_METHODS = [
   "list_backends",
+  "detect_clis",
   "test_backend",
   "list_models",
   "complete",
@@ -179,6 +180,7 @@ const MESSAGE_TYPES = new Set<string>(["hello", "ready", "request", "response", 
 const EMPTY_PAYLOAD_METHODS = new Set<SidecarRequestMethod>(["list_backends", "get_app_mode"]);
 const METHOD_PAYLOAD_KEYS = {
   list_backends: [],
+  detect_clis: ["agentId"],
   test_backend: ["backendId"],
   list_models: ["backendId"],
   complete: ["backendId", "taskType", "schemaId", "input", "model", "timeoutMs"],
@@ -314,7 +316,7 @@ function validateRequestPayload(method: SidecarRequestMethod, payload: JsonObjec
   if (EMPTY_PAYLOAD_METHODS.has(method) && Object.keys(payload).length > 0) {
     throw new SidecarProtocolError("UNKNOWN_FIELD", `${method} payload must be empty.`);
   }
-  for (const key of ["backendId", "taskType", "schemaId", "model", "runRequestId"]) {
+  for (const key of ["agentId", "backendId", "taskType", "schemaId", "model", "runRequestId"]) {
     if (key in payload) requireBoundedString(payload[key], key, 180);
   }
   if ("timeoutMs" in payload && (!Number.isSafeInteger(payload.timeoutMs) || Number(payload.timeoutMs) <= 0)) {

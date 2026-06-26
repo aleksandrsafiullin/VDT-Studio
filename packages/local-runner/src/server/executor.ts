@@ -10,6 +10,7 @@ import {
   getRegisteredJsonSchema,
   getStrictResponseJsonSchema,
   isVdtSchemaId,
+  normalizeRegisteredSchemaOutput,
   validateRegisteredSchemaDetailed,
   validateRegisteredSchema,
   type ExecFileProbe,
@@ -67,7 +68,7 @@ export const EXECUTION_LIMITS = Object.freeze({
   maxStderrBytes: 1024 * 1024,
   maxResultBytes: 1024 * 1024,
   maxRepairExcerptBytes: 16 * 1024,
-  repairTimeoutMs: 30_000,
+  repairTimeoutMs: 60_000,
   timeoutMs: 120_000,
   killGraceMs: 3_000
 });
@@ -108,13 +109,13 @@ function abortError(message = "Completion was cancelled."): Error {
 }
 
 function safeEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const result: NodeJS.ProcessEnv = {};
+  const result: Record<string, string> = {};
   for (const key of ALLOWED_ENV_KEYS) {
     const value = source[key];
     if (value !== undefined) result[key] = value;
   }
   result.NO_COLOR = "1";
-  return result;
+  return result as NodeJS.ProcessEnv;
 }
 
 async function defaultResolveExecutable(manifest: BackendManifest, env: NodeJS.ProcessEnv): Promise<string> {
@@ -311,7 +312,7 @@ function buildSubscriptionPrompt(request: CompletionRequest): string {
     JSON.stringify({
       schemaId: request.schemaId,
       taskType: request.taskType,
-      outputJsonSchema: getRegisteredJsonSchema(schemaId),
+      outputJsonSchema: getStrictResponseJsonSchema(schemaId),
       input: request.input,
       ...(request.model ? { model: request.model } : {})
     })
@@ -517,7 +518,10 @@ async function executeCli(
         if (streamingResult || streamingError !== undefined) return;
         let output: unknown;
         try {
-          output = adapter.parseStreamingOutput(stdout, stderr, request.schemaId as VdtSchemaId);
+          output = normalizeRegisteredSchemaOutput(
+            request.schemaId as VdtSchemaId,
+            adapter.parseStreamingOutput(stdout, stderr, request.schemaId as VdtSchemaId)
+          );
         } catch (error) {
           streamingError = error;
           stopChildAfterStreamingResult();
@@ -608,9 +612,10 @@ async function executeCli(
       if (byteLength(stdout) > EXECUTION_LIMITS.maxResultBytes && !adapter) {
         throw Object.assign(new Error("Backend result exceeds the configured limit."), { code: "OUTPUT_TOO_LARGE" });
       }
-      const output = adapter
+      const parsedOutput = adapter
         ? adapter.parseOutput(stdout, stderr, request.schemaId as VdtSchemaId)
         : extractBoundedJson(stdout, EXECUTION_LIMITS.maxResultBytes);
+      const output = normalizeRegisteredSchemaOutput(request.schemaId as VdtSchemaId, parsedOutput);
       const schemaValid = validateRegisteredSchema(request.schemaId as VdtSchemaId, output);
       if (!schemaValid) {
         throw Object.assign(new Error("Backend output failed registered schema validation."), {
@@ -782,7 +787,7 @@ async function executeLocalHttp(
   let output: unknown;
   let schemaValid = false;
   try {
-    output = extractBoundedJson(content, EXECUTION_LIMITS.maxResultBytes);
+    output = normalizeRegisteredSchemaOutput(schemaId, extractBoundedJson(content, EXECUTION_LIMITS.maxResultBytes));
     schemaValid = validateRegisteredSchema(schemaId, output);
   } catch {
     output = undefined;
@@ -800,7 +805,10 @@ async function executeLocalHttp(
       request,
       Math.min(EXECUTION_LIMITS.repairTimeoutMs, request.timeoutMs ?? EXECUTION_LIMITS.repairTimeoutMs)
     );
-    repairedOutput = extractBoundedJson(repairedContent, EXECUTION_LIMITS.maxResultBytes);
+    repairedOutput = normalizeRegisteredSchemaOutput(
+      schemaId,
+      extractBoundedJson(repairedContent, EXECUTION_LIMITS.maxResultBytes)
+    );
     const repairedSchemaValid = validateRegisteredSchema(schemaId, repairedOutput);
     if (!repairedSchemaValid) {
       throw Object.assign(new Error("Backend output failed registered schema validation after one repair attempt."), {

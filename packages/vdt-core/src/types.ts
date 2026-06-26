@@ -156,6 +156,20 @@ export interface VdtImpactNode {
   unit?: string | undefined;
 }
 
+export interface VdtInputSensitivity {
+  nodeId: string;
+  nodeName: string;
+  baselineValue?: number | undefined;
+  unit?: string | undefined;
+  onePercentRootDelta?: number | undefined;
+}
+
+export interface VdtScenarioMultiplicativeEffect {
+  totalRootEffect?: number | undefined;
+  sumOfIsolatedEffects?: number | undefined;
+  multiplicativeEffect?: number | undefined;
+}
+
 export interface CalculationTraceItem {
   nodeId: string;
   nodeName: string;

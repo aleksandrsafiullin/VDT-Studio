@@ -68,7 +68,8 @@ describe("provider persistence", () => {
     expect(PARTIALIZE_EPHEMERAL_STATE_KEYS).toEqual([
       "runnerPairingToken",
       "cliTestStatusByAgent",
-      "providerTestStatus"
+      "providerTestStatus",
+      "scenarioModalOpen"
     ]);
   });
 
@@ -116,7 +117,8 @@ describe("store persist round-trip", () => {
       },
       runnerPairingToken: "runner-session-token",
       cliTestStatusByAgent: { claude: { kind: "success", message: "ok" } },
-      providerTestStatus: { kind: "success", message: "connected" }
+      providerTestStatus: { kind: "success", message: "connected" },
+      scenarioModalOpen: true
     });
 
     const raw = localStorageMock.getItem("vdt-studio-state");
@@ -139,4 +141,41 @@ describe("store persist round-trip", () => {
       gatewayPresetId: "alibaba-coding-plan"
     });
   }, 15_000);
+});
+
+describe("scenario modal ui state", () => {
+  it("openScenarioModal sets scenarioModalOpen to true", async () => {
+    const { useVdtStudioStore } = await import("./vdt-store");
+
+    useVdtStudioStore.setState({ scenarioModalOpen: false });
+    useVdtStudioStore.getState().openScenarioModal();
+
+    expect(useVdtStudioStore.getState().scenarioModalOpen).toBe(true);
+  });
+
+  it("setScenarioModalOpen toggles scenarioModalOpen", async () => {
+    const { useVdtStudioStore } = await import("./vdt-store");
+
+    useVdtStudioStore.getState().setScenarioModalOpen(true);
+    expect(useVdtStudioStore.getState().scenarioModalOpen).toBe(true);
+
+    useVdtStudioStore.getState().setScenarioModalOpen(false);
+    expect(useVdtStudioStore.getState().scenarioModalOpen).toBe(false);
+  });
+
+  it("resetUiPreferences closes the scenario modal", async () => {
+    const { DEFAULT_UI } = await import("./ui-preferences");
+    const { useVdtStudioStore } = await import("./vdt-store");
+
+    useVdtStudioStore.setState({
+      ui: { ...DEFAULT_UI, fontScale: 1.05, leftPanelCollapsed: true },
+      scenarioModalOpen: true
+    });
+
+    useVdtStudioStore.getState().resetUiPreferences();
+
+    const state = useVdtStudioStore.getState();
+    expect(state.ui).toEqual(DEFAULT_UI);
+    expect(state.scenarioModalOpen).toBe(false);
+  });
 });

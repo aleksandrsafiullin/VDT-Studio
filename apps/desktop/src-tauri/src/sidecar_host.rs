@@ -113,6 +113,14 @@ impl DesktopRuntime {
             .map_err(|error| RuntimeError::new("INVALID_SIDECAR_RESPONSE", error.to_string()))
     }
 
+    pub fn detect_subscription_clis(&self, agent_id: Option<&str>) -> Result<Value, RuntimeError> {
+        let payload = match agent_id {
+            Some(agent_id) => json!({ "agentId": agent_id }),
+            None => json!({}),
+        };
+        self.request("detect_clis", payload, None)
+    }
+
     pub fn test_backend(&self, backend_id: &str) -> Result<Value, RuntimeError> {
         self.request("test_backend", json!({ "backendId": backend_id }), None)
     }

@@ -65,6 +65,16 @@ function writeJsonl(result) {
 }
 
 function main() {
+  if (process.argv.includes("--version")) {
+    process.stdout.write("codex-cli 0.128.0\n");
+    process.exit(0);
+  }
+
+  if (process.argv.includes("login") && process.argv.includes("status")) {
+    process.stdout.write(`${JSON.stringify({ loggedIn: true, status: "ready" })}\n`);
+    process.exit(0);
+  }
+
   if (process.argv.includes("debug") && process.argv.includes("models")) {
     process.stdout.write(`${JSON.stringify({ models: [{ slug: "gpt-5.5" }, { id: "gpt-5.2" }, { id: "gpt-5.3-codex" }, { id: "codex-auto-review" }] })}\n`);
     process.exit(0);

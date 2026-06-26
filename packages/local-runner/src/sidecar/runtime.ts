@@ -4,6 +4,7 @@ import {
   cancelRuntimeRequest,
   completeRuntime,
   createLocalRuntimeContext,
+  detectRuntimeSubscriptionClis,
   getRuntimeRun,
   listRuntimeModels,
   openRuntimeProviderAuth,
@@ -138,6 +139,10 @@ export function runLocalRuntimeSidecar(options: SidecarRuntimeOptions = {}): voi
 
 async function routeSidecarRequest(message: SidecarRequestMessage, context: LocalRuntimeContext): Promise<RuntimeResult> {
   if (message.method === "list_backends") return listRuntimeBackends(context);
+  if (message.method === "detect_clis") {
+    const agentId = typeof message.payload.agentId === "string" ? message.payload.agentId : undefined;
+    return detectRuntimeSubscriptionClis(context, agentId);
+  }
   if (message.method === "test_backend") return testRuntimeBackend(requireBackendId(message.payload), context);
   if (message.method === "complete") {
     return completeRuntime(parseCompletionPayload({ ...message.payload, requestId: message.requestId }), context);

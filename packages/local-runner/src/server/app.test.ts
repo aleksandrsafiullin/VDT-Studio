@@ -1,6 +1,6 @@
 import { request as httpRequest, type Server } from "node:http";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -253,7 +253,12 @@ describe.skipIf(!hasLoopback)("Phase 2 completion contract", () => {
     });
     expect(response.status).toBe(200);
     expect(response.body.run.status).toBe("succeeded");
-    expect((await call(server, `/v1/runs/${requestId}`, { token })).body.run.output).toEqual(input);
+    expect(response.body.output).toMatchObject({
+      projectTitle: "Mock tree",
+      rootNodeId: "root",
+      nodes: [expect.objectContaining({ id: "root", name: "Root KPI" })]
+    });
+    expect((await call(server, `/v1/runs/${requestId}`, { token })).body.run.output).toEqual(response.body.output);
     expect(audit).toHaveLength(1);
     expect(JSON.stringify(audit[0])).not.toContain("projectTitle");
   });
@@ -448,7 +453,7 @@ describe.skipIf(!hasLoopback)("claude subscription backend", () => {
 });
 
 describe.skipIf(!hasLoopback)("manifest-driven CLI execution", () => {
-  const manifest = (mode: string): BackendManifest => ({
+  const manifest = (mode: string, diagnosticsPath?: string): BackendManifest => ({
     id: `fake_${mode}`,
     label: `Fake ${mode}`,
     kind: "custom_cli",
@@ -456,7 +461,7 @@ describe.skipIf(!hasLoopback)("manifest-driven CLI execution", () => {
     taskTypes: ["generate_tree"],
     schemaIds: ["connection-test-v1", "generate-tree-v1"],
     modelSelection: false,
-    cli: { executableAliases: ["fake"], args: [fixture, mode], versionArgs: ["--version"] },
+    cli: { executableAliases: ["fake"], args: diagnosticsPath ? [fixture, mode, diagnosticsPath] : [fixture, mode], versionArgs: ["--version"] },
     safety: { toolsDisabled: true, requiresOsSandbox: false, certified: true }
   });
 
@@ -483,18 +488,26 @@ describe.skipIf(!hasLoopback)("manifest-driven CLI execution", () => {
   });
 
   it("executes only reviewed manifest args with a filtered environment and cleans the temp cwd", async () => {
+    const diagnosticsDir = await mkdtemp(path.join(os.tmpdir(), "vdt-runner-diagnostics-"));
+    const diagnosticsPath = path.join(diagnosticsDir, "fake-backend.json");
     const server = await start({
-      host: "127.0.0.1", port: 0, manifests: [manifest("valid")],
+      host: "127.0.0.1", port: 0, manifests: [manifest("valid", diagnosticsPath)],
       executor: { env: { PATH: process.env.PATH, HOME: process.env.HOME, SECRET_TOKEN: "never" }, resolveExecutable: async () => process.execPath }
     });
-    const token = await pair(server);
-    const rejected = await call(server, "/v1/backends/fake_valid/test", { method: "POST", token, body: { command: "/bin/sh" } });
-    expect(rejected.body.error.code).toBe("UNKNOWN_FIELD");
-    const response = await call(server, "/v1/backends/fake_valid/test", { method: "POST", token, body: {} });
-    expect(response.status).toBe(200);
-    expect(response.body.output.envKeys).not.toContain("SECRET_TOKEN");
-    expect(response.body.output.envKeys).toEqual(expect.arrayContaining(["HOME", "NO_COLOR", "PATH"]));
-    await expect(lstat(response.body.output.cwd)).rejects.toMatchObject({ code: "ENOENT" });
+    try {
+      const token = await pair(server);
+      const rejected = await call(server, "/v1/backends/fake_valid/test", { method: "POST", token, body: { command: "/bin/sh" } });
+      expect(rejected.body.error.code).toBe("UNKNOWN_FIELD");
+      const response = await call(server, "/v1/backends/fake_valid/test", { method: "POST", token, body: {} });
+      expect(response.status).toBe(200);
+      expect(response.body.output).toEqual({ ok: true });
+      const diagnostics = JSON.parse(await readFile(diagnosticsPath, "utf8")) as { cwd: string; envKeys: string[] };
+      expect(diagnostics.envKeys).not.toContain("SECRET_TOKEN");
+      expect(diagnostics.envKeys).toEqual(expect.arrayContaining(["HOME", "NO_COLOR", "PATH"]));
+      await expect(lstat(diagnostics.cwd)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(diagnosticsDir, { recursive: true, force: true });
+    }
   });
 
   it("cancels an active process and normalizes cancellation", async () => {

@@ -2,11 +2,25 @@
 
 import { useEffect, useId, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { clsx } from "clsx";
-import type { ExecutionMode } from "@/lib/execution-mode-catalog";
+import type { ByokGateway, ByokProtocol, ExecutionMode } from "@/lib/execution-mode-catalog";
 import { hasLocalAiUi, resolveVdtAppMode } from "@/lib/app-mode";
 import { LocalCliSettings } from "./local-cli-settings";
 import { ByokSettings } from "./byok-settings";
 import { useVdtStudioStore } from "./vdt-store";
+
+const PROTOCOL_LABELS: Record<ByokProtocol, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  azure: "Azure OpenAI",
+  gemini: "Google Gemini"
+};
+
+const GATEWAY_LABELS: Record<ByokGateway, string> = {
+  none: "Direct",
+  ollama: "Ollama Cloud",
+  senseaudio: "SenseAudio",
+  aihubmix: "AIHubMix"
+};
 
 export function ExecutionModeSettings() {
   const panelId = useId();
@@ -15,9 +29,15 @@ export function ExecutionModeSettings() {
   const byokTabId = `${panelId}-byok-tab`;
   const byokPanelId = `${panelId}-byok-panel`;
   const executionMode = useVdtStudioStore((state) => state.executionSettings.executionMode);
+  const byokProtocol = useVdtStudioStore((state) => state.executionSettings.byokProtocol ?? "openai");
+  const byokGateway = useVdtStudioStore((state) => state.executionSettings.byokGateway ?? "none");
   const setExecutionMode = useVdtStudioStore((state) => state.setExecutionMode);
   const localAiAvailable = hasLocalAiUi(resolveVdtAppMode());
   const [activeTab, setActiveTab] = useState<ExecutionMode>(localAiAvailable ? executionMode : "byok");
+  const statusLine =
+    activeTab === "byok"
+      ? `API keys · ${PROTOCOL_LABELS[byokProtocol]} · ${GATEWAY_LABELS[byokGateway]}`
+      : "Local AI · Desktop runtime";
 
   useEffect(() => {
     if (!localAiAvailable && executionMode === "local_cli") {
@@ -52,50 +72,60 @@ export function ExecutionModeSettings() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div
-        className="inline-flex rounded-md border border-line bg-slate-50 p-1"
-        role="tablist"
-        aria-label="Execution mode"
+        className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between"
       >
-        {localAiAvailable ? (
+        <div
+          className="inline-flex w-fit rounded-lg border border-slate-200 bg-slate-100 p-1"
+          role="tablist"
+          aria-label="Execution mode"
+        >
+          {localAiAvailable ? (
+            <button
+              id={localCliTabId}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "local_cli"}
+              aria-controls={localCliPanelId}
+              tabIndex={activeTab === "local_cli" ? 0 : -1}
+              data-testid="execution-mode-tab-local-cli"
+              className={clsx(
+                "rounded-md px-4 py-2 text-xs font-semibold transition",
+                activeTab === "local_cli"
+                  ? "bg-ink text-white shadow-sm"
+                  : "text-slate-600 hover:bg-white/70 hover:text-ink"
+              )}
+              onClick={() => selectTab("local_cli")}
+              onKeyDown={handleTabKeyDown}
+            >
+              Local AI
+            </button>
+          ) : null}
           <button
-            id={localCliTabId}
+            id={byokTabId}
             type="button"
             role="tab"
-            aria-selected={activeTab === "local_cli"}
-            aria-controls={localCliPanelId}
-            tabIndex={activeTab === "local_cli" ? 0 : -1}
-            data-testid="execution-mode-tab-local-cli"
+            aria-selected={activeTab === "byok"}
+            aria-controls={byokPanelId}
+            tabIndex={activeTab === "byok" ? 0 : -1}
+            data-testid="execution-mode-tab-byok"
             className={clsx(
-              "rounded px-4 py-1.5 text-xs font-semibold transition",
-              activeTab === "local_cli"
-                ? "bg-white text-ink shadow-sm"
-                : "text-muted hover:text-ink"
+              "rounded-md px-4 py-2 text-xs font-semibold transition",
+              activeTab === "byok"
+                ? "bg-ink text-white shadow-sm"
+                : "text-slate-600 hover:bg-white/70 hover:text-ink"
             )}
-            onClick={() => selectTab("local_cli")}
+            onClick={() => selectTab("byok")}
             onKeyDown={handleTabKeyDown}
           >
-            Local AI
+            API keys
           </button>
-        ) : null}
-        <button
-          id={byokTabId}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "byok"}
-          aria-controls={byokPanelId}
-          tabIndex={activeTab === "byok" ? 0 : -1}
-          data-testid="execution-mode-tab-byok"
-          className={clsx(
-            "rounded px-4 py-1.5 text-xs font-semibold transition",
-            activeTab === "byok" ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"
-          )}
-          onClick={() => selectTab("byok")}
-          onKeyDown={handleTabKeyDown}
-        >
-          API keys
-        </button>
+        </div>
+
+        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
+          {statusLine}
+        </div>
       </div>
 
       {activeTab === "local_cli" ? (

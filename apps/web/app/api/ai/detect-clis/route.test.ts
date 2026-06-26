@@ -1,6 +1,13 @@
 import { readFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route";
+
+const fakeCodex = fileURLToPath(new URL("../../../../../../packages/local-runner/src/server/fixtures/fake-codex.cjs", import.meta.url));
+const fakeCursor = fileURLToPath(new URL("../../../../../../packages/local-runner/src/server/fixtures/fake-cursor.cjs", import.meta.url));
 
 async function readJson(response: Response) {
   return (await response.json()) as {
@@ -63,6 +70,44 @@ describe("detect CLIs API route", () => {
     ]);
   });
 
+  it("scans local CLIs in development web mode", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-web-detect-clis-"));
+    try {
+      await symlink(fakeCodex, path.join(tempDir, "codex"));
+      await symlink(fakeCursor, path.join(tempDir, "agent"));
+      vi.stubEnv("VDT_APP_MODE", "development_web");
+      vi.stubEnv("PATH", `${tempDir}${path.delimiter}${process.env.PATH ?? ""}`);
+
+      const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis"));
+      const body = await readJson(response);
+
+      expect(response.status).toBe(200);
+      expect(body.appMode).toBe("development_web");
+      expect(body.agents).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: "codex",
+          installed: true,
+          alias: "codex",
+          status: "ready",
+          authSummary: "ChatGPT subscription is authenticated and ready."
+        }),
+        expect.objectContaining({
+          id: "cursor-agent",
+          installed: true,
+          alias: "agent",
+          status: "ready",
+          authSummary: "Cursor account is authenticated and ready."
+        })
+      ]));
+      expect(body.modelsByAgent).toMatchObject({
+        codex: ["gpt-5.5", "gpt-5.2"],
+        "cursor-agent": ["auto", "gpt-5.5-high"]
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects unknown agent ids", async () => {
     const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis?id=unknown-agent"));
     const body = await readJson(response);
@@ -71,10 +116,10 @@ describe("detect CLIs API route", () => {
     expect(body.error).toBe("Unknown CLI agent: unknown-agent");
   });
 
-  it("does not import node-backed model bridge detection from the hosted route", async () => {
+  it("does not statically import node-backed detection in the hosted route", async () => {
     const source = await readFile(new URL("./route.ts", import.meta.url), "utf8");
 
-    expect(source).not.toContain("@vdt-studio/model-bridge/node");
+    expect(source).not.toMatch(/^import .*@vdt-studio\/local-runner/m);
     expect(source).not.toContain("node:child_process");
     expect(source).not.toContain("execFile");
   });

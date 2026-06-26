@@ -35,10 +35,7 @@ function panelToggleLabel(panel: PanelToggleTarget, expanded: boolean) {
   if (panel === "left") {
     return expanded ? "Collapse setup panel" : "Expand setup panel";
   }
-  if (panel === "right") {
-    return expanded ? "Collapse inspector panel" : "Expand inspector panel";
-  }
-  return expanded ? "Collapse scenario drawer" : "Expand scenario drawer";
+  return expanded ? "Collapse inspector panel" : "Expand inspector panel";
 }
 
 export function PanelToggleButton({
@@ -94,7 +91,7 @@ export function PanelCollapseTab({
     <Panel
       className={clsx(
         "flex h-full min-h-0 flex-col items-center py-3",
-        panel === "left" ? "border-r" : panel === "right" ? "border-l" : "border-t"
+        panel === "left" ? "border-r" : "border-l"
       )}
     >
       <PanelToggleButton

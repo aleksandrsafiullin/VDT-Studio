@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -11,10 +11,12 @@ const SIDECAR_LAUNCHER = "apps/desktop/src-tauri/sidecars/vdt-local-runtime";
 const SIDECAR_WINDOWS_LAUNCHER = "apps/desktop/src-tauri/sidecars/vdt-local-runtime.cmd";
 const SIDECAR_BUNDLE = "apps/desktop/src-tauri/sidecars/vdt-local-runtime.mjs";
 const SIDECAR_MANIFEST = "apps/desktop/src-tauri/sidecars/vdt-local-runtime.manifest.json";
+const SIDECAR_SKILLS = "apps/desktop/src-tauri/sidecars/vdt-agent-skills";
 const TAURI_RESOURCE_PATH = "sidecars/vdt-local-runtime";
 const TAURI_WINDOWS_RESOURCE_PATH = "sidecars/vdt-local-runtime.cmd";
 const TAURI_BUNDLE_RESOURCE_PATH = "sidecars/vdt-local-runtime.mjs";
 const TAURI_MANIFEST_RESOURCE_PATH = "sidecars/vdt-local-runtime.manifest.json";
+const TAURI_SKILLS_RESOURCE_PATH = "sidecars/vdt-agent-skills";
 
 function fail(message) {
   throw new Error(`Desktop sidecar verification failed: ${message}`);
@@ -50,6 +52,26 @@ function verifyBundleMatchesSource(root, expectedDigest) {
   }
 }
 
+function directorySha256(directory) {
+  const hash = createHash("sha256");
+  const walk = (current) => {
+    for (const entry of readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const path = resolve(current, entry.name);
+      if (entry.isDirectory()) {
+        walk(path);
+      } else if (entry.isFile()) {
+        const rel = relative(directory, path).replaceAll("\\", "/");
+        hash.update(rel);
+        hash.update("\0");
+        hash.update(readFileSync(path));
+        hash.update("\0");
+      }
+    }
+  };
+  walk(directory);
+  return hash.digest("hex");
+}
+
 export function verifyDesktopSidecar(root = DEFAULT_ROOT) {
   const tauriConfig = JSON.parse(readFileSync(join(root, "apps/desktop/src-tauri/tauri.conf.json"), "utf8"));
   const manifestPath = join(root, SIDECAR_MANIFEST);
@@ -66,6 +88,9 @@ export function verifyDesktopSidecar(root = DEFAULT_ROOT) {
   }
   if (!resources.includes(TAURI_MANIFEST_RESOURCE_PATH)) {
     fail("tauri bundle resources must include the sidecar integrity manifest.");
+  }
+  if (manifest.kind === "node-runtime-bundle" && !resources.includes(TAURI_SKILLS_RESOURCE_PATH)) {
+    fail("tauri bundle resources must include the packaged VDT agent skill library.");
   }
 
   const sidecarHost = readFileSync(join(root, "apps/desktop/src-tauri/src/sidecar_host.rs"), "utf8");
@@ -101,8 +126,22 @@ export function verifyDesktopSidecar(root = DEFAULT_ROOT) {
   } else if (manifest.kind === "node-runtime-bundle") {
     const bundleStat = statSync(bundlePath);
     const windowsStat = statSync(windowsLauncherPath);
+    const skillsPath = join(root, SIDECAR_SKILLS);
+    const skillsStat = statSync(skillsPath);
     if (!bundleStat.isFile()) fail("sidecar runtime bundle is not a file.");
     if (!windowsStat.isFile()) fail("Windows sidecar launcher is not a file.");
+    if (!skillsStat.isDirectory()) fail("VDT agent skill library resource is not a directory.");
+    for (const skillFile of [
+      "registry.md",
+      "finance/revenue-profit.md",
+      "generic/logical-kpi-decomposition.md",
+      "mining/haulage-truck-cycle.md",
+      "mining/production-volume.md",
+      "saas/funnel-growth.md"
+    ]) {
+      const skillStat = statSync(join(skillsPath, skillFile));
+      if (!skillStat.isFile()) fail(`VDT agent skill library is missing ${skillFile}.`);
+    }
     if (bundleStat.size < 50_000) fail("sidecar runtime bundle is unexpectedly small.");
     const bundle = readFileSync(bundlePath, "utf8");
     windowsText = readFileSync(windowsLauncherPath, "utf8");
@@ -115,12 +154,16 @@ export function verifyDesktopSidecar(root = DEFAULT_ROOT) {
       fail("Windows sidecar launcher SHA-256 does not match the integrity manifest.");
     }
     if (manifest.bundleSha256 !== bundleDigest) fail("sidecar bundle SHA-256 does not match the integrity manifest.");
+    if (manifest.skillLibrarySha256 !== directorySha256(skillsPath)) {
+      fail("sidecar skill library SHA-256 does not match the integrity manifest.");
+    }
     verifyBundleMatchesSource(root, bundleDigest);
     if (!text.startsWith("#!/bin/sh")) fail("sidecar launcher must use an explicit POSIX shell shebang.");
     if (!windowsText.startsWith("@echo off")) fail("Windows sidecar launcher must use an explicit cmd entrypoint.");
     if (!text.includes("vdt-local-runtime.mjs")) fail("sidecar launcher must target the bundled runtime entrypoint.");
     if (!windowsText.includes("vdt-local-runtime.mjs")) fail("Windows sidecar launcher must target the bundled runtime entrypoint.");
     if (!bundle.includes("runLocalRuntimeSidecar")) fail("sidecar bundle must contain the reviewed runtime entrypoint.");
+    if (!bundle.includes("vdt-agent-skills")) fail("sidecar bundle must resolve the packaged VDT agent skill library.");
     if (/from\s+["']\.\.\//.test(bundle) || /packages\/local-runner\/src\/sidecar\/index\.ts/.test(bundle)) {
       fail("sidecar runtime bundle must not import workspace source files at runtime.");
     }

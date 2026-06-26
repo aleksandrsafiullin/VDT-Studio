@@ -127,7 +127,8 @@ export function verifyDesktopNativeReadiness(root = DEFAULT_ROOT, env = process.
         "sidecars/vdt-local-runtime",
         "sidecars/vdt-local-runtime.cmd",
         "sidecars/vdt-local-runtime.mjs",
-        "sidecars/vdt-local-runtime.manifest.json"
+        "sidecars/vdt-local-runtime.manifest.json",
+        "sidecars/vdt-agent-skills"
       ];
   for (const required of requiredResources) {
     if (!Array.isArray(resources) || !resources.includes(required)) {

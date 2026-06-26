@@ -1,4 +1,5 @@
 import type { VdtChangeSet, VdtProject } from "@vdt-studio/vdt-core";
+import type { VdtAgentRun } from "@vdt-studio/vdt-agent";
 import { generateVdtProject } from "../generate-vdt";
 import type { DeepenNodeContext } from "../schemas/deepen-node";
 import type { CheckUnitsResult } from "../schemas/check-units";
@@ -13,7 +14,7 @@ import type { SuggestAlternativeContext } from "../schemas/suggest-alternative";
 import type { SuggestFormulaContext } from "../schemas/suggest-formula";
 import type { AiProvider, GenerateVdtInput, VdtAiTaskType } from "../types";
 import { runCheckUnits } from "./check-units";
-import { runDeepenNode } from "./deepen-node";
+import { runAgenticDeepenNode } from "./deepen-node";
 import { runExecutiveSummary } from "./executive-summary";
 import { runExplainNode } from "./explain-node";
 import { runExplainScenario } from "./explain-scenario";
@@ -84,7 +85,7 @@ export type AiExplanationResult = ExplainNodeResult | ExplainScenarioResult | Ex
 
 export type RunAiTaskResult =
   | { kind: "project"; project: VdtProject }
-  | { kind: "change_set"; changeSet: VdtChangeSet }
+  | { kind: "change_set"; changeSet: VdtChangeSet; agentRun?: VdtAgentRun }
   | { kind: "advisory"; result: AiAdvisoryResult }
   | { kind: "explanation"; result: AiExplanationResult };
 
@@ -128,11 +129,11 @@ export async function runAiTask<T extends VdtAiTaskType>(
     }
     case "deepen_node": {
       const { project, nodeId, context, ...opts } = input as RunAiTaskInputMap["deepen_node"];
-      const changeSet = await runDeepenNode(provider, project, nodeId, {
+      const { changeSet, agentRun } = await runAgenticDeepenNode(provider, project, nodeId, {
         context,
         ...pickRunOptions(opts)
       });
-      return { kind: "change_set", changeSet };
+      return { kind: "change_set", changeSet, agentRun };
     }
     case "simplify_branch": {
       const { project, branchRootNodeId, context, ...opts } = input as RunAiTaskInputMap["simplify_branch"];

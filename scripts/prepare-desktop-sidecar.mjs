@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { chmodSync, copyFileSync, cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -9,6 +9,8 @@ const launcherPath = resolve(root, "apps/desktop/src-tauri/sidecars/vdt-local-ru
 const windowsLauncherPath = resolve(root, "apps/desktop/src-tauri/sidecars/vdt-local-runtime.cmd");
 const bundlePath = resolve(root, "apps/desktop/src-tauri/sidecars/vdt-local-runtime.mjs");
 const manifestPath = resolve(root, "apps/desktop/src-tauri/sidecars/vdt-local-runtime.manifest.json");
+const skillSourcePath = resolve(root, "packages/vdt-agent/skills");
+const skillResourcePath = resolve(root, "apps/desktop/src-tauri/sidecars/vdt-agent-skills");
 const selfContainedSource = process.env.VDT_DESKTOP_SELF_CONTAINED_SIDECAR;
 
 const launcher = `#!/bin/sh
@@ -45,6 +47,26 @@ exit /b %ERRORLEVEL%
 `;
 
 mkdirSync(dirname(launcherPath), { recursive: true });
+function directorySha256(directory) {
+  const hash = createHash("sha256");
+  const walk = (current) => {
+    for (const entry of readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const path = resolve(current, entry.name);
+      if (entry.isDirectory()) {
+        walk(path);
+      } else if (entry.isFile()) {
+        const rel = relative(directory, path).replaceAll("\\", "/");
+        hash.update(rel);
+        hash.update("\0");
+        hash.update(readFileSync(path));
+        hash.update("\0");
+      }
+    }
+  };
+  walk(directory);
+  return hash.digest("hex");
+}
+
 if (selfContainedSource) {
   const source = resolve(selfContainedSource);
   const sourceStat = statSync(source);
@@ -72,6 +94,9 @@ if (selfContainedSource) {
   process.exit(0);
 }
 
+rmSync(skillResourcePath, { recursive: true, force: true });
+cpSync(skillSourcePath, skillResourcePath, { recursive: true });
+
 execFileSync(
   "pnpm",
   [
@@ -94,6 +119,7 @@ writeFileSync(windowsLauncherPath, windowsLauncher, "utf8");
 const launcherDigest = createHash("sha256").update(launcher).digest("hex");
 const windowsLauncherDigest = createHash("sha256").update(windowsLauncher).digest("hex");
 const bundleDigest = createHash("sha256").update(readFileSync(bundlePath)).digest("hex");
+const skillLibraryDigest = directorySha256(skillResourcePath);
 writeFileSync(
   manifestPath,
   `${JSON.stringify({
@@ -105,6 +131,7 @@ writeFileSync(
     launcherSha256: launcherDigest,
     windowsLauncherSha256: windowsLauncherDigest,
     bundleSha256: bundleDigest,
+    skillLibrarySha256: skillLibraryDigest,
     selfContained: false,
     requiresNode: ">=24 <25"
   }, null, 2)}\n`,

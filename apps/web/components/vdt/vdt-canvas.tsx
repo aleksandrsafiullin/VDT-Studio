@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LayoutGrid } from "lucide-react";
 import {
   Background,
@@ -30,18 +30,24 @@ const edgeTypes: EdgeTypes = {
 export function VdtCanvas() {
   const project = useVdtStudioStore((state) => state.project);
   const highlightedNodeIds = useVdtStudioStore((state) => state.highlightedNodeIds);
+  const kpiHorizontalGap = useVdtStudioStore((state) => state.ui.kpiHorizontalGap);
+  const kpiVerticalGap = useVdtStudioStore((state) => state.ui.kpiVerticalGap);
   const selectNode = useVdtStudioStore((state) => state.selectNode);
   const autoDistributeLayout = useVdtStudioStore((state) => state.autoDistributeLayout);
   const updateNodePosition = useVdtStudioStore((state) => state.updateNodePosition);
   const calculation = useMemo(() => calculateGraph(project), [project]);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [flowCanRender, setFlowCanRender] = useState(false);
 
   const fallbackPositions = useMemo(() => {
     const existingPositions = collectExistingPositions(project.graph.nodes);
     return layoutGraph(project.graph, project.rootNodeId, {
       ...DEFAULT_CANVAS_LAYOUT,
+      horizontalGap: kpiHorizontalGap,
+      verticalGap: kpiVerticalGap,
       existingPositions
     }).positions;
-  }, [project.graph, project.rootNodeId]);
+  }, [kpiHorizontalGap, kpiVerticalGap, project.graph, project.rootNodeId]);
 
   const highlightedSet = useMemo(() => new Set(highlightedNodeIds), [highlightedNodeIds]);
 
@@ -96,8 +102,34 @@ export function VdtCanvas() {
     setNodes(storeNodes);
   }, [setNodes, storeNodes]);
 
+  useEffect(() => {
+    const element = canvasRef.current;
+    if (!element) return undefined;
+
+    const updateAvailability = () => {
+      setFlowCanRender(element.clientWidth > 0 && element.clientHeight > 0);
+    };
+
+    updateAvailability();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateAvailability);
+      return () => window.removeEventListener("resize", updateAvailability);
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const size = entries[0]?.contentRect;
+      setFlowCanRender(Boolean(size && size.width > 0 && size.height > 0));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <div className="relative h-full min-h-[360px] flex-1 overflow-hidden bg-canvas" data-testid="vdt-canvas">
+    <div
+      ref={canvasRef}
+      className="relative flex-1 min-h-0 w-full overflow-hidden bg-canvas"
+      data-testid="vdt-canvas"
+    >
       <div className="absolute left-4 top-4 z-10 flex items-center gap-2">
         <div className="rounded-md border border-line bg-white/95 px-3 py-2 text-xs text-muted shadow-sm backdrop-blur">
           Visual flow: root to drivers.
@@ -111,24 +143,30 @@ export function VdtCanvas() {
           Auto-distribute
         </Button>
       </div>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        defaultViewport={{ x: 46, y: 194, zoom: 0.68 }}
-        minZoom={0.34}
-        maxZoom={1.5}
-        onNodesChange={onNodesChange}
-        onNodeClick={(_, node) => selectNode(node.id)}
-        onNodeDragStart={onNodeDragStart}
-        onNodeDragStop={onNodeDragStop}
-        nodesDraggable
-        panOnScroll
-      >
-        <Background color="#d8dee8" gap={22} size={1} />
-        <Controls position="bottom-left" />
-      </ReactFlow>
+      {flowCanRender ? (
+        <div className="absolute inset-0">
+          <ReactFlow
+            className="h-full w-full"
+            style={{ height: "100%", width: "100%" }}
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            defaultViewport={{ x: 46, y: 194, zoom: 0.68 }}
+            minZoom={0.34}
+            maxZoom={1.5}
+            onNodesChange={onNodesChange}
+            onNodeClick={(_, node) => selectNode(node.id)}
+            onNodeDragStart={onNodeDragStart}
+            onNodeDragStop={onNodeDragStop}
+            nodesDraggable
+            panOnScroll
+          >
+            <Background color="#d8dee8" gap={22} size={1} />
+            <Controls position="bottom-left" />
+          </ReactFlow>
+        </div>
+      ) : null}
     </div>
   );
 }

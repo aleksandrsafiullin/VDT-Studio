@@ -29,10 +29,16 @@ import {
 } from "@vdt-studio/ai-harness";
 import { makeId } from "@/lib/id";
 import { hasLocalAiUi, resolveVdtAppMode } from "@/lib/app-mode";
+import { formatExecutionModeSummary } from "@/lib/format-execution-summary";
 import {
   createAiExecutionClient,
   HOSTED_WEB_LOCAL_AI_MESSAGE,
-  type CliAgentDetectionSnapshot
+  type AiExecutionProgressEvent,
+  type AiExecutionProgressPhase,
+  type CliAgentDetectionSnapshot,
+  type VdtAgentEvent,
+  type VdtAgentRun,
+  type VdtAgentSelectedSkill
 } from "@/lib/ai-execution-client";
 import {
   applyUiPreference,
@@ -87,19 +93,74 @@ import oeeExample from "../../../../examples/oee.json";
 export {
   BASE_LEFT_PANEL_WIDTH,
   BASE_RIGHT_PANEL_WIDTH,
-  BASE_SCENARIO_DRAWER_HEIGHT,
   BASE_WORKSPACE_SECTION_MIN_HEIGHT,
   COLLAPSED_PANEL_WIDTH,
+  DEFAULT_KPI_HORIZONTAL_GAP,
+  DEFAULT_KPI_VERTICAL_GAP,
   DEFAULT_LEFT_PANEL_WIDTH,
   DEFAULT_RIGHT_PANEL_WIDTH,
   DEFAULT_UI,
-  SCENARIO_DRAWER_COLLAPSED_HEIGHT,
-  scenarioDrawerCollapsedHeight,
+  MAX_KPI_HORIZONTAL_GAP,
+  MAX_KPI_VERTICAL_GAP,
+  MIN_KPI_HORIZONTAL_GAP,
+  MIN_KPI_VERTICAL_GAP,
   type UiPreferences
 } from "./ui-preferences";
 
 export type ProviderId = "mock" | "local_cli" | "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "local_runner";
 export type ExampleProjectId = "production_volume" | "oee" | "inventory_level" | "maintenance_cost";
+export type GenerateActivityPhase =
+  | "preparing_request"
+  | "starting_backend"
+  | "waiting_provider"
+  | "validating_schema"
+  | "normalizing_graph"
+  | "building_canvas"
+  | "ready";
+
+export type GenerateActivityStatus = "running" | "needs_user_input" | "ready" | "error" | "cancelled";
+export type GenerateActivityDetailStatus = "pending" | "running" | "complete" | "error" | "cancelled";
+
+export interface GenerateActivityDetail {
+  id: string;
+  label: string;
+  status: GenerateActivityDetailStatus;
+  updatedAt: string;
+}
+
+export interface GenerateActivityState {
+  runId: string;
+  status: GenerateActivityStatus;
+  phase: GenerateActivityPhase;
+  phaseStartedAt: string;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string | undefined;
+  requestId?: string | undefined;
+  providerId: ProviderId;
+  providerLabel: string;
+  backendId?: string | undefined;
+  backendLabel?: string | undefined;
+  schemaId?: string | undefined;
+  outputBytes?: number | undefined;
+  schemaValid?: boolean | undefined;
+  repairAttempted?: boolean | undefined;
+  repairSucceeded?: boolean | undefined;
+  errorCode?: string | undefined;
+  model?: string | undefined;
+  appMode: ReturnType<typeof resolveVdtAppMode>;
+  canCancel: boolean;
+  cancelRequested: boolean;
+  message?: string | undefined;
+  summary?: string | undefined;
+  agentRun?: VdtAgentRun | undefined;
+  selectedSkills?: VdtAgentSelectedSkill[] | undefined;
+  agentEvents?: VdtAgentEvent[] | undefined;
+  questionsForUser?: string[] | undefined;
+  finalReport?: string | undefined;
+  timeoutMs?: number | undefined;
+  details?: GenerateActivityDetail[] | undefined;
+}
 
 export {
   LOCAL_RUNNER_PRESET_CATALOG as LOCAL_RUNNER_PRESETS
@@ -182,6 +243,10 @@ const EXPLANATION_AI_TASKS = new Set<RunAiActionTaskType>([
   "generate_executive_summary"
 ]);
 
+const AGENTIC_AI_ACTION_SCHEMA_IDS: Partial<Record<RunAiActionTaskType, string>> = {
+  deepen_node: "deepen-node-v1"
+};
+
 interface VdtStudioState {
   project: VdtProject;
   selectedNodeId: string;
@@ -207,7 +272,9 @@ interface VdtStudioState {
   providerTestStatus?: ProviderTestStatus | undefined;
   byokFieldErrors?: ByokFieldErrors | undefined;
   ui: UiPreferences;
+  scenarioModalOpen: boolean;
   isGenerating: boolean;
+  generateActivity?: GenerateActivityState | undefined;
   aiError?: string | undefined;
   pendingChangeSet?: VdtChangeSet | undefined;
   changeSetSelection: Set<string>;
@@ -247,11 +314,14 @@ interface VdtStudioState {
   setPanelWidth: (side: "left" | "right", width: number) => void;
   toggleLeftPanel: () => void;
   toggleRightPanel: () => void;
-  toggleScenarioDrawer: () => void;
+  openScenarioModal: () => void;
+  closeScenarioModal: () => void;
+  setScenarioModalOpen: (open: boolean) => void;
   resetUiPreferences: () => void;
   autoDistributeLayout: () => void;
   updateNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
   generateWithAi: () => Promise<void>;
+  cancelGenerate: () => void;
   loadExample: (exampleId?: ExampleProjectId) => void;
   selectNode: (nodeId: string) => void;
   updateNode: (nodeId: string, patch: Partial<VdtNode>) => void;
@@ -261,6 +331,8 @@ interface VdtStudioState {
   deleteNode: (nodeId: string) => void;
   createScenario: () => void;
   setActiveScenarioId: (scenarioId: string) => void;
+  renameScenario: (scenarioId: string, name: string) => void;
+  deleteScenario: (scenarioId: string) => void;
   updateScenarioOverride: (scenarioId: string, nodeId: string, value?: number) => void;
   runAiAction: <T extends RunAiActionTaskType>(taskType: T, input: RunAiActionInput<T>) => Promise<void>;
   toggleChangeSelection: (changeId: string) => void;
@@ -295,6 +367,22 @@ function briefFromProject(project: VdtProject): BriefState {
     goal: project.description ?? "",
     levelOfDetail: "medium"
   };
+}
+
+function summarizeGeneratedVdt(project: VdtProject): string {
+  const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+  const rootName = rootNode?.name ?? "the root KPI";
+  const nodeById = new Map(project.graph.nodes.map((node) => [node.id, node.name]));
+  const topDrivers = project.graph.edges
+    .filter((edge) => edge.sourceNodeId === project.rootNodeId)
+    .map((edge) => nodeById.get(edge.targetNodeId))
+    .filter((name): name is string => typeof name === "string" && name.trim().length > 0)
+    .slice(0, 5);
+  const driverText = topDrivers.length > 0
+    ? ` The first-level drivers are ${topDrivers.join(", ")}.`
+    : "";
+
+  return `Built ${rootName} as a visual decomposition with ${project.graph.nodes.length} nodes and ${project.graph.edges.length} edges.${driverText} The canvas now includes the formulas, assumptions, warnings, and scenario inputs returned with the validated graph.`;
 }
 
 function nowIso() {
@@ -356,10 +444,18 @@ function mergeAdvisoryIntoReview(
   };
 }
 
-function layoutProjectGraph(project: VdtProject): VdtProject {
+function canvasLayoutOptions(ui: Pick<UiPreferences, "kpiHorizontalGap" | "kpiVerticalGap">) {
+  return {
+    ...DEFAULT_CANVAS_LAYOUT,
+    horizontalGap: ui.kpiHorizontalGap,
+    verticalGap: ui.kpiVerticalGap
+  };
+}
+
+function layoutProjectGraph(project: VdtProject, ui: UiPreferences = DEFAULT_UI): VdtProject {
   const existingPositions = collectExistingPositions(project.graph.nodes);
   const layout = layoutGraph(project.graph, project.rootNodeId, {
-    ...DEFAULT_CANVAS_LAYOUT,
+    ...canvasLayoutOptions(ui),
     existingPositions
   });
   const updatedAt = nowIso();
@@ -390,10 +486,315 @@ function clearPendingAiActionState() {
   };
 }
 
+let activeGenerateAbortController: AbortController | undefined;
+let activeGenerateRunId: string | undefined;
+
+function generateRunId() {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : makeId("generate");
+}
+
+function isAbortError(error: unknown) {
+  return (
+    error instanceof DOMException && error.name === "AbortError"
+  ) || (
+    error instanceof Error && error.name === "AbortError"
+  );
+}
+
+function describeBackendLabel(
+  providerId: ProviderId,
+  providerConfig: Record<string, unknown> | undefined,
+  executionSettings: ExecutionSettings
+) {
+  const configuredBackendId = providerConfig?.backendId;
+  const backendId = typeof configuredBackendId === "string" && configuredBackendId.trim()
+    ? configuredBackendId.trim()
+    : providerId;
+
+  if (executionSettings.executionMode === "local_cli" && executionSettings.selectedCliAgentId) {
+    return {
+      backendId,
+      backendLabel: getCliCatalogEntry(executionSettings.selectedCliAgentId).displayName
+    };
+  }
+
+  return {
+    backendId,
+    backendLabel: backendId === "mock" ? "Built-in mock" : backendId.replace(/_/g, " ")
+  };
+}
+
+function activityTimeoutMs(
+  providerConfig: Record<string, unknown> | undefined,
+  backendId: string | undefined
+): number | undefined {
+  const timeoutMs = providerConfig?.timeoutMs;
+  if (typeof timeoutMs === "number" && Number.isSafeInteger(timeoutMs) && timeoutMs > 0) {
+    return backendId?.endsWith("_subscription") ? Math.max(timeoutMs, 120_000) : timeoutMs;
+  }
+
+  const timeoutSec = providerConfig?.timeoutSec;
+  if (typeof timeoutSec === "number" && Number.isSafeInteger(timeoutSec) && timeoutSec > 0) {
+    const value = timeoutSec * 1000;
+    return backendId?.endsWith("_subscription") ? Math.max(value, 120_000) : value;
+  }
+
+  return backendId?.endsWith("_subscription") ? 120_000 : undefined;
+}
+
+function buildGenerateActivity(
+  runId: string,
+  executionSettings: ExecutionSettings,
+  providerId: ProviderId,
+  providerConfig: Record<string, unknown> | undefined
+): GenerateActivityState {
+  const summary = formatExecutionModeSummary(executionSettings);
+  const backend = describeBackendLabel(providerId, providerConfig, executionSettings);
+  const timestamp = nowIso();
+
+  return {
+    runId,
+    status: "running",
+    phase: "preparing_request",
+    phaseStartedAt: timestamp,
+    startedAt: timestamp,
+    updatedAt: timestamp,
+    providerId,
+    providerLabel: summary.primary,
+    backendId: backend.backendId,
+    backendLabel: backend.backendLabel,
+    model: summary.secondary,
+    appMode: resolveVdtAppMode(),
+    canCancel: true,
+    cancelRequested: false,
+    timeoutMs: activityTimeoutMs(providerConfig, backend.backendId)
+  };
+}
+
+function buildAiActionActivity(
+  runId: string,
+  taskType: RunAiActionTaskType,
+  executionSettings: ExecutionSettings,
+  providerId: ProviderId,
+  providerConfig: Record<string, unknown> | undefined
+): GenerateActivityState {
+  const activity = buildGenerateActivity(runId, executionSettings, providerId, providerConfig);
+  return {
+    ...activity,
+    schemaId: AGENTIC_AI_ACTION_SCHEMA_IDS[taskType],
+    canCancel: false,
+    summary: `Running ${taskType.replaceAll("_", " ")}.`
+  };
+}
+
+function mapGenerateActivityPhase(
+  phase: AiExecutionProgressPhase,
+  currentPhase: GenerateActivityPhase
+): GenerateActivityPhase {
+  switch (phase) {
+    case "preparing_request":
+      return "preparing_request";
+    case "starting_backend":
+      return "starting_backend";
+    case "waiting_for_provider":
+      return "waiting_provider";
+    case "validating_schema":
+      return "validating_schema";
+    case "repairing_output":
+      return "normalizing_graph";
+    case "building_project":
+      return "building_canvas";
+    case "complete":
+      return "ready";
+    case "error":
+    case "cancelled":
+      return currentPhase;
+    default: {
+      const exhaustive: never = phase;
+      return exhaustive;
+    }
+  }
+}
+
+function mapGenerateActivityStatus(event: AiExecutionProgressEvent): GenerateActivityStatus {
+  if (event.agentRun?.status === "needs_user_input") return "needs_user_input";
+  if (event.phase === "complete" || event.status === "succeeded") return "ready";
+  if (event.phase === "cancelled" || event.status === "cancelled") return "cancelled";
+  if (event.phase === "error" || event.status === "failed") return "error";
+  return "running";
+}
+
+function mergeActivityDetails(
+  current: GenerateActivityDetail[] | undefined,
+  incoming: AiExecutionProgressEvent["details"] | undefined,
+  updatedAt: string,
+  status: GenerateActivityStatus
+): GenerateActivityDetail[] | undefined {
+  const byId = new Map<string, GenerateActivityDetail>();
+  for (const detail of current ?? []) {
+    byId.set(detail.id, detail);
+  }
+
+  for (const detail of incoming ?? []) {
+    byId.set(detail.id, {
+      ...byId.get(detail.id),
+      id: detail.id,
+      label: detail.label,
+      status: detail.status,
+      updatedAt
+    });
+  }
+
+  if (byId.size === 0) return undefined;
+
+  if (status === "error" || status === "cancelled") {
+    const terminalStatus = status === "error" ? "error" : "cancelled";
+    for (const [id, detail] of byId) {
+      byId.set(id, {
+        ...detail,
+        status: detail.status === "running" ? terminalStatus : detail.status,
+        updatedAt: detail.status === "running" ? updatedAt : detail.updatedAt
+      });
+    }
+  }
+
+  if (status === "ready") {
+    for (const [id, detail] of byId) {
+      byId.set(id, {
+        ...detail,
+        status: detail.status === "pending" || detail.status === "running" ? "complete" : detail.status,
+        updatedAt
+      });
+    }
+  }
+
+  return [...byId.values()];
+}
+
+function mergeAgentEvents(
+  current: VdtAgentEvent[] | undefined,
+  incoming: VdtAgentEvent[] | undefined
+): VdtAgentEvent[] | undefined {
+  const byId = new Map<string, VdtAgentEvent>();
+  for (const event of current ?? []) {
+    byId.set(event.id, event);
+  }
+  for (const event of incoming ?? []) {
+    byId.set(event.id, event);
+  }
+  if (byId.size === 0) return undefined;
+  return [...byId.values()].sort((left, right) => {
+    const leftTime = Date.parse(left.timestamp);
+    const rightTime = Date.parse(right.timestamp);
+    if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return 0;
+    return leftTime - rightTime;
+  });
+}
+
+function mergeAgentRun(activity: GenerateActivityState, incoming: VdtAgentRun | undefined): Partial<GenerateActivityState> {
+  if (!incoming) return {};
+  const agentEvents = mergeAgentEvents(activity.agentEvents ?? activity.agentRun?.events, incoming.events);
+  const selectedSkills = incoming.selectedSkills.length > 0
+    ? incoming.selectedSkills
+    : activity.selectedSkills ?? activity.agentRun?.selectedSkills;
+  const questionsForUser = incoming.questionsForUser ?? activity.questionsForUser ?? activity.agentRun?.questionsForUser;
+  const finalReport = incoming.finalReport ?? activity.finalReport ?? activity.agentRun?.finalReport;
+  return {
+    agentRun: {
+      ...incoming,
+      events: agentEvents ?? incoming.events,
+      selectedSkills: selectedSkills ?? incoming.selectedSkills,
+      ...(questionsForUser ? { questionsForUser } : {}),
+      ...(finalReport ? { finalReport } : {})
+    },
+    selectedSkills,
+    agentEvents,
+    questionsForUser,
+    finalReport
+  };
+}
+
+function applyGenerateProgressEvent(
+  set: (partial: Partial<VdtStudioState> | ((state: VdtStudioState) => Partial<VdtStudioState>)) => void,
+  runId: string,
+  event: AiExecutionProgressEvent
+) {
+  set((state) => {
+    const activity = state.generateActivity;
+    if (activity?.runId !== runId) {
+      return {};
+    }
+    if (activity.cancelRequested || activity.status === "cancelled") {
+      return {};
+    }
+
+    const status = mapGenerateActivityStatus(event);
+    const phase = mapGenerateActivityPhase(event.phase, activity.phase);
+    const phaseStartedAt = phase === activity.phase ? activity.phaseStartedAt : event.updatedAt;
+    const completedAt = status === "ready" || status === "error" || status === "cancelled"
+      ? event.updatedAt
+      : activity.completedAt;
+    const agentPatch = mergeAgentRun(activity, event.agentRun);
+
+    return {
+      generateActivity: {
+        ...activity,
+        ...agentPatch,
+        status,
+        phase,
+        phaseStartedAt,
+        requestId: event.requestId,
+        providerId: (event.providerId as ProviderId | undefined) ?? activity.providerId,
+        backendId: event.backendId ?? activity.backendId,
+        schemaId: event.schemaId ?? activity.schemaId,
+        appMode: event.appMode,
+        outputBytes: event.outputBytes ?? activity.outputBytes,
+        schemaValid: event.schemaValid ?? activity.schemaValid,
+        repairAttempted: event.repairAttempted ?? activity.repairAttempted,
+        repairSucceeded: event.repairSucceeded ?? activity.repairSucceeded,
+        errorCode: event.error?.code ?? activity.errorCode,
+        canCancel: (status === "running" || status === "needs_user_input") && !activity.cancelRequested,
+        message: event.error?.message ?? activity.message,
+        details: mergeActivityDetails(activity.details, event.details, event.updatedAt, status),
+        completedAt,
+        updatedAt: event.updatedAt
+      }
+    };
+  });
+}
+
+function patchGenerateActivity(
+  set: (partial: Partial<VdtStudioState> | ((state: VdtStudioState) => Partial<VdtStudioState>)) => void,
+  runId: string,
+  patch: Partial<GenerateActivityState>
+) {
+  set((state) => {
+    if (state.generateActivity?.runId !== runId) {
+      return {};
+    }
+
+    const updatedAt = nowIso();
+    return {
+      generateActivity: {
+        ...state.generateActivity,
+        ...patch,
+        phaseStartedAt:
+          patch.phase && patch.phase !== state.generateActivity.phase
+            ? updatedAt
+            : (patch.phaseStartedAt ?? state.generateActivity.phaseStartedAt),
+        updatedAt
+      }
+    };
+  });
+}
+
 async function runAiTask<T extends RunAiActionTaskType>(
   taskType: T,
   input: RunAiActionInput<T>,
-  state: Pick<VdtStudioState, "executionSettings" | "cliDetectionAgents" | "project" | "runnerPairingToken">
+  state: Pick<VdtStudioState, "executionSettings" | "cliDetectionAgents" | "project" | "runnerPairingToken">,
+  options?: { onProgress?: (event: AiExecutionProgressEvent) => void }
 ): Promise<RunAiTaskResult> {
   if (state.executionSettings.executionMode === "local_cli" && !hasLocalAiUi(resolveVdtAppMode())) {
     throw new Error(HOSTED_WEB_LOCAL_AI_MESSAGE);
@@ -412,24 +813,28 @@ async function runAiTask<T extends RunAiActionTaskType>(
   }
 
   const { providerId, providerConfig } = resolveExecutionSettings(state.executionSettings);
-  if (providerId === "local_runner" && !state.runnerPairingToken) {
+  const needsPairing = requiresStandaloneRunnerPairing();
+  if (providerId === "local_runner" && needsPairing && !state.runnerPairingToken) {
     throw new Error("Pair the local runner before running this AI action.");
   }
 
-  return createAiExecutionClient().complete({
-    taskType,
-    input: {
-      project: state.project,
-      ...input
+  return createAiExecutionClient().complete(
+    {
+      taskType,
+      input: {
+        project: state.project,
+        ...input
+      },
+      providerId,
+      providerConfig:
+        providerId === "mock"
+          ? undefined
+          : providerId === "local_runner" && needsPairing
+            ? { ...providerConfig, pairingToken: state.runnerPairingToken }
+            : providerConfig
     },
-    providerId,
-    providerConfig:
-      providerId === "mock"
-        ? undefined
-        : providerId === "local_runner"
-          ? { ...providerConfig, pairingToken: state.runnerPairingToken }
-          : providerConfig
-  });
+    options?.onProgress ? { onProgress: options.onProgress } : undefined
+  );
 }
 
 export function isAdvisoryAiTaskType(taskType: RunAiActionTaskType): boolean {
@@ -486,8 +891,11 @@ function ensureScenario(project: VdtProject) {
   };
 }
 
-function requiresStandaloneRunnerPairing(providerId: ProviderId, appMode = resolveVdtAppMode()): boolean {
-  return providerId === "local_runner" && appMode === "development_web";
+function requiresStandaloneRunnerPairing(): boolean {
+  // Development web now uses the managed Next.js local runtime route, matching
+  // the desktop sidecar shape. Pairing is retained only for the legacy
+  // standalone HTTP runner surface, not for the main Local AI flow.
+  return false;
 }
 
 function persistedProviderConfig(config: ProviderConfigState) {
@@ -599,7 +1007,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       isTestingProvider: false,
       byokFieldErrors: undefined,
       ui: { ...DEFAULT_UI },
+      scenarioModalOpen: false,
       isGenerating: false,
+      generateActivity: undefined,
       changeSetSelection: new Set<string>(),
       highlightedNodeIds: [],
       isRunningAiAction: false,
@@ -619,16 +1029,15 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         set((state) => ({
           ui: { ...state.ui, rightPanelCollapsed: !state.ui.rightPanelCollapsed }
         })),
-      toggleScenarioDrawer: () =>
-        set((state) => ({
-          ui: { ...state.ui, scenarioDrawerCollapsed: !state.ui.scenarioDrawerCollapsed }
-        })),
-      resetUiPreferences: () => set({ ui: { ...DEFAULT_UI } }),
+      openScenarioModal: () => set({ scenarioModalOpen: true }),
+      closeScenarioModal: () => set({ scenarioModalOpen: false }),
+      setScenarioModalOpen: (open) => set({ scenarioModalOpen: open }),
+      resetUiPreferences: () => set({ ui: { ...DEFAULT_UI }, scenarioModalOpen: false }),
       autoDistributeLayout: () =>
         set((state) => {
           const existingPositions = collectExistingPositions(state.project.graph.nodes);
           const layout = layoutGraph(state.project.graph, state.project.rootNodeId, {
-            ...DEFAULT_CANVAS_LAYOUT,
+            ...canvasLayoutOptions(state.ui),
             existingPositions
           });
           const updatedAt = nowIso();
@@ -876,6 +1285,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           ...state.executionSettings,
           executionMode: "local_cli",
           selectedCliAgentId: agentId,
+          localRunnerPresetId: "custom_cli_json",
+          runnerProviderId: "cli_stub",
           command: resolveCliCommandForAgent(agentId, state.cliDetectionAgents),
           cliModelSelection: model ? { source: "custom", customModel: model } : { source: "agent_default" }
         });
@@ -894,7 +1305,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         let nextStatus: ProviderTestStatus | undefined;
 
         try {
-          const needsPairing = requiresStandaloneRunnerPairing(resolved.providerId);
+          const needsPairing = requiresStandaloneRunnerPairing();
           if (needsPairing && !state.runnerPairingToken) {
             throw new Error("Pair the local runner before testing a subscription backend.");
           }
@@ -972,11 +1383,32 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       setProviderTestState: (isTestingProvider, providerTestStatus) =>
         set({ isTestingProvider, providerTestStatus }),
       setByokFieldErrors: (byokFieldErrors) => set({ byokFieldErrors }),
+      cancelGenerate: () => {
+        const activity = get().generateActivity;
+        if (!activity || (activity.status !== "running" && activity.status !== "needs_user_input")) return;
+        const completedAt = nowIso();
+        set({
+          isGenerating: false,
+          generateActivity: {
+            ...activity,
+            status: "cancelled",
+            cancelRequested: true,
+            canCancel: false,
+            message: "Generation cancelled.",
+            details: mergeActivityDetails(activity.details, undefined, completedAt, "cancelled"),
+            completedAt,
+            updatedAt: completedAt
+          }
+        });
+        activeGenerateAbortController?.abort();
+      },
       generateWithAi: async () => {
+        if (get().isGenerating) return;
+
         const { brief, executionSettings, cliDetectionAgents } = get();
 
         if (executionSettings.executionMode === "local_cli" && !hasLocalAiUi(resolveVdtAppMode())) {
-          set({ aiError: HOSTED_WEB_LOCAL_AI_MESSAGE });
+          set({ aiError: HOSTED_WEB_LOCAL_AI_MESSAGE, generateActivity: undefined });
           return;
         }
 
@@ -985,7 +1417,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           if (hasByokFieldErrors(validationErrors)) {
             set({
               byokFieldErrors: validationErrors,
-              aiError: "Fix BYOK settings before generating."
+              aiError: "Fix BYOK settings before generating.",
+              generateActivity: undefined
             });
             return;
           }
@@ -993,22 +1426,33 @@ export const useVdtStudioStore = create<VdtStudioState>()(
 
         const executionError = validateExecutionForGenerate(executionSettings, cliDetectionAgents);
         if (executionError) {
-          set({ aiError: executionError });
+          set({ aiError: executionError, generateActivity: undefined });
           return;
         }
 
         const { providerId, providerConfig } = resolveExecutionSettings(executionSettings);
         const runnerPairingToken = get().runnerPairingToken;
-        const needsPairing = requiresStandaloneRunnerPairing(providerId);
+        const needsPairing = requiresStandaloneRunnerPairing();
         if (needsPairing && !runnerPairingToken) {
-          set({ aiError: "Pair the local runner before generating." });
+          set({ aiError: "Pair the local runner before generating.", generateActivity: undefined });
           return;
         }
-        set({ isGenerating: true, aiError: undefined, ...clearPendingAiActionState(), byokFieldErrors: undefined });
+
+        const runId = generateRunId();
+        const abortController = new AbortController();
+        activeGenerateRunId = runId;
+        activeGenerateAbortController = abortController;
+        set({
+          isGenerating: true,
+          generateActivity: buildGenerateActivity(runId, executionSettings, providerId, providerConfig),
+          aiError: undefined,
+          ...clearPendingAiActionState(),
+          byokFieldErrors: undefined
+        });
 
         try {
-          const project = ensureScenario(
-            await createAiExecutionClient().generateTree({
+          const generatedProject = await createAiExecutionClient().generateTree(
+            {
               ...brief,
               providerId,
               providerConfig:
@@ -1017,19 +1461,92 @@ export const useVdtStudioStore = create<VdtStudioState>()(
                   : needsPairing
                     ? { ...providerConfig, pairingToken: runnerPairingToken }
                     : providerConfig
-            })
+            },
+            {
+              signal: abortController.signal,
+              onProgress: (event) => applyGenerateProgressEvent(set, runId, event)
+            }
           );
+          const activityAfterCompletion = get().generateActivity;
+          if (
+            abortController.signal.aborted ||
+            activeGenerateRunId !== runId ||
+            activityAfterCompletion?.runId !== runId ||
+            activityAfterCompletion.status === "cancelled" ||
+            activityAfterCompletion.cancelRequested
+          ) {
+            set({ isGenerating: false });
+            return;
+          }
+          patchGenerateActivity(set, runId, { phase: "validating_schema", canCancel: false });
+          const projectWithScenario = ensureScenario(generatedProject);
+          patchGenerateActivity(set, runId, { phase: "normalizing_graph" });
+          const project = projectWithScenario;
+          patchGenerateActivity(set, runId, { phase: "building_canvas" });
+          const completedAt = nowIso();
+          const currentActivity = get().generateActivity!;
+          const generatedSummary = summarizeGeneratedVdt(project);
           set({
             project,
             selectedNodeId: project.rootNodeId,
             activeScenarioId: project.scenarios[0]?.id ?? "",
-            isGenerating: false
+            isGenerating: false,
+            generateActivity: {
+              ...currentActivity,
+              status: "ready",
+              phase: "ready",
+              phaseStartedAt: completedAt,
+              canCancel: false,
+              summary: currentActivity.finalReport ?? currentActivity.agentRun?.finalReport ?? generatedSummary,
+              finalReport: currentActivity.finalReport ?? currentActivity.agentRun?.finalReport,
+              details: mergeActivityDetails(currentActivity.details, undefined, completedAt, "ready"),
+              completedAt,
+              updatedAt: completedAt
+            }
           });
         } catch (error) {
+          if (isAbortError(error)) {
+            set((state) => ({
+              isGenerating: false,
+              aiError: undefined,
+              generateActivity: (() => {
+                if (state.generateActivity?.runId !== runId) return state.generateActivity;
+                const completedAt = nowIso();
+                return {
+                  ...state.generateActivity,
+                  status: "cancelled",
+                  canCancel: false,
+                  cancelRequested: true,
+                  message: "Generation cancelled.",
+                  details: mergeActivityDetails(state.generateActivity.details, undefined, completedAt, "cancelled"),
+                  completedAt,
+                  updatedAt: completedAt
+                };
+              })()
+            }));
+            return;
+          }
+
+          const completedAt = nowIso();
+          const currentActivity = get().generateActivity!;
           set({
             aiError: error instanceof Error ? error.message : "AI response could not be parsed.",
-            isGenerating: false
+            isGenerating: false,
+            generateActivity: {
+              ...currentActivity,
+              status: "error",
+              canCancel: false,
+              message: error instanceof Error ? error.message : "AI response could not be parsed.",
+              details: mergeActivityDetails(currentActivity.details, undefined, completedAt, "error"),
+              completedAt,
+              updatedAt: completedAt
+            }
           });
+        } finally {
+          if (activeGenerateRunId === runId) {
+            activeGenerateAbortController = undefined;
+            activeGenerateRunId = undefined;
+          }
         }
       },
       loadExample: (exampleId = "production_volume") => {
@@ -1039,6 +1556,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           brief: briefFromProject(project),
           selectedNodeId: project.rootNodeId,
           activeScenarioId: project.scenarios[0]?.id ?? "",
+          generateActivity: undefined,
           aiError: undefined,
           ...clearPendingAiActionState()
         });
@@ -1049,6 +1567,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           project: nextProject,
           selectedNodeId: nextProject.rootNodeId,
           activeScenarioId: nextProject.scenarios[0]?.id ?? "",
+          generateActivity: undefined,
           aiError: undefined,
           ...clearPendingAiActionState()
         });
@@ -1132,6 +1651,55 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           };
         }),
       setActiveScenarioId: (scenarioId) => set({ activeScenarioId: scenarioId }),
+      renameScenario: (scenarioId, name) =>
+        set((state) => {
+          const trimmed = name.trim();
+          if (!trimmed) {
+            return state;
+          }
+
+          const scenario = state.project.scenarios.find((candidate) => candidate.id === scenarioId);
+          if (!scenario || scenario.name === trimmed) {
+            return state;
+          }
+
+          const updatedAt = nowIso();
+          return {
+            project: {
+              ...state.project,
+              updatedAt,
+              scenarios: state.project.scenarios.map((candidate) =>
+                candidate.id === scenarioId ? { ...candidate, name: trimmed, updatedAt } : candidate
+              )
+            }
+          };
+        }),
+      deleteScenario: (scenarioId) =>
+        set((state) => {
+          if (state.project.scenarios.length <= 1) {
+            return state;
+          }
+
+          const index = state.project.scenarios.findIndex((candidate) => candidate.id === scenarioId);
+          if (index === -1) {
+            return state;
+          }
+
+          const scenarios = state.project.scenarios.filter((candidate) => candidate.id !== scenarioId);
+          const nextActive =
+            state.activeScenarioId === scenarioId
+              ? scenarios[Math.min(index, scenarios.length - 1)]!.id
+              : state.activeScenarioId;
+
+          return {
+            activeScenarioId: nextActive,
+            project: {
+              ...state.project,
+              scenarios,
+              updatedAt: nowIso()
+            }
+          };
+        }),
       updateScenarioOverride: (scenarioId, nodeId, value) =>
         set((state) => ({
           project: {
@@ -1156,31 +1724,77 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
         })),
       runAiAction: async (taskType, input) => {
+        const actionRunId = AGENTIC_AI_ACTION_SCHEMA_IDS[taskType] ? generateRunId() : undefined;
+        const stateBeforeRun = get();
+        const resolvedExecution = actionRunId ? resolveExecutionSettings(stateBeforeRun.executionSettings) : undefined;
         set({
           isRunningAiAction: true,
           aiActionError: undefined,
           pendingAdvisoryResult: undefined,
           pendingAdvisoryTaskType: undefined,
           pendingExplanation: undefined,
-          pendingExplanationTaskType: undefined
+          pendingExplanationTaskType: undefined,
+          ...(actionRunId && resolvedExecution
+            ? {
+                generateActivity: buildAiActionActivity(
+                  actionRunId,
+                  taskType,
+                  stateBeforeRun.executionSettings,
+                  resolvedExecution.providerId,
+                  resolvedExecution.providerConfig
+                )
+              }
+            : {})
         });
 
         try {
-          const result = await runAiTask(taskType, input, get());
+          const result = await runAiTask(
+            taskType,
+            input,
+            get(),
+            actionRunId
+              ? { onProgress: (event) => applyGenerateProgressEvent(set, actionRunId, event) }
+              : undefined
+          );
           const project = get().project;
 
           switch (result.kind) {
             case "change_set":
-              set({
-                pendingChangeSet: result.changeSet,
-                changeSetSelection: collectChangeEntryIds(result.changeSet),
-                highlightedNodeIds: computeHighlightedNodeIds(project, result.changeSet),
-                pendingAdvisoryResult: undefined,
-                pendingAdvisoryTaskType: undefined,
-                pendingExplanation: undefined,
-                pendingExplanationTaskType: undefined,
-                selectedPanelTab: "ai",
-                isRunningAiAction: false
+              set((state) => {
+                const activity = actionRunId && state.generateActivity?.runId === actionRunId
+                  ? state.generateActivity
+                  : undefined;
+                const completedAt = nowIso();
+                const agentPatch = activity ? mergeAgentRun(activity, result.agentRun) : {};
+                const finalReport = agentPatch.finalReport ?? activity?.finalReport ?? activity?.agentRun?.finalReport;
+                return {
+                  pendingChangeSet: result.changeSet,
+                  changeSetSelection: collectChangeEntryIds(result.changeSet),
+                  highlightedNodeIds: computeHighlightedNodeIds(project, result.changeSet),
+                  pendingAdvisoryResult: undefined,
+                  pendingAdvisoryTaskType: undefined,
+                  pendingExplanation: undefined,
+                  pendingExplanationTaskType: undefined,
+                  selectedPanelTab: "ai",
+                  isRunningAiAction: false,
+                  ...(activity
+                    ? {
+                        generateActivity: {
+                          ...activity,
+                          ...agentPatch,
+                          status: "ready",
+                          phase: "ready",
+                          phaseStartedAt: completedAt,
+                          canCancel: false,
+                          summary: finalReport ?? `Prepared ${result.changeSet.additions.length} graph change${result.changeSet.additions.length === 1 ? "" : "s"}.`,
+                          finalReport,
+                          details: mergeActivityDetails(activity.details, undefined, completedAt, "ready"),
+                          completedAt,
+                          updatedAt: completedAt
+                        }
+                      }
+                    : {})
+                };
               });
               return;
             case "advisory":
@@ -1219,9 +1833,29 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             }
           }
         } catch (error) {
-          set({
-            aiActionError: error instanceof Error ? error.message : "AI task failed.",
-            isRunningAiAction: false
+          set((state) => {
+            const activity = actionRunId && state.generateActivity?.runId === actionRunId
+              ? state.generateActivity
+              : undefined;
+            const completedAt = nowIso();
+            const message = error instanceof Error ? error.message : "AI task failed.";
+            return {
+              aiActionError: message,
+              isRunningAiAction: false,
+              ...(activity
+                ? {
+                    generateActivity: {
+                      ...activity,
+                      status: "error",
+                      canCancel: false,
+                      message,
+                      details: mergeActivityDetails(activity.details, undefined, completedAt, "error"),
+                      completedAt,
+                      updatedAt: completedAt
+                    }
+                  }
+                : {})
+            };
           });
         }
       },
@@ -1255,7 +1889,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             };
           }
 
-          const laidOut = layoutProjectGraph(applied.project);
+          const laidOut = layoutProjectGraph(applied.project, state.ui);
           calculateGraph(laidOut);
 
           return {
@@ -1303,7 +1937,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         set((state) => {
           try {
             const restored = restoreProjectVersionSnapshot(state.project, versionId);
-            const laidOut = layoutProjectGraph(restored);
+            const laidOut = layoutProjectGraph(restored, state.ui);
             calculateGraph(laidOut);
 
             return {

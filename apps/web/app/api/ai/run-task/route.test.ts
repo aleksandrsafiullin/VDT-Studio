@@ -20,6 +20,7 @@ async function readJson(response: Response) {
       kind: string;
       changeSet?: { taskType?: string; additions?: Array<{ nodeId?: string }> };
       result?: { findings?: unknown[]; questionsForUser?: unknown[] };
+      agentRun?: { status?: string; events?: Array<{ type?: string }> };
     };
   };
 }
@@ -107,6 +108,15 @@ describe("run-task API route", () => {
       "equipment_failure_downtime",
       "process_interruption_downtime"
     ]);
+    expect(body.result?.agentRun).toMatchObject({
+      status: "succeeded",
+      events: expect.arrayContaining([
+        expect.objectContaining({ type: "classification" }),
+        expect.objectContaining({ type: "skill_selected" }),
+        expect.objectContaining({ type: "graph_validation" }),
+        expect.objectContaining({ type: "final_report" })
+      ])
+    });
   });
 
   it("runs review_model through MockProvider", async () => {

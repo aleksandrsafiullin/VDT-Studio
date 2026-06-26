@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   applyChangeSet,
   calculateGraph,
+  calculateIsolatedRootEffect,
+  calculateOnePercentRootSensitivity,
   calculateScenario,
+  calculateScenarioMultiplicativeEffect,
   createVersionSnapshot,
   diffChangeSet,
   evaluateFormula,
@@ -17,6 +20,7 @@ import {
   DEFAULT_CANVAS_LAYOUT,
   previewChangeSet,
   productionVolumeProject,
+  rankScenarioInputNodes,
   restoreVersionSnapshot,
   validateGraph,
   VersionNotFoundError,
@@ -61,6 +65,136 @@ describe("production volume example", () => {
     expect(result.absoluteChange).toBeCloseTo(3801.6, 5);
     expect(result.percentageChange).toBeCloseTo(3.333333, 4);
     expect(result.impactedNodes.map((node) => node.nodeId)).toContain("unplanned_downtime");
+  });
+});
+
+describe("scenario sensitivity APIs", () => {
+  it("calculates 1% root sensitivity for unplanned_downtime", () => {
+    const delta = calculateOnePercentRootSensitivity(productionVolumeProject, "unplanned_downtime");
+
+    expect(delta).toBeDefined();
+    expect(Number.isFinite(delta)).toBe(true);
+    expect(delta).not.toBe(0);
+    // +1% unplanned downtime reduces effective working time and root output.
+    expect(delta).toBeCloseTo(-152.064, 2);
+  });
+
+  it("calculates isolated root effect for a single override value", () => {
+    const isolatedAt60 = calculateIsolatedRootEffect(productionVolumeProject, "unplanned_downtime", 60);
+    const scenario = productionVolumeProject.scenarios[0];
+    expect(scenario).toBeDefined();
+
+    const scenarioResult = calculateScenario(productionVolumeProject, scenario!);
+
+    expect(isolatedAt60).toBeDefined();
+    expect(isolatedAt60).toBeCloseTo(3801.6, 2);
+    expect(isolatedAt60).toBeCloseTo(scenarioResult.absoluteChange!, 5);
+  });
+
+  it("ranks scenario input nodes by absolute 1% root effect with zero baseline last and name tie-break", () => {
+    const zeroBaselineInput = {
+      id: "zero_baseline_input",
+      name: "Zero Baseline Input",
+      description: "Input with zero baseline for ranking edge case.",
+      type: "input" as const,
+      status: "ai_suggested" as const,
+      unit: "hours/month",
+      baselineValue: 0,
+      aiGenerated: true,
+      aiConfidence: 0.5,
+      aiRationale: "Test fixture for zero-baseline ranking.",
+      controllability: "low" as const,
+      materiality: "low" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    };
+    const projectWithZeroBaseline: VdtProject = {
+      ...productionVolumeProject,
+      graph: {
+        ...productionVolumeProject.graph,
+        nodes: [...productionVolumeProject.graph.nodes, zeroBaselineInput]
+      }
+    };
+
+    const ranked = rankScenarioInputNodes(projectWithZeroBaseline);
+    const rankedIds = ranked.map((entry) => entry.nodeId);
+
+    expect(rankedIds.at(-1)).toBe("zero_baseline_input");
+    expect(ranked.find((entry) => entry.nodeId === "zero_baseline_input")?.onePercentRootDelta).toBe(0);
+
+    const unplannedIndex = rankedIds.indexOf("unplanned_downtime");
+    const plannedIndex = rankedIds.indexOf("planned_downtime");
+    expect(unplannedIndex).toBeGreaterThan(-1);
+    expect(plannedIndex).toBeGreaterThan(-1);
+    expect(unplannedIndex).toBeLessThan(plannedIndex);
+
+    const utilizationIndex = rankedIds.indexOf("utilization_factor");
+    const yieldIndex = rankedIds.indexOf("yield_factor");
+    expect(utilizationIndex).toBeGreaterThan(-1);
+    expect(yieldIndex).toBeGreaterThan(-1);
+    expect(ranked[utilizationIndex]!.onePercentRootDelta).toBeCloseTo(ranked[yieldIndex]!.onePercentRootDelta!, 5);
+    expect(utilizationIndex).toBeLessThan(yieldIndex);
+    expect(ranked[utilizationIndex]!.nodeName.localeCompare(ranked[yieldIndex]!.nodeName)).toBeLessThan(0);
+
+    for (let index = 1; index < ranked.length - 1; index += 1) {
+      const previous = ranked[index - 1]!;
+      const current = ranked[index]!;
+      const previousMagnitude = Math.abs(previous.onePercentRootDelta ?? 0);
+      const currentMagnitude = Math.abs(current.onePercentRootDelta ?? 0);
+      expect(previousMagnitude).toBeGreaterThanOrEqual(currentMagnitude);
+    }
+  });
+
+  it("returns undefined sensitivity for unknown node ids without throwing", () => {
+    expect(calculateOnePercentRootSensitivity(productionVolumeProject, "missing_node")).toBeUndefined();
+    expect(calculateIsolatedRootEffect(productionVolumeProject, "missing_node", 42)).toBeUndefined();
+  });
+
+  it("calculates zero multiplicative effect for a single override", () => {
+    const scenario = productionVolumeProject.scenarios[0];
+    expect(scenario).toBeDefined();
+
+    const multiplicative = calculateScenarioMultiplicativeEffect(productionVolumeProject, scenario!);
+
+    expect(multiplicative.totalRootEffect).toBeCloseTo(3801.6, 2);
+    expect(multiplicative.sumOfIsolatedEffects).toBeCloseTo(3801.6, 2);
+    expect(multiplicative.multiplicativeEffect).toBeCloseTo(0, 5);
+  });
+
+  it("calculates non-zero multiplicative effect when multiple overrides combine", () => {
+    const scenario = productionVolumeProject.scenarios[0];
+    expect(scenario).toBeDefined();
+
+    const multiOverrideScenario = {
+      ...scenario!,
+      overrides: [
+        { nodeId: "unplanned_downtime", value: 60 },
+        { nodeId: "planned_downtime", value: 20 }
+      ]
+    };
+
+    const combined = calculateScenario(productionVolumeProject, multiOverrideScenario);
+    const multiplicative = calculateScenarioMultiplicativeEffect(productionVolumeProject, multiOverrideScenario);
+    const isolatedUnplanned = calculateIsolatedRootEffect(productionVolumeProject, "unplanned_downtime", 60)!;
+    const isolatedPlanned = calculateIsolatedRootEffect(productionVolumeProject, "planned_downtime", 20)!;
+
+    expect(combined.absoluteChange).toBeDefined();
+    expect(multiplicative.sumOfIsolatedEffects).toBeCloseTo(isolatedUnplanned + isolatedPlanned, 2);
+    expect(multiplicative.multiplicativeEffect).toBeCloseTo(
+      combined.absoluteChange! - (isolatedUnplanned + isolatedPlanned),
+      2
+    );
+    expect(Math.abs(multiplicative.multiplicativeEffect ?? 0)).toBeGreaterThan(0);
+  });
+
+  it("returns undefined multiplicative fields when scenario has no valid overrides", () => {
+    const multiplicative = calculateScenarioMultiplicativeEffect(productionVolumeProject, {
+      ...productionVolumeProject.scenarios[0]!,
+      overrides: []
+    });
+
+    expect(multiplicative.sumOfIsolatedEffects).toBeUndefined();
+    expect(multiplicative.multiplicativeEffect).toBeUndefined();
   });
 });
 
@@ -659,6 +793,112 @@ describe("graph layout", () => {
     assertSiblingClustersDoNotInterleave(leafClusters[0]!, leafClusters[1]!);
     assertSiblingClustersDoNotInterleave(leafClusters[1]!, leafClusters[2]!);
     assertSiblingClustersDoNotInterleave(leafClusters[0]!, leafClusters[2]!);
+  });
+
+  it("keeps same-named leaf KPIs grouped under their own parent branch", () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const node = (
+      id: string,
+      name: string,
+      type: "root_kpi" | "calculated" | "input" = "input"
+    ) => ({
+      id,
+      name,
+      type,
+      status: "accepted" as const,
+      aiGenerated: false,
+      createdAt: now,
+      updatedAt: now
+    });
+    const edge = (id: string, sourceNodeId: string, targetNodeId: string) => ({
+      id,
+      sourceNodeId,
+      targetNodeId,
+      relation: "positive_driver" as const,
+      aiGenerated: false
+    });
+    const graph = {
+      nodes: [
+        node("root", "Root", "root_kpi"),
+        node("senior_a", "Senior KPI A", "calculated"),
+        node("senior_b", "Senior KPI B", "calculated"),
+        node("a_distance", "Average haul distance"),
+        node("a_speed", "Average speed"),
+        node("b_distance", "Average haul distance"),
+        node("b_speed", "Average speed")
+      ],
+      edges: [
+        edge("e_root_a", "root", "senior_a"),
+        edge("e_root_b", "root", "senior_b"),
+        edge("e_a_distance", "senior_a", "a_distance"),
+        edge("e_a_speed", "senior_a", "a_speed"),
+        edge("e_b_distance", "senior_b", "b_distance"),
+        edge("e_b_speed", "senior_b", "b_speed")
+      ]
+    };
+
+    const layout = layoutGraph(graph, "root", DEFAULT_CANVAS_LAYOUT);
+
+    assertSiblingClustersDoNotInterleave(
+      ysFor(layout.positions, ["a_distance", "a_speed"]),
+      ysFor(layout.positions, ["b_distance", "b_speed"])
+    );
+  });
+
+  it("applies custom horizontal and vertical KPI spacing", () => {
+    const layout = layoutGraph(
+      productionVolumeProject.graph,
+      productionVolumeProject.rootNodeId,
+      {
+        ...DEFAULT_CANVAS_LAYOUT,
+        horizontalGap: 320,
+        verticalGap: 96
+      }
+    );
+
+    expect(
+      layout.positions.get("effective_working_time")!.x -
+        layout.positions.get(productionVolumeProject.rootNodeId)!.x
+    ).toBe(DEFAULT_CANVAS_LAYOUT.cardWidth + 320);
+    expect(
+      layout.positions.get("planned_downtime")!.y -
+        layout.positions.get("calendar_time")!.y
+    ).toBe(DEFAULT_CANVAS_LAYOUT.cardHeight + 96);
+    assertNoOverlappingBoxes(layout.positions, layout.cardWidth, layout.cardHeight);
+  });
+
+  it("supports partial spacing options and legacy xGap/yGap aliases", () => {
+    const partialLayout = layoutGraph(
+      productionVolumeProject.graph,
+      productionVolumeProject.rootNodeId,
+      {
+        horizontalGap: 320,
+        verticalGap: 96
+      }
+    );
+    const aliasLayout = layoutGraph(
+      productionVolumeProject.graph,
+      productionVolumeProject.rootNodeId,
+      {
+        xGap: 320,
+        yGap: 96
+      }
+    );
+
+    expect(partialLayout.cardWidth).toBe(DEFAULT_CANVAS_LAYOUT.cardWidth);
+    expect(partialLayout.cardHeight).toBe(DEFAULT_CANVAS_LAYOUT.cardHeight);
+    expect(partialLayout.positions.get("effective_working_time")).toEqual(
+      aliasLayout.positions.get("effective_working_time")
+    );
+    expect(
+      partialLayout.positions.get("effective_working_time")!.x -
+        partialLayout.positions.get(productionVolumeProject.rootNodeId)!.x
+    ).toBe(DEFAULT_CANVAS_LAYOUT.cardWidth + 320);
+    expect(
+      partialLayout.positions.get("planned_downtime")!.y -
+        partialLayout.positions.get("calendar_time")!.y
+    ).toBe(DEFAULT_CANVAS_LAYOUT.cardHeight + 96);
+    assertNoOverlappingBoxes(partialLayout.positions, partialLayout.cardWidth, partialLayout.cardHeight);
   });
 
   it("respects manual sibling order from existingPositions y values", () => {

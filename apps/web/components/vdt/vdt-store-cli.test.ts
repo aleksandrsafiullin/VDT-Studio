@@ -58,6 +58,43 @@ function mockDeepenChangeSet(): VdtChangeSet {
   };
 }
 
+function agentRunFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    runId: "agent-run-store-1",
+    status: "succeeded",
+    phase: "reporting",
+    request: {
+      rootKpi: "Production Volume",
+      industry: "Mining"
+    },
+    selectedSkills: [
+      {
+        id: "mining.production_volume",
+        path: "packages/vdt-agent/skills/mining/production-volume.md",
+        reason: "Matched production volume mining context."
+      }
+    ],
+    events: [
+      {
+        id: "evt-classification",
+        timestamp: "2026-06-24T10:00:01.000Z",
+        type: "classification",
+        title: "Classified request",
+        message: "Classified request as mining / production throughput."
+      },
+      {
+        id: "evt-final-report",
+        timestamp: "2026-06-24T10:00:05.000Z",
+        type: "final_report",
+        title: "Final report",
+        message: "Generated final report."
+      }
+    ],
+    finalReport: "Validation result: Graph validation passed.",
+    ...overrides
+  };
+}
+
 describe("vdt-store change-set workflow", () => {
   beforeEach(() => {
     localStorageMock.clear();
@@ -98,7 +135,7 @@ describe("vdt-store change-set workflow", () => {
           status: 200,
           json: async () => ({
             ok: true,
-            result: { kind: "change_set", changeSet }
+            result: { kind: "change_set", changeSet, agentRun: agentRunFixture() }
           })
         } as Response;
       }
@@ -134,6 +171,97 @@ describe("vdt-store change-set workflow", () => {
     );
     expect(state.isRunningAiAction).toBe(false);
     expect(state.selectedPanelTab).toBe("ai");
+    expect(state.generateActivity).toMatchObject({
+      status: "ready",
+      schemaId: "deepen-node-v1",
+      agentRun: {
+        runId: "agent-run-store-1",
+        selectedSkills: expect.arrayContaining([expect.objectContaining({ id: "mining.production_volume" })])
+      },
+      finalReport: "Validation result: Graph validation passed."
+    });
+  });
+
+  it("runAiAction reaches managed local CLI runtime without runner pairing", async () => {
+    const changeSet = mockDeepenChangeSet();
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/ai/dev-runtime")) {
+        const body = JSON.parse(String(init?.body)) as {
+          operation?: string;
+          request?: {
+            backendId?: string;
+            taskType?: string;
+            schemaId?: string;
+            input?: { nodeId?: string; project?: { id?: string } };
+          };
+        };
+        expect(body.operation).toBe("complete");
+        expect(body.request).toMatchObject({
+          backendId: "codex_subscription",
+          taskType: "deepen_node",
+          schemaId: "deepen-node-v1"
+        });
+        expect(body.request?.input?.nodeId).toBe("unplanned_downtime");
+        expect(body.request?.input?.project?.id).toBe(productionVolumeProject.id);
+        expect(String(init?.body)).not.toContain("pairingToken");
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            output: { kind: "change_set", changeSet }
+          })
+        } as Response;
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ agents: [] })
+      } as Response;
+    });
+
+    useVdtStudioStore.setState({
+      runnerPairingToken: undefined,
+      cliDetectionAgents: [
+        {
+          id: "codex",
+          installed: true,
+          executable: "/usr/local/bin/codex",
+          alias: "codex",
+          version: "0.128.0",
+          status: "ready",
+          authSummary: "ChatGPT subscription is authenticated and ready."
+        }
+      ],
+      executionSettings: {
+        ...DEFAULT_EXECUTION_SETTINGS,
+        executionMode: "local_cli",
+        selectedCliAgentId: "codex",
+        localRunnerPresetId: "custom_cli_json",
+        runnerProviderId: "cli_stub",
+        command: "/usr/local/bin/codex",
+        cliModelSelection: { source: "agent_default" }
+      },
+      providerId: "local_runner",
+      providerConfig: {
+        localRunnerPresetId: "custom_cli_json",
+        runnerProviderId: "cli_stub"
+      }
+    });
+
+    await useVdtStudioStore.getState().runAiAction("deepen_node", { nodeId: "unplanned_downtime" });
+
+    const devRuntimeCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/ai/dev-runtime"));
+    expect(devRuntimeCall).toBeDefined();
+    const state = useVdtStudioStore.getState();
+    expect(state.aiActionError).toBeUndefined();
+    expect(state.pendingChangeSet?.id).toBe(changeSet.id);
+    expect(state.changeSetSelection).toEqual(
+      new Set(["add_equipment_failure_downtime", "add_process_interruption_downtime"])
+    );
   });
 
   it("toggleChangeSelection updates selected change entry ids", () => {
@@ -388,11 +516,11 @@ describe("vdt-store cli rescan", () => {
     ]);
   });
 
-  it("posts a real Local CLI connection test to the application API", async () => {
+  it("posts a real Local CLI connection test to the managed development runtime", async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/api/ai/generate-vdt")) {
+      if (url.endsWith("/api/ai/dev-runtime")) {
         return {
           ok: true,
           status: 200,
@@ -410,7 +538,6 @@ describe("vdt-store cli rescan", () => {
     });
 
     useVdtStudioStore.setState({
-      runnerPairingToken: "test-session-token",
       cliDetectionAgents: [
         {
           id: "claude",
@@ -432,37 +559,30 @@ describe("vdt-store cli rescan", () => {
 
     await useVdtStudioStore.getState().testCli("claude");
 
-    const testProviderCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/ai/generate-vdt"));
+    const testProviderCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/ai/dev-runtime"));
     expect(testProviderCall).toBeDefined();
 
     const [, requestInit] = testProviderCall!;
     const body = JSON.parse(String(requestInit?.body)) as {
-      providerId?: string;
       operation?: string;
-      providerConfig?: {
-        backendId?: string;
-        pairingToken?: string;
-        timeoutMs?: number;
-      };
+      backendId?: string;
     };
 
-    expect(body.operation).toBe("connection_test");
-    expect(body.providerId).toBe("local_runner");
-    expect(body.providerConfig).toMatchObject({
-      backendId: "claude_subscription",
-      pairingToken: "test-session-token",
-      timeoutMs: 60_000
+    expect(body).toEqual({
+      operation: "test",
+      backendId: "claude_subscription"
     });
+    expect(String(requestInit?.body)).not.toContain("pairingToken");
 
     const state = useVdtStudioStore.getState();
     expect(state.cliTestStatusByAgent.claude?.kind).toBe("success");
   });
 
-  it("posts a real Local CLI connection test for codex", async () => {
+  it("posts a real Local CLI connection test for codex without pairing", async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/api/ai/generate-vdt")) {
+      if (url.endsWith("/api/ai/dev-runtime")) {
         return {
           ok: true,
           status: 200,
@@ -478,7 +598,6 @@ describe("vdt-store cli rescan", () => {
     });
 
     useVdtStudioStore.setState({
-      runnerPairingToken: "test-session-token",
       cliDetectionAgents: [
         {
           id: "codex",
@@ -494,27 +613,24 @@ describe("vdt-store cli rescan", () => {
         ...DEFAULT_EXECUTION_SETTINGS,
         executionMode: "local_cli",
         selectedCliAgentId: "codex",
-        localRunnerPresetId: "custom_cli_json",
-        runnerProviderId: "cli_stub",
         command: "/usr/local/bin/codex"
       }
     });
 
     await useVdtStudioStore.getState().testCli("codex");
 
-    const testProviderCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/ai/generate-vdt"));
+    const testProviderCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/ai/dev-runtime"));
     expect(testProviderCall).toBeDefined();
 
     const [, requestInit] = testProviderCall!;
     const body = JSON.parse(String(requestInit?.body)) as {
       operation?: string;
-      providerId?: string;
-      providerConfig?: { backendId?: string };
+      backendId?: string;
     };
 
-    expect(body.operation).toBe("connection_test");
-    expect(body.providerId).toBe("local_runner");
-    expect(body.providerConfig?.backendId).toBe("codex_subscription");
+    expect(body.operation).toBe("test");
+    expect(body.backendId).toBe("codex_subscription");
+    expect(String(requestInit?.body)).not.toContain("pairingToken");
     expect(useVdtStudioStore.getState().cliTestStatusByAgent.codex?.kind).toBe("success");
   });
 
@@ -529,7 +645,7 @@ describe("vdt-store cli rescan", () => {
         backendId: "cursor_subscription",
         taskType: "generate_tree",
         schemaId: "generate-tree-v1",
-        timeoutMs: 60_000
+        timeoutMs: 120_000
       });
       return {
         output: {
@@ -651,7 +767,7 @@ describe("vdt-store cli rescan", () => {
         backendId: "codex_subscription",
         taskType: "generate_tree",
         schemaId: "generate-tree-v1",
-        timeoutMs: 60_000
+        timeoutMs: 120_000
       });
       return {
         output: {
@@ -771,7 +887,6 @@ describe("vdt-store cli rescan", () => {
     } as Response);
 
     useVdtStudioStore.setState({
-      runnerPairingToken: "test-session-token",
       cliDetectionAgents: [
         {
           id: "claude",
@@ -796,7 +911,7 @@ describe("vdt-store cli rescan", () => {
 
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/api/ai/generate-vdt")) {
+      if (url.includes("/api/ai/dev-runtime")) {
         return {
           ok: false,
           status: 502,
@@ -810,15 +925,13 @@ describe("vdt-store cli rescan", () => {
       } as Response;
     });
 
-    useVdtStudioStore.setState({ runnerPairingToken: "test-session-token" });
-
     await useVdtStudioStore.getState().generateWithAi();
 
     const state = useVdtStudioStore.getState();
     expect(state.aiError).toContain(providerMessage);
     expect(state.isGenerating).toBe(false);
 
-    const generateCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/ai/generate-vdt"));
+    const generateCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/ai/dev-runtime"));
     expect(generateCall).toBeDefined();
   });
 
@@ -829,5 +942,487 @@ describe("vdt-store cli catalog models", () => {
     const claudeModels = getCliCatalogEntry("claude").suggestedModels;
     expect(claudeModels).toContain("claude-sonnet-4-6");
     expect(claudeModels.length).toBeGreaterThan(0);
+  });
+});
+
+describe("vdt-store generate activity", () => {
+  beforeEach(() => {
+    localStorageMock.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, project: cloneProject(productionVolumeProject), agentRun: agentRunFixture() })
+      })
+    );
+    useVdtStudioStore.setState({
+      project: cloneProject(productionVolumeProject),
+      selectedNodeId: productionVolumeProject.rootNodeId,
+      activeScenarioId: productionVolumeProject.scenarios[0]?.id ?? "",
+      isGenerating: false,
+      generateActivity: undefined,
+      aiError: undefined,
+      providerId: "mock",
+      executionSettings: {
+        ...DEFAULT_EXECUTION_SETTINGS,
+        useMockProvider: true,
+        gatewayPresetId: "mock"
+      }
+    });
+  });
+
+  it("tracks observable generate phases and marks the run ready", async () => {
+    await useVdtStudioStore.getState().generateWithAi();
+
+    const state = useVdtStudioStore.getState();
+    expect(state.isGenerating).toBe(false);
+    expect(state.aiError).toBeUndefined();
+    expect(state.generateActivity).toMatchObject({
+      status: "ready",
+      phase: "ready",
+      providerId: "mock",
+      providerLabel: "Built-in mock",
+      backendId: "mock",
+      canCancel: false
+    });
+    expect(state.generateActivity?.runId).toBeTruthy();
+    expect(state.generateActivity?.completedAt).toBeTruthy();
+    expect(state.generateActivity?.agentRun).toMatchObject({
+      runId: "agent-run-store-1",
+      selectedSkills: expect.arrayContaining([expect.objectContaining({ id: "mining.production_volume" })])
+    });
+    expect(state.generateActivity?.agentEvents?.map((event) => event.type)).toEqual(expect.arrayContaining([
+      "classification",
+      "final_report"
+    ]));
+    expect(state.generateActivity?.finalReport).toBe("Validation result: Graph validation passed.");
+    expect(state.generateActivity?.summary).toBe("Validation result: Graph validation passed.");
+  });
+
+  it("updates generate activity from client onProgress runtime events", async () => {
+    const fetchMock = vi.mocked(fetch);
+    let runtimeRequestId = "";
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/ai/dev-runtime")) {
+        const body = JSON.parse(String(init?.body)) as {
+          operation?: string;
+          request?: { requestId?: string; backendId?: string; taskType?: string; schemaId?: string };
+        };
+        runtimeRequestId = body.request?.requestId ?? "";
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            output: cloneProject(productionVolumeProject),
+            run: {
+              requestId: runtimeRequestId,
+              backendId: body.request?.backendId,
+              taskType: body.request?.taskType,
+              schemaId: body.request?.schemaId,
+              status: "running",
+              progress: {
+                phase: "repairing_output",
+                label: "Repairing output",
+                updatedAt: "2026-06-24T10:00:04.000Z"
+              },
+              outputBytes: 4096,
+              schemaValid: true,
+              repairAttempted: true,
+              repairSucceeded: true,
+              agentRun: agentRunFixture()
+            }
+          })
+        } as Response;
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ agents: [] })
+      } as Response;
+    });
+
+    useVdtStudioStore.setState({
+      cliDetectionAgents: [
+        {
+          id: "codex",
+          installed: true,
+          executable: "/usr/local/bin/codex",
+          alias: "codex",
+          version: "0.128.0",
+          status: "ready",
+          authSummary: "ChatGPT subscription is authenticated and ready."
+        }
+      ],
+      executionSettings: {
+        ...DEFAULT_EXECUTION_SETTINGS,
+        executionMode: "local_cli",
+        selectedCliAgentId: "codex",
+        localRunnerPresetId: "custom_cli_json",
+        runnerProviderId: "cli_stub",
+        timeoutSec: 60,
+        cliModelSelection: { source: "agent_default" }
+      },
+      providerId: "local_runner",
+      providerConfig: {
+        localRunnerPresetId: "custom_cli_json",
+        runnerProviderId: "cli_stub",
+        timeoutSec: 60
+      }
+    });
+
+    await useVdtStudioStore.getState().generateWithAi();
+
+    const activity = useVdtStudioStore.getState().generateActivity;
+    expect(runtimeRequestId).toBeTruthy();
+    expect(activity).toMatchObject({
+      status: "ready",
+      phase: "ready",
+      requestId: runtimeRequestId,
+      backendId: "codex_subscription",
+      schemaId: "generate-tree-v1",
+      outputBytes: 4096,
+      schemaValid: true,
+      repairAttempted: true,
+      repairSucceeded: true
+    });
+    expect(activity?.summary).toBe("Validation result: Graph validation passed.");
+    expect(activity?.agentRun).toMatchObject({
+      runId: "agent-run-store-1",
+      status: "succeeded",
+      selectedSkills: expect.arrayContaining([expect.objectContaining({ id: "mining.production_volume" })])
+    });
+    expect(activity?.agentEvents?.map((event) => event.type)).toEqual(expect.arrayContaining([
+      "classification",
+      "final_report"
+    ]));
+    expect(activity?.finalReport).toBe("Validation result: Graph validation passed.");
+    expect(activity?.details).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "request-prepared", status: "complete" }),
+      expect.objectContaining({ id: "backend-started", status: "complete" }),
+      expect.objectContaining({ id: "provider-request", status: "complete" }),
+      expect.objectContaining({ id: "schema-validation", status: "complete" }),
+      expect.objectContaining({ id: "canvas-build", status: "complete" })
+    ]));
+  });
+
+  it("keeps needs_user_input status and questions from runtime agentRun snapshots", async () => {
+    const fetchMock = vi.mocked(fetch);
+    let runtimeRequestId = "";
+    let capturedSignal: AbortSignal | undefined;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/ai/dev-runtime")) {
+        const body = JSON.parse(String(init?.body)) as {
+          operation?: string;
+          requestId?: string;
+          request?: { requestId?: string; backendId?: string; taskType?: string; schemaId?: string };
+        };
+        if (body.operation === "run") {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ok: true,
+              run: {
+                requestId: body.requestId,
+                backendId: "codex_subscription",
+                taskType: "generate_tree",
+                schemaId: "generate-tree-v1",
+                status: "running",
+                progress: {
+                  phase: "waiting_for_provider",
+                  label: "Waiting for CLI/provider",
+                  updatedAt: "2026-06-24T10:00:03.000Z"
+                },
+                agentRun: agentRunFixture({
+                  status: "needs_user_input",
+                  phase: "asking_clarifying_questions",
+                  questionsForUser: ["What is the rated truck payload?"],
+                  finalReport: undefined
+                })
+              }
+            })
+          } as Response;
+        }
+        runtimeRequestId = body.request?.requestId ?? "";
+        capturedSignal = init?.signal ?? undefined;
+        return await new Promise<Response>((_resolve, reject) => {
+          capturedSignal?.addEventListener("abort", () => {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        });
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ agents: [] })
+      } as Response;
+    });
+
+    useVdtStudioStore.setState({
+      cliDetectionAgents: [
+        {
+          id: "codex",
+          installed: true,
+          executable: "/usr/local/bin/codex",
+          alias: "codex",
+          version: "0.128.0",
+          status: "ready",
+          authSummary: "ChatGPT subscription is authenticated and ready."
+        }
+      ],
+      executionSettings: {
+        ...DEFAULT_EXECUTION_SETTINGS,
+        executionMode: "local_cli",
+        selectedCliAgentId: "codex",
+        localRunnerPresetId: "custom_cli_json",
+        runnerProviderId: "cli_stub",
+        timeoutSec: 60,
+        cliModelSelection: { source: "agent_default" }
+      },
+      providerId: "local_runner",
+      providerConfig: {
+        localRunnerPresetId: "custom_cli_json",
+        runnerProviderId: "cli_stub",
+        timeoutSec: 60
+      }
+    });
+
+    const generatePromise = useVdtStudioStore.getState().generateWithAi();
+    await vi.waitFor(() => expect(runtimeRequestId).toMatch(/^[0-9a-f-]+$/));
+    await vi.waitFor(() => expect(useVdtStudioStore.getState().generateActivity?.status).toBe("needs_user_input"));
+
+    const activity = useVdtStudioStore.getState().generateActivity;
+    expect(activity?.questionsForUser).toEqual(["What is the rated truck payload?"]);
+    expect(activity?.agentRun?.status).toBe("needs_user_input");
+    expect(activity?.canCancel).toBe(true);
+
+    useVdtStudioStore.getState().cancelGenerate();
+    await generatePromise;
+    expect(capturedSignal?.aborted).toBe(true);
+  });
+
+  it("aborts an active generate request through cancelGenerate", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? undefined;
+      return await new Promise<Response>((_resolve, reject) => {
+        capturedSignal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        });
+      });
+    });
+
+    const generatePromise = useVdtStudioStore.getState().generateWithAi();
+    await vi.waitFor(() => expect(useVdtStudioStore.getState().generateActivity?.status).toBe("running"));
+
+    useVdtStudioStore.getState().cancelGenerate();
+    expect(useVdtStudioStore.getState().generateActivity).toMatchObject({
+      status: "cancelled",
+      cancelRequested: true,
+      canCancel: false,
+      message: "Generation cancelled."
+    });
+    await generatePromise;
+
+    const state = useVdtStudioStore.getState();
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(state.isGenerating).toBe(false);
+    expect(state.aiError).toBeUndefined();
+    expect(state.generateActivity).toMatchObject({
+      status: "cancelled",
+      cancelRequested: true,
+      canCancel: false,
+      message: "Generation cancelled."
+    });
+  });
+
+  it("does not apply a late successful completion after cancelGenerate", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    let resolveFetch: ((response: Response) => void) | undefined;
+    const lateProject = {
+      ...cloneProject(productionVolumeProject),
+      id: "late_project",
+      name: "Late Cancelled Project",
+      rootNodeId: productionVolumeProject.rootNodeId
+    };
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? undefined;
+      return await new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+    });
+
+    const initialProjectId = useVdtStudioStore.getState().project.id;
+    const initialProjectName = useVdtStudioStore.getState().project.name;
+    const generatePromise = useVdtStudioStore.getState().generateWithAi();
+    await vi.waitFor(() => expect(useVdtStudioStore.getState().generateActivity?.status).toBe("running"));
+
+    useVdtStudioStore.getState().cancelGenerate();
+    expect(capturedSignal?.aborted).toBe(true);
+    resolveFetch?.({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, project: lateProject, agentRun: agentRunFixture() })
+    } as Response);
+    await generatePromise;
+
+    const state = useVdtStudioStore.getState();
+    expect(state.isGenerating).toBe(false);
+    expect(state.project.id).toBe(initialProjectId);
+    expect(state.project.name).toBe(initialProjectName);
+    expect(state.project.name).not.toBe("Late Cancelled Project");
+    expect(state.generateActivity).toMatchObject({
+      status: "cancelled",
+      cancelRequested: true,
+      canCancel: false,
+      message: "Generation cancelled."
+    });
+  });
+});
+
+describe("vdt-store renameScenario", () => {
+  const scenarioId = "scenario_reduce_unplanned_downtime";
+  const originalName = "Reduce unplanned downtime";
+
+  beforeEach(() => {
+    localStorageMock.clear();
+    useVdtStudioStore.setState({
+      project: cloneProject(productionVolumeProject),
+      activeScenarioId: scenarioId
+    });
+  });
+
+  it("trims whitespace from the new name", () => {
+    useVdtStudioStore.getState().renameScenario(scenarioId, "  Optimized downtime  ");
+
+    const scenario = useVdtStudioStore.getState().project.scenarios.find((s) => s.id === scenarioId);
+    expect(scenario?.name).toBe("Optimized downtime");
+  });
+
+  it("no-ops on empty or whitespace-only names", () => {
+    const before = useVdtStudioStore.getState().project;
+
+    useVdtStudioStore.getState().renameScenario(scenarioId, "   ");
+    expect(useVdtStudioStore.getState().project).toBe(before);
+
+    useVdtStudioStore.getState().renameScenario(scenarioId, "");
+    expect(useVdtStudioStore.getState().project).toBe(before);
+    expect(
+      useVdtStudioStore.getState().project.scenarios.find((s) => s.id === scenarioId)?.name
+    ).toBe(originalName);
+  });
+
+  it("renames the scenario and updates timestamps", () => {
+    const beforeProjectUpdatedAt = useVdtStudioStore.getState().project.updatedAt;
+    const beforeScenarioUpdatedAt = useVdtStudioStore
+      .getState()
+      .project.scenarios.find((s) => s.id === scenarioId)?.updatedAt;
+
+    useVdtStudioStore.getState().renameScenario(scenarioId, "Lower downtime case");
+
+    const state = useVdtStudioStore.getState();
+    const scenario = state.project.scenarios.find((s) => s.id === scenarioId);
+
+    expect(scenario?.name).toBe("Lower downtime case");
+    expect(scenario?.updatedAt).not.toBe(beforeScenarioUpdatedAt);
+    expect(state.project.updatedAt).not.toBe(beforeProjectUpdatedAt);
+    expect(state.activeScenarioId).toBe(scenarioId);
+    expect(scenario?.overrides).toEqual(
+      productionVolumeProject.scenarios.find((s) => s.id === scenarioId)?.overrides
+    );
+  });
+});
+
+describe("vdt-store deleteScenario", () => {
+  const scenarioId = "scenario_reduce_unplanned_downtime";
+
+  beforeEach(() => {
+    localStorageMock.clear();
+    useVdtStudioStore.setState({
+      project: cloneProject(productionVolumeProject),
+      activeScenarioId: scenarioId
+    });
+  });
+
+  it("removes a non-active scenario without changing activeScenarioId", () => {
+    useVdtStudioStore.getState().createScenario();
+    const stateAfterCreate = useVdtStudioStore.getState();
+    const secondId = stateAfterCreate.activeScenarioId;
+    const firstId = scenarioId;
+
+    useVdtStudioStore.getState().setActiveScenarioId(firstId);
+    useVdtStudioStore.getState().deleteScenario(secondId);
+
+    const state = useVdtStudioStore.getState();
+    expect(state.activeScenarioId).toBe(firstId);
+    expect(state.project.scenarios).toHaveLength(1);
+    expect(state.project.scenarios.find((s) => s.id === secondId)).toBeUndefined();
+  });
+
+  it("reassigns activeScenarioId when deleting active scenario at index 0", () => {
+    useVdtStudioStore.getState().createScenario();
+    const secondId = useVdtStudioStore.getState().activeScenarioId;
+
+    useVdtStudioStore.getState().setActiveScenarioId(scenarioId);
+    useVdtStudioStore.getState().deleteScenario(scenarioId);
+
+    const state = useVdtStudioStore.getState();
+    expect(state.activeScenarioId).toBe(secondId);
+    expect(state.project.scenarios).toHaveLength(1);
+    expect(state.project.scenarios.find((s) => s.id === scenarioId)).toBeUndefined();
+  });
+
+  it("reassigns activeScenarioId when deleting active scenario at middle index", () => {
+    useVdtStudioStore.getState().createScenario();
+    const secondId = useVdtStudioStore.getState().activeScenarioId;
+    useVdtStudioStore.getState().createScenario();
+    const thirdId = useVdtStudioStore.getState().activeScenarioId;
+
+    useVdtStudioStore.getState().setActiveScenarioId(secondId);
+    useVdtStudioStore.getState().deleteScenario(secondId);
+
+    const state = useVdtStudioStore.getState();
+    expect(state.activeScenarioId).toBe(thirdId);
+    expect(state.project.scenarios).toHaveLength(2);
+    expect(state.project.scenarios.find((s) => s.id === secondId)).toBeUndefined();
+  });
+
+  it("reassigns activeScenarioId when deleting active scenario at last index", () => {
+    useVdtStudioStore.getState().createScenario();
+    const secondId = useVdtStudioStore.getState().activeScenarioId;
+
+    useVdtStudioStore.getState().setActiveScenarioId(secondId);
+    useVdtStudioStore.getState().deleteScenario(secondId);
+
+    const state = useVdtStudioStore.getState();
+    expect(state.activeScenarioId).toBe(scenarioId);
+    expect(state.project.scenarios).toHaveLength(1);
+    expect(state.project.scenarios.find((s) => s.id === secondId)).toBeUndefined();
+  });
+
+  it("no-ops when only one scenario remains", () => {
+    const before = useVdtStudioStore.getState().project;
+
+    useVdtStudioStore.getState().deleteScenario(scenarioId);
+
+    expect(useVdtStudioStore.getState().project).toBe(before);
+    expect(useVdtStudioStore.getState().activeScenarioId).toBe(scenarioId);
+  });
+
+  it("no-ops on unknown scenario id", () => {
+    const before = useVdtStudioStore.getState().project;
+
+    useVdtStudioStore.getState().deleteScenario("scenario_unknown");
+
+    expect(useVdtStudioStore.getState().project).toBe(before);
+    expect(useVdtStudioStore.getState().activeScenarioId).toBe(scenarioId);
   });
 });

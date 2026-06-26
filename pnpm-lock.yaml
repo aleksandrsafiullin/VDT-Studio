@@ -95,6 +95,9 @@ importers:
       '@vdt-studio/model-bridge':
         specifier: workspace:*
         version: link:../model-bridge
+      '@vdt-studio/vdt-agent':
+        specifier: workspace:*
+        version: link:../vdt-agent
       '@vdt-studio/vdt-core':
         specifier: workspace:*
         version: link:../vdt-core
@@ -119,6 +122,12 @@ importers:
       '@vdt-studio/model-bridge':
         specifier: workspace:*
         version: link:../model-bridge
+      '@vdt-studio/vdt-agent':
+        specifier: workspace:*
+        version: link:../vdt-agent
+      '@vdt-studio/vdt-core':
+        specifier: workspace:*
+        version: link:../vdt-core
 
   packages/model-bridge:
     dependencies:
@@ -127,6 +136,8 @@ importers:
         version: link:../vdt-core
 
   packages/ui: {}
+
+  packages/vdt-agent: {}
 
   packages/vdt-core: {}
 

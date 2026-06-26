@@ -59,6 +59,11 @@ function main() {
     process.exit(0);
   }
 
+  if (process.argv.includes("status") && process.argv.includes("--format")) {
+    process.stdout.write(`${JSON.stringify({ loggedIn: true, status: "ready" })}\n`);
+    process.exit(0);
+  }
+
   if (process.argv.includes("models")) {
     process.stdout.write("auto - Cursor automatic model\n");
     process.stdout.write("gpt-5.5-high - GPT high reasoning\n");
@@ -112,6 +117,35 @@ function main() {
       process.exit(0);
     }
     process.stdout.write(JSON.stringify(invalid));
+    process.exit(0);
+  }
+
+  if (mode === "reversed-tree") {
+    writeStreamJson({
+      projectTitle: "Fake Cursor tree",
+      rootNodeId: "root",
+      nodes: [{ id: "root" }, { id: "child" }],
+      edges: [{ id: "edge_child_root", sourceNodeId: "child", targetNodeId: "root", relation: "positive_driver" }],
+      assumptions: [],
+      questionsForUser: [],
+      warnings: []
+    });
+    process.exit(0);
+  }
+
+  if (mode === "duplicate-edge-tree") {
+    writeStreamJson({
+      projectTitle: "Fake Cursor tree",
+      rootNodeId: "root",
+      nodes: [{ id: "root" }, { id: "child" }],
+      edges: [
+        { id: "edge_formula", sourceNodeId: "root", targetNodeId: "child", relation: "formula_dependency" },
+        { id: "edge_driver", sourceNodeId: "root", targetNodeId: "child", relation: "multiplicative_driver" }
+      ],
+      assumptions: [],
+      questionsForUser: [],
+      warnings: []
+    });
     process.exit(0);
   }
 

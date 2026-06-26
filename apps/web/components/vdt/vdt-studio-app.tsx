@@ -3,7 +3,6 @@
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { NodeInspector } from "./node-inspector";
 import { PanelResizeHandle } from "./panel-resize-handle";
-import { ScenarioDrawer } from "./scenario-drawer";
 import { SetupRail } from "./setup-rail";
 import { TopBar } from "./top-bar";
 import { VdtCanvas } from "./vdt-canvas";
@@ -55,7 +54,6 @@ export function VdtStudioApp() {
           style={{ minHeight: BASE_WORKSPACE_SECTION_MIN_HEIGHT }}
         >
           <VdtCanvas />
-          <ScenarioDrawer />
         </section>
         {isDesktop && !rightCollapsed ? (
           <PanelResizeHandle

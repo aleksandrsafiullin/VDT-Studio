@@ -58,14 +58,15 @@ function SectionTitle({ protocol }: { protocol: ByokProtocol }) {
   const meta = PROTOCOL_SECTION_LABELS[protocol];
 
   return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-2">
-        <h3 className="text-sm font-semibold text-ink">{meta.title}</h3>
-        <span title={meta.hint} className="text-muted">
-          <Info className="h-3.5 w-3.5" aria-hidden="true" />
-          <span className="sr-only">{meta.hint}</span>
-        </span>
-      </div>
+    <div className="flex items-center justify-between gap-3">
+      <h3 className="text-sm font-semibold text-ink">{meta.title}</h3>
+      <span
+        title={meta.hint}
+        className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-500"
+      >
+        <Info className="h-3.5 w-3.5" aria-hidden="true" />
+        <span className="sr-only">{meta.hint}</span>
+      </span>
     </div>
   );
 }
@@ -168,231 +169,259 @@ export function ByokPresetForm({
     onTest();
   }
 
+  const showPresetSection = showPresetSelect || (showPresetLabel && preset.releaseStatus === "beta");
+
   return (
-    <div className="space-y-4 rounded-lg border border-line bg-white p-4" data-testid="byok-preset-form">
-      <SectionTitle protocol={protocol} />
+    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" data-testid="byok-preset-form">
+      <div className="border-b border-slate-200 bg-white px-4 py-4 sm:px-5">
+        <SectionTitle protocol={protocol} />
+      </div>
 
-      {showPresetSelect ? (
-        <Field label="Gateway preset">
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <SelectInput
-                data-testid="byok-gateway-preset"
-                className="min-w-0 flex-1"
-                value={executionSettings.gatewayPresetId ?? preset.id}
-                onChange={(event) => onPresetChange(event.target.value as GatewayPresetId)}
-              >
-                {presetOptions.map((candidate) => (
-                  <option
-                    key={candidate.id}
-                    value={candidate.id}
-                    data-testid={candidate.id === "alibaba-coding-plan" ? "byok-preset-alibaba-coding-plan" : undefined}
+      <div className="divide-y divide-slate-200">
+        {showPresetSection ? (
+          <section className="space-y-3 px-4 py-5 sm:px-5">
+            <h4 className="text-xs font-semibold uppercase tracking-normal text-slate-500">Provider profile</h4>
+            {showPresetSelect ? (
+              <Field label="Gateway preset">
+                <div className="flex flex-wrap items-center gap-2">
+                  <SelectInput
+                    data-testid="byok-gateway-preset"
+                    className="min-w-0 flex-1"
+                    value={executionSettings.gatewayPresetId ?? preset.id}
+                    onChange={(event) => onPresetChange(event.target.value as GatewayPresetId)}
                   >
-                    {candidate.label}
-                    {candidate.releaseStatus === "beta" ? " (Beta)" : ""}
-                  </option>
-                ))}
-              </SelectInput>
-              <ByokReleaseStatusBadge status={preset.releaseStatus} />
-            </div>
-          </div>
-        </Field>
-      ) : showPresetLabel && preset.releaseStatus === "beta" ? (
-        <div
-          className="flex flex-wrap items-center gap-2"
-          data-testid="byok-preset-beta-banner"
-        >
-          <span className="text-sm font-medium text-ink">{preset.label}</span>
-          <ByokReleaseStatusBadge status={preset.releaseStatus} />
-        </div>
-      ) : null}
-
-      <Field
-        label="API key"
-        {...(fieldErrors.apiKey
-          ? { hint: fieldErrors.apiKey }
-          : {
-              hint:
-                preset.credentialMode === "session_only"
-                  ? "Session only — cleared on reload and never saved to localStorage."
-                  : "Session only — not included in project export."
-            })}
-      >
-        <div className="flex gap-2">
-          <TextInput
-            data-testid="byok-api-key"
-            type={showApiKey ? "text" : "password"}
-            autoComplete="off"
-            value={executionSettings.apiKey ?? ""}
-            aria-invalid={Boolean(fieldErrors.apiKey)}
-            onChange={(event) => {
-              clearExecutionFieldError("apiKey");
-              onFieldChange("apiKey", event.target.value);
-            }}
-          />
-          <Button
-            size="sm"
-            variant="secondary"
-            type="button"
-            aria-label={showApiKey ? "Hide API key" : "Show API key"}
-            data-testid="byok-api-key-toggle"
-            icon={showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            onClick={() => setShowApiKey((current) => !current)}
-          />
-        </div>
-        {preset.apiKeyUrl ? (
-          <a
-            href={preset.apiKeyUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"
-            data-testid="byok-get-key-link"
-          >
-            Get key
-            <ExternalLink className="h-3 w-3" aria-hidden="true" />
-          </a>
-        ) : null}
-      </Field>
-
-      {protocol === "azure" ? (
-        <>
-          <Field label="Endpoint" {...(fieldErrors.endpoint ? { hint: fieldErrors.endpoint } : {})}>
-            <TextInput
-              data-testid="byok-endpoint"
-              value={executionSettings.endpoint ?? ""}
-              placeholder="https://your-resource.openai.azure.com"
-              aria-invalid={Boolean(fieldErrors.endpoint)}
-              onChange={(event) => {
-                clearExecutionFieldError("endpoint");
-                onFieldChange("endpoint", event.target.value);
-              }}
-            />
-          </Field>
-          <Field label="Deployment" {...(fieldErrors.deployment ? { hint: fieldErrors.deployment } : {})}>
-            <TextInput
-              data-testid="byok-deployment"
-              value={executionSettings.deployment ?? ""}
-              aria-invalid={Boolean(fieldErrors.deployment)}
-              onChange={(event) => {
-                clearExecutionFieldError("deployment");
-                onFieldChange("deployment", event.target.value);
-                onFieldChange("model", event.target.value);
-              }}
-            />
-          </Field>
-          <Field label="API version">
-            <TextInput
-              data-testid="byok-api-version"
-              value={executionSettings.apiVersion ?? preset.apiVersion ?? "2024-10-21"}
-              onChange={(event) => onFieldChange("apiVersion", event.target.value)}
-            />
-          </Field>
-        </>
-      ) : (
-        <Field
-          label="Base URL"
-          {...(fieldErrors.baseUrl
-            ? { hint: fieldErrors.baseUrl }
-            : {
-                hint: customizeBaseUrl
-                  ? "Custom endpoint for this provider."
-                  : `Default: ${preset.baseUrl || "provider default"}`
-              })}
-        >
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs text-muted">Customize</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={customizeBaseUrl}
-                data-testid="byok-customize-base-url"
-                className={clsx(
-                  "relative inline-flex h-5 w-9 shrink-0 rounded-full border transition",
-                  customizeBaseUrl ? "border-accent bg-accent" : "border-line bg-slate-200"
-                )}
-                onClick={() => {
-                  const next = !customizeBaseUrl;
-                  onFieldChange("customizeBaseUrl", next);
-                  if (!next) {
-                    onFieldChange("baseUrl", preset.baseUrl ?? "");
-                    clearExecutionFieldError("baseUrl");
-                  }
-                }}
+                    {presetOptions.map((candidate) => (
+                      <option
+                        key={candidate.id}
+                        value={candidate.id}
+                        data-testid={candidate.id === "alibaba-coding-plan" ? "byok-preset-alibaba-coding-plan" : undefined}
+                      >
+                        {candidate.label}
+                        {candidate.releaseStatus === "beta" ? " (Beta)" : ""}
+                      </option>
+                    ))}
+                  </SelectInput>
+                  <ByokReleaseStatusBadge status={preset.releaseStatus} />
+                </div>
+              </Field>
+            ) : (
+              <div
+                className="flex flex-wrap items-center gap-2"
+                data-testid="byok-preset-beta-banner"
               >
-                <span
-                  className={clsx(
-                    "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition",
-                    customizeBaseUrl ? "left-[18px]" : "left-0.5"
-                  )}
-                />
-              </button>
+                <span className="text-sm font-medium text-ink">{preset.label}</span>
+                <ByokReleaseStatusBadge status={preset.releaseStatus} />
+              </div>
+            )}
+          </section>
+        ) : null}
+
+        <section className="space-y-4 px-4 py-5 sm:px-5">
+          <h4 className="text-xs font-semibold uppercase tracking-normal text-slate-500">Credentials</h4>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="lg:col-span-2">
+              <Field
+                label="API key"
+                {...(fieldErrors.apiKey
+                  ? { hint: fieldErrors.apiKey }
+                  : {
+                      hint:
+                        preset.credentialMode === "session_only"
+                          ? "Session only - cleared on reload and never saved to localStorage."
+                          : "Session only - not included in project export."
+                    })}
+              >
+                <div className="flex gap-2">
+                  <TextInput
+                    data-testid="byok-api-key"
+                    type={showApiKey ? "text" : "password"}
+                    autoComplete="off"
+                    value={executionSettings.apiKey ?? ""}
+                    aria-invalid={Boolean(fieldErrors.apiKey)}
+                    onChange={(event) => {
+                      clearExecutionFieldError("apiKey");
+                      onFieldChange("apiKey", event.target.value);
+                    }}
+                  />
+                  <Button
+                    size="icon"
+                    variant="secondary"
+                    type="button"
+                    aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                    data-testid="byok-api-key-toggle"
+                    icon={showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    onClick={() => setShowApiKey((current) => !current)}
+                  />
+                </div>
+                {preset.apiKeyUrl ? (
+                  <a
+                    href={preset.apiKeyUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"
+                    data-testid="byok-get-key-link"
+                  >
+                    Get key
+                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                  </a>
+                ) : null}
+              </Field>
             </div>
-            <TextInput
-              data-testid="byok-base-url"
-              value={executionSettings.baseUrl ?? preset.baseUrl ?? ""}
-              readOnly={!customizeBaseUrl}
-              aria-invalid={Boolean(fieldErrors.baseUrl)}
-              className={!customizeBaseUrl ? "bg-slate-50 text-muted" : undefined}
-              onChange={(event) => {
-                clearExecutionFieldError("baseUrl");
-                onFieldChange("baseUrl", event.target.value);
+
+            {protocol === "azure" ? (
+              <>
+                <Field label="Endpoint" {...(fieldErrors.endpoint ? { hint: fieldErrors.endpoint } : {})}>
+                  <TextInput
+                    data-testid="byok-endpoint"
+                    value={executionSettings.endpoint ?? ""}
+                    placeholder="https://your-resource.openai.azure.com"
+                    aria-invalid={Boolean(fieldErrors.endpoint)}
+                    onChange={(event) => {
+                      clearExecutionFieldError("endpoint");
+                      onFieldChange("endpoint", event.target.value);
+                    }}
+                  />
+                </Field>
+                <Field label="Deployment" {...(fieldErrors.deployment ? { hint: fieldErrors.deployment } : {})}>
+                  <TextInput
+                    data-testid="byok-deployment"
+                    value={executionSettings.deployment ?? ""}
+                    aria-invalid={Boolean(fieldErrors.deployment)}
+                    onChange={(event) => {
+                      clearExecutionFieldError("deployment");
+                      onFieldChange("deployment", event.target.value);
+                      onFieldChange("model", event.target.value);
+                    }}
+                  />
+                </Field>
+                <div className="lg:col-span-2">
+                  <Field label="API version">
+                    <TextInput
+                      data-testid="byok-api-version"
+                      value={executionSettings.apiVersion ?? preset.apiVersion ?? "2024-10-21"}
+                      onChange={(event) => onFieldChange("apiVersion", event.target.value)}
+                    />
+                  </Field>
+                </div>
+              </>
+            ) : (
+              <div className="lg:col-span-2">
+                <Field
+                  label="Advanced endpoint"
+                  {...(fieldErrors.baseUrl
+                    ? { hint: fieldErrors.baseUrl }
+                    : {
+                        hint: customizeBaseUrl
+                          ? "Custom endpoint for this provider."
+                          : `Default: ${preset.baseUrl || "provider default"}`
+                      })}
+                >
+                  <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-slate-600">Customize base URL</span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={customizeBaseUrl}
+                        data-testid="byok-customize-base-url"
+                        className={clsx(
+                          "relative inline-flex h-5 w-9 shrink-0 rounded-full border transition",
+                          customizeBaseUrl ? "border-accent bg-accent" : "border-slate-300 bg-slate-200"
+                        )}
+                        onClick={() => {
+                          const next = !customizeBaseUrl;
+                          onFieldChange("customizeBaseUrl", next);
+                          if (!next) {
+                            onFieldChange("baseUrl", preset.baseUrl ?? "");
+                            clearExecutionFieldError("baseUrl");
+                          }
+                        }}
+                      >
+                        <span
+                          className={clsx(
+                            "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition",
+                            customizeBaseUrl ? "left-[18px]" : "left-0.5"
+                          )}
+                        />
+                      </button>
+                    </div>
+                    <TextInput
+                      data-testid="byok-base-url"
+                      value={executionSettings.baseUrl ?? preset.baseUrl ?? ""}
+                      readOnly={!customizeBaseUrl}
+                      aria-invalid={Boolean(fieldErrors.baseUrl)}
+                      className={!customizeBaseUrl ? "bg-white/70 text-muted" : undefined}
+                      onChange={(event) => {
+                        clearExecutionFieldError("baseUrl");
+                        onFieldChange("baseUrl", event.target.value);
+                      }}
+                    />
+                  </div>
+                </Field>
+              </div>
+            )}
+
+            {protocol === "anthropic" ? (
+              <div className="lg:col-span-2">
+                <Field label="API version (optional)">
+                  <TextInput
+                    data-testid="byok-anthropic-version"
+                    value={executionSettings.anthropicVersion ?? preset.anthropicVersion ?? "2023-06-01"}
+                    onChange={(event) => onFieldChange("anthropicVersion", event.target.value)}
+                  />
+                </Field>
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="space-y-4 px-4 py-5 sm:px-5">
+          <h4 className="text-xs font-semibold uppercase tracking-normal text-slate-500">Model limits</h4>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Field label="Max tokens (optional)">
+              <TextInput
+                data-testid="byok-max-tokens"
+                type="number"
+                min={1}
+                inputMode="numeric"
+                placeholder={maxTokensPlaceholder}
+                value={executionSettings.maxTokens ?? ""}
+                onChange={(event) => {
+                  const raw = event.target.value.trim();
+                  onFieldChange("maxTokens", raw ? Number(raw) : undefined);
+                }}
+              />
+            </Field>
+
+            <ModelField
+              key={`${executionSettings.gatewayPresetId ?? preset.id}-${executionSettings.model ?? preset.model}`}
+              preset={preset}
+              model={executionSettings.model ?? preset.model}
+              error={fieldErrors.model}
+              onChange={(value) => {
+                clearExecutionFieldError("model");
+                onFieldChange("model", value);
               }}
             />
           </div>
-        </Field>
-      )}
 
-      {protocol === "anthropic" ? (
-        <Field label="API version (optional)">
-          <TextInput
-            data-testid="byok-anthropic-version"
-            value={executionSettings.anthropicVersion ?? preset.anthropicVersion ?? "2023-06-01"}
-            onChange={(event) => onFieldChange("anthropicVersion", event.target.value)}
-          />
-        </Field>
-      ) : null}
+          <div className="flex flex-col gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <ProviderUsageNote className="sm:max-w-[440px]" />
+            <Button
+              size="sm"
+              variant="primary"
+              data-testid="byok-test-connection"
+              disabled={isTesting}
+              icon={<PlugZap className="h-4 w-4" />}
+              onClick={handleTest}
+            >
+              {isTesting ? "Testing..." : "Test connection"}
+            </Button>
+          </div>
 
-      <Field label="Max tokens (optional)">
-        <TextInput
-          data-testid="byok-max-tokens"
-          type="number"
-          min={1}
-          inputMode="numeric"
-          placeholder={maxTokensPlaceholder}
-          value={executionSettings.maxTokens ?? ""}
-          onChange={(event) => {
-            const raw = event.target.value.trim();
-            onFieldChange("maxTokens", raw ? Number(raw) : undefined);
-          }}
-        />
-      </Field>
-
-      <ModelField
-        key={`${executionSettings.gatewayPresetId ?? preset.id}-${executionSettings.model ?? preset.model}`}
-        preset={preset}
-        model={executionSettings.model ?? preset.model}
-        error={fieldErrors.model}
-        onChange={(value) => {
-          clearExecutionFieldError("model");
-          onFieldChange("model", value);
-        }}
-      />
-
-      <Button
-        className="w-full"
-        size="sm"
-        data-testid="byok-test-connection"
-        disabled={isTesting}
-        icon={<PlugZap className="h-4 w-4" />}
-        onClick={handleTest}
-      >
-        {isTesting ? "Testing..." : "Test connection"}
-      </Button>
-
-      <ProviderUsageNote className="mt-1" />
-
-      {testStatus ? <ProviderTestStatusBanner status={testStatus} /> : null}
+          {testStatus ? <ProviderTestStatusBanner status={testStatus} /> : null}
+        </section>
+      </div>
     </div>
   );
 }

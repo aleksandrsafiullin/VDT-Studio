@@ -359,6 +359,170 @@ function validateAdvisoryArrays(output: Record<string, unknown>): boolean {
   );
 }
 
+function validateGenerateTreeGraph(output: Record<string, unknown>): RegisteredSchemaValidationResult {
+  const errors: string[] = [];
+  const rootId = typeof output.rootNodeId === "string" ? output.rootNodeId : "";
+  const nodes = isObjectArray(output.nodes) ? output.nodes as Record<string, unknown>[] : [];
+  const edges = isObjectArray(output.edges) ? output.edges as Record<string, unknown>[] : [];
+  const nodeIds = new Set<string>();
+  const nodeTypes = new Map<string, unknown>();
+
+  for (const [index, node] of nodes.entries()) {
+    if (typeof node.id !== "string" || node.id.length === 0) {
+      errors.push(`$.nodes[${index}].id must be a non-empty string.`);
+      continue;
+    }
+    if (nodeIds.has(node.id)) {
+      errors.push(`Duplicate node id "${node.id}".`);
+    }
+    nodeIds.add(node.id);
+    nodeTypes.set(node.id, node.type);
+  }
+
+  if (!rootId) {
+    errors.push("$.rootNodeId must be a non-empty string.");
+  } else if (!nodeIds.has(rootId)) {
+    errors.push(`$.rootNodeId must reference an existing node: ${rootId}.`);
+  }
+
+  const childrenBySource = new Map<string, string[]>();
+  const edgePairs = new Set<string>();
+  for (const [index, edge] of edges.entries()) {
+    const sourceNodeId = typeof edge.sourceNodeId === "string" ? edge.sourceNodeId : "";
+    const targetNodeId = typeof edge.targetNodeId === "string" ? edge.targetNodeId : "";
+
+    if (!sourceNodeId || !nodeIds.has(sourceNodeId)) {
+      errors.push(`$.edges[${index}].sourceNodeId must reference an existing node: ${sourceNodeId || "(missing)"}.`);
+      continue;
+    }
+    if (!targetNodeId || !nodeIds.has(targetNodeId)) {
+      errors.push(`$.edges[${index}].targetNodeId must reference an existing node: ${targetNodeId || "(missing)"}.`);
+      continue;
+    }
+
+    const edgePairKey = `${sourceNodeId}\u0000${targetNodeId}`;
+    if (edgePairs.has(edgePairKey)) {
+      errors.push(`Duplicate edge pair "${sourceNodeId}" -> "${targetNodeId}".`);
+    }
+    edgePairs.add(edgePairKey);
+    childrenBySource.set(sourceNodeId, [...(childrenBySource.get(sourceNodeId) ?? []), targetNodeId]);
+  }
+
+  if (rootId && nodeIds.has(rootId)) {
+    const reachable = new Set<string>();
+    const stack = [rootId];
+    while (stack.length > 0) {
+      const nodeId = stack.pop();
+      if (!nodeId || reachable.has(nodeId)) continue;
+      reachable.add(nodeId);
+      for (const childId of childrenBySource.get(nodeId) ?? []) {
+        if (!reachable.has(childId)) stack.push(childId);
+      }
+    }
+
+    for (const nodeId of nodeIds) {
+      if (nodeId !== rootId && nodeTypes.get(nodeId) !== "external_factor" && !reachable.has(nodeId)) {
+        errors.push(`Node "${nodeId}" must be reachable from root "${rootId}" through visual decomposition edges.`);
+      }
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+function shouldPreferDuplicateEdge(candidate: Record<string, unknown>, current: Record<string, unknown>): boolean {
+  const candidateIsFormula = candidate.relation === "formula_dependency";
+  const currentIsFormula = current.relation === "formula_dependency";
+  if (currentIsFormula && !candidateIsFormula) return true;
+  return false;
+}
+
+function dedupeGenerateTreeEdges(edges: Record<string, unknown>[]): Record<string, unknown>[] {
+  const orderedKeys: string[] = [];
+  const edgeByPair = new Map<string, Record<string, unknown>>();
+
+  for (const edge of edges) {
+    const sourceNodeId = typeof edge.sourceNodeId === "string" ? edge.sourceNodeId : "";
+    const targetNodeId = typeof edge.targetNodeId === "string" ? edge.targetNodeId : "";
+    const key = `${sourceNodeId}\u0000${targetNodeId}`;
+    const current = edgeByPair.get(key);
+    if (!current) {
+      orderedKeys.push(key);
+      edgeByPair.set(key, edge);
+      continue;
+    }
+    if (shouldPreferDuplicateEdge(edge, current)) {
+      edgeByPair.set(key, edge);
+    }
+  }
+
+  return orderedKeys.flatMap((key) => {
+    const edge = edgeByPair.get(key);
+    return edge ? [edge] : [];
+  });
+}
+
+function orientGenerateTreeEdgesFromRoot(output: Record<string, unknown>): Record<string, unknown> {
+  if (validateGenerateTreeGraph(output).valid) return output;
+
+  const rootId = typeof output.rootNodeId === "string" ? output.rootNodeId : "";
+  const nodes = isObjectArray(output.nodes) ? output.nodes as Record<string, unknown>[] : [];
+  const edges = isObjectArray(output.edges) ? output.edges as Record<string, unknown>[] : [];
+  const nodeTypes = new Map<string, unknown>();
+  const nodeIds = new Set<string>();
+  for (const node of nodes) {
+    if (typeof node.id !== "string" || node.id.length === 0) continue;
+    nodeIds.add(node.id);
+    nodeTypes.set(node.id, node.type);
+  }
+  if (!rootId || !nodeIds.has(rootId) || edges.length === 0) return output;
+
+  const neighbors = new Map<string, string[]>();
+  for (const edge of edges) {
+    const sourceNodeId = typeof edge.sourceNodeId === "string" ? edge.sourceNodeId : "";
+    const targetNodeId = typeof edge.targetNodeId === "string" ? edge.targetNodeId : "";
+    if (!nodeIds.has(sourceNodeId) || !nodeIds.has(targetNodeId)) return output;
+    neighbors.set(sourceNodeId, [...(neighbors.get(sourceNodeId) ?? []), targetNodeId]);
+    neighbors.set(targetNodeId, [...(neighbors.get(targetNodeId) ?? []), sourceNodeId]);
+  }
+
+  const depth = new Map<string, number>([[rootId, 0]]);
+  const queue = [rootId];
+  while (queue.length > 0) {
+    const nodeId = queue.shift();
+    if (!nodeId) continue;
+    const nextDepth = (depth.get(nodeId) ?? 0) + 1;
+    for (const neighbor of neighbors.get(nodeId) ?? []) {
+      if (depth.has(neighbor)) continue;
+      depth.set(neighbor, nextDepth);
+      queue.push(neighbor);
+    }
+  }
+
+  for (const nodeId of nodeIds) {
+    if (nodeId !== rootId && nodeTypes.get(nodeId) !== "external_factor" && !depth.has(nodeId)) return output;
+  }
+
+  const orientedEdges = edges.map((edge) => {
+    const sourceDepth = typeof edge.sourceNodeId === "string" ? depth.get(edge.sourceNodeId) : undefined;
+    const targetDepth = typeof edge.targetNodeId === "string" ? depth.get(edge.targetNodeId) : undefined;
+    if (sourceDepth === undefined || targetDepth === undefined || sourceDepth <= targetDepth) return edge;
+    return {
+      ...edge,
+      sourceNodeId: edge.targetNodeId,
+      targetNodeId: edge.sourceNodeId
+    };
+  });
+
+  const normalized = { ...output, edges: dedupeGenerateTreeEdges(orientedEdges) };
+  return validateGenerateTreeGraph(normalized).valid ? normalized : output;
+}
+
+export function normalizeRegisteredSchemaOutput(schemaId: VdtSchemaId, output: unknown): unknown {
+  if (schemaId === "generate-tree-v1" && isRecord(output)) return orientGenerateTreeEdgesFromRoot(output);
+  return output;
+}
+
 const jsonSchemas: Record<VdtSchemaId, Record<string, unknown>> = {
   "connection-test-v1": {
     type: "object",
@@ -529,7 +693,8 @@ const validators: Record<VdtSchemaId, (output: Record<string, unknown>) => boole
     isObjectArray(output.nodes) &&
     (output.nodes as unknown[]).length > 0 &&
     isObjectArray(output.edges) &&
-    validateAdvisoryArrays(output),
+    validateAdvisoryArrays(output) &&
+    validateGenerateTreeGraph(output).valid,
   "deepen-node-v1": (output) =>
     typeof output.targetNodeId === "string" &&
     isObjectArray(output.nodes) &&
@@ -597,6 +762,10 @@ export function validateRegisteredSchemaDetailed(schemaId: VdtSchemaId, output: 
   if (!schema) return { valid: false, errors: [`Unknown schema ${schemaId}.`] };
   const subset = validateJsonSchemaSubset(schema, output);
   if (!subset.valid) return subset;
+  if (schemaId === "generate-tree-v1" && isRecord(output)) {
+    const graph = validateGenerateTreeGraph(output);
+    if (!graph.valid) return graph;
+  }
   if (!isRecord(output) || !validators[schemaId](output)) {
     return { valid: false, errors: [`$ does not satisfy registered semantic validator for ${schemaId}.`] };
   }

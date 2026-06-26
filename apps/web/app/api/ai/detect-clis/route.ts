@@ -40,6 +40,36 @@ function desktopDetectionUnavailable(agent: SubscriptionCliAgent) {
   };
 }
 
+async function developmentWebDetection(agentId?: SubscriptionCliAgentId) {
+  const { detectSubscriptionCli, detectSubscriptionClis, enrichSubscriptionCliDetections } = await import("@vdt-studio/model-bridge/node");
+  const { getSubscriptionCliAdapter } = await import("@vdt-studio/model-bridge");
+  const detected = agentId ? [await detectSubscriptionCli(agentId)] : await detectSubscriptionClis();
+  const agents = await enrichSubscriptionCliDetections(detected);
+  const modelsByAgent: Partial<Record<SubscriptionCliAgentId, readonly string[]>> = {};
+
+  await Promise.all(
+    agents.map(async (agent) => {
+      if (!agent.installed || !agent.executable) {
+        modelsByAgent[agent.id] = [];
+        return;
+      }
+      const adapter = getSubscriptionCliAdapter(agent.backendId);
+      try {
+        modelsByAgent[agent.id] = adapter?.listModels ? await adapter.listModels(agent.executable) : [];
+      } catch {
+        modelsByAgent[agent.id] = [];
+      }
+    })
+  );
+
+  return NextResponse.json({
+    appMode: "development_web",
+    ok: true,
+    agents,
+    modelsByAgent
+  });
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const agentId = searchParams.get("id");
@@ -48,10 +78,15 @@ export async function GET(request: Request) {
   if (agentId && !isSubscriptionCliAgentId(agentId)) {
     return NextResponse.json({ error: `Unknown CLI agent: ${agentId}` }, { status: 400 });
   }
+  const requestedAgentId = agentId && isSubscriptionCliAgentId(agentId) ? agentId : undefined;
 
   const agents = agentId
     ? SUBSCRIPTION_CLI_AGENTS.filter((agent) => agent.id === agentId)
     : SUBSCRIPTION_CLI_AGENTS;
+
+  if (appMode === "development_web") {
+    return developmentWebDetection(requestedAgentId);
+  }
 
   return NextResponse.json({
     appMode,

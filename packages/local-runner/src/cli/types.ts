@@ -1,4 +1,5 @@
 import type { VdtAiTaskType } from "@vdt-studio/model-bridge";
+import type { VdtAgentRun } from "@vdt-studio/vdt-agent";
 
 export type BackendKind = "mock" | "local_http" | "subscription_cli" | "custom_cli";
 export type BackendSupportLevel =
@@ -48,6 +49,22 @@ export interface CompletionRequest {
 }
 
 export type RunStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
+export type RunProgressPhase =
+  | "preparing_request"
+  | "starting_backend"
+  | "waiting_for_provider"
+  | "validating_schema"
+  | "repairing_output"
+  | "building_project"
+  | "complete"
+  | "error"
+  | "cancelled";
+
+export interface RunProgressSnapshot {
+  phase: RunProgressPhase;
+  label: string;
+  updatedAt: string;
+}
 
 export interface RunSnapshot {
   requestId: string;
@@ -64,6 +81,8 @@ export interface RunSnapshot {
   repaired?: boolean;
   repairAttempted?: boolean;
   repairSucceeded?: boolean;
+  progress?: RunProgressSnapshot;
+  agentRun?: VdtAgentRun;
   output?: unknown;
   error?: { code: string; message: string };
 }

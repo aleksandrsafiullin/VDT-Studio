@@ -25,6 +25,12 @@ async function readJson(response: Response) {
         questionsForUser?: string[];
       };
     };
+    agentRun?: {
+      status?: string;
+      selectedSkills?: Array<{ id?: string }>;
+      events?: Array<{ type?: string; message?: string }>;
+      finalReport?: string;
+    };
   };
 }
 
@@ -79,8 +85,8 @@ describe("generate VDT API route", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("passes maxTokens from providerConfig to generateVdtProject", async () => {
-    const generateSpy = vi.spyOn(aiHarness, "generateVdtProject");
+  it("passes maxTokens from providerConfig to generateAgenticVdtProject", async () => {
+    const generateSpy = vi.spyOn(aiHarness, "generateAgenticVdtProject");
 
     try {
       const response = await POST(
@@ -121,6 +127,17 @@ describe("generate VDT API route", () => {
     expect(body.project?.rootNodeId).toBe("production_volume");
     expect(body.project?.aiReview?.assumptions?.length).toBeGreaterThan(0);
     expect(body.project?.aiReview?.questionsForUser?.length).toBeGreaterThan(0);
+    expect(body.agentRun).toMatchObject({
+      status: "succeeded",
+      selectedSkills: expect.arrayContaining([expect.objectContaining({ id: "mining.production_volume" })])
+    });
+    expect(body.agentRun?.events?.map((event) => event.type)).toEqual(expect.arrayContaining([
+      "skill_selected",
+      "model_call_started",
+      "graph_validation",
+      "final_report"
+    ]));
+    expect(body.agentRun?.finalReport).toContain("Validation result: Graph validation passed");
   });
 
   it("rejects invalid request bodies before provider execution", async () => {

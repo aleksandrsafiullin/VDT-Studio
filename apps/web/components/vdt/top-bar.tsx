@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent } from "react";
-import { Download, FileImage, FileJson, GitBranch, ShieldCheck, Sparkles, Upload } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { Download, FileImage, FileJson, GitBranch, Route, ShieldCheck, Sparkles, Upload } from "lucide-react";
 import {
   calculateGraph,
   exportProjectJson,
@@ -13,20 +13,49 @@ import {
 import { Button } from "@/components/ui/button";
 import { downloadTextFile } from "@/lib/download";
 import { formatNumber } from "@/lib/format";
+import { ScenarioModal } from "./scenario-modal";
 import { SettingsModal } from "./settings-modal";
 import { VersionHistoryPanel } from "./version-history-panel";
 import { useVdtStudioStore } from "./vdt-store";
+
+const exportMenuItemClass =
+  "flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-graphite hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 export function TopBar() {
   const project = useVdtStudioStore((state) => state.project);
   const replaceProject = useVdtStudioStore((state) => state.replaceProject);
   const runAiAction = useVdtStudioStore((state) => state.runAiAction);
   const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
+  const activeScenarioId = useVdtStudioStore((state) => state.activeScenarioId);
+  const scenarioModalOpen = useVdtStudioStore((state) => state.scenarioModalOpen);
+  const openScenarioModal = useVdtStudioStore((state) => state.openScenarioModal);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const scenarioModalTriggerRef = useRef<HTMLButtonElement>(null);
   const [importError, setImportError] = useState<string>();
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!exportMenuOpen) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setExportMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [exportMenuOpen]);
   const calculation = calculateGraph(project);
   const validation = validateGraph(project.graph, project.rootNodeId);
   const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+  const activeScenario =
+    project.scenarios.find((scenario) => scenario.id === activeScenarioId) ?? project.scenarios[0];
+  const activeScenarioTitle = activeScenario?.name
+    ? `Scenario: ${activeScenario.name}`
+    : "Open scenario mode";
 
   async function handleProjectImport(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -64,6 +93,19 @@ export function TopBar() {
           {validation.valid ? "Model graph valid" : `${validation.errors.length} graph issues`}
         </div>
         <Button
+          ref={scenarioModalTriggerRef}
+          size="sm"
+          data-testid="open-scenario-modal"
+          icon={<Route className="h-4 w-4" />}
+          onClick={() => openScenarioModal()}
+          aria-label="Open scenario mode"
+          aria-haspopup="dialog"
+          aria-expanded={scenarioModalOpen}
+          title={activeScenarioTitle}
+        >
+          <span className="hidden sm:inline">Scenario</span>
+        </Button>
+        <Button
           size="sm"
           data-testid="review-model-button"
           icon={<Sparkles className="h-4 w-4" />}
@@ -82,37 +124,77 @@ export function TopBar() {
         <Button
           size="sm"
           aria-label="Import"
-          icon={<Upload className="h-4 w-4" />}
+          icon={<Download className="h-4 w-4" />}
           onClick={() => fileInputRef.current?.click()}
         >
           <span className="hidden sm:inline">Import</span>
         </Button>
-        <Button
-          size="sm"
-          aria-label="JSON"
-          icon={<FileJson className="h-4 w-4" />}
-          onClick={() => downloadTextFile(`${project.id}.json`, exportProjectJson(project), "application/json")}
-        >
-          <span className="hidden sm:inline">JSON</span>
-        </Button>
-        <Button
-          size="sm"
-          aria-label="SVG"
-          icon={<FileImage className="h-4 w-4" />}
-          onClick={() => downloadTextFile(`${project.id}.svg`, exportProjectSvg(project), "image/svg+xml")}
-        >
-          <span className="hidden sm:inline">SVG</span>
-        </Button>
-        <Button
-          size="sm"
-          aria-label="Markdown"
-          icon={<Download className="h-4 w-4" />}
-          onClick={() => downloadTextFile(`${project.id}.md`, exportProjectMarkdown(project), "text/markdown")}
-        >
-          <span className="hidden sm:inline">Markdown</span>
-        </Button>
+        <div className="relative">
+          <Button
+            size="sm"
+            aria-label="Export"
+            aria-controls="export-menu"
+            aria-expanded={exportMenuOpen}
+            aria-haspopup="menu"
+            data-testid="export-menu-button"
+            icon={<Upload className="h-4 w-4" />}
+            onClick={() => setExportMenuOpen((current) => !current)}
+          >
+            <span className="hidden sm:inline">Export</span>
+          </Button>
+
+          {exportMenuOpen ? (
+            <div
+              id="export-menu"
+              role="menu"
+              aria-label="Export options"
+              className="absolute right-0 top-full z-30 mt-2 min-w-[10rem] rounded-md border border-line bg-white py-1 shadow-lg"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="export-json"
+                className={exportMenuItemClass}
+                onClick={() => {
+                  downloadTextFile(`${project.id}.json`, exportProjectJson(project), "application/json");
+                  setExportMenuOpen(false);
+                }}
+              >
+                <FileJson className="h-4 w-4" />
+                JSON
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="export-svg"
+                className={exportMenuItemClass}
+                onClick={() => {
+                  downloadTextFile(`${project.id}.svg`, exportProjectSvg(project), "image/svg+xml");
+                  setExportMenuOpen(false);
+                }}
+              >
+                <FileImage className="h-4 w-4" />
+                SVG
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="export-markdown"
+                className={exportMenuItemClass}
+                onClick={() => {
+                  downloadTextFile(`${project.id}.md`, exportProjectMarkdown(project), "text/markdown");
+                  setExportMenuOpen(false);
+                }}
+              >
+                <Download className="h-4 w-4" />
+                Markdown
+              </button>
+            </div>
+          ) : null}
+        </div>
         <VersionHistoryPanel />
         <SettingsModal />
+        <ScenarioModal triggerRef={scenarioModalTriggerRef} />
       </div>
       {importError ? (
         <div

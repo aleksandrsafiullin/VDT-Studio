@@ -1,4 +1,7 @@
 import { fileURLToPath } from "node:url";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createLocalRuntimeContext } from "../server/runtime";
 import { SidecarHostError, SidecarProcessHost } from "./host";
@@ -7,6 +10,7 @@ import { handleSidecarCancel, handleSidecarRequest } from "./runtime";
 
 const sidecarEntrypoint = fileURLToPath(new URL("./index.ts", import.meta.url));
 const fakeCodex = fileURLToPath(new URL("../server/fixtures/fake-codex.cjs", import.meta.url));
+const fakeCursor = fileURLToPath(new URL("../server/fixtures/fake-cursor.cjs", import.meta.url));
 const TEST_HANDSHAKE_TIMEOUT_MS = 5000;
 const hosts: SidecarProcessHost[] = [];
 
@@ -50,7 +54,7 @@ describe("local runtime sidecar", () => {
         warnings: []
       }
     });
-    expect(payload).toMatchObject({ ok: true, run: { status: "succeeded" }, output: { projectTitle: "Tree" } });
+    expect(payload).toMatchObject({ ok: true, run: { status: "succeeded" }, output: { projectTitle: "Mock tree" } });
   });
 
   it("propagates runtime errors as structured failed responses", async () => {
@@ -89,12 +93,53 @@ describe("local runtime sidecar", () => {
     });
   });
 
+  it("routes subscription CLI detection through the sidecar protocol", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-sidecar-detect-"));
+    try {
+      await symlink(fakeCodex, path.join(tempDir, "codex"));
+      await symlink(fakeCursor, path.join(tempDir, "agent"));
+      const context = createLocalRuntimeContext({
+        auditSink: () => undefined,
+        detection: { path: tempDir, probeTimeoutMs: 5_000 }
+      });
+
+      await expect(handleSidecarRequest({
+        protocolVersion: SIDECAR_PROTOCOL_VERSION,
+        type: "request",
+        requestId: crypto.randomUUID(),
+        method: "detect_clis",
+        payload: { agentId: "cursor-agent" }
+      }, context)).resolves.toMatchObject({
+        ok: true,
+        payload: {
+          ok: true,
+          agents: [
+            expect.objectContaining({
+              id: "cursor-agent",
+              installed: true,
+              alias: "agent",
+              status: "ready"
+            })
+          ],
+          modelsByAgent: { "cursor-agent": ["auto", "gpt-5.5-high"] }
+        }
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("cancels an active sidecar runtime completion request", async () => {
     let abortHandler: (() => void) | undefined;
+    let fetchStarted: (() => void) | undefined;
+    const fetchStartedPromise = new Promise<void>((resolve) => {
+      fetchStarted = resolve;
+    });
     const context = createLocalRuntimeContext({
       auditSink: () => undefined,
       executor: {
         fetch: async (_url, init) => {
+          fetchStarted?.();
           await new Promise((_resolve, reject) => {
             abortHandler = () => reject(Object.assign(new Error("Aborted"), { name: "AbortError" }));
             init?.signal?.addEventListener("abort", abortHandler, { once: true });
@@ -118,6 +163,7 @@ describe("local runtime sidecar", () => {
       }
     }, context);
 
+    await fetchStartedPromise;
     handleSidecarCancel({ protocolVersion: SIDECAR_PROTOCOL_VERSION, type: "cancel", requestId }, context);
     expect(abortHandler).toBeDefined();
     await expect(response).resolves.toMatchObject({

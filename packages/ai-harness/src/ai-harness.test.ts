@@ -7,6 +7,7 @@ import {
   effectiveWorkingTimeAlternativeOutput,
   generateVdtOutputSchema,
   generateVdtOutputToProject,
+  generateAgenticVdtProject,
   generateVdtProject,
   checkUnitsOutputSchema,
   executiveSummaryOutputSchema,
@@ -58,7 +59,7 @@ import {
   validateIdentifyMissingDriversOutput,
   validateReviewModelOutput
 } from "./index";
-import type { AiProvider } from "./types";
+import type { AiCompletionParams, AiProvider } from "./types";
 
 function mockProviderFor<TOutput>(id: string, output: TOutput): AiProvider {
   return {
@@ -125,6 +126,43 @@ describe("AI harness", () => {
     expect(project.name).toBe("Production Volume Driver Model");
     expect(project.rootNodeId).toBe("production_volume");
     expect(project.aiSettings.defaultProviderId).toBe("mock");
+  });
+
+  it("generates an agentic project with selected skills and decomposition plan in the provider prompt", async () => {
+    const calls: Array<{ systemPrompt: string; userPrompt: string }> = [];
+    const provider: AiProvider = {
+      id: "capture",
+      name: "Capture Provider",
+      type: "mock",
+      async completeStructured<TInput, TOutput>(params: AiCompletionParams<TInput>): Promise<TOutput> {
+        calls.push({ systemPrompt: params.systemPrompt, userPrompt: params.userPrompt });
+        return productionVolumeAiOutput as TOutput;
+      }
+    };
+
+    const { project, agentRun } = await generateAgenticVdtProject(provider, {
+      rootKpi: "Production Volume",
+      industry: "Mining / Processing Plant",
+      businessContext: "Ore throughput and plant production volume",
+      unit: "tonnes/month",
+      goal: "Understand what drives production decrease",
+      levelOfDetail: "medium"
+    });
+
+    expect(project.rootNodeId).toBe("production_volume");
+    expect(agentRun.status).toBe("succeeded");
+    expect(agentRun.selectedSkills.map((skill: { id: string }) => skill.id)).toContain("mining.production_volume");
+    expect(agentRun.events.map((event: { type: string }) => event.type)).toEqual(expect.arrayContaining([
+      "model_call_started",
+      "model_call_completed",
+      "graph_validation",
+      "final_report"
+    ]));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.systemPrompt).toContain("Use the selected VDT skills");
+    expect(calls[0]?.userPrompt).toContain("Selected skill excerpts:");
+    expect(calls[0]?.userPrompt).toContain("mining.production_volume");
+    expect(calls[0]?.userPrompt).toContain("Deterministic decomposition plan:");
   });
 
   it("adapts mock generation to the requested root KPI", async () => {
@@ -644,6 +682,17 @@ describe("AI harness", () => {
       "equipment_failure_downtime",
       "process_interruption_downtime"
     ]);
+    expect(result.agentRun).toMatchObject({
+      status: "succeeded",
+      events: expect.arrayContaining([
+        expect.objectContaining({ type: "classification" }),
+        expect.objectContaining({ type: "skill_selected" }),
+        expect.objectContaining({ type: "model_call_started" }),
+        expect.objectContaining({ type: "graph_patch" }),
+        expect.objectContaining({ type: "graph_validation" }),
+        expect.objectContaining({ type: "final_report" })
+      ])
+    });
   });
 
   it("dispatches review_model through runAiTask with MockProvider", async () => {

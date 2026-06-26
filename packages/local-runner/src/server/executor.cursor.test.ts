@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { createManifestRegistry } from "./manifests";
-import { executeCompletion } from "./executor";
+import { EXECUTION_LIMITS, executeCompletion } from "./executor";
 
 const fakeCursor = fileURLToPath(new URL("./fixtures/fake-cursor.cjs", import.meta.url));
 const tempDirs: string[] = [];
@@ -31,6 +31,10 @@ function fakeCursorExecutor(env: NodeJS.ProcessEnv = process.env) {
 }
 
 describe("cursor subscription executor", () => {
+  it("keeps enough repair budget for full Cursor tree responses", () => {
+    expect(EXECUTION_LIMITS.repairTimeoutMs).toBeGreaterThanOrEqual(60_000);
+  });
+
   it("executes certified cursor manifest through open-design-style ephemeral workspace mode", async () => {
     const result = await executeCompletion(
       cursorManifest(),
@@ -63,6 +67,52 @@ describe("cursor subscription executor", () => {
     );
     expect(result.schemaValid).toBe(true);
     expect(result.output).toMatchObject({ projectTitle: "Fake Cursor tree", rootNodeId: "root" });
+  });
+
+  it("orients reversed Cursor generate-tree edges before schema validation", async () => {
+    const result = await executeCompletion(
+      cursorManifest(),
+      {
+        requestId: crypto.randomUUID(),
+        backendId: "cursor_subscription",
+        taskType: "generate_tree",
+        schemaId: "generate-tree-v1",
+        input: { prompt: "Build a tree" }
+      },
+      new AbortController().signal,
+      fakeCursorExecutor({ ...process.env, VDT_FAKE_CURSOR_MODE: "reversed-tree" })
+    );
+
+    expect(result.schemaValid).toBe(true);
+    expect(result.repaired).toBeUndefined();
+    expect(result.output).toMatchObject({
+      projectTitle: "Fake Cursor tree",
+      rootNodeId: "root",
+      edges: [expect.objectContaining({ sourceNodeId: "root", targetNodeId: "child" })]
+    });
+  });
+
+  it("deduplicates Cursor generate-tree visual edge pairs before schema validation", async () => {
+    const result = await executeCompletion(
+      cursorManifest(),
+      {
+        requestId: crypto.randomUUID(),
+        backendId: "cursor_subscription",
+        taskType: "generate_tree",
+        schemaId: "generate-tree-v1",
+        input: { prompt: "Build a tree" }
+      },
+      new AbortController().signal,
+      fakeCursorExecutor({ ...process.env, VDT_FAKE_CURSOR_MODE: "duplicate-edge-tree" })
+    );
+
+    expect(result.schemaValid).toBe(true);
+    expect(result.repaired).toBeUndefined();
+    expect(result.output).toMatchObject({
+      projectTitle: "Fake Cursor tree",
+      rootNodeId: "root",
+      edges: [expect.objectContaining({ id: "edge_driver", relation: "multiplicative_driver" })]
+    });
   });
 
   it("resolves from schema-valid Cursor stream output before a slow process close", async () => {

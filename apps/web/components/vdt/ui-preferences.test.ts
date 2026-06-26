@@ -3,12 +3,14 @@ import {
   applyUiPreference,
   BASE_LEFT_PANEL_WIDTH,
   BASE_RIGHT_PANEL_WIDTH,
-  BASE_SCENARIO_DRAWER_HEIGHT,
   DEFAULT_LEFT_PANEL_WIDTH,
   DEFAULT_RIGHT_PANEL_WIDTH,
   DEFAULT_UI,
+  MAX_KPI_HORIZONTAL_GAP,
+  MAX_KPI_VERTICAL_GAP,
+  MIN_KPI_HORIZONTAL_GAP,
+  MIN_KPI_VERTICAL_GAP,
   mergeUiPreferences,
-  scenarioDrawerCollapsedHeight,
   setPanelWidth,
   UI_PERSIST_KEYS,
   type UiPreferences
@@ -18,17 +20,6 @@ describe("ui-preferences", () => {
   it("uses default panel widths derived from legacy scale", () => {
     expect(DEFAULT_LEFT_PANEL_WIDTH).toBe(255);
     expect(DEFAULT_RIGHT_PANEL_WIDTH).toBe(279);
-  });
-
-  it("computes scenario drawer collapsed height from fontScale within 40–52px", () => {
-    expect(scenarioDrawerCollapsedHeight(0.75)).toBe(40);
-    expect(scenarioDrawerCollapsedHeight(0.9)).toBe(40);
-    expect(scenarioDrawerCollapsedHeight(1.1)).toBe(48);
-    expect(scenarioDrawerCollapsedHeight(1)).toBe(44);
-  });
-
-  it("keeps expanded scenario drawer height fixed at base height", () => {
-    expect(BASE_SCENARIO_DRAWER_HEIGHT).toBe(248);
   });
 
   it("clamps fontScale and panel widths via applyUiPreference helper", () => {
@@ -45,6 +36,20 @@ describe("ui-preferences", () => {
     expect(ui4.rightPanelWidth).toBe(520);
   });
 
+  it("clamps KPI block spacing via applyUiPreference helper", () => {
+    const ui = applyUiPreference(DEFAULT_UI, "kpiHorizontalGap", 40);
+    expect(ui.kpiHorizontalGap).toBe(MIN_KPI_HORIZONTAL_GAP);
+
+    const ui2 = applyUiPreference(ui, "kpiHorizontalGap", 900);
+    expect(ui2.kpiHorizontalGap).toBe(MAX_KPI_HORIZONTAL_GAP);
+
+    const ui3 = applyUiPreference(ui2, "kpiVerticalGap", 4);
+    expect(ui3.kpiVerticalGap).toBe(MIN_KPI_VERTICAL_GAP);
+
+    const ui4 = applyUiPreference(ui3, "kpiVerticalGap", 400);
+    expect(ui4.kpiVerticalGap).toBe(MAX_KPI_VERTICAL_GAP);
+  });
+
   it("clamps panel widths via setPanelWidth", () => {
     expect(setPanelWidth(DEFAULT_UI, "left", 500).leftPanelWidth).toBe(480);
     expect(setPanelWidth(DEFAULT_UI, "right", 200).rightPanelWidth).toBe(240);
@@ -56,6 +61,11 @@ describe("ui-preferences", () => {
     expect(mergeUiPreferences({ fontScale: 1 })).toEqual({
       ...DEFAULT_UI,
       fontScale: 1
+    });
+    expect(mergeUiPreferences({ kpiHorizontalGap: 300, kpiVerticalGap: 72 })).toEqual({
+      ...DEFAULT_UI,
+      kpiHorizontalGap: 300,
+      kpiVerticalGap: 72
     });
   });
 
@@ -115,36 +125,58 @@ describe("ui-preferences", () => {
     );
   });
 
+  it("preserves defaults for corrupt KPI spacing values on hydrate", () => {
+    expect(
+      mergeUiPreferences({
+        kpiHorizontalGap: "wide" as unknown as number,
+        kpiVerticalGap: null as unknown as number
+      })
+    ).toEqual(DEFAULT_UI);
+
+    expect(
+      mergeUiPreferences({
+        kpiHorizontalGap: Number.NEGATIVE_INFINITY,
+        kpiVerticalGap: Number.NaN
+      })
+    ).toEqual(DEFAULT_UI);
+  });
+
   it("preserves defaults for corrupt boolean collapse flags on hydrate", () => {
     expect(
       mergeUiPreferences({
         leftPanelCollapsed: "yes" as unknown as boolean,
-        rightPanelCollapsed: 1 as unknown as boolean,
-        scenarioDrawerCollapsed: null as unknown as boolean
+        rightPanelCollapsed: 1 as unknown as boolean
       })
     ).toEqual(DEFAULT_UI);
 
     expect(
       mergeUiPreferences({
         leftPanelCollapsed: true,
-        rightPanelCollapsed: false,
-        scenarioDrawerCollapsed: true
+        rightPanelCollapsed: false
       })
     ).toEqual({
       ...DEFAULT_UI,
-      leftPanelCollapsed: true,
+      leftPanelCollapsed: true
+    });
+  });
+
+  it("ignores legacy scenarioDrawerCollapsed on hydrate", () => {
+    const ui = mergeUiPreferences({
       scenarioDrawerCollapsed: true
     });
+    expect(ui).toEqual(DEFAULT_UI);
+    expect("scenarioDrawerCollapsed" in ui).toBe(false);
   });
 
   it("defines the full persist shape for ui preferences", () => {
     expect(UI_PERSIST_KEYS).toEqual([
       "fontScale",
+      "kpiHorizontalGap",
+      "kpiVerticalGap",
       "leftPanelWidth",
       "rightPanelWidth",
       "leftPanelCollapsed",
-      "rightPanelCollapsed",
-      "scenarioDrawerCollapsed"
+      "rightPanelCollapsed"
     ]);
   });
 });

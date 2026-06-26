@@ -35,5 +35,6 @@ export function scrubPersistedProviderSecrets(persistedState: unknown): unknown 
 export const PARTIALIZE_EPHEMERAL_STATE_KEYS = [
   "runnerPairingToken",
   "cliTestStatusByAgent",
-  "providerTestStatus"
+  "providerTestStatus",
+  "scenarioModalOpen"
 ] as const;

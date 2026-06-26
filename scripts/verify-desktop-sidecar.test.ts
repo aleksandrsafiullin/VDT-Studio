@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +8,45 @@ import { verifyDesktopSidecar } from "./verify-desktop-sidecar.mjs";
 
 const tempDirs: string[] = [];
 const hosts: SidecarProcessHost[] = [];
+
+async function directorySha256(directory: string) {
+  const hash = createHash("sha256");
+  const walk = async (current: string) => {
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const entryPath = path.resolve(current, entry.name);
+      if (entry.isDirectory()) {
+        await walk(entryPath);
+      } else if (entry.isFile()) {
+        const rel = path.relative(directory, entryPath).replaceAll("\\", "/");
+        hash.update(rel);
+        hash.update("\0");
+        hash.update(await readFile(entryPath));
+        hash.update("\0");
+      }
+    }
+  };
+  await walk(directory);
+  return hash.digest("hex");
+}
+
+async function writeSkillLibrary(root: string) {
+  const skillsRoot = path.join(root, "apps/desktop/src-tauri/sidecars/vdt-agent-skills");
+  const files = {
+    "registry.md": "| Skill ID | Path | Domain | Matching terms | Primary KPI patterns | Input requirements | Expected outputs | Confidence hints | When not to use |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
+    "finance/revenue-profit.md": "---\nid: finance.revenue_profit\n---\n",
+    "generic/logical-kpi-decomposition.md": "---\nid: generic.logical_kpi_decomposition\n---\n",
+    "mining/haulage-truck-cycle.md": "---\nid: mining.haulage.truck_cycle\n---\n",
+    "mining/production-volume.md": "---\nid: mining.production_volume\n---\n",
+    "saas/funnel-growth.md": "---\nid: saas.funnel_growth\n---\n"
+  };
+  for (const [file, text] of Object.entries(files)) {
+    const filePath = path.join(skillsRoot, file);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, text);
+  }
+  return directorySha256(skillsRoot);
+}
 
 async function writeLauncher(text: string, mode = 0o755) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vdt-sidecar-fixture-"));
@@ -21,7 +60,8 @@ async function writeLauncher(text: string, mode = 0o755) {
   await mkdir(path.dirname(launcherPath), { recursive: true });
   await mkdir(path.dirname(configPath), { recursive: true });
   await mkdir(path.dirname(hostPath), { recursive: true });
-  const bundle = `export function runLocalRuntimeSidecar() {}\n${"// bundled runtime\n".repeat(4000)}`;
+  const skillLibrarySha256 = await writeSkillLibrary(root);
+  const bundle = `export function runLocalRuntimeSidecar() {}\nconst packagedSkills = "vdt-agent-skills";\n${"// bundled runtime\n".repeat(4000)}`;
   const windowsLauncher = "@echo off\nset \"ENTRYPOINT=%~dp0vdt-local-runtime.mjs\"\nnode \"%ENTRYPOINT%\"\n";
   await writeFile(launcherPath, text);
   await writeFile(windowsLauncherPath, windowsLauncher);
@@ -36,6 +76,7 @@ async function writeLauncher(text: string, mode = 0o755) {
     launcherSha256: createHash("sha256").update(text).digest("hex"),
     windowsLauncherSha256: createHash("sha256").update(windowsLauncher).digest("hex"),
     bundleSha256: createHash("sha256").update(bundle).digest("hex"),
+    skillLibrarySha256,
     selfContained: false,
     requiresNode: ">=24 <25"
   }));
@@ -45,7 +86,8 @@ async function writeLauncher(text: string, mode = 0o755) {
         "sidecars/vdt-local-runtime",
         "sidecars/vdt-local-runtime.cmd",
         "sidecars/vdt-local-runtime.mjs",
-        "sidecars/vdt-local-runtime.manifest.json"
+        "sidecars/vdt-local-runtime.manifest.json",
+        "sidecars/vdt-agent-skills"
       ]
     }
   }));
@@ -120,6 +162,34 @@ describe("verify-desktop-sidecar", () => {
     });
   });
 
+  it("runs agentic generate_tree through the packaged sidecar launcher", async () => {
+    const host = new SidecarProcessHost({
+      command: path.join(process.cwd(), "apps/desktop/src-tauri/sidecars/vdt-local-runtime"),
+      handshakeTimeoutMs: 5000
+    });
+    hosts.push(host);
+    await host.start();
+    await expect(host.request("complete", {
+      backendId: "mock",
+      taskType: "generate_tree",
+      schemaId: "generate-tree-v1",
+      input: {
+        rootKpi: "Production Volume",
+        industry: "Mining",
+        businessContext: "Production volume throughput"
+      }
+    })).resolves.toMatchObject({
+      ok: true,
+      run: {
+        status: "succeeded",
+        agentRun: {
+          status: "succeeded",
+          selectedSkills: expect.arrayContaining([expect.objectContaining({ id: "mining.production_volume" })])
+        }
+      }
+    });
+  });
+
   it("fails if the launcher is not executable", async () => {
     const root = await writeLauncher("#!/bin/sh\nexec node vdt-local-runtime.mjs\n", 0o644);
     expect(() => verifyDesktopSidecar(root)).toThrow(/must be executable/);
@@ -152,6 +222,28 @@ describe("verify-desktop-sidecar", () => {
       }
     }));
     expect(() => verifyDesktopSidecar(root)).toThrow(/Windows sidecar launcher/);
+  });
+
+  it("fails if the Tauri bundle resource does not include the VDT agent skill library", async () => {
+    const root = await writeLauncher("#!/bin/sh\nexec node vdt-local-runtime.mjs\n");
+    await writeFile(path.join(root, "apps/desktop/src-tauri/tauri.conf.json"), JSON.stringify({
+      bundle: {
+        resources: [
+          "sidecars/vdt-local-runtime",
+          "sidecars/vdt-local-runtime.cmd",
+          "sidecars/vdt-local-runtime.mjs",
+          "sidecars/vdt-local-runtime.manifest.json"
+        ]
+      }
+    }));
+    expect(() => verifyDesktopSidecar(root)).toThrow(/skill library/);
+  });
+
+  it("fails if the packaged VDT agent skill library is missing a required skill", async () => {
+    const root = await writeLauncher("#!/bin/sh\nexec node vdt-local-runtime.mjs\n");
+    await rm(path.join(root, "apps/desktop/src-tauri/sidecars/vdt-agent-skills/mining/production-volume.md"));
+    await expect(stat(path.join(root, "apps/desktop/src-tauri/sidecars/vdt-agent-skills/mining/production-volume.md"))).rejects.toThrow();
+    expect(() => verifyDesktopSidecar(root)).toThrow(/production-volume/);
   });
 
   it("fails if the sidecar launcher hash does not match the manifest", async () => {

@@ -26,7 +26,8 @@ async function createFixture(options: { signed?: boolean; selfContained?: boolea
         "sidecars/vdt-local-runtime",
         "sidecars/vdt-local-runtime.cmd",
         "sidecars/vdt-local-runtime.mjs",
-        "sidecars/vdt-local-runtime.manifest.json"
+        "sidecars/vdt-local-runtime.manifest.json",
+        "sidecars/vdt-agent-skills"
       ],
       macOS: { signingIdentity: options.signed ? "Developer ID Application: Example" : "-" }
     }

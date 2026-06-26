@@ -15,6 +15,7 @@ import {
   type ExampleProjectId
 } from "./vdt-store";
 import { ExecutionModeSummaryCard } from "./execution-mode-summary";
+import { GenerateActivityPanel } from "./generate-activity-panel";
 import { SettingsModal } from "./settings-modal";
 
 export function SetupRail() {
@@ -22,12 +23,14 @@ export function SetupRail() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const brief = useVdtStudioStore((state) => state.brief);
   const isGenerating = useVdtStudioStore((state) => state.isGenerating);
+  const generateActivity = useVdtStudioStore((state) => state.generateActivity);
   const aiError = useVdtStudioStore((state) => state.aiError);
   const leftPanelCollapsed = useVdtStudioStore((state) => state.ui.leftPanelCollapsed);
   const isDesktop = useDesktopLayout();
   const showCollapsed = isDesktop && leftPanelCollapsed;
   const setBriefField = useVdtStudioStore((state) => state.setBriefField);
   const generateWithAi = useVdtStudioStore((state) => state.generateWithAi);
+  const cancelGenerate = useVdtStudioStore((state) => state.cancelGenerate);
   const loadExample = useVdtStudioStore((state) => state.loadExample);
   const toggleLeftPanel = useVdtStudioStore((state) => state.toggleLeftPanel);
   const runAiAction = useVdtStudioStore((state) => state.runAiAction);
@@ -139,7 +142,7 @@ export function SetupRail() {
             <Button
               size="sm"
               icon={<Scale className="h-4 w-4" />}
-              disabled={isRunningAiAction}
+              disabled={isRunningAiAction || isGenerating}
               onClick={() => void runAiAction("check_units", {})}
             >
               Check units
@@ -147,7 +150,7 @@ export function SetupRail() {
             <Button
               size="sm"
               icon={<Search className="h-4 w-4" />}
-              disabled={isRunningAiAction}
+              disabled={isRunningAiAction || isGenerating}
               onClick={() => void runAiAction("identify_missing_drivers", {})}
             >
               Find missing drivers
@@ -155,7 +158,7 @@ export function SetupRail() {
             <Button
               size="sm"
               icon={<Search className="h-4 w-4" />}
-              disabled={isRunningAiAction}
+              disabled={isRunningAiAction || isGenerating}
               onClick={() => void runAiAction("identify_duplicate_drivers", {})}
             >
               Find duplicates
@@ -163,7 +166,7 @@ export function SetupRail() {
             <Button
               size="sm"
               icon={<FileText className="h-4 w-4" />}
-              disabled={isRunningAiAction}
+              disabled={isRunningAiAction || isGenerating}
               onClick={runExecutiveSummary}
             >
               Executive summary
@@ -203,6 +206,9 @@ export function SetupRail() {
         ) : null}
       </div>
       <div className="space-y-2 border-t border-line px-4 py-4">
+        {generateActivity ? (
+          <GenerateActivityPanel activity={generateActivity} onCancel={cancelGenerate} />
+        ) : null}
         <Button
           className="w-full"
           variant="primary"
@@ -224,7 +230,12 @@ export function SetupRail() {
             ))}
           </SelectInput>
         </Field>
-        <Button className="w-full" icon={<RotateCcw className="h-4 w-4" />} onClick={() => loadExample(selectedExampleId)}>
+        <Button
+          className="w-full"
+          icon={<RotateCcw className="h-4 w-4" />}
+          disabled={isGenerating}
+          onClick={() => loadExample(selectedExampleId)}
+        >
           Open example
         </Button>
         <div className="flex items-center gap-2 rounded-md bg-slate-50 px-3 py-2 text-xs leading-5 text-muted">

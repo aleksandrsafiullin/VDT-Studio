@@ -3,10 +3,13 @@ import { mkdtemp, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { productionVolumeProject } from "@vdt-studio/vdt-core";
 import type { AuditEvent } from "../cli/types";
 import {
   createLocalRuntimeContext,
   completeRuntime,
+  cancelRuntimeRequest,
+  detectRuntimeSubscriptionClis,
   getRuntimeRun,
   listRuntimeBackends,
   listRuntimeModels,
@@ -46,6 +49,49 @@ describe("local runtime contract", () => {
       docsUrl: "https://developers.openai.com/codex/cli"
     });
     expect(JSON.stringify(result.payload)).not.toContain("command");
+  });
+
+  it("detects installed subscription CLIs and provider-owned models", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-detect-clis-"));
+    try {
+      await symlink(fakeCodex, path.join(tempDir, "codex"));
+      await symlink(fakeCursor, path.join(tempDir, "agent"));
+      const context = createLocalRuntimeContext({
+        auditSink: () => undefined,
+        detection: { path: tempDir, probeTimeoutMs: 5_000 }
+      });
+
+      await expect(detectRuntimeSubscriptionClis(context)).resolves.toMatchObject({
+        statusCode: 200,
+        payload: {
+          ok: true,
+          agents: expect.arrayContaining([
+            expect.objectContaining({
+              id: "codex",
+              installed: true,
+              alias: "codex",
+              version: "codex-cli 0.128.0",
+              status: "ready",
+              authSummary: "ChatGPT subscription is authenticated and ready."
+            }),
+            expect.objectContaining({
+              id: "cursor-agent",
+              installed: true,
+              alias: "agent",
+              version: "2026.06.19-test",
+              status: "ready",
+              authSummary: "Cursor account is authenticated and ready."
+            })
+          ]),
+          modelsByAgent: {
+            codex: ["gpt-5.5", "gpt-5.2"],
+            "cursor-agent": ["auto", "gpt-5.5-high"]
+          }
+        }
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("lists subscription CLI models through provider adapters", async () => {
@@ -111,10 +157,277 @@ describe("local runtime contract", () => {
 
     const result = await completeRuntime(request, context);
     expect(result.statusCode).toBe(200);
-    expect(result.payload).toMatchObject({ ok: true, run: { requestId: request.requestId, status: "succeeded" } });
+    expect(result.payload).toMatchObject({
+      ok: true,
+      run: {
+        requestId: request.requestId,
+        status: "succeeded",
+        progress: { phase: "complete", label: "Complete" }
+      }
+    });
 
     const stored = getRuntimeRun(request.requestId, context);
-    expect(stored.payload).toMatchObject({ ok: true, run: { requestId: request.requestId, status: "succeeded" } });
+    expect(stored.payload).toMatchObject({
+      ok: true,
+      run: {
+        requestId: request.requestId,
+        status: "succeeded",
+        progress: { phase: "complete", label: "Complete" }
+      }
+    });
+  });
+
+  it("attaches agent events to generate_tree run snapshots", async () => {
+    const context = createLocalRuntimeContext({ auditSink: () => undefined });
+    const request = parseCompletionPayload({
+      requestId: crypto.randomUUID(),
+      backendId: "mock",
+      taskType: "generate_tree",
+      schemaId: "generate-tree-v1",
+      input: {
+        rootKpi: "Production Volume",
+        industry: "Mining / Processing Plant",
+        businessContext: "Ore throughput and plant production volume",
+        unit: "tonnes/month"
+      }
+    });
+
+    const result = await completeRuntime(request, context);
+
+    expect(result.statusCode).toBe(200);
+    expect(result.payload).toMatchObject({
+      ok: true,
+      run: {
+        status: "succeeded",
+        agentRun: {
+          status: "succeeded",
+          selectedSkills: expect.arrayContaining([expect.objectContaining({ id: "mining.production_volume" })]),
+          events: expect.arrayContaining([
+            expect.objectContaining({ type: "classification" }),
+            expect.objectContaining({ type: "skill_selected" }),
+            expect.objectContaining({ type: "model_call_started" }),
+            expect.objectContaining({ type: "graph_validation" }),
+            expect.objectContaining({ type: "final_report" })
+          ])
+        }
+      }
+    });
+
+    const stored = getRuntimeRun(request.requestId, context);
+    expect(stored.payload).toMatchObject({
+      ok: true,
+      run: {
+        agentRun: {
+          finalReport: expect.stringContaining("Validation result: Graph validation passed")
+        }
+      }
+    });
+  });
+
+  it("records real graph validation failures for schema-valid generate_tree output", async () => {
+    const invalidGraphOutput = {
+      projectTitle: "Invalid graph",
+      rootNodeId: "root",
+      nodes: [{
+        id: "root",
+        name: "Root KPI",
+        description: "Schema-valid root.",
+        type: "root_kpi",
+        unit: "units",
+        formula: "missing_child",
+        aiConfidence: 0.9,
+        aiRationale: "Fixture root.",
+        controllability: "medium",
+        materiality: "high"
+      }],
+      edges: [],
+      assumptions: [],
+      questionsForUser: [],
+      warnings: []
+    };
+    const context = createLocalRuntimeContext({
+      auditSink: () => undefined,
+      executor: {
+        fetch: async () =>
+          new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(invalidGraphOutput) } }] }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          })
+      }
+    });
+    const request = parseCompletionPayload({
+      requestId: crypto.randomUUID(),
+      backendId: "ollama",
+      taskType: "generate_tree",
+      schemaId: "generate-tree-v1",
+      input: {
+        rootKpi: "Production Volume",
+        industry: "Mining",
+        businessContext: "Production volume throughput"
+      }
+    });
+
+    const result = await completeRuntime(request, context);
+
+    expect(result.statusCode).toBe(200);
+    expect(result.payload).toMatchObject({
+      ok: true,
+      run: {
+        status: "succeeded",
+        agentRun: {
+          status: "succeeded",
+          events: expect.arrayContaining([
+            expect.objectContaining({
+              type: "graph_validation",
+              message: expect.stringContaining("Graph validation failed")
+            })
+          ]),
+          finalReport: expect.stringContaining("Validation result: Graph validation failed")
+        }
+      }
+    });
+  });
+
+  it("attaches classification and skill events to deepen_node run snapshots without changing output", async () => {
+    const context = createLocalRuntimeContext({ auditSink: () => undefined });
+    const request = parseCompletionPayload({
+      requestId: crypto.randomUUID(),
+      backendId: "mock",
+      taskType: "deepen_node",
+      schemaId: "deepen-node-v1",
+      input: {
+        projectTitle: "Production Volume Driver Model",
+        industry: "Mining",
+        businessContext: "Open pit truck haulage production volume",
+        targetNodeId: "ore_hauled",
+        excerpt: {
+          rootNodeId: "production_volume",
+          targetNodeId: "ore_hauled",
+          nodes: [{ id: "ore_hauled", name: "Ore Hauled", type: "calculated", unit: "tonnes/month" }],
+          edges: []
+        }
+      }
+    });
+
+    const result = await completeRuntime(request, context);
+
+    expect(result.statusCode).toBe(200);
+    expect(result.payload).toMatchObject({
+      ok: true,
+      output: { targetNodeId: "node-1" },
+      run: {
+        agentRun: {
+          status: "succeeded",
+          events: expect.arrayContaining([
+            expect.objectContaining({ type: "classification" }),
+            expect.objectContaining({ type: "skill_selected" }),
+            expect.objectContaining({ type: "model_call_started" }),
+            expect.objectContaining({ type: "graph_patch" }),
+            expect.objectContaining({ type: "model_call_completed" })
+          ])
+        }
+      }
+    });
+    const events = (result.payload as { run?: { agentRun?: { events?: Array<{ type?: string }> } } }).run?.agentRun?.events ?? [];
+    expect(events.map((event) => event.type)).not.toContain("graph_validation");
+  });
+
+  it("attaches agent events to deepen_node runs from the UI project/nodeId input shape", async () => {
+    const context = createLocalRuntimeContext({ auditSink: () => undefined });
+    const request = parseCompletionPayload({
+      requestId: crypto.randomUUID(),
+      backendId: "mock",
+      taskType: "deepen_node",
+      schemaId: "deepen-node-v1",
+      input: {
+        project: productionVolumeProject,
+        nodeId: "unplanned_downtime"
+      }
+    });
+
+    const result = await completeRuntime(request, context);
+
+    expect(result.statusCode).toBe(200);
+    expect(result.payload).toMatchObject({
+      ok: true,
+      output: { targetNodeId: "node-1" },
+      run: {
+        agentRun: {
+          status: "succeeded",
+          request: {
+            rootKpi: "Unplanned Downtime",
+            industry: "Mining / Processing Plant"
+          },
+          selectedSkills: expect.arrayContaining([expect.objectContaining({ id: expect.any(String) })]),
+          events: expect.arrayContaining([
+            expect.objectContaining({ type: "classification" }),
+            expect.objectContaining({ type: "skill_selected" }),
+            expect.objectContaining({ type: "model_call_started" }),
+            expect.objectContaining({ type: "graph_patch" }),
+            expect.objectContaining({ type: "final_report" })
+          ]),
+          finalReport: expect.stringContaining("Generated a candidate deepen patch")
+        }
+      }
+    });
+  });
+
+  it("marks nested agent runs as cancelled when runtime completion is cancelled", async () => {
+    let abortHandler: (() => void) | undefined;
+    let fetchStarted: (() => void) | undefined;
+    const fetchStartedPromise = new Promise<void>((resolve) => {
+      fetchStarted = resolve;
+    });
+    const context = createLocalRuntimeContext({
+      auditSink: () => undefined,
+      executor: {
+        fetch: async (_url, init) => {
+          fetchStarted?.();
+          await new Promise((_resolve, reject) => {
+            abortHandler = () => reject(Object.assign(new Error("Aborted"), { name: "AbortError" }));
+            init?.signal?.addEventListener("abort", abortHandler, { once: true });
+          });
+          throw new Error("Expected abort before local HTTP response.");
+        }
+      }
+    });
+    const request = parseCompletionPayload({
+      requestId: crypto.randomUUID(),
+      backendId: "ollama",
+      taskType: "generate_tree",
+      schemaId: "generate-tree-v1",
+      input: {
+        rootKpi: "Production Volume",
+        industry: "Mining",
+        businessContext: "Production volume throughput"
+      },
+      timeoutMs: 10_000
+    });
+
+    const response = completeRuntime(request, context);
+    await fetchStartedPromise;
+    expect(cancelRuntimeRequest(request.requestId, context)).toMatchObject({
+      statusCode: 202,
+      payload: { ok: true, requestId: request.requestId, status: "cancelling" }
+    });
+    expect(abortHandler).toBeDefined();
+
+    await expect(response).resolves.toMatchObject({
+      statusCode: 409,
+      payload: {
+        ok: false,
+        run: {
+          status: "cancelled",
+          agentRun: {
+            status: "cancelled",
+            events: expect.arrayContaining([
+              expect.objectContaining({ type: "error", title: "Provider execution cancelled" })
+            ])
+          }
+        },
+        error: { code: "CANCELLED" }
+      }
+    });
   });
 
   it("records failed repair attempts in audit metadata and run snapshots", async () => {

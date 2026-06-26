@@ -1,4 +1,7 @@
+import { writeFile } from "node:fs/promises";
+
 const mode = process.argv[2] ?? "valid";
+const diagnosticsPath = process.argv[3];
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
@@ -15,8 +18,16 @@ if (mode === "stderr") {
   process.exit(7);
 }
 
+if (diagnosticsPath) {
+  await writeFile(
+    diagnosticsPath,
+    JSON.stringify({ cwd: process.cwd(), envKeys: Object.keys(process.env).sort() }),
+    { encoding: "utf8", mode: 0o600 }
+  );
+}
+
 const output = request.schemaId === "connection-test-v1"
-  ? { ok: true, cwd: process.cwd(), envKeys: Object.keys(process.env).sort() }
+  ? { ok: true }
   : {
       projectTitle: "Fake tree",
       rootNodeId: "root",
