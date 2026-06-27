@@ -360,8 +360,8 @@ describe("execution-mode-resolver", () => {
   it("migrates legacy provider state into execution settings", () => {
     expect(migrateLegacyProviderToExecutionSettings("mock", {})).toMatchObject({
       executionMode: "byok",
-      gatewayPresetId: "mock",
-      useMockProvider: true
+      gatewayPresetId: "openai-default",
+      useMockProvider: false
     });
 
     expect(
@@ -440,11 +440,11 @@ describe("execution-mode-resolver", () => {
         }
       })
     ).toMatchObject({
-      providerId: "mock",
+      providerId: "openai_compatible",
       executionSettings: {
         executionMode: "byok",
-        gatewayPresetId: "mock",
-        useMockProvider: true
+        gatewayPresetId: "openai-default",
+        useMockProvider: false
       }
     });
   });
@@ -464,7 +464,7 @@ describe("execution-mode-resolver", () => {
     });
   });
 
-  it("preserves explicit mock execution settings without upgrading to openai-default", () => {
+  it("reconciles explicit mock execution settings to a real default provider", () => {
     expect(
       reconcilePersistedExecutionSettings(
         "mock",
@@ -477,8 +477,8 @@ describe("execution-mode-resolver", () => {
       )
     ).toMatchObject({
       executionMode: "byok",
-      gatewayPresetId: "mock",
-      useMockProvider: true
+      gatewayPresetId: "openai-default",
+      useMockProvider: false
     });
   });
 

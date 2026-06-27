@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, Clock3, Loader2, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, Clock3, Loader2, X } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import type { GenerateActivityState } from "./vdt-store";
@@ -73,6 +73,7 @@ export function GenerateActivityPanel({
   const [elapsed, setElapsed] = useState(() => formatElapsed(activity.startedAt, activity.completedAt));
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [freeformAnswer, setFreeformAnswer] = useState("");
 
   useEffect(() => {
     setElapsed(formatElapsed(activity.startedAt, activity.completedAt));
@@ -90,16 +91,21 @@ export function GenerateActivityPanel({
   const finalReport = activity.finalReport ?? activity.agentRun?.finalReport;
   const phase = activity.agentRun?.phase ? formatPhase(activity.agentRun.phase) : formatPhase(activity.phase);
   const isWorking = activity.status === "running" || activity.status === "needs_user_input";
+  const latestEvent = events.at(-1);
 
   return (
     <section
-      className="px-1 py-3"
+      className="space-y-3"
       data-testid="generate-activity-panel"
       aria-live="polite"
     >
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 rounded-md border border-blue-100 bg-white px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
-          {isWorking ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-accent" aria-hidden="true" /> : null}
+          {isWorking ? (
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-accent" aria-hidden="true" />
+          ) : (
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+          )}
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-ink">{phase}</div>
             <div className="truncate text-xs text-muted">{activity.providerLabel} - {statusLabel(activity)}</div>
@@ -112,59 +118,21 @@ export function GenerateActivityPanel({
       </div>
 
       {activity.message ? (
-        <p className={clsx("mt-4 text-sm leading-6", activity.status === "error" ? "text-red-700" : "text-muted")}>
+        <p className={clsx("text-sm leading-6", activity.status === "error" ? "text-red-700" : "text-muted")}>
           {activity.message}
         </p>
       ) : null}
 
-      <div className="mt-4 space-y-3" data-testid="generate-agent-events">
-        <div className="text-xs font-semibold uppercase tracking-wide text-muted">Agent Activity</div>
-        {events.length > 0 ? (
-          events.map((event) => (
-            <article key={event.id} className="border-l border-line pl-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="text-sm font-semibold text-ink">{event.title}</div>
-                <time className="shrink-0 text-[11px] text-muted" dateTime={event.timestamp}>
-                  {new Date(event.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                </time>
-              </div>
-              <p className="mt-1 text-sm leading-6 text-graphite">{event.message}</p>
-              {event.metadata ? (
-                <dl className="mt-2 grid gap-1 text-xs text-muted">
-                  {Object.entries(event.metadata).slice(0, 4).map(([key, value]) => {
-                    const formatted = formatMetadata(value);
-                    return formatted ? (
-                      <div key={key} className="flex gap-2">
-                        <dt className="shrink-0 font-medium text-graphite">{key}</dt>
-                        <dd className="min-w-0 truncate">{formatted}</dd>
-                      </div>
-                    ) : null;
-                  })}
-                </dl>
-              ) : null}
-            </article>
-          ))
-        ) : (
-          <p className="text-sm leading-6 text-muted">Waiting for runtime events.</p>
-        )}
-      </div>
-
-      {selectedSkills.length > 0 ? (
-        <div className="mt-5" data-testid="generate-selected-skills">
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted">Selected Skills</div>
-          <div className="mt-2 space-y-2">
-            {selectedSkills.map((skill) => (
-              <div key={skill.id} className="text-sm leading-6 text-ink">
-                <span className="font-semibold">{skill.id}</span>
-                <span className="text-muted"> - {skill.reason}</span>
-              </div>
-            ))}
-          </div>
+      {latestEvent && isWorking ? (
+        <div className="rounded-md border border-line bg-white px-3 py-2">
+          <div className="text-xs font-semibold uppercase tracking-normal text-muted">Now</div>
+          <p className="mt-1 text-sm font-semibold text-ink">{latestEvent.title}</p>
+          <p className="mt-1 text-sm leading-5 text-muted">{latestEvent.message}</p>
         </div>
       ) : null}
 
       {activity.status === "needs_user_input" && (structuredQuestions.length > 0 || questions.length > 0) ? (
-        <div className="mt-5" data-testid="generate-questions">
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3" data-testid="generate-questions">
           <div className="text-sm font-semibold text-ink">Questions</div>
           {structuredQuestions.length > 0 ? (
             <form
@@ -214,28 +182,111 @@ export function GenerateActivityPanel({
               </Button>
             </form>
           ) : (
-            <ul className="mt-2 space-y-2 text-sm leading-6 text-ink">
-              {questions.map((question) => (
-                <li key={question}>{question}</li>
-              ))}
-            </ul>
+            <form
+              className="mt-3 space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!freeformAnswer.trim()) return;
+                onAnswer?.({ response: freeformAnswer.trim() });
+              }}
+            >
+              <ul className="space-y-2 text-sm leading-6 text-ink">
+                {questions.map((question) => (
+                  <li key={question}>{question}</li>
+                ))}
+              </ul>
+              <textarea
+                className="w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-blue-100"
+                rows={3}
+                value={freeformAnswer}
+                onChange={(event) => setFreeformAnswer(event.target.value)}
+                data-testid="agent-answer-freeform"
+                placeholder="Answer for the agent"
+              />
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={!onAnswer || !freeformAnswer.trim()}
+                data-testid="continue-agent"
+              >
+                Continue agent
+              </Button>
+            </form>
           )}
         </div>
       ) : null}
 
       {activity.status === "ready" && finalReport ? (
-        <div className="mt-5" data-testid="generate-final-report">
-          <div className="text-sm font-semibold text-ink">Final Report</div>
-          <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-ink">{finalReport}</p>
+        <div className="rounded-md border border-emerald-200 bg-white px-3 py-3" data-testid="generate-final-report">
+          <div className="text-sm font-semibold text-ink">Draft ready</div>
+          <p className="mt-1 text-sm leading-5 text-muted">
+            The first draft is on the canvas. The next step is to deepen one branch.
+          </p>
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs font-semibold uppercase tracking-normal text-muted">Final Report</summary>
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{finalReport}</p>
+          </details>
         </div>
       ) : activity.status === "ready" && activity.summary ? (
-        <div className="mt-5" data-testid="generate-final-report">
-          <div className="text-sm font-semibold text-ink">Final Report</div>
-          <p className="mt-2 text-sm leading-7 text-ink">{activity.summary}</p>
+        <div className="rounded-md border border-emerald-200 bg-white px-3 py-3" data-testid="generate-final-report">
+          <div className="text-sm font-semibold text-ink">Draft ready</div>
+          <p className="mt-1 text-sm leading-5 text-muted">{activity.summary}</p>
         </div>
       ) : null}
 
-      <div className="mt-5" data-testid="generate-run-details">
+      <details className="rounded-md border border-line bg-white px-3 py-2" data-testid="generate-agent-events">
+        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-normal text-muted">
+          Activity log ({events.length})
+        </summary>
+        <div className="mt-3 space-y-3">
+          {events.length > 0 ? (
+            events.map((event) => (
+              <article key={event.id} className="border-l border-line pl-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="text-sm font-semibold text-ink">{event.title}</div>
+                  <time className="shrink-0 text-[11px] text-muted" dateTime={event.timestamp}>
+                    {new Date(event.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                  </time>
+                </div>
+                <p className="mt-1 text-sm leading-6 text-graphite">{event.message}</p>
+                {event.metadata ? (
+                  <dl className="mt-2 grid gap-1 text-xs text-muted">
+                    {Object.entries(event.metadata).slice(0, 4).map(([key, value]) => {
+                      const formatted = formatMetadata(value);
+                      return formatted ? (
+                        <div key={key} className="flex gap-2">
+                          <dt className="shrink-0 font-medium text-graphite">{key}</dt>
+                          <dd className="min-w-0 truncate">{formatted}</dd>
+                        </div>
+                      ) : null;
+                    })}
+                  </dl>
+                ) : null}
+              </article>
+            ))
+          ) : (
+            <p className="text-sm leading-6 text-muted">Waiting for runtime events.</p>
+          )}
+        </div>
+      </details>
+
+      {selectedSkills.length > 0 ? (
+        <details className="rounded-md border border-line bg-white px-3 py-2" data-testid="generate-selected-skills">
+          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-normal text-muted">
+            Selected skills ({selectedSkills.length})
+          </summary>
+          <div className="mt-3 space-y-2">
+            {selectedSkills.map((skill) => (
+              <div key={skill.id} className="text-sm leading-6 text-ink">
+                <span className="font-semibold">{skill.id}</span>
+                <span className="text-muted"> - {skill.reason}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+
+      <div data-testid="generate-run-details">
         <button
           type="button"
           className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted"
@@ -267,7 +318,7 @@ export function GenerateActivityPanel({
       </div>
 
       {isWorking ? (
-        <div className="mt-5 flex items-center gap-3">
+        <div className="flex items-center gap-3">
           <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
           <span className="text-sm text-muted">{activity.status === "needs_user_input" ? "Waiting for input" : "Working"}</span>
           <Button

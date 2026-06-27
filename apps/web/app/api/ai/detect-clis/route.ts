@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveVdtAppMode } from "@/lib/app-mode";
+import { resolveVdtAppModeForRequest } from "@/lib/app-mode";
 
 const SUBSCRIPTION_CLI_AGENTS = [
   { id: "cursor-agent", backendId: "cursor_subscription" },
@@ -73,7 +73,7 @@ async function developmentWebDetection(agentId?: SubscriptionCliAgentId) {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const agentId = searchParams.get("id");
-  const appMode = resolveVdtAppMode(process.env.VDT_APP_MODE ?? process.env.NEXT_PUBLIC_VDT_APP_MODE ?? "hosted_web");
+  const appMode = resolveVdtAppModeForRequest(request);
 
   if (agentId && !isSubscriptionCliAgentId(agentId)) {
     return NextResponse.json({ error: `Unknown CLI agent: ${agentId}` }, { status: 400 });

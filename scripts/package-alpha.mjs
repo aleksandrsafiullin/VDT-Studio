@@ -11,8 +11,8 @@ const releaseDir = join(root, "output", "release", `v${manifest.version}`);
 
 rmSync(releaseDir, { recursive: true, force: true });
 mkdirSync(releaseDir, { recursive: true });
-execFileSync("pnpm", ["--filter", "@vdt-studio/cli", "build"], { cwd: root, stdio: "inherit" });
-execFileSync("pnpm", ["--filter", "@vdt-studio/cli", "pack", "--pack-destination", releaseDir], {
+execFileSync("corepack", ["pnpm", "--filter", "@vdt-studio/cli", "build"], { cwd: root, stdio: "inherit" });
+execFileSync("corepack", ["pnpm", "--filter", "@vdt-studio/cli", "pack", "--pack-destination", releaseDir], {
   cwd: root,
   stdio: "inherit"
 });

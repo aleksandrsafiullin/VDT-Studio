@@ -28,8 +28,9 @@ function verifyBundleMatchesSource(root, expectedDigest) {
   const outputPath = join(tempDir, "vdt-local-runtime.mjs");
   try {
     execFileSync(
-      "pnpm",
+      "corepack",
       [
+        "pnpm",
         "--filter",
         "@vdt-studio/cli",
         "exec",

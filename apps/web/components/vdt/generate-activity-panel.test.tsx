@@ -41,7 +41,7 @@ function activity(overrides: Partial<GenerateActivityState> = {}): GenerateActiv
           reason: "Matched ore mined production context."
         },
         {
-          id: "mining.haulage.truck_cycle",
+          id: "mining.haulage_truck_cycle",
           path: "packages/vdt-agent/skills/mining/haulage-truck-cycle.md",
           reason: "Matched haulage throughput driver patterns."
         }
@@ -60,7 +60,7 @@ function activity(overrides: Partial<GenerateActivityState> = {}): GenerateActiv
           timestamp: "2026-06-24T10:00:02.000Z",
           type: "skill_selected",
           title: "Selected skills",
-          message: "Selected mining.production_volume and mining.haulage.truck_cycle."
+          message: "Selected mining.production_volume and mining.haulage_truck_cycle."
         }
       ]
     },
@@ -86,7 +86,7 @@ describe("GenerateActivityPanel", () => {
     expect(html).toContain('data-testid="generate-run-details"');
     expect(html).toContain("Generating Graph");
     expect(html).toContain("Classified request as mining / production throughput.");
-    expect(html).toContain("Selected mining.production_volume and mining.haulage.truck_cycle.");
+    expect(html).toContain("Selected mining.production_volume and mining.haulage_truck_cycle.");
     expect(html).toContain("mining.production_volume");
     expect(html).toContain("Matched ore mined production context.");
     expect(html).not.toContain("Model " + "is thinking");

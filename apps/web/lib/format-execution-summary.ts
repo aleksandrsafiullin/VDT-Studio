@@ -73,8 +73,8 @@ export function formatExecutionModeSummary(settings: ExecutionSettings): Executi
   if (settings.useMockProvider || settings.gatewayPresetId === "mock") {
     return {
       modeLabel: "BYOK",
-      primary: "Built-in mock",
-      secondary: "Offline development"
+      primary: "Runtime not configured",
+      secondary: "Select a real provider"
     };
   }
 

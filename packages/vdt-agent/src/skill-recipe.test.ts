@@ -13,8 +13,14 @@ describe("skill recipes", () => {
     expect(recipes.map((recipe) => recipe.skillId).sort()).toEqual([
       "finance.revenue_profit",
       "generic.logical_kpi_decomposition",
-      "mining.haulage.truck_cycle",
+      "mining.block_preparation_dozer",
+      "mining.drill_and_blast",
+      "mining.excavation_loading",
+      "mining.haulage_truck_cycle",
+      "mining.material_allocation_ore_waste",
+      "mining.mine_production_system",
       "mining.production_volume",
+      "mining.underground_production_cycle",
       "saas.funnel_growth"
     ]);
     expect(recipes.every((recipe) => recipe.requiredInputs.length > 0)).toBe(true);

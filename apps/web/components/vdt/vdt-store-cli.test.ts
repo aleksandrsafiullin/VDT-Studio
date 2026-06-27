@@ -982,7 +982,7 @@ describe("vdt-store generate activity", () => {
       status: "ready",
       phase: "ready",
       providerId: "mock",
-      providerLabel: "Built-in mock",
+      providerLabel: "Runtime not configured",
       backendId: "mock",
       canCancel: false
     });

@@ -99,6 +99,7 @@ export type VdtAgentEventType =
   | "skill_selected"
   | "skill_read"
   | "clarifying_questions"
+  | "user_instruction"
   | "planning_decomposition"
   | "model_call_started"
   | "model_call_completed"

@@ -109,6 +109,10 @@ export function migrateLegacyProviderToExecutionSettings(
   providerId: ResolvedProviderId,
   providerConfig: LegacyProviderConfig = {}
 ): ExecutionSettings {
+  if (providerId === "mock") {
+    return { ...DEFAULT_EXECUTION_SETTINGS };
+  }
+
   if (providerId === "local_cli") {
     const presetId = providerConfig.localRunnerPresetId ?? "custom_cli_json";
     const migrated = applyLocalRunnerPreset(
@@ -243,7 +247,7 @@ export function reconcilePersistedExecutionSettings(
     if (providerId && providerId !== "mock") {
       return fromLegacy;
     }
-    return applyGatewayPreset(merged, "mock");
+    return { ...DEFAULT_EXECUTION_SETTINGS };
   }
 
   return merged;

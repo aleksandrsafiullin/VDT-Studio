@@ -339,6 +339,7 @@ interface VdtStudioState {
   startAgentRun: () => Promise<void>;
   connectAgentEvents: (runId: string) => void;
   sendAgentAnswers: (answers: Record<string, string | number | string[]>) => Promise<void>;
+  sendAgentInstruction: (text: string, selectedNodeId?: string) => Promise<void>;
   sendManualProjectChange: (change: ManualProjectChange) => Promise<void>;
   applyAgentGraphPatch: (snapshot: RuntimeAgentRunSnapshot) => void;
   cancelAgentRun: () => Promise<void>;
@@ -546,7 +547,7 @@ function describeBackendLabel(
 
   return {
     backendId,
-    backendLabel: backendId === "mock" ? "Built-in mock" : backendId.replace(/_/g, " ")
+    backendLabel: backendId === "mock" ? "Runtime not configured" : backendId.replace(/_/g, " ")
   };
 }
 
@@ -1145,10 +1146,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         goal: "Understand what drives production decrease",
         levelOfDetail: "medium"
       },
-      providerId: "mock",
+      providerId: "openai_compatible",
       providerConfig: {
         openAiBaseUrl: "https://api.openai.com/v1",
-        openAiModel: "gpt-5.4-mini",
+        openAiModel: "gpt-5.5",
         anthropicBaseUrl: "https://api.anthropic.com",
         anthropicModel: "claude-sonnet-4-6",
         geminiBaseUrl: "https://generativelanguage.googleapis.com",
@@ -1602,7 +1603,32 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       startAgentRun: async () => {
         if (get().isGenerating) return;
         const state = get();
+        const { executionSettings, cliDetectionAgents } = state;
+        if (executionSettings.executionMode === "local_cli" && !hasLocalAiUi(resolveVdtAppMode())) {
+          set({ aiError: HOSTED_WEB_LOCAL_AI_MESSAGE, generateActivity: undefined });
+          return;
+        }
+        if (executionSettings.executionMode === "byok") {
+          const validationErrors = validateByokSettings(executionSettings);
+          if (hasByokFieldErrors(validationErrors)) {
+            set({
+              byokFieldErrors: validationErrors,
+              aiError: "Fix BYOK settings before starting the agent.",
+              generateActivity: undefined
+            });
+            return;
+          }
+        }
+        const executionError = validateExecutionForGenerate(executionSettings, cliDetectionAgents);
+        if (executionError) {
+          set({ aiError: executionError, generateActivity: undefined });
+          return;
+        }
         const { providerId, providerConfig } = resolveExecutionSettings(state.executionSettings);
+        if (providerId === "mock") {
+          set({ aiError: "Configure a real provider before starting the agent.", generateActivity: undefined });
+          return;
+        }
         set({
           isGenerating: true,
           aiError: undefined,
@@ -1617,7 +1643,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             mode: "generate_vdt",
             input: state.brief,
             providerId,
-            providerConfig: providerId === "mock" ? undefined : providerConfig,
+            providerConfig,
             options: {
               autoApplyPatches: true,
               continueWithAssumptions: false,
@@ -1648,6 +1674,33 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           applyAgentSnapshot(set, snapshot);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Agent answers could not be sent.";
+          set({ agentError: message, aiError: message });
+        }
+      },
+      sendAgentInstruction: async (text, selectedNodeId) => {
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        const runId = get().agentRun?.runId ?? get().activeAgentRunId;
+        if (!runId) {
+          set((state) => ({
+            brief: {
+              ...state.brief,
+              businessContext: [state.brief.businessContext, `Agent instruction: ${trimmed}`]
+                .filter(Boolean)
+                .join("\n")
+            }
+          }));
+          return;
+        }
+        try {
+          const snapshot = await createAgentClient().sendMessage(runId, {
+            type: "user_instruction",
+            text: trimmed,
+            ...(selectedNodeId ? { selectedNodeId } : {})
+          });
+          applyAgentSnapshot(set, snapshot);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Agent instruction could not be sent.";
           set({ agentError: message, aiError: message });
         }
       },

@@ -33,7 +33,9 @@ describe("detect CLIs API route", () => {
     vi.unstubAllEnvs();
   });
 
-  it("fails closed for hosted web without scanning server PATH", async () => {
+  it("fails closed for explicit hosted web without scanning server PATH", async () => {
+    vi.stubEnv("VDT_APP_MODE", "hosted_web");
+
     const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis"));
     const body = await readJson(response);
 
@@ -55,6 +57,8 @@ describe("detect CLIs API route", () => {
   });
 
   it("returns one hosted-web placeholder when id is provided", async () => {
+    vi.stubEnv("VDT_APP_MODE", "hosted_web");
+
     const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis?id=codex"));
     const body = await readJson(response);
 
@@ -103,6 +107,33 @@ describe("detect CLIs API route", () => {
         codex: ["gpt-5.5", "gpt-5.2"],
         "cursor-agent": ["auto", "gpt-5.5-high"]
       });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps localhost detection in development web mode even for production builds", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-web-detect-clis-"));
+    try {
+      await symlink(fakeCodex, path.join(tempDir, "codex"));
+      vi.stubEnv("VDT_APP_MODE", undefined);
+      vi.stubEnv("NEXT_PUBLIC_VDT_APP_MODE", undefined);
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("PATH", `${tempDir}${path.delimiter}${process.env.PATH ?? ""}`);
+
+      const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis?id=codex"));
+      const body = await readJson(response);
+
+      expect(response.status).toBe(200);
+      expect(body.appMode).toBe("development_web");
+      expect(body.agents).toEqual([
+        expect.objectContaining({
+          id: "codex",
+          installed: true,
+          alias: "codex",
+          status: "ready"
+        })
+      ]);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

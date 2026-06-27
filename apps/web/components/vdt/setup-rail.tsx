@@ -1,29 +1,29 @@
 "use client";
 
 import { useState } from "react";
-import { Bot, ClipboardList, Database, FileText, RotateCcw, Scale, Search, Sparkles } from "lucide-react";
-import { calculateGraph } from "@vdt-studio/vdt-core";
+import { Check, CircleAlert, Send, Settings2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Field, SelectInput, TextArea, TextInput } from "@/components/ui/field";
+import { Field, TextArea, TextInput } from "@/components/ui/field";
 import { Panel, PanelCollapseTab, PanelToggleButton, PanelHeader } from "@/components/ui/panel";
+import { hasByokFieldErrors, validateByokSettings } from "@/lib/byok-validation";
+import { formatExecutionModeSummary } from "@/lib/format-execution-summary";
+import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
-import { AdvisoryFindingsPanel } from "./advisory-findings-panel";
-import { ExplanationPanel } from "./explanation-panel";
-import {
-  EXAMPLE_PROJECT_OPTIONS,
-  useVdtStudioStore,
-  type ExampleProjectId
-} from "./vdt-store";
-import { ExecutionModeSummaryCard } from "./execution-mode-summary";
+import { useVdtStudioStore } from "./vdt-store";
 import { GenerateActivityPanel } from "./generate-activity-panel";
 import { SettingsModal } from "./settings-modal";
 
 export function SetupRail() {
-  const [selectedExampleId, setSelectedExampleId] = useState<ExampleProjectId>("production_volume");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [instructionText, setInstructionText] = useState("");
   const brief = useVdtStudioStore((state) => state.brief);
+  const project = useVdtStudioStore((state) => state.project);
+  const executionSettings = useVdtStudioStore((state) => state.executionSettings);
   const isGenerating = useVdtStudioStore((state) => state.isGenerating);
+  const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
   const generateActivity = useVdtStudioStore((state) => state.generateActivity);
+  const pendingChangeSet = useVdtStudioStore((state) => state.pendingChangeSet);
+  const changeSetSelection = useVdtStudioStore((state) => state.changeSetSelection);
   const aiError = useVdtStudioStore((state) => state.aiError);
   const leftPanelCollapsed = useVdtStudioStore((state) => state.ui.leftPanelCollapsed);
   const isDesktop = useDesktopLayout();
@@ -31,44 +31,51 @@ export function SetupRail() {
   const setBriefField = useVdtStudioStore((state) => state.setBriefField);
   const startAgentRun = useVdtStudioStore((state) => state.startAgentRun);
   const sendAgentAnswers = useVdtStudioStore((state) => state.sendAgentAnswers);
-  const generateWithAi = useVdtStudioStore((state) => state.generateWithAi);
+  const sendAgentInstruction = useVdtStudioStore((state) => state.sendAgentInstruction);
   const cancelGenerate = useVdtStudioStore((state) => state.cancelGenerate);
-  const loadExample = useVdtStudioStore((state) => state.loadExample);
-  const toggleLeftPanel = useVdtStudioStore((state) => state.toggleLeftPanel);
   const runAiAction = useVdtStudioStore((state) => state.runAiAction);
-  const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
-  const pendingAdvisoryResult = useVdtStudioStore((state) => state.pendingAdvisoryResult);
-  const pendingAdvisoryTaskType = useVdtStudioStore((state) => state.pendingAdvisoryTaskType);
-  const pendingExplanation = useVdtStudioStore((state) => state.pendingExplanation);
-  const pendingExplanationTaskType = useVdtStudioStore((state) => state.pendingExplanationTaskType);
-  const saveAdvisoryToProject = useVdtStudioStore((state) => state.saveAdvisoryToProject);
-  const applyAdvisorySuggestedChanges = useVdtStudioStore((state) => state.applyAdvisorySuggestedChanges);
   const selectNode = useVdtStudioStore((state) => state.selectNode);
-  const project = useVdtStudioStore((state) => state.project);
+  const applyPendingChangeSet = useVdtStudioStore((state) => state.applyPendingChangeSet);
+  const discardPendingChangeSet = useVdtStudioStore((state) => state.discardPendingChangeSet);
+  const toggleLeftPanel = useVdtStudioStore((state) => state.toggleLeftPanel);
+  const executionSummary = formatExecutionModeSummary(executionSettings);
+  const resolvedExecution = resolveExecutionSettings(executionSettings);
+  const canRunDeepenAction = resolvedExecution.providerId !== "mock";
+  const byokValidationBlocked = executionSettings.executionMode === "byok" &&
+    hasByokFieldErrors(validateByokSettings(executionSettings));
+  const canUseConfiguredRuntime = canRunDeepenAction && !byokValidationBlocked;
+  const topLevelDrivers = project.graph.edges
+    .filter((edge) => edge.sourceNodeId === project.rootNodeId)
+    .map((edge) => project.graph.nodes.find((node) => node.id === edge.targetNodeId))
+    .filter((node): node is NonNullable<typeof node> => Boolean(node));
+  const deepenTargetId = topLevelDrivers[0]?.id;
+  const pendingChangeCount = pendingChangeSet
+    ? pendingChangeSet.additions.length +
+      pendingChangeSet.updates.length +
+      pendingChangeSet.deletions.length +
+      pendingChangeSet.edgeChanges.length
+    : 0;
+  const canSendInstruction =
+    instructionText.trim().length > 0 &&
+    !isGenerating &&
+    !isRunningAiAction &&
+    canUseConfiguredRuntime;
 
-  const setupAdvisoryTasks = new Set(["check_units", "identify_missing_drivers", "identify_duplicate_drivers"]);
-  const showSetupAdvisory =
-    pendingAdvisoryResult &&
-    pendingAdvisoryTaskType &&
-    setupAdvisoryTasks.has(pendingAdvisoryTaskType);
-  const showExecutiveSummary =
-    pendingExplanation &&
-    pendingExplanationTaskType === "generate_executive_summary";
-
-  function runExecutiveSummary() {
-    const calculation = calculateGraph(project);
-    const topDrivers = project.graph.nodes
-      .filter((node) => node.id !== project.rootNodeId)
-      .slice(0, 5)
-      .map((node) => ({
-        nodeId: node.id,
-        name: node.name,
-        contributionSummary: node.description
-      }));
-
-    void runAiAction("generate_executive_summary", {
-      rootValue: calculation.rootValue,
-      topDrivers
+  async function submitAgentInstruction() {
+    const text = instructionText.trim();
+    if (!text || isGenerating || isRunningAiAction) return;
+    if (!canUseConfiguredRuntime) return;
+    setInstructionText("");
+    await sendAgentInstruction(text, generateActivity ? deepenTargetId : undefined);
+    if (!generateActivity) {
+      await startAgentRun();
+      return;
+    }
+    if (!deepenTargetId) return;
+    selectNode(deepenTargetId);
+    await runAiAction("deepen_node", {
+      nodeId: deepenTargetId,
+      context: { goal: text }
     });
   }
 
@@ -87,8 +94,7 @@ export function SetupRail() {
   return (
     <Panel className="flex h-full min-h-0 flex-col border-r">
       <PanelHeader
-        title="New VDT"
-        subtitle="Project brief and execution mode"
+        title="VDT Agent"
         action={
           <PanelToggleButton
             panel="left"
@@ -97,162 +103,142 @@ export function SetupRail() {
           />
         }
       />
-      <div className="flex-1 space-y-4 overflow-auto px-4 py-4">
-        <div className="space-y-3">
-          <Field label="Root KPI">
-            <TextInput value={brief.rootKpi} onChange={(event) => setBriefField("rootKpi", event.target.value)} />
-          </Field>
-          <Field label="Industry">
-            <TextInput value={brief.industry ?? ""} onChange={(event) => setBriefField("industry", event.target.value)} />
-          </Field>
-          <Field label="Unit">
-            <TextInput value={brief.unit ?? ""} onChange={(event) => setBriefField("unit", event.target.value)} />
-          </Field>
-          <Field label="Time period">
-            <TextInput
-              value={brief.timePeriod ?? ""}
-              onChange={(event) => setBriefField("timePeriod", event.target.value)}
-            />
-          </Field>
-          <Field label="Business goal">
-            <TextArea value={brief.goal ?? ""} onChange={(event) => setBriefField("goal", event.target.value)} />
-          </Field>
-          <Field label="Business context">
-            <TextArea
-              value={brief.businessContext ?? ""}
-              onChange={(event) => setBriefField("businessContext", event.target.value)}
-            />
-          </Field>
-          <Field label="Detail">
-            <SelectInput
-              value={brief.levelOfDetail ?? "medium"}
-              onChange={(event) => setBriefField("levelOfDetail", event.target.value)}
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </SelectInput>
-          </Field>
-        </div>
-
-        <div className="border-t border-line pt-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
-            <ClipboardList className="h-4 w-4 text-accent" />
-            AI analysis
-          </div>
-          <div className="grid gap-2">
-            <Button
-              size="sm"
-              icon={<Scale className="h-4 w-4" />}
-              disabled={isRunningAiAction || isGenerating}
-              onClick={() => void runAiAction("check_units", {})}
-            >
-              Check units
-            </Button>
-            <Button
-              size="sm"
-              icon={<Search className="h-4 w-4" />}
-              disabled={isRunningAiAction || isGenerating}
-              onClick={() => void runAiAction("identify_missing_drivers", {})}
-            >
-              Find missing drivers
-            </Button>
-            <Button
-              size="sm"
-              icon={<Search className="h-4 w-4" />}
-              disabled={isRunningAiAction || isGenerating}
-              onClick={() => void runAiAction("identify_duplicate_drivers", {})}
-            >
-              Find duplicates
-            </Button>
-            <Button
-              size="sm"
-              icon={<FileText className="h-4 w-4" />}
-              disabled={isRunningAiAction || isGenerating}
-              onClick={runExecutiveSummary}
-            >
-              Executive summary
-            </Button>
+      <div className="flex-1 overflow-auto">
+        <section className="space-y-3 border-b border-line px-4 py-4">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-normal text-muted">Current brief</p>
+            <p className="mt-1 truncate text-sm font-semibold text-ink">{brief.rootKpi || "Untitled VDT"}</p>
           </div>
 
-          {showSetupAdvisory && pendingAdvisoryTaskType ? (
-            <div className="mt-3">
-              <AdvisoryFindingsPanel
-                taskType={pendingAdvisoryTaskType}
-                result={pendingAdvisoryResult}
-                isRunning={isRunningAiAction}
-                onSaveToProject={saveAdvisoryToProject}
-                onApplySuggestedChanges={applyAdvisorySuggestedChanges}
-                onSelectNode={selectNode}
+          <div className="space-y-2">
+            <Field label="Root KPI">
+              <TextInput
+                className="py-2"
+                value={brief.rootKpi}
+                onChange={(event) => setBriefField("rootKpi", event.target.value)}
               />
+            </Field>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Unit">
+                <TextInput
+                  className="py-2"
+                  value={brief.unit ?? ""}
+                  onChange={(event) => setBriefField("unit", event.target.value)}
+                />
+              </Field>
+              <Field label="Period">
+                <TextInput
+                  className="py-2"
+                  value={brief.timePeriod ?? ""}
+                  onChange={(event) => setBriefField("timePeriod", event.target.value)}
+                />
+              </Field>
             </div>
-          ) : null}
-
-          {showExecutiveSummary && pendingExplanationTaskType ? (
-            <div className="mt-3">
-              <ExplanationPanel taskType={pendingExplanationTaskType} result={pendingExplanation} />
-            </div>
-          ) : null}
-        </div>
-
-        <div className="border-t border-line pt-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
-            <Bot className="h-4 w-4 text-accent" />
-            Execution mode
           </div>
-          <ExecutionModeSummaryCard onConfigure={() => setSettingsOpen(true)} />
-        </div>
+        </section>
 
-        {aiError ? (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-5 text-red-700">{aiError}</div>
-        ) : null}
-      </div>
-      <div className="space-y-2 border-t border-line px-4 py-4">
-        {generateActivity ? (
-          <GenerateActivityPanel activity={generateActivity} onCancel={cancelGenerate} onAnswer={(answers) => void sendAgentAnswers(answers)} />
-        ) : null}
-        <Button
-          className="w-full"
-          variant="primary"
-          icon={<Bot className="h-4 w-4" />}
-          disabled={isGenerating}
-          onClick={() => void startAgentRun()}
-          data-testid="start-vdt-agent"
-        >
-          {isGenerating ? "Agent running..." : "Start VDT Agent"}
-        </Button>
-        <Button
-          className="w-full"
-          icon={<Sparkles className="h-4 w-4" />}
-          disabled={isGenerating}
-          onClick={() => void generateWithAi()}
-        >
-          {isGenerating ? "Generating..." : "Generate VDT with AI"}
-        </Button>
-        <Field label="Example model">
-          <SelectInput
-            value={selectedExampleId}
-            onChange={(event) => setSelectedExampleId(event.target.value as ExampleProjectId)}
-          >
-            {EXAMPLE_PROJECT_OPTIONS.map((example) => (
-              <option key={example.id} value={example.id}>
-                {example.label}
-              </option>
-            ))}
-          </SelectInput>
-        </Field>
-        <Button
-          className="w-full"
-          icon={<RotateCcw className="h-4 w-4" />}
-          disabled={isGenerating}
-          onClick={() => loadExample(selectedExampleId)}
-        >
-          Open example
-        </Button>
-        <div className="flex items-center gap-2 rounded-md bg-slate-50 px-3 py-2 text-xs leading-5 text-muted">
-          <Database className="h-4 w-4 shrink-0" />
-          Browser-local state is saved automatically.
-        </div>
+        <section className="space-y-3 px-4 py-4">
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            {generateActivity ? (
+              <div className="border-b border-slate-100 px-3 py-3">
+                <GenerateActivityPanel
+                  activity={generateActivity}
+                  onCancel={cancelGenerate}
+                  onAnswer={(answers) => void sendAgentAnswers(answers)}
+                />
+              </div>
+            ) : null}
+
+            <form
+              className="bg-white p-3"
+              data-testid="agent-composer"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitAgentInstruction();
+              }}
+            >
+              <TextArea
+                className="min-h-52 resize-none rounded-xl border-slate-200 bg-white p-3 text-sm leading-6 shadow-none focus:bg-white"
+                value={instructionText}
+                onChange={(event) => setInstructionText(event.target.value)}
+                placeholder="Describe the situation, data, constraints, and what to do next..."
+                data-testid="agent-instruction-input"
+              />
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  className={[
+                    "flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-line bg-slate-50 px-2.5 text-left transition",
+                    "hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  ].join(" ")}
+                  onClick={() => setSettingsOpen(true)}
+                  data-testid="execution-mode-configure"
+                  aria-label="Configure execution mode"
+                >
+                  <span
+                    className={[
+                      "h-1.5 w-1.5 shrink-0 rounded-full",
+                      canUseConfiguredRuntime ? "bg-emerald-500" : "bg-amber-500"
+                    ].join(" ")}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 flex-1 truncate" data-testid="execution-mode-summary">
+                    <span className="truncate text-xs font-semibold text-ink">{executionSummary.primary}</span>
+                    <span className="ml-1 truncate text-[11px] text-muted">
+                      {executionSummary.secondary ?? executionSummary.modeLabel}
+                    </span>
+                  </span>
+                  <Settings2 className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" />
+                </button>
+                <Button
+                  className="h-9 shrink-0 px-3"
+                  size="sm"
+                  variant="primary"
+                  icon={<Send className="h-4 w-4" />}
+                  disabled={!canSendInstruction}
+                  data-testid="agent-send-instruction"
+                >
+                  Send
+                </Button>
+              </div>
+            </form>
+
+            {pendingChangeSet ? (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-white p-3" data-testid="agent-patch-ready">
+                <div className="text-xs font-semibold uppercase tracking-normal text-emerald-700">Patch ready</div>
+                <p className="mt-1 text-sm leading-5 text-ink">
+                  AI prepared {pendingChangeCount} graph change{pendingChangeCount === 1 ? "" : "s"}. Review or apply them.
+                </p>
+                <div className="mt-3 flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    icon={<Check className="h-4 w-4" />}
+                    disabled={isRunningAiAction || changeSetSelection.size === 0}
+                    onClick={applyPendingChangeSet}
+                  >
+                    Apply
+                  </Button>
+                  <Button
+                    size="sm"
+                    icon={<X className="h-4 w-4" />}
+                    disabled={isRunningAiAction}
+                    onClick={discardPendingChangeSet}
+                  >
+                    Discard
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {aiError ? (
+              <div className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-5 text-red-700">
+                <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{aiError}</span>
+              </div>
+            ) : null}
+          </div>
+        </section>
       </div>
       <SettingsModal
         open={settingsOpen}

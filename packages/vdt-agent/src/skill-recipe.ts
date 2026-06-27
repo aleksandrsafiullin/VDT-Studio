@@ -61,15 +61,15 @@ const RECIPE_TEMPLATES: Record<string, RecipeTemplate> = {
       },
       {
         nodeId: "average_productivity",
-        useSkillId: "mining.haulage.truck_cycle",
+        useSkillId: "mining.haulage_truck_cycle",
         suggestedDrivers: ["bottleneck_rate", "utilization_factor", "yield_factor"],
         guidance: "Deepen productivity with the named bottleneck such as haulage, loading, crushing, or dumping."
       }
     ],
     warnings: ["Do not double count downtime inside both availability and utilization."]
   },
-  "mining.haulage.truck_cycle": {
-    skillId: "mining.haulage.truck_cycle",
+  "mining.haulage_truck_cycle": {
+    skillId: "mining.haulage_truck_cycle",
     requiredInputs: ["number_of_trucks", "payload_per_trip_t", "cycle_time_h", "operating_hours", "truck_availability"],
     initialDrivers: [
       { id: "number_of_trucks", name: "Number of trucks", type: "input", relation: "multiplicative_driver" },
@@ -165,7 +165,7 @@ export function compileSkillRecipe(skill: VdtSkill | SkillExcerpt): VdtSkillReci
   const template = RECIPE_TEMPLATES[skill.id] ?? RECIPE_TEMPLATES["generic.logical_kpi_decomposition"]!;
   const questions = buildCriticalQuestions({ rootKpi: skill.title, industry: skill.domain }, [{ id: skill.id }]);
   return {
-    skillId: template.skillId,
+    skillId: skill.id,
     requiredInputs: [...template.requiredInputs],
     questions,
     initialDrivers: template.initialDrivers.map((driver) => ({ ...driver })),

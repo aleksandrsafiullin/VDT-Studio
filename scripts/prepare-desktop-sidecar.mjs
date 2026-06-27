@@ -98,8 +98,9 @@ rmSync(skillResourcePath, { recursive: true, force: true });
 cpSync(skillSourcePath, skillResourcePath, { recursive: true });
 
 execFileSync(
-  "pnpm",
+  "corepack",
   [
+    "pnpm",
     "--filter",
     "@vdt-studio/cli",
     "exec",

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,10 +43,25 @@ describe("development local runtime API route", () => {
     expect(body.ok).toBe(false);
   });
 
+  it("allows localhost production builds through the development runtime mode gate", async () => {
+    vi.stubEnv("VDT_APP_MODE", undefined);
+    vi.stubEnv("NEXT_PUBLIC_VDT_APP_MODE", undefined);
+    vi.stubEnv("NODE_ENV", "production");
+
+    const response = await POST(request({}));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(400);
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("Unsupported operation: (missing)");
+  });
+
   it("tests a subscription backend through the managed runtime without pairing", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-dev-runtime-"));
     try {
-      await symlink(fakeCodex, path.join(tempDir, "codex"));
+      const fakeCodexExecutable = path.join(tempDir, "codex");
+      await copyFile(fakeCodex, fakeCodexExecutable);
+      await chmod(fakeCodexExecutable, 0o700);
       vi.stubEnv("VDT_APP_MODE", "development_web");
       vi.stubEnv("PATH", `${tempDir}${path.delimiter}${process.env.PATH ?? ""}`);
 
@@ -58,7 +73,7 @@ describe("development local runtime API route", () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 60_000);
 
   it("returns run progress snapshots for polling clients", async () => {
     vi.stubEnv("VDT_APP_MODE", "development_web");

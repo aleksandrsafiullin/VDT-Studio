@@ -170,7 +170,7 @@ export class VdtAgentRuntime {
   async handleMessage(runId: string, message: AgentUserMessage): Promise<VdtAgentRunSnapshot> {
     const state = this.store.getState(runId);
     if (state.status === "cancelled" || state.status === "failed" || state.status === "succeeded") {
-      if (message.type !== "manual_project_change") {
+      if (message.type !== "manual_project_change" && message.type !== "user_instruction") {
         return this.store.getSnapshot(runId);
       }
     }
@@ -199,6 +199,20 @@ export class VdtAgentRuntime {
         metadata: { answerIds: Object.keys(message.answers) }
       });
       await this.buildDraft(runId);
+      return this.store.getSnapshot(runId);
+    }
+
+    if (message.type === "user_instruction") {
+      const text = message.text.trim();
+      this.emit(runId, {
+        type: "user_instruction",
+        phase: state.phase,
+        title: "User instruction received",
+        message: text,
+        metadata: {
+          ...(message.selectedNodeId ? { selectedNodeId: message.selectedNodeId } : {})
+        }
+      });
       return this.store.getSnapshot(runId);
     }
 

@@ -30,6 +30,7 @@ export type VdtAgentEventType =
   | "skill_read"
   | "clarifying_questions"
   | "user_answer_received"
+  | "user_instruction"
   | "plan_proposed"
   | "tool_call_started"
   | "tool_call_completed"
@@ -122,6 +123,11 @@ export type AgentUserMessage =
       type: "manual_project_change";
       projectRevision?: number | undefined;
       change: ManualProjectChange;
+    }
+  | {
+      type: "user_instruction";
+      text: string;
+      selectedNodeId?: string | undefined;
     }
   | {
       type: "approval";

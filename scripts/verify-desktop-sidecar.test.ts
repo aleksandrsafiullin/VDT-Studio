@@ -36,7 +36,7 @@ async function writeSkillLibrary(root: string) {
     "registry.md": "| Skill ID | Path | Domain | Matching terms | Primary KPI patterns | Input requirements | Expected outputs | Confidence hints | When not to use |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
     "finance/revenue-profit.md": "---\nid: finance.revenue_profit\n---\n",
     "generic/logical-kpi-decomposition.md": "---\nid: generic.logical_kpi_decomposition\n---\n",
-    "mining/haulage-truck-cycle.md": "---\nid: mining.haulage.truck_cycle\n---\n",
+    "mining/haulage-truck-cycle.md": "---\nid: mining.haulage_truck_cycle\n---\n",
     "mining/production-volume.md": "---\nid: mining.production_volume\n---\n",
     "saas/funnel-growth.md": "---\nid: saas.funnel_growth\n---\n"
   };

@@ -38,8 +38,14 @@ describe("VDT agent skill library", () => {
     expect(skillPaths).toEqual([
       "finance/revenue-profit.md",
       "generic/logical-kpi-decomposition.md",
+      "mining/block-preparation-dozer.md",
+      "mining/drill-and-blast.md",
+      "mining/excavation-loading.md",
       "mining/haulage-truck-cycle.md",
+      "mining/material-allocation-ore-waste.md",
+      "mining/mine-production-system.md",
       "mining/production-volume.md",
+      "mining/underground-production-cycle.md",
       "saas/funnel-growth.md"
     ]);
     expect(skillPaths.every((path) => registryPaths.has(path))).toBe(true);
@@ -62,7 +68,7 @@ describe("VDT agent skill library", () => {
         industry: "Mining",
         businessContext: "Open-pit truck haulage with payload and cycle time constraints"
       },
-      "mining.haulage.truck_cycle"
+      "mining.haulage_truck_cycle"
     ],
     [
       "finance profit",

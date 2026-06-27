@@ -26,6 +26,11 @@ export const agentUserMessageSchema = z.discriminatedUnion("type", [
     change: manualProjectChangeSchema
   }),
   z.object({
+    type: z.literal("user_instruction"),
+    text: z.string().trim().min(1).max(2_000),
+    selectedNodeId: z.string().max(160).optional()
+  }),
+  z.object({
     type: z.literal("approval"),
     approved: z.boolean(),
     selectedChangeIds: z.array(z.string()).optional()

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveVdtAppMode } from "@/lib/app-mode";
+import { resolveVdtAppModeForRequest } from "@/lib/app-mode";
 
 type RuntimeModule = typeof import("../../../../../../packages/local-runner/src/server/runtime");
 
@@ -11,10 +11,6 @@ const runtimeGlobal = globalThis as typeof globalThis & {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function appModeFromEnv() {
-  return resolveVdtAppMode(process.env.VDT_APP_MODE ?? process.env.NEXT_PUBLIC_VDT_APP_MODE);
 }
 
 async function loadRuntime() {
@@ -41,7 +37,7 @@ function normalizeRuntimeError(error: unknown) {
 }
 
 export async function POST(request: Request) {
-  if (appModeFromEnv() !== "development_web") {
+  if (resolveVdtAppModeForRequest(request) !== "development_web") {
     return NextResponse.json(
       { ok: false, error: "Development local runtime is only available in development_web mode." },
       { status: 404 }
