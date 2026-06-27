@@ -131,7 +131,7 @@ export function resolveRunTaskType(rawTaskType: unknown): RunTaskType {
   if (!RUN_TASK_TYPE_SET.has(resolved)) {
     throw new Error(`Unsupported taskType: ${rawTaskType}`);
   }
-  return resolved;
+  return resolved as RunTaskType;
 }
 
 export function parseRunTaskRequest(body: RunTaskRequestBody): {

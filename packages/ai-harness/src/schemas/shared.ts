@@ -26,7 +26,8 @@ export const aiVdtNodeSchema = z.object({
   aiConfidence: z.number().min(0).max(1),
   aiRationale: z.string().min(1).max(1_000),
   controllability: z.enum(["high", "medium", "low", "none"]).optional(),
-  materiality: z.enum(["high", "medium", "low", "unknown"]).optional()
+  materiality: z.enum(["high", "medium", "low", "unknown"]).optional(),
+  fixedInScenario: z.boolean().optional()
 });
 
 export const aiVdtEdgeSchema = z.object({

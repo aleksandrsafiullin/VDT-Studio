@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { CANONICAL_TASK_TYPES, verifyPhase7Gate } from "./verify-phase7-gate.mjs";
+import { CANONICAL_RUN_TASK_TYPES, CANONICAL_TASK_TYPES, verifyPhase7Gate } from "./verify-phase7-gate.mjs";
 
 const tempDirs: string[] = [];
 
@@ -35,13 +35,13 @@ async function writeStaticFixture(options: { readme?: string; runTaskParser?: st
     path.join(root, "apps/web/app/api/ai/run-task/parse-run-task-request.ts"),
     options.runTaskParser ??
       [
-        ...CANONICAL_TASK_TYPES.filter((taskType) => taskType !== "generate_tree").map((taskType) => `"${taskType}",`),
+        ...CANONICAL_RUN_TASK_TYPES.filter((taskType) => taskType !== "generate_tree").map((taskType) => `"${taskType}",`),
         'throw new Error("generate_tree must use /api/ai/generate-vdt.");'
       ].join("\n")
   );
   await writeFile(
     path.join(root, "apps/web/app/api/ai/run-task/route.ts"),
-    "Bounded AI task route for all VdtAiTaskType values except `generate_tree`.\n"
+    "Bounded AI task route for web-runnable VDT AI actions.\n"
   );
   await writeFile(path.join(root, "apps/web/app/api/ai/generate-vdt/route.ts"), 'taskType: "generate_tree"\n');
   await writeFile(path.join(root, "apps/web/components/vdt/component.tsx"), "export const ok = true;\n");
@@ -49,7 +49,7 @@ async function writeStaticFixture(options: { readme?: string; runTaskParser?: st
   await writeFile(
     path.join(root, "README.md"),
     options.readme ??
-      `VDT Studio exposes 12 bounded AI tasks.\n${CANONICAL_TASK_TYPES.map((taskType) => `\`${taskType}\``).join("\n")}\n`
+      `VDT Studio exposes 12 bounded AI tasks.\n${CANONICAL_RUN_TASK_TYPES.map((taskType) => `\`${taskType}\``).join("\n")}\n`
   );
   await writeFile(path.join(root, "docs/ROADMAP.md"), "Phase 7 verification gate verified for bounded AI actions.\n");
   return root;
@@ -62,8 +62,8 @@ afterEach(async () => {
 describe("verify-phase7-gate", () => {
   it("passes the current repository and runs all mock tasks", async () => {
     await expect(verifyPhase7Gate()).resolves.toMatchObject({
-      taskCount: 12,
-      schemaCount: 12,
+      taskCount: 13,
+      schemaCount: 13,
       mockTaskCount: 12
     });
   });
@@ -74,7 +74,7 @@ describe("verify-phase7-gate", () => {
   });
 
   it("fails when run-task stops rejecting generate_tree", async () => {
-    const root = await writeStaticFixture({ runTaskParser: CANONICAL_TASK_TYPES.map((taskType) => `"${taskType}",`).join("\n") });
+    const root = await writeStaticFixture({ runTaskParser: CANONICAL_RUN_TASK_TYPES.map((taskType) => `"${taskType}",`).join("\n") });
     await expect(verifyPhase7Gate(root, { runMockSmoke: false })).rejects.toThrow(/run-task route must reject generate_tree/);
   });
 });

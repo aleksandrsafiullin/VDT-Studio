@@ -65,7 +65,8 @@ export const productionVolumeAiOutput: GenerateVdtOutput = generateVdtOutputSche
       aiConfidence: 0.9,
       aiRationale: "Calendar time provides the maximum theoretical time base.",
       controllability: "none",
-      materiality: "medium"
+      materiality: "medium",
+      fixedInScenario: true
     },
     {
       id: "planned_downtime",
@@ -209,6 +210,168 @@ export const productionVolumeAiOutput: GenerateVdtOutput = generateVdtOutputSche
 });
 
 const MOCK_OUTPUT_BY_TASK: Record<AiTaskType, unknown> = {
+  agent_plan: {
+    buildIntent: {
+      rootKpi: "Ore haulage",
+      industry: "Mining",
+      businessContext: "I have 5 trucks\nAverage distance 2.7 km\nAverage load speed - 7 km/h\nAverage empty speed - 11 km/h",
+      unit: "tonnes/year",
+      timePeriod: "year",
+      goal: "Build a truck haulage VDT from the provided fleet and route inputs."
+    },
+    selectedSkillIds: ["mining.haulage_truck_cycle"],
+    skillRationale: "The prompt provides truck count, haul distance, loaded speed, and empty return speed, which directly match the haulage truck cycle skill.",
+    extractedInputs: [
+      { id: "number_of_trucks", label: "Number of trucks", value: 5, unit: "trucks", sourceText: "I have 5 trucks" },
+      { id: "haul_distance_km", label: "Average haul distance", value: 2.7, unit: "km", sourceText: "Average distance 2.7 km" },
+      { id: "loaded_speed_kmh", label: "Average loaded speed", value: 7, unit: "km/h", sourceText: "Average load speed - 7 km/h" },
+      { id: "empty_speed_kmh", label: "Average empty speed", value: 11, unit: "km/h", sourceText: "Average empty speed - 11 km/h" }
+    ],
+    missingInputs: [
+      {
+        id: "payload_per_trip_t",
+        question: "What is the average payload per truck trip in tonnes?",
+        reason: "Truck haulage tonnes require payload per trip.",
+        required: true
+      },
+      {
+        id: "operating_hours",
+        question: "How many operating hours should the yearly period assume?",
+        reason: "Trips per truck requires an operating-hours time base.",
+        required: true
+      }
+    ],
+    driverPlan: [
+      {
+        id: "number_of_trucks",
+        parentNodeId: "root",
+        name: "Number of trucks",
+        type: "input",
+        unit: "trucks",
+        relation: "multiplicative_driver",
+        formula: "",
+        description: "Active haul trucks in the fleet.",
+        value: 5,
+        assumptions: []
+      },
+      {
+        id: "trips_per_truck",
+        parentNodeId: "root",
+        name: "Trips per truck",
+        type: "calculated",
+        unit: "trips/truck/year",
+        relation: "multiplicative_driver",
+        formula: "operating_hours / cycle_time_h",
+        description: "Number of completed haulage cycles per truck in the period.",
+        value: "",
+        assumptions: ["Operating hours are required from the user before calculating trips."]
+      },
+      {
+        id: "payload_per_trip_t",
+        parentNodeId: "root",
+        name: "Payload per trip",
+        type: "input",
+        unit: "tonnes/trip",
+        relation: "multiplicative_driver",
+        formula: "",
+        description: "Average payload carried by each truck trip.",
+        value: "",
+        assumptions: []
+      },
+      {
+        id: "operating_hours",
+        parentNodeId: "trips_per_truck",
+        name: "Operating hours",
+        type: "input",
+        unit: "hours/year",
+        relation: "formula_dependency",
+        formula: "",
+        description: "Truck operating hours during the yearly period.",
+        value: "",
+        assumptions: []
+      },
+      {
+        id: "cycle_time_h",
+        parentNodeId: "trips_per_truck",
+        name: "Cycle time",
+        type: "calculated",
+        unit: "hours/trip",
+        relation: "divisive_driver",
+        formula: "loaded_travel_time_h + empty_return_time_h",
+        description: "Travel-only truck cycle time from loaded and empty speeds.",
+        value: "",
+        assumptions: ["Loading, dumping, spotting, and queueing are not provided yet."]
+      },
+      {
+        id: "loaded_travel_time_h",
+        parentNodeId: "cycle_time_h",
+        name: "Loaded travel time",
+        type: "calculated",
+        unit: "hours/trip",
+        relation: "additive_component",
+        formula: "haul_distance_km / loaded_speed_kmh",
+        description: "Loaded travel duration over the average haul distance.",
+        value: "",
+        assumptions: []
+      },
+      {
+        id: "empty_return_time_h",
+        parentNodeId: "cycle_time_h",
+        name: "Empty return time",
+        type: "calculated",
+        unit: "hours/trip",
+        relation: "additive_component",
+        formula: "haul_distance_km / empty_speed_kmh",
+        description: "Empty return duration over the same average distance.",
+        value: "",
+        assumptions: ["Return distance equals the average loaded haul distance."]
+      },
+      {
+        id: "haul_distance_km",
+        parentNodeId: "loaded_travel_time_h",
+        name: "Average haul distance",
+        type: "input",
+        unit: "km",
+        relation: "formula_dependency",
+        formula: "",
+        description: "Average one-way haul route distance.",
+        value: 2.7,
+        assumptions: []
+      },
+      {
+        id: "loaded_speed_kmh",
+        parentNodeId: "loaded_travel_time_h",
+        name: "Average loaded speed",
+        type: "input",
+        unit: "km/h",
+        relation: "formula_dependency",
+        formula: "",
+        description: "Average truck speed while loaded.",
+        value: 7,
+        assumptions: []
+      },
+      {
+        id: "empty_speed_kmh",
+        parentNodeId: "empty_return_time_h",
+        name: "Average empty speed",
+        type: "input",
+        unit: "km/h",
+        relation: "formula_dependency",
+        formula: "",
+        description: "Average truck speed while returning empty.",
+        value: 11,
+        assumptions: []
+      }
+    ],
+    rootFormula: "number_of_trucks * trips_per_truck * payload_per_trip_t",
+    assumptions: ["Return distance is treated as equal to loaded haul distance until the user provides a separate value."],
+    questionsForUser: [
+      "What is the average payload per truck trip in tonnes?",
+      "How many operating hours should the yearly period assume?"
+    ],
+    warnings: [],
+    confidence: 0.9
+  },
   generate_tree: productionVolumeAiOutput,
   deepen_node: unplannedDowntimeDeepenOutput,
   simplify_branch: averageProductivitySimplifyOutput,
@@ -385,6 +548,21 @@ function specializeGenerateTreeOutput(input: GenerateVdtInput): GenerateVdtOutpu
 }
 
 function resolveMockOutput<TInput>(params: AiCompletionParams<TInput>): unknown {
+  if (params.taskType === "agent_plan") {
+    const output = structuredClone(MOCK_OUTPUT_BY_TASK.agent_plan as Record<string, unknown>);
+    const input = params.input as { answers?: Record<string, unknown> };
+    if (input.answers && Object.keys(input.answers).length > 0) {
+      output.missingInputs = [];
+      output.questionsForUser = [];
+      const driverPlan = Array.isArray(output.driverPlan) ? output.driverPlan as Array<Record<string, unknown>> : [];
+      for (const driver of driverPlan) {
+        if (driver.id === "payload_per_trip_t") driver.value = 40;
+        if (driver.id === "operating_hours") driver.value = 4000;
+      }
+    }
+    return output;
+  }
+
   if (params.taskType === "generate_tree") {
     return specializeGenerateTreeOutput(params.input as GenerateVdtInput);
   }

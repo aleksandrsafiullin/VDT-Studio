@@ -31,10 +31,10 @@ export interface AiCompletionParams<TInput> {
   schema: unknown;
   systemPrompt: string;
   userPrompt: string;
-  model?: string;
-  temperature?: number;
-  maxTokens?: number;
-  signal?: AbortSignal;
+  model?: string | undefined;
+  temperature?: number | undefined;
+  maxTokens?: number | undefined;
+  signal?: AbortSignal | undefined;
 }
 
 export interface AiProvider {

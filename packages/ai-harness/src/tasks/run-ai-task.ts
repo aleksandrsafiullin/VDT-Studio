@@ -12,7 +12,7 @@ import type { ReviewModelResult } from "../schemas/review-model";
 import type { SimplifyBranchContext } from "../schemas/simplify-branch";
 import type { SuggestAlternativeContext } from "../schemas/suggest-alternative";
 import type { SuggestFormulaContext } from "../schemas/suggest-formula";
-import type { AiProvider, GenerateVdtInput, VdtAiTaskType } from "../types";
+import type { AiProvider, GenerateVdtInput } from "../types";
 import { runCheckUnits } from "./check-units";
 import { runAgenticDeepenNode } from "./deepen-node";
 import { runExecutiveSummary } from "./executive-summary";
@@ -104,6 +104,8 @@ export type RunAiTaskInputMap = {
   generate_executive_summary: RunAiTaskExecutiveSummaryInput;
 };
 
+export type RunnableAiTaskType = keyof RunAiTaskInputMap;
+
 function pickRunOptions(input: RunAiTaskCommonOptions): {
   maxTokens?: number;
   signal?: AbortSignal;
@@ -114,7 +116,7 @@ function pickRunOptions(input: RunAiTaskCommonOptions): {
   };
 }
 
-export async function runAiTask<T extends VdtAiTaskType>(
+export async function runAiTask<T extends RunnableAiTaskType>(
   taskType: T,
   provider: AiProvider,
   input: RunAiTaskInputMap[T]

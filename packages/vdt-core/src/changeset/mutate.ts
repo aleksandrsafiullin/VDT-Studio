@@ -55,6 +55,7 @@ function additionToNode(addition: VdtNodeAddition, timestamp: string): VdtNode {
     owner: addition.owner,
     controllability: addition.controllability,
     materiality: addition.materiality,
+    fixedInScenario: addition.fixedInScenario,
     dataMapping: addition.dataMapping,
     createdAt: timestamp,
     updatedAt: timestamp

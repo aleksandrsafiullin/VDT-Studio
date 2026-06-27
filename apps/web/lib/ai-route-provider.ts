@@ -24,7 +24,7 @@ export type AiRouteProviderId =
 
 export interface AiRouteProviderRequest {
   providerId?: AiRouteProviderId | string;
-  providerConfig?: Record<string, unknown>;
+  providerConfig?: Record<string, unknown> | undefined;
 }
 
 export function isMockProviderAllowed() {

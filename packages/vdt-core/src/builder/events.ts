@@ -20,6 +20,7 @@ export interface AddDriverInput {
   unit?: string | undefined;
   relation?: VdtEdgeRelation | undefined;
   formula?: string | undefined;
+  baselineValue?: number | undefined;
   description?: string | undefined;
   aiRationale?: string | undefined;
   assumptions?: string[] | undefined;

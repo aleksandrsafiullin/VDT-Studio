@@ -60,6 +60,24 @@ describe("formatExecutionModeSummary", () => {
     });
   });
 
+  it("does not show a previous CLI custom model for local HTTP presets", () => {
+    expect(
+      formatExecutionModeSummary({
+        ...DEFAULT_EXECUTION_SETTINGS,
+        executionMode: "local_cli",
+        selectedCliAgentId: "codex",
+        localRunnerPresetId: "ollama_openai",
+        runnerProviderId: "local_http_stub",
+        localModel: "qwen3:latest",
+        cliModelSelection: { source: "custom", customModel: "gpt-5.5" }
+      })
+    ).toEqual({
+      modeLabel: "Local CLI",
+      primary: "Ollama",
+      secondary: "qwen3:latest"
+    });
+  });
+
   it("summarizes BYOK preset and model", () => {
     expect(
       formatExecutionModeSummary({

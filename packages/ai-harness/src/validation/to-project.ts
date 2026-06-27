@@ -41,6 +41,7 @@ export function generateVdtOutputToProject(
         aiRationale: node.aiRationale,
         controllability: node.controllability,
         materiality: node.materiality,
+        fixedInScenario: node.fixedInScenario,
         createdAt: now,
         updatedAt: now
       })),

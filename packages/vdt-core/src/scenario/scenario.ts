@@ -6,6 +6,9 @@ const EPSILON = 0.000001;
 
 export function calculateScenario(project: VdtProject, scenario: VdtScenario): VdtScenarioResult {
   const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
+  const fixedInScenarioNodeIds = new Set(
+    project.graph.nodes.filter((node) => node.fixedInScenario === true).map((node) => node.id)
+  );
   const overrideErrors: VdtWarning[] = scenario.overrides
     .filter((override) => !nodeIds.has(override.nodeId))
     .map((override) =>
@@ -16,8 +19,9 @@ export function calculateScenario(project: VdtProject, scenario: VdtScenario): V
         nodeId: override.nodeId
       })
     );
+  const activeOverrides = scenario.overrides.filter((override) => !fixedInScenarioNodeIds.has(override.nodeId));
   const baseline = calculateGraph(project);
-  const scenarioCalculation = calculateGraph(project, { overrides: scenario.overrides });
+  const scenarioCalculation = calculateGraph(project, { overrides: activeOverrides });
   const impactedNodes: VdtImpactNode[] = [];
 
   for (const node of project.graph.nodes) {

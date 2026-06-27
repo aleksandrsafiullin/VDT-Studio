@@ -6,10 +6,10 @@ import {
 } from "@vdt-studio/model-bridge";
 import type { BackendManifest } from "../cli/types";
 
-/** All 12 canonical VDT AI task types (one per output schema). */
+/** All canonical VDT AI task types (one per output schema). */
 export const ALL_VDT_TASK_TYPES = VDT_OUTPUT_SCHEMA_IDS.map((schemaId) => schemaTasks[schemaId]) as readonly VdtAiTaskType[];
 
-/** All 13 registered schema IDs (12 output schemas + connection-test-v1). */
+/** All registered schema IDs (output schemas + connection-test-v1). */
 export const ALL_VDT_SCHEMA_IDS = VDT_SCHEMA_IDS;
 
 export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.freeze([

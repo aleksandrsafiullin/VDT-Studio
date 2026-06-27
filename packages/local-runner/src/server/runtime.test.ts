@@ -112,6 +112,58 @@ describe("local runtime contract", () => {
     });
   });
 
+  it("lists OpenAI-compatible local HTTP models", async () => {
+    const context = createLocalRuntimeContext({
+      auditSink: () => undefined,
+      executor: {
+        fetch: async (url) => {
+          expect(String(url)).toBe("http://127.0.0.1:1234/v1/models");
+          return new Response(JSON.stringify({
+            data: [
+              { id: "qwen2.5-coder:7b" },
+              { id: "llama3.2:latest" }
+            ]
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+      }
+    });
+
+    await expect(listRuntimeModels("lm_studio", context)).resolves.toMatchObject({
+      statusCode: 200,
+      payload: { ok: true, backendId: "lm_studio", models: ["qwen2.5-coder:7b", "llama3.2:latest"] }
+    });
+  });
+
+  it("falls back to the native Ollama tags endpoint when /v1/models is unavailable", async () => {
+    const requestedUrls: string[] = [];
+    const context = createLocalRuntimeContext({
+      auditSink: () => undefined,
+      executor: {
+        fetch: async (url) => {
+          requestedUrls.push(String(url));
+          if (String(url).endsWith("/v1/models")) {
+            return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
+          }
+          return new Response(JSON.stringify({
+            models: [
+              { name: "qwen3:latest" },
+              { model: "deepseek-r1:8b" }
+            ]
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+      }
+    });
+
+    await expect(listRuntimeModels("ollama", context)).resolves.toMatchObject({
+      statusCode: 200,
+      payload: { ok: true, backendId: "ollama", models: ["qwen3:latest", "deepseek-r1:8b"] }
+    });
+    expect(requestedUrls).toEqual([
+      "http://127.0.0.1:11434/v1/models",
+      "http://127.0.0.1:11434/api/tags"
+    ]);
+  });
+
   it("canonicalizes symlinked provider executables before adapter execution", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-symlink-provider-"));
     try {

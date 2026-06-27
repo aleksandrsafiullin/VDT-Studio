@@ -20,8 +20,8 @@ import {
 } from "./parse-run-task-request";
 
 /**
- * Bounded AI task route for all VdtAiTaskType values except `generate_tree`.
- * Tree generation remains on `/api/ai/generate-vdt` only.
+ * Bounded AI task route for web-runnable VDT AI actions.
+ * Tree generation remains on `/api/ai/generate-vdt`; schema-only planning runs through local-runner completions.
  */
 export async function POST(request: Request) {
   let body: (RunTaskRequestBody & Record<string, unknown>) | undefined;

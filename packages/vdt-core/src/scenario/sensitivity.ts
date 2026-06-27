@@ -6,8 +6,13 @@ function isScenarioInputNode(type: VdtProject["graph"]["nodes"][number]["type"])
   return type === "input" || type === "data_mapped";
 }
 
+function isOverridableInputNode(node: VdtProject["graph"]["nodes"][number]): boolean {
+  return isScenarioInputNode(node.type) && node.fixedInScenario !== true;
+}
+
 function isKnownScenarioInputNode(project: VdtProject, nodeId: string): boolean {
-  return project.graph.nodes.some((node) => node.id === nodeId && isScenarioInputNode(node.type));
+  const node = project.graph.nodes.find((candidate) => candidate.id === nodeId);
+  return node !== undefined && isOverridableInputNode(node);
 }
 
 function rootDelta(baselineRootValue: number | undefined, scenarioRootValue: number | undefined): number | undefined {
@@ -134,7 +139,7 @@ export function rankScenarioInputNodes(project: VdtProject): VdtInputSensitivity
   const baseline = calculateGraph(project);
 
   return project.graph.nodes
-    .filter((node) => isScenarioInputNode(node.type))
+    .filter((node) => isOverridableInputNode(node))
     .map((node) => {
       const baselineValue = baseline.values[node.id];
       const onePercentRootDelta =

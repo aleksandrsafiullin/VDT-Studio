@@ -232,7 +232,7 @@ interface BriefState extends GenerateVdtInput {
   rootKpi: string;
 }
 
-export type RunAiActionTaskType = Exclude<VdtAiTaskType, "generate_tree">;
+export type RunAiActionTaskType = Exclude<VdtAiTaskType, "agent_plan" | "generate_tree">;
 
 export type RunAiActionInput<T extends RunAiActionTaskType = RunAiActionTaskType> = Omit<
   RunAiTaskInputMap[T],
@@ -336,10 +336,10 @@ interface VdtStudioState {
   resetUiPreferences: () => void;
   autoDistributeLayout: () => void;
   updateNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
-  startAgentRun: () => Promise<void>;
+  startAgentRun: (initialInstruction?: string) => Promise<boolean>;
   connectAgentEvents: (runId: string) => void;
   sendAgentAnswers: (answers: Record<string, string | number | string[]>) => Promise<void>;
-  sendAgentInstruction: (text: string, selectedNodeId?: string) => Promise<void>;
+  sendAgentInstruction: (text: string, selectedNodeId?: string) => Promise<boolean>;
   sendManualProjectChange: (change: ManualProjectChange) => Promise<void>;
   applyAgentGraphPatch: (snapshot: RuntimeAgentRunSnapshot) => void;
   cancelAgentRun: () => Promise<void>;
@@ -806,6 +806,16 @@ function mapRuntimeAgentEventType(type: RuntimeAgentEvent["type"]): VdtAgentEven
     default:
       return type;
   }
+}
+
+function shouldRefreshAgentSnapshot(event: RuntimeAgentEvent): boolean {
+  return event.type === "clarifying_questions" ||
+    event.type === "plan_proposed" ||
+    event.type === "graph_patch" ||
+    event.type === "graph_validation" ||
+    event.type === "final_report" ||
+    event.type === "error" ||
+    event.type === "run_completed";
 }
 
 function mapRuntimeStatus(snapshot: RuntimeAgentRunSnapshot): GenerateActivityStatus {
@@ -1572,7 +1582,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         set({ agentConnectionStatus: "connecting" });
         activeAgentEventUnsubscribe = createAgentClient().subscribe(runId, {
           onOpen: () => set({ agentConnectionStatus: "connected" }),
-          onEvent: (event) =>
+          onEvent: (event) => {
             set((state) => {
               if (state.agentRun?.runId !== runId && state.activeAgentRunId !== runId) return {};
               const byId = new Map(state.agentEvents.map((entry) => [entry.id, entry]));
@@ -1591,22 +1601,31 @@ export const useVdtStudioStore = create<VdtStudioState>()(
                 generateActivity: state.generateActivity?.runId === runId
                   ? {
                       ...state.generateActivity,
-                      agentEvents: legacyEvents,
-                      updatedAt: event.timestamp
-                    }
-                  : state.generateActivity
-              };
-            }),
+	                      agentEvents: legacyEvents,
+	                      updatedAt: event.timestamp
+	                    }
+	                  : state.generateActivity
+	              };
+            });
+            if (shouldRefreshAgentSnapshot(event)) {
+              void createAgentClient().getRun(runId)
+                .then((snapshot) => applyAgentSnapshot(set, snapshot))
+                .catch((error) => {
+                  const message = error instanceof Error ? error.message : "Agent run could not be refreshed.";
+                  set({ agentError: message, aiError: message, agentConnectionStatus: "error" });
+                });
+            }
+          },
           onError: () => set({ agentConnectionStatus: "error" })
         });
       },
-      startAgentRun: async () => {
-        if (get().isGenerating) return;
+      startAgentRun: async (initialInstruction) => {
+        if (get().isGenerating) return false;
         const state = get();
         const { executionSettings, cliDetectionAgents } = state;
         if (executionSettings.executionMode === "local_cli" && !hasLocalAiUi(resolveVdtAppMode())) {
           set({ aiError: HOSTED_WEB_LOCAL_AI_MESSAGE, generateActivity: undefined });
-          return;
+          return false;
         }
         if (executionSettings.executionMode === "byok") {
           const validationErrors = validateByokSettings(executionSettings);
@@ -1616,18 +1635,18 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               aiError: "Fix BYOK settings before starting the agent.",
               generateActivity: undefined
             });
-            return;
+            return false;
           }
         }
         const executionError = validateExecutionForGenerate(executionSettings, cliDetectionAgents);
         if (executionError) {
           set({ aiError: executionError, generateActivity: undefined });
-          return;
+          return false;
         }
         const { providerId, providerConfig } = resolveExecutionSettings(state.executionSettings);
         if (providerId === "mock") {
           set({ aiError: "Configure a real provider before starting the agent.", generateActivity: undefined });
-          return;
+          return false;
         }
         set({
           isGenerating: true,
@@ -1639,9 +1658,16 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           ...clearPendingAiActionState()
         });
         try {
+          const prompt = initialInstruction?.trim();
+          const input = prompt
+            ? {
+                ...state.brief,
+                prompt
+              }
+            : state.brief;
           const response = await createAgentClient().startRun({
             mode: "generate_vdt",
-            input: state.brief,
+            input,
             providerId,
             providerConfig,
             options: {
@@ -1653,6 +1679,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           set({ activeAgentRunId: response.runId });
           applyAgentSnapshot(set, response.snapshot);
           get().connectAgentEvents(response.runId);
+          return true;
         } catch (error) {
           const message = error instanceof Error ? error.message : "Agent run could not be started.";
           set({
@@ -1661,6 +1688,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             isGenerating: false,
             agentConnectionStatus: "error"
           });
+          return false;
         }
       },
       sendAgentAnswers: async (answers) => {
@@ -1679,7 +1707,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       },
       sendAgentInstruction: async (text, selectedNodeId) => {
         const trimmed = text.trim();
-        if (!trimmed) return;
+        if (!trimmed) return false;
         const runId = get().agentRun?.runId ?? get().activeAgentRunId;
         if (!runId) {
           set((state) => ({
@@ -1690,7 +1718,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
                 .join("\n")
             }
           }));
-          return;
+          return true;
         }
         try {
           const snapshot = await createAgentClient().sendMessage(runId, {
@@ -1699,9 +1727,11 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             ...(selectedNodeId ? { selectedNodeId } : {})
           });
           applyAgentSnapshot(set, snapshot);
+          return true;
         } catch (error) {
           const message = error instanceof Error ? error.message : "Agent instruction could not be sent.";
           set({ agentError: message, aiError: message });
+          return false;
         }
       },
       sendManualProjectChange: async (change) => {
@@ -1737,12 +1767,14 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         }
       },
       cancelGenerate: () => {
-        if (get().activeAgentRunId) {
-          void get().cancelAgentRun();
-          return;
-        }
         const activity = get().generateActivity;
         if (!activity || (activity.status !== "running" && activity.status !== "needs_user_input")) return;
+        if (!activeGenerateRunId || activity.runId !== activeGenerateRunId) {
+          if (get().activeAgentRunId) {
+            void get().cancelAgentRun();
+          }
+          return;
+        }
         const completedAt = nowIso();
         set({
           isGenerating: false,
@@ -1804,7 +1836,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           generateActivity: buildGenerateActivity(runId, executionSettings, providerId, providerConfig),
           aiError: undefined,
           ...clearPendingAiActionState(),
-          byokFieldErrors: undefined
+          byokFieldErrors: undefined,
+          activeAgentRunId: undefined,
+          agentRun: undefined,
+          agentEvents: [],
+          agentPendingQuestions: undefined,
+          agentError: undefined,
+          agentConnectionStatus: "disconnected"
         });
 
         try {
@@ -2116,28 +2154,34 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           };
         }),
       updateScenarioOverride: (scenarioId, nodeId, value) =>
-        set((state) => ({
-          project: {
-            ...state.project,
-            updatedAt: nowIso(),
-            scenarios: state.project.scenarios.map((scenario) => {
-              if (scenario.id !== scenarioId) {
-                return scenario;
-              }
-
-              const overrides = scenario.overrides.filter((override) => override.nodeId !== nodeId);
-              if (value !== undefined) {
-                overrides.push({ nodeId, value });
-              }
-
-              return {
-                ...scenario,
-                overrides,
-                updatedAt: nowIso()
-              };
-            })
+        set((state) => {
+          if (state.project.graph.nodes.find((n) => n.id === nodeId)?.fixedInScenario === true) {
+            return state;
           }
-        })),
+
+          return {
+            project: {
+              ...state.project,
+              updatedAt: nowIso(),
+              scenarios: state.project.scenarios.map((scenario) => {
+                if (scenario.id !== scenarioId) {
+                  return scenario;
+                }
+
+                const overrides = scenario.overrides.filter((override) => override.nodeId !== nodeId);
+                if (value !== undefined) {
+                  overrides.push({ nodeId, value });
+                }
+
+                return {
+                  ...scenario,
+                  overrides,
+                  updatedAt: nowIso()
+                };
+              })
+            }
+          };
+        }),
       runAiAction: async (taskType, input) => {
         const actionRunId = AGENTIC_AI_ACTION_SCHEMA_IDS[taskType] ? generateRunId() : undefined;
         const stateBeforeRun = get();

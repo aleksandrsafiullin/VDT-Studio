@@ -71,6 +71,7 @@ export const productionVolumeProject: VdtProject = {
         aiConfidence: 0.9,
         aiRationale: "Calendar time provides the maximum theoretical time base.",
         controllability: "none",
+        fixedInScenario: true,
         materiality: "medium",
         createdAt,
         updatedAt: createdAt

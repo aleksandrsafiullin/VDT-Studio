@@ -200,6 +200,7 @@ describe("schema registry", () => {
   });
 
   it("schemaIdForTask returns the expected schema for each task", () => {
+    expect(schemaIdForTask("agent_plan")).toBe("agent-plan-v1");
     expect(schemaIdForTask("deepen_node")).toBe("deepen-node-v1");
     expect(schemaIdForTask("review_model")).toBe("review-model-v1");
     expect(schemaIdForTask("generate_executive_summary")).toBe("generate-executive-summary-v1");

@@ -23,6 +23,20 @@ vi.stubGlobal("localStorage", localStorageMock);
 
 const { useVdtStudioStore } = await import("./vdt-store");
 
+beforeEach(() => {
+  useVdtStudioStore.setState({
+    isGenerating: false,
+    generateActivity: undefined,
+    aiError: undefined,
+    activeAgentRunId: undefined,
+    agentRun: undefined,
+    agentEvents: [],
+    agentPendingQuestions: undefined,
+    agentError: undefined,
+    agentConnectionStatus: "disconnected"
+  });
+});
+
 function mockDeepenChangeSet(): VdtChangeSet {
   return {
     id: "changeset_deepen_unplanned_downtime",
@@ -122,6 +136,81 @@ describe("vdt-store change-set workflow", () => {
         gatewayPresetId: "mock"
       }
     });
+  });
+
+  it("startAgentRun sends the first user instruction as prompt instead of dropping it", async () => {
+    const prompt = "I have 5 trucks\nAverage distance 2.7 km\nAverage load speed - 7 km/h\nAverage empty speed - 11 km/h";
+    const fetchMock = vi.mocked(fetch);
+    vi.stubGlobal("EventSource", class {
+      addEventListener() {}
+      close() {}
+    });
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/agent/runs")) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            ok: true,
+            runId: "agent-run-start-1",
+            snapshot: {
+              runId: "agent-run-start-1",
+              status: "needs_user_input",
+              phase: "asking_clarifying_questions",
+              request: JSON.parse(String(init?.body)),
+              selectedSkills: [{ id: "mining.haulage_truck_cycle", path: "mining/haulage-truck-cycle.md", title: "Truck cycle", score: 92, reason: "AI selected truck cycle.", matchedTerms: [] }],
+              events: [],
+              pendingQuestions: [{ id: "payload_per_trip_t", question: "Payload?", reason: "Needed.", required: true }],
+              createdAt: "2026-06-27T00:00:00.000Z",
+              updatedAt: "2026-06-27T00:00:00.000Z"
+            }
+          })
+        } as Response;
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ agents: [] })
+      } as Response;
+    });
+    useVdtStudioStore.setState({
+      executionSettings: {
+        ...DEFAULT_EXECUTION_SETTINGS,
+        executionMode: "byok",
+        gatewayPresetId: "openai-default",
+        byokProtocol: "openai",
+        useMockProvider: false,
+        apiKey: "test-key",
+        model: "gpt-test"
+      },
+      brief: {
+        rootKpi: "Ore haulage",
+        industry: "Mining",
+        businessContext: "",
+        unit: "tonnes/year",
+        timePeriod: "year",
+        goal: "Build a VDT",
+        levelOfDetail: "medium"
+      }
+    });
+
+    await useVdtStudioStore.getState().startAgentRun(prompt);
+
+    const startCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/agent/runs"));
+    expect(startCall).toBeDefined();
+    const [, requestInit] = startCall!;
+    const body = JSON.parse(String(requestInit?.body)) as {
+      input?: { prompt?: string; businessContext?: string };
+      providerId?: string;
+    };
+    expect(body.providerId).toBe("openai_compatible");
+    expect(body.input?.prompt).toBe(prompt);
+    expect(body.input?.businessContext ?? "").not.toContain(prompt);
+    expect(useVdtStudioStore.getState().agentRun?.selectedSkills.map((skill) => skill.id)).toEqual([
+      "mining.haulage_truck_cycle"
+    ]);
   });
 
   it("runAiAction posts deepen_node to /api/ai/run-task and stores pending change set", async () => {

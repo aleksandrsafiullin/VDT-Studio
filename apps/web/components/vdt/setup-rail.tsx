@@ -65,12 +65,14 @@ export function SetupRail() {
     const text = instructionText.trim();
     if (!text || isGenerating || isRunningAiAction) return;
     if (!canUseConfiguredRuntime) return;
-    setInstructionText("");
-    await sendAgentInstruction(text, generateActivity ? deepenTargetId : undefined);
     if (!generateActivity) {
-      await startAgentRun();
+      const accepted = await startAgentRun(text);
+      if (accepted) setInstructionText("");
       return;
     }
+    const accepted = await sendAgentInstruction(text, deepenTargetId);
+    if (!accepted) return;
+    setInstructionText("");
     if (!deepenTargetId) return;
     selectNode(deepenTargetId);
     await runAiAction("deepen_node", {
@@ -191,6 +193,7 @@ export function SetupRail() {
                   <Settings2 className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" />
                 </button>
                 <Button
+                  type="submit"
                   className="h-9 shrink-0 px-3"
                   size="sm"
                   variant="primary"

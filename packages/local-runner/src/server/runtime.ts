@@ -24,15 +24,11 @@ import {
 } from "@vdt-studio/vdt-agent";
 import type { AuditEvent, BackendManifest, CompletionRequest, RunProgressPhase, RunSnapshot, RunStatus } from "../cli/types";
 import { executeCompletion, EXECUTION_LIMITS, listBackendModels, type ExecutorOptions } from "./executor";
-import { createManifestRegistry, publicManifest } from "./manifests";
+import { ALL_VDT_TASK_TYPES, createManifestRegistry, publicManifest } from "./manifests";
 
 export const LOCAL_RUNTIME_VERSION = "0.2.0";
 const MAX_RETAINED_RUNS = 200;
-const TASK_TYPES = new Set<VdtAiTaskType>([
-  "generate_tree", "deepen_node", "simplify_branch", "suggest_alternative", "suggest_formula",
-  "review_model", "check_units", "identify_missing_drivers", "identify_duplicate_drivers",
-  "explain_node", "explain_scenario", "generate_executive_summary"
-]);
+const TASK_TYPES = new Set<VdtAiTaskType>(ALL_VDT_TASK_TYPES);
 
 export interface LocalRuntimeConfig {
   manifests?: readonly BackendManifest[];

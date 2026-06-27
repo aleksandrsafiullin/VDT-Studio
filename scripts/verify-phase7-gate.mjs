@@ -18,7 +18,7 @@ import {
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_ROOT = resolve(dirname(SCRIPT_PATH), "..");
 
-export const CANONICAL_TASK_TYPES = [
+export const CANONICAL_RUN_TASK_TYPES = [
   "generate_tree",
   "deepen_node",
   "simplify_branch",
@@ -32,6 +32,8 @@ export const CANONICAL_TASK_TYPES = [
   "explain_scenario",
   "generate_executive_summary"
 ];
+
+export const CANONICAL_TASK_TYPES = ["agent_plan", ...CANONICAL_RUN_TASK_TYPES];
 
 const GRAPH_MUTATION_TASKS = new Set([
   "deepen_node",
@@ -120,7 +122,7 @@ function assertSchemaAndManifestCoverage() {
   expectExactSet(VDT_OUTPUT_SCHEMA_IDS.map((schemaId) => schemaTasks[schemaId]), CANONICAL_TASK_TYPES, "model-bridge output schema tasks");
   expectExactSet(ALL_VDT_TASK_TYPES, CANONICAL_TASK_TYPES, "local-runner ALL_VDT_TASK_TYPES");
   if (VDT_OUTPUT_SCHEMA_IDS.length !== CANONICAL_TASK_TYPES.length) {
-    fail("model-bridge must register exactly 12 VDT output schemas.");
+    fail(`model-bridge must register exactly ${CANONICAL_TASK_TYPES.length} VDT output schemas.`);
   }
   for (const taskType of CANONICAL_TASK_TYPES) {
     const schemaId = schemaIdForTask(taskType);
@@ -142,13 +144,13 @@ function assertRouteSeparation(root) {
   if (!runTaskParser.includes("generate_tree must use /api/ai/generate-vdt.")) {
     fail("run-task route must reject generate_tree.");
   }
-  for (const taskType of CANONICAL_TASK_TYPES.filter((taskType) => taskType !== "generate_tree")) {
+  for (const taskType of CANONICAL_RUN_TASK_TYPES.filter((taskType) => taskType !== "generate_tree")) {
     if (!runTaskParser.includes(`"${taskType}"`)) {
       fail(`/api/ai/run-task RUN_TASK_TYPES is missing ${taskType}.`);
     }
   }
-  if (!runTaskRoute.includes("Bounded AI task route for all VdtAiTaskType values except `generate_tree`")) {
-    fail("run-task route must document its non-generate_tree boundary.");
+  if (!runTaskRoute.includes("Bounded AI task route for web-runnable VDT AI actions")) {
+    fail("run-task route must document its web-runnable action boundary.");
   }
   if (!generateRoute.includes('taskType: "generate_tree"')) {
     fail("/api/ai/generate-vdt must use generate_tree.");
@@ -178,7 +180,7 @@ function assertDocs(root) {
   if (!readme.includes("VDT Studio exposes 12 bounded AI tasks")) {
     fail("README must list the bounded AI actions.");
   }
-  for (const taskType of CANONICAL_TASK_TYPES) {
+  for (const taskType of CANONICAL_RUN_TASK_TYPES) {
     if (!readme.includes(`\`${taskType}\``)) {
       fail(`README AI Actions section is missing ${taskType}.`);
     }
@@ -260,7 +262,7 @@ function expectedKind(taskType) {
 async function assertMockProviderCoverage() {
   const provider = new MockProvider();
   const results = [];
-  for (const taskType of CANONICAL_TASK_TYPES) {
+  for (const taskType of CANONICAL_RUN_TASK_TYPES) {
     const result = await runAiTask(taskType, provider, taskInput(taskType));
     const kind = expectedKind(taskType);
     if (result.kind !== kind) {

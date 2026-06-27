@@ -114,6 +114,7 @@ export class VdtBuilderSession {
       status: "ai_suggested",
       unit: input.unit?.trim() || undefined,
       formula: input.formula?.trim() || undefined,
+      baselineValue: input.baselineValue,
       aiGenerated: true,
       aiConfidence: 0.72,
       aiRationale: input.aiRationale?.trim() || "Added by the VDT builder as an agent driver.",
@@ -145,6 +146,7 @@ export class VdtBuilderSession {
           type: node.type,
           unit: node.unit,
           formula: node.formula,
+          baselineValue: node.baselineValue,
           aiConfidence: node.aiConfidence,
           aiRationale: node.aiRationale,
           assumptions: node.assumptions

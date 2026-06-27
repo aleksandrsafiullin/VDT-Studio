@@ -167,6 +167,25 @@ export function NodeInspector() {
                 onChange={(event) => updateNode(node.id, { description: event.target.value })}
               />
             </Field>
+            {node.type === "input" || node.type === "data_mapped" ? (
+              <div className="grid gap-1.5">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 shrink-0 rounded border-slate-300"
+                    data-testid="node-fixed-in-scenario-toggle"
+                    checked={node.fixedInScenario === true}
+                    onChange={(event) =>
+                      updateNode(node.id, { fixedInScenario: event.target.checked ? true : undefined })
+                    }
+                  />
+                  <span className="text-sm font-medium text-ink">Not changeable</span>
+                </label>
+                <span className="text-xs leading-4 text-muted">
+                  Does not participate in the performance improvement scenarios
+                </span>
+              </div>
+            ) : null}
 
             <div className="grid grid-cols-2 gap-2">
               <Button icon={<Check className="h-4 w-4" />} onClick={() => acceptNode(node.id)}>

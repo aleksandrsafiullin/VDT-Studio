@@ -492,7 +492,7 @@ test("renders the workspace without invoking a mock provider", async ({ page }, 
 
   await expect(page).toHaveTitle(/VDT Studio/);
   await expect(page.getByRole("button", { name: /Generate VDT with AI/i })).toBeVisible();
-  await expect(page.getByText("Visual flow: root to drivers.")).toBeVisible();
+  await expect(page.getByTestId("auto-distribute-layout")).toBeVisible();
 
   await expect(page.getByRole("heading", { name: "Production Volume Driver Model" })).toBeVisible();
   await expect(page.getByText("Model graph valid")).toBeVisible();
@@ -1026,6 +1026,49 @@ test("shows a real BYOK connection error without falling back to mock", async ({
   await expect.poll(() => generateRequestBody?.providerId).toBe("anthropic");
   expect(generateRequestBody?.providerId).not.toBe("mock");
   await expect(page.getByRole("heading", { name: "Production Volume Driver Model" })).toBeVisible();
+});
+
+test("hides fixedInScenario inputs from the scenario overrides table", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Fixed scenario input filtering runs on desktop viewport.");
+
+  await openScenarioModal(page);
+
+  await expect(page.getByTestId("scenario-overrides-table")).toBeVisible();
+  await expect(scenarioOverrideCard(page, "calendar_time")).toHaveCount(0);
+  await expect(scenarioOverrideCard(page, "unplanned_downtime")).toBeVisible();
+
+  await closeScenarioModal(page);
+});
+
+test("inspector locked-in-scenario toggle hides and restores override rows", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Fixed scenario toggle round-trip runs on desktop viewport.");
+
+  if ((await page.getByTestId("expand-right-panel").count()) > 0) {
+    await page.getByTestId("expand-right-panel").click();
+  }
+
+  await reactFlowNode(page, "unplanned_downtime").click();
+  await page.getByRole("tab", { name: "properties" }).click();
+
+  await openScenarioModal(page);
+  await expect(scenarioOverrideCard(page, "unplanned_downtime")).toBeVisible();
+  await closeScenarioModal(page);
+
+  const toggle = page.getByTestId("node-fixed-in-scenario-toggle");
+  await expect(toggle).not.toBeChecked();
+  await toggle.check();
+  await expect(toggle).toBeChecked();
+
+  await openScenarioModal(page);
+  await expect(scenarioOverrideCard(page, "unplanned_downtime")).toHaveCount(0);
+  await closeScenarioModal(page);
+
+  await toggle.uncheck();
+  await expect(toggle).not.toBeChecked();
+
+  await openScenarioModal(page);
+  await expect(scenarioOverrideCard(page, "unplanned_downtime")).toBeVisible();
+  await closeScenarioModal(page);
 });
 
 test("runs the downtime scenario and shows updated totals in middle column", async ({ page }, testInfo) => {

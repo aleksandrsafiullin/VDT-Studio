@@ -38,6 +38,127 @@ const mockNode = Object.freeze({
 
 const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
   "connection-test-v1": { ok: true },
+  "agent-plan-v1": {
+    buildIntent: {
+      rootKpi: "Ore haulage",
+      industry: "",
+      businessContext: "I have 5 trucks\nAverage distance 2.7 km\nAverage load speed - 7 km/h\nAverage empty speed - 11 km/h",
+      unit: "tonnes/year",
+      timePeriod: "year",
+      goal: ""
+    },
+    selectedSkillIds: ["mining.haulage_truck_cycle"],
+    skillRationale: "Mock planning response for a truck haulage request.",
+    extractedInputs: [
+      { id: "number_of_trucks", label: "Number of trucks", value: 5, unit: "trucks", sourceText: "I have 5 trucks" },
+      { id: "haul_distance_km", label: "Average haul distance", value: 2.7, unit: "km", sourceText: "Average distance 2.7 km" },
+      { id: "loaded_speed_kmh", label: "Average loaded speed", value: 7, unit: "km/h", sourceText: "Average load speed - 7 km/h" },
+      { id: "empty_speed_kmh", label: "Average empty speed", value: 11, unit: "km/h", sourceText: "Average empty speed - 11 km/h" }
+    ],
+    missingInputs: [
+      {
+        id: "payload_per_trip_t",
+        question: "What is the average payload per truck trip in tonnes?",
+        reason: "Truck haulage tonnes require payload per trip.",
+        required: true
+      },
+      {
+        id: "operating_hours",
+        question: "How many operating hours should the yearly period assume?",
+        reason: "Trips per truck require available operating time.",
+        required: true
+      }
+    ],
+    driverPlan: [
+      {
+        id: "number_of_trucks",
+        parentNodeId: "root",
+        name: "Number of trucks",
+        type: "input",
+        unit: "trucks",
+        relation: "multiplicative_driver",
+        formula: "",
+        description: "Available truck fleet size.",
+        value: 5,
+        assumptions: []
+      },
+      {
+        id: "trips_per_truck",
+        parentNodeId: "root",
+        name: "Trips per truck",
+        type: "calculated",
+        unit: "trips/truck/year",
+        relation: "multiplicative_driver",
+        formula: "operating_hours / ((haul_distance_km / loaded_speed_kmh) + (haul_distance_km / empty_speed_kmh))",
+        description: "Trips each truck can complete from cycle time and annual operating hours.",
+        value: "",
+        assumptions: []
+      },
+      {
+        id: "payload_per_trip_t",
+        parentNodeId: "root",
+        name: "Payload per trip",
+        type: "input",
+        unit: "tonnes/trip",
+        relation: "multiplicative_driver",
+        formula: "",
+        description: "Average tonnes moved per loaded trip.",
+        value: "",
+        assumptions: []
+      },
+      {
+        id: "operating_hours",
+        parentNodeId: "trips_per_truck",
+        name: "Operating hours",
+        type: "input",
+        unit: "hours/year",
+        relation: "formula_dependency",
+        formula: "",
+        description: "Available truck operating hours during the year.",
+        value: "",
+        assumptions: []
+      },
+      {
+        id: "haul_distance_km",
+        parentNodeId: "trips_per_truck",
+        name: "Average haul distance",
+        type: "input",
+        unit: "km",
+        relation: "divisive_driver",
+        formula: "",
+        description: "Average one-way loaded haul distance.",
+        value: 2.7,
+        assumptions: []
+      },
+      {
+        id: "loaded_speed_kmh",
+        parentNodeId: "trips_per_truck",
+        name: "Average loaded speed",
+        type: "input",
+        unit: "km/h",
+        relation: "positive_driver",
+        formula: "",
+        description: "Average speed while loaded.",
+        value: 7,
+        assumptions: []
+      },
+      {
+        id: "empty_speed_kmh",
+        parentNodeId: "trips_per_truck",
+        name: "Average empty speed",
+        type: "input",
+        unit: "km/h",
+        relation: "positive_driver",
+        formula: "",
+        description: "Average return speed while empty.",
+        value: 11,
+        assumptions: []
+      }
+    ],
+    rootFormula: "number_of_trucks * trips_per_truck * payload_per_trip_t",
+    ...advisoryStub,
+    confidence: 0.5
+  },
   "generate-tree-v1": { projectTitle: "Mock tree", rootNodeId: "root", nodes: [mockNode], edges: [], ...advisoryStub },
   "deepen-node-v1": { targetNodeId: "node-1", nodes: [{ ...mockNode, id: "child_a", name: "Child A" }], edges: [], ...advisoryStub },
   "simplify-branch-v1": { branchRootNodeId: "node-1", nodeRemovals: [], edgeChanges: [], rationale: "Mock", ...advisoryStub },
@@ -106,6 +227,11 @@ function byteLength(value: string): number {
 
 function abortError(message = "Completion was cancelled."): Error {
   return Object.assign(new Error(message), { name: "AbortError", code: "CANCELLED" });
+}
+
+function isClosedStdinError(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code) : "";
+  return code === "EPIPE" || code === "ERR_STREAM_DESTROYED";
 }
 
 function safeEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -540,6 +666,10 @@ async function executeCli(
       };
 
       child.once("error", fail);
+      child.stdin.on("error", (error) => {
+        if (isClosedStdinError(error)) return;
+        fail(error);
+      });
       child.stdout.on("data", (chunk: Buffer | string) => {
         stdout += chunk.toString();
         if (byteLength(stdout) > EXECUTION_LIMITS.maxStdoutBytes) {
@@ -573,14 +703,18 @@ async function executeCli(
 
     try {
       if (signal.aborted) terminate();
-      if (adapter) {
-        if (adapter.spawnHints?.stdin === "prompt") {
-          child.stdin.end(promptText);
+      try {
+        if (adapter) {
+          if (adapter.spawnHints?.stdin === "prompt") {
+            child.stdin.end(promptText);
+          } else {
+            child.stdin.end();
+          }
         } else {
-          child.stdin.end();
+          child.stdin.end(requestJson);
         }
-      } else {
-        child.stdin.end(requestJson);
+      } catch (error) {
+        if (!isClosedStdinError(error)) throw error;
       }
       const completed = await completion;
       if (completed.type === "stream") return completed.result;
@@ -716,6 +850,112 @@ async function readBoundedResponse(response: Response): Promise<string> {
     chunks.push(chunk.value);
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+function appendPath(baseUrl: string, pathSegment: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/${pathSegment.replace(/^\/+/, "")}`;
+}
+
+function ollamaTagsUrl(baseUrl: string): string {
+  const url = new URL(baseUrl);
+  url.pathname = `${url.pathname.replace(/\/v1\/?$/, "").replace(/\/+$/, "")}/api/tags`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+function addModelName(models: string[], seen: Set<string>, value: unknown): void {
+  if (typeof value !== "string") return;
+  const model = value.trim();
+  if (!model || model.length > 160 || model.includes("\0") || seen.has(model)) return;
+  seen.add(model);
+  models.push(model);
+}
+
+function collectModelNames(payload: unknown): string[] {
+  const models: string[] = [];
+  const seen = new Set<string>();
+
+  const visit = (value: unknown): void => {
+    if (typeof value === "string") {
+      addModelName(models, seen, value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+
+    const record = value as Record<string, unknown>;
+    addModelName(models, seen, record.id);
+    addModelName(models, seen, record.name);
+    addModelName(models, seen, record.model);
+
+    if (Array.isArray(record.data)) visit(record.data);
+    if (Array.isArray(record.models)) visit(record.models);
+  };
+
+  visit(payload);
+  return models;
+}
+
+async function fetchModelList(url: string, signal: AbortSignal, options: ExecutorOptions): Promise<string[]> {
+  let response: Response;
+  let rawResponse: string;
+  try {
+    response = await (options.fetch ?? fetch)(url, {
+      method: "GET",
+      redirect: "error",
+      signal,
+      headers: { accept: "application/json" }
+    });
+    rawResponse = await readBoundedResponse(response);
+  } catch (error) {
+    if (signal.aborted) throw abortError("Model listing was cancelled.");
+    throw Object.assign(error instanceof Error ? error : new Error("Local model endpoint could not be reached."), {
+      code: "LOCAL_MODEL_LIST_FAILED"
+    });
+  }
+
+  if (!response.ok) {
+    throw Object.assign(new Error(`Local model list failed with status ${response.status}.`), {
+      code: "LOCAL_MODEL_LIST_FAILED"
+    });
+  }
+
+  try {
+    return collectModelNames(JSON.parse(rawResponse));
+  } catch {
+    throw Object.assign(new Error("Local model list returned invalid JSON."), {
+      code: "INVALID_PROVIDER_RESPONSE"
+    });
+  }
+}
+
+async function listLocalHttpModels(
+  manifest: BackendManifest,
+  signal: AbortSignal,
+  options: ExecutorOptions
+): Promise<readonly string[]> {
+  if (!manifest.localHttp) return [];
+  const urls = [
+    appendPath(manifest.localHttp.baseUrl, "models"),
+    ...(manifest.id === "ollama" ? [ollamaTagsUrl(manifest.localHttp.baseUrl)] : [])
+  ];
+  let lastError: unknown;
+
+  for (const url of urls) {
+    try {
+      const models = await fetchModelList(url, signal, options);
+      if (models.length > 0 || manifest.id !== "ollama") return models;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError) throw lastError;
+  return [];
 }
 
 async function postLocalHttpChat(
@@ -866,6 +1106,9 @@ export async function listBackendModels(
 ): Promise<readonly string[]> {
   if (!manifest.modelSelection) return [];
   if (signal.aborted) throw abortError("Model listing was cancelled.");
+  if (manifest.kind === "local_http") {
+    return listLocalHttpModels(manifest, signal, options);
+  }
   if (manifest.kind !== "subscription_cli") return [];
 
   const adapter = getSubscriptionCliAdapter(manifest.id);

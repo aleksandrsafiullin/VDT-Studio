@@ -199,7 +199,7 @@ export interface ModelOption {
 }
 
 export interface AiCompletionRequest {
-  taskType: Exclude<VdtAiTaskType, "generate_tree">;
+  taskType: Exclude<VdtAiTaskType, "agent_plan" | "generate_tree">;
   input: unknown;
   providerId: string;
   providerConfig?: Record<string, unknown> | undefined;
@@ -276,6 +276,7 @@ function apiBackends(): PublicBackendStatus[] {
 
 const API_BACKEND_IDS = new Set(["openai_compatible", "anthropic", "gemini", "azure_openai", "mock"]);
 const TASK_SCHEMA_IDS = {
+  agent_plan: "agent-plan-v1",
   generate_tree: "generate-tree-v1",
   deepen_node: "deepen-node-v1",
   simplify_branch: "simplify-branch-v1",
@@ -1004,6 +1005,25 @@ export class DevelopmentRunnerClient extends BaseWebAiExecutionClient {
     }>(response, "CLI detection failed.");
     if (!payload.agents) throw new Error(payload.error ?? "CLI detection failed.");
     return { agents: payload.agents, modelsByAgent: payload.modelsByAgent ?? {} };
+  }
+
+  override async listModels(backendId: string): Promise<ModelOption[]> {
+    if (isApiBackendId(backendId)) return [];
+    const response = await this.fetcher("/api/ai/dev-runtime", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation: "list_models", backendId })
+    });
+    const payload = await readJsonResponse<{
+      ok?: boolean;
+      models?: Array<string | ModelOption>;
+      error?: string | { message?: string };
+    }>(response, "Model listing failed.");
+    if (!payload.ok) {
+      const error = typeof payload.error === "object" ? payload.error?.message : payload.error;
+      throw new Error(error ?? "Model listing failed.");
+    }
+    return (payload.models ?? []).map((model) => typeof model === "string" ? { id: model, label: model } : model);
   }
 
   override async testBackend(backendId: string, request: BackendTestRequest): Promise<BackendTestResult> {

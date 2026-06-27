@@ -13,6 +13,7 @@ import {
   exportProjectSvg,
   exportProjectJson,
   exportProjectMarkdown,
+  getFormulaReferenceOrder,
   importProjectJson,
   layoutGraph,
   listVersions,
@@ -21,6 +22,7 @@ import {
   previewChangeSet,
   productionVolumeProject,
   rankScenarioInputNodes,
+  resolveFormulaEdgeRelation,
   restoreVersionSnapshot,
   validateGraph,
   VersionNotFoundError,
@@ -39,6 +41,108 @@ describe("formula engine", () => {
     expect(missing.errors[0]?.type).toBe("missing_value");
     expect(missing.references).toEqual(["a", "b"]);
     expect(evaluateFormula("a / b", { a: 1, b: 0 }).errors[0]?.type).toBe("division_by_zero");
+  });
+});
+
+describe("formula edge relations", () => {
+  it("assigns formula_dependency to the first operand and maps later operators", () => {
+    expect(
+      resolveFormulaEdgeRelation(
+        "nominal_rate * utilization_factor * yield_factor",
+        "nominal_rate",
+        "multiplicative_driver"
+      )
+    ).toBe("formula_dependency");
+    expect(
+      resolveFormulaEdgeRelation(
+        "nominal_rate * utilization_factor * yield_factor",
+        "utilization_factor",
+        "multiplicative_driver"
+      )
+    ).toBe("multiplicative_driver");
+    expect(
+      resolveFormulaEdgeRelation(
+        "nominal_rate * utilization_factor * yield_factor",
+        "yield_factor",
+        "multiplicative_driver"
+      )
+    ).toBe("multiplicative_driver");
+  });
+
+  it("maps chained subtraction to subtractive components after the base operand", () => {
+    expect(
+      resolveFormulaEdgeRelation(
+        "calendar_time - planned_downtime - unplanned_downtime",
+        "calendar_time",
+        "subtractive_component"
+      )
+    ).toBe("formula_dependency");
+    expect(
+      resolveFormulaEdgeRelation(
+        "calendar_time - planned_downtime - unplanned_downtime",
+        "planned_downtime",
+        "additive_component"
+      )
+    ).toBe("subtractive_component");
+    expect(
+      resolveFormulaEdgeRelation(
+        "calendar_time - planned_downtime - unplanned_downtime",
+        "unplanned_downtime",
+        "subtractive_component"
+      )
+    ).toBe("subtractive_component");
+  });
+
+  it("maps two-factor multiplication with one visible operator", () => {
+    expect(
+      resolveFormulaEdgeRelation(
+        "effective_working_time * average_productivity",
+        "effective_working_time",
+        "multiplicative_driver"
+      )
+    ).toBe("formula_dependency");
+    expect(
+      resolveFormulaEdgeRelation(
+        "effective_working_time * average_productivity",
+        "average_productivity",
+        "multiplicative_driver"
+      )
+    ).toBe("multiplicative_driver");
+  });
+
+  it("maps division with formula_dependency numerator and divisive denominator", () => {
+    expect(
+      resolveFormulaEdgeRelation("operating_hours / cycle_time_h", "operating_hours", "divisive_driver")
+    ).toBe("formula_dependency");
+    expect(
+      resolveFormulaEdgeRelation("operating_hours / cycle_time_h", "cycle_time_h", "multiplicative_driver")
+    ).toBe("divisive_driver");
+  });
+
+  it("falls back when parent formula is missing or child is not referenced", () => {
+    expect(resolveFormulaEdgeRelation(undefined, "child", "positive_driver")).toBe("positive_driver");
+    expect(resolveFormulaEdgeRelation("a * b", "unknown", "contextual_influence")).toBe("contextual_influence");
+  });
+
+  it("returns formula operand ids in left-to-right order", () => {
+    expect(getFormulaReferenceOrder("nominal_rate * utilization_factor * yield_factor")).toEqual([
+      "nominal_rate",
+      "utilization_factor",
+      "yield_factor"
+    ]);
+    expect(getFormulaReferenceOrder("calendar_time - planned_downtime - unplanned_downtime")).toEqual([
+      "calendar_time",
+      "planned_downtime",
+      "unplanned_downtime"
+    ]);
+    expect(getFormulaReferenceOrder("effective_working_time * average_productivity")).toEqual([
+      "effective_working_time",
+      "average_productivity"
+    ]);
+    expect(getFormulaReferenceOrder("operating_hours / cycle_time_h")).toEqual([
+      "operating_hours",
+      "cycle_time_h"
+    ]);
   });
 });
 
@@ -195,6 +299,90 @@ describe("scenario sensitivity APIs", () => {
 
     expect(multiplicative.sumOfIsolatedEffects).toBeUndefined();
     expect(multiplicative.multiplicativeEffect).toBeUndefined();
+  });
+
+  it("excludes fixedInScenario nodes from ranking and sensitivity helpers", () => {
+    const projectWithLockedInput: VdtProject = {
+      ...productionVolumeProject,
+      graph: {
+        ...productionVolumeProject.graph,
+        nodes: productionVolumeProject.graph.nodes.map((node) =>
+          node.id === "unplanned_downtime" ? { ...node, fixedInScenario: true } : node
+        )
+      }
+    };
+
+    const ranked = rankScenarioInputNodes(projectWithLockedInput);
+    expect(ranked.map((entry) => entry.nodeId)).not.toContain("unplanned_downtime");
+    expect(calculateOnePercentRootSensitivity(projectWithLockedInput, "unplanned_downtime")).toBeUndefined();
+    expect(calculateIsolatedRootEffect(projectWithLockedInput, "unplanned_downtime", 60)).toBeUndefined();
+  });
+
+  it("ignores overrides targeting fixedInScenario nodes in calculateScenario", () => {
+    const projectWithLockedInput: VdtProject = {
+      ...productionVolumeProject,
+      graph: {
+        ...productionVolumeProject.graph,
+        nodes: productionVolumeProject.graph.nodes.map((node) =>
+          node.id === "unplanned_downtime" ? { ...node, fixedInScenario: true } : node
+        )
+      }
+    };
+    const baseline = calculateGraph(projectWithLockedInput);
+    const scenarioWithLockedOverride = {
+      ...productionVolumeProject.scenarios[0]!,
+      overrides: [{ nodeId: "unplanned_downtime", value: 60 }]
+    };
+
+    const result = calculateScenario(projectWithLockedInput, scenarioWithLockedOverride);
+
+    expect(result.scenarioValue).toBeCloseTo(baseline.rootValue!, 5);
+    expect(result.absoluteChange).toBeCloseTo(0, 5);
+    expect(result.errors?.some((error) => error.nodeId === "unplanned_downtime")).toBe(false);
+  });
+
+  it("still errors on unknown override nodes when fixedInScenario nodes are present", () => {
+    const projectWithLockedInput: VdtProject = {
+      ...productionVolumeProject,
+      graph: {
+        ...productionVolumeProject.graph,
+        nodes: productionVolumeProject.graph.nodes.map((node) =>
+          node.id === "unplanned_downtime" ? { ...node, fixedInScenario: true } : node
+        )
+      }
+    };
+
+    const result = calculateScenario(projectWithLockedInput, {
+      ...productionVolumeProject.scenarios[0]!,
+      overrides: [{ nodeId: "typo_node", value: 123 }]
+    });
+
+    expect(result.errors?.some((error) => error.message.includes("typo_node"))).toBe(true);
+  });
+
+  it("counts only non-locked overrides in calculateScenarioMultiplicativeEffect", () => {
+    const projectWithLockedInput: VdtProject = {
+      ...productionVolumeProject,
+      graph: {
+        ...productionVolumeProject.graph,
+        nodes: productionVolumeProject.graph.nodes.map((node) =>
+          node.id === "unplanned_downtime" ? { ...node, fixedInScenario: true } : node
+        )
+      }
+    };
+    const scenario = {
+      ...productionVolumeProject.scenarios[0]!,
+      overrides: [
+        { nodeId: "unplanned_downtime", value: 60 },
+        { nodeId: "planned_downtime", value: 20 }
+      ]
+    };
+
+    const multiplicative = calculateScenarioMultiplicativeEffect(projectWithLockedInput, scenario);
+    const isolatedPlanned = calculateIsolatedRootEffect(projectWithLockedInput, "planned_downtime", 20)!;
+
+    expect(multiplicative.sumOfIsolatedEffects).toBeCloseTo(isolatedPlanned, 2);
+    expect(calculateIsolatedRootEffect(projectWithLockedInput, "unplanned_downtime", 60)).toBeUndefined();
   });
 });
 

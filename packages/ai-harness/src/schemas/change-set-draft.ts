@@ -20,7 +20,8 @@ const aiNodePatchSchema = z.object({
   aiConfidence: z.number().min(0).max(1).optional(),
   aiRationale: z.string().max(1_000).optional(),
   controllability: z.enum(["high", "medium", "low", "none"]).optional(),
-  materiality: z.enum(["high", "medium", "low", "unknown"]).optional()
+  materiality: z.enum(["high", "medium", "low", "unknown"]).optional(),
+  fixedInScenario: z.boolean().optional()
 });
 
 export const aiChangeSetAdditionSchema = z.object({
@@ -36,7 +37,8 @@ export const aiChangeSetAdditionSchema = z.object({
   aiConfidence: z.number().min(0).max(1).optional(),
   aiRationale: z.string().max(1_000).optional(),
   controllability: z.enum(["high", "medium", "low", "none"]).optional(),
-  materiality: z.enum(["high", "medium", "low", "unknown"]).optional()
+  materiality: z.enum(["high", "medium", "low", "unknown"]).optional(),
+  fixedInScenario: z.boolean().optional()
 });
 
 export const aiChangeSetUpdateSchema = z.object({
@@ -124,7 +126,8 @@ export function aiChangeSetDraftToVdtChangeSet(
       aiConfidence: entry.aiConfidence,
       aiRationale: entry.aiRationale,
       controllability: entry.controllability,
-      materiality: entry.materiality
+      materiality: entry.materiality,
+      fixedInScenario: entry.fixedInScenario
     })),
     updates: draft.updates.map(
       (entry): VdtNodeUpdate => ({

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
   type CliAgentId,
   type CliCatalogEntry,
   type CliModelSelection,
+  type LocalHttpModelBackendId,
   type LocalRunnerPresetCatalogEntry
 } from "@/lib/execution-mode-catalog";
 import { CliAgentCard, type CliAgentDetectionView } from "./cli-agent-card";
@@ -63,12 +64,40 @@ function AccordionSection({
 function LocalModelCard({
   preset,
   selected,
-  onSelect
+  selectedModel,
+  discoveredModels,
+  isLoadingModels,
+  modelListError,
+  onSelect,
+  onSelectModel,
+  onRefreshModels
 }: {
   preset: LocalRunnerPresetCatalogEntry;
   selected: boolean;
+  selectedModel?: string | undefined;
+  discoveredModels: readonly string[];
+  isLoadingModels: boolean;
+  modelListError?: string | undefined;
   onSelect: () => void;
+  onSelectModel: (model: string) => void;
+  onRefreshModels: () => void;
 }) {
+  const modelOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const options: string[] = [];
+    const add = (model: string | undefined) => {
+      const trimmed = model?.trim();
+      if (!trimmed || seen.has(trimmed)) return;
+      seen.add(trimmed);
+      options.push(trimmed);
+    };
+    add(selectedModel);
+    for (const model of discoveredModels) add(model);
+    add(preset.model);
+    return options;
+  }, [discoveredModels, preset.model, selectedModel]);
+  const currentModel = selectedModel?.trim() || modelOptions[0] || preset.model || "";
+
   return (
     <article
       data-testid={`local-model-card-${preset.id}`}
@@ -84,17 +113,59 @@ function LocalModelCard({
           <p className="mt-2 truncate rounded-md bg-slate-50 px-2 py-1.5 font-mono text-[11px] text-slate-600">
             {preset.baseUrl}
           </p>
-          {preset.model ? <p className="mt-1 text-xs text-slate-500">Default model: {preset.model}</p> : null}
+          {!selected && preset.model ? <p className="mt-1 text-xs text-slate-500">Default model: {preset.model}</p> : null}
         </div>
-        <Button
-          size="sm"
-          variant={selected ? "primary" : "secondary"}
-          data-testid={`local-model-select-${preset.id}`}
-          onClick={onSelect}
-        >
-          {selected ? "Selected" : "Select"}
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label={`Refresh ${preset.label} models`}
+            title={`Refresh ${preset.label} models`}
+            data-testid={`local-model-refresh-${preset.id}`}
+            disabled={isLoadingModels}
+            onClick={onRefreshModels}
+          >
+            <RefreshCw className={clsx("h-3.5 w-3.5", isLoadingModels && "animate-spin")} aria-hidden="true" />
+          </Button>
+          <Button
+            size="sm"
+            variant={selected ? "primary" : "secondary"}
+            data-testid={`local-model-select-${preset.id}`}
+            onClick={onSelect}
+          >
+            {selected ? "Selected" : "Select"}
+          </Button>
+        </div>
       </div>
+      {selected ? (
+        <div className="mt-3 space-y-2">
+          <Field label="Model">
+            <SelectInput
+              data-testid={`local-model-model-${preset.id}`}
+              value={currentModel}
+              disabled={isLoadingModels || modelOptions.length === 0}
+              onChange={(event) => onSelectModel(event.target.value)}
+            >
+              {modelOptions.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </SelectInput>
+          </Field>
+          {isLoadingModels ? (
+            <p className="text-xs leading-5 text-muted">Loading available models...</p>
+          ) : modelListError ? (
+            <p className="text-xs leading-5 text-red-700">{modelListError}</p>
+          ) : discoveredModels.length > 0 ? (
+            <p className="text-xs leading-5 text-slate-500">
+              {discoveredModels.length} model{discoveredModels.length === 1 ? "" : "s"} detected.
+            </p>
+          ) : (
+            <p className="text-xs leading-5 text-slate-500">Using preset default until the runtime reports models.</p>
+          )}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -134,23 +205,46 @@ export function LocalAiRuntimeErrorBanner({
 
 export function LocalModelCards({
   selectedPresetId,
-  onSelectPreset
+  selectedModel,
+  modelsByBackend = {},
+  isLoadingModelsByBackend = {},
+  modelListErrorByBackend = {},
+  onSelectPreset,
+  onSelectModel,
+  onRefreshModels
 }: {
   selectedPresetId?: string | undefined;
+  selectedModel?: string | undefined;
+  modelsByBackend?: Partial<Record<LocalHttpModelBackendId, readonly string[]>>;
+  isLoadingModelsByBackend?: Partial<Record<LocalHttpModelBackendId, boolean>>;
+  modelListErrorByBackend?: Partial<Record<LocalHttpModelBackendId, string | undefined>>;
   onSelectPreset: (presetId: LocalRunnerPresetCatalogEntry["id"]) => void;
+  onSelectModel?: (model: string) => void;
+  onRefreshModels?: (backendId: LocalHttpModelBackendId) => void;
 }) {
   const localModelPresets = LOCAL_RUNNER_PRESET_CATALOG.filter((preset) => preset.runnerProviderId === "local_http_stub");
 
   return (
     <div className="grid gap-3 sm:grid-cols-3" data-testid="local-model-cards">
-      {localModelPresets.map((preset) => (
-        <LocalModelCard
-          key={preset.id}
-          preset={preset}
-          selected={selectedPresetId === preset.id}
-          onSelect={() => onSelectPreset(preset.id)}
-        />
-      ))}
+      {localModelPresets.map((preset) => {
+        const backendId = preset.modelBackendId;
+        return (
+          <LocalModelCard
+            key={preset.id}
+            preset={preset}
+            selected={selectedPresetId === preset.id}
+            selectedModel={selectedPresetId === preset.id ? selectedModel : undefined}
+            discoveredModels={backendId ? modelsByBackend[backendId] ?? [] : []}
+            isLoadingModels={backendId ? Boolean(isLoadingModelsByBackend[backendId]) : false}
+            modelListError={backendId ? modelListErrorByBackend[backendId] : undefined}
+            onSelect={() => onSelectPreset(preset.id)}
+            onSelectModel={(model) => onSelectModel?.(model)}
+            onRefreshModels={() => {
+              if (backendId) onRefreshModels?.(backendId);
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -167,6 +261,7 @@ export function LocalCliSettings() {
   const isTestingCliByAgent = useVdtStudioStore((state) => state.isTestingCliByAgent);
   const setSelectedCliAgentId = useVdtStudioStore((state) => state.setSelectedCliAgentId);
   const setLocalRunnerPreset = useVdtStudioStore((state) => state.setLocalRunnerPreset);
+  const setExecutionSettingsField = useVdtStudioStore((state) => state.setExecutionSettingsField);
   const setCliModelForAgent = useVdtStudioStore((state) => state.setCliModelForAgent);
   const setMemoryModelMode = useVdtStudioStore((state) => state.setMemoryModelMode);
   const rescanClis = useVdtStudioStore((state) => state.rescanClis);
@@ -179,6 +274,9 @@ export function LocalCliSettings() {
 
   const [installToast, setInstallToast] = useState<string | undefined>();
   const [pairingCode, setPairingCode] = useState("");
+  const [localModelsByBackend, setLocalModelsByBackend] = useState<Partial<Record<LocalHttpModelBackendId, string[]>>>({});
+  const [localModelLoadingByBackend, setLocalModelLoadingByBackend] = useState<Partial<Record<LocalHttpModelBackendId, boolean>>>({});
+  const [localModelErrorByBackend, setLocalModelErrorByBackend] = useState<Partial<Record<LocalHttpModelBackendId, string | undefined>>>({});
   const hasAttemptedInitialScan = useRef(false);
   const selectedCliAgentId = executionSettings.selectedCliAgentId;
   const memoryModelMode = executionSettings.memoryModelMode ?? "same_as_chat";
@@ -198,6 +296,37 @@ export function LocalCliSettings() {
   const canUseExplicitMemoryCli = installedAgents.length > 0;
 
   const selectedCatalog = selectedCliAgentId ? getCliCatalogEntry(selectedCliAgentId) : undefined;
+  const selectedLocalPreset = LOCAL_RUNNER_PRESET_CATALOG.find((preset) => preset.id === executionSettings.localRunnerPresetId);
+  const selectedLocalBackendId =
+    selectedLocalPreset?.runnerProviderId === "local_http_stub" ? selectedLocalPreset.modelBackendId : undefined;
+  let activeRunnerProviderId = executionSettings.runnerProviderId ?? selectedLocalPreset?.runnerProviderId;
+  if (activeRunnerProviderId === "cli_stub" && selectedLocalPreset?.runnerProviderId === "local_http_stub") {
+    activeRunnerProviderId = "local_http_stub";
+  }
+  const isSubscriptionCliActive =
+    executionSettings.executionMode === "local_cli" && activeRunnerProviderId === "cli_stub";
+  const sameAsChatLabel = isSubscriptionCliActive
+    ? selectedCatalog?.displayName ?? "selected CLI"
+    : selectedLocalPreset?.label ?? "selected local model";
+
+  const refreshLocalModels = useCallback(async (backendId: LocalHttpModelBackendId) => {
+    setLocalModelLoadingByBackend((current) => ({ ...current, [backendId]: true }));
+    setLocalModelErrorByBackend((current) => ({ ...current, [backendId]: undefined }));
+    try {
+      const models = await createAiExecutionClient().listModels(backendId);
+      setLocalModelsByBackend((current) => ({
+        ...current,
+        [backendId]: models.map((model) => model.id)
+      }));
+    } catch (error) {
+      setLocalModelErrorByBackend((current) => ({
+        ...current,
+        [backendId]: error instanceof Error ? error.message : "Model list unavailable."
+      }));
+    } finally {
+      setLocalModelLoadingByBackend((current) => ({ ...current, [backendId]: false }));
+    }
+  }, []);
 
   const runInitialScan = useCallback(() => {
     void rescanClis();
@@ -211,6 +340,40 @@ export function LocalCliSettings() {
     hasAttemptedInitialScan.current = true;
     runInitialScan();
   }, [cliDetectionAgents, isRescanningClis, runInitialScan]);
+
+  useEffect(() => {
+    if (!selectedLocalBackendId || selectedLocalPreset?.runnerProviderId !== "local_http_stub") {
+      return;
+    }
+
+    if (
+      localModelsByBackend[selectedLocalBackendId] === undefined &&
+      !localModelLoadingByBackend[selectedLocalBackendId] &&
+      localModelErrorByBackend[selectedLocalBackendId] === undefined
+    ) {
+      void refreshLocalModels(selectedLocalBackendId);
+    }
+
+    const models = localModelsByBackend[selectedLocalBackendId] ?? [];
+    if (models.length === 0) {
+      return;
+    }
+
+    const currentModel = executionSettings.localModel?.trim();
+    const presetModel = selectedLocalPreset.model?.trim();
+    if (!currentModel || (currentModel === presetModel && !models.includes(currentModel))) {
+      setExecutionSettingsField("localModel", models[0]);
+    }
+  }, [
+    executionSettings.localModel,
+    localModelErrorByBackend,
+    localModelLoadingByBackend,
+    localModelsByBackend,
+    refreshLocalModels,
+    selectedLocalBackendId,
+    selectedLocalPreset,
+    setExecutionSettingsField
+  ]);
 
   useEffect(() => {
     if (memoryModelMode === "selected_cli" && !canUseExplicitMemoryCli) {
@@ -247,6 +410,16 @@ export function LocalCliSettings() {
     setInstallToast(`Copied ${entry.primaryCommand}`);
   }
 
+  function handleSelectLocalPreset(presetId: LocalRunnerPresetCatalogEntry["id"]) {
+    const preset = LOCAL_RUNNER_PRESET_CATALOG.find((entry) => entry.id === presetId);
+    setLocalRunnerPreset(presetId);
+    if (preset?.runnerProviderId === "local_http_stub") {
+      const discoveredModel = preset.modelBackendId ? localModelsByBackend[preset.modelBackendId]?.[0] : undefined;
+      const model = discoveredModel ?? preset.model;
+      if (model) setExecutionSettingsField("localModel", model);
+    }
+  }
+
   async function handleAuthenticate(entry: CliCatalogEntry) {
     try {
       const action = await createAiExecutionClient().openProviderAuth(backendIdForCliAgent(entry.id));
@@ -270,7 +443,13 @@ export function LocalCliSettings() {
       <AccordionSection title="Local model servers" testId="local-model-servers-accordion">
         <LocalModelCards
           selectedPresetId={executionSettings.localRunnerPresetId}
-          onSelectPreset={setLocalRunnerPreset}
+          selectedModel={executionSettings.localModel}
+          modelsByBackend={localModelsByBackend}
+          isLoadingModelsByBackend={localModelLoadingByBackend}
+          modelListErrorByBackend={localModelErrorByBackend}
+          onSelectPreset={handleSelectLocalPreset}
+          onSelectModel={(model) => setExecutionSettingsField("localModel", model)}
+          onRefreshModels={refreshLocalModels}
         />
       </AccordionSection>
 
@@ -359,7 +538,7 @@ export function LocalCliSettings() {
                   key={entry.id}
                   catalog={entry}
                   detection={detection}
-                  selected={selectedCliAgentId === entry.id}
+                  selected={isSubscriptionCliActive && selectedCliAgentId === entry.id}
                   modelSelection={resolveModelSelection(entry.id)}
                   discoveredModels={cliDiscoveredModelsByAgent[entry.id] ?? []}
                   testStatus={cliTestStatusByAgent[entry.id]}
@@ -410,7 +589,7 @@ export function LocalCliSettings() {
               }}
             >
               <option value="same_as_chat">
-                Same as chat ({selectedCatalog?.displayName ?? "selected CLI"})
+                Same as chat ({sameAsChatLabel})
               </option>
               <option value="selected_cli" disabled={!canUseExplicitMemoryCli}>
                 Explicit CLI override

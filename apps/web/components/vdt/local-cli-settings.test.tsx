@@ -5,13 +5,23 @@ import { LocalAiRuntimeErrorBanner, LocalModelCards } from "./local-cli-settings
 describe("LocalModelCards", () => {
   it("renders local model server cards without standalone runner pairing instructions", () => {
     const html = renderToStaticMarkup(
-      <LocalModelCards selectedPresetId="ollama_openai" onSelectPreset={() => undefined} />
+      <LocalModelCards
+        selectedPresetId="ollama_openai"
+        selectedModel="qwen3:latest"
+        modelsByBackend={{ ollama: ["qwen3:latest", "deepseek-r1:8b"] }}
+        onSelectPreset={() => undefined}
+        onSelectModel={() => undefined}
+        onRefreshModels={() => undefined}
+      />
     );
 
     expect(html).toContain('data-testid="local-model-cards"');
     expect(html).toContain('data-testid="local-model-card-ollama_openai"');
     expect(html).toContain('data-testid="local-model-card-lm_studio_openai"');
     expect(html).toContain('data-testid="local-model-card-vllm_openai"');
+    expect(html).toContain('data-testid="local-model-model-ollama_openai"');
+    expect(html).toContain("qwen3:latest");
+    expect(html).toContain("deepseek-r1:8b");
     expect(html).toContain("Local model server managed by the desktop runtime.");
     expect(html).toContain("http://127.0.0.1:11434/v1");
     expect(html).not.toContain("vdt runner start");

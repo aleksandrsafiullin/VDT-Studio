@@ -1,5 +1,6 @@
 import { agentStartRequestSchema, type VdtAgentStartRequest } from "@vdt-studio/vdt-agent-runtime";
-import { agentRuntime, jsonError } from "./runtime";
+import { readMaxTokens } from "@/lib/ai-route-provider";
+import { agentRuntime, createAgentPlanningProvider, jsonError } from "./runtime";
 
 export async function POST(request: Request) {
   let raw: unknown;
@@ -15,7 +16,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const snapshot = await agentRuntime.startRun(parsed.data as VdtAgentStartRequest);
+    const provider = createAgentPlanningProvider(parsed.data as VdtAgentStartRequest, request.url);
+    const snapshot = agentRuntime.startRunInBackground(parsed.data as VdtAgentStartRequest, {
+      provider,
+      maxTokens: readMaxTokens(parsed.data.providerConfig)
+    });
     return Response.json({ ok: true, runId: snapshot.runId, snapshot });
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : "Agent run could not be started.", 500, "AGENT_START_FAILED");

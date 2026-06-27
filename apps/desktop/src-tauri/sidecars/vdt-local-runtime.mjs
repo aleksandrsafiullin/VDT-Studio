@@ -127,6 +127,7 @@ function extractBoundedJson(raw, maxBytes) {
 
 // ../model-bridge/src/schema-registry.ts
 var VDT_OUTPUT_SCHEMA_IDS = [
+  "agent-plan-v1",
   "generate-tree-v1",
   "deepen-node-v1",
   "simplify-branch-v1",
@@ -142,6 +143,7 @@ var VDT_OUTPUT_SCHEMA_IDS = [
 ];
 var VDT_SCHEMA_IDS = ["connection-test-v1", ...VDT_OUTPUT_SCHEMA_IDS];
 var schemaTask = {
+  "agent-plan-v1": "agent_plan",
   "generate-tree-v1": "generate_tree",
   "deepen-node-v1": "deepen_node",
   "simplify-branch-v1": "simplify_branch",
@@ -198,7 +200,7 @@ function enumProp(values) {
 }
 var nodeIdProp = { type: "string", maxLength: 160 };
 var confidenceProp = { type: "number", minimum: 0, maximum: 1 };
-var nodeTypeProp = enumProp(["root_kpi", "calculated", "input", "assumption", "external_factor"]);
+var nodeTypeProp = enumProp(["root_kpi", "calculated", "input", "assumption", "external_factor", "data_mapped"]);
 var edgeRelationProp = enumProp([
   "positive_driver",
   "negative_driver",
@@ -270,6 +272,52 @@ var nodePatchSchema = objectSchema(
     materiality: materialityProp
   },
   []
+);
+var stringOrNumberProp = { anyOf: [stringProp, { type: "number" }] };
+var agentBuildIntentSchema = objectSchema(
+  {
+    rootKpi: stringProp,
+    industry: stringProp,
+    businessContext: stringProp,
+    unit: { type: "string", maxLength: 80 },
+    timePeriod: { type: "string", maxLength: 80 },
+    goal: stringProp
+  },
+  ["rootKpi", "industry", "businessContext", "unit", "timePeriod", "goal"]
+);
+var agentExtractedInputSchema = objectSchema(
+  {
+    id: nodeIdProp,
+    label: { type: "string", maxLength: 120 },
+    value: stringOrNumberProp,
+    unit: { type: "string", maxLength: 80 },
+    sourceText: { type: "string", maxLength: 500 }
+  },
+  ["id", "label", "value"]
+);
+var agentMissingInputSchema = objectSchema(
+  {
+    id: nodeIdProp,
+    question: { type: "string", maxLength: 500 },
+    reason: { type: "string", maxLength: 1e3 },
+    required: { type: "boolean" }
+  },
+  ["id", "question", "reason", "required"]
+);
+var agentDriverSchema = objectSchema(
+  {
+    id: nodeIdProp,
+    parentNodeId: nodeIdProp,
+    name: { type: "string", maxLength: 120 },
+    type: nodeTypeProp,
+    unit: { type: "string", maxLength: 80 },
+    relation: edgeRelationProp,
+    formula: { type: "string", maxLength: 500 },
+    description: { type: "string", maxLength: 1e3 },
+    value: stringOrNumberProp,
+    assumptions: stringArrayProp
+  },
+  ["id", "parentNodeId", "name", "type", "unit", "relation", "formula", "description", "value", "assumptions"]
 );
 var nodeUpdateSchema = objectSchema(
   {
@@ -583,6 +631,34 @@ var jsonSchemas = {
     required: ["ok"],
     additionalProperties: false
   },
+  "agent-plan-v1": objectSchema(
+    {
+      buildIntent: agentBuildIntentSchema,
+      selectedSkillIds: stringArrayProp,
+      skillRationale: stringProp,
+      extractedInputs: arrayProp(agentExtractedInputSchema, 80),
+      missingInputs: arrayProp(agentMissingInputSchema, 40),
+      driverPlan: arrayProp(agentDriverSchema, 80),
+      rootFormula: { type: "string", maxLength: 500 },
+      assumptions: stringArrayProp,
+      questionsForUser: stringArrayProp,
+      warnings: warningArrayProp,
+      confidence: confidenceProp
+    },
+    [
+      "buildIntent",
+      "selectedSkillIds",
+      "skillRationale",
+      "extractedInputs",
+      "missingInputs",
+      "driverPlan",
+      "rootFormula",
+      "assumptions",
+      "questionsForUser",
+      "warnings",
+      "confidence"
+    ]
+  ),
   "generate-tree-v1": objectSchema(
     {
       projectTitle: stringProp,
@@ -731,6 +807,7 @@ function getStrictResponseJsonSchema(schemaId) {
 }
 var validators = {
   "connection-test-v1": (output) => output.ok === true,
+  "agent-plan-v1": (output) => isRecord(output.buildIntent) && isStringArray(output.selectedSkillIds) && typeof output.skillRationale === "string" && isObjectArray(output.extractedInputs) && isObjectArray(output.missingInputs) && isObjectArray(output.driverPlan) && typeof output.rootFormula === "string" && validateAdvisoryArrays(output) && typeof output.confidence === "number",
   "generate-tree-v1": (output) => typeof output.projectTitle === "string" && typeof output.rootNodeId === "string" && isObjectArray(output.nodes) && output.nodes.length > 0 && isObjectArray(output.edges) && validateAdvisoryArrays(output) && validateGenerateTreeGraph(output).valid,
   "deepen-node-v1": (output) => typeof output.targetNodeId === "string" && isObjectArray(output.nodes) && output.nodes.length > 0 && isObjectArray(output.edges) && validateAdvisoryArrays(output),
   "simplify-branch-v1": (output) => typeof output.branchRootNodeId === "string" && isObjectArray(output.nodeRemovals) && isObjectArray(output.edgeChanges) && typeof output.rationale === "string" && validateAdvisoryArrays(output),
@@ -3872,6 +3949,127 @@ var mockNode = Object.freeze({
 });
 var MOCK_STUB_OUTPUT = {
   "connection-test-v1": { ok: true },
+  "agent-plan-v1": {
+    buildIntent: {
+      rootKpi: "Ore haulage",
+      industry: "",
+      businessContext: "I have 5 trucks\nAverage distance 2.7 km\nAverage load speed - 7 km/h\nAverage empty speed - 11 km/h",
+      unit: "tonnes/year",
+      timePeriod: "year",
+      goal: ""
+    },
+    selectedSkillIds: ["mining.haulage_truck_cycle"],
+    skillRationale: "Mock planning response for a truck haulage request.",
+    extractedInputs: [
+      { id: "number_of_trucks", label: "Number of trucks", value: 5, unit: "trucks", sourceText: "I have 5 trucks" },
+      { id: "haul_distance_km", label: "Average haul distance", value: 2.7, unit: "km", sourceText: "Average distance 2.7 km" },
+      { id: "loaded_speed_kmh", label: "Average loaded speed", value: 7, unit: "km/h", sourceText: "Average load speed - 7 km/h" },
+      { id: "empty_speed_kmh", label: "Average empty speed", value: 11, unit: "km/h", sourceText: "Average empty speed - 11 km/h" }
+    ],
+    missingInputs: [
+      {
+        id: "payload_per_trip_t",
+        question: "What is the average payload per truck trip in tonnes?",
+        reason: "Truck haulage tonnes require payload per trip.",
+        required: true
+      },
+      {
+        id: "operating_hours",
+        question: "How many operating hours should the yearly period assume?",
+        reason: "Trips per truck require available operating time.",
+        required: true
+      }
+    ],
+    driverPlan: [
+      {
+        id: "number_of_trucks",
+        parentNodeId: "root",
+        name: "Number of trucks",
+        type: "input",
+        unit: "trucks",
+        relation: "multiplicative_driver",
+        formula: "",
+        description: "Available truck fleet size.",
+        value: 5,
+        assumptions: []
+      },
+      {
+        id: "trips_per_truck",
+        parentNodeId: "root",
+        name: "Trips per truck",
+        type: "calculated",
+        unit: "trips/truck/year",
+        relation: "multiplicative_driver",
+        formula: "operating_hours / ((haul_distance_km / loaded_speed_kmh) + (haul_distance_km / empty_speed_kmh))",
+        description: "Trips each truck can complete from cycle time and annual operating hours.",
+        value: "",
+        assumptions: []
+      },
+      {
+        id: "payload_per_trip_t",
+        parentNodeId: "root",
+        name: "Payload per trip",
+        type: "input",
+        unit: "tonnes/trip",
+        relation: "multiplicative_driver",
+        formula: "",
+        description: "Average tonnes moved per loaded trip.",
+        value: "",
+        assumptions: []
+      },
+      {
+        id: "operating_hours",
+        parentNodeId: "trips_per_truck",
+        name: "Operating hours",
+        type: "input",
+        unit: "hours/year",
+        relation: "formula_dependency",
+        formula: "",
+        description: "Available truck operating hours during the year.",
+        value: "",
+        assumptions: []
+      },
+      {
+        id: "haul_distance_km",
+        parentNodeId: "trips_per_truck",
+        name: "Average haul distance",
+        type: "input",
+        unit: "km",
+        relation: "divisive_driver",
+        formula: "",
+        description: "Average one-way loaded haul distance.",
+        value: 2.7,
+        assumptions: []
+      },
+      {
+        id: "loaded_speed_kmh",
+        parentNodeId: "trips_per_truck",
+        name: "Average loaded speed",
+        type: "input",
+        unit: "km/h",
+        relation: "positive_driver",
+        formula: "",
+        description: "Average speed while loaded.",
+        value: 7,
+        assumptions: []
+      },
+      {
+        id: "empty_speed_kmh",
+        parentNodeId: "trips_per_truck",
+        name: "Average empty speed",
+        type: "input",
+        unit: "km/h",
+        relation: "positive_driver",
+        formula: "",
+        description: "Average return speed while empty.",
+        value: 11,
+        assumptions: []
+      }
+    ],
+    rootFormula: "number_of_trucks * trips_per_truck * payload_per_trip_t",
+    ...advisoryStub,
+    confidence: 0.5
+  },
   "generate-tree-v1": { projectTitle: "Mock tree", rootNodeId: "root", nodes: [mockNode], edges: [], ...advisoryStub },
   "deepen-node-v1": { targetNodeId: "node-1", nodes: [{ ...mockNode, id: "child_a", name: "Child A" }], edges: [], ...advisoryStub },
   "simplify-branch-v1": { branchRootNodeId: "node-1", nodeRemovals: [], edgeChanges: [], rationale: "Mock", ...advisoryStub },
@@ -3927,6 +4125,10 @@ function byteLength7(value) {
 }
 function abortError(message = "Completion was cancelled.") {
   return Object.assign(new Error(message), { name: "AbortError", code: "CANCELLED" });
+}
+function isClosedStdinError(error2) {
+  const code = typeof error2 === "object" && error2 !== null && "code" in error2 ? String(error2.code) : "";
+  return code === "EPIPE" || code === "ERR_STREAM_DESTROYED";
 }
 function safeEnvironment(source) {
   const result = {};
@@ -4296,6 +4498,10 @@ async function executeCli(manifest, request, signal, options) {
         stopChildAfterStreamingResult();
       };
       child.once("error", fail);
+      child.stdin.on("error", (error2) => {
+        if (isClosedStdinError(error2)) return;
+        fail(error2);
+      });
       child.stdout.on("data", (chunk) => {
         stdout += chunk.toString();
         if (byteLength7(stdout) > EXECUTION_LIMITS.maxStdoutBytes) {
@@ -4328,14 +4534,18 @@ async function executeCli(manifest, request, signal, options) {
     });
     try {
       if (signal.aborted) terminate();
-      if (adapter) {
-        if (adapter.spawnHints?.stdin === "prompt") {
-          child.stdin.end(promptText);
+      try {
+        if (adapter) {
+          if (adapter.spawnHints?.stdin === "prompt") {
+            child.stdin.end(promptText);
+          } else {
+            child.stdin.end();
+          }
         } else {
-          child.stdin.end();
+          child.stdin.end(requestJson);
         }
-      } else {
-        child.stdin.end(requestJson);
+      } catch (error2) {
+        if (!isClosedStdinError(error2)) throw error2;
       }
       const completed = await completion;
       if (completed.type === "stream") return completed.result;
@@ -4456,6 +4666,94 @@ async function readBoundedResponse(response) {
     chunks.push(chunk.value);
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+function appendPath(baseUrl, pathSegment) {
+  return `${baseUrl.replace(/\/+$/, "")}/${pathSegment.replace(/^\/+/, "")}`;
+}
+function ollamaTagsUrl(baseUrl) {
+  const url = new URL(baseUrl);
+  url.pathname = `${url.pathname.replace(/\/v1\/?$/, "").replace(/\/+$/, "")}/api/tags`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+function addModelName(models, seen, value) {
+  if (typeof value !== "string") return;
+  const model = value.trim();
+  if (!model || model.length > 160 || model.includes("\0") || seen.has(model)) return;
+  seen.add(model);
+  models.push(model);
+}
+function collectModelNames(payload) {
+  const models = [];
+  const seen = /* @__PURE__ */ new Set();
+  const visit = (value) => {
+    if (typeof value === "string") {
+      addModelName(models, seen, value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    const record = value;
+    addModelName(models, seen, record.id);
+    addModelName(models, seen, record.name);
+    addModelName(models, seen, record.model);
+    if (Array.isArray(record.data)) visit(record.data);
+    if (Array.isArray(record.models)) visit(record.models);
+  };
+  visit(payload);
+  return models;
+}
+async function fetchModelList(url, signal, options) {
+  let response;
+  let rawResponse;
+  try {
+    response = await (options.fetch ?? fetch)(url, {
+      method: "GET",
+      redirect: "error",
+      signal,
+      headers: { accept: "application/json" }
+    });
+    rawResponse = await readBoundedResponse(response);
+  } catch (error2) {
+    if (signal.aborted) throw abortError("Model listing was cancelled.");
+    throw Object.assign(error2 instanceof Error ? error2 : new Error("Local model endpoint could not be reached."), {
+      code: "LOCAL_MODEL_LIST_FAILED"
+    });
+  }
+  if (!response.ok) {
+    throw Object.assign(new Error(`Local model list failed with status ${response.status}.`), {
+      code: "LOCAL_MODEL_LIST_FAILED"
+    });
+  }
+  try {
+    return collectModelNames(JSON.parse(rawResponse));
+  } catch {
+    throw Object.assign(new Error("Local model list returned invalid JSON."), {
+      code: "INVALID_PROVIDER_RESPONSE"
+    });
+  }
+}
+async function listLocalHttpModels(manifest, signal, options) {
+  if (!manifest.localHttp) return [];
+  const urls = [
+    appendPath(manifest.localHttp.baseUrl, "models"),
+    ...manifest.id === "ollama" ? [ollamaTagsUrl(manifest.localHttp.baseUrl)] : []
+  ];
+  let lastError;
+  for (const url of urls) {
+    try {
+      const models = await fetchModelList(url, signal, options);
+      if (models.length > 0 || manifest.id !== "ollama") return models;
+    } catch (error2) {
+      lastError = error2;
+    }
+  }
+  if (lastError) throw lastError;
+  return [];
 }
 async function postLocalHttpChat(manifest, messages, signal, options, request, timeoutMs) {
   if (!manifest.localHttp) throw Object.assign(new Error("Backend has no local HTTP manifest."), { code: "INVALID_MANIFEST" });
@@ -4580,6 +4878,9 @@ async function executeCompletion(manifest, request, signal, options = {}) {
 async function listBackendModels(manifest, signal, options = {}) {
   if (!manifest.modelSelection) return [];
   if (signal.aborted) throw abortError("Model listing was cancelled.");
+  if (manifest.kind === "local_http") {
+    return listLocalHttpModels(manifest, signal, options);
+  }
   if (manifest.kind !== "subscription_cli") return [];
   const adapter = getSubscriptionCliAdapter(manifest.id);
   if (!adapter?.listModels) return [];
@@ -4795,20 +5096,7 @@ function publicManifest(manifest) {
 // ../local-runner/src/server/runtime.ts
 var LOCAL_RUNTIME_VERSION = "0.2.0";
 var MAX_RETAINED_RUNS = 200;
-var TASK_TYPES = /* @__PURE__ */ new Set([
-  "generate_tree",
-  "deepen_node",
-  "simplify_branch",
-  "suggest_alternative",
-  "suggest_formula",
-  "review_model",
-  "check_units",
-  "identify_missing_drivers",
-  "identify_duplicate_drivers",
-  "explain_node",
-  "explain_scenario",
-  "generate_executive_summary"
-]);
+var TASK_TYPES = new Set(ALL_VDT_TASK_TYPES);
 var PROGRESS_LABELS = {
   preparing_request: "Preparing request",
   starting_backend: "Starting backend",

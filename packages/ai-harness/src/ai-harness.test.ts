@@ -7,6 +7,9 @@ import {
   effectiveWorkingTimeAlternativeOutput,
   generateVdtOutputSchema,
   generateVdtOutputToProject,
+  aiChangeSetDraftSchema,
+  aiChangeSetDraftToVdtChangeSet,
+  aiVdtNodeSchema,
   generateAgenticVdtProject,
   generateVdtProject,
   checkUnitsOutputSchema,
@@ -82,6 +85,78 @@ describe("AI harness", () => {
 
     expect(output.rootNodeId).toBe("production_volume");
     expect(output.nodes.length).toBeGreaterThan(5);
+  });
+
+  it("accepts optional fixedInScenario on AI nodes and maps it to VdtNode", () => {
+    const node = aiVdtNodeSchema.parse({
+      id: "calendar_time",
+      name: "Calendar Time",
+      description: "Total calendar hours in the period.",
+      type: "input",
+      aiConfidence: 0.9,
+      aiRationale: "Fixed time base.",
+      fixedInScenario: true
+    });
+
+    expect(node.fixedInScenario).toBe(true);
+
+    const output = generateVdtOutputSchema.parse({
+      ...productionVolumeAiOutput,
+      nodes: productionVolumeAiOutput.nodes.map((entry) =>
+        entry.id === "calendar_time" ? { ...entry, fixedInScenario: true } : entry
+      )
+    });
+    const project = generateVdtOutputToProject(output, {
+      rootKpi: "Production Volume",
+      industry: "Mining / Processing Plant"
+    });
+
+    expect(project.graph.nodes.find((entry) => entry.id === "calendar_time")?.fixedInScenario).toBe(true);
+  });
+
+  it("rejects non-boolean fixedInScenario on AI nodes", () => {
+    expect(() =>
+      aiVdtNodeSchema.parse({
+        id: "calendar_time",
+        name: "Calendar Time",
+        description: "Total calendar hours in the period.",
+        type: "input",
+        aiConfidence: 0.9,
+        aiRationale: "Fixed time base.",
+        fixedInScenario: "yes"
+      })
+    ).toThrow();
+  });
+
+  it("mirrors fixedInScenario through change-set draft additions and node patches", () => {
+    const draft = aiChangeSetDraftSchema.parse({
+      additions: [
+        {
+          id: "add_calendar_time",
+          nodeId: "calendar_time",
+          parentNodeId: "effective_working_time",
+          relation: "positive_driver",
+          name: "Calendar Time",
+          fixedInScenario: true
+        }
+      ],
+      updates: [
+        {
+          id: "update_planned_downtime",
+          nodeId: "planned_downtime",
+          patch: { fixedInScenario: false }
+        }
+      ]
+    });
+
+    const changeSet = aiChangeSetDraftToVdtChangeSet(draft, {
+      taskType: "review_model",
+      backendId: "mock",
+      changeSetId: "changeset_test"
+    });
+
+    expect(changeSet.additions[0]?.fixedInScenario).toBe(true);
+    expect(changeSet.updates[0]?.patch.fixedInScenario).toBe(false);
   });
 
   it("converts valid AI output into a calculable project", () => {

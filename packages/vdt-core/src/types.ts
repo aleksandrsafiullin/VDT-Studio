@@ -1,4 +1,5 @@
 export type VdtAiTaskType =
+  | "agent_plan"
   | "generate_tree"
   | "deepen_node"
   | "simplify_branch"
@@ -77,6 +78,7 @@ export interface VdtNode {
   owner?: string | undefined;
   controllability?: "high" | "medium" | "low" | "none" | undefined;
   materiality?: "high" | "medium" | "low" | "unknown" | undefined;
+  fixedInScenario?: boolean | undefined;
   dataMapping?: VdtDataMapping | undefined;
   position?: {
     x: number;

@@ -7,6 +7,52 @@ const advisory = {
 };
 
 export const VALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
+  "agent-plan-v1": {
+    buildIntent: {
+      rootKpi: "Ore haulage",
+      industry: "Mining",
+      businessContext: "Open-pit truck haulage",
+      unit: "tonnes/year",
+      timePeriod: "year",
+      goal: "Build a truck haulage VDT"
+    },
+    selectedSkillIds: ["mining.haulage_truck_cycle"],
+    skillRationale: "The request describes truck count, haul distance, and loaded/empty travel speeds.",
+    extractedInputs: [
+      {
+        id: "number_of_trucks",
+        label: "Number of trucks",
+        value: 5,
+        unit: "trucks",
+        sourceText: "I have 5 trucks"
+      }
+    ],
+    missingInputs: [
+      {
+        id: "payload_per_trip_t",
+        question: "What is the average payload per trip in tonnes?",
+        reason: "Truck-cycle tonnes require payload per trip.",
+        required: true
+      }
+    ],
+    driverPlan: [
+      {
+        id: "number_of_trucks",
+        parentNodeId: "root",
+        name: "Number of trucks",
+        type: "input",
+        unit: "trucks",
+        relation: "multiplicative_driver",
+        formula: "",
+        description: "Active haul trucks in the fleet.",
+        value: 5,
+        assumptions: []
+      }
+    ],
+    rootFormula: "number_of_trucks * trips_per_truck * payload_per_trip_t",
+    ...advisory,
+    confidence: 0.88
+  },
   "generate-tree-v1": {
     projectTitle: "Production Volume",
     rootNodeId: "production_volume",
@@ -92,6 +138,13 @@ export const VALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
 };
 
 export const INVALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
+  "agent-plan-v1": {
+    selectedSkillIds: ["mining.production_volume"],
+    skillRationale: "x",
+    extractedInputs: [{ id: "root_kpi", label: "Root KPI", value: { bad: true } }],
+    missingInputs: [{ id: "baseline_period", question: "Baseline?", reason: "Needed.", required: true }],
+    confidence: 0.8
+  },
   "generate-tree-v1": { projectTitle: "x" },
   "deepen-node-v1": { targetNodeId: "a", nodes: [], edges: [], assumptions: [], questionsForUser: [], warnings: [] },
   "simplify-branch-v1": { branchRootNodeId: "a", nodeRemovals: "bad", edgeChanges: [], rationale: "x", ...advisory },

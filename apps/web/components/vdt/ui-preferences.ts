@@ -10,12 +10,12 @@ export const MIN_LEFT_PANEL_WIDTH = 220;
 export const MAX_LEFT_PANEL_WIDTH = 480;
 export const MIN_RIGHT_PANEL_WIDTH = 240;
 export const MAX_RIGHT_PANEL_WIDTH = 520;
-export const DEFAULT_KPI_HORIZONTAL_GAP = 220;
-export const DEFAULT_KPI_VERTICAL_GAP = 36;
-export const MIN_KPI_HORIZONTAL_GAP = 120;
-export const MAX_KPI_HORIZONTAL_GAP = 520;
-export const MIN_KPI_VERTICAL_GAP = 16;
-export const MAX_KPI_VERTICAL_GAP = 220;
+export const DEFAULT_KPI_HORIZONTAL_GAP = 50;
+export const DEFAULT_KPI_VERTICAL_GAP = 18;
+export const MIN_KPI_HORIZONTAL_GAP = 30;
+export const MAX_KPI_HORIZONTAL_GAP = 220;
+export const MIN_KPI_VERTICAL_GAP = 2;
+export const MAX_KPI_VERTICAL_GAP =110;
 
 export interface UiPreferences {
   fontScale: number;

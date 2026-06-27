@@ -1,6 +1,7 @@
 import type { VdtAiTaskType } from "@vdt-studio/vdt-core";
 
 export const VDT_OUTPUT_SCHEMA_IDS = [
+  "agent-plan-v1",
   "generate-tree-v1",
   "deepen-node-v1",
   "simplify-branch-v1",
@@ -21,6 +22,7 @@ export type VdtOutputSchemaId = (typeof VDT_OUTPUT_SCHEMA_IDS)[number];
 export type VdtSchemaId = (typeof VDT_SCHEMA_IDS)[number];
 
 const schemaTask: Record<VdtOutputSchemaId, VdtAiTaskType> = {
+  "agent-plan-v1": "agent_plan",
   "generate-tree-v1": "generate_tree",
   "deepen-node-v1": "deepen_node",
   "simplify-branch-v1": "simplify_branch",
@@ -101,7 +103,7 @@ function enumProp(values: readonly string[]): Record<string, unknown> {
 
 const nodeIdProp = { type: "string", maxLength: 160 };
 const confidenceProp = { type: "number", minimum: 0, maximum: 1 };
-const nodeTypeProp = enumProp(["root_kpi", "calculated", "input", "assumption", "external_factor"]);
+const nodeTypeProp = enumProp(["root_kpi", "calculated", "input", "assumption", "external_factor", "data_mapped"]);
 const edgeRelationProp = enumProp([
   "positive_driver",
   "negative_driver",
@@ -127,7 +129,8 @@ const aiNodeSchema = objectSchema(
     aiConfidence: confidenceProp,
     aiRationale: { type: "string", maxLength: 1_000 },
     controllability: controllabilityProp,
-    materiality: materialityProp
+    materiality: materialityProp,
+    fixedInScenario: { type: "boolean" }
   },
   ["id"]
 );
@@ -176,9 +179,61 @@ const nodePatchSchema = objectSchema(
     aiConfidence: confidenceProp,
     aiRationale: { type: "string", maxLength: 1_000 },
     controllability: controllabilityProp,
-    materiality: materialityProp
+    materiality: materialityProp,
+    fixedInScenario: { type: "boolean" }
   },
   []
+);
+
+const stringOrNumberProp = { anyOf: [stringProp, { type: "number" }] };
+
+const agentBuildIntentSchema = objectSchema(
+  {
+    rootKpi: stringProp,
+    industry: stringProp,
+    businessContext: stringProp,
+    unit: { type: "string", maxLength: 80 },
+    timePeriod: { type: "string", maxLength: 80 },
+    goal: stringProp
+  },
+  ["rootKpi", "industry", "businessContext", "unit", "timePeriod", "goal"]
+);
+
+const agentExtractedInputSchema = objectSchema(
+  {
+    id: nodeIdProp,
+    label: { type: "string", maxLength: 120 },
+    value: stringOrNumberProp,
+    unit: { type: "string", maxLength: 80 },
+    sourceText: { type: "string", maxLength: 500 }
+  },
+  ["id", "label", "value"]
+);
+
+const agentMissingInputSchema = objectSchema(
+  {
+    id: nodeIdProp,
+    question: { type: "string", maxLength: 500 },
+    reason: { type: "string", maxLength: 1_000 },
+    required: { type: "boolean" }
+  },
+  ["id", "question", "reason", "required"]
+);
+
+const agentDriverSchema = objectSchema(
+  {
+    id: nodeIdProp,
+    parentNodeId: nodeIdProp,
+    name: { type: "string", maxLength: 120 },
+    type: nodeTypeProp,
+    unit: { type: "string", maxLength: 80 },
+    relation: edgeRelationProp,
+    formula: { type: "string", maxLength: 500 },
+    description: { type: "string", maxLength: 1_000 },
+    value: stringOrNumberProp,
+    assumptions: stringArrayProp
+  },
+  ["id", "parentNodeId", "name", "type", "unit", "relation", "formula", "description", "value", "assumptions"]
 );
 
 const nodeUpdateSchema = objectSchema(
@@ -248,7 +303,8 @@ const changeSetAdditionSchema = objectSchema(
     aiConfidence: confidenceProp,
     aiRationale: { type: "string", maxLength: 1_000 },
     controllability: controllabilityProp,
-    materiality: materialityProp
+    materiality: materialityProp,
+    fixedInScenario: { type: "boolean" }
   },
   ["id", "nodeId", "parentNodeId", "relation", "name"]
 );
@@ -530,6 +586,34 @@ const jsonSchemas: Record<VdtSchemaId, Record<string, unknown>> = {
     required: ["ok"],
     additionalProperties: false
   },
+  "agent-plan-v1": objectSchema(
+    {
+      buildIntent: agentBuildIntentSchema,
+      selectedSkillIds: stringArrayProp,
+      skillRationale: stringProp,
+      extractedInputs: arrayProp(agentExtractedInputSchema, 80),
+      missingInputs: arrayProp(agentMissingInputSchema, 40),
+      driverPlan: arrayProp(agentDriverSchema, 80),
+      rootFormula: { type: "string", maxLength: 500 },
+      assumptions: stringArrayProp,
+      questionsForUser: stringArrayProp,
+      warnings: warningArrayProp,
+      confidence: confidenceProp
+    },
+    [
+      "buildIntent",
+      "selectedSkillIds",
+      "skillRationale",
+      "extractedInputs",
+      "missingInputs",
+      "driverPlan",
+      "rootFormula",
+      "assumptions",
+      "questionsForUser",
+      "warnings",
+      "confidence"
+    ]
+  ),
   "generate-tree-v1": objectSchema(
     {
       projectTitle: stringProp,
@@ -687,6 +771,16 @@ export function getStrictResponseJsonSchema(schemaId: VdtSchemaId): Record<strin
 
 const validators: Record<VdtSchemaId, (output: Record<string, unknown>) => boolean> = {
   "connection-test-v1": (output) => output.ok === true,
+  "agent-plan-v1": (output) =>
+    isRecord(output.buildIntent) &&
+    isStringArray(output.selectedSkillIds) &&
+    typeof output.skillRationale === "string" &&
+    isObjectArray(output.extractedInputs) &&
+    isObjectArray(output.missingInputs) &&
+    isObjectArray(output.driverPlan) &&
+    typeof output.rootFormula === "string" &&
+    validateAdvisoryArrays(output) &&
+    typeof output.confidence === "number",
   "generate-tree-v1": (output) =>
     typeof output.projectTitle === "string" &&
     typeof output.rootNodeId === "string" &&

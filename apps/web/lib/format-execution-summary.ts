@@ -48,14 +48,14 @@ export function formatExecutionModeSummary(settings: ExecutionSettings): Executi
     if (runnerProviderId === "cli_stub" && preset.runnerProviderId === "local_http_stub") {
       runnerProviderId = "local_http_stub";
     }
-    const model = resolveCliModelLabel(
-      settings.selectedCliAgentId,
-      settings.cliModelSelection,
-      settings.localModel ?? preset.model
-    );
 
     if (runnerProviderId === "cli_stub" && settings.selectedCliAgentId) {
       const agent = getCliCatalogEntry(settings.selectedCliAgentId);
+      const model = resolveCliModelLabel(
+        settings.selectedCliAgentId,
+        settings.cliModelSelection,
+        undefined
+      );
       return {
         modeLabel: "Local CLI",
         primary: agent.displayName,
@@ -66,7 +66,7 @@ export function formatExecutionModeSummary(settings: ExecutionSettings): Executi
     return {
       modeLabel: "Local CLI",
       primary: preset.label,
-      secondary: model
+      secondary: settings.localModel?.trim() || preset.model
     };
   }
 

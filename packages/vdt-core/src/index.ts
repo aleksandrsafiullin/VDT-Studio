@@ -7,6 +7,7 @@ export * from "./changeset/diff";
 export * from "./formula/ast";
 export * from "./formula/parser";
 export * from "./formula/evaluator";
+export * from "./formula/edge-relation";
 export * from "./formula/calculate";
 export * from "./graph/validation";
 export * from "./graph/layout";

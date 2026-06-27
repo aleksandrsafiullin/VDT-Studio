@@ -64,6 +64,7 @@ const addDriverTool: AgentTool = {
       "formula_dependency"
     ]).optional(),
     formula: z.string().max(500).optional(),
+    baselineValue: z.number().finite().optional(),
     description: z.string().max(1_000).optional(),
     aiRationale: z.string().max(800).optional(),
     assumptions: z.array(z.string().max(300)).max(20).optional()

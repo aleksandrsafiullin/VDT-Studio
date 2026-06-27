@@ -157,6 +157,20 @@ describe("AiExecutionClient", () => {
     ).resolves.toEqual({ ok: true });
   });
 
+  it("lists development local HTTP models through the managed dev runtime route", async () => {
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe("/api/ai/dev-runtime");
+      expect(JSON.parse(String(init?.body))).toEqual({ operation: "list_models", backendId: "ollama" });
+      return jsonResponse({ ok: true, backendId: "ollama", models: ["qwen3:latest", "llama3.2"] });
+    });
+
+    await expect(new DevelopmentRunnerClient(fetcher as unknown as typeof fetch).listModels("ollama"))
+      .resolves.toEqual([
+        { id: "qwen3:latest", label: "qwen3:latest" },
+        { id: "llama3.2", label: "llama3.2" }
+      ]);
+  });
+
   it("runs development local AI completions through the managed dev runtime route without pairing", async () => {
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
       expect(url).toBe("/api/ai/dev-runtime");

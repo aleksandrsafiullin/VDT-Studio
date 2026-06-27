@@ -1,5 +1,6 @@
 import { agentUserMessageSchema } from "@vdt-studio/vdt-agent-runtime";
-import { agentRuntime, jsonError } from "../../runtime";
+import { readMaxTokens } from "@/lib/ai-route-provider";
+import { agentRuntime, createAgentPlanningProvider, jsonError } from "../../runtime";
 
 export async function POST(request: Request, { params }: { params: Promise<{ runId: string }> }) {
   const { runId } = await params;
@@ -20,7 +21,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
   }
 
   try {
-    const snapshot = await agentRuntime.handleMessage(runId, parsed.data);
+    const state = agentRuntime.store.getState(runId);
+    const needsPlanner = parsed.data.type === "user_answer" || parsed.data.type === "user_instruction";
+    const execution = needsPlanner
+      ? {
+          provider: createAgentPlanningProvider(state.request, request.url),
+          maxTokens: readMaxTokens(state.request.providerConfig)
+        }
+      : {};
+    const snapshot = agentRuntime.handleMessageInBackground(runId, parsed.data, execution);
     return Response.json({ ok: true, snapshot });
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : "Agent message could not be processed.", 500, "AGENT_MESSAGE_FAILED");

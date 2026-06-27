@@ -19,6 +19,8 @@ async function readJson(response: Response) {
   return await response.json() as {
     ok?: boolean;
     error?: string | { code?: string; message?: string };
+    backendId?: string;
+    models?: string[];
     run?: {
       requestId?: string;
       status?: string;
@@ -74,6 +76,29 @@ describe("development local runtime API route", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it("lists local HTTP models through the managed runtime", async () => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    const runtime = await import("../../../../../../packages/local-runner/src/server/runtime");
+    (globalThis as typeof globalThis & { __vdtStudioDevelopmentRuntime?: unknown }).__vdtStudioDevelopmentRuntime =
+      runtime.createLocalRuntimeContext({
+        executor: {
+          fetch: async () =>
+            new Response(JSON.stringify({ data: [{ id: "qwen3:latest" }] }), {
+              status: 200,
+              headers: { "content-type": "application/json" }
+            })
+        }
+      });
+
+    const response = await POST(request({ operation: "list_models", backendId: "ollama" }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.backendId).toBe("ollama");
+    expect(body.models).toEqual(["qwen3:latest"]);
+  });
 
   it("returns run progress snapshots for polling clients", async () => {
     vi.stubEnv("VDT_APP_MODE", "development_web");

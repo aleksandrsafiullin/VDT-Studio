@@ -27,7 +27,8 @@ export function suggestAlternativeOutputToChangeSet(
       aiConfidence: node.aiConfidence,
       aiRationale: node.aiRationale,
       controllability: node.controllability,
-      materiality: node.materiality
+      materiality: node.materiality,
+      fixedInScenario: node.fixedInScenario
     };
   });
 

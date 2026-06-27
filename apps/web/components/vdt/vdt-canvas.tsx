@@ -13,7 +13,13 @@ import {
   type NodeTypes
 } from "@xyflow/react";
 import { VdtRelationEdge, type VdtEdgeData } from "./vdt-edge";
-import { calculateGraph, DEFAULT_CANVAS_LAYOUT, layoutGraph } from "@vdt-studio/vdt-core";
+import {
+  calculateGraph,
+  DEFAULT_CANVAS_LAYOUT,
+  getFormulaReferenceOrder,
+  layoutGraph,
+  resolveFormulaEdgeRelation
+} from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { VdtNodeCard, type VdtNodeCardData } from "./vdt-node-card";
 import { collectExistingPositions } from "./layout-positions";
@@ -82,18 +88,49 @@ export function VdtCanvas() {
     [updateNodePosition]
   );
 
-  const edges: Edge<VdtEdgeData>[] = useMemo(
-    () =>
-      project.graph.edges.map((edge) => ({
+  const nodeById = useMemo(
+    () => new Map(project.graph.nodes.map((node) => [node.id, node])),
+    [project.graph.nodes]
+  );
+
+  const edges: Edge<VdtEdgeData>[] = useMemo(() => {
+    const formulaOrderCache = new Map<string, string[]>();
+
+    return project.graph.edges.map((edge) => {
+      const parentFormula = nodeById.get(edge.sourceNodeId)?.formula;
+      const relation = resolveFormulaEdgeRelation(parentFormula, edge.targetNodeId, edge.relation);
+
+      let previousOperandNodeId: string | undefined;
+      if (relation !== "formula_dependency" && parentFormula?.trim()) {
+        try {
+          let order = formulaOrderCache.get(parentFormula);
+          if (!order) {
+            order = getFormulaReferenceOrder(parentFormula);
+            formulaOrderCache.set(parentFormula, order);
+          }
+          const operandIndex = order.indexOf(edge.targetNodeId);
+          if (operandIndex > 0) {
+            previousOperandNodeId = order[operandIndex - 1];
+          }
+        } catch {
+          // ignore invalid formulas; edge falls back to source/target midpoint
+        }
+      }
+
+      return {
         id: edge.id,
         type: "vdtEdge",
         source: edge.sourceNodeId,
         target: edge.targetNodeId,
-        data: { relation: edge.relation, aiGenerated: edge.aiGenerated },
+        data: {
+          relation,
+          aiGenerated: edge.aiGenerated,
+          ...(previousOperandNodeId ? { previousOperandNodeId } : {})
+        },
         animated: edge.aiGenerated
-      })),
-    [project.graph.edges]
-  );
+      };
+    });
+  }, [nodeById, project.graph.edges]);
 
   useEffect(() => {
     if (isDraggingRef.current) {
@@ -131,9 +168,6 @@ export function VdtCanvas() {
       data-testid="vdt-canvas"
     >
       <div className="absolute left-4 top-4 z-10 flex items-center gap-2">
-        <div className="rounded-md border border-line bg-white/95 px-3 py-2 text-xs text-muted shadow-sm backdrop-blur">
-          Visual flow: root to drivers.
-        </div>
         <Button
           size="sm"
           data-testid="auto-distribute-layout"

@@ -25,6 +25,7 @@ export type VdtNodePatch = Partial<
     | "owner"
     | "controllability"
     | "materiality"
+    | "fixedInScenario"
     | "aiConfidence"
     | "aiRationale"
     | "dataMapping"
@@ -54,6 +55,7 @@ export interface VdtNodeAddition {
   owner?: string | undefined;
   controllability?: VdtNode["controllability"];
   materiality?: VdtNode["materiality"];
+  fixedInScenario?: VdtNode["fixedInScenario"];
   dataMapping?: VdtNode["dataMapping"];
 }
 
