@@ -35,6 +35,10 @@ select {
   display: none;
 }
 
+.react-flow__node {
+  overflow: visible;
+}
+
 @media (min-width: 1024px) {
   .vdt-workspace-grid {
     grid-template-columns:

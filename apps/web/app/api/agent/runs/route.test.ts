@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
+import { createLocalRuntimeContext } from "@vdt-studio/local-runner/server-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createLocalRuntimeContext } from "../../../../../../packages/local-runner/src/server/runtime";
 import { POST as startRun } from "./route";
 import { GET as getRun } from "./[runId]/route";
 import { GET as getEvents } from "./[runId]/events/route";
@@ -223,6 +223,41 @@ describe("agent runs API", () => {
     expect(body.snapshot?.status).toBe("running");
     const snapshot = await waitForRunSnapshot(body.runId!, (run) => run.status === "needs_user_input");
     expect(snapshot.selectedSkills.map((skill) => skill.id)).toEqual(["mining.haulage_truck_cycle"]);
+  });
+
+  it("refreshes stale managed local runtime manifests before agent decisions", async () => {
+    const staleContext = createLocalRuntimeContext({ auditSink: () => undefined });
+    const staleManifest = staleContext.manifests.get("mock");
+    if (!staleManifest) throw new Error("Expected mock manifest.");
+    (staleContext.manifests as Map<string, typeof staleManifest>).set("mock", Object.freeze({
+      ...staleManifest,
+      taskTypes: staleManifest.taskTypes.filter((taskType) => taskType !== "agent_decision"),
+      schemaIds: staleManifest.schemaIds.filter((schemaId) => schemaId !== "agent-decision-v1")
+    }));
+    runtimeGlobal.__vdtStudioDevelopmentRuntime = staleContext;
+
+    const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+      mode: "generate_vdt",
+      input: {
+        prompt: "I have 5 trucks\nAverage distance 2.7 km\nAverage load speed - 7 km/h\nAverage empty speed - 11 km/h",
+        rootKpi: "Ore haulage",
+        unit: "tonnes/year",
+        timePeriod: "year"
+      },
+      providerId: "local_runner",
+      providerConfig: {
+        backendId: "mock"
+      },
+      options: { continueWithAssumptions: false }
+    }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(body.snapshot?.status).toBe("running");
+    await waitForManagedRuntimeRun();
+    expect(runtimeGlobal.__vdtStudioDevelopmentRuntime).not.toBe(staleContext);
+    expect(runtimeGlobal.__vdtStudioDevelopmentRuntime?.manifests.get("mock")?.taskTypes).toContain("agent_decision");
+    expect(runtimeGlobal.__vdtStudioDevelopmentRuntime?.manifests.get("mock")?.schemaIds).toContain("agent-decision-v1");
   });
 
   it("cancels the managed local runtime request when an agent run is cancelled", async () => {

@@ -2,6 +2,7 @@ import { chmod, copyFile, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLocalRuntimeContext } from "@vdt-studio/local-runner/server-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 
@@ -79,9 +80,8 @@ describe("development local runtime API route", () => {
 
   it("lists local HTTP models through the managed runtime", async () => {
     vi.stubEnv("VDT_APP_MODE", "development_web");
-    const runtime = await import("../../../../../../packages/local-runner/src/server/runtime");
     (globalThis as typeof globalThis & { __vdtStudioDevelopmentRuntime?: unknown }).__vdtStudioDevelopmentRuntime =
-      runtime.createLocalRuntimeContext({
+      createLocalRuntimeContext({
         executor: {
           fetch: async () =>
             new Response(JSON.stringify({ data: [{ id: "qwen3:latest" }] }), {

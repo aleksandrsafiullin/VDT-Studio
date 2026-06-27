@@ -199,7 +199,7 @@ export interface ModelOption {
 }
 
 export interface AiCompletionRequest {
-  taskType: Exclude<VdtAiTaskType, "agent_plan" | "generate_tree">;
+  taskType: Exclude<VdtAiTaskType, "agent_decision" | "agent_plan" | "generate_tree">;
   input: unknown;
   providerId: string;
   providerConfig?: Record<string, unknown> | undefined;
@@ -276,6 +276,7 @@ function apiBackends(): PublicBackendStatus[] {
 
 const API_BACKEND_IDS = new Set(["openai_compatible", "anthropic", "gemini", "azure_openai", "mock"]);
 const TASK_SCHEMA_IDS = {
+  agent_decision: "agent-decision-v1",
   agent_plan: "agent-plan-v1",
   generate_tree: "generate-tree-v1",
   deepen_node: "deepen-node-v1",

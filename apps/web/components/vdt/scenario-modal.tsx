@@ -438,12 +438,14 @@ export function ScenarioModal({
   const activeScenarioId = useVdtStudioStore((state) => state.activeScenarioId);
   const createScenario = useVdtStudioStore((state) => state.createScenario);
   const setActiveScenarioId = useVdtStudioStore((state) => state.setActiveScenarioId);
+  const setMainScenario = useVdtStudioStore((state) => state.setMainScenario);
   const renameScenario = useVdtStudioStore((state) => state.renameScenario);
   const deleteScenario = useVdtStudioStore((state) => state.deleteScenario);
   const cloneScenario = useVdtStudioStore((state) => state.cloneScenario);
 
   const activeScenario = project.scenarios.find((scenario) => scenario.id === activeScenarioId) ?? project.scenarios[0];
   const canDeleteScenario = project.scenarios.length > 1;
+  const isMainScenario = activeScenario?.isMain === true;
   const [isRenamingScenario, setIsRenamingScenario] = useState(false);
   const [scenarioNameDraft, setScenarioNameDraft] = useState(activeScenario?.name ?? "");
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -573,6 +575,31 @@ export function ScenarioModal({
             </div>
           </div>
           <div className="flex min-w-0 flex-1 max-w-3xl items-center justify-end gap-2">
+            <label className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-ink">
+              <input
+                type="checkbox"
+                data-testid="main-scenario-checkbox"
+                className="h-3.5 w-3.5 rounded border-line text-accent focus:ring-accent"
+                checked={isMainScenario}
+                disabled={!activeScenario || isRenamingScenario}
+                onChange={(event) => {
+                  if (!activeScenario) {
+                    return;
+                  }
+
+                  if (event.target.checked) {
+                    setMainScenario(activeScenario.id);
+                    return;
+                  }
+
+                  const fallback = project.scenarios.find((scenario) => scenario.id !== activeScenario.id);
+                  if (fallback) {
+                    setMainScenario(fallback.id);
+                  }
+                }}
+              />
+              Main Scenario
+            </label>
             {!isRenamingScenario ? (
               <Tooltip label="Edit scenario name">
                 <Button
@@ -679,7 +706,7 @@ export function ScenarioModal({
               >
                 {project.scenarios.map((scenario) => (
                   <option key={scenario.id} value={scenario.id} title={scenario.name}>
-                    {scenario.name}
+                    {scenario.isMain ? `★ ${scenario.name}` : scenario.name}
                   </option>
                 ))}
               </SelectInput>

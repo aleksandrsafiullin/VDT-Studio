@@ -1,6 +1,6 @@
 import { agentStartRequestSchema, type VdtAgentStartRequest } from "@vdt-studio/vdt-agent-runtime";
 import { readMaxTokens } from "@/lib/ai-route-provider";
-import { agentRuntime, createAgentPlanningProvider, jsonError } from "./runtime";
+import { agentRuntime, createAgentDecisionProvider, jsonError } from "./runtime";
 
 export async function POST(request: Request) {
   let raw: unknown;
@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const provider = createAgentPlanningProvider(parsed.data as VdtAgentStartRequest, request.url);
+    const provider = createAgentDecisionProvider(parsed.data as VdtAgentStartRequest, request.url);
     const snapshot = agentRuntime.startRunInBackground(parsed.data as VdtAgentStartRequest, {
       provider,
       maxTokens: readMaxTokens(parsed.data.providerConfig)

@@ -127,6 +127,7 @@ function extractBoundedJson(raw, maxBytes) {
 
 // ../model-bridge/src/schema-registry.ts
 var VDT_OUTPUT_SCHEMA_IDS = [
+  "agent-decision-v1",
   "agent-plan-v1",
   "generate-tree-v1",
   "deepen-node-v1",
@@ -143,6 +144,7 @@ var VDT_OUTPUT_SCHEMA_IDS = [
 ];
 var VDT_SCHEMA_IDS = ["connection-test-v1", ...VDT_OUTPUT_SCHEMA_IDS];
 var schemaTask = {
+  "agent-decision-v1": "agent_decision",
   "agent-plan-v1": "agent_plan",
   "generate-tree-v1": "generate_tree",
   "deepen-node-v1": "deepen_node",
@@ -225,7 +227,8 @@ var aiNodeSchema = objectSchema(
     aiConfidence: confidenceProp,
     aiRationale: { type: "string", maxLength: 1e3 },
     controllability: controllabilityProp,
-    materiality: materialityProp
+    materiality: materialityProp,
+    fixedInScenario: { type: "boolean" }
   },
   ["id"]
 );
@@ -269,7 +272,8 @@ var nodePatchSchema = objectSchema(
     aiConfidence: confidenceProp,
     aiRationale: { type: "string", maxLength: 1e3 },
     controllability: controllabilityProp,
-    materiality: materialityProp
+    materiality: materialityProp,
+    fixedInScenario: { type: "boolean" }
   },
   []
 );
@@ -319,6 +323,50 @@ var agentDriverSchema = objectSchema(
   },
   ["id", "parentNodeId", "name", "type", "unit", "relation", "formula", "description", "value", "assumptions"]
 );
+var agentQuestionSchema = objectSchema(
+  {
+    id: nodeIdProp,
+    question: { type: "string", maxLength: 500 },
+    reason: { type: "string", maxLength: 600 },
+    required: { type: "boolean" },
+    expectedAnswerType: enumProp(["text", "number", "single_choice", "multi_choice"]),
+    options: stringArrayProp,
+    defaultValue: { anyOf: [stringProp, { type: "number" }, stringArrayProp] }
+  },
+  ["id", "question", "reason", "required"]
+);
+var agentDecisionCallToolSchema = objectSchema(
+  {
+    type: { type: "string", const: "call_tool" },
+    toolName: { type: "string", maxLength: 120 },
+    args: { type: "object", properties: {}, required: [], additionalProperties: true },
+    statusMessage: { type: "string", maxLength: 500 }
+  },
+  ["type", "toolName", "args", "statusMessage"]
+);
+var agentDecisionAskUserSchema = objectSchema(
+  {
+    type: { type: "string", const: "ask_user" },
+    questions: { type: "array", minItems: 1, maxItems: 5, items: agentQuestionSchema },
+    statusMessage: { type: "string", maxLength: 500 }
+  },
+  ["type", "questions", "statusMessage"]
+);
+var agentDecisionFinishSchema = objectSchema(
+  {
+    type: { type: "string", const: "finish" },
+    summary: { type: "string", maxLength: 2e3 },
+    nextSuggestedActions: { type: "array", maxItems: 10, items: { type: "string", maxLength: 300 } }
+  },
+  ["type", "summary", "nextSuggestedActions"]
+);
+var agentDecisionSchema = {
+  type: "object",
+  anyOf: [agentDecisionCallToolSchema, agentDecisionAskUserSchema, agentDecisionFinishSchema],
+  properties: {},
+  required: [],
+  additionalProperties: false
+};
 var nodeUpdateSchema = objectSchema(
   {
     id: nodeIdProp,
@@ -383,7 +431,8 @@ var changeSetAdditionSchema = objectSchema(
     aiConfidence: confidenceProp,
     aiRationale: { type: "string", maxLength: 1e3 },
     controllability: controllabilityProp,
-    materiality: materialityProp
+    materiality: materialityProp,
+    fixedInScenario: { type: "boolean" }
   },
   ["id", "nodeId", "parentNodeId", "relation", "name"]
 );
@@ -631,6 +680,7 @@ var jsonSchemas = {
     required: ["ok"],
     additionalProperties: false
   },
+  "agent-decision-v1": agentDecisionSchema,
   "agent-plan-v1": objectSchema(
     {
       buildIntent: agentBuildIntentSchema,
@@ -807,6 +857,21 @@ function getStrictResponseJsonSchema(schemaId) {
 }
 var validators = {
   "connection-test-v1": (output) => output.ok === true,
+  "agent-decision-v1": (output) => {
+    for (const forbidden of ["driverPlan", "nodes", "edges", "rootFormula", "project", "fullProject", "fullGraph", "selectedSkillIds"]) {
+      if (forbidden in output) return false;
+    }
+    if (output.type === "call_tool") {
+      return typeof output.toolName === "string" && isRecord(output.args) && typeof output.statusMessage === "string";
+    }
+    if (output.type === "ask_user") {
+      return isObjectArray(output.questions) && output.questions.length > 0 && typeof output.statusMessage === "string";
+    }
+    if (output.type === "finish") {
+      return typeof output.summary === "string" && isStringArray(output.nextSuggestedActions);
+    }
+    return false;
+  },
   "agent-plan-v1": (output) => isRecord(output.buildIntent) && isStringArray(output.selectedSkillIds) && typeof output.skillRationale === "string" && isObjectArray(output.extractedInputs) && isObjectArray(output.missingInputs) && isObjectArray(output.driverPlan) && typeof output.rootFormula === "string" && validateAdvisoryArrays(output) && typeof output.confidence === "number",
   "generate-tree-v1": (output) => typeof output.projectTitle === "string" && typeof output.rootNodeId === "string" && isObjectArray(output.nodes) && output.nodes.length > 0 && isObjectArray(output.edges) && validateAdvisoryArrays(output) && validateGenerateTreeGraph(output).valid,
   "deepen-node-v1": (output) => typeof output.targetNodeId === "string" && isObjectArray(output.nodes) && output.nodes.length > 0 && isObjectArray(output.edges) && validateAdvisoryArrays(output),
@@ -3949,6 +4014,16 @@ var mockNode = Object.freeze({
 });
 var MOCK_STUB_OUTPUT = {
   "connection-test-v1": { ok: true },
+  "agent-decision-v1": {
+    type: "call_tool",
+    toolName: "skill.search",
+    args: {
+      rootKpi: "Ore haulage",
+      industry: "Mining",
+      maxSkills: 3
+    },
+    statusMessage: "Searching for the most relevant VDT skill."
+  },
   "agent-plan-v1": {
     buildIntent: {
       rootKpi: "Ore haulage",
@@ -4087,8 +4162,61 @@ function isRecord9(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function mockOutput(schemaId, input) {
+  if (schemaId === "agent-decision-v1") return mockAgentDecision(input);
   if (isRecord9(input) && validateRegisteredSchema(schemaId, input)) return input;
   return MOCK_STUB_OUTPUT[schemaId];
+}
+function mockAgentDecision(input) {
+  const context = isRecord9(input) && isRecord9(input.data) ? input.data : input;
+  const record = isRecord9(context) ? context : {};
+  const project = isRecord9(record.currentProject) ? record.currentProject : void 0;
+  const nodes = Array.isArray(project?.nodes) ? project.nodes : [];
+  const nodeIds = new Set(nodes.flatMap((node) => isRecord9(node) && typeof node.id === "string" ? [node.id] : []));
+  const answers = isRecord9(record.userAnswers) ? record.userAnswers : {};
+  const recentEvents = Array.isArray(record.recentEvents) ? record.recentEvents : [];
+  const hasTool = (toolName) => recentEvents.some((event) => {
+    if (!isRecord9(event) || !isRecord9(event.metadata)) return false;
+    return event.metadata.toolName === toolName;
+  });
+  if (!hasTool("skill.search")) return { type: "call_tool", toolName: "skill.search", args: { rootKpi: "Ore haulage", industry: "Mining", maxSkills: 3 }, statusMessage: "Searching for the truck haulage skill." };
+  if (!hasTool("skill.read")) return { type: "call_tool", toolName: "skill.read", args: { skillId: "mining.haulage_truck_cycle" }, statusMessage: "Reading the truck haulage skill." };
+  if (!hasTool("skill.compile_recipe")) return { type: "call_tool", toolName: "skill.compile_recipe", args: { skillId: "mining.haulage_truck_cycle" }, statusMessage: "Compiling the truck haulage recipe." };
+  if (answers.payload_per_trip_t === void 0 || answers.operating_hours === void 0) {
+    return {
+      type: "ask_user",
+      statusMessage: "Payload and operating hours are needed to calculate annual hauled tonnes.",
+      questions: [
+        { id: "payload_per_trip_t", question: "What is the average payload per truck trip in tonnes?", reason: "Annual hauled tonnes require payload per completed trip.", required: true, expectedAnswerType: "number" },
+        { id: "operating_hours", question: "How many operating hours per year should the model use?", reason: "Trips per truck require an operating-hours base.", required: true, expectedAnswerType: "number" }
+      ]
+    };
+  }
+  if (!project || nodeIds.size === 0) return { type: "call_tool", toolName: "vdt.create_draft", args: { projectTitle: "Ore haulage Driver Model", rootKpi: "Ore haulage", unit: "tonnes/year", timePeriod: "year", industry: "Mining" }, statusMessage: "Creating the hauled-tonnes root." };
+  const payload = parseMockNumber(answers.payload_per_trip_t) ?? 40;
+  const operatingHours = parseMockNumber(answers.operating_hours) ?? 4e3;
+  const add = (nodeId, name, parentNodeId, extra) => ({ type: "call_tool", toolName: "vdt.add_driver", args: { parentNodeId, nodeId, name, ...extra }, statusMessage: `Adding ${name}.` });
+  if (!nodeIds.has("number_of_trucks")) return add("number_of_trucks", "Number of trucks", "ore_haulage", { type: "input", unit: "trucks", relation: "multiplicative_driver", baselineValue: 5 });
+  if (!nodeIds.has("trips_per_truck")) return add("trips_per_truck", "Trips per truck", "ore_haulage", { type: "calculated", unit: "trips/truck/year", relation: "multiplicative_driver", formula: "operating_hours / cycle_time_h" });
+  if (!nodeIds.has("payload_per_trip_t")) return add("payload_per_trip_t", "Payload per trip", "ore_haulage", { type: "input", unit: "tonnes/trip", relation: "multiplicative_driver", baselineValue: payload });
+  if (!nodeIds.has("operating_hours")) return add("operating_hours", "Operating hours", "trips_per_truck", { type: "input", unit: "h/year", relation: "formula_dependency", baselineValue: operatingHours });
+  if (!nodeIds.has("cycle_time_h")) return add("cycle_time_h", "Cycle time", "trips_per_truck", { type: "calculated", unit: "h/trip", relation: "divisive_driver", formula: "loaded_travel_time_h + empty_return_time_h" });
+  if (!nodeIds.has("loaded_travel_time_h")) return add("loaded_travel_time_h", "Loaded travel time", "cycle_time_h", { type: "calculated", unit: "h/trip", relation: "additive_component", formula: "haul_distance_km / loaded_speed_kmh" });
+  if (!nodeIds.has("empty_return_time_h")) return add("empty_return_time_h", "Empty return time", "cycle_time_h", { type: "calculated", unit: "h/trip", relation: "additive_component", formula: "haul_distance_km / empty_speed_kmh" });
+  if (!nodeIds.has("haul_distance_km")) return add("haul_distance_km", "Average haul distance", "loaded_travel_time_h", { type: "input", unit: "km", relation: "formula_dependency", baselineValue: 2.7 });
+  if (!nodeIds.has("loaded_speed_kmh")) return add("loaded_speed_kmh", "Average loaded speed", "loaded_travel_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 7 });
+  if (!nodeIds.has("empty_speed_kmh")) return add("empty_speed_kmh", "Average empty speed", "empty_return_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 11 });
+  const root = nodes.find((node) => isRecord9(node) && node.id === "ore_haulage");
+  if (!isRecord9(root) || typeof root.formula !== "string" || !root.formula) return { type: "call_tool", toolName: "vdt.set_formula", args: { nodeId: "ore_haulage", formula: "number_of_trucks * trips_per_truck * payload_per_trip_t" }, statusMessage: "Setting the hauled-tonnes formula." };
+  if (!hasTool("vdt.calculate")) return { type: "call_tool", toolName: "vdt.calculate", args: {}, statusMessage: "Calculating the graph." };
+  return { type: "finish", summary: "Built a valid truck haulage VDT.", nextSuggestedActions: ["Review payload and operating-hours assumptions."] };
+}
+function parseMockNumber(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : void 0;
+  if (typeof value !== "string") return void 0;
+  const match = value.replace(",", ".").match(/[-+]?\d+(?:\.\d+)?/);
+  if (!match) return void 0;
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : void 0;
 }
 var EXECUTION_LIMITS = Object.freeze({
   maxPromptBytes: 512 * 1024,
@@ -5214,9 +5342,7 @@ async function completeRuntime(request, context) {
   }
   const manifest = context.manifests.get(request.backendId);
   if (!manifest) throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
-  if (!manifest.taskTypes.includes(request.taskType) || !manifest.schemaIds.includes(request.schemaId)) {
-    throw new LocalRuntimeError(400, "UNSUPPORTED_CONTRACT", "Backend does not support this task/schema contract.");
-  }
+  assertManifestSupportsContract(manifest, request);
   const createdAt = (/* @__PURE__ */ new Date()).toISOString();
   const controller = new AbortController();
   const run = {
@@ -5309,6 +5435,22 @@ async function completeRuntime(request, context) {
       errorCode: normalized.code
     });
     return { statusCode: normalized.code === "CANCELLED" ? 409 : 502, payload: { ok: false, run: publicRun(run), error: normalized } };
+  }
+}
+function assertManifestSupportsContract(manifest, request) {
+  if (!isVdtSchemaId(request.schemaId) || !schemaSupportsTask(request.schemaId, request.taskType)) {
+    throw new LocalRuntimeError(
+      400,
+      "UNSUPPORTED_CONTRACT",
+      `Backend ${manifest.id} received invalid task/schema contract ${request.taskType}/${request.schemaId}.`
+    );
+  }
+  if (!manifest.taskTypes.includes(request.taskType) || !manifest.schemaIds.includes(request.schemaId)) {
+    throw new LocalRuntimeError(
+      400,
+      "UNSUPPORTED_CONTRACT",
+      `Backend ${manifest.id} does not advertise ${request.taskType}/${request.schemaId}. Refresh or restart the VDT local runtime so it can load the current task/schema registry.`
+    );
   }
 }
 async function prepareRuntimeAgentRun(request) {

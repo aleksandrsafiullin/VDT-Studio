@@ -1516,6 +1516,113 @@ describe("vdt-store deleteScenario", () => {
   });
 });
 
+describe("vdt-store setMainScenario", () => {
+  const scenarioId = "scenario_reduce_unplanned_downtime";
+
+  beforeEach(() => {
+    localStorageMock.clear();
+    useVdtStudioStore.setState({
+      project: cloneProject(productionVolumeProject),
+      activeScenarioId: scenarioId
+    });
+  });
+
+  it("sets exactly one main scenario at a time", () => {
+    useVdtStudioStore.getState().createScenario();
+    const secondId = useVdtStudioStore.getState().activeScenarioId;
+
+    useVdtStudioStore.getState().setMainScenario(secondId);
+
+    const scenarios = useVdtStudioStore.getState().project.scenarios;
+    expect(scenarios.find((scenario) => scenario.id === secondId)?.isMain).toBe(true);
+    expect(scenarios.find((scenario) => scenario.id === scenarioId)?.isMain).toBe(false);
+    expect(scenarios.filter((scenario) => scenario.isMain).length).toBe(1);
+  });
+
+  it("promotes another scenario when deleting the main scenario", () => {
+    useVdtStudioStore.getState().createScenario();
+    const secondId = useVdtStudioStore.getState().activeScenarioId;
+
+    useVdtStudioStore.getState().deleteScenario(scenarioId);
+
+    const scenarios = useVdtStudioStore.getState().project.scenarios;
+    expect(scenarios).toHaveLength(1);
+    expect(scenarios[0]?.id).toBe(secondId);
+    expect(scenarios[0]?.isMain).toBe(true);
+  });
+});
+
+describe("vdt-store main scenario migration", () => {
+  it("ensures exactly one main scenario when replacing a legacy project without isMain", () => {
+    localStorageMock.clear();
+    const legacyProject = {
+      ...cloneProject(productionVolumeProject),
+      scenarios: productionVolumeProject.scenarios.map((scenario) => {
+        const next = { ...scenario };
+        delete next.isMain;
+        return next;
+      })
+    };
+
+    useVdtStudioStore.getState().replaceProject(legacyProject);
+
+    const state = useVdtStudioStore.getState();
+    const mainScenario = state.project.scenarios.find((scenario) => scenario.isMain === true);
+    expect(state.project.scenarios.filter((scenario) => scenario.isMain).length).toBe(1);
+    expect(mainScenario).toBeDefined();
+    expect(state.activeScenarioId).toBe(mainScenario?.id);
+  });
+
+  it("ensures exactly one main scenario on loadExample and selects it", () => {
+    localStorageMock.clear();
+    useVdtStudioStore.getState().loadExample("production_volume");
+
+    const state = useVdtStudioStore.getState();
+    const mainScenario = state.project.scenarios.find((scenario) => scenario.isMain === true);
+    expect(state.project.scenarios.filter((scenario) => scenario.isMain).length).toBe(1);
+    expect(mainScenario).toBeDefined();
+    expect(state.activeScenarioId).toBe(mainScenario?.id);
+  });
+
+  it("ensures exactly one main scenario after persist merge hydration", async () => {
+    localStorageMock.clear();
+    const legacyProject = {
+      ...cloneProject(productionVolumeProject),
+      scenarios: productionVolumeProject.scenarios.map((scenario) => {
+        const next = { ...scenario };
+        delete next.isMain;
+        return next;
+      })
+    };
+
+    localStorageMock.setItem(
+      "vdt-studio-state",
+      JSON.stringify({
+        state: {
+          project: legacyProject,
+          activeScenarioId: legacyProject.scenarios[0]?.id ?? "",
+          brief: useVdtStudioStore.getState().brief,
+          providerId: "mock",
+          executionSettings: {
+            ...DEFAULT_EXECUTION_SETTINGS,
+            useMockProvider: true,
+            gatewayPresetId: "mock"
+          }
+        },
+        version: 2
+      })
+    );
+
+    await useVdtStudioStore.persist.rehydrate();
+
+    const state = useVdtStudioStore.getState();
+    const mainScenario = state.project.scenarios.find((scenario) => scenario.isMain === true);
+    expect(state.project.scenarios.filter((scenario) => scenario.isMain).length).toBe(1);
+    expect(mainScenario).toBeDefined();
+    expect(state.activeScenarioId).toBe(mainScenario?.id);
+  });
+});
+
 describe("vdt-store cloneScenario", () => {
   const scenarioId = "scenario_reduce_unplanned_downtime";
   const originalName = "Reduce unplanned downtime";
@@ -1541,6 +1648,7 @@ describe("vdt-store cloneScenario", () => {
     expect(clone?.overrides).toEqual(sourceOverrides);
     expect(clone?.results).toBeUndefined();
     expect(clone?.baselineScenarioId).toBeUndefined();
+    expect(clone?.isMain).toBeUndefined();
     expect(state.activeScenarioId).toBe(clone?.id);
     expect(state.project.updatedAt).not.toBe(productionVolumeProject.updatedAt);
   });

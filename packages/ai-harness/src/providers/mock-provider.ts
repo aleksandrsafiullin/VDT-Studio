@@ -210,6 +210,16 @@ export const productionVolumeAiOutput: GenerateVdtOutput = generateVdtOutputSche
 });
 
 const MOCK_OUTPUT_BY_TASK: Record<AiTaskType, unknown> = {
+  agent_decision: {
+    type: "call_tool",
+    toolName: "skill.search",
+    args: {
+      rootKpi: "Ore haulage",
+      industry: "Mining",
+      maxSkills: 3
+    },
+    statusMessage: "Searching for the most relevant VDT skill."
+  },
   agent_plan: {
     buildIntent: {
       rootKpi: "Ore haulage",
@@ -548,6 +558,10 @@ function specializeGenerateTreeOutput(input: GenerateVdtInput): GenerateVdtOutpu
 }
 
 function resolveMockOutput<TInput>(params: AiCompletionParams<TInput>): unknown {
+  if (params.taskType === "agent_decision") {
+    return mockAgentDecision(params.input);
+  }
+
   if (params.taskType === "agent_plan") {
     const output = structuredClone(MOCK_OUTPUT_BY_TASK.agent_plan as Record<string, unknown>);
     const input = params.input as { answers?: Record<string, unknown> };
@@ -590,6 +604,122 @@ function resolveMockOutput<TInput>(params: AiCompletionParams<TInput>): unknown 
     throw new Error(`MockProvider has no stub for task: ${params.taskType}`);
   }
   return output;
+}
+
+function mockAgentDecision(input: unknown): unknown {
+  const context = asRecord(input);
+  const project = asRecord(context?.currentProject);
+  const nodeIds = new Set((Array.isArray(project?.nodes) ? project.nodes : [])
+    .flatMap((node) => typeof asRecord(node)?.id === "string" ? [asRecord(node)!.id as string] : []));
+  const answers = asRecord(context?.userAnswers) ?? {};
+  const recentEvents = Array.isArray(context?.recentEvents) ? context.recentEvents : [];
+  const hasTool = (toolName: string) => recentEvents.some((event) => asRecord(event)?.metadata && asRecord(asRecord(event)?.metadata)?.toolName === toolName);
+
+  if (!hasTool("skill.search")) {
+    return {
+      type: "call_tool",
+      toolName: "skill.search",
+      args: { rootKpi: "Ore haulage", industry: "Mining", maxSkills: 3 },
+      statusMessage: "Searching for the truck haulage skill."
+    };
+  }
+  if (!hasTool("skill.read")) {
+    return {
+      type: "call_tool",
+      toolName: "skill.read",
+      args: { skillId: "mining.haulage_truck_cycle" },
+      statusMessage: "Reading the truck haulage skill."
+    };
+  }
+  if (!hasTool("skill.compile_recipe")) {
+    return {
+      type: "call_tool",
+      toolName: "skill.compile_recipe",
+      args: { skillId: "mining.haulage_truck_cycle" },
+      statusMessage: "Compiling the truck haulage recipe."
+    };
+  }
+  if (answers.payload_per_trip_t === undefined || answers.operating_hours === undefined) {
+    return {
+      type: "ask_user",
+      statusMessage: "Payload and operating hours are needed to calculate annual hauled tonnes.",
+      questions: [
+        {
+          id: "payload_per_trip_t",
+          question: "What is the average payload per truck trip in tonnes?",
+          reason: "Annual hauled tonnes require payload per completed truck trip.",
+          required: true,
+          expectedAnswerType: "number"
+        },
+        {
+          id: "operating_hours",
+          question: "How many operating hours per year should the model use?",
+          reason: "Trips per truck require an operating-hours base.",
+          required: true,
+          expectedAnswerType: "number"
+        }
+      ]
+    };
+  }
+  if (!project || nodeIds.size === 0) {
+    return {
+      type: "call_tool",
+      toolName: "vdt.create_draft",
+      args: { projectTitle: "Ore haulage Driver Model", rootKpi: "Ore haulage", unit: "tonnes/year", timePeriod: "year", industry: "Mining" },
+      statusMessage: "Creating the hauled-tonnes root."
+    };
+  }
+  const add = (nodeId: string, name: string, parentNodeId: string, extra: Record<string, unknown>) => ({
+    type: "call_tool",
+    toolName: "vdt.add_driver",
+    args: { parentNodeId, nodeId, name, ...extra },
+    statusMessage: `Adding ${name}.`
+  });
+  const payload = parseMockNumber(answers.payload_per_trip_t) ?? 40;
+  const operatingHours = parseMockNumber(answers.operating_hours) ?? 4000;
+  if (!nodeIds.has("number_of_trucks")) return add("number_of_trucks", "Number of trucks", "ore_haulage", { type: "input", unit: "trucks", relation: "multiplicative_driver", baselineValue: 5 });
+  if (!nodeIds.has("trips_per_truck")) return add("trips_per_truck", "Trips per truck", "ore_haulage", { type: "calculated", unit: "trips/truck/year", relation: "multiplicative_driver", formula: "operating_hours / cycle_time_h" });
+  if (!nodeIds.has("payload_per_trip_t")) return add("payload_per_trip_t", "Payload per trip", "ore_haulage", { type: "input", unit: "tonnes/trip", relation: "multiplicative_driver", baselineValue: payload });
+  if (!nodeIds.has("operating_hours")) return add("operating_hours", "Operating hours", "trips_per_truck", { type: "input", unit: "h/year", relation: "formula_dependency", baselineValue: operatingHours });
+  if (!nodeIds.has("cycle_time_h")) return add("cycle_time_h", "Cycle time", "trips_per_truck", { type: "calculated", unit: "h/trip", relation: "divisive_driver", formula: "loaded_travel_time_h + empty_return_time_h" });
+  if (!nodeIds.has("loaded_travel_time_h")) return add("loaded_travel_time_h", "Loaded travel time", "cycle_time_h", { type: "calculated", unit: "h/trip", relation: "additive_component", formula: "haul_distance_km / loaded_speed_kmh" });
+  if (!nodeIds.has("empty_return_time_h")) return add("empty_return_time_h", "Empty return time", "cycle_time_h", { type: "calculated", unit: "h/trip", relation: "additive_component", formula: "haul_distance_km / empty_speed_kmh" });
+  if (!nodeIds.has("haul_distance_km")) return add("haul_distance_km", "Average haul distance", "loaded_travel_time_h", { type: "input", unit: "km", relation: "formula_dependency", baselineValue: 2.7 });
+  if (!nodeIds.has("loaded_speed_kmh")) return add("loaded_speed_kmh", "Average loaded speed", "loaded_travel_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 7 });
+  if (!nodeIds.has("empty_speed_kmh")) return add("empty_speed_kmh", "Average empty speed", "empty_return_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 11 });
+
+  const root = (Array.isArray(project.nodes) ? project.nodes : []).map(asRecord).find((node) => node?.id === "ore_haulage");
+  if (typeof root?.formula !== "string" || !root.formula) {
+    return {
+      type: "call_tool",
+      toolName: "vdt.set_formula",
+      args: { nodeId: "ore_haulage", formula: "number_of_trucks * trips_per_truck * payload_per_trip_t" },
+      statusMessage: "Setting the hauled-tonnes formula."
+    };
+  }
+  if (!hasTool("vdt.calculate")) {
+    return { type: "call_tool", toolName: "vdt.calculate", args: {}, statusMessage: "Calculating the graph." };
+  }
+  return {
+    type: "finish",
+    summary: "Built a valid truck haulage VDT.",
+    nextSuggestedActions: ["Review payload and operating-hours assumptions."]
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function parseMockNumber(value: unknown): number | undefined {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== "string") return undefined;
+  const match = value.replace(",", ".").match(/[-+]?\d+(?:\.\d+)?/);
+  if (!match) return undefined;
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 export class MockProvider implements AiProvider {

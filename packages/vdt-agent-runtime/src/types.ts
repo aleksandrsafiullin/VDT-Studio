@@ -1,4 +1,13 @@
-import type { VdtBuilderSession, VdtChangeSet, VdtProject } from "@vdt-studio/vdt-core";
+import type {
+  CalculationTraceItem,
+  VdtBuilderSession,
+  VdtChangeSet,
+  VdtEdgeRelation,
+  VdtNodeStatus,
+  VdtNodeType,
+  VdtProject,
+  VdtWarning
+} from "@vdt-studio/vdt-core";
 import type { VdtAgentQuestion, VdtSkillRecipe } from "@vdt-studio/vdt-agent";
 
 export type VdtAgentRunStatus =
@@ -114,6 +123,123 @@ export interface ManualProjectChange {
   summary?: string | undefined;
 }
 
+export interface NodeSummary {
+  id: string;
+  name: string;
+  type: VdtNodeType;
+  unit?: string | undefined;
+  formula?: string | undefined;
+  baselineValue?: number | undefined;
+  value?: number | undefined;
+  status: VdtNodeStatus;
+  childIds: string[];
+}
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  rootNodeId: string;
+  nodeCount: number;
+  edgeCount: number;
+  nodes: NodeSummary[];
+  edges: Array<{
+    id: string;
+    sourceNodeId: string;
+    targetNodeId: string;
+    relation: VdtEdgeRelation;
+  }>;
+  truncated: boolean;
+}
+
+export interface ValidationIssueSummary {
+  type: VdtWarning["type"];
+  severity: VdtWarning["severity"];
+  message: string;
+  nodeId?: string | undefined;
+  edgeId?: string | undefined;
+  repairHints?: string[] | undefined;
+}
+
+export interface ValidationStateSummary {
+  valid: boolean;
+  errors: ValidationIssueSummary[];
+  warnings: ValidationIssueSummary[];
+}
+
+export interface CalculationStateSummary {
+  rootNodeId: string;
+  rootValue?: number | undefined;
+  valueCount: number;
+  errors: ValidationIssueSummary[];
+  warnings: ValidationIssueSummary[];
+  tracePreview: CalculationTraceItem[];
+}
+
+export interface ManualChangeSummary {
+  observedAt: string;
+  projectRevision?: number | undefined;
+  kind: ManualProjectChange["kind"];
+  nodeId?: string | undefined;
+  edgeId?: string | undefined;
+  summary?: string | undefined;
+}
+
+export interface AgentEventSummary {
+  id: string;
+  seq: number;
+  type: VdtAgentEventType;
+  phase: VdtAgentRunPhase;
+  title: string;
+  message: string;
+  metadata?: Record<string, unknown> | undefined;
+}
+
+export interface AgentToolSpec {
+  name: string;
+  description: string;
+  inputJsonSchema: unknown;
+  mutatesProject: boolean;
+  requiresDraftProject: boolean;
+  phase: VdtAgentRunPhase;
+}
+
+export interface AgentToolResultEnvelope {
+  toolName: string;
+  ok: boolean;
+  output?: unknown | undefined;
+  error?: {
+    code: string;
+    message: string;
+    details?: unknown | undefined;
+  } | undefined;
+  projectChanged: boolean;
+  validation?: ValidationStateSummary | undefined;
+  emittedEventIds: string[];
+}
+
+export interface AgentDecisionContext {
+  runId: string;
+  mode: VdtAgentMode;
+  step: number;
+  userRequest: VdtAgentStartInput;
+  currentProject?: ProjectSummary | undefined;
+  selectedNode?: NodeSummary | undefined;
+  selectedSkills: VdtAgentSelectedSkill[];
+  availableTools: AgentToolSpec[];
+  recentEvents: AgentEventSummary[];
+  userAnswers: Record<string, string | number | string[]>;
+  manualChanges: ManualChangeSummary[];
+  lastToolResult?: AgentToolResultEnvelope | undefined;
+  validationState?: ValidationStateSummary | undefined;
+  calculationState?: CalculationStateSummary | undefined;
+  constraints: {
+    maxOneToolCallPerDecision: true;
+    mustUseToolsForGraphChanges: true;
+    cannotReturnFullGraph: true;
+    cannotExposeHiddenReasoning: true;
+  };
+}
+
 export type AgentUserMessage =
   | {
       type: "user_answer";
@@ -171,4 +297,8 @@ export interface VdtAgentRunState extends VdtAgentRunSnapshot {
   answers: Record<string, string | number | string[]>;
   manualChanges: Array<{ projectRevision?: number | undefined; change: ManualProjectChange; observedAt: string }>;
   recipes: VdtSkillRecipe[];
+  lastToolResult?: AgentToolResultEnvelope | undefined;
+  validationState?: ValidationStateSummary | undefined;
+  calculationState?: CalculationStateSummary | undefined;
+  memoryNotes: Array<{ note: string; tags: string[]; createdAt: string }>;
 }

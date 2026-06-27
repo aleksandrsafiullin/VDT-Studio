@@ -45,7 +45,8 @@ export class AgentRunStore {
       abortController: new AbortController(),
       answers: {},
       manualChanges: [],
-      recipes: []
+      recipes: [],
+      memoryNotes: []
     };
     this.runs.set(runId, state);
     return state;

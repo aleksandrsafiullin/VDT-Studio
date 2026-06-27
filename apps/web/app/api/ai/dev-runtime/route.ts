@@ -1,9 +1,8 @@
+import * as runtime from "@vdt-studio/local-runner/server-runtime";
 import { NextResponse } from "next/server";
 import { resolveVdtAppModeForRequest } from "@/lib/app-mode";
 
-type RuntimeModule = typeof import("../../../../../../packages/local-runner/src/server/runtime");
-
-type RuntimeContext = ReturnType<RuntimeModule["createLocalRuntimeContext"]>;
+type RuntimeContext = ReturnType<typeof runtime.createLocalRuntimeContext>;
 
 const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtStudioDevelopmentRuntime?: RuntimeContext;
@@ -13,8 +12,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function loadRuntime() {
-  const runtime = await import("../../../../../../packages/local-runner/src/server/runtime");
+function loadRuntime() {
   runtimeGlobal.__vdtStudioDevelopmentRuntime ??= runtime.createLocalRuntimeContext();
   return { runtime, context: runtimeGlobal.__vdtStudioDevelopmentRuntime };
 }
@@ -56,7 +54,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { runtime, context } = await loadRuntime();
+    const { runtime, context } = loadRuntime();
     const operation = typeof body.operation === "string" ? body.operation : "";
 
     if (operation === "test") {

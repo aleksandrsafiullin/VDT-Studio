@@ -15,12 +15,15 @@ import {
 import { VdtRelationEdge, type VdtEdgeData } from "./vdt-edge";
 import {
   calculateGraph,
+  calculateScenarioGraph,
   DEFAULT_CANVAS_LAYOUT,
   getFormulaReferenceOrder,
   layoutGraph,
+  percentageChange,
   resolveFormulaEdgeRelation
 } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
+import { KpiSpacingPopover } from "./kpi-spacing-popover";
 import { VdtNodeCard, type VdtNodeCardData } from "./vdt-node-card";
 import { collectExistingPositions } from "./layout-positions";
 import { useVdtStudioStore } from "./vdt-store";
@@ -42,6 +45,28 @@ export function VdtCanvas() {
   const autoDistributeLayout = useVdtStudioStore((state) => state.autoDistributeLayout);
   const updateNodePosition = useVdtStudioStore((state) => state.updateNodePosition);
   const calculation = useMemo(() => calculateGraph(project), [project]);
+  const mainScenarioContext = useMemo(() => {
+    const mainScenario = project.scenarios.find((scenario) => scenario.isMain === true);
+    if (!mainScenario) {
+      return undefined;
+    }
+
+    const scenarioResult = calculateScenarioGraph(project, mainScenario);
+    if (Object.keys(scenarioResult.values).length === 0) {
+      return undefined;
+    }
+
+    return {
+      values: scenarioResult.values,
+      rootEffect: {
+        absoluteChange:
+          calculation.rootValue !== undefined && scenarioResult.rootValue !== undefined
+            ? scenarioResult.rootValue - calculation.rootValue
+            : undefined,
+        percentageChange: percentageChange(calculation.rootValue, scenarioResult.rootValue)
+      }
+    };
+  }, [calculation.rootValue, project]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [flowCanRender, setFlowCanRender] = useState(false);
 
@@ -66,11 +91,14 @@ export function VdtCanvas() {
         data: {
           node,
           value: calculation.values[node.id],
+          mainScenarioValue: mainScenarioContext?.values[node.id],
+          rootScenarioEffect:
+            node.id === project.rootNodeId ? mainScenarioContext?.rootEffect : undefined,
           highlighted: highlightedSet.has(node.id),
           onSelect: selectNode
         }
       })),
-    [calculation.values, fallbackPositions, highlightedSet, project.graph.nodes, selectNode]
+    [calculation.values, fallbackPositions, highlightedSet, mainScenarioContext, project.graph.nodes, project.rootNodeId, selectNode]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
@@ -176,6 +204,7 @@ export function VdtCanvas() {
         >
           Auto-distribute
         </Button>
+        <KpiSpacingPopover />
       </div>
       {flowCanRender ? (
         <div className="absolute inset-0">

@@ -1,4 +1,5 @@
 export type VdtAiTaskType =
+  | "agent_decision"
   | "agent_plan"
   | "generate_tree"
   | "deepen_node"
@@ -123,6 +124,7 @@ export interface VdtScenario {
   id: string;
   name: string;
   description?: string | undefined;
+  isMain?: boolean | undefined;
   baselineScenarioId?: string | undefined;
   overrides: VdtScenarioOverride[];
   results?: VdtScenarioResult | undefined;

@@ -33,7 +33,8 @@ export const CANONICAL_RUN_TASK_TYPES = [
   "generate_executive_summary"
 ];
 
-export const CANONICAL_TASK_TYPES = ["agent_plan", ...CANONICAL_RUN_TASK_TYPES];
+export const CANONICAL_TASK_TYPES = ["agent_decision", "agent_plan", ...CANONICAL_RUN_TASK_TYPES];
+export const CANONICAL_EXPOSED_TASK_TYPES = ["agent_decision", ...CANONICAL_RUN_TASK_TYPES];
 
 const GRAPH_MUTATION_TASKS = new Set([
   "deepen_node",
@@ -177,10 +178,10 @@ function assertDocs(root) {
   const readme = read(root, "README.md");
   const roadmap = read(root, "docs/ROADMAP.md");
 
-  if (!readme.includes("VDT Studio exposes 12 bounded AI tasks")) {
+  if (!readme.includes("VDT Studio exposes 13 bounded AI tasks")) {
     fail("README must list the bounded AI actions.");
   }
-  for (const taskType of CANONICAL_RUN_TASK_TYPES) {
+  for (const taskType of CANONICAL_EXPOSED_TASK_TYPES) {
     if (!readme.includes(`\`${taskType}\``)) {
       fail(`README AI Actions section is missing ${taskType}.`);
     }

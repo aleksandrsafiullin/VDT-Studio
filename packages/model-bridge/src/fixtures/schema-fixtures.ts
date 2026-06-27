@@ -7,6 +7,16 @@ const advisory = {
 };
 
 export const VALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
+  "agent-decision-v1": {
+    type: "call_tool",
+    toolName: "skill.search",
+    args: {
+      rootKpi: "Ore haulage",
+      industry: "Mining",
+      maxSkills: 3
+    },
+    statusMessage: "Searching for a truck haulage skill."
+  },
   "agent-plan-v1": {
     buildIntent: {
       rootKpi: "Ore haulage",
@@ -138,6 +148,13 @@ export const VALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
 };
 
 export const INVALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
+  "agent-decision-v1": {
+    type: "call_tool",
+    toolName: "vdt.add_many_drivers",
+    args: {},
+    statusMessage: "Returning a forbidden full plan.",
+    driverPlan: []
+  },
   "agent-plan-v1": {
     selectedSkillIds: ["mining.production_volume"],
     skillRationale: "x",

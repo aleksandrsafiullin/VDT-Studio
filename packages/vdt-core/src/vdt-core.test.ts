@@ -6,24 +6,30 @@ import {
   calculateIsolatedRootEffect,
   calculateOnePercentRootSensitivity,
   calculateScenario,
+  calculateScenarioGraph,
   calculateScenarioMultiplicativeEffect,
   createVersionSnapshot,
   diffChangeSet,
+  evaluateAst,
   evaluateFormula,
   exportProjectSvg,
   exportProjectJson,
   exportProjectMarkdown,
+  FormulaParseError,
   getFormulaReferenceOrder,
   importProjectJson,
   layoutGraph,
   listVersions,
   MAX_VERSION_SNAPSHOTS,
   DEFAULT_CANVAS_LAYOUT,
+  parseFormula,
   previewChangeSet,
   productionVolumeProject,
   rankScenarioInputNodes,
   resolveFormulaEdgeRelation,
   restoreVersionSnapshot,
+  serializeFormulaTokens,
+  tokenizeFormula,
   validateGraph,
   VersionNotFoundError,
   type VdtChangeSet,
@@ -41,6 +47,62 @@ describe("formula engine", () => {
     expect(missing.errors[0]?.type).toBe("missing_value");
     expect(missing.references).toEqual(["a", "b"]);
     expect(evaluateFormula("a / b", { a: 1, b: 0 }).errors[0]?.type).toBe("division_by_zero");
+  });
+});
+
+describe("serializeFormulaTokens", () => {
+  const assertParseEquivalent = (formula: string, bindings: Record<string, number>) => {
+    const serialized = serializeFormulaTokens(tokenizeFormula(formula));
+    const originalAst = parseFormula(formula);
+    const serializedAst = parseFormula(serialized);
+    const resolve = (reference: string) => bindings[reference];
+
+    expect(evaluateAst(serializedAst, resolve)).toBe(evaluateAst(originalAst, resolve));
+  };
+
+  it("normalizes spacing for production-volume formulas", () => {
+    const formulas = productionVolumeProject.graph.nodes
+      .map((node) => node.formula)
+      .filter((formula): formula is string => Boolean(formula?.trim()));
+
+    for (const formula of formulas) {
+      expect(serializeFormulaTokens(tokenizeFormula(formula))).toBe(formula);
+    }
+  });
+
+  it("preserves number.raw including percent suffix", () => {
+    expect(serializeFormulaTokens(tokenizeFormula("90%"))).toBe("90%");
+    expect(serializeFormulaTokens(tokenizeFormula("(a + b) * 90%"))).toBe("(a + b) * 90%");
+  });
+
+  it("returns empty string for empty or whitespace-only token streams", () => {
+    expect(serializeFormulaTokens([])).toBe("");
+    expect(serializeFormulaTokens([{ type: "eof" }])).toBe("");
+    expect(serializeFormulaTokens(tokenizeFormula(""))).toBe("");
+    expect(serializeFormulaTokens(tokenizeFormula("   "))).toBe("");
+    expect(() => parseFormula(serializeFormulaTokens(tokenizeFormula("")))).toThrow(FormulaParseError);
+  });
+
+  it("strips eof tokens when serializing", () => {
+    const tokens = tokenizeFormula("a + b");
+    expect(tokens.at(-1)?.type).toBe("eof");
+    expect(serializeFormulaTokens(tokens)).toBe("a + b");
+  });
+
+  it("keeps parse semantics for unary minus, parentheses, and chained subtraction", () => {
+    assertParseEquivalent("-a", { a: 5 });
+    assertParseEquivalent("(a + b) * 90%", { a: 10, b: 20 });
+    assertParseEquivalent("calendar_time - planned_downtime - unplanned_downtime", {
+      calendar_time: 720,
+      planned_downtime: 40,
+      unplanned_downtime: 80
+    });
+
+    expect(serializeFormulaTokens(tokenizeFormula("-a"))).toBe("-a");
+    expect(serializeFormulaTokens(tokenizeFormula("(a + b) * 90%"))).toBe("(a + b) * 90%");
+    expect(serializeFormulaTokens(tokenizeFormula("calendar_time - planned_downtime - unplanned_downtime"))).toBe(
+      "calendar_time - planned_downtime - unplanned_downtime"
+    );
   });
 });
 
@@ -169,6 +231,14 @@ describe("production volume example", () => {
     expect(result.absoluteChange).toBeCloseTo(3801.6, 5);
     expect(result.percentageChange).toBeCloseTo(3.333333, 4);
     expect(result.impactedNodes.map((node) => node.nodeId)).toContain("unplanned_downtime");
+  });
+
+  it("calculateScenarioGraph matches calculateScenario root values", () => {
+    const scenario = productionVolumeProject.scenarios[0]!;
+    const graphResult = calculateScenarioGraph(productionVolumeProject, scenario);
+    const scenarioResult = calculateScenario(productionVolumeProject, scenario);
+
+    expect(graphResult.rootValue).toBe(scenarioResult.scenarioValue);
   });
 });
 
@@ -641,6 +711,30 @@ describe("exports", () => {
     expect(imported.rootNodeId).toBe("production_volume");
     expect(imported.graph.nodes).toHaveLength(productionVolumeProject.graph.nodes.length);
     expect(imported.graph.edges).toHaveLength(productionVolumeProject.graph.edges.length);
+    expect(imported.scenarios[0]?.isMain).toBe(true);
+  });
+
+  it("round-trips scenario isMain through JSON import", () => {
+    const project = {
+      ...productionVolumeProject,
+      scenarios: [
+        { ...productionVolumeProject.scenarios[0]!, isMain: true },
+        {
+          id: "scenario_alt",
+          name: "Alternate",
+          isMain: false,
+          overrides: [],
+          createdAt: productionVolumeProject.createdAt,
+          updatedAt: productionVolumeProject.updatedAt
+        }
+      ]
+    };
+
+    const imported = importProjectJson(exportProjectJson(project));
+    expect(imported.scenarios.find((scenario) => scenario.id === "scenario_reduce_unplanned_downtime")?.isMain).toBe(
+      true
+    );
+    expect(imported.scenarios.find((scenario) => scenario.id === "scenario_alt")?.isMain).toBe(false);
   });
 
   it("round-trips node positions through JSON import", () => {

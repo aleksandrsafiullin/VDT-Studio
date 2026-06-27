@@ -1,6 +1,6 @@
 import { agentUserMessageSchema } from "@vdt-studio/vdt-agent-runtime";
 import { readMaxTokens } from "@/lib/ai-route-provider";
-import { agentRuntime, createAgentPlanningProvider, jsonError } from "../../runtime";
+import { agentRuntime, createAgentDecisionProvider, jsonError } from "../../runtime";
 
 export async function POST(request: Request, { params }: { params: Promise<{ runId: string }> }) {
   const { runId } = await params;
@@ -25,7 +25,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
     const needsPlanner = parsed.data.type === "user_answer" || parsed.data.type === "user_instruction";
     const execution = needsPlanner
       ? {
-          provider: createAgentPlanningProvider(state.request, request.url),
+          provider: createAgentDecisionProvider(state.request, request.url),
           maxTokens: readMaxTokens(state.request.providerConfig)
         }
       : {};

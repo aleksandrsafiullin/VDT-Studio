@@ -10,6 +10,7 @@ import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { formatNumber } from "@/lib/format";
 import { AdvisoryFindingsPanel } from "./advisory-findings-panel";
 import { ChangeSetPreviewPanel } from "./change-set-preview-panel";
+import { FormulaEditorField } from "./formula-editor";
 import { ExplanationPanel } from "./explanation-panel";
 import { isAdvisoryAiTaskType, isExplanationAiTaskType, useVdtStudioStore } from "./vdt-store";
 
@@ -54,6 +55,12 @@ export function NodeInspector() {
   const node = project.graph.nodes.find((candidate) => candidate.id === selectedNodeId) ?? project.graph.nodes[0];
   const calculation = calculateGraph(project);
   const nodeErrors = calculation.errors.filter((error) => error.nodeId === node?.id);
+  const formulaInlineErrors = nodeErrors.filter(
+    (error) =>
+      error.type === "formula_parse_error" ||
+      error.type === "unknown_reference" ||
+      error.type === "circular_dependency"
+  );
   const canDeepen = node && node.id !== project.rootNodeId;
 
   if (showCollapsed) {
@@ -90,7 +97,7 @@ export function NodeInspector() {
     <Panel className="flex h-full min-h-0 flex-col border-l" data-testid="right-panel">
       <PanelHeader
         title="Node Inspector"
-        subtitle={node.id}
+        subtitle={node.name}
         action={
           <div className="flex items-center gap-1">
             <StatusPill status={node.status} />
@@ -123,7 +130,7 @@ export function NodeInspector() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3 rounded-md border border-line bg-slate-50 p-3">
               <div>
-                <div className="text-xs font-medium uppercase tracking-normal text-muted">Calculated value</div>
+                <div className="text-xs font-medium uppercase tracking-normal text-muted">Value</div>
                 <div className="mt-1 text-lg font-semibold text-ink">{formatNumber(calculation.values[node.id])}</div>
               </div>
               <div>
@@ -148,12 +155,17 @@ export function NodeInspector() {
             <Field label="Unit">
               <TextInput value={node.unit ?? ""} onChange={(event) => updateNode(node.id, { unit: event.target.value })} />
             </Field>
-            <Field label="Formula" hint="Use node IDs. Example: effective_working_time * average_productivity">
-              <TextArea
-                value={node.formula ?? ""}
-                onChange={(event) => updateNode(node.id, { formula: event.target.value || undefined })}
+            {(node.type === "root_kpi" || node.type === "calculated") && (
+              <FormulaEditorField
+                key={node.id}
+                formula={node.formula}
+                currentNodeId={node.id}
+                nodes={project.graph.nodes}
+                edges={project.graph.edges}
+                onChange={(value) => updateNode(node.id, { formula: value || undefined })}
+                errors={formulaInlineErrors}
               />
-            </Field>
+            )}
             <Field label="Baseline value">
               <TextInput
                 type="number"

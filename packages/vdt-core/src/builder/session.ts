@@ -467,6 +467,7 @@ function defaultScenario(timestamp: string): VdtScenario {
     id: "base_scenario",
     name: "Base scenario",
     description: "Baseline values for the agent draft.",
+    isMain: true,
     overrides: [],
     createdAt: timestamp,
     updatedAt: timestamp

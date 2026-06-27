@@ -229,6 +229,63 @@ describe("local runtime contract", () => {
     });
   });
 
+  it("runs agent_decision through the mock backend contract", async () => {
+    const context = createLocalRuntimeContext({ auditSink: () => undefined });
+    const request = parseCompletionPayload({
+      requestId: crypto.randomUUID(),
+      backendId: "mock",
+      taskType: "agent_decision",
+      schemaId: "agent-decision-v1",
+      input: {
+        data: {
+          run: { status: "running", phase: "planning" },
+          brief: { rootKpi: "Ore haulage", unit: "tonnes/year", timePeriod: "year" },
+          tools: []
+        },
+        systemPrompt: "Return one agent decision.",
+        userPrompt: "Build a VDT for ore haulage."
+      }
+    });
+
+    const result = await completeRuntime(request, context);
+
+    expect(result.statusCode).toBe(200);
+    expect(result.payload).toMatchObject({
+      ok: true,
+      output: {
+        type: "call_tool",
+        toolName: "skill.search"
+      },
+      run: {
+        taskType: "agent_decision",
+        schemaId: "agent-decision-v1",
+        status: "succeeded"
+      }
+    });
+  });
+
+  it("reports the exact missing task/schema when a stale manifest rejects agent_decision", async () => {
+    const context = createLocalRuntimeContext({ auditSink: () => undefined });
+    const mockManifest = context.manifests.get("mock");
+    if (!mockManifest) throw new Error("Expected mock manifest.");
+    (context.manifests as Map<string, typeof mockManifest>).set("mock", Object.freeze({
+      ...mockManifest,
+      taskTypes: mockManifest.taskTypes.filter((taskType) => taskType !== "agent_decision"),
+      schemaIds: mockManifest.schemaIds.filter((schemaId) => schemaId !== "agent-decision-v1")
+    }));
+    const request = parseCompletionPayload({
+      requestId: crypto.randomUUID(),
+      backendId: "mock",
+      taskType: "agent_decision",
+      schemaId: "agent-decision-v1",
+      input: {}
+    });
+
+    await expect(completeRuntime(request, context)).rejects.toThrow(
+      "Backend mock does not advertise agent_decision/agent-decision-v1"
+    );
+  });
+
   it("attaches agent events to generate_tree run snapshots", async () => {
     const context = createLocalRuntimeContext({ auditSink: () => undefined });
     const request = parseCompletionPayload({

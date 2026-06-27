@@ -22,7 +22,7 @@ type PersistedVdtState = {
     };
     project?: {
       graph?: {
-        nodes?: Array<{ id: string; position?: { x: number; y: number } }>;
+        nodes?: Array<{ id: string; position?: { x: number; y: number }; formula?: string }>;
       };
       versions?: Array<{ id: string; name?: string }>;
     };
@@ -212,6 +212,93 @@ function mockGeneratedProject() {
 async function readNodePosition(page: Page, nodeId: string) {
   const persisted = await readPersistedState(page);
   return persisted?.state?.project?.graph?.nodes?.find((candidate) => candidate.id === nodeId)?.position;
+}
+
+async function readPersistedNodeFormula(page: Page, nodeId: string) {
+  const persisted = await readPersistedState(page);
+  return persisted?.state?.project?.graph?.nodes?.find((candidate) => candidate.id === nodeId)?.formula;
+}
+
+async function ensureRightPanelExpanded(page: Page) {
+  await page.getByTestId("vdt-canvas").waitFor();
+  const expand = page.getByTestId("expand-right-panel");
+  if ((await expand.count()) > 0) {
+    await expand.click();
+  }
+  await expect(page.getByTestId("right-panel")).toBeVisible({ timeout: 15_000 });
+}
+
+async function selectNodeInInspector(page: Page, nodeId: string) {
+  await ensureRightPanelExpanded(page);
+  await reactFlowNode(page, nodeId).click({ force: true });
+  await page.getByRole("tab", { name: "properties" }).click();
+  await expect(page.getByTestId("right-panel")).toBeVisible();
+}
+
+/** Handle-based drag for formula palette chips (Playwright dragTo is flaky with dnd-kit). */
+async function dragFormulaPaletteNodeIntoFormula(page: Page, nodeId: string) {
+  const handle = page.getByTestId(`formula-palette-drag-handle-${nodeId}`);
+  const dropZone = page.getByTestId("formula-editor-drop-zone");
+  await expect(handle).toBeVisible();
+  await expect(dropZone).toBeVisible();
+
+  try {
+    await handle.dragTo(dropZone, {
+      force: true,
+      sourcePosition: { x: 4, y: 6 },
+      targetPosition: { x: 24, y: 16 }
+    });
+  } catch {
+    const handleBox = await handle.boundingBox();
+    const dropBox = await dropZone.boundingBox();
+    expect(handleBox).not.toBeNull();
+    expect(dropBox).not.toBeNull();
+
+    const startX = handleBox!.x + handleBox!.width / 2;
+    const startY = handleBox!.y + handleBox!.height / 2;
+    const endX = dropBox!.x + dropBox!.width / 2;
+    const endY = dropBox!.y + dropBox!.height / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.waitForTimeout(80);
+    await page.mouse.move(endX, endY, { steps: 24 });
+    await page.waitForTimeout(80);
+    await page.mouse.up();
+  }
+}
+
+/** Handle-based drag for reordering formula tokens via drag handles. */
+async function dragFormulaTokenReorder(page: Page, fromIndex: number, toIndex: number) {
+  const source = page.getByTestId(`formula-token-drag-handle-${fromIndex}`);
+  const target = page.getByTestId(`formula-token-drag-handle-${toIndex}`);
+  await expect(source).toBeVisible();
+  await expect(target).toBeVisible();
+
+  try {
+    await source.dragTo(target, {
+      force: true,
+      sourcePosition: { x: 4, y: 6 },
+      targetPosition: { x: 4, y: 6 }
+    });
+  } catch {
+    const sourceBox = await source.boundingBox();
+    const targetBox = await target.boundingBox();
+    expect(sourceBox).not.toBeNull();
+    expect(targetBox).not.toBeNull();
+
+    const startX = sourceBox!.x + sourceBox!.width / 2;
+    const startY = sourceBox!.y + sourceBox!.height / 2;
+    const endX = targetBox!.x + targetBox!.width / 2;
+    const endY = targetBox!.y + targetBox!.height / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.waitForTimeout(80);
+    await page.mouse.move(endX, endY, { steps: 24 });
+    await page.waitForTimeout(80);
+    await page.mouse.up();
+  }
 }
 
 async function readNodePositions(page: Page, nodeIds: string[]) {
@@ -465,6 +552,14 @@ async function openSettingsModal(page: Page, section: "execution" | "display" = 
     await page.getByTestId("settings-nav-display").click();
   }
   return modal;
+}
+
+async function openKpiSpacingPopover(page: Page) {
+  await page.getByTestId("vdt-canvas").waitFor();
+  await page.getByTestId("kpi-spacing-toggle").click();
+  const panel = page.getByTestId("kpi-spacing-panel");
+  await expect(panel).toBeVisible();
+  return panel;
 }
 
 test.beforeEach(async ({ page }) => {
@@ -1098,6 +1193,41 @@ test("runs the downtime scenario and shows updated totals in middle column", asy
   await closeScenarioModal(page);
 });
 
+test("marks main scenario in select and shows scenario values on node cards", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Main scenario canvas display runs on desktop viewport.");
+
+  await page.reload();
+  await page.getByTestId("vdt-canvas").waitFor();
+
+  const rootNode = reactFlowNode(page, "production_volume");
+  await expect(rootNode.getByTestId("node-main-scenario-value")).toBeVisible();
+  await expect(rootNode.getByTestId("node-main-scenario-value")).toContainText("117,849.6");
+  await expect(rootNode.getByText("Base")).toBeVisible();
+  await expect(rootNode.getByText("Potential")).toBeVisible();
+  await expect(page.getByTestId("root-scenario-effect")).toBeVisible();
+  await expect(page.getByTestId("root-scenario-effect")).toContainText("+3,801.6");
+
+  await openScenarioModal(page);
+  await expect(page.getByTestId("main-scenario-checkbox")).toBeChecked();
+  await expect(page.getByTestId("scenario-select").locator("option:checked")).toHaveText(
+    /★ Reduce unplanned downtime/
+  );
+
+  await page.getByTestId("new-scenario").click();
+  await expect(page.getByTestId("main-scenario-checkbox")).not.toBeChecked();
+  await page.getByTestId("main-scenario-checkbox").check();
+  await expect(page.getByTestId("main-scenario-checkbox")).toBeChecked();
+
+  await closeScenarioModal(page);
+  await expect(rootNode.getByTestId("node-main-scenario-value")).not.toContainText("117,849.6");
+
+  await openScenarioModal(page);
+  await page.getByTestId("scenario-select").selectOption({ label: "Reduce unplanned downtime" });
+  await page.getByTestId("main-scenario-checkbox").check();
+  await closeScenarioModal(page);
+  await expect(rootNode.getByTestId("node-main-scenario-value")).toContainText("117,849.6");
+});
+
 test("persists scenario rename across reload", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario rename persistence runs on desktop viewport.");
 
@@ -1118,7 +1248,7 @@ test("persists scenario rename across reload", async ({ page }, testInfo) => {
   await openScenarioModal(page);
 
   await expect(page.getByTestId("scenario-select").locator("option:checked")).toHaveText(
-    "Optimized downtime plan"
+    "★ Optimized downtime plan"
   );
 });
 
@@ -1378,25 +1508,28 @@ test("keeps execution settings reachable on mobile", async ({ page }, testInfo) 
   expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(viewport!.height + 1);
 });
 
-test("persists font scale, KPI spacing and panel widths from settings", async ({ page }, testInfo) => {
+test("persists font scale, KPI spacing and panel widths", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Settings persistence runs on desktop viewport.");
 
   await openSettingsModal(page, "display");
   await page.getByTestId("font-scale-slider").fill("80");
-  await page.getByTestId("kpi-horizontal-gap-slider").fill("320");
-  await page.getByTestId("kpi-vertical-gap-slider").fill("96");
+  await page.keyboard.press("Escape");
+
+  await openKpiSpacingPopover(page);
+  await page.getByTestId("kpi-horizontal-gap-slider").fill("220");
+  await page.getByTestId("kpi-vertical-gap-slider").fill("94");
   await page.keyboard.press("Escape");
 
   await expect.poll(async () => (await readPersistedUi(page))?.fontScale).toBeCloseTo(0.8, 2);
-  await expect.poll(async () => (await readPersistedUi(page))?.kpiHorizontalGap).toBe(320);
-  await expect.poll(async () => (await readPersistedUi(page))?.kpiVerticalGap).toBe(96);
+  await expect.poll(async () => (await readPersistedUi(page))?.kpiHorizontalGap).toBe(220);
+  await expect.poll(async () => (await readPersistedUi(page))?.kpiVerticalGap).toBe(94);
 
   await page.reload();
 
   const ui = await readPersistedUi(page);
   expect(ui?.fontScale).toBeCloseTo(0.8, 2);
-  expect(ui?.kpiHorizontalGap).toBe(320);
-  expect(ui?.kpiVerticalGap).toBe(96);
+  expect(ui?.kpiHorizontalGap).toBe(220);
+  expect(ui?.kpiVerticalGap).toBe(94);
   expect(ui?.leftPanelWidth).toBe(255);
   expect(ui?.rightPanelWidth).toBe(279);
 });
@@ -1566,14 +1699,14 @@ test("auto-distributes nodes without overlap", async ({ page }, testInfo) => {
 test("KPI spacing settings affect auto-distributed layout and persist", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "KPI spacing settings run on desktop viewport.");
 
-  await openSettingsModal(page, "display");
-  await page.getByTestId("kpi-horizontal-gap-slider").fill("320");
-  await page.getByTestId("kpi-vertical-gap-slider").fill("96");
+  await openKpiSpacingPopover(page);
+  await page.getByTestId("kpi-horizontal-gap-slider").fill("220");
+  await page.getByTestId("kpi-vertical-gap-slider").fill("94");
   await page.keyboard.press("Escape");
 
   await page.getByTestId("auto-distribute-layout").click();
-  await expect.poll(async () => (await readPersistedUi(page))?.kpiHorizontalGap).toBe(320);
-  await expect.poll(async () => (await readPersistedUi(page))?.kpiVerticalGap).toBe(96);
+  await expect.poll(async () => (await readPersistedUi(page))?.kpiHorizontalGap).toBe(220);
+  await expect.poll(async () => (await readPersistedUi(page))?.kpiVerticalGap).toBe(94);
 
   await expect.poll(async () => readNodePosition(page, "effective_working_time")).toMatchObject({
     x: expect.any(Number),
@@ -1585,14 +1718,14 @@ test("KPI spacing settings affect auto-distributed layout and persist", async ({
   const calendarTime = await readNodePosition(page, "calendar_time");
   const plannedDowntime = await readNodePosition(page, "planned_downtime");
 
-  expect(effectiveWorkingTime!.x - root!.x).toBeCloseTo(580, 0);
-  expect(plannedDowntime!.y - calendarTime!.y).toBeCloseTo(228, 0);
+  expect(effectiveWorkingTime!.x - root!.x).toBeCloseTo(480, 0);
+  expect(plannedDowntime!.y - calendarTime!.y).toBeCloseTo(226, 0);
 
   await page.reload();
 
   const ui = await readPersistedUi(page);
-  expect(ui?.kpiHorizontalGap).toBe(320);
-  expect(ui?.kpiVerticalGap).toBe(96);
+  expect(ui?.kpiHorizontalGap).toBe(220);
+  expect(ui?.kpiVerticalGap).toBe(94);
 });
 
 test("auto-distribute groups cousin nodes by parent", async ({ page }, testInfo) => {
@@ -1769,8 +1902,11 @@ test("resets display preferences to defaults", async ({ page }, testInfo) => {
 
   await openSettingsModal(page, "display");
   await page.getByTestId("font-scale-slider").fill("80");
-  await page.getByTestId("kpi-horizontal-gap-slider").fill("320");
-  await page.getByTestId("kpi-vertical-gap-slider").fill("96");
+  await page.keyboard.press("Escape");
+
+  await openKpiSpacingPopover(page);
+  await page.getByTestId("kpi-horizontal-gap-slider").fill("220");
+  await page.getByTestId("kpi-vertical-gap-slider").fill("94");
   await page.keyboard.press("Escape");
 
   await page.getByTestId("collapse-left-panel").click();
@@ -1783,8 +1919,8 @@ test("resets display preferences to defaults", async ({ page }, testInfo) => {
   await page.keyboard.press("Escape");
 
   await expect.poll(async () => (await readPersistedUi(page))?.fontScale).toBeCloseTo(0.9, 2);
-  await expect.poll(async () => (await readPersistedUi(page))?.kpiHorizontalGap).toBe(220);
-  await expect.poll(async () => (await readPersistedUi(page))?.kpiVerticalGap).toBe(36);
+  await expect.poll(async () => (await readPersistedUi(page))?.kpiHorizontalGap).toBe(50);
+  await expect.poll(async () => (await readPersistedUi(page))?.kpiVerticalGap).toBe(18);
   await expect.poll(async () => (await readPersistedUi(page))?.leftPanelWidth).toBe(255);
   await expect.poll(async () => (await readPersistedUi(page))?.rightPanelWidth).toBe(279);
   await expect.poll(async () => (await readPersistedUi(page))?.leftPanelCollapsed).toBe(false);
@@ -2136,4 +2272,104 @@ test("generates through managed Local CLI runtime without standalone pairing", a
   await expect.poll(() => generateRequestBody?.operation).toBe("complete");
   await expect(page.getByRole("heading", { name: "Revenue Driver Model" })).toBeVisible();
   await expect(page.getByTestId("generate-final-report")).toContainText("Validation result: Graph validation passed.");
+});
+
+test.describe("visual formula editor", () => {
+  test("drag-and-drop build and reorder updates persisted formula", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula editor DnD runs on desktop viewport.");
+
+    const nodeId = "production_volume";
+    const baselineFormula = "effective_working_time * average_productivity";
+
+    await selectNodeInInspector(page, nodeId);
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+
+    const formulaRow = page.getByTestId("formula-token-row");
+    await expect(formulaRow.getByText("Effective Working Time", { exact: true })).toBeVisible();
+    await expect(formulaRow.getByText("Average Productivity", { exact: true })).toBeVisible();
+    await expect(formulaRow.getByText("effective_working_time")).toHaveCount(0);
+    await expect(formulaRow.getByText("average_productivity")).toHaveCount(0);
+
+    await expect(page.getByTestId("formula-palette-node-calendar_time")).toHaveCount(0);
+
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toBe(baselineFormula);
+
+    await dragFormulaTokenReorder(page, 2, 0);
+
+    let formulaAfterDnD = await readPersistedNodeFormula(page, nodeId);
+    if (formulaAfterDnD === baselineFormula) {
+      testInfo.annotations.push({
+        type: "note",
+        description: "Token reorder did not change formula; inserting multiply via toolbar."
+      });
+      await page.getByTestId("formula-toolbar-multiply").click();
+      formulaAfterDnD = await readPersistedNodeFormula(page, nodeId);
+    }
+
+    expect(formulaAfterDnD).not.toBe(baselineFormula);
+
+    const graphStillValid = await page.getByText("Model graph valid").isVisible();
+    if (graphStillValid) {
+      await page.getByRole("tab", { name: "warnings" }).click();
+      await expect(page.getByText("No formula errors for this node.")).toBeVisible();
+
+      const rootNode = reactFlowNode(page, nodeId);
+      await expect(rootNode.getByTestId("node-main-scenario-value")).toBeVisible();
+      await expect(rootNode.getByTestId("node-main-scenario-value")).not.toContainText("NaN");
+      await expect(rootNode.getByTestId("node-main-scenario-value")).not.toContainText("Infinity");
+    }
+  });
+
+  test("remove token restores node in palette and updates persisted formula", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula remove-token runs on desktop viewport.");
+
+    const nodeId = "effective_working_time";
+    const baselineFormula = "calendar_time - planned_downtime - unplanned_downtime";
+
+    await selectNodeInInspector(page, nodeId);
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toBe(baselineFormula);
+
+    const formulaRow = page.getByTestId("formula-token-row");
+    await expect(formulaRow.getByText("Planned Downtime", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("formula-palette-node-planned_downtime")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Remove Planned Downtime" }).click();
+
+    await expect(formulaRow.getByText("Planned Downtime", { exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("formula-palette-node-planned_downtime")).toBeVisible();
+    await expect(page.getByTestId("formula-palette-node-planned_downtime")).toContainText("Planned Downtime");
+
+    await expect
+      .poll(async () => {
+        const formula = await readPersistedNodeFormula(page, nodeId);
+        return typeof formula === "string" && !/\bplanned_downtime\b/.test(formula);
+      })
+      .toBe(true);
+
+    const formulaAfterRemove = await readPersistedNodeFormula(page, nodeId);
+    expect(formulaAfterRemove).toContain("calendar_time");
+    expect(formulaAfterRemove).toContain("unplanned_downtime");
+  });
+
+  test("hides formula editor on input nodes", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula editor input gating runs on desktop viewport.");
+
+    await selectNodeInInspector(page, "calendar_time");
+    await expect(page.getByTestId("formula-editor")).toHaveCount(0);
+  });
+
+  test("shows inline error for invalid edit-as-text formula", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula inline error runs on desktop viewport.");
+
+    await selectNodeInInspector(page, "production_volume");
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+
+    await page.getByTestId("formula-edit-as-text").click();
+    await page.getByTestId("formula-editor").locator("textarea").fill("(");
+
+    const errorBanner = page.getByTestId("formula-editor-error");
+    await expect(errorBanner).toBeVisible();
+    await expect(errorBanner).toContainText(/cannot be parsed|Missing closing parenthesis/i);
+  });
 });

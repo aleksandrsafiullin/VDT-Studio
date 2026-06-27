@@ -173,6 +173,19 @@ function readOptionalNumber(source: Record<string, unknown>, key: string) {
   throw new Error(`Imported project field ${key} must be a finite number.`);
 }
 
+function readOptionalBoolean(source: Record<string, unknown>, key: string) {
+  const value = source[key];
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  throw new Error(`Imported project field ${key} must be a boolean.`);
+}
+
 function readOptionalPosition(source: Record<string, unknown>) {
   const value = source.position;
   if (value === undefined || value === null) {
@@ -286,6 +299,7 @@ function readScenario(value: Record<string, unknown>, fallbackDate: string): Vdt
     id: readString(value, "id", "scenario id"),
     name: readString(value, "name", "scenario name"),
     description: readOptionalString(value, "description"),
+    isMain: readOptionalBoolean(value, "isMain"),
     baselineScenarioId: readOptionalString(value, "baselineScenarioId"),
     overrides: readRecordArray(value, "overrides", "scenario overrides").map(readScenarioOverride),
     createdAt: readOptionalString(value, "createdAt") ?? fallbackDate,

@@ -1,6 +1,7 @@
 import type { VdtAiTaskType } from "@vdt-studio/vdt-core";
 
 export const VDT_OUTPUT_SCHEMA_IDS = [
+  "agent-decision-v1",
   "agent-plan-v1",
   "generate-tree-v1",
   "deepen-node-v1",
@@ -22,6 +23,7 @@ export type VdtOutputSchemaId = (typeof VDT_OUTPUT_SCHEMA_IDS)[number];
 export type VdtSchemaId = (typeof VDT_SCHEMA_IDS)[number];
 
 const schemaTask: Record<VdtOutputSchemaId, VdtAiTaskType> = {
+  "agent-decision-v1": "agent_decision",
   "agent-plan-v1": "agent_plan",
   "generate-tree-v1": "generate_tree",
   "deepen-node-v1": "deepen_node",
@@ -235,6 +237,55 @@ const agentDriverSchema = objectSchema(
   },
   ["id", "parentNodeId", "name", "type", "unit", "relation", "formula", "description", "value", "assumptions"]
 );
+
+const agentQuestionSchema = objectSchema(
+  {
+    id: nodeIdProp,
+    question: { type: "string", maxLength: 500 },
+    reason: { type: "string", maxLength: 600 },
+    required: { type: "boolean" },
+    expectedAnswerType: enumProp(["text", "number", "single_choice", "multi_choice"]),
+    options: stringArrayProp,
+    defaultValue: { anyOf: [stringProp, { type: "number" }, stringArrayProp] }
+  },
+  ["id", "question", "reason", "required"]
+);
+
+const agentDecisionCallToolSchema = objectSchema(
+  {
+    type: { type: "string", const: "call_tool" },
+    toolName: { type: "string", maxLength: 120 },
+    args: { type: "object", properties: {}, required: [], additionalProperties: true },
+    statusMessage: { type: "string", maxLength: 500 }
+  },
+  ["type", "toolName", "args", "statusMessage"]
+);
+
+const agentDecisionAskUserSchema = objectSchema(
+  {
+    type: { type: "string", const: "ask_user" },
+    questions: { type: "array", minItems: 1, maxItems: 5, items: agentQuestionSchema },
+    statusMessage: { type: "string", maxLength: 500 }
+  },
+  ["type", "questions", "statusMessage"]
+);
+
+const agentDecisionFinishSchema = objectSchema(
+  {
+    type: { type: "string", const: "finish" },
+    summary: { type: "string", maxLength: 2_000 },
+    nextSuggestedActions: { type: "array", maxItems: 10, items: { type: "string", maxLength: 300 } }
+  },
+  ["type", "summary", "nextSuggestedActions"]
+);
+
+const agentDecisionSchema = {
+  type: "object",
+  anyOf: [agentDecisionCallToolSchema, agentDecisionAskUserSchema, agentDecisionFinishSchema],
+  properties: {},
+  required: [],
+  additionalProperties: false
+};
 
 const nodeUpdateSchema = objectSchema(
   {
@@ -586,6 +637,7 @@ const jsonSchemas: Record<VdtSchemaId, Record<string, unknown>> = {
     required: ["ok"],
     additionalProperties: false
   },
+  "agent-decision-v1": agentDecisionSchema,
   "agent-plan-v1": objectSchema(
     {
       buildIntent: agentBuildIntentSchema,
@@ -771,6 +823,21 @@ export function getStrictResponseJsonSchema(schemaId: VdtSchemaId): Record<strin
 
 const validators: Record<VdtSchemaId, (output: Record<string, unknown>) => boolean> = {
   "connection-test-v1": (output) => output.ok === true,
+  "agent-decision-v1": (output) => {
+    for (const forbidden of ["driverPlan", "nodes", "edges", "rootFormula", "project", "fullProject", "fullGraph", "selectedSkillIds"]) {
+      if (forbidden in output) return false;
+    }
+    if (output.type === "call_tool") {
+      return typeof output.toolName === "string" && isRecord(output.args) && typeof output.statusMessage === "string";
+    }
+    if (output.type === "ask_user") {
+      return isObjectArray(output.questions) && (output.questions as unknown[]).length > 0 && typeof output.statusMessage === "string";
+    }
+    if (output.type === "finish") {
+      return typeof output.summary === "string" && isStringArray(output.nextSuggestedActions);
+    }
+    return false;
+  },
   "agent-plan-v1": (output) =>
     isRecord(output.buildIntent) &&
     isStringArray(output.selectedSkillIds) &&

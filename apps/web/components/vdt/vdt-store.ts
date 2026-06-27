@@ -232,7 +232,7 @@ interface BriefState extends GenerateVdtInput {
   rootKpi: string;
 }
 
-export type RunAiActionTaskType = Exclude<VdtAiTaskType, "agent_plan" | "generate_tree">;
+export type RunAiActionTaskType = Exclude<VdtAiTaskType, "agent_decision" | "agent_plan" | "generate_tree">;
 
 export type RunAiActionInput<T extends RunAiActionTaskType = RunAiActionTaskType> = Omit<
   RunAiTaskInputMap[T],
@@ -354,6 +354,7 @@ interface VdtStudioState {
   deleteNode: (nodeId: string) => void;
   createScenario: () => void;
   setActiveScenarioId: (scenarioId: string) => void;
+  setMainScenario: (scenarioId: string) => void;
   renameScenario: (scenarioId: string, name: string) => void;
   deleteScenario: (scenarioId: string) => void;
   cloneScenario: (scenarioId: string) => void;
@@ -834,7 +835,8 @@ function applyAgentSnapshot(
     if (state.activeAgentRunId && state.activeAgentRunId !== snapshot.runId) {
       return {};
     }
-    const project = snapshot.project ?? snapshot.draftProject;
+    const rawProject = snapshot.project ?? snapshot.draftProject;
+    const project = rawProject ? ensureScenario(rawProject) : undefined;
     const status = mapRuntimeStatus(snapshot);
     const now = nowIso();
     const activity = state.generateActivity?.runId === snapshot.runId
@@ -851,7 +853,7 @@ function applyAgentSnapshot(
         ? {
             project,
             selectedNodeId: project.rootNodeId,
-            activeScenarioId: project.scenarios[0]?.id ?? "",
+            activeScenarioId: resolveMainScenarioId(project),
             projectRevision: state.projectRevision + 1
           }
         : {}),
@@ -1033,13 +1035,14 @@ function updateProjectNode(project: VdtProject, nodeId: string, update: (node: V
   };
 }
 
-function defaultScenario(): VdtScenario {
+function defaultScenario(options?: { isMain?: boolean }): VdtScenario {
   const createdAt = nowIso();
   return {
     id: makeId("scenario"),
     name: "New scenario",
     description: "Adjust input drivers and compare impact against baseline.",
     overrides: [],
+    ...(options?.isMain ? { isMain: true } : {}),
     createdAt,
     updatedAt: createdAt
   };
@@ -1059,15 +1062,40 @@ function uniqueScenarioCopyName(baseName: string, scenarios: VdtScenario[]): str
   return `${root} (${suffix})`;
 }
 
+function ensureMainScenario(project: VdtProject): VdtProject {
+  if (project.scenarios.length === 0) {
+    return project;
+  }
+
+  const mainScenarios = project.scenarios.filter((scenario) => scenario.isMain === true);
+  if (mainScenarios.length === 1) {
+    return project;
+  }
+
+  const mainId = mainScenarios[0]?.id ?? project.scenarios[0]!.id;
+
+  return {
+    ...project,
+    scenarios: project.scenarios.map((scenario) => ({
+      ...scenario,
+      isMain: scenario.id === mainId
+    }))
+  };
+}
+
 function ensureScenario(project: VdtProject) {
   if (project.scenarios.length > 0) {
-    return project;
+    return ensureMainScenario(project);
   }
 
   return {
     ...project,
-    scenarios: [defaultScenario()]
+    scenarios: [defaultScenario({ isMain: true })]
   };
+}
+
+function resolveMainScenarioId(project: VdtProject): string {
+  return project.scenarios.find((scenario) => scenario.isMain === true)?.id ?? project.scenarios[0]?.id ?? "";
 }
 
 function requiresStandaloneRunnerPairing(): boolean {
@@ -1884,7 +1912,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           set({
             project,
             selectedNodeId: project.rootNodeId,
-            activeScenarioId: project.scenarios[0]?.id ?? "",
+            activeScenarioId: resolveMainScenarioId(project),
             isGenerating: false,
             generateActivity: {
               ...currentActivity,
@@ -1945,12 +1973,12 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         }
       },
       loadExample: (exampleId = "production_volume") => {
-        const project = buildExampleProject(exampleId);
+        const project = ensureScenario(buildExampleProject(exampleId));
         set({
           project,
           brief: briefFromProject(project),
           selectedNodeId: project.rootNodeId,
-          activeScenarioId: project.scenarios[0]?.id ?? "",
+          activeScenarioId: resolveMainScenarioId(project),
           generateActivity: undefined,
           aiError: undefined,
           ...clearPendingAiActionState()
@@ -1961,7 +1989,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         set((state) => ({
           project: nextProject,
           selectedNodeId: nextProject.rootNodeId,
-          activeScenarioId: nextProject.scenarios[0]?.id ?? "",
+          activeScenarioId: resolveMainScenarioId(nextProject),
           generateActivity: undefined,
           aiError: undefined,
           projectRevision: state.projectRevision + 1,
@@ -2078,6 +2106,25 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           };
         }),
       setActiveScenarioId: (scenarioId) => set({ activeScenarioId: scenarioId }),
+      setMainScenario: (scenarioId) =>
+        set((state) => {
+          if (!state.project.scenarios.some((scenario) => scenario.id === scenarioId)) {
+            return state;
+          }
+
+          const updatedAt = nowIso();
+          return {
+            project: {
+              ...state.project,
+              updatedAt,
+              scenarios: state.project.scenarios.map((scenario) => ({
+                ...scenario,
+                isMain: scenario.id === scenarioId,
+                updatedAt: scenario.id === scenarioId || scenario.isMain ? updatedAt : scenario.updatedAt
+              }))
+            }
+          };
+        }),
       renameScenario: (scenarioId, name) =>
         set((state) => {
           const trimmed = name.trim();
@@ -2112,7 +2159,17 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             return state;
           }
 
-          const scenarios = state.project.scenarios.filter((candidate) => candidate.id !== scenarioId);
+          const deletedScenario = state.project.scenarios[index];
+          const wasMain = deletedScenario?.isMain === true;
+          let scenarios = state.project.scenarios.filter((candidate) => candidate.id !== scenarioId);
+          if (wasMain) {
+            const promoteId = scenarios[Math.min(index, scenarios.length - 1)]!.id;
+            scenarios = scenarios.map((scenario) => ({
+              ...scenario,
+              isMain: scenario.id === promoteId
+            }));
+          }
+
           const nextActive =
             state.activeScenarioId === scenarioId
               ? scenarios[Math.min(index, scenarios.length - 1)]!.id
@@ -2405,13 +2462,14 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       restoreVersionSnapshot: (versionId) =>
         set((state) => {
           try {
-            const restored = restoreProjectVersionSnapshot(state.project, versionId);
+            const restored = ensureScenario(restoreProjectVersionSnapshot(state.project, versionId));
             const laidOut = layoutProjectGraph(restored, state.ui);
             calculateGraph(laidOut);
 
             return {
               project: laidOut,
               selectedNodeId: laidOut.rootNodeId,
+              activeScenarioId: resolveMainScenarioId(laidOut),
               ...clearPendingAiActionState()
             };
           } catch (error) {
@@ -2456,10 +2514,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           persisted?.executionSettings
         );
         const synced = syncLegacyProviderFromExecutionSettings(executionSettings, providerConfig);
+        const project = ensureScenario(persisted?.project ?? currentState.project);
 
         return {
           ...currentState,
           ...persisted,
+          project,
+          activeScenarioId: resolveMainScenarioId(project),
           providerId: synced.providerId,
           providerConfig: persistedProviderConfig(synced.providerConfig as ProviderConfigState),
           executionSettings,

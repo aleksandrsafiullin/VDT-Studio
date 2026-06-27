@@ -13,7 +13,7 @@ describe("ToolRegistry", () => {
     });
     const registry = new ToolRegistry();
 
-    await expect(registry.run("missing.tool", {}, {
+    const result = await registry.run("missing.tool", {}, {
       runId: run.runId,
       store,
       emit: (event) => store.appendEvent(run.runId, event),
@@ -22,7 +22,9 @@ describe("ToolRegistry", () => {
         store.updateRun(run.runId, patch);
       },
       signal: run.abortController.signal
-    })).rejects.toThrow(/Unknown agent tool/);
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("UNKNOWN_TOOL");
     expect(store.getSnapshot(run.runId).events.at(-1)?.type).toBe("tool_call_completed");
   });
 
@@ -42,7 +44,7 @@ describe("ToolRegistry", () => {
       run: (_context, input) => input
     });
 
-    await expect(registry.run("test.echo", { value: 1 }, {
+    const result = await registry.run("test.echo", { value: 1 }, {
       runId: run.runId,
       store,
       emit: (event) => store.appendEvent(run.runId, event),
@@ -51,7 +53,9 @@ describe("ToolRegistry", () => {
         store.updateRun(run.runId, patch);
       },
       signal: run.abortController.signal
-    })).rejects.toThrow();
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("INVALID_TOOL_ARGS");
     expect(store.getSnapshot(run.runId).events.at(-1)?.message).toContain("Expected string");
   });
 });

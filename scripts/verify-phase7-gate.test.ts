@@ -49,7 +49,7 @@ async function writeStaticFixture(options: { readme?: string; runTaskParser?: st
   await writeFile(
     path.join(root, "README.md"),
     options.readme ??
-      `VDT Studio exposes 12 bounded AI tasks.\n${CANONICAL_RUN_TASK_TYPES.map((taskType) => `\`${taskType}\``).join("\n")}\n`
+      `VDT Studio exposes 13 bounded AI tasks.\n${["agent_decision", ...CANONICAL_RUN_TASK_TYPES].map((taskType) => `\`${taskType}\``).join("\n")}\n`
   );
   await writeFile(path.join(root, "docs/ROADMAP.md"), "Phase 7 verification gate verified for bounded AI actions.\n");
   return root;
@@ -62,8 +62,8 @@ afterEach(async () => {
 describe("verify-phase7-gate", () => {
   it("passes the current repository and runs all mock tasks", async () => {
     await expect(verifyPhase7Gate()).resolves.toMatchObject({
-      taskCount: 13,
-      schemaCount: 13,
+      taskCount: 14,
+      schemaCount: 14,
       mockTaskCount: 12
     });
   });

@@ -185,9 +185,7 @@ export async function completeRuntime(request: CompletionRequest, context: Local
   }
   const manifest = context.manifests.get(request.backendId);
   if (!manifest) throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
-  if (!manifest.taskTypes.includes(request.taskType) || !manifest.schemaIds.includes(request.schemaId)) {
-    throw new LocalRuntimeError(400, "UNSUPPORTED_CONTRACT", "Backend does not support this task/schema contract.");
-  }
+  assertManifestSupportsContract(manifest, request);
   const createdAt = new Date().toISOString();
   const controller = new AbortController();
   const run: ActiveRun = {
@@ -270,6 +268,24 @@ export async function completeRuntime(request: CompletionRequest, context: Local
       errorCode: normalized.code
     });
     return { statusCode: normalized.code === "CANCELLED" ? 409 : 502, payload: { ok: false, run: publicRun(run), error: normalized } };
+  }
+}
+
+function assertManifestSupportsContract(manifest: BackendManifest, request: CompletionRequest): void {
+  if (!isVdtSchemaId(request.schemaId) || !schemaSupportsTask(request.schemaId, request.taskType)) {
+    throw new LocalRuntimeError(
+      400,
+      "UNSUPPORTED_CONTRACT",
+      `Backend ${manifest.id} received invalid task/schema contract ${request.taskType}/${request.schemaId}.`
+    );
+  }
+
+  if (!manifest.taskTypes.includes(request.taskType) || !manifest.schemaIds.includes(request.schemaId)) {
+    throw new LocalRuntimeError(
+      400,
+      "UNSUPPORTED_CONTRACT",
+      `Backend ${manifest.id} does not advertise ${request.taskType}/${request.schemaId}. Refresh or restart the VDT local runtime so it can load the current task/schema registry.`
+    );
   }
 }
 

@@ -1,14 +1,31 @@
 import { calculateGraph } from "../formula/calculate";
-import type { VdtImpactNode, VdtProject, VdtScenario, VdtScenarioResult, VdtWarning } from "../types";
+import type {
+  GraphCalculationResult,
+  VdtImpactNode,
+  VdtProject,
+  VdtScenario,
+  VdtScenarioOverride,
+  VdtScenarioResult,
+  VdtWarning
+} from "../types";
 import { percentageChange, warning } from "../utils";
 
 const EPSILON = 0.000001;
 
-export function calculateScenario(project: VdtProject, scenario: VdtScenario): VdtScenarioResult {
-  const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
+export function getActiveScenarioOverrides(project: VdtProject, scenario: VdtScenario): VdtScenarioOverride[] {
   const fixedInScenarioNodeIds = new Set(
     project.graph.nodes.filter((node) => node.fixedInScenario === true).map((node) => node.id)
   );
+
+  return scenario.overrides.filter((override) => !fixedInScenarioNodeIds.has(override.nodeId));
+}
+
+export function calculateScenarioGraph(project: VdtProject, scenario: VdtScenario): GraphCalculationResult {
+  return calculateGraph(project, { overrides: getActiveScenarioOverrides(project, scenario) });
+}
+
+export function calculateScenario(project: VdtProject, scenario: VdtScenario): VdtScenarioResult {
+  const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
   const overrideErrors: VdtWarning[] = scenario.overrides
     .filter((override) => !nodeIds.has(override.nodeId))
     .map((override) =>
@@ -19,9 +36,8 @@ export function calculateScenario(project: VdtProject, scenario: VdtScenario): V
         nodeId: override.nodeId
       })
     );
-  const activeOverrides = scenario.overrides.filter((override) => !fixedInScenarioNodeIds.has(override.nodeId));
   const baseline = calculateGraph(project);
-  const scenarioCalculation = calculateGraph(project, { overrides: activeOverrides });
+  const scenarioCalculation = calculateScenarioGraph(project, scenario);
   const impactedNodes: VdtImpactNode[] = [];
 
   for (const node of project.graph.nodes) {

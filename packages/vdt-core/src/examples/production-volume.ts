@@ -237,6 +237,7 @@ export const productionVolumeProject: VdtProject = {
       id: "scenario_reduce_unplanned_downtime",
       name: "Reduce unplanned downtime",
       description: "Reduce unplanned downtime from 80 to 60 hours/month.",
+      isMain: true,
       overrides: [
         {
           nodeId: "unplanned_downtime",

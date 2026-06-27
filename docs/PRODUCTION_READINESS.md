@@ -37,7 +37,7 @@ Source of truth: `Technical Specification for Codex.docx`, checked against the r
 These items are present in the full specification but are not required to claim the original core MVP loop complete:
 
 - Version comparison is future scope; snapshot creation, listing and restore are implemented.
-- Live-provider certification remains open even though all 12 bounded AI actions and their mock-provider workflows are implemented.
+- Live-provider certification remains open even though all 13 bounded AI actions and their mock-provider workflows are implemented.
 - Live-provider quality evaluation remains open; the checked-in 20-KPI dataset and mock baseline are implemented, but credentialed provider adapters are not promoted as release-gate quality sources yet.
 - PNG canvas export. SVG export is implemented.
 - Durable SQLite project storage. Current web persistence is browser-local.

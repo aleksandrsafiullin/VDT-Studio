@@ -37,13 +37,13 @@ describe("ui-preferences", () => {
   });
 
   it("clamps KPI block spacing via applyUiPreference helper", () => {
-    const ui = applyUiPreference(DEFAULT_UI, "kpiHorizontalGap", 40);
+    const ui = applyUiPreference(DEFAULT_UI, "kpiHorizontalGap", 10);
     expect(ui.kpiHorizontalGap).toBe(MIN_KPI_HORIZONTAL_GAP);
 
     const ui2 = applyUiPreference(ui, "kpiHorizontalGap", 900);
     expect(ui2.kpiHorizontalGap).toBe(MAX_KPI_HORIZONTAL_GAP);
 
-    const ui3 = applyUiPreference(ui2, "kpiVerticalGap", 4);
+    const ui3 = applyUiPreference(ui2, "kpiVerticalGap", 1);
     expect(ui3.kpiVerticalGap).toBe(MIN_KPI_VERTICAL_GAP);
 
     const ui4 = applyUiPreference(ui3, "kpiVerticalGap", 400);
@@ -64,7 +64,7 @@ describe("ui-preferences", () => {
     });
     expect(mergeUiPreferences({ kpiHorizontalGap: 300, kpiVerticalGap: 72 })).toEqual({
       ...DEFAULT_UI,
-      kpiHorizontalGap: 300,
+      kpiHorizontalGap: MAX_KPI_HORIZONTAL_GAP,
       kpiVerticalGap: 72
     });
   });

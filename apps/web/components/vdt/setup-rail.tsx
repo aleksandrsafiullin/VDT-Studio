@@ -17,7 +17,6 @@ export function SetupRail() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [instructionText, setInstructionText] = useState("");
   const brief = useVdtStudioStore((state) => state.brief);
-  const project = useVdtStudioStore((state) => state.project);
   const executionSettings = useVdtStudioStore((state) => state.executionSettings);
   const isGenerating = useVdtStudioStore((state) => state.isGenerating);
   const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
@@ -28,13 +27,12 @@ export function SetupRail() {
   const leftPanelCollapsed = useVdtStudioStore((state) => state.ui.leftPanelCollapsed);
   const isDesktop = useDesktopLayout();
   const showCollapsed = isDesktop && leftPanelCollapsed;
+  const selectedNodeId = useVdtStudioStore((state) => state.selectedNodeId);
   const setBriefField = useVdtStudioStore((state) => state.setBriefField);
   const startAgentRun = useVdtStudioStore((state) => state.startAgentRun);
   const sendAgentAnswers = useVdtStudioStore((state) => state.sendAgentAnswers);
   const sendAgentInstruction = useVdtStudioStore((state) => state.sendAgentInstruction);
   const cancelGenerate = useVdtStudioStore((state) => state.cancelGenerate);
-  const runAiAction = useVdtStudioStore((state) => state.runAiAction);
-  const selectNode = useVdtStudioStore((state) => state.selectNode);
   const applyPendingChangeSet = useVdtStudioStore((state) => state.applyPendingChangeSet);
   const discardPendingChangeSet = useVdtStudioStore((state) => state.discardPendingChangeSet);
   const toggleLeftPanel = useVdtStudioStore((state) => state.toggleLeftPanel);
@@ -44,11 +42,6 @@ export function SetupRail() {
   const byokValidationBlocked = executionSettings.executionMode === "byok" &&
     hasByokFieldErrors(validateByokSettings(executionSettings));
   const canUseConfiguredRuntime = canRunDeepenAction && !byokValidationBlocked;
-  const topLevelDrivers = project.graph.edges
-    .filter((edge) => edge.sourceNodeId === project.rootNodeId)
-    .map((edge) => project.graph.nodes.find((node) => node.id === edge.targetNodeId))
-    .filter((node): node is NonNullable<typeof node> => Boolean(node));
-  const deepenTargetId = topLevelDrivers[0]?.id;
   const pendingChangeCount = pendingChangeSet
     ? pendingChangeSet.additions.length +
       pendingChangeSet.updates.length +
@@ -70,15 +63,9 @@ export function SetupRail() {
       if (accepted) setInstructionText("");
       return;
     }
-    const accepted = await sendAgentInstruction(text, deepenTargetId);
+    const accepted = await sendAgentInstruction(text, selectedNodeId);
     if (!accepted) return;
     setInstructionText("");
-    if (!deepenTargetId) return;
-    selectNode(deepenTargetId);
-    await runAiAction("deepen_node", {
-      nodeId: deepenTargetId,
-      context: { goal: text }
-    });
   }
 
   if (showCollapsed) {
