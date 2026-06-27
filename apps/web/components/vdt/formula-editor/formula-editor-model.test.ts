@@ -140,6 +140,19 @@ describe("formula-editor-model", () => {
     expect(parseFormulaToEditorTokens("a @ b")).toEqual([]);
   });
 
+  it("parseFormulaToEditorTokens assigns stable token ids for hydration", () => {
+    const formula = "effective_working_time * average_productivity";
+    const first = parseFormulaToEditorTokens(formula);
+    const second = parseFormulaToEditorTokens(formula);
+
+    expect(first.map((entry) => entry.id)).toEqual(second.map((entry) => entry.id));
+    expect(first.map((entry) => entry.id)).toEqual([
+      "fet_0_ref_effective_working_time",
+      "fet_1_op_*",
+      "fet_2_ref_average_productivity"
+    ]);
+  });
+
   it("getReferencedNodeIds scans identifier tokens when parse fails", () => {
     const referenced = getReferencedNodeIds("a * (");
     expect([...referenced]).toEqual(["a"]);

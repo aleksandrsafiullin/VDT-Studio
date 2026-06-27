@@ -28,11 +28,29 @@ export function createEditorToken(token: FormulaToken, id = makeId("fet")): Form
   return { id, token };
 }
 
+/** Stable ids for parsed tokens so SSR and client hydration match. */
+function stableEditorTokenId(token: FormulaToken, index: number): string {
+  switch (token.type) {
+    case "identifier":
+      return `fet_${index}_ref_${token.value}`;
+    case "number":
+      return `fet_${index}_num_${token.raw}`;
+    case "operator":
+      return `fet_${index}_op_${token.value}`;
+    case "left_paren":
+      return `fet_${index}_lp`;
+    case "right_paren":
+      return `fet_${index}_rp`;
+    default:
+      return `fet_${index}_tok`;
+  }
+}
+
 export function parseFormulaToEditorTokens(formula: string): FormulaEditorToken[] {
   try {
     return tokenizeFormula(formula)
       .filter((token) => token.type !== "eof")
-      .map((token) => createEditorToken(token));
+      .map((token, index) => createEditorToken(token, stableEditorTokenId(token, index)));
   } catch {
     return [];
   }
