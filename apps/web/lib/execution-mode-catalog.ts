@@ -56,6 +56,7 @@ export interface CliCatalogEntry {
   id: CliAgentId;
   displayName: string;
   subtitle: string;
+  usageNote: string;
   primaryCommand: string;
   badges: CliAgentBadge[];
   docsUrl: string;
@@ -85,6 +86,7 @@ export interface ByokGatewayPreset {
 export interface LocalRunnerPresetCatalogEntry {
   id: LocalRunnerPresetId;
   label: string;
+  description: string;
   runnerProviderId: "local_http_stub" | "cli_stub";
   modelBackendId?: LocalHttpModelBackendId | undefined;
   baseUrl?: string | undefined;
@@ -128,6 +130,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     id: "claude",
     displayName: "Claude Code",
     subtitle: "Claude subscription backend with tools disabled",
+    usageNote: "Billing and rate limits follow your Anthropic subscription and the model Claude Code selects.",
     primaryCommand: "claude",
     badges: ["official"],
     docsUrl: "https://docs.anthropic.com/en/docs/claude-code",
@@ -138,6 +141,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     id: "codex",
     displayName: "Codex CLI",
     subtitle: "OpenAI's official terminal coding agent",
+    usageNote: "Billing and rate limits follow your OpenAI subscription and Codex CLI policy.",
     primaryCommand: "codex",
     badges: ["official"],
     docsUrl: "https://developers.openai.com/codex/cli",
@@ -148,6 +152,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     id: "gemini",
     displayName: "Gemini CLI",
     subtitle: "Google's official Gemini terminal agent",
+    usageNote: "Billing and quotas follow your Google account and Gemini CLI usage policy.",
     primaryCommand: "gemini",
     badges: ["official", "many-models"],
     docsUrl: "https://github.com/google-gemini/gemini-cli",
@@ -158,6 +163,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     id: "cursor-agent",
     displayName: "Cursor Agent",
     subtitle: "Cursor subscription backend isolated by the local runner",
+    usageNote: "Uses your Cursor subscription; limits depend on your Cursor plan and selected model.",
     primaryCommand: "agent",
     badges: ["official"],
     docsUrl: "https://docs.cursor.com/agent",
@@ -168,6 +174,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     id: "copilot",
     displayName: "GitHub Copilot CLI",
     subtitle: "GitHub's official Copilot terminal agent",
+    usageNote: "Uses your GitHub Copilot subscription; limits follow Copilot CLI and GitHub policy.",
     primaryCommand: "copilot",
     badges: ["official"],
     docsUrl: "https://docs.github.com/en/copilot",
@@ -198,6 +205,7 @@ export const LOCAL_RUNNER_PRESET_CATALOG: readonly LocalRunnerPresetCatalogEntry
   {
     id: "ollama_openai",
     label: "Ollama",
+    description: "Run open-weight models locally with Ollama's OpenAI-compatible API.",
     runnerProviderId: "local_http_stub",
     modelBackendId: "ollama",
     baseUrl: "http://127.0.0.1:11434/v1",
@@ -206,6 +214,7 @@ export const LOCAL_RUNNER_PRESET_CATALOG: readonly LocalRunnerPresetCatalogEntry
   {
     id: "lm_studio_openai",
     label: "LM Studio",
+    description: "Host GGUF models in LM Studio and expose them via a local OpenAI endpoint.",
     runnerProviderId: "local_http_stub",
     modelBackendId: "lm_studio",
     baseUrl: "http://127.0.0.1:1234/v1",
@@ -214,6 +223,7 @@ export const LOCAL_RUNNER_PRESET_CATALOG: readonly LocalRunnerPresetCatalogEntry
   {
     id: "vllm_openai",
     label: "vLLM",
+    description: "Serve high-throughput models with vLLM's OpenAI-compatible server.",
     runnerProviderId: "local_http_stub",
     modelBackendId: "vllm",
     baseUrl: "http://127.0.0.1:8000/v1",
@@ -222,6 +232,7 @@ export const LOCAL_RUNNER_PRESET_CATALOG: readonly LocalRunnerPresetCatalogEntry
   {
     id: "custom_cli_json",
     label: "CLI JSON stdout",
+    description: "Custom local command that prints JSON to stdout for the desktop runtime.",
     runnerProviderId: "cli_stub",
     command: "vdt-model-adapter",
     argsText: ""

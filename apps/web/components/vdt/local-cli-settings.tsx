@@ -102,57 +102,62 @@ function LocalModelCard({
     <article
       data-testid={`local-model-card-${preset.id}`}
       className={clsx(
-        "rounded-lg border bg-white p-3 transition",
+        "flex flex-col gap-3 rounded-lg border bg-white p-3 transition",
         selected ? "border-accent ring-2 ring-blue-100" : "border-line hover:border-slate-300"
       )}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-ink">{preset.label}</p>
-          <p className="mt-1 text-xs leading-5 text-muted">Local model server managed by the desktop runtime.</p>
-          <p className="mt-2 truncate rounded-md bg-slate-50 px-2 py-1.5 font-mono text-[11px] text-slate-600">
-            {preset.baseUrl}
-          </p>
-          {!selected && preset.model ? <p className="mt-1 text-xs text-slate-500">Default model: {preset.model}</p> : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label={`Refresh ${preset.label} models`}
-            title={`Refresh ${preset.label} models`}
-            data-testid={`local-model-refresh-${preset.id}`}
-            disabled={isLoadingModels}
-            onClick={onRefreshModels}
-          >
-            <RefreshCw className={clsx("h-3.5 w-3.5", isLoadingModels && "animate-spin")} aria-hidden="true" />
-          </Button>
-          <Button
-            size="sm"
-            variant={selected ? "primary" : "secondary"}
-            data-testid={`local-model-select-${preset.id}`}
-            onClick={onSelect}
-          >
-            {selected ? "Selected" : "Select"}
-          </Button>
-        </div>
+      <div className="flex items-center justify-between gap-2">
+        <p className="min-w-0 truncate text-sm font-semibold text-ink">{preset.label}</p>
+        <Button
+          size="sm"
+          variant={selected ? "primary" : "secondary"}
+          className="shrink-0"
+          data-testid={`local-model-select-${preset.id}`}
+          onClick={onSelect}
+        >
+          {selected ? "Selected" : "Select"}
+        </Button>
       </div>
+
+      <div className="space-y-2">
+        <p className="text-xs leading-5 text-muted">{preset.description}</p>
+        <p className="truncate rounded-md bg-slate-50 px-2 py-1.5 font-mono text-[11px] text-slate-600">
+          {preset.baseUrl}
+        </p>
+      </div>
+
       {selected ? (
-        <div className="mt-3 space-y-2">
-          <Field label="Model">
-            <SelectInput
-              data-testid={`local-model-model-${preset.id}`}
-              value={currentModel}
-              disabled={isLoadingModels || modelOptions.length === 0}
-              onChange={(event) => onSelectModel(event.target.value)}
+        <div className="space-y-2">
+          <div className="flex items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <Field label="Model">
+                <SelectInput
+                  data-testid={`local-model-model-${preset.id}`}
+                  value={currentModel}
+                  disabled={isLoadingModels || modelOptions.length === 0}
+                  onChange={(event) => onSelectModel(event.target.value)}
+                >
+                  {modelOptions.map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+            </div>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="shrink-0"
+              aria-label={`Refresh ${preset.label} models`}
+              title={`Refresh ${preset.label} models`}
+              data-testid={`local-model-refresh-${preset.id}`}
+              disabled={isLoadingModels}
+              onClick={onRefreshModels}
             >
-              {modelOptions.map((model) => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
-              ))}
-            </SelectInput>
-          </Field>
+              <RefreshCw className={clsx("h-3.5 w-3.5", isLoadingModels && "animate-spin")} aria-hidden="true" />
+            </Button>
+          </div>
           {isLoadingModels ? (
             <p className="text-xs leading-5 text-muted">Loading available models...</p>
           ) : modelListError ? (
@@ -165,6 +170,8 @@ function LocalModelCard({
             <p className="text-xs leading-5 text-slate-500">Using preset default until the runtime reports models.</p>
           )}
         </div>
+      ) : preset.model ? (
+        <p className="text-xs text-slate-500">Default model: {preset.model}</p>
       ) : null}
     </article>
   );

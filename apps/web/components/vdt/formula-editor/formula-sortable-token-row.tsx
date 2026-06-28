@@ -2,15 +2,15 @@
 
 import {
   SortableContext,
-  horizontalListSortingStrategy,
+  rectSortingStrategy,
   useSortable
 } from "@dnd-kit/sortable";
 import type { DraggableAttributes } from "@dnd-kit/core";
-import { CSS } from "@dnd-kit/utilities";
 import { clsx } from "clsx";
 import { GripVertical } from "lucide-react";
-import { useMemo, type ReactNode } from "react";
+import { Fragment, useMemo, type ReactNode } from "react";
 import type { VdtNode } from "@vdt-studio/vdt-core";
+import { FormulaInsertIndicator } from "./formula-insert-indicator";
 import {
   editorTokensToSegments,
   type FormulaEditorSegment,
@@ -30,6 +30,8 @@ export interface FormulaSortableTokenRowProps {
   className?: string;
   /** When true, renders only sortable items (drop zone wrapper lives in FormulaEditorDnd). */
   embedded?: boolean;
+  /** Index where the dragged token will land; renders a "|" marker before that position. */
+  insertIndex?: number | null;
 }
 
 interface SortableTokenItemProps {
@@ -80,14 +82,13 @@ function SortableTokenItem({
   onUpdateNumber,
   isUnknownReference
 }: SortableTokenItemProps) {
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
-    id
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useSortable({
+    id,
+    animateLayoutChanges: () => false
   });
 
   const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.35 : 1
+    opacity: isDragging ? 0 : 1
   };
 
   const dragHandle = (
@@ -157,6 +158,7 @@ function renderSegmentToken(
             className="inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
             aria-label={`Remove ${segment.value} operator`}
             data-testid={`formula-operator-remove-${segment.id}`}
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={() => onRemoveToken(segment.id)}
           >
             ×
@@ -173,6 +175,7 @@ function renderSegmentToken(
             className="inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
             aria-label="Remove left parenthesis"
             data-testid={`formula-operator-remove-${segment.id}`}
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={() => onRemoveToken(segment.id)}
           >
             ×
@@ -189,6 +192,7 @@ function renderSegmentToken(
             className="inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
             aria-label="Remove right parenthesis"
             data-testid={`formula-operator-remove-${segment.id}`}
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={() => onRemoveToken(segment.id)}
           >
             ×
@@ -265,7 +269,8 @@ function SortableTokenItems({
   nodes,
   onRemoveToken,
   onUpdateNumber,
-  isUnknownReference
+  isUnknownReference,
+  insertIndex = null
 }: Omit<FormulaSortableTokenRowProps, "onReorder" | "className" | "embedded">) {
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const segments = useMemo(
@@ -275,17 +280,19 @@ function SortableTokenItems({
   const sortableIds = useMemo(() => editorTokens.map((token) => token.id), [editorTokens]);
 
   return (
-    <SortableContext items={sortableIds} strategy={horizontalListSortingStrategy}>
+    <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
       {segments.map((segment, index) => (
-        <SortableTokenItem
-          key={segment.id}
-          id={segment.id}
-          index={index}
-          segment={segment}
-          onRemoveToken={onRemoveToken}
-          onUpdateNumber={onUpdateNumber}
-          {...(isUnknownReference !== undefined ? { isUnknownReference } : {})}
-        />
+        <Fragment key={segment.id}>
+          {insertIndex === index ? <FormulaInsertIndicator /> : null}
+          <SortableTokenItem
+            id={segment.id}
+            index={index}
+            segment={segment}
+            onRemoveToken={onRemoveToken}
+            onUpdateNumber={onUpdateNumber}
+            {...(isUnknownReference !== undefined ? { isUnknownReference } : {})}
+          />
+        </Fragment>
       ))}
     </SortableContext>
   );
@@ -298,7 +305,8 @@ export function FormulaSortableTokenRow({
   onUpdateNumber,
   isUnknownReference,
   className,
-  embedded = false
+  embedded = false,
+  insertIndex = null
 }: FormulaSortableTokenRowProps) {
   if (embedded) {
     return (
@@ -307,6 +315,7 @@ export function FormulaSortableTokenRow({
         nodes={nodes}
         onRemoveToken={onRemoveToken}
         onUpdateNumber={onUpdateNumber}
+        insertIndex={insertIndex}
         {...(isUnknownReference !== undefined ? { isUnknownReference } : {})}
       />
     );
@@ -328,6 +337,7 @@ export function FormulaSortableTokenRow({
           nodes={nodes}
           onRemoveToken={onRemoveToken}
           onUpdateNumber={onUpdateNumber}
+          insertIndex={insertIndex}
           {...(isUnknownReference !== undefined ? { isUnknownReference } : {})}
         />
       )}

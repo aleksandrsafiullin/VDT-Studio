@@ -111,7 +111,7 @@ describe("CliAgentCard", () => {
     expect(html).not.toContain("Live from CLI");
     expect(html).toContain("claude-sonnet-4-6");
     expect(html).toContain("claude-opus-4-8");
-    expect(html).toContain("Usage and limits are managed by the provider");
+    expect(html).toContain("Billing and rate limits follow your Anthropic subscription");
   });
 
   it("exposes async test status to assistive tech with distinct info styling", () => {

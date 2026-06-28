@@ -46,25 +46,39 @@ export function useFormulaEditorState(
   const [editorTokens, setEditorTokens] = useState<FormulaEditorToken[]>(() => parseFormulaToEditorTokens(formula));
   const editorTokensRef = useRef(editorTokens);
   editorTokensRef.current = editorTokens;
+  const lastEmittedFormulaRef = useRef(formula);
 
   const applyTokenUpdate = useCallback(
     (updater: (tokens: FormulaEditorToken[]) => FormulaEditorToken[]) => {
       const next = updater(editorTokensRef.current);
+      const nextFormula = editorTokensToFormula(next);
       editorTokensRef.current = next;
+      lastEmittedFormulaRef.current = nextFormula;
       setEditorTokens(next);
-      onFormulaChange(editorTokensToFormula(next));
+      onFormulaChange(nextFormula);
     },
     [onFormulaChange]
   );
 
   useEffect(() => {
+    if (formula === lastEmittedFormulaRef.current) {
+      return;
+    }
+
     setEditorTokens((previous) => {
       const currentFormula = editorTokensToFormula(previous);
       if (currentFormula === formula) {
+        lastEmittedFormulaRef.current = formula;
         return previous;
       }
+
       const next = parseFormulaToEditorTokens(formula);
+      if (next.length === 0 && formula.trim() !== "") {
+        return previous;
+      }
+
       editorTokensRef.current = next;
+      lastEmittedFormulaRef.current = formula;
       return next;
     });
   }, [formula]);
@@ -135,9 +149,11 @@ export function useFormulaEditorState(
   const setFromFormulaString = useCallback(
     (raw: string) => {
       const nextTokens = parseFormulaToEditorTokens(raw);
+      const nextFormula = editorTokensToFormula(nextTokens);
       editorTokensRef.current = nextTokens;
+      lastEmittedFormulaRef.current = nextFormula;
       setEditorTokens(nextTokens);
-      onFormulaChange(editorTokensToFormula(nextTokens));
+      onFormulaChange(nextFormula);
     },
     [onFormulaChange]
   );

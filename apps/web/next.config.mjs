@@ -9,6 +9,8 @@ const nextConfig = {
   outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: [
     "@vdt-studio/vdt-core",
+    "@vdt-studio/vdt-agent",
+    "@vdt-studio/vdt-agent-runtime",
     "@vdt-studio/ai-harness",
     "@vdt-studio/local-runner",
     "@vdt-studio/model-bridge",

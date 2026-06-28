@@ -146,7 +146,11 @@ export function CliAgentCard({
               ))}
             </span>
             <span className="mt-0.5 block text-xs leading-5 text-muted">{catalog.subtitle}</span>
-            <ProviderUsageNote className="mt-1" testId={`provider-usage-note-${catalog.id}`} />
+            <ProviderUsageNote
+              className="mt-1"
+              testId={`provider-usage-note-${catalog.id}`}
+              message={catalog.usageNote}
+            />
             {detection.version ? (
               <span className="mt-1 flex flex-wrap items-center gap-2">
                 <span className="font-mono text-[11px] text-slate-500">{detection.version}</span>

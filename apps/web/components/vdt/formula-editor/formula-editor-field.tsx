@@ -4,7 +4,7 @@ import { ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
 import { useCallback, useMemo, useState } from "react";
 import type { VdtEdge, VdtNode } from "@vdt-studio/vdt-core";
-import { Field, TextArea } from "@/components/ui/field";
+import { TextArea } from "@/components/ui/field";
 import { FormulaEditorInteractions } from "./formula-editor-dnd";
 import { useFormulaEditorState } from "./use-formula-editor-state";
 
@@ -69,8 +69,14 @@ export function FormulaEditorField({
   const showErrorBanner = inlineErrorMessages.length > 0;
 
   return (
-    <Field label="Formula" hint="Build formula from drivers below">
-      <div className="space-y-3" data-testid="formula-editor">
+    <div className="grid gap-1.5">
+      <span
+        id="formula-editor-label"
+        className="text-[11px] font-semibold uppercase tracking-normal text-slate-500"
+      >
+        Formula
+      </span>
+      <div className="space-y-3" data-testid="formula-editor" aria-labelledby="formula-editor-label">
         {showErrorBanner ? (
           <div
             className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800"
@@ -122,6 +128,7 @@ export function FormulaEditorField({
           ) : null}
         </div>
       </div>
-    </Field>
+      <span className="text-xs leading-4 text-muted">Build formula from drivers below</span>
+    </div>
   );
 }

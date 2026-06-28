@@ -445,17 +445,21 @@ export function retrieveSkills(
         ...(entry?.expectedOutputs ?? [])
       ];
       const matchedTerms = uniqueStrings(terms.filter((term) => includesTerm(haystack, term)));
-      const hasExplicitMatch = matchedTerms.length > 0;
+      const patternMatched = skillMatchesClassificationPattern(skill, classification);
+      const effectiveMatchedTerms = patternMatched
+        ? uniqueStrings([...matchedTerms, classification.pattern])
+        : matchedTerms;
+      const hasExplicitMatch = effectiveMatchedTerms.length > 0;
       const isGenericFallback = skill.domain === "generic";
       const domainScore = skill.domain === classification.domain && hasExplicitMatch ? 8 : isGenericFallback ? 1 : 0;
-      const patternScore = matchedTerms.length * 3;
-      const outputScore = skill.frontmatter.outputs.some((output) => matchedTerms.includes(output)) ? 2 : 0;
+      const patternScore = matchedTerms.length * 3 + (patternMatched ? 6 : 0);
+      const outputScore = skill.frontmatter.outputs.some((output) => effectiveMatchedTerms.includes(output)) ? 2 : 0;
       const score = domainScore + patternScore + outputScore;
       return {
         skill,
         score,
-        matchedTerms,
-        reason: buildSelectionReason(skill, classification, matchedTerms)
+        matchedTerms: effectiveMatchedTerms,
+        reason: buildSelectionReason(skill, classification, effectiveMatchedTerms)
       };
     })
     .filter(
@@ -482,6 +486,16 @@ export function retrieveSkills(
         }
       ]
     : [];
+}
+
+function skillMatchesClassificationPattern(skill: VdtSkill, classification: VdtClassification): boolean {
+  if (skill.domain !== classification.domain) return false;
+  if (classification.pattern === "logical_kpi_decomposition" || classification.pattern === "production_volume") return false;
+  const normalizedPattern = normalizeText(classification.pattern);
+  if (!normalizedPattern) return false;
+  const skillIdSuffix = skill.id.split(".").at(-1) ?? skill.id;
+  if (normalizeText(skillIdSuffix) === normalizedPattern) return true;
+  return [...skill.frontmatter.patterns, ...skill.frontmatter.kpiPatterns].some((pattern) => normalizeText(pattern) === normalizedPattern);
 }
 
 export function readSkillExcerpts(skills: RetrievedSkill[] | VdtSkill[], maxChars = 1800): SkillExcerpt[] {

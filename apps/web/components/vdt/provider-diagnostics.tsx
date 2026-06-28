@@ -44,12 +44,17 @@ export function ProviderTestStatusBanner({ status, testId = "provider-test-statu
 interface ProviderUsageNoteProps {
   className?: string;
   testId?: string;
+  message?: string;
 }
 
-export function ProviderUsageNote({ className, testId = "provider-usage-note" }: ProviderUsageNoteProps) {
+export function ProviderUsageNote({
+  className,
+  testId = "provider-usage-note",
+  message = PROVIDER_USAGE_LIMITS_COPY
+}: ProviderUsageNoteProps) {
   return (
     <p className={clsx("text-xs leading-5 text-muted", className)} data-testid={testId}>
-      {PROVIDER_USAGE_LIMITS_COPY}
+      {message}
     </p>
   );
 }

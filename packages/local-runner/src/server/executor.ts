@@ -497,10 +497,22 @@ function buildRepairMessages(
 
 function buildSubscriptionPrompt(request: CompletionRequest): string {
   const schemaId = request.schemaId as VdtSchemaId;
+  const schemaInstructions = schemaId === "agent-decision-v1"
+    ? [
+        "Agent decision encoding:",
+        "- Return the strict fields type, toolName, argsJson, statusMessage, questionsJson, summary, and nextSuggestedActions.",
+        "- For call_tool, set toolName and put the tool arguments in argsJson as a JSON object string.",
+        "- For call_tool, toolName must exactly match one availableTools.name from the input context.",
+        "- For ask_user, put the question array in questionsJson as a JSON array string.",
+        "- Never call request_user_input, ask_user, or user.ask as a tool; use type ask_user instead.",
+        "- Use {} for unused argsJson, [] for unused questionsJson, an empty summary unless finishing, and a non-empty statusMessage."
+      ].join("\n")
+    : "";
   return [
     `Return only JSON matching approved schema ${request.schemaId} for VDT task ${request.taskType}.`,
     "Do not include markdown fences or commentary.",
     "Do not use tools, run commands, inspect files, edit files, or wait for user input. Answer directly from the provided request.",
+    schemaInstructions,
     JSON.stringify({
       schemaId: request.schemaId,
       taskType: request.taskType,
@@ -512,10 +524,21 @@ function buildSubscriptionPrompt(request: CompletionRequest): string {
 }
 
 function buildRepairPrompt(request: CompletionRequest, invalidJson: string, parsedOutput: unknown): string {
+  const schemaId = request.schemaId as VdtSchemaId;
+  const schemaInstructions = schemaId === "agent-decision-v1"
+    ? [
+        "For agent-decision-v1, return strict fields type, toolName, argsJson, statusMessage, questionsJson, summary, and nextSuggestedActions.",
+        "Encode tool arguments as an argsJson JSON object string and user questions as a questionsJson JSON array string.",
+        "For call_tool, toolName must exactly match one availableTools.name from the input context.",
+        "Never call request_user_input, ask_user, or user.ask as a tool; use type ask_user instead.",
+        "Use {} for unused argsJson, [] for unused questionsJson, and a non-empty statusMessage."
+      ].join(" ")
+    : "";
   return [
     `Repair JSON for approved schema ${request.schemaId} and VDT task ${request.taskType}.`,
     "Return exactly one corrected JSON object.",
     "Do not include markdown fences, commentary, file paths, environment values, credentials, or tokens.",
+    schemaInstructions,
     JSON.stringify({
       taskType: request.taskType,
       schemaId: request.schemaId,

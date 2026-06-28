@@ -69,6 +69,7 @@ export function FormulaNumberToken({
           className="inline-flex shrink-0 rounded p-0.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
           aria-label="Remove number"
           data-testid={tokenId ? `formula-number-remove-${tokenId}` : "formula-number-remove"}
+          onPointerDown={(event) => event.stopPropagation()}
           onClick={onRemove}
         >
           <X className="h-3 w-3" />

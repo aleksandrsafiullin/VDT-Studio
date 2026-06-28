@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlignHorizontalSpaceBetween } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ArrowDownBackwardAndArrowUpForwardSquare } from "./canvas-toolbar-icons";
 import { SpacingSlider } from "./spacing-slider";
 import { useVdtStudioStore } from "./vdt-store";
 import {
@@ -45,15 +45,16 @@ export function KpiSpacingPopover() {
   }, [open]);
 
   return (
-    <div ref={containerRef} className="relative">
+    <div ref={containerRef} className="relative inline-flex items-center">
       <Button
         size="sm"
+        className="h-8"
         aria-label="KPI block spacing"
         aria-controls="kpi-spacing-panel"
         aria-expanded={open}
         aria-haspopup="dialog"
         data-testid="kpi-spacing-toggle"
-        icon={<AlignHorizontalSpaceBetween className="h-4 w-4" />}
+        icon={<ArrowDownBackwardAndArrowUpForwardSquare />}
         onClick={() => setOpen((current) => !current)}
       >
         Spacing

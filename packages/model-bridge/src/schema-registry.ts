@@ -287,6 +287,40 @@ const agentDecisionSchema = {
   additionalProperties: false
 };
 
+const agentDecisionStrictResponseSchema = objectSchema(
+  {
+    type: enumProp(["call_tool", "ask_user", "finish"]),
+    toolName: { type: "string", maxLength: 120 },
+    argsJson: {
+      type: "string",
+      maxLength: MAX_OUTPUT_STRING_LENGTH,
+      description: "A JSON object string containing tool arguments. Use {} when type is not call_tool."
+    },
+    statusMessage: {
+      type: "string",
+      minLength: 1,
+      maxLength: 500,
+      description: "A concise user-visible status message for this decision."
+    },
+    questionsJson: {
+      type: "string",
+      maxLength: MAX_OUTPUT_STRING_LENGTH,
+      description: "A JSON array string containing user questions. Use [] unless type is ask_user."
+    },
+    summary: {
+      type: "string",
+      maxLength: 2_000,
+      description: "Finish summary. Use an empty string unless type is finish."
+    },
+    nextSuggestedActions: {
+      type: "array",
+      maxItems: 10,
+      items: { type: "string", maxLength: 300 }
+    }
+  },
+  ["type", "toolName", "argsJson", "statusMessage", "questionsJson", "summary", "nextSuggestedActions"]
+);
+
 const nodeUpdateSchema = objectSchema(
   {
     id: nodeIdProp,
@@ -625,7 +659,117 @@ function orientGenerateTreeEdgesFromRoot(output: Record<string, unknown>): Recor
   return validateGenerateTreeGraph(normalized).valid ? normalized : output;
 }
 
+function parseJsonObjectString(value: unknown): Record<string, unknown> | undefined {
+  if (isRecord(value)) return value;
+  if (typeof value !== "string") return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseJsonObjectArrayString(value: unknown): Record<string, unknown>[] | undefined {
+  if (isObjectArray(value)) return value as Record<string, unknown>[];
+  if (typeof value !== "string") return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isObjectArray(parsed) ? parsed as Record<string, unknown>[] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeStatusMessage(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+const userQuestionToolAliases = new Set(["request_user_input", "ask_user", "user.ask", "user.request_input"]);
+
+function questionFromRecord(record: Record<string, unknown>, index = 0): Record<string, unknown> | undefined {
+  const question =
+    typeof record.question === "string" && record.question.trim()
+      ? record.question
+      : typeof record.message === "string" && record.message.trim()
+        ? record.message
+        : undefined;
+  if (!question) return undefined;
+  return {
+    id: typeof record.id === "string" && record.id.trim() ? record.id : `question_${index + 1}`,
+    question,
+    reason: typeof record.reason === "string" && record.reason.trim() ? record.reason : "The agent needs this information before continuing.",
+    required: typeof record.required === "boolean" ? record.required : true,
+    ...(typeof record.expectedAnswerType === "string" ? { expectedAnswerType: record.expectedAnswerType } : {}),
+    ...(isStringArray(record.options) ? { options: record.options } : {}),
+    ...(record.defaultValue === undefined ? {} : { defaultValue: record.defaultValue })
+  };
+}
+
+function questionsFromArgs(args: Record<string, unknown>): Record<string, unknown>[] {
+  if (isObjectArray(args.questions)) {
+    return (args.questions as Record<string, unknown>[])
+      .map((question, index) => questionFromRecord(question, index))
+      .filter((question): question is Record<string, unknown> => question !== undefined);
+  }
+  const single = questionFromRecord(args);
+  return single ? [single] : [];
+}
+
+function fallbackQuestionFromMessage(message: unknown): Record<string, unknown>[] {
+  const question = typeof message === "string" && message.trim()
+    ? message.trim()
+    : "What additional information should the agent use before continuing?";
+  return [
+    {
+      id: "additional_input",
+      question,
+      reason: "The agent requested user input before continuing.",
+      required: true
+    }
+  ];
+}
+
+function normalizeAgentDecisionOutput(output: Record<string, unknown>): Record<string, unknown> {
+  if (output.type === "call_tool") {
+    const toolName = typeof output.toolName === "string" ? output.toolName : "";
+    const args = parseJsonObjectString(output.argsJson ?? output.args) ?? {};
+    if (userQuestionToolAliases.has(toolName)) {
+      return {
+        type: "ask_user",
+        questions: questionsFromArgs(args),
+        statusMessage: normalizeStatusMessage(output.statusMessage, "Additional inputs are needed.")
+      };
+    }
+    return {
+      type: output.type,
+      toolName,
+      args,
+      statusMessage: normalizeStatusMessage(output.statusMessage, toolName ? `Calling ${toolName}.` : "Calling the next tool.")
+    };
+  }
+  if (output.type === "ask_user") {
+    const questions =
+      parseJsonObjectArrayString(output.questionsJson ?? output.questions) ??
+      questionsFromArgs(parseJsonObjectString(output.argsJson ?? output.args) ?? {});
+    return {
+      type: output.type,
+      questions: questions.length > 0 ? questions : fallbackQuestionFromMessage(output.statusMessage),
+      statusMessage: normalizeStatusMessage(output.statusMessage, "Additional inputs are needed.")
+    };
+  }
+  if (output.type === "finish") {
+    return {
+      type: output.type,
+      summary: typeof output.summary === "string" && output.summary.trim() ? output.summary : "Finished the VDT agent run.",
+      nextSuggestedActions: isStringArray(output.nextSuggestedActions) ? output.nextSuggestedActions : []
+    };
+  }
+  return output;
+}
+
 export function normalizeRegisteredSchemaOutput(schemaId: VdtSchemaId, output: unknown): unknown {
+  if (schemaId === "agent-decision-v1" && isRecord(output)) return normalizeAgentDecisionOutput(output);
   if (schemaId === "generate-tree-v1" && isRecord(output)) return orientGenerateTreeEdgesFromRoot(output);
   return output;
 }
@@ -818,6 +962,7 @@ function toStrictResponseJsonSchema(schema: unknown): unknown {
 }
 
 export function getStrictResponseJsonSchema(schemaId: VdtSchemaId): Record<string, unknown> {
+  if (schemaId === "agent-decision-v1") return agentDecisionStrictResponseSchema;
   return toStrictResponseJsonSchema(jsonSchemas[schemaId]) as Record<string, unknown>;
 }
 

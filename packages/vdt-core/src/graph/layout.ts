@@ -30,7 +30,7 @@ export interface GraphLayoutResult {
 export const DEFAULT_CANVAS_LAYOUT: ResolvedGraphLayoutOptions = Object.freeze({
   margin: 48,
   cardWidth: 260,
-  cardHeight: 132,
+  cardHeight: 158,
   horizontalGap: 220,
   verticalGap: 36
 });

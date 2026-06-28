@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { VdtEdge, VdtNode } from "@vdt-studio/vdt-core";
 import {
+  createEditorToken,
   editorTokensToFormula,
   getConnectedNodeIds,
   getPaletteNodes,
   getReferencedNodeIds,
+  operatorToToken,
   parseFormulaToEditorTokens,
+  removeEditorTokenById,
   resolveDisplayName,
   validateFormulaString
 } from "./formula-editor-model";
@@ -156,5 +159,31 @@ describe("formula-editor-model", () => {
   it("getReferencedNodeIds scans identifier tokens when parse fails", () => {
     const referenced = getReferencedNodeIds("a * (");
     expect([...referenced]).toEqual(["a"]);
+  });
+
+  it("removeEditorTokenById drops the matching token and updates formula", () => {
+    const tokens = parseFormulaToEditorTokens("a * b");
+    const operatorToken = tokens.find((entry) => entry.token.type === "operator");
+    expect(operatorToken).toBeDefined();
+
+    const next = removeEditorTokenById(tokens, operatorToken!.id);
+    expect(next).toHaveLength(2);
+    expect(next.map((entry) => entry.token.type)).toEqual(["identifier", "identifier"]);
+    expect(editorTokensToFormula(next)).toBe("a b");
+  });
+
+  it("removeEditorTokenById can remove operators without losing adjacent references", () => {
+    const tokens = parseFormulaToEditorTokens("calendar_time - planned_downtime - unplanned_downtime");
+    const firstMinus = tokens.find((entry) => entry.token.type === "operator");
+    expect(firstMinus).toBeDefined();
+
+    const next = removeEditorTokenById(tokens, firstMinus!.id);
+    expect(editorTokensToFormula(next)).toBe("calendar_time planned_downtime - unplanned_downtime");
+  });
+
+  it("inserted operator round-trips through editorTokensToFormula", () => {
+    const tokens = parseFormulaToEditorTokens("a");
+    const withPlus = [...tokens, createEditorToken(operatorToToken("+"))];
+    expect(editorTokensToFormula(withPlus)).toBe("a +");
   });
 });

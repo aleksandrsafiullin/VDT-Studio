@@ -132,8 +132,8 @@ function createLivePlanningProvider(options) {
         const result = await completeRuntime({
           requestId,
           backendId: options.backend,
-          taskType: "agent_plan",
-          schemaId: "agent-plan-v1",
+          taskType: "agent_decision",
+          schemaId: "agent-decision-v1",
           input: {
             data: params.input,
             systemPrompt: params.systemPrompt,
@@ -144,10 +144,10 @@ function createLivePlanningProvider(options) {
         }, runtimeContext);
         const payload = result.payload;
         if (result.statusCode < 200 || result.statusCode >= 300 || !payload?.ok) {
-          throw new Error(payload?.error?.message ?? "Live CLI agent planning failed.");
+          throw new Error(payload?.error?.message ?? "Live CLI agent decision failed.");
         }
         if (payload.run?.repairAttempted || payload.run?.repaired) {
-          throw new Error("Live CLI agent planning required structured-output repair; primary agent-plan output is not readiness-clean.");
+          throw new Error("Live CLI agent decision required structured-output repair; primary agent-decision output is not readiness-clean.");
         }
         return payload.output;
       } finally {

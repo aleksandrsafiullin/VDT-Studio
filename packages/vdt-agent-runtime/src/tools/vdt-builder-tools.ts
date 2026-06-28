@@ -31,19 +31,57 @@ const edgeRelationSchema = z.enum([
   "formula_dependency"
 ]);
 
+function normalizeEnumText(value: unknown): string | undefined {
+  return typeof value === "string"
+    ? value.trim().toLowerCase().replace(/[\s-]+/g, "_")
+    : undefined;
+}
+
+function normalizeNodeType(value: unknown): unknown {
+  const normalized = normalizeEnumText(value);
+  if (!normalized) return value;
+  if (nodeTypeSchema.options.includes(normalized as never)) return normalized;
+  if (["driver", "factor", "lever", "input_driver", "variable"].includes(normalized)) return "input";
+  if (["calculation", "computed", "derived", "formula", "formula_node"].includes(normalized)) return "calculated";
+  if (["root", "kpi", "root_metric", "root_driver"].includes(normalized)) return "root_kpi";
+  if (["external", "context", "external_driver"].includes(normalized)) return "external_factor";
+  if (["data", "mapped", "data_source", "data_mapped_node"].includes(normalized)) return "data_mapped";
+  return value;
+}
+
+function normalizeEdgeRelation(value: unknown): unknown {
+  const normalized = normalizeEnumText(value);
+  if (!normalized) return value;
+  if (edgeRelationSchema.options.includes(normalized as never)) return normalized;
+  if (["determines", "drives", "driver", "influences", "contributes", "affects", "impacts"].includes(normalized)) {
+    return "positive_driver";
+  }
+  if (["multiplies", "multiplier", "factor", "multiplicative"].includes(normalized)) return "multiplicative_driver";
+  if (["divides", "denominator", "inverse", "divisive"].includes(normalized)) return "divisive_driver";
+  if (["adds", "addition", "component", "part", "additive"].includes(normalized)) return "additive_component";
+  if (["subtracts", "reduction", "reduces", "negative", "decreases"].includes(normalized)) return "negative_driver";
+  if (["dependency", "formula", "formula_reference", "depends_on"].includes(normalized)) return "formula_dependency";
+  return value;
+}
+
+const nodeTypeInputSchema = z.preprocess(normalizeNodeType, nodeTypeSchema);
+const edgeRelationInputSchema = z.preprocess(normalizeEdgeRelation, edgeRelationSchema);
+const nullToUndefined = (value: unknown): unknown => value === null ? undefined : value;
+const optionalInput = <T extends z.ZodTypeAny>(schema: T) => z.preprocess(nullToUndefined, schema.optional());
+
 const nodePatchSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
-  description: z.string().max(1_000).optional(),
-  type: nodeTypeSchema.optional(),
-  unit: z.string().max(80).optional(),
-  formula: z.string().max(500).optional(),
-  baselineValue: z.number().finite().optional(),
-  value: z.number().finite().optional(),
-  status: nodeStatusSchema.optional(),
-  assumptions: z.array(z.string().max(300)).max(20).optional(),
-  tags: z.array(z.string().max(80)).max(20).optional(),
-  controllability: z.enum(["high", "medium", "low", "none"]).optional(),
-  materiality: z.enum(["high", "medium", "low", "unknown"]).optional()
+  name: optionalInput(z.string().min(1).max(200)),
+  description: optionalInput(z.string().max(1_000)),
+  type: optionalInput(nodeTypeInputSchema),
+  unit: optionalInput(z.string().max(80)),
+  formula: optionalInput(z.string().max(500)),
+  baselineValue: optionalInput(z.number().finite()),
+  value: optionalInput(z.number().finite()),
+  status: optionalInput(nodeStatusSchema),
+  assumptions: optionalInput(z.array(z.string().max(300)).max(20)),
+  tags: optionalInput(z.array(z.string().max(80)).max(20)),
+  controllability: optionalInput(z.enum(["high", "medium", "low", "none"])),
+  materiality: optionalInput(z.enum(["high", "medium", "low", "unknown"]))
 }).strict();
 
 export function createVdtBuilderTools(): AgentTool[] {
@@ -66,12 +104,12 @@ const createDraftTool: AgentTool = {
   inputSchema: z.object({
     projectTitle: z.string().min(1).max(240),
     rootKpi: z.string().min(1).max(200),
-    unit: z.string().max(80).optional(),
-    timePeriod: z.string().max(80).optional(),
-    industry: z.string().max(160).optional(),
-    businessContext: z.string().max(2_000).optional(),
-    goal: z.string().max(1_000).optional(),
-    replaceExisting: z.boolean().optional()
+    unit: optionalInput(z.string().max(80)),
+    timePeriod: optionalInput(z.string().max(80)),
+    industry: optionalInput(z.string().max(160)),
+    businessContext: optionalInput(z.string().max(2_000)),
+    goal: optionalInput(z.string().max(1_000)),
+    replaceExisting: optionalInput(z.boolean())
   }),
   outputSchema: z.record(z.unknown()),
   mutatesProject: true,
@@ -104,16 +142,16 @@ const addDriverTool: AgentTool = {
   description: "Add one driver node and edge under an existing parent node.",
   inputSchema: z.object({
     parentNodeId: z.string().min(1).max(160),
-    nodeId: z.string().max(160).optional(),
+    nodeId: optionalInput(z.string().max(160)),
     name: z.string().min(1).max(200),
-    type: nodeTypeSchema.optional(),
-    unit: z.string().max(80).optional(),
-    relation: edgeRelationSchema.optional(),
-    formula: z.string().max(500).optional(),
-    baselineValue: z.number().finite().optional(),
-    description: z.string().max(1_000).optional(),
-    aiRationale: z.string().max(800).optional(),
-    assumptions: z.array(z.string().max(300)).max(20).optional()
+    type: optionalInput(nodeTypeInputSchema),
+    unit: optionalInput(z.string().max(80)),
+    relation: optionalInput(edgeRelationInputSchema),
+    formula: optionalInput(z.string().max(500)),
+    baselineValue: optionalInput(z.number().finite()),
+    description: optionalInput(z.string().max(1_000)),
+    aiRationale: optionalInput(z.string().max(800)),
+    assumptions: optionalInput(z.array(z.string().max(300)).max(20))
   }),
   outputSchema: z.record(z.unknown()),
   mutatesProject: true,
@@ -158,8 +196,8 @@ const addEdgeTool: AgentTool = {
   inputSchema: z.object({
     sourceNodeId: z.string().min(1).max(160),
     targetNodeId: z.string().min(1).max(160),
-    relation: edgeRelationSchema,
-    label: z.string().max(120).optional()
+    relation: edgeRelationInputSchema,
+    label: optionalInput(z.string().max(120))
   }),
   outputSchema: z.record(z.unknown()),
   mutatesProject: true,

@@ -27,6 +27,7 @@ describe("execution-mode-catalog", () => {
     for (const entry of CLI_CATALOG) {
       expect(entry.displayName.trim().length).toBeGreaterThan(0);
       expect(entry.subtitle.trim().length).toBeGreaterThan(0);
+      expect(entry.usageNote.trim().length).toBeGreaterThan(0);
       expect(entry.primaryCommand.trim().length).toBeGreaterThan(0);
       expect(entry.docsUrl.startsWith("http")).toBe(true);
       expect(entry.installHint.trim().length).toBeGreaterThan(0);
@@ -292,6 +293,7 @@ describe("execution-mode-catalog", () => {
     const registryIds = new Set(MODEL_BACKEND_DEFINITIONS.map((backend) => backend.id));
 
     for (const preset of LOCAL_RUNNER_PRESET_CATALOG) {
+      expect(preset.description.trim().length).toBeGreaterThan(0);
       if (preset.modelBackendId === undefined) {
         continue;
       }

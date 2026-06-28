@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LayoutGrid } from "lucide-react";
 import {
   Background,
   Controls,
@@ -23,6 +22,7 @@ import {
   resolveFormulaEdgeRelation
 } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
+import { SquareGrid2x2 } from "./canvas-toolbar-icons";
 import { KpiSpacingPopover } from "./kpi-spacing-popover";
 import { VdtNodeCard, type VdtNodeCardData } from "./vdt-node-card";
 import { collectExistingPositions } from "./layout-positions";
@@ -198,8 +198,9 @@ export function VdtCanvas() {
       <div className="absolute left-4 top-4 z-10 flex items-center gap-2">
         <Button
           size="sm"
+          className="h-8"
           data-testid="auto-distribute-layout"
-          icon={<LayoutGrid className="h-4 w-4" />}
+          icon={<SquareGrid2x2 />}
           onClick={autoDistributeLayout}
         >
           Auto-distribute

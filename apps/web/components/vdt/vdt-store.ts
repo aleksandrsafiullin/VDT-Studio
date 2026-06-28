@@ -1228,9 +1228,14 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       highlightedNodeIds: [],
       isRunningAiAction: false,
       setUiPreference: (field, value) =>
-        set((state) => ({
-          ui: applyUiPreference(state.ui, field, value)
-        })),
+        set((state) => {
+          const nextUi = applyUiPreference(state.ui, field, value);
+          const shouldRelayout = field === "kpiHorizontalGap" || field === "kpiVerticalGap";
+          return {
+            ui: nextUi,
+            ...(shouldRelayout ? { project: layoutProjectGraph(state.project, nextUi) } : {})
+          };
+        }),
       setPanelWidth: (side, width) =>
         set((state) => ({
           ui: applyPanelWidth(state.ui, side, width)
@@ -1246,30 +1251,16 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       openScenarioModal: () => set({ scenarioModalOpen: true }),
       closeScenarioModal: () => set({ scenarioModalOpen: false }),
       setScenarioModalOpen: (open) => set({ scenarioModalOpen: open }),
-      resetUiPreferences: () => set({ ui: { ...DEFAULT_UI }, scenarioModalOpen: false }),
+      resetUiPreferences: () =>
+        set((state) => ({
+          ui: { ...DEFAULT_UI },
+          scenarioModalOpen: false,
+          project: layoutProjectGraph(state.project, DEFAULT_UI)
+        })),
       autoDistributeLayout: () =>
-        set((state) => {
-          const existingPositions = collectExistingPositions(state.project.graph.nodes);
-          const layout = layoutGraph(state.project.graph, state.project.rootNodeId, {
-            ...canvasLayoutOptions(state.ui),
-            existingPositions
-          });
-          const updatedAt = nowIso();
-          return {
-            project: {
-              ...state.project,
-              updatedAt,
-              graph: {
-                ...state.project.graph,
-                nodes: state.project.graph.nodes.map((node) => ({
-                  ...node,
-                  position: layout.positions.get(node.id) ?? node.position ?? { x: 0, y: 0 },
-                  updatedAt
-                }))
-              }
-            }
-          };
-        }),
+        set((state) => ({
+          project: layoutProjectGraph(state.project, state.ui)
+        })),
       updateNodePosition: (nodeId, position) => {
         set((state) => ({
           project: updateProjectNode(state.project, nodeId, (node) => ({

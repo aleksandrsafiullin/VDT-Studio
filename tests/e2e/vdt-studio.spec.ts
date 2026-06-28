@@ -270,35 +270,45 @@ async function dragFormulaPaletteNodeIntoFormula(page: Page, nodeId: string) {
 
 /** Handle-based drag for reordering formula tokens via drag handles. */
 async function dragFormulaTokenReorder(page: Page, fromIndex: number, toIndex: number) {
+  const formulaRow = page.getByTestId("formula-token-row");
+  const tokenCountBefore = await formulaRow.locator('[data-testid^="formula-token-drag-handle-"]').count();
+  expect(tokenCountBefore).toBeGreaterThan(0);
+
   const source = page.getByTestId(`formula-token-drag-handle-${fromIndex}`);
   const target = page.getByTestId(`formula-token-drag-handle-${toIndex}`);
   await expect(source).toBeVisible();
   await expect(target).toBeVisible();
 
-  try {
-    await source.dragTo(target, {
-      force: true,
-      sourcePosition: { x: 4, y: 6 },
-      targetPosition: { x: 4, y: 6 }
-    });
-  } catch {
-    const sourceBox = await source.boundingBox();
-    const targetBox = await target.boundingBox();
-    expect(sourceBox).not.toBeNull();
-    expect(targetBox).not.toBeNull();
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  expect(sourceBox).not.toBeNull();
+  expect(targetBox).not.toBeNull();
 
-    const startX = sourceBox!.x + sourceBox!.width / 2;
-    const startY = sourceBox!.y + sourceBox!.height / 2;
-    const endX = targetBox!.x + targetBox!.width / 2;
-    const endY = targetBox!.y + targetBox!.height / 2;
+  const startX = sourceBox!.x + sourceBox!.width / 2;
+  const startY = sourceBox!.y + sourceBox!.height / 2;
+  const endX = targetBox!.x + 4;
+  const endY = targetBox!.y + targetBox!.height / 2;
 
-    await page.mouse.move(startX, startY);
-    await page.mouse.down();
-    await page.waitForTimeout(80);
-    await page.mouse.move(endX, endY, { steps: 24 });
-    await page.waitForTimeout(80);
-    await page.mouse.up();
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.waitForTimeout(80);
+  await page.mouse.move(endX, endY, { steps: 12 });
+  await page.waitForTimeout(80);
+
+  if (fromIndex !== toIndex) {
+    await expect
+      .poll(async () => page.getByTestId("formula-insert-indicator").count(), { timeout: 5_000 })
+      .toBeGreaterThan(0);
   }
+
+  const tokenCountMidDrag = await formulaRow.locator('[data-testid^="formula-token-drag-handle-"]').count();
+  expect(tokenCountMidDrag).toBe(tokenCountBefore);
+
+  await page.mouse.up();
+  await page.waitForTimeout(120);
+
+  const tokenCountAfter = await formulaRow.locator('[data-testid^="formula-token-drag-handle-"]').count();
+  expect(tokenCountAfter).toBe(tokenCountBefore);
 }
 
 async function readNodePositions(page: Page, nodeIds: string[]) {
@@ -1704,14 +1714,22 @@ test("KPI spacing settings affect auto-distributed layout and persist", async ({
   await page.getByTestId("kpi-vertical-gap-slider").fill("94");
   await page.keyboard.press("Escape");
 
-  await page.getByTestId("auto-distribute-layout").click();
   await expect.poll(async () => (await readPersistedUi(page))?.kpiHorizontalGap).toBe(220);
   await expect.poll(async () => (await readPersistedUi(page))?.kpiVerticalGap).toBe(94);
 
-  await expect.poll(async () => readNodePosition(page, "effective_working_time")).toMatchObject({
-    x: expect.any(Number),
-    y: expect.any(Number)
-  });
+  await expect.poll(async () => {
+    const root = await readNodePosition(page, "production_volume");
+    const effectiveWorkingTime = await readNodePosition(page, "effective_working_time");
+    const calendarTime = await readNodePosition(page, "calendar_time");
+    const plannedDowntime = await readNodePosition(page, "planned_downtime");
+    if (!root || !effectiveWorkingTime || !calendarTime || !plannedDowntime) {
+      return false;
+    }
+    return (
+      Math.abs(effectiveWorkingTime.x - root.x - 480) < 1 &&
+      Math.abs(plannedDowntime.y - calendarTime.y - 252) < 1
+    );
+  }).toBe(true);
 
   const root = await readNodePosition(page, "production_volume");
   const effectiveWorkingTime = await readNodePosition(page, "effective_working_time");
@@ -1719,7 +1737,7 @@ test("KPI spacing settings affect auto-distributed layout and persist", async ({
   const plannedDowntime = await readNodePosition(page, "planned_downtime");
 
   expect(effectiveWorkingTime!.x - root!.x).toBeCloseTo(480, 0);
-  expect(plannedDowntime!.y - calendarTime!.y).toBeCloseTo(226, 0);
+  expect(plannedDowntime!.y - calendarTime!.y).toBeCloseTo(252, 0);
 
   await page.reload();
 
@@ -2296,17 +2314,18 @@ test.describe("visual formula editor", () => {
 
     await dragFormulaTokenReorder(page, 2, 0);
 
-    let formulaAfterDnD = await readPersistedNodeFormula(page, nodeId);
-    if (formulaAfterDnD === baselineFormula) {
-      testInfo.annotations.push({
-        type: "note",
-        description: "Token reorder did not change formula; inserting multiply via toolbar."
-      });
-      await page.getByTestId("formula-toolbar-multiply").click();
-      formulaAfterDnD = await readPersistedNodeFormula(page, nodeId);
-    }
+    await expect
+      .poll(async () => {
+        const formula = await readPersistedNodeFormula(page, nodeId);
+        return typeof formula === "string" && formula !== baselineFormula;
+      })
+      .toBe(true);
 
-    expect(formulaAfterDnD).not.toBe(baselineFormula);
+    const formulaAfterDnD = await readPersistedNodeFormula(page, nodeId);
+    expect(formulaAfterDnD).toContain("average_productivity");
+    expect(formulaAfterDnD).toContain("effective_working_time");
+    expect(formulaAfterDnD).toContain("*");
+    await expect(formulaRow.locator('[data-testid^="formula-token-drag-handle-"]')).toHaveCount(3);
 
     const graphStillValid = await page.getByText("Model graph valid").isVisible();
     if (graphStillValid) {
@@ -2371,5 +2390,84 @@ test.describe("visual formula editor", () => {
     const errorBanner = page.getByTestId("formula-editor-error");
     await expect(errorBanner).toBeVisible();
     await expect(errorBanner).toContainText(/cannot be parsed|Missing closing parenthesis/i);
+  });
+
+  test("clicking empty drop zone space does not insert operators", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula empty-space click runs on desktop viewport.");
+
+    const nodeId = "production_volume";
+    const baselineFormula = "effective_working_time * average_productivity";
+
+    await selectNodeInInspector(page, nodeId);
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toBe(baselineFormula);
+
+    const dropZone = page.getByTestId("formula-editor-drop-zone");
+    const box = await dropZone.boundingBox();
+    expect(box).not.toBeNull();
+
+    await page.mouse.click(box!.x + box!.width - 8, box!.y + box!.height - 8);
+
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toBe(baselineFormula);
+    await expect(page.getByTestId("formula-toolbar-plus")).toHaveCount(1);
+    await expect(dropZone.getByText("+", { exact: true })).toHaveCount(0);
+  });
+
+  test("remove operator token updates persisted formula", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula operator remove runs on desktop viewport.");
+
+    const nodeId = "production_volume";
+    const baselineFormula = "effective_working_time * average_productivity";
+
+    await selectNodeInInspector(page, nodeId);
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toBe(baselineFormula);
+
+    const dropZone = page.getByTestId("formula-editor-drop-zone");
+    await dropZone.getByRole("button", { name: "Remove * operator" }).click();
+
+    await expect.poll(async () => {
+      const formula = await readPersistedNodeFormula(page, nodeId);
+      return typeof formula === "string" && !formula.includes("*");
+    }).toBe(true);
+
+    const formulaAfterRemove = await readPersistedNodeFormula(page, nodeId);
+    expect(formulaAfterRemove).toContain("effective_working_time");
+    expect(formulaAfterRemove).toContain("average_productivity");
+    await expect(dropZone.getByRole("button", { name: "Remove * operator" })).toHaveCount(0);
+  });
+
+  test("shows insert indicator while dragging palette nodes into formula", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula insert indicator runs on desktop viewport.");
+
+    const nodeId = "effective_working_time";
+    await selectNodeInInspector(page, nodeId);
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+
+    const dropZone = page.getByTestId("formula-editor-drop-zone");
+    await dropZone.getByRole("button", { name: "Remove Planned Downtime" }).click();
+    await expect(page.getByTestId("formula-palette-drag-handle-planned_downtime")).toBeVisible();
+
+    const handle = page.getByTestId("formula-palette-drag-handle-planned_downtime");
+    await expect(handle).toBeVisible();
+
+    const handleBox = await handle.boundingBox();
+    const dropBox = await dropZone.boundingBox();
+    expect(handleBox).not.toBeNull();
+    expect(dropBox).not.toBeNull();
+
+    const startX = handleBox!.x + handleBox!.width / 2;
+    const startY = handleBox!.y + handleBox!.height / 2;
+    const endX = dropBox!.x + dropBox!.width / 2;
+    const endY = dropBox!.y + dropBox!.height / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 12 });
+    await expect
+      .poll(async () => page.getByTestId("formula-insert-indicator").count(), { timeout: 5_000 })
+      .toBeGreaterThan(0);
+    await page.mouse.up();
+    await expect(page.getByTestId("formula-insert-indicator")).toHaveCount(0);
   });
 });

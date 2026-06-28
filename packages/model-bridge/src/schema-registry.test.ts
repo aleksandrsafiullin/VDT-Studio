@@ -206,4 +206,103 @@ describe("schema registry", () => {
     expect(schemaIdForTask("review_model")).toBe("review-model-v1");
     expect(schemaIdForTask("generate_executive_summary")).toBe("generate-executive-summary-v1");
   });
+
+  it("emits a Codex-compatible flat strict schema for agent decisions", () => {
+    const schema = getStrictResponseJsonSchema("agent-decision-v1");
+
+    expect(schema).toMatchObject({
+      type: "object",
+      additionalProperties: false
+    });
+    expect(schema).not.toHaveProperty("anyOf");
+    expect(schema).not.toHaveProperty("oneOf");
+    expect(schema).not.toHaveProperty("allOf");
+    expect(schema.properties).toMatchObject({
+      type: { type: "string", enum: ["call_tool", "ask_user", "finish"] },
+      argsJson: { type: "string" },
+      questionsJson: { type: "string" }
+    });
+    expect(schema.required).toEqual([
+      "type",
+      "toolName",
+      "argsJson",
+      "statusMessage",
+      "questionsJson",
+      "summary",
+      "nextSuggestedActions"
+    ]);
+  });
+
+  it("normalizes agent-decision strict response encoding before registered validation", () => {
+    const normalized = normalizeRegisteredSchemaOutput("agent-decision-v1", {
+      type: "call_tool",
+      toolName: "skill.search",
+      argsJson: "{\"rootKpi\":\"Ore haulage\",\"industry\":\"Mining\",\"maxSkills\":3}",
+      statusMessage: "Searching for a haulage skill.",
+      questionsJson: "[]",
+      summary: "",
+      nextSuggestedActions: []
+    });
+
+    expect(normalized).toEqual({
+      type: "call_tool",
+      toolName: "skill.search",
+      args: { rootKpi: "Ore haulage", industry: "Mining", maxSkills: 3 },
+      statusMessage: "Searching for a haulage skill."
+    });
+    expect(validateRegisteredSchema("agent-decision-v1", normalized)).toBe(true);
+  });
+
+  it("normalizes user-question tool aliases to ask_user decisions", () => {
+    const normalized = normalizeRegisteredSchemaOutput("agent-decision-v1", {
+      type: "call_tool",
+      toolName: "request_user_input",
+      argsJson: "{\"questions\":[{\"id\":\"payload_per_trip_t\",\"question\":\"Average payload per trip?\",\"reason\":\"Needed for tonnes per year.\",\"required\":true,\"expectedAnswerType\":\"number\"}]}",
+      statusMessage: "Payload is needed before continuing.",
+      questionsJson: "[]",
+      summary: "",
+      nextSuggestedActions: []
+    });
+
+    expect(normalized).toEqual({
+      type: "ask_user",
+      questions: [
+        {
+          id: "payload_per_trip_t",
+          question: "Average payload per trip?",
+          reason: "Needed for tonnes per year.",
+          required: true,
+          expectedAnswerType: "number"
+        }
+      ],
+      statusMessage: "Payload is needed before continuing."
+    });
+    expect(validateRegisteredSchema("agent-decision-v1", normalized)).toBe(true);
+  });
+
+  it("keeps provider ask_user decisions valid when questions are missing", () => {
+    const normalized = normalizeRegisteredSchemaOutput("agent-decision-v1", {
+      type: "ask_user",
+      toolName: "",
+      argsJson: "{}",
+      statusMessage: "Payload and operating hours are required.",
+      questionsJson: "[]",
+      summary: "",
+      nextSuggestedActions: []
+    });
+
+    expect(normalized).toEqual({
+      type: "ask_user",
+      questions: [
+        {
+          id: "additional_input",
+          question: "Payload and operating hours are required.",
+          reason: "The agent requested user input before continuing.",
+          required: true
+        }
+      ],
+      statusMessage: "Payload and operating hours are required."
+    });
+    expect(validateRegisteredSchema("agent-decision-v1", normalized)).toBe(true);
+  });
 });

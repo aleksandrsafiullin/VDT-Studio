@@ -71,6 +71,15 @@ describe("VDT agent skill library", () => {
       "mining.haulage_truck_cycle"
     ],
     [
+      "ore haulage shorthand",
+      {
+        rootKpi: "Ore haulage",
+        industry: "Mining",
+        businessContext: "I have 5 trucks\nAverage distance 2.7 km\nAverage load speed - 7 km/h\nAverage empty speed - 11 km/h"
+      },
+      "mining.haulage_truck_cycle"
+    ],
+    [
       "finance profit",
       {
         rootKpi: "Operating profit",

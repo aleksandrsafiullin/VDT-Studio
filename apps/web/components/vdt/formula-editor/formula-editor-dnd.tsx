@@ -5,12 +5,13 @@ import {
   DragOverlay,
   KeyboardSensor,
   PointerSensor,
-  closestCenter,
+  closestCorners,
   useDraggable,
   useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragOverEvent,
   type DragStartEvent
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
@@ -21,6 +22,7 @@ import type { VdtNode } from "@vdt-studio/vdt-core";
 import {
   editorTokensToSegments,
   resolveDisplayName,
+  type FormulaEditorOperator,
   type FormulaEditorSegment
 } from "./formula-editor-model";
 import { FormulaNodePalette } from "./formula-node-palette";
@@ -31,9 +33,13 @@ import {
   FormulaTokenGhostChip,
   type FormulaSortableTokenRowProps
 } from "./formula-sortable-token-row";
-import type { FormulaEditorOperator } from "./formula-editor-model";
+import {
+  FORMULA_EDITOR_DROP_ZONE_ID,
+  resolveFormulaInsertIndex
+} from "./formula-drag-insert-index";
+import { FormulaInsertIndicator } from "./formula-insert-indicator";
 
-export const FORMULA_EDITOR_DROP_ZONE_ID = "formula-editor-drop-zone";
+export { FORMULA_EDITOR_DROP_ZONE_ID } from "./formula-drag-insert-index";
 
 export const FORMULA_DRAG_TYPE = {
   paletteNode: "palette-node",
@@ -61,7 +67,7 @@ function FormulaPaletteDraggableNode({ node }: { node: VdtNode }) {
   });
 
   return (
-    <div ref={setNodeRef} className={clsx("inline-flex", isDragging && "opacity-40")}>
+    <div ref={setNodeRef} className={clsx("inline-flex", isDragging && "opacity-0")}>
       <FormulaReferenceChip
         nodeId={node.id}
         displayName={node.name}
@@ -131,6 +137,7 @@ export function FormulaEditorDnd({
   dropZoneClassName
 }: FormulaEditorDndProps) {
   const [activeDrag, setActiveDrag] = useState<ActiveDragState>(null);
+  const [insertIndex, setInsertIndex] = useState<number | null>(null);
 
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const segments = useMemo(
@@ -144,6 +151,7 @@ export function FormulaEditorDnd({
   );
 
   const handleDragStart = (event: DragStartEvent) => {
+    setInsertIndex(null);
     const dragType = event.active.data.current?.type;
 
     if (dragType === FORMULA_DRAG_TYPE.paletteNode) {
@@ -162,9 +170,14 @@ export function FormulaEditorDnd({
     }
   };
 
+  const handleDragOver = (event: DragOverEvent) => {
+    setInsertIndex(resolveFormulaInsertIndex(event.over?.id, editorTokens, event.active.id));
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     setActiveDrag(null);
+    setInsertIndex(null);
 
     if (!over) {
       return;
@@ -205,30 +218,43 @@ export function FormulaEditorDnd({
     onReorder(fromIndex, toIndex);
   };
 
+  const handleDragCancel = () => {
+    setActiveDrag(null);
+    setInsertIndex(null);
+  };
+
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={closestCorners}
       onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
     >
       <div className={clsx("space-y-3", className)}>
         <FormulaEditorDropZone {...(dropZoneClassName !== undefined ? { className: dropZoneClassName } : {})}>
           {segments.length === 0 ? (
-            <p className="text-xs text-muted">Drag nodes or use toolbar to build a formula.</p>
+            activeDrag && insertIndex === 0 ? (
+              <FormulaInsertIndicator />
+            ) : (
+              <p className="text-xs text-muted">Drag nodes or use toolbar to build a formula.</p>
+            )
           ) : (
-            <div className="flex flex-wrap items-center gap-1.5" data-testid="formula-token-row">
+            <div className="contents" data-testid="formula-token-row">
               <FormulaSortableTokenRow
-              editorTokens={editorTokens}
-              nodes={nodes}
-              onReorder={onReorder}
-              onRemoveToken={onRemoveToken}
-              onUpdateNumber={onUpdateNumber}
-              {...(isUnknownReference !== undefined ? { isUnknownReference } : {})}
-              embedded
-            />
+                editorTokens={editorTokens}
+                nodes={nodes}
+                onReorder={onReorder}
+                onRemoveToken={onRemoveToken}
+                onUpdateNumber={onUpdateNumber}
+                insertIndex={insertIndex}
+                {...(isUnknownReference !== undefined ? { isUnknownReference } : {})}
+                embedded
+              />
             </div>
           )}
+          {segments.length > 0 && insertIndex === segments.length ? <FormulaInsertIndicator /> : null}
         </FormulaEditorDropZone>
 
         <FormulaNodePalette
