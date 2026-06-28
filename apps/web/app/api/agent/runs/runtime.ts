@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as managedRuntime from "@vdt-studio/local-runner/server-runtime";
+import { schemaIdForTask } from "@vdt-studio/model-bridge";
 import {
   createVdtAgentRuntime,
   type AgentDecisionProvider,
@@ -9,8 +10,6 @@ import { createAiProvider } from "@/lib/ai-route-provider";
 import { resolveVdtAppModeForRequest } from "@/lib/app-mode";
 
 type RuntimeContext = ReturnType<typeof managedRuntime.createLocalRuntimeContext>;
-const AGENT_DECISION_TASK_TYPE = "agent_decision" as const;
-const AGENT_DECISION_SCHEMA_ID = "agent-decision-v1";
 
 const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtAgentRuntime?: ReturnType<typeof createVdtAgentRuntime>;
@@ -69,8 +68,8 @@ export function createAgentDecisionProvider(request: VdtAgentStartRequest, reque
         const result = await managedRuntime.completeRuntime({
           requestId,
           backendId,
-          taskType: AGENT_DECISION_TASK_TYPE,
-          schemaId: AGENT_DECISION_SCHEMA_ID,
+          taskType: params.taskType,
+          schemaId: schemaIdForTask(params.taskType),
           input: {
             data: params.input,
             systemPrompt: params.systemPrompt,
@@ -79,12 +78,16 @@ export function createAgentDecisionProvider(request: VdtAgentStartRequest, reque
           ...(selectedModel ? { model: selectedModel } : {}),
           ...(timeoutMs ? { timeoutMs } : {})
         }, context);
-        const payload = result.payload as { ok?: boolean; output?: unknown; error?: { message?: string } } | undefined;
+        const payload = result.payload as { ok?: boolean; output?: unknown; error?: { code?: string; message?: string } } | undefined;
         if (params.signal?.aborted) {
           throw new DOMException("The operation was aborted.", "AbortError");
         }
         if (result.statusCode < 200 || result.statusCode >= 300 || !payload?.ok) {
-          throw new Error(payload?.error?.message ?? "Managed local runtime agent decision failed.");
+          const error = new Error(payload?.error?.message ?? "Managed local runtime agent decision failed.");
+          if (payload?.error?.code) {
+            (error as { code?: string }).code = payload.error.code;
+          }
+          throw error;
         }
         return payload.output as never;
       } finally {
@@ -98,7 +101,7 @@ export const createAgentPlanningProvider = createAgentDecisionProvider;
 
 function managedLocalRuntimeContext(backendId: string): RuntimeContext {
   const existing = runtimeGlobal.__vdtStudioDevelopmentRuntime;
-  if (existing && runtimeSupportsAgentDecision(existing, backendId)) {
+  if (existing && runtimeSupportsAgentTasks(existing, backendId)) {
     return existing;
   }
 
@@ -107,11 +110,13 @@ function managedLocalRuntimeContext(backendId: string): RuntimeContext {
   return refreshed;
 }
 
-function runtimeSupportsAgentDecision(context: RuntimeContext, backendId: string): boolean {
+function runtimeSupportsAgentTasks(context: RuntimeContext, backendId: string): boolean {
   const manifest = context.manifests.get(backendId);
   return Boolean(
-    manifest?.taskTypes.includes(AGENT_DECISION_TASK_TYPE) &&
-    manifest.schemaIds.includes(AGENT_DECISION_SCHEMA_ID)
+    manifest?.taskTypes.includes("agent_decision") &&
+    manifest.schemaIds.includes(schemaIdForTask("agent_decision")) &&
+    manifest.taskTypes.includes("orchestrator_first_response") &&
+    manifest.schemaIds.includes(schemaIdForTask("orchestrator_first_response"))
   );
 }
 

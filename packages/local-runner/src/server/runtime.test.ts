@@ -264,6 +264,39 @@ describe("local runtime contract", () => {
     });
   });
 
+  it("runs orchestrator_first_response through the mock backend contract", async () => {
+    const context = createLocalRuntimeContext({ auditSink: () => undefined });
+    const request = parseCompletionPayload({
+      requestId: crypto.randomUUID(),
+      backendId: "mock",
+      taskType: "orchestrator_first_response",
+      schemaId: "orchestrator-first-response-v1",
+      input: {
+        data: {
+          brief: { rootKpi: "Excavation", unit: "tonnes/year", period: "year" },
+          currentUserMessage: "Build an excavation model. I have 5 excavators."
+        },
+        systemPrompt: "Return one first response.",
+        userPrompt: "Build an excavation model."
+      }
+    });
+
+    const result = await completeRuntime(request, context);
+
+    expect(result.statusCode).toBe(200);
+    expect(result.payload).toMatchObject({
+      ok: true,
+      output: {
+        nextAction: "continue_building"
+      },
+      run: {
+        taskType: "orchestrator_first_response",
+        schemaId: "orchestrator-first-response-v1",
+        status: "succeeded"
+      }
+    });
+  });
+
   it("reports the exact missing task/schema when a stale manifest rejects agent_decision", async () => {
     const context = createLocalRuntimeContext({ auditSink: () => undefined });
     const mockManifest = context.manifests.get("mock");

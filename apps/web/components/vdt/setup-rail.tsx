@@ -48,17 +48,19 @@ export function SetupRail() {
       pendingChangeSet.deletions.length +
       pendingChangeSet.edgeChanges.length
     : 0;
+  const canContinueCurrentAgentRun = generateActivity?.status === "running" ||
+    generateActivity?.status === "needs_user_input";
   const canSendInstruction =
     instructionText.trim().length > 0 &&
-    !isGenerating &&
     !isRunningAiAction &&
-    canUseConfiguredRuntime;
+    canUseConfiguredRuntime &&
+    (!isGenerating || Boolean(generateActivity));
 
   async function submitAgentInstruction() {
     const text = instructionText.trim();
-    if (!text || isGenerating || isRunningAiAction) return;
+    if (!text || isRunningAiAction) return;
     if (!canUseConfiguredRuntime) return;
-    if (!generateActivity) {
+    if (!canContinueCurrentAgentRun) {
       const accepted = await startAgentRun(text);
       if (accepted) setInstructionText("");
       return;

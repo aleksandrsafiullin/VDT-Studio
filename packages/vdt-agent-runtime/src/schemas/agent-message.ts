@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+const answerValueSchema = z.union([z.string(), z.number(), z.array(z.string())]);
+
+const agentAnswerPayloadSchema = z.object({
+  questionId: z.string().min(1).max(120),
+  selectedOptionIds: z.array(z.string().min(1).max(160)).max(20).optional(),
+  freeText: z.string().max(2_000).optional(),
+  fields: z.record(z.union([z.string(), z.number()])).optional()
+});
+
 export const manualProjectChangeSchema = z.object({
   kind: z.enum([
     "node_updated",
@@ -18,7 +27,8 @@ export const manualProjectChangeSchema = z.object({
 export const agentUserMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("user_answer"),
-    answers: z.record(z.union([z.string(), z.number(), z.array(z.string())]))
+    answers: z.record(answerValueSchema).optional(),
+    structuredAnswers: z.array(agentAnswerPayloadSchema).max(20).optional()
   }),
   z.object({
     type: z.literal("manual_project_change"),

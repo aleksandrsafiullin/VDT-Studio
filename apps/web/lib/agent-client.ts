@@ -8,8 +8,12 @@ import type {
 } from "@vdt-studio/vdt-agent-runtime";
 
 export type {
+  AgentAnswerPayload,
+  AgentChatMessage,
   AgentUserMessage,
   ManualProjectChange,
+  PublicAgentStatus,
+  RetryableAgentError,
   VdtAgentEvent,
   VdtAgentQuestion,
   VdtAgentRunSnapshot,

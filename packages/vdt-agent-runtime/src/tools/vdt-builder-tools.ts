@@ -5,7 +5,7 @@ import {
   type VdtEdgeRelation,
   type VdtNodePatch
 } from "@vdt-studio/vdt-core";
-import { AgentToolError, type AgentTool } from "../tool-registry";
+import { AgentToolError, type AgentTool, type AgentToolContext } from "../tool-registry";
 import { summarizeCalculation, summarizeValidation } from "../summaries";
 
 const nodeTypeSchema = z.enum(["root_kpi", "calculated", "input", "assumption", "external_factor", "data_mapped"]);
@@ -88,6 +88,7 @@ export function createVdtBuilderTools(): AgentTool[] {
   return [
     createDraftTool,
     addDriverTool,
+    addDriversBatchTool,
     addEdgeTool,
     updateNodeTool,
     deleteNodeTool,
@@ -97,6 +98,20 @@ export function createVdtBuilderTools(): AgentTool[] {
     calculateTool
   ];
 }
+
+const addDriverInputSchema = z.object({
+  parentNodeId: z.string().min(1).max(160),
+  nodeId: optionalInput(z.string().max(160)),
+  name: z.string().min(1).max(200),
+  type: optionalInput(nodeTypeInputSchema),
+  unit: optionalInput(z.string().max(80)),
+  relation: optionalInput(edgeRelationInputSchema),
+  formula: optionalInput(z.string().max(500)),
+  baselineValue: optionalInput(z.number().finite()),
+  description: optionalInput(z.string().max(1_000)),
+  aiRationale: optionalInput(z.string().max(800)),
+  assumptions: optionalInput(z.array(z.string().max(300)).max(20))
+});
 
 const createDraftTool: AgentTool = {
   name: "vdt.create_draft",
@@ -120,7 +135,19 @@ const createDraftTool: AgentTool = {
     if (existing.graph.nodes.length > 0 && input.replaceExisting !== true) {
       throw new AgentToolError("DRAFT_ALREADY_EXISTS", "Draft project already exists. Pass replaceExisting=true to replace it.");
     }
-    const result = builder.createDraft(input);
+    const protectedBrief = protectedBriefFromRun(context);
+    if (protectedBrief.rootKpi && !sameVisibleValue(input.rootKpi, protectedBrief.rootKpi)) {
+      throw new AgentToolError(
+        "VISIBLE_BRIEF_CONFLICT",
+        `Draft root KPI "${input.rootKpi}" conflicts with the visible brief root KPI "${protectedBrief.rootKpi}". Ask the user before changing scope.`
+      );
+    }
+    const result = builder.createDraft({
+      ...input,
+      ...(protectedBrief.rootKpi ? { rootKpi: protectedBrief.rootKpi, projectTitle: `${protectedBrief.rootKpi} Driver Model` } : {}),
+      ...(protectedBrief.unit ? { unit: protectedBrief.unit } : {}),
+      ...(protectedBrief.timePeriod ? { timePeriod: protectedBrief.timePeriod } : {})
+    });
     const validation = summarizeValidation(builder.validate().validation);
     context.store.updateRun(context.runId, {
       draftProject: result.project,
@@ -140,19 +167,7 @@ const createDraftTool: AgentTool = {
 const addDriverTool: AgentTool = {
   name: "vdt.add_driver",
   description: "Add one driver node and edge under an existing parent node.",
-  inputSchema: z.object({
-    parentNodeId: z.string().min(1).max(160),
-    nodeId: optionalInput(z.string().max(160)),
-    name: z.string().min(1).max(200),
-    type: optionalInput(nodeTypeInputSchema),
-    unit: optionalInput(z.string().max(80)),
-    relation: optionalInput(edgeRelationInputSchema),
-    formula: optionalInput(z.string().max(500)),
-    baselineValue: optionalInput(z.number().finite()),
-    description: optionalInput(z.string().max(1_000)),
-    aiRationale: optionalInput(z.string().max(800)),
-    assumptions: optionalInput(z.array(z.string().max(300)).max(20))
-  }),
+  inputSchema: addDriverInputSchema,
   outputSchema: z.record(z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
@@ -187,6 +202,66 @@ const addDriverTool: AgentTool = {
       metadata: { revision: result.revision, nodeId, edgeId }
     });
     return { nodeId, edgeId, revision: result.revision, validation };
+  }
+};
+
+const addDriversBatchTool: AgentTool = {
+  name: "vdt.add_drivers_batch",
+  description: "Add 2 to 20 driver nodes and their parent edges in one batch. Use this for sibling drivers or a small branch to reduce repeated model round-trips.",
+  inputSchema: z.object({
+    drivers: z.array(addDriverInputSchema).min(2).max(20)
+  }),
+  outputSchema: z.record(z.unknown()),
+  mutatesProject: true,
+  requiresDraftProject: true,
+  phase: "building_graph",
+  run(context, input) {
+    const builder = requireBuilder(context.builder);
+    const added: Array<{ nodeId: string; edgeId: string; parentNodeId: string; name: string }> = [];
+    let lastRevision = builder.getRevision();
+
+    for (const driver of input.drivers) {
+      const project = builder.getProject();
+      const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
+      if (!nodeIds.has(driver.parentNodeId)) {
+        throw new AgentToolError("PARENT_NOT_FOUND", `Parent node "${driver.parentNodeId}" was not found.`);
+      }
+      if (driver.nodeId && nodeIds.has(driver.nodeId)) {
+        throw new AgentToolError("NODE_ID_EXISTS", `Node id "${driver.nodeId}" already exists.`);
+      }
+      const result = builder.addDriver(driver);
+      const nodeId = result.changeSet?.additions[0]?.nodeId ?? driver.nodeId ?? driver.name;
+      const edgeId = result.changeSet?.edgeChanges[0]?.action === "add"
+        ? result.changeSet.edgeChanges[0].edge.id
+        : "";
+      added.push({ nodeId, edgeId, parentNodeId: driver.parentNodeId, name: driver.name });
+      lastRevision = result.revision;
+    }
+
+    const validation = summarizeValidation(builder.validate().validation);
+    const project = builder.getProject();
+    context.store.updateRun(context.runId, {
+      draftProject: project,
+      validationState: validation
+    });
+    context.emit({
+      type: "graph_patch",
+      phase: "building_graph",
+      title: "Drivers added",
+      message: `Added ${added.length} drivers: ${added.map((driver) => `"${driver.name}"`).join(", ")}.`,
+      metadata: {
+        revision: lastRevision,
+        nodeIds: added.map((driver) => driver.nodeId),
+        edgeIds: added.map((driver) => driver.edgeId),
+        parentNodeIds: added.map((driver) => driver.parentNodeId)
+      }
+    });
+    return {
+      nodeIds: added.map((driver) => driver.nodeId),
+      edgeIds: added.map((driver) => driver.edgeId),
+      revision: lastRevision,
+      validation
+    };
   }
 };
 
@@ -244,6 +319,18 @@ const updateNodeTool: AgentTool = {
     const project = builder.getProject();
     if (!project.graph.nodes.some((node) => node.id === input.nodeId)) {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
+    }
+    if (input.nodeId === project.rootNodeId) {
+      const protectedBrief = protectedBriefFromRun(context);
+      if (input.patch.type && input.patch.type !== "root_kpi") {
+        throw new AgentToolError("ROOT_TYPE_PROTECTED", "The root node type is protected by the visible brief.");
+      }
+      if (protectedBrief.rootKpi && input.patch.name && !sameVisibleValue(input.patch.name, protectedBrief.rootKpi)) {
+        throw new AgentToolError(
+          "VISIBLE_BRIEF_CONFLICT",
+          `Root node rename "${input.patch.name}" conflicts with the visible brief root KPI "${protectedBrief.rootKpi}". Ask the user before changing scope.`
+        );
+      }
     }
     assertFormulaReferencesIfPresent(project, input.patch.formula, input.nodeId);
     const result = builder.updateNode({ nodeId: input.nodeId, patch: input.patch as VdtNodePatch });
@@ -400,6 +487,23 @@ const calculateTool: AgentTool = {
 function requireBuilder(builder: VdtBuilderSession | undefined): VdtBuilderSession {
   if (!builder) throw new AgentToolError("NO_DRAFT_PROJECT", "VDT builder session is not available for this run.");
   return builder;
+}
+
+function protectedBriefFromRun(context: AgentToolContext): {
+  rootKpi?: string | undefined;
+  unit?: string | undefined;
+  timePeriod?: string | undefined;
+} {
+  const input = context.getRun().request.input;
+  return {
+    rootKpi: input.rootKpi?.trim() || undefined,
+    unit: input.unit?.trim() || undefined,
+    timePeriod: input.timePeriod?.trim() || undefined
+  };
+}
+
+function sameVisibleValue(left: string, right: string): boolean {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
 
 function assertFormulaReferencesIfPresent(project: ReturnType<VdtBuilderSession["getProject"]>, formula: string | undefined, nodeId: string): void {

@@ -17,6 +17,10 @@ export interface FormulaEditorFieldProps {
   errors?: Array<{ type: string; message: string }>;
 }
 
+function formulaDndContextId(nodeId: string): string {
+  return `formula-editor-${nodeId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
 export function FormulaEditorField({
   formula,
   currentNodeId,
@@ -89,6 +93,7 @@ export function FormulaEditorField({
         ) : null}
 
         <FormulaEditorInteractions
+          dndContextId={formulaDndContextId(currentNodeId)}
           editorTokens={editorTokens}
           nodes={nodes}
           paletteNodes={paletteNodes}

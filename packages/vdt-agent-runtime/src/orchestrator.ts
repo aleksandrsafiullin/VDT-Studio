@@ -3,9 +3,18 @@ import {
   VdtBuilderSession,
   type VdtNodePatch
 } from "@vdt-studio/vdt-core";
+import {
+  answerRecordFromPayloads,
+  answerPayloadsFromRecord,
+  describeAnswerPayloads,
+  normalizeUserQuestions,
+  publicStatusForPhase
+} from "./chat-messages";
 import { AGENT_DECISION_SYSTEM_PROMPT } from "./prompts/agent-decision";
+import { AGENT_FIRST_RESPONSE_SYSTEM_PROMPT } from "./prompts/agent-first-response";
 import { AgentRunStore } from "./run-store";
 import { agentDecisionSchema, parseAndGuardAgentDecision, type AgentDecision } from "./schemas/agent-decision";
+import { firstResponseSchema, type FirstResponseInput, type FirstResponseOutput } from "./schemas/agent-first-response";
 import { ToolRegistry, type AgentToolContext } from "./tool-registry";
 import { createDefaultToolRegistry } from "./tools";
 import {
@@ -31,7 +40,7 @@ import type {
 export interface AgentDecisionProvider {
   id: string;
   completeStructured<TInput, TOutput>(params: {
-    taskType: "agent_decision";
+    taskType: "orchestrator_first_response" | "agent_decision";
     input: TInput;
     schema: unknown;
     systemPrompt: string;
@@ -113,12 +122,20 @@ export class VdtAgentRuntime {
     }
 
     if (message.type === "user_answer") {
-      const answeredContext = answersToContext(message.answers);
+      const answerPayloads = message.structuredAnswers && message.structuredAnswers.length > 0
+        ? message.structuredAnswers
+        : answerPayloadsFromRecord(message.answers ?? {});
+      const answerRecord = {
+        ...(message.answers ?? {}),
+        ...answerRecordFromPayloads(answerPayloads)
+      };
+      const answeredContext = answersToContext(answerRecord);
       this.store.updateRun(runId, {
         status: "running",
         phase: "planning_decomposition",
         pendingQuestions: undefined,
-        answers: { ...state.answers, ...message.answers },
+        retryableError: undefined,
+        answers: { ...state.answers, ...answerRecord },
         request: {
           ...state.request,
           input: {
@@ -127,12 +144,19 @@ export class VdtAgentRuntime {
           }
         }
       });
+      this.store.appendChatMessage(runId, {
+        role: "user",
+        kind: "answer",
+        text: describeAnswerPayloads(answerPayloads),
+        answers: answerPayloads
+      });
+      this.store.updatePublicStatus(runId, publicStatusForPhase("planning_decomposition", "Reading your answer..."));
       this.emit(runId, {
         type: "user_answer_received",
         phase: "planning_decomposition",
         title: "User answers received",
         message: "Saved answers and resumed the AI agent.",
-        metadata: { answerIds: Object.keys(message.answers) }
+        metadata: { answerIds: answerPayloads.map((answer) => answer.questionId) }
       });
       await this.executeRun(runId, execution);
       return this.store.getSnapshot(runId);
@@ -150,9 +174,15 @@ export class VdtAgentRuntime {
         }
       });
       if (!text) return this.store.getSnapshot(runId);
+      this.store.appendChatMessage(runId, {
+        role: "user",
+        kind: "instruction",
+        text
+      });
       this.store.updateRun(runId, {
         status: "running",
         phase: "planning_decomposition",
+        retryableError: undefined,
         request: {
           ...state.request,
           input: {
@@ -202,6 +232,7 @@ export class VdtAgentRuntime {
   private initializeRun(request: VdtAgentStartRequest): VdtAgentRunState {
     const state = this.store.createRun(request);
     this.store.updateRun(state.runId, { status: "running", phase: "classifying_request" });
+    this.store.updatePublicStatus(state.runId, publicStatusForPhase("classifying_request", "Agent is reading your request..."));
     this.emit(state.runId, {
       type: "run_started",
       phase: "classifying_request",
@@ -211,6 +242,11 @@ export class VdtAgentRuntime {
 
     const initialPrompt = request.input.prompt?.trim();
     if (initialPrompt) {
+      this.store.appendChatMessage(state.runId, {
+        role: "user",
+        kind: "instruction",
+        text: initialPrompt
+      });
       this.emit(state.runId, {
         type: "user_instruction",
         phase: "classifying_request",
@@ -226,20 +262,100 @@ export class VdtAgentRuntime {
   private async executeRun(runId: string, execution: VdtAgentExecutionOptions): Promise<void> {
     try {
       this.ensureBuilder(runId);
+      await this.ensureFirstResponse(runId, execution);
+      const firstResponseState = this.store.getState(runId);
+      if (firstResponseState.status === "needs_user_input" || firstResponseState.status === "waiting_approval") {
+        return;
+      }
       await this.runDecisionLoop(runId, execution);
     } catch (error) {
       const state = this.store.getState(runId);
       if (state.abortController.signal.aborted || isAbortError(error)) {
         return;
       }
-      this.failRun(
-        runId,
-        error,
-        "AGENT_DECISION_LOOP_FAILED",
-        "Agent decision loop failed",
-        "Agent run failed while running the decision loop."
-      );
+      if (isRetryableProviderError(error)) {
+        this.pauseForRetryableError(runId, error);
+      } else {
+        this.failRun(
+          runId,
+          error,
+          "AGENT_DECISION_LOOP_FAILED",
+          "Agent decision loop failed",
+          "Agent run failed while running the decision loop."
+        );
+      }
     }
+  }
+
+  private async ensureFirstResponse(runId: string, execution: VdtAgentExecutionOptions): Promise<void> {
+    const state = this.store.getState(runId);
+    if (state.firstResponseCompleted) return;
+    if (!execution.provider) {
+      throw new Error("Agent mode requires a configured AI provider.");
+    }
+
+    const input = this.buildFirstResponseInput(runId);
+    this.emit(runId, {
+      type: "tool_call_started",
+      phase: "classifying_request",
+      title: "First response requested",
+      message: "Asked the orchestrator to write the first visible response.",
+      metadata: { taskType: "orchestrator_first_response", providerId: execution.provider.id }
+    });
+
+    const raw = await execution.provider.completeStructured<FirstResponseInput, FirstResponseOutput>({
+      taskType: "orchestrator_first_response",
+      input,
+      schema: firstResponseSchema,
+      systemPrompt: AGENT_FIRST_RESPONSE_SYSTEM_PROMPT,
+      userPrompt: JSON.stringify(input, null, 2),
+      temperature: 0.2,
+      maxTokens: Math.min(execution.maxTokens ?? 2_000, 2_000),
+      signal: state.abortController.signal
+    });
+    const firstResponse = firstResponseSchema.parse(raw);
+    const questions = normalizeUserQuestions(firstResponse.questions ?? []);
+
+    this.store.appendChatMessage(runId, {
+      role: "assistant",
+      kind: "assistant_message",
+      text: firstResponse.assistantMessage
+    });
+    this.store.updatePublicStatus(runId, firstResponse.publicStatus);
+    this.emit(runId, {
+      type: "assistant_message",
+      phase: "classifying_request",
+      title: "Assistant message",
+      message: firstResponse.assistantMessage,
+      metadata: { taskType: "orchestrator_first_response", nextAction: firstResponse.nextAction }
+    });
+
+    if (firstResponse.nextAction === "ask_user" && questions.length > 0) {
+      this.store.updateRun(runId, {
+        status: "needs_user_input",
+        phase: "asking_clarifying_questions",
+        pendingQuestions: questions,
+        firstResponseCompleted: true
+      });
+      this.store.appendChatMessage(runId, {
+        role: "assistant",
+        kind: "question",
+        questions
+      });
+      this.store.updatePublicStatus(runId, publicStatusForPhase("asking_clarifying_questions", "Waiting for your answer."));
+      this.emit(runId, {
+        type: "clarifying_questions",
+        phase: "asking_clarifying_questions",
+        title: "Clarifying questions",
+        message: `Agent needs ${questions.length} answer${questions.length === 1 ? "" : "s"} before continuing.`,
+        questions
+      });
+      return;
+    }
+
+    this.store.updateRun(runId, {
+      firstResponseCompleted: true
+    });
   }
 
   private async runDecisionLoop(runId: string, execution: VdtAgentExecutionOptions): Promise<void> {
@@ -260,8 +376,10 @@ export class VdtAgentRuntime {
         status: "running",
         phase: inferPhaseForNextDecision(current)
       });
+      this.store.updatePublicStatus(runId, publicStatusForPhase(this.store.getState(runId).phase));
 
       const decision = await this.requestDecision(runId, execution);
+      this.publishDecisionStatus(runId, decision);
       const outcome = await this.executeDecision(runId, decision, execution);
 
       if (outcome === "paused" || outcome === "finished") return;
@@ -347,6 +465,27 @@ export class VdtAgentRuntime {
     return "continue";
   }
 
+  private publishDecisionStatus(runId: string, decision: AgentDecision): void {
+    if (decision.type === "finish") return;
+    const message = decision.statusMessage.trim();
+    if (!message) return;
+    const state = this.store.getState(runId);
+    const updated = this.store.updatePublicStatus(runId, publicStatusForPhase(state.phase, message));
+    this.store.appendChatMessage(runId, {
+      role: "assistant",
+      kind: "status",
+      text: message,
+      status: updated.publicStatus
+    });
+    this.emit(runId, {
+      type: "assistant_message",
+      phase: state.phase,
+      title: "Agent status",
+      message,
+      metadata: { decisionType: decision.type }
+    });
+  }
+
   private buildAgentContext(runId: string): AgentDecisionContext {
     const state = this.store.getState(runId);
     const project = state.builder?.getProject() ?? state.draftProject ?? state.project;
@@ -361,8 +500,15 @@ export class VdtAgentRuntime {
       selectedSkills: state.selectedSkills,
       availableTools: this.tools.listSpecs(),
       recentEvents: summarizeEvents(state.events),
+      visibleContext: state.visibleContext,
       userAnswers: state.answers,
       manualChanges: summarizeManualChanges(state),
+      subagentReports: (state.subagentReports ?? []).slice(-8).map((report) => ({
+        taskId: report.taskId,
+        status: report.status,
+        summaryForOrchestrator: report.summaryForOrchestrator,
+        ...(report.confidence !== undefined ? { confidence: report.confidence } : {})
+      })),
       lastToolResult: state.lastToolResult,
       validationState: state.validationState,
       calculationState: state.calculationState,
@@ -372,6 +518,30 @@ export class VdtAgentRuntime {
         cannotReturnFullGraph: true,
         cannotExposeHiddenReasoning: true
       }
+    };
+  }
+
+  private buildFirstResponseInput(runId: string): FirstResponseInput {
+    const state = this.store.getState(runId);
+    const project = state.project ?? state.draftProject ?? state.request.input.project;
+    const rootNode = project?.graph.nodes.find((node) => node.id === project.rootNodeId);
+    const lastUserMessage = [...state.chatMessages].reverse().find((message) => message.role === "user");
+    return {
+      brief: state.visibleContext.brief,
+      currentUserMessage: lastUserMessage?.text ?? state.request.input.prompt ?? state.request.input.businessContext ?? state.visibleContext.brief.rootKpi,
+      ...(project && rootNode
+        ? {
+            currentProjectSummary: {
+              title: project.name,
+              rootNodeName: rootNode.name,
+              ...(rootNode.unit ? { unit: rootNode.unit } : {})
+            }
+          }
+        : {}),
+      visibleChatSummary: state.chatMessages
+        .slice(-8)
+        .map((message) => `${message.role}: ${message.text ?? message.kind}`)
+        .join("\n")
     };
   }
 
@@ -463,6 +633,12 @@ export class VdtAgentRuntime {
       validationState: validation,
       calculationState: calculationSummary
     });
+    this.store.appendChatMessage(runId, {
+      role: "assistant",
+      kind: "final_report",
+      text: decision.summary
+    });
+    this.store.updatePublicStatus(runId, publicStatusForPhase("reporting", "Draft ready."));
 
     this.emit(runId, {
       type: "final_report",
@@ -543,6 +719,45 @@ export class VdtAgentRuntime {
     });
   }
 
+  private pauseForRetryableError(runId: string, error: unknown): void {
+    const state = this.store.getState(runId);
+    if (state.status === "cancelled") return;
+    const message = error instanceof Error ? error.message : "Backend execution timed out.";
+    const retryCount = (state.retryableError?.retryCount ?? 0) + 1;
+    const code = retryableCode(error);
+    const userMessage = retryableUserMessage(code);
+    const retryableError = {
+      code,
+      message,
+      retryCount,
+      createdAt: new Date().toISOString()
+    };
+    const project = state.builder?.getProject();
+    this.store.updateRun(runId, {
+      status: "needs_user_input",
+      phase: "reporting",
+      retryableError,
+      error: undefined,
+      ...(project && project.graph.nodes.length > 0 ? { draftProject: project } : {})
+    });
+    this.store.appendChatMessage(runId, {
+      role: "assistant",
+      kind: "retryable_error",
+      text: userMessage.chat
+    });
+    this.store.updatePublicStatus(runId, {
+      phase: "retryable_error",
+      message: userMessage.status
+    });
+    this.emit(runId, {
+      type: "error",
+      phase: "reporting",
+      title: userMessage.title,
+      message,
+      metadata: { code: retryableError.code, retryable: true, retryCount }
+    });
+  }
+
   private emit(runId: string, event: Parameters<AgentRunStore["appendEvent"]>[1]): void {
     this.store.appendEvent(runId, event);
   }
@@ -582,6 +797,7 @@ function isGraphMutationTool(toolName: string): boolean {
   return new Set([
     "vdt.create_draft",
     "vdt.add_driver",
+    "vdt.add_drivers_batch",
     "vdt.add_edge",
     "vdt.update_node",
     "vdt.delete_node",
@@ -601,4 +817,54 @@ function answersToContext(answers: Record<string, string | number | string[]>): 
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && (error.name === "AbortError" || (error as { code?: unknown }).code === "CANCELLED");
+}
+
+function isRetryableProviderError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as { code?: unknown }).code;
+  if (
+    code === "TIMEOUT" ||
+    code === "PROVIDER_UNAVAILABLE" ||
+    code === "SCHEMA_REPAIR_FAILED" ||
+    code === "BACKEND_PARSE_FAILED" ||
+    code === "SCHEMA_INVALID"
+  ) {
+    return true;
+  }
+  return /timed out|timeout|provider unavailable|rate limited|temporarily unavailable|structured response|schema validation|schema repair|could not be parsed/i.test(error.message);
+}
+
+function retryableCode(error: unknown): "TIMEOUT" | "PROVIDER_UNAVAILABLE" | "SCHEMA_REPAIR_FAILED" | "STRUCTURED_OUTPUT_FAILED" {
+  const code = error instanceof Error ? (error as { code?: unknown }).code : undefined;
+  if (code === "PROVIDER_UNAVAILABLE") return "PROVIDER_UNAVAILABLE";
+  if (code === "SCHEMA_REPAIR_FAILED") return "SCHEMA_REPAIR_FAILED";
+  if (code === "BACKEND_PARSE_FAILED" || code === "SCHEMA_INVALID") return "STRUCTURED_OUTPUT_FAILED";
+  if (error instanceof Error && /structured response|schema validation|schema repair|could not be parsed/i.test(error.message)) {
+    return "STRUCTURED_OUTPUT_FAILED";
+  }
+  return "TIMEOUT";
+}
+
+function retryableUserMessage(
+  code: "TIMEOUT" | "PROVIDER_UNAVAILABLE" | "SCHEMA_REPAIR_FAILED" | "STRUCTURED_OUTPUT_FAILED"
+): { title: string; status: string; chat: string } {
+  if (code === "STRUCTURED_OUTPUT_FAILED" || code === "SCHEMA_REPAIR_FAILED") {
+    return {
+      title: "Provider returned unstructured output",
+      status: "The provider returned an unstructured answer. Your message is saved, and you can retry.",
+      chat: "I saved your message, but the provider returned output that VDT Studio could not use as a structured agent response. Retry the step, or send a smaller instruction so I can continue from the saved context."
+    };
+  }
+  if (code === "PROVIDER_UNAVAILABLE") {
+    return {
+      title: "Provider temporarily unavailable",
+      status: "The provider is temporarily unavailable. Your message is saved.",
+      chat: "I saved your message, but the provider is temporarily unavailable. Retry the step, or send a smaller instruction so I can continue from the saved context."
+    };
+  }
+  return {
+    title: "Provider step timed out",
+    status: "The provider step timed out. Your message is saved.",
+    chat: "I saved your message, but the provider step timed out. Retry the step, or send a smaller instruction so I can continue from the saved context."
+  };
 }

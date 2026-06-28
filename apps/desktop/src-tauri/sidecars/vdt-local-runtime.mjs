@@ -127,6 +127,7 @@ function extractBoundedJson(raw, maxBytes) {
 
 // ../model-bridge/src/schema-registry.ts
 var VDT_OUTPUT_SCHEMA_IDS = [
+  "orchestrator-first-response-v1",
   "agent-decision-v1",
   "agent-plan-v1",
   "generate-tree-v1",
@@ -144,6 +145,7 @@ var VDT_OUTPUT_SCHEMA_IDS = [
 ];
 var VDT_SCHEMA_IDS = ["connection-test-v1", ...VDT_OUTPUT_SCHEMA_IDS];
 var schemaTask = {
+  "orchestrator-first-response-v1": "orchestrator_first_response",
   "agent-decision-v1": "agent_decision",
   "agent-plan-v1": "agent_plan",
   "generate-tree-v1": "generate_tree",
@@ -330,10 +332,85 @@ var agentQuestionSchema = objectSchema(
     reason: { type: "string", maxLength: 600 },
     required: { type: "boolean" },
     expectedAnswerType: enumProp(["text", "number", "single_choice", "multi_choice"]),
-    options: stringArrayProp,
+    answerKind: enumProp(["text", "number", "single_choice", "multi_choice", "field_group"]),
+    options: {
+      type: "array",
+      maxItems: 20,
+      items: {
+        anyOf: [
+          stringProp,
+          objectSchema(
+            {
+              id: nodeIdProp,
+              label: { type: "string", maxLength: 160 },
+              value: { type: "string", maxLength: 500 },
+              requiresFreeText: { type: "boolean" },
+              revealsFields: arrayProp(objectSchema(
+                {
+                  id: nodeIdProp,
+                  label: { type: "string", maxLength: 160 },
+                  kind: enumProp(["text", "number"]),
+                  unit: { type: "string", maxLength: 80 },
+                  required: { type: "boolean" },
+                  placeholder: { type: "string", maxLength: 200 }
+                },
+                ["id", "label", "kind"]
+              ), 12)
+            },
+            ["id", "label", "value"]
+          )
+        ]
+      }
+    },
+    fields: arrayProp(objectSchema(
+      {
+        id: nodeIdProp,
+        label: { type: "string", maxLength: 160 },
+        kind: enumProp(["text", "number"]),
+        unit: { type: "string", maxLength: 80 },
+        required: { type: "boolean" },
+        placeholder: { type: "string", maxLength: 200 }
+      },
+      ["id", "label", "kind"]
+    ), 12),
+    freeTextAllowed: { type: "boolean" },
+    placeholder: { type: "string", maxLength: 200 },
     defaultValue: { anyOf: [stringProp, { type: "number" }, stringArrayProp] }
   },
   ["id", "question", "reason", "required"]
+);
+var publicAgentStatusSchema = objectSchema(
+  {
+    phase: enumProp([
+      "reading_request",
+      "asking_questions",
+      "planning_model",
+      "running_subagents",
+      "building_draft",
+      "checking_model",
+      "waiting_user",
+      "ready",
+      "retryable_error"
+    ]),
+    message: { type: "string", maxLength: 500 },
+    progress: objectSchema(
+      {
+        completed: { type: "number" },
+        total: { type: "number" }
+      },
+      ["completed", "total"]
+    )
+  },
+  ["phase", "message"]
+);
+var orchestratorFirstResponseSchema = objectSchema(
+  {
+    assistantMessage: { type: "string", minLength: 1, maxLength: 2e3 },
+    nextAction: enumProp(["ask_user", "continue_building"]),
+    questions: { type: "array", maxItems: 5, items: agentQuestionSchema },
+    publicStatus: publicAgentStatusSchema
+  },
+  ["assistantMessage", "nextAction", "questions", "publicStatus"]
 );
 var agentDecisionCallToolSchema = objectSchema(
   {
@@ -367,6 +444,39 @@ var agentDecisionSchema = {
   required: [],
   additionalProperties: false
 };
+var agentDecisionStrictResponseSchema = objectSchema(
+  {
+    type: enumProp(["call_tool", "ask_user", "finish"]),
+    toolName: { type: "string", maxLength: 120 },
+    argsJson: {
+      type: "string",
+      maxLength: MAX_OUTPUT_STRING_LENGTH,
+      description: "A JSON object string containing tool arguments. Use {} when type is not call_tool."
+    },
+    statusMessage: {
+      type: "string",
+      minLength: 1,
+      maxLength: 500,
+      description: "A concise user-visible status message for this decision."
+    },
+    questionsJson: {
+      type: "string",
+      maxLength: MAX_OUTPUT_STRING_LENGTH,
+      description: "A JSON array string containing user questions. Use [] unless type is ask_user."
+    },
+    summary: {
+      type: "string",
+      maxLength: 2e3,
+      description: "Finish summary. Use an empty string unless type is finish."
+    },
+    nextSuggestedActions: {
+      type: "array",
+      maxItems: 10,
+      items: { type: "string", maxLength: 300 }
+    }
+  },
+  ["type", "toolName", "argsJson", "statusMessage", "questionsJson", "summary", "nextSuggestedActions"]
+);
 var nodeUpdateSchema = objectSchema(
   {
     id: nodeIdProp,
@@ -669,7 +779,98 @@ function orientGenerateTreeEdgesFromRoot(output) {
   const normalized = { ...output, edges: dedupeGenerateTreeEdges(orientedEdges) };
   return validateGenerateTreeGraph(normalized).valid ? normalized : output;
 }
+function parseJsonObjectString(value) {
+  if (isRecord(value)) return value;
+  if (typeof value !== "string") return void 0;
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function parseJsonObjectArrayString(value) {
+  if (isObjectArray(value)) return value;
+  if (typeof value !== "string") return void 0;
+  try {
+    const parsed = JSON.parse(value);
+    return isObjectArray(parsed) ? parsed : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function normalizeStatusMessage(value, fallback) {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+var userQuestionToolAliases = /* @__PURE__ */ new Set(["request_user_input", "ask_user", "user.ask", "user.request_input"]);
+function questionFromRecord(record, index = 0) {
+  const question = typeof record.question === "string" && record.question.trim() ? record.question : typeof record.message === "string" && record.message.trim() ? record.message : void 0;
+  if (!question) return void 0;
+  return {
+    id: typeof record.id === "string" && record.id.trim() ? record.id : `question_${index + 1}`,
+    question,
+    reason: typeof record.reason === "string" && record.reason.trim() ? record.reason : "The agent needs this information before continuing.",
+    required: typeof record.required === "boolean" ? record.required : true,
+    ...typeof record.expectedAnswerType === "string" ? { expectedAnswerType: record.expectedAnswerType } : {},
+    ...isStringArray(record.options) ? { options: record.options } : {},
+    ...record.defaultValue === void 0 ? {} : { defaultValue: record.defaultValue }
+  };
+}
+function questionsFromArgs(args) {
+  if (isObjectArray(args.questions)) {
+    return args.questions.map((question, index) => questionFromRecord(question, index)).filter((question) => question !== void 0);
+  }
+  const single = questionFromRecord(args);
+  return single ? [single] : [];
+}
+function fallbackQuestionFromMessage(message) {
+  const question = typeof message === "string" && message.trim() ? message.trim() : "What additional information should the agent use before continuing?";
+  return [
+    {
+      id: "additional_input",
+      question,
+      reason: "The agent requested user input before continuing.",
+      required: true
+    }
+  ];
+}
+function normalizeAgentDecisionOutput(output) {
+  if (output.type === "call_tool") {
+    const toolName = typeof output.toolName === "string" ? output.toolName : "";
+    const args = parseJsonObjectString(output.argsJson ?? output.args) ?? {};
+    if (userQuestionToolAliases.has(toolName)) {
+      return {
+        type: "ask_user",
+        questions: questionsFromArgs(args),
+        statusMessage: normalizeStatusMessage(output.statusMessage, "Additional inputs are needed.")
+      };
+    }
+    return {
+      type: output.type,
+      toolName,
+      args,
+      statusMessage: normalizeStatusMessage(output.statusMessage, toolName ? `Calling ${toolName}.` : "Calling the next tool.")
+    };
+  }
+  if (output.type === "ask_user") {
+    const questions = parseJsonObjectArrayString(output.questionsJson ?? output.questions) ?? questionsFromArgs(parseJsonObjectString(output.argsJson ?? output.args) ?? {});
+    return {
+      type: output.type,
+      questions: questions.length > 0 ? questions : fallbackQuestionFromMessage(output.statusMessage),
+      statusMessage: normalizeStatusMessage(output.statusMessage, "Additional inputs are needed.")
+    };
+  }
+  if (output.type === "finish") {
+    return {
+      type: output.type,
+      summary: typeof output.summary === "string" && output.summary.trim() ? output.summary : "Finished the VDT agent run.",
+      nextSuggestedActions: isStringArray(output.nextSuggestedActions) ? output.nextSuggestedActions : []
+    };
+  }
+  return output;
+}
 function normalizeRegisteredSchemaOutput(schemaId, output) {
+  if (schemaId === "agent-decision-v1" && isRecord(output)) return normalizeAgentDecisionOutput(output);
   if (schemaId === "generate-tree-v1" && isRecord(output)) return orientGenerateTreeEdgesFromRoot(output);
   return output;
 }
@@ -680,6 +881,7 @@ var jsonSchemas = {
     required: ["ok"],
     additionalProperties: false
   },
+  "orchestrator-first-response-v1": orchestratorFirstResponseSchema,
   "agent-decision-v1": agentDecisionSchema,
   "agent-plan-v1": objectSchema(
     {
@@ -853,10 +1055,12 @@ function toStrictResponseJsonSchema(schema) {
   return result;
 }
 function getStrictResponseJsonSchema(schemaId) {
+  if (schemaId === "agent-decision-v1") return agentDecisionStrictResponseSchema;
   return toStrictResponseJsonSchema(jsonSchemas[schemaId]);
 }
 var validators = {
   "connection-test-v1": (output) => output.ok === true,
+  "orchestrator-first-response-v1": (output) => typeof output.assistantMessage === "string" && (output.nextAction === "ask_user" || output.nextAction === "continue_building") && isObjectArray(output.questions) && isRecord(output.publicStatus),
   "agent-decision-v1": (output) => {
     for (const forbidden of ["driverPlan", "nodes", "edges", "rootFormula", "project", "fullProject", "fullGraph", "selectedSkillIds"]) {
       if (forbidden in output) return false;
@@ -3332,7 +3536,7 @@ function validateGraph(input, rootNodeId) {
 var DEFAULT_CANVAS_LAYOUT = Object.freeze({
   margin: 48,
   cardWidth: 260,
-  cardHeight: 132,
+  cardHeight: 158,
   horizontalGap: 220,
   verticalGap: 36
 });
@@ -3575,17 +3779,19 @@ function retrieveSkills(request, library, options = {}) {
       ...entry?.expectedOutputs ?? []
     ];
     const matchedTerms = uniqueStrings(terms.filter((term) => includesTerm(haystack, term)));
-    const hasExplicitMatch = matchedTerms.length > 0;
+    const patternMatched = skillMatchesClassificationPattern(skill, classification);
+    const effectiveMatchedTerms = patternMatched ? uniqueStrings([...matchedTerms, classification.pattern]) : matchedTerms;
+    const hasExplicitMatch = effectiveMatchedTerms.length > 0;
     const isGenericFallback = skill.domain === "generic";
     const domainScore = skill.domain === classification.domain && hasExplicitMatch ? 8 : isGenericFallback ? 1 : 0;
-    const patternScore = matchedTerms.length * 3;
-    const outputScore = skill.frontmatter.outputs.some((output) => matchedTerms.includes(output)) ? 2 : 0;
+    const patternScore = matchedTerms.length * 3 + (patternMatched ? 6 : 0);
+    const outputScore = skill.frontmatter.outputs.some((output) => effectiveMatchedTerms.includes(output)) ? 2 : 0;
     const score = domainScore + patternScore + outputScore;
     return {
       skill,
       score,
-      matchedTerms,
-      reason: buildSelectionReason(skill, classification, matchedTerms)
+      matchedTerms: effectiveMatchedTerms,
+      reason: buildSelectionReason(skill, classification, effectiveMatchedTerms)
     };
   }).filter(
     (candidate) => candidate.skill.domain === "generic" || candidate.skill.domain === classification.domain && candidate.matchedTerms.length > 0
@@ -3603,6 +3809,15 @@ function retrieveSkills(request, library, options = {}) {
       reason: "Selected as fallback because no domain-specific skill matched the request."
     }
   ] : [];
+}
+function skillMatchesClassificationPattern(skill, classification) {
+  if (skill.domain !== classification.domain) return false;
+  if (classification.pattern === "logical_kpi_decomposition" || classification.pattern === "production_volume") return false;
+  const normalizedPattern = normalizeText(classification.pattern);
+  if (!normalizedPattern) return false;
+  const skillIdSuffix = skill.id.split(".").at(-1) ?? skill.id;
+  if (normalizeText(skillIdSuffix) === normalizedPattern) return true;
+  return [...skill.frontmatter.patterns, ...skill.frontmatter.kpiPatterns].some((pattern) => normalizeText(pattern) === normalizedPattern);
 }
 function readSkillExcerpts(skills, maxChars = 1800) {
   return skills.map((item) => {
@@ -4014,6 +4229,16 @@ var mockNode = Object.freeze({
 });
 var MOCK_STUB_OUTPUT = {
   "connection-test-v1": { ok: true },
+  "orchestrator-first-response-v1": {
+    assistantMessage: "I will use the visible brief as the source of truth and start by checking the requested VDT scope.",
+    nextAction: "continue_building",
+    questions: [],
+    publicStatus: {
+      phase: "planning_model",
+      message: "Planning the VDT from your request.",
+      progress: { completed: 1, total: 3 }
+    }
+  },
   "agent-decision-v1": {
     type: "call_tool",
     toolName: "skill.search",
@@ -4424,10 +4649,20 @@ function buildRepairMessages(schemaId, request, invalidJson, parsedOutput) {
 }
 function buildSubscriptionPrompt(request) {
   const schemaId = request.schemaId;
+  const schemaInstructions = schemaId === "agent-decision-v1" ? [
+    "Agent decision encoding:",
+    "- Return the strict fields type, toolName, argsJson, statusMessage, questionsJson, summary, and nextSuggestedActions.",
+    "- For call_tool, set toolName and put the tool arguments in argsJson as a JSON object string.",
+    "- For call_tool, toolName must exactly match one availableTools.name from the input context.",
+    "- For ask_user, put the question array in questionsJson as a JSON array string.",
+    "- Never call request_user_input, ask_user, or user.ask as a tool; use type ask_user instead.",
+    "- Use {} for unused argsJson, [] for unused questionsJson, an empty summary unless finishing, and a non-empty statusMessage."
+  ].join("\n") : "";
   return [
     `Return only JSON matching approved schema ${request.schemaId} for VDT task ${request.taskType}.`,
     "Do not include markdown fences or commentary.",
     "Do not use tools, run commands, inspect files, edit files, or wait for user input. Answer directly from the provided request.",
+    schemaInstructions,
     JSON.stringify({
       schemaId: request.schemaId,
       taskType: request.taskType,
@@ -4438,10 +4673,19 @@ function buildSubscriptionPrompt(request) {
   ].join("\n");
 }
 function buildRepairPrompt(request, invalidJson, parsedOutput) {
+  const schemaId = request.schemaId;
+  const schemaInstructions = schemaId === "agent-decision-v1" ? [
+    "For agent-decision-v1, return strict fields type, toolName, argsJson, statusMessage, questionsJson, summary, and nextSuggestedActions.",
+    "Encode tool arguments as an argsJson JSON object string and user questions as a questionsJson JSON array string.",
+    "For call_tool, toolName must exactly match one availableTools.name from the input context.",
+    "Never call request_user_input, ask_user, or user.ask as a tool; use type ask_user instead.",
+    "Use {} for unused argsJson, [] for unused questionsJson, and a non-empty statusMessage."
+  ].join(" ") : "";
   return [
     `Repair JSON for approved schema ${request.schemaId} and VDT task ${request.taskType}.`,
     "Return exactly one corrected JSON object.",
     "Do not include markdown fences, commentary, file paths, environment values, credentials, or tokens.",
+    schemaInstructions,
     JSON.stringify({
       taskType: request.taskType,
       schemaId: request.schemaId,

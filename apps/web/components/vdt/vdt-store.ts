@@ -30,7 +30,11 @@ import {
 import { makeId } from "@/lib/id";
 import {
   createAgentClient,
+  type AgentAnswerPayload as RuntimeAgentAnswerPayload,
+  type AgentChatMessage as RuntimeAgentChatMessage,
   type ManualProjectChange,
+  type PublicAgentStatus as RuntimePublicAgentStatus,
+  type RetryableAgentError as RuntimeRetryableAgentError,
   type VdtAgentEvent as RuntimeAgentEvent,
   type VdtAgentQuestion as RuntimeAgentQuestion,
   type VdtAgentRunSnapshot as RuntimeAgentRunSnapshot
@@ -164,6 +168,9 @@ export interface GenerateActivityState {
   agentRun?: VdtAgentRun | undefined;
   selectedSkills?: VdtAgentSelectedSkill[] | undefined;
   agentEvents?: VdtAgentEvent[] | undefined;
+  agentChatMessages?: RuntimeAgentChatMessage[] | undefined;
+  publicStatus?: RuntimePublicAgentStatus | undefined;
+  retryableError?: RuntimeRetryableAgentError | undefined;
   agentQuestions?: RuntimeAgentQuestion[] | undefined;
   questionsForUser?: string[] | undefined;
   finalReport?: string | undefined;
@@ -232,7 +239,7 @@ interface BriefState extends GenerateVdtInput {
   rootKpi: string;
 }
 
-export type RunAiActionTaskType = Exclude<VdtAiTaskType, "agent_decision" | "agent_plan" | "generate_tree">;
+export type RunAiActionTaskType = Exclude<VdtAiTaskType, "orchestrator_first_response" | "agent_decision" | "agent_plan" | "generate_tree">;
 
 export type RunAiActionInput<T extends RunAiActionTaskType = RunAiActionTaskType> = Omit<
   RunAiTaskInputMap[T],
@@ -337,8 +344,9 @@ interface VdtStudioState {
   autoDistributeLayout: () => void;
   updateNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
   startAgentRun: (initialInstruction?: string) => Promise<boolean>;
+  resumePersistedAgentRun: () => Promise<void>;
   connectAgentEvents: (runId: string) => void;
-  sendAgentAnswers: (answers: Record<string, string | number | string[]>) => Promise<void>;
+  sendAgentAnswers: (answers: Record<string, string | number | string[]> | RuntimeAgentAnswerPayload[]) => Promise<void>;
   sendAgentInstruction: (text: string, selectedNodeId?: string) => Promise<boolean>;
   sendManualProjectChange: (change: ManualProjectChange) => Promise<void>;
   applyAgentGraphPatch: (snapshot: RuntimeAgentRunSnapshot) => void;
@@ -751,20 +759,22 @@ function legacyAgentRunFromRuntimeSnapshot(snapshot: RuntimeAgentRunSnapshot): V
     ...(input.unit !== undefined ? { unit: input.unit } : {}),
     ...(input.timePeriod !== undefined ? { timePeriod: input.timePeriod } : {}),
     ...(input.goal !== undefined ? { goal: input.goal } : {}),
-      ...(input.levelOfDetail !== undefined ? { levelOfDetail: input.levelOfDetail } : {})
+    ...(input.levelOfDetail !== undefined ? { levelOfDetail: input.levelOfDetail } : {})
   };
   const resultProjectId = snapshot.project?.id ?? snapshot.draftProject?.id;
+  const selectedSkills = snapshot.selectedSkills ?? [];
+  const events = snapshot.events ?? [];
   return {
     runId: snapshot.runId,
     status: snapshot.status === "queued" || snapshot.status === "waiting_approval" ? "running" : snapshot.status,
     phase: mapRuntimeAgentPhase(snapshot.phase),
     request,
-    selectedSkills: snapshot.selectedSkills.map((skill) => ({
+    selectedSkills: selectedSkills.map((skill) => ({
       id: skill.id,
       path: skill.path,
       reason: skill.reason
     })),
-    events: snapshot.events.map((event) => ({
+    events: events.map((event) => ({
       id: event.id,
       timestamp: event.timestamp,
       type: mapRuntimeAgentEventType(event.type),
@@ -804,13 +814,16 @@ function mapRuntimeAgentEventType(type: RuntimeAgentEvent["type"]): VdtAgentEven
     case "repair_started":
     case "run_completed":
       return type === "plan_proposed" ? "planning_decomposition" : type === "tool_call_started" ? "model_call_started" : type === "tool_call_completed" ? "model_call_completed" : "graph_patch";
+    case "assistant_message":
+      return "model_call_completed";
     default:
       return type;
   }
 }
 
 function shouldRefreshAgentSnapshot(event: RuntimeAgentEvent): boolean {
-  return event.type === "clarifying_questions" ||
+  return event.type === "assistant_message" ||
+    event.type === "clarifying_questions" ||
     event.type === "plan_proposed" ||
     event.type === "graph_patch" ||
     event.type === "graph_validation" ||
@@ -825,6 +838,19 @@ function mapRuntimeStatus(snapshot: RuntimeAgentRunSnapshot): GenerateActivitySt
   if (snapshot.status === "failed") return "error";
   if (snapshot.status === "cancelled") return "cancelled";
   return "running";
+}
+
+function isActiveActivity(activity: GenerateActivityState | undefined): boolean {
+  return activity?.status === "running" || activity?.status === "needs_user_input";
+}
+
+function isActiveRuntimeRun(snapshot: RuntimeAgentRunSnapshot | undefined): boolean {
+  return snapshot?.status === "queued" || snapshot?.status === "running" ||
+    snapshot?.status === "needs_user_input" || snapshot?.status === "waiting_approval";
+}
+
+function resumableAgentRunId(state: Pick<VdtStudioState, "activeAgentRunId" | "agentRun" | "generateActivity">): string | undefined {
+  return state.activeAgentRunId ?? state.agentRun?.runId ?? state.generateActivity?.runId;
 }
 
 function applyAgentSnapshot(
@@ -871,6 +897,9 @@ function applyAgentSnapshot(
         agentRun: legacyRun,
         selectedSkills: legacyRun.selectedSkills,
         agentEvents: legacyRun.events,
+        agentChatMessages: snapshot.chatMessages,
+        publicStatus: snapshot.publicStatus,
+        retryableError: snapshot.retryableError,
         agentQuestions: snapshot.pendingQuestions,
         questionsForUser: snapshot.pendingQuestions?.map((question) => question.question),
         finalReport: snapshot.finalReport,
@@ -1620,11 +1649,11 @@ export const useVdtStudioStore = create<VdtStudioState>()(
                 generateActivity: state.generateActivity?.runId === runId
                   ? {
                       ...state.generateActivity,
-	                      agentEvents: legacyEvents,
-	                      updatedAt: event.timestamp
-	                    }
-	                  : state.generateActivity
-	              };
+                      agentEvents: legacyEvents,
+                      updatedAt: event.timestamp
+                    }
+                  : state.generateActivity
+              };
             });
             if (shouldRefreshAgentSnapshot(event)) {
               void createAgentClient().getRun(runId)
@@ -1637,6 +1666,48 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           },
           onError: () => set({ agentConnectionStatus: "error" })
         });
+      },
+      resumePersistedAgentRun: async () => {
+        const state = get();
+        const runId = resumableAgentRunId(state);
+        if (!runId) return;
+        if (!isActiveActivity(state.generateActivity) && !isActiveRuntimeRun(state.agentRun)) return;
+        if (state.agentConnectionStatus === "connecting" || state.agentConnectionStatus === "connected") return;
+
+        set({ agentConnectionStatus: "connecting" });
+        try {
+          const snapshot = await createAgentClient().getRun(runId);
+          applyAgentSnapshot(set, snapshot);
+          if (isActiveRuntimeRun(snapshot)) {
+            get().connectAgentEvents(runId);
+          } else {
+            set({ agentConnectionStatus: "disconnected" });
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Agent run could not be reattached.";
+          set((current) => ({
+            activeAgentRunId: undefined,
+            isGenerating: false,
+            agentConnectionStatus: "error",
+            agentError: message,
+            aiError: message,
+            generateActivity: current.generateActivity?.runId === runId
+              ? {
+                  ...current.generateActivity,
+                  status: "error",
+                  canCancel: false,
+                  message: "Saved agent thread was restored, but the backend run could not be reattached.",
+                  retryableError: {
+                    code: "PROVIDER_UNAVAILABLE",
+                    message: "Saved agent thread was restored, but the backend run could not be reattached. Start a new instruction to continue from the saved context.",
+                    retryCount: 0,
+                    createdAt: nowIso()
+                  },
+                  updatedAt: nowIso()
+                }
+              : current.generateActivity
+          }));
+        }
       },
       startAgentRun: async (initialInstruction) => {
         if (get().isGenerating) return false;
@@ -1716,7 +1787,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         try {
           const snapshot = await createAgentClient().sendMessage(runId, {
             type: "user_answer",
-            answers
+            ...(Array.isArray(answers) ? { structuredAnswers: answers } : { answers })
           });
           applyAgentSnapshot(set, snapshot);
         } catch (error) {
@@ -1727,7 +1798,15 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       sendAgentInstruction: async (text, selectedNodeId) => {
         const trimmed = text.trim();
         if (!trimmed) return false;
-        const runId = get().agentRun?.runId ?? get().activeAgentRunId;
+        const currentRun = get().agentRun;
+        if (
+          currentRun?.status === "failed" ||
+          currentRun?.status === "succeeded" ||
+          currentRun?.status === "cancelled"
+        ) {
+          return false;
+        }
+        const runId = currentRun?.runId ?? get().activeAgentRunId;
         if (!runId) {
           set((state) => ({
             brief: {
@@ -2493,7 +2572,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         providerId: state.providerId,
         providerConfig: persistedProviderConfig(state.providerConfig),
         executionSettings: persistedExecutionSettings(state.executionSettings),
-        ui: state.ui
+        ui: state.ui,
+        generateActivity: state.generateActivity,
+        activeAgentRunId: state.activeAgentRunId,
+        agentRun: state.agentRun,
+        agentEvents: state.agentEvents,
+        agentPendingQuestions: state.agentPendingQuestions,
+        agentError: state.agentError
       }),
       merge: (persistedState, currentState) => {
         const persisted = persistedState as Partial<VdtStudioState> | undefined;
@@ -2506,6 +2591,12 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         );
         const synced = syncLegacyProviderFromExecutionSettings(executionSettings, providerConfig);
         const project = ensureScenario(persisted?.project ?? currentState.project);
+        const generateActivity = persisted?.generateActivity;
+        const agentRun = persisted?.agentRun;
+        const hasActiveAgentRun = isActiveActivity(generateActivity) || isActiveRuntimeRun(agentRun);
+        const activeAgentRunId = hasActiveAgentRun
+          ? persisted?.activeAgentRunId ?? agentRun?.runId ?? generateActivity?.runId
+          : undefined;
 
         return {
           ...currentState,
@@ -2515,7 +2606,14 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           providerId: synced.providerId,
           providerConfig: persistedProviderConfig(synced.providerConfig as ProviderConfigState),
           executionSettings,
-          ui
+          ui,
+          generateActivity,
+          activeAgentRunId,
+          agentRun,
+          agentEvents: persisted?.agentEvents ?? [],
+          agentPendingQuestions: persisted?.agentPendingQuestions,
+          isGenerating: hasActiveAgentRun,
+          agentConnectionStatus: hasActiveAgentRun ? "disconnected" : "idle"
         };
       }
     }

@@ -210,6 +210,16 @@ export const productionVolumeAiOutput: GenerateVdtOutput = generateVdtOutputSche
 });
 
 const MOCK_OUTPUT_BY_TASK: Record<AiTaskType, unknown> = {
+  orchestrator_first_response: {
+    assistantMessage: "I will use your visible brief as the source of truth and draft the VDT from that scope.",
+    nextAction: "continue_building",
+    questions: [],
+    publicStatus: {
+      phase: "planning_model",
+      message: "Planning the VDT from your request.",
+      progress: { completed: 1, total: 3 }
+    }
+  },
   agent_decision: {
     type: "call_tool",
     toolName: "skill.search",
@@ -558,6 +568,10 @@ function specializeGenerateTreeOutput(input: GenerateVdtInput): GenerateVdtOutpu
 }
 
 function resolveMockOutput<TInput>(params: AiCompletionParams<TInput>): unknown {
+  if (params.taskType === "orchestrator_first_response") {
+    return MOCK_OUTPUT_BY_TASK.orchestrator_first_response;
+  }
+
   if (params.taskType === "agent_decision") {
     return mockAgentDecision(params.input);
   }

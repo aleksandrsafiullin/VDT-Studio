@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { NodeInspector } from "./node-inspector";
 import { PanelResizeHandle } from "./panel-resize-handle";
@@ -15,6 +16,7 @@ import {
 export function VdtStudioApp() {
   const ui = useVdtStudioStore((state) => state.ui);
   const setPanelWidth = useVdtStudioStore((state) => state.setPanelWidth);
+  const resumePersistedAgentRun = useVdtStudioStore((state) => state.resumePersistedAgentRun);
   const isDesktop = useDesktopLayout();
   const leftCollapsed = isDesktop && ui.leftPanelCollapsed;
   const rightCollapsed = isDesktop && ui.rightPanelCollapsed;
@@ -22,6 +24,10 @@ export function VdtStudioApp() {
   const rightWidth = rightCollapsed ? COLLAPSED_PANEL_WIDTH : ui.rightPanelWidth;
   const leftHandleWidth = isDesktop && !leftCollapsed ? 6 : 0;
   const rightHandleWidth = isDesktop && !rightCollapsed ? 6 : 0;
+
+  useEffect(() => {
+    void resumePersistedAgentRun();
+  }, [resumePersistedAgentRun]);
 
   return (
     <main

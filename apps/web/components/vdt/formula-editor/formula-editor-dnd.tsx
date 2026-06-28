@@ -116,6 +116,7 @@ function FormulaEditorDropZone({
 }
 
 export interface FormulaEditorDndProps extends Omit<FormulaSortableTokenRowProps, "className"> {
+  dndContextId: string;
   paletteNodes: VdtNode[];
   onInsertReference: (nodeId: string, atIndex?: number) => void;
   paletteEmptyMessage?: string;
@@ -124,6 +125,7 @@ export interface FormulaEditorDndProps extends Omit<FormulaSortableTokenRowProps
 }
 
 export function FormulaEditorDnd({
+  dndContextId,
   editorTokens,
   nodes,
   paletteNodes,
@@ -225,6 +227,7 @@ export function FormulaEditorDnd({
 
   return (
     <DndContext
+      id={dndContextId}
       sensors={sensors}
       collisionDetection={closestCorners}
       onDragStart={handleDragStart}

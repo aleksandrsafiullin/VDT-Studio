@@ -6,7 +6,34 @@ export const agentQuestionSchema = z.object({
   reason: z.string().min(1).max(600),
   required: z.boolean(),
   expectedAnswerType: z.enum(["text", "number", "single_choice", "multi_choice"]).optional(),
-  options: z.array(z.string().max(160)).max(20).optional(),
+  answerKind: z.enum(["text", "number", "single_choice", "multi_choice", "field_group"]).optional(),
+  options: z.array(z.union([
+    z.string().max(160),
+    z.object({
+      id: z.string().min(1).max(120),
+      label: z.string().min(1).max(160),
+      value: z.string().min(1).max(500),
+      revealsFields: z.array(z.object({
+        id: z.string().min(1).max(120),
+        label: z.string().min(1).max(160),
+        kind: z.enum(["text", "number"]),
+        unit: z.string().max(80).optional(),
+        required: z.boolean().optional(),
+        placeholder: z.string().max(200).optional()
+      })).max(12).optional(),
+      requiresFreeText: z.boolean().optional()
+    })
+  ])).max(20).optional(),
+  fields: z.array(z.object({
+    id: z.string().min(1).max(120),
+    label: z.string().min(1).max(160),
+    kind: z.enum(["text", "number"]),
+    unit: z.string().max(80).optional(),
+    required: z.boolean().optional(),
+    placeholder: z.string().max(200).optional()
+  })).max(12).optional(),
+  freeTextAllowed: z.boolean().optional(),
+  placeholder: z.string().max(200).optional(),
   defaultValue: z.union([z.string(), z.number(), z.array(z.string())]).optional()
 });
 
@@ -19,6 +46,7 @@ export const agentEventTypeSchema = z.enum([
   "clarifying_questions",
   "user_answer_received",
   "user_instruction",
+  "assistant_message",
   "plan_proposed",
   "tool_call_started",
   "tool_call_completed",

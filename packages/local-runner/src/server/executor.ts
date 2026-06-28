@@ -38,6 +38,16 @@ const mockNode = Object.freeze({
 
 const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
   "connection-test-v1": { ok: true },
+  "orchestrator-first-response-v1": {
+    assistantMessage: "I will use the visible brief as the source of truth and start by checking the requested VDT scope.",
+    nextAction: "continue_building",
+    questions: [],
+    publicStatus: {
+      phase: "planning_model",
+      message: "Planning the VDT from your request.",
+      progress: { completed: 1, total: 3 }
+    }
+  },
   "agent-decision-v1": {
     type: "call_tool",
     toolName: "skill.search",

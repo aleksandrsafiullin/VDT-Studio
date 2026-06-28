@@ -26,6 +26,14 @@ type PersistedVdtState = {
       };
       versions?: Array<{ id: string; name?: string }>;
     };
+    generateActivity?: {
+      runId?: string;
+      status?: string;
+    };
+    agentRun?: {
+      runId?: string;
+      status?: string;
+    };
   };
 };
 
@@ -119,6 +127,351 @@ function mockAgentRun() {
       }
     ],
     finalReport: "Validation result: Graph validation passed. Applied graph to canvas."
+  };
+}
+
+function mockRuntimeAgentSnapshot() {
+  const timestamp = "2026-06-24T10:00:05.000Z";
+  const project = mockGeneratedProject();
+  return {
+    runId: "agent-run-e2e",
+    status: "succeeded",
+    phase: "reporting",
+    request: {
+      mode: "generate_vdt",
+      input: {
+        prompt: "Build a revenue model.",
+        rootKpi: "Revenue",
+        industry: "SaaS",
+        unit: "USD/month",
+        timePeriod: "monthly"
+      },
+      providerId: "openai_compatible",
+      options: {
+        autoApplyPatches: true,
+        continueWithAssumptions: false,
+        maxSteps: 30
+      }
+    },
+    project,
+    draftProject: project,
+    selectedSkills: [
+      {
+        id: "saas.funnel_growth",
+        path: "packages/vdt-agent/skills/saas/funnel-growth.md",
+        title: "SaaS Funnel Growth",
+        score: 100,
+        reason: "Matched SaaS revenue growth context.",
+        matchedTerms: ["revenue"]
+      }
+    ],
+    events: [
+      {
+        id: "agent-run-e2e:1",
+        runId: "agent-run-e2e",
+        seq: 1,
+        timestamp,
+        phase: "reporting",
+        type: "final_report",
+        title: "Final report",
+        message: "Validation result: Graph validation passed. Applied graph to canvas."
+      }
+    ],
+    chatMessages: [
+      {
+        id: "agent-run-e2e:chat:1",
+        runId: "agent-run-e2e",
+        role: "user",
+        kind: "instruction",
+        text: "Build a revenue model.",
+        createdAt: "2026-06-24T10:00:00.000Z"
+      },
+      {
+        id: "agent-run-e2e:chat:2",
+        runId: "agent-run-e2e",
+        role: "assistant",
+        kind: "final_report",
+        text: "Validation result: Graph validation passed. Applied graph to canvas.",
+        createdAt: timestamp
+      }
+    ],
+    publicStatus: {
+      phase: "ready",
+      message: "Draft ready.",
+      updatedAt: timestamp
+    },
+    visibleContext: {
+      threadId: "agent-run-e2e",
+      visibleTitle: "Revenue",
+      brief: {
+        rootKpi: "Revenue",
+        unit: "USD/month",
+        period: "monthly",
+        industry: "SaaS"
+      },
+      project: {
+        id: project.id,
+        name: project.name,
+        rootNodeName: "Revenue",
+        rootNodeUnit: "USD/month"
+      },
+      visibleMessages: []
+    },
+    finalReport: "Validation result: Graph validation passed. Applied graph to canvas.",
+    createdAt: "2026-06-24T10:00:00.000Z",
+    updatedAt: timestamp,
+    completedAt: timestamp
+  };
+}
+
+function mockRuntimeStructuredOutputFailureSnapshot(prompt = "Build an excavation model. I have 5 excavators.") {
+  const timestamp = "2026-06-24T10:00:05.000Z";
+  return {
+    runId: "agent-run-structured-output-failure",
+    status: "needs_user_input",
+    phase: "reporting",
+    request: {
+      mode: "generate_vdt",
+      input: {
+        prompt,
+        rootKpi: "Excavation",
+        unit: "tonnes/year",
+        timePeriod: "year"
+      },
+      providerId: "local_runner",
+      options: {
+        autoApplyPatches: true,
+        continueWithAssumptions: false,
+        maxSteps: 30
+      }
+    },
+    events: [
+      {
+        id: "agent-run-structured-output-failure:1",
+        runId: "agent-run-structured-output-failure",
+        seq: 1,
+        timestamp,
+        phase: "reporting",
+        type: "error",
+        title: "Provider returned unstructured output",
+        message: "Backend output could not be parsed as the required structured response.",
+        metadata: { code: "STRUCTURED_OUTPUT_FAILED", retryable: true }
+      }
+    ],
+    chatMessages: [
+      {
+        id: "agent-run-structured-output-failure:chat:1",
+        runId: "agent-run-structured-output-failure",
+        role: "user",
+        kind: "instruction",
+        text: prompt,
+        createdAt: "2026-06-24T10:00:00.000Z"
+      },
+      {
+        id: "agent-run-structured-output-failure:chat:2",
+        runId: "agent-run-structured-output-failure",
+        role: "assistant",
+        kind: "retryable_error",
+        text: "I saved your message, but the provider returned output that VDT Studio could not use as a structured agent response. Retry the step, or send a smaller instruction so I can continue from the saved context.",
+        createdAt: timestamp
+      }
+    ],
+    publicStatus: {
+      phase: "retryable_error",
+      message: "The provider returned an unstructured answer. Your message is saved, and you can retry.",
+      updatedAt: timestamp
+    },
+    retryableError: {
+      code: "STRUCTURED_OUTPUT_FAILED",
+      message: "Backend output could not be parsed as the required structured response.",
+      retryCount: 1,
+      createdAt: timestamp
+    },
+    visibleContext: {
+      threadId: "agent-run-structured-output-failure",
+      visibleTitle: "Excavation",
+      brief: {
+        rootKpi: "Excavation",
+        unit: "tonnes/year",
+        period: "year"
+      },
+      visibleMessages: []
+    },
+    createdAt: "2026-06-24T10:00:00.000Z",
+    updatedAt: timestamp
+  };
+}
+
+function mockRuntimeNeedsInputSnapshot() {
+  const timestamp = "2026-06-24T10:00:05.000Z";
+  const questions = [
+    {
+      id: "fleet_in_scope",
+      question: "What fleet is in scope?",
+      reason: "Fleet counts determine available loading and hauling capacity.",
+      required: true,
+      answerKind: "field_group",
+      freeTextAllowed: false,
+      fields: [
+        {
+          id: "excavator_count",
+          label: "Excavators",
+          kind: "number",
+          unit: "units",
+          required: true
+        },
+        {
+          id: "haul_truck_count",
+          label: "Haul trucks",
+          kind: "number",
+          unit: "units",
+          required: true
+        }
+      ]
+    },
+    {
+      id: "shift_pattern",
+      question: "How many shifts does the fleet work?",
+      reason: "Shift pattern determines annual available operating hours.",
+      required: true,
+      answerKind: "field_group",
+      freeTextAllowed: true,
+      fields: [
+        {
+          id: "shifts_per_day",
+          label: "Shifts per day",
+          kind: "number",
+          unit: "shifts/day",
+          required: true
+        }
+      ]
+    }
+  ];
+  return {
+    runId: "agent-run-reload",
+    status: "needs_user_input",
+    phase: "asking_clarifying_questions",
+    request: {
+      mode: "generate_vdt",
+      input: {
+        prompt: "Build an excavation model. I have 5 excavators.",
+        rootKpi: "Excavation",
+        unit: "tonnes/year",
+        timePeriod: "year"
+      },
+      providerId: "openai_compatible",
+      options: {
+        autoApplyPatches: true,
+        continueWithAssumptions: false,
+        maxSteps: 30
+      }
+    },
+    selectedSkills: [],
+    events: [
+      {
+        id: "agent-run-reload:1",
+        runId: "agent-run-reload",
+        seq: 1,
+        timestamp,
+        phase: "asking_clarifying_questions",
+        type: "clarifying_questions",
+        title: "Clarifying questions",
+        message: "Agent needs 2 answers before continuing.",
+        questions
+      }
+    ],
+    chatMessages: [
+      {
+        id: "agent-run-reload:chat:1",
+        runId: "agent-run-reload",
+        role: "user",
+        kind: "instruction",
+        text: "Build an excavation model. I have 5 excavators.",
+        createdAt: "2026-06-24T10:00:00.000Z"
+      },
+      {
+        id: "agent-run-reload:chat:2",
+        runId: "agent-run-reload",
+        role: "assistant",
+        kind: "assistant_message",
+        text: "I need the fleet and shift inputs before building capacity formulas.",
+        createdAt: "2026-06-24T10:00:02.000Z"
+      },
+      {
+        id: "agent-run-reload:chat:3",
+        runId: "agent-run-reload",
+        role: "assistant",
+        kind: "question",
+        questions,
+        createdAt: timestamp
+      }
+    ],
+    publicStatus: {
+      phase: "waiting_user",
+      message: "Waiting for your answer.",
+      updatedAt: timestamp
+    },
+    visibleContext: {
+      threadId: "agent-run-reload",
+      visibleTitle: "Excavation",
+      brief: {
+        rootKpi: "Excavation",
+        unit: "tonnes/year",
+        period: "year"
+      },
+      visibleMessages: []
+    },
+    pendingQuestions: questions,
+    createdAt: "2026-06-24T10:00:00.000Z",
+    updatedAt: timestamp
+  };
+}
+
+function mockPersistedActiveAgentState(snapshot: ReturnType<typeof mockRuntimeNeedsInputSnapshot>) {
+  const questions = snapshot.pendingQuestions ?? [];
+  return {
+    state: {
+      brief: {
+        rootKpi: "Excavation",
+        industry: "Mining",
+        businessContext: "",
+        unit: "tonnes/year",
+        timePeriod: "year",
+        goal: "",
+        levelOfDetail: "medium"
+      },
+      generateActivity: {
+        runId: snapshot.runId,
+        status: "needs_user_input",
+        phase: "waiting_provider",
+        phaseStartedAt: snapshot.updatedAt,
+        startedAt: snapshot.createdAt,
+        updatedAt: snapshot.updatedAt,
+        providerId: "openai_compatible",
+        providerLabel: "OpenAI",
+        appMode: "development_web",
+        canCancel: true,
+        cancelRequested: false,
+        agentChatMessages: snapshot.chatMessages,
+        publicStatus: snapshot.publicStatus,
+        agentQuestions: questions,
+        questionsForUser: questions.map((question) => question.question),
+        agentRun: {
+          runId: snapshot.runId,
+          status: "needs_user_input",
+          phase: "asking_clarifying_questions",
+          request: { rootKpi: "Excavation" },
+          selectedSkills: [],
+          events: snapshot.events,
+          questionsForUser: questions.map((question) => question.question)
+        }
+      },
+      activeAgentRunId: snapshot.runId,
+      agentRun: snapshot,
+      agentEvents: snapshot.events,
+      agentPendingQuestions: questions
+    },
+    version: 2
   };
 }
 
@@ -596,7 +949,8 @@ test("renders the workspace without invoking a mock provider", async ({ page }, 
   });
 
   await expect(page).toHaveTitle(/VDT Studio/);
-  await expect(page.getByRole("button", { name: /Generate VDT with AI/i })).toBeVisible();
+  await expect(page.getByTestId("agent-instruction-input")).toBeVisible();
+  await expect(page.getByTestId("agent-send-instruction")).toBeDisabled();
   await expect(page.getByTestId("auto-distribute-layout")).toBeVisible();
 
   await expect(page.getByRole("heading", { name: "Production Volume Driver Model" })).toBeVisible();
@@ -604,27 +958,35 @@ test("renders the workspace without invoking a mock provider", async ({ page }, 
   expect(consoleErrors).toEqual([]);
 });
 
-test("shows real agent activity after mock VDT generation", async ({ page }, testInfo) => {
+test("shows chat-first agent progress after mock VDT generation", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Generate activity smoke runs on desktop viewport.");
 
-  await page.route("**/api/ai/generate-vdt", async (route) => {
+  await page.route("**/api/agent/runs", async (route) => {
+    const snapshot = mockRuntimeAgentSnapshot();
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
         ok: true,
-        project: mockGeneratedProject(),
-        agentRun: mockAgentRun()
+        runId: snapshot.runId,
+        snapshot
       })
     });
   });
 
-  await page.getByRole("button", { name: /Generate VDT with AI/i }).click();
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-byok").click();
+  await page.getByTestId("byok-api-key").fill("session-only-key");
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId("agent-instruction-input").fill("Build a revenue model.");
+  await page.getByTestId("agent-send-instruction").click();
 
   await expect(page.getByTestId("generate-activity-panel")).toBeVisible();
-  await expect(page.getByTestId("generate-agent-events")).toContainText("Classified request as SaaS / revenue growth.");
-  await expect(page.getByTestId("generate-selected-skills")).toContainText("saas.funnel_growth");
-  await expect(page.getByTestId("generate-final-report")).toContainText("Validation result: Graph validation passed.");
+  await expect(page.getByTestId("agent-chat-thread")).toContainText("Validation result: Graph validation passed.");
+  await expect(page.getByTestId("generate-agent-events")).toHaveCount(0);
+  await expect(page.getByTestId("generate-selected-skills")).toHaveCount(0);
+  await expect(page.getByTestId("generate-run-details")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Revenue Driver Model" })).toBeVisible();
   await expect(page.getByText(new RegExp("Model " + "is thinking"))).toHaveCount(0);
   await expect(page.getByText(new RegExp("Reason" + "ing"))).toHaveCount(0);
@@ -632,6 +994,77 @@ test("shows real agent activity after mock VDT generation", async ({ page }, tes
   await expect(page.getByText(/I.m treating/)).toHaveCount(0);
   await expect(page.getByText(/Next I.m separating/)).toHaveCount(0);
   await expect(page.getByTestId("cancel-generate")).toHaveCount(0);
+});
+
+test("keeps the user message visible when the agent provider returns unstructured output", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Agent retryable output smoke runs on desktop viewport.");
+
+  await page.route("**/api/agent/runs", async (route) => {
+    const requestBody = route.request().postDataJSON() as { input?: { prompt?: string } };
+    const snapshot = mockRuntimeStructuredOutputFailureSnapshot(requestBody.input?.prompt);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        runId: snapshot.runId,
+        snapshot
+      })
+    });
+  });
+
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-byok").click();
+  await page.getByTestId("byok-api-key").fill("session-only-key");
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId("agent-instruction-input").fill("Build an excavation model. I have 5 excavators.");
+  await page.getByTestId("agent-send-instruction").click();
+
+  await expect(page.getByTestId("generate-activity-panel")).toBeVisible();
+  await expect(page.getByTestId("agent-chat-thread")).toContainText("Build an excavation model. I have 5 excavators.");
+  await expect(page.getByTestId("agent-chat-thread")).toContainText("could not use as a structured agent response");
+  await expect(page.getByTestId("agent-retryable-error")).toContainText(
+    "Backend output could not be parsed as the required structured response."
+  );
+  await expect(page.getByTestId("retry-agent")).toBeVisible();
+  await expect(page.getByTestId("agent-instruction-input")).toHaveValue("");
+});
+
+test("restores active agent chat and structured questions after page reload", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Agent reload persistence smoke runs on desktop viewport.");
+
+  const snapshot = mockRuntimeNeedsInputSnapshot();
+  await page.route("**/api/agent/runs/agent-run-reload", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, snapshot })
+    });
+  });
+  await page.route("**/api/agent/runs/agent-run-reload/events", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: ""
+    });
+  });
+
+  await page.evaluate((persisted) => {
+    localStorage.setItem("vdt-studio-state", JSON.stringify(persisted));
+  }, mockPersistedActiveAgentState(snapshot));
+
+  await page.reload();
+
+  await expect(page.getByTestId("agent-chat-thread")).toContainText("Build an excavation model. I have 5 excavators.");
+  await expect(page.getByTestId("agent-chat-thread")).toContainText("I need the fleet and shift inputs");
+  await expect(page.getByTestId("agent-answer-field-fleet_in_scope-excavator_count")).toBeVisible();
+  await expect(page.getByTestId("agent-answer-field-fleet_in_scope-haul_truck_count")).toBeVisible();
+  await expect(page.getByTestId("agent-answer-field-shift_pattern-shifts_per_day")).toBeVisible();
+
+  const persisted = await readPersistedState(page);
+  expect(persisted?.state?.generateActivity?.runId).toBe("agent-run-reload");
+  expect(persisted?.state?.agentRun?.runId).toBe("agent-run-reload");
 });
 
 test("opens checked-in examples and syncs the setup brief", async ({ page }, testInfo) => {

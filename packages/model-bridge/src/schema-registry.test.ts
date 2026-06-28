@@ -200,6 +200,7 @@ describe("schema registry", () => {
   });
 
   it("schemaIdForTask returns the expected schema for each task", () => {
+    expect(schemaIdForTask("orchestrator_first_response")).toBe("orchestrator-first-response-v1");
     expect(schemaIdForTask("agent_decision")).toBe("agent-decision-v1");
     expect(schemaIdForTask("agent_plan")).toBe("agent-plan-v1");
     expect(schemaIdForTask("deepen_node")).toBe("deepen-node-v1");

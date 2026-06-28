@@ -7,6 +7,15 @@ const advisory = {
 };
 
 export const VALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
+  "orchestrator-first-response-v1": {
+    assistantMessage: "I will use the visible brief as the source of truth and start by checking the requested VDT scope.",
+    nextAction: "continue_building",
+    questions: [],
+    publicStatus: {
+      phase: "planning_model",
+      message: "Planning the VDT from your request."
+    }
+  },
   "agent-decision-v1": {
     type: "call_tool",
     toolName: "skill.search",
@@ -148,6 +157,12 @@ export const VALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
 };
 
 export const INVALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
+  "orchestrator-first-response-v1": {
+    assistantMessage: "",
+    nextAction: "replace_scope",
+    questions: "bad",
+    publicStatus: {}
+  },
   "agent-decision-v1": {
     type: "call_tool",
     toolName: "vdt.add_many_drivers",

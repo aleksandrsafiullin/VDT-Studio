@@ -40,6 +40,7 @@ export type VdtAgentEventType =
   | "clarifying_questions"
   | "user_answer_received"
   | "user_instruction"
+  | "assistant_message"
   | "plan_proposed"
   | "tool_call_started"
   | "tool_call_completed"
@@ -72,6 +73,134 @@ export interface VdtAgentSelectedSkill {
   score: number;
   reason: string;
   matchedTerms: string[];
+}
+
+export type PublicAgentStatusPhase =
+  | "reading_request"
+  | "asking_questions"
+  | "planning_model"
+  | "running_subagents"
+  | "building_draft"
+  | "checking_model"
+  | "waiting_user"
+  | "ready"
+  | "retryable_error";
+
+export interface PublicAgentStatus {
+  phase: PublicAgentStatusPhase;
+  message: string;
+  updatedAt: string;
+  progress?: {
+    completed: number;
+    total: number;
+  } | undefined;
+}
+
+export interface AgentAnswerPayload {
+  questionId: string;
+  selectedOptionIds?: string[] | undefined;
+  freeText?: string | undefined;
+  fields?: Record<string, string | number> | undefined;
+}
+
+export type AgentChatMessageKind =
+  | "instruction"
+  | "answer"
+  | "assistant_message"
+  | "question"
+  | "status"
+  | "draft_ready"
+  | "retryable_error"
+  | "final_report";
+
+export interface AgentChatMessage {
+  id: string;
+  runId: string;
+  role: "user" | "assistant" | "system";
+  kind: AgentChatMessageKind;
+  text?: string | undefined;
+  questions?: VdtAgentQuestion[] | undefined;
+  answers?: AgentAnswerPayload[] | undefined;
+  status?: PublicAgentStatus | undefined;
+  createdAt: string;
+}
+
+export interface AgentThreadContext {
+  threadId: string;
+  visibleTitle: string;
+  brief: {
+    rootKpi: string;
+    unit?: string | undefined;
+    period?: string | undefined;
+    industry?: string | undefined;
+    businessContext?: string | undefined;
+  };
+  project?: {
+    id: string;
+    name: string;
+    rootNodeName: string;
+    rootNodeUnit?: string | undefined;
+  } | undefined;
+  visibleMessages: AgentChatMessage[];
+}
+
+export interface RetryableAgentError {
+  code: "TIMEOUT" | "PROVIDER_UNAVAILABLE" | "SCHEMA_REPAIR_FAILED" | "STRUCTURED_OUTPUT_FAILED" | "SUBAGENT_FAILED";
+  message: string;
+  failedStepId?: string | undefined;
+  failedSubagentTaskId?: string | undefined;
+  retryCount: number;
+  createdAt: string;
+}
+
+export interface AgentArtifact {
+  id: string;
+  runId: string;
+  type:
+    | "brief_summary"
+    | "decomposition_plan"
+    | "formula_plan"
+    | "unit_report"
+    | "critic_report"
+    | "draft_project"
+    | "patch"
+    | "memory_patch";
+  summary: string;
+  payload: unknown;
+  createdAt: string;
+}
+
+export interface SubagentTask {
+  id: string;
+  runId: string;
+  type:
+    | "brief_alignment"
+    | "domain_decomposition"
+    | "formula_generation"
+    | "unit_validation"
+    | "model_critique"
+    | "memory_curation";
+  status: "queued" | "running" | "succeeded" | "failed_retryable" | "failed";
+  inputArtifactId: string;
+  publicStatus?: string | undefined;
+  startedAt?: string | undefined;
+  heartbeatAt?: string | undefined;
+  completedAt?: string | undefined;
+  timeoutMs: number;
+  retryCount: number;
+}
+
+export interface SubagentReport {
+  taskId: string;
+  status: "succeeded" | "needs_user_input" | "failed_retryable" | "failed";
+  summaryForOrchestrator: string;
+  userFacingSummary?: string | undefined;
+  proposedQuestions?: VdtAgentQuestion[] | undefined;
+  proposedPatchArtifactId?: string | undefined;
+  proposedProjectArtifactId?: string | undefined;
+  assumptions?: string[] | undefined;
+  risks?: string[] | undefined;
+  confidence?: number | undefined;
 }
 
 export type VdtAgentMode = "generate_vdt" | "continue_project" | "deepen_node" | "review_project";
@@ -223,12 +352,14 @@ export interface AgentDecisionContext {
   step: number;
   userRequest: VdtAgentStartInput;
   currentProject?: ProjectSummary | undefined;
+  visibleContext: AgentThreadContext;
   selectedNode?: NodeSummary | undefined;
   selectedSkills: VdtAgentSelectedSkill[];
   availableTools: AgentToolSpec[];
   recentEvents: AgentEventSummary[];
   userAnswers: Record<string, string | number | string[]>;
   manualChanges: ManualChangeSummary[];
+  subagentReports: Array<Pick<SubagentReport, "taskId" | "status" | "summaryForOrchestrator" | "confidence">>;
   lastToolResult?: AgentToolResultEnvelope | undefined;
   validationState?: ValidationStateSummary | undefined;
   calculationState?: CalculationStateSummary | undefined;
@@ -243,7 +374,8 @@ export interface AgentDecisionContext {
 export type AgentUserMessage =
   | {
       type: "user_answer";
-      answers: Record<string, string | number | string[]>;
+      answers?: Record<string, string | number | string[]> | undefined;
+      structuredAnswers?: AgentAnswerPayload[] | undefined;
     }
   | {
       type: "manual_project_change";
@@ -270,11 +402,18 @@ export interface VdtAgentRunSnapshot {
   draftProject?: VdtProject | undefined;
   selectedSkills: VdtAgentSelectedSkill[];
   events: VdtAgentEvent[];
+  chatMessages: AgentChatMessage[];
+  publicStatus: PublicAgentStatus;
+  visibleContext: AgentThreadContext;
   pendingQuestions?: VdtAgentQuestion[] | undefined;
   pendingPlan?: VdtBuildPlan | undefined;
   pendingChangeSet?: VdtChangeSet | undefined;
   finalReport?: string | undefined;
   error?: { code: string; message: string } | undefined;
+  retryableError?: RetryableAgentError | undefined;
+  artifacts?: AgentArtifact[] | undefined;
+  subagentTasks?: SubagentTask[] | undefined;
+  subagentReports?: SubagentReport[] | undefined;
   createdAt: string;
   updatedAt: string;
   completedAt?: string | undefined;
@@ -292,6 +431,8 @@ export interface AgentEventInput {
 
 export interface VdtAgentRunState extends VdtAgentRunSnapshot {
   seq: number;
+  chatSeq: number;
+  firstResponseCompleted: boolean;
   abortController: AbortController;
   builder?: VdtBuilderSession | undefined;
   answers: Record<string, string | number | string[]>;

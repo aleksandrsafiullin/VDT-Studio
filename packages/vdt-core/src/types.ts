@@ -1,4 +1,5 @@
 export type VdtAiTaskType =
+  | "orchestrator_first_response"
   | "agent_decision"
   | "agent_plan"
   | "generate_tree"

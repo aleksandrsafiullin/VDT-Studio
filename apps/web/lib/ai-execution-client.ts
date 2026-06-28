@@ -276,6 +276,7 @@ function apiBackends(): PublicBackendStatus[] {
 
 const API_BACKEND_IDS = new Set(["openai_compatible", "anthropic", "gemini", "azure_openai", "mock"]);
 const TASK_SCHEMA_IDS = {
+  orchestrator_first_response: "orchestrator-first-response-v1",
   agent_decision: "agent-decision-v1",
   agent_plan: "agent-plan-v1",
   generate_tree: "generate-tree-v1",

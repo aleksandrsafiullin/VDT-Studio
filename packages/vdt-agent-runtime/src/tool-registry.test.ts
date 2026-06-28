@@ -96,4 +96,64 @@ describe("ToolRegistry", () => {
     expect(project.graph.nodes.find((node) => node.name === "Price")).toMatchObject({ type: "input" });
     expect(project.graph.edges.at(-1)).toMatchObject({ relation: "positive_driver" });
   });
+
+  it("adds multiple VDT drivers in one batch tool call", async () => {
+    const store = new AgentRunStore({ now: () => "2026-06-26T00:00:00.000Z" });
+    const run = store.createRun({
+      mode: "generate_vdt",
+      input: { rootKpi: "Excavation", unit: "tonnes/year", timePeriod: "year" },
+      providerId: "mock"
+    });
+    const builder = new VdtBuilderSession({ now: () => "2026-06-26T00:00:00.000Z" });
+    builder.createDraft({
+      projectTitle: "Excavation Driver Model",
+      rootKpi: "Excavation",
+      unit: "tonnes/year",
+      timePeriod: "year"
+    });
+    store.updateRun(run.runId, { builder, draftProject: builder.getProject() });
+    const registry = createDefaultToolRegistry();
+
+    const result = await registry.run("vdt.add_drivers_batch", {
+      drivers: [
+        {
+          parentNodeId: "excavation",
+          nodeId: "excavator_count",
+          name: "Excavator count",
+          type: "input",
+          unit: "units",
+          relation: "multiplicative_driver",
+          baselineValue: 5
+        },
+        {
+          parentNodeId: "excavation",
+          nodeId: "shift_count",
+          name: "Shift count",
+          type: "input",
+          unit: "shifts/day",
+          relation: "multiplicative_driver",
+          baselineValue: 2
+        }
+      ]
+    }, {
+      runId: run.runId,
+      store,
+      emit: (event) => store.appendEvent(run.runId, event),
+      getRun: () => store.getSnapshot(run.runId),
+      updateRun: (patch) => {
+        store.updateRun(run.runId, patch);
+      },
+      builder,
+      signal: run.abortController.signal
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.output).toMatchObject({ nodeIds: ["excavator_count", "shift_count"] });
+    const project = builder.getProject();
+    expect(project.graph.nodes.map((node) => node.id)).toEqual(expect.arrayContaining([
+      "excavator_count",
+      "shift_count"
+    ]));
+    expect(store.getSnapshot(run.runId).events.some((event) => event.message.includes("Added 2 drivers"))).toBe(true);
+  });
 });

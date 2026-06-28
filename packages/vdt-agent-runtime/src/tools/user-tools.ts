@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { AgentTool } from "../tool-registry";
+import { normalizeUserQuestions, publicStatusForPhase } from "../chat-messages";
 import { agentQuestionSchema } from "../schemas/agent-event";
 
 export function createUserTools(): AgentTool[] {
@@ -15,17 +16,24 @@ const askUserTool: AgentTool = {
   outputSchema: z.object({ status: z.literal("needs_user_input") }),
   phase: "asking_clarifying_questions",
   run(context, input) {
+    const questions = normalizeUserQuestions(input.questions);
     context.store.updateRun(context.runId, {
       status: "needs_user_input",
       phase: "asking_clarifying_questions",
-      pendingQuestions: input.questions
+      pendingQuestions: questions
     });
+    context.store.appendChatMessage(context.runId, {
+      role: "assistant",
+      kind: "question",
+      questions
+    });
+    context.store.updatePublicStatus(context.runId, publicStatusForPhase("asking_clarifying_questions", "Waiting for your answer."));
     context.emit({
       type: "clarifying_questions",
       phase: "asking_clarifying_questions",
       title: "Clarifying questions",
-      message: `Agent needs ${input.questions.length} answer${input.questions.length === 1 ? "" : "s"} before continuing.`,
-      questions: input.questions
+      message: `Agent needs ${questions.length} answer${questions.length === 1 ? "" : "s"} before continuing.`,
+      questions
     });
     return { status: "needs_user_input" };
   }
@@ -42,9 +50,24 @@ const showStatusTool: AgentTool = {
   outputSchema: z.object({ ok: z.literal(true) }),
   phase: "planning_decomposition",
   run(context, input) {
+    const state = context.store.getState(context.runId);
+    const updated = context.store.updatePublicStatus(context.runId, publicStatusForPhase(state.phase, input.message));
+    context.store.appendChatMessage(context.runId, {
+      role: "assistant",
+      kind: "status",
+      text: input.message,
+      status: updated.publicStatus
+    });
     context.emit({
       type: "tool_call_completed",
-      phase: context.store.getState(context.runId).phase,
+      phase: state.phase,
+      title: input.title,
+      message: input.message,
+      metadata: { level: input.level ?? "info", toolName: "user.show_status" }
+    });
+    context.emit({
+      type: "assistant_message",
+      phase: state.phase,
       title: input.title,
       message: input.message,
       metadata: { level: input.level ?? "info", toolName: "user.show_status" }

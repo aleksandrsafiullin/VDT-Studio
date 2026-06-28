@@ -3,6 +3,7 @@ export * from "./orchestrator";
 export * from "./run-store";
 export * from "./schemas/agent-decision";
 export * from "./schemas/agent-event";
+export * from "./schemas/agent-first-response";
 export * from "./schemas/agent-message";
 export * from "./schemas/agent-plan";
 export * from "./schemas/agent-run";

@@ -61,6 +61,11 @@ function withSharedReviewArrays(
 }
 
 export const TASK_LIMITS: Record<VdtAiTaskType, VdtAiTaskLimits> = {
+  orchestrator_first_response: withSharedReviewArrays({
+    maxInputBytes: DEFAULT_MAX_INPUT_BYTES,
+    maxOutputBytes: DEFAULT_MAX_OUTPUT_BYTES,
+    maxFindings: 10
+  }),
   agent_decision: withSharedReviewArrays({
     maxInputBytes: DEFAULT_MAX_INPUT_BYTES,
     maxOutputBytes: DEFAULT_MAX_OUTPUT_BYTES,

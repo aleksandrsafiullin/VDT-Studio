@@ -1,6 +1,7 @@
 import type { VdtAiTaskType } from "@vdt-studio/vdt-core";
 
 export const VDT_OUTPUT_SCHEMA_IDS = [
+  "orchestrator-first-response-v1",
   "agent-decision-v1",
   "agent-plan-v1",
   "generate-tree-v1",
@@ -23,6 +24,7 @@ export type VdtOutputSchemaId = (typeof VDT_OUTPUT_SCHEMA_IDS)[number];
 export type VdtSchemaId = (typeof VDT_SCHEMA_IDS)[number];
 
 const schemaTask: Record<VdtOutputSchemaId, VdtAiTaskType> = {
+  "orchestrator-first-response-v1": "orchestrator_first_response",
   "agent-decision-v1": "agent_decision",
   "agent-plan-v1": "agent_plan",
   "generate-tree-v1": "generate_tree",
@@ -245,10 +247,87 @@ const agentQuestionSchema = objectSchema(
     reason: { type: "string", maxLength: 600 },
     required: { type: "boolean" },
     expectedAnswerType: enumProp(["text", "number", "single_choice", "multi_choice"]),
-    options: stringArrayProp,
+    answerKind: enumProp(["text", "number", "single_choice", "multi_choice", "field_group"]),
+    options: {
+      type: "array",
+      maxItems: 20,
+      items: {
+        anyOf: [
+          stringProp,
+          objectSchema(
+            {
+              id: nodeIdProp,
+              label: { type: "string", maxLength: 160 },
+              value: { type: "string", maxLength: 500 },
+              requiresFreeText: { type: "boolean" },
+              revealsFields: arrayProp(objectSchema(
+                {
+                  id: nodeIdProp,
+                  label: { type: "string", maxLength: 160 },
+                  kind: enumProp(["text", "number"]),
+                  unit: { type: "string", maxLength: 80 },
+                  required: { type: "boolean" },
+                  placeholder: { type: "string", maxLength: 200 }
+                },
+                ["id", "label", "kind"]
+              ), 12)
+            },
+            ["id", "label", "value"]
+          )
+        ]
+      }
+    },
+    fields: arrayProp(objectSchema(
+      {
+        id: nodeIdProp,
+        label: { type: "string", maxLength: 160 },
+        kind: enumProp(["text", "number"]),
+        unit: { type: "string", maxLength: 80 },
+        required: { type: "boolean" },
+        placeholder: { type: "string", maxLength: 200 }
+      },
+      ["id", "label", "kind"]
+    ), 12),
+    freeTextAllowed: { type: "boolean" },
+    placeholder: { type: "string", maxLength: 200 },
     defaultValue: { anyOf: [stringProp, { type: "number" }, stringArrayProp] }
   },
   ["id", "question", "reason", "required"]
+);
+
+const publicAgentStatusSchema = objectSchema(
+  {
+    phase: enumProp([
+      "reading_request",
+      "asking_questions",
+      "planning_model",
+      "running_subagents",
+      "building_draft",
+      "checking_model",
+      "waiting_user",
+      "ready",
+      "retryable_error"
+    ]),
+    message: { type: "string", maxLength: 500 },
+    progress: objectSchema(
+      {
+        completed: { type: "number" },
+        total: { type: "number" }
+      },
+      ["completed", "total"]
+    )
+  },
+  ["phase", "message"]
+);
+
+const orchestratorFirstResponseSchema = objectSchema(
+  {
+    assistantMessage: { type: "string", minLength: 1, maxLength: 2_000 },
+    nextAction: enumProp(["ask_user", "continue_building"]),
+    questions: { type: "array", maxItems: 5, items: agentQuestionSchema },
+    publicStatus: publicAgentStatusSchema
+  },
+  ["assistantMessage", "nextAction", "questions", "publicStatus"]
 );
 
 const agentDecisionCallToolSchema = objectSchema(
@@ -781,6 +860,7 @@ const jsonSchemas: Record<VdtSchemaId, Record<string, unknown>> = {
     required: ["ok"],
     additionalProperties: false
   },
+  "orchestrator-first-response-v1": orchestratorFirstResponseSchema,
   "agent-decision-v1": agentDecisionSchema,
   "agent-plan-v1": objectSchema(
     {
@@ -968,6 +1048,11 @@ export function getStrictResponseJsonSchema(schemaId: VdtSchemaId): Record<strin
 
 const validators: Record<VdtSchemaId, (output: Record<string, unknown>) => boolean> = {
   "connection-test-v1": (output) => output.ok === true,
+  "orchestrator-first-response-v1": (output) =>
+    typeof output.assistantMessage === "string" &&
+    (output.nextAction === "ask_user" || output.nextAction === "continue_building") &&
+    isObjectArray(output.questions) &&
+    isRecord(output.publicStatus),
   "agent-decision-v1": (output) => {
     for (const forbidden of ["driverPlan", "nodes", "edges", "rootFormula", "project", "fullProject", "fullGraph", "selectedSkillIds"]) {
       if (forbidden in output) return false;

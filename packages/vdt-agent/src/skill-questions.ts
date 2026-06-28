@@ -1,6 +1,24 @@
 import type { GenerateVdtInputLike, SkillExcerpt } from "./index";
 
 export type VdtAgentQuestionExpectedAnswerType = "text" | "number" | "single_choice" | "multi_choice";
+export type VdtAgentQuestionAnswerKind = VdtAgentQuestionExpectedAnswerType | "field_group";
+
+export interface VdtAgentQuestionField {
+  id: string;
+  label: string;
+  kind: "text" | "number";
+  unit?: string | undefined;
+  required?: boolean | undefined;
+  placeholder?: string | undefined;
+}
+
+export interface VdtAgentQuestionOption {
+  id: string;
+  label: string;
+  value: string;
+  revealsFields?: VdtAgentQuestionField[] | undefined;
+  requiresFreeText?: boolean | undefined;
+}
 
 export interface VdtAgentQuestion {
   id: string;
@@ -8,7 +26,11 @@ export interface VdtAgentQuestion {
   reason: string;
   required: boolean;
   expectedAnswerType?: VdtAgentQuestionExpectedAnswerType | undefined;
-  options?: string[] | undefined;
+  answerKind?: VdtAgentQuestionAnswerKind | undefined;
+  options?: Array<string | VdtAgentQuestionOption> | undefined;
+  fields?: VdtAgentQuestionField[] | undefined;
+  freeTextAllowed?: boolean | undefined;
+  placeholder?: string | undefined;
   defaultValue?: string | number | string[] | undefined;
 }
 
