@@ -1782,8 +1782,37 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         }
       },
       sendAgentAnswers: async (answers) => {
-        const runId = get().agentRun?.runId ?? get().activeAgentRunId;
-        if (!runId) return;
+        const runId = get().agentRun?.runId ?? get().activeAgentRunId ?? get().generateActivity?.runId;
+        if (!runId) {
+          const message = "Agent run was not found. Reload the page or start a new run.";
+          set({ agentError: message, aiError: message });
+          return;
+        }
+        const submittedAt = nowIso();
+        set((state) => ({
+          aiError: undefined,
+          agentError: undefined,
+          isGenerating: true,
+          activeAgentRunId: state.activeAgentRunId ?? runId,
+          agentConnectionStatus: state.agentConnectionStatus === "idle" ? "connecting" : state.agentConnectionStatus,
+          generateActivity: state.generateActivity?.runId === runId
+            ? {
+                ...state.generateActivity,
+                status: "running",
+                canCancel: true,
+                cancelRequested: false,
+                publicStatus: {
+                  phase: "planning_model",
+                  message: "Reading your answer...",
+                  updatedAt: submittedAt
+                },
+                retryableError: undefined,
+                message: undefined,
+                completedAt: undefined,
+                updatedAt: submittedAt
+              }
+            : state.generateActivity
+        }));
         try {
           const snapshot = await createAgentClient().sendMessage(runId, {
             type: "user_answer",
@@ -1792,7 +1821,27 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           applyAgentSnapshot(set, snapshot);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Agent answers could not be sent.";
-          set({ agentError: message, aiError: message });
+          const failedAt = nowIso();
+          set((state) => ({
+            agentError: message,
+            aiError: message,
+            agentConnectionStatus: "error",
+            isGenerating: state.generateActivity?.runId === runId ? true : state.isGenerating,
+            generateActivity: state.generateActivity?.runId === runId
+              ? {
+                  ...state.generateActivity,
+                  status: "needs_user_input",
+                  canCancel: true,
+                  publicStatus: {
+                    phase: "waiting_user",
+                    message: `Could not send answer: ${message}`,
+                    updatedAt: failedAt
+                  },
+                  message,
+                  updatedAt: failedAt
+                }
+              : state.generateActivity
+          }));
         }
       },
       sendAgentInstruction: async (text, selectedNodeId) => {

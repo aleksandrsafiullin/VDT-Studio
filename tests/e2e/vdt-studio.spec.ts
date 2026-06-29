@@ -427,6 +427,58 @@ function mockRuntimeNeedsInputSnapshot() {
   };
 }
 
+function mockRuntimeRunningAfterAnswersSnapshot(
+  answers: Array<{ questionId: string; fields?: Record<string, string | number>; freeText?: string }> = []
+) {
+  const timestamp = "2026-06-24T10:00:07.000Z";
+  const base = mockRuntimeNeedsInputSnapshot();
+  return {
+    ...base,
+    status: "running",
+    phase: "planning_decomposition",
+    pendingQuestions: undefined,
+    events: [
+      ...base.events,
+      {
+        id: "agent-run-reload:2",
+        runId: "agent-run-reload",
+        seq: 2,
+        timestamp,
+        phase: "planning_decomposition",
+        type: "user_answer_received",
+        title: "User answers received",
+        message: "Saved answers and resumed the AI agent.",
+        metadata: { answerIds: answers.map((answer) => answer.questionId) }
+      }
+    ],
+    chatMessages: [
+      ...base.chatMessages,
+      {
+        id: "agent-run-reload:chat:4",
+        runId: "agent-run-reload",
+        role: "user",
+        kind: "answer",
+        text: answers
+          .map((answer) => {
+            const fields = answer.fields
+              ? Object.entries(answer.fields).map(([key, value]) => `${key}: ${value}`).join(", ")
+              : "";
+            return `${answer.questionId}: ${[fields, answer.freeText].filter(Boolean).join("; ")}`;
+          })
+          .join("\n"),
+        answers,
+        createdAt: timestamp
+      }
+    ],
+    publicStatus: {
+      phase: "planning_model",
+      message: "Reading your answer...",
+      updatedAt: timestamp
+    },
+    updatedAt: timestamp
+  };
+}
+
 function mockPersistedActiveAgentState(snapshot: ReturnType<typeof mockRuntimeNeedsInputSnapshot>) {
   const questions = snapshot.pendingQuestions ?? [];
   return {
@@ -1065,6 +1117,78 @@ test("restores active agent chat and structured questions after page reload", as
   const persisted = await readPersistedState(page);
   expect(persisted?.state?.generateActivity?.runId).toBe("agent-run-reload");
   expect(persisted?.state?.agentRun?.runId).toBe("agent-run-reload");
+});
+
+test("submits structured agent answers after reload and shows immediate progress", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Agent answer submit smoke runs on desktop viewport.");
+
+  const snapshot = mockRuntimeNeedsInputSnapshot();
+  let capturedMessageBody:
+    | {
+        type?: string;
+        structuredAnswers?: Array<{
+          questionId: string;
+          fields?: Record<string, string | number>;
+          freeText?: string;
+        }>;
+      }
+    | undefined;
+
+  await page.route("**/api/agent/runs/agent-run-reload/messages", async (route) => {
+    capturedMessageBody = route.request().postDataJSON() as typeof capturedMessageBody;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        snapshot: mockRuntimeRunningAfterAnswersSnapshot(capturedMessageBody?.structuredAnswers ?? [])
+      })
+    });
+  });
+  await page.route("**/api/agent/runs/agent-run-reload", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, snapshot })
+    });
+  });
+  await page.route("**/api/agent/runs/agent-run-reload/events", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: ""
+    });
+  });
+
+  await page.evaluate((persisted) => {
+    localStorage.setItem("vdt-studio-state", JSON.stringify(persisted));
+  }, mockPersistedActiveAgentState(snapshot));
+
+  await page.reload();
+
+  await page.getByTestId("agent-answer-field-fleet_in_scope-excavator_count").fill("5");
+  await page.getByTestId("agent-answer-field-fleet_in_scope-haul_truck_count").fill("10");
+  await page.getByTestId("agent-answer-field-shift_pattern-shifts_per_day").fill("2");
+  await page.getByTestId("continue-agent").click();
+
+  await expect.poll(() => capturedMessageBody?.type).toBe("user_answer");
+  expect(capturedMessageBody?.structuredAnswers).toMatchObject([
+    {
+      questionId: "fleet_in_scope",
+      fields: {
+        excavator_count: 5,
+        haul_truck_count: 10
+      }
+    },
+    {
+      questionId: "shift_pattern",
+      fields: {
+        shifts_per_day: 2
+      }
+    }
+  ]);
+  await expect(page.getByTestId("generate-activity-panel")).toContainText("Reading your answer...");
+  await expect(page.getByTestId("agent-chat-thread")).toContainText("fleet_in_scope");
 });
 
 test("opens checked-in examples and syncs the setup brief", async ({ page }, testInfo) => {

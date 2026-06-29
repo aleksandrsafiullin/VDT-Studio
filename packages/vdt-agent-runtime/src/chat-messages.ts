@@ -80,6 +80,8 @@ export function publicStatusForPhase(phase: VdtAgentRunPhase, message?: string):
 function normalizeOneQuestion(question: VdtAgentQuestion): VdtAgentQuestion[] {
   const fleetQuestions = splitFleetAndShiftQuestion(question);
   if (fleetQuestions) return fleetQuestions;
+  const fieldGroupQuestion = inferFieldGroupQuestion(question);
+  if (fieldGroupQuestion) return [fieldGroupQuestion];
   return [normalizeQuestionDefaults(question)];
 }
 
@@ -96,6 +98,7 @@ function normalizeQuestionDefaults(question: VdtAgentQuestion): VdtAgentQuestion
 }
 
 function splitFleetAndShiftQuestion(question: VdtAgentQuestion): VdtAgentQuestion[] | undefined {
+  if (hasExplicitAnswerStructure(question)) return undefined;
   const text = question.question.toLowerCase();
   const mentionsFleet = /excavator|truck|haul\s*truck|dump\s*truck|самосвал|экскаватор/.test(text);
   const mentionsShift = /shift|смен/.test(text);
@@ -148,6 +151,137 @@ function splitFleetAndShiftQuestion(question: VdtAgentQuestion): VdtAgentQuestio
       ]
     })
   ];
+}
+
+function inferFieldGroupQuestion(question: VdtAgentQuestion): VdtAgentQuestion | undefined {
+  if (hasExplicitAnswerStructure(question)) return undefined;
+  const text = question.question.toLowerCase();
+  const mentionsExcavators = /excavator|экскаватор/.test(text);
+  const mentionsTrucks = /truck|haul\s*truck|dump\s*truck|самосвал/.test(text);
+  const mentionsReverseShovel = /reverse\s+shovel|backhoe|обратн/.test(text);
+  const mentionsStraightShovel = /straight\s+shovel|face\s+shovel|прям/.test(text);
+  const mentionsHours = /hour|час/.test(text);
+  const mentionsDaysPerYear = /(day|дн).*(year|год)|(year|год).*(day|дн)/.test(text);
+  const mentionsDistance = /distance|km|км/.test(text);
+  const mentionsSpeed = /speed|km\/h|км\/ч/.test(text);
+
+  if (mentionsReverseShovel && mentionsStraightShovel) {
+    return normalizeQuestionDefaults({
+      ...question,
+      answerKind: "field_group",
+      freeTextAllowed: false,
+      fields: [
+        {
+          id: "reverse_shovel_count",
+          label: "Reverse shovel excavators",
+          kind: "number",
+          unit: "units",
+          required: true,
+          placeholder: "3"
+        },
+        {
+          id: "straight_shovel_count",
+          label: "Straight shovel excavators",
+          kind: "number",
+          unit: "units",
+          required: true,
+          placeholder: "2"
+        }
+      ]
+    });
+  }
+
+  if (mentionsExcavators && mentionsTrucks) {
+    return normalizeQuestionDefaults({
+      ...question,
+      answerKind: "field_group",
+      freeTextAllowed: false,
+      fields: [
+        {
+          id: "excavator_count",
+          label: "Excavators",
+          kind: "number",
+          unit: "units",
+          required: true,
+          placeholder: "5"
+        },
+        {
+          id: "haul_truck_count",
+          label: "Haul trucks",
+          kind: "number",
+          unit: "units",
+          required: true,
+          placeholder: "10"
+        }
+      ]
+    });
+  }
+
+  if (mentionsHours && mentionsDaysPerYear) {
+    return normalizeQuestionDefaults({
+      ...question,
+      answerKind: "field_group",
+      freeTextAllowed: true,
+      fields: [
+        {
+          id: /shift|смен/.test(text) ? "hours_per_shift" : "operating_hours",
+          label: /shift|смен/.test(text) ? "Hours per shift" : "Operating hours",
+          kind: "number",
+          unit: "h",
+          required: true,
+          placeholder: "12"
+        },
+        {
+          id: "working_days_per_year",
+          label: "Working days per year",
+          kind: "number",
+          unit: "days/year",
+          required: true,
+          placeholder: "350"
+        }
+      ]
+    });
+  }
+
+  if (mentionsDistance && mentionsSpeed) {
+    return normalizeQuestionDefaults({
+      ...question,
+      answerKind: "field_group",
+      freeTextAllowed: true,
+      fields: [
+        {
+          id: "haul_distance_km",
+          label: "Haul distance",
+          kind: "number",
+          unit: "km",
+          required: true,
+          placeholder: "2.7"
+        },
+        {
+          id: "loaded_speed_kmh",
+          label: "Loaded speed",
+          kind: "number",
+          unit: "km/h",
+          required: false,
+          placeholder: "7"
+        },
+        {
+          id: "empty_speed_kmh",
+          label: "Empty speed",
+          kind: "number",
+          unit: "km/h",
+          required: false,
+          placeholder: "11"
+        }
+      ]
+    });
+  }
+
+  return undefined;
+}
+
+function hasExplicitAnswerStructure(question: VdtAgentQuestion): boolean {
+  return (question.fields?.length ?? 0) > 0 || (question.options?.length ?? 0) > 0;
 }
 
 function inferAnswerKind(question: VdtAgentQuestion): VdtAgentQuestion["answerKind"] {

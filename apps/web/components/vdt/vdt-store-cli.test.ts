@@ -213,6 +213,115 @@ describe("vdt-store change-set workflow", () => {
     ]);
   });
 
+  it("sends structured answers from restored activity and marks the agent as reading immediately", async () => {
+    const fetchMock = vi.mocked(fetch);
+    let capturedMessageBody: unknown;
+    let resolveMessage: ((response: Response) => void) | undefined;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/agent/runs/agent-run-restored/messages")) {
+        capturedMessageBody = JSON.parse(String(init?.body));
+        return await new Promise<Response>((resolve) => {
+          resolveMessage = resolve;
+        });
+      }
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ agents: [] })
+      } as Response;
+    });
+
+    useVdtStudioStore.setState({
+      activeAgentRunId: undefined,
+      agentRun: undefined,
+      generateActivity: {
+        runId: "agent-run-restored",
+        status: "needs_user_input",
+        phase: "waiting_provider",
+        phaseStartedAt: "2026-06-27T00:00:00.000Z",
+        startedAt: "2026-06-27T00:00:00.000Z",
+        updatedAt: "2026-06-27T00:00:00.000Z",
+        providerId: "openai_compatible",
+        providerLabel: "OpenAI",
+        appMode: "development_web",
+        canCancel: true,
+        cancelRequested: false,
+        publicStatus: {
+          phase: "waiting_user",
+          message: "Waiting for your answer.",
+          updatedAt: "2026-06-27T00:00:00.000Z"
+        }
+      }
+    });
+
+    const sendPromise = useVdtStudioStore.getState().sendAgentAnswers([
+      {
+        questionId: "fleet_in_scope",
+        fields: {
+          excavator_count: 5,
+          haul_truck_count: 10
+        }
+      }
+    ]);
+
+    expect(capturedMessageBody).toMatchObject({
+      type: "user_answer",
+      structuredAnswers: [
+        {
+          questionId: "fleet_in_scope",
+          fields: {
+            excavator_count: 5,
+            haul_truck_count: 10
+          }
+        }
+      ]
+    });
+    expect(useVdtStudioStore.getState().activeAgentRunId).toBe("agent-run-restored");
+    expect(useVdtStudioStore.getState().generateActivity?.status).toBe("running");
+    expect(useVdtStudioStore.getState().generateActivity?.publicStatus?.message).toBe("Reading your answer...");
+
+    resolveMessage?.({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        ok: true,
+        snapshot: {
+          runId: "agent-run-restored",
+          status: "running",
+          phase: "planning_decomposition",
+          request: {
+            mode: "generate_vdt",
+            input: {
+              prompt: "Build an excavation model.",
+              rootKpi: "Excavation"
+            },
+            providerId: "openai_compatible"
+          },
+          selectedSkills: [],
+          events: [],
+          chatMessages: [],
+          publicStatus: {
+            phase: "planning_model",
+            message: "Reading your answer...",
+            updatedAt: "2026-06-27T00:00:01.000Z"
+          },
+          visibleContext: {
+            threadId: "agent-run-restored",
+            visibleTitle: "Excavation",
+            visibleMessages: []
+          },
+          createdAt: "2026-06-27T00:00:00.000Z",
+          updatedAt: "2026-06-27T00:00:01.000Z"
+        }
+      })
+    } as Response);
+    await sendPromise;
+
+    expect(useVdtStudioStore.getState().generateActivity?.status).toBe("running");
+    expect(useVdtStudioStore.getState().agentRun?.runId).toBe("agent-run-restored");
+  });
+
   it("runAiAction posts deepen_node to /api/ai/run-task and stores pending change set", async () => {
     const changeSet = mockDeepenChangeSet();
     const fetchMock = vi.mocked(fetch);

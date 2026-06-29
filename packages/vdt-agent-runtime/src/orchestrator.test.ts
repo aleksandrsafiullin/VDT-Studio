@@ -316,6 +316,72 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
     expect(snapshot.pendingQuestions?.[1]?.fields?.map((field) => field.id)).toEqual(["shifts_per_day"]);
   });
 
+  it("normalizes compound numeric clarifications into separate answer fields", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([], {
+      assistantMessage: "I need to confirm the missing operating inputs before building the tree.",
+      nextAction: "ask_user",
+      questions: [
+        {
+          id: "fleet_counts",
+          question: "How many excavators and trucks should the model use?",
+          reason: "Fleet count determines loading and hauling capacity.",
+          required: true,
+          expectedAnswerType: "text"
+        },
+        {
+          id: "excavator_mix",
+          question: "Of the excavators, how many are reverse shovel and how many are straight shovel?",
+          reason: "Excavator type can affect loading assumptions.",
+          required: true,
+          expectedAnswerType: "text"
+        },
+        {
+          id: "calendar",
+          question: "How many hours are in each shift, and how many working days per year should be assumed?",
+          reason: "Calendar assumptions determine annual available hours.",
+          required: true,
+          expectedAnswerType: "text"
+        }
+      ],
+      publicStatus: {
+        phase: "asking_questions",
+        message: "Confirming missing inputs."
+      }
+    });
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: {
+        prompt: "Build an excavation VDT.",
+        rootKpi: "Excavation",
+        unit: "tonnes/year",
+        timePeriod: "year"
+      },
+      providerId: "decision-test",
+      options: { continueWithAssumptions: false, maxSteps: 10 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.pendingQuestions?.map((question) => question.id)).toEqual([
+      "fleet_counts",
+      "excavator_mix",
+      "calendar"
+    ]);
+    expect(snapshot.pendingQuestions?.[0]?.fields?.map((field) => field.id)).toEqual([
+      "excavator_count",
+      "haul_truck_count"
+    ]);
+    expect(snapshot.pendingQuestions?.[1]?.fields?.map((field) => field.id)).toEqual([
+      "reverse_shovel_count",
+      "straight_shovel_count"
+    ]);
+    expect(snapshot.pendingQuestions?.[2]?.fields?.map((field) => field.id)).toEqual([
+      "hours_per_shift",
+      "working_days_per_year"
+    ]);
+  });
+
   it("asks for missing haulage inputs, resumes the same run, and builds a valid calculable VDT one tool at a time", async () => {
     const runtime = createVdtAgentRuntime();
     const provider = scriptedProvider([

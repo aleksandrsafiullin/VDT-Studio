@@ -362,12 +362,13 @@ function QuestionCard({
         </div>
       ))}
       <Button
+        type="submit"
         size="sm"
         variant="primary"
         disabled={!canSubmit || !canContinue}
         data-testid="continue-agent"
       >
-        Send answer
+        {canSubmit ? "Send answer" : "Working..."}
       </Button>
     </form>
   );
