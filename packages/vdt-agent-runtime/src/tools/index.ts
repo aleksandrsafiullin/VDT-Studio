@@ -10,8 +10,21 @@ import { createSkillTools } from "./skill-tools";
 import { createSubagentTools } from "./subagent-tools";
 import { createUserTools } from "./user-tools";
 import { createVdtBuilderTools } from "./vdt-builder-tools";
+import type { ResearchProvider } from "./research-tools";
+export {
+  BraveSearchProvider,
+  TavilySearchProvider,
+  resolveResearchProviderFromEnv,
+  type ResearchProviderEnv,
+  type ResearchProviderResolverOptions
+} from "./research-providers";
+export type { ResearchProvider, ResearchPurpose, ResearchSearchResult, ResearchSourceDocument } from "./research-tools";
 
-export function createDefaultToolRegistry(): ToolRegistry {
+export interface DefaultToolRegistryOptions {
+  researchProvider?: ResearchProvider | undefined;
+}
+
+export function createDefaultToolRegistry(options: DefaultToolRegistryOptions = {}): ToolRegistry {
   const registry = new ToolRegistry();
   for (const tool of [
     ...createSkillTools(),
@@ -19,7 +32,7 @@ export function createDefaultToolRegistry(): ToolRegistry {
     ...createVdtBuilderTools(),
     ...createProjectTools(),
     ...createFormulaTools(),
-    ...createResearchTools(),
+    ...createResearchTools(options.researchProvider),
     ...createRepairTools(),
     ...createMemoryTools(),
     ...createSubagentTools(),

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AgentRunStore } from "../run-store";
-import { ToolRegistry, type AgentToolContext } from "../tool-registry";
-import { createResearchTools } from "./research-tools";
+import { AgentToolError, ToolRegistry, type AgentToolContext } from "../tool-registry";
+import { createResearchTools, type ResearchProvider } from "./research-tools";
 
 describe("research tools", () => {
   it("returns a controlled tool failure when no research provider is configured", async () => {
@@ -17,6 +17,72 @@ describe("research tools", () => {
       code: "RESEARCH_PROVIDER_NOT_CONFIGURED",
       message: "Research provider is not configured. Ask the user for process details or continue with explicit assumptions."
     });
+  });
+
+  it("returns normalized results from a configured research provider", async () => {
+    const { registry, context } = testRegistry({
+      id: "test-search",
+      async search(query, options) {
+        return [{
+          id: "test_1",
+          title: `Result for ${query}`,
+          url: "https://example.com/process",
+          sourceName: "Example",
+          snippet: `Purpose ${options.purpose} with ${options.maxResults} requested results.`,
+          retrievedAt: "2026-07-01T00:00:00.000Z"
+        }];
+      }
+    });
+
+    const result = await registry.run("research.search_web", {
+      query: "mine production process drivers",
+      purpose: "process_components",
+      maxResults: 3
+    }, context);
+
+    expect(result.ok).toBe(true);
+    expect(result.output).toEqual({
+      providerConfigured: true,
+      providerId: "test-search",
+      results: [
+        {
+          id: "test_1",
+          title: "Result for mine production process drivers",
+          url: "https://example.com/process",
+          sourceName: "Example",
+          snippet: "Purpose process_components with 3 requested results.",
+          retrievedAt: "2026-07-01T00:00:00.000Z"
+        }
+      ]
+    });
+  });
+
+  it("returns provider failures through the tool envelope without exposing provider secrets", async () => {
+    const providerSecret = "research-provider-secret";
+    const { registry, context } = testRegistry({
+      id: "test-search",
+      async search() {
+        void providerSecret;
+        throw new AgentToolError(
+          "RESEARCH_PROVIDER_RATE_LIMITED",
+          "Research provider \"test-search\" request failed with status 429.",
+          { providerId: "test-search", status: 429 }
+        );
+      }
+    });
+
+    const result = await registry.run("research.search_web", {
+      query: "mine production process drivers",
+      purpose: "process_components"
+    }, context);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toEqual({
+      code: "RESEARCH_PROVIDER_RATE_LIMITED",
+      message: "Research provider \"test-search\" request failed with status 429.",
+      details: { providerId: "test-search", status: 429 }
+    });
+    expect(JSON.stringify(result)).not.toContain(providerSecret);
   });
 
   it("extracts candidate drivers from process text deterministically", async () => {
@@ -62,7 +128,7 @@ describe("research tools", () => {
   });
 });
 
-function testRegistry() {
+function testRegistry(provider?: ResearchProvider) {
   const store = new AgentRunStore({ now: () => "2026-07-01T00:00:00.000Z" });
   const run = store.createRun({
     mode: "generate_vdt",
@@ -70,7 +136,7 @@ function testRegistry() {
     providerId: "mock"
   });
   const registry = new ToolRegistry();
-  for (const tool of createResearchTools()) registry.register(tool);
+  for (const tool of createResearchTools(provider)) registry.register(tool);
   const context = {
       runId: run.runId,
       store,

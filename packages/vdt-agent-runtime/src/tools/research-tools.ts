@@ -20,9 +20,10 @@ export interface ResearchSourceDocument {
 }
 
 export interface ResearchProvider {
+  id?: string | undefined;
   search(
     query: string,
-    options: { purpose: ResearchPurpose; maxResults: number }
+    options: { purpose: ResearchPurpose; maxResults: number; signal?: AbortSignal | undefined }
   ): Promise<ResearchSearchResult[]>;
   open?(url: string): Promise<ResearchSourceDocument>;
 }
@@ -30,6 +31,8 @@ export interface ResearchProvider {
 export type ResearchPurpose = "best_practices" | "process_components" | "benchmarks" | "standards" | "regulations";
 
 export class NoopResearchProvider implements ResearchProvider {
+  readonly id = "noop";
+
   async search(): Promise<ResearchSearchResult[]> {
     throw new AgentToolError(
       "RESEARCH_PROVIDER_NOT_CONFIGURED",
@@ -40,6 +43,15 @@ export class NoopResearchProvider implements ResearchProvider {
 }
 
 const researchPurposeSchema = z.enum(["best_practices", "process_components", "benchmarks", "standards", "regulations"]);
+
+const researchSearchResultSchema = z.object({
+  id: z.string().min(1).max(200),
+  title: z.string().min(1).max(300),
+  url: z.string().url().optional(),
+  sourceName: z.string().min(1).max(160).optional(),
+  snippet: z.string().min(1).max(1_500),
+  retrievedAt: z.string().min(1).max(80)
+});
 
 const candidateDriverSchema = z.object({
   id: z.string().min(1).max(160),
@@ -70,14 +82,23 @@ function createSearchWebTool(provider: ResearchProvider): AgentTool {
       purpose: researchPurposeSchema,
       maxResults: z.number().int().min(1).max(10).optional()
     }),
-    outputSchema: z.record(z.unknown()),
+    outputSchema: z.object({
+      results: z.array(researchSearchResultSchema).max(10),
+      providerConfigured: z.boolean(),
+      providerId: z.string().min(1).max(80)
+    }),
     phase: "reading_skills",
-    async run(_context, input) {
+    async run(context, input) {
       const maxResults = input.maxResults ?? 5;
-      const results = await provider.search(input.query, { purpose: input.purpose, maxResults });
+      const results = await provider.search(input.query, {
+        purpose: input.purpose,
+        maxResults,
+        signal: context.signal
+      });
       return {
         results: results.slice(0, maxResults),
-        providerConfigured: true
+        providerConfigured: true,
+        providerId: provider.id ?? "configured"
       };
     }
   };

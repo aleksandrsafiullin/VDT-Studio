@@ -6,6 +6,9 @@ import {
 } from "./orchestrator";
 import type { AgentDecision } from "./schemas/agent-decision";
 import type { FirstResponseInput, FirstResponseOutput } from "./schemas/agent-first-response";
+import { createDefaultToolRegistry } from "./tools";
+import type { ResearchProvider } from "./tools/research-tools";
+import { AgentToolError } from "./tool-registry";
 import type { AgentDecisionContext } from "./types";
 
 function scriptedProvider(
@@ -595,6 +598,130 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
     expect(snapshot.status).toBe("needs_user_input");
     expect(snapshot.lastFeedback).toMatchObject({ kind: "research_required", target: { toolName: "research.search_web" } });
     expect(provider.decisionInputs[1]?.lastFeedback).toMatchObject({ kind: "research_required" });
+  });
+
+  it("feeds configured research results back into the next agent decision", async () => {
+    const researchProvider: ResearchProvider = {
+      id: "test-search",
+      async search(query, options) {
+        return [{
+          id: "test_1",
+          title: "Mine production process drivers",
+          url: "https://example.com/mining-production",
+          sourceName: "Example",
+          snippet: `${query}: working time and productivity rate for ${options.purpose}.`,
+          retrievedAt: "2026-07-01T00:00:00.000Z"
+        }];
+      }
+    };
+    const runtime = createVdtAgentRuntime({
+      tools: createDefaultToolRegistry({ researchProvider })
+    });
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "research.search_web",
+        statusMessage: "Checking configured research sources.",
+        args: {
+          query: "mine production process drivers",
+          purpose: "process_components",
+          maxResults: 3
+        }
+      },
+      {
+        type: "ask_user",
+        statusMessage: "Research found candidate process drivers; asking for the site-specific boundary.",
+        questions: [{
+          id: "process_boundary",
+          question: "Which researched process drivers apply to this mine?",
+          reason: "The search result gave general process drivers that need user confirmation.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { prompt: "Build a VDT for mine production", rootKpi: "Mine production" },
+      providerId: "decision-test",
+      options: { maxSteps: 4 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.lastFeedback).toBeUndefined();
+    expect(provider.decisionInputs[1]?.lastToolResult).toMatchObject({
+      toolName: "research.search_web",
+      ok: true,
+      output: {
+        providerConfigured: true,
+        providerId: "test-search",
+        results: [
+          expect.objectContaining({
+            id: "test_1",
+            title: "Mine production process drivers"
+          })
+        ]
+      }
+    });
+  });
+
+  it("turns configured research provider failures into structured feedback for the next decision", async () => {
+    const researchProvider: ResearchProvider = {
+      id: "test-search",
+      async search() {
+        throw new AgentToolError(
+          "RESEARCH_PROVIDER_UNAVAILABLE",
+          "Research provider \"test-search\" request failed with status 503.",
+          { providerId: "test-search", status: 503 }
+        );
+      }
+    };
+    const runtime = createVdtAgentRuntime({
+      tools: createDefaultToolRegistry({ researchProvider })
+    });
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "research.search_web",
+        statusMessage: "Checking configured research sources.",
+        args: {
+          query: "mine production process drivers",
+          purpose: "process_components",
+          maxResults: 3
+        }
+      },
+      {
+        type: "ask_user",
+        statusMessage: "Research provider failed, so asking for source details.",
+        questions: [{
+          id: "process_components",
+          question: "What process components should the VDT use while research is unavailable?",
+          reason: "The configured research provider failed.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { prompt: "Build a VDT for mine production", rootKpi: "Mine production" },
+      providerId: "decision-test",
+      options: { maxSteps: 4 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.lastFeedback).toMatchObject({
+      kind: "tool_failed",
+      target: { toolName: "research.search_web" },
+      actual: { providerId: "test-search", status: 503 },
+      retryable: true
+    });
+    expect(provider.decisionInputs[1]?.lastFeedback).toMatchObject({
+      kind: "tool_failed",
+      target: { toolName: "research.search_web" }
+    });
   });
 
   it("records finish rejection feedback and lets the next decision repair or ask", async () => {

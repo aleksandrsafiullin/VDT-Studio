@@ -17,11 +17,13 @@ const config = {
         line: "#d8dee8",
         accent: "#2f6fed",
         teal: "#0f9f8f",
-        graphite: "#2f3642"
+        graphite: "#2f3642",
+        "apple-gray": "#f5f5f7"
       },
       boxShadow: {
         panel: "0 14px 40px rgba(26, 35, 52, 0.08)",
-        node: "0 8px 24px rgba(30, 42, 60, 0.10)"
+        node: "0 8px 24px rgba(30, 42, 60, 0.10)",
+        glass: "0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.06)"
       },
       fontFamily: {
         sans: ["Inter", "ui-sans-serif", "system-ui", "Segoe UI", "sans-serif"]

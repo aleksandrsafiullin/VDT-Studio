@@ -3,8 +3,13 @@ import * as managedRuntime from "@vdt-studio/local-runner/server-runtime";
 import { schemaIdForTask } from "@vdt-studio/model-bridge";
 import {
   AgentRunStore,
+  createDefaultToolRegistry,
   createVdtAgentRuntime,
+  resolveResearchProviderFromEnv,
   type AgentDecisionProvider,
+  type ResearchProviderEnv,
+  type ResearchProviderResolverOptions,
+  type ToolRegistry,
   type VdtAgentStartRequest
 } from "@vdt-studio/vdt-agent-runtime";
 import { createAiProvider } from "@/lib/ai-route-provider";
@@ -23,7 +28,8 @@ const runtimeGlobal = globalThis as typeof globalThis & {
 
 export const agentRuntime =
   runtimeGlobal.__vdtAgentRuntime ?? createVdtAgentRuntime({
-    store: createAgentRunStore()
+    store: createAgentRunStore(),
+    tools: createAgentToolRegistryFromEnv()
   });
 
 if (process.env.NODE_ENV !== "production") {
@@ -105,6 +111,15 @@ export function createAgentDecisionProvider(request: VdtAgentStartRequest, reque
 }
 
 export const createAgentPlanningProvider = createAgentDecisionProvider;
+
+export function createAgentToolRegistryFromEnv(
+  env: ResearchProviderEnv = process.env,
+  options: ResearchProviderResolverOptions = {}
+): ToolRegistry {
+  return createDefaultToolRegistry({
+    researchProvider: resolveResearchProviderFromEnv(env, options)
+  });
+}
 
 function createAgentRunStore(): AgentRunStore {
   if (isNextProductionBuild()) {
