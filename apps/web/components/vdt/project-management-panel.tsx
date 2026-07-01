@@ -4,14 +4,8 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { FolderPlus, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextInput } from "@/components/ui/field";
+import { projectMetadataText } from "@/lib/project-metadata";
 import { useVdtStudioStore } from "./vdt-store";
-
-function metadataText(metadata: Record<string, unknown> | undefined, key: string): string {
-  const value = metadata?.[key];
-  if (typeof value === "string") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return "";
-}
 
 export function ProjectManagementPanel({ urlScopedProjectId }: { urlScopedProjectId?: string }) {
   const workspace = useVdtStudioStore((state) => state.workspace);
@@ -32,16 +26,16 @@ export function ProjectManagementPanel({ urlScopedProjectId }: { urlScopedProjec
   useEffect(() => {
     const projectRecord = activeSummary?.project;
     setName(projectRecord?.name ?? "");
-    setClientName(metadataText(projectRecord?.metadata, "clientName"));
-    setSiteName(metadataText(projectRecord?.metadata, "siteName"));
-    setYear(metadataText(projectRecord?.metadata, "year"));
+    setClientName(projectMetadataText(projectRecord?.metadata, "clientName"));
+    setSiteName(projectMetadataText(projectRecord?.metadata, "siteName"));
+    setYear(projectMetadataText(projectRecord?.metadata, "year"));
   }, [activeSummary?.project]);
 
   const dirty = activeSummary
     ? name.trim() !== activeSummary.project.name ||
-      clientName.trim() !== metadataText(activeSummary.project.metadata, "clientName") ||
-      siteName.trim() !== metadataText(activeSummary.project.metadata, "siteName") ||
-      year.trim() !== metadataText(activeSummary.project.metadata, "year")
+      clientName.trim() !== projectMetadataText(activeSummary.project.metadata, "clientName") ||
+      siteName.trim() !== projectMetadataText(activeSummary.project.metadata, "siteName") ||
+      year.trim() !== projectMetadataText(activeSummary.project.metadata, "year")
     : false;
 
   const showProjectSwitcher = !urlScopedProjectId && workspace.projectSummaries.length > 0;
@@ -111,10 +105,10 @@ export function ProjectManagementPanel({ urlScopedProjectId }: { urlScopedProjec
                 onChange={(event) => setClientName(event.target.value)}
               />
             </Field>
-            <Field label="Site / mine">
+            <Field label="Site">
               <TextInput
                 value={siteName}
-                placeholder="Mine, plant, or operation"
+                placeholder="Site, plant, or operation"
                 className="rounded-xl border-black/10"
                 onChange={(event) => setSiteName(event.target.value)}
               />
