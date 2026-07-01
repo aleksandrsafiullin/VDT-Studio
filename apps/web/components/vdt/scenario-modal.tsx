@@ -134,7 +134,7 @@ function ScenarioOverrideRow({
 
   useEffect(() => {
     setStepDecimalPlaces(initialStepDecimalPlaces(overrideValue, baselineValue));
-  }, [node.nodeId, activeScenarioId]);
+  }, [node.nodeId, activeScenarioId, overrideValue, baselineValue]);
 
   const differsFromBaseline =
     scenarioValue !== undefined &&

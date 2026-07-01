@@ -36,7 +36,7 @@ export async function POST(request: Request) {
   if (!name) return jsonError("Project name is required.");
 
   const rawId = nonEmptyString(body.id);
-  let projectId = rawId ? parseSafeId(rawId, "projectId") : { ok: true as const, value: generatedSafeId("project", name) };
+  const projectId = rawId ? parseSafeId(rawId, "projectId") : { ok: true as const, value: generatedSafeId("project", name) };
   if (!projectId.ok) return jsonError(projectId.message);
 
   const database = openVdtStorageDatabase(process.cwd());

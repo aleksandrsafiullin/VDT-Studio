@@ -33,7 +33,6 @@ export function VdtRelationEdge({
   sourceY,
   targetX,
   targetY,
-  source,
   target,
   sourcePosition,
   targetPosition,

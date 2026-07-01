@@ -49,7 +49,8 @@
     "release:bundle:verify": "node scripts/verify-release-bundle.mjs",
     "package:alpha": "node scripts/package-alpha.mjs",
     "package:verify": "node scripts/verify-cli-package.mjs",
-    "release:verify": "corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test && corepack pnpm build && corepack pnpm ci:verify && corepack pnpm phase7:verify && corepack pnpm docs:verify && corepack pnpm security:audit && corepack pnpm certification:verify && corepack pnpm evaluation:verify && corepack pnpm package:alpha && corepack pnpm release:bundle:verify && corepack pnpm package:verify"
+    "release:verify": "corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test && corepack pnpm build && corepack pnpm ci:verify && corepack pnpm phase7:verify && corepack pnpm docs:verify && corepack pnpm security:audit && corepack pnpm certification:verify && corepack pnpm evaluation:verify && corepack pnpm package:alpha && corepack pnpm release:bundle:verify && corepack pnpm package:verify",
+    "github:maintenance": "node scripts/configure-github-maintenance.mjs"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",

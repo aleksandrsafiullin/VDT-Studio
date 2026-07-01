@@ -1122,6 +1122,10 @@ function applyAgentSnapshot(
     }
     const rawProject = snapshot.project ?? snapshot.draftProject;
     const project = rawProject ? ensureScenario(rawProject) : undefined;
+    const preservedSelectedNodeId = project && state.selectedNodeId
+      && project.graph.nodes.some((node) => node.id === state.selectedNodeId)
+      ? state.selectedNodeId
+      : undefined;
     const status = mapRuntimeStatus(snapshot);
     const now = nowIso();
     const requestProviderId = snapshot.request.providerId as ProviderId;
@@ -1159,7 +1163,7 @@ function applyAgentSnapshot(
       ...(project
         ? {
             project,
-            selectedNodeId: project.rootNodeId,
+            selectedNodeId: preservedSelectedNodeId ?? project.rootNodeId,
             activeScenarioId: resolveMainScenarioId(project),
             projectRevision: state.projectRevision + 1
           }
@@ -1220,31 +1224,6 @@ function applyGenerateProgressEvent(
         details: mergeActivityDetails(activity.details, event.details, event.updatedAt, status),
         completedAt,
         updatedAt: event.updatedAt
-      }
-    };
-  });
-}
-
-function patchGenerateActivity(
-  set: (partial: Partial<VdtStudioState> | ((state: VdtStudioState) => Partial<VdtStudioState>)) => void,
-  runId: string,
-  patch: Partial<GenerateActivityState>
-) {
-  set((state) => {
-    if (state.generateActivity?.runId !== runId) {
-      return {};
-    }
-
-    const updatedAt = nowIso();
-    return {
-      generateActivity: {
-        ...state.generateActivity,
-        ...patch,
-        phaseStartedAt:
-          patch.phase && patch.phase !== state.generateActivity.phase
-            ? updatedAt
-            : (patch.phaseStartedAt ?? state.generateActivity.phaseStartedAt),
-        updatedAt
       }
     };
   });
