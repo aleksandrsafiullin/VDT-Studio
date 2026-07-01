@@ -1,4 +1,46 @@
+import fs from "node:fs";
+import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+
+const E2E_PROJECT_ID = "project_e2e_production_volume";
+const E2E_VDT_ID = "vdt_e2e_production_volume";
+const productionVolumeExamplePath = path.join(process.cwd(), "examples", "production-volume.json");
+
+function loadProductionVolumeExample() {
+  return JSON.parse(fs.readFileSync(productionVolumeExamplePath, "utf8")) as Record<string, unknown>;
+}
+
+async function seedProductionVolumeWorkspace(page: Page) {
+  const project = loadProductionVolumeExample();
+  const createProject = await page.request.post("/api/vdt/projects", {
+    data: {
+      id: E2E_PROJECT_ID,
+      name: "E2E Production Volume",
+      industry: project.industry
+    }
+  });
+  if (createProject.status() !== 409) {
+    expect(createProject.ok()).toBeTruthy();
+  }
+
+  const createVdt = await page.request.post(`/api/vdt/projects/${E2E_PROJECT_ID}/vdts`, {
+    data: {
+      id: E2E_VDT_ID,
+      name: project.name,
+      rootKpi: "Production Volume",
+      project
+    }
+  });
+  if (createVdt.status() !== 409) {
+    expect(createVdt.ok()).toBeTruthy();
+  }
+}
+
+async function openProductionVolumeEditor(page: Page) {
+  await seedProductionVolumeWorkspace(page);
+  await page.goto(`/projects/${E2E_PROJECT_ID}?vdt=${E2E_VDT_ID}`);
+  await expect(page.getByTestId("vdt-canvas")).toBeVisible();
+}
 
 type PersistedVdtState = {
   state?: {
@@ -945,6 +987,26 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => localStorage.clear());
   await page.reload();
+  await openProductionVolumeEditor(page);
+});
+
+test("home page lists projects and opens workspace", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Home navigation smoke runs on desktop viewport.");
+
+  await page.goto("/");
+  await expect(page.getByTestId("projects-home")).toBeVisible();
+  await expect(page.getByTestId(`project-card-${E2E_PROJECT_ID}`)).toBeVisible();
+  await page.getByTestId(`open-project-${E2E_PROJECT_ID}`).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${E2E_PROJECT_ID}$`));
+  await expect(page.getByText("Project workspace")).toBeVisible();
+  await page.getByRole("button", { name: "Open" }).click();
+  await expect(page).toHaveURL(new RegExp(`vdt=${E2E_VDT_ID}`));
+  await expect(page.getByTestId("vdt-canvas")).toBeVisible();
+  await page.getByTestId("back-to-project-workspace").click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${E2E_PROJECT_ID}$`));
+  await expect(page.getByText("Project workspace")).toBeVisible();
+  await page.getByTestId("back-to-projects").click();
+  await expect(page.getByTestId("projects-home")).toBeVisible();
 });
 
 test("renders the workspace without invoking a mock provider", async ({ page }, testInfo) => {

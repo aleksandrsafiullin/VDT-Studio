@@ -46,6 +46,68 @@ function scriptedProvider(
   };
 }
 
+function schemaValidatingRawDecisionProvider(
+  decisions: unknown[],
+  firstResponse: FirstResponseOutput = {
+    assistantMessage: "I will continue through the decision loop.",
+    nextAction: "continue_building",
+    questions: [],
+    publicStatus: {
+      phase: "planning_model",
+      message: "Planning the VDT from your request."
+    }
+  }
+): AgentDecisionProvider & {
+  decisionInputs: AgentDecisionContext[];
+} {
+  return {
+    id: "schema-validating-provider",
+    decisionInputs: [],
+    async completeStructured(params) {
+      const raw = params.taskType === "orchestrator_first_response"
+        ? firstResponse
+        : decisions.shift();
+      if (params.taskType === "agent_decision") {
+        this.decisionInputs.push(params.input as AgentDecisionContext);
+      }
+      const schema = params.schema as { parse?: (value: unknown) => unknown };
+      return (typeof schema.parse === "function" ? schema.parse(raw) : raw) as never;
+    }
+  };
+}
+
+function structuredDecisionFailureProvider(
+  decisions: unknown[],
+  firstResponse: FirstResponseOutput = {
+    assistantMessage: "I will continue through the decision loop.",
+    nextAction: "continue_building",
+    questions: [],
+    publicStatus: {
+      phase: "planning_model",
+      message: "Planning the VDT from your request."
+    }
+  }
+): AgentDecisionProvider & {
+  decisionInputs: AgentDecisionContext[];
+} {
+  return {
+    id: "structured-decision-failure-provider",
+    decisionInputs: [],
+    async completeStructured(params) {
+      if (params.taskType === "orchestrator_first_response") {
+        return firstResponse as never;
+      }
+      this.decisionInputs.push(params.input as AgentDecisionContext);
+      const decision = decisions.shift();
+      if (decision instanceof Error) {
+        throw decision;
+      }
+      if (!decision) throw new Error("Structured failure provider ran out of decisions.");
+      return decision as never;
+    }
+  };
+}
+
 function timeoutAfterFirstResponseProvider(firstResponse: FirstResponseOutput): AgentDecisionProvider & { taskTypes: string[] } {
   return {
     id: "timeout-test",
@@ -314,6 +376,83 @@ function haulageBuildDecisions(): AgentDecision[] {
 }
 
 describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
+  it("keeps agent_decision schema validation in the orchestrator even when provider validates its supplied schema", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = schemaValidatingRawDecisionProvider([
+      {
+        type: "call_tool",
+        toolName: "vdt.create_draft",
+        statusMessage: "Missing args should be rejected by orchestrator feedback."
+      },
+      {
+        type: "ask_user",
+        statusMessage: "Asking after orchestrator-side schema feedback.",
+        questions: [{
+          id: "root_kpi_needed",
+          question: "What root KPI should the draft use?",
+          reason: "The previous agent decision was missing required tool args.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { prompt: "Build a VDT", rootKpi: "Revenue" },
+      providerId: "schema-validating-provider",
+      options: { maxSteps: 4 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.retryableError).toBeUndefined();
+    expect(snapshot.lastFeedback).toMatchObject({
+      kind: "schema_validation_failed",
+      target: { taskType: "agent_decision", fieldPath: "args" }
+    });
+    expect(provider.decisionInputs[1]?.lastFeedback).toMatchObject({ kind: "schema_validation_failed" });
+  });
+
+  it("feeds provider-side agent_decision structured output failures back to the next AI decision", async () => {
+    const runtime = createVdtAgentRuntime();
+    const providerError = new Error("AI response could not be parsed or validated: Required field args is missing.");
+    const provider = structuredDecisionFailureProvider([
+      providerError,
+      {
+        type: "ask_user",
+        statusMessage: "Asking after provider-side schema feedback.",
+        questions: [{
+          id: "root_kpi_needed",
+          question: "What root KPI should the draft use?",
+          reason: "The previous provider response failed structured output validation.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { prompt: "Build a VDT", rootKpi: "Revenue" },
+      providerId: "structured-decision-failure-provider",
+      options: { maxSteps: 4 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.retryableError).toBeUndefined();
+    expect(snapshot.lastFeedback).toMatchObject({
+      kind: "schema_validation_failed",
+      message: expect.stringContaining("could not be parsed or validated"),
+      target: { taskType: "agent_decision" },
+      retryable: true
+    });
+    expect(provider.decisionInputs).toHaveLength(2);
+    expect(provider.decisionInputs[1]?.lastFeedback).toMatchObject({
+      kind: "schema_validation_failed",
+      target: { taskType: "agent_decision" }
+    });
+  });
+
   it("feeds forbidden full-plan fields back to the provider and retries the next small decision", async () => {
     const runtime = createVdtAgentRuntime();
     const provider = scriptedProvider([

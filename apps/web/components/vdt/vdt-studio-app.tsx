@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { NodeInspector } from "./node-inspector";
 import { PanelResizeHandle } from "./panel-resize-handle";
@@ -8,6 +8,7 @@ import { ProjectManagementPanel } from "./project-management-panel";
 import { ProjectVdtList } from "./project-vdt-list";
 import { SetupRail } from "./setup-rail";
 import { TopBar } from "./top-bar";
+import { useWorkspaceRouteSync } from "./use-workspace-route-sync";
 import { VdtCanvas } from "./vdt-canvas";
 import { WorkspaceModeRail } from "./workspace-mode-rail";
 import {
@@ -20,12 +21,16 @@ import {
 const MODE_RAIL_WIDTH = 52;
 const PROJECT_MANAGEMENT_PANEL_WIDTH = 360;
 
-export function VdtStudioApp() {
+interface VdtStudioAppProps {
+  projectId: string;
+}
+
+function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
   const ui = useVdtStudioStore((state) => state.ui);
   const workspace = useVdtStudioStore((state) => state.workspace);
   const setPanelWidth = useVdtStudioStore((state) => state.setPanelWidth);
   const resumePersistedAgentRun = useVdtStudioStore((state) => state.resumePersistedAgentRun);
-  const refreshWorkspace = useVdtStudioStore((state) => state.refreshWorkspace);
+  const { openWorkspaceVdt, showProjectWorkspace } = useWorkspaceRouteSync(projectId);
   const isDesktop = useDesktopLayout();
   const isProjectMode = workspace.activePanel === "project" || !hasActiveWorkspaceVdt(workspace);
   const leftCollapsed = !isProjectMode && isDesktop && ui.leftPanelCollapsed;
@@ -39,10 +44,6 @@ export function VdtStudioApp() {
     void resumePersistedAgentRun();
   }, [resumePersistedAgentRun]);
 
-  useEffect(() => {
-    void refreshWorkspace();
-  }, [refreshWorkspace]);
-
   return (
     <main
       className="flex min-h-screen flex-col bg-canvas text-ink lg:h-screen lg:overflow-hidden"
@@ -55,10 +56,10 @@ export function VdtStudioApp() {
         ["--vdt-right-handle" as string]: `${rightHandleWidth}px`
       }}
     >
-      <TopBar />
+      <TopBar projectId={projectId} />
       <div className={`vdt-workspace-grid grid min-h-0 flex-1 grid-cols-1 ${isProjectMode ? "vdt-workspace-grid-project" : ""}`}>
         <div className="min-h-0 lg:block">
-          <WorkspaceModeRail />
+          <WorkspaceModeRail onProjectMode={showProjectWorkspace} />
         </div>
         <div className="min-h-0 lg:block">
           {isProjectMode ? <ProjectManagementPanel /> : <SetupRail />}
@@ -77,7 +78,7 @@ export function VdtStudioApp() {
           className="flex min-h-0 flex-col overflow-hidden"
           style={{ minHeight: BASE_WORKSPACE_SECTION_MIN_HEIGHT }}
         >
-          {isProjectMode ? <ProjectVdtList /> : <VdtCanvas />}
+          {isProjectMode ? <ProjectVdtList onOpenVdt={openWorkspaceVdt} /> : <VdtCanvas />}
         </section>
         {!isProjectMode && isDesktop && !rightCollapsed ? (
           <PanelResizeHandle
@@ -96,5 +97,13 @@ export function VdtStudioApp() {
         )}
       </div>
     </main>
+  );
+}
+
+export function VdtStudioApp({ projectId }: VdtStudioAppProps) {
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-canvas" />}>
+      <VdtStudioAppContent projectId={projectId} />
+    </Suspense>
   );
 }

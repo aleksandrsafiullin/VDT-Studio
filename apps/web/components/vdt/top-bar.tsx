@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { Download, FileImage, FileJson, Folder, GitBranch, Route, ShieldCheck, Sparkles, Upload } from "lucide-react";
+import { ArrowLeft, Download, FileImage, FileJson, Folder, GitBranch, Route, ShieldCheck, Sparkles, Upload } from "lucide-react";
 import {
   calculateGraph,
   exportProjectJson,
@@ -22,7 +23,11 @@ import { hasActiveWorkspaceVdt, useVdtStudioStore } from "./vdt-store";
 const exportMenuItemClass =
   "flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-graphite hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
-export function TopBar() {
+interface TopBarProps {
+  projectId: string;
+}
+
+export function TopBar({ projectId }: TopBarProps) {
   const project = useVdtStudioStore((state) => state.project);
   const workspace = useVdtStudioStore((state) => state.workspace);
   const replaceProject = useVdtStudioStore((state) => state.replaceProject);
@@ -52,13 +57,22 @@ export function TopBar() {
   }, [exportMenuOpen]);
 
   const activeProjectSummary =
-    workspace.projectSummaries.find((entry) => entry.project.id === workspace.activeProjectId) ??
-    workspace.projectSummaries[0];
+    workspace.projectSummaries.find((entry) => entry.project.id === projectId) ??
+    workspace.projectSummaries.find((entry) => entry.project.id === workspace.activeProjectId);
 
   if (workspace.activePanel === "project" || !hasActiveWorkspaceVdt(workspace)) {
     return (
       <header className="relative flex h-14 shrink-0 items-center justify-between gap-4 border-b border-line bg-white px-4">
         <div className="flex min-w-0 items-center gap-3">
+          <Link
+            href="/"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line text-graphite transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            data-testid="back-to-projects"
+            aria-label="Back to projects"
+            title="Back to projects"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-slate-900 text-white">
             <Folder className="h-4 w-4" />
           </div>
@@ -69,7 +83,7 @@ export function TopBar() {
             <p className="truncate text-xs text-muted">
               {activeProjectSummary
                 ? `${activeProjectSummary.counts.vdts} VDTs - ${activeProjectSummary.counts.revisions} revisions`
-                : "Create or select a project"}
+                : "Project not found"}
             </p>
           </div>
         </div>
@@ -106,6 +120,15 @@ export function TopBar() {
   return (
     <header className="relative flex h-14 shrink-0 items-center justify-between gap-4 border-b border-line bg-white px-4">
       <div className="flex min-w-0 items-center gap-3">
+        <Link
+          href={`/projects/${projectId}`}
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line text-graphite transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          data-testid="back-to-project-workspace"
+          aria-label="Back to project workspace"
+          title="Back to project workspace"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Link>
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-slate-900 text-white">
           <GitBranch className="h-4 w-4" />
         </div>

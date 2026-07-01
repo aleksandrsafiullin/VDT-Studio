@@ -527,7 +527,7 @@ describe("syncElapsedTracker", () => {
   });
 
   it("caps pause accumulation at completedAt on terminal transition", () => {
-    let state = initTrackerForTest(runId, trackerActivity({
+    const state = initTrackerForTest(runId, trackerActivity({
       status: "needs_user_input",
       updatedAt: "2026-06-24T10:00:30.000Z"
     }));

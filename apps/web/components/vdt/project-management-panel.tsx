@@ -21,7 +21,7 @@ export function ProjectManagementPanel() {
   const selectWorkspaceProject = useVdtStudioStore((state) => state.selectWorkspaceProject);
   const updateWorkspaceProjectDetails = useVdtStudioStore((state) => state.updateWorkspaceProjectDetails);
   const activeSummary = useMemo(
-    () => workspace.projectSummaries.find((entry) => entry.project.id === workspace.activeProjectId) ?? workspace.projectSummaries[0],
+    () => workspace.projectSummaries.find((entry) => entry.project.id === workspace.activeProjectId),
     [workspace.activeProjectId, workspace.projectSummaries]
   );
 

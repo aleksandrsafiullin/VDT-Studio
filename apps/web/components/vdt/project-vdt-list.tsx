@@ -18,7 +18,7 @@ function statusClass(status: string): string {
   return "border-amber-200 bg-amber-50 text-amber-700";
 }
 
-export function ProjectVdtList() {
+export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => void | Promise<void> }) {
   const [newVdtModalOpen, setNewVdtModalOpen] = useState(false);
   const workspace = useVdtStudioStore((state) => state.workspace);
   const project = useVdtStudioStore((state) => state.project);
@@ -27,7 +27,7 @@ export function ProjectVdtList() {
   const selectWorkspaceVdt = useVdtStudioStore((state) => state.selectWorkspaceVdt);
   const deleteWorkspaceVdt = useVdtStudioStore((state) => state.deleteWorkspaceVdt);
   const activeSummary = useMemo(
-    () => workspace.projectSummaries.find((entry) => entry.project.id === workspace.activeProjectId) ?? workspace.projectSummaries[0],
+    () => workspace.projectSummaries.find((entry) => entry.project.id === workspace.activeProjectId),
     [workspace.activeProjectId, workspace.projectSummaries]
   );
   const rows = activeSummary?.vdts ?? [];
@@ -43,6 +43,14 @@ export function ProjectVdtList() {
       ...(values.unit ? { unit: values.unit } : {}),
       ...(values.timePeriod ? { timePeriod: values.timePeriod } : {})
     });
+  }
+
+  async function handleOpenVdt(vdtId: string) {
+    if (onOpenVdt) {
+      await onOpenVdt(vdtId);
+      return;
+    }
+    await selectWorkspaceVdt(vdtId);
   }
 
   return (
@@ -136,7 +144,7 @@ export function ProjectVdtList() {
                             type="button"
                             size="sm"
                             icon={<ExternalLink className="h-4 w-4" />}
-                            onClick={() => void selectWorkspaceVdt(entry.vdt.id)}
+                            onClick={() => void handleOpenVdt(entry.vdt.id)}
                           >
                             Open
                           </Button>

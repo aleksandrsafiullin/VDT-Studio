@@ -277,6 +277,10 @@ export interface CreateWorkspaceVdtParams {
 
 export type WorkspacePanelMode = "project" | "vdt";
 
+export interface RefreshWorkspaceOptions {
+  scopedProjectId?: string | undefined;
+}
+
 export interface VdtWorkspaceState {
   activePanel: WorkspacePanelMode;
   projectSummaries: StoredProjectSummary[];
@@ -393,7 +397,9 @@ interface VdtStudioState {
   setScenarioModalOpen: (open: boolean) => void;
   resetUiPreferences: () => void;
   autoDistributeLayout: () => void;
-  refreshWorkspace: () => Promise<void>;
+  refreshWorkspace: (options?: RefreshWorkspaceOptions) => Promise<void>;
+  clearHomeWorkspaceContext: () => void;
+  closeWorkspaceVdtEditor: () => void;
   setWorkspacePanel: (panel: WorkspacePanelMode) => void;
   createWorkspaceProject: (name?: string) => Promise<boolean>;
   renameWorkspaceProject: (projectId: string, name: string) => Promise<boolean>;
@@ -1628,7 +1634,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         set((state) => ({
           project: layoutProjectGraph(state.project, state.ui)
         })),
-      refreshWorkspace: async () => {
+      refreshWorkspace: async (options) => {
+        const scopedProjectId = options?.scopedProjectId;
         set((state) => ({
           workspace: {
             ...state.workspace,
@@ -1639,24 +1646,63 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         try {
           const summary = await fetchStoredProjectExplorerSummary();
           set((state) => {
-            const activeProjectExists = state.workspace.activeProjectId
-              ? summary.projects.some((entry) => entry.project.id === state.workspace.activeProjectId)
-              : false;
-            const activeVdtSummary = state.workspace.activeVdtId
-              ? summary.projects.find((entry) => entry.vdts.some((vdtEntry) => vdtEntry.vdt.id === state.workspace.activeVdtId))
-              : undefined;
-            const activeProjectId = activeProjectExists
-              ? state.workspace.activeProjectId
-              : activeVdtSummary?.project.id ?? summary.projects[0]?.project.id;
-            const activeVdtId =
-              activeVdtSummary && activeVdtSummary.project.id === activeProjectId
-                ? state.workspace.activeVdtId
+            const projectSummaries = summary.projects;
+            let activeProjectId: string | undefined;
+            let activeVdtId: string | undefined;
+            let activePanel: WorkspacePanelMode = "project";
+
+            if (scopedProjectId) {
+              activeProjectId = projectSummaries.some((entry) => entry.project.id === scopedProjectId)
+                ? scopedProjectId
                 : undefined;
-            const activePanel = activeVdtId && state.workspace.activePanel === "vdt" ? "vdt" : "project";
+              const activeVdtSummary = state.workspace.activeVdtId
+                ? projectSummaries.find((entry) => entry.vdts.some((vdtEntry) => vdtEntry.vdt.id === state.workspace.activeVdtId))
+                : undefined;
+              activeVdtId =
+                activeProjectId &&
+                activeVdtSummary &&
+                activeVdtSummary.project.id === activeProjectId &&
+                state.workspace.activeVdtId
+                  ? state.workspace.activeVdtId
+                  : undefined;
+              activePanel =
+                activeVdtId && state.workspace.activePanel === "vdt" && hasActiveWorkspaceVdt({
+                  ...state.workspace,
+                  projectSummaries,
+                  activeProjectId,
+                  activeVdtId
+                })
+                  ? "vdt"
+                  : "project";
+            } else {
+              const activeProjectExists = state.workspace.activeProjectId
+                ? projectSummaries.some((entry) => entry.project.id === state.workspace.activeProjectId)
+                : false;
+              const activeVdtSummary = state.workspace.activeVdtId
+                ? projectSummaries.find((entry) => entry.vdts.some((vdtEntry) => vdtEntry.vdt.id === state.workspace.activeVdtId))
+                : undefined;
+              activeProjectId = activeProjectExists
+                ? state.workspace.activeProjectId
+                : activeVdtSummary?.project.id;
+              activeVdtId =
+                activeVdtSummary && activeProjectId && activeVdtSummary.project.id === activeProjectId
+                  ? state.workspace.activeVdtId
+                  : undefined;
+              activePanel =
+                activeVdtId && state.workspace.activePanel === "vdt" && hasActiveWorkspaceVdt({
+                  ...state.workspace,
+                  projectSummaries,
+                  activeProjectId,
+                  activeVdtId
+                })
+                  ? "vdt"
+                  : "project";
+            }
+
             return {
               workspace: {
                 ...state.workspace,
-                projectSummaries: summary.projects,
+                projectSummaries,
                 activePanel,
                 activeProjectId,
                 activeVdtId,
@@ -1675,6 +1721,25 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }));
         }
       },
+      clearHomeWorkspaceContext: () =>
+        set((state) => ({
+          workspace: {
+            ...state.workspace,
+            activeProjectId: undefined,
+            activeVdtId: undefined,
+            activePanel: "project",
+            error: undefined
+          }
+        })),
+      closeWorkspaceVdtEditor: () =>
+        set((state) => ({
+          workspace: {
+            ...state.workspace,
+            activeVdtId: undefined,
+            activePanel: "project",
+            error: undefined
+          }
+        })),
       setWorkspacePanel: (panel) =>
         set((state) => ({
           workspace: {
@@ -2135,7 +2200,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               lastSavedAt: nowIso()
             }
           }));
-          void get().refreshWorkspace();
+          void get().refreshWorkspace({ scopedProjectId: get().workspace.activeProjectId });
           return true;
         } catch (error) {
           set((current) => ({

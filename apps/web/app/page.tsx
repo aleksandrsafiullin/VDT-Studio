@@ -1,5 +1,5 @@
-import { VdtStudioApp } from "@/components/vdt/vdt-studio-app";
+import { ProjectsHomePage } from "@/components/vdt/projects-home-page";
 
 export default function HomePage() {
-  return <VdtStudioApp />;
+  return <ProjectsHomePage />;
 }

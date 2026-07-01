@@ -22,7 +22,7 @@ const modes: Array<{
   }
 ];
 
-export function WorkspaceModeRail() {
+export function WorkspaceModeRail({ onProjectMode }: { onProjectMode?: () => void }) {
   const workspace = useVdtStudioStore((state) => state.workspace);
   const setWorkspacePanel = useVdtStudioStore((state) => state.setWorkspacePanel);
   const canOpenVdt = hasActiveWorkspaceVdt(workspace);
@@ -53,7 +53,13 @@ export function WorkspaceModeRail() {
                 ? "border-slate-900 bg-slate-900 text-white shadow-sm"
                 : "border-transparent hover:border-line hover:bg-slate-50 hover:text-ink"
             )}
-            onClick={() => setWorkspacePanel(mode.id)}
+            onClick={() => {
+              if (mode.id === "project" && canOpenVdt && workspace.activePanel === "vdt") {
+                onProjectMode?.();
+                return;
+              }
+              setWorkspacePanel(mode.id);
+            }}
           >
             {mode.icon}
             <span className="sr-only">{mode.label}</span>

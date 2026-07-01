@@ -34,7 +34,6 @@ import { AGENT_FIRST_RESPONSE_SYSTEM_PROMPT } from "./prompts/agent-first-respon
 import { AgentRunStore } from "./run-store";
 import {
   AgentDecisionForbiddenFieldsError,
-  agentDecisionSchema,
   parseAndGuardAgentDecision,
   type AgentDecision
 } from "./schemas/agent-decision";
@@ -65,6 +64,7 @@ import type {
 
 const MAX_DECISION_REPAIR_ATTEMPTS = 2;
 const MAX_FINISH_REPAIR_ATTEMPTS = 3;
+const rawAgentDecisionProviderSchema = z.unknown();
 
 export interface AgentDecisionProvider {
   id: string;
@@ -489,18 +489,17 @@ export class VdtAgentRuntime {
         }
       });
 
-      const raw = await execution.provider.completeStructured<AgentDecisionContext, AgentDecision>({
-        taskType: "agent_decision",
-        input: context,
-        schema: agentDecisionSchema,
-        systemPrompt: AGENT_DECISION_SYSTEM_PROMPT,
-        userPrompt: promptForAgentDecision(context),
-        temperature: 0.1,
-        maxTokens: execution.maxTokens,
-        signal: state.abortController.signal
-      });
-
       try {
+        const raw = await execution.provider.completeStructured<AgentDecisionContext, unknown>({
+          taskType: "agent_decision",
+          input: context,
+          schema: rawAgentDecisionProviderSchema,
+          systemPrompt: AGENT_DECISION_SYSTEM_PROMPT,
+          userPrompt: promptForAgentDecision(context),
+          temperature: 0.1,
+          maxTokens: execution.maxTokens,
+          signal: state.abortController.signal
+        });
         const decision = parseAndGuardAgentDecision(raw);
 
         this.emit(runId, {
@@ -522,6 +521,9 @@ export class VdtAgentRuntime {
 
         return decision;
       } catch (error) {
+        if (!isAgentDecisionRepairableError(error)) {
+          throw error;
+        }
         const feedback = feedbackFromDecisionError(error);
         this.appendFeedback(runId, feedback);
         this.emit(runId, {
@@ -1015,6 +1017,25 @@ function feedbackFromDecisionError(error: unknown): AgentStructuredFeedback {
     expected: "Valid AgentDecision JSON.",
     retryable: true
   });
+}
+
+function isAgentDecisionRepairableError(error: unknown): boolean {
+  return error instanceof AgentDecisionForbiddenFieldsError ||
+    error instanceof z.ZodError ||
+    isAgentDecisionStructuredOutputError(error);
+}
+
+function isAgentDecisionStructuredOutputError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as { code?: unknown }).code;
+  if (
+    code === "BACKEND_PARSE_FAILED" ||
+    code === "SCHEMA_INVALID"
+  ) {
+    return true;
+  }
+  return /could not be parsed or validated|did not contain valid JSON|failed schema validation|required structured response/i
+    .test(error.message);
 }
 
 function inferPhaseForNextDecision(state: VdtAgentRunState): VdtAgentRunPhase {

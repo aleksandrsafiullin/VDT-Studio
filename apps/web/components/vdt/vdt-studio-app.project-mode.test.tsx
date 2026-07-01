@@ -1,6 +1,14 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn()
+  }),
+  useSearchParams: () => new URLSearchParams()
+}));
+
 function installLocalStorageStub() {
   const values = new Map<string, string>();
   vi.stubGlobal("localStorage", {
@@ -34,7 +42,7 @@ describe("VdtStudioApp project mode", () => {
   it("shows project management without VDT editor surfaces", async () => {
     const { VdtStudioApp } = await import("./vdt-studio-app");
 
-    const html = renderToStaticMarkup(<VdtStudioApp />);
+    const html = renderToStaticMarkup(<VdtStudioApp projectId="project_mode_test" />);
 
     expect(html).toContain('data-testid="workspace-mode-project"');
     expect(html).toContain('data-testid="workspace-mode-vdt"');
