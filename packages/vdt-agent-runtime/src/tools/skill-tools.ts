@@ -7,6 +7,7 @@ import {
   retrieveSkills
 } from "@vdt-studio/vdt-agent";
 import { extractFormulaReferences, stableSnakeId, type VdtChangeSet, type VdtProject } from "@vdt-studio/vdt-core";
+import { createStructuredFeedback } from "../feedback";
 import { proposeAndMaybeApplyMutation } from "../mutation-pipeline";
 import { AgentToolError, type AgentTool } from "../tool-registry";
 import { summarizeValidation } from "../summaries";
@@ -132,6 +133,8 @@ const skillReadTool: AgentTool = {
       referenceFiles: skill.frontmatter.referenceFiles ?? {},
       evalFiles: skill.frontmatter.evalFiles ?? {},
       runtimePolicy: skill.frontmatter.runtimePolicy ?? {},
+      recipeQuality: recipe.recipeQuality,
+      recipeSource: recipe.recipeSource,
       formulaTemplates: recipe.formulaTemplates.map((formula) => `${formula.targetNodeId} = ${formula.formula}`)
     };
   }
@@ -150,16 +153,33 @@ const skillCompileRecipeTool: AgentTool = {
     const skill = library.byId.get(input.skillId);
     if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", `Skill "${input.skillId}" was not found.`);
     const recipe = compileSkillRecipe(skill);
-    const recipeQuality = inferRecipeQuality(recipe);
+    const state = context.store.getState(context.runId);
+    const feedback = recipe.recipeQuality === "complete"
+      ? undefined
+      : createStructuredFeedback({
+          kind: "recipe_incomplete",
+          severity: "warning",
+          message: `Skill "${recipe.skillId}" exists, but executable recipe is ${recipe.recipeQuality}. Read markdown guidance, use research/discovery, or ask user before building.`,
+          target: { toolName: "skill.compile_recipe" },
+          expected: "Complete executable recipe template.",
+          actual: { recipeQuality: recipe.recipeQuality, recipeSource: recipe.recipeSource },
+          suggestedNextTools: ["skill.read", "research.search_web", "user.ask"],
+          retryable: true
+        });
     context.store.updateRun(context.runId, {
       recipes: [
-        ...context.store.getState(context.runId).recipes.filter((existing) => existing.skillId !== recipe.skillId),
+        ...state.recipes.filter((existing) => existing.skillId !== recipe.skillId),
         recipe
-      ]
+      ],
+      ...(feedback
+        ? {
+            feedbackHistory: [...(state.feedbackHistory ?? []), feedback].slice(-20),
+            lastFeedback: feedback
+          }
+        : {})
     });
     return {
-      ...recipe,
-      recipeQuality
+      ...recipe
     };
   }
 };
@@ -189,6 +209,13 @@ const skillSeedDraftFromRecipeTool: AgentTool = {
       const skill = library.byId.get(input.skillId);
       if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", `Skill "${input.skillId}" was not found.`);
       recipe = compileSkillRecipe(skill);
+    }
+    if (recipe.recipeQuality === "missing") {
+      throw new AgentToolError(
+        "RECIPE_INCOMPLETE",
+        `Skill "${recipe.skillId}" has no executable recipe. Read markdown guidance, use research/discovery, or ask the user before building.`,
+        { recipeQuality: recipe.recipeQuality, recipeSource: recipe.recipeSource, warnings: recipe.warnings }
+      );
     }
 
     let project = builder.getProject();
@@ -280,12 +307,6 @@ const skillSeedDraftFromRecipeTool: AgentTool = {
     };
   }
 };
-
-function inferRecipeQuality(recipe: ReturnType<typeof compileSkillRecipe>): "complete" | "partial" {
-  if (recipe.skillId === "generic.logical_kpi_decomposition") return "complete";
-  const looksGeneric = recipe.requiredInputs.includes("driverLogic") && recipe.initialDrivers.some((driver) => driver.id === "capacity");
-  return looksGeneric ? "partial" : "complete";
-}
 
 function referencesExist(project: VdtProject, formula: string): boolean {
   const nodeIds = new Set(project.graph.nodes.map((node) => node.id));

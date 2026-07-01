@@ -24,6 +24,9 @@ export interface PersistedAgentRunState {
   manualChanges: VdtAgentRunState["manualChanges"];
   recipes: VdtAgentRunState["recipes"];
   lastToolResult?: VdtAgentRunState["lastToolResult"] | undefined;
+  feedbackHistory?: VdtAgentRunState["feedbackHistory"] | undefined;
+  lastFeedback?: VdtAgentRunState["lastFeedback"] | undefined;
+  repairAttemptCount?: VdtAgentRunState["repairAttemptCount"] | undefined;
   validationState?: VdtAgentRunState["validationState"] | undefined;
   calculationState?: VdtAgentRunState["calculationState"] | undefined;
   memoryNotes: VdtAgentRunState["memoryNotes"];
@@ -287,6 +290,9 @@ export function snapshotFromState(state: VdtAgentRunState): VdtAgentRunSnapshot 
     finalReport: state.finalReport,
     error: state.error,
     retryableError: state.retryableError,
+    feedbackHistory: redactSecrets(state.feedbackHistory) as VdtAgentRunState["feedbackHistory"],
+    lastFeedback: redactSecrets(state.lastFeedback) as VdtAgentRunState["lastFeedback"],
+    repairAttemptCount: state.repairAttemptCount,
     artifacts: state.artifacts,
     mutationProposals: state.mutationProposals,
     progressiveBuild: state.progressiveBuild,
@@ -308,6 +314,9 @@ export function serializeAgentRunState(state: VdtAgentRunState): PersistedAgentR
     manualChanges: redactSecrets(state.manualChanges) as VdtAgentRunState["manualChanges"],
     recipes: state.recipes,
     lastToolResult: redactSecrets(state.lastToolResult) as VdtAgentRunState["lastToolResult"],
+    feedbackHistory: redactSecrets(state.feedbackHistory) as VdtAgentRunState["feedbackHistory"],
+    lastFeedback: redactSecrets(state.lastFeedback) as VdtAgentRunState["lastFeedback"],
+    repairAttemptCount: state.repairAttemptCount,
     validationState: state.validationState,
     calculationState: state.calculationState,
     memoryNotes: redactSecrets(state.memoryNotes) as VdtAgentRunState["memoryNotes"]
@@ -351,6 +360,9 @@ export function hydrateAgentRunState(persisted: PersistedAgentRunState): VdtAgen
     manualChanges: persisted.manualChanges,
     recipes: persisted.recipes,
     lastToolResult: persisted.lastToolResult,
+    feedbackHistory: persisted.feedbackHistory ?? snapshot.feedbackHistory,
+    lastFeedback: persisted.lastFeedback ?? snapshot.lastFeedback,
+    repairAttemptCount: persisted.repairAttemptCount ?? snapshot.repairAttemptCount,
     validationState: persisted.validationState,
     calculationState: persisted.calculationState,
     memoryNotes: persisted.memoryNotes

@@ -1,6 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { GenerateActivityPanel } from "./generate-activity-panel";
+import {
+  formatActiveElapsed,
+  GenerateActivityPanel,
+  isWaitingForUser,
+  syncElapsedTracker
+} from "./generate-activity-panel";
 import type { GenerateActivityState } from "./vdt-store";
 
 function activity(overrides: Partial<GenerateActivityState> = {}): GenerateActivityState {
@@ -379,3 +384,194 @@ describe("GenerateActivityPanel", () => {
     expect(html).toContain('data-testid="reject-mutation"');
   });
 });
+
+describe("isWaitingForUser", () => {
+  it("returns true for needs_user_input", () => {
+    expect(isWaitingForUser({ status: "needs_user_input" })).toBe(true);
+  });
+
+  it("returns true for waiting_approval even when status is running", () => {
+    expect(isWaitingForUser({
+      status: "running",
+      runtimeAgentRun: { status: "waiting_approval" } as GenerateActivityState["runtimeAgentRun"]
+    })).toBe(true);
+  });
+
+  it("returns false for active running without approval wait", () => {
+    expect(isWaitingForUser({
+      status: "running",
+      runtimeAgentRun: { status: "running" } as GenerateActivityState["runtimeAgentRun"]
+    })).toBe(false);
+  });
+});
+
+describe("formatActiveElapsed", () => {
+  const startedAt = "2026-06-24T10:00:00.000Z";
+
+  it("counts wall time when not paused", () => {
+    const now = Date.parse("2026-06-24T10:01:30.000Z");
+    expect(formatActiveElapsed(startedAt, undefined, 0, null, now)).toBe("1:30");
+  });
+
+  it("freezes elapsed time while paused", () => {
+    const pauseStartedAt = Date.parse("2026-06-24T10:00:45.000Z");
+    const now = Date.parse("2026-06-24T10:20:00.000Z");
+    expect(formatActiveElapsed(startedAt, undefined, 0, pauseStartedAt, now)).toBe("0:45");
+  });
+
+  it("subtracts accumulated pause time across resume cycles", () => {
+    const pausedMs = 15 * 60 * 1000;
+    const now = Date.parse("2026-06-24T10:17:30.000Z");
+    expect(formatActiveElapsed(startedAt, undefined, pausedMs, null, now)).toBe("2:30");
+  });
+
+  it("uses completedAt for terminal activities", () => {
+    const completedAt = "2026-06-24T10:00:05.000Z";
+    expect(formatActiveElapsed(startedAt, completedAt, 0, null)).toBe("0:05");
+  });
+});
+
+describe("syncElapsedTracker", () => {
+  const startedAt = "2026-06-24T10:00:00.000Z";
+  const runId = "run-activity-123456789";
+
+  function trackerActivity(
+    overrides: Partial<GenerateActivityState> = {}
+  ): Pick<GenerateActivityState, "runId" | "status" | "runtimeAgentRun" | "updatedAt" | "startedAt" | "completedAt"> {
+    return {
+      runId,
+      status: "running",
+      startedAt,
+      updatedAt: startedAt,
+      ...overrides
+    };
+  }
+
+  it("freezes elapsed time while waiting for user input", () => {
+    let state = initTrackerForTest(runId, trackerActivity({
+      status: "needs_user_input",
+      updatedAt: "2026-06-24T10:00:45.000Z"
+    }));
+
+    const paused = syncElapsedTracker(
+      state,
+      trackerActivity({ status: "needs_user_input", updatedAt: "2026-06-24T10:00:45.000Z" }),
+      Date.parse("2026-06-24T10:20:00.000Z")
+    );
+    state = paused.state;
+    expect(paused.elapsed).toBe("0:45");
+  });
+
+  it("freezes elapsed time while waiting for approval", () => {
+    let state = initTrackerForTest(runId, trackerActivity({
+      status: "running",
+      updatedAt: "2026-06-24T10:01:20.000Z",
+      runtimeAgentRun: { status: "waiting_approval" } as GenerateActivityState["runtimeAgentRun"]
+    }));
+
+    const paused = syncElapsedTracker(
+      state,
+      trackerActivity({
+        status: "running",
+        updatedAt: "2026-06-24T10:01:20.000Z",
+        runtimeAgentRun: { status: "waiting_approval" } as GenerateActivityState["runtimeAgentRun"]
+      }),
+      Date.parse("2026-06-24T10:30:00.000Z")
+    );
+    state = paused.state;
+    expect(paused.elapsed).toBe("1:20");
+  });
+
+  it("resumes counting after user input and supports multiple pause cycles", () => {
+    let state = initTrackerForTest(runId, trackerActivity({
+      status: "needs_user_input",
+      updatedAt: "2026-06-24T10:00:30.000Z"
+    }));
+
+    const resumed = syncElapsedTracker(
+      state,
+      trackerActivity({ status: "running", updatedAt: "2026-06-24T10:10:00.000Z" }),
+      Date.parse("2026-06-24T10:10:00.000Z")
+    );
+    state = resumed.state;
+    expect(resumed.elapsed).toBe("0:30");
+
+    const working = syncElapsedTracker(
+      state,
+      trackerActivity({ status: "running", updatedAt: "2026-06-24T10:10:00.000Z" }),
+      Date.parse("2026-06-24T10:10:15.000Z")
+    );
+    state = working.state;
+    expect(working.elapsed).toBe("0:45");
+
+    const pausedAgain = syncElapsedTracker(
+      state,
+      trackerActivity({
+        status: "needs_user_input",
+        updatedAt: "2026-06-24T10:10:15.000Z"
+      }),
+      Date.parse("2026-06-24T10:10:15.000Z")
+    );
+    state = pausedAgain.state;
+    expect(pausedAgain.elapsed).toBe("0:45");
+
+    const stillPaused = syncElapsedTracker(
+      state,
+      trackerActivity({
+        status: "needs_user_input",
+        updatedAt: "2026-06-24T10:10:15.000Z"
+      }),
+      Date.parse("2026-06-24T10:40:00.000Z")
+    );
+    expect(stillPaused.elapsed).toBe("0:45");
+  });
+
+  it("caps pause accumulation at completedAt on terminal transition", () => {
+    let state = initTrackerForTest(runId, trackerActivity({
+      status: "needs_user_input",
+      updatedAt: "2026-06-24T10:00:30.000Z"
+    }));
+
+    const terminal = syncElapsedTracker(
+      state,
+      trackerActivity({
+        status: "ready",
+        completedAt: "2026-06-24T10:00:40.000Z",
+        updatedAt: "2026-06-24T10:00:40.000Z"
+      }),
+      Date.parse("2026-06-24T10:05:00.000Z")
+    );
+
+    // 30s active before pause; without completedAt cap, late effect would subtract 5m pause → 0:00
+    expect(terminal.elapsed).toBe("0:30");
+  });
+
+  it("resets tracking when runId changes", () => {
+    const first = syncElapsedTracker(
+      initTrackerForTest(runId, trackerActivity({
+        status: "needs_user_input",
+        updatedAt: "2026-06-24T10:00:30.000Z"
+      })),
+      trackerActivity({
+        runId: "run-activity-next",
+        status: "needs_user_input",
+        updatedAt: "2026-06-24T10:02:00.000Z"
+      }),
+      Date.parse("2026-06-24T10:05:00.000Z")
+    );
+
+    expect(first.elapsed).toBe("2:00");
+    expect(first.state.runId).toBe("run-activity-next");
+    expect(first.state.pausedMs).toBe(0);
+  });
+});
+
+function initTrackerForTest(
+  runId: string,
+  activity: Pick<GenerateActivityState, "status" | "runtimeAgentRun" | "updatedAt">
+) {
+  return syncElapsedTracker(
+    { runId, pausedMs: 0, pauseStartedAt: null },
+    { runId, startedAt: "2026-06-24T10:00:00.000Z", updatedAt: activity.updatedAt, status: activity.status, runtimeAgentRun: activity.runtimeAgentRun }
+  ).state;
+}

@@ -9,6 +9,8 @@ import type {
   VdtWarning
 } from "@vdt-studio/vdt-core";
 import type { VdtAgentQuestion, VdtSkillRecipe } from "@vdt-studio/vdt-agent";
+import type { AgentDomainPolicySummary } from "./domain-policies";
+import type { AgentStructuredFeedback } from "./feedback";
 
 export type VdtAgentRunStatus =
   | "queued"
@@ -460,12 +462,15 @@ export interface AgentDecisionContext {
   visibleContext: AgentThreadContext;
   selectedNode?: NodeSummary | undefined;
   selectedSkills: VdtAgentSelectedSkill[];
+  domainPolicies: AgentDomainPolicySummary[];
   availableTools: AgentToolSpec[];
   recentEvents: AgentEventSummary[];
   userAnswers: Record<string, string | number | string[]>;
   manualChanges: ManualChangeSummary[];
   subagentReports: Array<Pick<SubagentReport, "taskId" | "status" | "summaryForOrchestrator" | "confidence">>;
   lastToolResult?: AgentToolResultEnvelope | undefined;
+  lastFeedback?: AgentStructuredFeedback | undefined;
+  recentFeedback?: AgentStructuredFeedback[] | undefined;
   pendingMutationProposal?: MutationProposal | undefined;
   progressiveBuild?: ProgressiveBuildSummary | undefined;
   validationState?: ValidationStateSummary | undefined;
@@ -475,6 +480,7 @@ export interface AgentDecisionContext {
     mustUseToolsForGraphChanges: true;
     cannotReturnFullGraph: true;
     cannotExposeHiddenReasoning: true;
+    mustUseFeedbackBeforeRetry: true;
   };
 }
 
@@ -519,6 +525,9 @@ export interface VdtAgentRunSnapshot {
   finalReport?: string | undefined;
   error?: { code: string; message: string } | undefined;
   retryableError?: RetryableAgentError | undefined;
+  feedbackHistory?: AgentStructuredFeedback[] | undefined;
+  lastFeedback?: AgentStructuredFeedback | undefined;
+  repairAttemptCount?: number | undefined;
   artifacts?: AgentArtifact[] | undefined;
   mutationProposals?: MutationProposal[] | undefined;
   progressiveBuild?: ProgressiveBuildState | undefined;
@@ -549,6 +558,9 @@ export interface VdtAgentRunState extends VdtAgentRunSnapshot {
   manualChanges: Array<{ projectRevision?: number | undefined; change: ManualProjectChange; observedAt: string }>;
   recipes: VdtSkillRecipe[];
   lastToolResult?: AgentToolResultEnvelope | undefined;
+  feedbackHistory?: AgentStructuredFeedback[] | undefined;
+  lastFeedback?: AgentStructuredFeedback | undefined;
+  repairAttemptCount?: number | undefined;
   mutationProposals?: MutationProposal[] | undefined;
   pendingMutationProposal?: MutationProposal | undefined;
   progressiveBuild?: ProgressiveBuildState | undefined;

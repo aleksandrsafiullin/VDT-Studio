@@ -25,7 +25,10 @@ describe("skill recipes", () => {
     ]);
     expect(recipes.every((recipe) => recipe.requiredInputs.length > 0)).toBe(true);
     expect(recipes.every((recipe) => recipe.initialDrivers.length > 0)).toBe(true);
-    expect(recipes.every((recipe) => recipe.formulaTemplates.length > 0)).toBe(true);
+    expect(recipes.every((recipe) => recipe.recipeQuality !== "missing")).toBe(true);
+    expect(recipes.every((recipe) => recipe.recipeSource === "template")).toBe(true);
+    expect(recipes.find((recipe) => recipe.skillId === "mining.mine_production_system")?.formulaTemplates).toEqual([]);
+    expect(recipes.find((recipe) => recipe.skillId === "mining.mine_production_system")?.warnings.join(" ")).toContain("min(stage_readiness_tonnes, downstream_capacity_tonnes)");
   });
 
   it("provides deterministic first-level mining drivers", async () => {
@@ -46,5 +49,42 @@ describe("skill recipes", () => {
 
     expect(serialized).not.toMatch(forbiddenTerm);
     expect(serialized).toMatch(/working_time|Working time/);
+  });
+
+  it("does not report generic fallback as a complete domain recipe", () => {
+    const missing = compileSkillRecipe({
+      id: "mining.unseeded_process",
+      path: "mining/unseeded-process.md",
+      title: "Unseeded mining process",
+      domain: "mining",
+      excerpt: "No executable recipe is available yet."
+    });
+    const partial = compileSkillRecipe({
+      id: "mining.markdown_only_process",
+      path: "mining/markdown-only-process.md",
+      title: "Markdown only mining process",
+      domain: "mining",
+      excerpt: [
+        "```text",
+        "custom_output",
+        "  custom_working_time",
+        "  custom_productivity_rate",
+        "```"
+      ].join("\n")
+    });
+
+    expect(missing).toMatchObject({
+      recipeQuality: "missing",
+      recipeSource: "generic_fallback"
+    });
+    expect(missing.warnings.join(" ")).toContain("Generic driver skeleton is support only");
+    expect(partial).toMatchObject({
+      recipeQuality: "partial",
+      recipeSource: "markdown_extracted"
+    });
+    expect(partial.initialDrivers.map((driver) => driver.id)).toEqual([
+      "custom_working_time",
+      "custom_productivity_rate"
+    ]);
   });
 });

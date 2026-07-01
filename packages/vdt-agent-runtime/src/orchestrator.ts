@@ -5,6 +5,7 @@ import {
   type VdtNodePatch,
   type VdtProject
 } from "@vdt-studio/vdt-core";
+import { z } from "zod";
 import {
   answerRecordFromPayloads,
   answerPayloadsFromRecord,
@@ -13,6 +14,17 @@ import {
   publicStatusForPhase
 } from "./chat-messages";
 import {
+  createStructuredFeedback,
+  feedbackFromFinishError,
+  feedbackFromForbiddenFields,
+  feedbackFromToolEnvelope,
+  feedbackFromValidation,
+  feedbackFromZodError,
+  formatFeedbackForPrompt,
+  type AgentStructuredFeedback
+} from "./feedback";
+import { policySummaryForRun } from "./domain-policies";
+import {
   applyPendingMutationProposal,
   defaultProgressiveBuildPolicy,
   rejectPendingMutationProposal
@@ -20,11 +32,17 @@ import {
 import { AGENT_DECISION_SYSTEM_PROMPT } from "./prompts/agent-decision";
 import { AGENT_FIRST_RESPONSE_SYSTEM_PROMPT } from "./prompts/agent-first-response";
 import { AgentRunStore } from "./run-store";
-import { agentDecisionSchema, parseAndGuardAgentDecision, type AgentDecision } from "./schemas/agent-decision";
+import {
+  AgentDecisionForbiddenFieldsError,
+  agentDecisionSchema,
+  parseAndGuardAgentDecision,
+  type AgentDecision
+} from "./schemas/agent-decision";
 import { firstResponseSchema, type FirstResponseInput, type FirstResponseOutput } from "./schemas/agent-first-response";
 import { ToolRegistry, type AgentToolContext } from "./tool-registry";
 import { createDefaultToolRegistry } from "./tools";
 import { validateExcavationProject } from "./tools/excavation-tools";
+import { validateMiningProject } from "./tools/mining-validation";
 import {
   summarizeCalculation,
   summarizeEvents,
@@ -44,6 +62,9 @@ import type {
   VdtAgentRunState,
   VdtAgentStartRequest
 } from "./types";
+
+const MAX_DECISION_REPAIR_ATTEMPTS = 2;
+const MAX_FINISH_REPAIR_ATTEMPTS = 3;
 
 export interface AgentDecisionProvider {
   id: string;
@@ -452,47 +473,77 @@ export class VdtAgentRuntime {
       throw new Error("Agent mode requires a configured AI provider.");
     }
 
-    const state = this.store.getState(runId);
-    const context = this.buildAgentContext(runId);
+    for (let attempt = 0; attempt <= MAX_DECISION_REPAIR_ATTEMPTS; attempt += 1) {
+      const state = this.store.getState(runId);
+      const context = this.buildAgentContext(runId);
 
-    this.emit(runId, {
-      type: "tool_call_started",
-      phase: state.phase,
-      title: "AI decision requested",
-      message: "Asked the AI agent to choose the next tool or user interaction.",
-      metadata: { taskType: "agent_decision", providerId: execution.provider.id }
-    });
+      this.emit(runId, {
+        type: "tool_call_started",
+        phase: state.phase,
+        title: "AI decision requested",
+        message: "Asked the AI agent to choose the next tool or user interaction.",
+        metadata: {
+          taskType: "agent_decision",
+          providerId: execution.provider.id,
+          repairAttempt: attempt
+        }
+      });
 
-    const raw = await execution.provider.completeStructured<AgentDecisionContext, AgentDecision>({
-      taskType: "agent_decision",
-      input: context,
-      schema: agentDecisionSchema,
-      systemPrompt: AGENT_DECISION_SYSTEM_PROMPT,
-      userPrompt: JSON.stringify(context, null, 2),
-      temperature: 0.1,
-      maxTokens: execution.maxTokens,
-      signal: state.abortController.signal
-    });
-
-    const decision = parseAndGuardAgentDecision(raw);
-
-    this.emit(runId, {
-      type: "tool_call_completed",
-      phase: state.phase,
-      title: "AI decision received",
-      message: decision.type === "call_tool"
-        ? `AI chose tool ${decision.toolName}.`
-        : decision.type === "ask_user"
-          ? "AI chose to ask the user for clarification."
-          : "AI chose to finish the run.",
-      metadata: {
+      const raw = await execution.provider.completeStructured<AgentDecisionContext, AgentDecision>({
         taskType: "agent_decision",
-        decisionType: decision.type,
-        toolName: decision.type === "call_tool" ? decision.toolName : undefined
-      }
-    });
+        input: context,
+        schema: agentDecisionSchema,
+        systemPrompt: AGENT_DECISION_SYSTEM_PROMPT,
+        userPrompt: promptForAgentDecision(context),
+        temperature: 0.1,
+        maxTokens: execution.maxTokens,
+        signal: state.abortController.signal
+      });
 
-    return decision;
+      try {
+        const decision = parseAndGuardAgentDecision(raw);
+
+        this.emit(runId, {
+          type: "tool_call_completed",
+          phase: state.phase,
+          title: "AI decision received",
+          message: decision.type === "call_tool"
+            ? `AI chose tool ${decision.toolName}.`
+            : decision.type === "ask_user"
+              ? "AI chose to ask the user for clarification."
+              : "AI chose to finish the run.",
+          metadata: {
+            taskType: "agent_decision",
+            decisionType: decision.type,
+            toolName: decision.type === "call_tool" ? decision.toolName : undefined,
+            repairAttempt: attempt
+          }
+        });
+
+        return decision;
+      } catch (error) {
+        const feedback = feedbackFromDecisionError(error);
+        this.appendFeedback(runId, feedback);
+        this.emit(runId, {
+          type: "tool_call_completed",
+          phase: state.phase,
+          title: "AI decision rejected",
+          message: feedback.message,
+          metadata: {
+            taskType: "agent_decision",
+            ok: false,
+            code: feedback.kind,
+            repairAttempt: attempt,
+            retrying: attempt < MAX_DECISION_REPAIR_ATTEMPTS
+          }
+        });
+        if (attempt >= MAX_DECISION_REPAIR_ATTEMPTS) {
+          throw new AgentDecisionRepairFailed(feedback.message);
+        }
+      }
+    }
+
+    throw new AgentDecisionRepairFailed("Agent decision could not be repaired.");
   }
 
   private async executeDecision(
@@ -511,10 +562,16 @@ export class VdtAgentRuntime {
     }
 
     const toolResult = await this.tools.run(decision.toolName, decision.args, this.toolContext(runId));
+    if (!toolResult.ok) {
+      const feedback = feedbackFromToolEnvelope(toolResult);
+      if (feedback) this.appendFeedback(runId, feedback);
+      return "continue";
+    }
     if (toolResult.ok && (toolResult.projectChanged || isGraphMutationTool(decision.toolName))) {
       await this.validateAfterMutation(runId, {
         includeSkillValidations: decision.toolName.startsWith("excavation.")
       });
+      this.store.updateRun(runId, { repairAttemptCount: undefined });
     }
 
     return "continue";
@@ -555,6 +612,7 @@ export class VdtAgentRuntime {
       currentProject: project ? summarizeProject(project) : undefined,
       selectedNode: project && selectedNodeId ? summarizeNode(project, selectedNodeId) : undefined,
       selectedSkills: state.selectedSkills,
+      domainPolicies: policySummaryForRun(state),
       availableTools: this.tools.listSpecs(),
       recentEvents: summarizeEvents(state.events),
       visibleContext: state.visibleContext,
@@ -567,6 +625,8 @@ export class VdtAgentRuntime {
         ...(report.confidence !== undefined ? { confidence: report.confidence } : {})
       })),
       lastToolResult: state.lastToolResult,
+      lastFeedback: state.lastFeedback,
+      recentFeedback: state.feedbackHistory?.slice(-5),
       pendingMutationProposal: state.pendingMutationProposal,
       progressiveBuild: summarizeProgressiveBuild(state.progressiveBuild),
       validationState: state.validationState,
@@ -575,7 +635,8 @@ export class VdtAgentRuntime {
         maxOneToolCallPerDecision: true,
         mustUseToolsForGraphChanges: true,
         cannotReturnFullGraph: true,
-        cannotExposeHiddenReasoning: true
+        cannotExposeHiddenReasoning: true,
+        mustUseFeedbackBeforeRetry: true
       }
     };
   }
@@ -620,6 +681,8 @@ export class VdtAgentRuntime {
       validationState: validation,
       phase: validation.valid ? "building_graph" : "repairing_graph"
     });
+    const feedback = feedbackFromValidation(validation);
+    if (feedback) this.appendFeedback(runId, feedback);
     this.emit(runId, {
       type: "graph_validation",
       phase: validation.valid ? "validating_graph" : "repairing_graph",
@@ -640,7 +703,7 @@ export class VdtAgentRuntime {
     const generic = state.builder?.validate().validation ?? validateGraph(project);
     const domainValidations = options.includeSkillValidations === false
       ? []
-      : skillValidationsForRun(state, project);
+      : domainValidationsForRun(state, project);
     return summarizeValidation({
       valid: generic.valid && domainValidations.every((validation) => validation.valid),
       errors: [
@@ -659,6 +722,7 @@ export class VdtAgentRuntime {
       await this.finishRun(runId, decision);
       return true;
     } catch (error) {
+      const state = this.store.getState(runId);
       const message = error instanceof Error ? error.message : "Cannot finish run.";
       const envelope: AgentToolResultEnvelope = {
         toolName: "finish",
@@ -668,17 +732,23 @@ export class VdtAgentRuntime {
         validation: this.store.getState(runId).validationState,
         emittedEventIds: []
       };
-      this.store.updateRun(runId, {
+      const repairAttemptCount = (state.repairAttemptCount ?? 0) + 1;
+      const feedback = feedbackFromFinishError(error, state.validationState);
+      this.appendFeedback(runId, feedback, {
         phase: "repairing_graph",
-        lastToolResult: envelope
+        lastToolResult: envelope,
+        repairAttemptCount
       });
       this.emit(runId, {
         type: "tool_call_completed",
         phase: "repairing_graph",
         title: "Finish rejected",
         message,
-        metadata: { ok: false, code: "FINISH_REJECTED" }
+        metadata: { ok: false, code: "FINISH_REJECTED", repairAttemptCount }
       });
+      if (repairAttemptCount >= MAX_FINISH_REPAIR_ATTEMPTS) {
+        this.pauseForFinishRepairInput(runId, message, repairAttemptCount);
+      }
       return false;
     }
   }
@@ -770,6 +840,49 @@ export class VdtAgentRuntime {
       builder: state.builder,
       signal: state.abortController.signal
     };
+  }
+
+  private appendFeedback(
+    runId: string,
+    feedback: AgentStructuredFeedback,
+    patch: Partial<Omit<VdtAgentRunState, "runId" | "events" | "createdAt" | "seq" | "abortController">> = {}
+  ): void {
+    const state = this.store.getState(runId);
+    this.store.updateRun(runId, {
+      ...patch,
+      feedbackHistory: [...(state.feedbackHistory ?? []), feedback].slice(-20),
+      lastFeedback: feedback
+    });
+  }
+
+  private pauseForFinishRepairInput(runId: string, message: string, repairAttemptCount: number): void {
+    const state = this.store.getState(runId);
+    if (state.status === "cancelled" || state.status === "failed" || state.status === "succeeded") return;
+    const question = {
+      id: "finish_repair_blocker",
+      question: "What business data, formula, or modeling boundary should the agent use to make this VDT valid and calculable?",
+      reason: `The agent could not finish after ${repairAttemptCount} repair attempts: ${message}`,
+      required: true,
+      expectedAnswerType: "text" as const
+    };
+    this.store.updateRun(runId, {
+      status: "needs_user_input",
+      phase: "asking_clarifying_questions",
+      pendingQuestions: [question]
+    });
+    this.store.appendChatMessage(runId, {
+      role: "assistant",
+      kind: "question",
+      questions: [question]
+    });
+    this.store.updatePublicStatus(runId, publicStatusForPhase("asking_clarifying_questions", "Waiting for the missing business data needed to finish."));
+    this.emit(runId, {
+      type: "clarifying_questions",
+      phase: "asking_clarifying_questions",
+      title: "Finish needs user input",
+      message: "Agent needs a precise answer before it can finish with a valid calculable VDT.",
+      questions: [question]
+    });
   }
 
   private failRun(
@@ -871,6 +984,39 @@ export function createVdtAgentRuntime(options?: VdtAgentRuntimeOptions): VdtAgen
   return new VdtAgentRuntime(options);
 }
 
+class AgentDecisionRepairFailed extends Error {
+  readonly code = "SCHEMA_REPAIR_FAILED";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentDecisionRepairFailed";
+  }
+}
+
+function promptForAgentDecision(context: AgentDecisionContext): string {
+  const feedback = context.recentFeedback?.length
+    ? `\n\nRecent structured feedback to address before retrying:\n${formatFeedbackForPrompt(context.recentFeedback)}`
+    : "";
+  return `${JSON.stringify(context, null, 2)}${feedback}`;
+}
+
+function feedbackFromDecisionError(error: unknown): AgentStructuredFeedback {
+  if (error instanceof AgentDecisionForbiddenFieldsError) {
+    return feedbackFromForbiddenFields(error.fields);
+  }
+  if (error instanceof z.ZodError) {
+    return feedbackFromZodError(error, { taskType: "agent_decision" });
+  }
+  return createStructuredFeedback({
+    kind: "schema_validation_failed",
+    severity: "error",
+    message: error instanceof Error ? error.message : "AgentDecision could not be parsed.",
+    target: { taskType: "agent_decision" },
+    expected: "Valid AgentDecision JSON.",
+    retryable: true
+  });
+}
+
 function inferPhaseForNextDecision(state: VdtAgentRunState): VdtAgentRunPhase {
   if (state.validationState && !state.validationState.valid) return "repairing_graph";
   if (!state.draftProject || state.draftProject.graph.nodes.length === 0) {
@@ -896,13 +1042,15 @@ function isGraphMutationTool(toolName: string): boolean {
   ]).has(toolName);
 }
 
-function skillValidationsForRun(state: VdtAgentRunState, project: VdtProject) {
-  if (!shouldValidateExcavationForRun(state, project)) return [];
+function domainValidationsForRun(state: VdtAgentRunState, project: VdtProject) {
   return [
-    validateExcavationProject(project, {
+    ...(shouldValidateExcavationForRun(state, project)
+      ? [validateExcavationProject(project, {
       requireCanonicalOutputTopology: shouldRequireCanonicalExcavationOutput(state, project),
       requireProductivityTopology: shouldRequireExcavationProductivity(state, project)
-    })
+    })]
+      : []),
+    validateMiningProject(state, project)
   ];
 }
 

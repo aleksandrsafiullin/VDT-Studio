@@ -33,12 +33,22 @@ export const FORBIDDEN_AGENT_DECISION_FIELDS = [
   "selectedSkillIds"
 ] as const;
 
+export class AgentDecisionForbiddenFieldsError extends Error {
+  readonly fields: string[];
+
+  constructor(fields: readonly string[]) {
+    super(`AgentDecision includes forbidden full-plan fields: ${fields.join(", ")}.`);
+    this.name = "AgentDecisionForbiddenFieldsError";
+    this.fields = [...fields];
+  }
+}
+
 export function parseAndGuardAgentDecision(output: unknown): AgentDecision {
   if (output && typeof output === "object" && !Array.isArray(output)) {
     const record = output as Record<string, unknown>;
     const forbidden = FORBIDDEN_AGENT_DECISION_FIELDS.filter((field) => field in record);
     if (forbidden.length > 0) {
-      throw new Error(`AgentDecision includes forbidden full-plan fields: ${forbidden.join(", ")}.`);
+      throw new AgentDecisionForbiddenFieldsError(forbidden);
     }
   }
   return agentDecisionSchema.parse(output);

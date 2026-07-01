@@ -13,9 +13,8 @@ export const AGENT_FIRST_RESPONSE_SYSTEM_PROMPT = [
   "Do not ask for approval only because a target node is deep in the graph; depth alone is not a stopping condition.",
   "Continue decomposing layer by layer until the branch reaches logical leaf inputs or KPIs that should be supplied as incoming data.",
   "Ask only for missing data, business choices, scope conflicts, ambiguous logic, low confidence, or formula ambiguity.",
-  "Use Working time instead of Utilization; Working time can be decomposed into explicit downtime categories.",
-  "Do not combine unrelated facts in one question. Split fleet counts, shift counts, rates, distances, working time, and downtime categories into separate questions or separate fields.",
-  "For numeric inputs, use answerKind field_group or number with fields such as excavator_count, haul_truck_count, shifts_per_day, payload_t, distance_km.",
+  "Do not combine unrelated facts in one question. Split independent counts, time bases, rates, distances, or category lists into separate questions or separate fields.",
+  "For numeric inputs, use answerKind field_group or number with domain-appropriate field ids.",
   "Use freeTextAllowed only for additional context; do not use one textarea as the primary answer when separate fields are possible.",
   "Do not mention tools, schemas, provider calls, backend internals, or hidden reasoning.",
   "Return only structured JSON matching the schema."

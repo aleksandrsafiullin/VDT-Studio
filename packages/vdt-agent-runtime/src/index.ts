@@ -1,4 +1,6 @@
 export * from "./event-bus";
+export * from "./feedback";
+export * from "./mcp-shape";
 export * from "./mutation-pipeline";
 export * from "./orchestrator";
 export * from "./run-store";

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ChevronDown, Clock3, Loader2, RotateCcw, X } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
@@ -18,14 +18,132 @@ type GenericApprovalRequest = {
   selectedChangeIds?: string[] | undefined;
 };
 
-function formatElapsed(startedAt: string, completedAt?: string) {
+export function isWaitingForUser(
+  activity: Pick<GenerateActivityState, "status" | "runtimeAgentRun">
+): boolean {
+  return activity.status === "needs_user_input"
+    || activity.runtimeAgentRun?.status === "waiting_approval";
+}
+
+export function formatActiveElapsed(
+  startedAt: string,
+  completedAt: string | undefined,
+  pausedMs: number,
+  pauseStartedAt: number | null,
+  now: number = Date.now()
+): string {
   const start = Date.parse(startedAt);
-  const end = completedAt ? Date.parse(completedAt) : Date.now();
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return "0:00";
-  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
+  if (!Number.isFinite(start)) return "0:00";
+
+  let end: number;
+  if (completedAt) {
+    end = Date.parse(completedAt);
+  } else if (pauseStartedAt !== null) {
+    end = pauseStartedAt;
+  } else {
+    end = now;
+  }
+  if (!Number.isFinite(end)) return "0:00";
+
+  const totalSeconds = Math.max(0, Math.floor((end - start - pausedMs) / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+type ElapsedTrackerState = {
+  runId: string;
+  pausedMs: number;
+  pauseStartedAt: number | null;
+};
+
+function initElapsedTracker(
+  runId: string,
+  activity: Pick<GenerateActivityState, "status" | "runtimeAgentRun" | "updatedAt">,
+  now = Date.now()
+): ElapsedTrackerState {
+  const state: ElapsedTrackerState = { runId, pausedMs: 0, pauseStartedAt: null };
+  if (!isWaitingForUser(activity)) return state;
+  const pauseStart = Date.parse(activity.updatedAt);
+  state.pauseStartedAt = Number.isFinite(pauseStart) ? pauseStart : now;
+  return state;
+}
+
+export function syncElapsedTracker(
+  state: ElapsedTrackerState,
+  activity: Pick<GenerateActivityState, "runId" | "status" | "runtimeAgentRun" | "updatedAt" | "startedAt" | "completedAt">,
+  now = Date.now()
+): { state: ElapsedTrackerState; elapsed: string } {
+  let next = state.runId === activity.runId
+    ? state
+    : initElapsedTracker(activity.runId, activity, now);
+
+  const waiting = isWaitingForUser(activity);
+  if (waiting) {
+    if (next.pauseStartedAt === null) {
+      const pauseStart = Date.parse(activity.updatedAt);
+      next = {
+        ...next,
+        pauseStartedAt: Number.isFinite(pauseStart) ? pauseStart : now
+      };
+    }
+  } else if (next.pauseStartedAt !== null) {
+    const completedAtMs = activity.completedAt ? Date.parse(activity.completedAt) : Number.NaN;
+    const resumeAt = Number.isFinite(completedAtMs) ? Math.min(now, completedAtMs) : now;
+    next = {
+      ...next,
+      pausedMs: next.pausedMs + (resumeAt - next.pauseStartedAt),
+      pauseStartedAt: null
+    };
+  }
+
+  return {
+    state: next,
+    elapsed: formatActiveElapsed(
+      activity.startedAt,
+      activity.completedAt,
+      next.pausedMs,
+      next.pauseStartedAt,
+      now
+    )
+  };
+}
+
+function useActiveElapsed(activity: GenerateActivityState): string {
+  const trackerRef = useRef<ElapsedTrackerState>(
+    initElapsedTracker(activity.runId, activity)
+  );
+
+  const [elapsed, setElapsed] = useState(() => syncElapsedTracker(
+    trackerRef.current,
+    activity
+  ).elapsed);
+
+  useEffect(() => {
+    const { state, elapsed: nextElapsed } = syncElapsedTracker(trackerRef.current, activity);
+    trackerRef.current = state;
+    setElapsed(nextElapsed);
+
+    const waiting = isWaitingForUser(activity);
+    const isActiveRunning = activity.status === "running" && !waiting && !activity.completedAt;
+    if (!isActiveRunning) return undefined;
+
+    const timer = window.setInterval(() => {
+      const tick = syncElapsedTracker(trackerRef.current, activity);
+      trackerRef.current = tick.state;
+      setElapsed(tick.elapsed);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [
+    activity.runId,
+    activity.startedAt,
+    activity.completedAt,
+    activity.status,
+    activity.updatedAt,
+    activity.runtimeAgentRun?.status
+  ]);
+
+  return elapsed;
 }
 
 function statusLabel(activity: GenerateActivityState) {
@@ -613,17 +731,8 @@ export function GenerateActivityPanel({
   onApproval?: (approved: boolean, selectedChangeIds?: string[] | undefined) => void;
   diagnostics?: boolean | undefined;
 }) {
-  const [elapsed, setElapsed] = useState(() => formatElapsed(activity.startedAt, activity.completedAt));
+  const elapsed = useActiveElapsed(activity);
   const [detailsOpen, setDetailsOpen] = useState(false);
-
-  useEffect(() => {
-    setElapsed(formatElapsed(activity.startedAt, activity.completedAt));
-    if (activity.status !== "running" && activity.status !== "needs_user_input") return undefined;
-    const timer = window.setInterval(() => {
-      setElapsed(formatElapsed(activity.startedAt));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [activity.completedAt, activity.startedAt, activity.status]);
 
   const events = useMemo(() => activity.agentEvents ?? activity.agentRun?.events ?? [], [activity.agentEvents, activity.agentRun]);
   const selectedSkills = activity.selectedSkills ?? activity.agentRun?.selectedSkills ?? [];

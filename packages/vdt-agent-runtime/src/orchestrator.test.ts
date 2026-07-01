@@ -9,7 +9,7 @@ import type { FirstResponseInput, FirstResponseOutput } from "./schemas/agent-fi
 import type { AgentDecisionContext } from "./types";
 
 function scriptedProvider(
-  decisions: AgentDecision[],
+  decisions: unknown[],
   firstResponse: FirstResponseOutput = {
     assistantMessage: "I will use the visible brief as the source of truth before drafting.",
     nextAction: "continue_building",
@@ -314,6 +314,190 @@ function haulageBuildDecisions(): AgentDecision[] {
 }
 
 describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
+  it("feeds forbidden full-plan fields back to the provider and retries the next small decision", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "vdt.create_draft",
+        statusMessage: "Trying a full plan.",
+        args: {},
+        nodes: [{ id: "bad" }]
+      },
+      {
+        type: "ask_user",
+        statusMessage: "Asking for a safe process boundary.",
+        questions: [{
+          id: "process_boundary",
+          question: "What process boundary should this VDT use?",
+          reason: "The previous output attempted to return a full graph instead of one decision.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { prompt: "Build a mining VDT", rootKpi: "Mine production" },
+      providerId: "decision-test",
+      options: { maxSteps: 4 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.lastFeedback).toMatchObject({ kind: "forbidden_field", retryable: true });
+    expect(provider.decisionInputs[1]?.lastFeedback).toMatchObject({ kind: "forbidden_field" });
+    expect(snapshot.events.some((event) =>
+      event.title === "AI decision rejected" &&
+      event.metadata?.retrying === true
+    )).toBe(true);
+  });
+
+  it("returns unknown tool feedback to the next AI decision", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "missing.tool",
+        statusMessage: "Trying a missing tool.",
+        args: {}
+      },
+      {
+        type: "ask_user",
+        statusMessage: "Falling back to a process question.",
+        questions: [{
+          id: "missing_tool_fallback",
+          question: "What process components should the agent model manually?",
+          reason: "The requested tool is not available.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { prompt: "Build a VDT", rootKpi: "Custom KPI" },
+      providerId: "decision-test",
+      options: { maxSteps: 4 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.lastFeedback).toMatchObject({ kind: "unknown_tool", target: { toolName: "missing.tool" } });
+    expect(provider.decisionInputs[1]?.recentFeedback?.at(-1)).toMatchObject({ kind: "unknown_tool" });
+  });
+
+  it("returns invalid tool args feedback to the next AI decision", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "vdt.create_draft",
+        statusMessage: "Trying invalid args.",
+        args: { projectTitle: "Bad draft" }
+      },
+      {
+        type: "ask_user",
+        statusMessage: "Asking after invalid tool args.",
+        questions: [{
+          id: "root_kpi_needed",
+          question: "What root KPI should the draft use?",
+          reason: "The draft tool requires rootKpi.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { prompt: "Build a VDT", rootKpi: "Revenue" },
+      providerId: "decision-test",
+      options: { maxSteps: 4 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.lastFeedback).toMatchObject({ kind: "invalid_tool_args", target: { toolName: "vdt.create_draft" } });
+    expect(provider.decisionInputs[1]?.lastFeedback).toMatchObject({ kind: "invalid_tool_args" });
+  });
+
+  it("turns research provider absence into feedback and lets the agent ask the user", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "research.search_web",
+        statusMessage: "Checking configured research sources.",
+        args: {
+          query: "custom industrial KPI process drivers",
+          purpose: "process_components"
+        }
+      },
+      {
+        type: "ask_user",
+        statusMessage: "Research is not configured, so asking for process components.",
+        questions: [{
+          id: "process_components",
+          question: "What are the main process components and formula boundary for this KPI?",
+          reason: "Research provider is not configured.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { prompt: "Build a VDT for an unknown KPI", rootKpi: "Custom KPI" },
+      providerId: "decision-test",
+      options: { maxSteps: 4 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.lastFeedback).toMatchObject({ kind: "research_required", target: { toolName: "research.search_web" } });
+    expect(provider.decisionInputs[1]?.lastFeedback).toMatchObject({ kind: "research_required" });
+  });
+
+  it("records finish rejection feedback and lets the next decision repair or ask", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "vdt.create_draft",
+        statusMessage: "Creating a draft without values.",
+        args: { projectTitle: "Revenue", rootKpi: "Revenue" }
+      },
+      {
+        type: "finish",
+        summary: "Trying to finish too early.",
+        nextSuggestedActions: []
+      },
+      {
+        type: "ask_user",
+        statusMessage: "Asking for the missing formula/value.",
+        questions: [{
+          id: "root_formula_or_value",
+          question: "What formula or value should the root KPI use?",
+          reason: "The draft cannot finish without a formula or value.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { prompt: "Build a simple revenue VDT", rootKpi: "Revenue" },
+      providerId: "decision-test",
+      options: { autoApplyPatches: true, maxSteps: 6 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.lastFeedback).toMatchObject({ kind: "finish_rejected" });
+    expect(provider.decisionInputs[2]?.lastFeedback).toMatchObject({ kind: "finish_rejected" });
+    expect(snapshot.repairAttemptCount).toBe(1);
+  });
+
   it("asks for modeling direction before skill selection when the visible root KPI is a placeholder", async () => {
     const runtime = createVdtAgentRuntime();
     const provider = scriptedProvider([], {

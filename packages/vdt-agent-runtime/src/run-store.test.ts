@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createStructuredFeedback,
   AgentRunStore,
   hydrateAgentRunState,
   serializeAgentRunState,
@@ -80,6 +81,18 @@ describe("AgentRunStore persistence", () => {
         nested: { accessToken: "nested-secret", kept: "visible" }
       }
     });
+    const feedback = createStructuredFeedback({
+      kind: "tool_failed",
+      severity: "error",
+      message: "Tool failed with a secret token.",
+      actual: { accessToken: "feedback-secret", kept: "visible" },
+      retryable: true
+    });
+    store.updateRun(state.runId, {
+      feedbackHistory: [feedback],
+      lastFeedback: feedback,
+      repairAttemptCount: 1
+    });
 
     const snapshot = store.getSnapshot(state.runId);
     expect(snapshot.request.providerConfig).toMatchObject({
@@ -91,6 +104,8 @@ describe("AgentRunStore persistence", () => {
       apiKey: "[redacted]",
       nested: { accessToken: "[redacted]", kept: "visible" }
     });
+    expect(snapshot.lastFeedback?.actual).toEqual({ accessToken: "[redacted]", kept: "visible" });
+    expect(snapshot.feedbackHistory).toHaveLength(1);
 
     const recoveredStore = new AgentRunStore({ persistence });
     expect(recoveredStore.has(state.runId)).toBe(true);
@@ -99,6 +114,8 @@ describe("AgentRunStore persistence", () => {
       status: "running",
       phase: "building_graph"
     });
+    expect(recoveredStore.getSnapshot(state.runId).repairAttemptCount).toBe(1);
+    expect(recoveredStore.getSnapshot(state.runId).lastFeedback).toMatchObject({ kind: "tool_failed" });
     expect(events).toHaveLength(1);
   });
 });

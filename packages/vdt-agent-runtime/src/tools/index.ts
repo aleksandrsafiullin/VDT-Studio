@@ -5,6 +5,7 @@ import { createFormulaTools } from "./formula-tools";
 import { createMemoryTools } from "./memory-tools";
 import { createProjectTools } from "./project-tools";
 import { createRepairTools } from "./repair-tools";
+import { createResearchTools } from "./research-tools";
 import { createSkillTools } from "./skill-tools";
 import { createSubagentTools } from "./subagent-tools";
 import { createUserTools } from "./user-tools";
@@ -18,6 +19,7 @@ export function createDefaultToolRegistry(): ToolRegistry {
     ...createVdtBuilderTools(),
     ...createProjectTools(),
     ...createFormulaTools(),
+    ...createResearchTools(),
     ...createRepairTools(),
     ...createMemoryTools(),
     ...createSubagentTools(),
