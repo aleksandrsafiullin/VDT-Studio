@@ -87,49 +87,6 @@ function assertExpectedCodexTestProviderBody(body: DevRuntimeRequestBody | undef
   expect(body?.backendId).toBe("codex_subscription");
 }
 
-function mockAgentRun() {
-  return {
-    runId: "agent-run-e2e",
-    status: "succeeded",
-    phase: "reporting",
-    request: {
-      rootKpi: "Revenue",
-      industry: "SaaS"
-    },
-    selectedSkills: [
-      {
-        id: "saas.funnel_growth",
-        path: "packages/vdt-agent/skills/saas/funnel-growth.md",
-        reason: "Matched SaaS revenue growth context."
-      }
-    ],
-    events: [
-      {
-        id: "evt-classification",
-        timestamp: "2026-06-24T10:00:01.000Z",
-        type: "classification",
-        title: "Classified request",
-        message: "Classified request as SaaS / revenue growth."
-      },
-      {
-        id: "evt-skill-selected",
-        timestamp: "2026-06-24T10:00:02.000Z",
-        type: "skill_selected",
-        title: "Selected skills",
-        message: "Selected saas.funnel_growth."
-      },
-      {
-        id: "evt-final-report",
-        timestamp: "2026-06-24T10:00:05.000Z",
-        type: "final_report",
-        title: "Final report",
-        message: "Generated final report."
-      }
-    ],
-    finalReport: "Validation result: Graph validation passed. Applied graph to canvas."
-  };
-}
-
 function mockRuntimeAgentSnapshot() {
   const timestamp = "2026-06-24T10:00:05.000Z";
   const project = mockGeneratedProject();
@@ -1550,9 +1507,10 @@ test("shows a real Local CLI connection error without falling back to mock", asy
 test("configures BYOK Anthropic without persisting API keys", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "BYOK settings smoke runs on desktop viewport.");
 
-  let generateRequestBody: {
+  let agentRunRequestBody: {
     providerId?: string;
     providerConfig?: { baseUrl?: string; model?: string; apiKey?: string };
+    input?: { prompt?: string };
   } | undefined;
 
   await openSettingsModal(page);
@@ -1568,21 +1526,30 @@ test("configures BYOK Anthropic without persisting API keys", async ({ page }, t
     .poll(() => page.evaluate(() => localStorage.getItem("vdt-studio-state") ?? ""))
     .not.toContain("session-only-key");
 
-  await page.route("**/api/ai/generate-vdt", async (route) => {
-    generateRequestBody = route.request().postDataJSON() as typeof generateRequestBody;
+  await page.route("**/api/agent/runs", async (route) => {
+    agentRunRequestBody = route.request().postDataJSON() as typeof agentRunRequestBody;
     await route.fulfill({
-      status: 400,
+      status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ ok: false, error: "Captured by e2e." })
+      body: JSON.stringify({
+        ok: true,
+        runId: "agent-run-e2e",
+        snapshot: {
+          ...mockRuntimeAgentSnapshot(),
+          request: agentRunRequestBody
+        }
+      })
     });
   });
 
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: /Generate VDT with AI/i }).click();
-  await expect.poll(() => generateRequestBody?.providerId).toBe("anthropic");
-  expect(generateRequestBody?.providerConfig?.baseUrl).toBe("https://api.anthropic.com");
-  expect(generateRequestBody?.providerConfig?.model).toBe("vdt-production-model");
-  expect(generateRequestBody?.providerConfig?.apiKey).toBe("session-only-key");
+  await page.getByTestId("agent-instruction-input").fill("Build a revenue model from the current brief.");
+  await page.getByTestId("agent-send-instruction").click();
+  await expect.poll(() => agentRunRequestBody?.providerId).toBe("anthropic");
+  expect(agentRunRequestBody?.input?.prompt).toBe("Build a revenue model from the current brief.");
+  expect(agentRunRequestBody?.providerConfig?.baseUrl).toBe("https://api.anthropic.com");
+  expect(agentRunRequestBody?.providerConfig?.model).toBe("vdt-production-model");
+  expect(agentRunRequestBody?.providerConfig?.apiKey).toBe("session-only-key");
 
   await page.reload();
 
@@ -1657,9 +1624,18 @@ test("shows a real BYOK connection error without falling back to mock", async ({
     operation?: string;
     providerConfig?: { apiKey?: string };
   } | undefined;
+  let agentRunRequestBody: { providerId?: string; providerConfig?: { apiKey?: string } } | undefined;
 
   await page.route("**/api/ai/generate-vdt", async (route) => {
     generateRequestBody = route.request().postDataJSON() as typeof generateRequestBody;
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: false, error: "Anthropic authentication failed." })
+    });
+  });
+  await page.route("**/api/agent/runs", async (route) => {
+    agentRunRequestBody = route.request().postDataJSON() as typeof agentRunRequestBody;
     await route.fulfill({
       status: 502,
       contentType: "application/json",
@@ -1681,12 +1657,13 @@ test("shows a real BYOK connection error without falling back to mock", async ({
   await expect(page.getByText("Connection test passed.")).toHaveCount(0);
 
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: /Generate VDT with AI/i }).click();
-  await expect(page.getByTestId("generate-activity-panel")).toContainText(
-    "Anthropic authentication failed."
-  );
+  await page.getByTestId("agent-instruction-input").fill("Build a revenue model from the current brief.");
+  await page.getByTestId("agent-send-instruction").click();
+  await expect(page.getByText("Anthropic authentication failed.")).toBeVisible();
+  await expect.poll(() => agentRunRequestBody?.providerId).toBe("anthropic");
   await expect.poll(() => generateRequestBody?.providerId).toBe("anthropic");
   expect(generateRequestBody?.providerId).not.toBe("mock");
+  expect(agentRunRequestBody?.providerId).not.toBe("mock");
   await expect(page.getByRole("heading", { name: "Production Volume Driver Model" })).toBeVisible();
 });
 
@@ -2049,7 +2026,8 @@ test("keeps the primary creation flow usable on mobile", async ({ page }, testIn
 
   await expect(page.getByText("New VDT")).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Generate VDT with AI/i })).toBeVisible();
+  await expect(page.getByTestId("agent-instruction-input")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Send$/i })).toBeVisible();
 });
 
 test("keeps execution settings reachable on mobile", async ({ page }, testInfo) => {
@@ -2237,7 +2215,6 @@ test("auto-distributes nodes without overlap", async ({ page }, testInfo) => {
     "planned_downtime",
     "unplanned_downtime",
     "nominal_rate",
-    "utilization_factor",
     "yield_factor"
   ];
 
@@ -2307,7 +2284,7 @@ test("auto-distribute groups cousin nodes by parent", async ({ page }, testInfo)
   test.skip(testInfo.project.name !== "chromium", "Layout grouping runs on desktop viewport.");
 
   const effectiveWorkingTimeChildren = ["calendar_time", "planned_downtime", "unplanned_downtime"];
-  const averageProductivityChildren = ["nominal_rate", "utilization_factor", "yield_factor"];
+  const averageProductivityChildren = ["nominal_rate", "yield_factor"];
 
   await page.getByTestId("auto-distribute-layout").click();
   await expect.poll(async () => page.locator(".react-flow__node").count()).toBeGreaterThan(0);
@@ -2705,7 +2682,7 @@ test("reviews the model with mock AI without changing the graph", async ({ page 
 
   const panel = page.getByTestId("advisory-findings-panel");
   await expect(panel).toBeVisible();
-  await expect(panel.getByText(/utilization_factor and yield_factor/i)).toBeVisible();
+  await expect(panel.getByText(/yield_factor uses a % label/i)).toBeVisible();
   await expect(page.getByTestId("change-set-apply")).toHaveCount(0);
   await expect.poll(async () => readCanvasNodeCount(page)).toBe(initialNodeCount);
 });
@@ -2721,7 +2698,7 @@ test("explains a node with mock AI without apply controls", async ({ page }, tes
   const panel = page.getByTestId("explanation-panel");
   await expect(panel).toBeVisible();
   await expect(panel.getByRole("heading", { name: "Node explanation" })).toBeVisible();
-  await expect(panel.getByText("Effective Working Time", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Working time", { exact: true })).toBeVisible();
   await expect(page.getByTestId("change-set-apply")).toHaveCount(0);
   await expect.poll(async () => readCanvasNodeCount(page)).toBe(initialNodeCount);
 });
@@ -2780,7 +2757,14 @@ test("shows usage limits copy on subscription CLI cards", async ({ page }, testI
 test("generates through managed Local CLI runtime without standalone pairing", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Managed Local CLI generate runs on desktop viewport.");
 
-  let generateRequestBody: DevRuntimeRequestBody | undefined;
+  let agentRunRequestBody:
+    | {
+        mode?: string;
+        providerId?: string;
+        providerConfig?: { backendId?: string; timeoutMs?: number; pairingToken?: string };
+        input?: { prompt?: string };
+      }
+    | undefined;
 
   await page.route("**/api/ai/detect-clis**", async (route) => {
     await route.fulfill({
@@ -2803,34 +2787,26 @@ test("generates through managed Local CLI runtime without standalone pairing", a
     });
   });
 
-  await page.route("**/api/ai/dev-runtime", async (route) => {
-    generateRequestBody = route.request().postDataJSON() as DevRuntimeRequestBody;
-    expect(generateRequestBody.operation).toBe("complete");
-    expect(generateRequestBody.request).toMatchObject({
-      backendId: "codex_subscription",
-      taskType: "generate_tree",
-      schemaId: "generate-tree-v1",
-      timeoutMs: 120_000
+  await page.route("**/api/agent/runs", async (route) => {
+    agentRunRequestBody = route.request().postDataJSON() as typeof agentRunRequestBody;
+    expect(agentRunRequestBody).toMatchObject({
+      mode: "generate_vdt",
+      providerId: "local_runner",
+      providerConfig: {
+        backendId: "codex_subscription",
+        timeoutMs: 60_000
+      }
     });
-    expect(JSON.stringify(generateRequestBody)).not.toContain("pairingToken");
+    expect(JSON.stringify(agentRunRequestBody)).not.toContain("pairingToken");
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
         ok: true,
-        output: mockGeneratedProject(),
-        run: {
-          requestId: generateRequestBody.request?.requestId ?? "request-e2e",
-          backendId: "codex_subscription",
-          taskType: "generate_tree",
-          schemaId: "generate-tree-v1",
-          status: "succeeded",
-          progress: {
-            phase: "complete",
-            label: "Complete",
-            updatedAt: "2026-06-24T10:00:05.000Z"
-          },
-          agentRun: mockAgentRun()
+        runId: "agent-run-e2e",
+        snapshot: {
+          ...mockRuntimeAgentSnapshot(),
+          request: agentRunRequestBody
         }
       })
     });
@@ -2843,8 +2819,9 @@ test("generates through managed Local CLI runtime without standalone pairing", a
   await page.getByTestId("cli-agent-select-codex").click();
   await page.keyboard.press("Escape");
 
-  await page.getByRole("button", { name: /Generate VDT with AI/i }).click();
-  await expect.poll(() => generateRequestBody?.operation).toBe("complete");
+  await page.getByTestId("agent-instruction-input").fill("Build a revenue model from the current brief.");
+  await page.getByTestId("agent-send-instruction").click();
+  await expect.poll(() => agentRunRequestBody?.providerConfig?.backendId).toBe("codex_subscription");
   await expect(page.getByRole("heading", { name: "Revenue Driver Model" })).toBeVisible();
   await expect(page.getByTestId("generate-final-report")).toContainText("Validation result: Graph validation passed.");
 });
@@ -2860,7 +2837,7 @@ test.describe("visual formula editor", () => {
     await expect(page.getByTestId("formula-editor")).toBeVisible();
 
     const formulaRow = page.getByTestId("formula-token-row");
-    await expect(formulaRow.getByText("Effective Working Time", { exact: true })).toBeVisible();
+    await expect(formulaRow.getByText("Working time", { exact: true })).toBeVisible();
     await expect(formulaRow.getByText("Average Productivity", { exact: true })).toBeVisible();
     await expect(formulaRow.getByText("effective_working_time")).toHaveCount(0);
     await expect(formulaRow.getByText("average_productivity")).toHaveCount(0);

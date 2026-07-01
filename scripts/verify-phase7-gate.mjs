@@ -33,8 +33,8 @@ export const CANONICAL_RUN_TASK_TYPES = [
   "generate_executive_summary"
 ];
 
-export const CANONICAL_TASK_TYPES = ["agent_decision", "agent_plan", ...CANONICAL_RUN_TASK_TYPES];
-export const CANONICAL_EXPOSED_TASK_TYPES = ["agent_decision", ...CANONICAL_RUN_TASK_TYPES];
+export const CANONICAL_TASK_TYPES = ["orchestrator_first_response", "agent_decision", "agent_plan", ...CANONICAL_RUN_TASK_TYPES];
+export const CANONICAL_EXPOSED_TASK_TYPES = ["orchestrator_first_response", "agent_decision", ...CANONICAL_RUN_TASK_TYPES];
 
 const GRAPH_MUTATION_TASKS = new Set([
   "deepen_node",
@@ -142,7 +142,7 @@ function assertRouteSeparation(root) {
   const runTaskRoute = read(root, "apps/web/app/api/ai/run-task/route.ts");
   const generateRoute = read(root, "apps/web/app/api/ai/generate-vdt/route.ts");
 
-  if (!runTaskParser.includes("generate_tree must use /api/ai/generate-vdt.")) {
+  if (!runTaskParser.includes("generate_tree must use /api/agent/runs.")) {
     fail("run-task route must reject generate_tree.");
   }
   for (const taskType of CANONICAL_RUN_TASK_TYPES.filter((taskType) => taskType !== "generate_tree")) {
@@ -153,8 +153,11 @@ function assertRouteSeparation(root) {
   if (!runTaskRoute.includes("Bounded AI task route for web-runnable VDT AI actions")) {
     fail("run-task route must document its web-runnable action boundary.");
   }
-  if (!generateRoute.includes('taskType: "generate_tree"')) {
-    fail("/api/ai/generate-vdt must use generate_tree.");
+  if (!generateRoute.includes("Project generation has moved to /api/agent/runs")) {
+    fail("/api/ai/generate-vdt must deprecate project generation in favor of /api/agent/runs.");
+  }
+  if (generateRoute.includes("generateAgenticVdtProject")) {
+    fail("/api/ai/generate-vdt must not call generateAgenticVdtProject.");
   }
 }
 
@@ -178,7 +181,7 @@ function assertDocs(root) {
   const readme = read(root, "README.md");
   const roadmap = read(root, "docs/ROADMAP.md");
 
-  if (!readme.includes("VDT Studio exposes 13 bounded AI tasks")) {
+  if (!readme.includes("VDT Studio exposes 14 bounded AI tasks")) {
     fail("README must list the bounded AI actions.");
   }
   for (const taskType of CANONICAL_EXPOSED_TASK_TYPES) {
@@ -229,21 +232,21 @@ function taskInput(taskType) {
         scenarioId: "scenario_reduce_unplanned_downtime",
         calculationSummary: {
           rootNodeId: "production_volume",
-          baselineRootValue: 114_048,
-          scenarioRootValue: 117_888,
-          rootDelta: 3_840,
+          baselineRootValue: 126_720,
+          scenarioRootValue: 130_944,
+          rootDelta: 4_224,
           nodeValues: [
             { nodeId: "unplanned_downtime", baselineValue: 80, scenarioValue: 60 },
-            { nodeId: "production_volume", baselineValue: 114_048, scenarioValue: 117_888 }
+            { nodeId: "production_volume", baselineValue: 126_720, scenarioValue: 130_944 }
           ]
         }
       };
     case "generate_executive_summary":
       return {
         project,
-        rootValue: 114_048,
+        rootValue: 126_720,
         topDrivers: [
-          { nodeId: "effective_working_time", name: "Effective Working Time", contributionSummary: "Time base after losses." },
+          { nodeId: "effective_working_time", name: "Working time", contributionSummary: "Time base after losses." },
           { nodeId: "average_productivity", name: "Average Productivity", contributionSummary: "Rate achieved per effective hour." }
         ]
       };

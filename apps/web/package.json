@@ -17,6 +17,7 @@
     "@vdt-studio/ai-harness": "workspace:*",
     "@vdt-studio/local-runner": "workspace:*",
     "@vdt-studio/model-bridge": "workspace:*",
+    "@vdt-studio/storage": "workspace:*",
     "@vdt-studio/vdt-agent-runtime": "workspace:*",
     "@vdt-studio/vdt-core": "workspace:*",
     "@xyflow/react": "^12.8.4",
@@ -28,7 +29,7 @@
     "zustand": "^5.0.6"
   },
   "devDependencies": {
-    "@types/node": "20.17.6",
+    "@types/node": "^24.13.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "autoprefixer": "^10.4.20",

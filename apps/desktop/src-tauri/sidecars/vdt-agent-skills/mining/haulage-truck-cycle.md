@@ -34,7 +34,7 @@ kpi_patterns:
 requires:
   - number_of_trucks
   - truck_availability
-  - utilization
+  - truck_working_time
   - payload_per_trip
   - haul_distance
   - loaded_speed
@@ -68,7 +68,7 @@ Use this skill when the branch KPI is hauled tonnes, truck productivity, haulage
 
 Use it for open-pit haul trucks, articulated dump trucks, rigid-frame trucks, underground mine trucks, LHD-to-truck haulage interfaces, or mixed truck fleets.
 
-Use `mining.excavation_loading` for the upstream loading unit. Use this skill to represent the truck side of the cycle, payload limits, route mix, ore/waste allocation, and truck-loader match.
+Use `mining.excavation` for the upstream excavation unit. Use this skill to represent the truck side of the cycle, payload limits, route mix, ore/waste allocation, and truck-loader match.
 
 ## Decomposition Pattern
 
@@ -86,9 +86,7 @@ Deepen `trips_per_truck` into time and cycle time:
 
 ```text
 trips_per_truck
-  operating_hours
-  truck_availability
-  utilization
+  truck_working_time
   cycle_time_h
 ```
 
@@ -148,7 +146,7 @@ loaded_travel_time_h = haul_distance_km / loaded_speed_kmh
 
 empty_return_time_h = return_distance_km / empty_speed_kmh
 
-trips_per_truck = operating_hours * truck_availability * utilization / cycle_time_h
+trips_per_truck = truck_working_time / cycle_time_h
 
 hauled_tonnes = number_of_trucks * trips_per_truck * payload_per_trip_t * payload_factor
 ```
@@ -182,23 +180,23 @@ loading_time_h = passes_per_truck * loader_cycle_time_h + spot_time_loader_h
 For mixed truck fleets by truck type and route:
 
 ```text
-haulage_capacity_tonnes = sum(truck_count_by_type_route * operating_hours * truck_availability_by_type * utilization_by_type_route * payload_per_trip_t_by_type_material / cycle_time_h_by_type_route)
+haulage_capacity_tonnes = sum(truck_count_by_type_route * truck_working_time_by_type_route * payload_per_trip_t_by_type_material / cycle_time_h_by_type_route)
 ```
 
 For hard ore/waste truck allocation:
 
 ```text
-ore_hauled_tonnes = sum(ore_assigned_truck_count_by_type * operating_hours * truck_availability_by_type * truck_utilization_by_type * ore_payload_per_trip_t_by_type / ore_cycle_time_h_by_type)
+ore_hauled_tonnes = sum(ore_assigned_truck_count_by_type * ore_truck_working_time_by_type * ore_payload_per_trip_t_by_type / ore_cycle_time_h_by_type)
 
-waste_hauled_tonnes = sum(waste_assigned_truck_count_by_type * operating_hours * truck_availability_by_type * truck_utilization_by_type * waste_payload_per_trip_t_by_type / waste_cycle_time_h_by_type)
+waste_hauled_tonnes = sum(waste_assigned_truck_count_by_type * waste_truck_working_time_by_type * waste_payload_per_trip_t_by_type / waste_cycle_time_h_by_type)
 ```
 
 For shared trucks with time-share allocation:
 
 ```text
-ore_truck_hours = operating_hours * truck_availability * utilization * ore_time_share
+ore_truck_hours = truck_working_time * ore_time_share
 
-waste_truck_hours = operating_hours * truck_availability * utilization * waste_time_share
+waste_truck_hours = truck_working_time * waste_time_share
 
 ore_hauled_tonnes = number_of_trucks * ore_truck_hours * ore_payload_per_trip_t / ore_cycle_time_h
 
@@ -208,7 +206,7 @@ waste_hauled_tonnes = number_of_trucks * waste_truck_hours * waste_payload_per_t
 For required truck count:
 
 ```text
-required_trucks = target_hauled_tonnes * cycle_time_h / (operating_hours * truck_availability * utilization * payload_per_trip_t * payload_factor)
+required_trucks = target_hauled_tonnes * cycle_time_h / (truck_working_time * payload_per_trip_t * payload_factor)
 ```
 
 For loader-truck match:
@@ -227,8 +225,8 @@ Minimum inputs:
 
 - `mine_type`: open_pit, underground, or mixed.
 - `number_of_trucks` by truck class.
-- `truck_availability` and `utilization` by truck class or fleet.
-- `operating_hours` for the period.
+- `truck_working_time` by truck class or fleet.
+- scheduled hours and explicit downtime categories for the period.
 - `rated_payload_t`, `truck_body_volume_m3`, `payload_factor`, `body_fill_factor`, and material density.
 - `haul_distance_km` and `return_distance_km` by route.
 - `loaded_speed_kmh` and `empty_speed_kmh` by route.
@@ -260,7 +258,7 @@ Always state:
 - Whether speeds are loaded, empty, average, measured, planned, or assumed.
 - Whether payload is actual average, rated capacity, body-volume constrained, wet tonnes, dry tonnes, or volume.
 - Whether trucks are hard-allocated by material, time-share allocated, or dynamically dispatched.
-- Whether availability and utilization are applied at truck, fleet, route, or circuit level.
+- Whether working time is measured at truck, fleet, route, or circuit level.
 - Whether queueing is additive first-pass modeling or derived from dispatch/simulation data.
 - Whether loader, dump, crusher, orepass, hoist, or road network constraints are included.
 
@@ -289,7 +287,7 @@ Recommended units:
 - Payload: `t/trip`, specifying wet or dry tonnes.
 - Body volume: `m3` or `lcm`.
 - Output: `t`, `kt`, `Mt`, `t/h`, `kt/day`, or `Mt/year`.
-- Availability, utilization, payload factor, body fill factor, and time share: decimals between `0` and `1`.
+- Payload factor, body fill factor, and time share: decimals between `0` and `1`.
 - Route mix weights: trips, tonnes, or hours; state which one is used.
 
 Do not mix one-way and round-trip distances. Do not use bank density for truck body loose volume without swell conversion.
@@ -320,9 +318,9 @@ hauled_tonnes
       planned_service_h
       breakdown_h
       maintenance_wait_h
-    utilization
-      dispatch_effectiveness
-      operator_availability
+    truck_working_time
+      dispatch_delay_h
+      operator_waiting_h
       shift_delay_h
     cycle_time_h
       spot_time_loader_h
@@ -353,6 +351,6 @@ hauled_tonnes
 - Deepen `cycle_time_h` by route, source, destination, material, truck type, and loader/dump/traffic queue source.
 - Deepen `payload_per_trip_t` into rated payload, body volume, fill factor, density, moisture, swell, and payload policy.
 - Deepen `number_of_trucks` into truck class mix, availability, maintenance, operator availability, and assignment.
-- Deepen `loading_time_h` with `mining.excavation_loading` when pass match, bucket size, or loader no-truck delay matters.
+- Deepen `loading_time_h` with `mining.excavation` when pass match, bucket size, or loader no-truck delay matters.
 - Deepen ore/waste allocation with `mining.material_allocation_ore_waste` whenever trucks are shared or material routes differ.
 - For underground haulage, deepen passing-bay delays, traffic-control rules, ventilation delays, orepass/hoist/crusher availability, ramp profile, and remote/autonomous operation constraints.

@@ -22,7 +22,7 @@ requires:
 outputs:
   - volume_rate_tree
   - inflow_outflow_tree
-  - capacity_utilization_tree
+  - working_time_tree
   - ratio_tree
 questions:
   - What exactly does the KPI measure?
@@ -38,7 +38,7 @@ Use this skill as the fallback when the domain is unclear or when the KPI is a g
 
 ## Decomposition Pattern
 
-Choose the mathematical family first, then name business-specific drivers. Common families are volume x rate, base x conversion, inflow - outflow, capacity x utilization x quality, stock movement, weighted average, share or ratio, and bottleneck-constrained output.
+Choose the mathematical family first, then name business-specific drivers. Common families are volume x rate x working time, base x conversion, inflow - outflow, explicit downtime decomposition, stock movement, weighted average, share or ratio, and bottleneck-constrained output.
 
 ## Formula Templates
 
@@ -46,7 +46,7 @@ Choose the mathematical family first, then name business-specific drivers. Commo
 output_value = volume * rate
 converted_volume = starting_base * conversion_rate
 net_flow = inflow - outflow
-available_output = capacity * utilization * quality_factor
+available_output = throughput_rate * working_time * quality_factor
 ending_stock = starting_stock + inflow - outflow
 weighted_average = weighted_sum / total_weight
 share_of_total = segment_value / total_value
@@ -72,8 +72,8 @@ share_of_total = segment_value / total_value
 - base_population
 - conversion_rate
 - average_value
-- capacity
-- utilization
+- throughput_rate
+- working_time
 - quality_factor
 - inflow
 - outflow
@@ -95,8 +95,8 @@ Keep flows aligned to the selected period and stocks as point-in-time balances. 
 
 ```text
 available_output
-- capacity
-- utilization
+- throughput_rate
+- working_time
 - quality_factor
 - constraint_factor
 ```
@@ -104,4 +104,3 @@ available_output
 ## Deepen Node Guidance
 
 Deepen a volume node with count, frequency, throughput, or population drivers. Deepen a rate node with conversion, productivity, quality, or average value drivers. Deepen a stock node with starting stock, inflow, outflow, write-offs, and timing. Ask clarifying questions before using a specialized domain structure when the KPI definition is ambiguous.
-

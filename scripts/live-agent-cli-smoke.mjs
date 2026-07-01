@@ -161,7 +161,6 @@ function answerQuestion(question) {
   const text = `${question.id ?? ""} ${question.question ?? ""} ${question.reason ?? ""}`.toLowerCase();
   if (/(payload|tonnes per trip|tons per trip|truck load|load per truck)/.test(text)) return "40 tonnes per loaded trip";
   if (/(availability|available)/.test(text)) return "85% mechanical availability";
-  if (/(utilization|utilisation)/.test(text)) return "90% utilization of available truck time";
   if (/(calendar|hours per year|annual hours|yearly hours)/.test(text)) return "8760 calendar hours per year";
   if (/(operating hours|working hours|productive hours|shift hours)/.test(text)) return "4000 operating hours per year";
   if (/(loading|load time)/.test(text)) return "4 minutes average loading time";

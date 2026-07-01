@@ -1408,7 +1408,7 @@ AI decision: call skill.read
 Tool result: skill excerpt returned
 AI decision: call skill.compile_recipe
 Tool result: recipe returned
-AI decision: ask_user(payload_per_trip_t, operating_hours or availability/utilization if needed)
+AI decision: ask_user(payload_per_trip_t, operating_hours or working_time if needed)
 User answers
 AI decision: call vdt.create_draft
 Tool result: root created
@@ -1442,7 +1442,7 @@ AI decision: finish
   - 7 km/h loaded speed;
   - 11 km/h empty speed;
   - payload answer from user;
-  - operating hours or equivalent availability/utilization logic.
+  - operating hours or equivalent Working time logic.
 
 ---
 

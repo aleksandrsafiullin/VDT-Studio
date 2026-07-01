@@ -4,6 +4,7 @@
   "references": [
     { "path": "./packages/cli" },
     { "path": "./packages/vdt-core" },
+    { "path": "./packages/vdt-storage" },
     { "path": "./packages/vdt-agent" },
     { "path": "./packages/vdt-agent-runtime" },
     { "path": "./packages/ai-harness" },

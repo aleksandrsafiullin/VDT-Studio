@@ -111,7 +111,7 @@ export const VALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
     ...advisory
   },
   "check-units-v1": {
-    unitFindings: [{ nodeId: "utilization_factor", severity: "warning", message: "Unit mismatch." }],
+    unitFindings: [{ nodeId: "yield_factor", severity: "warning", message: "Unit mismatch." }],
     ...advisory
   },
   "identify-missing-drivers-v1": {
@@ -128,8 +128,8 @@ export const VALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
   "identify-duplicate-drivers-v1": {
     duplicateClusters: [
       {
-        nodeIds: ["utilization_factor", "yield_factor"],
-        similarityReason: "Both adjust productivity multiplicatively."
+        nodeIds: ["planned_downtime", "unplanned_downtime"],
+        similarityReason: "Both reduce working time."
       }
     ],
     ...advisory

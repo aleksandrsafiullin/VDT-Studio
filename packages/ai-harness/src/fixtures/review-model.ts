@@ -5,8 +5,8 @@ export const productionVolumeReviewOutput: ReviewModelOutput = reviewModelOutput
     {
       severity: "warning",
       category: "unit_consistency",
-      message: "utilization_factor and yield_factor use % labels but are applied as multiplicative ratios (0-1).",
-      nodeId: "utilization_factor"
+      message: "yield_factor uses a % label but is applied as a multiplicative ratio (0-1).",
+      nodeId: "yield_factor"
     },
     {
       severity: "info",

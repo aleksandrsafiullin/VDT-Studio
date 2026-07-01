@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 export * from "./skill-questions";
 export * from "./skill-recipe";
 
-export type VdtAgentStatus = "running" | "needs_user_input" | "succeeded" | "failed" | "cancelled";
+export type VdtAgentStatus = "running" | "needs_user_input" | "waiting_approval" | "succeeded" | "failed" | "cancelled";
 
 export type VdtAgentPhase =
   | "classifying_request"
@@ -13,6 +13,7 @@ export type VdtAgentPhase =
   | "planning_decomposition"
   | "asking_clarifying_questions"
   | "generating_graph"
+  | "previewing_mutation"
   | "validating_graph"
   | "applying_graph"
   | "reporting";
@@ -27,6 +28,9 @@ export type VdtAgentEventType =
   | "planning_decomposition"
   | "model_call_started"
   | "model_call_completed"
+  | "mutation_proposed"
+  | "mutation_applied"
+  | "mutation_rejected"
   | "web_search_started"
   | "web_search_completed"
   | "graph_validation"
@@ -71,7 +75,9 @@ export interface VdtAgentRun {
   error?: { code: string; message: string };
 }
 
-export type FrontmatterValue = string | number | boolean | string[];
+export type FrontmatterScalar = string | number | boolean;
+export type FrontmatterMap = Record<string, FrontmatterScalar>;
+export type FrontmatterValue = FrontmatterScalar | string[] | FrontmatterMap;
 
 export interface ParsedFrontmatter {
   attributes: Record<string, FrontmatterValue>;
@@ -80,14 +86,20 @@ export interface ParsedFrontmatter {
 
 export interface VdtSkillFrontmatter {
   id: string;
+  name?: string;
+  orchestratorId?: string;
   title: string;
   domain: string;
   version?: number;
+  description?: string;
   patterns: string[];
   kpiPatterns: string[];
   requires: string[];
   outputs: string[];
   questions: string[];
+  referenceFiles?: Record<string, string>;
+  evalFiles?: Record<string, string>;
+  runtimePolicy?: FrontmatterMap;
 }
 
 export interface VdtSkill {
@@ -141,6 +153,9 @@ export interface SkillExcerpt {
   reason?: string;
   outputs?: string[];
   questions?: string[];
+  referenceFiles?: Record<string, string>;
+  evalFiles?: Record<string, string>;
+  runtimePolicy?: FrontmatterMap;
 }
 
 export interface DecompositionPlan {
@@ -192,7 +207,18 @@ const DOMAIN_TERMS: Record<VdtClassification["domain"], string[]> = {
     "dump",
     "crusher",
     "throughput",
-    "production volume"
+    "production volume",
+    "excavation",
+    "excavator",
+    "shovel",
+    "bucket",
+    "bucket fill",
+    "swell",
+    "rock m3",
+    "solid m3",
+    "downtime",
+    "face not ready",
+    "restricted access"
   ],
   finance: [
     "revenue",
@@ -261,9 +287,15 @@ export function parseFrontmatter(markdown: string): ParsedFrontmatter {
     }
 
     const key = keyMatch[1]!;
-    const inlineValue = keyMatch[2] ?? "";
-    if (inlineValue.trim()) {
-      attributes[key] = parseScalarFrontmatterValue(inlineValue.trim());
+    const inlineValue = keyMatch[2]?.trim() ?? "";
+    if (inlineValue) {
+      if (inlineValue === ">-" || inlineValue === ">" || inlineValue === "|" || inlineValue === "|-") {
+        const { value, nextIndex } = parseBlockScalarFrontmatterValue(frontmatterLines, index, inlineValue);
+        attributes[key] = value;
+        index = nextIndex;
+        continue;
+      }
+      attributes[key] = parseScalarFrontmatterValue(inlineValue);
       continue;
     }
 
@@ -272,7 +304,26 @@ export function parseFrontmatter(markdown: string): ParsedFrontmatter {
       index += 1;
       values.push(parseStringValue(frontmatterLines[index]!.replace(/^\s*-\s+/, "")));
     }
-    attributes[key] = values;
+    if (values.length > 0) {
+      attributes[key] = values;
+      continue;
+    }
+
+    const map: FrontmatterMap = {};
+    while (frontmatterLines[index + 1]?.match(/^\s+[A-Za-z0-9_-]+:/)) {
+      index += 1;
+      const nestedLine = frontmatterLines[index]!.trim();
+      const nestedMatch = /^([A-Za-z0-9_-]+):(?:\s*(.*))?$/.exec(nestedLine);
+      if (!nestedMatch) {
+        throw new Error(`Unsupported nested frontmatter line: ${frontmatterLines[index]}`);
+      }
+      const nestedValue = parseScalarFrontmatterValue(nestedMatch[2]?.trim() ?? "");
+      if (Array.isArray(nestedValue) || isFrontmatterMap(nestedValue)) {
+        throw new Error(`Unsupported nested frontmatter value: ${frontmatterLines[index]}`);
+      }
+      map[nestedMatch[1]!] = nestedValue;
+    }
+    attributes[key] = Object.keys(map).length > 0 ? map : values;
   }
 
   return {
@@ -509,7 +560,10 @@ export function readSkillExcerpts(skills: RetrievedSkill[] | VdtSkill[], maxChar
       domain: skill.domain,
       excerpt: createSkillExcerpt(skill, maxChars),
       outputs: skill.frontmatter.outputs,
-      questions: skill.frontmatter.questions
+      questions: skill.frontmatter.questions,
+      ...(skill.frontmatter.referenceFiles ? { referenceFiles: skill.frontmatter.referenceFiles } : {}),
+      ...(skill.frontmatter.evalFiles ? { evalFiles: skill.frontmatter.evalFiles } : {}),
+      ...(skill.frontmatter.runtimePolicy ? { runtimePolicy: skill.frontmatter.runtimePolicy } : {})
     };
     if (reason) {
       excerpt.reason = reason;
@@ -755,6 +809,21 @@ function parseScalarFrontmatterValue(value: string): FrontmatterValue {
   return parseStringValue(value);
 }
 
+function parseBlockScalarFrontmatterValue(
+  lines: string[],
+  index: number,
+  marker: string
+): { value: string; nextIndex: number } {
+  const blockLines: string[] = [];
+  let cursor = index;
+  while (lines[cursor + 1] !== undefined && !/^[A-Za-z0-9_-]+:\s*/.test(lines[cursor + 1]!)) {
+    cursor += 1;
+    blockLines.push(lines[cursor]!.replace(/^\s{2}/, ""));
+  }
+  const chomped = blockLines.join(marker.startsWith("|") ? "\n" : " ").replace(/\s+/g, " ").trim();
+  return { value: chomped, nextIndex: cursor };
+}
+
 function parseStringValue(value: string): string {
   return value.replace(/^["']|["']$/g, "").trim();
 }
@@ -767,6 +836,10 @@ function normalizeSkillFrontmatter(attributes: Record<string, FrontmatterValue>,
     }
     return value.trim();
   };
+  const getOptionalString = (key: string) => {
+    const value = attributes[key];
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  };
   const getStringArray = (key: string) => {
     const value = attributes[key];
     if (!Array.isArray(value)) {
@@ -778,22 +851,65 @@ function normalizeSkillFrontmatter(attributes: Record<string, FrontmatterValue>,
     }
     return values;
   };
+  const getOptionalStringArray = (key: string) => {
+    const value = attributes[key];
+    if (value === undefined) return [];
+    if (!Array.isArray(value)) {
+      throw new Error(`Skill ${path} frontmatter must be a list: ${key}.`);
+    }
+    return value.map((item) => item.trim()).filter(Boolean);
+  };
+  const getStringMap = (key: string) => {
+    const value = attributes[key];
+    if (!isFrontmatterMap(value)) return undefined;
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0)
+        .map(([mapKey, mapValue]) => [mapKey, mapValue.trim()])
+    );
+  };
+  const getScalarMap = (key: string) => {
+    const value = attributes[key];
+    return isFrontmatterMap(value) ? { ...value } : undefined;
+  };
   const version = attributes.version;
+  const name = getOptionalString("name");
+  const orchestratorId = getOptionalString("orchestrator_id");
+  const description = getOptionalString("description");
 
   const frontmatter: VdtSkillFrontmatter = {
     id: getString("id"),
+    ...(name ? { name } : {}),
+    ...(orchestratorId ? { orchestratorId } : {}),
     title: getString("title"),
     domain: getString("domain"),
+    ...(description ? { description } : {}),
     patterns: getStringArray("patterns"),
     kpiPatterns: getStringArray("kpi_patterns"),
     requires: getStringArray("requires"),
     outputs: getStringArray("outputs"),
-    questions: getStringArray("questions")
+    questions: getOptionalStringArray("questions")
   };
   if (typeof version === "number") {
     frontmatter.version = version;
   }
+  const referenceFiles = getStringMap("reference_files");
+  const evalFiles = getStringMap("eval_files");
+  const runtimePolicy = getScalarMap("runtime_policy");
+  if (referenceFiles && Object.keys(referenceFiles).length > 0) {
+    frontmatter.referenceFiles = referenceFiles;
+  }
+  if (evalFiles && Object.keys(evalFiles).length > 0) {
+    frontmatter.evalFiles = evalFiles;
+  }
+  if (runtimePolicy && Object.keys(runtimePolicy).length > 0) {
+    frontmatter.runtimePolicy = runtimePolicy;
+  }
   return frontmatter;
+}
+
+function isFrontmatterMap(value: FrontmatterValue | undefined): value is FrontmatterMap {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function splitMarkdownTableRow(row: string): string[] {
@@ -876,10 +992,44 @@ function includesTerm(haystack: string, term: string): boolean {
 }
 
 function inferPattern(domain: VdtClassification["domain"], haystack: string): string {
-  if (domain === "mining" && (includesTerm(haystack, "haulage") || includesTerm(haystack, "truck"))) {
-    return "haulage_truck_cycle";
-  }
   if (domain === "mining") {
+    const excavationTerms = [
+      "excavation",
+      "excavator",
+      "shovel",
+      "bucket",
+      "bucket fill",
+      "swell",
+      "ore tonnes",
+      "rock m3",
+      "solid m3",
+      "downtime",
+      "truck loading time",
+      "loaded trucks per hour",
+      "face not ready",
+      "material not ready",
+      "restricted access",
+      "equipment split",
+      "material split"
+    ];
+    if (excavationTerms.some((term) => includesTerm(haystack, term))) {
+      return "excavation";
+    }
+    const haulageTerms = [
+      "haulage",
+      "haul route",
+      "haul distance",
+      "truck cycle",
+      "truck productivity",
+      "loaded speed",
+      "empty speed",
+      "queueing",
+      "dumping",
+      "truck"
+    ];
+    if (haulageTerms.some((term) => includesTerm(haystack, term))) {
+      return "haulage_truck_cycle";
+    }
     return "production_volume";
   }
   if (domain === "finance") {

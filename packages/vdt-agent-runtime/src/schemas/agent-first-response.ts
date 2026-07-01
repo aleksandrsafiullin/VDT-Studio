@@ -40,6 +40,23 @@ export interface FirstResponseInput {
     industry?: string | undefined;
     businessContext?: string | undefined;
   };
+  briefReadiness: {
+    rootKpiIsPlaceholder: boolean;
+    directionStatus: "ready" | "needs_agent_judgment";
+    guidance: string;
+  };
+  continuationPolicy: {
+    continueWithAssumptions: boolean;
+    maxNodesPerLayer: number;
+    askOnlyWhen: Array<
+      | "missing_data"
+      | "business_choice"
+      | "scope_conflict"
+      | "ambiguous_logic"
+      | "low_confidence"
+      | "formula_ambiguity"
+    >;
+  };
   currentUserMessage: string;
   currentProjectSummary?: {
     title: string;
@@ -48,4 +65,3 @@ export interface FirstResponseInput {
   } | undefined;
   visibleChatSummary?: string | undefined;
 }
-

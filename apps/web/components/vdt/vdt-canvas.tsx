@@ -44,6 +44,8 @@ export function VdtCanvas() {
   const selectNode = useVdtStudioStore((state) => state.selectNode);
   const autoDistributeLayout = useVdtStudioStore((state) => state.autoDistributeLayout);
   const updateNodePosition = useVdtStudioStore((state) => state.updateNodePosition);
+  const addManualIncomingKpi = useVdtStudioStore((state) => state.addManualIncomingKpi);
+  const requestIncomingKpisWithAi = useVdtStudioStore((state) => state.requestIncomingKpisWithAi);
   const calculation = useMemo(() => calculateGraph(project), [project]);
   const mainScenarioContext = useMemo(() => {
     const mainScenario = project.scenarios.find((scenario) => scenario.isMain === true);
@@ -95,10 +97,24 @@ export function VdtCanvas() {
           rootScenarioEffect:
             node.id === project.rootNodeId ? mainScenarioContext?.rootEffect : undefined,
           highlighted: highlightedSet.has(node.id),
-          onSelect: selectNode
+          onSelect: selectNode,
+          onAddManualIncomingKpi: addManualIncomingKpi,
+          onAddAiIncomingKpis: (nodeId) => {
+            void requestIncomingKpisWithAi(nodeId);
+          }
         }
       })),
-    [calculation.values, fallbackPositions, highlightedSet, mainScenarioContext, project.graph.nodes, project.rootNodeId, selectNode]
+    [
+      addManualIncomingKpi,
+      calculation.values,
+      fallbackPositions,
+      highlightedSet,
+      mainScenarioContext,
+      project.graph.nodes,
+      project.rootNodeId,
+      requestIncomingKpisWithAi,
+      selectNode
+    ]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);

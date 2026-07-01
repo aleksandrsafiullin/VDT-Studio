@@ -80,7 +80,7 @@ export type AiExecutionProgressPhase =
 export type AiExecutionProgressStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
 export type AiExecutionProgressDetailStatus = "pending" | "running" | "complete" | "error" | "cancelled";
 
-export type VdtAgentStatus = "running" | "needs_user_input" | "succeeded" | "failed" | "cancelled";
+export type VdtAgentStatus = "running" | "needs_user_input" | "waiting_approval" | "succeeded" | "failed" | "cancelled";
 
 export type VdtAgentPhase =
   | "classifying_request"
@@ -89,6 +89,7 @@ export type VdtAgentPhase =
   | "planning_decomposition"
   | "asking_clarifying_questions"
   | "generating_graph"
+  | "previewing_mutation"
   | "validating_graph"
   | "applying_graph"
   | "reporting";
@@ -103,6 +104,9 @@ export type VdtAgentEventType =
   | "planning_decomposition"
   | "model_call_started"
   | "model_call_completed"
+  | "mutation_proposed"
+  | "mutation_applied"
+  | "mutation_rejected"
   | "web_search_started"
   | "web_search_completed"
   | "graph_validation"

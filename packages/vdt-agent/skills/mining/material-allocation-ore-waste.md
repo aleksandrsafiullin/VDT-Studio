@@ -19,7 +19,7 @@ kpi_patterns:
   - waste moved
   - total material moved
   - strip ratio
-  - fleet utilization by material
+  - fleet working time by material
   - ore time share
   - waste time share
   - руда
@@ -193,7 +193,7 @@ Always state:
 - The allocation policy selected and why it was selected.
 - Whether material split is based on equipment hours, tonnes, trips, routes, shifts, or explicit equipment assignments.
 - Whether productivity rates differ by material type.
-- Whether ore and waste share the same availability and utilization factors.
+- Whether ore and waste share the same working-time pool and downtime categories.
 - Whether rehandle and stockpile movements are included.
 - Whether the reported `total_material_moved_tonnes` includes ore, waste, overburden, rehandle, backfill, and development waste.
 - Whether material classification uses geology, grade control, cutoff grade, destination, or dispatch material code.

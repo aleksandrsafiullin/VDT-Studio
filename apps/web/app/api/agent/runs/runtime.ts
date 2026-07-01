@@ -2,12 +2,17 @@ import { randomUUID } from "node:crypto";
 import * as managedRuntime from "@vdt-studio/local-runner/server-runtime";
 import { schemaIdForTask } from "@vdt-studio/model-bridge";
 import {
+  AgentRunStore,
   createVdtAgentRuntime,
   type AgentDecisionProvider,
   type VdtAgentStartRequest
 } from "@vdt-studio/vdt-agent-runtime";
 import { createAiProvider } from "@/lib/ai-route-provider";
 import { resolveVdtAppModeForRequest } from "@/lib/app-mode";
+import {
+  createSqliteAgentRunPersistence,
+  openAgentRunPersistenceDatabase
+} from "./persistence";
 
 type RuntimeContext = ReturnType<typeof managedRuntime.createLocalRuntimeContext>;
 
@@ -17,7 +22,9 @@ const runtimeGlobal = globalThis as typeof globalThis & {
 };
 
 export const agentRuntime =
-  runtimeGlobal.__vdtAgentRuntime ?? createVdtAgentRuntime();
+  runtimeGlobal.__vdtAgentRuntime ?? createVdtAgentRuntime({
+    store: createAgentRunStore()
+  });
 
 if (process.env.NODE_ENV !== "production") {
   runtimeGlobal.__vdtAgentRuntime = agentRuntime;
@@ -98,6 +105,20 @@ export function createAgentDecisionProvider(request: VdtAgentStartRequest, reque
 }
 
 export const createAgentPlanningProvider = createAgentDecisionProvider;
+
+function createAgentRunStore(): AgentRunStore {
+  if (isNextProductionBuild()) {
+    return new AgentRunStore();
+  }
+
+  return new AgentRunStore({
+    persistence: createSqliteAgentRunPersistence(openAgentRunPersistenceDatabase(process.cwd()))
+  });
+}
+
+function isNextProductionBuild(): boolean {
+  return process.env.NEXT_PHASE === "phase-production-build";
+}
 
 function managedLocalRuntimeContext(backendId: string): RuntimeContext {
   const existing = runtimeGlobal.__vdtStudioDevelopmentRuntime;

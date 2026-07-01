@@ -1,4 +1,5 @@
 export * from "./event-bus";
+export * from "./mutation-pipeline";
 export * from "./orchestrator";
 export * from "./run-store";
 export * from "./schemas/agent-decision";

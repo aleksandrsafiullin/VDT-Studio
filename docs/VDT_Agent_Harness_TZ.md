@@ -1384,7 +1384,7 @@ hauled_tonnes
   number_of_trucks
   trips_per_truck
     available_truck_hours
-    utilization
+    working_time
     cycle_time_h
   payload_per_trip_t
   payload_factor
@@ -1422,4 +1422,3 @@ pnpm typecheck
 pnpm test
 pnpm build
 ```
-

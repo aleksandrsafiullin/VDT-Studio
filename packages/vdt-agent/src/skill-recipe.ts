@@ -41,6 +41,66 @@ type RecipeTemplate = Omit<VdtSkillRecipe, "questions"> & {
 };
 
 const RECIPE_TEMPLATES: Record<string, RecipeTemplate> = {
+  "mining.excavation": {
+    skillId: "mining.excavation",
+    requiredInputs: [
+      "target_kpi_and_unit",
+      "equipment_scope_and_active_count",
+      "period_days",
+      "downtime_basis_and_categories",
+      "productivity_material_mode",
+      "bucket_truck_loading_inputs"
+    ],
+    initialDrivers: [
+      {
+        id: "active_excavator_count",
+        name: "Active excavator count",
+        type: "input",
+        unit: "excavators",
+        relation: "multiplicative_driver",
+        assumptions: ["Collect through dialog; leave unknown until provided."]
+      },
+      {
+        id: "net_excavation_time_per_excavator_h",
+        name: "Net excavation time per excavator",
+        type: "calculated",
+        unit: "h",
+        relation: "multiplicative_driver"
+      },
+      {
+        id: "excavator_productivity",
+        name: "Excavator productivity",
+        type: "calculated",
+        relation: "multiplicative_driver"
+      }
+    ],
+    formulaTemplates: [
+      { targetNodeId: "root", formula: "active_excavator_count * net_excavation_time_per_excavator_h * excavator_productivity" },
+      { targetNodeId: "calendar_time_per_excavator_h", formula: "period_days * hours_per_day_24" },
+      { targetNodeId: "net_excavation_time_per_excavator_h", formula: "calendar_time_per_excavator_h - downtime_per_excavator_h" },
+      { targetNodeId: "loaded_trucks_per_hour", formula: "minutes_per_hour_60 / truck_loading_time_min" },
+      { targetNodeId: "truck_loading_time_min", formula: "loading_movement_unloading_time_min + face_breakdown_ripping_time_min + truck_departure_arrival_time_min + relocation_time_min" },
+      { targetNodeId: "ore_excavator_productivity_tph", formula: "loaded_trucks_per_hour * tonnes_per_truck" },
+      { targetNodeId: "rock_excavator_productivity_m3ph", formula: "loaded_trucks_per_hour * rock_volume_per_truck_in_solid_m3" }
+    ],
+    deepenRules: [
+      {
+        nodeId: "net_excavation_time_per_excavator_h",
+        suggestedDrivers: ["calendar_time_per_excavator_h", "downtime_per_excavator_h"],
+        guidance: "Model material readiness, drill/blast waits, access, geotechnical, and safety restrictions as downtime categories only."
+      },
+      {
+        nodeId: "excavator_productivity",
+        suggestedDrivers: ["loaded_trucks_per_hour", "material_per_truck"],
+        guidance: "Keep the branch excavation-only; trucks are a loading container, not a haulage cycle tree."
+      }
+    ],
+    warnings: [
+      "Build topology with unknown numeric leaves before suggesting defaults.",
+      "Accepted catalog values must be marked default_assumption.",
+      "Do not model readiness or access limits as caps, min branches, or multipliers."
+    ]
+  },
   "mining.production_volume": {
     skillId: "mining.production_volume",
     requiredInputs: ["unit", "timePeriod", "bottleneck"],
@@ -51,7 +111,7 @@ const RECIPE_TEMPLATES: Record<string, RecipeTemplate> = {
     formulaTemplates: [
       { targetNodeId: "root", formula: "effective_working_time * average_productivity" },
       { targetNodeId: "effective_working_time", formula: "calendar_time - planned_downtime - unplanned_downtime" },
-      { targetNodeId: "average_productivity", formula: "bottleneck_rate * utilization_factor * yield_factor" }
+      { targetNodeId: "average_productivity", formula: "bottleneck_rate * yield_factor" }
     ],
     deepenRules: [
       {
@@ -62,24 +122,25 @@ const RECIPE_TEMPLATES: Record<string, RecipeTemplate> = {
       {
         nodeId: "average_productivity",
         useSkillId: "mining.haulage_truck_cycle",
-        suggestedDrivers: ["bottleneck_rate", "utilization_factor", "yield_factor"],
+        suggestedDrivers: ["bottleneck_rate", "yield_factor"],
         guidance: "Deepen productivity with the named bottleneck such as haulage, loading, crushing, or dumping."
       }
     ],
-    warnings: ["Do not double count downtime inside both availability and utilization."]
+    warnings: ["Do not double count downtime inside both working time and productivity."]
   },
   "mining.haulage_truck_cycle": {
     skillId: "mining.haulage_truck_cycle",
-    requiredInputs: ["number_of_trucks", "payload_per_trip_t", "cycle_time_h", "operating_hours", "truck_availability"],
+    requiredInputs: ["number_of_trucks", "payload_per_trip_t", "cycle_time_h", "truck_working_time"],
     initialDrivers: [
       { id: "number_of_trucks", name: "Number of trucks", type: "input", relation: "multiplicative_driver" },
       { id: "trips_per_truck", name: "Trips per truck", type: "calculated", relation: "multiplicative_driver" },
       { id: "payload_per_trip_t", name: "Payload per trip", type: "input", unit: "tonnes", relation: "multiplicative_driver" },
+      { id: "truck_working_time", name: "Truck working time", type: "calculated", unit: "hours", relation: "multiplicative_driver" },
       { id: "payload_factor", name: "Payload factor", type: "assumption", relation: "multiplicative_driver" }
     ],
     formulaTemplates: [
       { targetNodeId: "hauled_tonnes", formula: "number_of_trucks * trips_per_truck * payload_per_trip_t * payload_factor" },
-      { targetNodeId: "trips_per_truck", formula: "available_truck_hours * utilization / cycle_time_h" },
+      { targetNodeId: "trips_per_truck", formula: "truck_working_time / cycle_time_h" },
       { targetNodeId: "cycle_time_h", formula: "loading_time_h + loaded_travel_time_h + dumping_time_h + empty_return_time_h + queue_time_h" }
     ],
     deepenRules: [
@@ -141,20 +202,20 @@ const RECIPE_TEMPLATES: Record<string, RecipeTemplate> = {
     skillId: "generic.logical_kpi_decomposition",
     requiredInputs: ["unit", "timePeriod", "driverLogic"],
     initialDrivers: [
-      { id: "capacity", name: "Capacity", type: "input", relation: "multiplicative_driver" },
-      { id: "utilization", name: "Utilization", type: "assumption", relation: "multiplicative_driver" },
+      { id: "throughput_rate", name: "Throughput rate", type: "input", relation: "multiplicative_driver" },
+      { id: "working_time", name: "Working time", type: "calculated", relation: "multiplicative_driver" },
       { id: "quality_factor", name: "Quality factor", type: "assumption", relation: "multiplicative_driver" }
     ],
     formulaTemplates: [
-      { targetNodeId: "root", formula: "capacity * utilization * quality_factor" },
-      { targetNodeId: "available_output", formula: "capacity * utilization * quality_factor" },
+      { targetNodeId: "root", formula: "throughput_rate * working_time * quality_factor" },
+      { targetNodeId: "available_output", formula: "throughput_rate * working_time * quality_factor" },
       { targetNodeId: "net_flow", formula: "inflow - outflow" }
     ],
     deepenRules: [
       {
-        nodeId: "capacity",
-        suggestedDrivers: ["base_population", "frequency", "throughput"],
-        guidance: "Deepen capacity or volume drivers with count, frequency, throughput, or population logic."
+        nodeId: "working_time",
+        suggestedDrivers: ["scheduled_time", "planned_downtime", "unplanned_downtime", "operational_delay_time"],
+        guidance: "Deepen working time into scheduled time and explicit downtime or delay categories."
       }
     ],
     warnings: ["Do not add ratios as if they were amounts."]

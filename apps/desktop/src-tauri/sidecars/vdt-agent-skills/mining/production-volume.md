@@ -32,7 +32,7 @@ requires:
   - planned_downtime
   - unplanned_downtime
   - bottleneck_rate
-  - utilization_factor
+  - working_time
   - yield_factor
   - mine_type
   - material_allocation_policy
@@ -58,7 +58,7 @@ questions:
 
 Use this skill when the root KPI is mining production volume, ore mined, ore loaded, waste moved, total material moved, ROM tonnes, mined tonnes, production tonnes, or mine throughput.
 
-Use it for a compact production-volume VDT that links tonnes to time, availability, utilization, productivity, bottleneck, and yield. If the user asks to show all mine production stages, combine this skill with `mining.mine_production_system` and the stage skills for block preparation, drilling/blasting, excavation/loading, haulage, and underground cycle modeling.
+Use it for a compact production-volume VDT that links tonnes to working time, explicit downtime categories, productivity, bottleneck, and yield. If the user asks to show all mine production stages, combine this skill with `mining.mine_production_system` and the stage skills for block preparation, drilling/blasting, excavation/loading, haulage, and underground cycle modeling.
 
 Prefer this skill over a generic decomposition when the KPI is physically constrained by mining equipment, mine sequence, haulage, dump/crusher capacity, processing, shift time, maintenance, weather, geology, ore recovery, dilution, or underground ventilation/hoisting.
 
@@ -70,7 +70,7 @@ Start with a simple production identity, then deepen only the drivers that mater
 production_volume = effective_working_time * average_productivity
 ```
 
-Then split effective time into calendar, planned downtime, unplanned downtime, availability, and utilization. Split productivity into bottleneck rate, material allocation, and yield.
+Then split working time into calendar or scheduled time, planned downtime, unplanned downtime, maintenance downtime, operating delays, weather delays, waiting time, and other explicit downtime categories. Split productivity into bottleneck rate, material allocation, and yield.
 
 ```text
 production_volume
@@ -92,7 +92,6 @@ average_productivity
     dump_or_crusher_rate
     underground_hoisting_rate
     processing_rate
-  utilization_factor
   yield_factor
 ```
 
@@ -138,19 +137,17 @@ production_volume = effective_working_time * average_productivity
 
 effective_working_time = calendar_time - planned_downtime - unplanned_downtime
 
-average_productivity = bottleneck_rate * utilization_factor * yield_factor
+average_productivity = bottleneck_rate * yield_factor
 ```
 
-If availability and utilization are explicit:
+If working time is explicit:
 
 ```text
 scheduled_time = calendar_time - planned_downtime
 
-available_time = scheduled_time * equipment_availability
+working_time = scheduled_time - unplanned_downtime - maintenance_downtime - operating_delay_time
 
-utilized_time = available_time * utilization_factor
-
-effective_working_time = utilized_time - operating_delay_time
+effective_working_time = working_time
 ```
 
 Stage bottleneck:
@@ -243,7 +240,7 @@ Minimum inputs:
 - `mine_type`: open_pit, underground, or mixed.
 - `time_period`: shift, day, week, month, quarter, year, or custom period.
 - `calendar_time`, `planned_downtime`, and `unplanned_downtime`.
-- `equipment_availability` and `utilization_factor`, unless already embedded in productivity.
+- `working_time` and downtime categories such as maintenance, breakdowns, waiting, shift handover, weather, and operating delays.
 - `bottleneck_rate` or stage capacities for block preparation, drilling/blasting, excavation/loading, haulage, dump/crusher, hoisting, and processing.
 - `material_allocation_policy`: hard allocation or time-share allocation if ore/waste share equipment.
 - `yield_factor`: ore losses, dilution, recovery, stockpile, moisture, or product yield where applicable.
@@ -259,8 +256,8 @@ Missing-input questions:
 - What is the exact KPI boundary: mined, loaded, hauled, crushed, processed, saleable, or contained metal?
 - Is the operation open-pit, underground, or mixed?
 - Should ore and waste resources be modeled as hard allocated by equipment, or split by ore/waste time share?
-- Does `average_productivity` already include downtime, utilization, queueing, or yield losses?
-- Should downtime be measured from calendar hours, scheduled hours, available hours, or utilized hours?
+- Does `average_productivity` already include queueing or yield losses that should stay outside working time?
+- Should downtime be measured from calendar hours, scheduled hours, or reported working hours?
 - Is there a stockpile between mine and plant that decouples mining volume from processing volume?
 
 ## Assumptions To State
@@ -270,7 +267,7 @@ Always state:
 - Production boundary and time base.
 - Mine type and whether stage details are modeled explicitly.
 - Whether ore/waste equipment allocation is hard allocation or time-share allocation.
-- Whether downtime, availability, utilization, and operating delays are mutually exclusive.
+- Whether downtime, maintenance, weather, waiting, and operating delay categories are mutually exclusive.
 - Whether `bottleneck_rate` is nameplate, budget, demonstrated, actual constrained rate, or calculated stage rate.
 - Whether stockpiles, rehandle, dilution, ore loss, moisture, density, swell, or recovery are included.
 - Whether the tree models total material, ore only, waste only, ROM feed, processed feed, saleable product, or contained metal.
@@ -304,7 +301,7 @@ Do not mix wet tonnes and dry tonnes without moisture conversion. Do not mix ban
 
 - Do not add sequential stage capacities. Use bottleneck logic unless buffers/stockpiles make stages partially independent.
 - Do not double-count downtime by subtracting unplanned downtime and also applying availability if both describe the same loss.
-- Do not apply utilization twice if productivity already reflects productive time.
+- Do not hide downtime in a productivity factor when it should appear under working time.
 - Do not model ore and waste as one material unless the KPI is total material moved.
 - Do not assume equipment allocation policy. Ask when hard allocation and time-share allocation are both possible.
 - Do not include metallurgical recovery in mined tonnes unless the KPI is saleable product or contained metal.
@@ -323,8 +320,8 @@ production_volume
     calendar_time
     planned_downtime
     unplanned_downtime
-    equipment_availability
-    utilization_factor
+    maintenance_downtime
+    operating_delay_time
   average_productivity
     bottleneck_rate
       block_preparation_rate
@@ -347,7 +344,7 @@ production_volume
 - Use `mining.mine_production_system` when the user wants all stages of production shown explicitly.
 - Use `mining.block_preparation_dozer` for dozer leveling, block readiness, floor readiness, drill pad release, or underground readiness subnodes.
 - Use `mining.drill_and_blast` for drilled meters, blast tonnes, powder factor, fragmentation, and underground advance.
-- Use `mining.excavation_loading` for excavators, shovels, LHDs, bucket size, pass count, and loading capacity.
+- Use `mining.excavation` for excavators, shovels, bucket size, material split, downtime, and excavation capacity.
 - Use `mining.haulage_truck_cycle` for truck cycle time, payload, body volume, routes, speeds, queueing, and fleet capacity.
 - Use `mining.underground_production_cycle` for underground development/stoping cycles, ventilation, support, backfill, and hoisting.
 - Use `mining.material_allocation_ore_waste` whenever ore/waste equipment assignment or time split is ambiguous or material-specific productivity matters.

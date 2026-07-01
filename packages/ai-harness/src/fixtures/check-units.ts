@@ -3,13 +3,6 @@ import { checkUnitsOutputSchema, type CheckUnitsOutput } from "../schemas/check-
 export const productionVolumeCheckUnitsOutput: CheckUnitsOutput = checkUnitsOutputSchema.parse({
   unitFindings: [
     {
-      nodeId: "utilization_factor",
-      expectedUnit: "ratio",
-      actualUnit: "%",
-      severity: "warning",
-      message: "Utilization is stored as % but used as a unitless multiplier in the productivity formula."
-    },
-    {
       nodeId: "yield_factor",
       expectedUnit: "ratio",
       actualUnit: "%",

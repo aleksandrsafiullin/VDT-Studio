@@ -12,7 +12,8 @@ export async function POST(request: Request) {
 
   const parsed = agentStartRequestSchema.safeParse(raw);
   if (!parsed.success) {
-    return jsonError(parsed.error.issues[0]?.message ?? "Invalid agent start request.");
+    const issue = parsed.error.issues[0];
+    return jsonError(issue ? formatZodIssue(issue) : "Invalid agent start request.");
   }
 
   try {
@@ -25,4 +26,9 @@ export async function POST(request: Request) {
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : "Agent run could not be started.", 500, "AGENT_START_FAILED");
   }
+}
+
+function formatZodIssue(issue: { path: Array<string | number>; message: string }): string {
+  const path = issue.path.join(".");
+  return path ? `${path}: ${issue.message}` : issue.message;
 }

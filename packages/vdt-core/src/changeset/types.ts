@@ -19,6 +19,8 @@ export type VdtNodePatch = Partial<
     | "formula"
     | "value"
     | "baselineValue"
+    | "valueStatus"
+    | "valueSource"
     | "status"
     | "assumptions"
     | "tags"
@@ -48,6 +50,8 @@ export interface VdtNodeAddition {
   formula?: string | undefined;
   value?: number | undefined;
   baselineValue?: number | undefined;
+  valueStatus?: VdtNode["valueStatus"];
+  valueSource?: VdtNode["valueSource"];
   aiConfidence?: number | undefined;
   aiRationale?: string | undefined;
   assumptions?: string[] | undefined;

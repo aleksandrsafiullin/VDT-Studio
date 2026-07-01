@@ -1,7 +1,9 @@
 import {
   calculateGraph,
+  validateGraph,
   VdtBuilderSession,
-  type VdtNodePatch
+  type VdtNodePatch,
+  type VdtProject
 } from "@vdt-studio/vdt-core";
 import {
   answerRecordFromPayloads,
@@ -10,6 +12,11 @@ import {
   normalizeUserQuestions,
   publicStatusForPhase
 } from "./chat-messages";
+import {
+  applyPendingMutationProposal,
+  defaultProgressiveBuildPolicy,
+  rejectPendingMutationProposal
+} from "./mutation-pipeline";
 import { AGENT_DECISION_SYSTEM_PROMPT } from "./prompts/agent-decision";
 import { AGENT_FIRST_RESPONSE_SYSTEM_PROMPT } from "./prompts/agent-first-response";
 import { AgentRunStore } from "./run-store";
@@ -17,6 +24,7 @@ import { agentDecisionSchema, parseAndGuardAgentDecision, type AgentDecision } f
 import { firstResponseSchema, type FirstResponseInput, type FirstResponseOutput } from "./schemas/agent-first-response";
 import { ToolRegistry, type AgentToolContext } from "./tool-registry";
 import { createDefaultToolRegistry } from "./tools";
+import { validateExcavationProject } from "./tools/excavation-tools";
 import {
   summarizeCalculation,
   summarizeEvents,
@@ -130,6 +138,7 @@ export class VdtAgentRuntime {
         ...answerRecordFromPayloads(answerPayloads)
       };
       const answeredContext = answersToContext(answerRecord);
+      const answerDescription = describeAnswerPayloads(answerPayloads, state.pendingQuestions ?? []);
       this.store.updateRun(runId, {
         status: "running",
         phase: "planning_decomposition",
@@ -140,14 +149,17 @@ export class VdtAgentRuntime {
           ...state.request,
           input: {
             ...state.request.input,
-            businessContext: [state.request.input.businessContext, answeredContext].filter(Boolean).join("\n")
+            businessContext: [
+              state.request.input.businessContext,
+              answeredContext
+            ].filter(Boolean).join("\n")
           }
         }
       });
       this.store.appendChatMessage(runId, {
         role: "user",
         kind: "answer",
-        text: describeAnswerPayloads(answerPayloads),
+        text: answerDescription,
         answers: answerPayloads
       });
       this.store.updatePublicStatus(runId, publicStatusForPhase("planning_decomposition", "Reading your answer..."));
@@ -208,15 +220,56 @@ export class VdtAgentRuntime {
     }
 
     if (message.type === "approval") {
+      const context = this.toolContext(runId);
       this.emit(runId, {
         type: "tool_call_completed",
         title: message.approved ? "Approval received" : "Approval rejected",
         message: message.approved ? "User approved pending agent action." : "User rejected pending agent action.",
         metadata: { selectedChangeIds: message.selectedChangeIds ?? [] }
       });
+      if (!state.pendingMutationProposal) {
+        const approvalRequest = pendingApprovalRequestText(state);
+        this.store.appendChatMessage(runId, {
+          role: "user",
+          kind: "answer",
+          text: `${message.approved ? "Approved" : "Rejected"}: ${approvalRequest}`
+        });
+        if (message.approved) {
+          this.store.updateRun(runId, {
+            status: "running",
+            phase: "planning_decomposition",
+            pendingPlan: undefined,
+            pendingChangeSet: undefined,
+            request: {
+              ...state.request,
+              input: {
+                ...state.request.input,
+                businessContext: [
+                  state.request.input.businessContext,
+                  `User approved pending agent request: ${approvalRequest}`
+                ].filter(Boolean).join("\n")
+              }
+            }
+          });
+          this.store.updatePublicStatus(runId, publicStatusForPhase("planning_decomposition", "Approval received. Continuing the agent run..."));
+          await this.executeRun(runId, execution);
+        } else {
+          this.store.updateRun(runId, {
+            status: "needs_user_input",
+            phase: "asking_clarifying_questions",
+            pendingPlan: undefined,
+            pendingChangeSet: undefined
+          });
+          this.store.updatePublicStatus(runId, publicStatusForPhase("asking_clarifying_questions", "Approval rejected. Send a revised instruction to continue."));
+        }
+        return this.store.getSnapshot(runId);
+      }
       if (message.approved) {
+        applyPendingMutationProposal(context, message.selectedChangeIds);
         this.store.updateRun(runId, { status: "running", phase: "planning_decomposition" });
         await this.executeRun(runId, execution);
+      } else {
+        rejectPendingMutationProposal(context, "User rejected the pending mutation proposal.");
       }
       return this.store.getSnapshot(runId);
     }
@@ -458,8 +511,10 @@ export class VdtAgentRuntime {
     }
 
     const toolResult = await this.tools.run(decision.toolName, decision.args, this.toolContext(runId));
-    if (toolResult.ok && isGraphMutationTool(decision.toolName)) {
-      await this.validateAfterMutation(runId);
+    if (toolResult.ok && (toolResult.projectChanged || isGraphMutationTool(decision.toolName))) {
+      await this.validateAfterMutation(runId, {
+        includeSkillValidations: decision.toolName.startsWith("excavation.")
+      });
     }
 
     return "continue";
@@ -495,6 +550,8 @@ export class VdtAgentRuntime {
       mode: state.request.mode,
       step: state.events.filter((event) => event.metadata?.taskType === "agent_decision").length + 1,
       userRequest: state.request.input,
+      briefReadiness: briefReadinessFromState(state),
+      continuationPolicy: continuationPolicyFromState(state),
       currentProject: project ? summarizeProject(project) : undefined,
       selectedNode: project && selectedNodeId ? summarizeNode(project, selectedNodeId) : undefined,
       selectedSkills: state.selectedSkills,
@@ -510,6 +567,8 @@ export class VdtAgentRuntime {
         ...(report.confidence !== undefined ? { confidence: report.confidence } : {})
       })),
       lastToolResult: state.lastToolResult,
+      pendingMutationProposal: state.pendingMutationProposal,
+      progressiveBuild: summarizeProgressiveBuild(state.progressiveBuild),
       validationState: state.validationState,
       calculationState: state.calculationState,
       constraints: {
@@ -528,6 +587,8 @@ export class VdtAgentRuntime {
     const lastUserMessage = [...state.chatMessages].reverse().find((message) => message.role === "user");
     return {
       brief: state.visibleContext.brief,
+      briefReadiness: briefReadinessFromState(state),
+      continuationPolicy: continuationPolicyFromState(state),
       currentUserMessage: lastUserMessage?.text ?? state.request.input.prompt ?? state.request.input.businessContext ?? state.visibleContext.brief.rootKpi,
       ...(project && rootNode
         ? {
@@ -545,12 +606,15 @@ export class VdtAgentRuntime {
     };
   }
 
-  private async validateAfterMutation(runId: string): Promise<void> {
+  private async validateAfterMutation(
+    runId: string,
+    options: { includeSkillValidations?: boolean | undefined } = {}
+  ): Promise<void> {
     const state = this.store.getState(runId);
     const builder = state.builder;
     if (!builder) return;
-    const validation = summarizeValidation(builder.validate().validation);
     const project = builder.getProject();
+    const validation = this.validateProjectForRun(runId, project, options);
     this.store.updateRun(runId, {
       draftProject: project,
       validationState: validation,
@@ -564,6 +628,29 @@ export class VdtAgentRuntime {
         ? `Graph validation passed with ${validation.warnings.length} warning${validation.warnings.length === 1 ? "" : "s"}.`
         : `Graph validation found ${validation.errors.length} error${validation.errors.length === 1 ? "" : "s"}.`,
       metadata: { errors: validation.errors.length, warnings: validation.warnings.length }
+    });
+  }
+
+  private validateProjectForRun(
+    runId: string,
+    project: VdtProject,
+    options: { includeSkillValidations?: boolean | undefined } = { includeSkillValidations: true }
+  ): ValidationStateSummary {
+    const state = this.store.getState(runId);
+    const generic = state.builder?.validate().validation ?? validateGraph(project);
+    const domainValidations = options.includeSkillValidations === false
+      ? []
+      : skillValidationsForRun(state, project);
+    return summarizeValidation({
+      valid: generic.valid && domainValidations.every((validation) => validation.valid),
+      errors: [
+        ...generic.errors,
+        ...domainValidations.flatMap((validation) => validation.errors)
+      ],
+      warnings: [
+        ...generic.warnings,
+        ...domainValidations.flatMap((validation) => validation.warnings)
+      ]
     });
   }
 
@@ -601,7 +688,7 @@ export class VdtAgentRuntime {
     const project = state.builder?.getProject() ?? state.draftProject;
     if (!project) throw new Error("Cannot finish: no draft project exists.");
 
-    const validation = summarizeValidation(state.builder?.validate().validation ?? { valid: false, errors: [], warnings: [] });
+    const validation = this.validateProjectForRun(runId, project);
     if (!validation.valid) {
       this.store.updateRun(runId, { phase: "repairing_graph", validationState: validation });
       throw new Error("Cannot finish: graph is invalid.");
@@ -809,10 +896,118 @@ function isGraphMutationTool(toolName: string): boolean {
   ]).has(toolName);
 }
 
+function skillValidationsForRun(state: VdtAgentRunState, project: VdtProject) {
+  if (!shouldValidateExcavationForRun(state, project)) return [];
+  return [
+    validateExcavationProject(project, {
+      requireCanonicalOutputTopology: shouldRequireCanonicalExcavationOutput(state, project),
+      requireProductivityTopology: shouldRequireExcavationProductivity(state, project)
+    })
+  ];
+}
+
+function shouldValidateExcavationForRun(state: VdtAgentRunState, project: VdtProject): boolean {
+  return hasSelectedSkill(state, "mining.excavation") || hasExcavationRuntimeSignature(project);
+}
+
+function shouldRequireCanonicalExcavationOutput(state: VdtAgentRunState, project: VdtProject): boolean {
+  const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
+  const root = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+  const rootKey = normalizeSkillKey(`${root?.id ?? ""} ${root?.name ?? ""}`);
+  if (rootKey.includes("productivity")) return false;
+  return (
+    hasSelectedSkill(state, "mining.excavation") ||
+    rootKey.includes("excavation") ||
+    rootKey.includes("production") ||
+    rootKey.includes("output") ||
+    nodeIds.has("active_excavator_count") ||
+    nodeIds.has("hydraulic_shovel_excavation_output")
+  );
+}
+
+function shouldRequireExcavationProductivity(state: VdtAgentRunState, project: VdtProject): boolean {
+  return hasSelectedSkill(state, "mining.excavation") || hasExcavationRuntimeSignature(project);
+}
+
+function hasSelectedSkill(state: VdtAgentRunState, skillId: string): boolean {
+  return state.selectedSkills.some((skill) => skill.id === skillId);
+}
+
+function hasExcavationRuntimeSignature(project: VdtProject): boolean {
+  const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
+  return [
+    "active_excavator_count",
+    "net_excavation_time_per_excavator_h",
+    "excavator_productivity",
+    "loaded_trucks_per_hour",
+    "truck_loading_time_min",
+    "material_per_truck",
+    "hydraulic_shovel_excavation_output"
+  ].some((nodeId) => nodeIds.has(nodeId));
+}
+
+function normalizeSkillKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
 function answersToContext(answers: Record<string, string | number | string[]>): string {
   return Object.entries(answers)
     .map(([key, value]) => `User answer ${key}: ${Array.isArray(value) ? value.join(", ") : value}`)
     .join("\n");
+}
+
+function pendingApprovalRequestText(state: VdtAgentRunState): string {
+  const latestApprovalEvent = [...state.events]
+    .reverse()
+    .find((event) => event.type === "plan_proposed");
+  if (latestApprovalEvent) {
+    return [latestApprovalEvent.title, latestApprovalEvent.message].filter(Boolean).join("\n\n");
+  }
+  const latestAssistantMessage = [...state.chatMessages]
+    .reverse()
+    .find((message) => message.role === "assistant" && message.kind === "assistant_message" && message.text?.trim());
+  return latestAssistantMessage?.text?.trim() ?? "Pending agent approval request.";
+}
+
+function summarizeProgressiveBuild(state: VdtAgentRunState["progressiveBuild"]): AgentDecisionContext["progressiveBuild"] {
+  if (!state) return undefined;
+  return {
+    rootNodeId: state.rootNodeId,
+    currentDepth: state.currentDepth,
+    completedLayerNodeIds: state.completedLayerNodeIds,
+    frontierNodeIds: state.frontierNodeIds,
+    blockedNodeIds: state.blockedNodeIds
+  };
+}
+
+function briefReadinessFromState(state: VdtAgentRunState): FirstResponseInput["briefReadiness"] {
+  const rootKpiIsPlaceholder = isPlaceholderRootKpi(state.visibleContext.brief.rootKpi);
+  return {
+    rootKpiIsPlaceholder,
+    directionStatus: rootKpiIsPlaceholder ? "needs_agent_judgment" : "ready",
+    guidance: rootKpiIsPlaceholder
+      ? "Before selecting skills or building a graph, decide whether the visible conversation explicitly states the desired VDT output or modeling direction. If it only lists data, assets, constraints, or equipment without the target tree, ask one open clarification question about what VDT to build."
+      : "The visible brief has a non-placeholder root KPI; continue with normal agent skill selection unless the conversation creates a scope conflict."
+  };
+}
+
+function isPlaceholderRootKpi(value: string | undefined): boolean {
+  return /^(new vdt|untitled vdt|value driver tree)$/i.test((value ?? "").trim());
+}
+
+function continuationPolicyFromState(state: VdtAgentRunState): AgentDecisionContext["continuationPolicy"] {
+  return {
+    continueWithAssumptions: state.request.options?.continueWithAssumptions === true,
+    maxNodesPerLayer: defaultProgressiveBuildPolicy.maxNodesPerLayer,
+    askOnlyWhen: [
+      "missing_data",
+      "business_choice",
+      "scope_conflict",
+      "ambiguous_logic",
+      "low_confidence",
+      "formula_ambiguity"
+    ]
+  };
 }
 
 function isAbortError(error: unknown): boolean {

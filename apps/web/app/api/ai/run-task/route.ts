@@ -21,7 +21,7 @@ import {
 
 /**
  * Bounded AI task route for web-runnable VDT AI actions.
- * Tree generation remains on `/api/ai/generate-vdt`; schema-only planning runs through local-runner completions.
+ * Tree generation is owned by `/api/agent/runs`; schema-only planning runs through local-runner completions.
  */
 export async function POST(request: Request) {
   let body: (RunTaskRequestBody & Record<string, unknown>) | undefined;
@@ -73,7 +73,7 @@ export async function POST(request: Request) {
         error.message.includes("endpoint") ||
         error.message.includes("must be") ||
         error.message.includes("is required") ||
-        error.message.includes("must use /api/ai/generate-vdt") ||
+        error.message.includes("must use /api/agent/runs") ||
         error.message.includes("Unsupported taskType") ||
         error.message.includes("Request body must be") ||
         error.message.includes("input.project") ||

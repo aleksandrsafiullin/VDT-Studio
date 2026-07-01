@@ -2,11 +2,14 @@ import { z } from "zod";
 import {
   extractFormulaReferences,
   type VdtBuilderSession,
+  type VdtChangeSet,
   type VdtEdgeRelation,
   type VdtNodePatch
 } from "@vdt-studio/vdt-core";
+import { defaultProgressiveBuildPolicy, proposeAndMaybeApplyMutation } from "../mutation-pipeline";
 import { AgentToolError, type AgentTool, type AgentToolContext } from "../tool-registry";
 import { summarizeCalculation, summarizeValidation } from "../summaries";
+import { cloneBuilder, combineChangeSets, requireBuilder, requireChangeSet } from "./builder-mutation-utils";
 
 const nodeTypeSchema = z.enum(["root_kpi", "calculated", "input", "assumption", "external_factor", "data_mapped"]);
 const nodeStatusSchema = z.enum([
@@ -68,6 +71,22 @@ const nodeTypeInputSchema = z.preprocess(normalizeNodeType, nodeTypeSchema);
 const edgeRelationInputSchema = z.preprocess(normalizeEdgeRelation, edgeRelationSchema);
 const nullToUndefined = (value: unknown): unknown => value === null ? undefined : value;
 const optionalInput = <T extends z.ZodTypeAny>(schema: T) => z.preprocess(nullToUndefined, schema.optional());
+const valueStatusSchema = z.enum([
+  "unknown",
+  "user_provided_value",
+  "default_assumption",
+  "calculated",
+  "partially_calculable"
+]);
+const valueSourceSchema = z.object({
+  sourceTier: optionalInput(z.string().max(120)),
+  confidence: optionalInput(z.string().max(80)),
+  catalogRef: optionalInput(z.string().max(240)),
+  acceptedByUserInDialog: optionalInput(z.boolean()),
+  editableInDialog: optionalInput(z.boolean()),
+  note: optionalInput(z.string().max(500)),
+  range: optionalInput(z.tuple([z.number().finite(), z.number().finite()]))
+}).strict();
 
 const nodePatchSchema = z.object({
   name: optionalInput(z.string().min(1).max(200)),
@@ -77,6 +96,8 @@ const nodePatchSchema = z.object({
   formula: optionalInput(z.string().max(500)),
   baselineValue: optionalInput(z.number().finite()),
   value: optionalInput(z.number().finite()),
+  valueStatus: optionalInput(valueStatusSchema),
+  valueSource: optionalInput(valueSourceSchema),
   status: optionalInput(nodeStatusSchema),
   assumptions: optionalInput(z.array(z.string().max(300)).max(20)),
   tags: optionalInput(z.array(z.string().max(80)).max(20)),
@@ -112,6 +133,8 @@ const addDriverInputSchema = z.object({
   aiRationale: optionalInput(z.string().max(800)),
   assumptions: optionalInput(z.array(z.string().max(300)).max(20))
 });
+
+type AddDriverToolInput = z.infer<typeof addDriverInputSchema>;
 
 const createDraftTool: AgentTool = {
   name: "vdt.create_draft",
@@ -182,34 +205,34 @@ const addDriverTool: AgentTool = {
     if (input.nodeId && nodeIds.has(input.nodeId)) {
       throw new AgentToolError("NODE_ID_EXISTS", `Node id "${input.nodeId}" already exists.`);
     }
-    const result = builder.addDriver(input);
+    const previewBuilder = cloneBuilder(context);
+    const result = previewBuilder.addDriver(input);
+    const changeSet = requireChangeSet(result.changeSet);
     const nodeId = result.changeSet?.additions[0]?.nodeId ?? input.nodeId ?? input.name;
     const edgeId = result.changeSet?.edgeChanges[0]?.action === "add"
       ? result.changeSet.edgeChanges[0].edge.id
       : "";
-    const validation = summarizeValidation(builder.validate().validation);
-    context.store.updateRun(context.runId, {
-      draftProject: result.project,
-      pendingChangeSet: result.changeSet,
-      validationState: validation
-    });
-    context.emit({
-      type: "graph_patch",
-      phase: "building_graph",
+    const mutation = proposeAndMaybeApplyMutation(context, {
       title: "Driver added",
-      message: result.event.message,
-      patch: result.changeSet,
-      metadata: { revision: result.revision, nodeId, edgeId }
+      summary: result.event.message,
+      changeSet,
+      targetNodeId: input.parentNodeId
     });
-    return { nodeId, edgeId, revision: result.revision, validation };
+    return {
+      nodeId,
+      edgeId,
+      revision: mutation.revision,
+      validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
+    };
   }
 };
 
 const addDriversBatchTool: AgentTool = {
   name: "vdt.add_drivers_batch",
-  description: "Add 2 to 20 driver nodes and their parent edges in one batch. Use this for sibling drivers or a small branch to reduce repeated model round-trips.",
+  description: `Add 2 to ${defaultProgressiveBuildPolicy.maxNodesPerLayer} sibling driver nodes under one parent in one visible layer.`,
   inputSchema: z.object({
-    drivers: z.array(addDriverInputSchema).min(2).max(20)
+    drivers: z.array(addDriverInputSchema).min(2).max(defaultProgressiveBuildPolicy.maxNodesPerLayer)
   }),
   outputSchema: z.record(z.unknown()),
   mutatesProject: true,
@@ -217,10 +240,18 @@ const addDriversBatchTool: AgentTool = {
   phase: "building_graph",
   run(context, input) {
     const builder = requireBuilder(context.builder);
+    const drivers = input.drivers as AddDriverToolInput[];
+    const parentNodeIds = new Set(drivers.map((driver) => driver.parentNodeId));
+    if (parentNodeIds.size > 1) {
+      throw new AgentToolError("MUTATION_SCOPE_VIOLATION", "Batch driver mutations must add one visible layer under a single parent node.");
+    }
+    const targetNodeId = drivers[0]?.parentNodeId;
+    if (!targetNodeId) throw new AgentToolError("INVALID_TOOL_ARGS", "At least one driver is required.");
+    const previewBuilder = cloneBuilder(context);
     const added: Array<{ nodeId: string; edgeId: string; parentNodeId: string; name: string }> = [];
-    let lastRevision = builder.getRevision();
+    const changeSets: VdtChangeSet[] = [];
 
-    for (const driver of input.drivers) {
+    for (const driver of drivers) {
       const project = builder.getProject();
       const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
       if (!nodeIds.has(driver.parentNodeId)) {
@@ -229,38 +260,28 @@ const addDriversBatchTool: AgentTool = {
       if (driver.nodeId && nodeIds.has(driver.nodeId)) {
         throw new AgentToolError("NODE_ID_EXISTS", `Node id "${driver.nodeId}" already exists.`);
       }
-      const result = builder.addDriver(driver);
+      const result = previewBuilder.addDriver(driver);
+      changeSets.push(requireChangeSet(result.changeSet));
       const nodeId = result.changeSet?.additions[0]?.nodeId ?? driver.nodeId ?? driver.name;
       const edgeId = result.changeSet?.edgeChanges[0]?.action === "add"
         ? result.changeSet.edgeChanges[0].edge.id
         : "";
       added.push({ nodeId, edgeId, parentNodeId: driver.parentNodeId, name: driver.name });
-      lastRevision = result.revision;
     }
 
-    const validation = summarizeValidation(builder.validate().validation);
-    const project = builder.getProject();
-    context.store.updateRun(context.runId, {
-      draftProject: project,
-      validationState: validation
-    });
-    context.emit({
-      type: "graph_patch",
-      phase: "building_graph",
+    const summary = `Added ${added.length} drivers: ${added.map((driver) => `"${driver.name}"`).join(", ")}.`;
+    const mutation = proposeAndMaybeApplyMutation(context, {
       title: "Drivers added",
-      message: `Added ${added.length} drivers: ${added.map((driver) => `"${driver.name}"`).join(", ")}.`,
-      metadata: {
-        revision: lastRevision,
-        nodeIds: added.map((driver) => driver.nodeId),
-        edgeIds: added.map((driver) => driver.edgeId),
-        parentNodeIds: added.map((driver) => driver.parentNodeId)
-      }
+      summary,
+      changeSet: combineChangeSets(changeSets, context),
+      targetNodeId
     });
     return {
       nodeIds: added.map((driver) => driver.nodeId),
       edgeIds: added.map((driver) => driver.edgeId),
-      revision: lastRevision,
-      validation
+      revision: mutation.revision,
+      validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
     };
   }
 };
@@ -284,25 +305,24 @@ const addEdgeTool: AgentTool = {
     const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
     if (!nodeIds.has(input.sourceNodeId)) throw new AgentToolError("SOURCE_NOT_FOUND", `Source node "${input.sourceNodeId}" was not found.`);
     if (!nodeIds.has(input.targetNodeId)) throw new AgentToolError("TARGET_NOT_FOUND", `Target node "${input.targetNodeId}" was not found.`);
-    const result = builder.addEdge(input);
+    const previewBuilder = cloneBuilder(context);
+    const result = previewBuilder.addEdge(input);
+    const changeSet = requireChangeSet(result.changeSet);
     const edgeId = result.changeSet?.edgeChanges[0]?.action === "add"
       ? result.changeSet.edgeChanges[0].edge.id
       : "";
-    const validation = summarizeValidation(builder.validate().validation);
-    context.store.updateRun(context.runId, {
-      draftProject: result.project,
-      pendingChangeSet: result.changeSet,
-      validationState: validation
-    });
-    context.emit({
-      type: "graph_patch",
-      phase: "building_graph",
+    const mutation = proposeAndMaybeApplyMutation(context, {
       title: "Edge added",
-      message: result.event.message,
-      patch: result.changeSet,
-      metadata: { revision: result.revision, edgeId }
+      summary: result.event.message,
+      changeSet,
+      targetNodeId: input.sourceNodeId
     });
-    return { edgeId, revision: result.revision, validation };
+    return {
+      edgeId,
+      revision: mutation.revision,
+      validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
+    };
   }
 };
 
@@ -333,22 +353,20 @@ const updateNodeTool: AgentTool = {
       }
     }
     assertFormulaReferencesIfPresent(project, input.patch.formula, input.nodeId);
-    const result = builder.updateNode({ nodeId: input.nodeId, patch: input.patch as VdtNodePatch });
-    const validation = summarizeValidation(builder.validate().validation);
-    context.store.updateRun(context.runId, {
-      draftProject: result.project,
-      pendingChangeSet: result.changeSet,
-      validationState: validation
-    });
-    context.emit({
-      type: "graph_patch",
-      phase: "building_graph",
+    const previewBuilder = cloneBuilder(context);
+    const result = previewBuilder.updateNode({ nodeId: input.nodeId, patch: input.patch as VdtNodePatch });
+    const mutation = proposeAndMaybeApplyMutation(context, {
       title: "Node updated",
-      message: result.event.message,
-      patch: result.changeSet,
-      metadata: { revision: result.revision, nodeId: input.nodeId }
+      summary: result.event.message,
+      changeSet: requireChangeSet(result.changeSet),
+      targetNodeId: input.nodeId
     });
-    return { nodeId: input.nodeId, revision: result.revision, validation };
+    return {
+      nodeId: input.nodeId,
+      revision: mutation.revision,
+      validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
+    };
   }
 };
 
@@ -369,22 +387,21 @@ const deleteNodeTool: AgentTool = {
     const removedEdgeIds = project.graph.edges
       .filter((edge) => edge.sourceNodeId === input.nodeId || edge.targetNodeId === input.nodeId)
       .map((edge) => edge.id);
-    const result = builder.deleteNode(input);
-    const validation = summarizeValidation(builder.validate().validation);
-    context.store.updateRun(context.runId, {
-      draftProject: result.project,
-      pendingChangeSet: result.changeSet,
-      validationState: validation
-    });
-    context.emit({
-      type: "graph_patch",
-      phase: "building_graph",
+    const previewBuilder = cloneBuilder(context);
+    const result = previewBuilder.deleteNode(input);
+    const mutation = proposeAndMaybeApplyMutation(context, {
       title: "Node deleted",
-      message: result.event.message,
-      patch: result.changeSet,
-      metadata: { revision: result.revision, nodeId: input.nodeId, removedEdgeIds }
+      summary: result.event.message,
+      changeSet: requireChangeSet(result.changeSet),
+      targetNodeId: input.nodeId
     });
-    return { deletedNodeId: input.nodeId, removedEdgeIds, revision: result.revision, validation };
+    return {
+      deletedNodeId: input.nodeId,
+      removedEdgeIds,
+      revision: mutation.revision,
+      validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
+    };
   }
 };
 
@@ -406,22 +423,20 @@ const setFormulaTool: AgentTool = {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
     }
     assertFormulaReferencesIfPresent(project, input.formula, input.nodeId);
-    const result = builder.setFormula(input);
-    const validation = summarizeValidation(builder.validate().validation);
-    context.store.updateRun(context.runId, {
-      draftProject: result.project,
-      pendingChangeSet: result.changeSet,
-      validationState: validation
-    });
-    context.emit({
-      type: "graph_patch",
-      phase: "building_graph",
+    const previewBuilder = cloneBuilder(context);
+    const result = previewBuilder.setFormula(input);
+    const mutation = proposeAndMaybeApplyMutation(context, {
       title: "Formula set",
-      message: result.event.message,
-      patch: result.changeSet,
-      metadata: { revision: result.revision, nodeId: input.nodeId }
+      summary: result.event.message,
+      changeSet: requireChangeSet(result.changeSet),
+      targetNodeId: input.nodeId
     });
-    return { nodeId: input.nodeId, revision: result.revision, validation };
+    return {
+      nodeId: input.nodeId,
+      revision: mutation.revision,
+      validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
+    };
   }
 };
 
@@ -484,22 +499,22 @@ const calculateTool: AgentTool = {
   }
 };
 
-function requireBuilder(builder: VdtBuilderSession | undefined): VdtBuilderSession {
-  if (!builder) throw new AgentToolError("NO_DRAFT_PROJECT", "VDT builder session is not available for this run.");
-  return builder;
-}
-
 function protectedBriefFromRun(context: AgentToolContext): {
   rootKpi?: string | undefined;
   unit?: string | undefined;
   timePeriod?: string | undefined;
 } {
   const input = context.getRun().request.input;
+  const rootKpi = input.rootKpi?.trim();
   return {
-    rootKpi: input.rootKpi?.trim() || undefined,
+    rootKpi: rootKpi && !isPlaceholderRootKpi(rootKpi) ? rootKpi : undefined,
     unit: input.unit?.trim() || undefined,
     timePeriod: input.timePeriod?.trim() || undefined
   };
+}
+
+function isPlaceholderRootKpi(value: string): boolean {
+  return /^(new vdt|untitled vdt|value driver tree)$/i.test(value.trim());
 }
 
 function sameVisibleValue(left: string, right: string): boolean {

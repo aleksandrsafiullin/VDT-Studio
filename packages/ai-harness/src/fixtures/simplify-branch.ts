@@ -5,13 +5,13 @@ export const averageProductivitySimplifyOutput: SimplifyBranchOutput = simplifyB
   nodeRemovals: [
     {
       nodeId: "yield_factor",
-      rationale: "Yield is immaterial for monthly volume planning and can be folded into utilization."
+      rationale: "Yield is immaterial for monthly volume planning and can be omitted from this productivity branch."
     }
   ],
   nodeUpdates: [
     {
       nodeId: "average_productivity",
-      formula: "nominal_rate * utilization_factor",
+      formula: "nominal_rate",
       aiRationale: "Simplified productivity model without a separate yield factor."
     }
   ],
@@ -23,8 +23,8 @@ export const averageProductivitySimplifyOutput: SimplifyBranchOutput = simplifyB
     }
   ],
   rationale:
-    "Remove yield_factor to reduce decomposition depth while keeping nominal rate and utilization as the core productivity levers.",
-  assumptions: ["Yield losses are already reflected in utilization for executive reporting."],
+    "Remove yield_factor to reduce decomposition depth while keeping nominal rate as the core productivity lever.",
+  assumptions: ["Yield losses are immaterial for this executive reporting view."],
   questionsForUser: ["Is saleable yield tracked separately in your monthly KPI pack?"],
   warnings: []
 });

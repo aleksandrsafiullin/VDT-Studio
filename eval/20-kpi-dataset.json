@@ -314,14 +314,14 @@
       "expectedRootUnit": "tonnes/hour",
       "timePeriod": "daily",
       "goal": "Increase plant throughput while staying within quality constraints.",
-      "businessContext": "Throughput is influenced by feed availability, equipment capacity, bottleneck utilization, downtime and process constraints.",
+      "businessContext": "Throughput is influenced by feed availability, bottleneck capacity, working time, downtime and process constraints.",
       "levelOfDetail": "medium",
       "expectations": {
         "minimumDepth": 2,
         "acceptableNodeCountRange": [6, 16],
-        "requiredBusinessDrivers": ["Feed Availability", "Bottleneck Capacity", "Utilization", "Downtime"],
-        "prohibitedDuplicatePatterns": ["capacity and throughput duplicated without utilization logic"],
-        "formulaExpectations": ["Throughput should connect available operating time, capacity/rate and utilization losses."],
+        "requiredBusinessDrivers": ["Feed Availability", "Bottleneck Capacity", "Working time", "Downtime"],
+        "prohibitedDuplicatePatterns": ["capacity and throughput duplicated without working-time logic"],
+        "formulaExpectations": ["Throughput should connect working time, capacity/rate and explicit downtime losses."],
         "unitConsistencyExpectations": ["Rate, time and output units should be internally consistent."]
       },
       "acceptance": { "minNodes": 6, "maxNodes": 16, "minEdges": 5, "minDepth": 2 }

@@ -68,11 +68,11 @@ pnpm local-runner:start
 
 ## AI Actions
 
-VDT Studio exposes 13 bounded AI tasks. Agent runs use `agent_decision`; tree generation uses `/api/ai/generate-vdt`; all other tasks use `/api/ai/run-task` with preview-before-apply for graph mutations.
+VDT Studio exposes 14 bounded AI tasks. Project creation runs through `/api/agent/runs` with `orchestrator_first_response` and `agent_decision`; `/api/ai/generate-vdt` is retained only for provider connection tests. Other bounded tasks use `/api/ai/run-task` with preview-before-apply for graph mutations.
 
 | Category | Tasks |
 | --- | --- |
-| Agent loop | `agent_decision` |
+| Agent loop | `orchestrator_first_response`, `agent_decision` |
 | Generate | `generate_tree` |
 | Graph mutate | `deepen_node`, `simplify_branch`, `suggest_alternative`, `suggest_formula` |
 | Advisory | `review_model`, `check_units`, `identify_missing_drivers`, `identify_duplicate_drivers` |
@@ -80,7 +80,7 @@ VDT Studio exposes 13 bounded AI tasks. Agent runs use `agent_decision`; tree ge
 
 Graph-mutating actions show a change-set preview in the node inspector; applying creates a version snapshot you can restore from the History control in the top bar. Advisory and explain tasks are read-only.
 
-The built-in mock provider covers all 13 exposed tasks for local development and automated tests.
+The built-in mock provider covers all 14 exposed tasks for local development and automated tests.
 
 ## Local Runner
 

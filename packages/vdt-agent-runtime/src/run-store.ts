@@ -7,6 +7,7 @@ import type {
   AgentThreadContext,
   ManualProjectChange,
   PublicAgentStatus,
+  VdtAgentEvent,
   VdtAgentRunPhase,
   VdtAgentRunSnapshot,
   VdtAgentRunState,
@@ -14,21 +15,46 @@ import type {
   VdtAgentStartRequest
 } from "./types";
 
+export interface PersistedAgentRunState {
+  snapshot: VdtAgentRunSnapshot;
+  seq: number;
+  chatSeq: number;
+  firstResponseCompleted: boolean;
+  answers: VdtAgentRunState["answers"];
+  manualChanges: VdtAgentRunState["manualChanges"];
+  recipes: VdtAgentRunState["recipes"];
+  lastToolResult?: VdtAgentRunState["lastToolResult"] | undefined;
+  validationState?: VdtAgentRunState["validationState"] | undefined;
+  calculationState?: VdtAgentRunState["calculationState"] | undefined;
+  memoryNotes: VdtAgentRunState["memoryNotes"];
+}
+
+export interface AgentRunPersistence {
+  createRun(state: VdtAgentRunState): void;
+  updateRun(state: VdtAgentRunState): void;
+  appendEvent(event: VdtAgentEvent, state: VdtAgentRunState): void;
+  getState(runId: string): VdtAgentRunState | null;
+  getSnapshot(runId: string): VdtAgentRunSnapshot | null;
+}
+
 export interface AgentRunStoreOptions {
   now?: (() => string) | undefined;
   maxEventsPerRun?: number | undefined;
   eventBus?: AgentEventBus | undefined;
+  persistence?: AgentRunPersistence | undefined;
 }
 
 export class AgentRunStore {
   private readonly runs = new Map<string, VdtAgentRunState>();
   private readonly now: () => string;
   private readonly maxEventsPerRun: number;
+  private readonly persistence?: AgentRunPersistence | undefined;
   readonly eventBus: AgentEventBus;
 
   constructor(options: AgentRunStoreOptions = {}) {
     this.now = options.now ?? (() => new Date().toISOString());
     this.maxEventsPerRun = options.maxEventsPerRun ?? 500;
+    this.persistence = options.persistence;
     this.eventBus = options.eventBus ?? new AgentEventBus();
   }
 
@@ -62,22 +88,33 @@ export class AgentRunStore {
     };
     state.visibleContext = visibleContextFromState(state);
     this.runs.set(runId, state);
+    this.persistence?.createRun(state);
     return state;
   }
 
   has(runId: string): boolean {
-    return this.runs.has(runId);
+    if (this.runs.has(runId)) return true;
+    const persisted = this.persistence?.getState(runId);
+    if (!persisted) return false;
+    this.runs.set(runId, persisted);
+    return true;
   }
 
   getState(runId: string): VdtAgentRunState {
-    const state = this.runs.get(runId);
+    const state = this.runs.get(runId) ?? this.persistence?.getState(runId) ?? undefined;
     if (!state) throw new Error(`Agent run "${runId}" was not found.`);
+    if (!this.runs.has(runId)) {
+      this.runs.set(runId, state);
+    }
     return state;
   }
 
   getSnapshot(runId: string): VdtAgentRunSnapshot {
-    const state = this.getState(runId);
-    return snapshotFromState(state);
+    const state = this.runs.get(runId);
+    if (state) return snapshotFromState(state);
+    const persisted = this.persistence?.getSnapshot(runId);
+    if (persisted) return persisted;
+    return snapshotFromState(this.getState(runId));
   }
 
   updateRun(runId: string, patch: Partial<Omit<VdtAgentRunState, "runId" | "events" | "createdAt" | "seq" | "abortController">>): VdtAgentRunState {
@@ -92,6 +129,7 @@ export class AgentRunStore {
       visibleContext: visibleContextFromState(updatedBase)
     };
     this.runs.set(runId, updated);
+    this.persistence?.updateRun(updated);
     return updated;
   }
 
@@ -119,6 +157,7 @@ export class AgentRunStore {
       visibleContext: visibleContextFromState(updatedBase)
     };
     this.runs.set(runId, updated);
+    this.persistence?.updateRun(updated);
     return updated;
   }
 
@@ -142,6 +181,7 @@ export class AgentRunStore {
       visibleContext: visibleContextFromState(updatedBase)
     };
     this.runs.set(runId, updated);
+    this.persistence?.updateRun(updated);
     return updated;
   }
 
@@ -173,6 +213,7 @@ export class AgentRunStore {
       visibleContext: visibleContextFromState(updatedBase)
     };
     this.runs.set(runId, updated);
+    this.persistence?.appendEvent(nextEvent, updated);
     this.eventBus.publish(nextEvent);
     return updated;
   }
@@ -214,6 +255,7 @@ export class AgentRunStore {
       visibleContext: visibleContextFromState(updatedBase)
     };
     this.runs.set(runId, updated);
+    this.persistence?.updateRun(updated);
     this.appendEvent(runId, {
       type: "run_completed",
       phase: "reporting",
@@ -224,13 +266,13 @@ export class AgentRunStore {
   }
 }
 
-function snapshotFromState(state: VdtAgentRunState): VdtAgentRunSnapshot {
+export function snapshotFromState(state: VdtAgentRunState): VdtAgentRunSnapshot {
   const visibleContext = visibleContextFromState(state);
   return {
     runId: state.runId,
     status: state.status,
     phase: state.phase,
-    request: state.request,
+    request: redactSecrets(state.request) as VdtAgentStartRequest,
     project: state.project,
     draftProject: state.draftProject,
     selectedSkills: state.selectedSkills,
@@ -241,15 +283,77 @@ function snapshotFromState(state: VdtAgentRunState): VdtAgentRunSnapshot {
     pendingQuestions: state.pendingQuestions,
     pendingPlan: state.pendingPlan,
     pendingChangeSet: state.pendingChangeSet,
+    pendingMutationProposal: state.pendingMutationProposal,
     finalReport: state.finalReport,
     error: state.error,
     retryableError: state.retryableError,
     artifacts: state.artifacts,
+    mutationProposals: state.mutationProposals,
+    progressiveBuild: state.progressiveBuild,
     subagentTasks: state.subagentTasks,
     subagentReports: state.subagentReports,
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
     completedAt: state.completedAt
+  };
+}
+
+export function serializeAgentRunState(state: VdtAgentRunState): PersistedAgentRunState {
+  return {
+    snapshot: snapshotFromState(state),
+    seq: state.seq,
+    chatSeq: state.chatSeq,
+    firstResponseCompleted: state.firstResponseCompleted,
+    answers: redactSecrets(state.answers) as VdtAgentRunState["answers"],
+    manualChanges: redactSecrets(state.manualChanges) as VdtAgentRunState["manualChanges"],
+    recipes: state.recipes,
+    lastToolResult: redactSecrets(state.lastToolResult) as VdtAgentRunState["lastToolResult"],
+    validationState: state.validationState,
+    calculationState: state.calculationState,
+    memoryNotes: redactSecrets(state.memoryNotes) as VdtAgentRunState["memoryNotes"]
+  };
+}
+
+export function hydrateAgentRunState(persisted: PersistedAgentRunState): VdtAgentRunState {
+  const snapshot = persisted.snapshot;
+  return {
+    runId: snapshot.runId,
+    status: snapshot.status,
+    phase: snapshot.phase,
+    request: snapshot.request,
+    project: snapshot.project,
+    draftProject: snapshot.draftProject,
+    selectedSkills: snapshot.selectedSkills,
+    events: snapshot.events,
+    chatMessages: snapshot.chatMessages,
+    publicStatus: snapshot.publicStatus,
+    visibleContext: snapshot.visibleContext,
+    pendingQuestions: snapshot.pendingQuestions,
+    pendingPlan: snapshot.pendingPlan,
+    pendingChangeSet: snapshot.pendingChangeSet,
+    pendingMutationProposal: snapshot.pendingMutationProposal,
+    finalReport: snapshot.finalReport,
+    error: snapshot.error,
+    retryableError: snapshot.retryableError,
+    artifacts: snapshot.artifacts,
+    mutationProposals: snapshot.mutationProposals,
+    progressiveBuild: snapshot.progressiveBuild,
+    subagentTasks: snapshot.subagentTasks,
+    subagentReports: snapshot.subagentReports,
+    createdAt: snapshot.createdAt,
+    updatedAt: snapshot.updatedAt,
+    completedAt: snapshot.completedAt,
+    seq: persisted.seq,
+    chatSeq: persisted.chatSeq,
+    firstResponseCompleted: persisted.firstResponseCompleted,
+    abortController: new AbortController(),
+    answers: persisted.answers,
+    manualChanges: persisted.manualChanges,
+    recipes: persisted.recipes,
+    lastToolResult: persisted.lastToolResult,
+    validationState: persisted.validationState,
+    calculationState: persisted.calculationState,
+    memoryNotes: persisted.memoryNotes
   };
 }
 
@@ -292,13 +396,20 @@ function briefFromRequest(request: VdtAgentStartRequest): AgentThreadContext["br
     input.project?.graph.nodes.find((node) => node.id === input.project?.rootNodeId)?.name?.trim() ||
     input.project?.name?.trim() ||
     "Value driver tree";
+  const businessContext = visibleBusinessContext(input.businessContext, input.prompt);
   return {
     rootKpi,
     ...(input.unit?.trim() ? { unit: input.unit.trim() } : {}),
     ...(input.timePeriod?.trim() ? { period: input.timePeriod.trim() } : {}),
     ...(input.industry?.trim() ? { industry: input.industry.trim() } : {}),
-    ...(input.businessContext?.trim() ? { businessContext: input.businessContext.trim() } : {})
+    ...(businessContext ? { businessContext } : {})
   };
+}
+
+function visibleBusinessContext(...values: Array<string | undefined>): string | undefined {
+  const parts = values.map((value) => value?.trim()).filter((value): value is string => Boolean(value));
+  const uniqueParts = [...new Set(parts)];
+  return uniqueParts.length > 0 ? uniqueParts.join("\n") : undefined;
 }
 
 function describeManualChange(change: ManualProjectChange): string {
@@ -308,14 +419,20 @@ function describeManualChange(change: ManualProjectChange): string {
 }
 
 function redactMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  if (!metadata) return undefined;
-  const redacted: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(metadata)) {
-    if (/thought|reasoning|chainofthought|api.?key|token|secret/i.test(key)) {
-      redacted[key] = "[redacted]";
-    } else {
-      redacted[key] = value;
-    }
-  }
-  return redacted;
+  return redactSecrets(metadata) as Record<string, unknown> | undefined;
+}
+
+function redactSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((entry) => redactSecrets(entry));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+      key,
+      isSecretKey(key) ? "[redacted]" : redactSecrets(entry)
+    ])
+  );
+}
+
+function isSecretKey(key: string): boolean {
+  return /thought|reasoning|chainofthought|api[_-]?key|token|authorization|password|secret|access[_-]?token|refresh[_-]?token/i.test(key);
 }

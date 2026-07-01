@@ -9,3 +9,4 @@ coverage
 .playwright-cli
 output
 test-results
+.vdt

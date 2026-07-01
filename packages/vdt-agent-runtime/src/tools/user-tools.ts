@@ -90,12 +90,23 @@ const requestApprovalTool: AgentTool = {
   outputSchema: z.object({ status: z.literal("waiting_approval") }),
   phase: "planning_decomposition",
   run(context, input) {
+    const state = context.store.getState(context.runId);
+    const approvalText = [input.title, input.message].filter(Boolean).join("\n\n");
     context.store.updateRun(context.runId, {
       status: "waiting_approval",
       phase: "planning_decomposition",
       pendingChangeSet: input.changeSet as never,
       pendingPlan: input.plan as never
     });
+    context.store.appendChatMessage(context.runId, {
+      role: "assistant",
+      kind: "assistant_message",
+      text: approvalText
+    });
+    context.store.updatePublicStatus(
+      context.runId,
+      publicStatusForPhase("planning_decomposition", input.message)
+    );
     context.emit({
       type: "plan_proposed",
       phase: "planning_decomposition",
@@ -105,6 +116,13 @@ const requestApprovalTool: AgentTool = {
         changeSetId: input.changeSetId,
         selectedChangeIds: input.selectedChangeIds ?? []
       }
+    });
+    context.emit({
+      type: "assistant_message",
+      phase: state.phase,
+      title: input.title,
+      message: input.message,
+      metadata: { toolName: "user.request_approval" }
     });
     return { status: "waiting_approval" };
   }

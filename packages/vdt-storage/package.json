@@ -1,0 +1,16 @@
+{
+  "name": "@vdt-studio/storage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@vdt-studio/vdt-core": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/vdt-storage/src"
+  }
+}

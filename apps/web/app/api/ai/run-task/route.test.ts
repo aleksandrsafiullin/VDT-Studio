@@ -43,7 +43,7 @@ describe("run-task API route", () => {
 
     expect(response.status).toBe(400);
     expect(body.ok).toBe(false);
-    expect(body.error).toBe("generate_tree must use /api/ai/generate-vdt.");
+    expect(body.error).toBe("generate_tree must use /api/agent/runs.");
   });
 
   it("rejects legacy generate_vdt alias with 400", async () => {
@@ -57,7 +57,7 @@ describe("run-task API route", () => {
     const body = await readJson(response);
 
     expect(response.status).toBe(400);
-    expect(body.error).toBe("generate_tree must use /api/ai/generate-vdt.");
+    expect(body.error).toBe("generate_tree must use /api/agent/runs.");
   });
 
   it("rejects unknown taskType with 400 before provider execution", async () => {

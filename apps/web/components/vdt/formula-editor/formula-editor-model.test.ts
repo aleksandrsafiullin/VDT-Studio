@@ -37,7 +37,7 @@ function makeEdge(sourceNodeId: string, targetNodeId: string): VdtEdge {
 
 const productionVolumeNodes: VdtNode[] = [
   makeNode("production_volume", "Production Volume"),
-  makeNode("effective_working_time", "Effective Working Time"),
+  makeNode("effective_working_time", "Working time"),
   makeNode("average_productivity", "Average Productivity"),
   makeNode("calendar_time", "Calendar Time"),
   makeNode("planned_downtime", "Planned Downtime"),
@@ -65,7 +65,7 @@ describe("formula-editor-model", () => {
 
   it("resolveDisplayName falls back to node id when node is missing", () => {
     const nodesById = new Map(productionVolumeNodes.map((node) => [node.id, node]));
-    expect(resolveDisplayName("effective_working_time", nodesById)).toBe("Effective Working Time");
+    expect(resolveDisplayName("effective_working_time", nodesById)).toBe("Working time");
     expect(resolveDisplayName("missing_node", nodesById)).toBe("missing_node");
   });
 

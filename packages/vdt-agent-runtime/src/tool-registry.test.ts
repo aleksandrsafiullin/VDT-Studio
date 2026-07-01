@@ -11,7 +11,8 @@ describe("ToolRegistry", () => {
     const run = store.createRun({
       mode: "generate_vdt",
       input: { rootKpi: "Revenue" },
-      providerId: "mock"
+      providerId: "mock",
+      options: { autoApplyPatches: true }
     });
     const registry = new ToolRegistry();
 
@@ -35,7 +36,8 @@ describe("ToolRegistry", () => {
     const run = store.createRun({
       mode: "generate_vdt",
       input: { rootKpi: "Revenue" },
-      providerId: "mock"
+      providerId: "mock",
+      options: { autoApplyPatches: true }
     });
     const registry = new ToolRegistry();
     registry.register({
@@ -66,7 +68,8 @@ describe("ToolRegistry", () => {
     const run = store.createRun({
       mode: "generate_vdt",
       input: { rootKpi: "Revenue" },
-      providerId: "mock"
+      providerId: "mock",
+      options: { autoApplyPatches: true }
     });
     const builder = new VdtBuilderSession({ now: () => "2026-06-26T00:00:00.000Z" });
     builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue" });
@@ -102,7 +105,8 @@ describe("ToolRegistry", () => {
     const run = store.createRun({
       mode: "generate_vdt",
       input: { rootKpi: "Excavation", unit: "tonnes/year", timePeriod: "year" },
-      providerId: "mock"
+      providerId: "mock",
+      options: { autoApplyPatches: true }
     });
     const builder = new VdtBuilderSession({ now: () => "2026-06-26T00:00:00.000Z" });
     builder.createDraft({
@@ -155,5 +159,45 @@ describe("ToolRegistry", () => {
       "shift_count"
     ]));
     expect(store.getSnapshot(run.runId).events.some((event) => event.message.includes("Added 2 drivers"))).toBe(true);
+  });
+
+  it("creates a pending mutation proposal instead of directly mutating when auto-apply is off", async () => {
+    const store = new AgentRunStore({ now: () => "2026-06-26T00:00:00.000Z" });
+    const run = store.createRun({
+      mode: "generate_vdt",
+      input: { rootKpi: "Revenue" },
+      providerId: "mock"
+    });
+    const builder = new VdtBuilderSession({ now: () => "2026-06-26T00:00:00.000Z" });
+    builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue" });
+    store.updateRun(run.runId, { builder, draftProject: builder.getProject() });
+    const registry = createDefaultToolRegistry();
+
+    const result = await registry.run("vdt.add_driver", {
+      parentNodeId: "revenue",
+      nodeId: "price",
+      name: "Price",
+      type: "input",
+      relation: "positive_driver"
+    }, {
+      runId: run.runId,
+      store,
+      emit: (event) => store.appendEvent(run.runId, event),
+      getRun: () => store.getSnapshot(run.runId),
+      updateRun: (patch) => {
+        store.updateRun(run.runId, patch);
+      },
+      builder,
+      signal: run.abortController.signal
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.projectChanged).toBe(false);
+    expect(result.mutationProposal?.status).toBe("proposed");
+    expect(builder.getProject().graph.nodes.map((node) => node.id)).toEqual(["revenue"]);
+    const snapshot = store.getSnapshot(run.runId);
+    expect(snapshot.status).toBe("waiting_approval");
+    expect(snapshot.pendingMutationProposal?.changeSet.additions.map((addition) => addition.nodeId)).toEqual(["price"]);
+    expect(snapshot.events.map((event) => event.type)).toEqual(expect.arrayContaining(["mutation_proposed"]));
   });
 });

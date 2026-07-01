@@ -6,9 +6,11 @@ import {
   readSkillExcerpts,
   retrieveSkills
 } from "@vdt-studio/vdt-agent";
-import { extractFormulaReferences, stableSnakeId, type VdtProject } from "@vdt-studio/vdt-core";
+import { extractFormulaReferences, stableSnakeId, type VdtChangeSet, type VdtProject } from "@vdt-studio/vdt-core";
+import { proposeAndMaybeApplyMutation } from "../mutation-pipeline";
 import { AgentToolError, type AgentTool } from "../tool-registry";
 import { summarizeValidation } from "../summaries";
+import { cloneBuilder, combineChangeSets, requireChangeSet } from "./builder-mutation-utils";
 
 export function createSkillTools(): AgentTool[] {
   return [skillListTool, skillSearchTool, skillReadTool, skillCompileRecipeTool, skillSeedDraftFromRecipeTool];
@@ -30,7 +32,9 @@ const skillListTool: AgentTool = {
         patterns: skill.frontmatter.patterns,
         kpiPatterns: skill.frontmatter.kpiPatterns,
         requiredInputs: skill.frontmatter.requires,
-        outputs: skill.frontmatter.outputs
+        outputs: skill.frontmatter.outputs,
+        referenceFiles: skill.frontmatter.referenceFiles,
+        runtimePolicy: skill.frontmatter.runtimePolicy
       }))
     };
   }
@@ -63,7 +67,9 @@ const skillSearchTool: AgentTool = {
       matchedTerms: candidate.matchedTerms,
       domain: candidate.skill.domain,
       requiredInputs: candidate.skill.frontmatter.requires,
-      outputs: candidate.skill.frontmatter.outputs
+      outputs: candidate.skill.frontmatter.outputs,
+      referenceFiles: candidate.skill.frontmatter.referenceFiles,
+      runtimePolicy: candidate.skill.frontmatter.runtimePolicy
     }));
     context.emit({
       type: "skill_search",
@@ -123,6 +129,9 @@ const skillReadTool: AgentTool = {
       requiredInputs: skill.frontmatter.requires,
       outputs: excerpt.outputs ?? [],
       questions: excerpt.questions ?? [],
+      referenceFiles: skill.frontmatter.referenceFiles ?? {},
+      evalFiles: skill.frontmatter.evalFiles ?? {},
+      runtimePolicy: skill.frontmatter.runtimePolicy ?? {},
       formulaTemplates: recipe.formulaTemplates.map((formula) => `${formula.targetNodeId} = ${formula.formula}`)
     };
   }
@@ -190,18 +199,21 @@ const skillSeedDraftFromRecipeTool: AgentTool = {
         unit: input.unit,
         timePeriod: input.timePeriod
       }).project;
+      context.store.updateRun(context.runId, { draftProject: project });
     }
 
     const rootNodeId = project.rootNodeId || stableSnakeId(input.rootKpi, "root_kpi");
+    const previewBuilder = cloneBuilder(context);
+    const changeSets: VdtChangeSet[] = [];
     const addedNodeIds: string[] = [];
     const appliedFormulaNodeIds: string[] = [];
     const knownInputs = input.knownInputs ?? {};
     for (const driver of recipe.initialDrivers.slice(0, input.maxInitialDrivers ?? 6)) {
-      const current = builder.getProject();
+      const current = previewBuilder.getProject();
       if (current.graph.nodes.some((node) => node.id === driver.id)) continue;
       const formula = driver.formula && referencesExist(current, driver.formula) ? driver.formula : undefined;
       const baselineValue = parseKnownNumber(knownInputs[driver.id]);
-      const result = builder.addDriver({
+      const result = previewBuilder.addDriver({
         parentNodeId: rootNodeId,
         nodeId: driver.id,
         name: driver.name,
@@ -213,42 +225,58 @@ const skillSeedDraftFromRecipeTool: AgentTool = {
         description: driver.description,
         assumptions: driver.assumptions
       });
+      changeSets.push(requireChangeSet(result.changeSet));
       addedNodeIds.push(result.changeSet?.additions[0]?.nodeId ?? driver.id);
     }
 
     for (const formula of recipe.formulaTemplates) {
-      const current = builder.getProject();
+      const current = previewBuilder.getProject();
       const targetNodeId = formula.targetNodeId === "root" || formula.targetNodeId === input.rootKpi
         ? current.rootNodeId
         : formula.targetNodeId;
       if (!current.graph.nodes.some((node) => node.id === targetNodeId)) continue;
       if (!referencesExist(current, formula.formula)) continue;
-      builder.setFormula({ nodeId: targetNodeId, formula: formula.formula });
+      const result = previewBuilder.setFormula({ nodeId: targetNodeId, formula: formula.formula });
+      changeSets.push(requireChangeSet(result.changeSet));
       appliedFormulaNodeIds.push(targetNodeId);
     }
 
-    const latest = builder.getProject();
-    const validation = summarizeValidation(builder.validate().validation);
     const missingInputs = recipe.requiredInputs.filter((id) => knownInputs[id] === undefined);
-    context.store.updateRun(context.runId, {
-      draftProject: latest,
-      validationState: validation
-    });
-    context.emit({
-      type: "graph_patch",
-      phase: "building_graph",
+    if (changeSets.length === 0) {
+      const latest = builder.getProject();
+      const validation = summarizeValidation(builder.validate().validation);
+      context.store.updateRun(context.runId, {
+        draftProject: latest,
+        validationState: validation
+      });
+      return {
+        projectId: latest.id,
+        rootNodeId: latest.rootNodeId,
+        addedNodeIds,
+        appliedFormulaNodeIds,
+        missingInputs,
+        revision: builder.getRevision(),
+        validation
+      };
+    }
+
+    const summary = `Seeded ${addedNodeIds.length} driver node${addedNodeIds.length === 1 ? "" : "s"} from ${recipe.skillId}.`;
+    const mutation = proposeAndMaybeApplyMutation(context, {
       title: "Recipe draft seeded",
-      message: `Seeded ${addedNodeIds.length} driver node${addedNodeIds.length === 1 ? "" : "s"} from ${recipe.skillId}.`,
-      metadata: { skillId: recipe.skillId, addedNodeIds, appliedFormulaNodeIds }
+      summary,
+      changeSet: combineChangeSets(changeSets, context),
+      targetNodeId: rootNodeId
     });
+    const latest = mutation.applied ? builder.getProject() : mutation.proposal.previewProject;
     return {
       projectId: latest.id,
       rootNodeId: latest.rootNodeId,
       addedNodeIds,
       appliedFormulaNodeIds,
       missingInputs,
-      revision: builder.getRevision(),
-      validation
+      revision: mutation.revision,
+      validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
     };
   }
 };

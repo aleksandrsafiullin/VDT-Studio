@@ -43,17 +43,48 @@ export function answerRecordFromPayloads(
   }));
 }
 
-export function describeAnswerPayloads(answers: AgentAnswerPayload[]): string {
+export function describeAnswerPayloads(answers: AgentAnswerPayload[], questions: VdtAgentQuestion[] = []): string {
+  const questionsById = new Map(questions.map((question) => [question.id, question]));
   return answers
-    .map((answer) => {
-      const values = [
-        answer.selectedOptionIds?.join(", "),
-        answer.freeText,
-        answer.fields ? Object.entries(answer.fields).map(([key, value]) => `${key}: ${value}`).join(", ") : undefined
-      ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-      return `${answer.questionId}: ${values.join("; ")}`;
-    })
-    .join("\n");
+    .map((answer) => describeAnswerPayload(answer, questionsById.get(answer.questionId)))
+    .join("\n\n");
+}
+
+function describeAnswerPayload(answer: AgentAnswerPayload, question: VdtAgentQuestion | undefined): string {
+  const values: string[] = [];
+  const optionLabels = new Map((question?.options ?? []).map((option) => [
+    typeof option === "string" ? option : option.id,
+    typeof option === "string" ? option : option.label
+  ]));
+  for (const optionId of answer.selectedOptionIds ?? []) {
+    values.push(optionLabels.get(optionId) ?? humanizeAnswerId(optionId));
+  }
+  if (answer.fields) {
+    const fieldLabels = new Map((question?.fields ?? []).map((field) => [
+      field.id,
+      field.unit ? `${field.label} (${field.unit})` : field.label
+    ]));
+    for (const [key, value] of Object.entries(answer.fields)) {
+      if (String(value).trim().length === 0) continue;
+      values.push(`${fieldLabels.get(key) ?? humanizeAnswerId(key)}: ${value}`);
+    }
+  }
+  if (answer.freeText?.trim()) {
+    values.push(answer.freeText.trim());
+  }
+
+  const title = question?.question ?? humanizeAnswerId(answer.questionId);
+  if (values.length === 0) return title;
+  if (values.length === 1) return `${title}\n${values[0]}`;
+  return `${title}\n${values.map((value) => `- ${value}`).join("\n")}`;
+}
+
+function humanizeAnswerId(value: string): string {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\w/, (letter) => letter.toUpperCase());
 }
 
 export function publicStatusForPhase(phase: VdtAgentRunPhase, message?: string): Omit<PublicAgentStatus, "updatedAt"> {
@@ -67,6 +98,7 @@ export function publicStatusForPhase(phase: VdtAgentRunPhase, message?: string):
     case "planning_decomposition":
       return { phase: "planning_model", message: message ?? "Planning the VDT structure..." };
     case "building_graph":
+    case "previewing_mutation":
     case "applying_graph":
       return { phase: "building_draft", message: message ?? "Drafting the driver tree..." };
     case "validating_graph":
@@ -134,7 +166,7 @@ function splitFleetAndShiftQuestion(question: VdtAgentQuestion): VdtAgentQuestio
     normalizeQuestionDefaults({
       id: `${question.id}_shifts`.replace(/_{2,}/g, "_"),
       question: "How many shifts does the fleet work?",
-      reason: "Shift pattern determines annual available operating hours and utilization assumptions.",
+      reason: "Shift pattern determines annual working time and downtime assumptions.",
       required: question.required,
       answerKind: "field_group",
       freeTextAllowed: true,

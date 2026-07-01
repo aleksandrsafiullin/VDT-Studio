@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { Download, FileImage, FileJson, GitBranch, Route, ShieldCheck, Sparkles, Upload } from "lucide-react";
+import { Download, FileImage, FileJson, Folder, GitBranch, Route, ShieldCheck, Sparkles, Upload } from "lucide-react";
 import {
   calculateGraph,
   exportProjectJson,
@@ -16,13 +16,15 @@ import { formatNumber } from "@/lib/format";
 import { ScenarioModal } from "./scenario-modal";
 import { SettingsModal } from "./settings-modal";
 import { VersionHistoryPanel } from "./version-history-panel";
-import { useVdtStudioStore } from "./vdt-store";
+import { VdtComparisonPanel } from "./vdt-comparison-panel";
+import { hasActiveWorkspaceVdt, useVdtStudioStore } from "./vdt-store";
 
 const exportMenuItemClass =
   "flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-graphite hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 export function TopBar() {
   const project = useVdtStudioStore((state) => state.project);
+  const workspace = useVdtStudioStore((state) => state.workspace);
   const replaceProject = useVdtStudioStore((state) => state.replaceProject);
   const runAiAction = useVdtStudioStore((state) => state.runAiAction);
   const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
@@ -48,6 +50,34 @@ export function TopBar() {
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [exportMenuOpen]);
+
+  const activeProjectSummary =
+    workspace.projectSummaries.find((entry) => entry.project.id === workspace.activeProjectId) ??
+    workspace.projectSummaries[0];
+
+  if (workspace.activePanel === "project" || !hasActiveWorkspaceVdt(workspace)) {
+    return (
+      <header className="relative flex h-14 shrink-0 items-center justify-between gap-4 border-b border-line bg-white px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-slate-900 text-white">
+            <Folder className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <h1 className="truncate text-sm font-semibold text-ink">
+              {activeProjectSummary?.project.name ?? "Project workspace"}
+            </h1>
+            <p className="truncate text-xs text-muted">
+              {activeProjectSummary
+                ? `${activeProjectSummary.counts.vdts} VDTs - ${activeProjectSummary.counts.revisions} revisions`
+                : "Create or select a project"}
+            </p>
+          </div>
+        </div>
+        <SettingsModal />
+      </header>
+    );
+  }
+
   const calculation = calculateGraph(project);
   const validation = validateGraph(project.graph, project.rootNodeId);
   const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
@@ -192,6 +222,7 @@ export function TopBar() {
             </div>
           ) : null}
         </div>
+        <VdtComparisonPanel project={project} />
         <VersionHistoryPanel />
         <SettingsModal />
         <ScenarioModal triggerRef={scenarioModalTriggerRef} />

@@ -131,9 +131,9 @@ For drill availability and drill meters:
 ```text
 drill_scheduled_hours = calendar_hours - drill_planned_downtime_h
 
-drill_available_hours = drill_scheduled_hours * drill_availability
+drill_available_hours = drill_scheduled_hours - drill_unplanned_downtime_h
 
-drill_effective_hours = drill_available_hours * drill_utilization
+drill_effective_hours = drill_available_hours - drill_operational_delay_h
 
 drilled_meters = drill_count * drill_effective_hours * penetration_rate_mph * drilling_efficiency
 ```
@@ -141,7 +141,7 @@ drilled_meters = drill_count * drill_effective_hours * penetration_rate_mph * dr
 For open-pit blast volume and tonnes:
 
 ```text
-blast_volume_bcm = number_of_holes * burden_m * spacing_m * bench_height_m * pattern_utilization_factor
+blast_volume_bcm = number_of_holes * burden_m * spacing_m * bench_height_m * pattern_coverage_factor
 
 blasted_tonnes = blast_volume_bcm * bank_density_t_per_bcm * blast_recovery_factor
 
@@ -215,7 +215,7 @@ Minimum inputs:
 - `mine_type`: open_pit, underground_development, underground_stoping, or mixed.
 - `drill_and_blast_kpi`: drilled meters, blasted tonnes, blast readiness, fragmentation, advance meters, or cost per tonne.
 - `drill_count` by drill type: rotary blasthole, DTH, top hammer, jumbo, longhole drill, cable bolt drill, or site-specific rig.
-- `drill_effective_hours`, or calendar/planned downtime/availability/utilization.
+- `drill_effective_hours`, or calendar hours plus planned downtime, unplanned downtime, and operational delay categories.
 - `penetration_rate_mph` and `drilling_efficiency` by rock type and drill type.
 - `blast_pattern`: hole diameter, burden, spacing, bench height or heading area, hole depth, subdrill, stemming, and pattern factor.
 - `explosive_type`, `explosive_linear_density_kg_per_m`, `powder_factor_kg_per_t`, or total explosive quantity.
@@ -271,7 +271,7 @@ Recommended units:
 - Density: `t/bcm` or `t/m3`.
 - Explosives: `kg`, `kg/hole`, `kg/m`, `kg/t`, or `kg/bcm`.
 - Time: `h`.
-- Pull factor, recovery, utilization, and quality factors: decimals between `0` and `1`.
+- Pull factor, recovery, coverage, and quality factors: decimals between `0` and `1`.
 
 Do not use `powder_factor_kg_per_t` against bank volume unless converted to tonnes. Do not compare open-pit bench metres and underground advance metres without stating the geometry.
 
@@ -292,8 +292,8 @@ drill_and_blast_capacity_tonnes
   drilled_meters
     drill_count
     drill_effective_hours
-      drill_availability
-      drill_utilization
+      drill_unplanned_downtime_h
+      drill_operational_delay_h
       relocation_time_h
     penetration_rate_mph
       rock_hardness_factor
@@ -322,7 +322,7 @@ drill_and_blast_capacity_tonnes
 
 ## Deepen Node Guidance
 
-- Deepen `drilled_meters` into drill count, drill effective hours, penetration rate, utilization, relocation/setup, redrill, and drill pattern accuracy.
+- Deepen `drilled_meters` into drill count, drill effective hours, penetration rate, operational delays, relocation/setup, redrill, and drill pattern accuracy.
 - Deepen `blasted_tonnes` into pattern geometry, density, blast recovery, and material classification.
 - Deepen `explosives_kg` into powder factor, charge length, explosive density, stemming, wet-hole constraints, and charging crew productivity.
 - Deepen `blast_quality_factor` when excavation, crusher, dilution, oversize, or secondary blasting is a suspected bottleneck.

@@ -175,7 +175,6 @@ describe("AI harness", () => {
             planned_downtime: 40,
             unplanned_downtime: 80,
             nominal_rate: 220,
-            utilization_factor: 0.9,
             yield_factor: 0.96
           };
           return baseline[node.id] !== undefined ? { ...node, baselineValue: baseline[node.id] } : node;
@@ -183,7 +182,7 @@ describe("AI harness", () => {
       }
     };
 
-    expect(calculateGraph(withValues).rootValue).toBeCloseTo(114048, 5);
+    expect(calculateGraph(withValues).rootValue).toBeCloseTo(126720, 5);
     expect(project.aiReview?.assumptions).toContain("Production volume is measured as useful output, not gross material movement.");
     expect(project.aiReview?.questionsForUser.length).toBeGreaterThan(0);
     expect(project.aiReview?.warnings[0]?.message).toContain("Yield factor");
@@ -466,7 +465,7 @@ describe("AI harness", () => {
 
     expect(changeSet.taskType).toBe("simplify_branch");
     expect(changeSet.deletions.map((entry) => entry.nodeId)).toEqual(["yield_factor"]);
-    expect(changeSet.updates[0]?.patch.formula).toBe("nominal_rate * utilization_factor");
+    expect(changeSet.updates[0]?.patch.formula).toBe("nominal_rate");
 
     const preview = previewChangeSet(productionVolumeProject, changeSet);
     expect(preview.graph.nodes.some((node) => node.id === "yield_factor")).toBe(false);
@@ -614,7 +613,7 @@ describe("AI harness", () => {
       productionVolumeProject
     );
 
-    expect(result.unitFindings[0]?.nodeId).toBe("utilization_factor");
+    expect(result.unitFindings[0]?.nodeId).toBe("yield_factor");
   });
 
   it("rejects check_units findings for unknown node ids", () => {
@@ -656,7 +655,7 @@ describe("AI harness", () => {
       productionVolumeDuplicateDriversOutput
     );
 
-    expect(result.duplicateClusters[0]?.nodeIds).toEqual(["utilization_factor", "yield_factor"]);
+    expect(result.duplicateClusters[0]?.nodeIds).toEqual(["planned_downtime", "unplanned_downtime"]);
   });
 
   it("runs identify_duplicate_drivers through a task-aware mock provider", async () => {
@@ -672,7 +671,7 @@ describe("AI harness", () => {
     expect(() =>
       validateIdentifyDuplicateDriversOutput(productionVolumeProject, {
         ...productionVolumeDuplicateDriversOutput,
-        duplicateClusters: [{ nodeIds: ["utilization_factor", "missing_node"], similarityReason: "test" }]
+        duplicateClusters: [{ nodeIds: ["planned_downtime", "missing_node"], similarityReason: "test" }]
       })
     ).toThrow(/unknown node id/);
   });
@@ -992,7 +991,7 @@ describe("AI harness", () => {
           ...productionVolumeCheckUnitsOutput,
           unitFindings: [
             {
-              nodeId: "utilization_factor",
+              nodeId: "yield_factor",
               severity: "critical",
               message: "Invalid severity."
             }
@@ -1019,7 +1018,7 @@ describe("AI harness", () => {
       expect(() =>
         identifyDuplicateDriversOutputSchema.parse({
           ...productionVolumeDuplicateDriversOutput,
-          duplicateClusters: [{ nodeIds: ["utilization_factor"], similarityReason: "Only one node." }]
+          duplicateClusters: [{ nodeIds: ["planned_downtime"], similarityReason: "Only one node." }]
         })
       ).toThrow();
     });

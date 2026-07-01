@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cloneProject, productionVolumeProject, type VdtChangeSet } from "@vdt-studio/vdt-core";
 import { productionVolumeReviewOutput } from "@vdt-studio/ai-harness";
 import { DEFAULT_EXECUTION_SETTINGS, getCliCatalogEntry } from "@/lib/execution-mode-catalog";
+import type { VdtAgentRunSnapshot } from "@/lib/agent-client";
 
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
@@ -27,6 +28,7 @@ beforeEach(() => {
   useVdtStudioStore.setState({
     isGenerating: false,
     generateActivity: undefined,
+    agentChatHistory: [],
     aiError: undefined,
     activeAgentRunId: undefined,
     agentRun: undefined,
@@ -107,6 +109,107 @@ function agentRunFixture(overrides: Record<string, unknown> = {}) {
     finalReport: "Validation result: Graph validation passed.",
     ...overrides
   };
+}
+
+function jsonResponse(payload: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => JSON.stringify(payload),
+    json: async () => payload
+  } as Response;
+}
+
+function runtimeSnapshotFixture(overrides: Record<string, unknown> = {}) {
+  const runId = typeof overrides.runId === "string" ? overrides.runId : "agent-run-store-1";
+  const updatedAt = "2026-06-24T10:00:05.000Z";
+  const project = cloneProject(productionVolumeProject);
+  const request = {
+    mode: "generate_vdt",
+    input: {
+      rootKpi: "Production Volume",
+      industry: "Mining"
+    },
+    providerId: "mock",
+    options: {
+      autoApplyPatches: true,
+      continueWithAssumptions: false,
+      maxSteps: 30
+    }
+  };
+
+  return {
+    runId,
+    status: "succeeded",
+    phase: "reporting",
+    request,
+    project,
+    selectedSkills: [
+      {
+        id: "mining.production_volume",
+        path: "packages/vdt-agent/skills/mining/production-volume.md",
+        title: "Production volume",
+        score: 92,
+        reason: "Matched production volume mining context.",
+        matchedTerms: ["production", "volume"]
+      }
+    ],
+    events: [
+      {
+        id: `${runId}:1`,
+        runId,
+        seq: 1,
+        timestamp: "2026-06-24T10:00:01.000Z",
+        phase: "classifying_request",
+        type: "classification",
+        title: "Classified request",
+        message: "Classified request as mining / production throughput."
+      },
+      {
+        id: `${runId}:2`,
+        runId,
+        seq: 2,
+        timestamp: updatedAt,
+        phase: "reporting",
+        type: "final_report",
+        title: "Final report",
+        message: "Generated final report."
+      }
+    ],
+    chatMessages: [],
+    publicStatus: {
+      phase: "ready",
+      message: "Validation result: Graph validation passed.",
+      updatedAt
+    },
+    visibleContext: {
+      threadId: runId,
+      visibleTitle: "Production Volume",
+      brief: {
+        rootKpi: "Production Volume",
+        industry: "Mining"
+      },
+      project: {
+        id: project.id,
+        name: project.name,
+        rootNodeName: "Production Volume",
+        rootNodeUnit: "tonnes/year"
+      },
+      visibleMessages: []
+    },
+    finalReport: "Validation result: Graph validation passed.",
+    createdAt: "2026-06-24T10:00:00.000Z",
+    updatedAt,
+    completedAt: updatedAt,
+    ...overrides
+  };
+}
+
+function stubEventSource() {
+  vi.stubGlobal("EventSource", class {
+    addEventListener() {}
+    close() {}
+  });
 }
 
 describe("vdt-store change-set workflow", () => {
@@ -322,6 +425,53 @@ describe("vdt-store change-set workflow", () => {
     expect(useVdtStudioStore.getState().agentRun?.runId).toBe("agent-run-restored");
   });
 
+  it("sends mutation approval messages from the active agent run", async () => {
+    const fetchMock = vi.mocked(fetch);
+    let capturedMessageBody: unknown;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/agent/runs/agent-run-approval/messages")) {
+        capturedMessageBody = JSON.parse(String(init?.body));
+        return jsonResponse({
+          ok: true,
+          snapshot: runtimeSnapshotFixture({
+            runId: "agent-run-approval",
+            status: "running",
+            phase: "building_graph",
+            completedAt: undefined
+          })
+        });
+      }
+      return jsonResponse({ agents: [] });
+    });
+
+    useVdtStudioStore.setState({
+      activeAgentRunId: "agent-run-approval",
+      generateActivity: {
+        runId: "agent-run-approval",
+        status: "running",
+        phase: "waiting_provider",
+        phaseStartedAt: "2026-06-27T00:00:00.000Z",
+        startedAt: "2026-06-27T00:00:00.000Z",
+        updatedAt: "2026-06-27T00:00:00.000Z",
+        providerId: "mock",
+        providerLabel: "Mock",
+        appMode: "development_web",
+        canCancel: true,
+        cancelRequested: false
+      }
+    });
+
+    await useVdtStudioStore.getState().sendAgentApproval(true, ["add_working_time"]);
+
+    expect(capturedMessageBody).toEqual({
+      type: "approval",
+      approved: true,
+      selectedChangeIds: ["add_working_time"]
+    });
+    expect(useVdtStudioStore.getState().agentRun?.runId).toBe("agent-run-approval");
+  });
+
   it("runAiAction posts deepen_node to /api/ai/run-task and stores pending change set", async () => {
     const changeSet = mockDeepenChangeSet();
     const fetchMock = vi.mocked(fetch);
@@ -518,6 +668,150 @@ describe("vdt-store change-set workflow", () => {
     expect(state.pendingChangeSet).toBeUndefined();
     expect(state.changeSetSelection.size).toBe(0);
     expect(state.aiActionError).toBeUndefined();
+  });
+
+  it("addManualIncomingKpi creates an editable incoming KPI under the selected node", () => {
+    const initialNodeCount = useVdtStudioStore.getState().project.graph.nodes.length;
+
+    useVdtStudioStore.getState().addManualIncomingKpi("calendar_time");
+
+    const state = useVdtStudioStore.getState();
+    const parent = state.project.graph.nodes.find((node) => node.id === "calendar_time");
+    const added = state.project.graph.nodes.find((node) => node.id === parent?.formula);
+    const edge = state.project.graph.edges.find((candidate) => candidate.targetNodeId === added?.id);
+
+    expect(state.project.graph.nodes.length).toBe(initialNodeCount + 1);
+    expect(parent).toMatchObject({
+      type: "calculated",
+      status: "edited"
+    });
+    expect(added).toMatchObject({
+      name: "New incoming KPI",
+      type: "input",
+      status: "edited",
+      unit: "hours/month",
+      aiGenerated: false
+    });
+    expect(edge).toMatchObject({
+      sourceNodeId: "calendar_time",
+      targetNodeId: added?.id,
+      relation: "formula_dependency",
+      aiGenerated: false
+    });
+    expect(state.selectedNodeId).toBe(added?.id);
+    expect(state.selectedPanelTab).toBe("properties");
+  });
+
+  it("requestIncomingKpisWithAi posts a selected-node instruction into the active agent chat", async () => {
+    const runId = "agent-run-incoming-kpis";
+    let capturedMessageBody: unknown;
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/api/agent/runs/${runId}/messages`)) {
+        capturedMessageBody = JSON.parse(String(init?.body));
+        return jsonResponse({
+          ok: true,
+          snapshot: runtimeSnapshotFixture({
+            runId,
+            status: "running",
+            phase: "building_graph",
+            completedAt: undefined,
+            chatMessages: [
+              {
+                id: "msg-incoming-kpis",
+                runId,
+                role: "user",
+                kind: "instruction",
+                text: (capturedMessageBody as { text?: string }).text,
+                createdAt: "2026-06-24T10:00:00.000Z"
+              }
+            ]
+          })
+        });
+      }
+      return jsonResponse({ agents: [] });
+    });
+
+    useVdtStudioStore.setState({
+      activeAgentRunId: runId,
+      agentRun: runtimeSnapshotFixture({
+        runId,
+        status: "running",
+        phase: "building_graph",
+        completedAt: undefined
+      }) as VdtAgentRunSnapshot,
+      generateActivity: {
+        runId,
+        status: "running",
+        phase: "waiting_provider",
+        phaseStartedAt: "2026-06-27T00:00:00.000Z",
+        startedAt: "2026-06-27T00:00:00.000Z",
+        updatedAt: "2026-06-27T00:00:00.000Z",
+        providerId: "mock",
+        providerLabel: "Mock",
+        appMode: "development_web",
+        canCancel: true,
+        cancelRequested: false
+      }
+    });
+
+    const accepted = await useVdtStudioStore.getState().requestIncomingKpisWithAi("calendar_time");
+
+    expect(accepted).toBe(true);
+    expect(capturedMessageBody).toMatchObject({
+      type: "user_instruction",
+      selectedNodeId: "calendar_time",
+      text: expect.stringContaining('Add incoming KPI drivers for "Calendar Time".')
+    });
+    expect((capturedMessageBody as { text?: string }).text).toContain("set or update the formula");
+    expect(useVdtStudioStore.getState().selectedNodeId).toBe("calendar_time");
+  });
+
+  it("requestIncomingKpisWithAi starts a project-aware agent chat when no active run can continue", async () => {
+    const fetchMock = vi.mocked(fetch);
+    let capturedStartBody: Record<string, unknown> | undefined;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/agent/runs")) {
+        capturedStartBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse({
+          ok: true,
+          runId: "agent-run-continue-project",
+          snapshot: runtimeSnapshotFixture({
+            runId: "agent-run-continue-project",
+            status: "running",
+            phase: "building_graph",
+            completedAt: undefined,
+            request: capturedStartBody
+          })
+        });
+      }
+      return jsonResponse({ agents: [] });
+    });
+
+    useVdtStudioStore.setState({
+      activeAgentRunId: undefined,
+      agentRun: undefined,
+      generateActivity: undefined,
+      executionSettings: {
+        ...DEFAULT_EXECUTION_SETTINGS,
+        executionMode: "byok",
+        gatewayPresetId: "openai-default",
+        apiKey: "test-api-key"
+      }
+    });
+
+    const accepted = await useVdtStudioStore.getState().requestIncomingKpisWithAi("calendar_time");
+
+    const input = capturedStartBody?.input as { project?: { id?: string }; selectedNodeId?: string; prompt?: string };
+    expect(accepted).toBe(true);
+    expect(capturedStartBody).toMatchObject({
+      mode: "continue_project"
+    });
+    expect(input.selectedNodeId).toBe("calendar_time");
+    expect(input.project?.id).toBe(productionVolumeProject.id);
+    expect(input.prompt).toContain('Add incoming KPI drivers for "Calendar Time".');
   });
 
   it("restoreVersionSnapshot reverts graph and discards pending change set", () => {
@@ -832,82 +1126,25 @@ describe("vdt-store cli rescan", () => {
     expect(useVdtStudioStore.getState().cliTestStatusByAgent.codex?.kind).toBe("success");
   });
 
-  it("generates with Cursor Agent through desktop sidecar without standalone pairing", async () => {
+  it("starts Cursor Agent generation through the canonical agent run without standalone pairing", async () => {
     vi.stubEnv("NEXT_PUBLIC_VDT_APP_MODE", "desktop");
-    const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
-    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
-      expect(command).toBe("ai_complete");
-      expect(JSON.stringify(args)).not.toContain("pairingToken");
-      expect(args?.request).toMatchObject({
-        providerId: "local_runner",
-        backendId: "cursor_subscription",
-        taskType: "generate_tree",
-        schemaId: "generate-tree-v1",
-        timeoutMs: 120_000
-      });
-      return {
-        output: {
-          projectTitle: "Revenue Value Driver Tree",
-          rootNodeId: "revenue",
-          nodes: [
-            {
-              id: "revenue",
-              name: "Revenue",
-              description: "Total business revenue.",
-              type: "root_kpi",
-              unit: "USD/month",
-              aiConfidence: 0.9,
-              aiRationale: "Revenue is the requested root KPI.",
-              controllability: "medium",
-              materiality: "high"
-            },
-            {
-              id: "price",
-              name: "Price",
-              description: "Average selling price.",
-              type: "input",
-              unit: "USD/unit",
-              aiConfidence: 0.8,
-              aiRationale: "Price directly affects revenue.",
-              controllability: "medium",
-              materiality: "high"
-            },
-            {
-              id: "volume",
-              name: "Volume",
-              description: "Units sold.",
-              type: "input",
-              unit: "units/month",
-              aiConfidence: 0.8,
-              aiRationale: "Volume directly affects revenue.",
-              controllability: "high",
-              materiality: "high"
-            }
-          ],
-          edges: [
-            {
-              id: "edge_revenue_price",
-              sourceNodeId: "revenue",
-              targetNodeId: "price",
-              relation: "multiplicative_driver",
-              aiConfidence: 0.8
-            },
-            {
-              id: "edge_revenue_volume",
-              sourceNodeId: "revenue",
-              targetNodeId: "volume",
-              relation: "multiplicative_driver",
-              aiConfidence: 0.8
-            }
-          ],
-          assumptions: [],
-          questionsForUser: [],
-          warnings: []
-        }
-      };
+    const fetchMock = vi.mocked(fetch);
+    let capturedBody: Record<string, unknown> | undefined;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/agent/runs")) {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse({
+          ok: true,
+          runId: "agent-run-cursor",
+          snapshot: runtimeSnapshotFixture({
+            runId: "agent-run-cursor",
+            request: capturedBody
+          })
+        });
+      }
+      return jsonResponse({ agents: [] });
     });
-
-    vi.stubGlobal("__TAURI__", { core: { invoke } });
 
     try {
       useVdtStudioStore.setState({
@@ -942,94 +1179,43 @@ describe("vdt-store cli rescan", () => {
 
       await useVdtStudioStore.getState().generateWithAi();
 
-      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(capturedBody).toMatchObject({
+        mode: "generate_vdt",
+        providerId: "local_runner",
+        providerConfig: expect.objectContaining({
+          backendId: "cursor_subscription",
+          timeoutMs: 60_000
+        })
+      });
+      expect(JSON.stringify(capturedBody)).not.toContain("pairingToken");
       const state = useVdtStudioStore.getState();
       expect(state.aiError).toBeUndefined();
-      expect(state.project.name).toBe("Revenue Value Driver Tree");
-      expect(state.project.rootNodeId).toBe("revenue");
+      expect(state.agentRun?.runId).toBe("agent-run-cursor");
       expect(state.isGenerating).toBe(false);
     } finally {
       vi.unstubAllEnvs();
-      vi.stubGlobal("__TAURI__", previousTauri);
     }
   });
 
-  it("generates with Codex CLI through desktop sidecar without standalone pairing", async () => {
+  it("starts Codex CLI generation through the canonical agent run without standalone pairing", async () => {
     vi.stubEnv("NEXT_PUBLIC_VDT_APP_MODE", "desktop");
-    const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
-    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
-      expect(command).toBe("ai_complete");
-      expect(JSON.stringify(args)).not.toContain("pairingToken");
-      expect(args?.request).toMatchObject({
-        providerId: "local_runner",
-        backendId: "codex_subscription",
-        taskType: "generate_tree",
-        schemaId: "generate-tree-v1",
-        timeoutMs: 120_000
-      });
-      return {
-        output: {
-          projectTitle: "Revenue Value Driver Tree",
-          rootNodeId: "revenue",
-          nodes: [
-            {
-              id: "revenue",
-              name: "Revenue",
-              description: "Total business revenue.",
-              type: "root_kpi",
-              unit: "USD/month",
-              aiConfidence: 0.9,
-              aiRationale: "Revenue is the requested root KPI.",
-              controllability: "medium",
-              materiality: "high"
-            },
-            {
-              id: "price",
-              name: "Price",
-              description: "Average selling price.",
-              type: "input",
-              unit: "USD/unit",
-              aiConfidence: 0.8,
-              aiRationale: "Price directly affects revenue.",
-              controllability: "medium",
-              materiality: "high"
-            },
-            {
-              id: "volume",
-              name: "Volume",
-              description: "Units sold.",
-              type: "input",
-              unit: "units/month",
-              aiConfidence: 0.8,
-              aiRationale: "Volume directly affects revenue.",
-              controllability: "high",
-              materiality: "high"
-            }
-          ],
-          edges: [
-            {
-              id: "edge_revenue_price",
-              sourceNodeId: "revenue",
-              targetNodeId: "price",
-              relation: "multiplicative_driver",
-              aiConfidence: 0.8
-            },
-            {
-              id: "edge_revenue_volume",
-              sourceNodeId: "revenue",
-              targetNodeId: "volume",
-              relation: "multiplicative_driver",
-              aiConfidence: 0.8
-            }
-          ],
-          assumptions: [],
-          questionsForUser: [],
-          warnings: []
-        }
-      };
+    const fetchMock = vi.mocked(fetch);
+    let capturedBody: Record<string, unknown> | undefined;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/agent/runs")) {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse({
+          ok: true,
+          runId: "agent-run-codex",
+          snapshot: runtimeSnapshotFixture({
+            runId: "agent-run-codex",
+            request: capturedBody
+          })
+        });
+      }
+      return jsonResponse({ agents: [] });
     });
-
-    vi.stubGlobal("__TAURI__", { core: { invoke } });
 
     try {
       useVdtStudioStore.setState({
@@ -1064,15 +1250,21 @@ describe("vdt-store cli rescan", () => {
 
       await useVdtStudioStore.getState().generateWithAi();
 
-      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(capturedBody).toMatchObject({
+        mode: "generate_vdt",
+        providerId: "local_runner",
+        providerConfig: expect.objectContaining({
+          backendId: "codex_subscription",
+          timeoutMs: 60_000
+        })
+      });
+      expect(JSON.stringify(capturedBody)).not.toContain("pairingToken");
       const state = useVdtStudioStore.getState();
       expect(state.aiError).toBeUndefined();
-      expect(state.project.name).toBe("Revenue Value Driver Tree");
-      expect(state.project.rootNodeId).toBe("revenue");
+      expect(state.agentRun?.runId).toBe("agent-run-codex");
       expect(state.isGenerating).toBe(false);
     } finally {
       vi.unstubAllEnvs();
-      vi.stubGlobal("__TAURI__", previousTauri);
     }
   });
 
@@ -1109,18 +1301,10 @@ describe("vdt-store cli rescan", () => {
 
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/api/ai/dev-runtime")) {
-        return {
-          ok: false,
-          status: 502,
-          json: async () => ({ ok: false, error: providerMessage })
-        } as Response;
+      if (url.endsWith("/api/agent/runs")) {
+        return jsonResponse({ ok: false, error: providerMessage }, 502);
       }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ agents: [] })
-      } as Response;
+      return jsonResponse({ agents: [] });
     });
 
     await useVdtStudioStore.getState().generateWithAi();
@@ -1129,7 +1313,7 @@ describe("vdt-store cli rescan", () => {
     expect(state.aiError).toContain(providerMessage);
     expect(state.isGenerating).toBe(false);
 
-    const generateCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/ai/dev-runtime"));
+    const generateCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/agent/runs"));
     expect(generateCall).toBeDefined();
   });
 
@@ -1151,7 +1335,16 @@ describe("vdt-store generate activity", () => {
       vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ ok: true, project: cloneProject(productionVolumeProject), agentRun: agentRunFixture() })
+        text: async () => JSON.stringify({
+          ok: true,
+          runId: "agent-run-store-1",
+          snapshot: runtimeSnapshotFixture()
+        }),
+        json: async () => ({
+          ok: true,
+          runId: "agent-run-store-1",
+          snapshot: runtimeSnapshotFixture()
+        })
       })
     );
     useVdtStudioStore.setState({
@@ -1198,49 +1391,162 @@ describe("vdt-store generate activity", () => {
     expect(state.generateActivity?.summary).toBe("Validation result: Graph validation passed.");
   });
 
-  it("updates generate activity from client onProgress runtime events", async () => {
+  it("stores agent runtime snapshots in chat history using the first user message as the title", () => {
+    const runId = "agent-run-history";
+    useVdtStudioStore.getState().applyAgentGraphPatch(runtimeSnapshotFixture({
+      runId,
+      updatedAt: "2026-06-24T10:10:00.000Z",
+      completedAt: "2026-06-24T10:10:00.000Z",
+      chatMessages: [
+        {
+          id: "msg-history-user",
+          runId,
+          role: "user",
+          kind: "instruction",
+          text: "Build annual ore production for excavators",
+          createdAt: "2026-06-24T10:00:00.000Z"
+        },
+        {
+          id: "msg-history-agent",
+          runId,
+          role: "assistant",
+          kind: "assistant_message",
+          text: "I will use the fleet as the starting scope.",
+          createdAt: "2026-06-24T10:00:01.000Z"
+        }
+      ]
+    }) as VdtAgentRunSnapshot);
+
+    const state = useVdtStudioStore.getState();
+    expect(state.agentChatHistory).toHaveLength(1);
+    expect(state.agentChatHistory[0]).toMatchObject({
+      runId,
+      title: "Build annual ore production for excavators",
+      status: "ready",
+      messageCount: 2
+    });
+    expect(state.agentChatHistory[0]?.activity.agentChatMessages).toHaveLength(2);
+  });
+
+  it("starts a new agent chat by archiving the current transcript and clearing the panel", () => {
+    const runId = "agent-run-new-chat";
+    useVdtStudioStore.getState().applyAgentGraphPatch(runtimeSnapshotFixture({
+      runId,
+      chatMessages: [
+        {
+          id: "msg-new-chat-user",
+          runId,
+          role: "user",
+          kind: "instruction",
+          text: "Create a drilling VDT",
+          createdAt: "2026-06-24T10:00:00.000Z"
+        }
+      ]
+    }) as VdtAgentRunSnapshot);
+
+    const accepted = useVdtStudioStore.getState().startNewAgentChat();
+
+    const state = useVdtStudioStore.getState();
+    expect(accepted).toBe(true);
+    expect(state.generateActivity).toBeUndefined();
+    expect(state.activeAgentRunId).toBeUndefined();
+    expect(state.agentRun).toBeUndefined();
+    expect(state.agentChatHistory[0]).toMatchObject({
+      runId,
+      title: "Create a drilling VDT"
+    });
+  });
+
+  it("opens an archived agent chat back into the visible agent panel", () => {
+    const runId = "agent-run-open-history";
+    useVdtStudioStore.getState().applyAgentGraphPatch(runtimeSnapshotFixture({
+      runId,
+      chatMessages: [
+        {
+          id: "msg-open-history-user",
+          runId,
+          role: "user",
+          kind: "instruction",
+          text: "Compare monthly crusher throughput",
+          createdAt: "2026-06-24T10:00:00.000Z"
+        }
+      ]
+    }) as VdtAgentRunSnapshot);
+    expect(useVdtStudioStore.getState().startNewAgentChat()).toBe(true);
+
+    const opened = useVdtStudioStore.getState().openAgentChat(runId);
+
+    const state = useVdtStudioStore.getState();
+    expect(opened).toBe(true);
+    expect(state.generateActivity).toMatchObject({
+      runId,
+      status: "ready",
+      agentChatMessages: expect.arrayContaining([
+        expect.objectContaining({ text: "Compare monthly crusher throughput" })
+      ])
+    });
+    expect(state.agentRun?.runId).toBe(runId);
+    expect(state.isGenerating).toBe(false);
+  });
+
+  it("starts a new chat from a running agent chat by keeping the running chat in history", () => {
+    const runId = "agent-run-history-running";
+    useVdtStudioStore.getState().applyAgentGraphPatch(runtimeSnapshotFixture({
+      runId,
+      status: "running",
+      phase: "building_graph",
+      project: undefined,
+      finalReport: undefined,
+      completedAt: undefined,
+      publicStatus: {
+        phase: "building_draft",
+        message: "Building the draft.",
+        updatedAt: "2026-06-24T10:00:05.000Z"
+      },
+      chatMessages: [
+        {
+          id: "msg-running-user",
+          runId,
+          role: "user",
+          kind: "instruction",
+          text: "Build a live model",
+          createdAt: "2026-06-24T10:00:00.000Z"
+        }
+      ]
+    }) as VdtAgentRunSnapshot);
+
+    const accepted = useVdtStudioStore.getState().startNewAgentChat();
+
+    const state = useVdtStudioStore.getState();
+    expect(accepted).toBe(true);
+    expect(state.generateActivity).toBeUndefined();
+    expect(state.isGenerating).toBe(false);
+    expect(state.agentChatHistory[0]).toMatchObject({
+      runId,
+      status: "running",
+      title: "Build a live model"
+    });
+    expect(state.aiError).toBeUndefined();
+  });
+
+  it("starts local CLI generation as an agent run and applies the returned snapshot", async () => {
     const fetchMock = vi.mocked(fetch);
-    let runtimeRequestId = "";
+    let capturedStartBody: Record<string, unknown> | undefined;
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/ai/dev-runtime")) {
-        const body = JSON.parse(String(init?.body)) as {
-          operation?: string;
-          request?: { requestId?: string; backendId?: string; taskType?: string; schemaId?: string };
-        };
-        runtimeRequestId = body.request?.requestId ?? "";
-        return {
+      if (url.endsWith("/api/agent/runs")) {
+        capturedStartBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse({
           ok: true,
-          status: 200,
-          json: async () => ({
-            ok: true,
-            output: cloneProject(productionVolumeProject),
-            run: {
-              requestId: runtimeRequestId,
-              backendId: body.request?.backendId,
-              taskType: body.request?.taskType,
-              schemaId: body.request?.schemaId,
-              status: "running",
-              progress: {
-                phase: "repairing_output",
-                label: "Repairing output",
-                updatedAt: "2026-06-24T10:00:04.000Z"
-              },
-              outputBytes: 4096,
-              schemaValid: true,
-              repairAttempted: true,
-              repairSucceeded: true,
-              agentRun: agentRunFixture()
-            }
+          runId: "agent-run-local-cli",
+          snapshot: runtimeSnapshotFixture({
+            runId: "agent-run-local-cli",
+            request: capturedStartBody
           })
-        } as Response;
+        });
       }
 
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ agents: [] })
-      } as Response;
+      return jsonResponse({ agents: [] });
     });
 
     useVdtStudioStore.setState({
@@ -1275,21 +1581,23 @@ describe("vdt-store generate activity", () => {
     await useVdtStudioStore.getState().generateWithAi();
 
     const activity = useVdtStudioStore.getState().generateActivity;
-    expect(runtimeRequestId).toBeTruthy();
+    expect(capturedStartBody).toMatchObject({
+      mode: "generate_vdt",
+      providerId: "local_runner",
+      providerConfig: expect.objectContaining({
+        backendId: "codex_subscription",
+        timeoutMs: 60_000
+      })
+    });
     expect(activity).toMatchObject({
       status: "ready",
       phase: "ready",
-      requestId: runtimeRequestId,
       backendId: "codex_subscription",
-      schemaId: "generate-tree-v1",
-      outputBytes: 4096,
-      schemaValid: true,
-      repairAttempted: true,
-      repairSucceeded: true
+      canCancel: false
     });
     expect(activity?.summary).toBe("Validation result: Graph validation passed.");
     expect(activity?.agentRun).toMatchObject({
-      runId: "agent-run-store-1",
+      runId: "agent-run-local-cli",
       status: "succeeded",
       selectedSkills: expect.arrayContaining([expect.objectContaining({ id: "mining.production_volume" })])
     });
@@ -1298,68 +1606,69 @@ describe("vdt-store generate activity", () => {
       "final_report"
     ]));
     expect(activity?.finalReport).toBe("Validation result: Graph validation passed.");
-    expect(activity?.details).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "request-prepared", status: "complete" }),
-      expect.objectContaining({ id: "backend-started", status: "complete" }),
-      expect.objectContaining({ id: "provider-request", status: "complete" }),
-      expect.objectContaining({ id: "schema-validation", status: "complete" }),
-      expect.objectContaining({ id: "canvas-build", status: "complete" })
-    ]));
   });
 
   it("keeps needs_user_input status and questions from runtime agentRun snapshots", async () => {
+    stubEventSource();
     const fetchMock = vi.mocked(fetch);
-    let runtimeRequestId = "";
-    let capturedSignal: AbortSignal | undefined;
+    let capturedStartBody: Record<string, unknown> | undefined;
+    let cancelRequested = false;
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/ai/dev-runtime")) {
-        const body = JSON.parse(String(init?.body)) as {
-          operation?: string;
-          requestId?: string;
-          request?: { requestId?: string; backendId?: string; taskType?: string; schemaId?: string };
-        };
-        if (body.operation === "run") {
-          return {
-            ok: true,
-            status: 200,
-            json: async () => ({
-              ok: true,
-              run: {
-                requestId: body.requestId,
-                backendId: "codex_subscription",
-                taskType: "generate_tree",
-                schemaId: "generate-tree-v1",
-                status: "running",
-                progress: {
-                  phase: "waiting_for_provider",
-                  label: "Waiting for CLI/provider",
-                  updatedAt: "2026-06-24T10:00:03.000Z"
-                },
-                agentRun: agentRunFixture({
-                  status: "needs_user_input",
-                  phase: "asking_clarifying_questions",
-                  questionsForUser: ["What is the rated truck payload?"],
-                  finalReport: undefined
-                })
+      if (url.endsWith("/api/agent/runs")) {
+        capturedStartBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse({
+          ok: true,
+          runId: "agent-run-needs-input",
+          snapshot: runtimeSnapshotFixture({
+            runId: "agent-run-needs-input",
+            status: "needs_user_input",
+            phase: "asking_clarifying_questions",
+            request: capturedStartBody,
+            project: undefined,
+            finalReport: undefined,
+            pendingQuestions: [
+              {
+                id: "rated_truck_payload",
+                question: "What is the rated truck payload?",
+                reason: "Needed to calculate haulage capacity.",
+                required: true
               }
-            })
-          } as Response;
-        }
-        runtimeRequestId = body.request?.requestId ?? "";
-        capturedSignal = init?.signal ?? undefined;
-        return await new Promise<Response>((_resolve, reject) => {
-          capturedSignal?.addEventListener("abort", () => {
-            reject(new DOMException("The operation was aborted.", "AbortError"));
-          });
+            ],
+            publicStatus: {
+              phase: "waiting_user",
+              message: "Waiting for your answer.",
+              updatedAt: "2026-06-24T10:00:05.000Z"
+            },
+            completedAt: undefined
+          })
+        });
+      }
+      if (url.endsWith("/api/agent/runs/agent-run-needs-input/cancel")) {
+        cancelRequested = true;
+        return jsonResponse({ ok: true });
+      }
+      if (url.endsWith("/api/agent/runs/agent-run-needs-input")) {
+        return jsonResponse({
+          ok: true,
+          snapshot: runtimeSnapshotFixture({
+            runId: "agent-run-needs-input",
+            status: "cancelled",
+            phase: "asking_clarifying_questions",
+            request: capturedStartBody,
+            project: undefined,
+            finalReport: undefined,
+            publicStatus: {
+              phase: "retryable_error",
+              message: "Agent run cancelled.",
+              updatedAt: "2026-06-24T10:00:06.000Z"
+            },
+            completedAt: "2026-06-24T10:00:06.000Z"
+          })
         });
       }
 
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ agents: [] })
-      } as Response;
+      return jsonResponse({ agents: [] });
     });
 
     useVdtStudioStore.setState({
@@ -1391,8 +1700,11 @@ describe("vdt-store generate activity", () => {
       }
     });
 
-    const generatePromise = useVdtStudioStore.getState().generateWithAi();
-    await vi.waitFor(() => expect(runtimeRequestId).toMatch(/^[0-9a-f-]+$/));
+    await useVdtStudioStore.getState().generateWithAi();
+    expect(capturedStartBody).toMatchObject({
+      mode: "generate_vdt",
+      providerId: "local_runner"
+    });
     await vi.waitFor(() => expect(useVdtStudioStore.getState().generateActivity?.status).toBe("needs_user_input"));
 
     const activity = useVdtStudioStore.getState().generateActivity;
@@ -1401,88 +1713,106 @@ describe("vdt-store generate activity", () => {
     expect(activity?.canCancel).toBe(true);
 
     useVdtStudioStore.getState().cancelGenerate();
-    await generatePromise;
-    expect(capturedSignal?.aborted).toBe(true);
+    await vi.waitFor(() => expect(cancelRequested).toBe(true));
+    await vi.waitFor(() => expect(useVdtStudioStore.getState().generateActivity?.status).toBe("cancelled"));
   });
 
-  it("aborts an active generate request through cancelGenerate", async () => {
-    let capturedSignal: AbortSignal | undefined;
+  it("cancels an active agent run through cancelGenerate", async () => {
+    stubEventSource();
+    let cancelRequested = false;
     const fetchMock = vi.mocked(fetch);
-    fetchMock.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      capturedSignal = init?.signal ?? undefined;
-      return await new Promise<Response>((_resolve, reject) => {
-        capturedSignal?.addEventListener("abort", () => {
-          reject(new DOMException("The operation was aborted.", "AbortError"));
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/agent/runs")) {
+        return jsonResponse({
+          ok: true,
+          runId: "agent-run-cancel",
+          snapshot: runtimeSnapshotFixture({
+            runId: "agent-run-cancel",
+            status: "running",
+            phase: "building_graph",
+            finalReport: undefined,
+            project: undefined,
+            publicStatus: {
+              phase: "building_draft",
+              message: "Building the next visible layer.",
+              updatedAt: "2026-06-24T10:00:05.000Z"
+            },
+            completedAt: undefined
+          })
         });
-      });
+      }
+      if (url.endsWith("/api/agent/runs/agent-run-cancel/cancel")) {
+        cancelRequested = true;
+        return jsonResponse({ ok: true });
+      }
+      if (url.endsWith("/api/agent/runs/agent-run-cancel")) {
+        return jsonResponse({
+          ok: true,
+          snapshot: runtimeSnapshotFixture({
+            runId: "agent-run-cancel",
+            status: "cancelled",
+            phase: "building_graph",
+            finalReport: undefined,
+            project: undefined,
+            publicStatus: {
+              phase: "retryable_error",
+              message: "Agent run cancelled.",
+              updatedAt: "2026-06-24T10:00:06.000Z"
+            },
+            completedAt: "2026-06-24T10:00:06.000Z"
+          })
+        });
+      }
+      return jsonResponse({ agents: [] });
     });
 
-    const generatePromise = useVdtStudioStore.getState().generateWithAi();
+    await useVdtStudioStore.getState().generateWithAi();
     await vi.waitFor(() => expect(useVdtStudioStore.getState().generateActivity?.status).toBe("running"));
 
     useVdtStudioStore.getState().cancelGenerate();
     expect(useVdtStudioStore.getState().generateActivity).toMatchObject({
-      status: "cancelled",
+      status: "running",
       cancelRequested: true,
       canCancel: false,
-      message: "Generation cancelled."
+      message: "Cancelling agent run..."
     });
-    await generatePromise;
+    await vi.waitFor(() => expect(cancelRequested).toBe(true));
+    await vi.waitFor(() => expect(useVdtStudioStore.getState().generateActivity?.status).toBe("cancelled"));
 
     const state = useVdtStudioStore.getState();
-    expect(capturedSignal?.aborted).toBe(true);
     expect(state.isGenerating).toBe(false);
     expect(state.aiError).toBeUndefined();
     expect(state.generateActivity).toMatchObject({
       status: "cancelled",
-      cancelRequested: true,
       canCancel: false,
-      message: "Generation cancelled."
+      message: "Cancelling agent run..."
     });
   });
 
-  it("does not apply a late successful completion after cancelGenerate", async () => {
-    let capturedSignal: AbortSignal | undefined;
-    let resolveFetch: ((response: Response) => void) | undefined;
-    const lateProject = {
-      ...cloneProject(productionVolumeProject),
-      id: "late_project",
-      name: "Late Cancelled Project",
-      rootNodeId: productionVolumeProject.rootNodeId
-    };
+  it("does not call the deprecated one-shot generate endpoint", async () => {
     const fetchMock = vi.mocked(fetch);
-    fetchMock.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      capturedSignal = init?.signal ?? undefined;
-      return await new Promise<Response>((resolve) => {
-        resolveFetch = resolve;
-      });
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/agent/runs")) {
+        const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse({
+          ok: true,
+          runId: "agent-run-no-legacy",
+          snapshot: runtimeSnapshotFixture({
+            runId: "agent-run-no-legacy",
+            request
+          })
+        });
+      }
+      return jsonResponse({ agents: [] });
     });
 
-    const initialProjectId = useVdtStudioStore.getState().project.id;
-    const initialProjectName = useVdtStudioStore.getState().project.name;
-    const generatePromise = useVdtStudioStore.getState().generateWithAi();
-    await vi.waitFor(() => expect(useVdtStudioStore.getState().generateActivity?.status).toBe("running"));
+    await useVdtStudioStore.getState().generateWithAi();
 
-    useVdtStudioStore.getState().cancelGenerate();
-    expect(capturedSignal?.aborted).toBe(true);
-    resolveFetch?.({
-      ok: true,
-      status: 200,
-      json: async () => ({ ok: true, project: lateProject, agentRun: agentRunFixture() })
-    } as Response);
-    await generatePromise;
-
-    const state = useVdtStudioStore.getState();
-    expect(state.isGenerating).toBe(false);
-    expect(state.project.id).toBe(initialProjectId);
-    expect(state.project.name).toBe(initialProjectName);
-    expect(state.project.name).not.toBe("Late Cancelled Project");
-    expect(state.generateActivity).toMatchObject({
-      status: "cancelled",
-      cancelRequested: true,
-      canCancel: false,
-      message: "Generation cancelled."
-    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/ai/generate-vdt"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/ai/dev-runtime"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/api/agent/runs"))).toBe(true);
   });
 });
 

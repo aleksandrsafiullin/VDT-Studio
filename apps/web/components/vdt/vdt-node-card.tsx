@@ -1,10 +1,14 @@
 "use client";
 
+import type { MouseEvent } from "react";
 import type { NodeProps } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
 import type { VdtNode } from "@vdt-studio/vdt-core";
 import { clsx } from "clsx";
+import { GitBranchPlus, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
+import { Tooltip } from "@/components/ui/tooltip";
 import { formatChange, formatNumber, formatPercent } from "@/lib/format";
 import { getNodeTypeIcon, VdtIcon } from "./vdt-icons";
 
@@ -25,6 +29,8 @@ export interface VdtNodeCardData extends Record<string, unknown> {
   rootScenarioEffect?: { absoluteChange?: number | undefined; percentageChange?: number | undefined } | undefined;
   highlighted?: boolean | undefined;
   onSelect?: ((nodeId: string) => void) | undefined;
+  onAddManualIncomingKpi?: ((nodeId: string) => void) | undefined;
+  onAddAiIncomingKpis?: ((nodeId: string) => void) | undefined;
 }
 
 function ValueRow({
@@ -69,9 +75,12 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
   const effectDiffers =
     rootScenarioEffect?.absoluteChange !== undefined &&
     Math.abs(rootScenarioEffect.absoluteChange) > VALUE_EPSILON;
+  const stopActionEvent = (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+  };
 
   return (
-    <div className="flex w-[238px] flex-col gap-2">
+    <div className="relative flex w-[238px] flex-col gap-2">
       <div
         className={[
           "min-h-[80px] rounded-lg border bg-white px-3 py-2 shadow-node transition",
@@ -116,6 +125,44 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
           />
         ) : null}
         <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-accent" />
+      </div>
+      <div className="absolute -right-14 top-1/2 z-30 flex h-24 w-14 -translate-y-1/2 items-center justify-end opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100">
+        <div className="nodrag nopan flex flex-col gap-1 rounded-md border border-line bg-white p-1 shadow-lg">
+          <Tooltip label="Add incoming KPI manually" className="block">
+            <Button
+              type="button"
+              size="icon"
+              variant="secondary"
+              className="h-8 w-8"
+              icon={<GitBranchPlus className="h-4 w-4" />}
+              aria-label={`Add incoming KPI manually for ${node.name}`}
+              data-testid="node-add-manual-incoming-kpi"
+              disabled={!nodeData.onAddManualIncomingKpi}
+              onMouseDown={stopActionEvent}
+              onClick={(event) => {
+                stopActionEvent(event);
+                nodeData.onAddManualIncomingKpi?.(node.id);
+              }}
+            />
+          </Tooltip>
+          <Tooltip label="Add incoming KPIs with AI" className="block">
+            <Button
+              type="button"
+              size="icon"
+              variant="primary"
+              className="h-8 w-8"
+              icon={<Sparkles className="h-4 w-4" />}
+              aria-label={`Add incoming KPIs with AI for ${node.name}`}
+              data-testid="node-add-ai-incoming-kpis"
+              disabled={!nodeData.onAddAiIncomingKpis}
+              onMouseDown={stopActionEvent}
+              onClick={(event) => {
+                stopActionEvent(event);
+                nodeData.onAddAiIncomingKpis?.(node.id);
+              }}
+            />
+          </Tooltip>
+        </div>
       </div>
       {isRootKpi && rootScenarioEffect ? (
         <div

@@ -390,15 +390,13 @@ describe("AiExecutionClient", () => {
     expect(events.every((event) => event.requestId === completionRequestId)).toBe(true);
   });
 
-  it("propagates agentRun from the generate-vdt API response", async () => {
-    const project = { id: "project-1", rootNodeId: "root", graph: { nodes: [], edges: [] } };
+  it("surfaces the deprecated generate-vdt API response for hosted generateTree calls", async () => {
     const events: AiExecutionProgressEvent[] = [];
     const fetcher = vi.fn(async () =>
       jsonResponse({
-        ok: true,
-        project,
-        agentRun: agentRunFixture()
-      })
+        ok: false,
+        error: "Project generation has moved to /api/agent/runs."
+      }, { status: 410 })
     );
 
     await expect(
@@ -415,12 +413,12 @@ describe("AiExecutionClient", () => {
         },
         { onProgress: (event) => events.push(event) }
       )
-    ).resolves.toEqual(project);
+    ).rejects.toThrow("/api/agent/runs");
 
-    expect(events.find((event) => event.phase === "complete")?.agentRun).toMatchObject({
-      runId: "agent-run-1",
-      finalReport: "Validation result: Graph validation passed.",
-      selectedSkills: expect.arrayContaining([expect.objectContaining({ id: "mining.production_volume" })])
+    expect(events.at(-1)).toMatchObject({
+      phase: "error",
+      status: "failed",
+      error: { message: expect.stringContaining("/api/agent/runs") }
     });
   });
 
@@ -614,23 +612,28 @@ describe("AiExecutionClient", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("keeps desktop BYOK generation on the hosted API route", async () => {
-    const fetcher = vi.fn(async () => jsonResponse({ ok: true, project: { id: "project-1" } }));
+  it("surfaces deprecation for desktop BYOK generateTree calls", async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse(
+        { ok: false, error: "Project generation has moved to /api/agent/runs." },
+        { status: 410 }
+      )
+    );
     const invoke = vi.fn();
 
-    const project = await new DesktopAiExecutionClient(fetcher as unknown as typeof fetch, invoke).generateTree({
-      providerId: "openai_compatible",
-      providerConfig: { model: "gpt-test" },
-      rootKpi: "Production Volume",
-      industry: "Mining",
-      businessContext: "Test",
-      unit: "tonnes",
-      timePeriod: "monthly",
-      goal: "Test",
-      levelOfDetail: "medium"
-    });
+    await expect(new DesktopAiExecutionClient(fetcher as unknown as typeof fetch, invoke).generateTree({
+        providerId: "openai_compatible",
+        providerConfig: { model: "gpt-test" },
+        rootKpi: "Production Volume",
+        industry: "Mining",
+        businessContext: "Test",
+        unit: "tonnes",
+        timePeriod: "monthly",
+        goal: "Test",
+        levelOfDetail: "medium"
+      })
+    ).rejects.toThrow("/api/agent/runs");
 
-    expect(project).toEqual({ id: "project-1" });
     expect(invoke).not.toHaveBeenCalled();
     expect(fetcher).toHaveBeenCalledWith(
       "/api/ai/generate-vdt",
@@ -638,9 +641,14 @@ describe("AiExecutionClient", () => {
     );
   });
 
-  it("keeps BYOK generation on the hosted API route", async () => {
-    const fetcher = vi.fn(async () => jsonResponse({ ok: true, project: { id: "project-1" } }));
-    const project = await createAiExecutionClient("hosted_web", fetcher as unknown as typeof fetch).generateTree({
+  it("surfaces deprecation for hosted BYOK generateTree calls", async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse(
+        { ok: false, error: "Project generation has moved to /api/agent/runs." },
+        { status: 410 }
+      )
+    );
+    await expect(createAiExecutionClient("hosted_web", fetcher as unknown as typeof fetch).generateTree({
       providerId: "openai_compatible",
       providerConfig: { model: "gpt-test" },
       rootKpi: "Production Volume",
@@ -650,9 +658,8 @@ describe("AiExecutionClient", () => {
       timePeriod: "monthly",
       goal: "Test",
       levelOfDetail: "medium"
-    });
+    })).rejects.toThrow("/api/agent/runs");
 
-    expect(project).toEqual({ id: "project-1" });
     expect(fetcher).toHaveBeenCalledWith(
       "/api/ai/generate-vdt",
       expect.objectContaining({
@@ -662,9 +669,14 @@ describe("AiExecutionClient", () => {
     );
   });
 
-  it("emits non-streaming fallback progress for hosted BYOK generation", async () => {
+  it("emits failure progress for deprecated hosted BYOK generateTree calls", async () => {
     const events: AiExecutionProgressEvent[] = [];
-    const fetcher = vi.fn(async () => jsonResponse({ ok: true, project: { id: "project-1", rootNodeId: "root", graph: { nodes: [], edges: [] } } }));
+    const fetcher = vi.fn(async () =>
+      jsonResponse(
+        { ok: false, error: "Project generation has moved to /api/agent/runs." },
+        { status: 410 }
+      )
+    );
 
     await expect(createAiExecutionClient("hosted_web", fetcher as unknown as typeof fetch).generateTree(
       {
@@ -678,15 +690,15 @@ describe("AiExecutionClient", () => {
         levelOfDetail: "medium"
       },
       { onProgress: (event) => events.push(event) }
-    )).resolves.toMatchObject({ id: "project-1" });
+    )).rejects.toThrow("/api/agent/runs");
 
     expect(events.map((event) => event.phase)).toEqual([
       "preparing_request",
       "waiting_for_provider",
-      "building_project",
-      "complete"
+      "error"
     ]);
     expect(new Set(events.map((event) => event.requestId)).size).toBe(1);
+    expect(events.at(-1)?.error?.message).toContain("/api/agent/runs");
   });
 
   it("propagates hosted run-task agentRun through complete progress", async () => {

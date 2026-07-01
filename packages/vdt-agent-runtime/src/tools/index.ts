@@ -1,5 +1,6 @@
 import { ToolRegistry } from "../tool-registry";
 import { createAiTaskTools } from "./ai-task-tools";
+import { createExcavationTools } from "./excavation-tools";
 import { createFormulaTools } from "./formula-tools";
 import { createMemoryTools } from "./memory-tools";
 import { createProjectTools } from "./project-tools";
@@ -13,6 +14,7 @@ export function createDefaultToolRegistry(): ToolRegistry {
   const registry = new ToolRegistry();
   for (const tool of [
     ...createSkillTools(),
+    ...createExcavationTools(),
     ...createVdtBuilderTools(),
     ...createProjectTools(),
     ...createFormulaTools(),

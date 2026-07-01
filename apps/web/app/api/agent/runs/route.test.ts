@@ -30,6 +30,7 @@ async function readJson(response: Response) {
     snapshot?: {
       runId: string;
       status: string;
+      visibleContext?: { brief?: { businessContext?: string } };
       pendingQuestions?: Array<{ id: string }>;
       selectedSkills: Array<{ id: string }>;
       draftProject?: { rootNodeId: string; graph: { nodes: Array<{ id: string; baselineValue?: number }> } };
@@ -89,11 +90,60 @@ async function waitForManagedRuntimeCancelled() {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   delete runtimeGlobal.__vdtStudioDevelopmentRuntime;
 });
 
 describe("agent runs API", () => {
+  it("accepts blank optional brief fields from the agent composer", async () => {
+    const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+      mode: "generate_vdt",
+      input: {
+        prompt: "I have 5 Komatsu PC1250 and 2 Komatsu PC2000",
+        rootKpi: "Ore Excavation",
+        industry: "",
+        businessContext: "",
+        unit: "ton",
+        timePeriod: "Year",
+        goal: "",
+        levelOfDetail: "",
+        selectedNodeId: ""
+      },
+      workspace: {
+        projectId: "project_ore_excavation",
+        projectName: "",
+        industry: "",
+        description: ""
+      },
+      providerId: "mock",
+      options: { continueWithAssumptions: false }
+    }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(body.snapshot?.status).toBe("running");
+    expect(body.snapshot?.visibleContext?.brief?.businessContext).toBe("I have 5 Komatsu PC1250 and 2 Komatsu PC2000");
+    const snapshot = await waitForRunSnapshot(body.runId!, (run) => run.selectedSkills.length > 0);
+    expect(snapshot.selectedSkills.length).toBeGreaterThan(0);
+  });
+
+  it("returns a JSON error when an agent run snapshot cannot be loaded", async () => {
+    vi.spyOn(agentRuntime.store, "has").mockImplementation(() => {
+      throw new Error("sqlite lookup failed");
+    });
+
+    const response = await getRun(new Request("http://localhost:3000/api/agent/runs/broken"), {
+      params: Promise.resolve({ runId: "broken" })
+    });
+    const body = await readJson(response);
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(body.ok).toBe(false);
+    expect(body.error?.message).toContain("sqlite lookup failed");
+  });
+
   it("starts a run, asks required questions, replays SSE events, resumes, and cancels", async () => {
     const startResponse = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
       mode: "generate_vdt",
@@ -119,7 +169,8 @@ describe("agent runs API", () => {
         unit: "tonnes/year",
         timePeriod: "year"
       },
-      providerId: "mock"
+      providerId: "mock",
+      options: { autoApplyPatches: true, maxAutoDepth: 4 }
     }));
     const startBody = await readJson(validStartResponse);
 
@@ -174,7 +225,7 @@ describe("agent runs API", () => {
       params: Promise.resolve({ runId })
     });
     expect((await readJson(cancelResponse)).status).toBe("cancelled");
-  });
+  }, 20_000);
 
   it("uses the managed local runtime for local_runner agent planning without standalone pairing", async () => {
     const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {

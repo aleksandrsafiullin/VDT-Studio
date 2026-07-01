@@ -1,0 +1,242 @@
+schema_version: 2
+id: mining.excavation.equipment_catalog
+skill_id: mining.excavation
+version: 1
+status: draft_reference_catalog
+language: en-only
+purpose: >-
+  Equipment and truck examples used to suggest bucket volume, bucket payload,
+  and pass-match context for Mining Excavation VDT dialog questions.
+
+usage_policy:
+  load_policy: lazy_entry_lookup
+  never_load_entire_catalog_into_prompt: true
+  apply_only_to_nodes:
+    - average_bucket_volume_m3
+    - bucket_payload_t
+    - buckets_per_truck
+    - truck_payload_t
+  not_allowed_for:
+    - proving_site_capacity
+    - replacing_equipment_passport
+    - building_haulage_vdt
+    - truck_fleet_sizing
+    - route_cycle_time
+  when_used:
+    assumption_status: default_assumption
+    source_tier: equipment_model_specific_value
+    editable_in_dialog: true
+    confidence_default: medium
+
+units:
+  bucket_volume: m3
+  bucket_payload: t
+  truck_payload: t
+
+equipment_types:
+  hydraulic_front_shovel:
+    display_name: Hydraulic front shovel
+    default_bucket_cycle_lookup_key: hydraulic_front_shovel
+    default_buckets_per_truck_lookup_key: hydraulic_front_shovel
+  hydraulic_backhoe_shovel:
+    display_name: Hydraulic backhoe shovel
+    default_bucket_cycle_lookup_key: hydraulic_backhoe_shovel
+    default_buckets_per_truck_lookup_key: hydraulic_backhoe_shovel
+  electric_rope_shovel:
+    display_name: Electric rope shovel
+    default_bucket_cycle_lookup_key: electric_rope_shovel
+    default_buckets_per_truck_lookup_key: electric_rope_shovel
+  wheel_loader:
+    display_name: Wheel loader
+    default_bucket_cycle_lookup_key: wheel_loader_blasted_face
+    default_buckets_per_truck_lookup_key: wheel_loader
+
+equipment_models:
+  cat_6015:
+    aliases: [Cat 6015, Caterpillar 6015, CAT6015]
+    manufacturer: Caterpillar
+    equipment_type: hydraulic_front_shovel
+    bucket:
+      nominal_volume_m3: 8.1
+      payload_t: 14.6
+    typical_truck_match_text: Cat 773 / 775 / 777; example pass match 4 / 5 / 7
+    applies_to_nodes: [average_bucket_volume_m3, bucket_payload_t, buckets_per_truck]
+  cat_6020:
+    aliases: [Cat 6020, Caterpillar 6020, CAT6020]
+    manufacturer: Caterpillar
+    equipment_type: hydraulic_front_shovel
+    bucket:
+      nominal_volume_m3: 12.0
+      payload_t: 21.6
+    applies_to_nodes: [average_bucket_volume_m3, bucket_payload_t]
+  cat_6030:
+    aliases: [Cat 6030, Caterpillar 6030, CAT6030]
+    manufacturer: Caterpillar
+    equipment_type: hydraulic_front_shovel
+    bucket:
+      nominal_volume_m3: 16.5
+      alternate_volume_m3: 17.0
+      payload_t: 30.0
+    applies_to_nodes: [average_bucket_volume_m3, bucket_payload_t]
+  cat_6040:
+    aliases: [Cat 6040, Caterpillar 6040, CAT6040]
+    manufacturer: Caterpillar
+    equipment_type: hydraulic_front_shovel
+    bucket:
+      nominal_volume_m3: 22.0
+      payload_t: 40.0
+    applies_to_nodes: [average_bucket_volume_m3, bucket_payload_t]
+  cat_6060:
+    aliases: [Cat 6060, Caterpillar 6060, CAT6060]
+    manufacturer: Caterpillar
+    equipment_type: hydraulic_front_shovel
+    bucket:
+      nominal_volume_m3: 34.0
+      payload_t: 61.0
+    typical_truck_match_text: about 4 passes with a 218-240 t truck class
+    applies_to_nodes: [average_bucket_volume_m3, bucket_payload_t, buckets_per_truck]
+  komatsu_pc2000:
+    aliases: [Komatsu PC2000, PC2000]
+    manufacturer: Komatsu
+    equipment_type: hydraulic_front_shovel
+    bucket:
+      nominal_volume_m3: 12.0
+    typical_truck_match_t: [90, 160]
+    applies_to_nodes: [average_bucket_volume_m3, buckets_per_truck]
+  komatsu_pc3000:
+    aliases: [Komatsu PC3000, PC3000]
+    manufacturer: Komatsu
+    equipment_type: hydraulic_front_shovel
+    bucket:
+      nominal_volume_m3: 16.0
+    typical_truck_match_t: [85, 165]
+    applies_to_nodes: [average_bucket_volume_m3, buckets_per_truck]
+  komatsu_pc4000:
+    aliases: [Komatsu PC4000, PC4000]
+    manufacturer: Komatsu
+    equipment_type: hydraulic_front_shovel
+    bucket:
+      nominal_volume_m3: 22.0
+    typical_truck_match_t: [150, 240]
+    applies_to_nodes: [average_bucket_volume_m3, buckets_per_truck]
+  komatsu_pc5500:
+    aliases: [Komatsu PC5500, PC5500]
+    manufacturer: Komatsu
+    equipment_type: hydraulic_front_shovel
+    bucket:
+      nominal_volume_m3: 29.0
+    typical_truck_match_t: [150, 240]
+    applies_to_nodes: [average_bucket_volume_m3, buckets_per_truck]
+  komatsu_pc7000:
+    aliases: [Komatsu PC7000, PC7000]
+    manufacturer: Komatsu
+    equipment_type: hydraulic_front_shovel
+    bucket:
+      nominal_volume_m3: 38.0
+    typical_truck_match_t: [240, 290]
+    applies_to_nodes: [average_bucket_volume_m3, buckets_per_truck]
+  komatsu_pc8000:
+    aliases: [Komatsu PC8000, PC8000]
+    manufacturer: Komatsu
+    equipment_type: hydraulic_front_shovel
+    bucket:
+      nominal_volume_m3: 42.0
+    typical_truck_match_t: [240, 290]
+    applies_to_nodes: [average_bucket_volume_m3, buckets_per_truck]
+  komatsu_wa800:
+    aliases: [Komatsu WA800, WA800]
+    manufacturer: Komatsu
+    equipment_type: wheel_loader
+    bucket:
+      nominal_volume_m3: 12.0
+    applies_to_nodes: [average_bucket_volume_m3]
+  komatsu_wa900:
+    aliases: [Komatsu WA900, WA900]
+    manufacturer: Komatsu
+    equipment_type: wheel_loader
+    bucket:
+      nominal_volume_m3: 13.0
+    applies_to_nodes: [average_bucket_volume_m3]
+  komatsu_wa1200:
+    aliases: [Komatsu WA1200, WA1200]
+    manufacturer: Komatsu
+    equipment_type: wheel_loader
+    bucket:
+      nominal_volume_m3: 20.0
+    applies_to_nodes: [average_bucket_volume_m3]
+  letourneau_l2350:
+    aliases: [LeTourneau L2350, L2350, P&H L-2350]
+    manufacturer: LeTourneau
+    equipment_type: wheel_loader
+    bucket:
+      nominal_volume_m3: 40.0
+    applies_to_nodes: [average_bucket_volume_m3]
+
+truck_payload_examples_t:
+  usage_note: >-
+    Truck payloads are used only to suggest buckets_per_truck or to build an
+    example excavator productivity branch. They do not create a haulage VDT.
+  models:
+    belaz_7555:
+      aliases: [BELAZ 7555, БелАЗ 7555]
+      payload_t: [55, 60]
+    belaz_7513:
+      aliases: [BELAZ 7513, БелАЗ 7513]
+      payload_t: [130, 140]
+    belaz_75306:
+      aliases: [BELAZ 75306, БелАЗ 75306]
+      payload_t: 220
+    cat_785:
+      aliases: [Cat 785, Caterpillar 785, CAT785]
+      payload_t: 147
+    cat_789:
+      aliases: [Cat 789, Caterpillar 789, CAT789]
+      payload_t: 193
+    cat_793:
+      aliases: [Cat 793, Caterpillar 793, CAT793]
+      payload_t: 240
+    cat_794_ac:
+      aliases: [Cat 794 AC, Caterpillar 794 AC, CAT794AC]
+      payload_t: 297
+    cat_797f:
+      aliases: [Cat 797F, Caterpillar 797F, CAT797F]
+      payload_t: 363
+    komatsu_hd785:
+      aliases: [Komatsu HD785, HD785]
+      payload_t: [91, 92]
+    komatsu_730e:
+      aliases: [Komatsu 730E, 730E]
+      payload_t: 186
+    komatsu_830e:
+      aliases: [Komatsu 830E, 830E]
+      payload_t: 227
+    komatsu_930e:
+      aliases: [Komatsu 930E, 930E]
+      payload_t: [290, 304]
+
+pass_match_rules:
+  preferred_formula: ceil(truck_payload_t / bucket_payload_t)
+  fallback_when_bucket_payload_unknown: references/excavation-defaults.yaml#default_tables.buckets_per_truck
+  avoid_partial_pass_in_first_pass_vdt: true
+  do_not_model:
+    - truck_queueing
+    - truck_arrival_rate
+    - truck_fleet_capacity
+    - route_cycle_time
+    - dispatch_matching
+
+lookup_examples:
+  cat_6020_average_bucket_volume_m3:
+    user_mentions: [Cat 6020, CAT6020]
+    returns:
+      node_id: average_bucket_volume_m3
+      value: 12.0
+      unit: m3
+      source_tier: equipment_model_specific_value
+      assumption_status: default_assumption
+  cat_6060_bucket_and_pass_context:
+    user_mentions: [Cat 6060]
+    returns:
+      average_bucket_volume_m3: 34.0
+      bucket_payload_t: 61.0
+      typical_truck_match_text: about 4 passes with a 218-240 t truck class

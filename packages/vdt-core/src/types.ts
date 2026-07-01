@@ -28,6 +28,23 @@ export type VdtNodeStatus =
   | "assumption"
   | "external_factor";
 
+export type VdtNodeValueStatus =
+  | "unknown"
+  | "user_provided_value"
+  | "default_assumption"
+  | "calculated"
+  | "partially_calculable";
+
+export interface VdtNodeValueSource {
+  sourceTier?: string | undefined;
+  confidence?: string | undefined;
+  catalogRef?: string | undefined;
+  acceptedByUserInDialog?: boolean | undefined;
+  editableInDialog?: boolean | undefined;
+  note?: string | undefined;
+  range?: [number, number] | undefined;
+}
+
 export type VdtEdgeRelation =
   | "positive_driver"
   | "negative_driver"
@@ -70,6 +87,8 @@ export interface VdtNode {
   formula?: string | undefined;
   value?: number | undefined;
   baselineValue?: number | undefined;
+  valueStatus?: VdtNodeValueStatus | undefined;
+  valueSource?: VdtNodeValueSource | undefined;
   scenarioValue?: number | undefined;
   aiGenerated: boolean;
   aiConfidence?: number | undefined;

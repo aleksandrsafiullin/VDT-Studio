@@ -63,8 +63,8 @@ describe("VdtBuilderSession", () => {
     const builder = new VdtBuilderSession({ now: () => "2026-06-26T00:00:00.000Z" });
     builder.createDraft({ projectTitle: "Available output", rootKpi: "Available output" });
     builder.addDriver({ parentNodeId: "available_output", nodeId: "capacity", name: "Capacity" });
-    builder.addDriver({ parentNodeId: "available_output", nodeId: "utilization", name: "Utilization" });
-    builder.setFormula({ nodeId: "available_output", formula: "capacity * utilization" });
+    builder.addDriver({ parentNodeId: "available_output", nodeId: "working_time", name: "Working time" });
+    builder.setFormula({ nodeId: "available_output", formula: "capacity * working_time" });
 
     const layout = builder.layout();
     const validation = builder.validate();

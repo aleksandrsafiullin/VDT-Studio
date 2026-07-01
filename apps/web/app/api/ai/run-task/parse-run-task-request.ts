@@ -12,7 +12,7 @@ import {
   type VdtAiTaskLimits
 } from "@vdt-studio/ai-harness";
 
-/** Bounded AI tasks served by `/api/ai/run-task`. Tree generation uses `/api/ai/generate-vdt`. */
+/** Bounded AI tasks served by `/api/ai/run-task`. Tree generation is owned by `/api/agent/runs`. */
 export const RUN_TASK_TYPES = [
   "deepen_node",
   "simplify_branch",
@@ -126,7 +126,7 @@ export function resolveRunTaskType(rawTaskType: unknown): RunTaskType {
 
   const resolved = resolveAiTaskType(rawTaskType.trim());
   if (resolved === "generate_tree") {
-    throw new Error("generate_tree must use /api/ai/generate-vdt.");
+    throw new Error("generate_tree must use /api/agent/runs.");
   }
   if (!RUN_TASK_TYPE_SET.has(resolved)) {
     throw new Error(`Unsupported taskType: ${rawTaskType}`);

@@ -1,6 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as aiHarness from "@vdt-studio/ai-harness";
-import { productionVolumeAiOutput } from "@vdt-studio/ai-harness";
 import { POST } from "./route";
 
 function jsonRequest(body: unknown) {
@@ -43,6 +41,7 @@ describe("generate VDT API route", () => {
   it("rejects unknown providerId with 400 before provider execution", async () => {
     const response = await POST(
       jsonRequest({
+        operation: "connection_test",
         rootKpi: "Production Volume",
         providerId: "unknown_provider"
       })
@@ -55,7 +54,7 @@ describe("generate VDT API route", () => {
   });
 
   it("rejects missing providerId with 400 before provider execution", async () => {
-    const response = await POST(jsonRequest({ rootKpi: "Production Volume" }));
+    const response = await POST(jsonRequest({ operation: "connection_test", rootKpi: "Production Volume" }));
     const body = await readJson(response);
 
     expect(response.status).toBe(400);
@@ -69,6 +68,7 @@ describe("generate VDT API route", () => {
 
     const response = await POST(
       jsonRequest({
+        operation: "connection_test",
         rootKpi: "Production Volume",
         providerId: "openai_compatible",
         providerConfig: {
@@ -85,30 +85,10 @@ describe("generate VDT API route", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("passes maxTokens from providerConfig to generateAgenticVdtProject", async () => {
-    const generateSpy = vi.spyOn(aiHarness, "generateAgenticVdtProject");
+  it("rejects project generation and points callers to agent runs", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
 
-    try {
-      const response = await POST(
-        jsonRequest({
-          rootKpi: "Production Volume",
-          providerId: "mock",
-          providerConfig: { maxTokens: 8_192 }
-        })
-      );
-
-      expect(response.status).toBe(200);
-      expect(generateSpy).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ rootKpi: "Production Volume" }),
-        expect.objectContaining({ maxTokens: 8_192 })
-      );
-    } finally {
-      generateSpy.mockRestore();
-    }
-  });
-
-  it("generates a validated mock-provider project with AI review artifacts", async () => {
     const response = await POST(
       jsonRequest({
         rootKpi: "Production Volume",
@@ -121,23 +101,10 @@ describe("generate VDT API route", () => {
     );
     const body = await readJson(response);
 
-    expect(response.status).toBe(200);
-    expect(body.ok).toBe(true);
-    expect(body.project?.name).toBe("Production Volume Driver Model");
-    expect(body.project?.rootNodeId).toBe("production_volume");
-    expect(body.project?.aiReview?.assumptions?.length).toBeGreaterThan(0);
-    expect(body.project?.aiReview?.questionsForUser?.length).toBeGreaterThan(0);
-    expect(body.agentRun).toMatchObject({
-      status: "succeeded",
-      selectedSkills: expect.arrayContaining([expect.objectContaining({ id: "mining.production_volume" })])
-    });
-    expect(body.agentRun?.events?.map((event) => event.type)).toEqual(expect.arrayContaining([
-      "skill_selected",
-      "model_call_started",
-      "graph_validation",
-      "final_report"
-    ]));
-    expect(body.agentRun?.finalReport).toContain("Validation result: Graph validation passed");
+    expect(response.status).toBe(410);
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("/api/agent/runs");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects invalid request bodies before provider execution", async () => {
@@ -156,6 +123,7 @@ describe("generate VDT API route", () => {
   it("requires an API key for request-supplied OpenAI-compatible base URLs", async () => {
     const response = await POST(
       jsonRequest({
+        operation: "connection_test",
         rootKpi: "Production Volume",
         providerId: "openai_compatible",
         providerConfig: {
@@ -224,6 +192,7 @@ describe("generate VDT API route", () => {
 
     const response = await POST(
       jsonRequest({
+        operation: "connection_test",
         rootKpi: "Production Volume",
         providerId: "openai_compatible",
         providerConfig: {
@@ -248,7 +217,7 @@ describe("generate VDT API route", () => {
     vi.stubEnv(envKey, "server-secret");
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const response = await POST(jsonRequest({ rootKpi: "Production Volume", providerId, providerConfig }));
+    const response = await POST(jsonRequest({ operation: "connection_test", rootKpi: "Production Volume", providerId, providerConfig }));
     expect(response.status).toBe(400);
     expect((await readJson(response)).error).toContain("must also provide its own API key");
     expect(fetchMock).not.toHaveBeenCalled();
@@ -260,6 +229,7 @@ describe("generate VDT API route", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await POST(jsonRequest({
+      operation: "connection_test",
       rootKpi: "Production Volume",
       providerId: "azure_openai",
       providerConfig: {
@@ -275,9 +245,9 @@ describe("generate VDT API route", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("generates through a local runner provider response", async () => {
+  it("performs a local runner connection test", async () => {
     const fetchMock = vi.fn(async () => {
-      return new Response(JSON.stringify({ ok: true, output: productionVolumeAiOutput }), {
+      return new Response(JSON.stringify({ ok: true, output: { ok: true } }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -286,6 +256,7 @@ describe("generate VDT API route", () => {
 
     const response = await POST(
       jsonRequest({
+        operation: "connection_test",
         rootKpi: "Production Volume",
         providerId: "local_runner",
         providerConfig: {
@@ -300,7 +271,6 @@ describe("generate VDT API route", () => {
 
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(body.project?.rootNodeId).toBe("production_volume");
     expect(fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:8765/v1/completions",
       expect.objectContaining({
@@ -313,7 +283,7 @@ describe("generate VDT API route", () => {
     {
       providerId: "anthropic",
       config: { apiKey: "anthropic-key", model: "claude-test" },
-      response: { content: [{ type: "tool_use", name: "return_structured_output", input: productionVolumeAiOutput }] },
+      response: { content: [{ type: "tool_use", name: "return_structured_output", input: { ok: true } }] },
       url: "https://api.anthropic.com/v1/messages"
     },
     {
@@ -324,16 +294,16 @@ describe("generate VDT API route", () => {
         deployment: "vdt-deployment",
         apiVersion: "2024-10-21"
       },
-      response: { choices: [{ message: { content: JSON.stringify(productionVolumeAiOutput) } }] },
+      response: { choices: [{ message: { content: JSON.stringify({ ok: true }) } }] },
       url: "https://example.openai.azure.com/openai/deployments/vdt-deployment/chat/completions?api-version=2024-10-21"
     },
     {
       providerId: "gemini",
       config: { apiKey: "gemini-key", model: "gemini-test" },
-      response: { candidates: [{ content: { parts: [{ text: JSON.stringify(productionVolumeAiOutput) }] } }] },
+      response: { candidates: [{ content: { parts: [{ text: JSON.stringify({ ok: true }) }] } }] },
       url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent"
     }
-  ])("generates through the $providerId provider", async ({ providerId, config, response: providerResponse, url }) => {
+  ])("performs a $providerId connection test", async ({ providerId, config, response: providerResponse, url }) => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify(providerResponse), {
       status: 200,
       headers: { "content-type": "application/json" }
@@ -341,6 +311,7 @@ describe("generate VDT API route", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await POST(jsonRequest({
+      operation: "connection_test",
       rootKpi: "Production Volume",
       providerId,
       providerConfig: config
@@ -348,7 +319,7 @@ describe("generate VDT API route", () => {
     const body = await readJson(response);
 
     expect(response.status).toBe(200);
-    expect(body.project?.rootNodeId).toBe("production_volume");
+    expect(body.ok).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith(url, expect.objectContaining({ method: "POST" }));
   });
 
@@ -360,6 +331,7 @@ describe("generate VDT API route", () => {
 
     const response = await POST(
       jsonRequest({
+        operation: "connection_test",
         rootKpi: "Production Volume",
         providerId: "local_runner",
         providerConfig: {
@@ -385,6 +357,7 @@ describe("generate VDT API route", () => {
 
     const response = await POST(
       jsonRequest({
+        operation: "connection_test",
         rootKpi: "Production Volume",
         providerId: "local_runner",
         providerConfig: {

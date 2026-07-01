@@ -60,7 +60,7 @@ This skill should retrieve and combine the more specific mining skills:
 
 - `mining.block_preparation_dozer`
 - `mining.drill_and_blast`
-- `mining.excavation_loading`
+- `mining.excavation`
 - `mining.haulage_truck_cycle`
 - `mining.underground_production_cycle`
 - `mining.material_allocation_ore_waste`
@@ -198,7 +198,7 @@ Minimum inputs for a useful complete mining VDT:
 - `material_types`: ore, waste, low_grade_ore, mineralized_waste, overburden, backfill, development_waste, or site-specific categories.
 - `allocation_policy`: `hard_allocation`, `time_share_allocation`, or `dynamic_dispatch_allocation`.
 - `stage_capacities`: tonnes or bcm per period for block preparation, drill/blast, loading, haulage, dump/crusher, hoisting, and processing where relevant.
-- `calendar_time`, `planned_downtime`, `unplanned_downtime`, `availability`, and `utilization` for the constrained equipment classes.
+- `calendar_time`, `planned_downtime`, `unplanned_downtime`, maintenance downtime, operating delays, and working time for the constrained equipment classes.
 - `ore_loss_rate`, `dilution_rate`, `mining_recovery_factor`, `moisture_factor`, `swell_factor`, and `density` if the boundary crosses volume/tonnes or grade/product definitions.
 
 Missing-input questions:
@@ -246,7 +246,7 @@ Use one consistent unit family per tree:
 - Rate: `t/h`, `bcm/h`, `m3/h`, `m/day`, `kt/day`, `Mt/year`.
 - Grade: `%`, `g/t`, or `ppm`.
 - Allocation: fractions between `0` and `1`, for example `ore_time_share = 0.65`.
-- Utilization/availability/recovery/fill factors: decimals between `0` and `1`.
+- Recovery, fill, and allocation factors: decimals between `0` and `1`.
 
 Do not mix bank and loose volumes without `swell_factor`. Do not mix wet and dry tonnes without `moisture_factor`. Do not add ore tonnes and waste tonnes into a product KPI unless the KPI is explicitly `total_material_moved`.
 
@@ -256,7 +256,7 @@ Do not mix bank and loose volumes without `swell_factor`. Do not mix wet and dry
 - Do not model ore and waste as one homogeneous material unless the KPI is explicitly total material movement.
 - Do not split equipment by both hard allocation and time share unless the user explicitly has partial dedicated fleets plus shared overflow.
 - Do not assume open-pit stages apply unchanged to underground operations; underground cycle constraints often include ventilation, re-entry, ground support, backfill, face availability, and hoisting.
-- Do not use rated equipment capacity as actual productivity without availability, utilization, delay, material, operator, and route factors.
+- Do not use rated equipment capacity as actual productivity without working time, explicit delays, material, operator, and route factors.
 - Do not include processing recovery in a mine-production KPI unless the KPI boundary is processed feed, saleable product, or contained metal.
 - Do not ignore precedence: loading capacity is irrelevant if blasted inventory is not available, and haulage capacity is irrelevant if no material is released.
 - Do not force exact numeric benchmarks when the user has not provided geology, fleet, routes, bench geometry, mining method, shift calendar, or historical performance.
@@ -308,7 +308,7 @@ mine_production_tonnes
 
 - Deepen `block_preparation_capacity_tonnes` with `mining.block_preparation_dozer`.
 - Deepen `drill_and_blast_capacity_tonnes` with `mining.drill_and_blast`.
-- Deepen `excavation_loading_capacity_tonnes` with `mining.excavation_loading`.
+- Deepen `excavation_loading_capacity_tonnes` with `mining.excavation`.
 - Deepen `haulage_capacity_tonnes` with `mining.haulage_truck_cycle`.
 - Deepen `underground_stage_readiness_tonnes` with `mining.underground_production_cycle`.
 - Deepen any ore/waste split, shared fleet, dedicated fleet, or strip-ratio branch with `mining.material_allocation_ore_waste`.

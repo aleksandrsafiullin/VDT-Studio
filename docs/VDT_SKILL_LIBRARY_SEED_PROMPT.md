@@ -106,7 +106,7 @@ Must cover:
 - unplanned downtime;
 - effective working time;
 - equipment availability;
-- utilization;
+- working time and explicit downtime categories;
 - loading productivity;
 - haulage constraint;
 - processing or dumping bottleneck;
@@ -117,7 +117,7 @@ Must include formula examples:
 ```text
 production_volume = effective_working_time * average_productivity
 effective_working_time = calendar_time - planned_downtime - unplanned_downtime
-average_productivity = bottleneck_rate * utilization_factor * yield_factor
+average_productivity = bottleneck_rate * yield_factor
 ```
 
 ### 2. Mining Haulage Truck Cycle
@@ -136,7 +136,7 @@ Must cover:
 
 - number of trucks;
 - truck availability;
-- utilization;
+- truck working time;
 - payload per trip;
 - haul distance;
 - loaded speed;
@@ -154,7 +154,7 @@ Must include formula examples:
 cycle_time_h = loading_time_h + loaded_travel_time_h + dumping_time_h + empty_return_time_h + queue_time_h
 loaded_travel_time_h = haul_distance_km / loaded_speed_kmh
 empty_return_time_h = haul_distance_km / empty_speed_kmh
-trips_per_truck = operating_hours * truck_availability * utilization / cycle_time_h
+trips_per_truck = truck_working_time / cycle_time_h
 hauled_tonnes = number_of_trucks * trips_per_truck * payload_per_trip_t * payload_factor
 ```
 
@@ -242,7 +242,7 @@ Must cover decomposition by:
 - volume x rate;
 - base x conversion;
 - inflow - outflow;
-- capacity x utilization x quality;
+- throughput rate x working time x quality;
 - stock = previous stock + inflow - outflow;
 - weighted average;
 - share / ratio / percentage;

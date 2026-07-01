@@ -3565,7 +3565,18 @@ var DOMAIN_TERMS = {
     "dump",
     "crusher",
     "throughput",
-    "production volume"
+    "production volume",
+    "excavation",
+    "excavator",
+    "shovel",
+    "bucket",
+    "bucket fill",
+    "swell",
+    "rock m3",
+    "solid m3",
+    "downtime",
+    "face not ready",
+    "restricted access"
   ],
   finance: [
     "revenue",
@@ -3628,9 +3639,15 @@ function parseFrontmatter(markdown) {
       throw new Error(`Unsupported frontmatter line: ${line}`);
     }
     const key = keyMatch[1];
-    const inlineValue = keyMatch[2] ?? "";
-    if (inlineValue.trim()) {
-      attributes[key] = parseScalarFrontmatterValue(inlineValue.trim());
+    const inlineValue = keyMatch[2]?.trim() ?? "";
+    if (inlineValue) {
+      if (inlineValue === ">-" || inlineValue === ">" || inlineValue === "|" || inlineValue === "|-") {
+        const { value, nextIndex } = parseBlockScalarFrontmatterValue(frontmatterLines, index, inlineValue);
+        attributes[key] = value;
+        index = nextIndex;
+        continue;
+      }
+      attributes[key] = parseScalarFrontmatterValue(inlineValue);
       continue;
     }
     const values = [];
@@ -3638,7 +3655,25 @@ function parseFrontmatter(markdown) {
       index += 1;
       values.push(parseStringValue(frontmatterLines[index].replace(/^\s*-\s+/, "")));
     }
-    attributes[key] = values;
+    if (values.length > 0) {
+      attributes[key] = values;
+      continue;
+    }
+    const map = {};
+    while (frontmatterLines[index + 1]?.match(/^\s+[A-Za-z0-9_-]+:/)) {
+      index += 1;
+      const nestedLine = frontmatterLines[index].trim();
+      const nestedMatch = /^([A-Za-z0-9_-]+):(?:\s*(.*))?$/.exec(nestedLine);
+      if (!nestedMatch) {
+        throw new Error(`Unsupported nested frontmatter line: ${frontmatterLines[index]}`);
+      }
+      const nestedValue = parseScalarFrontmatterValue(nestedMatch[2]?.trim() ?? "");
+      if (Array.isArray(nestedValue) || isFrontmatterMap(nestedValue)) {
+        throw new Error(`Unsupported nested frontmatter value: ${frontmatterLines[index]}`);
+      }
+      map[nestedMatch[1]] = nestedValue;
+    }
+    attributes[key] = Object.keys(map).length > 0 ? map : values;
   }
   return {
     attributes,
@@ -3830,7 +3865,10 @@ function readSkillExcerpts(skills, maxChars = 1800) {
       domain: skill.domain,
       excerpt: createSkillExcerpt(skill, maxChars),
       outputs: skill.frontmatter.outputs,
-      questions: skill.frontmatter.questions
+      questions: skill.frontmatter.questions,
+      ...skill.frontmatter.referenceFiles ? { referenceFiles: skill.frontmatter.referenceFiles } : {},
+      ...skill.frontmatter.evalFiles ? { evalFiles: skill.frontmatter.evalFiles } : {},
+      ...skill.frontmatter.runtimePolicy ? { runtimePolicy: skill.frontmatter.runtimePolicy } : {}
     };
     if (reason) {
       excerpt.reason = reason;
@@ -4030,6 +4068,16 @@ function parseScalarFrontmatterValue(value) {
   }
   return parseStringValue(value);
 }
+function parseBlockScalarFrontmatterValue(lines, index, marker) {
+  const blockLines = [];
+  let cursor = index;
+  while (lines[cursor + 1] !== void 0 && !/^[A-Za-z0-9_-]+:\s*/.test(lines[cursor + 1])) {
+    cursor += 1;
+    blockLines.push(lines[cursor].replace(/^\s{2}/, ""));
+  }
+  const chomped = blockLines.join(marker.startsWith("|") ? "\n" : " ").replace(/\s+/g, " ").trim();
+  return { value: chomped, nextIndex: cursor };
+}
 function parseStringValue(value) {
   return value.replace(/^["']|["']$/g, "").trim();
 }
@@ -4040,6 +4088,10 @@ function normalizeSkillFrontmatter(attributes, path6) {
       throw new Error(`Skill ${path6} is missing required string frontmatter: ${key}.`);
     }
     return value.trim();
+  };
+  const getOptionalString = (key) => {
+    const value = attributes[key];
+    return typeof value === "string" && value.trim() ? value.trim() : void 0;
   };
   const getStringArray = (key) => {
     const value = attributes[key];
@@ -4052,21 +4104,61 @@ function normalizeSkillFrontmatter(attributes, path6) {
     }
     return values;
   };
+  const getOptionalStringArray = (key) => {
+    const value = attributes[key];
+    if (value === void 0) return [];
+    if (!Array.isArray(value)) {
+      throw new Error(`Skill ${path6} frontmatter must be a list: ${key}.`);
+    }
+    return value.map((item) => item.trim()).filter(Boolean);
+  };
+  const getStringMap = (key) => {
+    const value = attributes[key];
+    if (!isFrontmatterMap(value)) return void 0;
+    return Object.fromEntries(
+      Object.entries(value).filter((entry) => typeof entry[1] === "string" && entry[1].trim().length > 0).map(([mapKey, mapValue]) => [mapKey, mapValue.trim()])
+    );
+  };
+  const getScalarMap = (key) => {
+    const value = attributes[key];
+    return isFrontmatterMap(value) ? { ...value } : void 0;
+  };
   const version = attributes.version;
+  const name = getOptionalString("name");
+  const orchestratorId = getOptionalString("orchestrator_id");
+  const description = getOptionalString("description");
   const frontmatter = {
     id: getString("id"),
+    ...name ? { name } : {},
+    ...orchestratorId ? { orchestratorId } : {},
     title: getString("title"),
     domain: getString("domain"),
+    ...description ? { description } : {},
     patterns: getStringArray("patterns"),
     kpiPatterns: getStringArray("kpi_patterns"),
     requires: getStringArray("requires"),
     outputs: getStringArray("outputs"),
-    questions: getStringArray("questions")
+    questions: getOptionalStringArray("questions")
   };
   if (typeof version === "number") {
     frontmatter.version = version;
   }
+  const referenceFiles = getStringMap("reference_files");
+  const evalFiles = getStringMap("eval_files");
+  const runtimePolicy = getScalarMap("runtime_policy");
+  if (referenceFiles && Object.keys(referenceFiles).length > 0) {
+    frontmatter.referenceFiles = referenceFiles;
+  }
+  if (evalFiles && Object.keys(evalFiles).length > 0) {
+    frontmatter.evalFiles = evalFiles;
+  }
+  if (runtimePolicy && Object.keys(runtimePolicy).length > 0) {
+    frontmatter.runtimePolicy = runtimePolicy;
+  }
   return frontmatter;
+}
+function isFrontmatterMap(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function splitMarkdownTableRow(row) {
   return row.slice(1, -1).split("|").map((cell) => cell.trim());
@@ -4118,10 +4210,44 @@ function includesTerm(haystack, term) {
   return normalizedTerm.length > 0 && ` ${haystack} `.includes(` ${normalizedTerm} `);
 }
 function inferPattern(domain, haystack) {
-  if (domain === "mining" && (includesTerm(haystack, "haulage") || includesTerm(haystack, "truck"))) {
-    return "haulage_truck_cycle";
-  }
   if (domain === "mining") {
+    const excavationTerms = [
+      "excavation",
+      "excavator",
+      "shovel",
+      "bucket",
+      "bucket fill",
+      "swell",
+      "ore tonnes",
+      "rock m3",
+      "solid m3",
+      "downtime",
+      "truck loading time",
+      "loaded trucks per hour",
+      "face not ready",
+      "material not ready",
+      "restricted access",
+      "equipment split",
+      "material split"
+    ];
+    if (excavationTerms.some((term) => includesTerm(haystack, term))) {
+      return "excavation";
+    }
+    const haulageTerms = [
+      "haulage",
+      "haul route",
+      "haul distance",
+      "truck cycle",
+      "truck productivity",
+      "loaded speed",
+      "empty speed",
+      "queueing",
+      "dumping",
+      "truck"
+    ];
+    if (haulageTerms.some((term) => includesTerm(haystack, term))) {
+      return "haulage_truck_cycle";
+    }
     return "production_volume";
   }
   if (domain === "finance") {

@@ -8,6 +8,7 @@ import {
   calculateScenario,
   calculateScenarioGraph,
   calculateScenarioMultiplicativeEffect,
+  compareVdtProjects,
   createVersionSnapshot,
   diffChangeSet,
   evaluateAst,
@@ -39,7 +40,7 @@ import {
 describe("formula engine", () => {
   it("evaluates arithmetic, parentheses and percent literals", () => {
     expect(evaluateFormula("(a + b) * 90%", { a: 10, b: 20 }).value).toBe(27);
-    expect(evaluateFormula("rate * utilization", { rate: 220, utilization: 0.9 }).value).toBe(198);
+    expect(evaluateFormula("rate * working_time", { rate: 220, working_time: 600 }).value).toBe(132000);
   });
 
   it("reports missing values and division by zero", () => {
@@ -110,21 +111,21 @@ describe("formula edge relations", () => {
   it("assigns formula_dependency to the first operand and maps later operators", () => {
     expect(
       resolveFormulaEdgeRelation(
-        "nominal_rate * utilization_factor * yield_factor",
-        "nominal_rate",
+        "throughput_rate * working_time * yield_factor",
+        "throughput_rate",
         "multiplicative_driver"
       )
     ).toBe("formula_dependency");
     expect(
       resolveFormulaEdgeRelation(
-        "nominal_rate * utilization_factor * yield_factor",
-        "utilization_factor",
+        "throughput_rate * working_time * yield_factor",
+        "working_time",
         "multiplicative_driver"
       )
     ).toBe("multiplicative_driver");
     expect(
       resolveFormulaEdgeRelation(
-        "nominal_rate * utilization_factor * yield_factor",
+        "throughput_rate * working_time * yield_factor",
         "yield_factor",
         "multiplicative_driver"
       )
@@ -187,9 +188,9 @@ describe("formula edge relations", () => {
   });
 
   it("returns formula operand ids in left-to-right order", () => {
-    expect(getFormulaReferenceOrder("nominal_rate * utilization_factor * yield_factor")).toEqual([
-      "nominal_rate",
-      "utilization_factor",
+    expect(getFormulaReferenceOrder("throughput_rate * working_time * yield_factor")).toEqual([
+      "throughput_rate",
+      "working_time",
       "yield_factor"
     ]);
     expect(getFormulaReferenceOrder("calendar_time - planned_downtime - unplanned_downtime")).toEqual([
@@ -214,10 +215,10 @@ describe("production volume example", () => {
 
     expect(result.errors).toHaveLength(0);
     expect(result.values.effective_working_time).toBe(600);
-    expect(result.values.average_productivity).toBeCloseTo(190.08, 5);
-    expect(result.values.production_volume).toBeCloseTo(114048, 5);
-    expect(result.rootValue).toBeCloseTo(114048, 5);
-    expect(result.trace.find((item) => item.nodeId === "production_volume")?.resolvedFormula).toBe("600 * 190.08");
+    expect(result.values.average_productivity).toBeCloseTo(211.2, 5);
+    expect(result.values.production_volume).toBeCloseTo(126720, 5);
+    expect(result.rootValue).toBeCloseTo(126720, 5);
+    expect(result.trace.find((item) => item.nodeId === "production_volume")?.resolvedFormula).toBe("600 * 211.2");
   });
 
   it("calculates scenario impact for reduced unplanned downtime", () => {
@@ -226,9 +227,9 @@ describe("production volume example", () => {
 
     const result = calculateScenario(productionVolumeProject, scenario!);
 
-    expect(result.baselineValue).toBeCloseTo(114048, 5);
-    expect(result.scenarioValue).toBeCloseTo(117849.6, 5);
-    expect(result.absoluteChange).toBeCloseTo(3801.6, 5);
+    expect(result.baselineValue).toBeCloseTo(126720, 5);
+    expect(result.scenarioValue).toBeCloseTo(130944, 5);
+    expect(result.absoluteChange).toBeCloseTo(4224, 5);
     expect(result.percentageChange).toBeCloseTo(3.333333, 4);
     expect(result.impactedNodes.map((node) => node.nodeId)).toContain("unplanned_downtime");
   });
@@ -250,7 +251,7 @@ describe("scenario sensitivity APIs", () => {
     expect(Number.isFinite(delta)).toBe(true);
     expect(delta).not.toBe(0);
     // +1% unplanned downtime reduces effective working time and root output.
-    expect(delta).toBeCloseTo(-152.064, 2);
+    expect(delta).toBeCloseTo(-168.96, 2);
   });
 
   it("calculates isolated root effect for a single override value", () => {
@@ -261,7 +262,7 @@ describe("scenario sensitivity APIs", () => {
     const scenarioResult = calculateScenario(productionVolumeProject, scenario!);
 
     expect(isolatedAt60).toBeDefined();
-    expect(isolatedAt60).toBeCloseTo(3801.6, 2);
+    expect(isolatedAt60).toBeCloseTo(4224, 2);
     expect(isolatedAt60).toBeCloseTo(scenarioResult.absoluteChange!, 5);
   });
 
@@ -302,13 +303,9 @@ describe("scenario sensitivity APIs", () => {
     expect(plannedIndex).toBeGreaterThan(-1);
     expect(unplannedIndex).toBeLessThan(plannedIndex);
 
-    const utilizationIndex = rankedIds.indexOf("utilization_factor");
     const yieldIndex = rankedIds.indexOf("yield_factor");
-    expect(utilizationIndex).toBeGreaterThan(-1);
     expect(yieldIndex).toBeGreaterThan(-1);
-    expect(ranked[utilizationIndex]!.onePercentRootDelta).toBeCloseTo(ranked[yieldIndex]!.onePercentRootDelta!, 5);
-    expect(utilizationIndex).toBeLessThan(yieldIndex);
-    expect(ranked[utilizationIndex]!.nodeName.localeCompare(ranked[yieldIndex]!.nodeName)).toBeLessThan(0);
+    expect(Math.abs(ranked[yieldIndex]!.onePercentRootDelta ?? 0)).toBeGreaterThan(0);
 
     for (let index = 1; index < ranked.length - 1; index += 1) {
       const previous = ranked[index - 1]!;
@@ -330,8 +327,8 @@ describe("scenario sensitivity APIs", () => {
 
     const multiplicative = calculateScenarioMultiplicativeEffect(productionVolumeProject, scenario!);
 
-    expect(multiplicative.totalRootEffect).toBeCloseTo(3801.6, 2);
-    expect(multiplicative.sumOfIsolatedEffects).toBeCloseTo(3801.6, 2);
+    expect(multiplicative.totalRootEffect).toBeCloseTo(4224, 2);
+    expect(multiplicative.sumOfIsolatedEffects).toBeCloseTo(4224, 2);
     expect(multiplicative.multiplicativeEffect).toBeCloseTo(0, 5);
   });
 
@@ -343,19 +340,19 @@ describe("scenario sensitivity APIs", () => {
       ...scenario!,
       overrides: [
         { nodeId: "unplanned_downtime", value: 60 },
-        { nodeId: "planned_downtime", value: 20 }
+        { nodeId: "yield_factor", value: 0.98 }
       ]
     };
 
     const combined = calculateScenario(productionVolumeProject, multiOverrideScenario);
     const multiplicative = calculateScenarioMultiplicativeEffect(productionVolumeProject, multiOverrideScenario);
     const isolatedUnplanned = calculateIsolatedRootEffect(productionVolumeProject, "unplanned_downtime", 60)!;
-    const isolatedPlanned = calculateIsolatedRootEffect(productionVolumeProject, "planned_downtime", 20)!;
+    const isolatedYield = calculateIsolatedRootEffect(productionVolumeProject, "yield_factor", 0.98)!;
 
     expect(combined.absoluteChange).toBeDefined();
-    expect(multiplicative.sumOfIsolatedEffects).toBeCloseTo(isolatedUnplanned + isolatedPlanned, 2);
+    expect(multiplicative.sumOfIsolatedEffects).toBeCloseTo(isolatedUnplanned + isolatedYield, 2);
     expect(multiplicative.multiplicativeEffect).toBeCloseTo(
-      combined.absoluteChange! - (isolatedUnplanned + isolatedPlanned),
+      combined.absoluteChange! - (isolatedUnplanned + isolatedYield),
       2
     );
     expect(Math.abs(multiplicative.multiplicativeEffect ?? 0)).toBeGreaterThan(0);
@@ -453,6 +450,116 @@ describe("scenario sensitivity APIs", () => {
 
     expect(multiplicative.sumOfIsolatedEffects).toBeCloseTo(isolatedPlanned, 2);
     expect(calculateIsolatedRootEffect(projectWithLockedInput, "unplanned_downtime", 60)).toBeUndefined();
+  });
+});
+
+describe("VDT comparison APIs", () => {
+  it("compares structure, formulas, values, root delta, and deterministic bottleneck candidates", () => {
+    const right: VdtProject = {
+      ...productionVolumeProject,
+      graph: {
+        ...productionVolumeProject.graph,
+        nodes: [
+          ...productionVolumeProject.graph.nodes.map((node) => {
+            if (node.id === "production_volume") {
+              return { ...node, formula: "effective_working_time * average_productivity * recovery_factor" };
+            }
+            if (node.id === "unplanned_downtime") {
+              return { ...node, baselineValue: 120 };
+            }
+            return node;
+          }),
+          {
+            id: "recovery_factor",
+            name: "Recovery Factor",
+            type: "input",
+            status: "ai_suggested",
+            unit: "%",
+            baselineValue: 0.95,
+            aiGenerated: true,
+            materiality: "high",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        edges: [
+          ...productionVolumeProject.graph.edges,
+          {
+            id: "edge_production_volume_recovery_factor",
+            sourceNodeId: "production_volume",
+            targetNodeId: "recovery_factor",
+            relation: "multiplicative_driver",
+            aiGenerated: true
+          }
+        ]
+      }
+    };
+
+    const result = compareVdtProjects(productionVolumeProject, right);
+
+    expect(result.rootDelta?.leftValue).toBe(126720);
+    expect(result.rootDelta?.rightValue).toBe(112358.4);
+    expect(result.rootDelta?.absoluteDelta).toBeCloseTo(-14361.6, 5);
+    expect(result.rootDelta?.percentDelta).toBeCloseTo(-11.3333, 4);
+    expect(result.structuralDiff).toEqual({
+      addedDrivers: ["recovery_factor"],
+      removedDrivers: [],
+      changedFormulas: ["production_volume"],
+      changedValues: expect.arrayContaining(["production_volume", "effective_working_time", "unplanned_downtime"])
+    });
+    expect(result.bottleneckCandidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          nodeId: "production_volume",
+          evidence: "value_delta",
+          severity: "high"
+        }),
+        expect.objectContaining({
+          nodeId: "production_volume",
+          evidence: "formula_change",
+          severity: "high"
+        }),
+        expect.objectContaining({
+          nodeId: "recovery_factor",
+          evidence: "missing_driver",
+          severity: "high"
+        }),
+        expect.objectContaining({
+          nodeId: "unplanned_downtime",
+          evidence: "sensitivity"
+        })
+      ])
+    );
+  });
+
+  it("detects removed drivers and omits root delta when neither graph calculates", () => {
+    const left: VdtProject = {
+      ...productionVolumeProject,
+      graph: {
+        ...productionVolumeProject.graph,
+        nodes: productionVolumeProject.graph.nodes.map((node) =>
+          node.id === "calendar_time" ? { ...node, baselineValue: undefined } : node
+        )
+      }
+    };
+    const right: VdtProject = {
+      ...left,
+      graph: {
+        nodes: left.graph.nodes.filter((node) => node.id !== "yield_factor"),
+        edges: left.graph.edges.filter((edge) => edge.targetNodeId !== "yield_factor")
+      }
+    };
+
+    const result = compareVdtProjects(left, right, { maxBottleneckCandidates: 4 });
+
+    expect(result.rootDelta).toBeUndefined();
+    expect(result.structuralDiff.removedDrivers).toEqual(["yield_factor"]);
+    expect(result.bottleneckCandidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        nodeId: "yield_factor",
+        evidence: "missing_driver"
+      })
+    ]));
   });
 });
 
@@ -995,10 +1102,9 @@ describe("graph layout", () => {
     expect(ewtYs[0]).toBeLessThan(ewtYs[1]!);
     expect(ewtYs[1]).toBeLessThan(ewtYs[2]!);
 
-    const apChildren = ["nominal_rate", "utilization_factor", "yield_factor"];
+    const apChildren = ["nominal_rate", "yield_factor"];
     const apYs = ysFor(layout.positions, apChildren);
     expect(apYs[0]).toBeLessThan(apYs[1]!);
-    expect(apYs[1]).toBeLessThan(apYs[2]!);
   });
 
   it("packs each parent's grandchildren as non-interleaving clusters", () => {
@@ -1009,7 +1115,7 @@ describe("graph layout", () => {
     );
 
     const ewtChildren = ["calendar_time", "planned_downtime", "unplanned_downtime"];
-    const apChildren = ["nominal_rate", "utilization_factor", "yield_factor"];
+    const apChildren = ["nominal_rate", "yield_factor"];
     const ewtYs = ysFor(layout.positions, ewtChildren);
     const apYs = ysFor(layout.positions, apChildren);
 
@@ -1025,14 +1131,14 @@ describe("graph layout", () => {
     );
 
     const ewtCousins = ["calendar_time", "planned_downtime", "unplanned_downtime"];
-    const apCousins = ["nominal_rate", "utilization_factor", "yield_factor"];
+    const apCousins = ["nominal_rate", "yield_factor"];
     const ewtYs = ysFor(layout.positions, ewtCousins);
     const apYs = ysFor(layout.positions, apCousins);
 
     // Flat global depth sort orders all six by name (C, N, P, U, U, Y) and interleaves branches.
     assertSiblingClustersDoNotInterleave(ewtYs, apYs);
     assertNotBetweenY(layout.positions, "nominal_rate", "calendar_time", "planned_downtime");
-    assertNotBetweenY(layout.positions, "utilization_factor", "planned_downtime", "unplanned_downtime");
+    assertNotBetweenY(layout.positions, "yield_factor", "planned_downtime", "unplanned_downtime");
   });
 
   it("preserves manual order among effective_working_time children from existingPositions", () => {

@@ -78,7 +78,7 @@ For open-pit dozer leveling:
 block_ready_area_m2
   dozer_count
   dozer_available_hours
-  dozer_utilization
+  dozer_operational_delay_h
   area_productivity_m2_per_h
   required_passes
   rework_factor
@@ -122,9 +122,9 @@ For time and availability:
 ```text
 dozer_scheduled_hours = calendar_hours - dozer_planned_downtime_h
 
-dozer_available_hours = dozer_scheduled_hours * dozer_availability
+dozer_available_hours = dozer_scheduled_hours - dozer_unplanned_downtime_h
 
-dozer_effective_hours = dozer_available_hours * dozer_utilization
+dozer_effective_hours = dozer_available_hours - dozer_operational_delay_h
 ```
 
 For area preparation:
@@ -188,7 +188,7 @@ Minimum inputs:
 - `mine_type`: open_pit, underground, or mixed.
 - `block_preparation_kpi`: area ready, volume prepared, tonnes released, drill pad ready, floor accepted, or schedule compliance.
 - `dozer_count` by class or model.
-- `dozer_effective_hours`, or `calendar_hours`, `planned_downtime`, `availability`, and `utilization`.
+- `dozer_effective_hours`, or `calendar_hours`, planned downtime, unplanned downtime, and operational delay categories.
 - `dozer_productivity_rate`: `m2/h`, `bcm/h`, `t/h`, or cycles per hour with blade volume.
 - `material_type`: ore, waste, overburden, low-grade ore, ROM pad material, road material, or underground development waste.
 - `allocation_policy`: hard allocation or time-share allocation when dozers can work on both ore and waste areas.
@@ -262,8 +262,8 @@ block_preparation_capacity_tonnes
   dozer_effective_hours
     calendar_hours
     dozer_planned_downtime_h
-    dozer_availability
-    dozer_utilization
+    dozer_unplanned_downtime_h
+    dozer_operational_delay_h
   dozer_productivity_rate
     blade_bank_volume_bcm
     dozer_cycle_time_h
@@ -285,7 +285,7 @@ block_preparation_capacity_tonnes
 
 ## Deepen Node Guidance
 
-- Deepen `dozer_effective_hours` into calendar, planned downtime, unplanned downtime, availability, utilization, and nonproductive support demand.
+- Deepen `dozer_effective_hours` into calendar, planned downtime, unplanned downtime, operational delay time, and nonproductive support demand.
 - Deepen `dozer_productivity_rate` into blade capacity, cycle time, push distance, slope, material condition, required passes, and operator efficiency.
 - Deepen `floor_acceptance_factor` into survey release, grade-control release, geotechnical release, safety release, and rework.
 - Deepen `material_allocation_policy` with `mining.material_allocation_ore_waste` whenever dozers can work on both ore and waste.

@@ -1,0 +1,223 @@
+schema_version: 3
+id: mining.excavation.dialogue_flow
+skill_id: mining.excavation
+version: 3
+status: draft_runtime_reference
+language: en-only
+purpose: >-
+  Dialog-only state machine for building a Mining Excavation VDT. This file is
+  used by the orchestrator to control conversation order. It is not a numeric
+  default catalog.
+
+runtime_principles:
+  interaction_mode: dialog_only
+  no_missing_inputs_panel: true
+  topology_before_input_values: true
+  max_questions_per_turn: 3
+  always_allow_custom_answer: true
+  always_allow_unknown_for_numeric_values: true
+  do_not_apply_defaults_without_user_acceptance: true
+  store_accepted_defaults_as: default_assumption
+  store_skipped_values_as: unknown
+  model_readiness_access_as_downtime: true
+  do_not_create_readiness_access_min_caps: true
+
+states:
+  initial_user_request:
+    action: detect_excavation_intent
+    next: acknowledge_and_start
+
+  acknowledge_and_start:
+    action: acknowledge_understanding_and_start_vdt_build
+    must_not_do:
+      - ask_numeric_value_questions
+      - ask_full_questionnaire
+      - ask_user_to_choose_skill
+    next: select_excavation_skill
+
+  select_excavation_skill:
+    action: load_mining_excavation_skill
+    load_initial_file: packages/vdt-agent/skills/mining/excavation.md
+    next: build_topology_draft
+
+  build_topology_draft:
+    action: build_best_effort_tree_with_unknown_numeric_leaves
+    must_not_do:
+      - load_full_defaults_catalog_into_prompt
+      - build_loading_or_haulage_tree
+      - wait_for_all_input_values_before_tree
+      - create_readiness_or_access_cap_nodes
+    next_if_topology_branching_exists: ask_topology_clarification
+    next_if_topology_complete: finalize_topology
+
+  ask_topology_clarification:
+    action: ask_only_questions_that_change_tree_structure_units_formulas_splits_or_downtime_categories
+    max_questions_per_turn: 3
+    answer_options_required: true
+    custom_answer_allowed: true
+    next: validate_topology_answer
+
+  validate_topology_answer:
+    action: validate_unit_formula_scope_split_and_downtime_consistency
+    next_if_valid: update_topology
+    next_if_invalid: ask_smallest_topology_followup
+
+  ask_smallest_topology_followup:
+    action: ask_minimum_question_needed_to_continue
+    next: validate_topology_answer
+
+  update_topology:
+    action: apply_answer_and_rebuild_affected_branches
+    next_if_more_topology_branches: ask_topology_clarification
+    next_if_topology_complete: finalize_topology
+
+  finalize_topology:
+    action: validate_graph_structure_and_formulas
+    message_intent: topology_ready_starting_input_kpi_collection
+    next: collect_input_kpi_values
+
+  collect_input_kpi_values:
+    action: ask_missing_leaf_value_question_or_small_related_group
+    max_questions_per_turn: 3
+    retrieve_reference_entries_only_for_active_questions: true
+    answer_options:
+      - enter_custom_value
+      - use_suggested_reference_value_when_available
+      - leave_unknown_for_now
+    next: validate_input_kpi_answer
+
+  validate_input_kpi_answer:
+    action: parse_value_unit_default_acceptance_custom_context_or_unknown
+    next_if_valid: write_value_to_graph
+    next_if_invalid: ask_smallest_value_followup
+
+  ask_smallest_value_followup:
+    action: ask_only_the_minimum_followup_needed_to_parse_or_validate_the_answer
+    next: validate_input_kpi_answer
+
+  write_value_to_graph:
+    action: store_value_status_and_recalculate_affected_formulas
+    statuses:
+      custom_user_value: user_provided_value
+      accepted_catalog_suggestion: default_assumption
+      skipped_or_unknown: unknown
+    next_if_value_changes_topology: update_topology
+    next_if_more_values_needed: collect_input_kpi_values
+    next_if_done: final_validation
+
+  final_validation:
+    action: run_formula_unit_assumption_and_forbidden_node_checks
+    required_checks:
+      - no_haulage_or_dispatch_nodes
+      - no_readiness_access_min_cap_formula
+      - readiness_access_nodes_are_under_downtime
+      - no_fleet_downtime_double_count
+      - no_mixed_unit_sum_without_convention
+    next_if_pass: complete
+    next_if_fail: repair_or_ask_followup
+
+  repair_or_ask_followup:
+    action: repair_deterministic_issue_or_ask_smallest_required_question
+    next: final_validation
+
+  complete:
+    action: tell_user_vdt_is_complete_and_ready_to_use
+    include_unresolved_unknowns_summary: true
+    terminal: true
+
+topology_question_bank:
+  - id: target_kpi_and_unit
+    ask_when: root KPI or unit is ambiguous
+    options: [total_excavation_output, ore_excavation_t, rock_excavation_solid_m3, excavation_capacity, excavator_productivity, custom]
+  - id: productivity_material_mode
+    ask_when: productivity branch can be ore t/h or rock solid m3/h
+    options: [ore_tph, rock_solid_m3ph, separate_material_branches, custom]
+  - id: equipment_split_logic
+    ask_when: equipment classes materially differ
+    options: [combined_fleet, split_by_equipment_class, split_by_model, custom]
+  - id: material_area_split_logic
+    ask_when: material area pit bench block or phase changes count time productivity or downtime logic
+    options: [no_split, material, pit, bench, block, operating_area, custom]
+  - id: downtime_category_visibility
+    ask_when: user mentions losses, downtime, readiness, access, restrictions, safety, or face availability
+    options:
+      - scheduled_non_excavation_time_h
+      - technical_downtime_h
+      - technological_downtime_h
+      - organizational_downtime_h
+      - relocation_or_move_time_h
+      - material_or_face_not_ready_time_h
+      - drill_blast_waiting_or_restricted_access_time_h
+      - operating_area_access_restriction_time_h
+      - geotechnical_or_safety_restriction_time_h
+      - other_downtime_h
+      - custom
+    note: readiness and access options are downtime categories, not output caps.
+  - id: downtime_basis
+    ask_when: downtime value is present but basis is ambiguous
+    options: [per_excavator, total_fleet, unknown]
+
+input_kpi_question_order:
+  - active_excavator_count
+  - period_days
+  - downtime_basis
+  - scheduled_non_excavation_time_h
+  - technical_downtime_h
+  - technological_downtime_h
+  - organizational_downtime_h
+  - relocation_or_move_time_h
+  - material_or_face_not_ready_time_h
+  - drill_blast_waiting_or_restricted_access_time_h
+  - operating_area_access_restriction_time_h
+  - geotechnical_or_safety_restriction_time_h
+  - other_downtime_h
+  - equipment_model_or_class
+  - average_bucket_volume_m3
+  - buckets_per_truck
+  - truck_loading_time_min_or_components
+  - actual_bucket_fill_factor
+  - swell_factor
+  - ore_density_in_solid_t_per_m3
+
+reference_lookup_policy:
+  load_defaults_catalog_for_nodes:
+    - bucket_cycle_time_sec
+    - truck_loading_time_min_or_components
+    - buckets_per_truck
+    - actual_bucket_fill_factor
+    - swell_factor
+    - ore_density_in_solid_t_per_m3
+  load_equipment_catalog_for_nodes:
+    - equipment_model_or_class
+    - average_bucket_volume_m3
+    - bucket_payload_t
+    - buckets_per_truck
+  no_reference_defaults_for_nodes:
+    - active_excavator_count
+    - period_days
+    - scheduled_non_excavation_time_h
+    - technical_downtime_h
+    - technological_downtime_h
+    - organizational_downtime_h
+    - relocation_or_move_time_h
+    - material_or_face_not_ready_time_h
+    - drill_blast_waiting_or_restricted_access_time_h
+    - operating_area_access_restriction_time_h
+    - geotechnical_or_safety_restriction_time_h
+    - other_downtime_h
+
+dialog_message_templates:
+  acknowledge_and_start: >-
+    I understand the task. I will build the Excavation VDT first, ask only
+    topology questions that are needed, and then fill input KPI values through
+    dialog.
+  topology_ready_starting_input_kpi_collection: >-
+    The VDT structure is ready. I will now ask for input KPI values. For each
+    missing value, you can enter your value, accept a suggested reference value
+    when available, or leave it unknown.
+  readiness_access_as_downtime_notice: >-
+    I will treat readiness and access limitations as downtime that reduces net
+    excavation time, not as output caps.
+  complete: >-
+    Done. The VDT is built and input KPI values are filled as far as possible.
+    You can now work with the VDT.

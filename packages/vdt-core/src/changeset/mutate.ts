@@ -47,6 +47,8 @@ function additionToNode(addition: VdtNodeAddition, timestamp: string): VdtNode {
     formula: addition.formula,
     value: addition.value,
     baselineValue: addition.baselineValue,
+    valueStatus: addition.valueStatus,
+    valueSource: addition.valueSource,
     aiGenerated: true,
     aiConfidence: addition.aiConfidence,
     aiRationale: addition.aiRationale,

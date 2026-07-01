@@ -46,10 +46,10 @@
         "type": "calculated",
         "status": "ai_suggested",
         "unit": "tonnes/hour",
-        "formula": "nominal_rate * utilization_factor * yield_factor",
+        "formula": "nominal_rate * yield_factor",
         "aiGenerated": true,
         "aiConfidence": 0.87,
-        "aiRationale": "Actual productivity is typically below nominal rate due to utilization and yield losses.",
+        "aiRationale": "Actual productivity is typically below nominal rate due to yield losses and operating conditions.",
         "controllability": "high",
         "materiality": "high",
         "createdAt": "2026-01-01T00:00:00.000Z",
@@ -116,22 +116,6 @@
         "aiConfidence": 0.82,
         "aiRationale": "Nominal rate defines the technical capacity baseline.",
         "controllability": "low",
-        "materiality": "high",
-        "createdAt": "2026-01-01T00:00:00.000Z",
-        "updatedAt": "2026-01-01T00:00:00.000Z"
-      },
-      {
-        "id": "utilization_factor",
-        "name": "Utilization Factor",
-        "description": "Share of nominal production rate actually utilized.",
-        "type": "input",
-        "status": "ai_suggested",
-        "unit": "%",
-        "baselineValue": 0.9,
-        "aiGenerated": true,
-        "aiConfidence": 0.78,
-        "aiRationale": "Utilization captures operational inefficiencies below design rate.",
-        "controllability": "high",
         "materiality": "high",
         "createdAt": "2026-01-01T00:00:00.000Z",
         "updatedAt": "2026-01-01T00:00:00.000Z"
@@ -207,15 +191,6 @@
         "label": "based on",
         "aiGenerated": true,
         "aiConfidence": 0.82
-      },
-      {
-        "id": "edge_average_productivity_utilization_factor",
-        "sourceNodeId": "average_productivity",
-        "targetNodeId": "utilization_factor",
-        "relation": "multiplicative_driver",
-        "label": "adjusted by",
-        "aiGenerated": true,
-        "aiConfidence": 0.78
       },
       {
         "id": "edge_average_productivity_yield_factor",

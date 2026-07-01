@@ -40,7 +40,7 @@ describe("VDT agent skill library", () => {
       "generic/logical-kpi-decomposition.md",
       "mining/block-preparation-dozer.md",
       "mining/drill-and-blast.md",
-      "mining/excavation-loading.md",
+      "mining/excavation.md",
       "mining/haulage-truck-cycle.md",
       "mining/material-allocation-ore-waste.md",
       "mining/mine-production-system.md",
@@ -61,6 +61,15 @@ describe("VDT agent skill library", () => {
   });
 
   it.each([
+    [
+      "mining excavation",
+      {
+        rootKpi: "Monthly ore excavation output",
+        industry: "Mining",
+        businessContext: "Excavator downtime, bucket fill factor, swell factor, and shovel productivity"
+      },
+      "mining.excavation"
+    ],
     [
       "mining haulage",
       {
@@ -101,7 +110,7 @@ describe("VDT agent skill library", () => {
       "generic KPI",
       {
         rootKpi: "Service quality score",
-        businessContext: "Operational KPI with capacity, utilization, and quality drivers"
+        businessContext: "Customer survey responses, complaint rate, resolution quality, and response timeliness"
       },
       "generic.logical_kpi_decomposition"
     ]
@@ -125,6 +134,22 @@ describe("VDT agent skill library", () => {
     );
 
     expect(selected.map((candidate) => candidate.skill.id)).toEqual(["generic.logical_kpi_decomposition"]);
+  });
+
+  it("loads excavation reference metadata without loading reference file bodies into the registry scan", async () => {
+    const library = await loadSkillLibraryFromFs(skillsRoot);
+    const excavation = library.byId.get("mining.excavation");
+
+    expect(excavation?.frontmatter.referenceFiles).toEqual({
+      dialogue_flow: "references/excavation-dialogue-flow.yaml",
+      defaults_catalog: "references/excavation-defaults.yaml",
+      equipment_catalog: "references/equipment-catalog.yaml"
+    });
+    expect(excavation?.frontmatter.evalFiles).toEqual({
+      regression_suite: "evals/excavation.evals.json"
+    });
+    expect(excavation?.raw).not.toContain("cat_6020_average_bucket_volume_m3");
+    expect(excavation?.raw).not.toContain("formula_numeric_ore_productivity_example");
   });
 });
 

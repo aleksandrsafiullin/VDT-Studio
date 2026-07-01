@@ -26,6 +26,7 @@ export type VdtAgentRunPhase =
   | "asking_clarifying_questions"
   | "planning_decomposition"
   | "building_graph"
+  | "previewing_mutation"
   | "validating_graph"
   | "repairing_graph"
   | "applying_graph"
@@ -44,6 +45,9 @@ export type VdtAgentEventType =
   | "plan_proposed"
   | "tool_call_started"
   | "tool_call_completed"
+  | "mutation_proposed"
+  | "mutation_applied"
+  | "mutation_rejected"
   | "graph_patch"
   | "graph_validation"
   | "manual_change_observed"
@@ -175,11 +179,10 @@ export interface SubagentTask {
   runId: string;
   type:
     | "brief_alignment"
-    | "domain_decomposition"
-    | "formula_generation"
-    | "unit_validation"
-    | "model_critique"
-    | "memory_curation";
+    | "level_decomposition"
+    | "formula_builder"
+    | "critic"
+    | "memory_curator";
   status: "queued" | "running" | "succeeded" | "failed_retryable" | "failed";
   inputArtifactId: string;
   publicStatus?: string | undefined;
@@ -196,6 +199,7 @@ export interface SubagentReport {
   summaryForOrchestrator: string;
   userFacingSummary?: string | undefined;
   proposedQuestions?: VdtAgentQuestion[] | undefined;
+  proposedMutationArtifactId?: string | undefined;
   proposedPatchArtifactId?: string | undefined;
   proposedProjectArtifactId?: string | undefined;
   assumptions?: string[] | undefined;
@@ -218,15 +222,24 @@ export interface VdtAgentStartInput {
   selectedNodeId?: string | undefined;
 }
 
+export interface VdtAgentWorkspaceContext {
+  projectId: string;
+  projectName?: string | undefined;
+  industry?: string | undefined;
+  description?: string | undefined;
+}
+
 export interface VdtAgentStartRequest {
   mode: VdtAgentMode;
   input: VdtAgentStartInput;
+  workspace?: VdtAgentWorkspaceContext | undefined;
   providerId: string;
   providerConfig?: Record<string, unknown> | undefined;
   options?: {
     autoApplyPatches?: boolean | undefined;
     askBeforeFirstPatch?: boolean | undefined;
     maxSteps?: number | undefined;
+    maxAutoDepth?: number | undefined;
     continueWithAssumptions?: boolean | undefined;
   } | undefined;
 }
@@ -304,6 +317,80 @@ export interface CalculationStateSummary {
   tracePreview: CalculationTraceItem[];
 }
 
+export type MutationProposalSource = "agent" | "user" | "repair" | "import";
+
+export type MutationProposalStatus = "proposed" | "approved" | "rejected" | "applied" | "failed";
+
+export interface MutationPolicy {
+  autoApply: boolean;
+  askBeforeFirstPatch: boolean;
+  requireApprovalForGraphStructure: boolean;
+  requireApprovalForFormulaChanges: boolean;
+  requireApprovalForDelete: boolean;
+}
+
+export interface ProgressiveMutationScope {
+  targetNodeId: string;
+  maxDepthDelta: 1;
+  maxNodesPerLayer: number;
+  allowGrandchildrenInSingleMutation: false;
+}
+
+export interface ProgressiveBuildState {
+  rootNodeId: string;
+  currentDepth: number;
+  maxAutoDepth: number;
+  completedLayerNodeIds: string[];
+  frontierNodeIds: string[];
+  blockedNodeIds: Array<{
+    nodeId: string;
+    reason: "missing_data" | "ambiguous_logic" | "needs_user_choice" | "low_confidence" | "validation_blocked";
+    questionIds: string[];
+  }>;
+}
+
+export type ProgressiveBuildSummary = Omit<ProgressiveBuildState, "maxAutoDepth">;
+
+export type AgentContinuationDecision =
+  | {
+      type: "continue_auto";
+      targetNodeId: string;
+      reason: string;
+    }
+  | {
+      type: "ask_user";
+      questions: VdtAgentQuestion[];
+    }
+  | {
+      type: "finish_current_depth";
+      summary: string;
+      nextSuggestedTargets: string[];
+    };
+
+export interface MutationProposal {
+  id: string;
+  runId: string;
+  projectId: string;
+  vdtId: string;
+  baseRevisionId: string;
+  baseRevision: number;
+  source: MutationProposalSource;
+  title: string;
+  summary: string;
+  changeSet: VdtChangeSet;
+  selectedChangeIds: string[];
+  previewProject: VdtProject;
+  validation: ValidationStateSummary;
+  calculation?: CalculationStateSummary | undefined;
+  status: MutationProposalStatus;
+  policy: MutationPolicy;
+  progressiveScope?: ProgressiveMutationScope | undefined;
+  createdAt: string;
+  appliedAt?: string | undefined;
+  rejectedAt?: string | undefined;
+  failureReason?: string | undefined;
+}
+
 export interface ManualChangeSummary {
   observedAt: string;
   projectRevision?: number | undefined;
@@ -343,6 +430,7 @@ export interface AgentToolResultEnvelope {
   } | undefined;
   projectChanged: boolean;
   validation?: ValidationStateSummary | undefined;
+  mutationProposal?: Pick<MutationProposal, "id" | "status" | "title" | "summary" | "selectedChangeIds"> | undefined;
   emittedEventIds: string[];
 }
 
@@ -351,6 +439,23 @@ export interface AgentDecisionContext {
   mode: VdtAgentMode;
   step: number;
   userRequest: VdtAgentStartInput;
+  briefReadiness: {
+    rootKpiIsPlaceholder: boolean;
+    directionStatus: "ready" | "needs_agent_judgment";
+    guidance: string;
+  };
+  continuationPolicy: {
+    continueWithAssumptions: boolean;
+    maxNodesPerLayer: number;
+    askOnlyWhen: Array<
+      | "missing_data"
+      | "business_choice"
+      | "scope_conflict"
+      | "ambiguous_logic"
+      | "low_confidence"
+      | "formula_ambiguity"
+    >;
+  };
   currentProject?: ProjectSummary | undefined;
   visibleContext: AgentThreadContext;
   selectedNode?: NodeSummary | undefined;
@@ -361,6 +466,8 @@ export interface AgentDecisionContext {
   manualChanges: ManualChangeSummary[];
   subagentReports: Array<Pick<SubagentReport, "taskId" | "status" | "summaryForOrchestrator" | "confidence">>;
   lastToolResult?: AgentToolResultEnvelope | undefined;
+  pendingMutationProposal?: MutationProposal | undefined;
+  progressiveBuild?: ProgressiveBuildSummary | undefined;
   validationState?: ValidationStateSummary | undefined;
   calculationState?: CalculationStateSummary | undefined;
   constraints: {
@@ -408,10 +515,13 @@ export interface VdtAgentRunSnapshot {
   pendingQuestions?: VdtAgentQuestion[] | undefined;
   pendingPlan?: VdtBuildPlan | undefined;
   pendingChangeSet?: VdtChangeSet | undefined;
+  pendingMutationProposal?: MutationProposal | undefined;
   finalReport?: string | undefined;
   error?: { code: string; message: string } | undefined;
   retryableError?: RetryableAgentError | undefined;
   artifacts?: AgentArtifact[] | undefined;
+  mutationProposals?: MutationProposal[] | undefined;
+  progressiveBuild?: ProgressiveBuildState | undefined;
   subagentTasks?: SubagentTask[] | undefined;
   subagentReports?: SubagentReport[] | undefined;
   createdAt: string;
@@ -439,6 +549,9 @@ export interface VdtAgentRunState extends VdtAgentRunSnapshot {
   manualChanges: Array<{ projectRevision?: number | undefined; change: ManualProjectChange; observedAt: string }>;
   recipes: VdtSkillRecipe[];
   lastToolResult?: AgentToolResultEnvelope | undefined;
+  mutationProposals?: MutationProposal[] | undefined;
+  pendingMutationProposal?: MutationProposal | undefined;
+  progressiveBuild?: ProgressiveBuildState | undefined;
   validationState?: ValidationStateSummary | undefined;
   calculationState?: CalculationStateSummary | undefined;
   memoryNotes: Array<{ note: string; tags: string[]; createdAt: string }>;

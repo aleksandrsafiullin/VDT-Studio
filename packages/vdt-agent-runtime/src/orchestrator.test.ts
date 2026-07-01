@@ -5,7 +5,8 @@ import {
   type AgentDecisionProvider
 } from "./orchestrator";
 import type { AgentDecision } from "./schemas/agent-decision";
-import type { FirstResponseOutput } from "./schemas/agent-first-response";
+import type { FirstResponseInput, FirstResponseOutput } from "./schemas/agent-first-response";
+import type { AgentDecisionContext } from "./types";
 
 function scriptedProvider(
   decisions: AgentDecision[],
@@ -18,17 +19,26 @@ function scriptedProvider(
       message: "Planning the VDT from your request."
     }
   }
-): AgentDecisionProvider & { calls: number; taskTypes: string[] } {
+): AgentDecisionProvider & {
+  calls: number;
+  taskTypes: string[];
+  firstResponseInputs: FirstResponseInput[];
+  decisionInputs: AgentDecisionContext[];
+} {
   return {
     id: "decision-test",
     calls: 0,
     taskTypes: [],
+    firstResponseInputs: [],
+    decisionInputs: [],
     async completeStructured(params) {
       this.calls += 1;
       this.taskTypes.push(params.taskType);
       if (params.taskType === "orchestrator_first_response") {
+        this.firstResponseInputs.push(params.input as FirstResponseInput);
         return firstResponse as never;
       }
+      this.decisionInputs.push(params.input as AgentDecisionContext);
       const decision = decisions.shift();
       if (!decision) throw new Error("Scripted provider ran out of decisions.");
       return decision as never;
@@ -126,8 +136,7 @@ function haulageBuildDecisions(): AgentDecision[] {
         name: "Trips per truck",
         type: "calculated",
         unit: "trips/truck/year",
-        relation: "multiplicative_driver",
-        formula: "operating_hours / cycle_time_h"
+        relation: "multiplicative_driver"
       }
     },
     {
@@ -168,8 +177,7 @@ function haulageBuildDecisions(): AgentDecision[] {
         name: "Cycle time",
         type: "calculated",
         unit: "h/trip",
-        relation: "divisive_driver",
-        formula: "loaded_travel_time_h + empty_return_time_h"
+        relation: "divisive_driver"
       }
     },
     {
@@ -182,8 +190,7 @@ function haulageBuildDecisions(): AgentDecision[] {
         name: "Loaded travel time",
         type: "calculated",
         unit: "h/trip",
-        relation: "additive_component",
-        formula: "haul_distance_km / loaded_speed_kmh"
+        relation: "additive_component"
       }
     },
     {
@@ -196,8 +203,7 @@ function haulageBuildDecisions(): AgentDecision[] {
         name: "Empty return time",
         type: "calculated",
         unit: "h/trip",
-        relation: "additive_component",
-        formula: "haul_distance_km / empty_speed_kmh"
+        relation: "additive_component"
       }
     },
     {
@@ -245,6 +251,42 @@ function haulageBuildDecisions(): AgentDecision[] {
     {
       type: "call_tool",
       toolName: "vdt.set_formula",
+      statusMessage: "Setting loaded travel time formula.",
+      args: {
+        nodeId: "loaded_travel_time_h",
+        formula: "haul_distance_km / loaded_speed_kmh"
+      }
+    },
+    {
+      type: "call_tool",
+      toolName: "vdt.set_formula",
+      statusMessage: "Setting empty return time formula.",
+      args: {
+        nodeId: "empty_return_time_h",
+        formula: "haul_distance_km / empty_speed_kmh"
+      }
+    },
+    {
+      type: "call_tool",
+      toolName: "vdt.set_formula",
+      statusMessage: "Setting cycle-time formula.",
+      args: {
+        nodeId: "cycle_time_h",
+        formula: "loaded_travel_time_h + empty_return_time_h"
+      }
+    },
+    {
+      type: "call_tool",
+      toolName: "vdt.set_formula",
+      statusMessage: "Setting trips-per-truck formula.",
+      args: {
+        nodeId: "trips_per_truck",
+        formula: "operating_hours / cycle_time_h"
+      }
+    },
+    {
+      type: "call_tool",
+      toolName: "vdt.set_formula",
       statusMessage: "Setting the root hauled-tonnes formula.",
       args: {
         nodeId: "ore_haulage",
@@ -272,6 +314,56 @@ function haulageBuildDecisions(): AgentDecision[] {
 }
 
 describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
+  it("asks for modeling direction before skill selection when the visible root KPI is a placeholder", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([], {
+      assistantMessage: "I can use those inputs, but first I need to confirm what VDT you want to build.",
+      nextAction: "ask_user",
+      questions: [
+        {
+          id: "model_direction",
+          question: "What value driver tree should we build from this information?",
+          reason: "The visible Root KPI is still a placeholder, and the source data alone does not define the model output.",
+          required: true,
+          expectedAnswerType: "text",
+          freeTextAllowed: true,
+          placeholder: "Describe the target output, KPI, or business question for the tree."
+        }
+      ],
+      publicStatus: {
+        phase: "asking_questions",
+        message: "Confirming what VDT to build."
+      }
+    });
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: {
+        prompt: "I have 5 Komatsu PC1250 and 2 Komatsu PC2000",
+        rootKpi: "New VDT",
+        timePeriod: "monthly"
+      },
+      providerId: "decision-test",
+      options: { continueWithAssumptions: false, maxSteps: 10 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(provider.taskTypes).toEqual(["orchestrator_first_response"]);
+    expect(provider.decisionInputs).toEqual([]);
+    expect(provider.firstResponseInputs[0]?.briefReadiness).toMatchObject({
+      rootKpiIsPlaceholder: true,
+      directionStatus: "needs_agent_judgment"
+    });
+    expect(snapshot.pendingQuestions?.[0]).toMatchObject({
+      id: "model_direction",
+      question: "What value driver tree should we build from this information?",
+      answerKind: "text",
+      freeTextAllowed: true
+    });
+    expect(snapshot.events.map((event) => event.type)).not.toContain("skill_search");
+    expect(snapshot.selectedSkills).toEqual([]);
+  });
+
   it("splits compound fleet and shift clarification into structured fields", async () => {
     const runtime = createVdtAgentRuntime();
     const provider = scriptedProvider([], {
@@ -382,6 +474,154 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
     ]);
   });
 
+  it("continues automatically across safe Working time layers without asking after each layer", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "vdt.create_draft",
+        statusMessage: "Creating the production root.",
+        args: {
+          projectTitle: "Production Volume Driver Model",
+          rootKpi: "Production Volume",
+          unit: "tonnes/month",
+          timePeriod: "month",
+          industry: "Mining"
+        }
+      },
+      {
+        type: "call_tool",
+        toolName: "vdt.add_drivers_batch",
+        statusMessage: "Adding the first visible production layer.",
+        args: {
+          drivers: [
+            {
+              parentNodeId: "production_volume",
+              nodeId: "throughput_rate",
+              name: "Throughput rate",
+              type: "input",
+              unit: "tonnes/hour",
+              relation: "multiplicative_driver",
+              baselineValue: 10
+            },
+            {
+              parentNodeId: "production_volume",
+              nodeId: "working_time",
+              name: "Working time",
+              type: "calculated",
+              unit: "hours/month",
+              relation: "multiplicative_driver"
+            }
+          ]
+        }
+      },
+      {
+        type: "call_tool",
+        toolName: "vdt.add_drivers_batch",
+        statusMessage: "Decomposing Working time into downtime categories.",
+        args: {
+          drivers: [
+            {
+              parentNodeId: "working_time",
+              nodeId: "scheduled_shift_time",
+              name: "Scheduled shift time",
+              type: "input",
+              unit: "hours/month",
+              relation: "additive_component",
+              baselineValue: 100
+            },
+            {
+              parentNodeId: "working_time",
+              nodeId: "planned_downtime",
+              name: "Planned downtime",
+              type: "input",
+              unit: "hours/month",
+              relation: "subtractive_component",
+              baselineValue: 10
+            },
+            {
+              parentNodeId: "working_time",
+              nodeId: "unplanned_downtime",
+              name: "Unplanned downtime",
+              type: "input",
+              unit: "hours/month",
+              relation: "subtractive_component",
+              baselineValue: 5
+            }
+          ]
+        }
+      },
+      {
+        type: "call_tool",
+        toolName: "vdt.set_formula",
+        statusMessage: "Calculating Working time.",
+        args: {
+          nodeId: "working_time",
+          formula: "scheduled_shift_time - planned_downtime - unplanned_downtime"
+        }
+      },
+      {
+        type: "call_tool",
+        toolName: "vdt.set_formula",
+        statusMessage: "Calculating Production Volume.",
+        args: {
+          nodeId: "production_volume",
+          formula: "throughput_rate * working_time"
+        }
+      },
+      {
+        type: "call_tool",
+        toolName: "vdt.calculate",
+        statusMessage: "Calculating the VDT.",
+        args: {}
+      },
+      {
+        type: "finish",
+        summary: "Built a calculable production-volume VDT with Working time decomposed into downtime categories.",
+        nextSuggestedActions: ["Review additional downtime categories if the mine has more stoppage data."]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: {
+        prompt: "Build a production volume VDT.",
+        rootKpi: "Production Volume",
+        unit: "tonnes/month",
+        timePeriod: "month",
+        industry: "Mining"
+      },
+      providerId: "decision-test",
+      options: { continueWithAssumptions: false, autoApplyPatches: true, maxSteps: 12 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("succeeded");
+    expect(snapshot.pendingQuestions).toBeUndefined();
+    expect(provider.firstResponseInputs[0]?.continuationPolicy).toMatchObject({
+      continueWithAssumptions: false,
+      maxNodesPerLayer: 8
+    });
+    expect(provider.decisionInputs.every((input) => input.continuationPolicy.continueWithAssumptions === false)).toBe(true);
+    const layerProposals = snapshot.mutationProposals?.filter((proposal) => proposal.changeSet.additions.length > 0);
+    expect(layerProposals?.map((proposal) => proposal.progressiveScope?.targetNodeId)).toEqual([
+      "production_volume",
+      "working_time"
+    ]);
+    expect(snapshot.progressiveBuild).toMatchObject({
+      currentDepth: 2,
+      completedLayerNodeIds: expect.arrayContaining(["production_volume", "working_time"])
+    });
+    expect(snapshot.project?.graph.nodes.map((node) => node.name)).toEqual(expect.arrayContaining([
+      "Production Volume",
+      "Throughput rate",
+      "Working time",
+      "Scheduled shift time",
+      "Planned downtime",
+      "Unplanned downtime"
+    ]));
+    expect(calculateGraph(snapshot.project!).rootValue).toBe(850);
+  });
+
   it("asks for missing haulage inputs, resumes the same run, and builds a valid calculable VDT one tool at a time", async () => {
     const runtime = createVdtAgentRuntime();
     const provider = scriptedProvider([
@@ -421,7 +661,7 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
         timePeriod: "year"
       },
       providerId: "decision-test",
-      options: { continueWithAssumptions: false, maxSteps: 30 }
+      options: { continueWithAssumptions: false, autoApplyPatches: true, maxSteps: 30, maxAutoDepth: 4 }
     }, { provider });
 
     expect(start.status).toBe("needs_user_input");
@@ -551,7 +791,7 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
       mode: "generate_vdt",
       input: { prompt: "Build and repair", rootKpi: "Ore haulage" },
       providerId: "decision-test",
-      options: { maxSteps: 20 }
+      options: { autoApplyPatches: true, maxSteps: 20 }
     }, { provider });
 
     expect(snapshot.status).toBe("succeeded");
@@ -687,7 +927,7 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
         timePeriod: "year"
       },
       providerId: "decision-test",
-      options: { continueWithAssumptions: false, maxSteps: 20 }
+      options: { continueWithAssumptions: false, autoApplyPatches: true, maxSteps: 20 }
     }, { provider });
 
     expect(start.status).toBe("needs_user_input");

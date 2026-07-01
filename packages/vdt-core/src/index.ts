@@ -14,6 +14,7 @@ export * from "./graph/validation";
 export * from "./graph/layout";
 export * from "./scenario/scenario";
 export * from "./scenario/sensitivity";
+export * from "./comparison/compare";
 export * from "./export/export";
 export * from "./examples/production-volume";
 export * from "./versioning/snapshot";

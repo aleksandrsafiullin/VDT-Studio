@@ -15,7 +15,7 @@ describe("skill recipes", () => {
       "generic.logical_kpi_decomposition",
       "mining.block_preparation_dozer",
       "mining.drill_and_blast",
-      "mining.excavation_loading",
+      "mining.excavation",
       "mining.haulage_truck_cycle",
       "mining.material_allocation_ore_waste",
       "mining.mine_production_system",
@@ -36,5 +36,15 @@ describe("skill recipes", () => {
     const drivers = initialDriversFromRecipes([compileSkillRecipe(skill!)]);
 
     expect(drivers.map((driver) => driver.id)).toEqual(["effective_working_time", "average_productivity"]);
+  });
+
+  it("does not seed hidden time-loss factors as generated drivers or formulas", async () => {
+    const library = await loadSkillLibraryFromFs(skillsRoot);
+    const recipes = library.skills.map((skill) => compileSkillRecipe(skill));
+    const serialized = JSON.stringify(recipes);
+    const forbiddenTerm = new RegExp(["util", "ization"].join(""), "i");
+
+    expect(serialized).not.toMatch(forbiddenTerm);
+    expect(serialized).toMatch(/working_time|Working time/);
   });
 });

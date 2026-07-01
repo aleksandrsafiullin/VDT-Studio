@@ -1,7 +1,8 @@
 import { z } from "zod";
-import { extractFormulaReferences, type VdtNodePatch } from "@vdt-studio/vdt-core";
+import { extractFormulaReferences, type VdtChangeSet, type VdtNodePatch } from "@vdt-studio/vdt-core";
+import { proposeAndMaybeApplyMutation } from "../mutation-pipeline";
 import { AgentToolError, type AgentTool } from "../tool-registry";
-import { summarizeValidation } from "../summaries";
+import { cloneBuilder, combineChangeSets, requireChangeSet } from "./builder-mutation-utils";
 
 const edgeRelationSchema = z.enum([
   "positive_driver",
@@ -48,6 +49,8 @@ const repairMissingFormulaReferenceTool: AgentTool = {
 
     let formula = node.formula;
     let addedNodeId: string | undefined;
+    const previewBuilder = cloneBuilder(context);
+    const changeSets: VdtChangeSet[] = [];
     if (input.strategy === "rename_to_existing") {
       if (!input.replacementNodeId) {
         throw new AgentToolError("REPLACEMENT_REQUIRED", "replacementNodeId is required for rename_to_existing.");
@@ -62,7 +65,7 @@ const repairMissingFormulaReferenceTool: AgentTool = {
         throw new AgentToolError("PARENT_NOT_FOUND", `Parent node "${input.newNode.parentNodeId}" was not found.`);
       }
       if (!project.graph.nodes.some((candidate) => candidate.id === input.newNode!.nodeId)) {
-        const added = builder.addDriver({
+        const added = previewBuilder.addDriver({
           parentNodeId: input.newNode.parentNodeId,
           nodeId: input.newNode.nodeId,
           name: input.newNode.name,
@@ -71,6 +74,7 @@ const repairMissingFormulaReferenceTool: AgentTool = {
           relation: "formula_dependency",
           baselineValue: input.newNode.baselineValue
         });
+        changeSets.push(requireChangeSet(added.changeSet));
         addedNodeId = added.changeSet?.additions[0]?.nodeId ?? input.newNode.nodeId;
       }
       formula = input.newNode.nodeId === input.missingReference
@@ -80,7 +84,7 @@ const repairMissingFormulaReferenceTool: AgentTool = {
       formula = renameReference(formula, input.missingReference, "1");
     }
 
-    project = builder.getProject();
+    project = previewBuilder.getProject();
     const available = new Set(project.graph.nodes.map((candidate) => candidate.id));
     const stillMissing = extractFormulaReferences(formula).filter((reference) => !available.has(reference));
     if (stillMissing.length > 0) {
@@ -89,13 +93,8 @@ const repairMissingFormulaReferenceTool: AgentTool = {
       });
     }
 
-    const result = builder.setFormula({ nodeId: input.nodeId, formula });
-    const validation = summarizeValidation(builder.validate().validation);
-    context.store.updateRun(context.runId, {
-      draftProject: result.project,
-      pendingChangeSet: result.changeSet,
-      validationState: validation
-    });
+    const result = previewBuilder.setFormula({ nodeId: input.nodeId, formula });
+    changeSets.push(requireChangeSet(result.changeSet));
     context.emit({
       type: "repair_started",
       phase: "repairing_graph",
@@ -103,13 +102,12 @@ const repairMissingFormulaReferenceTool: AgentTool = {
       message: `Repaired missing reference "${input.missingReference}" on "${input.nodeId}".`,
       metadata: { strategy: input.strategy, nodeId: input.nodeId, addedNodeId }
     });
-    context.emit({
-      type: "graph_patch",
-      phase: "repairing_graph",
+    const mutation = proposeAndMaybeApplyMutation(context, {
+      source: "repair",
       title: "Formula repair applied",
-      message: result.event.message,
-      patch: result.changeSet,
-      metadata: { revision: result.revision, nodeId: input.nodeId }
+      summary: result.event.message,
+      changeSet: combineChangeSets(changeSets, context),
+      targetNodeId: input.nodeId
     });
     return {
       repaired: true,
@@ -117,7 +115,9 @@ const repairMissingFormulaReferenceTool: AgentTool = {
       nodeId: input.nodeId,
       formula,
       addedNodeId,
-      validation
+      revision: mutation.revision,
+      validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
     };
   }
 };
@@ -137,18 +137,25 @@ const repairOrphanNodeTool: AgentTool = {
   run(context, input) {
     const builder = context.builder;
     if (!builder) throw new AgentToolError("NO_DRAFT_PROJECT", "VDT builder session is not available for this run.");
-    const result = builder.addEdge({
+    const previewBuilder = cloneBuilder(context);
+    const result = previewBuilder.addEdge({
       sourceNodeId: input.attachToNodeId,
       targetNodeId: input.nodeId,
       relation: input.relation
     });
-    const validation = summarizeValidation(builder.validate().validation);
-    context.store.updateRun(context.runId, {
-      draftProject: result.project,
-      pendingChangeSet: result.changeSet,
-      validationState: validation
+    const mutation = proposeAndMaybeApplyMutation(context, {
+      source: "repair",
+      title: "Orphan node attached",
+      summary: result.event.message,
+      changeSet: requireChangeSet(result.changeSet),
+      targetNodeId: input.attachToNodeId
     });
-    return { repaired: true, validation };
+    return {
+      repaired: true,
+      revision: mutation.revision,
+      validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
+    };
   }
 };
 
@@ -175,10 +182,13 @@ const repairDuplicateNodeIdTool: AgentTool = {
       throw new AgentToolError("NODE_ID_EXISTS", `Node "${input.newNodeId}" already exists.`);
     }
     const target = project.graph.nodes.find((node) => node.id === input.nodeId)!;
-    builder.deleteNode({ nodeId: input.nodeId, cascadeEdges: true });
+    const previewBuilder = cloneBuilder(context);
+    const changeSets: VdtChangeSet[] = [];
+    const deleted = previewBuilder.deleteNode({ nodeId: input.nodeId, cascadeEdges: true });
+    changeSets.push(requireChangeSet(deleted.changeSet));
     const parentEdge = project.graph.edges.find((edge) => edge.targetNodeId === input.nodeId);
     const parentNodeId = parentEdge?.sourceNodeId ?? project.rootNodeId;
-    builder.addDriver({
+    const added = previewBuilder.addDriver({
       parentNodeId,
       nodeId: input.newNodeId,
       name: target.name,
@@ -190,19 +200,32 @@ const repairDuplicateNodeIdTool: AgentTool = {
       description: target.description,
       assumptions: target.assumptions
     });
+    changeSets.push(requireChangeSet(added.changeSet));
     if (input.updateFormulaReferences === true) {
-      for (const node of builder.getProject().graph.nodes) {
+      for (const node of previewBuilder.getProject().graph.nodes) {
         if (!node.formula?.includes(input.nodeId)) continue;
-        builder.updateNode({
+        const updated = previewBuilder.updateNode({
           nodeId: node.id,
           patch: { formula: renameReference(node.formula, input.nodeId, input.newNodeId) } as VdtNodePatch
         });
+        changeSets.push(requireChangeSet(updated.changeSet));
       }
     }
-    const latest = builder.getProject();
-    const validation = summarizeValidation(builder.validate().validation);
-    context.store.updateRun(context.runId, { draftProject: latest, validationState: validation });
-    return { repaired: true, oldNodeId: input.nodeId, newNodeId: input.newNodeId, validation };
+    const mutation = proposeAndMaybeApplyMutation(context, {
+      source: "repair",
+      title: "Duplicate node id repaired",
+      summary: `Renamed "${input.nodeId}" to "${input.newNodeId}".`,
+      changeSet: combineChangeSets(changeSets, context),
+      targetNodeId: parentNodeId
+    });
+    return {
+      repaired: true,
+      oldNodeId: input.nodeId,
+      newNodeId: input.newNodeId,
+      revision: mutation.revision,
+      validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
+    };
   }
 };
 

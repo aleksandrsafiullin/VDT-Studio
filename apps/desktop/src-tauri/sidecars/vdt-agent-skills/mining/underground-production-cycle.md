@@ -59,7 +59,7 @@ questions:
 
 Use this skill for underground mine production, development advance, stoping production, drill-blast-muck-haul cycles, LHD mucking, underground truck haulage, orepass/hoist constraints, ventilation/re-entry, ground support, services extension, or backfill-constrained production.
 
-Use it when the mining method or underground cycle constraints materially affect production. For detailed drill/blast variables, combine with `mining.drill_and_blast`. For detailed truck/LHD/truck cycle variables, combine with `mining.haulage_truck_cycle` and `mining.excavation_loading`.
+Use it when the mining method or underground cycle constraints materially affect production. For detailed drill/blast variables, combine with `mining.drill_and_blast`. For detailed truck/LHD/truck cycle variables, combine with `mining.haulage_truck_cycle`; use `mining.excavation` only when the scope is open-pit excavation.
 
 ## Decomposition Pattern
 
@@ -178,7 +178,7 @@ underground_haulage_capacity_tonnes = truck_count * truck_effective_hours * payl
 For hoisting or orepass constraint:
 
 ```text
-hoisting_capacity_tonnes = hoist_available_hours * hoist_rate_tph * hoist_utilization
+hoisting_capacity_tonnes = hoist_working_hours * hoist_rate_tph
 
 orepass_capacity_tonnes = orepass_available_hours * orepass_draw_rate_tph * orepass_availability
 ```
@@ -325,7 +325,7 @@ underground_production_tonnes
 
 - Deepen `development_cycle_time_h` into each sequential stage and identify whether any stages can run in parallel.
 - Deepen `drilling_time_h` and `stope_blasted_tonnes` with `mining.drill_and_blast`.
-- Deepen `mucking_capacity_tonnes` with `mining.excavation_loading`, especially for LHD bucket size, tramming distance, drawpoint conditions, and remote operation.
+- Deepen open-pit excavation capacity with `mining.excavation`; keep underground mucking/LHD capacity inside this skill.
 - Deepen `underground_haulage_or_hoisting_capacity_tonnes` with `mining.haulage_truck_cycle` for trucks or with a hoist/conveyor branch if truck haulage is not the bottleneck.
 - Deepen `material_allocation_policy` with `mining.material_allocation_ore_waste` when equipment or crews are shared across ore, development waste, backfill, or rehandle.
 - If the user has not specified mining method, use a generic drill-blast-muck-haul-support cycle and ask for the method before adding method-specific drivers.

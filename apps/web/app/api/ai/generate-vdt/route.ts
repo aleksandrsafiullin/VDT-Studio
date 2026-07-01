@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import {
   AnthropicProvider,
   AzureOpenAiProvider,
-  generateAgenticVdtProject,
   GeminiProvider,
   isLocalRunnerConnectionFailure,
   LocalRunnerProvider,
@@ -23,6 +22,9 @@ interface GenerateVdtRequest extends GenerateVdtInput {
   providerConfig?: Record<string, unknown>;
   operation?: "generate" | "connection_test";
 }
+
+const GENERATE_VDT_DEPRECATED_MESSAGE =
+  "Project generation has moved to /api/agent/runs. Start a generate_vdt agent run instead.";
 
 const MAX_FIELD_LENGTHS: Partial<Record<keyof GenerateVdtInput, number>> = {
   rootKpi: 140,
@@ -87,19 +89,6 @@ function readProviderConfig(value: unknown) {
   }
 
   return providerConfig;
-}
-
-function readMaxTokens(value: unknown): number | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-
-  const maxTokens = (value as Record<string, unknown>).maxTokens;
-  if (typeof maxTokens !== "number" || !Number.isFinite(maxTokens) || maxTokens <= 0) {
-    return undefined;
-  }
-
-  return Math.min(Math.floor(maxTokens), 1_000_000);
 }
 
 function readLocalRunnerProviderConfig(value: unknown, origin: string): LocalRunnerProviderConfig {
@@ -217,16 +206,18 @@ export async function POST(request: Request) {
     }
 
     const connectionTest = body.operation === "connection_test";
-    const input: GenerateVdtInput = {
-      rootKpi: readLimitedString(body, "rootKpi", !connectionTest) ?? "Connection test",
-      levelOfDetail: readLimitedString(body, "levelOfDetail") ?? "medium"
-    };
+    readLimitedString(body, "rootKpi", !connectionTest);
+    readLimitedString(body, "levelOfDetail");
     const optionalInputFields: (keyof GenerateVdtInput)[] = ["industry", "businessContext", "unit", "timePeriod", "goal"];
     for (const field of optionalInputFields) {
-      const value = readLimitedString(body, field);
-      if (value !== undefined) {
-        input[field] = value;
-      }
+      readLimitedString(body, field);
+    }
+
+    if (!connectionTest) {
+      return NextResponse.json(
+        { ok: false, error: GENERATE_VDT_DEPRECATED_MESSAGE },
+        { status: 410 }
+      );
     }
 
     let provider;
@@ -362,10 +353,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    const { project, agentRun } = await generateAgenticVdtProject(provider, input, {
-      maxTokens: readMaxTokens(body.providerConfig)
-    });
-    return NextResponse.json({ ok: true, project, agentRun });
+    return NextResponse.json(
+      { ok: false, error: GENERATE_VDT_DEPRECATED_MESSAGE },
+      { status: 410 }
+    );
   } catch (error) {
     if (
       error instanceof Error &&

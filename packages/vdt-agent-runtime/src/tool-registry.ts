@@ -124,6 +124,7 @@ export class ToolRegistry {
         output: parsedOutput,
         projectChanged,
         validation: currentValidation(context),
+        mutationProposal: latestMutationProposal(context),
         emittedEventIds: emittedSince(context, beforeEvents)
       });
     } catch (error) {
@@ -140,6 +141,7 @@ export class ToolRegistry {
         error: toolError,
         projectChanged: false,
         validation: currentValidation(context),
+        mutationProposal: latestMutationProposal(context),
         emittedEventIds: emittedSince(context, beforeEvents)
       });
     }
@@ -181,6 +183,18 @@ function emittedSince(context: AgentToolContext, beforeIds: string[]): string[] 
 
 function currentValidation(context: AgentToolContext): AgentToolResultEnvelope["validation"] {
   return context.store.getState(context.runId).validationState;
+}
+
+function latestMutationProposal(context: AgentToolContext): AgentToolResultEnvelope["mutationProposal"] {
+  const proposal = context.store.getState(context.runId).mutationProposals?.at(-1);
+  if (!proposal) return undefined;
+  return {
+    id: proposal.id,
+    status: proposal.status,
+    title: proposal.title,
+    summary: proposal.summary,
+    selectedChangeIds: proposal.selectedChangeIds
+  };
 }
 
 function zodSchemaSummary(schema: z.ZodType<unknown>): unknown {

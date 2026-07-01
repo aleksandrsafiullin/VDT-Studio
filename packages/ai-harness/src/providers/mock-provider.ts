@@ -34,13 +34,13 @@ export const productionVolumeAiOutput: GenerateVdtOutput = generateVdtOutputSche
     },
     {
       id: "effective_working_time",
-      name: "Effective Working Time",
+      name: "Working time",
       description: "Time available for actual production after planned and unplanned losses.",
       type: "calculated",
       unit: "hours/month",
       formula: "calendar_time - planned_downtime - unplanned_downtime",
       aiConfidence: 0.92,
-      aiRationale: "Available production time is a direct driver of monthly output.",
+      aiRationale: "Working time is a direct driver of monthly output and can be decomposed into downtime categories.",
       controllability: "high",
       materiality: "high"
     },
@@ -50,9 +50,9 @@ export const productionVolumeAiOutput: GenerateVdtOutput = generateVdtOutputSche
       description: "Average production rate achieved during effective working time.",
       type: "calculated",
       unit: "tonnes/hour",
-      formula: "nominal_rate * utilization_factor * yield_factor",
+      formula: "nominal_rate * yield_factor",
       aiConfidence: 0.87,
-      aiRationale: "Actual productivity is typically below nominal rate due to utilization and yield losses.",
+      aiRationale: "Actual productivity is typically below nominal rate when product yield or recovery losses apply.",
       controllability: "high",
       materiality: "high"
     },
@@ -99,17 +99,6 @@ export const productionVolumeAiOutput: GenerateVdtOutput = generateVdtOutputSche
       aiConfidence: 0.82,
       aiRationale: "Nominal rate defines the technical capacity baseline.",
       controllability: "low",
-      materiality: "high"
-    },
-    {
-      id: "utilization_factor",
-      name: "Utilization Factor",
-      description: "Share of nominal production rate actually utilized.",
-      type: "input",
-      unit: "%",
-      aiConfidence: 0.78,
-      aiRationale: "Utilization captures operational inefficiencies below design rate.",
-      controllability: "high",
       materiality: "high"
     },
     {
@@ -172,14 +161,6 @@ export const productionVolumeAiOutput: GenerateVdtOutput = generateVdtOutputSche
       relation: "multiplicative_driver",
       label: "based on",
       aiConfidence: 0.82
-    },
-    {
-      id: "edge_average_productivity_utilization_factor",
-      sourceNodeId: "average_productivity",
-      targetNodeId: "utilization_factor",
-      relation: "multiplicative_driver",
-      label: "adjusted by",
-      aiConfidence: 0.78
     },
     {
       id: "edge_average_productivity_yield_factor",
@@ -456,10 +437,10 @@ const REQUIRED_DRIVER_HINTS: Record<string, readonly string[]> = {
   "Safety Incident Rate": ["Recordable Incidents", "Exposure Hours", "Training Compliance", "Hazard Controls"],
   "Energy Consumption": ["Operating Hours", "Equipment Load", "Efficiency", "Standby Losses"],
   Recovery: ["Recovered Metal", "Feed Metal", "Grind Size", "Reagent Dosing"],
-  Throughput: ["Feed Availability", "Bottleneck Capacity", "Utilization", "Downtime"],
+  Throughput: ["Feed Availability", "Bottleneck Capacity", "Working time", "Downtime"],
   Yield: ["Good Output", "Total Input", "Scrap", "Rework"],
   "Procurement Savings": ["Baseline Spend", "Negotiated Price Reduction", "Compliance", "Leakage"],
-  "Workforce Productivity": ["Output Volume", "FTE Count", "Effective Working Time", "Skill Mix"]
+  "Workforce Productivity": ["Output Volume", "FTE Count", "Working time", "Skill Mix"]
 };
 
 function genericGenerateTreeOutput(input: GenerateVdtInput): GenerateVdtOutput {
@@ -692,17 +673,51 @@ function mockAgentDecision(input: unknown): unknown {
   const payload = parseMockNumber(answers.payload_per_trip_t) ?? 40;
   const operatingHours = parseMockNumber(answers.operating_hours) ?? 4000;
   if (!nodeIds.has("number_of_trucks")) return add("number_of_trucks", "Number of trucks", "ore_haulage", { type: "input", unit: "trucks", relation: "multiplicative_driver", baselineValue: 5 });
-  if (!nodeIds.has("trips_per_truck")) return add("trips_per_truck", "Trips per truck", "ore_haulage", { type: "calculated", unit: "trips/truck/year", relation: "multiplicative_driver", formula: "operating_hours / cycle_time_h" });
+  if (!nodeIds.has("trips_per_truck")) return add("trips_per_truck", "Trips per truck", "ore_haulage", { type: "calculated", unit: "trips/truck/year", relation: "multiplicative_driver" });
   if (!nodeIds.has("payload_per_trip_t")) return add("payload_per_trip_t", "Payload per trip", "ore_haulage", { type: "input", unit: "tonnes/trip", relation: "multiplicative_driver", baselineValue: payload });
   if (!nodeIds.has("operating_hours")) return add("operating_hours", "Operating hours", "trips_per_truck", { type: "input", unit: "h/year", relation: "formula_dependency", baselineValue: operatingHours });
-  if (!nodeIds.has("cycle_time_h")) return add("cycle_time_h", "Cycle time", "trips_per_truck", { type: "calculated", unit: "h/trip", relation: "divisive_driver", formula: "loaded_travel_time_h + empty_return_time_h" });
-  if (!nodeIds.has("loaded_travel_time_h")) return add("loaded_travel_time_h", "Loaded travel time", "cycle_time_h", { type: "calculated", unit: "h/trip", relation: "additive_component", formula: "haul_distance_km / loaded_speed_kmh" });
-  if (!nodeIds.has("empty_return_time_h")) return add("empty_return_time_h", "Empty return time", "cycle_time_h", { type: "calculated", unit: "h/trip", relation: "additive_component", formula: "haul_distance_km / empty_speed_kmh" });
+  if (!nodeIds.has("cycle_time_h")) return add("cycle_time_h", "Cycle time", "trips_per_truck", { type: "calculated", unit: "h/trip", relation: "divisive_driver" });
+  if (!nodeIds.has("loaded_travel_time_h")) return add("loaded_travel_time_h", "Loaded travel time", "cycle_time_h", { type: "calculated", unit: "h/trip", relation: "additive_component" });
+  if (!nodeIds.has("empty_return_time_h")) return add("empty_return_time_h", "Empty return time", "cycle_time_h", { type: "calculated", unit: "h/trip", relation: "additive_component" });
   if (!nodeIds.has("haul_distance_km")) return add("haul_distance_km", "Average haul distance", "loaded_travel_time_h", { type: "input", unit: "km", relation: "formula_dependency", baselineValue: 2.7 });
   if (!nodeIds.has("loaded_speed_kmh")) return add("loaded_speed_kmh", "Average loaded speed", "loaded_travel_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 7 });
   if (!nodeIds.has("empty_speed_kmh")) return add("empty_speed_kmh", "Average empty speed", "empty_return_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 11 });
 
-  const root = (Array.isArray(project.nodes) ? project.nodes : []).map(asRecord).find((node) => node?.id === "ore_haulage");
+  const nodes = Array.isArray(project.nodes) ? project.nodes.map(asRecord) : [];
+  const formulaFor = (nodeId: string) => nodes.find((node) => node?.id === nodeId)?.formula;
+  if (typeof formulaFor("loaded_travel_time_h") !== "string" || !formulaFor("loaded_travel_time_h")) {
+    return {
+      type: "call_tool",
+      toolName: "vdt.set_formula",
+      args: { nodeId: "loaded_travel_time_h", formula: "haul_distance_km / loaded_speed_kmh" },
+      statusMessage: "Setting loaded travel time formula."
+    };
+  }
+  if (typeof formulaFor("empty_return_time_h") !== "string" || !formulaFor("empty_return_time_h")) {
+    return {
+      type: "call_tool",
+      toolName: "vdt.set_formula",
+      args: { nodeId: "empty_return_time_h", formula: "haul_distance_km / empty_speed_kmh" },
+      statusMessage: "Setting empty return time formula."
+    };
+  }
+  if (typeof formulaFor("cycle_time_h") !== "string" || !formulaFor("cycle_time_h")) {
+    return {
+      type: "call_tool",
+      toolName: "vdt.set_formula",
+      args: { nodeId: "cycle_time_h", formula: "loaded_travel_time_h + empty_return_time_h" },
+      statusMessage: "Setting cycle time formula."
+    };
+  }
+  if (typeof formulaFor("trips_per_truck") !== "string" || !formulaFor("trips_per_truck")) {
+    return {
+      type: "call_tool",
+      toolName: "vdt.set_formula",
+      args: { nodeId: "trips_per_truck", formula: "operating_hours / cycle_time_h" },
+      statusMessage: "Setting trips per truck formula."
+    };
+  }
+  const root = nodes.find((node) => node?.id === "ore_haulage");
   if (typeof root?.formula !== "string" || !root.formula) {
     return {
       type: "call_tool",
