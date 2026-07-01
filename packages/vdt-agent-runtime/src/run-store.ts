@@ -64,11 +64,12 @@ export class AgentRunStore {
   createRun(request: VdtAgentStartRequest): VdtAgentRunState {
     const timestamp = this.now();
     const runId = randomUUID();
+    const normalizedRequest = normalizeStartRequest(request);
     const state: VdtAgentRunState = {
       runId,
       status: "queued",
       phase: "classifying_request",
-      request,
+      request: normalizedRequest,
       selectedSkills: [],
       events: [],
       chatMessages: [],
@@ -79,7 +80,7 @@ export class AgentRunStore {
         message: "Agent is reading your request...",
         updatedAt: timestamp
       },
-      visibleContext: emptyVisibleContext(runId, request),
+      visibleContext: emptyVisibleContext(runId, normalizedRequest),
       createdAt: timestamp,
       updatedAt: timestamp,
       seq: 0,
@@ -329,7 +330,7 @@ export function hydrateAgentRunState(persisted: PersistedAgentRunState): VdtAgen
     runId: snapshot.runId,
     status: snapshot.status,
     phase: snapshot.phase,
-    request: snapshot.request,
+    request: normalizeStartRequest(snapshot.request),
     project: snapshot.project,
     draftProject: snapshot.draftProject,
     selectedSkills: snapshot.selectedSkills,
@@ -366,6 +367,16 @@ export function hydrateAgentRunState(persisted: PersistedAgentRunState): VdtAgen
     validationState: persisted.validationState,
     calculationState: persisted.calculationState,
     memoryNotes: persisted.memoryNotes
+  };
+}
+
+function normalizeStartRequest(request: VdtAgentStartRequest): VdtAgentStartRequest {
+  return {
+    ...request,
+    options: {
+      ...(request.options ?? {}),
+      researchMode: request.options?.researchMode ?? "auto"
+    }
   };
 }
 

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { calculateGraph } from "@vdt-studio/vdt-core";
+import { calculateGraph, calculateScenarioGraph } from "@vdt-studio/vdt-core";
 import type { ProjectRecord, VdtDatabase, VdtRecord } from "@vdt-studio/storage";
 import { assertSafeId } from "@vdt-studio/storage";
 
@@ -8,6 +8,7 @@ export interface StoredVdtSummary {
   revisionCount: number;
   nodeCount?: number | undefined;
   rootValue?: number | undefined;
+  potentialValue?: number | undefined;
   rootUnit?: string | undefined;
 }
 
@@ -95,11 +96,15 @@ function buildStoredVdtSummary(database: VdtDatabase, vdt: VdtRecord): StoredVdt
     const snapshot = database.readVdtRevision(activeRevision);
     const rootNode = snapshot.graph.nodes.find((node) => node.id === snapshot.rootNodeId);
     const calculation = calculateGraph(snapshot);
+    const mainScenario = snapshot.scenarios.find((scenario) => scenario.isMain === true);
+    const scenarioCalculation = mainScenario ? calculateScenarioGraph(snapshot, mainScenario) : undefined;
+    const potentialValue = scenarioCalculation?.rootValue;
     return {
       vdt,
       revisionCount: revisions.length,
       nodeCount: snapshot.graph.nodes.length,
       rootValue: Number.isFinite(calculation.rootValue) ? calculation.rootValue : undefined,
+      potentialValue: Number.isFinite(potentialValue) ? potentialValue : undefined,
       rootUnit: rootNode?.unit ?? vdt.unit
     };
   } catch {

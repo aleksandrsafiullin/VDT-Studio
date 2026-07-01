@@ -8,8 +8,17 @@ import { formatNumber } from "@/lib/format";
 import { NewVdtModal, type NewVdtModalValues } from "./new-vdt-modal";
 import { useVdtStudioStore } from "./vdt-store";
 
+const VALUE_EPSILON = 1e-6;
+
 function formatRootValue(value: number | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? formatNumber(value) : "Not calculated";
+}
+
+function valuesDiffer(base: number | undefined, candidate: number | undefined): boolean {
+  if (base === undefined || candidate === undefined) {
+    return false;
+  }
+  return Math.abs(candidate - base) > VALUE_EPSILON;
 }
 
 function statusClass(status: string): string {
@@ -57,7 +66,7 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
   return (
     <div className="vdt-ui-scale flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 overflow-auto px-5 py-8 sm:px-6 sm:py-10">
-        <div className="mx-auto flex w-full max-w-5xl flex-col">
+        <div className="mx-auto flex w-full max-w-6xl flex-col">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0 max-w-xl">
               <p className="text-sm text-muted">VDTs</p>
@@ -75,6 +84,7 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
                 type="button"
                 variant="primary"
                 className="rounded-full px-5 shadow-sm"
+                data-testid="new-vdt-button"
                 disabled={workspace.isMutating}
                 icon={<Plus className="h-4 w-4" />}
                 onClick={() => setNewVdtModalOpen(true)}
@@ -103,13 +113,20 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
 
           <div className="mt-10 min-h-0 flex-1">
             {activeSummary && rows.length > 0 ? (
-              <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3" data-testid="project-vdt-list">
-                {rows.map((entry) => (
-                  <article key={entry.vdt.id} className="group relative" data-testid={`project-vdt-card-${entry.vdt.id}`}>
+              <div
+                className="grid grid-cols-1 gap-5 md:grid-cols-[repeat(auto-fill,minmax(min(100%,420px),1fr))]"
+                data-testid="project-vdt-list"
+              >
+                {rows.map((entry) => {
+                  const unit = entry.rootUnit ?? entry.vdt.unit ?? "";
+                  const potentialDiffers = valuesDiffer(entry.rootValue, entry.potentialValue);
+                  return (
+                  <article key={entry.vdt.id} className="group relative min-w-0" data-testid={`project-vdt-card-${entry.vdt.id}`}>
                     <button
                       type="button"
+                      aria-label={`Open ${entry.vdt.name}`}
                       className={clsx(
-                        "flex w-full flex-col rounded-2xl border border-black/5 bg-gradient-to-b from-white to-slate-50/80 p-5 text-left shadow-glass",
+                        "flex w-full min-w-0 flex-col rounded-2xl border border-black/5 bg-gradient-to-b from-white to-slate-50/80 p-5 text-left shadow-glass",
                         "transition duration-200 motion-reduce:transition-none hover:border-black/[0.08] hover:shadow-lg motion-safe:hover:-translate-y-0.5",
                         "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                       )}
@@ -120,27 +137,47 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
                           <GitBranch className="h-4 w-4" />
                         </span>
                         <div className="min-w-0 flex-1">
-                          <h3 className="truncate text-base font-semibold tracking-tight text-ink">{entry.vdt.name}</h3>
+                          <h3 className="line-clamp-2 text-base font-semibold leading-snug tracking-tight text-ink">
+                            {entry.vdt.name}
+                          </h3>
                           <p className="mt-1 truncate text-sm text-muted">{entry.vdt.rootKpi || "Root KPI not set"}</p>
                         </div>
                       </div>
-                      <div className="mt-4 flex flex-wrap items-center gap-2">
-                        <span className="inline-flex items-center rounded-full bg-slate-100/90 px-2.5 py-0.5 text-xs font-medium text-ink">
-                          {formatRootValue(entry.rootValue)} {entry.rootUnit ?? entry.vdt.unit ?? ""}
-                        </span>
+                      <div className="mt-4 grid grid-cols-2 gap-4 border-t border-black/5 pt-4">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-medium uppercase tracking-wide text-muted">Base</p>
+                          <p className="mt-0.5 truncate text-sm font-semibold text-ink">{formatRootValue(entry.rootValue)}</p>
+                          {unit ? <p className="mt-0.5 truncate text-xs text-muted">{unit}</p> : null}
+                        </div>
+                        {entry.potentialValue !== undefined ? (
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-medium uppercase tracking-wide text-muted">Potential</p>
+                            <p
+                              className={clsx(
+                                "mt-0.5 truncate text-sm font-semibold",
+                                potentialDiffers ? "text-accent" : "text-ink"
+                              )}
+                            >
+                              {formatRootValue(entry.potentialValue)}
+                            </p>
+                            {unit ? <p className="mt-0.5 truncate text-xs text-muted">{unit}</p> : null}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs text-muted">
+                          {entry.revisionCount} revision{entry.revisionCount === 1 ? "" : "s"}
+                          {typeof entry.nodeCount === "number" ? ` · ${entry.nodeCount} nodes` : ""}
+                        </p>
                         <span
                           className={clsx(
-                            "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize",
+                            "inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize",
                             statusClass(entry.vdt.status)
                           )}
                         >
                           {entry.vdt.status}
                         </span>
                       </div>
-                      <p className="mt-3 text-xs text-muted">
-                        {entry.revisionCount} revision{entry.revisionCount === 1 ? "" : "s"}
-                        {typeof entry.nodeCount === "number" ? ` · ${entry.nodeCount} nodes` : ""}
-                      </p>
                     </button>
                     <button
                       type="button"
@@ -165,7 +202,8 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </article>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div
@@ -187,6 +225,7 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
                   type="button"
                   className="mt-8 rounded-full px-6 shadow-sm"
                   variant="primary"
+                  data-testid="new-vdt-empty-button"
                   disabled={workspace.isMutating}
                   icon={<Plus className="h-4 w-4" />}
                   onClick={() => void (activeSummary ? setNewVdtModalOpen(true) : handleCreateProject())}

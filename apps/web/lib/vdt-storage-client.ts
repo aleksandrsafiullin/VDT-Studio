@@ -51,6 +51,7 @@ export interface StoredProjectSummary {
     revisionCount: number;
     nodeCount?: number | undefined;
     rootValue?: number | undefined;
+    potentialValue?: number | undefined;
     rootUnit?: string | undefined;
   }>;
 }

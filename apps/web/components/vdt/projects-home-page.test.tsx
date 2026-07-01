@@ -1,7 +1,23 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ProjectsHomePage, ProjectsHomeProjectCards } from "./projects-home-page";
-import { useVdtStudioStore } from "./vdt-store";
+
+const localStorageMock = (() => {
+  let store: Record<string, string> = {};
+  return {
+    getItem: (key: string) => store[key] ?? null,
+    setItem: (key: string, value: string) => {
+      store[key] = value;
+    },
+    removeItem: (key: string) => {
+      delete store[key];
+    },
+    clear: () => {
+      store = {};
+    }
+  };
+})();
+
+vi.stubGlobal("localStorage", localStorageMock);
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -9,8 +25,12 @@ vi.mock("next/navigation", () => ({
   })
 }));
 
+const { ProjectsHomePage, ProjectsHomeProjectCards } = await import("./projects-home-page");
+const { useVdtStudioStore } = await import("./vdt-store");
+
 describe("ProjectsHomePage", () => {
   beforeEach(() => {
+    localStorageMock.clear();
     useVdtStudioStore.setState((state) => ({
       clearHomeWorkspaceContext: vi.fn(),
       refreshWorkspace: vi.fn(async () => {}),

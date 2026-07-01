@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Check, CircleAlert, History, MessageSquarePlus, Send, Settings2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, CircleAlert, History, MessageSquarePlus, Search, Send, Settings2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, TextArea, TextInput } from "@/components/ui/field";
 import { Panel, PanelCollapseTab, PanelToggleButton, PanelHeader } from "@/components/ui/panel";
@@ -13,6 +13,32 @@ import { useVdtStudioStore } from "./vdt-store";
 import { GenerateActivityPanel } from "./generate-activity-panel";
 import { SettingsModal } from "./settings-modal";
 import type { AgentChatHistoryEntry } from "./vdt-store";
+import type { ResearchMode } from "@/lib/agent-client";
+
+interface ResearchStatus {
+  providerConfigured: boolean;
+  providerId: "brave" | "tavily" | "noop" | string;
+}
+
+const RESEARCH_MODES: ResearchMode[] = ["auto", "on", "off"];
+
+const RESEARCH_MODE_TOOLTIP: Record<ResearchMode, string> = {
+  auto: "Agent may search when local skills are not enough.",
+  on: "Agent should use research for unknown/current process context.",
+  off: "Agent will not use web research."
+};
+
+function nextResearchMode(mode: ResearchMode): ResearchMode {
+  return RESEARCH_MODES[(RESEARCH_MODES.indexOf(mode) + 1) % RESEARCH_MODES.length] ?? "auto";
+}
+
+function researchModeTooltip(mode: ResearchMode, status: ResearchStatus | undefined): string {
+  const base = RESEARCH_MODE_TOOLTIP[mode];
+  if (mode !== "off" && status?.providerConfigured === false) {
+    return `${base} Research provider is not configured.`;
+  }
+  return base;
+}
 
 function chatStatusLabel(status: AgentChatHistoryEntry["status"]) {
   switch (status) {
@@ -44,6 +70,8 @@ export function SetupRail() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [instructionText, setInstructionText] = useState("");
+  const [researchMode, setResearchMode] = useState<ResearchMode>("auto");
+  const [researchStatus, setResearchStatus] = useState<ResearchStatus | undefined>();
   const brief = useVdtStudioStore((state) => state.brief);
   const executionSettings = useVdtStudioStore((state) => state.executionSettings);
   const isGenerating = useVdtStudioStore((state) => state.isGenerating);
@@ -88,17 +116,37 @@ export function SetupRail() {
     canUseConfiguredRuntime &&
     (!isGenerating || Boolean(generateActivity));
   const canStartNewChat = Boolean(generateActivity);
+  const researchUnavailable = researchMode !== "off" && researchStatus?.providerConfigured === false;
+  const researchTooltip = researchModeTooltip(researchMode, researchStatus);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/agent/research/status")
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Research status could not be loaded.");
+        return await response.json() as ResearchStatus;
+      })
+      .then((status) => {
+        if (!cancelled) setResearchStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setResearchStatus({ providerConfigured: false, providerId: "noop" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function submitAgentInstruction() {
     const text = instructionText.trim();
     if (!text || isRunningAiAction) return;
     if (!canUseConfiguredRuntime) return;
     if (!canContinueCurrentAgentRun) {
-      const accepted = await startAgentRun(text);
+      const accepted = await startAgentRun(text, { researchMode });
       if (accepted) setInstructionText("");
       return;
     }
-    const accepted = await sendAgentInstruction(text, selectedNodeId);
+    const accepted = await sendAgentInstruction(text, selectedNodeId, researchMode);
     if (!accepted) return;
     setInstructionText("");
   }
@@ -318,6 +366,24 @@ export function SetupRail() {
               </span>
               <Settings2 className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" />
             </button>
+            <Button
+              type="button"
+              className={[
+                "h-9 w-9 shrink-0",
+                researchMode === "on" ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "",
+                researchMode === "off" ? "border-slate-200 bg-slate-50 text-slate-400 hover:bg-slate-100" : "",
+                researchUnavailable ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" : ""
+              ].filter(Boolean).join(" ")}
+              size="icon"
+              variant="secondary"
+              icon={<Search className="h-4 w-4" />}
+              onClick={() => setResearchMode((mode) => nextResearchMode(mode))}
+              title={researchTooltip}
+              aria-label={`Search ${researchMode}`}
+              data-testid="agent-research-mode-toggle"
+              data-research-mode={researchMode}
+              data-provider-configured={researchStatus?.providerConfigured ?? "unknown"}
+            />
             <Button
               type="submit"
               className="h-9 shrink-0 px-3"

@@ -38,7 +38,8 @@ describe("SQLite agent run persistence", () => {
       providerConfig: {
         apiKey: "sk-secret",
         model: "gpt-test"
-      }
+      },
+      options: { researchMode: "on" }
     });
     firstStore.updateRun(run.runId, { status: "running", phase: "building_graph" });
     firstStore.appendEvent(run.runId, {
@@ -51,6 +52,7 @@ describe("SQLite agent run persistence", () => {
 
     const createRunInput = createAgentRunSpy.mock.calls[0]?.[0];
     expect(createRunInput?.request).toMatchObject({
+      options: { researchMode: "on" },
       providerConfig: {
         apiKey: "[redacted]",
         model: "gpt-test"
@@ -66,6 +68,7 @@ describe("SQLite agent run persistence", () => {
     }
 
     expect(firstDatabase.getAgentRun(run.runId)?.request).toMatchObject({
+      options: { researchMode: "on" },
       providerConfig: {
         apiKey: "[redacted]",
         model: "gpt-test"
@@ -94,6 +97,7 @@ describe("SQLite agent run persistence", () => {
       status: "running",
       phase: "building_graph",
       request: {
+        options: { researchMode: "on" },
         providerConfig: {
           apiKey: "[redacted]",
           model: "gpt-test"

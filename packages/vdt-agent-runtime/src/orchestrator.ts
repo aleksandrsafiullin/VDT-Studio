@@ -55,6 +55,8 @@ import type {
   AgentToolResultEnvelope,
   AgentUserMessage,
   ManualProjectChange,
+  ResearchMode,
+  ResearchProviderStatus,
   ValidationStateSummary,
   VdtAgentRunPhase,
   VdtAgentRunSnapshot,
@@ -203,7 +205,8 @@ export class VdtAgentRuntime {
         title: "User instruction received",
         message: text,
         metadata: {
-          ...(message.selectedNodeId ? { selectedNodeId: message.selectedNodeId } : {})
+          ...(message.selectedNodeId ? { selectedNodeId: message.selectedNodeId } : {}),
+          ...(message.researchMode ? { researchMode: message.researchMode } : {})
         }
       });
       if (!text) return this.store.getSnapshot(runId);
@@ -218,6 +221,10 @@ export class VdtAgentRuntime {
         retryableError: undefined,
         request: {
           ...state.request,
+          options: {
+            ...(state.request.options ?? {}),
+            ...(message.researchMode ? { researchMode: message.researchMode } : {})
+          },
           input: {
             ...state.request.input,
             selectedNodeId: message.selectedNodeId ?? state.request.input.selectedNodeId,
@@ -609,6 +616,7 @@ export class VdtAgentRuntime {
       mode: state.request.mode,
       step: state.events.filter((event) => event.metadata?.taskType === "agent_decision").length + 1,
       userRequest: state.request.input,
+      researchPolicy: researchPolicyFromState(state, this.tools.getMetadata().researchProviderStatus),
       briefReadiness: briefReadinessFromState(state),
       continuationPolicy: continuationPolicyFromState(state),
       currentProject: project ? summarizeProject(project) : undefined,
@@ -1000,6 +1008,33 @@ function promptForAgentDecision(context: AgentDecisionContext): string {
     ? `\n\nRecent structured feedback to address before retrying:\n${formatFeedbackForPrompt(context.recentFeedback)}`
     : "";
   return `${JSON.stringify(context, null, 2)}${feedback}`;
+}
+
+function researchPolicyFromState(
+  state: VdtAgentRunState,
+  status?: ResearchProviderStatus | undefined
+): AgentDecisionContext["researchPolicy"] {
+  const mode = researchModeFromRequest(state.request);
+  const guidance = researchGuidance(mode);
+  return {
+    mode,
+    ...(typeof status?.providerConfigured === "boolean" ? { providerConfigured: status.providerConfigured } : {}),
+    guidance
+  };
+}
+
+function researchModeFromRequest(request: VdtAgentStartRequest): ResearchMode {
+  return request.options?.researchMode ?? "auto";
+}
+
+function researchGuidance(mode: ResearchMode): string {
+  if (mode === "off") {
+    return "User disabled web research: do not call research.search_web. Use local skills, visible context, deterministic tools, or ask the user for missing process details.";
+  }
+  if (mode === "on") {
+    return "User enabled research: use research/discovery before building when the process is not covered by complete local skills or when current benchmarks/standards are relevant. Use research as source discovery, then continue with extraction/proposal/validation tools rather than single-shot report generation.";
+  }
+  return "Research is automatic: prefer complete local skills and visible context first, and call research.search_web only when local skills are incomplete, the process is unknown, or current benchmarks/standards/regulations are relevant. Use research as source discovery, not as single-shot report generation.";
 }
 
 function feedbackFromDecisionError(error: unknown): AgentStructuredFeedback {

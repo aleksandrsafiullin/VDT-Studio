@@ -5,8 +5,10 @@ import {
   AgentRunStore,
   createDefaultToolRegistry,
   createVdtAgentRuntime,
+  researchProviderStatus,
   resolveResearchProviderFromEnv,
   type AgentDecisionProvider,
+  type ResearchProviderStatus,
   type ResearchProviderEnv,
   type ResearchProviderResolverOptions,
   type ToolRegistry,
@@ -116,9 +118,15 @@ export function createAgentToolRegistryFromEnv(
   env: ResearchProviderEnv = process.env,
   options: ResearchProviderResolverOptions = {}
 ): ToolRegistry {
-  return createDefaultToolRegistry({
-    researchProvider: resolveResearchProviderFromEnv(env, options)
-  });
+  const researchProvider = resolveResearchProviderFromEnv(env, options);
+  return createDefaultToolRegistry({ researchProvider });
+}
+
+export function resolveAgentResearchStatusFromEnv(
+  env: ResearchProviderEnv = process.env,
+  options: ResearchProviderResolverOptions = {}
+): ResearchProviderStatus {
+  return researchProviderStatus(resolveResearchProviderFromEnv(env, options));
 }
 
 function createAgentRunStore(): AgentRunStore {

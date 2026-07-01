@@ -998,13 +998,13 @@ test("home page lists projects and opens workspace", async ({ page }, testInfo) 
   await expect(page.getByTestId(`project-card-${E2E_PROJECT_ID}`)).toBeVisible();
   await page.getByTestId(`open-project-${E2E_PROJECT_ID}`).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${E2E_PROJECT_ID}$`));
-  await expect(page.getByText("Project workspace")).toBeVisible();
-  await page.getByRole("button", { name: "Open" }).click();
+  await expect(page.getByTestId("workspace-mode-project")).toBeVisible();
+  await page.getByTestId(`project-vdt-card-${E2E_VDT_ID}`).click();
   await expect(page).toHaveURL(new RegExp(`vdt=${E2E_VDT_ID}`));
   await expect(page.getByTestId("vdt-canvas")).toBeVisible();
   await page.getByTestId("back-to-project-workspace").click();
   await expect(page).toHaveURL(new RegExp(`/projects/${E2E_PROJECT_ID}$`));
-  await expect(page.getByText("Project workspace")).toBeVisible();
+  await expect(page.getByTestId("project-vdt-list")).toBeVisible();
   await page.getByTestId("back-to-projects").click();
   await expect(page.getByTestId("projects-home")).toBeVisible();
 });

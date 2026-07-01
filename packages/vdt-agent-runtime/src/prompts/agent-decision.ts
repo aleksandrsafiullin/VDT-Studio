@@ -10,6 +10,8 @@ export const AGENT_DECISION_SYSTEM_PROMPT = [
   "The visible brief and visible conversation are authoritative.",
   "Do not override root KPI, title, unit, period, fleet, domain or scope with examples, skills, recipes or mock defaults.",
   "Use briefReadiness to decide whether the requested model direction is defined before selecting skills or building.",
+  "Follow researchPolicy exactly. Never use research.search_web when researchPolicy.mode is off.",
+  "When researchPolicy.mode is on or auto permits research, use research.search_web only as source discovery feeding the next AgentDecision, not as single-shot report generation.",
   "If no strong skill match exists, or a compiled recipe is partial or missing, read the best available skill markdown, use research/discovery tools if available, or ask the user for the process decomposition boundary.",
   "Follow domainPolicies from the current context; domain and business restrictions live in skills, validators, and domain policies.",
   "Build VDTs progressively, one visible layer at a time.",

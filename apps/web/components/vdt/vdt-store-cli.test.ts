@@ -299,7 +299,7 @@ describe("vdt-store change-set workflow", () => {
       }
     });
 
-    await useVdtStudioStore.getState().startAgentRun(prompt);
+    await useVdtStudioStore.getState().startAgentRun(prompt, { researchMode: "on" });
 
     const startCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/agent/runs"));
     expect(startCall).toBeDefined();
@@ -309,11 +309,59 @@ describe("vdt-store change-set workflow", () => {
       providerId?: string;
     };
     expect(body.providerId).toBe("openai_compatible");
+    expect((body as { options?: { researchMode?: string } }).options?.researchMode).toBe("on");
     expect(body.input?.prompt).toBe(prompt);
     expect(body.input?.businessContext ?? "").not.toContain(prompt);
     expect(useVdtStudioStore.getState().agentRun?.selectedSkills.map((skill) => skill.id)).toEqual([
       "mining.haulage_truck_cycle"
     ]);
+  });
+
+  it("sendAgentInstruction sends researchMode for the active agent run", async () => {
+    const runId = "agent-run-research-mode";
+    let capturedMessageBody: unknown;
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/api/agent/runs/${runId}/messages`)) {
+        capturedMessageBody = JSON.parse(String(init?.body));
+        return jsonResponse({
+          ok: true,
+          snapshot: runtimeSnapshotFixture({
+            runId,
+            status: "running",
+            phase: "planning_decomposition",
+            completedAt: undefined,
+            chatMessages: []
+          })
+        });
+      }
+      return jsonResponse({ agents: [] });
+    });
+
+    useVdtStudioStore.setState({
+      activeAgentRunId: runId,
+      agentRun: runtimeSnapshotFixture({
+        runId,
+        status: "running",
+        phase: "planning_decomposition",
+        completedAt: undefined
+      }) as VdtAgentRunSnapshot
+    });
+
+    const accepted = await useVdtStudioStore.getState().sendAgentInstruction(
+      "Continue without web research.",
+      "calendar_time",
+      "off"
+    );
+
+    expect(accepted).toBe(true);
+    expect(capturedMessageBody).toMatchObject({
+      type: "user_instruction",
+      text: "Continue without web research.",
+      selectedNodeId: "calendar_time",
+      researchMode: "off"
+    });
   });
 
   it("sends structured answers from restored activity and marks the agent as reading immediately", async () => {

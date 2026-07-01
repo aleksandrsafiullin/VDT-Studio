@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { openVdtDatabase } from "@vdt-studio/storage";
 import { AgentRunStore, type AgentToolContext } from "@vdt-studio/vdt-agent-runtime";
 import { createSqliteAgentRunPersistence } from "./persistence";
-import { createAgentToolRegistryFromEnv } from "./runtime";
+import { createAgentToolRegistryFromEnv, resolveAgentResearchStatusFromEnv } from "./runtime";
 
 const tempDirs: string[] = [];
 
@@ -18,6 +18,20 @@ afterEach(() => {
 });
 
 describe("agent runs runtime research tools", () => {
+  it("reports configured research provider status without exposing API keys", () => {
+    const secret = "tavily-runtime-secret";
+    const status = resolveAgentResearchStatusFromEnv({
+      VDT_RESEARCH_PROVIDER: "tavily",
+      TAVILY_API_KEY: secret
+    });
+
+    expect(status).toEqual({
+      providerConfigured: true,
+      providerId: "tavily"
+    });
+    expect(JSON.stringify(status)).not.toContain(secret);
+  });
+
   it("resolves server-side research provider env without persisting API keys", async () => {
     const secret = "brave-runtime-secret";
     const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({

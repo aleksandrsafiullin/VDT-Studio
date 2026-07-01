@@ -34,6 +34,13 @@ export type VdtAgentRunPhase =
   | "applying_graph"
   | "reporting";
 
+export type ResearchMode = "auto" | "on" | "off";
+
+export interface ResearchProviderStatus {
+  providerConfigured: boolean;
+  providerId: string;
+}
+
 export type VdtAgentEventType =
   | "run_started"
   | "classification"
@@ -243,6 +250,7 @@ export interface VdtAgentStartRequest {
     maxSteps?: number | undefined;
     maxAutoDepth?: number | undefined;
     continueWithAssumptions?: boolean | undefined;
+    researchMode?: ResearchMode | undefined;
   } | undefined;
 }
 
@@ -441,6 +449,11 @@ export interface AgentDecisionContext {
   mode: VdtAgentMode;
   step: number;
   userRequest: VdtAgentStartInput;
+  researchPolicy: {
+    mode: ResearchMode;
+    providerConfigured?: boolean | undefined;
+    guidance: string;
+  };
   briefReadiness: {
     rootKpiIsPlaceholder: boolean;
     directionStatus: "ready" | "needs_agent_judgment";
@@ -499,6 +512,7 @@ export type AgentUserMessage =
       type: "user_instruction";
       text: string;
       selectedNodeId?: string | undefined;
+      researchMode?: ResearchMode | undefined;
     }
   | {
       type: "approval";

@@ -11,6 +11,8 @@ const safeId = (max = 128) => boundedString(max).regex(
   "Must use only letters, numbers, underscores, or hyphens."
 );
 
+export const researchModeSchema = z.enum(["auto", "on", "off"]);
+
 export const agentStartRequestSchema = z.object({
   mode: z.enum(["generate_vdt", "continue_project", "deepen_node", "review_project"]),
   input: z.object({
@@ -41,7 +43,8 @@ export const agentStartRequestSchema = z.object({
     askBeforeFirstPatch: z.boolean().optional(),
     maxSteps: z.number().int().min(1).max(30).optional(),
     maxAutoDepth: z.number().int().min(1).max(8).optional(),
-    continueWithAssumptions: z.boolean().optional()
+    continueWithAssumptions: z.boolean().optional(),
+    researchMode: researchModeSchema.optional()
   }).optional()
 }).superRefine((value, ctx) => {
   for (const forbidden of ["command", "args", "argsText", "cwd", "env", "schema", "systemPrompt", "userPrompt"]) {

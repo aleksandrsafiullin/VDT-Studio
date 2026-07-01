@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AgentToolError, type AgentTool } from "../tool-registry";
 import { agentQuestionSchema } from "../schemas/agent-event";
+import type { ResearchProviderStatus } from "../types";
 
 export interface ResearchSearchResult {
   id: string;
@@ -73,6 +74,20 @@ export function createResearchTools(provider: ResearchProvider = new NoopResearc
   ];
 }
 
+export function researchProviderStatus(provider: ResearchProvider | undefined): ResearchProviderStatus {
+  if (!provider) {
+    return {
+      providerConfigured: false,
+      providerId: "noop"
+    };
+  }
+  const providerId = provider?.id ?? "configured";
+  return {
+    providerConfigured: providerId !== "noop",
+    providerId
+  };
+}
+
 function createSearchWebTool(provider: ResearchProvider): AgentTool {
   return {
     name: "research.search_web",
@@ -89,6 +104,14 @@ function createSearchWebTool(provider: ResearchProvider): AgentTool {
     }),
     phase: "reading_skills",
     async run(context, input) {
+      const researchMode = context.store.getState(context.runId).request.options?.researchMode ?? "auto";
+      if (researchMode === "off") {
+        throw new AgentToolError(
+          "RESEARCH_DISABLED_BY_USER",
+          "Web research is disabled by the user. Do not call research.search_web; use local skills or ask the user for process details.",
+          { researchMode: "off" }
+        );
+      }
       const maxResults = input.maxResults ?? 5;
       const results = await provider.search(input.query, {
         purpose: input.purpose,

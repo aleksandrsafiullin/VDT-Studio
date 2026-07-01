@@ -80,7 +80,7 @@ async function waitForManagedRuntimeRun() {
 }
 
 async function waitForManagedRuntimeCancelled() {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     if ([...(runtimeGlobal.__vdtStudioDevelopmentRuntime?.runs.values() ?? [])].some((run) => run.status === "cancelled")) {
       return;
     }

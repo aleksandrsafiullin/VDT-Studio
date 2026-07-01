@@ -144,6 +144,7 @@ export function ProjectManagementPanel({ urlScopedProjectId }: { urlScopedProjec
               type="submit"
               variant="primary"
               className="rounded-full px-5 shadow-sm"
+              data-testid="save-project-button"
               disabled={!dirty || workspace.isMutating || !name.trim()}
               icon={<Save className="h-4 w-4" />}
             >

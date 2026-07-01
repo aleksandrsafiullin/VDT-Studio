@@ -17,7 +17,8 @@ export type AgentFeedbackKind =
   | "finish_rejected"
   | "business_rule_failed"
   | "recipe_incomplete"
-  | "research_required";
+  | "research_required"
+  | "research_disabled";
 
 export interface AgentStructuredFeedback {
   id: string;
@@ -160,6 +161,7 @@ function feedbackKindForToolError(code: string): AgentFeedbackKind {
   if (code === "UNKNOWN_TOOL") return "unknown_tool";
   if (code === "INVALID_TOOL_ARGS") return "invalid_tool_args";
   if (code === "RECIPE_INCOMPLETE") return "recipe_incomplete";
+  if (code === "RESEARCH_DISABLED_BY_USER") return "research_disabled";
   if (code === "RESEARCH_PROVIDER_NOT_CONFIGURED") return "research_required";
   if (/VALIDATION|BUSINESS_RULE|DOMAIN_POLICY/i.test(code)) return "business_rule_failed";
   return "tool_failed";
@@ -172,6 +174,7 @@ function suggestedToolsForToolError(code: string): string[] | undefined {
     return ["formula.suggest_reference_repair", "vdt.set_formula"];
   }
   if (/NO_DRAFT_PROJECT/i.test(code)) return ["vdt.create_draft"];
+  if (/RESEARCH_DISABLED_BY_USER/i.test(code)) return ["skill.search", "skill.read", "user.ask"];
   if (/RESEARCH_PROVIDER_NOT_CONFIGURED/i.test(code)) return ["user.ask"];
   return undefined;
 }

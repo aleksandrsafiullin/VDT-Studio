@@ -37,6 +37,7 @@ import {
   type AgentChatMessage as RuntimeAgentChatMessage,
   type ManualProjectChange,
   type PublicAgentStatus as RuntimePublicAgentStatus,
+  type ResearchMode,
   type RetryableAgentError as RuntimeRetryableAgentError,
   type VdtAgentEvent as RuntimeAgentEvent,
   type VdtAgentQuestion as RuntimeAgentQuestion,
@@ -429,13 +430,14 @@ interface VdtStudioState {
       mode?: VdtAgentStartRequest["mode"];
       selectedNodeId?: string;
       includeCurrentProject?: boolean;
+      researchMode?: ResearchMode | undefined;
     }
   ) => Promise<boolean>;
   resumePersistedAgentRun: () => Promise<void>;
   connectAgentEvents: (runId: string) => void;
   sendAgentAnswers: (answers: Record<string, string | number | string[]> | RuntimeAgentAnswerPayload[]) => Promise<void>;
   sendAgentApproval: (approved: boolean, selectedChangeIds?: string[] | undefined) => Promise<void>;
-  sendAgentInstruction: (text: string, selectedNodeId?: string) => Promise<boolean>;
+  sendAgentInstruction: (text: string, selectedNodeId?: string, researchMode?: ResearchMode) => Promise<boolean>;
   sendManualProjectChange: (change: ManualProjectChange) => Promise<void>;
   addManualIncomingKpi: (parentNodeId: string) => void;
   requestIncomingKpisWithAi: (nodeId: string) => Promise<boolean>;
@@ -2746,7 +2748,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             options: {
               autoApplyPatches: true,
               continueWithAssumptions: false,
-              maxSteps: 30
+              maxSteps: 30,
+              researchMode: options?.researchMode ?? "auto"
             }
           });
           set({ activeAgentRunId: response.runId });
@@ -2891,7 +2894,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }));
         }
       },
-      sendAgentInstruction: async (text, selectedNodeId) => {
+      sendAgentInstruction: async (text, selectedNodeId, researchMode) => {
         const trimmed = text.trim();
         if (!trimmed) return false;
         const currentRun = get().agentRun;
@@ -2943,7 +2946,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           const snapshot = await createAgentClient().sendMessage(runId, {
             type: "user_instruction",
             text: trimmed,
-            ...(selectedNodeId ? { selectedNodeId } : {})
+            ...(selectedNodeId ? { selectedNodeId } : {}),
+            ...(researchMode ? { researchMode } : {})
           });
           applyAgentSnapshot(set, snapshot);
           return true;

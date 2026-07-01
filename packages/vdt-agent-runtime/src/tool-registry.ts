@@ -5,6 +5,7 @@ import type {
   AgentEventInput,
   AgentToolResultEnvelope,
   AgentToolSpec,
+  ResearchProviderStatus,
   VdtAgentRunPhase,
   VdtAgentRunSnapshot,
   VdtAgentRunState
@@ -34,6 +35,10 @@ export interface AgentTool<I = any, O = any> {
   run(context: AgentToolContext, input: I): Promise<O> | O;
 }
 
+export interface ToolRegistryMetadata {
+  researchProviderStatus?: ResearchProviderStatus | undefined;
+}
+
 export class AgentToolError extends Error {
   readonly code: string;
   readonly details?: unknown | undefined;
@@ -48,6 +53,12 @@ export class AgentToolError extends Error {
 
 export class ToolRegistry {
   private readonly tools = new Map<string, AgentTool<unknown, unknown>>();
+
+  constructor(private readonly metadata: ToolRegistryMetadata = {}) {}
+
+  getMetadata(): ToolRegistryMetadata {
+    return this.metadata;
+  }
 
   register<I, O>(tool: AgentTool<I, O>): void {
     if (this.tools.has(tool.name)) {

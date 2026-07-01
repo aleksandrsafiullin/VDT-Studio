@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AgentRunStore } from "../run-store";
 import { AgentToolError, ToolRegistry, type AgentToolContext } from "../tool-registry";
 import { createResearchTools, type ResearchProvider } from "./research-tools";
@@ -17,6 +17,26 @@ describe("research tools", () => {
       code: "RESEARCH_PROVIDER_NOT_CONFIGURED",
       message: "Research provider is not configured. Ask the user for process details or continue with explicit assumptions."
     });
+  });
+
+  it("returns RESEARCH_DISABLED_BY_USER without calling the provider when research mode is off", async () => {
+    const search = vi.fn<ResearchProvider["search"]>(async () => []);
+    const { registry, context } = testRegistry({
+      id: "test-search",
+      search
+    }, "off");
+
+    const result = await registry.run("research.search_web", {
+      query: "mine production process drivers",
+      purpose: "process_components"
+    }, context);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatchObject({
+      code: "RESEARCH_DISABLED_BY_USER",
+      details: { researchMode: "off" }
+    });
+    expect(search).not.toHaveBeenCalled();
   });
 
   it("returns normalized results from a configured research provider", async () => {
@@ -128,12 +148,13 @@ describe("research tools", () => {
   });
 });
 
-function testRegistry(provider?: ResearchProvider) {
+function testRegistry(provider?: ResearchProvider, researchMode: "auto" | "on" | "off" = "auto") {
   const store = new AgentRunStore({ now: () => "2026-07-01T00:00:00.000Z" });
   const run = store.createRun({
     mode: "generate_vdt",
     input: { rootKpi: "Ore mined" },
-    providerId: "mock"
+    providerId: "mock",
+    options: { researchMode }
   });
   const registry = new ToolRegistry();
   for (const tool of createResearchTools(provider)) registry.register(tool);

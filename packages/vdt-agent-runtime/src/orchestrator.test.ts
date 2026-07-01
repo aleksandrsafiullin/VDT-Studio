@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { calculateGraph, validateGraph } from "@vdt-studio/vdt-core";
 import {
   createVdtAgentRuntime,
@@ -598,6 +598,93 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
     expect(snapshot.status).toBe("needs_user_input");
     expect(snapshot.lastFeedback).toMatchObject({ kind: "research_required", target: { toolName: "research.search_web" } });
     expect(provider.decisionInputs[1]?.lastFeedback).toMatchObject({ kind: "research_required" });
+  });
+
+  it("includes researchPolicy in decision context and feeds disabled research back to the agent", async () => {
+    const search = vi.fn<ResearchProvider["search"]>(async () => []);
+    const runtime = createVdtAgentRuntime({
+      tools: createDefaultToolRegistry({
+        researchProvider: {
+          id: "test-search",
+          search
+        }
+      })
+    });
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "research.search_web",
+        statusMessage: "Trying to search despite user preference.",
+        args: {
+          query: "mine production process drivers",
+          purpose: "process_components"
+        }
+      },
+      {
+        type: "ask_user",
+        statusMessage: "Research is disabled, so asking for local process details.",
+        questions: [{
+          id: "process_components",
+          question: "What local process components should the VDT use?",
+          reason: "Web research is disabled by the user.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { prompt: "Build a VDT for mine production", rootKpi: "Mine production" },
+      providerId: "decision-test",
+      options: { maxSteps: 4, researchMode: "off" }
+    }, { provider });
+
+    expect(search).not.toHaveBeenCalled();
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.lastFeedback).toMatchObject({
+      kind: "research_disabled",
+      target: { toolName: "research.search_web" },
+      actual: { researchMode: "off" },
+      suggestedNextTools: ["skill.search", "skill.read", "user.ask"]
+    });
+    expect(provider.decisionInputs[0]?.researchPolicy).toMatchObject({
+      mode: "off",
+      providerConfigured: true
+    });
+    expect(provider.decisionInputs[0]?.researchPolicy.guidance).toContain("do not call research.search_web");
+    expect(provider.decisionInputs[1]?.lastFeedback).toMatchObject({ kind: "research_disabled" });
+  });
+
+  it("describes search-on research policy without exposing provider configuration", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([
+      {
+        type: "ask_user",
+        statusMessage: "Asking for site-specific boundaries.",
+        questions: [{
+          id: "site_boundary",
+          question: "Which site-specific process boundary should this VDT use?",
+          reason: "The agent needs the local model boundary.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    ]);
+
+    await runtime.startRun({
+      mode: "generate_vdt",
+      input: { prompt: "Build a VDT for a current benchmark-heavy KPI", rootKpi: "Benchmark KPI" },
+      providerId: "decision-test",
+      options: { maxSteps: 2, researchMode: "on" }
+    }, { provider });
+
+    expect(provider.decisionInputs[0]?.researchPolicy).toEqual({
+      mode: "on",
+      providerConfigured: false,
+      guidance: expect.stringContaining("use research/discovery before building")
+    });
+    expect(JSON.stringify(provider.decisionInputs[0]?.researchPolicy)).not.toContain("API_KEY");
   });
 
   it("feeds configured research results back into the next agent decision", async () => {

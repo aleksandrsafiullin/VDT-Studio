@@ -13,6 +13,7 @@ export type {
   AgentUserMessage,
   ManualProjectChange,
   PublicAgentStatus,
+  ResearchMode,
   RetryableAgentError,
   VdtAgentEvent,
   VdtAgentQuestion,
