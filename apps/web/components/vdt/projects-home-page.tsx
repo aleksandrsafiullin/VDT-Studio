@@ -25,7 +25,7 @@ function ProjectsHomeSkeletonCards() {
       {Array.from({ length: 3 }, (_, index) => (
         <div
           key={index}
-          className="animate-pulse rounded-2xl border border-black/5 bg-gradient-to-b from-white to-slate-50/80 p-5 shadow-glass"
+          className="motion-safe:animate-pulse rounded-2xl border border-black/5 bg-gradient-to-b from-white to-slate-50/80 p-5 shadow-glass"
         >
           <div className="h-5 w-2/3 rounded-md bg-slate-200/80" />
           <div className="mt-4 flex gap-2">
@@ -65,7 +65,7 @@ export function ProjectsHomeProjectCards({
             data-testid={`open-project-${entry.project.id}`}
             className={clsx(
               "flex flex-col rounded-2xl border border-black/5 bg-gradient-to-b from-white to-slate-50/80 p-5 shadow-glass",
-              "transition duration-200 hover:-translate-y-0.5 hover:border-black/[0.08] hover:shadow-lg",
+              "transition duration-200 motion-reduce:transition-none hover:border-black/[0.08] hover:shadow-lg motion-safe:hover:-translate-y-0.5",
               "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             )}
           >
@@ -78,7 +78,7 @@ export function ProjectsHomeProjectCards({
                 {entry.counts.revisions} revision{entry.counts.revisions === 1 ? "" : "s"}
               </span>
             </div>
-            <p className="mt-3 text-xs text-muted/90">Updated {formatUpdatedAt(entry.project.updatedAt)}</p>
+            <p className="mt-3 text-xs text-muted">Updated {formatUpdatedAt(entry.project.updatedAt)}</p>
           </Link>
           <button
             type="button"
@@ -88,7 +88,7 @@ export function ProjectsHomeProjectCards({
             className={clsx(
               "absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full",
               "border border-transparent text-muted transition",
-              "opacity-0 hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+              "opacity-40 hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
               "group-hover:opacity-100 group-focus-within:opacity-100",
               "disabled:cursor-not-allowed disabled:opacity-45"
             )}
@@ -180,6 +180,8 @@ export function ProjectsHomePage() {
             variant="primary"
             className="rounded-full px-5 shadow-sm"
             data-testid="create-project-button"
+            aria-expanded={createOpen}
+            aria-controls="create-project-form"
             disabled={workspace.isMutating}
             icon={<Plus className="h-4 w-4" />}
             onClick={() => setCreateOpen(true)}
@@ -197,6 +199,7 @@ export function ProjectsHomePage() {
           <div className="overflow-hidden">
             {createOpen ? (
               <form
+                id="create-project-form"
                 className="rounded-2xl border border-black/5 bg-white/90 p-6 shadow-glass backdrop-blur-sm"
                 data-testid="create-project-form"
                 onSubmit={(event) => void handleCreateProject(event)}
@@ -241,9 +244,12 @@ export function ProjectsHomePage() {
           </div>
         ) : null}
 
-        <div className="mt-10 min-h-0 flex-1">
+        <div className="mt-10 min-h-0 flex-1" aria-busy={workspace.isLoading}>
           {workspace.isLoading ? (
-            <ProjectsHomeSkeletonCards />
+            <>
+              <span className="sr-only">Loading projects</span>
+              <ProjectsHomeSkeletonCards />
+            </>
           ) : workspace.projectSummaries.length === 0 ? (
             <div
               className="flex min-h-[320px] flex-col items-center justify-center px-6 py-16 text-center"

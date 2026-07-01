@@ -22,7 +22,13 @@ const modes: Array<{
   }
 ];
 
-export function WorkspaceModeRail({ onProjectMode }: { onProjectMode?: () => void }) {
+export function WorkspaceModeRail({
+  appleStyle = false,
+  onProjectMode
+}: {
+  appleStyle?: boolean;
+  onProjectMode?: () => void;
+}) {
   const workspace = useVdtStudioStore((state) => state.workspace);
   const setWorkspacePanel = useVdtStudioStore((state) => state.setWorkspacePanel);
   const canOpenVdt = hasActiveWorkspaceVdt(workspace);
@@ -31,7 +37,12 @@ export function WorkspaceModeRail({ onProjectMode }: { onProjectMode?: () => voi
   return (
     <nav
       aria-label="Workspace mode"
-      className="flex h-auto shrink-0 flex-row gap-1 border-b border-line bg-white p-2 shadow-panel lg:h-full lg:flex-col lg:border-b-0 lg:border-r"
+      className={clsx(
+        "flex h-auto shrink-0 flex-row gap-1 p-2 lg:h-full lg:flex-col",
+        appleStyle
+          ? "border-b border-black/5 bg-white/70 backdrop-blur-xl lg:border-b-0 lg:border-r"
+          : "border-b border-line bg-white shadow-panel lg:border-b-0 lg:border-r"
+      )}
     >
       {modes.map((mode) => {
         const selected = activePanel === mode.id;
@@ -46,12 +57,22 @@ export function WorkspaceModeRail({ onProjectMode }: { onProjectMode?: () => voi
             disabled={disabled}
             data-testid={`workspace-mode-${mode.id}`}
             className={clsx(
-              "flex h-9 w-9 items-center justify-center rounded-md border text-slate-600 transition",
+              "flex h-9 w-9 items-center justify-center transition",
               "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
               "disabled:cursor-not-allowed disabled:opacity-35",
-              selected
-                ? "border-slate-900 bg-slate-900 text-white shadow-sm"
-                : "border-transparent hover:border-line hover:bg-slate-50 hover:text-ink"
+              appleStyle
+                ? clsx(
+                    "rounded-xl text-slate-600",
+                    selected
+                      ? "bg-accent/10 text-accent"
+                      : "border border-transparent hover:bg-black/[0.04] hover:text-ink"
+                  )
+                : clsx(
+                    "rounded-md border text-slate-600",
+                    selected
+                      ? "border-slate-900 bg-slate-900 text-white shadow-sm"
+                      : "border-transparent hover:border-line hover:bg-slate-50 hover:text-ink"
+                  )
             )}
             onClick={() => {
               if (mode.id === "project" && canOpenVdt && workspace.activePanel === "vdt") {

@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect } from "react";
+import { clsx } from "clsx";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { NodeInspector } from "./node-inspector";
 import { PanelResizeHandle } from "./panel-resize-handle";
@@ -46,7 +47,10 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
 
   return (
     <main
-      className="flex min-h-screen flex-col bg-canvas text-ink lg:h-screen lg:overflow-hidden"
+      className={clsx(
+        "flex min-h-screen flex-col text-ink lg:h-screen lg:overflow-hidden",
+        isProjectMode ? "vdt-apple-workspace bg-apple-gray" : "bg-canvas"
+      )}
       style={{
         ["--vdt-font-scale" as string]: ui.fontScale,
         ["--vdt-mode-rail" as string]: `${MODE_RAIL_WIDTH}px`,
@@ -56,13 +60,19 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
         ["--vdt-right-handle" as string]: `${rightHandleWidth}px`
       }}
     >
+      {isProjectMode ? (
+        <div
+          className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(47,111,237,0.08),transparent)]"
+          aria-hidden="true"
+        />
+      ) : null}
       <TopBar projectId={projectId} />
-      <div className={`vdt-workspace-grid grid min-h-0 flex-1 grid-cols-1 ${isProjectMode ? "vdt-workspace-grid-project" : ""}`}>
+      <div className={`vdt-workspace-grid relative grid min-h-0 flex-1 grid-cols-1 ${isProjectMode ? "vdt-workspace-grid-project" : ""}`}>
         <div className="min-h-0 lg:block">
-          <WorkspaceModeRail onProjectMode={showProjectWorkspace} />
+          <WorkspaceModeRail appleStyle={isProjectMode} onProjectMode={showProjectWorkspace} />
         </div>
         <div className="min-h-0 lg:block">
-          {isProjectMode ? <ProjectManagementPanel /> : <SetupRail />}
+          {isProjectMode ? <ProjectManagementPanel urlScopedProjectId={projectId} /> : <SetupRail />}
         </div>
         {!isProjectMode && isDesktop && !leftCollapsed ? (
           <PanelResizeHandle
@@ -102,7 +112,7 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
 
 export function VdtStudioApp({ projectId }: VdtStudioAppProps) {
   return (
-    <Suspense fallback={<main className="min-h-screen bg-canvas" />}>
+    <Suspense fallback={<main className="min-h-screen bg-apple-gray" />}>
       <VdtStudioAppContent projectId={projectId} />
     </Suspense>
   );

@@ -36,6 +36,7 @@ export function createSqliteAgentRunPersistence(database: VdtDatabase): AgentRun
     createRun(state) {
       const projectContext = ensureStorageProject(database, state);
       const conversationId = ensureConversation(database, projectContext.projectId, state);
+      const payload = persistedRunPayload(state);
       database.createAgentRun({
         id: state.runId,
         projectId: projectContext.projectId,
@@ -43,9 +44,9 @@ export function createSqliteAgentRunPersistence(database: VdtDatabase): AgentRun
         conversationId,
         status: state.status,
         phase: state.phase,
-        request: state.request as unknown as Record<string, unknown>,
-        publicSnapshot: snapshotFromState(state) as unknown as Record<string, unknown>,
-        internalState: serializeAgentRunState(state) as unknown as Record<string, unknown>,
+        request: payload.request,
+        publicSnapshot: payload.publicSnapshot,
+        internalState: payload.internalState,
         completedAt: state.completedAt
       });
       persistConversationMessages(database, state, conversationId);
@@ -56,14 +57,15 @@ export function createSqliteAgentRunPersistence(database: VdtDatabase): AgentRun
       const projectContext = ensureStorageProject(database, state);
       const conversationId = ensureConversation(database, projectContext.projectId, state);
       persistConversationMessages(database, state, conversationId);
+      const payload = persistedRunPayload(state);
       database.updateAgentRun(state.runId, {
         vdtId: vdtIdFromState(state),
         conversationId,
         status: state.status,
         phase: state.phase,
-        request: state.request as unknown as Record<string, unknown>,
-        publicSnapshot: snapshotFromState(state) as unknown as Record<string, unknown>,
-        internalState: serializeAgentRunState(state) as unknown as Record<string, unknown>,
+        request: payload.request,
+        publicSnapshot: payload.publicSnapshot,
+        internalState: payload.internalState,
         completedAt: state.completedAt
       });
     },
@@ -73,14 +75,15 @@ export function createSqliteAgentRunPersistence(database: VdtDatabase): AgentRun
       const projectContext = ensureStorageProject(database, state);
       const conversationId = ensureConversation(database, projectContext.projectId, state);
       persistConversationMessages(database, state, conversationId);
+      const payload = persistedRunPayload(state);
       database.updateAgentRun(state.runId, {
         vdtId: vdtIdFromState(state),
         conversationId,
         status: state.status,
         phase: state.phase,
-        request: state.request as unknown as Record<string, unknown>,
-        publicSnapshot: snapshotFromState(state) as unknown as Record<string, unknown>,
-        internalState: serializeAgentRunState(state) as unknown as Record<string, unknown>,
+        request: payload.request,
+        publicSnapshot: payload.publicSnapshot,
+        internalState: payload.internalState,
         completedAt: state.completedAt
       });
     },
@@ -93,6 +96,19 @@ export function createSqliteAgentRunPersistence(database: VdtDatabase): AgentRun
       const record = database.getAgentRun(runId);
       return record?.publicSnapshot as VdtAgentRunSnapshot | undefined ?? null;
     }
+  };
+}
+
+function persistedRunPayload(state: VdtAgentRunState): {
+  request: Record<string, unknown>;
+  publicSnapshot: Record<string, unknown>;
+  internalState: Record<string, unknown>;
+} {
+  const internalState = serializeAgentRunState(state);
+  return {
+    request: internalState.snapshot.request as unknown as Record<string, unknown>,
+    publicSnapshot: internalState.snapshot as unknown as Record<string, unknown>,
+    internalState: internalState as unknown as Record<string, unknown>
   };
 }
 

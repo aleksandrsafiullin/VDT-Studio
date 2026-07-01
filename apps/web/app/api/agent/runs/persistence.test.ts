@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { openVdtDatabase } from "@vdt-studio/storage";
 import { previewChangeSet, VdtBuilderSession, type VdtChangeSet } from "@vdt-studio/vdt-core";
 import { AgentRunStore, type MutationProposal } from "@vdt-studio/vdt-agent-runtime";
@@ -21,6 +21,8 @@ describe("SQLite agent run persistence", () => {
     const root = tempRoot();
     const dataDir = path.join(root, "data");
     const firstDatabase = openVdtDatabase(root, { dataDir, now: fixedClock("2026-06-29T10:00:00.000Z") });
+    const createAgentRunSpy = vi.spyOn(firstDatabase, "createAgentRun");
+    const updateAgentRunSpy = vi.spyOn(firstDatabase, "updateAgentRun");
     const firstStore = new AgentRunStore({
       now: fixedClock("2026-06-29T10:00:01.000Z"),
       persistence: createSqliteAgentRunPersistence(firstDatabase)
@@ -46,6 +48,22 @@ describe("SQLite agent run persistence", () => {
       message: "Created the first visible layer.",
       metadata: { pairingToken: "pair-secret", layer: 1 }
     });
+
+    const createRunInput = createAgentRunSpy.mock.calls[0]?.[0];
+    expect(createRunInput?.request).toMatchObject({
+      providerConfig: {
+        apiKey: "[redacted]",
+        model: "gpt-test"
+      }
+    });
+    expect(JSON.stringify(createRunInput?.request)).not.toContain("sk-secret");
+    expect(snapshotRequest(createRunInput?.publicSnapshot)).toEqual(createRunInput?.request);
+    expect(internalStateSnapshotRequest(createRunInput?.internalState)).toEqual(createRunInput?.request);
+    for (const [, patch] of updateAgentRunSpy.mock.calls) {
+      expect(JSON.stringify(patch.request)).not.toContain("sk-secret");
+      expect(snapshotRequest(patch.publicSnapshot)).toEqual(patch.request);
+      expect(internalStateSnapshotRequest(patch.internalState)).toEqual(patch.request);
+    }
 
     expect(firstDatabase.getAgentRun(run.runId)?.request).toMatchObject({
       providerConfig: {
@@ -296,6 +314,14 @@ function tempRoot(): string {
 
 function fixedClock(value: string): () => string {
   return () => value;
+}
+
+function snapshotRequest(value: unknown): unknown {
+  return (value as { request?: unknown } | undefined)?.request;
+}
+
+function internalStateSnapshotRequest(value: unknown): unknown {
+  return (value as { snapshot?: { request?: unknown } } | undefined)?.snapshot?.request;
 }
 
 function buildDraftProject() {

@@ -62,27 +62,27 @@ export function TopBar({ projectId }: TopBarProps) {
 
   if (workspace.activePanel === "project" || !hasActiveWorkspaceVdt(workspace)) {
     return (
-      <header className="relative flex h-14 shrink-0 items-center justify-between gap-4 border-b border-line bg-white px-4">
+      <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center justify-between gap-4 border-b border-black/5 bg-white/70 px-5 backdrop-blur-xl">
         <div className="flex min-w-0 items-center gap-3">
           <Link
             href="/"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line text-graphite transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-graphite transition hover:bg-black/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             data-testid="back-to-projects"
             aria-label="Back to projects"
             title="Back to projects"
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-slate-900 text-white">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-sm">
             <Folder className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <h1 className="truncate text-sm font-semibold text-ink">
+            <h1 className="truncate text-[15px] font-medium tracking-tight text-ink">
               {activeProjectSummary?.project.name ?? "Project workspace"}
             </h1>
             <p className="truncate text-xs text-muted">
               {activeProjectSummary
-                ? `${activeProjectSummary.counts.vdts} VDTs - ${activeProjectSummary.counts.revisions} revisions`
+                ? `${activeProjectSummary.counts.vdts} VDT${activeProjectSummary.counts.vdts === 1 ? "" : "s"} · ${activeProjectSummary.counts.revisions} revision${activeProjectSummary.counts.revisions === 1 ? "" : "s"}`
                 : "Project not found"}
             </p>
           </div>
