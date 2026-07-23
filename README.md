@@ -1,137 +1,142 @@
 # VDT Studio
 
-VDT Studio is an AI-first, local-first workspace for building editable Value Driver Trees and calculable KPI driver models.
+VDT Studio is an AI-first, local-first workspace for building editable Value Driver Trees and calculable KPI models. AI proposes structure, users own business logic and approval, and deterministic code owns calculation and validation.
 
-The product helps analysts and consultants move from a KPI question to an explainable model: AI proposes the first draft, the user owns the logic, and a deterministic calculation engine owns the numbers.
+> Current release: `0.1.0-alpha.0`. The repository is suitable for development and controlled alpha evaluation, not production KPI decisions. See [Production readiness](docs/PRODUCTION_READINESS.md).
 
-![VDT Studio concept](docs/design-concept.png)
+## Current Product Surface
 
-## What It Does
+- Project and VDT workspace backed by local SQLite metadata and revision files.
+- Left-to-right editable factor-tree canvas with node review and change-set previews.
+- Deterministic formula evaluation, scenario calculation and calculation trace.
+- In-product agent runtime with bounded tools, skills, structured events and a calculation-aware finish gate.
+- BYOK API providers, fixed local HTTP backends and reviewed subscription-CLI adapters.
+- Standalone paired local runner for development and a private-pipe desktop sidecar foundation.
+- JSON, Markdown and deterministic SVG export.
+- Experimental raw-data discovery for CSV/TSV, XLS/XLSX, JSON/NDJSON and Parquet.
 
-- AI-generated first draft of any KPI driver tree.
-- Left-to-right editable VDT canvas.
-- Human review workflow for AI suggestions.
-- Deterministic formula engine with trace output.
-- Scenario impact analysis.
-- BYOK and OpenAI-compatible model support.
-- API, local-model and selected subscription backend architecture.
-- Bounded model backend contract with deterministic validation.
-- JSON, Markdown and SVG export.
-- Browser-local JSON import.
+Raw-data discovery currently proposes semantic models and metadata mappings; it does **not** execute mappings or calculate trusted KPI baselines. Web research currently returns search results but does not yet provide an auditable benchmark evidence pipeline. These limitations are tracked in [Data ingestion](docs/DATA_INGESTION.md) and the [roadmap](docs/ROADMAP.md).
 
 ## Quickstart
 
+Requirements: Node `>=24 <25`, pnpm `10.33.2`.
+
 ```bash
 git clone https://github.com/aleksandrsafiullin/VDT-Studio.git
-cd vdt-studio
-pnpm install
+cd VDT-Studio
+corepack enable
+pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Optional local runner:
+Open the URL printed by Next.js. For standalone local-runner development:
 
 ```bash
 pnpm local-runner:start
 ```
+
+Normal desktop Local AI uses reviewed Tauri commands and the managed sidecar; it does not ask production users to start or pair a runner manually.
+
+## Product Workflows
+
+### Build and review a VDT
+
+1. Create a project and VDT.
+2. Enter the root KPI, business context, unit and period.
+3. Start an agent run or edit the tree manually.
+4. Review formulas, assumptions, warnings and proposed changes.
+5. Apply accepted changes, calculate scenarios and save a revision.
+
+The current agent loop uses local skills and bounded tools. Skill coverage is intentionally small and mostly English; multilingual and cross-domain retrieval remain roadmap work.
+
+### Discover data candidates
+
+The experimental import wizard can profile supported tabular files, infer columns and propose `data_mapped` nodes. Treat the output as a reviewed semantic draft only. It is not a calculation or reconciliation engine and must not be used as a trusted baseline.
+
+## AI Task Surface
+
+The schema registry contains 18 task contracts. Seventeen are exposed product tasks; `agent_plan` remains an internal compatibility contract and is not the primary build path.
+
+| Category | Exposed tasks |
+|---|---|
+| Agent loop | `orchestrator_first_response`, `agent_decision` |
+| Data discovery | `data_agent_decision`, `analyze_raw_dataset`, `review_dataset_proposal` |
+| Generate | `generate_tree` |
+| Graph mutation | `deepen_node`, `simplify_branch`, `suggest_alternative`, `suggest_formula` |
+| Advisory | `review_model`, `check_units`, `identify_missing_drivers`, `identify_duplicate_drivers` |
+| Explanation | `explain_node`, `explain_scenario`, `generate_executive_summary` |
+
+Project creation runs through `/api/agent/runs`. Data discovery runs through `/api/data/discovery/runs`. `/api/ai/generate-vdt` is retained for connection tests and legacy structured generation; other bounded tasks use `/api/ai/run-task`.
+
+## Model Configuration
+
+The deterministic mock provider is the offline reference for tests. API/BYOK providers are configured in `Settings -> AI`. Session API keys are excluded from persisted Zustand state and project exports.
+
+The local execution boundary supports:
+
+- fixed local HTTP manifests for Ollama, LM Studio and vLLM;
+- subscription CLI adapters with status recorded in `release/provider-certification.json`;
+- development standalone-runner pairing;
+- managed desktop sidecar execution over reviewed Tauri commands.
+
+Provider detection or a passing fake-executable test is not proof of live production support. See [Provider compatibility](docs/provider-compatibility.md).
 
 ## Development Commands
 
 ```bash
-pnpm dev
-pnpm build
+pnpm lint
 pnpm typecheck
 pnpm test
+pnpm build
 pnpm test:e2e
-pnpm dev:all
-pnpm vdt -- --help
+pnpm docs:verify
+pnpm phase7:verify
+pnpm certification:verify
+pnpm security:audit
+pnpm desktop:sidecar:verify
 pnpm package:alpha
 pnpm package:verify
 ```
 
-## AI Model Configuration
-
-The app ships with a deterministic mock provider for local development and tests. OpenAI-compatible endpoints are configured from `Settings -> AI`, the setup rail, or through environment variables:
-
-```bash
-OPENAI_COMPATIBLE_BASE_URL=https://api.openai.com/v1
-OPENAI_COMPATIBLE_API_KEY=...
-OPENAI_COMPATIBLE_MODEL=gpt-4.1-mini
-```
-
-The app keeps browser-entered API keys in memory for the active session and sends them only to the configured generation route. Secrets are not persisted in project files or browser local storage.
-
-Local runner routing is also available from the provider selector. Start the runner, enter the short-lived terminal pairing code, select an Ollama, LM Studio, vLLM or subscription backend, then run `Test connection`:
-
-```bash
-pnpm local-runner:start
-```
-
-## AI Actions
-
-VDT Studio exposes 14 bounded AI tasks. Project creation runs through `/api/agent/runs` with `orchestrator_first_response` and `agent_decision`; `/api/ai/generate-vdt` is retained only for provider connection tests. Other bounded tasks use `/api/ai/run-task` with preview-before-apply for graph mutations.
-
-| Category | Tasks |
-| --- | --- |
-| Agent loop | `orchestrator_first_response`, `agent_decision` |
-| Generate | `generate_tree` |
-| Graph mutate | `deepen_node`, `simplify_branch`, `suggest_alternative`, `suggest_formula` |
-| Advisory | `review_model`, `check_units`, `identify_missing_drivers`, `identify_duplicate_drivers` |
-| Explain | `explain_node`, `explain_scenario`, `generate_executive_summary` |
-
-Graph-mutating actions show a change-set preview in the node inspector; applying creates a version snapshot you can restore from the History control in the top bar. Advisory and explain tasks are read-only.
-
-The built-in mock provider covers all 14 exposed tasks for local development and automated tests.
-
-## Local Runner
-
-`packages/local-runner` exposes a paired, loopback-only v1 service. The browser sends a registered backend ID and bounded task/schema input; executable names, arguments, environment and endpoints remain in reviewed server manifests. Subscription CLI manifests fail closed until separately certified. See [Local Runner](docs/LOCAL_RUNNER.md) and [Provider compatibility](docs/provider-compatibility.md).
+`pnpm security:audit` currently fails on documented high-severity dependencies in the upload/image stack. Do not claim a passing release gate until those dependencies are remediated.
 
 ## Product CLI
-
-`packages/cli` builds a narrow Node CLI for deterministic project operations and the localhost runner launcher.
 
 ```bash
 pnpm vdt -- validate examples/production-volume.json
 pnpm vdt -- calculate examples/production-volume.json
 pnpm vdt -- export examples/production-volume.json --format markdown
 pnpm vdt -- doctor
+pnpm vdt -- runner start
 ```
 
-External agents, MCP installation, skill distribution and repository control are not product features. See [ADR-001](docs/adr/ADR-001-model-backends-not-agent-orchestration.md).
+The CLI does not install MCP servers, distribute coding-agent skills or give external agents control of the repository. The application does contain a bounded in-product VDT agent; see [ADR-002](docs/adr/ADR-002-bounded-in-product-agent-runtime.md).
 
-## Alpha Release Package
+## Alpha Packaging
 
-The alpha artifact is a clean, self-contained Node 24 CLI tarball. It includes the paired local runner behind `vdt runner start`; no separate runner install is required.
+`pnpm package:alpha` builds the Node 24 CLI/runner tarball under `output/release/`. Signed desktop installers and a Node-free self-contained sidecar remain open gates.
 
 ```bash
 pnpm package:alpha
+pnpm release:bundle:verify
 pnpm package:verify
 ```
 
-The clean-install gate installs the tarball into a temporary project and verifies `vdt --help`, `vdt doctor`, project validation, package exports, runner startup, and `/v1/health`. Artifacts, SHA-256 checksums, and the release manifest are written under `output/release/`. See [Alpha release](docs/RELEASE.md).
+See [Alpha release](docs/RELEASE.md) and the [release checklist](docs/release-checklist.md).
 
-## Examples
+## Documentation
 
-Example projects live under `examples/`:
+Start with the [documentation map](docs/README.md):
 
-- `production-volume.json`
-- `oee.json`
-- `inventory-level.json`
-- `maintenance-cost.json`
+- [Product specification](docs/PRODUCT_SPEC.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Agent and AI harness](docs/AI_HARNESS.md)
+- [Formula engine](docs/FORMULA_ENGINE.md)
+- [Data ingestion](docs/DATA_INGESTION.md)
+- [Roadmap](docs/ROADMAP.md)
+- [Production readiness](docs/PRODUCTION_READINESS.md)
 
-## Roadmap
-
-- PNG canvas export.
-- SQLite-backed local project storage.
-- Excel calculation model export.
-- PowerPoint summary export.
-- PDF report generation.
-- Individually certified subscription-backend adapters and desktop OS sandbox profiles.
-- Tauri desktop packaging.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributors and coding agents must update documentation with behavior changes; see [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

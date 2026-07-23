@@ -2,7 +2,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { CANONICAL_RUN_TASK_TYPES, CANONICAL_TASK_TYPES, verifyPhase7Gate } from "./verify-phase7-gate.mjs";
+import {
+  CANONICAL_DATA_TASK_TYPES,
+  CANONICAL_RUN_TASK_TYPES,
+  CANONICAL_TASK_TYPES,
+  verifyPhase7Gate
+} from "./verify-phase7-gate.mjs";
 
 const tempDirs: string[] = [];
 
@@ -52,9 +57,9 @@ async function writeStaticFixture(options: { readme?: string; runTaskParser?: st
   await writeFile(
     path.join(root, "README.md"),
     options.readme ??
-      `VDT Studio exposes 14 bounded AI tasks.\n${["orchestrator_first_response", "agent_decision", ...CANONICAL_RUN_TASK_TYPES].map((taskType) => `\`${taskType}\``).join("\n")}\n`
+      `The schema registry contains 18 task contracts. Seventeen are exposed product tasks.\n${["orchestrator_first_response", "agent_decision", ...CANONICAL_DATA_TASK_TYPES, ...CANONICAL_RUN_TASK_TYPES].map((taskType) => `\`${taskType}\``).join("\n")}\n`
   );
-  await writeFile(path.join(root, "docs/ROADMAP.md"), "Phase 7 verification gate verified for bounded AI actions.\n");
+  await writeFile(path.join(root, "docs/ROADMAP.md"), "18 registered task schemas, 17 exposed product tasks.\n");
   return root;
 }
 
@@ -65,8 +70,8 @@ afterEach(async () => {
 describe("verify-phase7-gate", () => {
   it("passes the current repository and runs all mock tasks", async () => {
     await expect(verifyPhase7Gate()).resolves.toMatchObject({
-      taskCount: 15,
-      schemaCount: 15,
+      taskCount: 18,
+      schemaCount: 18,
       mockTaskCount: 12
     });
   });

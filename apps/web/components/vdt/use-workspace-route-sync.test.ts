@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { VdtWorkspaceState } from "./vdt-store";
-import { bootstrapProjectWorkspaceRoute } from "./use-workspace-route-sync";
+import {
+  bootstrapProjectWorkspaceRoute,
+  shouldCloseWorkspaceVdtEditorForRoute
+} from "./use-workspace-route-sync";
 
 function workspace(overrides: Partial<VdtWorkspaceState> = {}): VdtWorkspaceState {
   return {
@@ -15,7 +18,7 @@ function workspace(overrides: Partial<VdtWorkspaceState> = {}): VdtWorkspaceStat
 describe("bootstrapProjectWorkspaceRoute", () => {
   const refreshWorkspace = vi.fn<(options?: { scopedProjectId?: string | undefined }) => Promise<void>>(async () => {});
   const selectWorkspaceProject = vi.fn<(projectId: string) => Promise<boolean>>(async () => true);
-  const selectWorkspaceVdt = vi.fn<(vdtId: string) => Promise<boolean>>(async () => true);
+  const selectWorkspaceVdt = vi.fn<(vdtId: string, options?: { expectedProjectId?: string | undefined }) => Promise<boolean>>(async () => true);
   const closeWorkspaceVdtEditor = vi.fn();
 
   beforeEach(() => {
@@ -80,7 +83,38 @@ describe("bootstrapProjectWorkspaceRoute", () => {
     });
 
     expect(selectWorkspaceProject).not.toHaveBeenCalled();
-    expect(selectWorkspaceVdt).toHaveBeenCalledWith("vdt_a");
+    expect(selectWorkspaceVdt).toHaveBeenCalledWith("vdt_a", { expectedProjectId: "project_a" });
     expect(closeWorkspaceVdtEditor).not.toHaveBeenCalled();
+  });
+
+  it("closes the editor when the requested VDT does not belong to the route project", async () => {
+    const current = workspace({
+      activeProjectId: "project_a",
+      activePanel: "project"
+    });
+    selectWorkspaceVdt.mockResolvedValueOnce(false);
+
+    await bootstrapProjectWorkspaceRoute({
+      projectId: "project_a",
+      initialVdt: "vdt_from_project_b",
+      refreshWorkspace,
+      selectWorkspaceProject,
+      selectWorkspaceVdt,
+      closeWorkspaceVdtEditor,
+      getWorkspace: () => current
+    });
+
+    expect(selectWorkspaceVdt).toHaveBeenCalledWith("vdt_from_project_b", { expectedProjectId: "project_a" });
+    expect(closeWorkspaceVdtEditor).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("shouldCloseWorkspaceVdtEditorForRoute", () => {
+  it("does not close a newly created local VDT before the URL query catches up", () => {
+    expect(shouldCloseWorkspaceVdtEditorForRoute(undefined, undefined, "vdt_a")).toBe(false);
+  });
+
+  it("closes the editor when navigation removes an existing VDT query", () => {
+    expect(shouldCloseWorkspaceVdtEditorForRoute("vdt_a", undefined, "vdt_a")).toBe(true);
   });
 });

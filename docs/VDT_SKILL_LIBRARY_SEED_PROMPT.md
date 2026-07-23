@@ -1,5 +1,7 @@
 # Prompt: Create Seed VDT Decomposition Skills
 
+> **Status:** historical/reference-only seed prompt. The initial library already exists under `packages/vdt-agent/skills/`; do not rerun this prompt as a greenfield task. Current skill changes must follow the source registry, recipe/tests and generated-sidecar rules in `AGENTS.md`. Reviewed 2026-07-23.
+
 Use this prompt with a separate implementation/content agent after `docs/AGENTIC_VDT_RUNTIME_SPEC.md` is accepted.
 
 ## Role

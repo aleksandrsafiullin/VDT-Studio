@@ -11,6 +11,7 @@ const nextConfig = {
     "@vdt-studio/vdt-core",
     "@vdt-studio/vdt-agent",
     "@vdt-studio/vdt-agent-runtime",
+    "@vdt-studio/data-harness",
     "@vdt-studio/storage",
     "@vdt-studio/ai-harness",
     "@vdt-studio/local-runner",

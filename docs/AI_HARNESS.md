@@ -1,48 +1,137 @@
-# AI Harness
+# AI And Agent Harness
 
-The AI harness is model-agnostic and task-oriented.
+Last reviewed against the working tree: **2026-07-23**.
 
-Generation providers:
+## Scope
 
-- `mock`: deterministic local provider for demos and automated tests.
-- `openai_compatible`: chat-completions provider that requests JSON output and validates it against schemas.
-- `anthropic`: Anthropic Messages API.
-- `azure_openai`: Azure OpenAI chat completions.
-- `gemini`: Google Gemini generate-content API.
-- `custom_http`
-- `local_runner`: routes structured tasks through paired `/v1/completions` requests containing only a registered backend ID and task/schema input.
-- `local_http`: exposed through fixed `ollama`, `lm_studio` and `vllm` manifests.
-- subscription backends: registered through reviewed adapter-specific manifests; unsafe or uncertified manifests fail closed.
+VDT Studio has two related but distinct layers:
 
-`packages/model-bridge` defines the product-facing model backend contract. External agent control, MCP and skill installation are outside product scope.
+- the **AI harness** provides bounded structured-completion tasks across model backends;
+- the **VDT agent runtime** repeatedly asks a model for one decision, executes one reviewed application tool and returns structured feedback.
 
-The local execution layer lives in `packages/local-runner`. Its backend registry owns endpoints, executable aliases and arguments. Public backend metadata omits those fields. Pairing is required before discovery, testing, completion, cancellation or run inspection.
+This is an in-product analytical agent. It does not give external coding agents, MCP servers or provider CLIs control of the repository, shell or arbitrary files.
 
-All providers implement the same `completeStructured` interface and must return schema-validated output before it is converted into a project graph.
+## Registered Tasks
 
-Provider evaluation lives in `eval/20-kpi-dataset.json` and `scripts/evaluate-providers.mjs`. The checked-in dataset covers the planned 20 KPI set with expected units, minimum graph depth, acceptable node-count ranges, required business drivers, prohibited duplicate patterns, formula expectations and unit-consistency expectations. `pnpm evaluation:verify` runs the deterministic mock-provider baseline, verifies root/unit/depth/node-count/edge-count, required-driver coverage, duplicate-name guardrails and root-formula driver references, then writes `output/evaluation/provider-evaluation.json`; live-provider quality evaluation should only be enabled by adding an explicit provider adapter to the script.
+The schema registry contains 18 task contracts. Seventeen are exposed product tasks; `agent_plan` is retained as an internal compatibility contract and must not become the primary VDT build path.
 
-The web workspace exposes the same provider configuration through `Settings -> AI` and the setup rail. Both surfaces share the same Zustand state and use `apps/web/lib/ai-execution-client.ts` as the browser-side execution boundary. That client routes hosted web mode to API/BYOK providers only, keeps standalone runner calls behind development mode, and routes desktop local AI through the reviewed Tauri command bridge when it is available. API keys remain session-only and are excluded from persisted browser state.
+| Owner | Tasks |
+|---|---|
+| Agent runtime | `orchestrator_first_response`, `agent_decision` |
+| Data discovery prototype | `data_agent_decision`, `analyze_raw_dataset`, `review_dataset_proposal` |
+| Structured project/action harness | `generate_tree`, `deepen_node`, `simplify_branch`, `suggest_alternative`, `suggest_formula`, `review_model`, `check_units`, `identify_missing_drivers`, `identify_duplicate_drivers`, `explain_node`, `explain_scenario`, `generate_executive_summary` |
 
-In normal desktop mode, the Local AI settings surface does not ask users to start or pair a runner. It presents subscription cards, local model server cards and provider-owned authentication help. Pairing controls are rendered only when `NEXT_PUBLIC_VDT_ENABLE_STANDALONE_RUNNER=true` in non-hosted Developer Mode.
+`pnpm phase7:verify` checks task/schema/manifest alignment, route ownership, README exposure and mock coverage.
 
-Desktop subscription model discovery is provider-owned and adapter-specific. Codex CLI is queried with `codex debug models`; Cursor Agent is queried with `cursor-agent models`. Missing executables, missing auth and model-list timeouts fail soft to an empty list so users can still open settings, authenticate with the provider-owned flow and rescan.
+## Agent Runtime
 
-Production safety notes:
+`packages/vdt-agent-runtime` implements:
 
-- Request-supplied OpenAI-compatible base URLs are disabled in production unless `VDT_ALLOW_REQUEST_PROVIDER_URLS=true`.
-- Production private or localhost provider URLs require `VDT_ALLOW_PRIVATE_PROVIDER_URLS=true`.
-- Request-supplied custom base URLs must provide their own API key.
-- Browser-entered BYOK API keys are kept in memory for the active session and are not persisted in localStorage.
-- Scrubbed session-only fields: `apiKey`, `localApiKey`, `pairingToken`, `runnerPairingToken`, `accessToken`, `providerToken` (including Alibaba Cloud Coding Plan BYOK keys).
-- Provider calls use a timeout and response-size cap.
-- The BYOK streaming proxy supports Anthropic, OpenAI, Azure OpenAI, Google Gemini, Ollama and OpenAI-compatible SenseAudio targets.
-- Proxy targets are DNS-resolved once and the upstream socket is pinned to the validated public address; redirects, private/link-local/CGNAT targets, oversized bodies, frames and streams are rejected.
-- Request-provided custom cloud endpoints cannot receive server-side API keys; the request must supply its own session-only key.
-- AI output schemas are closed to unapproved top-level fields, cap string lengths and array sizes, expose detailed validation errors for repair prompts, and emit repair attempt/success metrics before graph conversion.
-- Top-level AI assumptions, questions and model warnings are preserved in `project.aiReview`.
-- Local-runner POST requests require `application/json`; browser-origin requests are checked before any provider execution.
-- Local-runner commands, arguments, environment, working directories, endpoints and schemas are never browser-configurable.
-- Subscription CLI execution is never performed by `apps/web`; uncertified manifests fail closed.
+1. first user-facing response;
+2. request classification and skill retrieval context;
+3. repeated `agent_decision` calls;
+4. exactly one tool call, user question or finish decision per step;
+5. structured tool result/error feedback;
+6. mutation preview/policy, graph validation and calculation-aware finish;
+7. persisted snapshots, SSE events and cancellation.
 
-Provider responses are always validated locally before graph conversion. The model bridge owns the registered JSON-schema subset for local-runner and desktop transports, including closed top-level fields and bounded nested values. Anthropic/Gemini provider-side schema constraints are used when callers supply JSON Schema directly; conversion of arbitrary Zod schemas into provider JSON Schema remains a follow-up, so local validation is the authoritative gate.
+The default maximum is bounded by `maxSteps`; provider errors can pause a run. `researchMode` is `auto`, `on` or `off`. `off` rejects `research.search_web` at the tool boundary before any provider call.
+
+### Current runtime limitations
+
+- No per-run mutex/actor prevents two decision loops from operating on the same builder.
+- Manual changes other than a narrow update path are not fully merged into runtime state.
+- Most tool descriptions expose property names but omit JSON Schema types, required fields, enums and constraints.
+- BYOK providers do not all receive the same strict `agent-decision-v1` schema as local-runner paths.
+- Repeated errors lack per-fingerprint retry budgets and backoff.
+- Persisted `running` runs are not re-enqueued or marked interrupted after process restart.
+- Existing-project formula/delete/root changes can be auto-applied too broadly.
+
+These are production blockers, not prompt-quality issues.
+
+## Skills
+
+The source library is `packages/vdt-agent/skills/`; the sidecar copy is generated.
+
+Current registry: 11 skills across mining, finance, SaaS and generic decomposition. Retrieval combines deterministic domain classification and term matching. Recipe compilation can seed graph structure and known numeric inputs.
+
+Known limitations:
+
+- classification domains are limited to `mining`, `finance`, `saas` and `generic`;
+- normalization is effectively English/ASCII and does not reliably classify Russian or Kazakh requests;
+- there is no embedding retrieval, ontology alias layer or model rerank;
+- a recipe can be labelled complete without executable formula closure;
+- per-skill evaluation coverage is incomplete.
+
+Skill changes must keep source registry, recipe mappings, tests and generated sidecar resources aligned. Run:
+
+```bash
+pnpm desktop:sidecar:prepare
+pnpm desktop:sidecar:verify
+```
+
+## Research
+
+`research.search_web` supports Brave or Tavily when configured by environment. It returns bounded search results with title, URL, source, snippet and retrieval time. Research policy is included in agent context and can be changed during a run.
+
+Current research is search-only:
+
+- no registered source-open/fetch tool;
+- no immutable source snapshot;
+- no structured claim-to-source record;
+- no benchmark value/unit/period/geography/cohort/method extraction;
+- no corroboration or applicability score;
+- no citation requirement in the final summary;
+- search snippets are not yet isolated by a complete prompt-injection trust policy.
+
+Therefore search results may inform a draft but must not be represented as an audited benchmark baseline.
+
+## Data-Agent Prototype
+
+`packages/data-harness` contains a separate decision loop for raw-data discovery. The current UI does not pass provider configuration, so normal wizard runs use deterministic heuristics. The data-agent allowlist does not include the main skill or research tools.
+
+This split is transitional. The target is a specialized sub-run of the main coordinator with the same policy, evidence store, cancellation, retry and approval contracts. See `DATA_INGESTION.md`.
+
+## Model Backends
+
+`packages/model-bridge` defines backend/task/schema contracts. `packages/ai-harness` owns provider adapters and local result validation.
+
+Configured provider families include:
+
+- deterministic `mock`;
+- OpenAI-compatible HTTP and Azure OpenAI;
+- Anthropic Messages API;
+- Google Gemini API;
+- fixed local HTTP manifests for Ollama, LM Studio and vLLM;
+- reviewed subscription CLI adapters executed by local runner/desktop sidecar.
+
+Canonical release status lives in `release/provider-certification.json`; documentation must not infer live support from executable detection alone.
+
+## Browser And Desktop Routing
+
+`apps/web/lib/ai-execution-client.ts` is the frontend boundary:
+
+- hosted web routes to API/BYOK providers;
+- standalone runner transport is development-only;
+- desktop mode uses reviewed Tauri commands when the bridge is present.
+
+Normal desktop UI hides pairing/startup controls. Provider authentication is provider-owned. Subscription model-list failures fail soft so Settings remains usable.
+
+## Provider Safety Contract
+
+- Structured output is validated locally before graph conversion.
+- Registered schemas close unapproved top-level fields and bound strings/arrays.
+- One-attempt repair records attempt/success metadata.
+- API keys, pairing tokens and provider tokens are scrubbed from persisted browser state.
+- Request-supplied provider URLs are disabled in production unless explicitly enabled.
+- Private/localhost production targets require an additional explicit opt-in.
+- BYOK proxy targets are DNS-validated and pinned; redirects and private/link-local/CGNAT targets are rejected.
+- Local-runner manifests own commands, static arguments, environment and supported schemas.
+- Local-runner requests require JSON, pairing and origin checks.
+- Subscription CLI execution never occurs directly in `apps/web`.
+
+## Evaluation
+
+`eval/20-kpi-dataset.json` and `pnpm evaluation:verify` provide the deterministic mock baseline for root/unit/depth/node count, required drivers, duplicate guardrails and root-formula references. The JSON report is written under `output/evaluation/`.
+
+This suite is not a live-provider, multilingual, benchmark or data-mapping certification. Required future agent evaluations are listed in `ROADMAP.md` and `PRODUCTION_READINESS.md`.

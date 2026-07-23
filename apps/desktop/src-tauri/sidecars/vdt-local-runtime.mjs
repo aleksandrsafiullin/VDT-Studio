@@ -130,6 +130,9 @@ var VDT_OUTPUT_SCHEMA_IDS = [
   "orchestrator-first-response-v1",
   "agent-decision-v1",
   "agent-plan-v1",
+  "data-agent-decision-v1",
+  "analyze-raw-dataset-v1",
+  "review-dataset-proposal-v1",
   "generate-tree-v1",
   "deepen-node-v1",
   "simplify-branch-v1",
@@ -148,6 +151,9 @@ var schemaTask = {
   "orchestrator-first-response-v1": "orchestrator_first_response",
   "agent-decision-v1": "agent_decision",
   "agent-plan-v1": "agent_plan",
+  "data-agent-decision-v1": "data_agent_decision",
+  "analyze-raw-dataset-v1": "analyze_raw_dataset",
+  "review-dataset-proposal-v1": "review_dataset_proposal",
   "generate-tree-v1": "generate_tree",
   "deepen-node-v1": "deepen_node",
   "simplify-branch-v1": "simplify_branch",
@@ -476,6 +482,161 @@ var agentDecisionStrictResponseSchema = objectSchema(
     }
   },
   ["type", "toolName", "argsJson", "statusMessage", "questionsJson", "summary", "nextSuggestedActions"]
+);
+var dataDiscoveryToolNameProp = enumProp([
+  "file.inspect",
+  "file.preview_raw",
+  "file.detect_tables",
+  "table.list",
+  "table.preview",
+  "table.sample",
+  "table.profile",
+  "table.quality_report",
+  "table.flatten_json",
+  "table.select_columns",
+  "column.profile",
+  "column.detect_type",
+  "column.detect_unit",
+  "column.sample_values",
+  "column.value_distribution",
+  "column.parse_candidates",
+  "column.semantic_role_candidates",
+  "table.group_by",
+  "table.pivot",
+  "table.time_series",
+  "table.correlate",
+  "table.outliers",
+  "table.duplicates",
+  "table.cardinality_matrix",
+  "text.normalize_values",
+  "text.cluster_values",
+  "text.extract_keywords",
+  "text.suggest_taxonomy_candidates",
+  "text.classification_diagnostics",
+  "semantic.detect_entities",
+  "semantic.detect_measures",
+  "semantic.detect_dimensions",
+  "semantic.detect_events",
+  "semantic.build_dataset_summary",
+  "vdt.project_excerpt",
+  "vdt.find_matching_nodes",
+  "vdt.propose_metric_bindings",
+  "vdt.validate_formula_candidates",
+  "vdt.validate_change_set"
+]);
+var dataAgentDecisionToolCallSchema = objectSchema(
+  {
+    type: { type: "string", const: "tool_call" },
+    toolName: dataDiscoveryToolNameProp,
+    rationale: { type: "string", minLength: 1, maxLength: 1e3 },
+    input: { type: "object", properties: {}, required: [], additionalProperties: true }
+  },
+  ["type", "toolName", "rationale", "input"]
+);
+var dataAgentDecisionFinalSchema = objectSchema(
+  {
+    type: { type: "string", const: "final_proposal" },
+    rationale: { type: "string", minLength: 1, maxLength: 2e3 },
+    result: { type: "object", properties: {}, required: [], additionalProperties: true }
+  },
+  ["type", "rationale", "result"]
+);
+var dataAgentDecisionAskUserSchema = objectSchema(
+  {
+    type: { type: "string", const: "ask_user" },
+    questions: { type: "array", minItems: 1, maxItems: 5, items: { type: "string", minLength: 1, maxLength: 500 } },
+    rationale: { type: "string", minLength: 1, maxLength: 1e3 }
+  },
+  ["type", "questions", "rationale"]
+);
+var dataAgentDecisionSchema = {
+  type: "object",
+  anyOf: [dataAgentDecisionToolCallSchema, dataAgentDecisionFinalSchema, dataAgentDecisionAskUserSchema],
+  properties: {},
+  required: [],
+  additionalProperties: false
+};
+var dataEvidenceSchema = objectSchema(
+  {
+    type: enumProp([
+      "column_name",
+      "value_pattern",
+      "distribution",
+      "aggregation_result",
+      "data_quality",
+      "cross_column_relationship",
+      "user_confirmation",
+      "model_reasoning"
+    ]),
+    message: { type: "string", minLength: 1, maxLength: 1e3 },
+    strength: enumProp(["weak", "medium", "strong"]),
+    observationRef: { type: "string", maxLength: 200 }
+  },
+  ["type", "message", "strength"]
+);
+var rawDatasetColumnSchema = objectSchema(
+  {
+    tableId: nodeIdProp,
+    columnName: { type: "string", minLength: 1, maxLength: 200 },
+    physicalType: enumProp(["string", "number", "date", "boolean", "mixed", "unknown"]),
+    logicalType: enumProp([
+      "identifier",
+      "category",
+      "text",
+      "measure",
+      "duration",
+      "timestamp",
+      "date",
+      "currency",
+      "percentage",
+      "status",
+      "other"
+    ]),
+    semanticRole: { type: "string", maxLength: 120 },
+    unit: { type: "string", maxLength: 80 },
+    confidence: confidenceProp,
+    evidence: { type: "array", minItems: 1, maxItems: 12, items: dataEvidenceSchema },
+    profileRef: { type: "string", minLength: 1, maxLength: 240 }
+  },
+  ["tableId", "columnName", "physicalType", "logicalType", "confidence", "evidence", "profileRef"]
+);
+var rawDatasetMetricCandidateSchema = objectSchema(
+  {
+    id: nodeIdProp,
+    name: { type: "string", minLength: 1, maxLength: 200 },
+    description: { type: "string", minLength: 1, maxLength: 800 },
+    sourceTableId: nodeIdProp,
+    sourceColumns: { type: "array", minItems: 1, maxItems: 20, items: { type: "string", minLength: 1, maxLength: 200 } },
+    aggregation: enumProp(["sum", "count", "avg", "min", "max", "ratio", "distinct_count", "custom"]),
+    unit: { type: "string", maxLength: 80 },
+    formula: { type: "string", maxLength: 1e3 },
+    dimensions: { type: "array", maxItems: 20, items: nodeIdProp },
+    confidence: confidenceProp,
+    evidence: { type: "array", minItems: 1, maxItems: 12, items: dataEvidenceSchema },
+    limitations: { type: "array", maxItems: 10, items: { type: "string", maxLength: 500 } }
+  },
+  ["id", "name", "description", "sourceTableId", "sourceColumns", "aggregation", "confidence", "evidence", "limitations"]
+);
+var rawDatasetAnalysisSchema = objectSchema(
+  {
+    datasetId: { type: "string", minLength: 1, maxLength: 200 },
+    summary: objectSchema(
+      {
+        rowCount: { type: "number", minimum: 0 },
+        tableCount: { type: "number", minimum: 0 },
+        likelyDatasetKind: { type: "string", minLength: 1, maxLength: 200 },
+        confidence: confidenceProp,
+        description: { type: "string", minLength: 1, maxLength: 1e3 }
+      },
+      ["rowCount", "tableCount", "likelyDatasetKind", "confidence", "description"]
+    ),
+    columns: arrayProp(rawDatasetColumnSchema, 500),
+    metricCandidates: arrayProp(rawDatasetMetricCandidateSchema, 50),
+    assumptions: stringArrayProp,
+    questionsForUser: stringArrayProp,
+    warnings: stringArrayProp
+  },
+  ["datasetId", "summary", "columns", "metricCandidates", "assumptions", "questionsForUser", "warnings"]
 );
 var nodeUpdateSchema = objectSchema(
   {
@@ -911,6 +1072,9 @@ var jsonSchemas = {
       "confidence"
     ]
   ),
+  "data-agent-decision-v1": dataAgentDecisionSchema,
+  "analyze-raw-dataset-v1": rawDatasetAnalysisSchema,
+  "review-dataset-proposal-v1": rawDatasetAnalysisSchema,
   "generate-tree-v1": objectSchema(
     {
       projectTitle: stringProp,
@@ -1077,6 +1241,20 @@ var validators = {
     return false;
   },
   "agent-plan-v1": (output) => isRecord(output.buildIntent) && isStringArray(output.selectedSkillIds) && typeof output.skillRationale === "string" && isObjectArray(output.extractedInputs) && isObjectArray(output.missingInputs) && isObjectArray(output.driverPlan) && typeof output.rootFormula === "string" && validateAdvisoryArrays(output) && typeof output.confidence === "number",
+  "data-agent-decision-v1": (output) => {
+    if (output.type === "tool_call") {
+      return typeof output.toolName === "string" && typeof output.rationale === "string" && isRecord(output.input);
+    }
+    if (output.type === "final_proposal") {
+      return typeof output.rationale === "string" && isRecord(output.result);
+    }
+    if (output.type === "ask_user") {
+      return isStringArray(output.questions) && output.questions.length > 0 && typeof output.rationale === "string";
+    }
+    return false;
+  },
+  "analyze-raw-dataset-v1": validateRawDatasetAnalysisOutput,
+  "review-dataset-proposal-v1": validateRawDatasetAnalysisOutput,
   "generate-tree-v1": (output) => typeof output.projectTitle === "string" && typeof output.rootNodeId === "string" && isObjectArray(output.nodes) && output.nodes.length > 0 && isObjectArray(output.edges) && validateAdvisoryArrays(output) && validateGenerateTreeGraph(output).valid,
   "deepen-node-v1": (output) => typeof output.targetNodeId === "string" && isObjectArray(output.nodes) && output.nodes.length > 0 && isObjectArray(output.edges) && validateAdvisoryArrays(output),
   "simplify-branch-v1": (output) => typeof output.branchRootNodeId === "string" && isObjectArray(output.nodeRemovals) && isObjectArray(output.edgeChanges) && typeof output.rationale === "string" && validateAdvisoryArrays(output),
@@ -1090,6 +1268,9 @@ var validators = {
   "explain-scenario-v1": (output) => typeof output.scenarioId === "string" && typeof output.narrative === "string" && isObjectArray(output.impactHighlights) && isStringArray(output.assumptions) && isStringArray(output.questionsForUser),
   "generate-executive-summary-v1": (output) => typeof output.headline === "string" && isStringArray(output.keyDrivers) && isStringArray(output.risks) && isStringArray(output.recommendations)
 };
+function validateRawDatasetAnalysisOutput(output) {
+  return typeof output.datasetId === "string" && isRecord(output.summary) && isObjectArray(output.columns) && isObjectArray(output.metricCandidates) && isStringArray(output.assumptions) && isStringArray(output.questionsForUser) && isStringArray(output.warnings);
+}
 function validateRegisteredSchema(schemaId, output) {
   if (!isRecord(output)) return false;
   const schema = jsonSchemas[schemaId];
@@ -4495,6 +4676,81 @@ var MOCK_STUB_OUTPUT = {
     rootFormula: "number_of_trucks * trips_per_truck * payload_per_trip_t",
     ...advisoryStub,
     confidence: 0.5
+  },
+  "data-agent-decision-v1": {
+    type: "tool_call",
+    toolName: "table.profile",
+    rationale: "Profile the detected table before proposing semantic roles.",
+    input: {
+      tableId: "table_1"
+    }
+  },
+  "analyze-raw-dataset-v1": {
+    datasetId: "mock_dataset",
+    summary: {
+      rowCount: 2,
+      tableCount: 1,
+      likelyDatasetKind: "operational records",
+      confidence: 0.75,
+      description: "Mock raw dataset analysis."
+    },
+    columns: [
+      {
+        tableId: "table_1",
+        columnName: "Minutes",
+        physicalType: "number",
+        logicalType: "duration",
+        semanticRole: "duration",
+        unit: "minute",
+        confidence: 0.86,
+        evidence: [
+          {
+            type: "column_name",
+            message: "Column name suggests minutes.",
+            strength: "strong"
+          }
+        ],
+        profileRef: "table_1.minutes"
+      }
+    ],
+    metricCandidates: [
+      {
+        id: "metric_total_minutes",
+        name: "Total Minutes",
+        description: "Sum of imported minutes.",
+        sourceTableId: "table_1",
+        sourceColumns: ["Minutes"],
+        aggregation: "sum",
+        unit: "minute",
+        confidence: 0.86,
+        evidence: [
+          {
+            type: "value_pattern",
+            message: "Values parse as numbers.",
+            strength: "strong"
+          }
+        ],
+        limitations: []
+      }
+    ],
+    assumptions: ["Minutes are treated as duration."],
+    questionsForUser: ["Confirm the duration unit."],
+    warnings: []
+  },
+  "review-dataset-proposal-v1": {
+    datasetId: "mock_dataset",
+    summary: {
+      rowCount: 2,
+      tableCount: 1,
+      likelyDatasetKind: "operational records",
+      confidence: 0.75,
+      description: "Mock reviewed dataset proposal."
+    },
+    columns: [],
+    metricCandidates: [],
+    assumptions: [],
+    questionsForUser: [],
+    warnings: []
   },
   "generate-tree-v1": { projectTitle: "Mock tree", rootNodeId: "root", nodes: [mockNode], edges: [], ...advisoryStub },
   "deepen-node-v1": { targetNodeId: "node-1", nodes: [{ ...mockNode, id: "child_a", name: "Child A" }], edges: [], ...advisoryStub },

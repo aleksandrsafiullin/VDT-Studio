@@ -859,6 +859,57 @@ describe("exports", () => {
     expect(imported.graph.nodes[0]?.position).toEqual({ x: 420, y: 180 });
   });
 
+  it("round-trips data-mapped node metadata through JSON import", () => {
+    const mapped = {
+      ...productionVolumeProject,
+      graph: {
+        ...productionVolumeProject.graph,
+        nodes: productionVolumeProject.graph.nodes.map((node, index) =>
+          index === 1
+            ? {
+                ...node,
+                type: "data_mapped" as const,
+                valueStatus: "unknown" as const,
+                valueSource: {
+                  sourceTier: "file",
+                  confidence: "high",
+                  note: "Imported from discovery"
+                },
+                controllability: "medium" as const,
+                materiality: "high" as const,
+                fixedInScenario: true,
+                dataMapping: {
+                  sourceId: "ds_import",
+                  tableId: "table_1",
+                  field: "Minutes",
+                  aggregation: "sum" as const,
+                  confidence: 0.91,
+                  evidence: [
+                    {
+                      type: "column_name" as const,
+                      message: "Minutes column maps to duration.",
+                      strength: "strong" as const
+                    }
+                  ]
+                }
+              }
+            : node
+        )
+      }
+    };
+
+    const imported = importProjectJson(exportProjectJson(mapped));
+    const node = imported.graph.nodes[1];
+
+    expect(node?.valueStatus).toBe("unknown");
+    expect(node?.valueSource?.sourceTier).toBe("file");
+    expect(node?.controllability).toBe("medium");
+    expect(node?.materiality).toBe("high");
+    expect(node?.fixedInScenario).toBe(true);
+    expect(node?.dataMapping?.sourceId).toBe("ds_import");
+    expect(node?.dataMapping?.field).toBe("Minutes");
+  });
+
   it("ignores malformed node positions on import", () => {
     const base = JSON.parse(exportProjectJson(productionVolumeProject)) as Record<string, unknown>;
     const graph = base.graph as Record<string, unknown>;

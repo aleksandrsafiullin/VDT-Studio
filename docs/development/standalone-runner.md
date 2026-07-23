@@ -1,5 +1,7 @@
 # Standalone Runner
 
+Last reviewed: **2026-07-23**.
+
 The standalone localhost runner is retained for development, tests, troubleshooting and headless CLI workflows. It is not the production desktop Local AI user journey.
 
 ## When To Use It
@@ -28,7 +30,7 @@ The web UI may expose standalone runner pairing only in explicit development mod
 - Protected routes require pairing.
 - Browser requests cannot supply executable paths, arguments, schemas, environment values or provider configuration fields.
 - Subscription CLI execution uses reviewed manifests.
-- Sandbox-required manifests fail closed when the required OS sandbox profile is not usable.
+- Manifests that declare an unavailable required sandbox fail closed; current cross-platform adapters primarily rely on reviewed tool-denial flags/policies, fresh temporary workspaces and local schema validation.
 
 ## Verification
 

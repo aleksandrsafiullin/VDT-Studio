@@ -1,8 +1,10 @@
 # Desktop Local Execution
 
+Last reviewed: **2026-07-23**.
+
 VDT Studio Desktop is the required host for seamless subscription CLI and local-model execution. Hosted web mode remains API/BYOK only.
 
-## Phase 2 Shell Boundary
+## Current Shell Boundary
 
 `apps/desktop` contains the Tauri shell foundation. The shell loads the existing web frontend with `NEXT_PUBLIC_VDT_APP_MODE=desktop` and exposes only these reviewed commands:
 
@@ -30,8 +32,8 @@ The desktop scaffold intentionally does not enable generic native plugins or com
 
 `pnpm desktop:verify` statically checks the Tauri config, default capability file, Rust command surface, reviewed sidecar host boundary, app-setup auto-start, startup-handshake timeout and shutdown cleanup contract.
 
-## Next Phase
+## Runtime And Remaining Work
 
-The Phase 3 protocol foundation is documented in `docs/architecture/runtime-protocol.md` and implemented in `packages/local-runner/src/sidecar/protocol.ts`.
+The private runtime protocol is documented in `docs/architecture/runtime-protocol.md` and implemented in `packages/local-runner/src/sidecar/protocol.ts`.
 
-The repository includes verified POSIX and Windows sidecar launchers at `apps/desktop/src-tauri/sidecars/vdt-local-runtime` and `apps/desktop/src-tauri/sidecars/vdt-local-runtime.cmd` plus a bundled Node runtime at `apps/desktop/src-tauri/sidecars/vdt-local-runtime.mjs`; the Tauri config declares all of them as bundle resources alongside the integrity manifest. The sidecar backend list includes both manifest fields and desktop status fields (`backendId`, `mode`, `status`) so the Rust host can parse the same payload it verifies in Node tests. The current hosts auto-start on app setup, time out failed startup handshakes, clean up the child process on shutdown, and fail closed after repeated sidecar crashes. The remaining Phase 3 work is replacing the Node runtime bundle with a self-contained packaged sidecar binary, native build verification, production restart/backoff hardening, signed installer configuration, and end-to-end desktop runtime validation.
+The repository includes verified POSIX and Windows sidecar launchers at `apps/desktop/src-tauri/sidecars/vdt-local-runtime` and `apps/desktop/src-tauri/sidecars/vdt-local-runtime.cmd` plus a bundled Node runtime at `apps/desktop/src-tauri/sidecars/vdt-local-runtime.mjs`; the Tauri config declares all of them as bundle resources alongside the integrity manifest. The sidecar backend list includes both manifest fields and desktop status fields (`backendId`, `mode`, `status`) so the Rust host can parse the same payload it verifies in Node tests. The current hosts auto-start on app setup, time out failed startup handshakes, clean up the child process on shutdown, and fail closed after repeated sidecar crashes. Remaining release work is replacing the Node runtime bundle with a self-contained packaged sidecar binary, native build verification, production restart/backoff hardening, signed installer configuration and end-to-end desktop runtime validation.

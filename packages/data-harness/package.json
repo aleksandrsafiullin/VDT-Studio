@@ -1,0 +1,19 @@
+{
+  "name": "@vdt-studio/data-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@vdt-studio/vdt-core": "workspace:*",
+    "hyparquet": "^1.26.2",
+    "xlsx": "^0.18.5",
+    "zod": "^3.25.64"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/data-harness/src"
+  }
+}

@@ -4,6 +4,9 @@ export const VDT_OUTPUT_SCHEMA_IDS = [
   "orchestrator-first-response-v1",
   "agent-decision-v1",
   "agent-plan-v1",
+  "data-agent-decision-v1",
+  "analyze-raw-dataset-v1",
+  "review-dataset-proposal-v1",
   "generate-tree-v1",
   "deepen-node-v1",
   "simplify-branch-v1",
@@ -27,6 +30,9 @@ const schemaTask: Record<VdtOutputSchemaId, VdtAiTaskType> = {
   "orchestrator-first-response-v1": "orchestrator_first_response",
   "agent-decision-v1": "agent_decision",
   "agent-plan-v1": "agent_plan",
+  "data-agent-decision-v1": "data_agent_decision",
+  "analyze-raw-dataset-v1": "analyze_raw_dataset",
+  "review-dataset-proposal-v1": "review_dataset_proposal",
   "generate-tree-v1": "generate_tree",
   "deepen-node-v1": "deepen_node",
   "simplify-branch-v1": "simplify_branch",
@@ -398,6 +404,170 @@ const agentDecisionStrictResponseSchema = objectSchema(
     }
   },
   ["type", "toolName", "argsJson", "statusMessage", "questionsJson", "summary", "nextSuggestedActions"]
+);
+
+const dataDiscoveryToolNameProp = enumProp([
+  "file.inspect",
+  "file.preview_raw",
+  "file.detect_tables",
+  "table.list",
+  "table.preview",
+  "table.sample",
+  "table.profile",
+  "table.quality_report",
+  "table.flatten_json",
+  "table.select_columns",
+  "column.profile",
+  "column.detect_type",
+  "column.detect_unit",
+  "column.sample_values",
+  "column.value_distribution",
+  "column.parse_candidates",
+  "column.semantic_role_candidates",
+  "table.group_by",
+  "table.pivot",
+  "table.time_series",
+  "table.correlate",
+  "table.outliers",
+  "table.duplicates",
+  "table.cardinality_matrix",
+  "text.normalize_values",
+  "text.cluster_values",
+  "text.extract_keywords",
+  "text.suggest_taxonomy_candidates",
+  "text.classification_diagnostics",
+  "semantic.detect_entities",
+  "semantic.detect_measures",
+  "semantic.detect_dimensions",
+  "semantic.detect_events",
+  "semantic.build_dataset_summary",
+  "vdt.project_excerpt",
+  "vdt.find_matching_nodes",
+  "vdt.propose_metric_bindings",
+  "vdt.validate_formula_candidates",
+  "vdt.validate_change_set"
+]);
+
+const dataAgentDecisionToolCallSchema = objectSchema(
+  {
+    type: { type: "string", const: "tool_call" },
+    toolName: dataDiscoveryToolNameProp,
+    rationale: { type: "string", minLength: 1, maxLength: 1_000 },
+    input: { type: "object", properties: {}, required: [], additionalProperties: true }
+  },
+  ["type", "toolName", "rationale", "input"]
+);
+
+const dataAgentDecisionFinalSchema = objectSchema(
+  {
+    type: { type: "string", const: "final_proposal" },
+    rationale: { type: "string", minLength: 1, maxLength: 2_000 },
+    result: { type: "object", properties: {}, required: [], additionalProperties: true }
+  },
+  ["type", "rationale", "result"]
+);
+
+const dataAgentDecisionAskUserSchema = objectSchema(
+  {
+    type: { type: "string", const: "ask_user" },
+    questions: { type: "array", minItems: 1, maxItems: 5, items: { type: "string", minLength: 1, maxLength: 500 } },
+    rationale: { type: "string", minLength: 1, maxLength: 1_000 }
+  },
+  ["type", "questions", "rationale"]
+);
+
+const dataAgentDecisionSchema = {
+  type: "object",
+  anyOf: [dataAgentDecisionToolCallSchema, dataAgentDecisionFinalSchema, dataAgentDecisionAskUserSchema],
+  properties: {},
+  required: [],
+  additionalProperties: false
+};
+
+const dataEvidenceSchema = objectSchema(
+  {
+    type: enumProp([
+      "column_name",
+      "value_pattern",
+      "distribution",
+      "aggregation_result",
+      "data_quality",
+      "cross_column_relationship",
+      "user_confirmation",
+      "model_reasoning"
+    ]),
+    message: { type: "string", minLength: 1, maxLength: 1_000 },
+    strength: enumProp(["weak", "medium", "strong"]),
+    observationRef: { type: "string", maxLength: 200 }
+  },
+  ["type", "message", "strength"]
+);
+
+const rawDatasetColumnSchema = objectSchema(
+  {
+    tableId: nodeIdProp,
+    columnName: { type: "string", minLength: 1, maxLength: 200 },
+    physicalType: enumProp(["string", "number", "date", "boolean", "mixed", "unknown"]),
+    logicalType: enumProp([
+      "identifier",
+      "category",
+      "text",
+      "measure",
+      "duration",
+      "timestamp",
+      "date",
+      "currency",
+      "percentage",
+      "status",
+      "other"
+    ]),
+    semanticRole: { type: "string", maxLength: 120 },
+    unit: { type: "string", maxLength: 80 },
+    confidence: confidenceProp,
+    evidence: { type: "array", minItems: 1, maxItems: 12, items: dataEvidenceSchema },
+    profileRef: { type: "string", minLength: 1, maxLength: 240 }
+  },
+  ["tableId", "columnName", "physicalType", "logicalType", "confidence", "evidence", "profileRef"]
+);
+
+const rawDatasetMetricCandidateSchema = objectSchema(
+  {
+    id: nodeIdProp,
+    name: { type: "string", minLength: 1, maxLength: 200 },
+    description: { type: "string", minLength: 1, maxLength: 800 },
+    sourceTableId: nodeIdProp,
+    sourceColumns: { type: "array", minItems: 1, maxItems: 20, items: { type: "string", minLength: 1, maxLength: 200 } },
+    aggregation: enumProp(["sum", "count", "avg", "min", "max", "ratio", "distinct_count", "custom"]),
+    unit: { type: "string", maxLength: 80 },
+    formula: { type: "string", maxLength: 1_000 },
+    dimensions: { type: "array", maxItems: 20, items: nodeIdProp },
+    confidence: confidenceProp,
+    evidence: { type: "array", minItems: 1, maxItems: 12, items: dataEvidenceSchema },
+    limitations: { type: "array", maxItems: 10, items: { type: "string", maxLength: 500 } }
+  },
+  ["id", "name", "description", "sourceTableId", "sourceColumns", "aggregation", "confidence", "evidence", "limitations"]
+);
+
+const rawDatasetAnalysisSchema = objectSchema(
+  {
+    datasetId: { type: "string", minLength: 1, maxLength: 200 },
+    summary: objectSchema(
+      {
+        rowCount: { type: "number", minimum: 0 },
+        tableCount: { type: "number", minimum: 0 },
+        likelyDatasetKind: { type: "string", minLength: 1, maxLength: 200 },
+        confidence: confidenceProp,
+        description: { type: "string", minLength: 1, maxLength: 1_000 }
+      },
+      ["rowCount", "tableCount", "likelyDatasetKind", "confidence", "description"]
+    ),
+    columns: arrayProp(rawDatasetColumnSchema, 500),
+    metricCandidates: arrayProp(rawDatasetMetricCandidateSchema, 50),
+    assumptions: stringArrayProp,
+    questionsForUser: stringArrayProp,
+    warnings: stringArrayProp
+  },
+  ["datasetId", "summary", "columns", "metricCandidates", "assumptions", "questionsForUser", "warnings"]
 );
 
 const nodeUpdateSchema = objectSchema(
@@ -890,6 +1060,9 @@ const jsonSchemas: Record<VdtSchemaId, Record<string, unknown>> = {
       "confidence"
     ]
   ),
+  "data-agent-decision-v1": dataAgentDecisionSchema,
+  "analyze-raw-dataset-v1": rawDatasetAnalysisSchema,
+  "review-dataset-proposal-v1": rawDatasetAnalysisSchema,
   "generate-tree-v1": objectSchema(
     {
       projectTitle: stringProp,
@@ -1078,6 +1251,20 @@ const validators: Record<VdtSchemaId, (output: Record<string, unknown>) => boole
     typeof output.rootFormula === "string" &&
     validateAdvisoryArrays(output) &&
     typeof output.confidence === "number",
+  "data-agent-decision-v1": (output) => {
+    if (output.type === "tool_call") {
+      return typeof output.toolName === "string" && typeof output.rationale === "string" && isRecord(output.input);
+    }
+    if (output.type === "final_proposal") {
+      return typeof output.rationale === "string" && isRecord(output.result);
+    }
+    if (output.type === "ask_user") {
+      return isStringArray(output.questions) && (output.questions as unknown[]).length > 0 && typeof output.rationale === "string";
+    }
+    return false;
+  },
+  "analyze-raw-dataset-v1": validateRawDatasetAnalysisOutput,
+  "review-dataset-proposal-v1": validateRawDatasetAnalysisOutput,
   "generate-tree-v1": (output) =>
     typeof output.projectTitle === "string" &&
     typeof output.rootNodeId === "string" &&
@@ -1135,6 +1322,18 @@ const validators: Record<VdtSchemaId, (output: Record<string, unknown>) => boole
     isStringArray(output.risks) &&
     isStringArray(output.recommendations)
 };
+
+function validateRawDatasetAnalysisOutput(output: Record<string, unknown>): boolean {
+  return (
+    typeof output.datasetId === "string" &&
+    isRecord(output.summary) &&
+    isObjectArray(output.columns) &&
+    isObjectArray(output.metricCandidates) &&
+    isStringArray(output.assumptions) &&
+    isStringArray(output.questionsForUser) &&
+    isStringArray(output.warnings)
+  );
+}
 
 export function validateRegisteredSchema(schemaId: VdtSchemaId, output: unknown): boolean {
   if (!isRecord(output)) return false;

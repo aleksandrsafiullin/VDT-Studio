@@ -1,34 +1,32 @@
-# ADR-001: Model backends, not agent orchestration
+# ADR-001: Bounded model backends, not external coding-agent control
 
-- Status: Accepted
-- Date: 2026-06-21
+- Status: **Superseded in part by ADR-002**
+- Original date: 2026-06-21
+- Reviewed: 2026-07-23
 
 ## Context
 
-VDT Studio previously exposed a 21-agent runtime, MCP installation, skill distribution, session protocols and coding-agent execution. Those capabilities expanded the trust boundary beyond the product's purpose and allowed provider-specific agent behavior to leak into the web application.
+VDT Studio previously exposed a 21-agent runtime, MCP installation, skill distribution, session protocols and coding-agent execution. That surface expanded the trust boundary beyond the analytical product and allowed provider-specific agent behavior to leak into the web application.
 
-The product needs bounded AI assistance for Value Driver Tree tasks. It does not need an external agent to control the app, repository, files, shell, Git state or provider settings.
+## Decision Retained
 
-## Decision
+External coding agents do not control VDT Studio, its repository, shell, arbitrary files or provider configuration.
 
-VDT Studio treats every AI integration as a model backend behind the `@vdt-studio/model-bridge` contract.
+- Providers execute behind registered task/schema contracts.
+- Subscription CLIs run only through reviewed local-runner/desktop adapters.
+- The browser sends backend/task identifiers, not executables or arbitrary arguments.
+- MCP installation, ACP/Pi sessions and external skill installation remain outside product scope.
+- Deterministic code validates provider output and owns calculations.
 
-- AI tasks come from a closed VDT task list.
-- A model returns a structured proposal; it never mutates the project directly.
-- The deterministic engine validates and calculates accepted changes.
-- Subscription CLIs execute only through the localhost runner.
-- The browser sends backend and task identifiers, never executables or arbitrary arguments.
-- MCP, skill distribution, ACP/Pi session orchestration and the 21-agent runtime are removed from product scope and source.
-- The product CLI is limited to validate, calculate, export, runner start and doctor operations.
+## Superseded Portion
 
-## Dependency direction
+The statement that VDT Studio has no agent orchestration is no longer current. The application now includes a bounded **in-product VDT agent runtime** with local domain skills and reviewed VDT tools.
 
-```text
-apps/web -> vdt-core, ai-harness, model-bridge contracts
-local-runner -> model-bridge execution (Phase 2)
-product CLI -> vdt-core, local-runner launcher
-```
+ADR-002 defines why that runtime is compatible with the retained security boundary: it orchestrates analytical application functions, not repository or operating-system control.
 
 ## Consequences
 
-Phase 1 provides the common contract, registry, bounded JSON extraction, fake backend and subscription CLI detection. Provider execution, pairing, process isolation and certification remain Phase 2+ work and may not be advertised as supported before their security gates pass.
+- `packages/model-bridge` and `packages/ai-harness` remain the model boundary.
+- `packages/vdt-agent` and `packages/vdt-agent-runtime` own the in-product agent loop.
+- `packages/local-runner` owns reviewed process execution.
+- Documentation must distinguish model backend, in-product VDT agent and prohibited external coding agent.

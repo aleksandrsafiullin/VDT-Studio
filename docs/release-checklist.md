@@ -1,10 +1,12 @@
 # Release Checklist
 
-This checklist describes the current alpha gates. It separates verified CLI/web alpha gates from native desktop release blockers so the project does not claim a clean desktop install before the installer path is ready.
+Last reviewed: **2026-07-23**.
 
-## Required For CLI/Web Alpha
+This checklist separates CLI/web alpha gates, data-upload blockers and native desktop gates. A release candidate is not ready if any required command fails.
 
-Run on Node 24:
+## CLI/Web Alpha Gates
+
+Run on Node `>=24 <25` with pnpm `10.33.2`:
 
 ```bash
 pnpm lint
@@ -12,6 +14,7 @@ pnpm typecheck
 pnpm test
 pnpm build
 pnpm ci:verify
+pnpm phase7:verify
 pnpm docs:verify
 pnpm security:audit
 pnpm certification:verify
@@ -22,11 +25,27 @@ pnpm package:verify
 pnpm test:e2e
 ```
 
-`pnpm release:verify` covers the non-browser sequence through `package:verify`. `pnpm test:e2e` remains explicit because it installs and drives browser engines.
+`pnpm release:verify` covers the non-browser sequence through `package:verify`. Browser E2E remains explicit.
 
-## Required Before Desktop Installer Claim
+Current known blocker: `pnpm security:audit` reports three high findings affecting `xlsx@0.18.5` and `sharp@0.34.5`. Do not waive or relabel this failure in documentation.
 
-Run:
+## Data Upload Gate
+
+Before enabling hosted/public or trusted report upload, require:
+
+- no high/critical parser or image dependencies;
+- streaming body limits before request buffering;
+- MIME/magic validation and archive expansion budget;
+- parser process isolation with CPU/RAM/time limits;
+- project/user ownership checks;
+- retention/delete and encryption policy;
+- explicit external-provider egress consent;
+- full-vs-sample/truncated disclosure;
+- golden baseline reconciliation tests.
+
+The current data-discovery prototype does not meet this gate.
+
+## Desktop Foundation And Installer Gates
 
 ```bash
 pnpm desktop:sidecar:prepare
@@ -34,41 +53,37 @@ pnpm desktop:verify
 pnpm desktop:native:preflight
 ```
 
-`pnpm desktop:native:preflight` must pass before VDT Studio can claim clean-machine desktop installation support. It currently fails closed until all of these are true:
+Before claiming clean-machine desktop support:
 
-- Rust Cargo and `rustc` are available in the build environment.
-- `@tauri-apps/cli` is pinned in `apps/desktop/package.json`.
-- macOS signing identity is configured.
-- Windows installer target is configured.
-- The embedded runtime is a self-contained sidecar binary.
-- The embedded runtime does not require a separate Node installation.
+- Rust Cargo and `rustc` are available;
+- `@tauri-apps/cli` is pinned and locked;
+- macOS signing identity is configured;
+- Windows installer targets remain configured;
+- sidecar is self-contained and Node-free;
+- host verifies resource hashes before launch;
+- clean macOS and Windows machines install, launch, list providers, create/save a VDT and exit without manual runtime setup.
 
-The desktop bundle targets are cross-platform; keep Windows and macOS installer targets intact when the native toolchain and signing gates are cleared.
+Ingest a reviewed Node-free runtime with:
 
-When the Node-free runtime compiler output is available, ingest it with `VDT_DESKTOP_SELF_CONTAINED_SIDECAR=/absolute/path/to/vdt-local-runtime pnpm desktop:sidecar:prepare`, then rerun `pnpm desktop:verify` and `pnpm desktop:native:preflight`.
+```bash
+VDT_DESKTOP_SELF_CONTAINED_SIDECAR=/absolute/path/to/vdt-local-runtime pnpm desktop:sidecar:prepare
+```
 
-The desktop host must keep verifying `vdt-local-runtime.manifest.json` SHA-256 fields before launch; do not treat packaging-time hash checks as sufficient for the native installer path.
+Then rerun both desktop verification commands.
 
 ## CI Contracts
 
-`pnpm ci:verify` statically verifies these workflow contracts:
-
-- Quality workflow runs lint, typecheck, tests, build, CI workflow verification, evaluation and desktop foundation verification.
-- Browser E2E workflow runs Playwright install and `pnpm test:e2e`.
-- Desktop E2E foundation workflow runs desktop verifier and sidecar/runtime focused tests on macOS and Windows.
-- Package workflow runs `package:alpha`, `release:bundle:verify` and `package:verify` on Ubuntu, macOS and Windows.
-- Desktop package workflow exposes manual native preflight on macOS and Windows.
-- Security workflow runs dependency audit and provider certification verification.
-- Release workflow runs release verification, browser E2E and attaches release artifacts including the versioned SPDX SBOM.
+`pnpm ci:verify` checks that workflows retain quality, browser E2E, desktop foundation, package, security and release jobs. It does not prove that credentials, native signing or clean-machine installation were executed.
 
 ## Manual Evidence To Record
 
-For each release candidate, record:
+For every candidate, retain:
 
-- command output for all required gates;
-- generated `output/release/v*/manifest.json`;
-- generated `output/release/v*/SHA256SUMS`;
-- generated `output/release/v*/sbom.spdx.json`;
-- generated `output/evaluation/provider-evaluation.json`;
-- explicit `desktop:native:preflight` blocker list until it passes;
-- live-provider certification evidence only from protected maintainer runs.
+- output for every required gate;
+- git commit and Node/pnpm versions;
+- `manifest.json`, `SHA256SUMS`, `sbom.spdx.json` and evaluation report;
+- dependency audit output;
+- provider certification and any credentialed live evidence;
+- native preflight blocker list or signed-installer evidence;
+- documentation impact and updated document list;
+- any skipped tests with reason.

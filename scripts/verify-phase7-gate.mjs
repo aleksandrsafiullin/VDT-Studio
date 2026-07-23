@@ -33,8 +33,25 @@ export const CANONICAL_RUN_TASK_TYPES = [
   "generate_executive_summary"
 ];
 
-export const CANONICAL_TASK_TYPES = ["orchestrator_first_response", "agent_decision", "agent_plan", ...CANONICAL_RUN_TASK_TYPES];
-export const CANONICAL_EXPOSED_TASK_TYPES = ["orchestrator_first_response", "agent_decision", ...CANONICAL_RUN_TASK_TYPES];
+export const CANONICAL_DATA_TASK_TYPES = [
+  "data_agent_decision",
+  "analyze_raw_dataset",
+  "review_dataset_proposal"
+];
+
+export const CANONICAL_TASK_TYPES = [
+  "orchestrator_first_response",
+  "agent_decision",
+  "agent_plan",
+  ...CANONICAL_DATA_TASK_TYPES,
+  ...CANONICAL_RUN_TASK_TYPES
+];
+export const CANONICAL_EXPOSED_TASK_TYPES = [
+  "orchestrator_first_response",
+  "agent_decision",
+  ...CANONICAL_DATA_TASK_TYPES,
+  ...CANONICAL_RUN_TASK_TYPES
+];
 
 const GRAPH_MUTATION_TASKS = new Set([
   "deepen_node",
@@ -181,7 +198,7 @@ function assertDocs(root) {
   const readme = read(root, "README.md");
   const roadmap = read(root, "docs/ROADMAP.md");
 
-  if (!readme.includes("VDT Studio exposes 14 bounded AI tasks")) {
+  if (!readme.includes("The schema registry contains 18 task contracts. Seventeen are exposed product tasks")) {
     fail("README must list the bounded AI actions.");
   }
   for (const taskType of CANONICAL_EXPOSED_TASK_TYPES) {
@@ -189,8 +206,8 @@ function assertDocs(root) {
       fail(`README AI Actions section is missing ${taskType}.`);
     }
   }
-  if (!roadmap.includes("Phase 7 verification gate")) {
-    fail("docs/ROADMAP.md must record Phase 7 verification gate progress.");
+  if (!roadmap.includes("18 registered task schemas, 17 exposed product tasks")) {
+    fail("docs/ROADMAP.md must record the current task/schema gate surface.");
   }
 }
 

@@ -7,6 +7,38 @@ const DEFAULT_ROOT = resolve(dirname(SCRIPT_PATH), "..");
 
 const REQUIRED_DOCS = [
   {
+    file: "AGENTS.md",
+    snippets: ["Documentation Is Part of Every Change", "Documentation impact: none", "pnpm docs:verify"]
+  },
+  {
+    file: "docs/README.md",
+    snippets: ["Source-Of-Truth Order", "DATA_INGESTION.md", "AGENTS.md"]
+  },
+  {
+    file: "docs/PRODUCT_SPEC.md",
+    snippets: ["Capability Status Summary", "Data and reports", "metadata-only mappings"]
+  },
+  {
+    file: "docs/ARCHITECTURE.md",
+    snippets: ["packages/vdt-storage", "packages/data-harness", "Known Architectural Gaps"]
+  },
+  {
+    file: "docs/AI_HARNESS.md",
+    snippets: ["18 task contracts", "Current runtime limitations", "search-only"]
+  },
+  {
+    file: "docs/DATA_INGESTION.md",
+    snippets: ["metadata only", "4096-byte", "MetricBinding"]
+  },
+  {
+    file: "docs/PRODUCTION_READINESS.md",
+    snippets: ["No-Go for production", "3 high vulnerabilities", "P0 Correctness Blockers"]
+  },
+  {
+    file: "docs/ROADMAP.md",
+    snippets: ["Wave 0", "Wave 4", "Evidence And Benchmarks"]
+  },
+  {
     file: "docs/architecture/desktop-local-execution.md",
     snippets: ["reviewed commands", "desktop:verify", "self-contained packaged sidecar binary"]
   },
@@ -16,7 +48,7 @@ const REQUIRED_DOCS = [
   },
   {
     file: "docs/security/local-ai-threat-model.md",
-    snippets: ["Hosted web mode is API/BYOK only", "UNSAFE_CONFIGURATION", "desktop:native:preflight"]
+    snippets: ["Hosted web is API/BYOK only", "UNSAFE_CONFIGURATION", "desktop:native:preflight"]
   },
   {
     file: "docs/provider-compatibility.md",
@@ -47,7 +79,10 @@ const FORBIDDEN_CLAIMS = [
   "MCP control",
   "all providers supported",
   "production-ready desktop installer",
-  "clean-machine desktop installation support is available"
+  "clean-machine desktop installation support is available",
+  "Source of truth: `Technical Specification for Codex.docx`",
+  "Durable SQLite project storage. Current web persistence is browser-local.",
+  "High/critical production dependency audit, provider-certification completeness"
 ];
 
 function fail(message) {

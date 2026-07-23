@@ -1,52 +1,112 @@
 # Production Readiness
 
-Source of truth: `Technical Specification for Codex.docx`, checked against the repository implementation rather than only `docs/PRODUCT_SPEC.md`.
+Last verified locally: **2026-07-23**, Node `24.14.0`, pnpm `10.33.2`.
 
-## Implemented MVP Acceptance Surface
+## Decision
 
-- Project brief input and AI draft generation through mock, OpenAI-compatible, Anthropic, Azure OpenAI, Gemini and local-runner configurations.
-- Structured AI output validation before graph conversion.
-- Left-to-right React Flow canvas with selection, zoom, pan, fit view and layout controls.
-- Node editing, accept, reject, delete, rationale display and preview-before-apply deepening.
-- Deterministic formula parsing, dependency resolution, validation, calculation trace and scenario overrides.
-- Baseline/scenario root impact with absolute and percentage change.
-- Browser-local project persistence, validated JSON import, JSON export, Markdown export and deterministic SVG export.
-- Paired localhost runner with backend-ID-only requests, manifest-owned execution, isolated temp directories, environment filtering, bounded output and cancellation.
-- Tauri desktop shell foundation with reviewed native command allowlist, sidecar host boundary and static verifier.
-- Phase 3 sidecar runtime foundation: HTTP-independent execution state, framed pipe protocol, app-setup auto-start, startup handshake, backend listing, mock completion, cancellation, repeated-crash fail-closed behavior, shutdown cleanup, Tauri-declared verified sidecar launcher plus bundled Node runtime, structured stderr audit and no stdout logs.
-- Phase 4 settings UX foundation: normal desktop Local AI settings show subscription and local model cards without runner startup or pairing instructions; provider authentication help routes through reviewed desktop IPC; desktop runtime failures use concise recovery copy; standalone runner pairing remains an explicit Developer Mode fallback.
-- Phase 8 schema hardening foundation: registered runtime schemas reject unapproved top-level provider fields, enforce nested string/array caps, feed detailed validation errors into the one-attempt repair loop, and record repair attempt/success metrics in run/audit metadata.
-- Phase 9 evaluation and bundle verification foundation: `eval/20-kpi-dataset.json` covers the planned 20 KPI set with expected units, minimum depth, acceptable node ranges, required drivers, duplicate-pattern guardrails, formula expectations and unit-consistency expectations; `pnpm evaluation:verify` runs the deterministic mock-provider baseline, checks required-driver coverage, duplicate-name guardrails and root-formula driver references, and writes a JSON report; `pnpm package:alpha` writes a versioned SPDX SBOM; `pnpm release:bundle:verify` checks release checksums/manifests/SBOM linkage and scans packaged artifacts plus desktop bundle resources for secret material.
-- Narrow product CLI for deterministic VDT operations and local-runner launch.
-- Shared model-backend contracts, bounded parsing, fake backend and five-target subscription CLI detection.
+**No-Go for production, hosted file upload, trusted KPI baselines or auditable benchmark claims.**
 
-## Production Gates In Progress
+The current `0.1.0-alpha.0` checkout is suitable for development and controlled evaluation on copies of data. It contains substantial implemented foundations, but several P0/P1 correctness and security blockers remain.
 
-- Independently certify each subscription CLI adapter and its OS isolation profile before enabling execution.
-- Complete independent security review of BYOK proxy target pinning, credential isolation, timeouts and stream limits.
-- Clear `pnpm desktop:native:preflight` by installing/verifying Rust and Tauri build tooling, pinning the Tauri CLI, configuring macOS signing, keeping Windows installer targets enabled, and replacing the Node runtime bundle with a self-contained sidecar binary.
+The repository does not contain the previously referenced `Technical Specification for Codex.docx`. Current readiness is assessed against executable contracts, current Markdown specs and the [2026-07-23 critical review](CRITICAL_ARCHITECTURE_AND_AGENT_REVIEW_2026-07-23.md).
 
-## Alpha Release Gates Completed
+## Verified In This Checkout
 
-- Sequential lint, typecheck, 497-test unit/integration suite, production build, packaging, and clean-install verification on Node 24, with loopback runner health enforced in CI and explicitly reported when a restricted local sandbox blocks binding.
-- Chromium desktop/mobile E2E plus WebKit release smoke.
-- High/critical production dependency audit, provider-certification completeness, deterministic 20-KPI mock-provider evaluation, SHA-256 checksums, versioned SPDX SBOM, release bundle secret scan, CI workflow-contract verification, and tag-driven SBOM workflow.
+| Gate | Result |
+|---|---|
+| `pnpm lint` | Pass with 4 warnings |
+| `pnpm typecheck` | Pass across workspace packages |
+| `pnpm test` | 117 files passed, 5 skipped; 967 tests passed, 11 live tests skipped |
+| `pnpm build` | CLI and Next production build pass |
+| `pnpm desktop:sidecar:verify` | Pass |
+| `pnpm phase7:verify` | Pass: 18 tasks, 18 schemas, 9 manifests, 12 mock task smokes |
+| `pnpm docs:verify` | Pass: 15 required documentation contracts verified |
+| `pnpm security:audit` | **Fail: 3 high vulnerabilities** |
 
-## Remaining Product Gaps
+No credentialed live-provider, browser E2E, native installer or clean-machine desktop test was executed during this review.
 
-These items are present in the full specification but are not required to claim the original core MVP loop complete:
+## Implemented Alpha Foundations
 
-- Version comparison is future scope; snapshot creation, listing and restore are implemented.
-- Live-provider certification remains open even though all 13 bounded AI actions and their mock-provider workflows are implemented.
-- Live-provider quality evaluation remains open; the checked-in 20-KPI dataset and mock baseline are implemented, but credentialed provider adapters are not promoted as release-gate quality sources yet.
-- PNG canvas export. SVG export is implemented.
-- Durable SQLite project storage. Current web persistence is browser-local.
-- Self-contained packaged desktop runtime sidecar binary that does not require Node, native build verification, production restart/backoff hardening, signed desktop packaging and production installers.
-- Data mapping workflows and real data-source connectors.
-- Excel, PowerPoint and PDF exports, which the specification classifies as future scope.
+- Project/VDT workspace, local SQLite metadata and hashed revision files.
+- Canvas editing, basic arithmetic formulas, scenarios, trace and JSON/Markdown/SVG export.
+- Bounded model-provider contracts and local output validation.
+- Real VDT agent decision/tool/feedback loop, skills and run events.
+- Research policy and search provider adapters.
+- Paired loopback runner and private-pipe desktop sidecar foundation.
+- Provider certification metadata, mock evaluation, package checksums and SBOM tooling.
+- Experimental tabular data parsing, semantic model and data-mapping proposals.
 
-## Release Rule
+## P0 Correctness Blockers
 
-Do not label the repository production-ready while any production gate above is open. Executable detection is not proof that a subscription backend has passed execution and sandbox certification.
+### Revision corruption on conflict
 
-The `0.1.0-alpha.0` package is a prerelease, not a production-readiness claim. Its release gate is documented in [RELEASE.md](RELEASE.md).
+Revision payload is written to a path based only on `revisionNo` before the SQLite insert. A conflicting save can overwrite the existing file, fail the unique constraint and leave the original record unreadable due to hash mismatch.
+
+Required: transaction/CAS reservation, unique temporary files, atomic rename, 409 conflict and crash/concurrency tests.
+
+### Silent partial data analysis
+
+The data API provides both full bytes and a 4096-byte text preview, but text parsing prefers the preview. A 14,900-byte/1000-row reproduction parsed only 280 rows and reported `truncated=false`.
+
+Required: parsers read the immutable full source; preview is UI-only; source/full/sample counts are mandatory.
+
+### Agent/manual-change race
+
+More than one decision loop can operate on a run, base revision is not enforced at apply, and stale agent snapshots can overwrite unsupported manual-change types.
+
+Required: per-run coordinator/lease, serialized attempt, operation-level merge and revision CAS.
+
+## P0 Release And Security Blockers
+
+`pnpm security:audit` currently reports:
+
+- `xlsx@0.18.5`: high prototype pollution ([GHSA-4r6h-8v6p-xvw6](https://github.com/advisories/GHSA-4r6h-8v6p-xvw6));
+- `xlsx@0.18.5`: high ReDoS ([GHSA-5pgg-2g8v-p4x9](https://github.com/advisories/GHSA-5pgg-2g8v-p4x9));
+- `sharp@0.34.5`: high inherited `libvips` vulnerabilities ([GHSA-f88m-g3jw-g9cj](https://github.com/advisories/GHSA-f88m-g3jw-g9cj)).
+
+The upload path also lacks pre-buffer streaming limits, archive expansion budgets, parser isolation, project ownership, retention/delete and encryption policy. Hosted/public uploads must remain disabled until these are closed.
+
+## P1 Product Blockers
+
+- Visual graph, formula dependencies and units are not a unified validated contract.
+- Structural `valid` does not guarantee dimensional correctness or calculability.
+- Status `approved` is not guarded by calculation/evidence gates.
+- Tool JSON Schemas shown to models omit important types/required/enums.
+- Skill selection is narrow and unreliable for Russian/Kazakh requests.
+- Recipe completeness does not guarantee formula closure.
+- Web research stops at snippets and has no immutable evidence/benchmark model.
+- Data mappings are not executable and do not materialize baselines.
+- Data-agent UI normally runs deterministic heuristics and is isolated from main skills/research.
+- Real Excel report layouts, locale numbers, quality rules and lineage are incomplete.
+- SQLite and localStorage remain competing project-state sources.
+
+## Provider And Desktop Gates
+
+- Canonical provider status is `release/provider-certification.json`; most real providers are not live-verified.
+- Complete credentialed live generation/agent smokes before raising a provider's support level.
+- Run an independent security review of BYOK proxy, CLI boundaries and upload/data egress.
+- Replace the bundled Node sidecar with a reviewed self-contained binary.
+- Pass `pnpm desktop:native:preflight` with Rust/Cargo, pinned Tauri CLI, signing and Windows targets.
+- Produce and test signed macOS/Windows installers on clean machines.
+
+## Release Gate Status
+
+The aggregate `pnpm release:verify` gate is currently expected to fail at `security:audit`. Documentation must not describe the high/critical dependency audit as completed.
+
+The following are not current production evidence unless rerun for a release candidate:
+
+- Playwright Chromium/WebKit results;
+- package clean-install on every target OS;
+- live provider output;
+- native desktop launch/install;
+- real user report baseline reconciliation.
+
+## Rule For Production Claims
+
+Do not label the application or installer production-ready until:
+
+1. every P0/P0-release blocker is closed;
+2. factor-tree dimensional/calculation gates are enforced;
+3. benchmark and data baselines have auditable provenance;
+4. dependency, provider, browser, package and native gates pass in the same release run;
+5. documentation and certification metadata match the tested artifacts.

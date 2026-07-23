@@ -1,5 +1,8 @@
 import type {
+  SemanticTaxonomy,
   VdtAiTaskType,
+  VdtDataSource,
+  VdtDataMapping,
   VdtEdge,
   VdtEdgeRelation,
   VdtNode,
@@ -105,6 +108,46 @@ export interface VdtEdgeChangeUpdate {
 
 export type VdtEdgeChange = VdtEdgeChangeAdd | VdtEdgeChangeRemove | VdtEdgeChangeUpdate;
 
+export interface VdtDataSourceChangeAdd {
+  id: string;
+  action: "add";
+  dataSource: VdtDataSource;
+}
+
+export interface VdtDataSourceChangeUpdate {
+  id: string;
+  action: "update";
+  sourceId: string;
+  patch: Partial<VdtDataSource>;
+}
+
+export type VdtDataSourceChange = VdtDataSourceChangeAdd | VdtDataSourceChangeUpdate;
+
+export interface VdtDataMappingChangeAdd {
+  id: string;
+  action: "add";
+  nodeId: string;
+  mapping: VdtDataMapping;
+}
+
+export interface VdtDataMappingChangeUpdate {
+  id: string;
+  action: "update";
+  nodeId: string;
+  mapping: VdtDataMapping;
+}
+
+export type VdtDataMappingChange = VdtDataMappingChangeAdd | VdtDataMappingChangeUpdate;
+
+export interface VdtTaxonomyChangeAdd {
+  id: string;
+  action: "add";
+  sourceId: string;
+  taxonomy: SemanticTaxonomy;
+}
+
+export type VdtTaxonomyChange = VdtTaxonomyChangeAdd;
+
 export interface VdtChangeSet {
   id: string;
   taskType: VdtAiTaskType;
@@ -114,6 +157,9 @@ export interface VdtChangeSet {
   updates: VdtNodeUpdate[];
   deletions: VdtNodeDeletion[];
   edgeChanges: VdtEdgeChange[];
+  dataSourceChanges?: VdtDataSourceChange[] | undefined;
+  dataMappingChanges?: VdtDataMappingChange[] | undefined;
+  taxonomyChanges?: VdtTaxonomyChange[] | undefined;
   assumptions: string[];
   questions: string[];
   warnings: VdtWarning[];

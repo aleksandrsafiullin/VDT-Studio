@@ -203,7 +203,10 @@ export interface ModelOption {
 }
 
 export interface AiCompletionRequest {
-  taskType: Exclude<VdtAiTaskType, "agent_decision" | "agent_plan" | "generate_tree">;
+  taskType: Exclude<
+    VdtAiTaskType,
+    "agent_decision" | "agent_plan" | "data_agent_decision" | "analyze_raw_dataset" | "review_dataset_proposal" | "generate_tree"
+  >;
   input: unknown;
   providerId: string;
   providerConfig?: Record<string, unknown> | undefined;
@@ -283,6 +286,9 @@ const TASK_SCHEMA_IDS = {
   orchestrator_first_response: "orchestrator-first-response-v1",
   agent_decision: "agent-decision-v1",
   agent_plan: "agent-plan-v1",
+  data_agent_decision: "data-agent-decision-v1",
+  analyze_raw_dataset: "analyze-raw-dataset-v1",
+  review_dataset_proposal: "review-dataset-proposal-v1",
   generate_tree: "generate-tree-v1",
   deepen_node: "deepen-node-v1",
   simplify_branch: "simplify-branch-v1",

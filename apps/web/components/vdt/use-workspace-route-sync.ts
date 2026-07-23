@@ -9,7 +9,7 @@ interface BootstrapProjectWorkspaceRouteDeps {
   initialVdt?: string | undefined;
   refreshWorkspace: (options?: { scopedProjectId?: string | undefined }) => Promise<void>;
   selectWorkspaceProject: (projectId: string) => Promise<boolean>;
-  selectWorkspaceVdt: (vdtId: string) => Promise<boolean>;
+  selectWorkspaceVdt: (vdtId: string, options?: { expectedProjectId?: string | undefined }) => Promise<boolean>;
   closeWorkspaceVdtEditor: () => void;
   getWorkspace: () => VdtWorkspaceState;
 }
@@ -26,12 +26,23 @@ export async function bootstrapProjectWorkspaceRoute(deps: BootstrapProjectWorks
   const syncedWorkspace = deps.getWorkspace();
   if (deps.initialVdt) {
     if (syncedWorkspace.activeVdtId !== deps.initialVdt || syncedWorkspace.activePanel !== "vdt") {
-      await deps.selectWorkspaceVdt(deps.initialVdt);
+      const selected = await deps.selectWorkspaceVdt(deps.initialVdt, { expectedProjectId: deps.projectId });
+      if (!selected) {
+        deps.closeWorkspaceVdtEditor();
+      }
     }
     return;
   }
 
   deps.closeWorkspaceVdtEditor();
+}
+
+export function shouldCloseWorkspaceVdtEditorForRoute(
+  previousVdtParam: string | undefined,
+  nextVdtParam: string | undefined,
+  activeVdtId: string | undefined
+): boolean {
+  return Boolean(previousVdtParam && !nextVdtParam && activeVdtId);
 }
 
 export function useWorkspaceRouteSync(projectId: string) {
@@ -45,6 +56,7 @@ export function useWorkspaceRouteSync(projectId: string) {
   const closeWorkspaceVdtEditor = useVdtStudioStore((state) => state.closeWorkspaceVdtEditor);
   const routeSyncRef = useRef(false);
   const mountedRef = useRef(false);
+  const previousVdtParamRef = useRef<string | undefined>(vdtParam);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,20 +88,24 @@ export function useWorkspaceRouteSync(projectId: string) {
   useEffect(() => {
     if (!mountedRef.current) {
       mountedRef.current = true;
+      previousVdtParamRef.current = vdtParam;
       return;
     }
     if (routeSyncRef.current) {
+      previousVdtParamRef.current = vdtParam;
       return;
     }
     if (vdtParam) {
       if (workspace.activeVdtId !== vdtParam) {
-        void selectWorkspaceVdt(vdtParam);
+        void selectWorkspaceVdt(vdtParam, { expectedProjectId: projectId });
       }
+      previousVdtParamRef.current = vdtParam;
       return;
     }
-    if (workspace.activeVdtId) {
+    if (shouldCloseWorkspaceVdtEditorForRoute(previousVdtParamRef.current, vdtParam, workspace.activeVdtId)) {
       closeWorkspaceVdtEditor();
     }
+    previousVdtParamRef.current = vdtParam;
   }, [closeWorkspaceVdtEditor, selectWorkspaceVdt, vdtParam, workspace.activeVdtId]);
 
   useEffect(() => {
@@ -109,9 +125,14 @@ export function useWorkspaceRouteSync(projectId: string) {
   const openWorkspaceVdt = useCallback(
     async (vdtId: string) => {
       routeSyncRef.current = true;
-      await selectWorkspaceVdt(vdtId);
-      router.push(`/projects/${projectId}?vdt=${encodeURIComponent(vdtId)}`);
-      routeSyncRef.current = false;
+      try {
+        const selected = await selectWorkspaceVdt(vdtId, { expectedProjectId: projectId });
+        if (selected) {
+          router.push(`/projects/${projectId}?vdt=${encodeURIComponent(vdtId)}`);
+        }
+      } finally {
+        routeSyncRef.current = false;
+      }
     },
     [projectId, router, selectWorkspaceVdt]
   );

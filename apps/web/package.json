@@ -15,6 +15,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@vdt-studio/ai-harness": "workspace:*",
+    "@vdt-studio/data-harness": "workspace:*",
     "@vdt-studio/local-runner": "workspace:*",
     "@vdt-studio/model-bridge": "workspace:*",
     "@vdt-studio/storage": "workspace:*",

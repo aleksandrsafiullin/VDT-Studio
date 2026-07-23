@@ -1,9 +1,10 @@
-# Formula editor — DnD conventions
+# Formula Editor Drag-And-Drop Conventions
 
-Subtasks 05–06 wire drag-and-drop on top of these presentational components.
+These conventions describe the implemented component boundary:
 
-- Use a single `DndContext` in the parent (`FormulaEditorField`), wrapping both the token row and palette — not at app root.
-- Configure `PointerSensor` with `activationConstraint: { distance: 4 }` so number inputs and remove buttons do not accidentally start drags.
-- Drag handles live on chips only (reference chips in the row and palette); spread `dragHandleProps` from `@dnd-kit` onto the handle element, not the whole chip.
-- Put `data-testid` on drag handles for Playwright (e.g. `formula-token-drag-handle-${index}`, palette handle ids in Subtask 06).
-- Token state and mutations come from `useFormulaEditorState` only — leaf components accept props/callbacks; no duplicate local token arrays.
+- Use one `DndContext` in `FormulaEditorField`, wrapping token row and palette; do not put it at app root.
+- Configure `PointerSensor` with `activationConstraint: { distance: 4 }` so inputs and remove buttons do not start drags accidentally.
+- Drag handles belong on reference/palette chips; spread `dragHandleProps` onto the handle, not the whole chip.
+- Keep stable `data-testid` values on drag handles for browser tests.
+- `useFormulaEditorState` owns token state and mutations. Leaf components receive props/callbacks and must not create duplicate token arrays.
+- Formula syntax and current unit limitations are documented in `docs/FORMULA_ENGINE.md`.

@@ -9,6 +9,7 @@ import type {
   VdtGraph,
   VdtNode,
   VdtNodeStatus,
+  VdtNodeValueStatus,
   VdtNodeType,
   VdtProject,
   VdtScenario,
@@ -114,6 +115,28 @@ const nodeStatuses = new Set<VdtNodeStatus>([
   "external_factor"
 ]);
 
+const nodeValueStatuses = new Set<VdtNodeValueStatus>([
+  "unknown",
+  "user_provided_value",
+  "default_assumption",
+  "calculated",
+  "partially_calculable"
+]);
+
+const nodeControllabilityValues = new Set<NonNullable<VdtNode["controllability"]>>([
+  "high",
+  "medium",
+  "low",
+  "none"
+]);
+
+const nodeMaterialityValues = new Set<NonNullable<VdtNode["materiality"]>>([
+  "high",
+  "medium",
+  "low",
+  "unknown"
+]);
+
 const edgeRelations = new Set<VdtEdgeRelation>([
   "positive_driver",
   "negative_driver",
@@ -139,7 +162,11 @@ const warningTypes = new Set<VdtWarning["type"]>([
   "invalid_value",
   "formula_parse_error",
   "unknown_reference",
-  "division_by_zero"
+  "division_by_zero",
+  "data_discovery_low_confidence",
+  "data_discovery_unsupported_format",
+  "data_discovery_sensitive_values",
+  "data_discovery_validation_failed"
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -228,6 +255,20 @@ function readEnum<T extends string>(source: Record<string, unknown>, key: string
   return value as T;
 }
 
+function readOptionalEnum<T extends string>(source: Record<string, unknown>, key: string, allowed: Set<T>, label: string) {
+  const value = source[key];
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`Imported project ${label} must be a string.`);
+  }
+  if (!allowed.has(value as T)) {
+    throw new Error(`Imported project has unsupported ${label}: ${value}.`);
+  }
+  return value as T;
+}
+
 function readRecordArray(source: Record<string, unknown>, key: string, label: string) {
   const value = source[key];
   if (!Array.isArray(value) || !value.every(isRecord)) {
@@ -250,6 +291,8 @@ function readNode(value: Record<string, unknown>, fallbackDate: string): VdtNode
     formula: readOptionalString(value, "formula"),
     value: readOptionalNumber(value, "value"),
     baselineValue: readOptionalNumber(value, "baselineValue"),
+    valueStatus: readOptionalEnum(value, "valueStatus", nodeValueStatuses, "node valueStatus"),
+    valueSource: isRecord(value.valueSource) ? value.valueSource as VdtNode["valueSource"] : undefined,
     scenarioValue: readOptionalNumber(value, "scenarioValue"),
     aiGenerated: typeof value.aiGenerated === "boolean" ? value.aiGenerated : false,
     aiConfidence: readOptionalNumber(value, "aiConfidence"),
@@ -257,6 +300,10 @@ function readNode(value: Record<string, unknown>, fallbackDate: string): VdtNode
     assumptions: readOptionalStringArray(value, "assumptions"),
     tags: readOptionalStringArray(value, "tags"),
     owner: readOptionalString(value, "owner"),
+    controllability: readOptionalEnum(value, "controllability", nodeControllabilityValues, "node controllability"),
+    materiality: readOptionalEnum(value, "materiality", nodeMaterialityValues, "node materiality"),
+    fixedInScenario: readOptionalBoolean(value, "fixedInScenario"),
+    dataMapping: isRecord(value.dataMapping) ? value.dataMapping as unknown as VdtNode["dataMapping"] : undefined,
     ...(position ? { position } : {}),
     createdAt: readOptionalString(value, "createdAt") ?? fallbackDate,
     updatedAt: readOptionalString(value, "updatedAt") ?? fallbackDate
@@ -325,12 +372,27 @@ function readDataSource(value: Record<string, unknown>): VdtDataSource {
     throw new Error(`Imported project has unsupported data source type: ${type}.`);
   }
 
-  return {
+  const dataSource: VdtDataSource = {
     id: readString(value, "id", "data source id"),
     name: readString(value, "name", "data source name"),
     type: type as VdtDataSource["type"],
     description: readOptionalString(value, "description")
   };
+
+  if (isRecord(value.file)) {
+    dataSource.file = value.file as unknown as VdtDataSource["file"];
+  }
+  if (isRecord(value.schema)) {
+    dataSource.schema = value.schema as unknown as VdtDataSource["schema"];
+  }
+  if (isRecord(value.profile)) {
+    dataSource.profile = value.profile as unknown as VdtDataSource["profile"];
+  }
+  if (isRecord(value.semanticModel)) {
+    dataSource.semanticModel = value.semanticModel as unknown as VdtDataSource["semanticModel"];
+  }
+
+  return dataSource;
 }
 
 function readDataSources(value: unknown): VdtDataSource[] {

@@ -179,6 +179,81 @@ const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
     ...advisoryStub,
     confidence: 0.5
   },
+  "data-agent-decision-v1": {
+    type: "tool_call",
+    toolName: "table.profile",
+    rationale: "Profile the detected table before proposing semantic roles.",
+    input: {
+      tableId: "table_1"
+    }
+  },
+  "analyze-raw-dataset-v1": {
+    datasetId: "mock_dataset",
+    summary: {
+      rowCount: 2,
+      tableCount: 1,
+      likelyDatasetKind: "operational records",
+      confidence: 0.75,
+      description: "Mock raw dataset analysis."
+    },
+    columns: [
+      {
+        tableId: "table_1",
+        columnName: "Minutes",
+        physicalType: "number",
+        logicalType: "duration",
+        semanticRole: "duration",
+        unit: "minute",
+        confidence: 0.86,
+        evidence: [
+          {
+            type: "column_name",
+            message: "Column name suggests minutes.",
+            strength: "strong"
+          }
+        ],
+        profileRef: "table_1.minutes"
+      }
+    ],
+    metricCandidates: [
+      {
+        id: "metric_total_minutes",
+        name: "Total Minutes",
+        description: "Sum of imported minutes.",
+        sourceTableId: "table_1",
+        sourceColumns: ["Minutes"],
+        aggregation: "sum",
+        unit: "minute",
+        confidence: 0.86,
+        evidence: [
+          {
+            type: "value_pattern",
+            message: "Values parse as numbers.",
+            strength: "strong"
+          }
+        ],
+        limitations: []
+      }
+    ],
+    assumptions: ["Minutes are treated as duration."],
+    questionsForUser: ["Confirm the duration unit."],
+    warnings: []
+  },
+  "review-dataset-proposal-v1": {
+    datasetId: "mock_dataset",
+    summary: {
+      rowCount: 2,
+      tableCount: 1,
+      likelyDatasetKind: "operational records",
+      confidence: 0.75,
+      description: "Mock reviewed dataset proposal."
+    },
+    columns: [],
+    metricCandidates: [],
+    assumptions: [],
+    questionsForUser: [],
+    warnings: []
+  },
   "generate-tree-v1": { projectTitle: "Mock tree", rootNodeId: "root", nodes: [mockNode], edges: [], ...advisoryStub },
   "deepen-node-v1": { targetNodeId: "node-1", nodes: [{ ...mockNode, id: "child_a", name: "Child A" }], edges: [], ...advisoryStub },
   "simplify-branch-v1": { branchRootNodeId: "node-1", nodeRemovals: [], edgeChanges: [], rationale: "Mock", ...advisoryStub },

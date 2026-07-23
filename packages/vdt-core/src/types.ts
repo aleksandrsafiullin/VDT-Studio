@@ -2,6 +2,9 @@ export type VdtAiTaskType =
   | "orchestrator_first_response"
   | "agent_decision"
   | "agent_plan"
+  | "data_agent_decision"
+  | "analyze_raw_dataset"
+  | "review_dataset_proposal"
   | "generate_tree"
   | "deepen_node"
   | "simplify_branch"
@@ -134,7 +137,11 @@ export interface VdtWarning {
     | "invalid_value"
     | "formula_parse_error"
     | "unknown_reference"
-    | "division_by_zero";
+    | "division_by_zero"
+    | "data_discovery_low_confidence"
+    | "data_discovery_unsupported_format"
+    | "data_discovery_sensitive_values"
+    | "data_discovery_validation_failed";
   message: string;
   nodeId?: string | undefined;
   edgeId?: string | undefined;
@@ -220,17 +227,252 @@ export interface VdtAiReviewArtifacts {
   warnings: VdtWarning[];
 }
 
+export interface EvidenceItem {
+  type:
+    | "column_name"
+    | "value_pattern"
+    | "distribution"
+    | "aggregation_result"
+    | "data_quality"
+    | "cross_column_relationship"
+    | "user_confirmation"
+    | "model_reasoning";
+  message: string;
+  strength: "weak" | "medium" | "strong";
+  observationRef?: string | undefined;
+}
+
+export type SemanticPhysicalType = "string" | "number" | "date" | "boolean" | "mixed" | "unknown";
+
+export type SemanticLogicalType =
+  | "identifier"
+  | "category"
+  | "text"
+  | "measure"
+  | "duration"
+  | "timestamp"
+  | "date"
+  | "currency"
+  | "percentage"
+  | "status"
+  | "other";
+
+export interface SemanticColumnModel {
+  tableId: string;
+  columnName: string;
+  physicalType: SemanticPhysicalType;
+  logicalType: SemanticLogicalType;
+  semanticRole?: string | undefined;
+  unit?: string | undefined;
+  confidence: number;
+  evidence: EvidenceItem[];
+  profileRef: string;
+}
+
+export interface SemanticTableModel {
+  tableId: string;
+  name: string;
+  rowCount: number;
+  columns: SemanticColumnModel[];
+}
+
+export interface SemanticEntity {
+  id: string;
+  name: string;
+  sourceTableId: string;
+  sourceColumns: string[];
+  confidence: number;
+  evidence: EvidenceItem[];
+}
+
+export interface DataFilterExpression {
+  column: string;
+  operator: "equals" | "not_equals" | "contains" | "greater_than" | "less_than" | "between" | "is_not_empty";
+  value?: string | number | boolean | undefined;
+  secondValue?: string | number | boolean | undefined;
+}
+
+export interface SemanticMeasure {
+  id: string;
+  name: string;
+  sourceTableId: string;
+  sourceColumn: string;
+  unit?: string | undefined;
+  aggregation: "sum" | "count" | "avg" | "min" | "max" | "ratio" | "distinct_count" | "custom";
+  confidence: number;
+  evidence: EvidenceItem[];
+}
+
+export interface SemanticDimension {
+  id: string;
+  name: string;
+  sourceTableId: string;
+  sourceColumn: string;
+  confidence: number;
+  evidence: EvidenceItem[];
+}
+
+export type TaxonomyMatchRule =
+  | { type: "equals"; value: string }
+  | { type: "contains"; value: string }
+  | { type: "regex"; pattern: string }
+  | { type: "cluster"; clusterId: string }
+  | { type: "manual_list"; values: string[] };
+
+export interface SemanticSubcategory {
+  id: string;
+  name: string;
+  matchRules: TaxonomyMatchRule[];
+  examples: string[];
+  rowCount?: number | undefined;
+  confidence: number;
+}
+
+export interface SemanticCategory {
+  id: string;
+  name: string;
+  description?: string | undefined;
+  matchRules: TaxonomyMatchRule[];
+  subcategories: SemanticSubcategory[];
+  examples: string[];
+  rowCount?: number | undefined;
+  measureShare?: number | undefined;
+  confidence: number;
+}
+
+export interface SemanticTaxonomy {
+  id: string;
+  name: string;
+  sourceTableId: string;
+  sourceColumns: string[];
+  categories: SemanticCategory[];
+  coverage: {
+    coveredRows: number;
+    totalRows: number;
+    coveredShare: number;
+    unknownShare: number;
+  };
+  confidence: number;
+  evidence: EvidenceItem[];
+}
+
+export interface SemanticMetricCandidate {
+  id: string;
+  name: string;
+  description: string;
+  sourceTableId: string;
+  sourceColumns: string[];
+  aggregation: "sum" | "count" | "avg" | "min" | "max" | "ratio" | "distinct_count" | "custom";
+  unit?: string | undefined;
+  formula?: string | undefined;
+  dimensions?: string[] | undefined;
+  filters?: DataFilterExpression[] | undefined;
+  confidence: number;
+  evidence: EvidenceItem[];
+  limitations: string[];
+}
+
+export interface VdtDataProfileColumn {
+  tableId: string;
+  columnName: string;
+  inferredType: SemanticPhysicalType;
+  nullCount: number;
+  nonNullCount: number;
+  uniqueCount: number;
+  examples: string[];
+}
+
+export interface VdtDataProfile {
+  generatedAt: string;
+  rowCount: number;
+  tableCount: number;
+  columns: VdtDataProfileColumn[];
+  quality: DataQualityReport;
+}
+
+export interface SemanticDatasetSummary {
+  rowCount: number;
+  tableCount: number;
+  likelyDatasetKind: string;
+  confidence: number;
+  description: string;
+}
+
+export interface DataQualityReport {
+  emptyRows: number;
+  duplicateRows: number;
+  warnings: string[];
+}
+
+export interface VdtSemanticDatasetModel {
+  datasetId: string;
+  version: string;
+  generatedAt: string;
+  summary: SemanticDatasetSummary;
+  tables: SemanticTableModel[];
+  entities: SemanticEntity[];
+  measures: SemanticMeasure[];
+  dimensions: SemanticDimension[];
+  taxonomies: SemanticTaxonomy[];
+  metricCandidates: SemanticMetricCandidate[];
+  dataQuality: DataQualityReport;
+  assumptions: string[];
+  questionsForUser: string[];
+  warnings: VdtWarning[];
+}
+
+export interface VdtDataSourceFileMetadata {
+  fileName: string;
+  mimeType: string;
+  extension?: string | undefined;
+  sizeBytes: number;
+  contentHash: string;
+  uploadedAt: string;
+  storageRef: string;
+  tableCount: number;
+}
+
+export interface VdtDataSourceField {
+  name: string;
+  physicalType: SemanticPhysicalType;
+  logicalType?: SemanticLogicalType | undefined;
+  unit?: string | undefined;
+}
+
+export interface VdtDataSourceTableSchema {
+  tableId: string;
+  name: string;
+  rowCount: number;
+  fields: VdtDataSourceField[];
+}
+
+export interface VdtDataSourceSchema {
+  tables: VdtDataSourceTableSchema[];
+}
+
 export interface VdtDataSource {
   id: string;
   name: string;
   type: "manual" | "file" | "database" | "api" | "local_model";
   description?: string | undefined;
+  file?: VdtDataSourceFileMetadata | undefined;
+  schema?: VdtDataSourceSchema | undefined;
+  profile?: VdtDataProfile | undefined;
+  semanticModel?: VdtSemanticDatasetModel | undefined;
 }
 
 export interface VdtDataMapping {
   sourceId: string;
+  tableId?: string | undefined;
   field: string;
   transform?: string | undefined;
+  semanticRole?: string | undefined;
+  unit?: string | undefined;
+  aggregation?: "sum" | "count" | "avg" | "min" | "max" | "ratio" | "distinct_count" | "custom" | undefined;
+  filters?: DataFilterExpression[] | undefined;
+  dimensions?: string[] | undefined;
+  confidence?: number | undefined;
+  evidence?: EvidenceItem[] | undefined;
 }
 
 export interface VdtVersion {

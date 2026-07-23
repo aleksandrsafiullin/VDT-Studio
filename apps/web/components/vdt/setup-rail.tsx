@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Check, CircleAlert, History, MessageSquarePlus, Search, Send, Settings2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DataImportWizard } from "@/components/data-import/data-import-wizard";
 import { Field, TextArea, TextInput } from "@/components/ui/field";
 import { Panel, PanelCollapseTab, PanelToggleButton, PanelHeader } from "@/components/ui/panel";
 import { hasByokFieldErrors, validateByokSettings } from "@/lib/byok-validation";
@@ -106,7 +107,10 @@ export function SetupRail() {
     ? pendingChangeSet.additions.length +
       pendingChangeSet.updates.length +
       pendingChangeSet.deletions.length +
-      pendingChangeSet.edgeChanges.length
+      pendingChangeSet.edgeChanges.length +
+      (pendingChangeSet.dataSourceChanges?.length ?? 0) +
+      (pendingChangeSet.dataMappingChanges?.length ?? 0) +
+      (pendingChangeSet.taxonomyChanges?.length ?? 0)
     : 0;
   const canContinueCurrentAgentRun = generateActivity?.status === "running" ||
     generateActivity?.status === "needs_user_input";
@@ -238,6 +242,8 @@ export function SetupRail() {
       <div className="flex min-h-0 flex-1 flex-col">
         <section className="min-h-0 flex-1 overflow-auto px-4 py-4">
           <div className="space-y-3">
+            <DataImportWizard />
+
             {historyOpen ? (
               <section className="space-y-2" data-testid="agent-chat-history">
                 <div className="flex items-center justify-between gap-3">

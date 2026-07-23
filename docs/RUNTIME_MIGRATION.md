@@ -1,35 +1,34 @@
-# Runtime inventory and migration map
+# Runtime Migration Record
 
-Date: 2026-06-21
+Status: **completed historical migration**.
 
-## Removed inventory
+Original date: **2026-06-21**.
+
+Reviewed for current context: **2026-07-23**.
+
+This document records the migration away from an external coding-agent/MCP product surface. It is not the current architecture specification; see `ARCHITECTURE.md`, `AI_HARNESS.md` and ADR-002.
+
+## Removed Surface
 
 | Previous surface | Previous location | Disposition |
 |---|---|---|
-| 21-agent definitions and PATH detection | `packages/cli/src/agent-runtime.ts` | Replaced by five subscription-backend detection manifests in `packages/model-bridge/src/detection.ts` |
-| Direct coding-agent process execution | `packages/cli/src/agent-runner.ts` | Removed; subscription execution belongs to the hardened local runner in Phase 2 |
-| ACP JSON-RPC sessions | `packages/cli/src/acp-client.ts` | Removed from product scope |
-| Pi RPC sessions | `packages/cli/src/pi-rpc-client.ts` | Removed from product scope |
-| MCP stdio server and installers | `packages/cli/src/mcp-server.ts`, `mcp-agent-install.ts` | Removed from product scope |
-| Skill bundle and installers | `skills/value-driver-tree`, `packages/cli/src/skill-install.ts` | Removed from product scope |
-| Web-side direct CLI execution | `apps/web/lib/local-cli-ai-provider.ts` | Removed; web routes subscription work through local runner |
-| Agent-facing settings entries | `apps/web/components/vdt/settings-nav.tsx` | Removed |
+| 21 external-agent definitions and PATH detection | `packages/cli/src/agent-runtime.ts` | Removed from product scope |
+| Direct coding-agent process execution | `packages/cli/src/agent-runner.ts` | Replaced by reviewed model-backend adapters |
+| ACP and Pi RPC sessions | legacy CLI modules | Removed |
+| MCP server/installers and external skill installers | legacy CLI modules | Removed |
+| Direct web-side CLI execution | `apps/web/lib/local-cli-ai-provider.ts` | Replaced by local runner/desktop execution boundary |
 
-## Phase 1 destinations
+## Migration Destinations
 
-| Concern | Destination |
+| Concern | Current destination |
 |---|---|
-| Backend contract and task vocabulary | `packages/model-bridge/src/contract.ts` |
-| Product backend registry | `packages/model-bridge/src/registry.ts` |
-| Bounded JSON extraction | `packages/model-bridge/src/safe-json.ts` |
-| Deterministic fake backend | `packages/model-bridge/src/fake-backend.ts` |
-| Five subscription CLI detection manifests | `packages/model-bridge/src/detection.ts` |
-| VDT product commands | `packages/cli/src/cli.ts` |
+| Backend and task contracts | `packages/model-bridge` |
+| Structured provider tasks | `packages/ai-harness` |
+| Reviewed process execution | `packages/local-runner` |
+| Product CLI | `packages/cli` |
+| In-product VDT agent and skills | `packages/vdt-agent`, `packages/vdt-agent-runtime` |
+| Desktop private execution | `apps/desktop` sidecar host and protocol |
 
-## Deferred to Phase 2+
+## Important Distinction
 
-- Runner pairing and scoped session tokens.
-- Reviewed backend manifests and backend-ID-only execution API.
-- Temp-directory, environment, output, timeout and cancellation enforcement.
-- OS sandbox certification.
-- Cursor end-to-end execution and provider compatibility publication.
+The later in-product VDT agent does not reverse the security decision to remove external coding-agent control. It may call a closed set of VDT application tools, but it cannot control the repository, arbitrary shell commands, provider configuration or broad filesystem access. ADR-002 captures the current decision.

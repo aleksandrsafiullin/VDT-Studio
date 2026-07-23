@@ -1,44 +1,44 @@
-# Development Plan Status
+# Development Plan Record
 
-The historical external-agent/MCP/skill orchestration waves were removed under ADR-001. This file records only the active product migration.
+Status: **historical phase record with current handoff rules**.
 
-## Phase 0 — Product boundary
+Last reviewed: **2026-07-23**.
 
-Complete. VDT Studio treats APIs, local HTTP servers and selected subscription CLIs as bounded model backends. External agents do not control the application, repository or tools.
+## Historical Migration Summary
 
-## Phase 1 — Model bridge
+The June 2026 migration removed the old external 21-agent/MCP/skill-installer product surface and introduced:
 
-Complete. `packages/model-bridge` owns backend contracts, detection metadata, bounded parsing and registered task/schema IDs. The 21-agent runtime, MCP/skill installers, ACP/Pi transports and direct web-side CLI execution were deleted.
+- bounded model-backend contracts in `packages/model-bridge`;
+- paired, manifest-owned execution in `packages/local-runner`;
+- subscription CLI adapters with certification metadata;
+- a narrow deterministic product CLI;
+- Tauri desktop and sidecar foundations.
 
-## Phase 2 — Hardened local runner
+After that migration, VDT Studio added a different capability: a bounded **in-product VDT agent** that uses application tools and domain skills. ADR-002 records the current distinction between this runtime and prohibited external coding-agent control.
 
-Implemented:
+## Current Work Program
 
-- v1 health, backend, pairing, completion, cancellation and run-status API;
-- short-lived rate-limited pairing codes and session-only high-entropy tokens;
-- backend-ID-only browser requests and public manifests without executable details;
-- manifest-owned `shell: false` execution with executable and symlink checks;
-- per-request temporary directories, filtered environments and cleanup;
-- prompt, line, stdout, stderr, result and timeout limits;
-- `SIGTERM`/`SIGKILL` cancellation;
-- registered schema validation and redacted audit metadata;
-- fake-binary security tests and product CLI runner/doctor commands.
+The active implementation order is maintained in [`ROADMAP.md`](ROADMAP.md):
 
-## Phase 3 — Cursor end-to-end
+1. preserve revisions and stop silent partial-data errors;
+2. create a canonical metric/unit/dependency model;
+3. add evidence and benchmark provenance;
+4. harden multilingual skills and agent runtime;
+5. implement deterministic data-to-KPI baselines;
+6. add report formats/connectors and complete production/native hardening.
 
-Partially complete. Detection, version/auth probes, parser, settings card and fake/live tests exist. On 2026-06-22 the installed Cursor CLI authenticated successfully, but protected generation failed closed under the old OS-specific sandbox experiment because Cursor required provider state outside the temp workspace. On 2026-06-24 Cursor was switched to the open-design-style adapter posture: VDT delegates the agent loop to Cursor, passes a fresh temp `--workspace`, does not pass the repo cwd or VDT MCP config, and validates the returned schema locally; the phase is not done until generate/deepen/review pass live.
+The detailed findings and acceptance tests live in [`CRITICAL_ARCHITECTURE_AND_AGENT_REVIEW_2026-07-23.md`](CRITICAL_ARCHITECTURE_AND_AGENT_REVIEW_2026-07-23.md).
 
-## Phase 4 — Codex and Claude
+## Agent Handoff Rule
 
-Implementation complete: both adapters use subscription login, bounded structured output, tool/session restrictions, settings cards, fake executors and opt-in live gates. Live acceptance is pending on this machine: Claude is absent; Codex is installed but its Homebrew Node runtime cannot load `libsimdjson.31.dylib`.
+Every implementation wave must record:
 
-## Phase 5 — Gemini and Copilot
+- scope and affected contracts;
+- current worktree status and preserved changes;
+- planner/reviewer findings when those roles are explicitly requested;
+- implementation and migrations;
+- tests and gates with results;
+- remaining blockers and next dependency;
+- documentation impact and updated documents.
 
-Implemented as experimental cross-platform adapters:
-
-- Gemini headless JSON with a temp supplemental admin policy denying every tool;
-- Copilot JSONL with an empty available-tool set, built-in MCP and custom instructions disabled;
-- auth/quota/plan/policy diagnostics, version gates, parsers, fake executors, cancellation/schema validation and opt-in live tests;
-- no macOS-only sandbox dependency; VDT relies on reviewed tool-denial flags/policies, fresh temp request directories, filtered environment and local schema validation.
-
-Live subscription acceptance remains pending because neither CLI is installed on the maintainer machine. In addition, Google ended Gemini CLI service for individual free/Google AI Pro/Ultra accounts on 2026-06-18, so the original personal-allowance criterion now applies only to enterprise Gemini Code Assist; Antigravity CLI requires a separate future adapter. Linux and Windows use the same experimental manifest path as macOS.
+Repository-wide agent rules live in [`AGENTS.md`](../AGENTS.md). Documentation updates are required in the same change as material behavior changes.

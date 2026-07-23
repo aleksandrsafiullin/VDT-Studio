@@ -293,7 +293,16 @@ export interface VdtWorkspaceState {
   lastSavedAt?: string | undefined;
 }
 
-export type RunAiActionTaskType = Exclude<VdtAiTaskType, "orchestrator_first_response" | "agent_decision" | "agent_plan" | "generate_tree">;
+export type RunAiActionTaskType = Exclude<
+  VdtAiTaskType,
+  | "orchestrator_first_response"
+  | "agent_decision"
+  | "agent_plan"
+  | "data_agent_decision"
+  | "analyze_raw_dataset"
+  | "review_dataset_proposal"
+  | "generate_tree"
+>;
 
 export type RunAiActionInput<T extends RunAiActionTaskType = RunAiActionTaskType> = Omit<
   RunAiTaskInputMap[T],
@@ -416,7 +425,7 @@ interface VdtStudioState {
   deleteWorkspaceProject: (projectId: string) => Promise<boolean>;
   createWorkspaceVdt: (input?: string | CreateWorkspaceVdtParams) => Promise<boolean>;
   selectWorkspaceProject: (projectId: string) => Promise<boolean>;
-  selectWorkspaceVdt: (vdtId: string) => Promise<boolean>;
+  selectWorkspaceVdt: (vdtId: string, options?: { expectedProjectId?: string | undefined }) => Promise<boolean>;
   renameWorkspaceVdt: (vdtId: string, name: string) => Promise<boolean>;
   setWorkspaceVdtStatus: (vdtId: string, status: StoredVdtStatus) => Promise<boolean>;
   deleteWorkspaceVdt: (vdtId: string) => Promise<boolean>;
@@ -460,6 +469,7 @@ interface VdtStudioState {
   cloneScenario: (scenarioId: string) => void;
   updateScenarioOverride: (scenarioId: string, nodeId: string, value?: number) => void;
   runAiAction: <T extends RunAiActionTaskType>(taskType: T, input: RunAiActionInput<T>) => Promise<void>;
+  stageDataDiscoveryChangeSet: (changeSet: VdtChangeSet) => void;
   toggleChangeSelection: (changeId: string) => void;
   applyPendingChangeSet: () => void;
   discardPendingChangeSet: () => void;
@@ -642,7 +652,10 @@ function collectChangeEntryIds(changeSet: VdtChangeSet): Set<string> {
     ...changeSet.additions.map((entry) => entry.id),
     ...changeSet.updates.map((entry) => entry.id),
     ...changeSet.deletions.map((entry) => entry.id),
-    ...changeSet.edgeChanges.map((entry) => entry.id)
+    ...changeSet.edgeChanges.map((entry) => entry.id),
+    ...(changeSet.dataSourceChanges ?? []).map((entry) => entry.id),
+    ...(changeSet.dataMappingChanges ?? []).map((entry) => entry.id),
+    ...(changeSet.taxonomyChanges ?? []).map((entry) => entry.id)
   ]);
 }
 
@@ -2003,8 +2016,17 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         }));
         return true;
       },
-      selectWorkspaceVdt: async (vdtId) => {
+      selectWorkspaceVdt: async (vdtId, options) => {
         if (get().workspace.activeVdtId === vdtId) {
+          if (options?.expectedProjectId && get().workspace.activeProjectId !== options.expectedProjectId) {
+            set((state) => ({
+              workspace: {
+                ...state.workspace,
+                error: "Selected VDT does not belong to this project."
+              }
+            }));
+            return false;
+          }
           set((state) => ({
             workspace: {
               ...state.workspace,
@@ -2027,6 +2049,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           const loaded = await loadStoredVdt(vdtId);
           if (!loaded.activeProject) {
             throw new Error("Selected VDT does not have a saved revision yet.");
+          }
+          if (options?.expectedProjectId && loaded.summary.project.id !== options.expectedProjectId) {
+            throw new Error("Selected VDT does not belong to this project.");
           }
           const project = ensureScenario(loaded.activeProject);
           set((state) => ({
@@ -3571,6 +3596,19 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             };
           });
         }
+      },
+      stageDataDiscoveryChangeSet: (changeSet) => {
+        set((state) => ({
+          pendingChangeSet: changeSet,
+          changeSetSelection: collectChangeEntryIds(changeSet),
+          highlightedNodeIds: computeHighlightedNodeIds(state.project, changeSet),
+          pendingAdvisoryResult: undefined,
+          pendingAdvisoryTaskType: undefined,
+          pendingExplanation: undefined,
+          pendingExplanationTaskType: undefined,
+          selectedPanelTab: "ai",
+          aiActionError: undefined
+        }));
       },
       toggleChangeSelection: (changeId) =>
         set((state) => {

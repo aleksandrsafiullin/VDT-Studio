@@ -72,6 +72,98 @@ export const VALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
     ...advisory,
     confidence: 0.88
   },
+  "data-agent-decision-v1": {
+    type: "tool_call",
+    toolName: "table.profile",
+    rationale: "Column profiles are needed before semantic inference.",
+    input: {
+      tableId: "table_1"
+    }
+  },
+  "analyze-raw-dataset-v1": {
+    datasetId: "dataset_1",
+    summary: {
+      rowCount: 4,
+      tableCount: 1,
+      likelyDatasetKind: "event log / downtime",
+      confidence: 0.82,
+      description: "Detected a small event log."
+    },
+    columns: [
+      {
+        tableId: "table_1",
+        columnName: "Minutes",
+        physicalType: "number",
+        logicalType: "duration",
+        semanticRole: "duration",
+        unit: "minute",
+        confidence: 0.88,
+        evidence: [
+          {
+            type: "column_name",
+            message: "Column name suggests minutes.",
+            strength: "strong"
+          }
+        ],
+        profileRef: "table_1.minutes"
+      }
+    ],
+    metricCandidates: [
+      {
+        id: "metric_total_minutes",
+        name: "Total Minutes",
+        description: "Sum of downtime minutes.",
+        sourceTableId: "table_1",
+        sourceColumns: ["Minutes"],
+        aggregation: "sum",
+        unit: "minute",
+        confidence: 0.88,
+        evidence: [
+          {
+            type: "value_pattern",
+            message: "Most values parse as positive numbers.",
+            strength: "strong"
+          }
+        ],
+        limitations: []
+      }
+    ],
+    assumptions: ["Minutes are interpreted as duration."],
+    questionsForUser: ["Confirm that Minutes is measured in minutes."],
+    warnings: []
+  },
+  "review-dataset-proposal-v1": {
+    datasetId: "dataset_1",
+    summary: {
+      rowCount: 4,
+      tableCount: 1,
+      likelyDatasetKind: "event log / downtime",
+      confidence: 0.82,
+      description: "Reviewed dataset proposal."
+    },
+    columns: [
+      {
+        tableId: "table_1",
+        columnName: "Reason",
+        physicalType: "string",
+        logicalType: "category",
+        semanticRole: "event_reason",
+        confidence: 0.9,
+        evidence: [
+          {
+            type: "distribution",
+            message: "Reason has recurring values.",
+            strength: "strong"
+          }
+        ],
+        profileRef: "table_1.reason"
+      }
+    ],
+    metricCandidates: [],
+    assumptions: [],
+    questionsForUser: [],
+    warnings: []
+  },
   "generate-tree-v1": {
     projectTitle: "Production Volume",
     rootNodeId: "production_volume",
@@ -176,6 +268,36 @@ export const INVALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
     extractedInputs: [{ id: "root_kpi", label: "Root KPI", value: { bad: true } }],
     missingInputs: [{ id: "baseline_period", question: "Baseline?", reason: "Needed.", required: true }],
     confidence: 0.8
+  },
+  "data-agent-decision-v1": {
+    type: "bad",
+    toolName: "table.profile",
+    rationale: "Invalid decision type.",
+    input: {}
+  },
+  "analyze-raw-dataset-v1": {
+    datasetId: "dataset_1",
+    summary: {},
+    columns: "bad",
+    metricCandidates: [],
+    assumptions: [],
+    questionsForUser: [],
+    warnings: []
+  },
+  "review-dataset-proposal-v1": {
+    datasetId: "dataset_1",
+    summary: {
+      rowCount: 1,
+      tableCount: 1,
+      likelyDatasetKind: "x",
+      confidence: 2,
+      description: "x"
+    },
+    columns: [],
+    metricCandidates: [],
+    assumptions: [],
+    questionsForUser: [],
+    warnings: []
   },
   "generate-tree-v1": { projectTitle: "x" },
   "deepen-node-v1": { targetNodeId: "a", nodes: [], edges: [], assumptions: [], questionsForUser: [], warnings: [] },

@@ -1,5 +1,7 @@
 # Agentic VDT Runtime Implementation Spec
 
+> **Status:** active normative target, partially implemented. This document describes required behavior, not proof of current readiness. For current implementation status use `AI_HARNESS.md`, `PRODUCTION_READINESS.md` and ADR-002. Last classification review: 2026-07-23.
+
 ## Purpose
 
 Implement VDT generation as an agentic decomposition workflow, not as a single "send prompt, wait for JSON" operation.

@@ -7,9 +7,17 @@ import { verifyReleaseDocs } from "./verify-release-docs.mjs";
 const tempDirs: string[] = [];
 
 const fixtureDocs: Record<string, string> = {
+  "AGENTS.md": "Documentation Is Part of Every Change\nDocumentation impact: none\npnpm docs:verify\n",
+  "docs/README.md": "Source-Of-Truth Order\nDATA_INGESTION.md\nAGENTS.md\n",
+  "docs/PRODUCT_SPEC.md": "Capability Status Summary\nData and reports\nmetadata-only mappings\n",
+  "docs/ARCHITECTURE.md": "packages/vdt-storage\npackages/data-harness\nKnown Architectural Gaps\n",
+  "docs/AI_HARNESS.md": "18 task contracts\nCurrent runtime limitations\nsearch-only\n",
+  "docs/DATA_INGESTION.md": "metadata only\n4096-byte\nMetricBinding\n",
+  "docs/PRODUCTION_READINESS.md": "No-Go for production\n3 high vulnerabilities\nP0 Correctness Blockers\n",
+  "docs/ROADMAP.md": "Wave 0\nWave 4\nEvidence And Benchmarks\n",
   "docs/architecture/desktop-local-execution.md": "reviewed commands\ndesktop:verify\nself-contained packaged sidecar binary\n",
   "docs/architecture/runtime-protocol.md": "private pipes\nbounded frame size\nstartup handshake\n",
-  "docs/security/local-ai-threat-model.md": "Hosted web mode is API/BYOK only\nUNSAFE_CONFIGURATION\ndesktop:native:preflight\n",
+  "docs/security/local-ai-threat-model.md": "Hosted web is API/BYOK only\nUNSAFE_CONFIGURATION\ndesktop:native:preflight\n",
   "docs/provider-compatibility.md": "Cursor\nCodex\nClaude\nGemini\nCopilot\n",
   "docs/desktop-installation.md": "Do not claim clean-machine desktop installation support\nNode installation\ndesktop:native:preflight\ncross-platform desktop bundle targets\nVDT_DESKTOP_SELF_CONTAINED_SIDECAR\n",
   "docs/development/standalone-runner.md": "not the production desktop Local AI user journey\nloopback\npairing\n",
@@ -36,7 +44,7 @@ describe("verify-release-docs", () => {
   it("passes when required release documents contain the expected guardrails", async () => {
     const root = await createFixture();
 
-    expect(verifyReleaseDocs(root).docs).toHaveLength(7);
+    expect(verifyReleaseDocs(root).docs).toHaveLength(15);
   });
 
   it("fails when a required release document is missing", async () => {

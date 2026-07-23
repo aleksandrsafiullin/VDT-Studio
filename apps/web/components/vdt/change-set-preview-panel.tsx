@@ -5,6 +5,8 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const TASK_TITLES: Partial<Record<VdtChangeSet["taskType"], string>> = {
+  analyze_raw_dataset: "Analyze raw dataset",
+  review_dataset_proposal: "Review dataset proposal",
   deepen_node: "Deepen node",
   simplify_branch: "Simplify branch",
   suggest_alternative: "Suggest alternative",
@@ -115,6 +117,35 @@ export function ChangeSetPreviewPanel({
               ? `Remove ${change.edgeId}`
               : `Update ${change.edgeId}`,
         detail: change.action
+      }))
+    },
+    {
+      label: "Data sources",
+      tone: "border-cyan-200 bg-cyan-50 text-cyan-950",
+      rows: (changeSet.dataSourceChanges ?? []).map((change) => ({
+        id: change.id,
+        label: change.action === "add" ? change.dataSource.name : change.sourceId,
+        detail: change.action === "add" ? `Attach ${change.dataSource.type} source` : "Update data source metadata"
+      }))
+    },
+    {
+      label: "Mappings",
+      tone: "border-violet-200 bg-violet-50 text-violet-950",
+      rows: (changeSet.dataMappingChanges ?? []).map((change) => ({
+        id: change.id,
+        label: `${change.nodeId} ← ${change.mapping.field}`,
+        detail: change.mapping.aggregation
+          ? `${change.mapping.aggregation}${change.mapping.unit ? `, ${change.mapping.unit}` : ""}`
+          : change.mapping.semanticRole
+      }))
+    },
+    {
+      label: "Taxonomy",
+      tone: "border-amber-200 bg-amber-50 text-amber-950",
+      rows: (changeSet.taxonomyChanges ?? []).map((change) => ({
+        id: change.id,
+        label: change.taxonomy.name,
+        detail: `${change.taxonomy.categories.length} categor${change.taxonomy.categories.length === 1 ? "y" : "ies"}`
       }))
     }
   ].filter((group) => group.rows.length > 0);

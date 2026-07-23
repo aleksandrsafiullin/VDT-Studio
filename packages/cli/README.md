@@ -1,6 +1,6 @@
 # VDT Studio CLI
 
-The product CLI exposes deterministic VDT operations and the localhost runner launcher:
+The Node 24 product CLI exposes deterministic VDT operations and the standalone loopback runner:
 
 ```bash
 vdt validate project.json
@@ -10,4 +10,6 @@ vdt runner start
 vdt doctor
 ```
 
-It does not install MCP servers or skills and does not run coding agents.
+The CLI does not install MCP servers or external skills and does not run coding agents. Subscription/local model execution belongs to the reviewed local-runner manifests; the in-product VDT agent is served through the application runtime, not the CLI command surface.
+
+Package and clean-install instructions live in `docs/RELEASE.md`.

@@ -1,5 +1,7 @@
 # Desktop Installation
 
+Last reviewed: **2026-07-23**.
+
 VDT Studio Desktop is the target distribution for seamless subscription CLI and local-model execution.
 
 ## Current Alpha Boundary

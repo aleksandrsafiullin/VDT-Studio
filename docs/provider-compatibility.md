@@ -1,5 +1,7 @@
 # Provider Compatibility
 
+Last reviewed against canonical metadata: **2026-07-23**. The certification file itself is dated **2026-06-22**; no newer credentialed live verification was performed during the documentation refresh.
+
 VDT Studio certifies subscription CLIs against reviewed manifest flags, structured-output contracts, and (where required) OS sandbox profiles. This document records tested versions, platform support, and explicit non-goals.
 
 See also [Local Runner](LOCAL_RUNNER.md) for pairing and API details.
@@ -49,10 +51,10 @@ This table must match `release/provider-certification.json`, `packages/model-bri
 
 Run live probes from a normal developer terminal, not from a sandboxed CI container:
 
-```
-pnpm --dir "/Users/aks/Documents/Apps/VDT Design/vdt-studio" live:codex
-pnpm --dir "/Users/aks/Documents/Apps/VDT Design/vdt-studio" live:cursor
-pnpm --dir "/Users/aks/Documents/Apps/VDT Design/vdt-studio" live:copilot -- --connection-only
+```bash
+pnpm live:codex
+pnpm live:cursor
+pnpm live:copilot -- --connection-only
 ```
 
 For a cheaper auth/connection-only check, append `-- --connection-only`.
@@ -104,7 +106,7 @@ Cursor now follows the same adapter posture used by open-design: VDT delegates t
 | Minimum version | `0.20.0` (`CODEX_CLI_MIN_VERSION`) |
 | Release status | **Alpha** |
 | Tested in CI | Fake backend (`fake-codex.cjs`) + adapter/parser fixtures; mocked e2e |
-| Maintainer live verification | Date TBD — run `pnpm --dir "/Users/aks/Documents/Apps/VDT Design/vdt-studio" live:codex` on a ChatGPT-signed-in machine |
+| Maintainer live verification | Date TBD — run `pnpm live:codex` on a ChatGPT-signed-in machine |
 | Auth modes | ChatGPT subscription sign-in (`codex login`); API-key mode is not used by VDT Studio |
 | OS sandbox | Codex CLI `--sandbox workspace-write` in a fresh temp cwd; no VDT OS-specific wrapper |
 | Platform matrix | **Alpha:** macOS, Linux, Windows when `codex` is on PATH and certified manifest flags apply; not supported until maintainer live and security gates pass |
@@ -151,7 +153,7 @@ Model discovery: `codex debug models`, parsed from JSON, JSONL or table output. 
 | Minimum version | `1.0.0` (`CLAUDE_CLI_MIN_VERSION`) |
 | Release status | **Alpha** |
 | Tested in CI | Fake backend (`fake-claude.cjs`) + adapter/parser fixtures; mocked e2e |
-| Maintainer live verification | Date TBD — run `VDT_LIVE_CLAUDE=1 pnpm --dir "/Users/aks/Documents/Apps/VDT Design/vdt-studio" vitest run packages/local-runner/src/server/claude.live.test.ts` on a Claude-Pro-signed-in machine |
+| Maintainer live verification | Date TBD — run `VDT_LIVE_CLAUDE=1 pnpm vitest run packages/local-runner/src/server/claude.live.test.ts` on a Claude-Pro-signed-in machine |
 | Auth modes | Claude Pro / subscription login (`claude login`) |
 | OS sandbox | Not required in manifest — tools disabled via CLI flags |
 | Platform matrix | **Alpha:** macOS, Linux, Windows when `claude` is on PATH; not supported until maintainer live and security gates pass |

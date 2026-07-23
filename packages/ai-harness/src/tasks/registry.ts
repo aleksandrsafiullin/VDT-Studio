@@ -76,6 +76,22 @@ export const TASK_LIMITS: Record<VdtAiTaskType, VdtAiTaskLimits> = {
     maxOutputBytes: DEFAULT_MAX_OUTPUT_BYTES,
     maxFindings: 30
   }),
+  data_agent_decision: withSharedReviewArrays({
+    maxInputBytes: 256 * 1024,
+    maxOutputBytes: 128 * 1024,
+    maxFindings: 20
+  }),
+  analyze_raw_dataset: withSharedReviewArrays({
+    maxInputBytes: 512 * 1024,
+    maxOutputBytes: DEFAULT_MAX_OUTPUT_BYTES,
+    maxChanges: GRAPH_MUTATION_CHANGES,
+    maxFindings: 40
+  }),
+  review_dataset_proposal: withSharedReviewArrays({
+    maxInputBytes: 512 * 1024,
+    maxOutputBytes: DEFAULT_MAX_OUTPUT_BYTES,
+    maxFindings: 40
+  }),
   generate_tree: withSharedReviewArrays({
     maxInputBytes: DEFAULT_MAX_INPUT_BYTES,
     maxOutputBytes: DEFAULT_MAX_OUTPUT_BYTES,

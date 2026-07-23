@@ -1,73 +1,97 @@
-# Local AI Threat Model
+# Local AI And Data Threat Model
 
-This threat model covers subscription CLI, local-model and desktop-sidecar execution for VDT Studio alpha work.
+Last reviewed against the working tree: **2026-07-23**.
 
-## Security Boundary
+This threat model covers API/BYOK providers, subscription CLIs, local-model execution, desktop sidecar execution, web research and experimental data ingestion.
 
-The trusted boundary for seamless Local AI is the desktop host:
+## Security Boundaries
 
-- Tauri exposes only reviewed commands listed in `docs/architecture/desktop-local-execution.md`.
-- The webview never receives provider credentials, executable paths, command arguments, environment values, runner tokens or sidecar handshake material.
-- Hosted web mode is API/BYOK only and must not detect or execute local CLIs.
-- Standalone localhost runner pairing remains a development and headless fallback, not the production desktop user journey.
+- Hosted web is API/BYOK only and must not detect or execute local CLIs.
+- Seamless Local AI is hosted by the desktop Tauri boundary and private sidecar protocol.
+- Standalone loopback runner is an explicit development/headless fallback with pairing.
+- Model output, web content and uploaded files are untrusted input.
+- Provider/CLI manifests, task schemas and deterministic validators are trusted code/configuration.
+- Data upload is not approved for hosted/public or trusted production use in the current alpha.
 
 ## Protected Assets
 
-- Provider subscription sessions and auth state.
-- API keys and BYOK credentials.
-- Desktop IPC request integrity.
-- Sidecar protocol nonce and request IDs.
-- Project data, version history and generated VDT content.
-- Repository files and local user files outside the ephemeral request directory.
-- Release artifacts, sidecar bundle resources and integrity manifests.
+- Provider subscription sessions and API/BYOK credentials.
+- Desktop IPC, sidecar handshake and request IDs.
+- Project metadata, graph revisions, conversations and generated VDT content.
+- Uploaded source files, semantic profiles, dataset versions and future evidence records.
+- Repository and user files outside request-scoped temporary directories.
+- Release artifacts, sidecar resources, manifests and SBOM/checksum files.
 
-## Threats And Controls
+## Implemented Controls
 
-| Threat | Control |
-| --- | --- |
-| Hosted web executes a local subscription CLI | `/api/ai/detect-clis` fails closed outside explicit development web mode; hosted copy points users to Desktop. |
-| Webview invokes arbitrary native capabilities | Tauri capability file enables no generic shell, filesystem or opener plugins; `pnpm desktop:verify` scans command/capability surface. |
-| Frontend supplies executable path, args, schema or env | Runtime request parsing rejects forbidden fields; manifests own executable aliases, static args, schema IDs and task support. |
-| Manifest or adapter argv injects NUL/path traversal/dangerous flags | Shared CLI argument validation rejects NUL bytes, `..` path traversal segments and reviewed dangerous flags before spawn. |
-| Provider output mutates a VDT silently | AI output is schema-validated, optionally repaired once, previewed as a change set and applied only after user selection. |
-| Provider reads repository or unrelated user files | Local AI requests run in fresh temp directories with filtered env and no browser-supplied paths. Tool-capable Cursor is constrained to a fresh temp `--workspace`; other subscription manifests must disable tools through reviewed CLI flags/policies before certification. |
-| OS-specific sandbox dependency enters a manifest | Runtime rejects sandbox-required manifests with `UNSAFE_CONFIGURATION`; supported Local AI execution must stay cross-platform. |
-| Sidecar stdout log corrupts protocol | Sidecar protocol accepts only bounded framed JSON messages; logs are structured on stderr. |
-| Sidecar never completes startup handshake | TS and Rust hosts enforce bounded startup-handshake timeouts and terminate the child on startup failure. |
-| Stale or tampered sidecar resource ships | `pnpm desktop:verify` rebuilds and hashes the sidecar bundle; the Rust desktop host verifies manifest SHA-256 digests before sidecar launch; `pnpm release:bundle:verify` scans declared desktop resources. |
-| Secret material ships in release artifacts | Release bundle verifier scans CLI tarball entries and desktop resources for secret-like files, private keys and common token patterns. |
-| Desktop installer claim hides native gaps | `pnpm desktop:native:preflight` fails closed until Rust/Cargo, pinned Tauri CLI, signing and a self-contained sidecar binary are present. |
+| Threat | Current control |
+|---|---|
+| Hosted web executes local CLI | App-mode checks fail closed; hosted copy routes users to Desktop |
+| Webview invokes arbitrary native capability | Reviewed Tauri commands only; no generic shell/filesystem/opener plugins |
+| Frontend supplies executable path/args/env/schema | Runtime parsers reject forbidden fields; manifests own execution details |
+| CLI argv injection/path traversal | Shared validation rejects NUL, traversal and reviewed dangerous flags |
+| Provider reads repository | Fresh temp workspaces, filtered environment and no browser-supplied cwd/path |
+| Sidecar stdout corrupts protocol | Bounded framed JSON on stdout; structured logs on stderr |
+| Sidecar startup hangs/crashes | Handshake timeout, child termination, pending rejection and crash-loop fail-closed |
+| Sidecar resource is stale/tampered | Manifest SHA-256 verification before launch and release bundle scanning |
+| Secret material ships | Bundle scanner, checksums and SBOM tooling |
+| BYOK target performs SSRF/redirect | DNS validation/pinning, private-range rejection, redirect and size limits |
+| Provider returns malformed graph | Closed schemas, local validation, bounded repair and calculation checks |
+| Research disabled by user | Tool-layer rejection before provider call |
 
-## Current Alpha Status
+## Open Critical Risks
 
-Implemented controls:
+| Risk | Status and required control |
+|---|---|
+| Conflicting revision overwrites existing file | P0: atomic reservation/write, revision CAS and crash/concurrency tests required |
+| Concurrent agent/stale snapshot overwrites manual changes | P0: per-run serialization, operation-level merge and conflict state required |
+| Untrusted XLS/XLSX parser vulnerabilities | P0-release: replace/update dependency and isolate parser before external upload |
+| Request/workbook materialized before effective limits | P0-release: streaming ingress and decompression/CPU/RAM budgets required |
+| ID-only dataset/run access | P0-release for hosted mode: project/user ownership or local-only enforcement required |
+| Plaintext files without retention/delete/encryption policy | P0-release: lifecycle, storage permissions and encryption policy required |
+| Partial preview analysed as full source | P0 correctness: parsers must read immutable full bytes and disclose sampling |
+| Web/file prompt injection | P1: mark source content as untrusted, isolate policy and add adversarial tests |
+| Provider receives sensitive sample/profile | P1: data minimization, explicit consent, DLP/redaction and egress audit required |
+| Dangerous existing-project mutation auto-applies | P1: risk-based approval and base-revision validation required |
 
-- Hosted/local execution split.
-- Desktop reviewed command allowlist.
-- Sidecar private pipe protocol foundation.
-- Sidecar startup timeout and crash-loop failure controls.
-- Sidecar bundle integrity checks in packaging gates and host launch path.
-- Runtime schema hardening and bounded repair.
-- Provider certification status verification.
-- Release SBOM/checksum/bundle secret checks.
-- Cross-platform Local AI certification gate that rejects OS-specific sandbox-required manifests.
+## Provider And CLI Boundary
 
-Open release blockers:
+- The browser never supplies executable paths, static arguments, environment or credentials to local CLI adapters.
+- Subscription backends remain at the status in `release/provider-certification.json`; fake tests are not live evidence.
+- Tool-capable Cursor receives a fresh ephemeral workspace, not the repository cwd or VDT MCP configuration.
+- Other reviewed subscription manifests deny tools through provider-owned flags/policies and validate output locally.
+- An unavailable required sandbox produces `UNSAFE_CONFIGURATION`.
 
-- Live-provider certification for subscription CLIs.
-- Self-contained sidecar binary with no separate Node requirement.
-- Native Tauri build verification with Rust/Cargo and pinned Tauri CLI.
-- macOS signing identity and Windows installer target verification.
-- Clean-machine desktop installer E2E.
+## Research Boundary
 
-The sidecar preparation script supports ingesting a reviewed Node-free runtime binary through `VDT_DESKTOP_SELF_CONTAINED_SIDECAR`, but the checked-in default development sidecar remains a Node runtime bundle until that compiler output is produced.
+Search results currently return snippets that are fed back to the model. Until a Research Broker and immutable Evidence Store exist:
 
-## Verification Commands
+- snippets must be treated as untrusted quoted data;
+- they must not change system/tool policy;
+- they must not be accepted as audited benchmark evidence;
+- source opening, claim extraction, corroboration and user acceptance remain required roadmap controls.
+
+## Data-Ingestion Boundary
+
+The current `.vdt/data-discovery` storage and API are suitable only for single-user local alpha evaluation on non-sensitive copies. Hosted/public data ingestion requires all controls listed in `docs/release-checklist.md` and `docs/DATA_INGESTION.md`.
+
+## Native Release Blockers
+
+- Node-free self-contained sidecar binary.
+- Native Rust/Tauri build verification and pinned CLI.
+- macOS signing and Windows installer verification.
+- Clean-machine installation and Local AI E2E.
+- Passing dependency/security audit and independent review.
+
+## Verification
 
 ```bash
+pnpm security:audit
+pnpm certification:verify
 pnpm desktop:verify
 pnpm desktop:native:preflight
-pnpm certification:verify
 pnpm release:bundle:verify
 pnpm docs:verify
 ```
+
+The current dependency audit fails with three high findings; documentation must not claim this gate is complete.

@@ -1,27 +1,35 @@
 # Local Runner
 
-The local runner is the loopback-only execution boundary for approved local model backends. Start it with:
+Last reviewed against the working tree: **2026-07-23**.
+
+The local runner is a loopback-only execution boundary for approved local HTTP and subscription-CLI model backends. It is used for repository development, headless CLI workflows and the alpha CLI package. Normal production desktop UX uses the managed sidecar over private IPC instead of browser pairing.
+
+Start the development runner with:
 
 ```bash
-vdt runner start
-# repository development fallback
 pnpm local-runner:start
+# packaged CLI equivalent
+vdt runner start
 ```
 
-The terminal prints a short-lived six-digit pairing code. Enter that code in `Settings -> AI -> Local runner`. The returned high-entropy token stays in browser memory only, expires, and is revoked when the runner restarts or the user unpairs.
+The terminal prints a short-lived pairing code. In explicit standalone-runner Developer Mode, exchange it in `Settings -> AI`. The returned high-entropy token remains in browser memory, expires and is revoked on restart/unpair.
 
 ## v1 API
 
-- `GET /v1/health` is public.
-- `POST /v1/pair` exchanges the short-lived code for a session token.
-- `POST /v1/unpair` revokes the current token.
-- `GET /v1/backends` lists public backend capabilities, never executables or arguments.
-- `POST /v1/backends/:id/test` runs a fixed connection probe.
-- `POST /v1/completions` runs an approved task/schema contract.
-- `POST /v1/completions/:requestId/cancel` cancels an active run.
-- `GET /v1/runs/:requestId` returns bounded run status and output.
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/health` | Public loopback health |
+| `POST /v1/pair` | Exchange one-time code for session token |
+| `POST /v1/unpair` | Revoke session |
+| `GET /v1/backends` | Public backend capabilities without executable details |
+| `POST /v1/backends/:id/test` | Fixed reviewed connection probe |
+| `POST /v1/completions` | Execute registered task/schema contract |
+| `POST /v1/completions/:requestId/cancel` | Cancel active request |
+| `GET /v1/runs/:requestId` | Bounded status/result lookup |
 
 All endpoints except health and pair require `Authorization: Bearer <session-token>`.
+
+Example completion request:
 
 ```json
 {
@@ -35,22 +43,29 @@ All endpoints except health and pair require `Authorization: Bearer <session-tok
 }
 ```
 
-Subscription CLIs are enabled only through reviewed per-provider adapters. Codex and Claude have certified tool/session restrictions; Gemini and Copilot use tool-denial flags/policies without a macOS-only sandbox dependency. Cursor is beta in an open-design-style mode: VDT delegates the agent loop to Cursor, passes a fresh temp `--workspace`, does not pass the repo cwd or VDT MCP config, and validates the returned schema locally. See [Provider compatibility](provider-compatibility.md).
+The browser supplies IDs and bounded input only. Manifests own executable aliases, arguments, endpoints, environment and supported tasks/schemas.
 
-## Security contract
+## Security Contract
 
-- Bind only to `127.0.0.1`; reject non-local `Host` headers.
-- Require an allowlisted browser `Origin` for mutations and keep CORS enabled in addition to pairing.
-- Accept JSON only and cap request bodies at 1 MB and serialized prompts at 512 KB.
-- Resolve reviewed executable aliases through symlinks to regular files outside the repository and spawn with `shell: false`.
-- Create a new owner-only temporary working directory per request and delete it after success, failure, timeout or cancellation.
-- Keep Local AI execution cross-platform: reviewed subscription manifests must either disable provider tools through CLI flags/policies or use the explicit Cursor ephemeral-workspace beta boundary. OS-specific sandbox-required manifests are rejected with `UNSAFE_CONFIGURATION`.
-- Pass only `PATH`, `HOME`, `USER`, `LOGNAME`, temp and locale variables; force `NO_COLOR=1`.
-- Cap a line at 1 MB, stdout at 4 MB, stderr at 1 MB and validated result JSON at 1 MB.
-- Cap execution at 120 seconds. Cancellation and timeout send `SIGTERM`, wait three seconds, then send `SIGKILL`.
-- Disable HTTP redirects. Built-in local HTTP endpoints are fixed in manifests.
-- Audit only request/backend/version/task/timing/exit/output/schema/error metadata. Prompts, credentials, stdout and stderr are not logged.
+- Bind only to `127.0.0.1`; reject non-local `Host` values.
+- Require allowlisted browser origins for mutations in addition to pairing.
+- Accept JSON only; bound bodies, prompts, lines, stdout, stderr and validated results.
+- Resolve reviewed executable aliases to regular files outside the repository and spawn with `shell: false`.
+- Use a fresh owner-only temporary directory for every request and clean it after completion.
+- Filter environment variables and never accept browser-supplied commands, paths, arguments or environment.
+- Disable redirects for local HTTP providers; built-in endpoints are manifest-owned.
+- Enforce timeout and cancellation with `SIGTERM`, bounded grace and `SIGKILL`.
+- Log only redacted request/backend/task/timing/schema/error metadata.
+- Reject manifests that require an unavailable OS-specific sandbox with `UNSAFE_CONFIGURATION`.
 
-Additional browser origins can be added with `VDT_LOCAL_RUNNER_ALLOWED_ORIGINS` as a comma-separated list. The bind address cannot be relaxed by configuration.
+Provider-specific tool/session restrictions vary. Release status and live evidence are canonical in `release/provider-certification.json` and summarized in `provider-compatibility.md`.
 
-Run `vdt doctor` to inspect the Node/runtime configuration and current runner health.
+## Verification
+
+```bash
+pnpm test
+pnpm certification:verify
+pnpm package:verify
+```
+
+Passing fake-executable and schema tests proves the bounded adapter contract, not live provider quality or production support.
