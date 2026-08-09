@@ -1,5 +1,6 @@
 import { buildStoredProjectSummary, jsonError, parseSafeId } from "../../../storage-response";
 import { openVdtStorageDatabase } from "../../../storage-database";
+import { storageWriteErrorResponse } from "../../../storage-write-adapter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,8 +10,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
   const parsedProjectId = parseSafeId(projectId, "projectId");
   if (!parsedProjectId.ok) return jsonError(parsedProjectId.message);
 
-  const database = openVdtStorageDatabase(process.cwd());
+  let database: ReturnType<typeof openVdtStorageDatabase> | undefined;
   try {
+    database = openVdtStorageDatabase(process.cwd());
     const project = database.getProject(parsedProjectId.value);
     if (!project) return jsonError("Project not found.", 404, "PROJECT_NOT_FOUND");
 
@@ -28,8 +30,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
       pendingProposals
     });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "Project explorer could not be loaded.", 500, "PROJECT_EXPLORER_FAILED");
+    return storageWriteErrorResponse(error, "Project explorer could not be loaded.");
   } finally {
-    database.close();
+    database?.close();
   }
 }

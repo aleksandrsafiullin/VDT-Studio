@@ -28,7 +28,7 @@ The schema registry contains 18 task contracts. Seventeen are exposed product ta
 `packages/vdt-agent-runtime` implements:
 
 1. first user-facing response;
-2. request classification and skill retrieval context;
+2. legacy request classification and skill retrieval context;
 3. repeated `agent_decision` calls;
 4. exactly one tool call, user question or finish decision per step;
 5. structured tool result/error feedback;
@@ -59,9 +59,23 @@ Known limitations:
 
 - classification domains are limited to `mining`, `finance`, `saas` and `generic`;
 - normalization is effectively English/ASCII and does not reliably classify Russian or Kazakh requests;
-- there is no embedding retrieval, ontology alias layer or model rerank;
+- `skill.read` currently mutates selection and no revision-aware explicit selection command exists;
+- no-match can select the generic skill automatically;
 - a recipe can be labelled complete without executable formula closure;
 - per-skill evaluation coverage is incomplete.
+
+The accepted corrective target is documented in [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) and the [`corrective implementation plan`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md):
+
+- exactly one immutable canonical artifact exists for each `skillId + versionId`, and its content may be in any language;
+- the original request is preserved; the model inspects bounded accessible catalog cards and reads candidates;
+- retrieval is recall-only and never becomes the selection decision;
+- `skill.read` is selection-neutral: it appends an exact version/hash read receipt but does not change selection, recipe binding or build basis;
+- only `skill.select`, guarded by run-state CAS, idempotency, catalog snapshot/hash, ACL and revocation checks, mutates selection;
+- no applicable skill produces an explicit gap instead of an automatic generic fallback;
+- translated copies, language aliases and keyword/regex/marker classifiers are not the multilingual architecture;
+- publishable recipe artifacts in Wave 1B depend on the strict metric/formula/input/recipe schemas from Wave 1A.1.
+
+This target is not implemented. Actor and authorization context must be server-issued; model/tool/request data cannot choose principal, tenant, workspace, project, roles or approval authority. Corrective feature flags remain server-owned, fail-closed and default OFF.
 
 Skill changes must keep source registry, recipe mappings, tests and generated sidecar resources aligned. Run:
 

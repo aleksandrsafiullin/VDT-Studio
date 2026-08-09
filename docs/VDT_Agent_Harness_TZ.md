@@ -1,6 +1,32 @@
 # ТЗ: Agentic VDT Harness для VDT Studio
 
-> **Статус:** нормативное референсное ТЗ, реализовано частично. Описания «текущей проблемы» ниже отражают момент создания документа и не должны использоваться как актуальный статус без сверки с кодом. Текущее состояние зафиксировано в `AI_HARNESS.md`, `PRODUCTION_READINESS.md` и ADR-002. Проверено 2026-07-23.
+> **Статус:** нормативное референсное ТЗ, реализовано частично. Описания «текущей проблемы» ниже отражают момент создания документа и не должны использоваться как актуальный статус без сверки с кодом. Текущее состояние зафиксировано в `AI_HARNESS.md`, `PRODUCTION_READINESS.md` и ADR-002. Контракт skills ниже скорректирован ADR-003 и `VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`. Проверено 2026-07-23.
+
+## Корректирующий контракт Gate A
+
+Этот раздел имеет приоритет над конфликтующими требованиями ниже. Старые `classification`, `skill.search`, `VdtClassification`, `matchingTerms`, `kpiPatterns`, score-based selection и generic fallback описывают V1/исторический путь и не являются целевым routing contract.
+
+Целевой V2:
+
+```text
+original request
+  -> skill.catalog_overview / skill.catalog_page or skill.discover
+  -> skill.read exact candidate versions (selection-neutral; append-only receipt)
+  -> skill.select OR skill.report_gap
+  -> skill.compile_recipe for pinned selected versions
+  -> immutable validated RunBuildBasis
+  -> bounded build tools
+```
+
+- Один `skillId + versionId` имеет одну каноническую копию.
+- Многоязычность обеспечивается пониманием агента, а не переводами/aliases/marker routing.
+- Retrieval не меняет selection; `skill.read` не выбирает skill.
+- `skill.select` выполняется под CAS/idempotency, сохраняет version/hash/rationale/gaps и атомарно заменяет полный selection set.
+- Generic не выбирается автоматически.
+- При отсутствии подходящего skill фиксируется gap и переход к research, `user.ask` или versioned user specification.
+- V2 остаётся default-off/local-only до прохождения gates.
+
+Полный storage, ActorContext, ACL, hashing, revocation, migration и feature-flag contract: [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md).
 
 ## 0. Назначение документа
 
@@ -13,8 +39,8 @@
 Текущая реализация создаёт иллюзию агентской работы, но фактически выполняет один большой structured AI call:
 
 1. Пользователь заполняет brief.
-2. Код детерминированно выбирает skills.
-3. Skills и decomposition plan добавляются в prompt.
+2. Legacy-код детерминированно выбирает skills.
+3. Legacy selected skills и decomposition plan добавляются в prompt.
 4. Модель одним ответом возвращает полный JSON дерева.
 5. JSON валидируется и превращается в VdtProject.
 6. UI показывает agent events уже вокруг завершённого результата.
@@ -47,7 +73,7 @@ Agent Run API + SSE events
 VDT Agent Orchestrator
         ↕
 Tool Registry
-  ├─ skill.search / skill.read / skill.compileRecipe
+  ├─ skill.catalog_* / skill.discover / skill.read / skill.select / skill.report_gap / skill.compile_recipe
   ├─ vdt.createDraft / vdt.addNode / vdt.setFormula / vdt.validate / vdt.layout
   ├─ project.read / project.diff / project.observeManualChange
   ├─ user.ask / user.requestApproval
@@ -423,7 +449,9 @@ export interface AgentToolContext {
 }
 ```
 
-### 8.2. Skill tools
+### 8.2. Skill tools — legacy V1 reference
+
+Следующие `skill.search`/classification shapes сохраняются только для анализа и миграции V1. Они superseded корректирующим контрактом Gate A выше и не должны реализовываться как V2.
 
 #### `skill.search`
 

@@ -6,7 +6,7 @@ VDT Studio `0.1.0-alpha.0` packages the Node 24 product CLI and paired localhost
 
 ## Current Release Status
 
-The aggregate release gate is **not green**. `pnpm security:audit` reports three high-severity production dependency findings in `xlsx` and `sharp`. Do not publish a new release or describe the current package as security-gate complete until the audit is remediated and rerun.
+The aggregate release gate is **not green**. `pnpm security:audit` reports 11 production-dependency vulnerabilities: 6 high and 5 moderate. The high findings affect `xlsx`, `sharp` and the current `next@15.5.19`. Do not publish a new release or describe the current package as security-gate complete until the audit is remediated and rerun.
 
 Other gates verified on 2026-07-23:
 

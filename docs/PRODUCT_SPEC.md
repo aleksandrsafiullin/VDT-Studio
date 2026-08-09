@@ -1,6 +1,6 @@
 # Product Specification
 
-Last reviewed against the working tree: **2026-07-23**.
+Last reviewed against the working tree: **2026-07-24**.
 
 ## Product Definition
 
@@ -29,7 +29,7 @@ The root KPI appears on the left and drivers expand to the right. The canvas is 
 - List, load and compare saved revisions.
 - Preserve user work across reloads while avoiding silent conflict or stale overwrite.
 
-Current status: implemented as an alpha foundation. Atomic revision conflict handling and a single durable source-of-truth policy remain blockers.
+Current status: implemented as an alpha foundation. W0.1 atomic revision conflict handling is implemented: manual/create/agent writers use one strict CAS/idempotency boundary and an exclusive-create no-clobber final path. Conflicts preserve local unsaved work, and failed auto-save blocks navigation. A single durable source-of-truth policy and metadata/revision ownership remain W0.5 blockers; Windows durability is unverified.
 
 ### Factor-tree editing and calculation
 
@@ -42,21 +42,24 @@ Current status: implemented for basic arithmetic. Dimensional algebra, visual-cy
 
 ### In-product VDT agent
 
-- Classify a request, retrieve local skills, decide the next bounded action, use tools, receive feedback and iterate.
+- Preserve the original-language request, inspect bounded local skill candidates and make an explicit agent-owned selection.
+- Decide the next bounded action, use one reviewed tool, receive feedback and iterate.
 - Ask focused clarification questions when necessary.
 - Build progressively and finish only with a structurally valid, calculable root.
 - Expose real run events rather than synthetic reasoning.
 - Respect user research policy and manual changes.
 
-Current status: working agent prototype. Per-run serialization, complete tool schemas, multilingual retrieval, restart recovery and reliable manual-change merge are incomplete.
+Current status: working legacy agent prototype. It still uses deterministic domain/term classification and can select a generic fallback automatically. Per-run serialization, complete tool schemas, agent-owned cross-language resolution, restart recovery and reliable manual-change merge are incomplete.
 
 ### Skills and process discovery
 
-- Prefer reviewed local skills for known domains.
-- Detect missing process knowledge and, with user permission, research authoritative sources.
-- Preserve selected skill IDs, assumptions and evidence in the run record.
+- Keep one immutable canonical artifact for each `skillId + versionId`; skill content may be authored in any language.
+- Let the agent inspect accessible catalog cards and skill content before explicit selection.
+- Keep `skill.read` selection-neutral: it may append an auditable exact-version read receipt, while only revision-aware, idempotent `skill.select` changes the run selection.
+- Detect no applicable skill explicitly and, with user permission, ask, research or create a versioned user specification.
+- Preserve selected skill IDs, versions, hashes, assumptions and evidence in the run record.
 
-Current status: the local registry contains 11 skills and is heavily mining-focused. Russian/Kazakh retrieval and auditable process-research evidence are not implemented.
+The target deliberately excludes translated skill copies, language-alias registries, keyword/marker routing as the selection decision and automatic generic fallback. Current status: the local registry contains 11 skills and is heavily mining-focused; its legacy ASCII-oriented retrieval remains live. The versioned repository, read ledger, explicit CAS selection and auditable process-research evidence are not implemented. See [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md).
 
 ### Benchmarks
 
@@ -104,6 +107,8 @@ Current status: implemented. PNG, Excel, PowerPoint and PDF outputs are planned.
 ## Security And Privacy
 
 - Hosted web is API/BYOK only; local subscription execution belongs to Desktop or the explicit development runner.
+- Hosted/public upload remains disabled. Local-only access uses a stable application-owned principal; hosted access requires a server-issued authenticated actor context.
+- Request bodies, model output, skills and uploaded files cannot choose or override principal, tenant, workspace, project, role or approval authority.
 - API keys remain session-only and are excluded from project data.
 - Provider endpoints, executable aliases and CLI flags are reviewed server-side.
 - Uploaded data requires ownership, resource limits, retention/delete controls and explicit outbound-provider consent before production use.
@@ -117,15 +122,15 @@ Current status: implemented. PNG, Excel, PowerPoint and PDF outputs are planned.
 | Basic factor-tree editing and arithmetic | Implemented with known validation gaps |
 | Scenario calculation and trace | Implemented |
 | Agent decision/tool loop | Working prototype |
-| Skill retrieval | Partial, narrow and mostly English |
+| Skill selection | Legacy deterministic retrieval; agent-owned single-copy target not implemented |
 | Web process research | Search-only prototype |
 | Auditable benchmark workflow | Planned |
 | Tabular data discovery | Experimental |
 | Executable data-to-KPI baseline | Not implemented |
-| SQLite revisions | Implemented with atomicity blocker |
+| SQLite revisions | W0.1 atomic commit implemented with independent `GO`; Windows durability unverified; W0.5 ownership open |
 | CLI/runner alpha package | Implemented; release gate currently blocked |
 | Signed clean-machine desktop installers | Not implemented |
 
 ## Acceptance Boundary
 
-The application must not be described as production-ready until the blockers in `PRODUCTION_READINESS.md` are closed. The detailed target architecture and development order are defined in `ROADMAP.md` and the 2026-07-23 critical review.
+The application must not be described as production-ready until the blockers in `PRODUCTION_READINESS.md` are closed. The authoritative target and order are defined in [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md), [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) and the [`corrective execution log`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md); `ROADMAP.md` is the operational summary. Frozen target contracts are not implementation evidence.

@@ -5,8 +5,19 @@ import os from "node:os";
 import {
   assertSafeId,
   openVdtDatabase,
+  validateStrictVdtProjectCommit,
   vdtPreviewDir,
-  type VdtDatabase
+  VdtStorageError,
+  type ActorContextV1,
+  type CreateVdtWithInitialSnapshotCommandV1,
+  type JsonValue,
+  type ProjectRuntimeStateV1,
+  type RevisionCommitCommandV2,
+  type RevisionCommitIntentV1,
+  type RevisionCommitResultV2,
+  type VdtDatabase,
+  type VdtRecord,
+  type VdtRevisionHeadV2
 } from "@vdt-studio/storage";
 import {
   hydrateAgentRunState,
@@ -17,24 +28,121 @@ import {
   type MutationProposal,
   type PersistedAgentRunState,
   type VdtAgentEvent,
-  type VdtAgentRunSnapshot,
   type VdtAgentRunState,
   type VdtAgentWorkspaceContext
 } from "@vdt-studio/vdt-agent-runtime";
 import type { VdtProject } from "@vdt-studio/vdt-core";
+import { createStorageWriteActor } from "@/app/api/vdt/storage-write-adapter";
 
 const DEFAULT_AGENT_PROJECT_ID = "project_agent_workspace";
 const DEFAULT_AGENT_PROJECT_NAME = "VDT Studio workspace";
+const STORAGE_REPLAY_STATE_KEY = "__vdtStorageReplayStateV1";
 
 export function openAgentRunPersistenceDatabase(projectRoot: string): VdtDatabase {
   const dataDir = process.env.VDT_DATA_DIR ?? defaultDataDir(projectRoot);
   return openVdtDatabase(projectRoot, { dataDir });
 }
 
-export function createSqliteAgentRunPersistence(database: VdtDatabase): AgentRunPersistence {
+interface SqliteAgentRunPersistenceOptions {
+  actorFactory?: ((projectId: string) => ActorContextV1) | undefined;
+}
+
+interface LazySqliteAgentRunPersistenceOptions
+  extends SqliteAgentRunPersistenceOptions {
+  databaseFactory?: (() => VdtDatabase) | undefined;
+}
+
+interface AgentInitialCombinedReplayV1 {
+  kind: "combined_create";
+  projectId: string;
+  vdtId: string;
+  command: CreateVdtWithInitialSnapshotCommandV1;
+  project: VdtProject;
+}
+
+interface AgentInitialRevisionReplayV1 {
+  kind: "initial_revision";
+  projectId: string;
+  vdtId: string;
+  command: RevisionCommitCommandV2;
+  project: VdtProject;
+}
+
+interface AgentLegacyInitialBasisV1 {
+  kind: "legacy_verified";
+  projectId: string;
+  vdtId: string;
+  revisionId: string;
+  contentIdentity: {
+    scheme: "legacy_graph_sha256";
+    hash: `sha256:${string}`;
+  };
+}
+
+type AgentInitialReplayV1 =
+  | AgentInitialCombinedReplayV1
+  | AgentInitialRevisionReplayV1
+  | AgentLegacyInitialBasisV1;
+
+interface AgentProposalCommitReplayV1 {
+  proposalStorageId: string;
+  projectId: string;
+  vdtId: string;
+  command: RevisionCommitCommandV2;
+  project: VdtProject;
+  proposal: MutationProposal;
+}
+
+interface AgentStorageReplayStateV1 {
+  schemaVersion: "agent_storage_replay_state.v1";
+  initial: AgentInitialReplayV1;
+  proposals: AgentProposalCommitReplayV1[];
+}
+
+export function createLazySqliteAgentRunPersistence(
+  projectRoot: string,
+  options: LazySqliteAgentRunPersistenceOptions = {}
+): AgentRunPersistence {
+  let delegate: AgentRunPersistence | undefined;
+  const persistence = (): AgentRunPersistence => {
+    if (delegate) return delegate;
+    const database =
+      options.databaseFactory?.() ??
+      openAgentRunPersistenceDatabase(projectRoot);
+    delegate = createSqliteAgentRunPersistence(database, {
+      actorFactory: options.actorFactory
+    });
+    return delegate;
+  };
   return {
     createRun(state) {
-      const projectContext = ensureStorageProject(database, state);
+      persistence().createRun(state);
+    },
+    updateRun(state) {
+      persistence().updateRun(state);
+    },
+    appendEvent(event, state) {
+      persistence().appendEvent(event, state);
+    },
+    getState(runId) {
+      return persistence().getState(runId);
+    },
+    getSnapshot(runId) {
+      return persistence().getSnapshot(runId);
+    }
+  };
+}
+
+export function createSqliteAgentRunPersistence(
+  database: VdtDatabase,
+  options: SqliteAgentRunPersistenceOptions = {}
+): AgentRunPersistence {
+  const actorFactory = options.actorFactory ?? createStorageWriteActor;
+  return {
+    createRun(state) {
+      const projectContext = storageProjectContextFromState(state);
+      const actor = actorFactory(projectContext.projectId);
+      ensureStorageProject(database, state, projectContext);
       const conversationId = ensureConversation(database, projectContext.projectId, state);
       const payload = persistedRunPayload(state);
       database.createAgentRun({
@@ -50,56 +158,82 @@ export function createSqliteAgentRunPersistence(database: VdtDatabase): AgentRun
         completedAt: state.completedAt
       });
       persistConversationMessages(database, state, conversationId);
-      persistRunArtifacts(database, state);
+      const replayState = persistRunArtifacts(
+        database,
+        state,
+        projectContext,
+        actor
+      );
+      if (replayState) {
+        updatePersistedAgentRun(
+          database,
+          state,
+          conversationId,
+          replayState
+        );
+      }
     },
     updateRun(state) {
-      persistRunArtifacts(database, state);
-      const projectContext = ensureStorageProject(database, state);
+      const projectContext = storageProjectContextFromState(state);
+      const actor = actorFactory(projectContext.projectId);
+      ensureStorageProject(database, state, projectContext);
+      const replayState = persistRunArtifacts(
+        database,
+        state,
+        projectContext,
+        actor
+      );
       const conversationId = ensureConversation(database, projectContext.projectId, state);
       persistConversationMessages(database, state, conversationId);
-      const payload = persistedRunPayload(state);
-      database.updateAgentRun(state.runId, {
-        vdtId: vdtIdFromState(state),
+      updatePersistedAgentRun(
+        database,
+        state,
         conversationId,
-        status: state.status,
-        phase: state.phase,
-        request: payload.request,
-        publicSnapshot: payload.publicSnapshot,
-        internalState: payload.internalState,
-        completedAt: state.completedAt
-      });
+        replayState
+      );
     },
     appendEvent(event, state) {
+      const projectContext = storageProjectContextFromState(state);
+      const actor = actorFactory(projectContext.projectId);
+      ensureStorageProject(database, state, projectContext);
       appendEventIfNew(database, event);
-      persistRunArtifacts(database, state);
-      const projectContext = ensureStorageProject(database, state);
+      const replayState = persistRunArtifacts(
+        database,
+        state,
+        projectContext,
+        actor
+      );
       const conversationId = ensureConversation(database, projectContext.projectId, state);
       persistConversationMessages(database, state, conversationId);
-      const payload = persistedRunPayload(state);
-      database.updateAgentRun(state.runId, {
-        vdtId: vdtIdFromState(state),
+      updatePersistedAgentRun(
+        database,
+        state,
         conversationId,
-        status: state.status,
-        phase: state.phase,
-        request: payload.request,
-        publicSnapshot: payload.publicSnapshot,
-        internalState: payload.internalState,
-        completedAt: state.completedAt
-      });
+        replayState
+      );
     },
     getState(runId) {
       const record = database.getAgentRun(runId);
       const persisted = record?.internalState as PersistedAgentRunState | undefined;
-      return persisted ? hydrateAgentRunState(persisted) : null;
+      if (!persisted) return null;
+      return reconcilePersistedReplayState(
+        database,
+        hydrateAgentRunState(persisted),
+        replayStateFromInternalState(record?.internalState),
+        actorFactory
+      );
     },
     getSnapshot(runId) {
-      const record = database.getAgentRun(runId);
-      return record?.publicSnapshot as VdtAgentRunSnapshot | undefined ?? null;
+      const state = this.getState(runId);
+      return state ? snapshotFromState(state) : null;
     }
   };
 }
 
-function persistedRunPayload(state: VdtAgentRunState): {
+function persistedRunPayload(
+  state: VdtAgentRunState,
+  replayState?: AgentStorageReplayStateV1 | undefined
+): {
   request: Record<string, unknown>;
   publicSnapshot: Record<string, unknown>;
   internalState: Record<string, unknown>;
@@ -108,49 +242,183 @@ function persistedRunPayload(state: VdtAgentRunState): {
   return {
     request: internalState.snapshot.request as unknown as Record<string, unknown>,
     publicSnapshot: internalState.snapshot as unknown as Record<string, unknown>,
-    internalState: internalState as unknown as Record<string, unknown>
+    internalState: {
+      ...internalState,
+      ...(replayState ? { [STORAGE_REPLAY_STATE_KEY]: replayState } : {})
+    } as unknown as Record<string, unknown>
   };
 }
 
-function persistRunArtifacts(database: VdtDatabase, state: VdtAgentRunState): void {
+function persistRunArtifacts(
+  database: VdtDatabase,
+  state: VdtAgentRunState,
+  projectContext: StorageProjectContext,
+  actor: ActorContextV1
+): AgentStorageReplayStateV1 | undefined {
   const project = state.draftProject ?? state.project;
-  if (!project) return;
-  const projectContext = ensureStorageProject(database, state);
+  const existingReplayState = replayStateForRun(database, state.runId);
+  if (!project) return existingReplayState;
 
-  const vdtId = ensureVdtRecord(database, projectContext.projectId, state, project);
-  persistRevisionIfMissing(database, {
-    projectId: projectContext.projectId,
-    project: state.draftProject ?? project,
-    vdtId,
-    revisionNo: 1,
-    source: "agent",
-    summary: "Initial VDT draft",
-    validation: state.validationState,
-    calculation: state.calculationState
-  });
+  const initial = ensureInitialAgentVdt(
+    database,
+    projectContext.projectId,
+    state,
+    project,
+    actor,
+    existingReplayState?.initial
+  );
+  let replayState: AgentStorageReplayStateV1 = {
+    schemaVersion: "agent_storage_replay_state.v1",
+    initial: initial.replay,
+    proposals: existingReplayState?.proposals ?? []
+  };
 
   for (const proposal of state.mutationProposals ?? []) {
-    persistMutationProposal(database, projectContext.projectId, state, vdtId, proposal);
+    replayState = persistMutationProposal(
+      database,
+      projectContext.projectId,
+      state,
+      initial.vdtId,
+      proposal,
+      actor,
+      replayState
+    );
   }
+  return replayState;
 }
 
-function ensureVdtRecord(database: VdtDatabase, projectId: string, state: VdtAgentRunState, project: VdtProject): string {
+function ensureInitialAgentVdt(
+  database: VdtDatabase,
+  projectId: string,
+  state: VdtAgentRunState,
+  project: VdtProject,
+  actor: ActorContextV1,
+  persistedReplay?: AgentInitialReplayV1 | undefined
+): { vdtId: string; replay: AgentInitialReplayV1 } {
   const vdtId = storageVdtId(state, project);
-  if (database.getVdt(vdtId)) return vdtId;
-  const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
-  database.createVdt({
-    id: vdtId,
-    projectId,
-    name: project.name || `${rootNode?.name ?? state.request.input.rootKpi ?? "Value driver tree"} VDT`,
-    rootKpi: rootNode?.name ?? state.request.input.rootKpi ?? "Value driver tree",
-    unit: rootNode?.unit ?? state.request.input.unit,
-    timePeriod: state.request.input.timePeriod,
-    metadata: {
-      sourceRunId: state.runId,
-      sourceProjectId: project.id
+  const idempotencyKey = `agent-run:${state.runId}:initial-v1`;
+  if (persistedReplay) {
+    if (
+      persistedReplay.projectId !== projectId ||
+      persistedReplay.vdtId !== vdtId
+    ) {
+      throw new VdtStorageError(
+        "IDEMPOTENCY_KEY_REUSE",
+        `Persisted initial replay basis does not match run ${state.runId}.`
+      );
     }
+    executeInitialReplay(database, actor, persistedReplay);
+    return { vdtId, replay: persistedReplay };
+  }
+
+  const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+  const runtime = requireProjectRuntimeState(database, projectId);
+  const intent: RevisionCommitIntentV1 = {
+    source: "agent",
+    summary: "Initial VDT draft",
+    validation: jsonOrNull(state.validationState),
+    calculation: jsonOrNull(state.calculationState)
+  };
+  validateStrictVdtProjectCommit(project);
+  const existing = database.getVdt(vdtId);
+  if (!existing) {
+    const replay: AgentInitialCombinedReplayV1 = {
+      kind: "combined_create",
+      projectId,
+      vdtId,
+      command: {
+        schemaVersion: "create_vdt_with_initial_snapshot.v1",
+        projectId,
+        expectedRuntimeGeneration: runtime.runtimeGeneration,
+        expectedGenerationVersion: runtime.generationVersion,
+        idempotencyKey,
+        vdt: {
+          requestedVdtId: vdtId,
+          name:
+            project.name ||
+            `${rootNode?.name ?? state.request.input.rootKpi ?? "Value driver tree"} VDT`,
+          rootKpi:
+            rootNode?.name ??
+            state.request.input.rootKpi ??
+            "Value driver tree",
+          unit: rootNode?.unit ?? state.request.input.unit ?? null,
+          timePeriod: state.request.input.timePeriod ?? null,
+          status: "draft",
+          metadata: {
+            sourceRunId: state.runId,
+            sourceProjectId: project.id
+          }
+        },
+        revisionIntent: intent
+      },
+      project
+    };
+    persistReplayCheckpoint(database, state, {
+      schemaVersion: "agent_storage_replay_state.v1",
+      initial: replay,
+      proposals: []
+    });
+    executeInitialReplay(database, actor, replay);
+    return { vdtId, replay };
+  }
+
+  const head = database.getVdtRevisionHead(vdtId);
+  if (!head || head.projectId !== projectId || existing.projectId !== projectId) {
+    throw new VdtStorageError(
+      "VDT_NOT_READY",
+      `Existing agent VDT ${vdtId} is not a ready project-owned record.`
+    );
+  }
+  if (head.activeRevisionId !== null) {
+    const replay = reconstructExistingInitialReplay(
+      database,
+      state,
+      existing,
+      head,
+      runtime
+    );
+    persistReplayCheckpoint(database, state, {
+      schemaVersion: "agent_storage_replay_state.v1",
+      initial: replay,
+      proposals: []
+    });
+    executeInitialReplay(database, actor, replay);
+    return { vdtId, replay };
+  }
+  if (
+    head.activeContentIdentity !== null ||
+    head.pendingRevisionId !== null ||
+    head.commitGeneration !== 0 ||
+    database.listVdtRevisions(vdtId).length !== 0
+  ) {
+    throw new VdtStorageError(
+      "REVISION_CONFLICT",
+      `Existing agent VDT ${vdtId} is not an empty atomic-commit target.`
+    );
+  }
+  const replay: AgentInitialRevisionReplayV1 = {
+    kind: "initial_revision",
+    projectId,
+    vdtId,
+    command: {
+      schemaVersion: "revision_commit.v2",
+      expectedActiveRevisionId: null,
+      expectedActiveContentIdentity: null,
+      expectedCommitGeneration: 0,
+      expectedRuntimeGeneration: runtime.runtimeGeneration,
+      expectedGenerationVersion: runtime.generationVersion,
+      idempotencyKey,
+      intent
+    },
+    project
+  };
+  persistReplayCheckpoint(database, state, {
+    schemaVersion: "agent_storage_replay_state.v1",
+    initial: replay,
+    proposals: []
   });
-  return vdtId;
+  executeInitialReplay(database, actor, replay);
+  return { vdtId, replay };
 }
 
 function persistMutationProposal(
@@ -158,16 +426,34 @@ function persistMutationProposal(
   projectId: string,
   state: VdtAgentRunState,
   vdtId: string,
-  proposal: MutationProposal
-): void {
+  proposal: MutationProposal,
+  actor: ActorContextV1,
+  replayState: AgentStorageReplayStateV1
+): AgentStorageReplayStateV1 {
   const proposalId = storageProposalId(proposal);
+  validateStrictVdtProjectCommit(proposal.previewProject);
   const previewFilePath = writePreviewProject(database, projectId, vdtId, proposal);
-  const baseRevisionId = storageRevisionId(vdtId, proposal.baseRevision);
+  const baseRevision = database
+    .listVdtRevisions(vdtId)
+    .find((revision) => revision.revisionNo === proposal.baseRevision);
+  if (!baseRevision) {
+    throw new VdtStorageError(
+      "REVISION_CONFLICT",
+      `Proposal ${proposal.id} base revision ${proposal.baseRevision} is not persisted.`
+    );
+  }
   const existing = database.getMutationProposal(proposalId);
+  const stagedStatus =
+    existing?.status === "applied"
+      ? "applied"
+      : proposal.status === "applied"
+        ? "approved"
+        : proposal.status;
   if (existing) {
     database.updateMutationProposal(proposalId, {
-      status: proposal.status,
-      appliedAt: proposal.appliedAt,
+      status: stagedStatus,
+      appliedAt:
+        stagedStatus === "applied" ? existing.appliedAt : undefined,
       previewFilePath,
       validation: proposal.validation,
       calculation: proposal.calculation
@@ -178,8 +464,8 @@ function persistMutationProposal(
       runId: state.runId,
       projectId,
       vdtId,
-      baseRevisionId,
-      status: proposal.status,
+      baseRevisionId: baseRevision.id,
+      status: stagedStatus,
       title: proposal.title,
       summary: proposal.summary,
       changeSet: proposal.changeSet,
@@ -187,47 +473,426 @@ function persistMutationProposal(
       validation: proposal.validation,
       calculation: proposal.calculation,
       createdAt: proposal.createdAt,
-      appliedAt: proposal.appliedAt
+      appliedAt: stagedStatus === "applied" ? proposal.appliedAt : undefined
     });
   }
 
   if (proposal.status === "applied") {
-    persistRevisionIfMissing(database, {
-      projectId,
-      project: proposal.previewProject,
-      vdtId,
-      revisionNo: proposal.baseRevision + 1,
-      source: proposal.source === "repair" ? "repair" : proposal.source === "import" ? "import" : "agent",
-      summary: proposal.summary,
+    if (!proposal.appliedAt) {
+      throw new TypeError(`Applied proposal ${proposal.id} has no appliedAt timestamp.`);
+    }
+    let replay = replayState.proposals.find(
+      (item) => item.proposalStorageId === proposalId
+    );
+    if (!replay) {
+      const runtime = requireProjectRuntimeState(database, projectId);
+      const head = database.getVdtRevisionHead(vdtId);
+      if (!head || !head.activeRevisionId || !head.activeContentIdentity) {
+        throw new VdtStorageError(
+          "REVISION_CONFLICT",
+          `Proposal ${proposal.id} cannot resolve a committed VDT head.`
+        );
+      }
+      if (head.activeRevisionId !== baseRevision.id) {
+        if (existing?.status === "applied") {
+          return replayState;
+        }
+        throw new VdtStorageError(
+          "REVISION_CONFLICT",
+          `Proposal ${proposal.id} base revision is not the current VDT head.`
+        );
+      }
+      replay = {
+        proposalStorageId: proposalId,
+        projectId,
+        vdtId,
+        command: {
+          schemaVersion: "revision_commit.v2",
+          expectedActiveRevisionId: baseRevision.id,
+          expectedActiveContentIdentity: head.activeContentIdentity,
+          expectedCommitGeneration: head.commitGeneration,
+          expectedRuntimeGeneration: runtime.runtimeGeneration,
+          expectedGenerationVersion: runtime.generationVersion,
+          idempotencyKey: `agent-proposal:${proposal.id}:apply-v1`,
+          intent: {
+            source: proposalRevisionSource(proposal),
+            summary: proposal.summary,
+            validation: jsonOrNull(proposal.validation),
+            calculation: jsonOrNull(proposal.calculation)
+          }
+        },
+        project: proposal.previewProject,
+        proposal
+      };
+      replayState = {
+        ...replayState,
+        proposals: [...replayState.proposals, replay]
+      };
+      persistReplayCheckpoint(database, state, replayState);
+    }
+    const committed = executeProposalReplay(database, actor, replay);
+    if (committed.revision.parentRevisionId !== baseRevision.id) {
+      throw new VdtStorageError(
+        "REVISION_CONFLICT",
+        `Proposal ${proposal.id} replay is not bound to its persisted base revision.`
+      );
+    }
+    database.updateMutationProposal(proposalId, {
+      status: "applied",
+      appliedAt: proposal.appliedAt,
+      previewFilePath,
       validation: proposal.validation,
       calculation: proposal.calculation
     });
   }
+  return replayState;
 }
 
-function persistRevisionIfMissing(database: VdtDatabase, input: {
-  projectId: string;
-  project: VdtProject;
-  vdtId: string;
-  revisionNo: number;
-  source: "agent" | "user" | "import" | "scenario" | "repair";
-  summary?: string | undefined;
-  validation?: unknown;
-  calculation?: unknown;
-}): void {
-  const revisionId = storageRevisionId(input.vdtId, input.revisionNo);
-  if (database.getVdtRevision(revisionId)) return;
-  database.saveVdtRevision({
-    id: revisionId,
-    projectId: input.projectId,
-    vdtId: input.vdtId,
-    revisionNo: input.revisionNo,
-    source: input.source,
-    summary: input.summary,
-    project: input.project,
-    validation: input.validation,
-    calculation: input.calculation
+function executeInitialReplay(
+  database: VdtDatabase,
+  actor: ActorContextV1,
+  replay: AgentInitialReplayV1
+): void {
+  if (replay.kind === "combined_create") {
+    database.createVdtWithInitialSnapshot({
+      actor,
+      command: replay.command,
+      project: replay.project
+    });
+    return;
+  }
+  if (replay.kind === "initial_revision") {
+    database.commitVdtRevision({
+      projectId: replay.projectId,
+      vdtId: replay.vdtId,
+      actor,
+      command: replay.command,
+      project: replay.project
+    });
+    return;
+  }
+
+  const vdt = database.getVdt(replay.vdtId);
+  const revision = database.getVdtRevision(replay.revisionId);
+  if (
+    !vdt ||
+    vdt.projectId !== replay.projectId ||
+    !revision ||
+    revision.vdtId !== replay.vdtId ||
+    replay.contentIdentity.hash !== `sha256:${revision.graphHash}`
+  ) {
+    throw new VdtStorageError(
+      "AMBIGUOUS_REVISION_RECOVERY",
+      `Legacy initial revision basis is no longer exact for ${replay.vdtId}.`
+    );
+  }
+  database.readVdtRevision(revision);
+}
+
+function executeProposalReplay(
+  database: VdtDatabase,
+  actor: ActorContextV1,
+  replay: AgentProposalCommitReplayV1
+): RevisionCommitResultV2 {
+  return database.commitVdtRevision({
+    projectId: replay.projectId,
+    vdtId: replay.vdtId,
+    actor,
+    command: replay.command,
+    project: replay.project
   });
+}
+
+function reconstructExistingInitialReplay(
+  database: VdtDatabase,
+  state: VdtAgentRunState,
+  vdt: VdtRecord,
+  head: VdtRevisionHeadV2,
+  runtime: ProjectRuntimeStateV1
+): AgentInitialReplayV1 {
+  const initialRevision = database
+    .listVdtRevisions(vdt.id)
+    .find((revision) => revision.revisionNo === 1);
+  if (!initialRevision || !head.activeRevisionId || !head.activeContentIdentity) {
+    throw new VdtStorageError(
+      "VDT_NOT_READY",
+      `Existing agent VDT ${vdt.id} has no exact initial revision basis.`
+    );
+  }
+  const metadata = vdt.metadata ?? {};
+  if (initialRevision.source !== "agent") {
+    throw new VdtStorageError(
+      "VDT_NOT_READY",
+      `Existing VDT ${vdt.id} was not created from an agent-owned initial revision.`
+    );
+  }
+  if (
+    head.activeContentIdentity.scheme === "legacy_graph_sha256" &&
+    metadata.sourceRunId === state.runId &&
+    initialRevision.id === head.activeRevisionId
+  ) {
+    return {
+      kind: "legacy_verified",
+      projectId: vdt.projectId,
+      vdtId: vdt.id,
+      revisionId: initialRevision.id,
+      contentIdentity: {
+        scheme: "legacy_graph_sha256",
+        hash: head.activeContentIdentity.hash
+      }
+    };
+  }
+
+  const initialProject = database.readVdtRevision(initialRevision);
+  validateStrictVdtProjectCommit(initialProject);
+  const sourceRunMatches = metadata.sourceRunId === state.runId;
+  if (sourceRunMatches) {
+    return {
+      kind: "combined_create",
+      projectId: vdt.projectId,
+      vdtId: vdt.id,
+      command: {
+        schemaVersion: "create_vdt_with_initial_snapshot.v1",
+        projectId: vdt.projectId,
+        expectedRuntimeGeneration: runtime.runtimeGeneration,
+        expectedGenerationVersion: runtime.generationVersion,
+        idempotencyKey: `agent-run:${state.runId}:initial-v1`,
+        vdt: {
+          requestedVdtId: vdt.id,
+          name: vdt.name,
+          rootKpi: vdt.rootKpi,
+          unit: vdt.unit ?? null,
+          timePeriod: vdt.timePeriod ?? null,
+          status: vdt.status,
+          metadata: vdt.metadata
+            ? (vdt.metadata as JsonValue)
+            : null
+        },
+        revisionIntent: {
+          source: initialRevision.source,
+          summary: initialRevision.summary ?? null,
+          validation: jsonOrNull(initialRevision.validation),
+          calculation: jsonOrNull(initialRevision.calculation)
+        }
+      },
+      project: initialProject
+    };
+  }
+
+  return {
+    kind: "initial_revision",
+    projectId: vdt.projectId,
+    vdtId: vdt.id,
+    command: {
+      schemaVersion: "revision_commit.v2",
+      expectedActiveRevisionId: null,
+      expectedActiveContentIdentity: null,
+      expectedCommitGeneration: 0,
+      expectedRuntimeGeneration: runtime.runtimeGeneration,
+      expectedGenerationVersion: runtime.generationVersion,
+      idempotencyKey: `agent-run:${state.runId}:initial-v1`,
+      intent: {
+        source: initialRevision.source,
+        summary: initialRevision.summary ?? null,
+        validation: jsonOrNull(initialRevision.validation),
+        calculation: jsonOrNull(initialRevision.calculation)
+      }
+    },
+    project: initialProject
+  };
+}
+
+function reconcilePersistedReplayState(
+  database: VdtDatabase,
+  state: VdtAgentRunState,
+  replayState: AgentStorageReplayStateV1 | undefined,
+  actorFactory: (projectId: string) => ActorContextV1
+): VdtAgentRunState {
+  if (!replayState) return state;
+
+  let reconciled = state;
+  executeInitialReplay(
+    database,
+    actorFactory(replayState.initial.projectId),
+    replayState.initial
+  );
+
+  for (const replay of replayState.proposals) {
+    const committed = executeProposalReplay(
+      database,
+      actorFactory(replay.projectId),
+      replay
+    );
+    if (
+      committed.revision.parentRevisionId !==
+      replay.command.expectedActiveRevisionId
+    ) {
+      throw new VdtStorageError(
+        "AMBIGUOUS_REVISION_RECOVERY",
+        `Proposal ${replay.proposal.id} replay changed its persisted base.`
+      );
+    }
+    database.updateMutationProposal(replay.proposalStorageId, {
+      status: "applied",
+      appliedAt:
+        replay.proposal.appliedAt ?? committed.revision.createdAt,
+      validation: replay.proposal.validation,
+      calculation: replay.proposal.calculation
+    });
+    reconciled = markProposalAppliedInState(
+      reconciled,
+      replay.proposal,
+      replay.proposal.appliedAt ?? committed.revision.createdAt
+    );
+  }
+
+  const record = database.getAgentRun(state.runId);
+  if (record) {
+    updatePersistedAgentRun(
+      database,
+      reconciled,
+      record.conversationId,
+      replayState
+    );
+  }
+  return reconciled;
+}
+
+function markProposalAppliedInState(
+  state: VdtAgentRunState,
+  proposal: MutationProposal,
+  appliedAt: string
+): VdtAgentRunState {
+  const applied = {
+    ...proposal,
+    status: "applied" as const,
+    appliedAt
+  };
+  const existing = state.mutationProposals ?? [];
+  const mutationProposals = existing.some((item) => item.id === proposal.id)
+    ? existing.map((item) => item.id === proposal.id ? applied : item)
+    : [...existing, applied];
+  return {
+    ...state,
+    mutationProposals,
+    ...(state.pendingMutationProposal?.id === proposal.id
+      ? { pendingMutationProposal: applied }
+      : {})
+  };
+}
+
+function persistReplayCheckpoint(
+  database: VdtDatabase,
+  state: VdtAgentRunState,
+  replayState: AgentStorageReplayStateV1
+): void {
+  const record = database.getAgentRun(state.runId);
+  if (!record) return;
+  const checkpointState = stateWithDurableProposalStatuses(database, state);
+  updatePersistedAgentRun(
+    database,
+    checkpointState,
+    record.conversationId,
+    replayState
+  );
+}
+
+function stateWithDurableProposalStatuses(
+  database: VdtDatabase,
+  state: VdtAgentRunState
+): VdtAgentRunState {
+  const staged = (state.mutationProposals ?? []).map((proposal) => {
+    if (proposal.status !== "applied") return proposal;
+    const durable = database.getMutationProposal(storageProposalId(proposal));
+    if (durable?.status === "applied") return proposal;
+    return {
+      ...proposal,
+      status: (durable?.status ?? "approved") as MutationProposal["status"],
+      appliedAt: undefined
+    };
+  });
+  const pending = state.pendingMutationProposal;
+  const stagedPending = pending
+    ? staged.find((proposal) => proposal.id === pending.id) ?? pending
+    : undefined;
+  return {
+    ...state,
+    mutationProposals: staged,
+    ...(stagedPending ? { pendingMutationProposal: stagedPending } : {})
+  };
+}
+
+function replayStateForRun(
+  database: VdtDatabase,
+  runId: string
+): AgentStorageReplayStateV1 | undefined {
+  return replayStateFromInternalState(
+    database.getAgentRun(runId)?.internalState
+  );
+}
+
+function replayStateFromInternalState(
+  internalState: Record<string, unknown> | undefined
+): AgentStorageReplayStateV1 | undefined {
+  const value = internalState?.[STORAGE_REPLAY_STATE_KEY];
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    (value as { schemaVersion?: unknown }).schemaVersion !==
+      "agent_storage_replay_state.v1"
+  ) {
+    return undefined;
+  }
+  return value as AgentStorageReplayStateV1;
+}
+
+function updatePersistedAgentRun(
+  database: VdtDatabase,
+  state: VdtAgentRunState,
+  conversationId: string | undefined,
+  replayState?: AgentStorageReplayStateV1 | undefined
+): void {
+  const payload = persistedRunPayload(state, replayState);
+  const requestedVdtId = vdtIdFromState(state);
+  const persistedVdtId =
+    requestedVdtId && database.getVdt(requestedVdtId)
+      ? requestedVdtId
+      : database.getAgentRun(state.runId)?.vdtId;
+  database.updateAgentRun(state.runId, {
+    vdtId: persistedVdtId,
+    conversationId,
+    status: state.status,
+    phase: state.phase,
+    request: payload.request,
+    publicSnapshot: payload.publicSnapshot,
+    internalState: payload.internalState,
+    completedAt: state.completedAt
+  });
+}
+
+function requireProjectRuntimeState(database: VdtDatabase, projectId: string) {
+  const runtime = database.getProjectRuntimeState(projectId);
+  if (!runtime) {
+    throw new VdtStorageError(
+      "PROJECT_RUNTIME_STATE_MISSING",
+      `Project runtime state is missing for ${projectId}.`
+    );
+  }
+  return runtime;
+}
+
+function proposalRevisionSource(
+  proposal: MutationProposal
+): RevisionCommitIntentV1["source"] {
+  if (proposal.source === "repair" || proposal.source === "import") {
+    return proposal.source;
+  }
+  return "agent";
+}
+
+function jsonOrNull(value: unknown): JsonValue | null {
+  return value === undefined ? null : (value as JsonValue);
 }
 
 function writePreviewProject(database: VdtDatabase, projectId: string, vdtId: string, proposal: MutationProposal): string {
@@ -250,10 +915,6 @@ function storageProposalId(proposal: MutationProposal): string {
   return safeStorageId("proposal", proposal.id);
 }
 
-function storageRevisionId(vdtId: string, revisionNo: number): string {
-  return safeStorageId("revision", `${vdtId}_${String(revisionNo).padStart(6, "0")}`);
-}
-
 function storageConversationId(state: VdtAgentRunState): string {
   return safeStorageId("conversation", state.runId);
 }
@@ -266,8 +927,11 @@ interface StorageProjectContext extends VdtAgentWorkspaceContext {
   projectId: string;
 }
 
-function ensureStorageProject(database: VdtDatabase, state: VdtAgentRunState): StorageProjectContext {
-  const context = storageProjectContextFromState(state);
+function ensureStorageProject(
+  database: VdtDatabase,
+  state: VdtAgentRunState,
+  context = storageProjectContextFromState(state)
+): StorageProjectContext {
   if (database.getProject(context.projectId)) return context;
   database.createProject({
     id: context.projectId,

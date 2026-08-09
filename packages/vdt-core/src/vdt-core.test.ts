@@ -599,6 +599,73 @@ describe("graph validation", () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  // Remove `.fails` across W1A/W4 when visual topology, formula dependencies, root readiness, and units share one gate.
+  it.fails("[known defect F-05] rejects graph, formula, root, and unit divergence as one contract", () => {
+    const resultUnitMismatch: VdtProject = {
+      ...productionVolumeProject,
+      graph: {
+        ...productionVolumeProject.graph,
+        nodes: productionVolumeProject.graph.nodes.map((node) =>
+          node.id === productionVolumeProject.rootNodeId ? { ...node, unit: "USD" } : node
+        )
+      }
+    };
+    const visualCycle: VdtProject = {
+      ...productionVolumeProject,
+      graph: {
+        ...productionVolumeProject.graph,
+        edges: [
+          ...productionVolumeProject.graph.edges,
+          {
+            id: "edge_calendar_time_to_root",
+            sourceNodeId: "calendar_time",
+            targetNodeId: productionVolumeProject.rootNodeId,
+            relation: "positive_driver",
+            aiGenerated: false
+          }
+        ]
+      }
+    };
+    const formulaEdgeDivergence: VdtProject = {
+      ...productionVolumeProject,
+      graph: {
+        ...productionVolumeProject.graph,
+        edges: productionVolumeProject.graph.edges.filter((edge) =>
+          !(edge.sourceNodeId === productionVolumeProject.rootNodeId && edge.targetNodeId === "average_productivity")
+        )
+      }
+    };
+    const unreadyRoot: VdtProject = {
+      ...productionVolumeProject,
+      graph: {
+        ...productionVolumeProject.graph,
+        nodes: productionVolumeProject.graph.nodes.map((node) =>
+          node.id === productionVolumeProject.rootNodeId
+            ? {
+                ...node,
+                type: "input",
+                formula: undefined,
+                value: undefined,
+                baselineValue: undefined
+              }
+            : node
+        )
+      }
+    };
+
+    expect({
+      resultUnitMismatch: validateGraph(resultUnitMismatch).valid,
+      visualCycle: validateGraph(visualCycle).valid,
+      formulaEdgeDivergence: validateGraph(formulaEdgeDivergence).valid,
+      unreadyRoot: validateGraph(unreadyRoot).valid
+    }).toEqual({
+      resultUnitMismatch: false,
+      visualCycle: false,
+      formulaEdgeDivergence: false,
+      unreadyRoot: false
+    });
+  });
+
   it("detects missing edge references and duplicate edge pairs", () => {
     const graph = {
       ...productionVolumeProject.graph,

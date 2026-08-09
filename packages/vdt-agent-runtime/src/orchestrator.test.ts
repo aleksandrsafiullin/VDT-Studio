@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { calculateGraph, validateGraph } from "@vdt-studio/vdt-core";
+import { calculateGraph, validateGraph, VdtBuilderSession } from "@vdt-studio/vdt-core";
+import { z } from "zod";
 import {
   createVdtAgentRuntime,
   type AgentDecisionProvider
@@ -379,6 +380,148 @@ function haulageBuildDecisions(): AgentDecision[] {
 }
 
 describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
+  // Remove `.fails` in W0.2 when manual operations merge into the active builder or enter an explicit merge state.
+  it.fails("[known defect F-03] does not silently overwrite a manual deletion during an in-flight mutation", async () => {
+    let contractSatisfied: boolean | undefined;
+    try {
+    const initialBuilder = new VdtBuilderSession({ now: () => "2026-07-23T00:00:00.000Z" });
+    initialBuilder.createDraft({ projectTitle: "Manual merge", rootKpi: "Production Volume" });
+    initialBuilder.addDriver({
+      parentNodeId: "production_volume",
+      nodeId: "manual_driver",
+      name: "Manual driver",
+      baselineValue: 1
+    });
+
+    let releaseMutation!: () => void;
+    const mutationCanFinish = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    let reportMutationStarted!: (runId: string) => void;
+    const mutationStarted = new Promise<string>((resolve) => {
+      reportMutationStarted = resolve;
+    });
+    const tools = createDefaultToolRegistry();
+    tools.register({
+      name: "test.in_flight_mutation",
+      description: "Hold a real project mutation open while a manual edit arrives.",
+      inputSchema: z.object({}),
+      outputSchema: z.object({ revision: z.number() }),
+      mutatesProject: true,
+      requiresDraftProject: true,
+      phase: "building_graph",
+      async run(context) {
+        if (!context.builder) throw new Error("The in-flight mutation requires a builder.");
+        reportMutationStarted(context.runId);
+        await mutationCanFinish;
+        const result = context.builder.addDriver({
+          parentNodeId: "production_volume",
+          nodeId: "agent_driver",
+          name: "Agent driver",
+          baselineValue: 2
+        });
+        context.updateRun({ draftProject: result.project });
+        return { revision: result.revision };
+      }
+    });
+
+    const runtime = createVdtAgentRuntime({ tools });
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "test.in_flight_mutation",
+        statusMessage: "Applying an agent mutation.",
+        args: {}
+      },
+      {
+        type: "ask_user",
+        statusMessage: "Pausing after the concurrency fixture.",
+        questions: [{
+          id: "concurrency_fixture_complete",
+          question: "Should the run continue?",
+          reason: "The concurrency fixture has completed.",
+          required: true,
+          expectedAnswerType: "boolean"
+        }]
+      }
+    ]);
+    const runPromise = runtime.startRun({
+      mode: "continue_project",
+      input: {
+        rootKpi: "Production Volume",
+        project: initialBuilder.getProject()
+      },
+      providerId: "manual-change-test"
+    }, {
+      provider
+    });
+    const runId = await mutationStarted;
+
+    await runtime.handleMessage(runId, {
+      type: "manual_project_change",
+      projectRevision: 3,
+      change: {
+        kind: "node_deleted",
+        nodeId: "manual_driver",
+        summary: "User deleted the manual driver while the agent was active."
+      }
+    });
+    releaseMutation();
+    const snapshot = await runPromise;
+
+    const toolStartedSeq = snapshot.events.find((event) =>
+      event.type === "tool_call_started" &&
+      event.metadata?.toolName === "test.in_flight_mutation"
+    )?.seq;
+    const manualChangeSeq = snapshot.events.find((event) => event.type === "manual_change_observed")?.seq;
+    const toolCompletedSeq = snapshot.events.find((event) =>
+      event.type === "tool_call_completed" &&
+      event.metadata?.toolName === "test.in_flight_mutation" &&
+      event.metadata?.ok === true
+    )?.seq;
+    const fixtureIsActuallyConcurrent =
+      typeof toolStartedSeq === "number" &&
+      typeof manualChangeSeq === "number" &&
+      typeof toolCompletedSeq === "number" &&
+      toolStartedSeq < manualChangeSeq &&
+      manualChangeSeq < toolCompletedSeq &&
+      snapshot.draftProject?.graph.nodes.some((node) => node.id === "agent_driver") === true;
+
+    // An invalid fixture must make `it.fails` report an unexpected pass instead of hiding setup drift.
+    if (!fixtureIsActuallyConcurrent) return;
+
+    const reconciliation = snapshot as typeof snapshot & {
+      status: string;
+      mergeState?: string | undefined;
+      reconciliationState?: string | undefined;
+    };
+    const explicitMergeOrRebase = [
+      reconciliation.status,
+      reconciliation.mergeState,
+      reconciliation.reconciliationState,
+      snapshot.error?.code,
+      snapshot.retryableError?.code,
+      snapshot.lastFeedback?.kind,
+      ...snapshot.events.flatMap((event) => [
+        event.metadata?.code,
+        event.metadata?.mergeState,
+        event.metadata?.reconciliationState
+      ])
+    ].some((value) =>
+      typeof value === "string" &&
+      /^(?:needs[_-]?merge|rebase(?:[_-]required)?)$/i.test(value)
+    );
+    const manualDeletionPreserved =
+      snapshot.draftProject?.graph.nodes.some((node) => node.id === "manual_driver") === false;
+
+    contractSatisfied = manualDeletionPreserved || explicitMergeOrRebase;
+    } catch {
+      // Setup/runtime errors must make `it.fails` an unexpected pass, not false evidence.
+      return;
+    }
+    expect(contractSatisfied).toBe(true);
+  });
+
   it("keeps agent_decision schema validation in the orchestrator even when provider validates its supplied schema", async () => {
     const runtime = createVdtAgentRuntime();
     const provider = schemaValidatingRawDecisionProvider([

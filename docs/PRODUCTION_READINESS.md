@@ -1,6 +1,6 @@
 # Production Readiness
 
-Last verified locally: **2026-07-23**, Node `24.14.0`, pnpm `10.33.2`.
+Last verified locally: **2026-07-24**, Node `24.14.0`, pnpm `10.33.2`.
 
 ## Decision
 
@@ -14,16 +14,16 @@ The repository does not contain the previously referenced `Technical Specificati
 
 | Gate | Result |
 |---|---|
-| `pnpm lint` | Pass with 4 warnings |
+| `pnpm lint` | Pass with 0 errors and 3 pre-existing warnings |
 | `pnpm typecheck` | Pass across workspace packages |
-| `pnpm test` | 117 files passed, 5 skipped; 967 tests passed, 11 live tests skipped |
-| `pnpm build` | CLI and Next production build pass |
-| `pnpm desktop:sidecar:verify` | Pass |
+| `pnpm test` | Clean rerun: 120 files passed, 5 skipped; 1,119 tests passed, 11 live tests skipped |
+| `pnpm build` | Isolated CLI and Next production build pass; built W0.1 route import passes |
+| `pnpm desktop:sidecar:prepare` + `pnpm desktop:sidecar:verify` | Pass; generated local-runtime manifest refreshed |
 | `pnpm phase7:verify` | Pass: 18 tasks, 18 schemas, 9 manifests, 12 mock task smokes |
-| `pnpm docs:verify` | Pass: 15 required documentation contracts verified |
-| `pnpm security:audit` | **Fail: 3 high vulnerabilities** |
+| `pnpm docs:verify` | Pass: 26 required documentation contracts verified |
+| `pnpm security:audit` | **Fail: 11 vulnerabilities: 6 high, 5 moderate** |
 
-No credentialed live-provider, browser E2E, native installer or clean-machine desktop test was executed during this review.
+No credentialed live-provider, browser E2E, native installer or clean-machine desktop test was executed during this review. Windows W0.1 storage durability is unverified.
 
 ## Implemented Alpha Foundations
 
@@ -36,13 +36,15 @@ No credentialed live-provider, browser E2E, native installer or clean-machine de
 - Provider certification metadata, mock evaluation, package checksums and SBOM tooling.
 - Experimental tabular data parsing, semantic model and data-mapping proposals.
 
+## W0.1 Atomic Revision Closure
+
+W0.1 is complete with independent implementation/test `GO`. All production manual, combined-create and agent revision writers use `commitVdtRevision()`; non-test `apps/web` contains zero calls to the compatibility `saveVdtRevision(` surface. Publication creates the final revision-ID path with exact `O_CREAT | O_EXCL` semantics, not overwrite-capable atomic rename, then fsyncs the final file and directory before the SQLite head commit.
+
+Independent Node 24 evidence passed 182/182 W0.1 tests: storage 59/59 with 100-process contention and real `SIGKILL` recovery, client/store 26/26, core 103/103 and agent packages 91/91. Package/workspace typechecks, isolated production build plus built-route import, strict DTO/error matrices, hosted fail-closed tests and the zero-writer audit also pass.
+
+This closes F-01 and W0.1 only. Wave 0 remains in progress; W0.2–W0.5 are open, V2 flags remain OFF, and real Windows Node 24 durability/capability evidence is absent.
+
 ## P0 Correctness Blockers
-
-### Revision corruption on conflict
-
-Revision payload is written to a path based only on `revisionNo` before the SQLite insert. A conflicting save can overwrite the existing file, fail the unique constraint and leave the original record unreadable due to hash mismatch.
-
-Required: transaction/CAS reservation, unique temporary files, atomic rename, 409 conflict and crash/concurrency tests.
 
 ### Silent partial data analysis
 
@@ -58,13 +60,18 @@ Required: per-run coordinator/lease, serialized attempt, operation-level merge a
 
 ## P0 Release And Security Blockers
 
-`pnpm security:audit` currently reports:
+`pnpm security:audit` currently reports 11 production-dependency vulnerabilities: 6 high and 5 moderate. The six high findings are:
 
 - `xlsx@0.18.5`: high prototype pollution ([GHSA-4r6h-8v6p-xvw6](https://github.com/advisories/GHSA-4r6h-8v6p-xvw6));
 - `xlsx@0.18.5`: high ReDoS ([GHSA-5pgg-2g8v-p4x9](https://github.com/advisories/GHSA-5pgg-2g8v-p4x9));
-- `sharp@0.34.5`: high inherited `libvips` vulnerabilities ([GHSA-f88m-g3jw-g9cj](https://github.com/advisories/GHSA-f88m-g3jw-g9cj)).
+- `sharp@0.34.5`: high inherited `libvips` vulnerabilities ([GHSA-f88m-g3jw-g9cj](https://github.com/advisories/GHSA-f88m-g3jw-g9cj));
+- `next@15.5.19`: high App Router Server Actions denial of service ([GHSA-m99w-x7hq-7vfj](https://github.com/advisories/GHSA-m99w-x7hq-7vfj));
+- `next@15.5.19`: high Server Actions SSRF on custom servers ([GHSA-89xv-2m56-2m9x](https://github.com/advisories/GHSA-89xv-2m56-2m9x));
+- `next@15.5.19`: high SSRF in rewrites with an attacker-controlled destination hostname ([GHSA-p9j2-gv94-2wf4](https://github.com/advisories/GHSA-p9j2-gv94-2wf4)).
 
-The upload path also lacks pre-buffer streaming limits, archive expansion budgets, parser isolation, project ownership, retention/delete and encryption policy. Hosted/public uploads must remain disabled until these are closed.
+The current Next.js high findings require at least `next@15.5.21`; the dependency remains at `15.5.19` in this evidence run.
+
+The upload path also lacks pre-buffer streaming limits, archive expansion budgets, parser isolation, a server-issued actor/ownership boundary, retention/delete and encryption policy. Hosted/public uploads must remain disabled until these findings and controls are closed.
 
 ## P1 Product Blockers
 
@@ -73,6 +80,7 @@ The upload path also lacks pre-buffer streaming limits, archive expansion budget
 - Status `approved` is not guarded by calculation/evidence gates.
 - Tool JSON Schemas shown to models omit important types/required/enums.
 - Skill selection is narrow and unreliable for Russian/Kazakh requests.
+- The target single-copy, agent-owned selection repository and CAS/read-ledger contract are documented but not implemented.
 - Recipe completeness does not guarantee formula closure.
 - Web research stops at snippets and has no immutable evidence/benchmark model.
 - Data mappings are not executable and do not materialize baselines.
@@ -92,6 +100,8 @@ The upload path also lacks pre-buffer streaming limits, archive expansion budget
 ## Release Gate Status
 
 The aggregate `pnpm release:verify` gate is currently expected to fail at `security:audit`. Documentation must not describe the high/critical dependency audit as completed.
+
+Gate A and W0.1 status is tracked by the [`corrective plan`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md), [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md), [`ADR-004`](adr/ADR-004-atomic-revision-commit-and-legacy-migration-adoption.md) and [`execution log`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md). W0.1 does not enable V2 behavior: all corrective V2 flags remain server-owned, fail-closed and default OFF.
 
 The following are not current production evidence unless rerun for a release candidate:
 

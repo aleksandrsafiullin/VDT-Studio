@@ -72,6 +72,15 @@ describe("ProjectsHomePage", () => {
               createdAt: "2026-06-29T13:00:00.000Z",
               updatedAt: "2026-06-29T13:00:00.000Z"
             },
+            runtimeState: {
+              schemaVersion: "project_runtime_state.v1",
+              projectId: "project_home_test",
+              runtimeGeneration: "v1",
+              generationVersion: 1,
+              migrationState: "shadow_ready",
+              writeState: "enabled",
+              updatedAt: "2026-06-29T13:00:00.000Z"
+            },
             counts: {
               vdts: 2,
               revisions: 4,
@@ -112,6 +121,15 @@ describe("ProjectsHomePage", () => {
               id: "project_empty_meta",
               name: "Empty metadata",
               createdAt: "2026-06-29T13:00:00.000Z",
+              updatedAt: "2026-06-29T13:00:00.000Z"
+            },
+            runtimeState: {
+              schemaVersion: "project_runtime_state.v1",
+              projectId: "project_empty_meta",
+              runtimeGeneration: "v1",
+              generationVersion: 1,
+              migrationState: "shadow_ready",
+              writeState: "enabled",
               updatedAt: "2026-06-29T13:00:00.000Z"
             },
             counts: {

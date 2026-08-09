@@ -2,10 +2,22 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { openVdtDatabase } from "@vdt-studio/storage";
-import { AgentRunStore, type AgentToolContext } from "@vdt-studio/vdt-agent-runtime";
-import { createSqliteAgentRunPersistence } from "./persistence";
-import { createAgentToolRegistryFromEnv, resolveAgentResearchStatusFromEnv } from "./runtime";
+import { openVdtDatabase, VdtStorageError } from "@vdt-studio/storage";
+import {
+  AgentRunStore,
+  type AgentRunPersistence,
+  type AgentToolContext
+} from "@vdt-studio/vdt-agent-runtime";
+import {
+  createLazySqliteAgentRunPersistence,
+  createSqliteAgentRunPersistence
+} from "./persistence";
+import { createStorageWriteActor } from "../../vdt/storage-write-adapter";
+import {
+  createAgentRunStore,
+  createAgentToolRegistryFromEnv,
+  resolveAgentResearchStatusFromEnv
+} from "./runtime";
 
 const tempDirs: string[] = [];
 
@@ -18,6 +30,15 @@ afterEach(() => {
 });
 
 describe("agent runs runtime research tools", () => {
+  it.each([
+    { VDT_APP_MODE: "hosted_web" },
+    { VDT_APP_MODE: "invalid", NEXT_PUBLIC_VDT_APP_MODE: "desktop" },
+    {}
+  ])("does not install SQLite persistence in hosted or unknown mode: %o", (env) => {
+    const store = createAgentRunStore(env);
+    expect((store as unknown as { persistence?: AgentRunPersistence }).persistence).toBeUndefined();
+  });
+
   it("reports configured research provider status without exposing API keys", () => {
     const secret = "tavily-runtime-secret";
     const status = resolveAgentResearchStatusFromEnv({
@@ -30,6 +51,33 @@ describe("agent runs runtime research tools", () => {
       providerId: "tavily"
     });
     expect(JSON.stringify(status)).not.toContain(secret);
+  });
+
+  it("does not open SQLite until the first persistence operation", () => {
+    const databaseFactory = vi.fn(() => {
+      throw new VdtStorageError(
+        "MIGRATION_IN_PROGRESS",
+        "migration lease is active",
+        true
+      );
+    });
+    const persistence = createLazySqliteAgentRunPersistence(process.cwd(), {
+      databaseFactory
+    });
+    const store = new AgentRunStore({ persistence });
+
+    expect(databaseFactory).not.toHaveBeenCalled();
+    expect(() => store.createRun({
+      mode: "generate_vdt",
+      input: {
+        prompt: "Build a production VDT.",
+        rootKpi: "Production Volume"
+      },
+      providerId: "mock"
+    })).toThrowError(expect.objectContaining({
+      code: "MIGRATION_IN_PROGRESS"
+    }));
+    expect(databaseFactory).toHaveBeenCalledTimes(1);
   });
 
   it("resolves server-side research provider env without persisting API keys", async () => {
@@ -53,7 +101,12 @@ describe("agent runs runtime research tools", () => {
     const database = openVdtDatabase(root, { dataDir, now: fixedClock("2026-07-01T00:00:00.000Z") });
     const store = new AgentRunStore({
       now: fixedClock("2026-07-01T00:00:00.000Z"),
-      persistence: createSqliteAgentRunPersistence(database)
+      persistence: createSqliteAgentRunPersistence(database, {
+        actorFactory: (projectId) => createStorageWriteActor(projectId, {
+          env: { VDT_APP_MODE: "development_web" },
+          now: fixedClock("2026-07-01T00:00:00.000Z")
+        })
+      })
     });
     const run = store.createRun({
       mode: "generate_vdt",

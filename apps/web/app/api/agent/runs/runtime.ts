@@ -15,10 +15,13 @@ import {
   type VdtAgentStartRequest
 } from "@vdt-studio/vdt-agent-runtime";
 import { createAiProvider } from "@/lib/ai-route-provider";
-import { resolveVdtAppModeForRequest } from "@/lib/app-mode";
 import {
-  createSqliteAgentRunPersistence,
-  openAgentRunPersistenceDatabase
+  createStorageWriteActor,
+  resolveTrustedStorageWriteMode,
+  type StorageWriteEnvironment
+} from "../../vdt/storage-write-adapter";
+import {
+  createLazySqliteAgentRunPersistence
 } from "./persistence";
 
 type RuntimeContext = ReturnType<typeof managedRuntime.createLocalRuntimeContext>;
@@ -48,8 +51,7 @@ export function createAgentDecisionProvider(request: VdtAgentStartRequest, reque
     return createAiProvider(request, requestUrl) as AgentDecisionProvider;
   }
 
-  const appMode = resolveVdtAppModeForRequest(new Request(requestUrl));
-  if (appMode !== "development_web" && appMode !== "desktop") {
+  if (!resolveTrustedStorageWriteMode()) {
     throw new Error("Local CLI agent decisions require the managed local runtime in development/desktop or a paired local runner.");
   }
 
@@ -129,13 +131,20 @@ export function resolveAgentResearchStatusFromEnv(
   return researchProviderStatus(resolveResearchProviderFromEnv(env, options));
 }
 
-function createAgentRunStore(): AgentRunStore {
-  if (isNextProductionBuild()) {
+export function createAgentRunStore(env?: StorageWriteEnvironment): AgentRunStore {
+  if (isNextProductionBuild() || !resolveTrustedStorageWriteMode(env)) {
     return new AgentRunStore();
   }
 
   return new AgentRunStore({
-    persistence: createSqliteAgentRunPersistence(openAgentRunPersistenceDatabase(process.cwd()))
+    persistence: createLazySqliteAgentRunPersistence(process.cwd(), {
+      ...(env
+        ? {
+            actorFactory: (projectId) =>
+              createStorageWriteActor(projectId, { env })
+          }
+        : {})
+    })
   });
 }
 

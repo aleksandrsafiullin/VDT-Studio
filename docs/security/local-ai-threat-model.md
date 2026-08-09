@@ -1,6 +1,6 @@
 # Local AI And Data Threat Model
 
-Last reviewed against the working tree: **2026-07-23**.
+Last reviewed against the working tree: **2026-07-24**.
 
 This threat model covers API/BYOK providers, subscription CLIs, local-model execution, desktop sidecar execution, web research and experimental data ingestion.
 
@@ -38,12 +38,12 @@ This threat model covers API/BYOK providers, subscription CLIs, local-model exec
 | BYOK target performs SSRF/redirect | DNS validation/pinning, private-range rejection, redirect and size limits |
 | Provider returns malformed graph | Closed schemas, local validation, bounded repair and calculation checks |
 | Research disabled by user | Tool-layer rejection before provider call |
+| Conflicting revision overwrites an existing file | W0.1 strict CAS/idempotency commit boundary; final publication uses `O_CREAT | O_EXCL`, never overwrite-capable atomic rename; 100-process conflict and SIGKILL recovery tests pass on macOS Node 24 |
 
 ## Open Critical Risks
 
 | Risk | Status and required control |
 |---|---|
-| Conflicting revision overwrites existing file | P0: atomic reservation/write, revision CAS and crash/concurrency tests required |
 | Concurrent agent/stale snapshot overwrites manual changes | P0: per-run serialization, operation-level merge and conflict state required |
 | Untrusted XLS/XLSX parser vulnerabilities | P0-release: replace/update dependency and isolate parser before external upload |
 | Request/workbook materialized before effective limits | P0-release: streaming ingress and decompression/CPU/RAM budgets required |
@@ -80,6 +80,7 @@ The current `.vdt/data-discovery` storage and API are suitable only for single-u
 - Node-free self-contained sidecar binary.
 - Native Rust/Tauri build verification and pinned CLI.
 - macOS signing and Windows installer verification.
+- Real Windows Node 24 W0.1 storage capability, concurrency and crash-recovery verification.
 - Clean-machine installation and Local AI E2E.
 - Passing dependency/security audit and independent review.
 
@@ -94,4 +95,4 @@ pnpm release:bundle:verify
 pnpm docs:verify
 ```
 
-The current dependency audit fails with three high findings; documentation must not claim this gate is complete.
+The current dependency audit fails with 11 vulnerabilities: 6 high and 5 moderate, including high findings in `xlsx`, `sharp` and `next@15.5.19`. Documentation must not claim this gate is complete.

@@ -8,6 +8,8 @@ import {
   readJsonObject
 } from "../../storage-response";
 import { openVdtStorageDatabase } from "../../storage-database";
+import { storageWriteErrorResponse } from "../../storage-write-adapter";
+import { VdtStorageError } from "@vdt-studio/storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,28 +19,40 @@ export async function GET(_request: Request, { params }: { params: Promise<{ vdt
   const parsedVdtId = parseSafeId(vdtId, "vdtId");
   if (!parsedVdtId.ok) return jsonError(parsedVdtId.message);
 
-  const database = openVdtStorageDatabase(process.cwd());
+  let database: ReturnType<typeof openVdtStorageDatabase> | undefined;
   try {
+    database = openVdtStorageDatabase(process.cwd());
     const vdt = database.getVdt(parsedVdtId.value);
     if (!vdt) return jsonError("VDT not found.", 404, "VDT_NOT_FOUND");
     const project = database.getProject(vdt.projectId);
     if (!project) return jsonError("Project not found.", 404, "PROJECT_NOT_FOUND");
     const revisions = database.listVdtRevisions(vdt.id);
-    const activeRevision = revisions.find((revision) => revision.id === vdt.activeRevisionId) ?? revisions.at(-1);
-    const activeProject = activeRevision ? database.readVdtRevision(activeRevision) : undefined;
+    const activeRevision = revisions.find((revision) => revision.id === vdt.activeRevisionId) ?? revisions.at(-1) ?? null;
+    const activeProject = activeRevision ? database.readVdtRevision(activeRevision) : null;
+    const head = database.getVdtRevisionHead(vdt.id);
+    if (!head) {
+      throw new VdtStorageError(
+        "VDT_REVISION_HEAD_MISSING",
+        `VDT revision head is missing for ${vdt.id}.`
+      );
+    }
+    const summary = buildStoredProjectSummary(database, project);
     return Response.json({
+      schemaVersion: "vdt_load_response.v1",
       ok: true,
       project,
-      summary: buildStoredProjectSummary(database, project),
+      summary,
       vdt,
       revisions,
       activeRevision,
-      activeProject
+      activeProject,
+      head,
+      runtimeState: summary.runtimeState
     });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "VDT could not be loaded.", 500, "VDT_LOOKUP_FAILED");
+    return storageWriteErrorResponse(error, "VDT could not be loaded.");
   } finally {
-    database.close();
+    database?.close();
   }
 }
 
@@ -61,8 +75,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ vd
     return jsonError(error instanceof Error ? error.message : "VDT status is invalid.");
   }
 
-  const database = openVdtStorageDatabase(process.cwd());
+  let database: ReturnType<typeof openVdtStorageDatabase> | undefined;
   try {
+    database = openVdtStorageDatabase(process.cwd());
     const current = database.getVdt(parsedVdtId.value);
     if (!current) return jsonError("VDT not found.", 404, "VDT_NOT_FOUND");
     const vdt = database.updateVdt(parsedVdtId.value, {
@@ -80,9 +95,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ vd
       summary: project ? buildStoredProjectSummary(database, project) : undefined
     });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "VDT could not be updated.", 500, "VDT_UPDATE_FAILED");
+    return storageWriteErrorResponse(error, "VDT could not be updated.");
   } finally {
-    database.close();
+    database?.close();
   }
 }
 
@@ -91,14 +106,15 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   const parsedVdtId = parseSafeId(vdtId, "vdtId");
   if (!parsedVdtId.ok) return jsonError(parsedVdtId.message);
 
-  const database = openVdtStorageDatabase(process.cwd());
+  let database: ReturnType<typeof openVdtStorageDatabase> | undefined;
   try {
+    database = openVdtStorageDatabase(process.cwd());
     const deleted = database.deleteVdt(parsedVdtId.value);
     if (!deleted) return jsonError("VDT not found.", 404, "VDT_NOT_FOUND");
     return Response.json({ ok: true, deletedVdtId: parsedVdtId.value });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "VDT could not be deleted.", 500, "VDT_DELETE_FAILED");
+    return storageWriteErrorResponse(error, "VDT could not be deleted.");
   } finally {
-    database.close();
+    database?.close();
   }
 }

@@ -1,12 +1,12 @@
 # VDT Studio — план корректирующей разработки для следующего оркестратора
 
-**Статус документа:** approved direction; ready to start Gate A
+**Статус документа:** approved direction; Gate A complete with independent `GO`
 
-**Статус реализации:** not started
+**Статус реализации:** Gate A complete; W0.1 complete with independent implementation/test `GO`; W0.2 design contract accepted with independent contract-only `GO`; Gate R1 SQL-only code accepted with independent code-only `GO`; three Sequence 3 byte-level contracts and the exact 13-file inert artifact freeze accepted with independent `GO`; Gate R2 is the next and only authorized implementation/review package and is not yet implemented or accepted; Wave 0 remains in progress and W0.2 runtime plus W0.3–W0.5 remain open
 
 **Версия:** 1.0
 
-**Дата:** 2026-07-23
+**Дата:** 2026-07-24
 
 **Исполнитель:** следующий implementation orchestrator
 
@@ -95,7 +95,7 @@
 4. Агент сам решает, какие candidate skills прочитать.
 5. Агент сравнивает applicability, exclusions, required inputs, outputs, recipe quality и gaps.
 6. Только явное агентское действие `skill.select` изменяет `selectedSkills`; оно атомарно заменяет полный selection set и сохраняет историю предыдущего решения.
-7. `skill.read` всегда read-only и не означает выбор.
+7. `skill.read` selection-neutral: оно не выбирает skill и не меняет recipe/build basis, но после успешных ACL/version/hash/revocation checks append-only записывает immutable read receipt и повышает `runStateVersion`.
 8. Retrieval/index никогда не объявляет skill выбранным и не меняет run state.
 9. Generic skill выбирается только явным решением агента после чтения; автоматического fallback нет.
 10. При отсутствии подходящего skill агент фиксирует `no_applicable_skill`, формулирует knowledge gaps и выбирает `research`, `ask_user` или `build_from_user_spec`.
@@ -248,6 +248,19 @@ understand request in original language
 
 Возвращает count, scopes, origins, catalog/index versions и index status. Не выбирает кандидата.
 
+```ts
+interface SkillCatalogOverviewOutput {
+  schemaVersion: "skill_catalog_overview_output.v1";
+  totalAccessibleVersions: number;
+  scopes: Array<"bundled" | "private" | "workspace">;
+  origins: Array<"bundled" | "user">;
+  catalogVersion: string;
+  catalogSnapshotHash: string;
+  indexVersion: string | null;
+  indexStatus: "ready" | "stale" | "unavailable";
+}
+```
+
 #### `skill.catalog_page`
 
 Side-effect-free stable pagination для small/degraded catalog browsing:
@@ -261,9 +274,11 @@ interface SkillCatalogPageInput {
 }
 
 interface SkillCatalogPageOutput {
+  schemaVersion: "skill_catalog_page_output.v1";
   catalogVersion: string;
+  catalogSnapshotHash: string;
   cards: SkillCard[];
-  nextCursor?: string;
+  nextCursor: string | null;
 }
 ```
 
@@ -282,11 +297,13 @@ interface SkillDiscoverInput {
 }
 
 interface SkillDiscoverOutput {
+  schemaVersion: "skill_discover_output.v1";
   queryId: string;
   catalogVersion: string;
-  indexVersion?: string;
+  catalogSnapshotHash: string;
+  indexVersion: string | null;
   candidates: SkillCard[];
-  nextCursor?: string;
+  nextCursor: string | null;
   indexStatus: "ready" | "stale" | "unavailable";
 }
 ```
@@ -295,6 +312,7 @@ Output не содержит `selected`, `matchedTerms` или authoritative cla
 
 ```ts
 interface SkillCard {
+  schemaVersion: "skill_card.v1";
   skillId: string;
   versionId: string;
   contentHash: string;
@@ -304,7 +322,7 @@ interface SkillCard {
   exclusions: string;
   requiredInputs: string[];
   expectedOutputs: string[];
-  contentLanguage?: string;
+  contentLanguage: string | null;
   origin: "bundled" | "user";
   visibility: "bundled" | "private" | "workspace";
   trustLevel: "bundled_reviewed" | "workspace_reviewed" | "user_unreviewed";
@@ -316,25 +334,33 @@ interface SkillCard {
 
 #### `skill.read`
 
-Читает конкретный `versionId` в режимах `outline | chunk | recipe | references`. Не зависит от языка Markdown headings и не изменяет run state.
+Читает конкретный `versionId` в режимах `outline | chunk | recipe | references`. Не зависит от языка Markdown headings. Это selection-neutral command, а не side-effect-free query: успешный read атомарно добавляет immutable receipt точного `versionId + contentHash` и повышает `runStateVersion`, не меняя selection, recipe binding или build basis. Exact command/receipt schema зафиксирована в `docs/architecture/CORRECTIVE_GATE_A_CONTRACT_SCHEMAS.md`.
 
 #### `skill.select`
 
 ```ts
 interface SkillSelectInput {
+  schemaVersion: "skill_select.v2";
+  expectedRunStateVersion: number;
+  idempotencyKey: string;
+  catalogVersion: string;
+  catalogSnapshotHash: string;
+  queryIds: string[];
   selections: Array<{
     skillId: string;
     versionId: string;
+    contentHash: string;
+    readReceiptIds: string[];
     role: "primary" | "supporting";
   }>;
-  consideredSkillIds: string[];
+  consideredVersionIds: string[];
   rationale: string;
   uncoveredNeeds: string[];
   confidence: "high" | "medium" | "low";
 }
 ```
 
-Validator требует, чтобы каждая selected version была прочитана и доступна этому actor в данном run, hash совпадал с прочитанным, version не была security-revoked и selection не превышал composition limit. Обычная публикация новой active version не ломает уже pinned run.
+Validator требует explicit read receipt IDs: каждый receipt должен принадлежать тому же server-bound run/actor, точному version/hash/catalog snapshot, а current ACL/hash/revocation повторно проверяются в selection transaction. Catalog snapshot не должен быть stale, selection не превышает composition limit. Command под CAS атомарно заменяет полный selection set и append-only сохраняет decision. Server сам вычисляет `requestHash` по frozen canonical framing из bound scope/actor и всей команды без `idempotencyKey`: тот же key + тот же actor/hash возвращает первоначальный terminal result, другой actor или hash даёт typed `IDEMPOTENCY_KEY_REUSE` без domain-state mutation. Typed CAS/ACL/stale rejection оставляет selection неизменным, но terminal result сохраняется в idempotency record. Обычная публикация новой active version не ломает уже pinned run.
 
 #### `skill.report_gap`
 
@@ -376,21 +402,25 @@ interface SkillGrant {
 }
 
 interface SkillVersion {
+  schemaVersion: "skill_version.v1";
   versionId: string;
   skillId: string;
-  contentLanguage?: string;
+  contentLanguage: string | null;
+  origin: "bundled" | "user";
   title: string;
   description: string;
   applicability: string;
   exclusions: string;
-  bodyMarkdown: string;
+  bodyStorageRef: string;
+  bodyByteLength: number;
+  mediaType: "text/markdown; charset=utf-8";
   contentHash: string;
-  schemaVersion: number;
   status: "draft" | "published" | "deprecated" | "revoked" | "tombstoned";
-  supersedesVersionId?: string;
-  derivedFromSkillId?: string;
-  revokedAt?: string;
-  revocationReason?: string;
+  supersedesVersionId: string | null;
+  derivedFromSkillId: string | null;
+  revokedAt: string | null;
+  revocationReason: string | null;
+  createdByPrincipalId: string;
   createdAt: string;
 }
 
@@ -429,9 +459,11 @@ interface FormulaTemplateSpecV1 {
 }
 
 interface RunRecipeBinding {
+  schemaVersion: "run_recipe_binding.v1";
   bindingId: string;
   runId: string;
   selectionDecisionId: string;
+  skillId: string;
   skillVersionId: string;
   skillContentHash: string;
   artifactVersion: string;
@@ -443,31 +475,40 @@ interface RunRecipeBinding {
 }
 
 interface SkillSelectionDecision {
+  schemaVersion: "skill_selection_decision.v2";
   decisionId: string;
   runId: string;
   sequence: number;
-  createdAt: string;
-  supersedesDecisionId?: string;
+  actorPrincipalId: string;
+  commandRequestHash: string;
+  previousRunStateVersion: number;
+  resultingRunStateVersion: number;
+  decidedAt: string;
+  supersedesDecisionId: string | null;
   catalogVersion: string;
   catalogSnapshotHash: string;
   queryIds: string[];
   indexVersions: string[];
   orderedCandidateVersionIds: string[];
   readVersionIds: string[];
+  consideredVersionIds: string[];
   selected: Array<{
+    skillId: string;
     versionId: string;
     contentHash: string;
+    readReceiptIds: string[];
     role: "primary" | "supporting";
   }>;
   rationale: string;
   confidence: "high" | "medium" | "low";
   uncoveredNeeds: string[];
   backendId: string;
-  modelId?: string;
+  modelId: string | null;
   promptVersion: string;
 }
 
 interface RunBuildBasis {
+  schemaVersion: "run_build_basis.v1";
   basisId: string;
   runId: string;
   sequence: number;
@@ -476,25 +517,28 @@ interface RunBuildBasis {
     | { kind: "research"; guidanceArtifactId: string; guidanceContentHash: string }
     | { kind: "user_spec"; userSpecificationArtifactId: string; specificationContentHash: string };
   orderedArtifactHashes: string[];
-  composedRecipe: RecipeASTV1;
+  composedRecipeArtifactId: string;
+  composedRecipeSchemaVersion: string;
   composedRecipeHash: string;
   compositionReportHash: string;
   validatorVersion: string;
   validationStatus: "valid" | "partial" | "invalid";
   basisContentHash: string;
   status: "active" | "superseded";
-  supersedesBasisId?: string;
+  supersedesBasisId: string | null;
   createdAt: string;
 }
 
 interface BuildBasisAcceptanceDecision {
+  schemaVersion: "build_basis_acceptance.v1";
   decisionId: string;
   basisId: string;
   basisContentHash: string;
-  actorId: string;
+  actorPrincipalId: string;
+  actorAuthSource: "desktop_local" | "hosted_session";
   decision: "accepted" | "rejected";
   acceptedLimitations: string[];
-  createdAt: string;
+  decidedAt: string;
 }
 
 interface SkillIndexDocument {
@@ -510,11 +554,15 @@ interface SkillIndexDocument {
 
 `MetricDefinitionDraftV1`, `FormulaASTV1` и `RequiredInputSpecV1` являются versioned strict schemas из Wave 1A, генерируют JSON Schema из того же source и не могут быть `unknown`/free-form JSON. `skill.select` append-only сохраняет `SkillSelectionDecision` и под CAS run-state атомарно меняет active decision pointer. Replay обязан использовать точные `RunRecipeBinding`; новая skill/recipe/validator version не меняет уже pinned run.
 
-Перед открытием build tools Recipe Composer создаёт единственный active `RunBuildBasis`. Для multi-skill selection он детерминированно проверяет cross-recipe IDs, duplicate/contradictory drivers, formula closure, dimensions, required inputs, provenance и ordering. Individually valid recipes не считаются совместно valid без этого composition gate. `basisContentHash` канонически покрывает source reference, ordered artifact hashes, composed recipe/hash, composition report, validator version и validation status. `partial` basis и любой `user_spec` basis требуют отдельный authenticated-human `BuildBasisAcceptanceDecision`; модель не может создать его. Acceptance и каждое build action передают `basisId + basisContentHash`. Reselection, recompile или изменение guidance atomically supersedes прежний basis, а in-flight build с прежним hash отклоняется.
+Перед открытием build tools Recipe Composer создаёт единственный active `RunBuildBasis`. Для multi-skill selection он детерминированно проверяет cross-recipe IDs, duplicate/contradictory drivers, formula closure, dimensions, required inputs, provenance и ordering. Individually valid recipes не считаются совместно valid без этого composition gate. `basisContentHash` канонически покрывает source reference, ordered artifact hashes, immutable composed-recipe artifact ID/schema/hash, composition report, validator version и validation status. `partial` basis и любой `user_spec` basis требуют отдельный authenticated-human `BuildBasisAcceptanceDecision`; модель не может создать его. Acceptance и каждое build action передают `basisId + basisContentHash`. Reselection, recompile или изменение guidance atomically supersedes прежний basis, а in-flight build с прежним hash отклоняется.
 
 `SkillIndexDocument` хранится отдельно, выводится из canonical source и может быть полностью перестроен. Это не перевод и не дополнительная skill version. Удаление/tombstone обязано удалять derived index records; для внешнего index требуется purge proof.
 
 Authorization matrix должна отдельно определять права `read`, `create`, `edit draft`, `publish`, `share`, `deprecate`, `security revoke`, `delete/tombstone` и `reindex`. Проверка `workspaceId/tenantId` выполняется на repository boundary, а не только в UI.
+
+Каждая repository/service command получает server-issued `ActorContextV1` с `principalId`, optional tenant/workspace/project, roles, auth source и session ID. Desktop local-only использует стабильную application-owned local principal identity; hosted mode требует authenticated server session. Request body, model output, skill, web source или data file не могут задавать/подменять actor/principal/tenant/workspace/project/roles либо authenticated-human approval identity.
+
+Canonical `contentHash` вычисляется по byte-exact framing из `docs/architecture/CORRECTIVE_GATE_A_CONTRACT_SCHEMAS.md`: fixed domain, uint64 big-endian length frames, exact RFC 8785 JSON metadata и точные сохранённые body bytes. Skill/version IDs и origin не входят в content identity. Хеширование не нормализует, не переводит и не переписывает пользовательский content. Bundled import, user publish, index, selection, recipe binding и replay обязаны использовать тот же serializer и golden vectors.
 
 ---
 
@@ -588,35 +636,39 @@ Root orchestrator отвечает за:
 
 ### A.1 Worktree inventory
 
-- [ ] Записать `git status --short`, current branch, HEAD и diff stat.
-- [ ] Назначить owner каждому pre-existing modified/untracked path.
-- [ ] Отдельно определить статус текущих data-harness и documentation changes.
-- [ ] Не выполнять reset, checkout, broad cleanup или `git add -A`.
-- [ ] При пересечении planned slice с существующим diff выполнить STOP и разделить ownership.
+- [x] Записать `git status --short`, current branch, HEAD и diff stat.
+- [x] Назначить owner каждому pre-existing modified/untracked path.
+- [x] Отдельно определить статус текущих data-harness и documentation changes.
+- [x] Не выполнять reset, checkout, broad cleanup или `git add -A`.
+- [x] При пересечении planned slice с существующим diff выполнить STOP и разделить ownership.
 
 ### A.2 Architecture decisions
 
-- [ ] Добавить ADR `Single-copy skills and agent-owned skill resolution`.
-- [ ] Зафиксировать skill scopes, versioning, trust levels и ownership.
-- [ ] Зафиксировать additive schema migration и mixed-write prohibition.
-- [ ] Зафиксировать deployment default: local-only до security gates.
-- [ ] Зафиксировать feature flags и kill switches.
+- [x] Добавить ADR `Single-copy skills and agent-owned skill resolution`.
+- [x] Зафиксировать skill scopes, versioning, trust levels и ownership.
+- [x] Зафиксировать server-issued `ActorContextV1`, local principal и authenticated-human boundary.
+- [x] Зафиксировать canonical hash serialization, read ledger и CAS/idempotency/revocation semantics `skill.select`.
+- [x] Зафиксировать exact Gate A design schemas, hash framing и state transitions в `docs/architecture/CORRECTIVE_GATE_A_CONTRACT_SCHEMAS.md`.
+- [x] Зафиксировать additive schema migration и mixed-write prohibition.
+- [x] Назначить `packages/vdt-storage` единственным migration-owner boundary: manifest/runner/DDL живут только там, а execution log назначает одного storage coder на slice; до Wave 0 определить ordered/checksummed forward-only runner и backup/restart/crash contract.
+- [x] Зафиксировать deployment default: local-only до security gates.
+- [x] Зафиксировать feature flags и kill switches.
 
 ### A.3 Documentation reconciliation
 
-- [ ] Удалить рекомендации language aliases из current roadmap/specs.
-- [ ] Обновить skill tool contracts в normative specs.
-- [ ] Пометить старый classifier contract legacy/superseded.
-- [ ] Добавить этот plan в current program map `docs/README.md`.
-- [ ] В секции Current Work Program файла `docs/AGENT_PLANS.md` сослаться на этот plan как active execution brief, не меняя исторический статус самого `AGENT_PLANS.md`.
-- [ ] Согласовать root `README.md` и `docs/ARCHITECTURE.md` с новым runtime boundary и single-copy skill contract.
-- [ ] Не менять capability status до реального прохождения tests.
+- [x] Удалить рекомендации language aliases из current roadmap/specs.
+- [x] Обновить skill tool contracts в normative specs.
+- [x] Пометить старый classifier contract legacy/superseded.
+- [x] Добавить этот plan в current program map `docs/README.md`.
+- [x] В секции Current Work Program файла `docs/AGENT_PLANS.md` сослаться на этот plan как active execution brief, не меняя исторический статус самого `AGENT_PLANS.md`.
+- [x] Согласовать root `README.md` и `docs/ARCHITECTURE.md` с новым runtime boundary и single-copy skill contract.
+- [x] Не менять capability status до реального прохождения tests.
 
 ### A.4 Baseline evidence
 
-- [ ] Зафиксировать текущие воспроизведения F-01, F-02, F-03, F-05, F-06 и language-selection defect как regression tests.
-- [ ] Запустить focused suites, typecheck, root tests и docs gate на поддерживаемом Node 24.
-- [ ] Создать `docs/implementation/VDT_CORRECTIVE_EXECUTION_LOG.md`.
+- [x] Зафиксировать текущие воспроизведения F-01, F-02, F-03, F-05, F-06 и language-selection defect как regression tests.
+- [x] Запустить focused suites, typecheck, root tests и docs gate на поддерживаемом Node 24.
+- [x] Создать `docs/implementation/VDT_CORRECTIVE_EXECUTION_LOG.md`.
 
 ### A.5 Feature flags
 
@@ -632,9 +684,11 @@ Root orchestrator отвечает за:
 - `external_research`;
 - `autonomous_mutations`.
 
+Все flags server-owned, fail-closed и default `false`. Они не принимаются из `NEXT_PUBLIC_*`, query/request body или model/tool output. Unknown/invalid value означает disabled + audit warning. Run сохраняет immutable config version/hash и flag snapshot; project canary assignment sticky. Snapshot является только grant ceiling: каждое protected action повторно проверяет current server rule, dependencies и live kill switch. Поздний disable останавливает новые actions существующего run, поздний enable не расширяет старый snapshot. Gate A фиксирует этот контракт, но не подключает и не включает V2 runtime behavior.
+
 ### Gate A exit
 
-- ADR и schemas reviewed;
+- ADR и exact design schemas в `docs/architecture/CORRECTIVE_GATE_A_CONTRACT_SCHEMAS.md` reviewed: `ActorContextV1`, skill card/version/read ledger, `SkillSelectCommandV2`, selection/recipe/build basis, byte-exact canonical hash, feature config/snapshot, migration manifest/applied record/state и pending/committed/quarantined revision state machine;
 - pre-existing changes не потеряны;
 - старый runtime не изменён;
 - план и docs не содержат language-copy/marker-selection target;
@@ -653,6 +707,12 @@ Root orchestrator отвечает за:
 
 ### W0.1 Atomic revisions
 
+**Historical storage checkpoint (2026-07-23):** initial planner and repeated reviewer verdicts were `STOP` while revision metadata, strict payload identity, pre-stage recovery, legacy manifest adoption and post-reserve write-state fencing were incomplete. [`ADR-004`](adr/ADR-004-atomic-revision-commit-and-legacy-migration-adoption.md) and the exact schemas resolved those findings. The implemented storage/migration package then passed repeated corrective reviews, real SIGKILL recovery, migration fencing and 100-process concurrency evidence; the independent tester returned `GO` for this sub-slice. At that checkpoint routes/agent/client were still the next W0.1 package and full W0.1 was incomplete. Evidence: [`VDT_CORRECTIVE_EXECUTION_LOG.md`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#w0-1-storage-go-2026-07-23).
+
+**Historical caller checkpoint (2026-07-23):** repository audit confirmed exactly three production legacy writers: manual revision POST, initial snapshot creation and agent persistence. The caller planner returned `GO_WITH_FINDINGS`, but the first independent caller review returned `STOP` for missing exact HTTP DTO/error mapping, hostname-dependent hosted authority, an agent-initial/source contradiction, pre-CAS metadata mutation/navigation loss and pre-commit durable `applied` status. ADR-004 and the exact schemas froze the corrected DTOs/matrix, explicit server-mode authority, trusted user/agent combined-create source, revision-only manual save, navigation stop and commit-before-applied ordering. At that checkpoint a repeated independent pre-code `GO` was still required before caller runtime edits.
+
+**Implementation checkpoint (2026-07-24):** after the historical storage and caller `STOP` findings above were closed, all three production caller paths were migrated and the independent post-code review/test package returned `GO` for full W0.1. The root Node 24.14 clean rerun passed 120 test files with 5 skipped and 1,119 tests with 11 skipped; the independent W0.1 matrix passed 182/182. The writer audit reports zero `saveVdtRevision(` calls in non-test `apps/web`. W0.1 is complete; Wave 0 is still in progress, all V2 flags remain OFF, and production/release remains `NO-GO`. Windows durability is not verified. Evidence: [`VDT_CORRECTIVE_EXECUTION_LOG.md`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#w0-1-go-2026-07-24).
+
 Поверхности:
 
 - `packages/vdt-storage/src/sqlite.ts`;
@@ -665,14 +725,25 @@ Root orchestrator отвечает за:
 
 Tasks:
 
-- [ ] создать один domain-level `commitVdtRevision()` как единственную разрешённую production write boundary; routes, manual save и agent apply вызывают её, а прямой `saveVdtRevision()` остаётся internal storage primitive;
-- [ ] резервировать `pending` revision ID/sequence внутри SQLite transaction с CAS по `expectedActiveRevisionId + baseHash`;
-- [ ] добавить `expectedActiveRevisionId`/base hash CAS;
-- [ ] писать unique temp file, fsync и публиковать immutable unique final path, включающий `revisionId`, через no-clobber operation; имя только по `revisionNo` запрещено;
-- [ ] после publish сверять final payload hash с reserved hash и только затем атомарно переводить revision в `committed` и обновлять active pointer;
-- [ ] возвращать `409 REVISION_CONFLICT` без изменения existing file;
-- [ ] добавить idempotency key;
-- [ ] добавить crash points, recovery для `pending` rows/orphan temp/final files и quarantine при hash mismatch.
+- [x] создать один domain-level `commitVdtRevision()` как единственную разрешённую production write boundary; routes, manual save и agent apply вызывают её, а прямой `saveVdtRevision()` остаётся internal storage primitive;
+- [x] server adapter назначает actor/source/intent: local principal `vdt_studio_local_application`, hosted writes дают `403 HOSTED_REVISION_WRITES_DISABLED`, security-owned и unknown body fields отклоняются;
+- [x] storage write mode определяется только explicit server env; missing/invalid/hosted и global agent persistence fail closed, hostname/Host/body не являются authority;
+- [x] load/create/revision API возвращают exact `ProjectRuntimeStateV1 + VdtRevisionHeadV2`; client/store сохраняют их и передают неизменённый CAS с operation-stable idempotency key;
+- [x] использовать frozen versioned manual/create/load/revisions DTO и HTTP `code + retryable` matrix; ambiguous retry сохраняет immutable body/key;
+- [x] server-side строго сериализовать exact payload без time-dependent defaults, назначить `revisionId`/paths и вычислить hash/length; caller не задаёт эти поля;
+- [x] до filesystem side effects одной SQLite transaction резервировать idempotency + leased/fenced durable attempt с exact canonical payload bytes; затем записать unique durable staged file с file/directory `fsync`;
+- [x] заменить permissive/current-time import на `StrictVdtProjectCommitV1` round-trip validator для commit path и опубликовать golden/recovery-byte fixtures;
+- [x] внедрить ordered manifest sequence 1/2, immutable bootstrap journal, fenced cross-process migration lease, consistent backup и exact legacy schema/revision attestation/backfill; drift/tampered legacy state блокирует migration до DDL;
+- [x] после durable stage резервировать единственный VDT `pending` slot и revision ID/sequence внутри одной SQLite transaction с CAS по `expectedActiveRevisionId + tagged active content identity + commitGeneration + project runtimeGeneration/generationVersion/writeState`; competing same-head callers конфликтуют до final-file write;
+- [x] публиковать staged bytes в immutable unique final path, включающий `revisionId`, через реальный no-clobber operation; plain POSIX rename недостаточен, потому что может заменить target; после publish обязательны `fsync` final file и directory; имя только по `revisionNo` запрещено;
+- [x] после publish сверять final payload hash с reserved hash и только затем атомарно переводить revision в `committed` и обновлять active pointer;
+- [x] возвращать `409 REVISION_CONFLICT` без изменения existing file; unclaimed staged file после reserve conflict детерминированно очищается/quarantine;
+- [x] добавить idempotency key;
+- [x] create-with-initial-snapshot проводить через отдельную idempotent combined command, связывающую полные VDT metadata + initial revision; hidden `creating` lifecycle не виден API и восстанавливается/удаляется по durable attempt;
+- [x] agent apply разрешать только если persisted revision для `proposal.baseRevision` совпадает с current active head; stale base даёт conflict без silent rebase и без durable `applied`;
+- [x] initial agent VDT создавать combined command с trusted source `agent`; proposal становится durable `applied` только после commit/replay;
+- [x] manual W0.1 save не меняет metadata; failed auto-save блокирует create/select/navigation, сохраняет local snapshot и не меняет `lastSavedAt`;
+- [x] добавить crash points и deterministic recovery: matching published final завершает DB commit без повторного publish; stage-only pending возобновляется; missing/mismatched stage и mismatched/ambiguous final переходят в typed quarantine с очисткой pending slot без изменения active head; disable/runtime-generation change после `head_reserved` и после `published` даёт `project_write_state_changed`, очищает pending и не promotes bytes; orphan stages никогда не promoted.
 
 Gate:
 
@@ -680,9 +751,68 @@ Gate:
 - два независимых API/runtime writer path проходят через один commit contract;
 - loser никогда не изменяет bytes/hash winner final file, включая гонку между reserve и publish;
 - предыдущие hashes читаются после fault injection на каждой стадии;
+- write-disable/generation-change fault tests после head reserve и после publish оставляют прежний active head и нулевой pending slot;
 - retry с одним idempotency key не создаёт дубль.
+- project create/list/detail/explorer возвращают `StoredProjectSummaryV1.runtimeState`, а каждый VDT summary — persisted head; первый create не угадывает CAS;
+- strict DTO tests отклоняют unknown/security fields; table-driven HTTP tests покрывают каждый frozen error class, `code + retryable`, `Retry-After` и unknown `VdtStorageError` fallback;
+- trusted-mode tests доказывают: explicit desktop/development разрешены; missing/invalid/hosted, spoofed `Host` и localhost URL дают zero-write hosted rejection; global agent runtime не устанавливает SQLite persistence;
+- ambiguous transport/retry сохраняет byte-equivalent body и тот же key; terminal conflict сохраняет local project, refreshes только head/runtime, не меняет metadata/`lastSavedAt` и не делает silent rebase;
+- false auto-save отдельно блокирует `createWorkspaceProject`, `createWorkspaceVdt`, `selectWorkspaceProject` и `selectWorkspaceVdt`;
+- agent initial combined create/replay сохраняет source `agent`; applied proposal проходит `non-applied → commit → applied`, а injected crash после commit восстанавливается тем же key без второй revision;
+- repository audit даёт ноль `saveVdtRevision(` в non-test `apps/web`; rollback test/config отключает new writes и сохраняет forward recovery без возврата legacy writer.
 
 ### W0.2 Per-run coordinator и manual merge
+
+**Historical next-package checkpoint (2026-07-24): `STOP` before runtime coding.** Read-only reconnaissance found that the exact schemas did not yet define the durable command, attempt, lease, manual-operation, merge/rebase and retry contracts. The W0.1 migration runner was also frozen to `user_version=2`, two applied rows and current-manifest-hash assumptions, so a sequence-3 migration could not be added safely by appending SQL alone. The then-authorized package was the W0.2 contract freeze: ADR-005/exact schemas plus a reviewed generalized append-only migration-runner extension slice. W0.2 runtime implementation remained blocked until a separate independent contract review.
+
+**Current contract checkpoint (2026-07-24): independent contract-only `GO`.**
+The strict independent W0.2 contract review returned zero blockers, accepted
+the path-scoped directory mode policy, closed the earlier P0 findings and
+confirmed the exact 50/50 tool inventory. Production manifest/migration state
+still contains only sequences 1 and 2 and no transform. This accepts ADR-005
+and the exact schemas as a design contract only; it marks none of the W0.2
+runtime tasks below implemented. Gate R1 SQL-only code now has separate
+independent code-only `GO`. Sequence 3 is not accepted or wired; Gate R2,
+W0.2 runtime and production remain unauthorized. Evidence:
+[`VDT_CORRECTIVE_EXECUTION_LOG.md`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#w0-2-contract-go-2026-07-24).
+
+**Current Gate R1 code checkpoint (2026-07-24): independent code-only `GO`
+with zero blockers.** Every `MigrationStateV1.blockedReason` write maps to
+exactly one of `applied_prefix_mismatch`, `checksum_mismatch`,
+`precondition_failed`, `postcondition_failed` or `backup_failed`; Linux
+tmpfs/overlay admission was removed without a bypass. Accepted evidence is
+115/115 focused tests, 124/124 storage tests, 7/7 targeted blocker
+regressions, five contention rounds in approximately 3.014 seconds, recursive
+typecheck and the production build, older-binary version-3 rejection without a
+write, production manifest/files at sequences 1/2 only with no sequence-3,
+transform or test-helper leakage, and clean diff/whitespace checks. Unbounded
+`foreign_key_check` materialization, unverified Windows durability and
+child-termination diagnostics are nonblocking residuals. Evidence:
+[`VDT_CORRECTIVE_EXECUTION_LOG.md`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#gate-r1-code-go-2026-07-24).
+
+**Historical Sequence 3 byte-contract checkpoint (2026-07-31): independent
+contract-only `GO` with zero blockers.** The reviewed bytes of
+`SEQUENCE_3_SQL_FREEZE_CONTRACT.md`,
+`LEGACY_AGENT_RUN_ADOPTION_TRANSFORM_CONTRACT.md` and
+`SEQUENCE_3_MANIFEST_PACKAGING_AND_FAULT_CONTRACT.md` are accepted as contract
+text only. At that historical acceptance boundary all 13 canonical future
+artifact paths were absent. The contract-only `GO` authorized only inert
+artifact generation, which was then in progress; at that historical checkpoint
+the artifact freeze was not complete and no artifact-freeze `GO` had been
+recorded. This historical checkpoint created no registry, package or runtime
+authority. Evidence:
+[`VDT_CORRECTIVE_EXECUTION_LOG.md`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-byte-contracts-go-2026-07-31).
+
+**Current Sequence 3 artifact-freeze checkpoint (2026-07-31): independent
+artifact-freeze `GO` with zero blockers.** The exact 13-file inert scope,
+complete hash graph, fresh build/no-wiring proof and retained residuals are
+recorded at
+[`sequence-3-artifact-freeze-go-2026-07-31`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-artifact-freeze-go-2026-07-31).
+The next and only authorized package is Gate R2 implementation and independent
+review. Gate R2 is not yet implemented or accepted; Sequence 3 is not
+production-wired; W0.2 runtime remains incomplete and unauthorized; all V2
+flags remain OFF; Windows durability is unverified; production/release remains
+`NO-GO`.
 
 Поверхности:
 
@@ -843,7 +973,7 @@ User, agent и import mutations проходят один ChangeSet contract с:
 
 - v1 revision остаётся immutable;
 - dry-run migration создаёт новую v2 child revision;
-- если current active v1 revision была `approved`, до создания child для неё создаётся immutable approval record с `approvalBasis: legacy`;
+- если current active v1 revision была `approved`, до создания child для неё создаётся immutable historical approval record с `approvalBasis: legacy` и actor attribution `unknown`; migration не фабрикует authenticated-human approval;
 - v2 child никогда не наследует approval и требует обычных V2 quality gates/human approval;
 - active pointer остаётся на v1 до отдельной validated promotion command; command требует `expectedActiveRevisionId` и проверяет `child.parentRevisionId === current activeRevisionId`, иначе возвращает conflict и требует повторной migration/rebase; promotion на v2 явно меняет derived top-level status на unapproved до нового approval;
 - old `valueSource` не становится verified evidence;
@@ -868,9 +998,9 @@ Current mutable `VdtRecord.status=approved` мигрируется ровно в
 
 **Priority:** P1
 
-**Depends on:** Wave 0
+**Depends on:** Wave 0. Publishable recipe artifacts/compiler дополнительно зависят от strict `MetricDefinitionDraftV1`, `FormulaASTV1`, `RequiredInputSpecV1` и `RecipeASTV1` schemas из W1A.1.
 
-**Можно выполнять параллельно с:** Wave 1A только вне `packages/vdt-storage` migration contract. Один migration owner сериализует metric/skill tables, schema version и rollback fixtures.
+**Можно выполнять параллельно с:** Wave 1A только вне `packages/vdt-storage` migration contract и до recipe compilation/certification dependency. Один migration owner сериализует metric/skill tables, schema version и rollback fixtures.
 
 ### W1B.1 Repository abstraction
 
@@ -1038,12 +1168,12 @@ Legacy functions могут существовать временно для rea
 - [ ] `skill.catalog_overview`;
 - [ ] `skill.catalog_page`;
 - [ ] `skill.discover`;
-- [ ] side-effect-free `skill.read`;
+- [ ] selection-neutral `skill.read` с append-only read receipt;
 - [ ] explicit `skill.select`;
 - [ ] `skill.report_gap`;
 - [ ] selected-version-only `skill.compile_recipe`.
 
-Только `skill.select` обновляет selection state. `skill.read` должен потерять текущий side effect записи в `selectedSkills`.
+Только `skill.select` обновляет selection state. `skill.read` должен потерять текущий side effect записи в `selectedSkills`, но сохраняет точный успешный read в append-only ledger по Gate A schema.
 
 ### W2.4 Strict schemas
 
@@ -1489,7 +1619,7 @@ Production/hosted default запрещён, пока любой P0/P0-release bl
 
 ## 18. Migration program
 
-Migration выполняется additive минимум два releases.
+Migration выполняется additive минимум два releases. До первого schema change monolithic unconditional DDL заменяется ordered, checksummed и idempotent forward-only migration runner: новый manifest только exact-extends applied prefix; entries содержат pre/post schema hashes; SQL, application record и `PRAGMA user_version` фиксируются одной transaction; consistent backup создаётся SQLite Backup API и file/directory-fsync до migration; durable attempt/restart reconciliation доказывает безопасный resume; destructive down-migration отсутствует.
 
 ### 18.1 Projects and revisions
 
@@ -1784,8 +1914,8 @@ Next unblocked dependency:
 
 | Stage | Status | Exit evidence |
 |---|---|---|
-| Gate A — preflight/contract freeze | not started | — |
-| Wave 0 — safety foundation | blocked by Gate A | — |
+| Gate A — preflight/contract freeze | complete — independent `GO` | [`VDT_CORRECTIVE_EXECUTION_LOG.md`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#gate-a-2026-07-23) |
+| Wave 0 — safety foundation | in progress; W0.1 complete — independent implementation/test `GO`; W0.2 design contract accepted — independent contract-only `GO`; Gate R1 SQL-only code accepted — independent code-only `GO`; exact 13-file Sequence 3 artifact freeze accepted — independent artifact-freeze `GO`; Gate R2 and W0.2 runtime not implemented; W0.3–W0.5 open | [W0.1 evidence](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#w0-1-go-2026-07-24); [W0.2 contract evidence](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#w0-2-contract-go-2026-07-24); [Gate R1 code evidence](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#gate-r1-code-go-2026-07-24); [artifact-freeze evidence](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-artifact-freeze-go-2026-07-31) |
 | Wave 1A — metric core | blocked by W0 | — |
 | Wave 1B — Skill Repository | blocked by W0 | — |
 | Wave 2 — agent-owned skill resolution | blocked by W1A/W1B | — |
@@ -1801,4 +1931,19 @@ Next unblocked dependency:
 
 ## 27. Команда для следующего оркестратора
 
-Начать только с Gate A. Не реализовывать Wave 1+ до письменного `GO` по Wave 0. Сохранить текущий dirty worktree. Использовать planner/reviewer/coder/tester checkpoints. После каждого slice сверять code с этим plan и актуальными normative specs. Не допускать языковых копий skills: многоязычным является агентское понимание, а не skill library.
+Current checkpoint: full W0.1 has independent implementation/test `GO`, and
+the W0.2 ADR/schema package has independent contract-only `GO`; Gate R1
+SQL-only code has independent code-only `GO` with zero blockers. Wave 0 remains
+in progress, no W0.2 runtime task is complete, all V2 flags remain OFF,
+production/release remains `NO-GO`, and Windows durability is unverified. The
+exact 13-file inert Sequence 3 artifact freeze has independent artifact-freeze
+`GO` with zero blockers. The next and only authorized package is Gate R2
+implementation and independent review. Gate R2 is not yet implemented or
+accepted; do not production-wire Sequence 3 or start W0.2 runtime/production
+work before that review. Do not begin Wave 1+ before written `GO` for all of
+Wave 0.
+Preserve the current dirty worktree and the 17 user-owned `* 2.md` files. Use
+planner/reviewer/coder/tester checkpoints, compare each slice with this plan
+and current normative specifications, and never introduce translated skill
+copies: multilingual understanding belongs to the agent, not the skill
+library.

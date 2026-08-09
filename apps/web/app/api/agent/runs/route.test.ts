@@ -1,6 +1,10 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLocalRuntimeContext } from "@vdt-studio/local-runner/server-runtime";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { VdtStorageError } from "@vdt-studio/storage";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as startRun } from "./route";
 import { GET as getRun } from "./[runId]/route";
 import { GET as getEvents } from "./[runId]/events/route";
@@ -10,6 +14,7 @@ import { agentRuntime } from "./runtime";
 
 const fakeCodex = fileURLToPath(new URL("../../../../../../packages/local-runner/src/server/fixtures/fake-codex.cjs", import.meta.url));
 const runtimeGlobal = globalThis as typeof globalThis & {
+  __vdtAgentRuntime?: unknown;
   __vdtStudioDevelopmentRuntime?: ReturnType<typeof createLocalRuntimeContext>;
 };
 
@@ -24,6 +29,7 @@ function jsonRequest(url: string, body: unknown, init?: RequestInit) {
 
 async function readJson(response: Response) {
   return await response.json() as {
+    schemaVersion?: string;
     ok: boolean;
     runId?: string;
     status?: string;
@@ -36,7 +42,7 @@ async function readJson(response: Response) {
       draftProject?: { rootNodeId: string; graph: { nodes: Array<{ id: string; baselineValue?: number }> } };
       events: Array<{ type: string; seq: number }>;
     };
-    error?: { message?: string };
+    error?: { code?: string; message?: string; retryable?: boolean };
   };
 }
 
@@ -89,6 +95,10 @@ async function waitForManagedRuntimeCancelled() {
   throw new Error("Timed out waiting for managed runtime cancellation.");
 }
 
+beforeEach(() => {
+  vi.stubEnv("VDT_APP_MODE", "development_web");
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -96,6 +106,42 @@ afterEach(() => {
 });
 
 describe("agent runs API", () => {
+  it.each([
+    ["hosted_web", "desktop"],
+    ["invalid", "desktop"],
+    [undefined, undefined]
+  ] as const)("fails closed in mode %s regardless of loopback URL and Host", async (mode, publicMode) => {
+    vi.stubEnv("VDT_APP_MODE", mode);
+    vi.stubEnv("NEXT_PUBLIC_VDT_APP_MODE", publicMode);
+    const previousIds = agentRunIds();
+
+    const response = await startRun(jsonRequest("http://127.0.0.1:3000/api/agent/runs", {
+      mode: "generate_vdt",
+      input: {
+        prompt: "Build a production VDT.",
+        rootKpi: "Production Volume"
+      },
+      providerId: "mock"
+    }, {
+      headers: {
+        "content-type": "application/json",
+        host: "localhost:3000"
+      }
+    }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(403);
+    expect(body).toMatchObject({
+      schemaVersion: "vdt_storage_error_response.v1",
+      ok: false,
+      error: {
+        code: "HOSTED_REVISION_WRITES_DISABLED",
+        retryable: false
+      }
+    });
+    expect(agentRunIds()).toEqual(previousIds);
+  });
+
   it("accepts blank optional brief fields from the agent composer", async () => {
     const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
       mode: "generate_vdt",
@@ -142,6 +188,63 @@ describe("agent runs API", () => {
     expect(response.headers.get("content-type")).toContain("application/json");
     expect(body.ok).toBe(false);
     expect(body.error?.message).toContain("sqlite lookup failed");
+  });
+
+  it("maps synchronous persistence errors through the frozen storage envelope", async () => {
+    vi.spyOn(agentRuntime, "startRunInBackground").mockImplementation(() => {
+      throw new VdtStorageError(
+        "MIGRATION_IN_PROGRESS",
+        "migration lease is active",
+        true
+      );
+    });
+
+    const response = await startRun(jsonRequest(
+      "http://localhost:3000/api/agent/runs",
+      {
+        mode: "generate_vdt",
+        input: {
+          prompt: "Build a production VDT.",
+          rootKpi: "Production Volume"
+        },
+        providerId: "mock"
+      }
+    ));
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("Retry-After")).toBe("1");
+    expect(await readJson(response)).toMatchObject({
+      schemaVersion: "vdt_storage_error_response.v1",
+      ok: false,
+      error: {
+        code: "MIGRATION_IN_PROGRESS",
+        retryable: true
+      }
+    });
+  });
+
+  it("keeps provider initialization failures on the agent request envelope", async () => {
+    const response = await startRun(jsonRequest(
+      "http://localhost:3000/api/agent/runs",
+      {
+        mode: "generate_vdt",
+        input: {
+          prompt: "Build a production VDT.",
+          rootKpi: "Production Volume"
+        },
+        providerId: "local_runner"
+      }
+    ));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(500);
+    expect(body.schemaVersion).toBeUndefined();
+    expect(body).toMatchObject({
+      ok: false,
+      error: {
+        code: "AGENT_START_FAILED"
+      }
+    });
   });
 
   it("starts a run, asks required questions, replays SSE events, resumes, and cancels", async () => {
@@ -348,5 +451,44 @@ describe("agent runs API", () => {
     const cancelled = await waitForRunSnapshot(runId, (snapshot) => snapshot.status === "cancelled");
     expect(cancelled.status).toBe("cancelled");
     await waitForManagedRuntimeCancelled();
+  });
+
+  it("maps lazy SQLite initialization failures through the frozen storage envelope", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "vdt-agent-db-open-"));
+    const invalidDataDir = path.join(root, "not-a-directory");
+    fs.writeFileSync(invalidDataDir, "file", "utf8");
+    vi.stubEnv("VDT_DATA_DIR", invalidDataDir);
+    delete runtimeGlobal.__vdtAgentRuntime;
+    vi.resetModules();
+
+    try {
+      const { POST } = await import("./route");
+      const response = await POST(jsonRequest(
+        "http://localhost:3000/api/agent/runs",
+        {
+          mode: "generate_vdt",
+          input: {
+            prompt: "Build a production VDT.",
+            rootKpi: "Production Volume"
+          },
+          providerId: "mock"
+        }
+      ));
+      const body = await readJson(response);
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      expect(body).toMatchObject({
+        schemaVersion: "vdt_storage_error_response.v1",
+        ok: false,
+        error: {
+          code: "VDT_STORAGE_INTERNAL_ERROR",
+          retryable: false
+        }
+      });
+    } finally {
+      delete runtimeGlobal.__vdtAgentRuntime;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

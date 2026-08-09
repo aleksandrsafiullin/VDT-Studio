@@ -104,10 +104,16 @@ import {
   deleteStoredProject,
   deleteStoredVdt,
   fetchStoredProjectExplorerSummary,
+  fetchStoredVdtRevisionState,
   loadStoredVdt,
+  revisionCasFromHead,
+  runtimeCasFromState,
   saveStoredVdtRevision,
   updateStoredProject,
   updateStoredVdt,
+  VdtStorageRequestError,
+  type CreateStoredVdtInput,
+  type SaveStoredVdtRevisionInput,
   type StoredProjectSummary,
   type StoredVdtRecord,
   type StoredVdtStatus
@@ -291,6 +297,21 @@ export interface VdtWorkspaceState {
   isMutating: boolean;
   error?: string | undefined;
   lastSavedAt?: string | undefined;
+  pendingRevisionCommit?: PendingWorkspaceRevisionCommit | undefined;
+  pendingVdtCreate?: PendingWorkspaceVdtCreate | undefined;
+}
+
+interface PendingWorkspaceRevisionCommit {
+  vdtId: string;
+  input: SaveStoredVdtRevisionInput;
+  projectRevision: number;
+}
+
+interface PendingWorkspaceVdtCreate {
+  projectId: string;
+  input: CreateStoredVdtInput;
+  projectRevision: number;
+  localProjectAtStart: VdtProject;
 }
 
 export type RunAiActionTaskType = Exclude<
@@ -520,6 +541,47 @@ function replaceVdtInSummaries(
       ))
     };
   });
+}
+
+function replaceVdtCommitState(
+  summaries: StoredProjectSummary[],
+  input: {
+    vdt: StoredVdtRecord;
+    head: StoredProjectSummary["vdts"][number]["head"];
+    runtimeState: StoredProjectSummary["runtimeState"];
+  }
+): StoredProjectSummary[] {
+  return summaries.map((summary) => {
+    if (summary.project.id !== input.vdt.projectId) return summary;
+    return {
+      ...summary,
+      runtimeState: input.runtimeState,
+      vdts: summary.vdts.map((entry) => (
+        entry.vdt.id === input.vdt.id
+          ? { ...entry, head: input.head }
+          : entry
+      ))
+    };
+  });
+}
+
+function shouldRetainPendingStorageOperation(error: unknown): boolean {
+  return !(error instanceof VdtStorageRequestError) || error.retryable;
+}
+
+function isRevisionStateConflict(error: unknown): error is VdtStorageRequestError {
+  return error instanceof VdtStorageRequestError && (
+    error.code === "REVISION_CONFLICT" ||
+    error.code === "PROJECT_WRITE_STATE_CHANGED" ||
+    error.code === "IDEMPOTENCY_KEY_REUSE"
+  );
+}
+
+function workspaceStorageError(error: unknown, fallback: string): string {
+  if (isRevisionStateConflict(error)) {
+    return "This VDT changed on the server. Your local edits are still open; reload or rebase before saving again.";
+  }
+  return error instanceof Error ? error.message : fallback;
 }
 
 function removeVdtFromSummaries(
@@ -1767,6 +1829,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         })),
       createWorkspaceProject: async (name) => {
         const projectName = name?.trim() || "New project";
+        if (hasActiveWorkspaceVdt(get().workspace) && !(await get().saveActiveWorkspaceVdt())) {
+          return false;
+        }
         const state = get();
         set((current) => ({
           workspace: {
@@ -1776,7 +1841,6 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
         }));
         try {
-          await get().saveActiveWorkspaceVdt();
           const summary = await createStoredProject({
             name: projectName,
             industry: state.project.industry ?? state.brief.industry
@@ -1910,6 +1974,18 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         }
       },
       createWorkspaceVdt: async (input) => {
+        const workspaceBeforeSave = get().workspace;
+        const pendingBeforeSave =
+          workspaceBeforeSave.pendingVdtCreate?.projectId === workspaceBeforeSave.activeProjectId
+            ? workspaceBeforeSave.pendingVdtCreate
+            : undefined;
+        if (
+          !pendingBeforeSave &&
+          hasActiveWorkspaceVdt(workspaceBeforeSave) &&
+          !(await get().saveActiveWorkspaceVdt())
+        ) {
+          return false;
+        }
         const state = get();
         const activeProjectId = state.workspace.activeProjectId;
         if (!activeProjectId) {
@@ -1925,74 +2001,119 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           typeof input === "string" ? { name: input } : input ?? {};
         const rootKpi = params.rootKpi?.trim() || params.name?.trim() || "";
         const vdtName = params.name?.trim() || params.rootKpi?.trim() || "New VDT";
+        const pendingCreate = state.workspace.pendingVdtCreate?.projectId === activeProjectId
+          ? state.workspace.pendingVdtCreate
+          : undefined;
+        const activeSummary = summaryForProject(state.workspace.projectSummaries, activeProjectId);
+        if (!pendingCreate && !activeSummary?.runtimeState) {
+          set((current) => ({
+            workspace: {
+              ...current.workspace,
+              error: "Project runtime state is unavailable. Refresh the workspace before creating a VDT."
+            }
+          }));
+          return false;
+        }
+        const hasExplicitBrief = Boolean(params.rootKpi?.trim());
+        const snapshot = pendingCreate?.input.project ?? (
+          hasActiveWorkspaceVdt(state.workspace) && !hasExplicitBrief
+            ? projectSnapshotForVdt(state.project, vdtName)
+            : buildDraftVdtProject({
+                name: vdtName,
+                rootKpi: rootKpi || vdtName,
+                ...(params.unit ? { unit: params.unit } : {}),
+                ...(params.timePeriod ? { timePeriod: params.timePeriod } : {}),
+                ...(activeSummary?.project.industry ? { industry: activeSummary.project.industry } : {})
+              })
+        );
+        const rootNode = rootNodeForProject(snapshot);
+        const createOperation: PendingWorkspaceVdtCreate = pendingCreate ?? {
+          projectId: activeProjectId,
+          projectRevision: state.projectRevision,
+          localProjectAtStart: cloneProject(state.project),
+          input: {
+            idempotencyKey: `create-vdt:${activeProjectId}:${generateRunId()}`,
+            expectedRuntime: runtimeCasFromState(activeSummary!.runtimeState),
+            name: vdtName,
+            rootKpi: rootNode?.name ?? vdtName,
+            unit: rootNode?.unit,
+            timePeriod: rootNode?.assumptions
+              ?.find((assumption) => assumption.startsWith("Time period: "))
+              ?.replace("Time period: ", ""),
+            project: snapshot
+          }
+        };
         set((current) => ({
           workspace: {
             ...current.workspace,
             isMutating: true,
-            error: undefined
+            error: undefined,
+            pendingVdtCreate: createOperation
           }
         }));
         try {
-          await get().saveActiveWorkspaceVdt();
-          const current = get();
-          const activeSummary = summaryForProject(current.workspace.projectSummaries, activeProjectId);
-          const hasExplicitBrief = Boolean(params.rootKpi?.trim());
-          const snapshot =
-            hasActiveWorkspaceVdt(current.workspace) && !hasExplicitBrief
-              ? projectSnapshotForVdt(current.project, vdtName)
-              : buildDraftVdtProject({
-                  name: vdtName,
-                  rootKpi: rootKpi || vdtName,
-                  ...(params.unit ? { unit: params.unit } : {}),
-                  ...(params.timePeriod ? { timePeriod: params.timePeriod } : {}),
-                  ...(activeSummary?.project.industry ? { industry: activeSummary.project.industry } : {})
-                });
-          const rootNode = rootNodeForProject(snapshot);
-          const created = await createStoredVdt(activeProjectId, {
-            name: vdtName,
-            rootKpi: rootNode?.name ?? vdtName,
-            unit: rootNode?.unit,
-            timePeriod: rootNode?.assumptions?.find((assumption) => assumption.startsWith("Time period: "))?.replace("Time period: ", ""),
-            project: snapshot
+          const created = await createStoredVdt(activeProjectId, createOperation.input);
+          let localProjectChanged = false;
+          set((current) => {
+            localProjectChanged =
+              current.projectRevision !== createOperation.projectRevision ||
+              JSON.stringify(current.project) !== JSON.stringify(createOperation.localProjectAtStart);
+            if (localProjectChanged) {
+              return {
+                workspace: {
+                  ...current.workspace,
+                  projectSummaries: upsertProjectSummary(current.workspace.projectSummaries, created.summary),
+                  isMutating: false,
+                  error: "The VDT was created from the submitted snapshot, but newer local edits remain open and unsaved.",
+                  pendingVdtCreate: undefined
+                }
+              };
+            }
+            const visibleProject = createOperation.input.project;
+            return {
+              project: visibleProject,
+              selectedNodeId: visibleProject.rootNodeId,
+              activeScenarioId: resolveMainScenarioId(visibleProject),
+              brief: briefFromProject(visibleProject),
+              generateActivity: undefined,
+              activeAgentRunId: undefined,
+              agentRun: undefined,
+              agentEvents: [],
+              agentPendingQuestions: undefined,
+              agentError: undefined,
+              isGenerating: false,
+              workspace: {
+                ...current.workspace,
+                projectSummaries: upsertProjectSummary(current.workspace.projectSummaries, created.summary),
+                activeProjectId,
+                activeVdtId: created.vdt.id,
+                activePanel: "vdt",
+                isMutating: false,
+                error: undefined,
+                lastSavedAt: nowIso(),
+                pendingVdtCreate: undefined
+              },
+              ...clearPendingAiActionState()
+            };
           });
-          set((current) => ({
-            project: snapshot,
-            selectedNodeId: snapshot.rootNodeId,
-            activeScenarioId: resolveMainScenarioId(snapshot),
-            brief: briefFromProject(snapshot),
-            generateActivity: undefined,
-            activeAgentRunId: undefined,
-            agentRun: undefined,
-            agentEvents: [],
-            agentPendingQuestions: undefined,
-            agentError: undefined,
-            isGenerating: false,
-            workspace: {
-              ...current.workspace,
-              projectSummaries: upsertProjectSummary(current.workspace.projectSummaries, created.summary),
-              activeProjectId,
-              activeVdtId: created.vdt.id,
-              activePanel: "vdt",
-              isMutating: false,
-              error: undefined,
-              lastSavedAt: nowIso()
-            },
-            ...clearPendingAiActionState()
-          }));
-          return true;
+          return !localProjectChanged;
         } catch (error) {
+          const retainPending = shouldRetainPendingStorageOperation(error);
           set((current) => ({
             workspace: {
               ...current.workspace,
               isMutating: false,
-              error: error instanceof Error ? error.message : "VDT could not be created."
+              error: workspaceStorageError(error, "VDT could not be created."),
+              pendingVdtCreate: retainPending ? createOperation : undefined
             }
           }));
           return false;
         }
       },
       selectWorkspaceProject: async (projectId) => {
-        await get().saveActiveWorkspaceVdt();
+        if (hasActiveWorkspaceVdt(get().workspace) && !(await get().saveActiveWorkspaceVdt())) {
+          return false;
+        }
         const summary = summaryForProject(get().workspace.projectSummaries, projectId);
         if (!summary) {
           set((state) => ({
@@ -2045,7 +2166,15 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
         }));
         try {
-          await get().saveActiveWorkspaceVdt();
+          if (hasActiveWorkspaceVdt(get().workspace) && !(await get().saveActiveWorkspaceVdt())) {
+            set((state) => ({
+              workspace: {
+                ...state.workspace,
+                isLoading: false
+              }
+            }));
+            return false;
+          }
           const loaded = await loadStoredVdt(vdtId);
           if (!loaded.activeProject) {
             throw new Error("Selected VDT does not have a saved revision yet.");
@@ -2198,43 +2327,77 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         const state = get();
         const activeVdtId = state.workspace.activeVdtId;
         if (!activeVdtId) return false;
+        const owningSummary = summaryContainingVdt(state.workspace.projectSummaries, activeVdtId);
+        const activeEntry = owningSummary?.vdts.find((entry) => entry.vdt.id === activeVdtId);
+        if (!owningSummary?.runtimeState || !activeEntry?.head) {
+          set((current) => ({
+            workspace: {
+              ...current.workspace,
+              error: "VDT revision state is unavailable. Refresh the workspace before saving."
+            }
+          }));
+          return false;
+        }
+        const existingOperation = state.workspace.pendingRevisionCommit?.vdtId === activeVdtId
+          ? state.workspace.pendingRevisionCommit
+          : undefined;
+        const operation: PendingWorkspaceRevisionCommit = existingOperation ?? {
+          vdtId: activeVdtId,
+          projectRevision: state.projectRevision,
+          input: {
+            idempotencyKey: `manual-save:${activeVdtId}:${generateRunId()}`,
+            expectedHead: revisionCasFromHead(activeEntry.head),
+            expectedRuntime: runtimeCasFromState(owningSummary.runtimeState),
+            project: cloneProject(state.project),
+            summary: "Manual workspace save"
+          }
+        };
         set((current) => ({
           workspace: {
             ...current.workspace,
             isMutating: true,
-            error: undefined
+            error: undefined,
+            pendingRevisionCommit: operation
           }
         }));
         try {
-          const rootNode = rootNodeForProject(state.project);
-          const vdt = await updateStoredVdt(activeVdtId, {
-            name: state.project.name,
-            rootKpi: rootNode?.name ?? state.brief.rootKpi,
-            unit: rootNode?.unit ?? state.brief.unit,
-            timePeriod: state.brief.timePeriod
+          const saved = await saveStoredVdtRevision(activeVdtId, operation.input);
+          let localProjectChanged = false;
+          set((current) => {
+            localProjectChanged =
+              current.projectRevision !== operation.projectRevision ||
+              JSON.stringify(current.project) !== JSON.stringify(operation.input.project);
+            return {
+              workspace: {
+                ...current.workspace,
+                projectSummaries: upsertProjectSummary(current.workspace.projectSummaries, saved.summary),
+                isMutating: false,
+                error: localProjectChanged
+                  ? "The submitted snapshot was saved, but newer local edits are still unsaved."
+                  : undefined,
+                lastSavedAt: localProjectChanged ? current.workspace.lastSavedAt : nowIso(),
+                pendingRevisionCommit: undefined
+              }
+            };
           });
-          await saveStoredVdtRevision(activeVdtId, {
-            project: state.project,
-            source: "user",
-            summary: "Manual workspace save"
-          });
-          set((current) => ({
-            workspace: {
-              ...current.workspace,
-              projectSummaries: replaceVdtInSummaries(current.workspace.projectSummaries, vdt),
-              isMutating: false,
-              error: undefined,
-              lastSavedAt: nowIso()
-            }
-          }));
-          void get().refreshWorkspace({ scopedProjectId: get().workspace.activeProjectId });
-          return true;
+          return !localProjectChanged;
         } catch (error) {
+          let refreshedState:
+            | Awaited<ReturnType<typeof fetchStoredVdtRevisionState>>
+            | undefined;
+          if (isRevisionStateConflict(error)) {
+            refreshedState = await fetchStoredVdtRevisionState(activeVdtId).catch(() => undefined);
+          }
+          const retainPending = shouldRetainPendingStorageOperation(error);
           set((current) => ({
             workspace: {
               ...current.workspace,
+              projectSummaries: refreshedState
+                ? replaceVdtCommitState(current.workspace.projectSummaries, refreshedState)
+                : current.workspace.projectSummaries,
               isMutating: false,
-              error: error instanceof Error ? error.message : "VDT could not be saved."
+              error: workspaceStorageError(error, "VDT could not be saved."),
+              pendingRevisionCommit: retainPending ? operation : undefined
             }
           }));
           return false;
@@ -3731,6 +3894,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       // providerTestStatus (see PARTIALIZE_EPHEMERAL_STATE_KEYS in provider-persistence.ts).
       partialize: (state) => ({
         project: state.project,
+        projectRevision: state.projectRevision,
         workspace: {
           activePanel: state.workspace.activePanel,
           projectSummaries: state.workspace.projectSummaries,
@@ -3738,7 +3902,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           activeVdtId: state.workspace.activeVdtId,
           isLoading: false,
           isMutating: false,
-          lastSavedAt: state.workspace.lastSavedAt
+          lastSavedAt: state.workspace.lastSavedAt,
+          pendingRevisionCommit: state.workspace.pendingRevisionCommit,
+          pendingVdtCreate: state.workspace.pendingVdtCreate
         },
         selectedNodeId: state.selectedNodeId,
         activeScenarioId: state.activeScenarioId,

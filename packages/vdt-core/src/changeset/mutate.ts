@@ -49,25 +49,27 @@ function additionToNode(addition: VdtNodeAddition, timestamp: string): VdtNode {
   return {
     id: addition.nodeId,
     name: addition.name,
-    description: addition.description,
     type: defaultNodeType(addition),
     status: "ai_suggested",
-    unit: addition.unit,
-    formula: addition.formula,
-    value: addition.value,
-    baselineValue: addition.baselineValue,
-    valueStatus: addition.valueStatus,
-    valueSource: addition.valueSource,
     aiGenerated: true,
-    aiConfidence: addition.aiConfidence,
-    aiRationale: addition.aiRationale,
-    assumptions: addition.assumptions,
-    tags: addition.tags,
-    owner: addition.owner,
-    controllability: addition.controllability,
-    materiality: addition.materiality,
-    fixedInScenario: addition.fixedInScenario,
-    dataMapping: addition.dataMapping,
+    ...definedProperties({
+      description: addition.description,
+      unit: addition.unit,
+      formula: addition.formula,
+      value: addition.value,
+      baselineValue: addition.baselineValue,
+      valueStatus: addition.valueStatus,
+      valueSource: addition.valueSource,
+      aiConfidence: addition.aiConfidence,
+      aiRationale: addition.aiRationale,
+      assumptions: addition.assumptions,
+      tags: addition.tags,
+      owner: addition.owner,
+      controllability: addition.controllability,
+      materiality: addition.materiality,
+      fixedInScenario: addition.fixedInScenario,
+      dataMapping: addition.dataMapping
+    }),
     createdAt: timestamp,
     updatedAt: timestamp
   };
@@ -81,7 +83,7 @@ function additionToEdge(addition: VdtNodeAddition): VdtEdge {
     relation: addition.relation,
     label: "AI proposed",
     aiGenerated: true,
-    aiConfidence: addition.aiConfidence
+    ...definedProperties({ aiConfidence: addition.aiConfidence })
   };
 }
 
@@ -357,9 +359,11 @@ export function mutateProjectGraph(
         sourceNodeId: change.edge.sourceNodeId,
         targetNodeId: change.edge.targetNodeId,
         relation: change.edge.relation,
-        label: change.edge.label,
         aiGenerated: change.edge.aiGenerated ?? true,
-        aiConfidence: change.edge.aiConfidence
+        ...definedProperties({
+          label: change.edge.label,
+          aiConfidence: change.edge.aiConfidence
+        })
       });
     }
   }
@@ -373,7 +377,7 @@ export function mutateProjectGraph(
       const patch = update.patch;
       return {
         ...node,
-        ...patch,
+        ...definedProperties(patch),
         updatedAt: timestamp
       };
     });
@@ -405,7 +409,9 @@ export function mutateProjectGraph(
       dataSources = [...dataSources.filter((source) => source.id !== change.dataSource.id), change.dataSource];
     } else {
       dataSources = dataSources.map((source) => (
-        source.id === change.sourceId ? { ...source, ...change.patch } : source
+        source.id === change.sourceId
+          ? { ...source, ...definedProperties(change.patch) }
+          : source
       ));
     }
   }
@@ -444,7 +450,7 @@ export function mutateProjectGraph(
 
         return {
           ...edge,
-          ...change.patch
+          ...definedProperties(change.patch)
         };
       });
     }
@@ -473,6 +479,16 @@ export function mutateProjectGraph(
   next.graph = { nodes, edges };
   next.dataSources = dataSources;
   return next;
+}
+
+function definedProperties<T extends object>(value: T): {
+  [K in keyof T]?: Exclude<T[K], undefined>;
+} {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined)
+  ) as {
+    [K in keyof T]?: Exclude<T[K], undefined>;
+  };
 }
 
 function confidenceLabel(confidence: number | undefined): "high" | "medium" | "low" {

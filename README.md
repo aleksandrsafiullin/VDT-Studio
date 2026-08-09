@@ -17,6 +17,8 @@ VDT Studio is an AI-first, local-first workspace for building editable Value Dri
 
 Raw-data discovery currently proposes semantic models and metadata mappings; it does **not** execute mappings or calculate trusted KPI baselines. Web research currently returns search results but does not yet provide an auditable benchmark evidence pipeline. These limitations are tracked in [Data ingestion](docs/DATA_INGESTION.md) and the [roadmap](docs/ROADMAP.md).
 
+The active corrective program is [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](docs/VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md). Gate A and W0.1 are complete with independent `GO`: local revision writes now use one strict CAS/idempotency commit boundary and exclusive-create no-clobber publication. The W0.2 design contract is accepted with independent contract-only `GO`, and Gate R1 SQL-only code has independent code-only `GO` with zero blockers, but no W0.2 runtime task is complete. The three Sequence 3 byte-level contracts have independent contract-only `GO`; the separate 13-file inert artifact freeze now has independent artifact-freeze `GO` with zero blockers, as recorded in the [2026-07-31 artifact-freeze checkpoint](docs/implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-artifact-freeze-go-2026-07-31). The accepted freeze is bound to verifier raw SHA-256 `817a090c48ba580fb5145ae0958f61e7be2255126f3dba17fcb65359f737c7ec`, freeze-record raw SHA-256 `6d5497733df9d1a184be34897ee20bba09355192239cdb904088b452d0b5dc73`, framed freeze-record hash `sha256:6aca44eded3fe69cac16f30fd0f4419523e49507ac6be099ec64d2e53efa6e7a` and V2 manifest hash `sha256:791fc7c7cce9abd11b2509ddaa6ba9e92e469178a3d1add6803b083295c849e8`. Fresh build and no-wiring evidence found no frozen bytes, names or hashes in current production outputs or authority files. The next and only authorized package is Gate R2 implementation and independent review. Gate R2 is not yet implemented or accepted; Sequence 3 is not production-wired; W0.2 runtime remains incomplete and unauthorized; all V2 flags stay OFF; Windows durability is unverified; production/release remains `NO-GO`.
+
 ## Quickstart
 
 Requirements: Node `>=24 <25`, pnpm `10.33.2`.
@@ -47,7 +49,7 @@ Normal desktop Local AI uses reviewed Tauri commands and the managed sidecar; it
 4. Review formulas, assumptions, warnings and proposed changes.
 5. Apply accepted changes, calculate scenarios and save a revision.
 
-The current agent loop uses local skills and bounded tools. Skill coverage is intentionally small and mostly English; multilingual and cross-domain retrieval remain roadmap work.
+The current agent loop uses local skills and bounded tools. Its live selection path is narrow, mostly English and still relies on deterministic classification/term matching. The corrective target keeps one canonical copy of each skill and makes multilingual understanding and explicit selection an agent responsibility; it does not create translated skill copies, language aliases or an automatic generic fallback.
 
 ### Discover data candidates
 
@@ -98,7 +100,7 @@ pnpm package:alpha
 pnpm package:verify
 ```
 
-`pnpm security:audit` currently fails on documented high-severity dependencies in the upload/image stack. Do not claim a passing release gate until those dependencies are remediated.
+`pnpm security:audit` currently fails on documented high-severity dependencies in the upload/parsing, image-processing and Next.js web-runtime stacks. Do not claim a passing release gate until those dependencies are remediated.
 
 ## Product CLI
 
@@ -111,6 +113,8 @@ pnpm vdt -- runner start
 ```
 
 The CLI does not install MCP servers, distribute coding-agent skills or give external agents control of the repository. The application does contain a bounded in-product VDT agent; see [ADR-002](docs/adr/ADR-002-bounded-in-product-agent-runtime.md).
+
+The corrective skill and migration boundary is recorded in [ADR-003](docs/adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md). The implemented W0.1 atomic revision decision and its limits are recorded in [ADR-004](docs/adr/ADR-004-atomic-revision-commit-and-legacy-migration-adoption.md).
 
 ## Alpha Packaging
 
@@ -135,6 +139,8 @@ Start with the [documentation map](docs/README.md):
 - [Data ingestion](docs/DATA_INGESTION.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Production readiness](docs/PRODUCTION_READINESS.md)
+- [Corrective implementation plan](docs/VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md)
+- [Corrective execution log](docs/implementation/VDT_CORRECTIVE_EXECUTION_LOG.md)
 
 Contributors and coding agents must update documentation with behavior changes; see [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 

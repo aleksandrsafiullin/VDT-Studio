@@ -1,6 +1,22 @@
 # ТЗ для Codex: настоящий Agentic Harness для VDT Studio
 
-> **Статус:** нормативное референсное ТЗ для decision/tool loop, реализовано частично. Разделы о legacy-пути являются историческим контекстом; актуальный runtime описан в `AI_HARNESS.md`, а незакрытые требования — в `PRODUCTION_READINESS.md` и `ROADMAP.md`. Проверено 2026-07-23.
+> **Статус:** нормативное референсное ТЗ для decision/tool loop, реализовано частично. Разделы о legacy-пути являются историческим контекстом; актуальный runtime описан в `AI_HARNESS.md`, а незакрытые требования — в `PRODUCTION_READINESS.md` и `ROADMAP.md`. Контракт skills скорректирован ADR-003 и `VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`. Проверено 2026-07-23.
+
+## Корректирующий контракт Gate A
+
+Этот раздел имеет приоритет над конфликтующими описаниями tools ниже. `skill.list`, `skill.search`, domain classification, `matchedTerms`, score-selected candidates, selection как побочный эффект чтения и automatic generic fallback являются legacy V1/reference-only.
+
+Целевой tool flow:
+
+1. `skill.catalog_overview`;
+2. `skill.catalog_page` или agent-authored `skill.discover`;
+3. selection-neutral `skill.read` конкретных `versionId` с idempotent append-only receipt;
+4. explicit `skill.select` под run-state CAS/idempotency либо `skill.report_gap`;
+5. selected-version-only `skill.compile_recipe`;
+6. deterministic composition validator и immutable `RunBuildBasis`;
+7. только затем bounded build tools.
+
+Один `skillId + versionId` имеет одну каноническую копию. Переводы, language aliases, keyword/regex marker routing и автоматический generic fallback запрещены. Retrieval/index даёт recall, но не принимает решение. Агент отвечает на языке пользователя независимо от языка skill. Полный hash/ACL/ActorContext/revocation/migration/flag contract записан в [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md).
 
 **Цель документа:** заменить текущую псевдо-агентскую реализацию на рабочую Harness-систему, где AI не возвращает готовый VDT и не возвращает большой `driverPlan`, а выполняет цикл:
 
@@ -604,7 +620,9 @@ tool failed → run failed
 
 ---
 
-# 7.1. Skill tools
+# 7.1. Skill tools — legacy V1 reference
+
+Shapes в этом подразделе сохраняются для анализа миграции существующих callers. Они не являются V2 target и не отменяют корректирующий контракт Gate A выше.
 
 ## `skill.list`
 

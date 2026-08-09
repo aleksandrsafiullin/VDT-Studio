@@ -121,6 +121,158 @@ describe("VDT agent skill library", () => {
     expect(selected[0]?.skill.id).toBe(expectedSkillId);
   });
 
+  // Remove `.fails` across W1B/W2 only when the live path uses V2 catalog/read/select semantics.
+  it.fails("[known defect F-08] resolves marker-free EN/RU intent through V2 catalog/read/select without implicit selection", async () => {
+    let observedContract: unknown;
+    try {
+    const library = await loadSkillLibraryFromFs(skillsRoot);
+    const englishRequest: GenerateVdtInputLike = {
+      rootKpi: "Monthly face-loading output",
+      industry: "Surface resource extraction",
+      businessContext: "Mass removed from the working face by primary loading machines, governed by fleet availability, pass size, and cycles per hour."
+    };
+    const russianRequest: GenerateVdtInputLike = {
+      rootKpi: "Месячный объем выемки с забоя",
+      industry: "Открытая разработка месторождения",
+      businessContext: "Масса, забираемая из рабочего забоя погрузочными машинами, зависит от доступности парка, объема одного прохода и числа циклов в час."
+    };
+    const expectedSkillId = "mining.excavation";
+
+    // Negative control: neither fixture is recognizable by the legacy ASCII marker router.
+    // Adding EN/RU aliases therefore makes this invariant fail instead of fixing the test.
+    const legacyEnglish = retrieveSkills(englishRequest, library, { maxSkills: 2 });
+    const legacyRussian = retrieveSkills(russianRequest, library, { maxSkills: 2 });
+    const fixturesRemainOutsideLegacyRouting = [legacyEnglish, legacyRussian].every((candidates) =>
+      candidates.every((candidate) => candidate.skill.id !== expectedSkillId)
+    );
+
+    const english = prepareAgenticVdtRun(englishRequest, library, {
+      runId: "language-v2-english",
+      now: () => new Date("2026-07-23T00:00:00.000Z")
+    }).run;
+    const russian = prepareAgenticVdtRun(russianRequest, library, {
+      runId: "language-v2-russian",
+      now: () => new Date("2026-07-23T00:00:00.000Z")
+    }).run;
+    const noMatch = prepareAgenticVdtRun({
+      rootKpi: "Custom relationship quality",
+      businessContext: "No applicable operating model has been supplied."
+    }, library, {
+      runId: "language-v2-no-match",
+      now: () => new Date("2026-07-23T00:00:00.000Z")
+    }).run;
+
+    type SelectedSkillV2 = (typeof english.selectedSkills)[number] & {
+      skillId?: string | undefined;
+      versionId?: string | undefined;
+      contentHash?: string | undefined;
+    };
+    const englishSelection = english.selectedSkills[0] as SelectedSkillV2 | undefined;
+    const russianSelection = russian.selectedSkills[0] as SelectedSkillV2 | undefined;
+    const englishSkillId = englishSelection?.skillId ?? englishSelection?.id;
+    const russianSkillId = russianSelection?.skillId ?? russianSelection?.id;
+    const exactCanonicalVersionSelected =
+      englishSelection !== undefined &&
+      russianSelection !== undefined &&
+      englishSkillId === expectedSkillId &&
+      russianSkillId === expectedSkillId &&
+      typeof englishSelection.versionId === "string" &&
+      englishSelection.versionId.length > 0 &&
+      englishSelection.versionId === russianSelection.versionId &&
+      typeof englishSelection.contentHash === "string" &&
+      englishSelection.contentHash.length > 0 &&
+      englishSelection.contentHash === russianSelection.contentHash;
+
+    const traceContract = (run: typeof english) => {
+      const toolEvents = run.events
+        .map((event, index) => ({
+          index,
+          metadata: event.metadata,
+          toolName: event.metadata?.toolName
+        }))
+        .filter((event): event is typeof event & { toolName: string } =>
+          typeof event.toolName === "string"
+        );
+      const indexOf = (toolName: string) =>
+        toolEvents.find((event) => event.toolName === toolName)?.index ?? -1;
+      const catalogIndex = indexOf("skill.catalog_overview");
+      const discoverIndex = indexOf("skill.discover");
+      const readEvents = toolEvents.filter((event) => event.toolName === "skill.read");
+      const selectIndex = indexOf("skill.select");
+      const readIsSelectionNeutral = readEvents.length > 0 && readEvents.every((event) => {
+        const before = event.metadata?.selectedSkillIdsBefore;
+        const after = event.metadata?.selectedSkillIdsAfter;
+        return event.metadata?.selectionChanged === false &&
+          Array.isArray(before) &&
+          Array.isArray(after) &&
+          JSON.stringify(before) === JSON.stringify(after);
+      });
+      const selectionEvent = toolEvents.find((event) => event.toolName === "skill.select");
+      const semanticSelectionWithoutLegacyRouting =
+        selectionEvent?.metadata?.resolutionMode === "agent_semantic_v2" &&
+        selectionEvent.metadata.usedLegacyMarkers === false &&
+        selectionEvent.metadata.usedLanguageAliases === false;
+      const readReceiptIds = readEvents
+        .map((event) => event.metadata?.readReceiptId)
+        .filter((value): value is string => typeof value === "string" && value.length > 0);
+      const selectedReadReceiptIds = selectionEvent?.metadata?.readReceiptIds;
+      const explicitReadReceiptBinding =
+        readReceiptIds.length === readEvents.length &&
+        Array.isArray(selectedReadReceiptIds) &&
+        readReceiptIds.every((receiptId) => selectedReadReceiptIds.includes(receiptId));
+
+      return {
+        explicitCatalogDiscoverReadSelect:
+          catalogIndex >= 0 &&
+          discoverIndex > catalogIndex &&
+          readEvents.every((event) => event.index > discoverIndex && event.index < selectIndex) &&
+          selectIndex > discoverIndex,
+        readIsSelectionNeutral,
+        explicitReadReceiptBinding,
+        semanticSelectionWithoutLegacyRouting
+      };
+    };
+    const englishTrace = traceContract(english);
+    const russianTrace = traceContract(russian);
+    const noAutomaticGenericFallback =
+      noMatch.selectedSkills.every((skill) =>
+        ((skill as typeof skill & { skillId?: string }).skillId ?? skill.id) !== "generic.logical_kpi_decomposition"
+      ) &&
+      noMatch.events.some((event) =>
+        event.metadata?.toolName === "skill.report_gap" ||
+        event.metadata?.outcome === "no_applicable_skill"
+      );
+
+    observedContract = {
+      fixturesRemainOutsideLegacyRouting,
+      exactCanonicalVersionSelected,
+      englishTrace,
+      russianTrace,
+      noAutomaticGenericFallback
+    };
+    } catch {
+      // Setup/runtime errors must make `it.fails` an unexpected pass, not false evidence.
+      return;
+    }
+    expect(observedContract).toEqual({
+      fixturesRemainOutsideLegacyRouting: true,
+      exactCanonicalVersionSelected: true,
+      englishTrace: {
+        explicitCatalogDiscoverReadSelect: true,
+        readIsSelectionNeutral: true,
+        explicitReadReceiptBinding: true,
+        semanticSelectionWithoutLegacyRouting: true
+      },
+      russianTrace: {
+        explicitCatalogDiscoverReadSelect: true,
+        readIsSelectionNeutral: true,
+        explicitReadReceiptBinding: true,
+        semanticSelectionWithoutLegacyRouting: true
+      },
+      noAutomaticGenericFallback: true
+    });
+  });
+
   it("does not select same-domain mining skills without an explicit skill pattern match", async () => {
     const library = await loadSkillLibraryFromFs(skillsRoot);
     const selected = retrieveSkills(

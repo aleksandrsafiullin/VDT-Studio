@@ -1,12 +1,28 @@
 # Agentic VDT Runtime Implementation Spec
 
-> **Status:** active normative target, partially implemented. This document describes required behavior, not proof of current readiness. For current implementation status use `AI_HARNESS.md`, `PRODUCTION_READINESS.md` and ADR-002. Last classification review: 2026-07-23.
+> **Status:** active normative target, partially implemented. This document describes required behavior, not proof of current readiness. For current implementation status use `AI_HARNESS.md`, `PRODUCTION_READINESS.md` and ADR-002. The corrective contract in ADR-003 and `VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md` supersedes conflicting classifier/skill-routing requirements below. Last contract review: 2026-07-23.
+
+## Corrective contract freeze
+
+This section is normative and overrides any conflicting later reference to keyword routing, fixed domain classification, matching terms, score-selected skills, translated variants or automatic fallback.
+
+- Preserve the original request without ASCII normalization or marker pre-classification.
+- Store one canonical artifact for each `skillId + versionId`; do not generate language copies or alias registries.
+- Give the agent bounded catalog cards, then let it decide which exact versions to read.
+- Treat catalog/index retrieval as recall-only and side-effect-free.
+- Make `skill.read` version/hash-pinned and selection-neutral; it may append one idempotent read receipt but cannot change selection, recipe binding or build basis.
+- Let only explicit `skill.select` atomically replace selection under run-state CAS and idempotency.
+- Record `no_applicable_skill` and a gap transition instead of selecting generic automatically.
+- Compile only pinned selected versions and open build tools only after one immutable, validated `RunBuildBasis`.
+- Keep V2 default-off/local-only until the corrective gates pass.
+
+The target skill tools are `skill.catalog_overview`, `skill.catalog_page`, `skill.discover`, `skill.read`, `skill.select`, `skill.report_gap` and selected-version-only `skill.compile_recipe`. Their ownership, hash, ACL, revocation, migration and feature-flag boundaries are defined in [ADR-003](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md). Existing V1 tools/events remain implementation evidence until their owning migration wave; they are not the V2 design.
 
 ## Purpose
 
 Implement VDT generation as an agentic decomposition workflow, not as a single "send prompt, wait for JSON" operation.
 
-The user experience must show real agent work as it happens: domain classification, skill lookup, skill reads, clarifying-question decisions, graph drafting, validation, patch application, and final report. Do not show fake reasoning or synthetic "the model is thinking" copy that is not backed by runtime events.
+The user experience must show real agent work as it happens: request understanding, catalog discovery, skill reads, an explicit selection/gap decision, clarifying-question decisions, graph drafting, validation, patch application, and final report. Do not show fake reasoning or synthetic "the model is thinking" copy that is not backed by runtime events.
 
 ## Implementation Agent Working Rules
 
@@ -38,14 +54,15 @@ Build a real VDT Agent Runtime with domain skills and observable execution event
 
 The agent should:
 
-1. Classify the user's request into a domain and decomposition pattern.
-2. Retrieve relevant markdown skills from a local skill library.
-3. Read the selected skills and cite their IDs in the run trace.
-4. Decide whether clarifying questions are necessary.
-5. Build a decomposition plan.
-6. Generate or patch a VDT graph.
-7. Validate graph reachability, formula references, units, and missing critical drivers.
-8. Return a final VDT plus a short user-facing report explaining the structure.
+1. Understand the original request in the user's language and formulate catalog intent.
+2. Browse or retrieve accessible canonical skill cards without changing run selection.
+3. Read exact candidate versions and explicitly select them, or record a knowledge gap.
+4. Pin version/hash/recipe evidence and create a validated build basis.
+5. Decide whether clarifying questions are necessary.
+6. Build a decomposition plan.
+7. Generate or patch a VDT graph through bounded tools.
+8. Validate graph reachability, formula/edge consistency, dimensions and missing critical drivers.
+9. Return a final VDT plus a short user-facing report explaining the structure.
 
 ## Non-Goals
 
@@ -116,22 +133,21 @@ The markdown body should include:
 - example mini-tree;
 - how to deepen related KPI nodes.
 
-### 2. Registry / Card Catalog
+### 2. Versioned repository / card catalog
 
-Create a registry that maps user requests to skill candidates. The registry must be readable by the agent and machine-parseable.
+Create an ACL-aware repository and a compact card catalog. A card describes a canonical version; it does not map markers to a selected skill and does not store a translation.
 
-The registry should include:
+Each card includes:
 
-- skill ID;
-- path;
-- domain;
-- matching keywords/patterns;
-- input requirements;
-- output node families;
-- confidence hints;
-- incompatible contexts.
+- skill ID, version ID and canonical content hash;
+- title and description;
+- applicability and exclusions;
+- required inputs and expected outputs;
+- content language metadata;
+- origin, visibility and trust level;
+- recipe validation status.
 
-The first implementation may use deterministic keyword matching plus model-assisted reranking. It must emit a run event describing selected skills and why they were selected.
+For the initial small catalog, the agent receives all bounded cards and chooses what to read. At larger scale, a rebuildable multilingual semantic index may return candidate windows, but the query is agent-authored, ACL is applied first, rank is non-authoritative and the final decision still requires exact version reads plus `skill.select`.
 
 ### 3. Agent Runtime State
 
@@ -310,7 +326,7 @@ The activity feed should look like a clean conversation/work log, not a checklis
 
 The final report must include:
 
-- root KPI and domain classification;
+- root KPI and request/selection summary;
 - selected skills used;
 - first-level drivers;
 - key formulas or formula families;
@@ -323,24 +339,24 @@ The report must be concise and user-facing.
 
 ## Suggested Implementation Phases
 
-### Phase 1: Skill File Contract and Registry
+### Phase 1: Single-copy repository and catalog
 
-- Add skill file format.
-- Add registry parser.
-- Add 3-5 seed skills from `docs/VDT_SKILL_LIBRARY_SEED_PROMPT.md`.
-- Add tests for frontmatter parsing and skill lookup.
+- Add immutable bundled/user version contracts and ACL-aware repository access.
+- Import existing bundled source files once with stable version IDs/hashes.
+- Add compact source-derived cards and side-effect-free catalog browsing.
+- Add tests for canonical hashing, version pinning, ACL and absence of translated copies.
 
 ### Phase 2: Agent Runtime Skeleton
 
 - Add `packages/vdt-agent` or equivalent module.
-- Implement `classifyRequest`, `retrieveSkills`, `readSkills`, `planDecomposition`.
+- Implement catalog browse/discovery, read ledger, explicit selection/gap decisions and build-basis validation.
 - Emit `VdtAgentEvent[]`.
-- Add unit tests for deterministic routing.
+- Add unit tests for strict commands, CAS/idempotency and replay.
 
 ### Phase 3: Generate VDT Through Agent Runtime
 
 - Replace direct generate path with agent orchestration while preserving provider interfaces.
-- Feed selected skill excerpts into the model prompt.
+- Feed pinned selected recipe bindings/build basis into the bounded runtime.
 - Validate output using existing schema/graph validators.
 - Add retry only when validator errors are actionable.
 
@@ -354,7 +370,7 @@ The report must be concise and user-facing.
 
 ### Phase 5: Deepen Node Agent Flow
 
-- Add node-level decomposition skill retrieval.
+- Add node-level agent-owned skill discovery/selection.
 - Generate graph patches/change-sets.
 - Validate and apply patches.
 - Add UI entry points from node inspector and chat.
@@ -367,9 +383,10 @@ The report must be concise and user-facing.
 
 ## Acceptance Criteria
 
-- New VDT generation uses selected skills, not only the raw brief.
+- New VDT generation uses an immutable validated build basis, not only the raw brief.
 - UI shows real runtime events, not synthetic reasoning.
-- User can see which skills were selected and why.
+- User can see exact selected skill versions, reasons and uncovered gaps.
+- `skill.read` has no selection side effect and generic is never auto-selected.
 - Agent can ask clarifying questions or proceed with assumptions.
 - Final VDT report explains the decomposition.
 - Deepen-node flow produces a validated graph patch.

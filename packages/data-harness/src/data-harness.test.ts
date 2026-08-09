@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
-import { productionVolumeProject } from "@vdt-studio/vdt-core";
+import { applyChangeSet, calculateGraph, productionVolumeProject } from "@vdt-studio/vdt-core";
 import { runRawDataDiscovery } from "./index";
 
 describe("raw data discovery harness", () => {
@@ -110,6 +110,59 @@ describe("raw data discovery harness", () => {
     expect(snapshot.tables.map((table) => table.name)).toEqual(["Downtime", "Production"]);
     expect(snapshot.semanticModel?.tables).toHaveLength(2);
     expect(snapshot.changeSetPreview?.dataSourceChanges?.[0]?.action).toBe("add");
+  });
+
+  // Remove `.fails` in W5 when an accepted mapping has a materialized baseline and executable tree lineage.
+  it.fails("[known defect F-06] does not report metadata-only mappings as calculated KPI inputs", async () => {
+    const csv = [
+      "Revenue,Orders",
+      "100,4",
+      "200,5",
+      "300,6"
+    ].join("\n");
+    const snapshot = await runRawDataDiscovery({
+      datasetId: "metadata_only_mapping",
+      file: {
+        fileName: "sales.csv",
+        mimeType: "text/csv",
+        sizeBytes: csv.length,
+        contentHash: "sha256:metadata-only",
+        storageRef: "metadata_only_mapping",
+        uploadedAt: "2026-07-23T00:00:00.000Z"
+      },
+      text: csv,
+      project: productionVolumeProject
+    });
+    const changeSet = snapshot.changeSetPreview;
+    expect(changeSet).toBeDefined();
+    if (!changeSet) throw new Error("Discovery did not produce a change-set.");
+    const selectedIds = new Set([
+      ...changeSet.additions,
+      ...(changeSet.dataSourceChanges ?? []),
+      ...(changeSet.dataMappingChanges ?? []),
+      ...(changeSet.taxonomyChanges ?? [])
+    ].map((entry) => entry.id));
+    const applied = applyChangeSet(productionVolumeProject, changeSet, selectedIds);
+    const mappedNodes = applied.project.graph.nodes.filter((node) => node.type === "data_mapped");
+    const mappedNodeIds = new Set(mappedNodes.map((node) => node.id));
+    const calculation = calculateGraph(applied.project);
+    const rootTrace = calculation.trace.find((item) => item.nodeId === applied.project.rootNodeId);
+
+    expect({
+      applied: applied.success,
+      mappedNodesPresent: mappedNodes.length > 0,
+      materialized: mappedNodes.every((node) => Number.isFinite(node.baselineValue ?? node.value)),
+      noMissingMappedValues: calculation.errors.every((error) =>
+        error.type !== "missing_value" || !error.nodeId || !mappedNodeIds.has(error.nodeId)
+      ),
+      linkedToRootCalculation: rootTrace?.inputs.some((input) => mappedNodeIds.has(input.nodeId)) ?? false
+    }).toEqual({
+      applied: true,
+      mappedNodesPresent: true,
+      materialized: true,
+      noMissingMappedValues: true,
+      linkedToRootCalculation: true
+    });
   });
 
   it("fails unsupported files without producing a change-set preview", async () => {

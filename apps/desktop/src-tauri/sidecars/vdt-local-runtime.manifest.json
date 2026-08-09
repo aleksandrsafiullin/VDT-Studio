@@ -7,7 +7,7 @@
   "launcherSha256": "53a53dba0485fecb6509bd859d35c0d7a6357428ef074c36b406d218eb369923",
   "windowsLauncherSha256": "f77472174de2c14660011fc4b0545cd77ba9ad831906098957dacdc35901daa0",
   "bundleSha256": "bc78eaaa80130493f516010d94146c3f90aec78aad2ab7fa22b7a4173267dd5b",
-  "skillLibrarySha256": "ad681b695b6ff5c803281de839599f2c6d24ea11ba231340254d52a773593ad7",
+  "skillLibrarySha256": "76da1d4e137b7436628ac32e564e4a9b022a6095f8f6404ee99cc07b08491605",
   "selfContained": false,
   "requiresNode": ">=24 <25"
 }

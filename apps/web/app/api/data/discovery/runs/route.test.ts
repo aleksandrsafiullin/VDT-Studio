@@ -102,6 +102,31 @@ describe("data discovery run API lifecycle", () => {
     expect(applyBody.changeSet).toBeTruthy();
   });
 
+  // Remove `.fails` in W0.3 when discovery parses immutable full bytes instead of the UI preview.
+  it.fails("[known defect F-02] analyzes every row in a CSV larger than the 4096-byte preview", async () => {
+    const csv = [
+      "id,value",
+      ...Array.from({ length: 1_000 }, (_, index) => `${index + 1},${100_000 + index}`)
+    ].join("\n");
+    const uploadResponse = await uploadFile(uploadRequest(new File([csv], "large.csv", { type: "text/csv" })));
+    const uploadBody = await readJson<{ ok: boolean; datasetId: string }>(uploadResponse);
+    expect(uploadResponse.status).toBe(200);
+
+    const runResponse = await createRun(jsonRequest("http://localhost:3000/api/data/discovery/runs", {
+      datasetId: uploadBody.datasetId,
+      project: productionVolumeProject
+    }));
+    const runBody = await readJson<{
+      snapshot: { tables: Array<{ rowCount: number; truncated: boolean }> };
+    }>(runResponse);
+
+    expect(runResponse.status).toBe(200);
+    expect(runBody.snapshot.tables[0]).toMatchObject({
+      rowCount: 1_000,
+      truncated: false
+    });
+  });
+
   it("blocks apply for failed unsupported discovery runs", async () => {
     const uploadResponse = await uploadFile(uploadRequest(new File(["zip"], "archive.zip", { type: "application/zip" })));
     const uploadBody = await readJson<{ ok: boolean; datasetId: string }>(uploadResponse);

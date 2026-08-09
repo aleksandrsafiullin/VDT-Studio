@@ -1,6 +1,6 @@
 # VDT Studio Documentation Map
 
-Last reviewed against the working tree: **2026-07-23**.
+Last reviewed against the working tree: **2026-07-24**.
 
 This page defines which documents are current, normative, historical or generated. Use it before planning or implementing repository changes.
 
@@ -38,6 +38,24 @@ The previously referenced `Technical Specification for Codex.docx` is not presen
 | [`development/standalone-runner.md`](development/standalone-runner.md) | Development/headless loopback runner usage |
 | [`security/local-ai-threat-model.md`](security/local-ai-threat-model.md) | Current Local AI and data-ingestion threat boundary |
 
+## Active Corrective Program
+
+The active implementation authority is [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md). Gate A and full W0.1 are complete with independent `GO`. W0.1 includes strict atomic revision commits, no-clobber publication, combined initial creation, migrated manual/agent callers and client CAS/idempotency handling. The W0.2 design contract is accepted with independent contract-only `GO`, and Gate R1 SQL-only code has independent code-only `GO` with zero blockers, but no W0.2 runtime task is complete. The three Sequence 3 byte-level contracts have independent contract-only `GO`; the separate exact 13-file inert artifact freeze has independent artifact-freeze `GO` with zero blockers, recorded at [`sequence-3-artifact-freeze-go-2026-07-31`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-artifact-freeze-go-2026-07-31). Its key identities are verifier raw SHA-256 `817a090c48ba580fb5145ae0958f61e7be2255126f3dba17fcb65359f737c7ec`, freeze-record raw SHA-256 `6d5497733df9d1a184be34897ee20bba09355192239cdb904088b452d0b5dc73`, framed freeze-record hash `sha256:6aca44eded3fe69cac16f30fd0f4419523e49507ac6be099ec64d2e53efa6e7a` and V2 manifest hash `sha256:791fc7c7cce9abd11b2509ddaa6ba9e92e469178a3d1add6803b083295c849e8`. Fresh build and no-wiring evidence has zero matches. The next and only authorized package is Gate R2 implementation and independent review. Gate R2 is not yet implemented or accepted; Sequence 3 is not production-wired; W0.2 runtime remains incomplete and unauthorized; all V2 flags remain OFF; Windows durability remains unverified; production/release remains `NO-GO`.
+
+| Artifact | Purpose |
+|---|---|
+| [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md) | Ordered Gate A and Wave 0–7 implementation program |
+| [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) | Accepted single-copy skill, actor, selection, migration and default-off flag contract |
+| [`ADR-004`](adr/ADR-004-atomic-revision-commit-and-legacy-migration-adoption.md) | Accepted and implemented W0.1 atomic revision, strict payload, leased recovery and legacy adoption decision |
+| [`ADR-005`](adr/ADR-005-durable-run-coordination-and-manual-reconciliation.md) | Accepted W0.2 durable command/lease, bounded-turn, manual reconciliation and retry design contract; contract-only `GO` plus separate Gate R1 code-only `GO`, no runtime authority |
+| [`CORRECTIVE_GATE_A_CONTRACT_SCHEMAS.md`](architecture/CORRECTIVE_GATE_A_CONTRACT_SCHEMAS.md) | Exact accepted Gate A/W0.1/W0.2 design fields, byte framing, idempotency and state transitions; not executable runtime schemas |
+| [`SEQUENCE_3_SQL_FREEZE_CONTRACT.md`](architecture/SEQUENCE_3_SQL_FREEZE_CONTRACT.md) | Accepted contract-only Sequence 3 SQL byte contract; no artifact or runtime authority |
+| [`LEGACY_AGENT_RUN_ADOPTION_TRANSFORM_CONTRACT.md`](architecture/LEGACY_AGENT_RUN_ADOPTION_TRANSFORM_CONTRACT.md) | Accepted contract-only transform, ABI and golden-vector contract; no artifact or runtime authority |
+| [`SEQUENCE_3_MANIFEST_PACKAGING_AND_FAULT_CONTRACT.md`](architecture/SEQUENCE_3_MANIFEST_PACKAGING_AND_FAULT_CONTRACT.md) | Accepted contract-only manifest, packaging, fence and fault contract; no artifact or runtime authority |
+| [`VDT_CORRECTIVE_EXECUTION_LOG.md`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md) | Slice ownership, evidence, gate results, blockers and reviewer verdicts |
+
+The corrective target keeps exactly one canonical artifact per `skillId + versionId`, preserves the original-language request and makes the agent responsible for explicit selection. It does not use translated skill copies, language aliases, keyword/marker routing or an automatic generic fallback as substitutes for agent understanding. These behaviors remain unimplemented until their owning waves pass.
+
 ## Normative Target Specifications
 
 These documents define intended behavior. They do not by themselves prove implementation:
@@ -48,7 +66,7 @@ These documents define intended behavior. They do not by themselves prove implem
 | [`VDT_Agent_Harness_TZ.md`](VDT_Agent_Harness_TZ.md) | Detailed agent-harness requirements; reference specification |
 | [`VDT_AgentDecision_ToolLoop_TZ.md`](VDT_AgentDecision_ToolLoop_TZ.md) | Decision/tool-loop requirements; reference specification |
 
-Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md` and the [2026-07-23 critical review](CRITICAL_ARCHITECTURE_AND_AGENT_REVIEW_2026-07-23.md).
+Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md`, the corrective execution log and the [2026-07-23 critical review](CRITICAL_ARCHITECTURE_AND_AGENT_REVIEW_2026-07-23.md).
 
 ## Architecture Decisions
 
@@ -56,6 +74,9 @@ Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md` and 
 |---|---|
 | [`ADR-001`](adr/ADR-001-model-backends-not-agent-orchestration.md) | Superseded in part; retained as the decision that removed external coding-agent control |
 | [`ADR-002`](adr/ADR-002-bounded-in-product-agent-runtime.md) | Accepted; current in-product agent architecture |
+| [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) | Accepted target contract; implementation not started |
+| [`ADR-004`](adr/ADR-004-atomic-revision-commit-and-legacy-migration-adoption.md) | Accepted and implemented for W0.1; independent implementation/test `GO` |
+| [`ADR-005`](adr/ADR-005-durable-run-coordination-and-manual-reconciliation.md) | Accepted W0.2 design contract with independent contract-only `GO`; Gate R1 SQL-only code and the three byte-level contracts have separate scoped `GO` decisions; sequence 3 and all runtime authority remain separately gated |
 
 ## Historical And Reference-Only Documents
 

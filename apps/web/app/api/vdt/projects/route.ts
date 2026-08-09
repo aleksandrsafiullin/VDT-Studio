@@ -8,19 +8,27 @@ import {
   readJsonObject
 } from "../storage-response";
 import { openVdtStorageDatabase } from "../storage-database";
+import { storageWriteErrorResponse } from "../storage-write-adapter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const database = openVdtStorageDatabase(process.cwd());
+  let database: ReturnType<typeof openVdtStorageDatabase> | undefined;
   try {
-    const projects = database.listProjects().map((project) => buildStoredProjectSummary(database, project));
-    return Response.json({ ok: true, projects });
+    database = openVdtStorageDatabase(process.cwd());
+    const currentDatabase = database;
+    const projects = currentDatabase.listProjects()
+      .map((project) => buildStoredProjectSummary(currentDatabase, project));
+    return Response.json({
+      schemaVersion: "project_explorer_response.v1",
+      ok: true,
+      projects
+    });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "Stored projects could not be listed.", 500, "PROJECTS_LIST_FAILED");
+    return storageWriteErrorResponse(error, "Stored projects could not be listed.");
   } finally {
-    database.close();
+    database?.close();
   }
 }
 
@@ -39,8 +47,9 @@ export async function POST(request: Request) {
   const projectId = rawId ? parseSafeId(rawId, "projectId") : { ok: true as const, value: generatedSafeId("project", name) };
   if (!projectId.ok) return jsonError(projectId.message);
 
-  const database = openVdtStorageDatabase(process.cwd());
+  let database: ReturnType<typeof openVdtStorageDatabase> | undefined;
   try {
+    database = openVdtStorageDatabase(process.cwd());
     if (database.getProject(projectId.value)) {
       return jsonError("Project already exists.", 409, "PROJECT_ALREADY_EXISTS");
     }
@@ -51,10 +60,14 @@ export async function POST(request: Request) {
       industry: nonEmptyString(body.industry),
       metadata: optionalRecord(body.metadata)
     });
-    return Response.json({ ok: true, project, summary: buildStoredProjectSummary(database, project) }, { status: 201 });
+    return Response.json({
+      schemaVersion: "project_summary_response.v1",
+      ok: true,
+      summary: buildStoredProjectSummary(database, project)
+    }, { status: 201 });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "Project could not be created.", 500, "PROJECT_CREATE_FAILED");
+    return storageWriteErrorResponse(error, "Project could not be created.");
   } finally {
-    database.close();
+    database?.close();
   }
 }

@@ -2,6 +2,8 @@
 
 > **Статус:** point-in-time audit и источник для roadmap. Это не living capability document; актуальные статусы поддерживаются в `PRODUCT_SPEC.md`, `PRODUCTION_READINESS.md` и `ROADMAP.md`.
 
+> **Примечание о supersession (2026-07-23):** доказательства, воспроизведённые findings, dependency-audit snapshot и выводы ниже сохранены как point-in-time review. Целевые рекомендации в F-08 и исторической Волне 3 про RU/KZ/EN aliases, keyword/marker routing, rerank как selector или research/generic fallback заменены [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md) и [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md). Принятый target — один канонический artifact на версию skill, agent-owned понимание исходного языка, selection-neutral `skill.read` с append-only read receipt, явный `skill.select` и явный no-applicable-skill gap. Это примечание не утверждает, что target реализован; текущий dependency-audit приведён в [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md).
+
 **Дата среза:** 23 июля 2026 года
 
 **Репозиторий:** `vdt-studio`, ветка `main`

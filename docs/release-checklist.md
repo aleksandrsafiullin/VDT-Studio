@@ -27,7 +27,9 @@ pnpm test:e2e
 
 `pnpm release:verify` covers the non-browser sequence through `package:verify`. Browser E2E remains explicit.
 
-Current known blocker: `pnpm security:audit` reports three high findings affecting `xlsx@0.18.5` and `sharp@0.34.5`. Do not waive or relabel this failure in documentation.
+Current known blocker: `pnpm security:audit` reports 11 vulnerabilities: 6 high and 5 moderate. The high findings affect `xlsx@0.18.5` (two), `sharp@0.34.5` (one) and `next@15.5.19` (three). Do not waive or relabel this failure in documentation.
+
+`pnpm docs:verify` also requires the active [`corrective plan`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md), [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) and [`execution log`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md). These are contract/evidence artifacts, not proof that V2 behavior is enabled.
 
 ## Data Upload Gate
 
@@ -37,13 +39,13 @@ Before enabling hosted/public or trusted report upload, require:
 - streaming body limits before request buffering;
 - MIME/magic validation and archive expansion budget;
 - parser process isolation with CPU/RAM/time limits;
-- project/user ownership checks;
+- a server-issued actor context and project/user ownership checks that request/model/upload data cannot override;
 - retention/delete and encryption policy;
 - explicit external-provider egress consent;
 - full-vs-sample/truncated disclosure;
 - golden baseline reconciliation tests.
 
-The current data-discovery prototype does not meet this gate.
+The current data-discovery prototype does not meet this gate. Hosted/public or trusted report upload remains disabled.
 
 ## Desktop Foundation And Installer Gates
 
@@ -86,4 +88,5 @@ For every candidate, retain:
 - provider certification and any credentialed live evidence;
 - native preflight blocker list or signed-installer evidence;
 - documentation impact and updated document list;
+- corrective execution-log entry with slice ownership, reviewer verdict, exact commands and remaining blockers;
 - any skipped tests with reason.

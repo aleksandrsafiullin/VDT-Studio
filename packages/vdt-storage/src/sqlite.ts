@@ -3,7 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { VdtProject } from "@vdt-studio/vdt-core";
+import { AtomicRevisionStore } from "./atomic-revisions";
 import { defined, decodeJson, encodeJson, toIso, toMillis } from "./json";
+import { runStorageMigrations } from "./migrations";
 import {
   assertInside,
   assertSafeId,
@@ -18,6 +20,8 @@ import {
 import type {
   AgentEventRecord,
   AgentRunRecord,
+  CreateVdtWithInitialSnapshotInputV1,
+  CreateVdtWithInitialSnapshotResultV1,
   ConversationRecord,
   CreateProjectInput,
   CreateVdtInput,
@@ -25,6 +29,7 @@ import type {
   MessageRecord,
   MutationProposalRecord,
   OpenVdtDatabaseOptions,
+  ProjectRuntimeStateV1,
   ProjectManifest,
   ProjectRecord,
   UpdateProjectInput,
@@ -32,6 +37,10 @@ import type {
   VdtComparisonRecord,
   VdtDatabase,
   VdtRecord,
+  RevisionCommitAttemptV1,
+  RevisionCommitInputV2,
+  RevisionCommitResultV2,
+  VdtRevisionHeadV2,
   VdtRevisionRecord
 } from "./types";
 
@@ -41,20 +50,40 @@ export function openVdtDatabase(projectRoot: string, options: OpenVdtDatabaseOpt
   const dataDir = ensureProjectLocation(options.dataDir ?? process.env.VDT_DATA_DIR ?? path.join(projectRoot, ".vdt"));
   const databasePath = path.join(dataDir, "app.sqlite");
   assertInside(dataDir, databasePath);
-  const db = new DatabaseSync(databasePath);
-  db.exec("PRAGMA journal_mode = WAL;");
-  db.exec("PRAGMA foreign_keys = ON;");
-  migrate(db);
-  return new SqliteVdtDatabase(db, dataDir, databasePath, options.now ?? (() => new Date().toISOString()));
+  const db = new DatabaseSync(databasePath, { timeout: options.busyTimeoutMs ?? 5_000 });
+  try {
+    runStorageMigrations(db, dataDir, {
+      now: options.now ?? (() => new Date().toISOString()),
+      busyTimeoutMs: options.busyTimeoutMs ?? 5_000,
+      leaseMs: options.migrationLeaseMs ?? 30_000,
+      idFactory: options.idFactory,
+      ownerTokenFactory: options.ownerTokenFactory,
+      faultInjector: options.migrationFaultInjector
+    });
+    db.exec("PRAGMA journal_mode = WAL;");
+    db.exec("PRAGMA foreign_keys = ON;");
+    const result = new SqliteVdtDatabase(db, dataDir, databasePath, options);
+    result.recoverRevisionCommits();
+    return result;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 export class SqliteVdtDatabase implements VdtDatabase {
+  private readonly now: () => string;
+  private readonly atomicRevisions: AtomicRevisionStore;
+
   constructor(
     private readonly db: DatabaseSync,
     readonly dataDir: string,
     readonly databasePath: string,
-    private readonly now: () => string
-  ) {}
+    options: OpenVdtDatabaseOptions
+  ) {
+    this.now = options.now ?? (() => new Date().toISOString());
+    this.atomicRevisions = new AtomicRevisionStore(db, dataDir, options);
+  }
 
   close(): void {
     this.db.close();
@@ -72,18 +101,25 @@ export class SqliteVdtDatabase implements VdtDatabase {
       createdAt,
       updatedAt: createdAt
     });
-    this.db.prepare(`
-      INSERT INTO projects (id, name, description, industry, metadata_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      record.id,
-      record.name,
-      record.description ?? null,
-      record.industry ?? null,
-      encodeJson(record.metadata),
-      toMillis(record.createdAt),
-      toMillis(record.updatedAt)
-    );
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO projects (id, name, description, industry, metadata_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        record.id,
+        record.name,
+        record.description ?? null,
+        record.industry ?? null,
+        encodeJson(record.metadata),
+        toMillis(record.createdAt),
+        toMillis(record.updatedAt)
+      );
+      this.db.prepare(`
+        INSERT INTO project_runtime_states
+        (project_id, schema_version, runtime_generation, generation_version, migration_state, write_state, updated_at)
+        VALUES (?, 'project_runtime_state.v1', 'v1', 1, 'shadow_ready', 'enabled', ?)
+      `).run(record.id, toMillis(record.createdAt));
+    });
     const dir = createProjectDir(this.dataDir, record.id);
     writeProjectManifest(dir, manifestFromProject(record));
     return record;
@@ -125,7 +161,23 @@ export class SqliteVdtDatabase implements VdtDatabase {
     assertSafeId(projectId, "projectId");
     const current = this.getProject(projectId);
     if (!current) return false;
-    const deleted = this.db.prepare("DELETE FROM projects WHERE id = ?").run(projectId).changes > 0;
+    const deleted = this.transaction(() => {
+      const vdtRows = this.db.prepare("SELECT id FROM vdts WHERE project_id = ?").all(projectId) as Row[];
+      for (const row of vdtRows) {
+        const vdtId = string(row.id);
+        this.db.prepare("DELETE FROM legacy_revision_attestations WHERE vdt_id = ?").run(vdtId);
+        this.db.prepare("DELETE FROM revision_commit_records WHERE vdt_id = ?").run(vdtId);
+        this.db.prepare("DELETE FROM revision_commit_attempts WHERE vdt_id = ?").run(vdtId);
+        this.db.prepare("DELETE FROM idempotency_records WHERE scope_id = ? AND operation = 'revision.commit'").run(vdtId);
+        this.db.prepare("DELETE FROM vdt_storage_lifecycles WHERE vdt_id = ?").run(vdtId);
+        this.db.prepare("DELETE FROM vdt_revision_heads WHERE vdt_id = ?").run(vdtId);
+      }
+      this.db.prepare(
+        "DELETE FROM idempotency_records WHERE scope_id = ? AND operation = 'vdt.create_with_initial'"
+      ).run(projectId);
+      this.db.prepare("DELETE FROM project_runtime_states WHERE project_id = ?").run(projectId);
+      return this.db.prepare("DELETE FROM projects WHERE id = ?").run(projectId).changes > 0;
+    });
     if (deleted) {
       const dir = projectDir(this.dataDir, projectId);
       assertInside(this.dataDir, dir);
@@ -155,21 +207,35 @@ export class SqliteVdtDatabase implements VdtDatabase {
       createdAt,
       updatedAt: createdAt
     });
-    this.db.prepare(`
-      INSERT INTO vdts (id, project_id, name, root_kpi, unit, time_period, status, active_revision_id, metadata_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-    `).run(
-      record.id,
-      record.projectId,
-      record.name,
-      record.rootKpi,
-      record.unit ?? null,
-      record.timePeriod ?? null,
-      record.status,
-      encodeJson(record.metadata),
-      toMillis(record.createdAt),
-      toMillis(record.updatedAt)
-    );
+    this.transaction(() => {
+      const runtime = this.atomicRevisions.getProjectRuntimeState(record.projectId);
+      if (!runtime) throw new Error(`Project runtime state not found: ${record.projectId}`);
+      this.db.prepare(`
+        INSERT INTO vdts (id, project_id, name, root_kpi, unit, time_period, status, active_revision_id, metadata_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+      `).run(
+        record.id,
+        record.projectId,
+        record.name,
+        record.rootKpi,
+        record.unit ?? null,
+        record.timePeriod ?? null,
+        record.status,
+        encodeJson(record.metadata),
+        toMillis(record.createdAt),
+        toMillis(record.updatedAt)
+      );
+      this.db.prepare(`
+        INSERT INTO vdt_revision_heads
+        (vdt_id, schema_version, project_id, active_revision_id, active_content_scheme, active_content_hash, pending_revision_id, commit_generation)
+        VALUES (?, 'vdt_revision_head.v2', ?, NULL, NULL, NULL, NULL, 0)
+      `).run(record.id, record.projectId);
+      this.db.prepare(`
+        INSERT INTO vdt_storage_lifecycles
+        (vdt_id, project_id, state, initial_attempt_id, updated_at)
+        VALUES (?, ?, 'ready', NULL, ?)
+      `).run(record.id, record.projectId, toMillis(record.createdAt));
+    });
     vdtRevisionDir(this.dataDir, record.projectId, record.id);
     vdtPreviewDir(this.dataDir, record.projectId, record.id);
     return record;
@@ -177,7 +243,11 @@ export class SqliteVdtDatabase implements VdtDatabase {
 
   getVdt(vdtId: string): VdtRecord | null {
     assertSafeId(vdtId, "vdtId");
-    const row = this.db.prepare("SELECT * FROM vdts WHERE id = ?").get(vdtId) as Row | undefined;
+    const row = this.db.prepare(`
+      SELECT v.* FROM vdts v
+      JOIN vdt_storage_lifecycles l ON l.vdt_id = v.id AND l.state = 'ready'
+      WHERE v.id = ?
+    `).get(vdtId) as Row | undefined;
     return row ? vdtFromRow(row) : null;
   }
 
@@ -215,7 +285,17 @@ export class SqliteVdtDatabase implements VdtDatabase {
     assertSafeId(vdtId, "vdtId");
     const current = this.getVdt(vdtId);
     if (!current) return false;
-    const deleted = this.db.prepare("DELETE FROM vdts WHERE id = ?").run(vdtId).changes > 0;
+    const deleted = this.transaction(() => {
+      this.db.prepare("DELETE FROM legacy_revision_attestations WHERE vdt_id = ?").run(vdtId);
+      this.db.prepare("DELETE FROM revision_commit_records WHERE vdt_id = ?").run(vdtId);
+      this.db.prepare("DELETE FROM revision_commit_attempts WHERE vdt_id = ?").run(vdtId);
+      this.db.prepare(
+        "DELETE FROM idempotency_records WHERE scope_id = ? AND operation = 'revision.commit'"
+      ).run(vdtId);
+      this.db.prepare("DELETE FROM vdt_storage_lifecycles WHERE vdt_id = ?").run(vdtId);
+      this.db.prepare("DELETE FROM vdt_revision_heads WHERE vdt_id = ?").run(vdtId);
+      return this.db.prepare("DELETE FROM vdts WHERE id = ?").run(vdtId).changes > 0;
+    });
     if (deleted) {
       const dir = path.join(projectDir(this.dataDir, current.projectId), "vdts", current.id);
       assertInside(this.dataDir, dir);
@@ -228,9 +308,15 @@ export class SqliteVdtDatabase implements VdtDatabase {
 
   listVdts(projectId: string): VdtRecord[] {
     assertSafeId(projectId, "projectId");
-    return (this.db.prepare("SELECT * FROM vdts WHERE project_id = ? ORDER BY updated_at DESC, name ASC").all(projectId) as Row[]).map(vdtFromRow);
+    return (this.db.prepare(`
+      SELECT v.* FROM vdts v
+      JOIN vdt_storage_lifecycles l ON l.vdt_id = v.id AND l.state = 'ready'
+      WHERE v.project_id = ?
+      ORDER BY v.updated_at DESC, v.name ASC
+    `).all(projectId) as Row[]).map(vdtFromRow);
   }
 
+  /** @deprecated Internal compatibility primitive for unmigrated V1 callers. */
   saveVdtRevision(input: CreateVdtRevisionInput): VdtRevisionRecord {
     assertSafeId(input.id, "revisionId");
     assertSafeId(input.projectId, "projectId");
@@ -239,7 +325,6 @@ export class SqliteVdtDatabase implements VdtDatabase {
     const revisionFile = path.join(vdtRevisionDir(this.dataDir, input.projectId, input.vdtId), `${String(input.revisionNo).padStart(6, "0")}.vdt.json`);
     assertInside(this.dataDir, revisionFile);
     const payload = `${JSON.stringify(input.project, null, 2)}\n`;
-    fs.writeFileSync(revisionFile, payload, "utf8");
     const filePath = path.relative(this.dataDir, revisionFile);
     const graphHash = createHash("sha256").update(payload).digest("hex");
     const record: VdtRevisionRecord = defined({
@@ -256,27 +341,112 @@ export class SqliteVdtDatabase implements VdtDatabase {
       createdAt
     });
 
-    this.transaction(() => {
-      this.db.prepare(`
-        INSERT INTO vdt_revisions (id, vdt_id, revision_no, parent_revision_id, source, summary, file_path, graph_hash, validation_json, calculation_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        record.id,
-        record.vdtId,
-        record.revisionNo,
-        record.parentRevisionId ?? null,
-        record.source,
-        record.summary ?? null,
-        record.filePath,
-        record.graphHash,
-        encodeJson(record.validation),
-        encodeJson(record.calculation),
-        toMillis(record.createdAt)
-      );
-      this.db.prepare("UPDATE vdts SET active_revision_id = ?, updated_at = ? WHERE id = ?").run(record.id, toMillis(createdAt), input.vdtId);
-      this.db.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").run(toMillis(createdAt), input.projectId);
-    });
+    let createdFile = false;
+    try {
+      this.transaction(() => {
+        const existing = this.db.prepare(
+          "SELECT 1 FROM vdt_revisions WHERE id = ? OR (vdt_id = ? AND revision_no = ?)"
+        ).get(record.id, record.vdtId, record.revisionNo);
+        if (existing) throw new Error(`Revision identity or number already exists: ${record.id}.`);
+        const owner = this.db.prepare(
+          "SELECT project_id FROM vdts WHERE id = ?"
+        ).get(record.vdtId) as Row | undefined;
+        if (owner?.project_id !== input.projectId) {
+          throw new Error(
+            `VDT ${record.vdtId} does not belong to project ${input.projectId}.`
+          );
+        }
+        const head = this.atomicRevisions.getVdtRevisionHead(record.vdtId);
+        if (!head || head.pendingRevisionId !== null) {
+          throw new Error(`VDT revision head is unavailable or pending: ${record.vdtId}.`);
+        }
+        const descriptor = fs.openSync(revisionFile, "wx", 0o600);
+        try {
+          fs.writeFileSync(descriptor, payload, "utf8");
+          fs.fsyncSync(descriptor);
+        } finally {
+          fs.closeSync(descriptor);
+        }
+        fsyncDirectory(path.dirname(revisionFile));
+        createdFile = true;
+        this.db.prepare(`
+          INSERT INTO vdt_revisions (id, vdt_id, revision_no, parent_revision_id, source, summary, file_path, graph_hash, validation_json, calculation_json, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          record.id,
+          record.vdtId,
+          record.revisionNo,
+          record.parentRevisionId ?? null,
+          record.source,
+          record.summary ?? null,
+          record.filePath,
+          record.graphHash,
+          encodeJson(record.validation),
+          encodeJson(record.calculation),
+          toMillis(record.createdAt)
+        );
+        this.db.prepare(`
+          INSERT INTO legacy_revision_attestations
+          (revision_id, schema_version, project_id, vdt_id, revision_no, file_relative_path,
+           content_scheme, content_hash, payload_byte_length, verified_at)
+          VALUES (?, 'legacy_revision_attestation.v1', ?, ?, ?, ?,
+                  'legacy_graph_sha256', ?, ?, ?)
+        `).run(
+          record.id,
+          input.projectId,
+          input.vdtId,
+          record.revisionNo,
+          record.filePath,
+          `sha256:${graphHash}`,
+          Buffer.byteLength(payload, "utf8"),
+          toMillis(record.createdAt)
+        );
+        this.db.prepare("UPDATE vdts SET active_revision_id = ?, updated_at = ? WHERE id = ?").run(record.id, toMillis(createdAt), input.vdtId);
+        const updatedHead = this.db.prepare(`
+          UPDATE vdt_revision_heads
+          SET active_revision_id = ?, active_content_scheme = 'legacy_graph_sha256',
+              active_content_hash = ?, commit_generation = MAX(commit_generation, ?)
+          WHERE vdt_id = ? AND pending_revision_id IS NULL
+        `).run(record.id, `sha256:${graphHash}`, record.revisionNo, input.vdtId).changes;
+        if (updatedHead !== 1) {
+          throw new Error(`VDT revision head changed during compatibility save: ${record.vdtId}.`);
+        }
+        this.db.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").run(toMillis(createdAt), input.projectId);
+      });
+    } catch (error) {
+      if (createdFile && fs.existsSync(revisionFile)) {
+        fs.unlinkSync(revisionFile);
+        fsyncDirectory(path.dirname(revisionFile));
+      }
+      throw error;
+    }
     return record;
+  }
+
+  commitVdtRevision(input: RevisionCommitInputV2): RevisionCommitResultV2 {
+    return this.atomicRevisions.commitVdtRevision(input);
+  }
+
+  createVdtWithInitialSnapshot(
+    input: CreateVdtWithInitialSnapshotInputV1
+  ): CreateVdtWithInitialSnapshotResultV1 {
+    return this.atomicRevisions.createVdtWithInitialSnapshot(input);
+  }
+
+  recoverRevisionCommits(): void {
+    this.atomicRevisions.recoverRevisionCommits();
+  }
+
+  getProjectRuntimeState(projectId: string): ProjectRuntimeStateV1 | null {
+    return this.atomicRevisions.getProjectRuntimeState(projectId);
+  }
+
+  getVdtRevisionHead(vdtId: string): VdtRevisionHeadV2 | null {
+    return this.atomicRevisions.getVdtRevisionHead(vdtId);
+  }
+
+  getRevisionCommitAttempt(attemptId: string): RevisionCommitAttemptV1 | null {
+    return this.atomicRevisions.getRevisionCommitAttempt(attemptId);
   }
 
   readVdtRevision(record: VdtRevisionRecord): VdtProject {
@@ -648,154 +818,6 @@ export class SqliteVdtDatabase implements VdtDatabase {
   }
 }
 
-function migrate(db: DatabaseSync): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      version INTEGER PRIMARY KEY,
-      applied_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS projects (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT,
-      industry TEXT,
-      metadata_json TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS vdts (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      root_kpi TEXT NOT NULL,
-      unit TEXT,
-      time_period TEXT,
-      status TEXT NOT NULL DEFAULT 'draft',
-      active_revision_id TEXT,
-      metadata_json TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS vdt_revisions (
-      id TEXT PRIMARY KEY,
-      vdt_id TEXT NOT NULL,
-      revision_no INTEGER NOT NULL,
-      parent_revision_id TEXT,
-      source TEXT NOT NULL,
-      summary TEXT,
-      file_path TEXT NOT NULL,
-      graph_hash TEXT NOT NULL,
-      validation_json TEXT,
-      calculation_json TEXT,
-      created_at INTEGER NOT NULL,
-      UNIQUE(vdt_id, revision_no),
-      FOREIGN KEY(vdt_id) REFERENCES vdts(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS conversations (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      vdt_id TEXT,
-      title TEXT,
-      mode TEXT NOT NULL DEFAULT 'vdt_build',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-      FOREIGN KEY(vdt_id) REFERENCES vdts(id) ON DELETE SET NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      agent_run_id TEXT,
-      events_json TEXT,
-      attachments_json TEXT,
-      produced_files_json TEXT,
-      run_context_json TEXT,
-      position INTEGER NOT NULL,
-      created_at INTEGER NOT NULL,
-      started_at INTEGER,
-      ended_at INTEGER,
-      FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS agent_runs (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      vdt_id TEXT,
-      conversation_id TEXT,
-      status TEXT NOT NULL,
-      phase TEXT NOT NULL,
-      request_json TEXT NOT NULL,
-      public_snapshot_json TEXT,
-      internal_state_json TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      completed_at INTEGER,
-      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-      FOREIGN KEY(vdt_id) REFERENCES vdts(id) ON DELETE SET NULL,
-      FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS agent_events (
-      id TEXT PRIMARY KEY,
-      run_id TEXT NOT NULL,
-      seq INTEGER NOT NULL,
-      type TEXT NOT NULL,
-      phase TEXT NOT NULL,
-      title TEXT NOT NULL,
-      message TEXT NOT NULL,
-      metadata_json TEXT,
-      created_at INTEGER NOT NULL,
-      UNIQUE(run_id, seq),
-      FOREIGN KEY(run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS mutation_proposals (
-      id TEXT PRIMARY KEY,
-      run_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      vdt_id TEXT NOT NULL,
-      base_revision_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      title TEXT NOT NULL,
-      summary TEXT,
-      change_set_json TEXT NOT NULL,
-      preview_file_path TEXT,
-      validation_json TEXT,
-      calculation_json TEXT,
-      created_at INTEGER NOT NULL,
-      applied_at INTEGER,
-      FOREIGN KEY(run_id) REFERENCES agent_runs(id) ON DELETE CASCADE,
-      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-      FOREIGN KEY(vdt_id) REFERENCES vdts(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS vdt_comparisons (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      left_vdt_id TEXT NOT NULL,
-      right_vdt_id TEXT NOT NULL,
-      left_revision_id TEXT NOT NULL,
-      right_revision_id TEXT NOT NULL,
-      result_json TEXT NOT NULL,
-      summary TEXT,
-      created_at INTEGER NOT NULL,
-      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-    );
-
-    INSERT OR IGNORE INTO schema_migrations (version, applied_at)
-    VALUES (1, unixepoch('subsec') * 1000);
-    PRAGMA user_version = 1;
-  `);
-}
-
 function manifestFromProject(record: ProjectRecord): ProjectManifest {
   return defined({
     schemaVersion: 1 as const,
@@ -995,6 +1017,15 @@ function redactSecrets(value: unknown): unknown {
       isSecretKey(key) ? "[redacted]" : redactSecrets(entry)
     ])
   );
+}
+
+function fsyncDirectory(directoryPath: string): void {
+  const descriptor = fs.openSync(directoryPath, "r");
+  try {
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 function isSecretKey(key: string): boolean {

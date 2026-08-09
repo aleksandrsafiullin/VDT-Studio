@@ -36,6 +36,15 @@ describe("ProjectExplorer", () => {
                 createdAt: "2026-06-29T13:00:00.000Z",
                 updatedAt: "2026-06-29T13:00:00.000Z"
               },
+              runtimeState: {
+                schemaVersion: "project_runtime_state.v1",
+                projectId: "project_agent_workspace",
+                runtimeGeneration: "v1",
+                generationVersion: 1,
+                migrationState: "shadow_ready",
+                writeState: "enabled",
+                updatedAt: "2026-06-29T13:00:00.000Z"
+              },
               counts: {
                 vdts: 2,
                 revisions: 4,
@@ -55,6 +64,18 @@ describe("ProjectExplorer", () => {
                     activeRevisionId: "revision_2",
                     createdAt: "2026-06-29T13:00:00.000Z",
                     updatedAt: "2026-06-29T13:00:00.000Z"
+                  },
+                  head: {
+                    schemaVersion: "vdt_revision_head.v2",
+                    projectId: "project_agent_workspace",
+                    vdtId: "vdt_production",
+                    activeRevisionId: "revision_2",
+                    activeContentIdentity: {
+                      scheme: "legacy_graph_sha256",
+                      hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    },
+                    pendingRevisionId: null,
+                    commitGeneration: 2
                   },
                   revisionCount: 2
                 }

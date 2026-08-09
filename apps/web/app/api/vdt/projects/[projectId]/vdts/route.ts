@@ -1,15 +1,15 @@
-import { importProjectJson, type VdtProject } from "@vdt-studio/vdt-core";
+import { VdtStorageError } from "@vdt-studio/storage";
 import {
   buildStoredProjectSummary,
-  generatedSafeId,
   jsonError,
-  nonEmptyString,
-  optionalRecord,
-  parseSafeId,
-  parseVdtStatus,
-  readJsonObject
+  parseSafeId
 } from "../../../storage-response";
 import { openVdtStorageDatabase } from "../../../storage-database";
+import {
+  createStorageWriteActor,
+  parseCreateVdtWithInitialHttpRequest,
+  storageWriteErrorResponse
+} from "../../../storage-write-adapter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,19 +19,35 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
   const parsedProjectId = parseSafeId(projectId, "projectId");
   if (!parsedProjectId.ok) return jsonError(parsedProjectId.message);
 
-  const database = openVdtStorageDatabase(process.cwd());
+  let database: ReturnType<typeof openVdtStorageDatabase> | undefined;
   try {
+    database = openVdtStorageDatabase(process.cwd());
     const project = database.getProject(parsedProjectId.value);
     if (!project) return jsonError("Project not found.", 404, "PROJECT_NOT_FOUND");
-    const vdts = database.listVdts(project.id).map((vdt) => ({
+    const summary = buildStoredProjectSummary(database, project);
+    const currentDatabase = database;
+    const vdts = currentDatabase.listVdts(project.id).map((vdt) => ({
       vdt,
-      revisions: database.listVdtRevisions(vdt.id)
+      head: currentDatabase.getVdtRevisionHead(vdt.id),
+      revisions: currentDatabase.listVdtRevisions(vdt.id)
     }));
-    return Response.json({ ok: true, project, vdts });
+    if (vdts.some((item) => item.head === null)) {
+      throw new VdtStorageError(
+        "VDT_REVISION_HEAD_MISSING",
+        "A persisted VDT revision head is missing."
+      );
+    }
+    return Response.json({
+      ok: true,
+      project,
+      runtimeState: summary.runtimeState,
+      summary,
+      vdts
+    });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "VDTs could not be listed.", 500, "VDTS_LIST_FAILED");
+    return storageWriteErrorResponse(error, "VDTs could not be listed.");
   } finally {
-    database.close();
+    database?.close();
   }
 }
 
@@ -40,73 +56,54 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
   const parsedProjectId = parseSafeId(projectId, "projectId");
   if (!parsedProjectId.ok) return jsonError(parsedProjectId.message);
 
-  let body: Record<string, unknown>;
+  let actor;
+  let body;
   try {
-    body = await readJsonObject(request);
+    actor = createStorageWriteActor(parsedProjectId.value);
+    body = parseCreateVdtWithInitialHttpRequest(await request.json());
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "VDT request could not be parsed.");
+    return storageWriteErrorResponse(error, "VDT request could not be parsed.");
   }
 
-  let snapshot: VdtProject | undefined;
+  let database: ReturnType<typeof openVdtStorageDatabase> | undefined;
   try {
-    snapshot = body.project === undefined ? undefined : importProjectJson(JSON.stringify(body.project));
-  } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "VDT snapshot is invalid.");
-  }
-
-  const rootNode = snapshot?.graph.nodes.find((node) => node.id === snapshot?.rootNodeId);
-  const rootKpi = nonEmptyString(body.rootKpi) ?? rootNode?.name ?? snapshot?.name;
-  if (!rootKpi) return jsonError("VDT root KPI is required.");
-
-  const name = nonEmptyString(body.name) ?? snapshot?.name ?? `${rootKpi} VDT`;
-  const rawId = nonEmptyString(body.id);
-  const vdtId = rawId ? parseSafeId(rawId, "vdtId") : { ok: true as const, value: generatedSafeId("vdt", name) };
-  if (!vdtId.ok) return jsonError(vdtId.message);
-
-  let status;
-  try {
-    status = parseVdtStatus(body.status);
-  } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "VDT status is invalid.");
-  }
-
-  const database = openVdtStorageDatabase(process.cwd());
-  try {
-    const project = database.getProject(parsedProjectId.value);
-    if (!project) return jsonError("Project not found.", 404, "PROJECT_NOT_FOUND");
-    if (database.getVdt(vdtId.value)) return jsonError("VDT already exists.", 409, "VDT_ALREADY_EXISTS");
-
-    const vdt = database.createVdt({
-      id: vdtId.value,
-      projectId: project.id,
-      name,
-      rootKpi,
-      unit: nonEmptyString(body.unit) ?? rootNode?.unit,
-      timePeriod: nonEmptyString(body.timePeriod),
-      status,
-      metadata: optionalRecord(body.metadata)
-    });
-    const revision = snapshot
-      ? database.saveVdtRevision({
-          id: generatedSafeId("revision", `${vdt.id}_1`),
-          projectId: project.id,
-          vdtId: vdt.id,
-          revisionNo: 1,
+    database = openVdtStorageDatabase(process.cwd());
+    const result = database.createVdtWithInitialSnapshot({
+      actor,
+      command: {
+        schemaVersion: "create_vdt_with_initial_snapshot.v1",
+        projectId: parsedProjectId.value,
+        expectedRuntimeGeneration: body.expectedRuntime.runtimeGeneration,
+        expectedGenerationVersion: body.expectedRuntime.generationVersion,
+        idempotencyKey: body.idempotencyKey,
+        vdt: body.vdt,
+        revisionIntent: {
           source: "user",
           summary: "Initial VDT snapshot",
-          project: snapshot
-        })
-      : undefined;
+          validation: null,
+          calculation: null
+        }
+      },
+      project: body.project
+    });
+    const project = database.getProject(parsedProjectId.value);
+    if (!project) {
+      throw new VdtStorageError("PROJECT_NOT_FOUND", "Project not found after initial VDT commit.");
+    }
+    const summary = buildStoredProjectSummary(database, project);
     return Response.json({
+      schemaVersion: "create_vdt_with_initial_http_response.v1",
       ok: true,
       project,
-      vdt: revision ? database.getVdt(vdt.id) ?? vdt : vdt,
-      revision,
-      summary: buildStoredProjectSummary(database, project)
+      vdt: result.vdt,
+      revision: result.revision,
+      head: result.head,
+      runtimeState: summary.runtimeState,
+      summary
     }, { status: 201 });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "VDT could not be created.", 500, "VDT_CREATE_FAILED");
+    return storageWriteErrorResponse(error, "VDT could not be created.");
   } finally {
-    database.close();
+    database?.close();
   }
 }

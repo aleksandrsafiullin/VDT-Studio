@@ -1,10 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
 import { calculateGraph, calculateScenarioGraph } from "@vdt-studio/vdt-core";
-import type { ProjectRecord, VdtDatabase, VdtRecord } from "@vdt-studio/storage";
-import { assertSafeId } from "@vdt-studio/storage";
+import type {
+  ProjectRecord,
+  ProjectRuntimeStateV1,
+  VdtDatabase,
+  VdtRecord,
+  VdtRevisionHeadV2
+} from "@vdt-studio/storage";
+import { assertSafeId, VdtStorageError } from "@vdt-studio/storage";
 
 export interface StoredVdtSummary {
   vdt: VdtRecord;
+  head: VdtRevisionHeadV2;
   revisionCount: number;
   nodeCount?: number | undefined;
   rootValue?: number | undefined;
@@ -14,6 +21,7 @@ export interface StoredVdtSummary {
 
 export interface StoredProjectSummary {
   project: ProjectRecord;
+  runtimeState: ProjectRuntimeStateV1;
   counts: {
     vdts: number;
     revisions: number;
@@ -70,9 +78,26 @@ export function parseVdtStatus(value: unknown): VdtRecord["status"] | undefined 
 }
 
 export function buildStoredProjectSummary(database: VdtDatabase, project: ProjectRecord): StoredProjectSummary {
-  const vdts = database.listVdts(project.id).map((vdt) => buildStoredVdtSummary(database, vdt));
+  const runtimeState = database.getProjectRuntimeState(project.id);
+  if (!runtimeState) {
+    throw new VdtStorageError(
+      "PROJECT_RUNTIME_STATE_MISSING",
+      `Project runtime state is missing for ${project.id}.`
+    );
+  }
+  const vdts = database.listVdts(project.id).map((vdt) => {
+    const head = database.getVdtRevisionHead(vdt.id);
+    if (!head) {
+      throw new VdtStorageError(
+        "VDT_REVISION_HEAD_MISSING",
+        `VDT revision head is missing for ${vdt.id}.`
+      );
+    }
+    return buildStoredVdtSummary(database, vdt, head);
+  });
   return {
     project,
+    runtimeState,
     counts: {
       vdts: vdts.length,
       revisions: vdts.reduce((total, item) => total + item.revisionCount, 0),
@@ -85,11 +110,15 @@ export function buildStoredProjectSummary(database: VdtDatabase, project: Projec
   };
 }
 
-function buildStoredVdtSummary(database: VdtDatabase, vdt: VdtRecord): StoredVdtSummary {
+function buildStoredVdtSummary(
+  database: VdtDatabase,
+  vdt: VdtRecord,
+  head: VdtRevisionHeadV2
+): StoredVdtSummary {
   const revisions = database.listVdtRevisions(vdt.id);
   const activeRevision = revisions.find((revision) => revision.id === vdt.activeRevisionId) ?? revisions.at(-1);
   if (!activeRevision) {
-    return { vdt, revisionCount: revisions.length, rootUnit: vdt.unit };
+    return { vdt, head, revisionCount: revisions.length, rootUnit: vdt.unit };
   }
 
   try {
@@ -101,6 +130,7 @@ function buildStoredVdtSummary(database: VdtDatabase, vdt: VdtRecord): StoredVdt
     const potentialValue = scenarioCalculation?.rootValue;
     return {
       vdt,
+      head,
       revisionCount: revisions.length,
       nodeCount: snapshot.graph.nodes.length,
       rootValue: Number.isFinite(calculation.rootValue) ? calculation.rootValue : undefined,
@@ -108,10 +138,14 @@ function buildStoredVdtSummary(database: VdtDatabase, vdt: VdtRecord): StoredVdt
       rootUnit: rootNode?.unit ?? vdt.unit
     };
   } catch {
-    return { vdt, revisionCount: revisions.length, rootUnit: vdt.unit };
+    return { vdt, head, revisionCount: revisions.length, rootUnit: vdt.unit };
   }
 }
 
-export function jsonError(message: string, status = 400, code = "VDT_STORAGE_REQUEST_ERROR") {
-  return Response.json({ ok: false, error: { code, message } }, { status });
+export function jsonError(message: string, status = 400, code = "INVALID_STORAGE_REQUEST") {
+  return Response.json({
+    schemaVersion: "vdt_storage_error_response.v1",
+    ok: false,
+    error: { code, message, retryable: false }
+  }, { status });
 }

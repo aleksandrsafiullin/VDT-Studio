@@ -357,6 +357,45 @@ describe("openVdtDatabase", () => {
     db.close();
   });
 
+  it("[fixed defect F-01] rejects a duplicate revision without modifying the winner bytes", () => {
+    const root = tempRoot();
+    const db = openVdtDatabase(root);
+    try {
+      db.createProject({ id: "project_revision_conflict", name: "Revision conflict" });
+      db.createVdt({
+        id: "vdt_revision_conflict",
+        projectId: "project_revision_conflict",
+        name: "Revision conflict VDT",
+        rootKpi: "Production Volume"
+      });
+      const winnerProject = buildWorkingTimeProject();
+      const winner = db.saveVdtRevision({
+        id: "revision_winner",
+        projectId: "project_revision_conflict",
+        vdtId: "vdt_revision_conflict",
+        revisionNo: 1,
+        source: "user",
+        project: winnerProject
+      });
+      const winnerPath = path.join(db.dataDir, winner.filePath);
+      const winnerBytes = fs.readFileSync(winnerPath, "utf8");
+
+      expect(() => db.saveVdtRevision({
+        id: "revision_loser",
+        projectId: "project_revision_conflict",
+        vdtId: "vdt_revision_conflict",
+        revisionNo: 1,
+        source: "agent",
+        project: { ...winnerProject, name: "Losing overwrite" }
+      })).toThrow();
+
+      expect(fs.readFileSync(winnerPath, "utf8")).toBe(winnerBytes);
+      expect(db.readVdtRevision(winner)).toEqual(winnerProject);
+    } finally {
+      db.close();
+    }
+  });
+
   it("rejects unsafe ids and detects revision file tampering", () => {
     const root = tempRoot();
     const db = openVdtDatabase(root);
