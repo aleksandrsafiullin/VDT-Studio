@@ -40,18 +40,21 @@ The transform identity is exactly:
 | input user version | `2` |
 | output user version | `3` |
 
-The only future canonical artifact paths are:
+The canonical artifact paths are:
 
 ```text
 packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-v1.wasm
 packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-abi.v1.json
-packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-v1.golden-vectors.json
+packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-v1.golden-vectors.json.gz
 packages/vdt-storage/scripts/build-legacy-agent-run-adoption-v1.mjs
 ```
 
-Those paths do not authorize creating the files. A different path, alias,
-package lookup, caller-supplied callback, dynamic import, or second module
-instance is not this contract.
+The gzip file is the deterministic `gzip -n -9` repository transport. Offline
+certification verifies its 8,755,503-byte compressed identity, performs a
+bounded gunzip, and then verifies the unchanged 121,310,783-byte canonical
+JSON identity before strict parsing and all 55 ABI plus 204 host-vector checks.
+A different path, alias, package lookup, caller-supplied callback, dynamic
+import, or second module instance is not this contract.
 
 ## Responsibility boundary
 

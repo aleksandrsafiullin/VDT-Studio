@@ -11,6 +11,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --root ../.. packages/vdt-storage/src --maxWorkers=1 --no-file-parallelism"
+    "test": "vitest run --root ../.. packages/vdt-storage/src --maxWorkers=1 --no-file-parallelism",
+    "sequence3:transport:verify": "node scripts/verify-sequence-3-vector-transport.mjs --verify"
   }
 }

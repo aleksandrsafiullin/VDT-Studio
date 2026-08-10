@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   __loadSequence3GoldenVectorsForTests,
   __sequence3AssetReadCountsForTests,
+  __sequence3GoldenVectorTransportIdentityForTests,
   loadSequence3TransformPreflightRegistry,
   loadVerifiedSequence3Assets
 } from "./sequence-3-assets";
@@ -20,6 +21,17 @@ describe("closed Sequence 3 assets", () => {
         "sha256:a4e95819f132dee113020b32b9cafff7ff96f18268dc286750a164523b462202"
     });
     expect(WebAssembly.Module.imports(first.module)).toEqual([]);
+    expect(__sequence3GoldenVectorTransportIdentityForTests()).toEqual({
+      basename: "legacy-agent-run-adoption-v1.golden-vectors.json.gz",
+      compressedByteLength: 8_755_503,
+      compressedRawSha256:
+        "sha256:62d65bbfa68bf5cc09ce21d73816971da313d0c1140338372fb1ae3c4c4a30d3",
+      uncompressedByteLength: 121_310_783,
+      uncompressedRawSha256:
+        "sha256:0cea8ae8156c3885219d11d496b686ab1a5420e01f3ebc74fa579be8eabe6467",
+      uncompressedFramedChecksum:
+        "sha256:a4e95819f132dee113020b32b9cafff7ff96f18268dc286750a164523b462202"
+    });
   }, 30_000);
 
   it("does not cache a registry whose ABI certification fails", () => {

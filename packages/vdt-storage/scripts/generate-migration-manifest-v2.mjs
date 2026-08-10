@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 
 const REQUIRED_NODE_VERSION = "24.15.0";
 const MIGRATION_ID = "003-durable-agent-run-coordination";
@@ -10,6 +11,14 @@ const PRECONDITION_SCHEMA_HASH =
 const HISTORICAL_PREFIX_MANIFEST_HASH =
   "sha256:f36158d9e2783a8cd1a9bd41f7d22da1d425a296dec95c8d272bb8fd789686ad";
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const GOLDEN_VECTOR_TRANSPORT = Object.freeze({
+  compressedByteLength: 8_755_503,
+  compressedRawSha256:
+    "sha256:62d65bbfa68bf5cc09ce21d73816971da313d0c1140338372fb1ae3c4c4a30d3",
+  uncompressedByteLength: 121_310_783,
+  uncompressedRawSha256:
+    "sha256:0cea8ae8156c3885219d11d496b686ab1a5420e01f3ebc74fa579be8eabe6467"
+});
 
 const TRANSFORM_IDENTITY = Object.freeze({
   transformId: "legacy-agent-run-adoption-v1",
@@ -105,7 +114,7 @@ const INPUT_PATHS = Object.freeze([
   "packages/vdt-storage/src/migrations/003-durable-agent-run-coordination.sql",
   "packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-v1.wasm",
   "packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-abi.v1.json",
-  "packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-v1.golden-vectors.json",
+  "packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-v1.golden-vectors.json.gz",
   "packages/vdt-storage/src/migrations/sequence-3-schema-introspection.v1.json"
 ]);
 
@@ -120,8 +129,30 @@ class GeneratorFailure extends Error {
 }
 
 function buildManifest(inputBuffers) {
-  const [sequence1Sql, sequence2Sql, sequence3Sql, moduleBytes, abiBytes, vectorBytes, introspectionBytes] =
+  const [sequence1Sql, sequence2Sql, sequence3Sql, moduleBytes, abiBytes, compressedVectorBytes, introspectionBytes] =
     inputBuffers;
+  if (
+    compressedVectorBytes.byteLength !==
+      GOLDEN_VECTOR_TRANSPORT.compressedByteLength ||
+    hashRaw(compressedVectorBytes) !==
+      GOLDEN_VECTOR_TRANSPORT.compressedRawSha256
+  ) {
+    fail("vector_transport_invalid");
+  }
+  let vectorBytes;
+  try {
+    vectorBytes = gunzipSync(compressedVectorBytes, {
+      maxOutputLength: GOLDEN_VECTOR_TRANSPORT.uncompressedByteLength
+    });
+  } catch {
+    fail("vector_transport_invalid");
+  }
+  if (
+    vectorBytes.byteLength !== GOLDEN_VECTOR_TRANSPORT.uncompressedByteLength ||
+    hashRaw(vectorBytes) !== GOLDEN_VECTOR_TRANSPORT.uncompressedRawSha256
+  ) {
+    fail("vector_transport_invalid");
+  }
 
   verifyHistoricalSql(sequence1Sql, HISTORICAL_ENTRIES[0]);
   verifyHistoricalSql(sequence2Sql, HISTORICAL_ENTRIES[1]);

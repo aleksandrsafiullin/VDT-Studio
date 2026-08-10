@@ -86,12 +86,13 @@ extension is permitted.
 | Sequence 3 SQL | `packages/vdt-storage/src/migrations/003-durable-agent-run-coordination.sql` |
 | WASM module | `packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-v1.wasm` |
 | machine-readable ABI contract | `packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-abi.v1.json` |
-| transform golden vectors | `packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-v1.golden-vectors.json` |
+| transform golden-vector transport | `packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-v1.golden-vectors.json.gz` |
 | deterministic WASM builder | `packages/vdt-storage/scripts/build-legacy-agent-run-adoption-v1.mjs` |
 | schema-introspection generator | `packages/vdt-storage/scripts/generate-sequence-3-schema-introspection.mjs` |
 | fault-spec generator | `packages/vdt-storage/scripts/generate-sequence-3-fault-vectors.mjs` |
 | standalone V2 manifest generator | `packages/vdt-storage/scripts/generate-migration-manifest-v2.mjs` |
-| standalone freeze verifier | `packages/vdt-storage/scripts/verify-sequence-3-artifact-freeze.mjs` |
+| active vector-transport verifier | `packages/vdt-storage/scripts/verify-sequence-3-vector-transport.mjs` |
+| historical verifier compatibility entry point | `packages/vdt-storage/scripts/verify-sequence-3-artifact-freeze.mjs` |
 | generated V2 manifest | `packages/vdt-storage/src/migrations/migration-manifest-v2.json` |
 | schema-introspection evidence | `packages/vdt-storage/src/migrations/sequence-3-schema-introspection.v1.json` |
 | fault vectors | `packages/vdt-storage/src/migrations/sequence-3-fault-vectors.v1.json` |
@@ -101,9 +102,12 @@ extension is permitted.
 | transform contract | `docs/architecture/LEGACY_AGENT_RUN_ADOPTION_TRANSFORM_CONTRACT.md` |
 | this contract | `docs/architecture/SEQUENCE_3_MANIFEST_PACKAGING_AND_FAULT_CONTRACT.md` |
 
-The V2 manifest, schema-introspection file, fault-spec file, freeze record,
-ABI contract, golden vectors and WASM module are committed inert source
-artifacts after the freeze; they are not build-directory output. Builders,
+The V2 manifest, schema-introspection file, fault-spec file, supersession
+record, ABI contract, deterministic gzip golden-vector transport and WASM
+module are committed source artifacts; they are not build-directory output.
+The manifest continues to bind the canonical uncompressed vector byte length
+and framed checksum. The active offline verifier separately binds the gzip
+transport identity and bounded decompression result. Builders,
 generators and the verifier are never run implicitly by install, build, test,
 application startup or packaging. Gate R2 execution evidence does not exist
 at artifact-freeze time and is not a freeze-record input.
@@ -390,10 +394,10 @@ production V2 hash.
 
 `packages/vdt-storage/scripts/generate-migration-manifest-v2.mjs` is a
 standalone Node script with imports only from `node:crypto`, `node:fs`,
-`node:path` and `node:url`. It contains its own strict JSON decoder, RFC 8785
-canonicalizer, uint64 big-endian framing and schema assertions. It does not
-import a production migration module, test helper, TypeScript source loader or
-third-party package.
+`node:path`, `node:url` and `node:zlib`. It contains its own strict JSON
+decoder, RFC 8785 canonicalizer, uint64 big-endian framing and schema
+assertions. It does not import a production migration module, test helper,
+TypeScript source loader or third-party package.
 
 The generator performs these operations in order:
 
@@ -409,7 +413,7 @@ The generator performs these operations in order:
    3. `packages/vdt-storage/src/migrations/003-durable-agent-run-coordination.sql`;
    4. `packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-v1.wasm`;
    5. `packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-abi.v1.json`;
-   6. `packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-v1.golden-vectors.json`;
+   6. `packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-v1.golden-vectors.json.gz`;
    7. `packages/vdt-storage/src/migrations/sequence-3-schema-introspection.v1.json`.
 4. Require each input to be a same-identity, single-link regular file beneath
    repository root. Reject a symlink, path escape, duplicate inode, size
@@ -417,9 +421,12 @@ The generator performs these operations in order:
    subsequent checks.
 5. Prove the frozen Sequence 1/2 lengths, checksums and V1 prefix hash from
    section 4.
-6. Strict-decode the ABI contract, golden vectors and introspection evidence;
-   reject duplicate/unknown/missing keys; require their canonical source-byte
-   policies and exact closed identities.
+6. Verify the exact deterministic gzip byte length and raw checksum; gunzip
+   with `maxOutputLength` fixed to the canonical 121,310,783-byte bound; then
+   verify the canonical uncompressed byte length, raw checksum and framed
+   checksum before strict-decoding the golden vectors. Strict-decode the ABI
+   contract and introspection evidence; reject duplicate/unknown/missing keys;
+   require their canonical source-byte policies and exact closed identities.
 7. Recompute schema-row hashes; require the user-version-2 hash to equal the
    frozen precondition and use only the verified user-version-3 semantic hash
    as Sequence 3 `postconditionSchemaHash`.

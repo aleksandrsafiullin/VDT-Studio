@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 import { canonicalizeJson, hashFramed, hashRawBytes } from "./canonical";
 import type { JsonValue, Sha256 } from "./types";
 
@@ -16,7 +17,7 @@ const ASSET_URLS = Object.freeze({
     import.meta.url
   ),
   vectors: new URL(
-    "./migrations/transforms/legacy-agent-run-adoption-v1.golden-vectors.json",
+    "./migrations/transforms/legacy-agent-run-adoption-v1.golden-vectors.json.gz",
     import.meta.url
   )
 });
@@ -43,10 +44,14 @@ const EXPECTED = Object.freeze({
     raw: "sha256:135d5e068534d3b70faaa1a64fffe1462b2b406c4cbdba33b67901b436b1f7c5"
   },
   vectors: {
-    basename: "legacy-agent-run-adoption-v1.golden-vectors.json",
-    length: 121_310_783,
-    raw: "sha256:0cea8ae8156c3885219d11d496b686ab1a5420e01f3ebc74fa579be8eabe6467",
-    framed: "sha256:a4e95819f132dee113020b32b9cafff7ff96f18268dc286750a164523b462202"
+    basename: "legacy-agent-run-adoption-v1.golden-vectors.json.gz",
+    length: 8_755_503,
+    raw: "sha256:62d65bbfa68bf5cc09ce21d73816971da313d0c1140338372fb1ae3c4c4a30d3",
+    uncompressedLength: 121_310_783,
+    uncompressedRaw:
+      "sha256:0cea8ae8156c3885219d11d496b686ab1a5420e01f3ebc74fa579be8eabe6467",
+    uncompressedFramed:
+      "sha256:a4e95819f132dee113020b32b9cafff7ff96f18268dc286750a164523b462202"
   }
 } as const);
 
@@ -83,6 +88,15 @@ export interface Sequence3GoldenVectorRegistry {
   readonly hostVectors: readonly Record<string, JsonValue>[];
   readonly vectorSetHash: Sha256;
   readonly vectorResultSetHash: Sha256;
+}
+
+export interface Sequence3GoldenVectorTransportIdentity {
+  readonly basename: "legacy-agent-run-adoption-v1.golden-vectors.json.gz";
+  readonly compressedByteLength: 8_755_503;
+  readonly compressedRawSha256: Sha256;
+  readonly uncompressedByteLength: 121_310_783;
+  readonly uncompressedRawSha256: Sha256;
+  readonly uncompressedFramedChecksum: Sha256;
 }
 
 let retainedRuntime: VerifiedSequence3Assets | undefined;
@@ -133,14 +147,29 @@ export function loadVerifiedSequence3Assets(): VerifiedSequence3Assets {
 export function loadSequence3TransformPreflightRegistry(): Sequence3GoldenVectorRegistry {
   if (retainedVectors) return retainedVectors;
   const runtime = loadVerifiedSequence3Assets();
-  const vectorBytes = readExact("vectors");
+  const compressedVectorBytes = readExact("vectors");
+  let vectorBytes: Buffer;
+  try {
+    vectorBytes = gunzipSync(compressedVectorBytes, {
+      maxOutputLength: EXPECTED.vectors.uncompressedLength
+    });
+  } catch {
+    throw new Error("sequence3_vector_transport_invalid");
+  }
+  if (
+    vectorBytes.length !== EXPECTED.vectors.uncompressedLength ||
+    hashRawBytes(vectorBytes) !== EXPECTED.vectors.uncompressedRaw
+  ) {
+    throw new Error("sequence3_vector_transport_invalid");
+  }
   if (
     hashFramed(
       "vdt-studio/migration-transform-golden-vectors",
       "migration_transform_golden_vectors_hash.v1",
       TRANSFORM_IDENTITY as unknown as JsonValue,
       vectorBytes
-    ) !== runtime.goldenVectorsChecksum
+    ) !== runtime.goldenVectorsChecksum ||
+    runtime.goldenVectorsChecksum !== EXPECTED.vectors.uncompressedFramed
   ) {
     throw new Error("sequence3_manifest_asset_checksum_invalid");
   }
@@ -161,6 +190,18 @@ export function __sequence3AssetReadCountsForTests(): Readonly<
   Record<keyof typeof ASSET_URLS, number>
 > {
   return Object.freeze({ ...assetReadCounts });
+}
+
+/** Test-only transport evidence; it is intentionally absent from the package entrypoint. */
+export function __sequence3GoldenVectorTransportIdentityForTests(): Sequence3GoldenVectorTransportIdentity {
+  return Object.freeze({
+    basename: EXPECTED.vectors.basename,
+    compressedByteLength: EXPECTED.vectors.length,
+    compressedRawSha256: EXPECTED.vectors.raw,
+    uncompressedByteLength: EXPECTED.vectors.uncompressedLength,
+    uncompressedRawSha256: EXPECTED.vectors.uncompressedRaw,
+    uncompressedFramedChecksum: EXPECTED.vectors.uncompressedFramed
+  });
 }
 
 function bundledAssetNamePattern(expectedBasename: string): RegExp {
@@ -511,8 +552,8 @@ function validateManifest(
     transform.phase !== "after_sql_before_application_record" ||
     transform.moduleByteLength !== module.length ||
     transform.contractByteLength !== abi.length ||
-    transform.goldenVectorsByteLength !== EXPECTED.vectors.length ||
-    transform.goldenVectorsChecksum !== EXPECTED.vectors.framed
+    transform.goldenVectorsByteLength !== EXPECTED.vectors.uncompressedLength ||
+    transform.goldenVectorsChecksum !== EXPECTED.vectors.uncompressedFramed
   ) throw new Error("sequence3_manifest_graph_invalid");
   const sqlChecksum = hashFramed(
     "vdt-studio/sql-migration",

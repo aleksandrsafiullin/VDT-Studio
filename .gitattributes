@@ -1,1 +1,0 @@
-packages/vdt-storage/src/migrations/transforms/legacy-agent-run-adoption-v1.golden-vectors.json filter=lfs diff=lfs merge=lfs -text

@@ -110,8 +110,8 @@ const REQUIRED_DOCS = [
   },
   {
     file: "docs/architecture/LEGACY_AGENT_RUN_ADOPTION_TRANSFORM_CONTRACT.md",
-    byteLength: 100814,
-    rawSha256: "sha256:951b1c7c74e488174bedf0c20d43fa52ffb8fa8d964b9e06b7506d9eca0c345b",
+    byteLength: 101063,
+    rawSha256: "sha256:2147d97799dbafde1864b14357f61ac52c7f376af2827eb8a13344c36a733ae0",
     snippets: [
       "# Sequence 3 Legacy Agent-Run Adoption Transform Contract",
       "PROPOSED / INERT / NOT RUNTIME AUTHORITY",
@@ -120,8 +120,8 @@ const REQUIRED_DOCS = [
   },
   {
     file: "docs/architecture/SEQUENCE_3_MANIFEST_PACKAGING_AND_FAULT_CONTRACT.md",
-    byteLength: 82446,
-    rawSha256: "sha256:8c872e65e2c38c6f4a17fca10f0cade2e0dbf5e61ae56155e30dcbdc862523cf",
+    byteLength: 83082,
+    rawSha256: "sha256:75c40031e0c8146fb06bfaf1b16def030eb359b0ec4eac9d1ad091bd18726543",
     snippets: [
       "# Sequence 3 Manifest, Packaging, Fence, And Fault Contract",
       "historical proposed inert byte-level contract; no runtime authority by itself",
