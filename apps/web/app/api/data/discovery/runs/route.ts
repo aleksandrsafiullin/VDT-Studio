@@ -1,7 +1,8 @@
-import { runRawDataDiscovery } from "@vdt-studio/data-harness";
+import { runRawDataDiscovery, type DataDiscoveryStructuredProvider } from "@vdt-studio/data-harness";
 import type { VdtProject } from "@vdt-studio/vdt-core";
-import { createAiProvider, type AiRouteProviderRequest } from "@/lib/ai-route-provider";
+import type { AiRouteProviderRequest } from "@/lib/ai-route-provider";
 import { jsonError, readJsonObject } from "../../../vdt/storage-response";
+import { createManagedAwareAiProvider } from "../../../agent/runs/managed-ai-provider";
 import { readDatasetFile, saveDiscoveryRun } from "../../store";
 
 export const runtime = "nodejs";
@@ -31,10 +32,10 @@ export async function POST(request: Request) {
   }
 
   const entryContext = readEntryContext(body.entryContext);
-  let provider: ReturnType<typeof createAiProvider> | undefined;
+  let provider: DataDiscoveryStructuredProvider | undefined;
   if (typeof body.providerId === "string" && body.providerId.trim()) {
     try {
-      provider = createAiProvider(body as AiRouteProviderRequest, request.url);
+      provider = createManagedAwareAiProvider(body as AiRouteProviderRequest, request.url);
     } catch (error) {
       const status = typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : 400;
       return jsonError(
@@ -49,7 +50,6 @@ export async function POST(request: Request) {
     datasetId,
     file: file.metadata,
     bytes: file.bytes,
-    text: file.textPreview,
     project,
     ...(entryContext ? { entryContext } : {}),
     ...(provider ? { provider } : {}),
@@ -80,16 +80,24 @@ function readProject(value: unknown): VdtProject | undefined {
 }
 
 function readEntryContext(value: unknown):
-  | { source?: string | undefined; cardName?: string | undefined; targetNodeId?: string | undefined }
+  | {
+      source?: string | undefined;
+      cardName?: string | undefined;
+      targetNodeId?: string | undefined;
+      purpose?: "incoming_kpis" | "data_mapping" | undefined;
+    }
   | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const source = readOptionalString((value as Record<string, unknown>).source);
   const cardName = readOptionalString((value as Record<string, unknown>).cardName);
   const targetNodeId = readOptionalString((value as Record<string, unknown>).targetNodeId);
+  const rawPurpose = readOptionalString((value as Record<string, unknown>).purpose);
+  const purpose = rawPurpose === "incoming_kpis" || rawPurpose === "data_mapping" ? rawPurpose : undefined;
   return {
     ...(source ? { source } : {}),
     ...(cardName ? { cardName } : {}),
-    ...(targetNodeId ? { targetNodeId } : {})
+    ...(targetNodeId ? { targetNodeId } : {}),
+    ...(purpose ? { purpose } : {})
   };
 }
 

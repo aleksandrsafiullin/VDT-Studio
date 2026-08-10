@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import {
   getGatewayPreset,
   type ByokGateway,
@@ -37,12 +38,83 @@ export function ByokSettings() {
   const setProviderTestState = useVdtStudioStore((state) => state.setProviderTestState);
   const byokFieldErrors = useVdtStudioStore((state) => state.byokFieldErrors);
   const setByokFieldErrors = useVdtStudioStore((state) => state.setByokFieldErrors);
+  const [discoveredModels, setDiscoveredModels] = useState<readonly string[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [modelListLoaded, setModelListLoaded] = useState(false);
+  const [modelListError, setModelListError] = useState<string | undefined>();
+  const modelRequestId = useRef(0);
 
   const protocol = executionSettings.byokProtocol ?? "openai";
   const gateway = executionSettings.byokGateway ?? "none";
   const presetId = executionSettings.gatewayPresetId ?? "openai-default";
   const preset = getGatewayPreset(presetId);
   const showPresetSelect = gateway === "none" && presetId !== "mock";
+
+  useEffect(() => {
+    modelRequestId.current += 1;
+    setDiscoveredModels([]);
+    setIsLoadingModels(false);
+    setModelListLoaded(false);
+    setModelListError(undefined);
+  }, [
+    executionSettings.apiKey,
+    executionSettings.anthropicVersion,
+    executionSettings.apiVersion,
+    executionSettings.baseUrl,
+    executionSettings.byokGateway,
+    executionSettings.byokProtocol,
+    executionSettings.customizeBaseUrl,
+    executionSettings.endpoint,
+    executionSettings.gatewayPresetId
+  ]);
+
+  async function loadModels() {
+    if (!executionSettings.apiKey?.trim()) {
+      setModelListError("Enter an API key before loading models.");
+      return;
+    }
+
+    const requestId = ++modelRequestId.current;
+    setIsLoadingModels(true);
+    setModelListLoaded(false);
+    setModelListError(undefined);
+
+    try {
+      const resolved = resolveExecutionSettings(executionSettings);
+      const response = await fetch("/api/ai/generate-vdt", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "list_models", ...resolved })
+      });
+      const payload = await response.json() as { ok?: boolean; models?: unknown; error?: string };
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? "Could not load models from the provider.");
+      }
+
+      const seen = new Set<string>();
+      const models = Array.isArray(payload.models)
+        ? payload.models.flatMap((value) => {
+            if (typeof value !== "string") return [];
+            const model = value.trim();
+            if (!model || seen.has(model)) return [];
+            seen.add(model);
+            return [model];
+          })
+        : [];
+      if (requestId !== modelRequestId.current) return;
+      setDiscoveredModels(models);
+      setModelListLoaded(true);
+    } catch (error) {
+      if (requestId !== modelRequestId.current) return;
+      setDiscoveredModels([]);
+      setModelListLoaded(false);
+      setModelListError(error instanceof Error ? error.message : "Could not load models from the provider.");
+    } finally {
+      if (requestId === modelRequestId.current) {
+        setIsLoadingModels(false);
+      }
+    }
+  }
 
   async function testConnection() {
     const fingerprint = JSON.stringify(executionSettings);
@@ -121,10 +193,15 @@ export function ByokSettings() {
         showPresetLabel={!showPresetSelect}
         isTesting={isTestingProvider}
         testStatus={providerTestStatus}
+        discoveredModels={discoveredModels}
+        isLoadingModels={isLoadingModels}
+        modelListLoaded={modelListLoaded}
+        modelListError={modelListError}
         onPresetChange={(nextPresetId: GatewayPresetId) => setGatewayPreset(nextPresetId)}
         onFieldChange={(field, value) => setExecutionSettingsField(field, value)}
         fieldErrors={byokFieldErrors}
         onFieldErrorsChange={setByokFieldErrors}
+        onLoadModels={() => void loadModels()}
         onTest={() => void testConnection()}
       />
     </div>

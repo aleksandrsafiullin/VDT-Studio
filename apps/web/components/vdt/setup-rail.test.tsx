@@ -20,7 +20,7 @@ const localStorageMock = (() => {
 
 vi.stubGlobal("localStorage", localStorageMock);
 
-const { SetupRail } = await import("./setup-rail");
+const { ExecutionReadinessDot, SetupRail } = await import("./setup-rail");
 const { useVdtStudioStore } = await import("./vdt-store");
 
 describe("SetupRail agent composer", () => {
@@ -39,15 +39,33 @@ describe("SetupRail agent composer", () => {
         useMockProvider: false,
         apiKey: "test-key",
         model: "gpt-test"
-      }
+      },
+      cliDetectionAgents: undefined,
+      cliDetectionError: undefined,
+      isRescanningClis: false
     });
   });
 
   it("renders the search mode toggle as Auto by default", () => {
     const html = renderToStaticMarkup(<SetupRail />);
 
+    expect(html).toContain('data-testid="data-import-attachment-button"');
+    expect(html).toContain('aria-label="Attach data file to create incoming KPIs"');
+    expect(html).not.toContain('data-testid="data-import-wizard"');
     expect(html).toContain('data-testid="agent-research-mode-toggle"');
     expect(html).toContain('data-research-mode="auto"');
     expect(html).toContain("Agent may search when local skills are not enough.");
+  });
+
+  it.each([
+    { state: "checking" as const, expectedClass: "bg-slate-400" },
+    { state: "ready" as const, expectedClass: "bg-emerald-500" },
+    { state: "warning" as const, expectedClass: "bg-amber-500" },
+    { state: "not_installed" as const, expectedClass: "bg-red-500" }
+  ])("renders the $state readiness color", ({ state, expectedClass }) => {
+    const html = renderToStaticMarkup(<ExecutionReadinessDot state={state} />);
+
+    expect(html).toContain(`data-readiness="${state}"`);
+    expect(html).toContain(expectedClass);
   });
 });

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { LOCAL_RUNNER_PRESET_CATALOG } from "@/lib/execution-mode-catalog";
-import { LocalAiRuntimeErrorBanner, LocalModelCards } from "./local-cli-settings";
+import { CLI_CATALOG, LOCAL_RUNNER_PRESET_CATALOG } from "@/lib/execution-mode-catalog";
+import { CliInstallGrid } from "./cli-install-grid";
+import {
+  LocalAiRuntimeErrorBanner,
+  LocalModelCards,
+  resolveCliSettingsDetectionState
+} from "./local-cli-settings";
 
 describe("LocalModelCards", () => {
   it("renders local model server cards without standalone runner pairing instructions", () => {
@@ -136,5 +141,72 @@ describe("LocalModelCards", () => {
     expect(html).not.toContain("Could not scan installed CLIs");
     expect(html).not.toContain("vdt runner start");
     expect(html).not.toContain("Pairing code");
+  });
+});
+
+describe("LocalCliSettings detection states", () => {
+  it("keeps install options hidden while scanning", () => {
+    expect(resolveCliSettingsDetectionState(undefined, true)).toMatchObject({
+      scanPending: true,
+      installedAgents: [],
+      notInstalledAgents: [],
+      showInstallOptions: false
+    });
+  });
+
+  it("classifies a confirmed ready CLI as installed without an install option", () => {
+    const state = resolveCliSettingsDetectionState(
+      [
+        {
+          id: "cursor-agent",
+          installed: true,
+          executable: "/usr/local/bin/agent",
+          alias: "agent",
+          version: "0.48.0",
+          status: "ready"
+        }
+      ],
+      false
+    );
+
+    expect(state.installedAgents.map((agent) => agent.id)).toEqual(["cursor-agent"]);
+    expect(state.notInstalledAgents).toEqual([]);
+    expect(state.showInstallOptions).toBe(false);
+  });
+
+  it("shows install cards only after a completed scan confirms not_installed", () => {
+    const state = resolveCliSettingsDetectionState(
+      [
+        {
+          id: "cursor-agent",
+          installed: false,
+          executable: null,
+          alias: null,
+          version: null,
+          status: "not_installed"
+        }
+      ],
+      false
+    );
+
+    expect(state.installedAgents).toEqual([]);
+    expect(state.notInstalledAgents.map((agent) => agent.id)).toEqual(["cursor-agent"]);
+    expect(state.showInstallOptions).toBe(true);
+  });
+
+  it("renders confirmed install options with a visible red Not installed status", () => {
+    const cursor = CLI_CATALOG.find((agent) => agent.id === "cursor-agent")!;
+    const html = renderToStaticMarkup(
+      <CliInstallGrid
+        agents={[cursor]}
+        onInstall={() => undefined}
+        onCopyCommand={() => undefined}
+        onRescanAgent={() => undefined}
+      />
+    );
+
+    expect(html).toContain('data-testid="cli-install-readiness-cursor-agent"');
+    expect(html).toContain('data-readiness="not_installed"');
+    expect(html).toContain("Not installed");
   });
 });

@@ -71,7 +71,11 @@ export function proposeAndMaybeApplyMutation(
   const calculation = validation.valid ? summarizeCalculation(calculateGraph(previewProject)) : undefined;
   const policy = mutationPolicyForRun(context);
   const scope = progressiveScopeForMutation(baseProject, changeSet, normalizedInput.targetNodeId);
-  const scopeError = validateProgressiveMutationScope(baseProject, changeSet, scope);
+  const scopeError = validateSingleLayerRunScope(
+    state,
+    changeSet,
+    normalizedInput.targetNodeId
+  ) ?? validateProgressiveMutationScope(baseProject, changeSet, scope);
   const proposal = buildMutationProposal({
     runId: context.runId,
     project: baseProject,
@@ -143,6 +147,36 @@ export function proposeAndMaybeApplyMutation(
 
   const applied = applyProposalToBuilder(context, proposal, selectedChangeIds);
   return applied;
+}
+
+function validateSingleLayerRunScope(
+  state: ReturnType<AgentToolContext["store"]["getState"]>,
+  changeSet: VdtChangeSet,
+  targetNodeId?: string | undefined
+): string | undefined {
+  if (state.request.mode !== "deepen_node") return undefined;
+  const selectedNodeId = state.request.input.selectedNodeId;
+  if (!selectedNodeId) {
+    return "Single-level decomposition requires a selected KPI.";
+  }
+  if (targetNodeId && targetNodeId !== selectedNodeId) {
+    return `Single-level decomposition can mutate only the selected KPI "${selectedNodeId}".`;
+  }
+  if (changeSet.additions.some((addition) => addition.parentNodeId !== selectedNodeId)) {
+    return `Single-level decomposition can add only immediate children of "${selectedNodeId}".`;
+  }
+  if (changeSet.updates.some((update) => update.nodeId !== selectedNodeId)) {
+    return `Single-level decomposition can update only the selected KPI "${selectedNodeId}".`;
+  }
+  if (changeSet.deletions.length > 0) {
+    return "Single-level decomposition cannot delete KPI nodes.";
+  }
+  if (changeSet.edgeChanges.some((change) =>
+    change.action !== "add" || change.edge.sourceNodeId !== selectedNodeId
+  )) {
+    return `Single-level decomposition can add edges only from the selected KPI "${selectedNodeId}".`;
+  }
+  return undefined;
 }
 
 export function applyPendingMutationProposal(

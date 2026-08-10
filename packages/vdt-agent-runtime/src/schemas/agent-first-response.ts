@@ -33,6 +33,7 @@ export const firstResponseSchema = z.object({
 export type FirstResponseOutput = z.infer<typeof firstResponseSchema>;
 
 export interface FirstResponseInput {
+  requestMode: "generate_vdt" | "continue_project" | "deepen_node" | "review_project";
   brief: {
     rootKpi: string;
     unit?: string | undefined;
@@ -62,6 +63,10 @@ export interface FirstResponseInput {
     title: string;
     rootNodeName: string;
     unit?: string | undefined;
+  } | undefined;
+  selectedNode?: {
+    id: string;
+    name: string;
   } | undefined;
   visibleChatSummary?: string | undefined;
 }

@@ -380,6 +380,83 @@ function haulageBuildDecisions(): AgentDecision[] {
 }
 
 describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
+  it("decomposes only the selected KPI's next level without creating a user chat instruction", async () => {
+    const builder = new VdtBuilderSession({ now: () => "2026-08-10T00:00:00.000Z" });
+    builder.createDraft({
+      projectTitle: "Ore mined Driver Model",
+      rootKpi: "Ore mined",
+      unit: "tonnes",
+      timePeriod: "year"
+    });
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "vdt.add_driver",
+        statusMessage: "Adding mining capacity.",
+        args: {
+          parentNodeId: "ore_mined",
+          nodeId: "mining_capacity",
+          name: "Mining capacity",
+          type: "input",
+          unit: "tonnes/year",
+          relation: "positive_driver"
+        }
+      },
+      {
+        type: "call_tool",
+        toolName: "vdt.add_driver",
+        statusMessage: "Attempting a deeper level.",
+        args: {
+          parentNodeId: "mining_capacity",
+          nodeId: "equipment_capacity",
+          name: "Equipment capacity",
+          type: "input",
+          unit: "tonnes/year",
+          relation: "positive_driver"
+        }
+      },
+      {
+        type: "finish",
+        summary: "Added the next incoming KPI level.",
+        nextSuggestedActions: []
+      }
+    ]);
+    const runtime = createVdtAgentRuntime();
+
+    const snapshot = await runtime.startRun({
+      mode: "deepen_node",
+      input: {
+        rootKpi: "Ore mined",
+        unit: "tonnes",
+        timePeriod: "year",
+        project: builder.getProject(),
+        selectedNodeId: "ore_mined"
+      },
+      providerId: "decision-test",
+      options: { autoApplyPatches: true, maxSteps: 5 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("succeeded");
+    expect(snapshot.project?.graph.nodes.map((node) => node.id)).toEqual([
+      "ore_mined",
+      "mining_capacity"
+    ]);
+    expect(snapshot.chatMessages.some((message) =>
+      message.role === "user" && message.kind === "instruction"
+    )).toBe(false);
+    expect(snapshot.events.some((event) => event.type === "user_instruction")).toBe(false);
+    expect(snapshot.events.some((event) =>
+      event.type === "mutation_rejected" && /selected KPI/.test(event.message)
+    )).toBe(true);
+    expect(provider.firstResponseInputs[0]).toMatchObject({
+      requestMode: "deepen_node",
+      selectedNode: { id: "ore_mined", name: "Ore mined" }
+    });
+    expect(provider.decisionInputs.every((input) =>
+      input.constraints.singleLayerDecompositionOnly === true
+    )).toBe(true);
+  });
+
   // Remove `.fails` in W0.2 when manual operations merge into the active builder or enter an explicit merge state.
   it.fails("[known defect F-03] does not silently overwrite a manual deletion during an in-flight mutation", async () => {
     let contractSatisfied: boolean | undefined;

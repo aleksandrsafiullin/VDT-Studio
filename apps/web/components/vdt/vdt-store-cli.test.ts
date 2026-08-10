@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cloneProject, productionVolumeProject, type VdtChangeSet } from "@vdt-studio/vdt-core";
 import { productionVolumeReviewOutput } from "@vdt-studio/ai-harness";
-import { DEFAULT_EXECUTION_SETTINGS, getCliCatalogEntry } from "@/lib/execution-mode-catalog";
+import { DEFAULT_EXECUTION_SETTINGS } from "@/lib/execution-mode-catalog";
 import type { VdtAgentRunSnapshot } from "@/lib/agent-client";
 
 const localStorageMock = (() => {
@@ -750,7 +750,7 @@ describe("vdt-store change-set workflow", () => {
     expect(state.selectedPanelTab).toBe("properties");
   });
 
-  it("requestIncomingKpisWithAi posts a selected-node instruction into the active agent chat", async () => {
+  it("requestIncomingKpisWithAi posts a structured single-level action without a chat instruction", async () => {
     const runId = "agent-run-incoming-kpis";
     let capturedMessageBody: unknown;
     const fetchMock = vi.mocked(fetch);
@@ -765,16 +765,7 @@ describe("vdt-store change-set workflow", () => {
             status: "running",
             phase: "building_graph",
             completedAt: undefined,
-            chatMessages: [
-              {
-                id: "msg-incoming-kpis",
-                runId,
-                role: "user",
-                kind: "instruction",
-                text: (capturedMessageBody as { text?: string }).text,
-                createdAt: "2026-06-24T10:00:00.000Z"
-              }
-            ]
+            chatMessages: []
           })
         });
       }
@@ -807,12 +798,11 @@ describe("vdt-store change-set workflow", () => {
     const accepted = await useVdtStudioStore.getState().requestIncomingKpisWithAi("calendar_time");
 
     expect(accepted).toBe(true);
-    expect(capturedMessageBody).toMatchObject({
-      type: "user_instruction",
-      selectedNodeId: "calendar_time",
-      text: expect.stringContaining('Add incoming KPI drivers for "Calendar Time".')
+    expect(capturedMessageBody).toEqual({
+      type: "deepen_node",
+      selectedNodeId: "calendar_time"
     });
-    expect((capturedMessageBody as { text?: string }).text).toContain("set or update the formula");
+    expect(useVdtStudioStore.getState().agentRun?.chatMessages).toEqual([]);
     expect(useVdtStudioStore.getState().selectedNodeId).toBe("calendar_time");
   });
 
@@ -855,11 +845,11 @@ describe("vdt-store change-set workflow", () => {
     const input = capturedStartBody?.input as { project?: { id?: string }; selectedNodeId?: string; prompt?: string };
     expect(accepted).toBe(true);
     expect(capturedStartBody).toMatchObject({
-      mode: "continue_project"
+      mode: "deepen_node"
     });
     expect(input.selectedNodeId).toBe("calendar_time");
     expect(input.project?.id).toBe(productionVolumeProject.id);
-    expect(input.prompt).toContain('Add incoming KPI drivers for "Calendar Time".');
+    expect(input.prompt).toBeUndefined();
   });
 
   it("restoreVersionSnapshot reverts graph and discards pending change set", () => {
@@ -1347,6 +1337,19 @@ describe("vdt-store cli rescan", () => {
     const fetchMock = vi.mocked(fetch);
     const providerMessage = "Claude Code authentication failed.";
 
+    useVdtStudioStore.setState({
+      cliDetectionAgents: [
+        {
+          id: "claude",
+          installed: true,
+          executable: "/usr/local/bin/claude",
+          alias: "claude",
+          version: "1.0.0",
+          status: "ready"
+        }
+      ]
+    });
+
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/api/agent/runs")) {
@@ -1365,14 +1368,6 @@ describe("vdt-store cli rescan", () => {
     expect(generateCall).toBeDefined();
   });
 
-});
-
-describe("vdt-store cli catalog models", () => {
-  it("exposes catalog suggestions for model selection without runner probe", () => {
-    const claudeModels = getCliCatalogEntry("claude").suggestedModels;
-    expect(claudeModels).toContain("claude-sonnet-4-6");
-    expect(claudeModels.length).toBeGreaterThan(0);
-  });
 });
 
 describe("vdt-store generate activity", () => {

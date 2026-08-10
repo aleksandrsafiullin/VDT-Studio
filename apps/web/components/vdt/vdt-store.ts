@@ -1089,13 +1089,14 @@ function mapRuntimeAgentEventType(type: RuntimeAgentEvent["type"]): VdtAgentEven
   switch (type) {
     case "run_started":
     case "user_answer_received":
+    case "node_decomposition_requested":
     case "plan_proposed":
     case "tool_call_started":
     case "tool_call_completed":
     case "manual_change_observed":
     case "repair_started":
     case "run_completed":
-      return type === "plan_proposed"
+      return type === "plan_proposed" || type === "node_decomposition_requested"
         ? "planning_decomposition"
         : type === "tool_call_started"
           ? "model_call_started"
@@ -1315,7 +1316,15 @@ function applyGenerateProgressEvent(
 async function runAiTask<T extends RunAiActionTaskType>(
   taskType: T,
   input: RunAiActionInput<T>,
-  state: Pick<VdtStudioState, "executionSettings" | "cliDetectionAgents" | "project" | "runnerPairingToken">,
+  state: Pick<
+    VdtStudioState,
+    | "executionSettings"
+    | "cliDetectionAgents"
+    | "cliDetectionError"
+    | "isRescanningClis"
+    | "project"
+    | "runnerPairingToken"
+  >,
   options?: { onProgress?: (event: AiExecutionProgressEvent) => void }
 ): Promise<RunAiTaskResult> {
   if (state.executionSettings.executionMode === "local_cli" && !hasLocalAiUi(resolveVdtAppMode())) {
@@ -1329,7 +1338,10 @@ async function runAiTask<T extends RunAiActionTaskType>(
     }
   }
 
-  const executionError = validateExecutionForGenerate(state.executionSettings, state.cliDetectionAgents);
+  const executionError = validateExecutionForGenerate(state.executionSettings, state.cliDetectionAgents, {
+    isScanning: state.isRescanningClis,
+    detectionError: state.cliDetectionError
+  });
   if (executionError) {
     throw new Error(executionError);
   }
@@ -1470,17 +1482,6 @@ function addManualIncomingKpiToProject(
       }
     }
   };
-}
-
-function buildIncomingKpisAgentInstruction(node: VdtNode): string {
-  return [
-    `Add incoming KPI drivers for "${node.name}".`,
-    `Target node id: ${node.id}.`,
-    "Use the current VDT graph context, the selected target node, and the active/selected skill context from this agent dialogue.",
-    "This button click is explicit user intent to decompose this branch layer by layer until it reaches logical leaf incoming KPIs/input drivers; do not ask for approval only because the branch is deep.",
-    "Decompose this KPI into the logical component KPIs/input drivers that should feed it, add those drivers to the current VDT, and set or update the formula for the target KPI so it references the new components.",
-    "Preserve the existing graph context, units, and mining/business meaning. Ask only if a required data definition is genuinely missing."
-  ].join("\n");
 }
 
 function defaultScenario(options?: { isMain?: boolean }): VdtScenario {
@@ -2884,7 +2885,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       startAgentRun: async (initialInstruction, options) => {
         if (get().isGenerating) return false;
         const state = get();
-        const { executionSettings, cliDetectionAgents } = state;
+        const { executionSettings, cliDetectionAgents, cliDetectionError, isRescanningClis } = state;
         if (executionSettings.executionMode === "local_cli" && !hasLocalAiUi(resolveVdtAppMode())) {
           set({ aiError: HOSTED_WEB_LOCAL_AI_MESSAGE, generateActivity: undefined });
           return false;
@@ -2900,7 +2901,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             return false;
           }
         }
-        const executionError = validateExecutionForGenerate(executionSettings, cliDetectionAgents);
+        const executionError = validateExecutionForGenerate(executionSettings, cliDetectionAgents, {
+          isScanning: isRescanningClis,
+          detectionError: cliDetectionError
+        });
         if (executionError) {
           set({ aiError: executionError, generateActivity: undefined });
           return false;
@@ -3211,14 +3215,48 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         }
 
         set({ selectedNodeId: nodeId, aiError: undefined, agentError: undefined });
-        const instruction = buildIncomingKpisAgentInstruction(node);
         const canContinueCurrentRun = isActiveRuntimeRun(state.agentRun) || isActiveActivity(state.generateActivity);
         if (canContinueCurrentRun) {
-          return get().sendAgentInstruction(instruction, nodeId);
+          const runId = state.agentRun?.runId ?? state.activeAgentRunId ?? state.generateActivity?.runId;
+          if (!runId) return false;
+          const requestedAt = nowIso();
+          set((current) => ({
+            aiError: undefined,
+            agentError: undefined,
+            activeAgentRunId: current.activeAgentRunId ?? runId,
+            generateActivity: current.generateActivity?.runId === runId
+              ? {
+                  ...current.generateActivity,
+                  status: "running",
+                  canCancel: true,
+                  retryableError: undefined,
+                  publicStatus: {
+                    phase: "planning_model",
+                    message: "Adding the next KPI level...",
+                    updatedAt: requestedAt
+                  },
+                  message: undefined,
+                  completedAt: undefined,
+                  updatedAt: requestedAt
+                }
+              : current.generateActivity
+          }));
+          try {
+            const snapshot = await createAgentClient().sendMessage(runId, {
+              type: "deepen_node",
+              selectedNodeId: nodeId
+            });
+            applyAgentSnapshot(set, snapshot);
+            return true;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "The next KPI level could not be created.";
+            set({ aiError: message, agentError: message });
+            return false;
+          }
         }
 
-        return get().startAgentRun(instruction, {
-          mode: "continue_project",
+        return get().startAgentRun(undefined, {
+          mode: "deepen_node",
           selectedNodeId: nodeId,
           includeCurrentProject: true
         });
@@ -3276,7 +3314,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         if (get().isGenerating) return;
 
         const state = get();
-        const { brief, executionSettings, cliDetectionAgents } = state;
+        const { brief, executionSettings, cliDetectionAgents, cliDetectionError, isRescanningClis } = state;
 
         if (executionSettings.executionMode === "local_cli" && !hasLocalAiUi(resolveVdtAppMode())) {
           set({ aiError: HOSTED_WEB_LOCAL_AI_MESSAGE, generateActivity: undefined });
@@ -3295,7 +3333,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
         }
 
-        const executionError = validateExecutionForGenerate(executionSettings, cliDetectionAgents);
+        const executionError = validateExecutionForGenerate(executionSettings, cliDetectionAgents, {
+          isScanning: isRescanningClis,
+          detectionError: cliDetectionError
+        });
         if (executionError) {
           set({ aiError: executionError, generateActivity: undefined });
           return;

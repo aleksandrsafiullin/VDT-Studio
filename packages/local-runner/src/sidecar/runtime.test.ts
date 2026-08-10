@@ -89,7 +89,11 @@ describe("local runtime sidecar", () => {
       payload: { backendId: "codex_subscription" }
     }, context)).resolves.toMatchObject({
       ok: true,
-      payload: { ok: true, backendId: "codex_subscription", models: ["gpt-5.5", "gpt-5.2"] }
+      payload: {
+        ok: true,
+        backendId: "codex_subscription",
+        models: ["gpt-5.5", "gpt-5.2", "gpt-5.3-codex"]
+      }
     });
   });
 

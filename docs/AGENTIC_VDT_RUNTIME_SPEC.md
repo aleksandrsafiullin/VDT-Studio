@@ -64,6 +64,8 @@ The agent should:
 8. Validate graph reachability, formula/edge consistency, dimensions and missing critical drivers.
 9. Return a final VDT plus a short user-facing report explaining the structure.
 
+For the semi-manual node-card decomposition path, a structured `deepen_node` action is the user intent. It must not be represented as a fabricated user chat instruction. One invocation may create only the selected KPI's immediate child layer and update that selected KPI as needed; it must stop before expanding any new child. Unknown values are allowed for this bounded structural step, so the normal full-model calculability finish gate must not force recursive decomposition.
+
 ## Non-Goals
 
 - Do not expose raw hidden chain-of-thought.

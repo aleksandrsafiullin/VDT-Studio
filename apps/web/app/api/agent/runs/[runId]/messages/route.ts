@@ -22,7 +22,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
 
   try {
     const state = agentRuntime.store.getState(runId);
-    const needsPlanner = parsed.data.type === "user_answer" || parsed.data.type === "user_instruction";
+    const needsPlanner = parsed.data.type === "user_answer" ||
+      parsed.data.type === "user_instruction" ||
+      parsed.data.type === "deepen_node";
     const execution = needsPlanner
       ? {
           provider: createAgentDecisionProvider(state.request, request.url),

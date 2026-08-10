@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { ExternalLink, Eye, EyeOff, Info, PlugZap } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ExternalLink, Eye, EyeOff, Info, Loader2, PlugZap, RefreshCw } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextInput } from "@/components/ui/field";
@@ -47,10 +47,15 @@ interface ByokPresetFormProps {
   showPresetLabel?: boolean;
   isTesting: boolean;
   testStatus?: ProviderTestStatus | undefined;
+  discoveredModels?: readonly string[] | undefined;
+  isLoadingModels?: boolean | undefined;
+  modelListLoaded?: boolean | undefined;
+  modelListError?: string | undefined;
   fieldErrors?: ByokFieldErrors | undefined;
   onPresetChange: (presetId: GatewayPresetId) => void;
   onFieldChange: <K extends keyof ExecutionSettings>(field: K, value: ExecutionSettings[K]) => void;
   onFieldErrorsChange?: (errors: ByokFieldErrors | undefined) => void;
+  onLoadModels?: (() => void) | undefined;
   onTest: () => void;
 }
 
@@ -72,62 +77,124 @@ function SectionTitle({ protocol }: { protocol: ByokProtocol }) {
 }
 
 function ModelField({
-  preset,
   model,
   error,
+  discoveredModels,
+  isLoadingModels,
+  modelListLoaded,
+  modelListError,
+  canLoadModels,
+  onLoadModels,
   onChange
 }: {
-  preset: ByokGatewayPreset;
   model: string;
   error?: string | undefined;
+  discoveredModels: readonly string[];
+  isLoadingModels: boolean;
+  modelListLoaded: boolean;
+  modelListError?: string | undefined;
+  canLoadModels: boolean;
+  onLoadModels?: (() => void) | undefined;
   onChange: (value: string) => void;
 }) {
-  const [customMode, setCustomMode] = useState(() => !preset.models.includes(model) && model.length > 0);
   const options = useMemo(() => {
-    const models = [...preset.models];
-    if (model && !models.includes(model)) {
-      models.push(model);
+    const seen = new Set<string>();
+    const models: string[] = [];
+    for (const candidate of discoveredModels) {
+      const trimmed = candidate.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      models.push(trimmed);
     }
     return models;
-  }, [preset.models, model]);
+  }, [discoveredModels]);
+  const [customMode, setCustomMode] = useState(() => options.length === 0);
+  const modelWasReported = options.includes(model);
+
+  useEffect(() => {
+    if (options.length > 0) {
+      setCustomMode(false);
+    }
+  }, [options]);
+
+  const status = isLoadingModels
+    ? "Loading available models from the provider..."
+    : modelListError
+      ? `${modelListError} Enter a model manually if this endpoint does not expose a model list.`
+      : modelListLoaded && options.length > 0
+        ? `${options.length} model${options.length === 1 ? "" : "s"} loaded from the provider.${model && !modelWasReported ? " The current model was not reported by this key." : ""}`
+        : modelListLoaded
+          ? "The provider returned no models. Enter the model ID manually."
+          : canLoadModels
+            ? "Load the current list from the provider, or enter a model ID manually."
+            : "Enter an API key to load the provider's current model list. Manual entry remains available.";
 
   return (
     <Field label="Model" {...(error ? { hint: error } : {})}>
-      {customMode ? (
-        <TextInput
-          data-testid="byok-model-custom"
-          value={model}
-          placeholder={preset.model}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      ) : (
-        <SelectInput
-          data-testid="byok-model-select"
-          value={model || preset.model}
-          onChange={(event) => {
-            const next = event.target.value;
-            if (next === "__custom__") {
-              setCustomMode(true);
-              return;
-            }
-            onChange(next);
-          }}
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          {customMode || options.length === 0 ? (
+            <TextInput
+              data-testid="byok-model-custom"
+              value={model}
+              placeholder="Enter model ID"
+              onChange={(event) => onChange(event.target.value)}
+            />
+          ) : (
+            <SelectInput
+              data-testid="byok-model-select"
+              value={model || options[0]}
+              onChange={(event) => {
+                const next = event.target.value;
+                if (next === "__custom__") {
+                  setCustomMode(true);
+                  return;
+                }
+                onChange(next);
+              }}
+            >
+              {model && !modelWasReported ? (
+                <option value={model}>{model} — not reported by provider</option>
+              ) : null}
+              {options.map((candidate) => (
+                <option key={candidate} value={candidate}>
+                  {candidate}
+                </option>
+              ))}
+              <option value="__custom__">Enter manually…</option>
+            </SelectInput>
+          )}
+        </div>
+        <Button
+          size="icon"
+          variant="secondary"
+          type="button"
+          aria-label="Load models from provider"
+          title="Load models from provider"
+          data-testid="byok-load-models"
+          disabled={!canLoadModels || isLoadingModels || !onLoadModels}
+          onClick={onLoadModels}
         >
-          {options.map((candidate) => (
-            <option key={candidate} value={candidate}>
-              {candidate}
-            </option>
-          ))}
-          <option value="__custom__">Custom model…</option>
-        </SelectInput>
-      )}
-      {customMode ? (
+          {isLoadingModels ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          )}
+        </Button>
+      </div>
+      <p className={clsx("mt-1 text-xs leading-5", modelListError ? "text-red-700" : "text-slate-500")}>
+        {status}
+      </p>
+      {customMode && options.length > 0 ? (
         <button
           type="button"
           className="mt-1 text-xs text-accent hover:underline"
-          onClick={() => setCustomMode(false)}
+          onClick={() => {
+            onChange(options[0]!);
+            setCustomMode(false);
+          }}
         >
-          Choose from preset list
+          Choose from live list
         </button>
       ) : null}
     </Field>
@@ -142,9 +209,14 @@ export function ByokPresetForm({
   showPresetLabel = false,
   isTesting,
   testStatus,
+  discoveredModels = [],
+  isLoadingModels = false,
+  modelListLoaded = false,
+  modelListError,
   onPresetChange,
   onFieldChange,
   onFieldErrorsChange,
+  onLoadModels,
   onTest,
   fieldErrors = {}
 }: ByokPresetFormProps) {
@@ -282,7 +354,12 @@ export function ByokPresetForm({
                     }}
                   />
                 </Field>
-                <Field label="Deployment" {...(fieldErrors.deployment ? { hint: fieldErrors.deployment } : {})}>
+                <Field
+                  label="Deployment"
+                  {...(fieldErrors.deployment
+                    ? { hint: fieldErrors.deployment }
+                    : { hint: "Enter the deployed name used for inference. Azure's model catalog does not report deployment names." })}
+                >
                   <TextInput
                     data-testid="byok-deployment"
                     value={executionSettings.deployment ?? ""}
@@ -393,16 +470,23 @@ export function ByokPresetForm({
               />
             </Field>
 
-            <ModelField
-              key={`${executionSettings.gatewayPresetId ?? preset.id}-${executionSettings.model ?? preset.model}`}
-              preset={preset}
-              model={executionSettings.model ?? preset.model}
-              error={fieldErrors.model}
-              onChange={(value) => {
-                clearExecutionFieldError("model");
-                onFieldChange("model", value);
-              }}
-            />
+            {protocol !== "azure" ? (
+              <ModelField
+                key={executionSettings.gatewayPresetId ?? preset.id}
+                model={executionSettings.model ?? preset.model}
+                error={fieldErrors.model}
+                discoveredModels={discoveredModels}
+                isLoadingModels={isLoadingModels}
+                modelListLoaded={modelListLoaded}
+                modelListError={modelListError}
+                canLoadModels={Boolean(executionSettings.apiKey?.trim())}
+                onLoadModels={onLoadModels}
+                onChange={(value) => {
+                  clearExecutionFieldError("model");
+                  onFieldChange("model", value);
+                }}
+              />
+            ) : null}
           </div>
 
           <div className="flex flex-col gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">

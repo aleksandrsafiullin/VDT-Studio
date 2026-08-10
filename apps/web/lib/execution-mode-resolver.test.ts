@@ -104,7 +104,7 @@ describe("execution-mode-resolver", () => {
     expect(message).not.toMatch(/BYOK/i);
   });
 
-  it("allows cli_stub generation when CLI detection has not run yet", () => {
+  it("blocks cli_stub generation while CLI detection has not run yet", () => {
     expect(
       validateExecutionForGenerate(
         {
@@ -117,10 +117,10 @@ describe("execution-mode-resolver", () => {
         },
         undefined
       )
-    ).toBeUndefined();
+    ).toMatch(/checking whether Claude Code can run requests/i);
   });
 
-  it("allows cli_stub generation when CLI scan failed with empty detection array", () => {
+  it("blocks cli_stub generation when CLI scan returned no selected-agent status", () => {
     expect(
       validateExecutionForGenerate(
         {
@@ -133,10 +133,10 @@ describe("execution-mode-resolver", () => {
         },
         []
       )
-    ).toBeUndefined();
+    ).toMatch(/readiness could not be verified/i);
   });
 
-  it("allows cli_stub generation when detection scan found the agent installed", () => {
+  it("blocks cli_stub generation when the agent is installed but readiness is unverified", () => {
     expect(
       validateExecutionForGenerate(
         {
@@ -148,6 +148,22 @@ describe("execution-mode-resolver", () => {
           command: "claude"
         },
         [{ id: "claude", installed: true }]
+      )
+    ).toMatch(/readiness has not been confirmed/i);
+  });
+
+  it("allows cli_stub generation only when the selected agent reports ready", () => {
+    expect(
+      validateExecutionForGenerate(
+        {
+          ...DEFAULT_EXECUTION_SETTINGS,
+          executionMode: "local_cli",
+          selectedCliAgentId: "claude",
+          localRunnerPresetId: "custom_cli_json",
+          runnerProviderId: "cli_stub",
+          command: "claude"
+        },
+        [{ id: "claude", installed: true, status: "ready" }]
       )
     ).toBeUndefined();
   });

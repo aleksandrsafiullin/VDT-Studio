@@ -3,7 +3,7 @@ import type { VdtSchemaId } from "../../schema-registry";
 import { assertArgsSafe } from "../security";
 import type { ExecFileProbe, SubscriptionCliAdapter, SubscriptionCliBuildArgsInput, SubscriptionCliModelProbeOptions } from "../types";
 import { probeCodexAuth } from "./auth";
-import { CODEX_BACKEND_ID, CODEX_CHATGPT_DEFAULT_MODEL, CODEX_FAST_SERVICE_TIER_ARGS } from "./constants";
+import { CODEX_BACKEND_ID, CODEX_FAST_SERVICE_TIER_ARGS } from "./constants";
 import { parseCodexExecJson } from "./parser";
 import { evaluateCodexVersion, parseCodexVersionOutput } from "./version";
 
@@ -25,6 +25,9 @@ export function parseCodexModelList(output: string): readonly string[] {
   const models: string[] = [];
   const seen = new Set<string>();
   const add = (value: unknown) => {
+    if (isRecord(value) && typeof value.visibility === "string" && value.visibility.toLowerCase() === "hide") {
+      return;
+    }
     const model = extractModelId(value);
     if (model && !seen.has(model)) {
       seen.add(model);
@@ -75,11 +78,6 @@ export function parseCodexModelList(output: string): readonly string[] {
   return Object.freeze(models);
 }
 
-function isSupportedCodexChatGptModel(model: string): boolean {
-  const normalized = model.toLowerCase();
-  return !normalized.includes("-codex") && !normalized.includes("auto-review");
-}
-
 async function defaultExecFileProbe(
   executable: string,
   args: readonly string[],
@@ -112,14 +110,14 @@ export async function listCodexModels(
     if (!/service_tier|unknown variant `default`|unknown variant "default"/i.test(text)) throw error;
     result = await execFile(executable, ["debug", "models", ...CODEX_FAST_SERVICE_TIER_ARGS], execOptions);
   }
-  return parseCodexModelList(`${result.stdout}\n${result.stderr}`).filter(isSupportedCodexChatGptModel);
+  return parseCodexModelList(`${result.stdout}\n${result.stderr}`);
 }
 
 /** Reviewed dynamic flags appended after manifest static args at spawn time. */
 export function buildCodexDynamicArgs(input: SubscriptionCliBuildArgsInput): readonly string[] {
   const args: string[] = [];
   if (input.cwd) args.push("-C", input.cwd);
-  args.push("--model", input.model ?? CODEX_CHATGPT_DEFAULT_MODEL);
+  if (input.model) args.push("--model", input.model);
   if (input.schemaPath) args.push("--output-schema", input.schemaPath);
   if (input.outputPath) args.push("--output-last-message", input.outputPath);
   assertArgsSafe(args);

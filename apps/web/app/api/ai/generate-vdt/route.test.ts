@@ -15,6 +15,7 @@ async function readJson(response: Response) {
   return (await response.json()) as {
     ok: boolean;
     error?: string;
+    models?: string[];
     project?: {
       name?: string;
       rootNodeId?: string;
@@ -160,6 +161,110 @@ describe("generate VDT API route", () => {
       "https://api.openai.com/v1/chat/completions",
       expect.objectContaining({ method: "POST" })
     );
+  });
+
+  it("loads the current OpenAI-compatible model list without catalog fallback", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: [{ id: "gpt-live-a" }, { id: "gpt-live-b" }, { id: "gpt-live-a" }]
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(jsonRequest({
+      operation: "list_models",
+      providerId: "openai_compatible",
+      providerConfig: { apiKey: "test-key", model: "stale-default" }
+    }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, models: ["gpt-live-a", "gpt-live-b"] });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/models",
+      expect.objectContaining({
+        method: "GET",
+        redirect: "error",
+        headers: { authorization: "Bearer test-key" }
+      })
+    );
+  });
+
+  it("loads the current Anthropic model list with the session API key", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: [{ id: "claude-live-a" }, { id: "claude-live-b" }]
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(jsonRequest({
+      operation: "list_models",
+      providerId: "anthropic",
+      providerConfig: {
+        apiKey: "anthropic-key",
+        model: "stale-default",
+        anthropicVersion: "2023-06-01"
+      }
+    }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(body.models).toEqual(["claude-live-a", "claude-live-b"]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.anthropic.com/v1/models",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          "x-api-key": "anthropic-key",
+          "anthropic-version": "2023-06-01"
+        })
+      })
+    );
+  });
+
+  it("loads only Gemini models that report generateContent support", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      models: [
+        { name: "models/gemini-live", supportedGenerationMethods: ["generateContent"] },
+        { name: "models/text-embedding", supportedGenerationMethods: ["embedContent"] },
+        { baseModelId: "gemini-live-base", supportedActions: ["generateContent"] }
+      ]
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(jsonRequest({
+      operation: "list_models",
+      providerId: "gemini",
+      providerConfig: { apiKey: "gemini-key", model: "stale-default" }
+    }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(body.models).toEqual(["gemini-live", "gemini-live-base"]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+      expect.objectContaining({
+        method: "GET",
+        headers: { "x-goog-api-key": "gemini-key" }
+      })
+    );
+  });
+
+  it("does not present Azure base models as executable deployment names", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(jsonRequest({
+      operation: "list_models",
+      providerId: "azure_openai",
+      providerConfig: {
+        endpoint: "https://example.openai.azure.com",
+        apiKey: "azure-key",
+        deployment: "manual-deployment"
+      }
+    }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toContain("deployment name");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("performs a dashscope connection test through openai_compatible", async () => {

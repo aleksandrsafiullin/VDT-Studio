@@ -1,6 +1,6 @@
 # Roadmap
 
-Last reviewed against the working tree: **2026-07-24**.
+Last reviewed against the working tree: **2026-08-10**.
 
 This roadmap is the operational summary of the authoritative [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md). It is ordered by dependency and risk and replaces the older phase list that treated SQLite and data mapping as entirely future work. Both now exist as partial implementations and must be corrected before expansion. [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) freezes the Gate A skill/actor/migration/flag target; [`VDT_CORRECTIVE_EXECUTION_LOG.md`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md) records actual progress and evidence.
 
@@ -12,9 +12,11 @@ Implemented at alpha level:
 - editable left-to-right canvas, basic formula engine, scenarios and trace;
 - JSON/Markdown/SVG export and product CLI;
 - bounded provider contracts, local runner and desktop private-pipe sidecar foundation;
+- provider-owned model discovery for supported subscription CLIs and BYOK OpenAI-compatible, Anthropic and Gemini APIs, with explicit manual fallback and no static availability catalog;
 - real agent decision/tool/feedback loop with local skill retrieval;
+- guarded one-click incoming-KPI decomposition that stops after the selected node's immediate child layer;
 - 18 registered task schemas, 17 exposed product tasks and phase-gate drift checks;
-- experimental tabular data discovery and metadata mapping proposals;
+- experimental composer-attached tabular discovery, including provider-assisted categories and deterministic initial Baselines for complete single-table incoming-KPI breakdowns;
 - alpha packaging, checksum/SBOM and provider-certification metadata.
 
 This foundation is not production-ready. Current blockers are recorded in `PRODUCTION_READINESS.md`.
@@ -53,7 +55,7 @@ Evidence: [W0.1](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#w0-1-go-2026-07-
 
 - [x] W0.1: make revision reservation/file write atomic and revision-CAS aware through one strict domain commit boundary, `O_CREAT | O_EXCL` publication and migrated manual/create/agent callers.
 - [ ] W0.2: serialize agent attempts per run and merge manual changes by operation/revision.
-- [ ] W0.3: fix the 4096-byte data preview/source defect and distinguish full, sampled and truncated data in every result.
+- [ ] W0.3: the 4096-byte preview/source defect is fixed in the working tree and truncated tables cannot materialize category Baselines; separate original/parsed/sample counts across every adapter remain open.
 - [ ] W0.4: remove high-severity upload/image dependencies; add streaming limits, parser isolation, lifecycle and local-only/auth boundaries.
 - [ ] W0.5: make SQLite the durable owner, complete dirty-navigation/metadata reconciliation and enforce sticky runtime generation with no mixed V1/V2 writes.
 

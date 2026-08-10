@@ -84,7 +84,11 @@ export function ChangeSetPreviewPanel({
       rows: changeSet.additions.map((addition) => ({
         id: addition.id,
         label: `${addition.name} (${addition.nodeId})`,
-        detail: addition.unit ? `Unit: ${addition.unit}` : undefined
+        detail: addition.baselineValue !== undefined
+          ? `Baseline: ${formatBaseline(addition.baselineValue)}${addition.unit ? ` ${addition.unit}` : ""}`
+          : addition.unit
+            ? `Unit: ${addition.unit}`
+            : undefined
       }))
     },
     {
@@ -251,4 +255,8 @@ export function ChangeSetPreviewPanel({
       </div>
     </div>
   );
+}
+
+function formatBaseline(value: number): string {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 }).format(value);
 }

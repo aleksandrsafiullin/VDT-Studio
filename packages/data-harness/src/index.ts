@@ -42,6 +42,10 @@ export const DEFAULT_DATA_DISCOVERY_LIMITS = {
   maxModelCallsPerRun: 22
 } as const;
 
+export type DataDiscoveryLimits = {
+  [Key in keyof typeof DEFAULT_DATA_DISCOVERY_LIMITS]: number;
+};
+
 export type DataDiscoveryRunStatus =
   | "queued"
   | "running"
@@ -84,8 +88,9 @@ export interface AnalyzeRawDatasetInput {
     source?: string | undefined;
     cardName?: string | undefined;
     targetNodeId?: string | undefined;
+    purpose?: "incoming_kpis" | "data_mapping" | undefined;
   } | undefined;
-  limits?: Partial<typeof DEFAULT_DATA_DISCOVERY_LIMITS> | undefined;
+  limits?: Partial<DataDiscoveryLimits> | undefined;
   provider?: DataDiscoveryStructuredProvider | undefined;
   providerModel?: string | undefined;
   signal?: AbortSignal | undefined;
@@ -305,7 +310,7 @@ interface ParsedDataset {
 
 interface AnalysisContext {
   input: AnalyzeRawDatasetInput;
-  limits: typeof DEFAULT_DATA_DISCOVERY_LIMITS;
+  limits: DataDiscoveryLimits;
   dataset: ParsedDataset;
   profiles: ColumnProfile[];
   semanticModel: VdtSemanticDatasetModel;
@@ -365,7 +370,7 @@ export async function runRawDataDiscovery(input: AnalyzeRawDatasetInput): Promis
   addEvent("taxonomy_synthesis", `Prepared ${semanticModel.taxonomies.length} taxonomy candidate${semanticModel.taxonomies.length === 1 ? "" : "s"}.`);
   const proposal = buildDiscoveryProposal(semanticModel);
   addEvent("kpi_proposal", `Prepared ${proposal.metrics.length} KPI candidate${proposal.metrics.length === 1 ? "" : "s"}.`);
-  const changeSet = buildVdtChangeSet(input, semanticModel, proposal, limits);
+  const changeSet = buildVdtChangeSet(input, dataset, semanticModel, proposal, limits);
   addEvent("vdt_mapping", `Mapped ${changeSet.additions.length} KPI candidate${changeSet.additions.length === 1 ? "" : "s"} to VDT changes.`);
   const context: AnalysisContext = {
     input,
@@ -414,6 +419,7 @@ export function applyDiscoveryUserEdits(
   next.userEdits = mergeUserEdits(next.userEdits, edits);
 
   const disabled = new Set((next.userEdits.disabledColumns ?? []).map((entry) => `${entry.tableId}.${entry.columnName}`));
+  const recalculationColumns = new Set((next.userEdits.columnRoles ?? []).map((entry) => `${entry.tableId}.${entry.columnName}`));
   for (const edit of next.userEdits.columnRoles ?? []) {
     for (const table of next.semanticModel?.tables ?? []) {
       const column = table.columns.find((candidate) => candidate.tableId === edit.tableId && candidate.columnName === edit.columnName);
@@ -478,9 +484,49 @@ export function applyDiscoveryUserEdits(
           const mapping = addition.dataMapping;
           if (!mapping) return true;
           if (disabled.has(`${mapping.tableId ?? ""}.${mapping.field}`)) return false;
+          if (addition.tags?.includes("incoming_kpi")) return true;
           return metricByName.has(addition.name);
         })
         .map((addition) => {
+          if (addition.tags?.includes("incoming_kpi")) {
+            const taxonomy = next.semanticModel?.taxonomies.find((candidate) => addition.tags?.includes(candidate.id));
+            const category = taxonomy?.categories.find((candidate) => addition.tags?.includes(candidate.id));
+            if (!taxonomy || !category || !addition.dataMapping) return addition;
+            const filterValue = category.matchRules.find((rule) => rule.type === "equals")?.value ?? category.name;
+            const filterChanged = addition.dataMapping.filters?.[0]?.value !== filterValue;
+            const semanticMappingChanged = recalculationColumns.has(`${addition.dataMapping.tableId ?? ""}.${addition.dataMapping.field}`) ||
+              addition.dataMapping.filters?.some((filter) => recalculationColumns.has(`${addition.dataMapping?.tableId ?? ""}.${filter.column}`));
+            const baselineInvalidated = filterChanged || semanticMappingChanged;
+            const targetName = addition.description?.split(" attributed to ")[0] ?? "Selected KPI";
+            return {
+              ...addition,
+              name: category.name,
+              description: `${targetName} attributed to ${taxonomy.name}: ${category.name}.`,
+              aiConfidence: Math.min(taxonomy.confidence, category.confidence),
+              ...(baselineInvalidated ? {
+                baselineValue: undefined,
+                valueStatus: "unknown" as const,
+                valueSource: {
+                  ...addition.valueSource,
+                  note: "The category filter or source-column semantics changed after analysis. Analyze the file again to recalculate this baseline."
+                }
+              } : {}),
+              dataMapping: {
+                ...addition.dataMapping,
+                filters: [{
+                  column: taxonomy.sourceColumns[0] ?? addition.dataMapping.filters?.[0]?.column ?? "category",
+                  operator: "equals" as const,
+                  value: filterValue
+                }],
+                dimensions: [taxonomy.id],
+                confidence: Math.min(taxonomy.confidence, category.confidence),
+                evidence: mergeEvidence(
+                  taxonomy.evidence.slice(0, 4),
+                  (addition.dataMapping.evidence ?? []).filter((item) => item.type === "aggregation_result" && !baselineInvalidated)
+                )
+              }
+            };
+          }
           const metric = metricByName.get(addition.name);
           if (!metric || !addition.dataMapping) return addition;
           return {
@@ -769,7 +815,7 @@ const duplicateInputSchema = z.object({
   columns: z.array(z.string().min(1)).max(DEFAULT_DATA_DISCOVERY_LIMITS.maxColumns).optional()
 });
 
-async function parseDataset(input: AnalyzeRawDatasetInput, limits: typeof DEFAULT_DATA_DISCOVERY_LIMITS): Promise<ParsedDataset> {
+async function parseDataset(input: AnalyzeRawDatasetInput, limits: DataDiscoveryLimits): Promise<ParsedDataset> {
   if (input.file.sizeBytes > limits.maxFileBytes) {
     return {
       tables: [],
@@ -808,7 +854,7 @@ async function parseDataset(input: AnalyzeRawDatasetInput, limits: typeof DEFAUL
   };
 }
 
-function parseWorkbookDataset(input: AnalyzeRawDatasetInput, limits: typeof DEFAULT_DATA_DISCOVERY_LIMITS): ParsedDataset {
+function parseWorkbookDataset(input: AnalyzeRawDatasetInput, limits: DataDiscoveryLimits): ParsedDataset {
   try {
     const bytes = bytesFromInput(input);
     const workbook = XLSX.read(bytes, {
@@ -870,7 +916,7 @@ function parseWorkbookDataset(input: AnalyzeRawDatasetInput, limits: typeof DEFA
   }
 }
 
-async function parseParquetDataset(input: AnalyzeRawDatasetInput, limits: typeof DEFAULT_DATA_DISCOVERY_LIMITS): Promise<ParsedDataset> {
+async function parseParquetDataset(input: AnalyzeRawDatasetInput, limits: DataDiscoveryLimits): Promise<ParsedDataset> {
   try {
     const bytes = bytesFromInput(input);
     const file = asyncBufferFromBytes(bytes);
@@ -923,7 +969,7 @@ async function parseParquetDataset(input: AnalyzeRawDatasetInput, limits: typeof
 function parseDelimitedDataset(
   text: string,
   fileName: string,
-  limits: typeof DEFAULT_DATA_DISCOVERY_LIMITS
+  limits: DataDiscoveryLimits
 ): ParsedDataset {
   const delimiter = detectDelimiter(text);
   const records = parseDelimitedRows(text, delimiter);
@@ -959,7 +1005,7 @@ function parseDelimitedDataset(
   };
 }
 
-function parseJsonDataset(text: string, limits: typeof DEFAULT_DATA_DISCOVERY_LIMITS): ParsedDataset {
+function parseJsonDataset(text: string, limits: DataDiscoveryLimits): ParsedDataset {
   try {
     const trimmed = text.trim();
     const parsed = trimmed.includes("\n") && !trimmed.startsWith("[") && !trimmed.startsWith("{")
@@ -1025,11 +1071,11 @@ function parseJsonDataset(text: string, limits: typeof DEFAULT_DATA_DISCOVERY_LI
   }
 }
 
-function profileTables(tables: DataTable[], limits: typeof DEFAULT_DATA_DISCOVERY_LIMITS): ColumnProfile[] {
+function profileTables(tables: DataTable[], limits: DataDiscoveryLimits): ColumnProfile[] {
   return tables.flatMap((table) => table.columns.map((column) => profileColumn(table, column, limits)));
 }
 
-function profileColumn(table: DataTable, columnName: string, limits: typeof DEFAULT_DATA_DISCOVERY_LIMITS): ColumnProfile {
+function profileColumn(table: DataTable, columnName: string, limits: DataDiscoveryLimits): ColumnProfile {
   const rawValues = table.rows.map((row) => row[columnName] ?? "");
   const values = rawValues.map((value) => value.trim());
   const nonEmpty = values.filter((value) => value.length > 0);
@@ -1061,7 +1107,7 @@ function buildSemanticDatasetModel(
   input: AnalyzeRawDatasetInput,
   dataset: ParsedDataset,
   profiles: ColumnProfile[],
-  limits: typeof DEFAULT_DATA_DISCOVERY_LIMITS
+  limits: DataDiscoveryLimits
 ): VdtSemanticDatasetModel {
   const tables: SemanticTableModel[] = dataset.tables.map((table) => ({
     tableId: table.tableId,
@@ -1133,9 +1179,10 @@ function buildDiscoveryProposal(model: VdtSemanticDatasetModel): DataDiscoveryPr
 
 function buildVdtChangeSet(
   input: AnalyzeRawDatasetInput,
+  dataset: ParsedDataset,
   model: VdtSemanticDatasetModel,
   proposal: DataDiscoveryProposal,
-  limits: typeof DEFAULT_DATA_DISCOVERY_LIMITS
+  limits: DataDiscoveryLimits
 ): VdtChangeSet {
   const timestamp = new Date().toISOString();
   const targetNodeId = resolveTargetNodeId(input.project, input.entryContext?.targetNodeId);
@@ -1162,7 +1209,7 @@ function buildVdtChangeSet(
     semanticModel: model
   };
   const metrics = proposal.metrics.slice(0, limits.maxVdtAdditions);
-  const additions = metrics.map((metric, index) => {
+  const defaultAdditions = metrics.map((metric, index) => {
     const nodeId = uniqueNodeId(input.project, safeId(metric.name || metric.id), index);
     const mappingEvidence = metric.evidence.slice(0, 4);
     return {
@@ -1196,6 +1243,20 @@ function buildVdtChangeSet(
       }
     };
   });
+  const incomingKpiBreakdown = input.entryContext?.purpose === "incoming_kpis"
+    ? buildIncomingKpiBreakdown(input, dataset, model, sourceId, targetNodeId, limits)
+    : undefined;
+  const additions = incomingKpiBreakdown?.additions.length
+    ? incomingKpiBreakdown.additions
+    : defaultAdditions;
+  const updates = incomingKpiBreakdown?.targetUpdate ? [incomingKpiBreakdown.targetUpdate] : [];
+  const purposeWarnings = input.entryContext?.purpose === "incoming_kpis" && !incomingKpiBreakdown?.additions.length
+    ? [warning(
+        "warning",
+        "data_discovery_low_confidence",
+        "No reliable category breakdown was found, so the preview uses general KPI candidates instead."
+      )]
+    : incomingKpiBreakdown?.warnings ?? [];
 
   return {
     id: `changeset_data_${safeId(input.datasetId).slice(0, 32)}`,
@@ -1203,7 +1264,7 @@ function buildVdtChangeSet(
     backendId: "data_harness",
     createdAt: timestamp,
     additions,
-    updates: [],
+    updates,
     deletions: [],
     edgeChanges: [],
     dataSourceChanges: [
@@ -1221,8 +1282,266 @@ function buildVdtChangeSet(
     })),
     assumptions: proposal.assumptions,
     questions: proposal.questions,
-    warnings: proposal.warnings
+    warnings: [...proposal.warnings, ...purposeWarnings]
   };
+}
+
+function buildIncomingKpiBreakdown(
+  input: AnalyzeRawDatasetInput,
+  dataset: ParsedDataset,
+  model: VdtSemanticDatasetModel,
+  sourceId: string,
+  targetNodeId: string,
+  limits: DataDiscoveryLimits
+): {
+  additions: VdtChangeSet["additions"];
+  targetUpdate?: VdtChangeSet["updates"][number] | undefined;
+  warnings: VdtWarning[];
+} {
+  const target = input.project.graph.nodes.find((node) => node.id === targetNodeId);
+  if (!target) return { additions: [], warnings: [] };
+
+  const taxonomy = [...model.taxonomies]
+    .filter((candidate) => candidate.categories.length >= 2)
+    .sort((left, right) => taxonomyScore(model, right) - taxonomyScore(model, left))[0];
+  if (!taxonomy) return { additions: [], warnings: [] };
+
+  const measure = [...model.measures]
+    .filter((candidate) => candidate.sourceTableId === taxonomy.sourceTableId)
+    .sort((left, right) => measureScore(right, target) - measureScore(left, target))[0];
+  const categoryColumn = taxonomy.sourceColumns[0];
+  if (!categoryColumn) return { additions: [], warnings: [] };
+  const sourceTable = dataset.tables.find((table) => table.tableId === taxonomy.sourceTableId);
+
+  const categories = [...taxonomy.categories]
+    .sort((left, right) => (right.rowCount ?? 0) - (left.rowCount ?? 0))
+    .slice(0, limits.maxVdtAdditions);
+  const additions = categories.map((category, index) => {
+    const nodeId = uniqueNodeId(input.project, `${safeId(target.name)}_${safeId(category.name)}`, index);
+    const filterValue = category.matchRules.find((rule) => rule.type === "equals")?.value ?? category.name;
+    const confidence = Math.min(taxonomy.confidence, category.confidence, measure?.confidence ?? taxonomy.confidence);
+    const baseline = measure && sourceTable
+      ? calculateCategoryBaseline(sourceTable, categoryColumn, category, measure, target.unit)
+      : undefined;
+    const outputUnit = baseline?.unit ?? measure?.unit;
+    return {
+      id: `add_${nodeId}`,
+      nodeId,
+      parentNodeId: targetNodeId,
+      relation: "formula_dependency" as const,
+      name: category.name,
+      description: `${target.name} attributed to ${taxonomy.name}: ${category.name}.`,
+      type: "data_mapped" as const,
+      unit: outputUnit,
+      ...(baseline?.value !== undefined ? { baselineValue: baseline.value } : {}),
+      valueStatus: baseline?.value !== undefined ? "calculated" as const : "unknown" as const,
+      valueSource: {
+        sourceTier: "file",
+        confidence: confidenceLabel(confidence),
+        note: baseline?.value !== undefined
+          ? `Baseline calculated deterministically from ${input.file.contentHash}: ${baseline.aggregation} of ${baseline.includedRows} matching row${baseline.includedRows === 1 ? "" : "s"} in ${sourceTable?.tableId ?? taxonomy.sourceTableId}.${measure?.sourceColumn ?? "unknown field"}${baseline.conversion ? `; ${baseline.conversion}` : ""}.`
+          : baseline?.reason ?? "A category was proposed from the attached dataset, but no numeric baseline could be calculated."
+      },
+      aiConfidence: confidence,
+      aiRationale: `The attached file groups ${target.name} by ${taxonomy.name}; this incoming KPI represents ${category.name}.`,
+      assumptions: ["The category is treated as an additive component of the selected KPI."],
+      tags: ["data_discovery", "incoming_kpi", taxonomy.id, category.id],
+      dataMapping: {
+        sourceId,
+        tableId: taxonomy.sourceTableId,
+        field: measure?.sourceColumn ?? "*",
+        aggregation: measure?.aggregation ?? "count",
+        unit: outputUnit,
+        ...(baseline?.conversion ? { transform: baseline.conversion } : {}),
+        filters: [{ column: categoryColumn, operator: "equals" as const, value: filterValue }],
+        dimensions: [taxonomy.id],
+        confidence,
+        evidence: [
+          ...taxonomy.evidence,
+          ...(measure?.evidence ?? []),
+          ...(baseline?.value !== undefined ? [{
+            type: "aggregation_result" as const,
+            message: `Calculated baseline ${baseline.value}${outputUnit ? ` ${outputUnit}` : ""} from ${baseline.includedRows} matching row${baseline.includedRows === 1 ? "" : "s"}.`,
+            strength: "strong" as const
+          }] : [])
+        ].slice(0, 6)
+      }
+    };
+  });
+
+  const childUnitsMatchTarget = Boolean(
+    measure && target.unit && additions.every((addition) => sameUnit(addition.unit, target.unit))
+  );
+  const targetUpdate = !target.formula?.trim() && childUnitsMatchTarget && additions.length > 0
+    ? {
+        id: `update_${targetNodeId}_incoming_formula`,
+        nodeId: targetNodeId,
+        patch: {
+          formula: additions.map((addition) => addition.nodeId).join(" + "),
+          aiRationale: `Incoming KPI formula proposed from ${taxonomy.name}.`
+        }
+      }
+    : undefined;
+  const baselineWarnings = sourceTable?.truncated && measure
+    ? [warning(
+        "warning",
+        "data_discovery_validation_failed",
+        `Baselines for "${target.name}" were not calculated because table "${sourceTable.name}" was truncated at ${sourceTable.rows.length} rows.`
+      )]
+    : additions.some((addition) => addition.valueStatus !== "calculated") && measure
+      ? [warning(
+          "warning",
+          "data_discovery_validation_failed",
+          `At least one incoming KPI baseline for "${target.name}" could not be calculated from all matching numeric values.`
+        )]
+      : [];
+  const formulaWarnings = !targetUpdate && !target.formula?.trim() && additions.length > 0
+    ? [warning(
+        "warning",
+        "data_discovery_low_confidence",
+        measure
+          ? `Incoming KPI categories were found, but the formula for "${target.name}" was not filled because source and target units are not confirmed as equivalent.`
+          : `Incoming KPI categories were found, but the formula for "${target.name}" was not filled because the file has no confirmed numeric measure.`
+      )]
+    : [];
+
+  return { additions, targetUpdate, warnings: [...baselineWarnings, ...formulaWarnings] };
+}
+
+interface CategoryBaselineResult {
+  value?: number | undefined;
+  unit?: string | undefined;
+  aggregation: SemanticMeasure["aggregation"];
+  includedRows: number;
+  conversion?: string | undefined;
+  reason?: string | undefined;
+}
+
+function calculateCategoryBaseline(
+  table: DataTable,
+  categoryColumn: string,
+  category: SemanticTaxonomy["categories"][number],
+  measure: SemanticMeasure,
+  targetUnit: string | undefined
+): CategoryBaselineResult {
+  if (table.truncated) {
+    return {
+      aggregation: measure.aggregation,
+      includedRows: 0,
+      reason: `Baseline was not calculated because table "${table.name}" contains only a truncated row set.`
+    };
+  }
+
+  const matchedRows = table.rows.filter((row) => categoryMatches(row[categoryColumn] ?? "", category.matchRules));
+  const values = matchedRows.map((row) => parseNumeric(row[measure.sourceColumn]));
+  const finiteValues = values.filter(Number.isFinite);
+  if (matchedRows.length === 0) {
+    return {
+      aggregation: measure.aggregation,
+      includedRows: 0,
+      reason: `Baseline was not calculated because category "${category.name}" matched no rows.`
+    };
+  }
+  if (finiteValues.length !== matchedRows.length) {
+    return {
+      aggregation: measure.aggregation,
+      includedRows: finiteValues.length,
+      reason: `Baseline was not calculated because ${matchedRows.length - finiteValues.length} of ${matchedRows.length} matching row${matchedRows.length === 1 ? "" : "s"} had a missing or invalid value in "${measure.sourceColumn}".`
+    };
+  }
+  if (measure.aggregation === "ratio" || measure.aggregation === "custom") {
+    return {
+      aggregation: measure.aggregation,
+      includedRows: finiteValues.length,
+      reason: `Baseline was not calculated because aggregation "${measure.aggregation}" requires an explicit formula.`
+    };
+  }
+
+  const aggregated = aggregate(finiteValues, measure.aggregation);
+  const conversion = resolveUnitConversion(measure.unit, targetUnit);
+  const converted = aggregated * conversion.factor;
+  if (!Number.isFinite(converted)) {
+    return {
+      aggregation: measure.aggregation,
+      includedRows: finiteValues.length,
+      reason: "Baseline calculation did not produce a finite numeric result."
+    };
+  }
+  return {
+    value: roundBaseline(converted),
+    unit: conversion.outputUnit,
+    aggregation: measure.aggregation,
+    includedRows: finiteValues.length,
+    ...(conversion.description ? { conversion: conversion.description } : {})
+  };
+}
+
+function categoryMatches(value: string, rules: SemanticTaxonomy["categories"][number]["matchRules"]): boolean {
+  const normalized = normalizeText(value);
+  return rules.some((rule) => {
+    if (rule.type === "equals") return normalized === normalizeText(rule.value);
+    if (rule.type === "contains") return normalized.includes(normalizeText(rule.value));
+    if (rule.type === "manual_list") return rule.values.some((candidate) => normalized === normalizeText(candidate));
+    // Regex and model-defined clusters require a separately reviewed execution contract.
+    return false;
+  });
+}
+
+function resolveUnitConversion(sourceUnit: string | undefined, targetUnit: string | undefined): {
+  factor: number;
+  outputUnit?: string | undefined;
+  description?: string | undefined;
+} {
+  if (!sourceUnit) return { factor: 1 };
+  if (!targetUnit || sameUnit(sourceUnit, targetUnit)) {
+    return { factor: 1, outputUnit: targetUnit ?? sourceUnit };
+  }
+  const sourceSeconds = timeUnitSeconds(sourceUnit);
+  const targetSeconds = timeUnitSeconds(targetUnit);
+  if (sourceSeconds && targetSeconds) {
+    return {
+      factor: sourceSeconds / targetSeconds,
+      outputUnit: targetUnit,
+      description: `converted ${sourceUnit} to ${targetUnit}`
+    };
+  }
+  return { factor: 1, outputUnit: sourceUnit };
+}
+
+function sameUnit(left: string | undefined, right: string | undefined): boolean {
+  if (!left || !right) return false;
+  if (normalizeText(left) === normalizeText(right)) return true;
+  const leftSeconds = timeUnitSeconds(left);
+  const rightSeconds = timeUnitSeconds(right);
+  return Boolean(leftSeconds && rightSeconds && leftSeconds === rightSeconds);
+}
+
+function timeUnitSeconds(unit: string): number | undefined {
+  const normalized = normalizeText(unit);
+  if (/^(s|sec|secs|second|seconds|сек|секунд|секунда|секунды)$/.test(normalized)) return 1;
+  if (/^(m|min|mins|minute|minutes|мин|минут|минута|минуты)$/.test(normalized)) return 60;
+  if (/^(h|hr|hrs|hour|hours|ч|час|часа|часов|часы)$/.test(normalized)) return 3_600;
+  if (/^(d|day|days|день|дня|дней|сутки|суток)$/.test(normalized)) return 86_400;
+  return undefined;
+}
+
+function roundBaseline(value: number): number {
+  return Number(value.toPrecision(15));
+}
+
+function taxonomyScore(model: VdtSemanticDatasetModel, taxonomy: SemanticTaxonomy): number {
+  const column = model.tables
+    .find((table) => table.tableId === taxonomy.sourceTableId)
+    ?.columns.find((candidate) => taxonomy.sourceColumns.includes(candidate.columnName));
+  const roleBonus = column?.semanticRole === "event_reason" ? 4 : 0;
+  const nameBonus = /reason|cause|category|type|причин|категор|вид/i.test(taxonomy.name) ? 2 : 0;
+  return roleBonus + nameBonus + taxonomy.coverage.coveredShare + taxonomy.confidence;
+}
+
+function measureScore(measure: SemanticMeasure, target: VdtNode): number {
+  const unitMatch = measure.unit && target.unit && measure.unit.toLowerCase() === target.unit.toLowerCase() ? 3 : 0;
+  const durationBonus = /downtime|delay|outage|просто|останов/i.test(target.name) && measure.unit && /minute|hour|мин|час/i.test(measure.unit) ? 2 : 0;
+  return unitMatch + durationBonus + measure.confidence;
 }
 
 function tableSchemaFromSemanticTable(table: SemanticTableModel): VdtDataSourceTableSchema {
@@ -1315,7 +1634,7 @@ function buildEntities(profiles: ColumnProfile[]): SemanticEntity[] {
 function buildTaxonomies(
   tables: DataTable[],
   profiles: ColumnProfile[],
-  limits: typeof DEFAULT_DATA_DISCOVERY_LIMITS
+  limits: DataDiscoveryLimits
 ): SemanticTaxonomy[] {
   const taxonomies: SemanticTaxonomy[] = [];
   for (const profile of profiles.filter((candidate) => candidate.logicalType === "category" || candidate.logicalType === "status")) {
@@ -1357,7 +1676,7 @@ function buildMetricCandidates(
   measures: SemanticMeasure[],
   dimensions: SemanticDimension[],
   taxonomies: SemanticTaxonomy[],
-  limits: typeof DEFAULT_DATA_DISCOVERY_LIMITS
+  limits: DataDiscoveryLimits
 ): SemanticMetricCandidate[] {
   const metrics: SemanticMetricCandidate[] = [];
   for (const table of tables) {
@@ -1751,7 +2070,7 @@ async function runProviderIndependentAgentLoop(
     }));
   }
 
-  context.changeSet = buildVdtChangeSet(context.input, context.semanticModel, context.proposal, context.limits);
+  context.changeSet = buildVdtChangeSet(context.input, context.dataset, context.semanticModel, context.proposal, context.limits);
   addEvent("self_review", "Provider-independent agent loop completed with deterministic validation.");
 }
 
@@ -2527,10 +2846,9 @@ function jaccard(left: Set<string>, right: Set<string>): number {
 }
 
 function textFromInput(input: AnalyzeRawDatasetInput): string {
-  if (input.text !== undefined) return input.text;
   const bytes = input.bytes;
-  if (!bytes) return "";
-  return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  if (bytes) return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  return input.text ?? "";
 }
 
 function bytesFromInput(input: AnalyzeRawDatasetInput): Uint8Array {

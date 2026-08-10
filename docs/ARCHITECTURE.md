@@ -1,6 +1,6 @@
 # Architecture
 
-Last reviewed against the working tree: **2026-07-24**.
+Last reviewed against the working tree: **2026-08-10**.
 
 ## System Context
 
@@ -87,9 +87,9 @@ All V2 feature flags are server-owned, fail closed and default to disabled. Proj
 
 ### Data discovery flow
 
-`POST /api/data/files -> stored source/preview -> POST /api/data/discovery/runs -> parse/profile -> semantic model -> metric proposal -> VDT change-set preview`
+`agent composer paperclip + selected KPI -> POST /api/data/files -> immutable source bytes + UI preview -> POST /api/data/discovery/runs -> full-byte parse/profile -> configured-provider semantic review -> incoming category aggregation -> materialized Baselines -> VDT change-set preview`
 
-This is a separate experimental harness. It can create data sources and `data_mapped` nodes, but the core calculator does not execute `dataMapping`; no baseline is materialized. See `DATA_INGESTION.md`.
+This is a separate experimental harness. The general flow can propose metrics; the `incoming_kpis` entry purpose prefers a reviewed taxonomy and creates filtered category nodes under the selected KPI. When the selected table is complete and a numeric measure is confirmed, deterministic harness code aggregates matching rows, converts compatible time units and writes `baselineValue` plus source-hash/row-coverage evidence into the change set. Truncated or invalid data fails closed to `unknown`. The managed local runtime and API/BYOK providers use the same bounded task schemas. The core calculator consumes the materialized value but still does not execute or refresh `dataMapping`. See `DATA_INGESTION.md`.
 
 ### Model execution flow
 
@@ -100,6 +100,8 @@ The browser-side `apps/web/lib/ai-execution-client.ts` selects one of:
 - reviewed Tauri command IPC in desktop mode.
 
 `packages/model-bridge` owns backend IDs and schema IDs. `packages/local-runner` owns executable aliases, static arguments, environment, timeouts and output caps. Browser requests cannot provide executable details.
+
+Model discovery follows the same ownership boundary. Subscription model IDs come only from adapter-owned CLI commands. BYOK Settings sends `operation: list_models` plus the resolved session-only provider configuration to `/api/ai/generate-vdt`; the server performs the bounded provider request and returns normalized IDs. The browser never calls provider model endpoints directly, and static preset/CLI catalogs are not treated as availability evidence. Azure uses a manual deployment name because the resource model catalog is not a deployment inventory.
 
 ## Data And State Ownership
 
@@ -137,7 +139,7 @@ validated and transformed inside the fenced Sequence 3 transaction.
 1. Concurrent agent attempts and stale snapshots can overwrite user changes; W0.2 durable coordination/merge contracts are not frozen.
 2. Visual edges, formula dependencies and units are not yet one validated contract.
 3. Research lacks source opening, immutable evidence and benchmark applicability.
-4. Data mappings are declarative metadata, not executable query plans.
+4. Data mappings remain declarative metadata rather than reusable executable query plans; only the narrow incoming-category discovery path materializes a value during its original run.
 5. Data-agent and VDT-agent orchestration are separate and inconsistent.
 6. Large `vdt-store.ts` and `data-harness/src/index.ts` modules mix too many responsibilities.
 7. There is no server-issued actor/tenant/workspace authorization context for the data/skill target model.

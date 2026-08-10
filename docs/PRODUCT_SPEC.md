@@ -1,6 +1,6 @@
 # Product Specification
 
-Last reviewed against the working tree: **2026-07-24**.
+Last reviewed against the working tree: **2026-08-10**.
 
 ## Product Definition
 
@@ -48,6 +48,7 @@ Current status: implemented for basic arithmetic. Dimensional algebra, visual-cy
 - Build progressively and finish only with a structurally valid, calculable root.
 - Expose real run events rather than synthetic reasoning.
 - Respect user research policy and manual changes.
+- Support semi-manual node decomposition: **Add incoming KPIs with AI** adds only one immediate child layer per click, without adding a user instruction to the visible chat or recursively expanding the new children.
 
 Current status: working legacy agent prototype. It still uses deterministic domain/term classification and can select a generic fallback automatically. Per-run serialization, complete tool schemas, agent-owned cross-language resolution, restart recovery and reliable manual-change merge are incomplete.
 
@@ -75,7 +76,7 @@ Current status: planned. Search snippets exist, but source opening, structured b
 - Calculate approved KPI baselines deterministically on the full dataset.
 - Preserve dataset version, row coverage, transformation plan and lineage.
 
-Current status: experimental discovery supports tabular formats but produces metadata-only mappings. Mapping execution, trusted baselines, complex report layouts, PDF/OCR and connectors are not implemented.
+Current status: the composer paperclip opens experimental discovery for the selected KPI. The configured provider can assist semantic analysis, and category fields can be proposed as incoming `data_mapped` KPIs with per-category filters. For a complete single parsed table and a confirmed numeric measure, deterministic code now materializes each category Baseline from all matching rows and converts compatible time units. Other proposals remain metadata-only mappings; general executable bindings, refresh/reconciliation, production-trusted baselines, complex report layouts, PDF/OCR and connectors are not implemented.
 
 ### Model providers and local execution
 
@@ -83,8 +84,10 @@ Current status: experimental discovery supports tabular formats but produces met
 - Keep browser code from supplying executable paths, arguments or environment.
 - Validate every structured result locally.
 - Use a standalone paired runner only for development/headless workflows; production desktop uses private IPC.
+- Treat subscription-CLI readiness as an execution gate: only an installed backend with runtime status `ready` may enable agent requests.
+- Populate model pickers only from the current CLI/provider response; when discovery is unsupported or fails, say so and retain manual entry without static availability claims.
 
-Current status: implemented at alpha levels that vary by provider. Canonical status lives in `release/provider-certification.json`.
+Current status: implemented at alpha levels that vary by provider. Canonical release status lives in `release/provider-certification.json`. The composer separately shows live request readiness: checking, ready, installed-but-blocked, or confirmed not installed. Unknown, authentication-required, rate-limited, unsupported, unsafe, unavailable and error states remain fail-closed until a rescan confirms `ready`. Codex and Cursor can report subscription models through their CLIs; API-key OpenAI-compatible, Anthropic and Gemini settings can load models through the server with the session key. Unsupported/failed discovery is explicit and manual. Azure remains deployment-name based because its base-model catalog is not a deployment list.
 
 ### Export
 
@@ -126,7 +129,7 @@ Current status: implemented. PNG, Excel, PowerPoint and PDF outputs are planned.
 | Web process research | Search-only prototype |
 | Auditable benchmark workflow | Planned |
 | Tabular data discovery | Experimental |
-| Executable data-to-KPI baseline | Not implemented |
+| Executable data-to-KPI baseline | Experimental limited category aggregation; general pipeline not implemented |
 | SQLite revisions | W0.1 atomic commit implemented with independent `GO`; Windows durability unverified; W0.5 ownership open |
 | CLI/runner alpha package | Implemented; release gate currently blocked |
 | Signed clean-machine desktop installers | Not implemented |

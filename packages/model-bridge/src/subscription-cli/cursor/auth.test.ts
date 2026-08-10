@@ -40,6 +40,27 @@ describe("probeCursorAuth", () => {
     expect(result.authSummary).toMatch(/authenticated/i);
   });
 
+  it("does not treat stored Cursor tokens as ready when account validation failed", async () => {
+    const result = await probeCursorAuth("/usr/bin/agent", {
+      execFileImpl: mockExec({
+        "/usr/bin/agent status --format json": {
+          stdout: JSON.stringify({
+            status: "authenticated",
+            isAuthenticated: true,
+            hasAccessToken: true,
+            hasRefreshToken: true,
+            message: "Logged in (unable to fetch user details)"
+          }),
+          stderr: ""
+        }
+      })
+    });
+
+    expect(result.status).toBe("authentication_required");
+    expect(result.authSummary).toMatch(/sign-in required/i);
+    expect(result.diagnostics.join(" ")).toContain("unable to fetch user details");
+  });
+
   it("maps login required from status stderr patterns", async () => {
     const execFileImpl: ExecFileProbe = async () => {
       throw Object.assign(new Error("login required"), { stderr: "Please login to continue", code: 1 });

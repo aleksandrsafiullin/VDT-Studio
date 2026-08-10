@@ -53,7 +53,15 @@ function parseStatusJson(stdout: string): ModelBackendStatus | undefined {
     const payload = JSON.parse(stdout.trim()) as unknown;
     if (typeof payload !== "object" || payload === null) return undefined;
     const record = payload as Record<string, unknown>;
-    const loggedIn = record.loggedIn ?? record.logged_in ?? record.authenticated;
+    const statusMessage = [record.message, record.error, record.detail]
+      .filter((value): value is string => typeof value === "string")
+      .join(" ")
+      .toLowerCase();
+    if (/unable to fetch user|authentication required|login required|sign.?in required|token (?:is )?(?:invalid|expired)/.test(statusMessage)) {
+      return "authentication_required";
+    }
+
+    const loggedIn = record.loggedIn ?? record.logged_in ?? record.authenticated ?? record.isAuthenticated;
     if (loggedIn === true) return "ready";
     if (loggedIn === false) return "authentication_required";
     const status = typeof record.status === "string" ? record.status.toLowerCase() : "";

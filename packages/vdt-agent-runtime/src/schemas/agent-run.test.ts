@@ -32,4 +32,19 @@ describe("agent run schemas", () => {
       researchMode: "enabled"
     }).success).toBe(false);
   });
+
+  it("accepts a selected-node decomposition action without instruction text", () => {
+    expect(agentUserMessageSchema.parse({
+      type: "deepen_node",
+      selectedNodeId: "calendar_time"
+    })).toEqual({
+      type: "deepen_node",
+      selectedNodeId: "calendar_time"
+    });
+
+    expect(agentUserMessageSchema.safeParse({
+      type: "deepen_node",
+      selectedNodeId: ""
+    }).success).toBe(false);
+  });
 });

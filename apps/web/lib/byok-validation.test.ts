@@ -26,8 +26,7 @@ describe("byok-validation", () => {
           gateway: "none",
           proxyProvider: "openai",
           baseUrl: "https://api.openai.com/v1",
-          model: "gpt-4.1-mini",
-          models: ["gpt-4.1-mini"]
+          model: "gpt-4.1-mini"
         }
       )
     ).toEqual({ baseUrl: "https://api.openai.com/v1" });
@@ -52,8 +51,7 @@ describe("byok-validation", () => {
           gateway: "none",
           proxyProvider: "openai",
           baseUrl: "https://api.openai.com/v1",
-          model: "gpt-4.1-mini",
-          models: ["gpt-4.1-mini"]
+          model: "gpt-4.1-mini"
         }
       )
     ).toEqual({ baseUrl: "https://custom.example.com/v1" });

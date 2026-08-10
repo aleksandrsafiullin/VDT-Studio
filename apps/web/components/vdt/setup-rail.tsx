@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, CircleAlert, History, MessageSquarePlus, Search, Send, Settings2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DataImportWizard } from "@/components/data-import/data-import-wizard";
 import { Field, TextArea, TextInput } from "@/components/ui/field";
 import { Panel, PanelCollapseTab, PanelToggleButton, PanelHeader } from "@/components/ui/panel";
 import { hasByokFieldErrors, validateByokSettings } from "@/lib/byok-validation";
+import {
+  resolveSelectedCliReadiness,
+  type CliRequestReadinessState
+} from "@/lib/cli-readiness";
 import { formatExecutionModeSummary } from "@/lib/format-execution-summary";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
@@ -67,7 +71,26 @@ function formatChatTime(value: string) {
   });
 }
 
+export function ExecutionReadinessDot({ state }: { state: CliRequestReadinessState }) {
+  const statusClass = {
+    checking: "bg-slate-400",
+    ready: "bg-emerald-500",
+    warning: "bg-amber-500",
+    not_installed: "bg-red-500"
+  }[state];
+
+  return (
+    <span
+      className={["h-1.5 w-1.5 shrink-0 rounded-full", statusClass].join(" ")}
+      data-testid="execution-mode-status-dot"
+      data-readiness={state}
+      aria-hidden="true"
+    />
+  );
+}
+
 export function SetupRail() {
+  const hasRequestedCliScan = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [instructionText, setInstructionText] = useState("");
@@ -75,6 +98,9 @@ export function SetupRail() {
   const [researchStatus, setResearchStatus] = useState<ResearchStatus | undefined>();
   const brief = useVdtStudioStore((state) => state.brief);
   const executionSettings = useVdtStudioStore((state) => state.executionSettings);
+  const cliDetectionAgents = useVdtStudioStore((state) => state.cliDetectionAgents);
+  const cliDetectionError = useVdtStudioStore((state) => state.cliDetectionError);
+  const isRescanningClis = useVdtStudioStore((state) => state.isRescanningClis);
   const isGenerating = useVdtStudioStore((state) => state.isGenerating);
   const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
   const generateActivity = useVdtStudioStore((state) => state.generateActivity);
@@ -87,6 +113,7 @@ export function SetupRail() {
   const showCollapsed = isDesktop && leftPanelCollapsed;
   const selectedNodeId = useVdtStudioStore((state) => state.selectedNodeId);
   const setBriefField = useVdtStudioStore((state) => state.setBriefField);
+  const rescanClis = useVdtStudioStore((state) => state.rescanClis);
   const startAgentRun = useVdtStudioStore((state) => state.startAgentRun);
   const startNewAgentChat = useVdtStudioStore((state) => state.startNewAgentChat);
   const openAgentChat = useVdtStudioStore((state) => state.openAgentChat);
@@ -102,7 +129,20 @@ export function SetupRail() {
   const canRunDeepenAction = resolvedExecution.providerId !== "mock";
   const byokValidationBlocked = executionSettings.executionMode === "byok" &&
     hasByokFieldErrors(validateByokSettings(executionSettings));
-  const canUseConfiguredRuntime = canRunDeepenAction && !byokValidationBlocked;
+  const cliReadiness = resolveSelectedCliReadiness(executionSettings, cliDetectionAgents, {
+    isScanning: isRescanningClis,
+    detectionError: cliDetectionError
+  });
+  const canUseConfiguredRuntime =
+    canRunDeepenAction &&
+    !byokValidationBlocked &&
+    (cliReadiness?.canExecute ?? true);
+  const executionReadinessState =
+    cliReadiness?.state ?? (canUseConfiguredRuntime ? "ready" : "warning");
+  const executionReadinessLabel = cliReadiness?.label ?? executionSummary.secondary ?? executionSummary.modeLabel;
+  const executionReadinessMessage =
+    cliReadiness?.message ??
+    (canUseConfiguredRuntime ? "The configured provider can accept requests." : "Configure a provider before sending requests.");
   const pendingChangeCount = pendingChangeSet
     ? pendingChangeSet.additions.length +
       pendingChangeSet.updates.length +
@@ -122,6 +162,19 @@ export function SetupRail() {
   const canStartNewChat = Boolean(generateActivity);
   const researchUnavailable = researchMode !== "off" && researchStatus?.providerConfigured === false;
   const researchTooltip = researchModeTooltip(researchMode, researchStatus);
+
+  useEffect(() => {
+    if (
+      cliReadiness &&
+      cliDetectionAgents === undefined &&
+      !isRescanningClis &&
+      !cliDetectionError &&
+      !hasRequestedCliScan.current
+    ) {
+      hasRequestedCliScan.current = true;
+      void rescanClis();
+    }
+  }, [cliDetectionAgents, cliDetectionError, cliReadiness, isRescanningClis, rescanClis]);
 
   useEffect(() => {
     let cancelled = false;
@@ -242,8 +295,6 @@ export function SetupRail() {
       <div className="flex min-h-0 flex-1 flex-col">
         <section className="min-h-0 flex-1 overflow-auto px-4 py-4">
           <div className="space-y-3">
-            <DataImportWizard />
-
             {historyOpen ? (
               <section className="space-y-2" data-testid="agent-chat-history">
                 <div className="flex items-center justify-between gap-3">
@@ -347,6 +398,7 @@ export function SetupRail() {
             data-testid="agent-instruction-input"
           />
           <div className="mt-2 flex items-center gap-2">
+            <DataImportWizard />
             <button
               type="button"
               className={[
@@ -355,19 +407,14 @@ export function SetupRail() {
               ].join(" ")}
               onClick={() => setSettingsOpen(true)}
               data-testid="execution-mode-configure"
-              aria-label="Configure execution mode"
+              aria-label={`Configure execution mode. ${executionSummary.primary}: ${executionReadinessLabel}`}
+              title={executionReadinessMessage}
             >
-              <span
-                className={[
-                  "h-1.5 w-1.5 shrink-0 rounded-full",
-                  canUseConfiguredRuntime ? "bg-emerald-500" : "bg-amber-500"
-                ].join(" ")}
-                aria-hidden="true"
-              />
+              <ExecutionReadinessDot state={executionReadinessState} />
               <span className="min-w-0 flex-1 truncate" data-testid="execution-mode-summary">
                 <span className="truncate text-xs font-semibold text-ink">{executionSummary.primary}</span>
                 <span className="ml-1 truncate text-[11px] text-muted">
-                  {executionSummary.secondary ?? executionSummary.modeLabel}
+                  {executionReadinessLabel}
                 </span>
               </span>
               <Settings2 className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" />

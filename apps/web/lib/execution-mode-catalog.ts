@@ -61,7 +61,6 @@ export interface CliCatalogEntry {
   badges: CliAgentBadge[];
   docsUrl: string;
   installHint: string;
-  suggestedModels: readonly string[];
 }
 
 export interface ByokGatewayPreset {
@@ -73,7 +72,6 @@ export interface ByokGatewayPreset {
   baseUrl: string;
   model: string;
   maxTokens?: number | undefined;
-  models: readonly string[];
   apiKeyUrl?: string | undefined;
   anthropicVersion?: string | undefined;
   endpoint?: string | undefined;
@@ -134,8 +132,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     primaryCommand: "claude",
     badges: ["official"],
     docsUrl: "https://docs.anthropic.com/en/docs/claude-code",
-    installHint: "npm install -g @anthropic-ai/claude-code",
-    suggestedModels: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"]
+    installHint: "npm install -g @anthropic-ai/claude-code"
   },
   {
     id: "codex",
@@ -145,8 +142,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     primaryCommand: "codex",
     badges: ["official"],
     docsUrl: "https://developers.openai.com/codex/cli",
-    installHint: "npm install -g @openai/codex",
-    suggestedModels: ["gpt-5.5", "gpt-5.4", "gpt-5.2"]
+    installHint: "npm install -g @openai/codex"
   },
   {
     id: "gemini",
@@ -156,8 +152,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     primaryCommand: "gemini",
     badges: ["official", "many-models"],
     docsUrl: "https://github.com/google-gemini/gemini-cli",
-    installHint: "npm install -g @google/gemini-cli",
-    suggestedModels: ["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3-flash-preview"]
+    installHint: "npm install -g @google/gemini-cli"
   },
   {
     id: "cursor-agent",
@@ -167,8 +162,7 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     primaryCommand: "agent",
     badges: ["official"],
     docsUrl: "https://docs.cursor.com/agent",
-    installHint: "Install via Cursor settings or cursor.com/cli",
-    suggestedModels: ["claude-sonnet-4-5", "gpt-4.1", "gpt-4.1-mini"]
+    installHint: "Install via Cursor settings or cursor.com/cli"
   },
   {
     id: "copilot",
@@ -178,28 +172,9 @@ export const CLI_CATALOG: readonly CliCatalogEntry[] = [
     primaryCommand: "copilot",
     badges: ["official"],
     docsUrl: "https://docs.github.com/en/copilot",
-    installHint: "gh extension install github/gh-copilot",
-    suggestedModels: ["gpt-4.1", "claude-sonnet-4-5", "gpt-4.1-mini"]
+    installHint: "gh extension install github/gh-copilot"
   }
 ];
-
-export function mergeCliModelOptions(
-  suggestedModels: readonly string[],
-  discoveredModels: readonly string[]
-): string[] {
-  const seen = new Set<string>();
-  const merged: string[] = [];
-
-  for (const model of [...suggestedModels, ...discoveredModels]) {
-    if (seen.has(model)) {
-      continue;
-    }
-    seen.add(model);
-    merged.push(model);
-  }
-
-  return merged;
-}
 
 export const LOCAL_RUNNER_PRESET_CATALOG: readonly LocalRunnerPresetCatalogEntry[] = [
   {
@@ -246,8 +221,7 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     protocol: "openai",
     gateway: "none",
     baseUrl: "",
-    model: "mock",
-    models: ["mock"]
+    model: "mock"
   },
   {
     id: "anthropic-claude",
@@ -259,14 +233,6 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     model: "claude-sonnet-4-6",
     maxTokens: 64_000,
     credentialMode: "session_only",
-    models: [
-      "claude-sonnet-4-6",
-      "claude-opus-4-8",
-      "claude-opus-4-7",
-      "claude-opus-4-6",
-      "claude-sonnet-4-5",
-      "claude-haiku-4-5"
-    ],
     apiKeyUrl: "https://console.anthropic.com/settings/keys",
     anthropicVersion: "2023-06-01"
   },
@@ -280,7 +246,6 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     model: "deepseek-v4-pro",
     maxTokens: 64_000,
     credentialMode: "session_only",
-    models: ["deepseek-v4-pro", "deepseek-v4-flash"],
     apiKeyUrl: "https://platform.deepseek.com/api_keys",
     anthropicVersion: "2023-06-01"
   },
@@ -294,16 +259,6 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     model: "MiniMax-M3",
     maxTokens: 64_000,
     credentialMode: "session_only",
-    models: [
-      "MiniMax-M3",
-      "MiniMax-M2.7",
-      "MiniMax-M2.7-highspeed",
-      "MiniMax-M2.5",
-      "MiniMax-M2.5-highspeed",
-      "MiniMax-M2.1",
-      "MiniMax-M2.1-highspeed",
-      "MiniMax-M2"
-    ],
     apiKeyUrl: "https://platform.minimax.io/user-center/basic-information/interface-key",
     anthropicVersion: "2023-06-01"
   },
@@ -317,7 +272,6 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     model: "mimo-v2-flash",
     maxTokens: 64_000,
     credentialMode: "session_only",
-    models: ["mimo-v2-flash"],
     apiKeyUrl: "https://platform.xiaomimimo.com",
     anthropicVersion: "2023-06-01"
   },
@@ -331,7 +285,6 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     model: "claude-sonnet-4-6",
     maxTokens: 64_000,
     credentialMode: "session_only",
-    models: ["claude-sonnet-4-6"],
     anthropicVersion: "2023-06-01"
   },
   {
@@ -344,24 +297,6 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     model: "gpt-5.5",
     maxTokens: 32_768,
     credentialMode: "session_only",
-    models: [
-      "gpt-5.5",
-      "gpt-5.5-pro",
-      "gpt-5.4",
-      "gpt-5.4-pro",
-      "gpt-5.4-mini",
-      "gpt-5.4-nano",
-      "gpt-5.2",
-      "gpt-5.2-chat-latest",
-      "gpt-5.1",
-      "gpt-5.3-codex",
-      "gpt-5",
-      "gpt-5-mini",
-      "gpt-5-nano",
-      "gpt-4.1",
-      "gpt-4.1-mini",
-      "o3"
-    ],
     apiKeyUrl: "https://platform.openai.com/api-keys"
   },
   {
@@ -375,7 +310,6 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     maxTokens: 32_768,
     credentialMode: "session_only",
     releaseStatus: "beta",
-    models: ["qwen3-coder-plus", "qwen3-coder-next"],
     apiKeyUrl: "https://modelstudio.console.alibabacloud.com/ap-southeast-1/?tab=globalset#/efm/coding_plan"
   },
   {
@@ -391,7 +325,6 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     apiVersion: "2024-10-21",
     maxTokens: 32_768,
     credentialMode: "session_only",
-    models: ["gpt-5.4-mini", "gpt-5.2", "gpt-5-mini", "gpt-4.1", "gpt-4.1-mini", "o4-mini", "o3"],
     apiKeyUrl: "https://portal.azure.com"
   },
   {
@@ -404,15 +337,6 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     model: "gemini-3.5-flash",
     maxTokens: 65_536,
     credentialMode: "session_only",
-    models: [
-      "gemini-3.5-flash",
-      "gemini-3.1-pro-preview",
-      "gemini-3-flash-preview",
-      "gemini-3.1-flash-lite",
-      "gemini-2.5-pro",
-      "gemini-2.5-flash",
-      "gemini-2.5-flash-lite"
-    ],
     apiKeyUrl: "https://aistudio.google.com/apikey"
   },
   {
@@ -425,7 +349,6 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     model: "qwen3",
     maxTokens: 32_768,
     credentialMode: "session_only",
-    models: ["qwen3", "llama3.3", "deepseek-r1"],
     apiKeyUrl: "https://ollama.com/settings/keys"
   },
   {
@@ -438,7 +361,6 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     model: "sense-chat",
     maxTokens: 32_768,
     credentialMode: "session_only",
-    models: ["sense-chat"],
     apiKeyUrl: "https://senseaudio.cn"
   },
   {
@@ -451,17 +373,6 @@ export const BYOK_GATEWAY_PRESETS: readonly ByokGatewayPreset[] = [
     model: "gpt-5.4-mini",
     maxTokens: 32_768,
     credentialMode: "session_only",
-    models: [
-      "gpt-5.4-mini",
-      "gpt-5.4",
-      "gpt-5.2",
-      "gpt-4.1-mini",
-      "gpt-4.1",
-      "claude-sonnet-4-6",
-      "claude-sonnet-4-5",
-      "gemini-2.5-pro",
-      "deepseek-v4-pro"
-    ],
     apiKeyUrl: "https://aihubmix.com"
   }
 ];
@@ -530,7 +441,7 @@ export const PROTOCOL_SECTION_LABELS: Record<ByokProtocol, { title: string; hint
 
 function protocolCustomDefaults(protocol: ByokProtocol): Pick<
   ByokGatewayPreset,
-  "protocol" | "gateway" | "baseUrl" | "model" | "maxTokens" | "models" | "anthropicVersion" | "endpoint" | "deployment" | "apiVersion"
+  "protocol" | "gateway" | "baseUrl" | "model" | "maxTokens" | "anthropicVersion" | "endpoint" | "deployment" | "apiVersion"
 > {
   switch (protocol) {
     case "anthropic":
@@ -540,7 +451,6 @@ function protocolCustomDefaults(protocol: ByokProtocol): Pick<
         baseUrl: "https://api.anthropic.com",
         model: "claude-sonnet-4-6",
         maxTokens: 64_000,
-        models: ["claude-sonnet-4-6"],
         anthropicVersion: "2023-06-01"
       };
     case "openai":
@@ -549,8 +459,7 @@ function protocolCustomDefaults(protocol: ByokProtocol): Pick<
         gateway: "none",
         baseUrl: "https://api.openai.com/v1",
         model: "gpt-5.5",
-        maxTokens: 32_768,
-        models: ["gpt-5.5"]
+        maxTokens: 32_768
       };
     case "azure":
       return {
@@ -561,8 +470,7 @@ function protocolCustomDefaults(protocol: ByokProtocol): Pick<
         deployment: "gpt-5.4-mini",
         model: "gpt-5.4-mini",
         apiVersion: "2024-10-21",
-        maxTokens: 32_768,
-        models: ["gpt-5.4-mini"]
+        maxTokens: 32_768
       };
     case "gemini":
       return {
@@ -570,8 +478,7 @@ function protocolCustomDefaults(protocol: ByokProtocol): Pick<
         gateway: "none",
         baseUrl: "https://generativelanguage.googleapis.com",
         model: "gemini-3.5-flash",
-        maxTokens: 65_536,
-        models: ["gemini-3.5-flash"]
+        maxTokens: 65_536
       };
   }
 }

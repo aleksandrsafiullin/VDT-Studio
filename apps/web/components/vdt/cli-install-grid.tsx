@@ -43,7 +43,16 @@ export function CliInstallGrid({
           >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-ink">{entry.displayName}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold text-ink">{entry.displayName}</p>
+                  <span
+                    data-testid={`cli-install-readiness-${entry.id}`}
+                    data-readiness="not_installed"
+                    className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700"
+                  >
+                    Not installed
+                  </span>
+                </div>
                 <p className="mt-1 text-xs leading-5 text-muted">
                   {entry.displayName} (&apos;{entry.primaryCommand}&apos;) was not found on your PATH.
                 </p>

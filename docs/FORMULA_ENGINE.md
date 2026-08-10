@@ -1,6 +1,6 @@
 # Formula And Calculation Engine
 
-Last reviewed against the working tree: **2026-07-23**.
+Last reviewed against the working tree: **2026-08-10**.
 
 ## Contract
 
@@ -25,7 +25,7 @@ For each graph node:
 3. a formula parses into the internal AST and recursively resolves referenced nodes;
 4. the engine records the result and a calculation trace.
 
-`dataMapping` is not executed by the formula engine. A `data_mapped` node still requires a materialized `baselineValue` or `value`; otherwise calculation reports `missing_value`.
+`dataMapping` is not executed by the formula engine. A `data_mapped` node still requires a materialized `baselineValue` or `value`; otherwise calculation reports `missing_value`. The experimental incoming-category file flow can materialize that `baselineValue` before the change set reaches the formula engine; this does not make mappings refreshable or generally executable.
 
 ## Reported Errors
 

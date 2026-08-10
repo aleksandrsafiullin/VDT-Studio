@@ -29,6 +29,12 @@ The terminal prints a short-lived pairing code. In explicit standalone-runner De
 
 All endpoints except health and pair require `Authorization: Bearer <session-token>`.
 
+The web and desktop clients fail closed on subscription-CLI readiness. Finding an executable is not sufficient: the selected backend must also report runtime status `ready` before the composer or another AI action can submit a request. Detection that is pending, failed, missing, unauthenticated, rate-limited, unsupported, unsafe or unavailable remains non-executable. Install guidance appears only after an explicit completed `not_installed` result.
+
+Provider auth probes must reflect request capability, not merely the presence of stored tokens. In particular, Cursor's `authenticated` status is mapped to `authentication_required` when the same payload reports that user details could not be fetched, because protected Cursor commands reject that session until `agent login` succeeds.
+
+Subscription model choices are provider-owned. Codex and Cursor adapters populate Settings only from their reviewed model-list commands. Adapters without a confirmed machine-readable list command, and any failed/auth-blocked list probe, expose `auto` and manual entry instead of a hardcoded catalog. Local HTTP backends continue to load models from their manifest-owned `/models` or native Ollama endpoint.
+
 Example completion request:
 
 ```json

@@ -4,8 +4,8 @@ import { clsx } from "clsx";
 import { Info, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextInput } from "@/components/ui/field";
+import { describeCliDetection } from "@/lib/cli-readiness";
 import {
-  mergeCliModelOptions,
   type CliAgentBadge,
   type CliAgentId,
   type CliCatalogEntry,
@@ -98,11 +98,25 @@ export function CliAgentCard({
         ? "auto"
         : modelSelection.customModel ?? "auto";
 
-  const dropdownModels = mergeCliModelOptions(catalog.suggestedModels, discoveredModels);
+  const dropdownModels = Array.from(
+    new Set(discoveredModels.map((model) => model.trim()).filter((model) => model && model !== "auto"))
+  );
   const hasLiveModels = discoveredModels.length > 0;
+  const modelDiscoveryLabel = hasLiveModels
+    ? "Live from CLI"
+    : detection.status === "authentication_required"
+      ? "Sign in to load models"
+      : "CLI list unavailable";
   const showManualEntry = modelValue !== "auto" && !dropdownModels.includes(modelValue);
   const versionLabel = versionCompatibilityLabel(detection);
   const testDisabled = isTestDisabled(detection, isTesting);
+  const requestReadiness = describeCliDetection(catalog.id, detection);
+  const requestReadinessClass = {
+    checking: "bg-slate-100 text-slate-600",
+    ready: "bg-emerald-50 text-emerald-700",
+    warning: "bg-amber-50 text-amber-800",
+    not_installed: "bg-red-50 text-red-700"
+  }[requestReadiness.state];
   const showAuthGuidance =
     detection.status === "authentication_required" && detection.authSummary && !testStatus;
 
@@ -144,6 +158,17 @@ export function CliAgentCard({
                   {BADGE_LABELS[badge]}
                 </span>
               ))}
+              <span
+                data-testid={`cli-agent-readiness-${catalog.id}`}
+                data-readiness={requestReadiness.state}
+                title={requestReadiness.message}
+                className={clsx(
+                  "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                  requestReadinessClass
+                )}
+              >
+                {requestReadiness.label}
+              </span>
             </span>
             <span className="mt-0.5 block text-xs leading-5 text-muted">{catalog.subtitle}</span>
             <ProviderUsageNote
@@ -251,7 +276,7 @@ export function CliAgentCard({
                     : "bg-slate-100 text-muted"
                 )}
               >
-                {hasLiveModels ? "Live from CLI" : "Catalog suggestions"}
+                {modelDiscoveryLabel}
               </span>
               <SelectInput
                 data-testid={`cli-agent-model-${catalog.id}`}

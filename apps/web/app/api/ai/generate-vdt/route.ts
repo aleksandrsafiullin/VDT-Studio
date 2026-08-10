@@ -20,11 +20,14 @@ import { isMockProviderAllowed } from "@/lib/ai-route-provider";
 interface GenerateVdtRequest extends GenerateVdtInput {
   providerId?: "mock" | "local_cli" | "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "local_runner";
   providerConfig?: Record<string, unknown>;
-  operation?: "generate" | "connection_test";
+  operation?: "generate" | "connection_test" | "list_models";
 }
 
 const GENERATE_VDT_DEPRECATED_MESSAGE =
   "Project generation has moved to /api/agent/runs. Start a generate_vdt agent run instead.";
+const MODEL_LIST_TIMEOUT_MS = 15_000;
+const MODEL_LIST_MAX_RESPONSE_BYTES = 1_000_000;
+const MODEL_LIST_MAX_ITEMS = 2_000;
 
 const MAX_FIELD_LENGTHS: Partial<Record<keyof GenerateVdtInput, number>> = {
   rootKpi: 140,
@@ -192,6 +195,146 @@ function assertLocalRunnerUrlAllowed(runnerUrl: string, envRunnerUrl: string) {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function modelListUrl(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}${path}`;
+}
+
+async function readBoundedModelListResponse(response: Response, providerName: string): Promise<unknown> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MODEL_LIST_MAX_RESPONSE_BYTES) {
+    throw new Error(`${providerName} model list exceeded the maximum allowed size.`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > MODEL_LIST_MAX_RESPONSE_BYTES) {
+      throw new Error(`${providerName} model list exceeded the maximum allowed size.`);
+    }
+    try {
+      return JSON.parse(new TextDecoder().decode(buffer)) as unknown;
+    } catch {
+      throw new Error(`${providerName} returned an invalid model-list response.`);
+    }
+  }
+
+  const decoder = new TextDecoder();
+  let total = 0;
+  let raw = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MODEL_LIST_MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error(`${providerName} model list exceeded the maximum allowed size.`);
+      }
+      raw += decoder.decode(value, { stream: true });
+    }
+    raw += decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
+
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error(`${providerName} returned an invalid model-list response.`);
+  }
+}
+
+async function requestModelList(
+  providerName: string,
+  url: string,
+  headers: Record<string, string>
+): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MODEL_LIST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers,
+      cache: "no-store",
+      redirect: "error",
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error(`${providerName} model discovery failed with status ${response.status}.`);
+    }
+    return await readBoundedModelListResponse(response, providerName);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`${providerName} model discovery timed out.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeModelIds(values: readonly unknown[], keys: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const models: string[] = [];
+
+  for (const value of values) {
+    let model: string | undefined;
+    if (typeof value === "string") {
+      model = value;
+    } else if (isRecord(value)) {
+      for (const key of keys) {
+        const candidate = value[key];
+        if (typeof candidate === "string" && candidate.trim()) {
+          model = candidate;
+          break;
+        }
+      }
+    }
+
+    const normalized = model?.trim().replace(/^models\//, "");
+    if (!normalized || normalized.length > 160 || /[\u0000-\u001f\u007f]/.test(normalized) || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    models.push(normalized);
+    if (models.length >= MODEL_LIST_MAX_ITEMS) break;
+  }
+
+  return models;
+}
+
+function openAiOrAnthropicModelIds(payload: unknown): string[] {
+  if (!isRecord(payload) || !Array.isArray(payload.data)) {
+    throw new Error("Provider returned an invalid model-list response.");
+  }
+  return normalizeModelIds(payload.data, ["id", "model", "name"]);
+}
+
+function geminiModelIds(payload: unknown): string[] {
+  if (!isRecord(payload) || !Array.isArray(payload.models)) {
+    throw new Error("Google Gemini returned an invalid model-list response.");
+  }
+
+  const generativeModels = payload.models.filter((value) => {
+    if (!isRecord(value)) return true;
+    const methods = Array.isArray(value.supportedGenerationMethods)
+      ? value.supportedGenerationMethods
+      : Array.isArray(value.supportedActions)
+        ? value.supportedActions
+        : undefined;
+    return !methods || methods.includes("generateContent");
+  });
+  return normalizeModelIds(generativeModels, ["baseModelId", "name", "id"]);
+}
+
+function modelListResponse(models: readonly string[]) {
+  return NextResponse.json({ ok: true, models });
+}
+
 export async function POST(request: Request) {
   let body: (GenerateVdtRequest & Record<string, unknown>) | undefined;
   try {
@@ -206,14 +349,15 @@ export async function POST(request: Request) {
     }
 
     const connectionTest = body.operation === "connection_test";
-    readLimitedString(body, "rootKpi", !connectionTest);
+    const modelList = body.operation === "list_models";
+    readLimitedString(body, "rootKpi", !connectionTest && !modelList);
     readLimitedString(body, "levelOfDetail");
     const optionalInputFields: (keyof GenerateVdtInput)[] = ["industry", "businessContext", "unit", "timePeriod", "goal"];
     for (const field of optionalInputFields) {
       readLimitedString(body, field);
     }
 
-    if (!connectionTest) {
+    if (!connectionTest && !modelList) {
       return NextResponse.json(
         { ok: false, error: GENERATE_VDT_DEPRECATED_MESSAGE },
         { status: 410 }
@@ -246,6 +390,15 @@ export async function POST(request: Request) {
         );
       }
 
+      if (modelList) {
+        const payload = await requestModelList(
+          "OpenAI-compatible provider",
+          modelListUrl(requestBaseUrl ?? envBaseUrl, "/models"),
+          apiKey ? { authorization: `Bearer ${apiKey}` } : {}
+        );
+        return modelListResponse(openAiOrAnthropicModelIds(payload));
+      }
+
       provider = new OpenAiCompatibleProvider({
         baseUrl: requestBaseUrl ?? envBaseUrl,
         apiKey,
@@ -262,6 +415,17 @@ export async function POST(request: Request) {
       const apiKey = providerConfig.apiKey ?? process.env.ANTHROPIC_API_KEY;
       if (!apiKey) {
         throw new Error("Anthropic API key is required.");
+      }
+      if (modelList) {
+        const payload = await requestModelList(
+          "Anthropic",
+          modelListUrl(baseUrl, baseUrl.replace(/\/+$/, "").endsWith("/v1") ? "/models" : "/v1/models"),
+          {
+            "x-api-key": apiKey,
+            "anthropic-version": providerConfig.anthropicVersion ?? "2023-06-01"
+          }
+        );
+        return modelListResponse(openAiOrAnthropicModelIds(payload));
       }
       provider = new AnthropicProvider({
         baseUrl,
@@ -289,6 +453,15 @@ export async function POST(request: Request) {
       if (!apiKey) {
         throw new Error("Azure OpenAI API key is required.");
       }
+      if (modelList) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "Azure OpenAI execution requires a deployment name. Enter the deployed name manually; the model catalog does not list deployments."
+          },
+          { status: 400 }
+        );
+      }
       if (!deployment) {
         throw new Error("Azure OpenAI deployment is required.");
       }
@@ -310,12 +483,26 @@ export async function POST(request: Request) {
       if (!apiKey) {
         throw new Error("Google Gemini API key is required.");
       }
+      if (modelList) {
+        const payload = await requestModelList(
+          "Google Gemini",
+          modelListUrl(baseUrl, "/v1beta/models?pageSize=1000"),
+          { "x-goog-api-key": apiKey }
+        );
+        return modelListResponse(geminiModelIds(payload));
+      }
       provider = new GeminiProvider({
         baseUrl,
         apiKey,
         model: providerConfig.model ?? process.env.GEMINI_MODEL ?? "gemini-2.5-pro"
       });
     } else if (body.providerId === "local_runner") {
+      if (modelList) {
+        return NextResponse.json(
+          { ok: false, error: "Local runner model discovery uses the dedicated local runtime endpoint." },
+          { status: 400 }
+        );
+      }
       provider = new LocalRunnerProvider(readLocalRunnerProviderConfig(body.providerConfig, new URL(request.url).origin));
     } else if (body.providerId === "mock") {
       if (!isMockProviderAllowed()) {
@@ -323,6 +510,9 @@ export async function POST(request: Request) {
           { ok: false, error: "Mock provider is only available in automated tests." },
           { status: 400 }
         );
+      }
+      if (modelList) {
+        return modelListResponse(["mock"]);
       }
       provider = new MockProvider();
     } else if (!body.providerId) {

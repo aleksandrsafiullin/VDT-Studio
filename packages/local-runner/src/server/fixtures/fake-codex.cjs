@@ -76,7 +76,7 @@ function main() {
   }
 
   if (process.argv.includes("debug") && process.argv.includes("models")) {
-    process.stdout.write(`${JSON.stringify({ models: [{ slug: "gpt-5.5" }, { id: "gpt-5.2" }, { id: "gpt-5.3-codex" }, { id: "codex-auto-review" }] })}\n`);
+    process.stdout.write(`${JSON.stringify({ models: [{ slug: "gpt-5.5", visibility: "list" }, { id: "gpt-5.2", visibility: "list" }, { id: "gpt-5.3-codex", visibility: "list" }, { id: "codex-auto-review", visibility: "hide" }] })}\n`);
     process.exit(0);
   }
 

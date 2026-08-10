@@ -15,7 +15,7 @@ VDT Studio is an AI-first, local-first workspace for building editable Value Dri
 - JSON, Markdown and deterministic SVG export.
 - Experimental raw-data discovery for CSV/TSV, XLS/XLSX, JSON/NDJSON and Parquet.
 
-Raw-data discovery currently proposes semantic models and metadata mappings; it does **not** execute mappings or calculate trusted KPI baselines. Web research currently returns search results but does not yet provide an auditable benchmark evidence pipeline. These limitations are tracked in [Data ingestion](docs/DATA_INGESTION.md) and the [roadmap](docs/ROADMAP.md).
+Raw-data discovery currently proposes semantic models and metadata mappings. Its narrow incoming-KPI path can also calculate a materialized baseline for each detected category—for example, downtime hours by reason—when one complete parsed table contains a confirmed numeric measure. General mapping execution, refresh, reconciliation and production-trusted KPI baselines are not implemented. Web research currently returns search results but does not yet provide an auditable benchmark evidence pipeline. These limitations are tracked in [Data ingestion](docs/DATA_INGESTION.md) and the [roadmap](docs/ROADMAP.md).
 
 The active corrective program is [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](docs/VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md). Gate A and W0.1 are complete with independent `GO`: local revision writes now use one strict CAS/idempotency commit boundary and exclusive-create no-clobber publication. The W0.2 design contract is accepted with independent contract-only `GO`, and Gate R1 SQL-only code has independent code-only `GO` with zero blockers, but no W0.2 agent-runtime task is complete. The three Sequence 3 byte-level contracts retain their independent contract-only `GO`; the separate 13-file inert artifact freeze retains its independent artifact-freeze `GO` with zero blockers; see the [2026-07-31 artifact-freeze checkpoint](docs/implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-artifact-freeze-go-2026-07-31). The accepted freeze is bound to verifier raw SHA-256 `817a090c48ba580fb5145ae0958f61e7be2255126f3dba17fcb65359f737c7ec`, freeze-record raw SHA-256 `6d5497733df9d1a184be34897ee20bba09355192239cdb904088b452d0b5dc73`, framed freeze-record hash `sha256:6aca44eded3fe69cac16f30fd0f4419523e49507ac6be099ec64d2e53efa6e7a` and V2 manifest hash `sha256:791fc7c7cce9abd11b2509ddaa6ba9e92e469178a3d1add6803b083295c849e8`. Sequence 3 is now production-wired locally: runtime admission verifies manifest/SQL/WASM/ABI integrity and the frozen vector identity, but the 121,310,783-byte golden registry is offline certification evidence only and is never loaded by production migration. W0.2 agent runtime remains incomplete and unauthorized; all V2 flags stay OFF; Windows durability, native crash evidence, package equality and large-file transport remain unverified; production/release remains `NO-GO`.
 
@@ -33,11 +33,18 @@ pnpm dev
 
 Open the URL printed by Next.js. For standalone local-runner development:
 
+`pnpm dev` explicitly starts the web app in trusted `development_web` mode so
+local project and VDT revision writes are enabled. A production-style
+`pnpm start` remains fail-closed unless the server owner explicitly configures a
+trusted application mode; a localhost URL alone never grants write authority.
+
 ```bash
 pnpm local-runner:start
 ```
 
 Normal desktop Local AI uses reviewed Tauri commands and the managed sidecar; it does not ask production users to start or pair a runner manually.
+
+For subscription CLIs, the agent-composer indicator reports live request readiness rather than the saved selection. Gray means the CLI check is still running, green means the selected CLI is installed and reports `ready`, amber means it is installed but needs authentication, an update, or another recovery action, and red means the completed scan confirmed that it is not installed. The composer remains blocked until the selected CLI reaches `ready`; Settings does not show install options while detection is still unknown.
 
 ## Product Workflows
 
@@ -49,11 +56,13 @@ Normal desktop Local AI uses reviewed Tauri commands and the managed sidecar; it
 4. Review formulas, assumptions, warnings and proposed changes.
 5. Apply accepted changes, calculate scenarios and save a revision.
 
+The node-card **Add incoming KPIs with AI** action is a semi-manual decomposition step: one click creates only the selected KPI's immediate incoming layer. It starts or resumes the agent with a structured `deepen_node` action, does not insert a synthetic user instruction into the chat, and does not continue into the newly created children. Click the action on a child separately when another level is wanted.
+
 The current agent loop uses local skills and bounded tools. Its live selection path is narrow, mostly English and still relies on deterministic classification/term matching. The corrective target keeps one canonical copy of each skill and makes multilingual understanding and explicit selection an agent responsibility; it does not create translated skill copies, language aliases or an automatic generic fallback.
 
 ### Discover data candidates
 
-The experimental import wizard can profile supported tabular files, infer columns and propose `data_mapped` nodes. Treat the output as a reviewed semantic draft only. It is not a calculation or reconciliation engine and must not be used as a trusted baseline.
+The paperclip beside the VDT Agent composer opens the experimental file flow for the currently selected KPI. With a configured provider, the data agent profiles supported tabular files and can propose incoming `data_mapped` KPI categories—for example, downtime reasons under Downtime. For a complete single table with a detected numeric duration, deterministic code sums the matching rows, converts compatible time units such as minutes to hours, and places the result in each category's `baselineValue` before the normal change-set review. The preview shows that Baseline and unit. Truncated data, invalid numeric rows or an unconfirmed measure remain `unknown`; the broader flow is not yet a refreshable or production-trusted calculation pipeline.
 
 ## AI Task Surface
 
@@ -68,11 +77,13 @@ The schema registry contains 18 task contracts. Seventeen are exposed product ta
 | Advisory | `review_model`, `check_units`, `identify_missing_drivers`, `identify_duplicate_drivers` |
 | Explanation | `explain_node`, `explain_scenario`, `generate_executive_summary` |
 
-Project creation runs through `/api/agent/runs`. Data discovery runs through `/api/data/discovery/runs`. `/api/ai/generate-vdt` is retained for connection tests and legacy structured generation; other bounded tasks use `/api/ai/run-task`.
+Project creation runs through `/api/agent/runs`. Data discovery runs through `/api/data/discovery/runs`. `/api/ai/generate-vdt` is retained for BYOK connection tests and session-key model discovery; direct generation on that route returns `410`. Other bounded tasks use `/api/ai/run-task`.
 
 ## Model Configuration
 
 The deterministic mock provider is the offline reference for tests. API/BYOK providers are configured in `Settings -> AI`. Session API keys are excluded from persisted Zustand state and project exports.
+
+Model availability is not maintained as a static product catalog. Subscription pickers use the installed CLI's model-list response when the adapter supports one. API-key pickers load the current OpenAI-compatible, Anthropic or Gemini response through the server using the session-only key. Failed or unsupported discovery is labeled explicitly and falls back to manual model entry. Azure OpenAI continues to require the deployed name because a base-model catalog does not prove that a deployment exists.
 
 The local execution boundary supports:
 

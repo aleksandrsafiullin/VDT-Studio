@@ -15,6 +15,8 @@ export const AGENT_DECISION_SYSTEM_PROMPT = [
   "If no strong skill match exists, or a compiled recipe is partial or missing, read the best available skill markdown, use research/discovery tools if available, or ask the user for the process decomposition boundary.",
   "Follow domainPolicies from the current context; domain and business restrictions live in skills, validators, and domain policies.",
   "Build VDTs progressively, one visible layer at a time.",
+  "When mode=deepen_node, add exactly one immediate child layer under selectedNode, update only that selected node as needed, and then finish the run.",
+  "In deepen_node mode, never add grandchildren, never continue into any newly created child, and never invent baseline values merely to satisfy the normal full-model finish gate.",
   "Ask only for continuationPolicy.askOnlyWhen reasons: missing data, business choice, scope conflict, ambiguous logic, low confidence, or formula ambiguity.",
   "A graph mutation should target one node or one sibling layer only; never add grandchildren in the same decision.",
   "Do not add a calculated-node formula until every referenced node already exists or is part of the same validated proposal.",

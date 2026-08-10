@@ -3413,10 +3413,18 @@ function verifySequence3ReadyState(
       "Sequence 3 ready adoption cardinality is invalid."
     );
   }
-  const sourceStatement = db.prepare(
-    "SELECT CAST(id AS BLOB) AS id_bytes FROM agent_runs ORDER BY CAST(id AS BLOB) ASC"
-  );
-  const sourceRows = sourceStatement.all() as Array<{ id_bytes?: unknown }>;
+  const sourceStatement = db.prepare(`
+    SELECT CAST(r.id AS BLOB) AS id_bytes
+    FROM legacy_agent_run_adoptions_v1 a
+    JOIN agent_runs r ON r.id = a.run_id
+    WHERE a.database_id = ? AND a.migration_application_id = ?
+      AND a.migration_sequence = 3
+    ORDER BY CAST(r.id AS BLOB) ASC
+  `);
+  const sourceRows = sourceStatement.all(
+    identity.databaseId,
+    applicationId
+  ) as Array<{ id_bytes?: unknown }>;
   if (
     sourceRows.length !== inputCount ||
     sourceRows.some(

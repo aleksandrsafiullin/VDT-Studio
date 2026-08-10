@@ -1,11 +1,14 @@
 import { resolveEffectiveByokUrls, resolveByokPreset } from "./byok-validation";
 import {
+  resolveSelectedCliReadiness,
+  type CliReadinessBackendStatus
+} from "./cli-readiness";
+import {
   applyGatewayPreset,
   applyLocalRunnerPreset,
   DEFAULT_ANTHROPIC_FALLBACK_MODEL,
   DEFAULT_EXECUTION_SETTINGS,
   DEFAULT_OPENAI_COMPATIBLE_FALLBACK_MODEL,
-  getCliCatalogEntry,
   getLocalRunnerPreset,
   type CliAgentId,
   type ExecutionSettings,
@@ -422,40 +425,16 @@ export function migratePersistedStateToV2(persistedState: unknown): unknown {
 export interface CliInstallationSnapshot {
   id: CliAgentId;
   installed: boolean;
+  status?: CliReadinessBackendStatus | undefined;
 }
 
 export function validateExecutionForGenerate(
   settings: ExecutionSettings,
-  cliDetectionAgents?: readonly CliInstallationSnapshot[]
+  cliDetectionAgents?: readonly CliInstallationSnapshot[],
+  options: { isScanning?: boolean | undefined; detectionError?: string | undefined } = {}
 ): string | undefined {
-  if (settings.executionMode !== "local_cli") {
-    return undefined;
-  }
-
-  const presetId = settings.localRunnerPresetId ?? "ollama_openai";
-  const preset = getLocalRunnerPreset(presetId);
-  const runnerProviderId = settings.runnerProviderId ?? preset.runnerProviderId;
-
-  if (runnerProviderId !== "cli_stub" || !settings.selectedCliAgentId) {
-    return undefined;
-  }
-
-  if (preset.runnerProviderId === "local_http_stub") {
-    return undefined;
-  }
-
-  // Detection unknown until the Local CLI tab runs a scan — do not block generation.
-  if (cliDetectionAgents === undefined) {
-    return undefined;
-  }
-
-  const detection = cliDetectionAgents.find((agent) => agent.id === settings.selectedCliAgentId);
-  if (detection?.installed === false) {
-    const agentName = getCliCatalogEntry(settings.selectedCliAgentId).displayName;
-    return `${agentName} is not installed. Install it from Execution mode settings or switch to a local HTTP preset.`;
-  }
-
-  return undefined;
+  const readiness = resolveSelectedCliReadiness(settings, cliDetectionAgents, options);
+  return readiness && !readiness.canExecute ? readiness.message : undefined;
 }
 
 function resolveLocalCli(settings: ExecutionSettings): ResolvedExecutionProvider {

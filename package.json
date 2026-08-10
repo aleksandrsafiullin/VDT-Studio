@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "dev": "corepack pnpm --filter @vdt-studio/web dev",
+    "dev": "node scripts/start-development-web.mjs",
     "build": "corepack pnpm build:cli && corepack pnpm build:web",
     "build:cli": "corepack pnpm --filter @vdt-studio/cli build",
     "build:web": "corepack pnpm --filter @vdt-studio/web build",

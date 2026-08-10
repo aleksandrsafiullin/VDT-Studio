@@ -27,8 +27,6 @@ describe("codexSubscriptionCliAdapter", () => {
         [
           "-C",
           "/tmp/vdt-run-abc",
-          "--model",
-          "gpt-5.5",
           "--output-schema",
           "/tmp/vdt-run-abc/schema.json",
           "--output-last-message",
@@ -59,7 +57,14 @@ describe("codexSubscriptionCliAdapter", () => {
   });
 
   it("parses codex debug model output variants", () => {
-    expect(parseCodexModelList(JSON.stringify({ models: [{ slug: "gpt-5.5" }, { id: "gpt-5.3-codex" }, { id: "gpt-5.5" }] })))
+    expect(parseCodexModelList(JSON.stringify({
+      models: [
+        { slug: "gpt-5.5", visibility: "list" },
+        { id: "gpt-5.3-codex", visibility: "list" },
+        { id: "codex-auto-review", visibility: "hide" },
+        { id: "gpt-5.5", visibility: "list" }
+      ]
+    })))
       .toEqual(["gpt-5.5", "gpt-5.3-codex"]);
     expect(parseCodexModelList('{"model":"o4-mini"}\ngpt-5.2 default\n')).toEqual(["o4-mini", "gpt-5.2"]);
     expect(parseCodexModelList("WARNING: proceeding with cached models\ngpt-5.5\nERROR failed to refresh remote models\n"))
@@ -68,11 +73,17 @@ describe("codexSubscriptionCliAdapter", () => {
 
   it("lists codex models through the reviewed command", async () => {
     const execFile = vi.fn(async () => ({
-      stdout: JSON.stringify({ models: [{ slug: "gpt-5.5" }, { id: "gpt-5.3-codex" }, { id: "codex-auto-review" }] }),
+      stdout: JSON.stringify({
+        models: [
+          { slug: "gpt-5.5", visibility: "list" },
+          { id: "gpt-5.3-codex", visibility: "list" },
+          { id: "codex-auto-review", visibility: "hide" }
+        ]
+      }),
       stderr: ""
     }));
 
-    await expect(listCodexModels("/usr/bin/codex", { execFile })).resolves.toEqual(["gpt-5.5"]);
+    await expect(listCodexModels("/usr/bin/codex", { execFile })).resolves.toEqual(["gpt-5.5", "gpt-5.3-codex"]);
     expect(execFile).toHaveBeenCalledWith("/usr/bin/codex", ["debug", "models"], expect.objectContaining({ shell: false }));
   });
 

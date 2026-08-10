@@ -92,6 +92,6 @@ describe("probeCodexAuth", () => {
     expect(result.status).toBe("ready");
     expect(execCalls.some((args) => args[0] === "exec" && args.includes("--ephemeral"))).toBe(true);
     expect(execCalls.some((args) => args[0] === "exec" && args.includes("--ignore-rules"))).toBe(true);
-    expect(execCalls.some((args) => args[0] === "exec" && args.includes("--model") && args.includes("gpt-5.5"))).toBe(true);
+    expect(execCalls.some((args) => args[0] === "exec" && args.includes("--model"))).toBe(false);
   });
 });

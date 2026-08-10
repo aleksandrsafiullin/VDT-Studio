@@ -102,8 +102,7 @@ describe("data discovery run API lifecycle", () => {
     expect(applyBody.changeSet).toBeTruthy();
   });
 
-  // Remove `.fails` in W0.3 when discovery parses immutable full bytes instead of the UI preview.
-  it.fails("[known defect F-02] analyzes every row in a CSV larger than the 4096-byte preview", async () => {
+  it("analyzes every row in a CSV larger than the 4096-byte UI preview", async () => {
     const csv = [
       "id,value",
       ...Array.from({ length: 1_000 }, (_, index) => `${index + 1},${100_000 + index}`)

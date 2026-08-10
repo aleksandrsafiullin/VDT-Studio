@@ -59,13 +59,13 @@ the complete platform crash matrix, package/bundle equality and transport for
 the over-100-MiB offline artifact remain unverified. Production/release remains
 `NO-GO` and all V2 feature flags remain OFF.
 
+## Working-Tree Data Correctness Update
+
+The 2026-08-10 focused data-harness/API checks close the known 4096-byte preview defect in the current working tree: text parsers prefer immutable full bytes, and a 1,000-row CSV regression passes. The incoming-category path also refuses to materialize Baselines from tables marked `truncated`.
+
+This is not release evidence: the checks ran on local Node 26 outside the supported Node 24 range, adapter snapshots do not yet expose separate original/parsed/sample counts everywhere, and the broader upload security and parser-isolation gates remain open.
+
 ## P0 Correctness Blockers
-
-### Silent partial data analysis
-
-The data API provides both full bytes and a 4096-byte text preview, but text parsing prefers the preview. A 14,900-byte/1000-row reproduction parsed only 280 rows and reported `truncated=false`.
-
-Required: parsers read the immutable full source; preview is UI-only; source/full/sample counts are mandatory.
 
 ### Agent/manual-change race
 
@@ -98,8 +98,8 @@ The upload path also lacks pre-buffer streaming limits, archive expansion budget
 - The target single-copy, agent-owned selection repository and CAS/read-ledger contract are documented but not implemented.
 - Recipe completeness does not guarantee formula closure.
 - Web research stops at snippets and has no immutable evidence/benchmark model.
-- Data mappings are not executable and do not materialize baselines.
-- Data-agent UI normally runs deterministic heuristics and is isolated from main skills/research.
+- Data mappings are not reusable executable bindings. The narrow incoming-category path can materialize an initial filtered aggregate, but refresh, reconciliation, period/grain semantics and general metric execution remain absent.
+- The composer file flow can use the configured provider for semantic review and category-to-incoming-KPI proposals, but it remains isolated from the main skills/research loop.
 - Real Excel report layouts, locale numbers, quality rules and lineage are incomplete.
 - SQLite and localStorage remain competing project-state sources.
 

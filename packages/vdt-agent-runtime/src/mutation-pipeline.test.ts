@@ -62,16 +62,44 @@ describe("mutation pipeline progressive scope", () => {
 
     expect(builder.getProject().graph.nodes.map((node) => node.id)).toEqual(["production_volume"]);
   });
+
+  it("keeps deepen_node runs on the selected KPI's immediate child layer", () => {
+    const { builder, context } = createMutationContext({
+      mode: "deepen_node",
+      selectedNodeId: "production_volume"
+    });
+
+    applyLayer(context, "production_volume", [
+      { nodeId: "throughput_rate", name: "Throughput rate" },
+      { nodeId: "working_time", name: "Working time" }
+    ]);
+
+    expect(() =>
+      applyLayer(context, "working_time", [
+        { nodeId: "scheduled_shift_time", name: "Scheduled shift time" }
+      ])
+    ).toThrow(/only the selected KPI "production_volume"/);
+
+    expect(builder.getProject().graph.nodes.map((node) => node.id)).toEqual([
+      "production_volume",
+      "throughput_rate",
+      "working_time"
+    ]);
+  });
 });
 
-function createMutationContext(): { builder: VdtBuilderSession; context: AgentToolContext } {
+function createMutationContext(options: {
+  mode?: "generate_vdt" | "deepen_node";
+  selectedNodeId?: string | undefined;
+} = {}): { builder: VdtBuilderSession; context: AgentToolContext } {
   const store = new AgentRunStore({ now: () => timestamp });
   const run = store.createRun({
-    mode: "generate_vdt",
+    mode: options.mode ?? "generate_vdt",
     input: {
       rootKpi: "Production Volume",
       unit: "tonnes",
-      timePeriod: "month"
+      timePeriod: "month",
+      ...(options.selectedNodeId ? { selectedNodeId: options.selectedNodeId } : {})
     },
     providerId: "mock",
     options: { autoApplyPatches: true }

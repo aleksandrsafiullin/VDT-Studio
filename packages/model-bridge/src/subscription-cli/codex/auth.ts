@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import type { ModelBackendDetectionResult, ModelBackendStatus } from "../../contract";
 import { validateRegisteredSchema } from "../../schema-registry";
 import type { ExecFileProbe } from "../types";
-import { CODEX_BACKEND_ID, CODEX_CHATGPT_DEFAULT_MODEL, CODEX_FAST_SERVICE_TIER_ARGS } from "./constants";
+import { CODEX_BACKEND_ID, CODEX_FAST_SERVICE_TIER_ARGS } from "./constants";
 import { parseCodexExecJson } from "./parser";
 import type { CodexVersionEvaluation } from "./version";
 
@@ -195,8 +195,6 @@ async function probeWithConnectionTest(executable: string, options: ProbeCodexAu
         "--ignore-rules",
         "--sandbox",
         "workspace-write",
-        "--model",
-        CODEX_CHATGPT_DEFAULT_MODEL,
         "-c",
         "sandbox_workspace_write.network_access=true",
         ...CODEX_FAST_SERVICE_TIER_ARGS

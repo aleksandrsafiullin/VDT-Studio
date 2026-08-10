@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextInput } from "@/components/ui/field";
 import { createAiExecutionClient } from "@/lib/ai-execution-client";
 import { hasStandaloneRunnerUi, resolveVdtAppMode, type VdtAppMode } from "@/lib/app-mode";
+import { isConfirmedNotInstalled } from "@/lib/cli-readiness";
 import {
   CLI_CATALOG,
   LOCAL_RUNNER_PRESET_CATALOG,
@@ -21,16 +22,6 @@ import { CliAgentCard, type CliAgentDetectionView } from "./cli-agent-card";
 import { CliInstallGrid } from "./cli-install-grid";
 import { ProviderTestStatusBanner } from "./provider-diagnostics";
 import { useVdtStudioStore } from "./vdt-store";
-
-function buildDetectionFallback(): CliAgentDetectionView[] {
-  return CLI_CATALOG.map((entry) => ({
-    id: entry.id,
-    installed: false,
-    executable: null,
-    alias: null,
-    version: null
-  }));
-}
 
 function AccordionSection({
   title,
@@ -182,6 +173,25 @@ function backendIdForCliAgent(agentId: CliAgentId): string {
   return `${agentId}_subscription`;
 }
 
+export function resolveCliSettingsDetectionState(
+  detections: readonly CliAgentDetectionView[] | undefined,
+  isScanning: boolean,
+  detectionError?: string | undefined
+) {
+  const detectionById = new Map((detections ?? []).map((detection) => [detection.id, detection] as const));
+  const scanPending = isScanning || detections === undefined;
+  const installedAgents = CLI_CATALOG.filter((entry) => detectionById.get(entry.id)?.installed === true);
+  const notInstalledAgents = CLI_CATALOG.filter((entry) => isConfirmedNotInstalled(detectionById.get(entry.id)));
+
+  return {
+    detectionById,
+    scanPending,
+    installedAgents,
+    notInstalledAgents,
+    showInstallOptions: !scanPending && !detectionError && notInstalledAgents.length > 0
+  };
+}
+
 export function LocalAiRuntimeErrorBanner({
   message,
   appMode
@@ -291,15 +301,13 @@ export function LocalCliSettings() {
   const appMode = resolveVdtAppMode();
   const showStandaloneRunner = hasStandaloneRunnerUi(appMode);
 
-  const detectionById = new Map(
-    buildDetectionFallback().map((fallback) => {
-      const scanned = cliDetectionAgents?.find((agent) => agent.id === fallback.id);
-      return [fallback.id, scanned ?? fallback] as const;
-    })
-  );
-
-  const installedAgents = CLI_CATALOG.filter((entry) => detectionById.get(entry.id)?.installed);
-  const notInstalledAgents = CLI_CATALOG.filter((entry) => !detectionById.get(entry.id)?.installed);
+  const {
+    detectionById,
+    scanPending: cliScanPending,
+    installedAgents,
+    notInstalledAgents,
+    showInstallOptions
+  } = resolveCliSettingsDetectionState(cliDetectionAgents, isRescanningClis, cliDetectionError);
   const canUseExplicitMemoryCli = installedAgents.length > 0;
 
   const selectedCatalog = selectedCliAgentId ? getCliCatalogEntry(selectedCliAgentId) : undefined;
@@ -510,7 +518,9 @@ export function LocalCliSettings() {
 
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-ink">Your subscriptions ({installedAgents.length})</h3>
+          <h3 className="text-sm font-semibold text-ink">
+            Your subscriptions{!cliScanPending && !cliDetectionError ? ` (${installedAgents.length})` : ""}
+          </h3>
           <Button
             size="sm"
             variant="secondary"
@@ -529,12 +539,23 @@ export function LocalCliSettings() {
           </Button>
         </div>
 
-        {installedAgents.length === 0 ? (
+        {cliScanPending ? (
+          <div
+            role="status"
+            aria-live="polite"
+            data-testid="local-cli-scan-status"
+            className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700"
+          >
+            <Loader2 className="h-4 w-4 animate-spin text-slate-500" aria-hidden="true" />
+            <span>Checking which CLI agents can run requests…</span>
+          </div>
+        ) : cliDetectionError ? null : installedAgents.length === 0 ? (
           <div
             data-testid="local-cli-empty-installed"
             className="rounded-md border border-dashed border-line bg-slate-50/80 px-4 py-6 text-center text-sm text-muted"
           >
-            No installed CLIs detected on PATH yet. Use the install grid below or rescan after installing an agent.
+            The completed scan did not find an installed CLI. Use the confirmed install options below or rescan after
+            installing an agent.
           </div>
         ) : (
           <div className="space-y-3">
@@ -562,20 +583,22 @@ export function LocalCliSettings() {
 
       </div>
 
-      <AccordionSection
-        title={`Available to install (${notInstalledAgents.length})`}
-        defaultOpen={installedAgents.length === 0}
-        testId="local-cli-install-accordion"
-      >
-        <CliInstallGrid
-          agents={notInstalledAgents}
-          isRescanningId={rescanningCliId}
-          toastMessage={installToast}
-          onInstall={handleInstall}
-          onCopyCommand={handleCopyCommand}
-          onRescanAgent={(agentId) => void rescanClis(agentId)}
-        />
-      </AccordionSection>
+      {showInstallOptions ? (
+        <AccordionSection
+          title={`Available to install (${notInstalledAgents.length})`}
+          defaultOpen={installedAgents.length === 0}
+          testId="local-cli-install-accordion"
+        >
+          <CliInstallGrid
+            agents={notInstalledAgents}
+            isRescanningId={rescanningCliId}
+            toastMessage={installToast}
+            onInstall={handleInstall}
+            onCopyCommand={handleCopyCommand}
+            onRescanAgent={(agentId) => void rescanClis(agentId)}
+          />
+        </AccordionSection>
+      ) : null}
 
       <AccordionSection title="Memory model" testId="local-cli-memory-accordion">
         <div className="space-y-3">

@@ -12,10 +12,26 @@ See also [Local Runner](LOCAL_RUNNER.md) for pairing and API details.
 - **Playwright e2e:** Mocked `/api/ai/detect-clis` enrichment and local-runner pairing; no real CLI install required in CI.
 - **Cross-platform CLI execution:** Subscription CLIs run from reviewed manifests with provider-owned auth, fixed args, fresh temp workspaces, filtered env and local schema validation. VDT does not depend on OS-specific sandbox wrappers for supported Local AI execution.
 - **Maintainer live gate:** Optional real CLI probes behind `VDT_LIVE_*=1` env vars (never run in default CI).
-- **Model discovery:** Subscription adapters own provider-specific model-list commands. Codex uses `codex debug models`; Cursor Agent uses `cursor-agent models`. Failures caused by a missing executable, missing auth, or timeout return an empty model list to keep settings usable.
+- **Subscription model discovery:** Subscription adapters own provider-specific model-list commands. Codex uses `codex debug models`; Cursor Agent uses `cursor-agent models`. Settings displays only model IDs returned by the installed CLI. A missing command, missing auth, unsupported list operation, or timeout leaves only `auto` plus manual entry; VDT does not substitute a bundled suggestion catalog.
+- **API-key model discovery:** Settings sends the session-only key and resolved provider configuration to the local server and requests `list_models`. OpenAI/OpenAI-compatible providers use `GET <baseUrl>/models`, Anthropic uses `GET <baseUrl>/v1/models` (or `<baseUrl>/models` when the base already ends in `/v1`), and Gemini uses `GET <baseUrl>/v1beta/models`. Responses are size/item bounded, redirects are disabled, keys are not returned to the browser, and only the current response populates the picker. An unsupported or failed list operation leaves manual entry available.
 - **Codex service tier:** Codex CLI 0.128.0 rejects legacy `service_tier = "default"` config values. VDT-owned Codex runtime calls set `service_tier="fast"` through reviewed `-c` args so a stale user config does not block local AI execution.
 
 Certification labels in manifests/registry reflect fake-backend + schema validation gates. Maintainer live verification dates are recorded per backend when run.
+
+## UI request-readiness contract
+
+Release labels such as `beta` and `alpha` describe reviewed adapter maturity; they do not prove that a provider can execute the user's next request. The agent composer derives a separate live readiness state from the selected CLI detection result:
+
+- **Checking** (gray): detection has not completed or a rescan is active; requests are disabled.
+- **Ready** (green): the executable is installed and the provider probe reports `ready`; requests may proceed.
+- **Action required** (amber): the executable exists but authentication, version, rate limit, safety, availability or probe errors prevent a confirmed request; requests are disabled.
+- **Not installed** (red): a completed scan explicitly reports `not_installed`; requests are disabled and Settings may show an install option.
+
+Settings must not translate an unknown or in-progress detection into `not_installed`. The install grid is populated only from explicit completed `not_installed` results.
+
+Model-list success is separate from request readiness. A green CLI readiness badge means the provider probe can execute a request; it does not authorize VDT to invent model availability. A model shown as **Live from CLI** or loaded from a BYOK provider came from that current provider response. When discovery is unavailable, the UI says so and permits manual entry without presenting catalog suggestions as verified.
+
+Azure OpenAI is intentionally different: execution requires a deployment name, while the Azure model catalog reports base models rather than the resource's deployment names. Settings therefore keeps Deployment as a manual field and does not present base-model results as executable deployments.
 
 ## Canonical release status
 
@@ -85,6 +101,8 @@ For a cheaper auth/connection-only check, append `-- --connection-only`.
 
 Auth/version detection (web UI): `agent status --format json` when available; otherwise a minimal stdin-based `--print` connection probe. Probes time out after 5 seconds.
 
+Cursor may report `status: authenticated` solely because token files exist while also returning `unable to fetch user details`. VDT treats that payload as `authentication_required`, not `ready`, because both protected generation and `agent models` reject the stale session. Settings then shows **Sign in to load models** until `agent login` restores a provider-validated session.
+
 Model discovery: `cursor-agent models`, parsed from JSON or line/table output.
 
 ### Not supported
@@ -125,13 +143,13 @@ exec
 -c service_tier="fast"
 ```
 
-Dynamic spawn args (adapter): `-C <temp>`, `--model <selected-model>`, `--output-schema`, `--output-last-message`. When the user has not selected a Codex model, VDT passes `--model gpt-5.5` so execution does not inherit an unsupported local Codex config default. The `--output-schema` file is generated from VDT's registered schema as an OpenAI-compatible strict response schema: every object is closed with `additionalProperties:false`, including nested array items such as `nodes[]`.
+Dynamic spawn args (adapter): `-C <temp>`, optional `--model <selected-model>`, `--output-schema`, `--output-last-message`. When the user leaves the model on `auto`, VDT omits `--model` and lets the installed Codex CLI select its current provider-owned default. The `--output-schema` file is generated from VDT's registered schema as an OpenAI-compatible strict response schema: every object is closed with `additionalProperties:false`, including nested array items such as `nodes[]`.
 
 Auth/version detection (web UI): `codex login status --json` when available; otherwise a minimal `exec` connection probe returning `connection-test-v1`. Probes time out after 5 seconds.
 
 Runtime auth isolation: VDT creates a writable per-run `CODEX_HOME` inside the temp execution cwd and copies only `auth.json`, `installation_id`, and `models_cache.json` when present. This keeps ChatGPT subscription auth available while preventing VDT runs from mutating the user's real `~/.codex` session, state, skills, or rule files.
 
-Model discovery: `codex debug models`, parsed from JSON, JSONL or table output. If a legacy `service_tier = "default"` config blocks the command, VDT retries discovery with `-c service_tier="fast"`. VDT filters Codex-only and review-only model ids such as `gpt-5.3-codex` and `codex-auto-review` because Codex CLI rejects them for ChatGPT-account execution.
+Model discovery: `codex debug models`, parsed from JSON, JSONL or table output. If a legacy `service_tier = "default"` config blocks the command, VDT retries discovery with `-c service_tier="fast"`. VDT returns IDs the installed Codex CLI marks visible and omits records whose CLI-owned metadata says `visibility: "hide"`; there is no VDT-maintained model-name allowlist. Execution remains authoritative if the CLI later rejects a selected ID.
 
 ### Limitations
 
@@ -219,13 +237,13 @@ Google's 2026 transition means the original Phase 5 personal-allowance criterion
 
 ### Configuration
 
-Select **BYOK → OpenAI → Gateway preset: Alibaba Cloud Coding Plan (Beta)** in Settings. Enter a Coding Plan API key for the browser session only. Connection tests route through `/api/ai/generate-vdt` with `providerId: openai_compatible` and the DashScope coding base URL.
+Select **BYOK → OpenAI → Gateway preset: Alibaba Cloud Coding Plan (Beta)** in Settings. Enter a Coding Plan API key for the browser session only. Connection tests and model discovery route through `/api/ai/generate-vdt` with `providerId: openai_compatible` and the DashScope coding base URL.
 
 `inferGatewayPresetId` recognizes `coding.dashscope` and `coding-intl.dashscope` URLs and maps them to `alibaba-coding-plan`.
 
 ### Limitations
 
-- Beta preset — model list is limited to catalog suggestions (`qwen3-coder-plus`, `qwen3-coder-next`)
+- Beta preset — the model picker uses the gateway's live `/models` response when available; if the Coding Plan endpoint does not expose that operation, enter the documented model ID manually
 - No separate Qwen agent or local-runner backend; OpenAI-compatible HTTP only
 - Usage and limits are managed by Alibaba Cloud and the user's Coding Plan policy (no numeric quota surfaced in VDT Studio)
 - Structured VDT output is validated locally after the provider response

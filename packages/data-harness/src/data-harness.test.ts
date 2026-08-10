@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import { applyChangeSet, calculateGraph, productionVolumeProject } from "@vdt-studio/vdt-core";
-import { runRawDataDiscovery } from "./index";
+import { applyDiscoveryUserEdits, runRawDataDiscovery } from "./index";
 
 describe("raw data discovery harness", () => {
   it("profiles unknown CSV data and builds an evidence-backed VDT proposal", async () => {
@@ -41,6 +41,244 @@ describe("raw data discovery harness", () => {
     expect(snapshot.changeSetPreview?.additions.every((addition) => addition.type === "data_mapped")).toBe(true);
     expect(JSON.stringify(snapshot).includes("admin@example.com")).toBe(false);
     expect(JSON.stringify(snapshot).includes("IMPORTXML")).toBe(false);
+  });
+
+  it("creates incoming KPI categories for the selected KPI when a file is attached from the agent composer", async () => {
+    const csv = [
+      "Date,Reason,Minutes",
+      "2026-07-01,Waiting for trucks,35",
+      "2026-07-01,Repair,120",
+      "2026-07-02,Waiting for trucks,25",
+      "2026-07-02,Weather,60"
+    ].join("\n");
+    const project = structuredClone(productionVolumeProject);
+    const target = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+    if (!target) throw new Error("Test project root KPI is missing.");
+    target.name = "Downtime";
+    target.unit = "minute";
+    target.formula = undefined;
+
+    const snapshot = await runRawDataDiscovery({
+      datasetId: "downtime_incoming_kpis",
+      file: {
+        fileName: "downtime.csv",
+        mimeType: "text/csv",
+        sizeBytes: csv.length,
+        contentHash: "sha256:downtime-incoming",
+        storageRef: "downtime_incoming_kpis",
+        uploadedAt: "2026-08-10T00:00:00.000Z"
+      },
+      text: csv,
+      project,
+      entryContext: {
+        source: "agent_composer_attachment",
+        targetNodeId: target.id,
+        purpose: "incoming_kpis"
+      }
+    });
+
+    const changeSet = snapshot.changeSetPreview;
+    expect(changeSet?.additions.map((addition) => addition.name)).toEqual([
+      "Waiting for trucks",
+      "Repair",
+      "Weather"
+    ]);
+    expect(changeSet?.additions.every((addition) =>
+      addition.parentNodeId === target.id &&
+      addition.relation === "formula_dependency" &&
+      addition.type === "data_mapped" &&
+      addition.tags?.includes("incoming_kpi") &&
+      addition.dataMapping?.field === "Minutes" &&
+      addition.dataMapping.filters?.[0]?.column === "Reason" &&
+      addition.valueStatus === "calculated" &&
+      Number.isFinite(addition.baselineValue)
+    )).toBe(true);
+    expect(Object.fromEntries(changeSet?.additions.map((addition) => [addition.name, addition.baselineValue]) ?? [])).toEqual({
+      "Waiting for trucks": 60,
+      Repair: 120,
+      Weather: 60
+    });
+    expect(changeSet?.updates).toEqual([
+      expect.objectContaining({
+        nodeId: target.id,
+        patch: expect.objectContaining({
+          formula: changeSet?.additions.map((addition) => addition.nodeId).join(" + ")
+        })
+      })
+    ]);
+    if (!changeSet) throw new Error("Incoming KPI change-set was not produced.");
+    const selectedIds = new Set([
+      ...changeSet.additions,
+      ...changeSet.updates,
+      ...(changeSet.dataSourceChanges ?? []),
+      ...(changeSet.taxonomyChanges ?? [])
+    ].map((entry) => entry.id));
+    const applied = applyChangeSet(project, changeSet, selectedIds);
+    const calculation = calculateGraph(applied.project);
+    expect(applied.success).toBe(true);
+    expect(calculation.errors).toEqual([]);
+    expect(calculation.rootValue).toBe(240);
+
+    const taxonomy = snapshot.proposal?.taxonomies.find((candidate) => candidate.sourceColumns.includes("Reason"));
+    const repairCategory = taxonomy?.categories.find((category) => category.name === "Repair");
+    if (!taxonomy || !repairCategory) throw new Error("Downtime taxonomy was not proposed.");
+    const renamed = applyDiscoveryUserEdits(snapshot, {
+      taxonomyEdits: [{
+        taxonomyId: taxonomy.id,
+        categories: taxonomy.categories.map((category) => category.id === repairCategory.id
+          ? { ...category, name: "Maintenance" }
+          : category)
+      }]
+    });
+    const renamedMaintenance = renamed.changeSetPreview?.additions.find((addition) => addition.name === "Maintenance");
+    expect(renamedMaintenance?.dataMapping?.filters?.[0]?.value).toBe("Repair");
+    expect(renamedMaintenance?.baselineValue).toBe(120);
+
+    const edited = applyDiscoveryUserEdits(snapshot, {
+      taxonomyEdits: [{
+        taxonomyId: taxonomy.id,
+        categories: taxonomy.categories.map((category) => category.id === repairCategory.id
+          ? {
+              ...category,
+              name: "Maintenance",
+              matchRules: [{ type: "equals", value: "Maintenance" }]
+            }
+          : category)
+      }]
+    });
+
+    expect(edited.changeSetPreview?.additions).toHaveLength(3);
+    const editedMaintenance = edited.changeSetPreview?.additions.find((addition) => addition.name === "Maintenance");
+    expect(editedMaintenance?.dataMapping?.filters?.[0]?.value).toBe("Maintenance");
+    expect(editedMaintenance?.baselineValue).toBeUndefined();
+    expect(editedMaintenance?.valueStatus).toBe("unknown");
+  });
+
+  it("converts category baselines from source minutes to target hours", async () => {
+    const csv = [
+      "Reason,Minutes",
+      "Waiting,30",
+      "Repair,120",
+      "Waiting,90",
+      "Weather,60"
+    ].join("\n");
+    const project = structuredClone(productionVolumeProject);
+    const target = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+    if (!target) throw new Error("Test project root KPI is missing.");
+    target.name = "Downtime";
+    target.unit = "hour";
+    target.formula = undefined;
+
+    const snapshot = await runRawDataDiscovery({
+      datasetId: "downtime_hours",
+      file: {
+        fileName: "downtime-hours.csv",
+        mimeType: "text/csv",
+        sizeBytes: csv.length,
+        contentHash: "sha256:downtime-hours",
+        storageRef: "downtime_hours",
+        uploadedAt: "2026-08-10T00:00:00.000Z"
+      },
+      text: csv,
+      project,
+      entryContext: {
+        source: "agent_composer_attachment",
+        targetNodeId: target.id,
+        purpose: "incoming_kpis"
+      }
+    });
+
+    const additions = snapshot.changeSetPreview?.additions ?? [];
+    expect(Object.fromEntries(additions.map((addition) => [addition.name, addition.baselineValue]))).toEqual({
+      Waiting: 2,
+      Repair: 2,
+      Weather: 1
+    });
+    expect(additions.every((addition) =>
+      addition.unit === "hour" &&
+      addition.dataMapping?.transform === "converted minute to hour"
+    )).toBe(true);
+  });
+
+  it("does not materialize a partial baseline when the source table is truncated", async () => {
+    const csv = [
+      "Reason,Minutes",
+      "Waiting,30",
+      "Repair,120",
+      "Waiting,90",
+      "Weather,60"
+    ].join("\n");
+    const project = structuredClone(productionVolumeProject);
+    const target = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+    if (!target) throw new Error("Test project root KPI is missing.");
+    target.name = "Downtime";
+    target.unit = "minute";
+    target.formula = undefined;
+
+    const snapshot = await runRawDataDiscovery({
+      datasetId: "downtime_truncated",
+      file: {
+        fileName: "downtime-truncated.csv",
+        mimeType: "text/csv",
+        sizeBytes: csv.length,
+        contentHash: "sha256:downtime-truncated",
+        storageRef: "downtime_truncated",
+        uploadedAt: "2026-08-10T00:00:00.000Z"
+      },
+      text: csv,
+      project,
+      entryContext: {
+        source: "agent_composer_attachment",
+        targetNodeId: target.id,
+        purpose: "incoming_kpis"
+      },
+      limits: { maxRows: 3 }
+    });
+
+    expect(snapshot.tables[0]?.truncated).toBe(true);
+    expect(snapshot.changeSetPreview?.additions.every((addition) =>
+      addition.baselineValue === undefined && addition.valueStatus === "unknown"
+    )).toBe(true);
+    expect(snapshot.changeSetPreview?.warnings.some((item) => item.message.includes("were not calculated"))).toBe(true);
+  });
+
+  it("does not invent a target-unit formula from a category-only list", async () => {
+    const csv = ["Reason", "Waiting", "Repair", "Weather"].join("\n");
+    const project = structuredClone(productionVolumeProject);
+    const target = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+    if (!target) throw new Error("Test project root KPI is missing.");
+    target.name = "Downtime";
+    target.unit = "hour";
+    target.formula = undefined;
+
+    const snapshot = await runRawDataDiscovery({
+      datasetId: "downtime_category_list",
+      file: {
+        fileName: "downtime-categories.csv",
+        mimeType: "text/csv",
+        sizeBytes: csv.length,
+        contentHash: "sha256:downtime-categories",
+        storageRef: "downtime_category_list",
+        uploadedAt: "2026-08-10T00:00:00.000Z"
+      },
+      text: csv,
+      project,
+      entryContext: {
+        source: "agent_composer_attachment",
+        targetNodeId: target.id,
+        purpose: "incoming_kpis"
+      }
+    });
+
+    expect(snapshot.changeSetPreview?.additions.map((addition) => addition.name)).toEqual([
+      "Repair",
+      "Waiting",
+      "Weather"
+    ]);
+    expect(snapshot.changeSetPreview?.additions.every((addition) => addition.unit === undefined)).toBe(true);
+    expect(snapshot.changeSetPreview?.additions.every((addition) => addition.baselineValue === undefined)).toBe(true);
+    expect(snapshot.changeSetPreview?.updates).toEqual([]);
+    expect(snapshot.changeSetPreview?.warnings.some((item) => item.message.includes("no confirmed numeric measure"))).toBe(true);
   });
 
   it("does not require business-specific columns", async () => {

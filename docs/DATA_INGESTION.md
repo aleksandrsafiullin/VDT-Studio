@@ -1,12 +1,14 @@
 # Data Ingestion And KPI Baselines
 
-Last reviewed against the working tree: **2026-07-23**.
+Last reviewed against the working tree: **2026-08-10**.
 
 ## Status
 
-Raw-data discovery is an **experimental semantic-proposal prototype**. It is not a trusted KPI calculation or baseline pipeline.
+Raw-data discovery is an **experimental semantic-proposal prototype with a narrow deterministic category-baseline path**. It is not a general or production-trusted KPI calculation pipeline.
 
-The current checkout can parse supported files, profile a bounded sample, infer semantic roles and propose `data_mapped` nodes. Those mappings are metadata only: the core calculation engine does not execute them and no baseline is materialized.
+The current checkout can parse supported files, profile rows, infer semantic roles and propose `data_mapped` nodes. When the composer requests `purpose: incoming_kpis`, a complete single parsed table can materialize a category Baseline directly into each proposed node. The harness filters rows by the selected category, aggregates the detected numeric measure, converts compatible time units such as minutes to hours, and records the dataset hash plus row coverage in `valueSource` and mapping evidence.
+
+The core formula engine still does not execute `dataMapping`. General metrics, refresh, joins, period windows and edited filter re-execution remain metadata only. A truncated table, invalid numeric value, unsupported aggregation or missing measure does not receive a Baseline.
 
 Do not use current import results for operational KPI decisions.
 
@@ -15,11 +17,12 @@ Do not use current import results for operational KPI decisions.
 1. `POST /api/data/files` accepts a file and stores bytes plus a text preview.
 2. `POST /api/data/discovery/runs` loads the source and project snapshot.
 3. `packages/data-harness` parses tables, profiles columns and infers dimensions/measures/taxonomies.
-4. Deterministic heuristics, and optionally a provider, propose candidate metrics.
-5. A VDT change set adds a data source and up to six `data_mapped` nodes.
-6. The user can edit the semantic proposal and stage it for the normal change-set preview.
+4. The composer attachment passes the configured provider for bounded semantic review; deterministic profiling remains the evidence base.
+5. With `purpose: incoming_kpis`, the harness prefers a category taxonomy and proposes up to six filtered category nodes under the selected KPI. For a complete source table and confirmed numeric measure, it aggregates all matching parsed rows and writes a materialized `baselineValue` to every category node.
+6. Compatible time units are converted to the selected KPI unit (for example, 120 minutes becomes 2 hours). The calculation and conversion are recorded in the mapping evidence and `valueSource` note.
+7. The user can edit the semantic proposal and stage it for the normal change-set preview. Renaming a category keeps its original match rule; changing the filter invalidates the prior Baseline until the file is analysed again.
 
-The wizard does not currently pass provider configuration, so the normal UI path is deterministic rather than agent-assisted.
+The attachment is represented by a paperclip beside the VDT Agent composer rather than a permanent card in the setup rail. A target formula is proposed only when child and target units are confirmed equivalent; otherwise the preview keeps the unit warning visible.
 
 ## Supported Inputs
 
@@ -36,13 +39,15 @@ Current configurable limits include 50 MB file size, 25,000 parsed rows, 80 colu
 
 ## Confirmed Correctness Gaps
 
-### Source preview is incorrectly preferred
+### Source preview is UI-only
 
-The API stores a 4096-byte `textPreview` and also passes full bytes. Text parsing currently prefers the preview, so a larger CSV can be silently analysed as a shorter file with `truncated=false`. This is a P0 data-correctness defect.
+The API still stores a 4096-byte `textPreview`, but discovery parsers now prefer immutable full bytes. A focused API regression covers a 1,000-row CSV larger than the preview. Parsed sources that exceed the row/column/sheet limits are marked `truncated`; the narrow category path refuses to materialize a Baseline from them.
 
-### Mappings are not executable
+The snapshot does not yet preserve separate original, parsed and sampled row counts for every adapter, so W0.3 remains partial rather than complete.
 
-Proposed nodes use `valueStatus: unknown` and receive no value/baseline. Applying the change set can succeed structurally while calculation reports `missing_value` for every imported node. The parent/root formula is not updated to use the new nodes.
+### General mappings are not executable
+
+General proposed nodes still use `valueStatus: unknown`; applying those changes can succeed structurally while calculation reports `missing_value`. The exception is the incoming-category path described above: it materializes a finite `baselineValue` during the discovery run and may propose an additive parent formula when child and target units are compatible. The mapping itself cannot be re-executed after apply or on source refresh.
 
 ### Metric semantics are incomplete
 
@@ -120,7 +125,7 @@ LLM may propose a semantic definition and binding. A local analytical engine mus
 1. Fix source/preview correctness and secure upload boundaries.
 2. Certify CSV with locale, size and full-row golden fixtures.
 3. Certify structured XLSX with header/table discovery and control totals.
-4. Implement typed binding, baseline execution, reconciliation and refresh/staleness.
+4. Replace the narrow category materialization with typed binding, reusable baseline execution, reconciliation and refresh/staleness.
 5. Add complex Excel/XLSB only from real user evidence.
 6. Add digital PDF, then OCR, with adapter-specific confidence and review gates.
 7. Add database/API connectors and scheduled refresh.

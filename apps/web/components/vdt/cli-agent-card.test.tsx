@@ -85,7 +85,7 @@ describe("CliAgentCard", () => {
     expect(html).toContain("Live from CLI");
   });
 
-  it("shows catalog suggestions and models without live discovery", () => {
+  it("shows an honest manual fallback without live discovery", () => {
     const html = renderToStaticMarkup(
       <CliAgentCard
         catalog={claudeCatalog}
@@ -107,10 +107,11 @@ describe("CliAgentCard", () => {
       />
     );
 
-    expect(html).toContain("Catalog suggestions");
+    expect(html).toContain("CLI list unavailable");
     expect(html).not.toContain("Live from CLI");
-    expect(html).toContain("claude-sonnet-4-6");
-    expect(html).toContain("claude-opus-4-8");
+    expect(html).not.toContain("claude-sonnet-4-6");
+    expect(html).not.toContain("claude-opus-4-8");
+    expect(html).toContain("Enter manually…");
     expect(html).toContain("Billing and rate limits follow your Anthropic subscription");
   });
 
@@ -169,6 +170,8 @@ describe("CliAgentCard", () => {
     );
 
     expect(html).toContain('data-testid="cli-agent-version-chip-cursor-agent"');
+    expect(html).toContain('data-testid="cli-agent-readiness-cursor-agent"');
+    expect(html).toContain('data-readiness="ready"');
     expect(html).toContain("Compatible");
     expect(html).toContain("Cursor account is authenticated and ready.");
     expect(html).not.toContain('disabled=""');
@@ -187,7 +190,7 @@ describe("CliAgentCard", () => {
           status: "authentication_required",
           authSummary: "Cursor sign-in required. Run `agent login` in a terminal."
         }}
-        selected={false}
+        selected
         modelSelection={{ source: "agent_default" }}
         discoveredModels={[]}
         isTesting={false}
@@ -200,8 +203,11 @@ describe("CliAgentCard", () => {
 
     expect(html).toContain('data-testid="cli-agent-auth-guidance-cursor-agent"');
     expect(html).toContain('data-testid="cli-agent-authenticate-cursor-agent"');
+    expect(html).toContain('data-readiness="warning"');
+    expect(html).toContain("Sign in required");
     expect(html).toContain("Authenticate");
     expect(html).toContain("Cursor sign-in required");
+    expect(html).toContain("Sign in to load models");
     expect(html).toContain("Compatible");
     expect(html).not.toMatch(/data-testid="cli-agent-test-cursor-agent"[^>]*disabled/);
   });

@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, FileUp, Loader2, Save, Sparkles, Table2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, FileText, Loader2, Paperclip, Save, Sparkles, Table2, X } from "lucide-react";
 import type { DataDiscoveryRunSnapshot, DataDiscoveryUserEdits } from "@vdt-studio/data-harness";
 import type { SemanticLogicalType, SemanticMetricCandidate, SemanticTaxonomy } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
+import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { useVdtStudioStore } from "@/components/vdt/vdt-store";
 
 type WizardStatus = "idle" | "uploading" | "analyzing" | "ready" | "saving" | "applying" | "error";
@@ -53,8 +54,13 @@ interface ApplyResponse extends DiscoveryResponse {
 }
 
 export function DataImportWizard() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [open, setOpen] = useState(false);
   const project = useVdtStudioStore((state) => state.project);
   const selectedNodeId = useVdtStudioStore((state) => state.selectedNodeId);
+  const executionSettings = useVdtStudioStore((state) => state.executionSettings);
+  const runnerPairingToken = useVdtStudioStore((state) => state.runnerPairingToken);
   const stageDataDiscoveryChangeSet = useVdtStudioStore((state) => state.stageDataDiscoveryChangeSet);
   const [file, setFile] = useState<File | undefined>();
   const [status, setStatus] = useState<WizardStatus>("idle");
@@ -84,6 +90,25 @@ export function DataImportWizard() {
   );
   const lastEvent = snapshot?.events.at(-1);
 
+  useEffect(() => {
+    if (!open) return;
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+
+    function closeOnOutsideClick(event: MouseEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+
+    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+    };
+  }, [open]);
+
   async function analyzeFile() {
     if (!file || running) return;
     setStatus("uploading");
@@ -103,6 +128,7 @@ export function DataImportWizard() {
       }
 
       setStatus("analyzing");
+      const { providerId, providerConfig } = resolveExecutionSettings(executionSettings);
       const discoveryResponse = await fetch("/api/data/discovery/runs", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -110,11 +136,18 @@ export function DataImportWizard() {
           projectId: project.id,
           datasetId: uploadPayload.datasetId,
           entryContext: {
-            source: "setup_rail",
+            source: "agent_composer_attachment",
             cardName: selectedNode?.name,
-            targetNodeId: selectedNode?.id
+            targetNodeId: selectedNode?.id,
+            purpose: "incoming_kpis"
           },
-          project
+          project,
+          ...(providerId === "mock" ? {} : {
+            providerId,
+            providerConfig: providerId === "local_runner" && runnerPairingToken
+              ? { ...providerConfig, pairingToken: runnerPairingToken }
+              : providerConfig
+          })
         })
       });
       const discoveryPayload = await readJson<DiscoveryResponse>(discoveryResponse);
@@ -128,6 +161,19 @@ export function DataImportWizard() {
       setError(caught instanceof Error ? caught.message : "Data discovery failed.");
       setStatus("error");
     }
+  }
+
+  function chooseFile() {
+    if (file || snapshot || error) {
+      setOpen(true);
+      return;
+    }
+    fileInputRef.current?.click();
+  }
+
+  function replaceFile() {
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    fileInputRef.current?.click();
   }
 
   async function saveUserEdits(edits: DataDiscoveryUserEdits) {
@@ -234,58 +280,105 @@ export function DataImportWizard() {
   function saveTaxonomyCategory(taxonomy: SemanticTaxonomy, categoryId: string, name: string) {
     const categories = taxonomy.categories.map((category) => {
       if (category.id !== categoryId) return category;
-      const matchRules = category.matchRules.map((rule) => {
-        if (rule.type === "equals" || rule.type === "contains") {
-          return { ...rule, value: name };
-        }
-        return rule;
-      });
       return {
         ...category,
-        name,
-        matchRules
+        name
       };
     });
     saveTaxonomy(taxonomy.id, { categories });
   }
 
   return (
-    <section className="rounded-md border border-line bg-white p-3" data-testid="data-import-wizard">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-ink">Add from file</h3>
-          <p className="mt-1 text-xs leading-5 text-muted">{selectedNode ? `Target: ${selectedNode.name}` : "Target: root KPI"}</p>
-        </div>
-        <FileUp className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-      </div>
-
-      <label className="mt-3 block">
-        <span className="sr-only">Select data file</span>
-        <input
-          type="file"
-          accept=".csv,.tsv,.txt,.json,.ndjson,.xlsx,.xls,.parquet,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.apache.parquet"
-          className="block w-full text-xs text-muted file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-ink hover:file:bg-slate-200"
-          data-testid="data-import-file-input"
-          disabled={running}
-          onChange={(event) => {
-            setFile(event.target.files?.[0]);
-            setError(undefined);
-          }}
-        />
-      </label>
-
+    <div ref={containerRef} className="relative shrink-0" data-testid="data-import-attachment">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv,.tsv,.txt,.json,.ndjson,.xlsx,.xls,.parquet,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.apache.parquet"
+        className="sr-only"
+        data-testid="data-import-file-input"
+        disabled={running}
+        onChange={(event) => {
+          const nextFile = event.target.files?.[0];
+          if (!nextFile) return;
+          setFile(nextFile);
+          setSnapshot(undefined);
+          setStatus("idle");
+          setError(undefined);
+          setOpen(true);
+        }}
+      />
       <Button
         type="button"
-        className="mt-3 w-full"
-        size="sm"
-        variant="secondary"
-        icon={status === "uploading" || status === "analyzing" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-        disabled={!file || running}
-        data-testid="data-import-analyze"
-        onClick={() => void analyzeFile()}
-      >
-        {status === "uploading" ? "Uploading" : status === "analyzing" ? "Analyzing" : "Analyze file"}
-      </Button>
+        className="relative h-9 w-9"
+        size="icon"
+        variant={file ? "primary" : "secondary"}
+        icon={<Paperclip className="h-4 w-4" />}
+        aria-label="Attach data file to create incoming KPIs"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls="data-import-popover"
+        title="Attach data file to create incoming KPIs"
+        data-testid="data-import-attachment-button"
+        onClick={chooseFile}
+      />
+
+      {open ? (
+        <section
+          id="data-import-popover"
+          role="dialog"
+          aria-label="Create incoming KPIs from file"
+          className="absolute bottom-full left-0 z-50 mb-2 max-h-[min(42rem,72vh)] w-[min(28rem,calc(100vw-2rem))] overflow-y-auto rounded-md border border-line bg-white p-3 shadow-xl"
+          data-testid="data-import-wizard"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-ink">Create incoming KPIs from file</h3>
+              <p className="mt-1 text-xs leading-5 text-muted">
+                {selectedNode ? `Target: ${selectedNode.name}` : "Target: root KPI"}
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 shrink-0"
+              icon={<X className="h-4 w-4" />}
+              aria-label="Close file attachment"
+              onClick={() => setOpen(false)}
+            />
+          </div>
+
+          {file ? (
+            <div className="mt-3 flex items-center gap-2 rounded-md border border-line bg-slate-50 px-2.5 py-2">
+              <FileText className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.name}</span>
+              <button
+                type="button"
+                className="shrink-0 text-xs font-semibold text-accent hover:text-blue-700"
+                disabled={running}
+                onClick={replaceFile}
+              >
+                Replace
+              </button>
+            </div>
+          ) : (
+            <Button type="button" className="mt-3 w-full" size="sm" onClick={replaceFile}>
+              Select data file
+            </Button>
+          )}
+
+          <Button
+            type="button"
+            className="mt-3 w-full"
+            size="sm"
+            variant="primary"
+            icon={status === "uploading" || status === "analyzing" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            disabled={!file || running}
+            data-testid="data-import-analyze"
+            onClick={() => void analyzeFile()}
+          >
+            {status === "uploading" ? "Uploading" : status === "analyzing" ? "Analyzing" : "Analyze and create incoming KPIs"}
+          </Button>
 
       {error ? (
         <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700" data-testid="data-import-error">
@@ -473,11 +566,13 @@ export function DataImportWizard() {
             data-testid="data-import-stage-preview"
             onClick={() => void stageProposal()}
           >
-            {status === "applying" ? "Validating" : "Stage preview"}
+            {status === "applying" ? "Validating" : "Stage incoming KPI preview"}
           </Button>
         </div>
       ) : null}
-    </section>
+        </section>
+      ) : null}
+    </div>
   );
 }
 

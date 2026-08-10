@@ -84,7 +84,7 @@ describe("local runtime contract", () => {
             })
           ]),
           modelsByAgent: {
-            codex: ["gpt-5.5", "gpt-5.2"],
+            codex: ["gpt-5.5", "gpt-5.2", "gpt-5.3-codex"],
             "cursor-agent": ["auto", "gpt-5.5-high"]
           }
         }
@@ -104,7 +104,11 @@ describe("local runtime contract", () => {
 
     await expect(listRuntimeModels("codex_subscription", context)).resolves.toMatchObject({
       statusCode: 200,
-      payload: { ok: true, backendId: "codex_subscription", models: ["gpt-5.5", "gpt-5.2"] }
+      payload: {
+        ok: true,
+        backendId: "codex_subscription",
+        models: ["gpt-5.5", "gpt-5.2", "gpt-5.3-codex"]
+      }
     });
     await expect(listRuntimeModels("cursor_subscription", context)).resolves.toMatchObject({
       statusCode: 200,
@@ -176,7 +180,11 @@ describe("local runtime contract", () => {
 
       await expect(listRuntimeModels("codex_subscription", context)).resolves.toMatchObject({
         statusCode: 200,
-        payload: { ok: true, backendId: "codex_subscription", models: ["gpt-5.5", "gpt-5.2"] }
+        payload: {
+          ok: true,
+          backendId: "codex_subscription",
+          models: ["gpt-5.5", "gpt-5.2", "gpt-5.3-codex"]
+        }
       });
     } finally {
       await rm(tempDir, { recursive: true, force: true });

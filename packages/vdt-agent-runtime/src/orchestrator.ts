@@ -197,6 +197,43 @@ export class VdtAgentRuntime {
       return this.store.getSnapshot(runId);
     }
 
+    if (message.type === "deepen_node") {
+      const project = state.builder?.getProject() ?? state.draftProject ?? state.project ?? state.request.input.project;
+      if (!project?.graph.nodes.some((node) => node.id === message.selectedNodeId)) {
+        throw new Error(`Selected node "${message.selectedNodeId}" was not found in the current VDT.`);
+      }
+      this.store.updateRun(runId, {
+        status: "running",
+        phase: "planning_decomposition",
+        pendingQuestions: undefined,
+        retryableError: undefined,
+        request: {
+          ...state.request,
+          mode: "deepen_node",
+          input: {
+            ...state.request.input,
+            selectedNodeId: message.selectedNodeId
+          }
+        }
+      });
+      this.store.updatePublicStatus(
+        runId,
+        publicStatusForPhase("planning_decomposition", "Adding the next KPI level...")
+      );
+      this.emit(runId, {
+        type: "node_decomposition_requested",
+        phase: "planning_decomposition",
+        title: "Next KPI level requested",
+        message: "Started a single-level decomposition for the selected KPI.",
+        metadata: {
+          selectedNodeId: message.selectedNodeId,
+          mutationProposalCount: state.mutationProposals?.length ?? 0
+        }
+      });
+      await this.executeRun(runId, execution);
+      return this.store.getSnapshot(runId);
+    }
+
     if (message.type === "user_instruction") {
       const text = message.text.trim();
       this.emit(runId, {
@@ -646,7 +683,8 @@ export class VdtAgentRuntime {
         mustUseToolsForGraphChanges: true,
         cannotReturnFullGraph: true,
         cannotExposeHiddenReasoning: true,
-        mustUseFeedbackBeforeRetry: true
+        mustUseFeedbackBeforeRetry: true,
+        singleLayerDecompositionOnly: state.request.mode === "deepen_node"
       }
     };
   }
@@ -655,8 +693,12 @@ export class VdtAgentRuntime {
     const state = this.store.getState(runId);
     const project = state.project ?? state.draftProject ?? state.request.input.project;
     const rootNode = project?.graph.nodes.find((node) => node.id === project.rootNodeId);
+    const selectedNode = state.request.input.selectedNodeId
+      ? project?.graph.nodes.find((node) => node.id === state.request.input.selectedNodeId)
+      : undefined;
     const lastUserMessage = [...state.chatMessages].reverse().find((message) => message.role === "user");
     return {
+      requestMode: state.request.mode,
       brief: state.visibleContext.brief,
       briefReadiness: briefReadinessFromState(state),
       continuationPolicy: continuationPolicyFromState(state),
@@ -667,6 +709,14 @@ export class VdtAgentRuntime {
               title: project.name,
               rootNodeName: rootNode.name,
               ...(rootNode.unit ? { unit: rootNode.unit } : {})
+            }
+          }
+        : {}),
+      ...(selectedNode
+        ? {
+            selectedNode: {
+              id: selectedNode.id,
+              name: selectedNode.name
             }
           }
         : {}),
@@ -768,6 +818,25 @@ export class VdtAgentRuntime {
     const project = state.builder?.getProject() ?? state.draftProject;
     if (!project) throw new Error("Cannot finish: no draft project exists.");
 
+    const isSingleLayerDecomposition = state.request.mode === "deepen_node";
+    if (isSingleLayerDecomposition) {
+      const selectedNodeId = state.request.input.selectedNodeId;
+      const actionEvent = [...state.events]
+        .reverse()
+        .find((event) => event.type === "node_decomposition_requested");
+      const mutationProposalCount = typeof actionEvent?.metadata?.mutationProposalCount === "number"
+        ? actionEvent.metadata.mutationProposalCount
+        : 0;
+      const actionProposals = (state.mutationProposals ?? []).slice(mutationProposalCount);
+      const createdImmediateChild = Boolean(selectedNodeId) && actionProposals.some((proposal) =>
+        proposal.status === "applied" &&
+        proposal.changeSet.additions.some((addition) => addition.parentNodeId === selectedNodeId)
+      );
+      if (!createdImmediateChild) {
+        throw new Error("Cannot finish: the selected KPI does not have a newly created immediate child layer.");
+      }
+    }
+
     const validation = this.validateProjectForRun(runId, project);
     if (!validation.valid) {
       this.store.updateRun(runId, { phase: "repairing_graph", validationState: validation });
@@ -776,17 +845,25 @@ export class VdtAgentRuntime {
 
     const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
     if (!rootNode) throw new Error("Cannot finish: root node is missing.");
-    if (!rootNode.formula?.trim() && rootNode.baselineValue === undefined && rootNode.value === undefined) {
+    if (
+      !isSingleLayerDecomposition &&
+      !rootNode.formula?.trim() &&
+      rootNode.baselineValue === undefined &&
+      rootNode.value === undefined
+    ) {
       throw new Error("Cannot finish: root node has no formula or value.");
     }
 
     const calculation = calculateGraph(project);
     const calculationSummary = summarizeCalculation(calculation);
     this.store.updateRun(runId, { calculationState: calculationSummary });
-    if (calculation.errors.length > 0) {
+    if (!isSingleLayerDecomposition && calculation.errors.length > 0) {
       throw new Error(`Cannot finish: calculation has errors: ${calculation.errors.map((error) => error.message).join("; ")}`);
     }
-    if (calculation.rootValue === undefined || !Number.isFinite(calculation.rootValue)) {
+    if (
+      !isSingleLayerDecomposition &&
+      (calculation.rootValue === undefined || !Number.isFinite(calculation.rootValue))
+    ) {
       throw new Error("Cannot finish: root value is not finite.");
     }
 

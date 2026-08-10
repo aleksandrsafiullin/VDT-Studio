@@ -8,11 +8,9 @@ import {
   LOCAL_RUNNER_PRESET_CATALOG,
   applyGatewayPreset,
   applyLocalRunnerPreset,
-  getCliCatalogEntry,
   getCustomGatewayPresetForProtocol,
   getGatewayPreset,
   listPresetsForProtocol,
-  mergeCliModelOptions,
   persistedExecutionSettings
 } from "./execution-mode-catalog";
 
@@ -32,68 +30,41 @@ describe("execution-mode-catalog", () => {
       expect(entry.docsUrl.startsWith("http")).toBe(true);
       expect(entry.installHint.trim().length).toBeGreaterThan(0);
       expect(Array.isArray(entry.badges)).toBe(true);
-      expect(entry.suggestedModels.length).toBeGreaterThan(0);
+      expect(entry).not.toHaveProperty("suggestedModels");
     }
   });
 
-  it("includes suggested models for priority CLI agents", () => {
-    expect(getCliCatalogEntry("claude").suggestedModels).toContain("claude-opus-4-8");
-    expect(getCliCatalogEntry("codex").suggestedModels).toContain("gpt-5.5");
-    expect(getCliCatalogEntry("codex").suggestedModels).not.toContain("gpt-5.3-codex");
-    expect(getCliCatalogEntry("gemini").suggestedModels).toContain("gemini-3.5-flash");
-    expect(getCliCatalogEntry("cursor-agent").suggestedModels.length).toBeGreaterThan(0);
-    expect(getCliCatalogEntry("copilot").suggestedModels.length).toBeGreaterThan(0);
+  it("does not bundle model availability claims for subscription CLIs", () => {
+    for (const entry of CLI_CATALOG) {
+      expect(entry).not.toHaveProperty("suggestedModels");
+    }
   });
 
-  it("uses current default models and refreshed lists per BYOK preset", () => {
+  it("keeps routing defaults without bundling BYOK model catalogs", () => {
     const anthropic = getGatewayPreset("anthropic-claude");
     expect(anthropic.model).toBe("claude-sonnet-4-6");
-    expect(anthropic.models[0]).toBe("claude-sonnet-4-6");
-    expect(anthropic.models).toHaveLength(6);
-    expect(anthropic.models).not.toContain("claude-sonnet-4-20250514");
-    expect(anthropic.models).not.toContain("claude-opus-4-20250514");
+    expect(anthropic).not.toHaveProperty("models");
 
     const openai = getGatewayPreset("openai-default");
     expect(openai.model).toBe("gpt-5.5");
-    expect(openai.models[0]).toBe("gpt-5.5");
-    expect(openai.models.length).toBeGreaterThanOrEqual(15);
-    expect(openai.models).toContain("gpt-5.2");
-    expect(openai.models).toContain("gpt-5.3-codex");
+    expect(openai).not.toHaveProperty("models");
 
     const azure = getGatewayPreset("azure-default");
     expect(azure.model).toBe("gpt-5.4-mini");
     expect(azure.deployment).toBe("gpt-5.4-mini");
-    expect(azure.models).toEqual([
-      "gpt-5.4-mini",
-      "gpt-5.2",
-      "gpt-5-mini",
-      "gpt-4.1",
-      "gpt-4.1-mini",
-      "o4-mini",
-      "o3"
-    ]);
+    expect(azure).not.toHaveProperty("models");
 
     const gemini = getGatewayPreset("gemini-default");
     expect(gemini.model).toBe("gemini-3.5-flash");
-    expect(gemini.models).toContain("gemini-2.5-flash-lite");
-    expect(gemini.models).toContain("gemini-3.1-pro-preview");
-    expect(gemini.models).not.toContain("gemini-2.0-flash");
 
     const deepseek = getGatewayPreset("deepseek-anthropic");
     expect(deepseek.model).toBe("deepseek-v4-pro");
-    expect(deepseek.models).toEqual(["deepseek-v4-pro", "deepseek-v4-flash"]);
-    expect(deepseek.models).not.toContain("deepseek-chat");
 
     const minimax = getGatewayPreset("minimax-anthropic");
     expect(minimax.model).toBe("MiniMax-M3");
-    expect(minimax.models[0]).toBe("MiniMax-M3");
-    expect(minimax.models).toHaveLength(8);
 
     const aihubmix = getGatewayPreset("aihubmix");
     expect(aihubmix.model).toBe("gpt-5.4-mini");
-    expect(aihubmix.models).toContain("claude-sonnet-4-6");
-    expect(aihubmix.models).toContain("deepseek-v4-pro");
-    expect(aihubmix.models).not.toContain("deepseek-chat");
 
     const alibaba = getGatewayPreset("alibaba-coding-plan");
     expect(alibaba.protocol).toBe("openai");
@@ -101,17 +72,8 @@ describe("execution-mode-catalog", () => {
     expect(alibaba.credentialMode).toBe("session_only");
     expect(alibaba.releaseStatus).toBe("beta");
     expect(alibaba.model).toBe("qwen3-coder-plus");
-    expect(alibaba.models).toEqual(["qwen3-coder-plus", "qwen3-coder-next"]);
+    expect(alibaba).not.toHaveProperty("models");
     expect(alibaba.apiKeyUrl).toMatch(/^https:\/\//);
-  });
-
-  it("merges suggested and discovered models with deduplication", () => {
-    expect(
-      mergeCliModelOptions(
-        ["claude-sonnet-4-5", "claude-opus-4-5"],
-        ["claude-sonnet-4-5", "claude-haiku-4-5"]
-      )
-    ).toEqual(["claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5"]);
   });
 
   it("includes anthropic vendor presets and gateway presets", () => {
@@ -136,7 +98,7 @@ describe("execution-mode-catalog", () => {
 
     for (const preset of BYOK_GATEWAY_PRESETS) {
       expect(preset.label.trim().length).toBeGreaterThan(0);
-      expect(preset.models.length).toBeGreaterThan(0);
+      expect(preset).not.toHaveProperty("models");
       if (preset.id !== "mock") {
         expect(preset.model.trim().length).toBeGreaterThan(0);
       }
@@ -257,7 +219,6 @@ describe("execution-mode-catalog", () => {
       gateway: "none",
       baseUrl: "https://api.anthropic.com",
       model: "claude-sonnet-4-6",
-      models: ["claude-sonnet-4-6"],
       anthropicVersion: "2023-06-01"
     });
 
@@ -268,7 +229,6 @@ describe("execution-mode-catalog", () => {
       endpoint: "https://your-resource.openai.azure.com",
       deployment: "gpt-5.4-mini",
       model: "gpt-5.4-mini",
-      models: ["gpt-5.4-mini"],
       apiVersion: "2024-10-21"
     });
 
@@ -277,8 +237,7 @@ describe("execution-mode-catalog", () => {
       protocol: "gemini",
       gateway: "none",
       baseUrl: "https://generativelanguage.googleapis.com",
-      model: "gemini-3.5-flash",
-      models: ["gemini-3.5-flash"]
+      model: "gemini-3.5-flash"
     });
   });
 

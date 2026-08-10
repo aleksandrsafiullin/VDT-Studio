@@ -66,6 +66,27 @@ describe("Gate R2 Sequence 3 production migration", () => {
     60_000
   );
 
+  it("allows post-migration agent runs without changing frozen adoption evidence", () => {
+    const fixture = createV2Fixture();
+    runProduction(fixture);
+    const migrationEvidence = readSequence3Evidence(fixture.databasePath);
+
+    insertPostMigrationRun(fixture.databasePath);
+    expect(readRunAndAdoptionCounts(fixture.databasePath)).toEqual({
+      agentRuns: 1,
+      adoptions: 0
+    });
+
+    runProduction(fixture);
+    expect(readSequence3Evidence(fixture.databasePath)).toEqual(
+      migrationEvidence
+    );
+    expect(readRunAndAdoptionCounts(fixture.databasePath)).toEqual({
+      agentRuns: 1,
+      adoptions: 0
+    });
+  });
+
   it("adopts populated legacy rows child-first with deterministic hashes and row contexts", () => {
     const first = createV2Fixture();
     const second = createV2Fixture();
@@ -388,6 +409,56 @@ function populateLegacyRuns(databasePath: string, invalid = false): void {
                 20, 30, NULL)
       `).run();
     }
+  } finally {
+    db.close();
+  }
+}
+
+function insertPostMigrationRun(databasePath: string): void {
+  const db = new DatabaseSync(databasePath);
+  try {
+    db.exec("PRAGMA foreign_keys = ON;");
+    db.prepare(`
+      INSERT INTO projects
+      (id, name, description, industry, metadata_json, created_at, updated_at)
+      VALUES ('project_post_migration', 'Post migration', NULL, NULL, NULL,
+              40, 40)
+    `).run();
+    db.prepare(`
+      INSERT INTO project_runtime_states
+      (project_id, schema_version, runtime_generation, generation_version,
+       migration_state, write_state, updated_at)
+      VALUES ('project_post_migration', 'project_runtime_state.v1', 'v1', 1,
+              'shadow_ready', 'enabled', 40)
+    `).run();
+    db.prepare(`
+      INSERT INTO agent_runs
+      (id, project_id, vdt_id, conversation_id, status, phase, request_json,
+       public_snapshot_json, internal_state_json, created_at, updated_at,
+       completed_at)
+      VALUES ('run_post_migration', 'project_post_migration', NULL, NULL,
+              'failed', 'reporting', '{}', NULL, NULL, 40, 50, 50)
+    `).run();
+  } finally {
+    db.close();
+  }
+}
+
+function readRunAndAdoptionCounts(databasePath: string): {
+  agentRuns: number;
+  adoptions: number;
+} {
+  const db = new DatabaseSync(databasePath);
+  try {
+    const row = db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM agent_runs) AS agent_runs,
+        (SELECT COUNT(*) FROM legacy_agent_run_adoptions_v1) AS adoptions
+    `).get() as { agent_runs: number; adoptions: number };
+    return {
+      agentRuns: Number(row.agent_runs),
+      adoptions: Number(row.adoptions)
+    };
   } finally {
     db.close();
   }

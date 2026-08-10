@@ -50,6 +50,7 @@ export type VdtAgentEventType =
   | "clarifying_questions"
   | "user_answer_received"
   | "user_instruction"
+  | "node_decomposition_requested"
   | "assistant_message"
   | "plan_proposed"
   | "tool_call_started"
@@ -494,6 +495,7 @@ export interface AgentDecisionContext {
     cannotReturnFullGraph: true;
     cannotExposeHiddenReasoning: true;
     mustUseFeedbackBeforeRetry: true;
+    singleLayerDecompositionOnly: boolean;
   };
 }
 
@@ -513,6 +515,10 @@ export type AgentUserMessage =
       text: string;
       selectedNodeId?: string | undefined;
       researchMode?: ResearchMode | undefined;
+    }
+  | {
+      type: "deepen_node";
+      selectedNodeId: string;
     }
   | {
       type: "approval";

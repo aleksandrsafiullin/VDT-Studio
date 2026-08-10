@@ -23,6 +23,8 @@ The schema registry contains 18 task contracts. Seventeen are exposed product ta
 
 `pnpm phase7:verify` checks task/schema/manifest alignment, route ownership, README exposure and mock coverage.
 
+The agent-composer file attachment passes the configured provider into the data-discovery prototype. In development/desktop, unpaired `local_runner` requests use the managed local runtime; paired runner and API/BYOK requests retain their existing provider boundary. This does not merge the data loop with the main VDT agent skills or research loop.
+
 ## Agent Runtime
 
 `packages/vdt-agent-runtime` implements:
@@ -34,6 +36,8 @@ The schema registry contains 18 task contracts. Seventeen are exposed product ta
 5. structured tool result/error feedback;
 6. mutation preview/policy, graph validation and calculation-aware finish;
 7. persisted snapshots, SSE events and cancellation.
+
+The node-card **Add incoming KPIs with AI** control uses the runtime's structured `deepen_node` action rather than a `user_instruction`. The action adds new nodes only as immediate children of the selected KPI, restricts formula/node updates to that selected KPI, rejects deletions and deeper mutations, and may finish with unknown values because this semi-manual structural step is intentionally narrower than full calculable-VDT generation.
 
 The default maximum is bounded by `maxSteps`; provider errors can pause a run. `researchMode` is `auto`, `on` or `off`. `off` rejects `research.search_web` at the tool boundary before any provider call.
 

@@ -46,6 +46,7 @@ export const agentEventTypeSchema = z.enum([
   "clarifying_questions",
   "user_answer_received",
   "user_instruction",
+  "node_decomposition_requested",
   "assistant_message",
   "plan_proposed",
   "tool_call_started",
