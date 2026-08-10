@@ -1,4 +1,4 @@
-import { openVdtDatabase } from "./index";
+import { openBootstrapVdtDatabaseForTests } from "./sqlite-test-support";
 import type { StorageMigrationFaultPoint } from "./types";
 
 const [projectRoot, dataDir, faultPointText] = process.argv.slice(2);
@@ -17,7 +17,7 @@ if (!migrationFaultPoints.has(faultPointText as StorageMigrationFaultPoint)) {
   throw new Error(`Unknown migration fault point: ${faultPointText}.`);
 }
 const faultPoint = faultPointText as StorageMigrationFaultPoint;
-openVdtDatabase(projectRoot, {
+openBootstrapVdtDatabaseForTests(projectRoot, {
   dataDir,
   migrationLeaseMs: 0,
   migrationFaultInjector(point) {

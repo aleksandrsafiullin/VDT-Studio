@@ -44,6 +44,21 @@ Independent Node 24 evidence passed 182/182 W0.1 tests: storage 59/59 with 100-p
 
 This closes F-01 and W0.1 only. Wave 0 remains in progress; W0.2–W0.5 are open, V2 flags remain OFF, and real Windows Node 24 durability/capability evidence is absent.
 
+## Sequence 3 Local Migration Core
+
+Sequence 3 is production-wired on supported local platforms and advances an
+exact version-2 database to `user_version=3`. Production verifies the manifest,
+SQL, WASM, ABI, static module profile and frozen vector identity/checksum, then
+transforms actual database rows without loading the 121,310,783-byte golden
+registry. The 55 ABI and 204 host vectors run only in explicit offline tests.
+
+Local Node `24.15.0` checks on 2026-08-10 passed storage typecheck, focused
+assets/transform/migration tests (`11/11`) and the focused legacy migration
+regression (`62/62`). This is not release evidence: native Windows durability,
+the complete platform crash matrix, package/bundle equality and transport for
+the over-100-MiB offline artifact remain unverified. Production/release remains
+`NO-GO` and all V2 feature flags remain OFF.
+
 ## P0 Correctness Blockers
 
 ### Silent partial data analysis

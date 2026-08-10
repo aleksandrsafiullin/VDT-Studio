@@ -9,14 +9,13 @@
 > The separate exact 13-file inert artifact freeze now has independent
 > artifact-freeze `GO` with zero blockers; see
 > [`sequence-3-artifact-freeze-go-2026-07-31`](../implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-artifact-freeze-go-2026-07-31).
-> The next and only authorized package
-> is Gate R2 implementation and independent review. Gate R2 is not yet
-> implemented or accepted; Sequence 3 is not production-wired; W0.2 runtime
-> remains incomplete and unauthorized; all V2 flags remain OFF,
-> Windows durability remains unverified, and production/release remains
-> `NO-GO`. Fresh build and no-wiring proof has zero frozen-artifact matches.
-> No executable W0.2 schema, sequence-3 migration or runtime registration is
-> implemented by this document.
+> Sequence 3 is now production-wired locally with the golden-vector registry
+> restricted to explicit offline certification. W0.2 agent runtime remains
+> incomplete and unauthorized; all V2 flags remain OFF. Windows durability,
+> native crash evidence, package equality and large-file transport remain
+> unverified, and production/release remains `NO-GO`. The earlier build and
+> no-wiring proof remains historical artifact-freeze evidence. This document
+> itself does not implement executable runtime behavior.
 >
 > **Authority:** [`ADR-003`](../adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md),
 > [`ADR-004`](../adr/ADR-004-atomic-revision-commit-and-legacy-migration-adoption.md),
@@ -1062,9 +1061,8 @@ This section is the exact accepted design contract for ADR-005. Its independent
 SQL-only code has its separate independent code-only `GO`. The three Sequence 3
 byte-level contracts are accepted with independent contract-only `GO` and zero
 blockers. The separate exact 13-file inert artifact freeze has independent
-artifact-freeze `GO` with zero blockers. Gate R2 implementation and independent
-review is the next and only authorized package. Gate R2 is not yet implemented
-or accepted; Sequence 3 is not production-wired; W0.2 runtime remains
+artifact-freeze `GO` with zero blockers. Sequence 3 is now production-wired
+locally with offline-only vector certification. W0.2 agent runtime remains
 incomplete and unauthorized.
 
 ### Bounded-turn execution model
@@ -4159,21 +4157,19 @@ The transform registry is closed: its only initial entry is exact key
 resource.
 No manifest path, dynamic callback, package lookup or caller-provided code is
 accepted. Before opening the sequence-3 write transaction, the runner loads
-the executable artifact into one immutable byte buffer, verifies its byte
-length/checksum and the contract/vector bytes, parses the WebAssembly module
-and requires an empty import section (no WASI/host imports), one bounded
+the executable artifact into one immutable byte buffer, verifies the exact
+SQL/module/ABI byte lengths/checksums, validates the ABI and manifest graph,
+and requires the manifest's vector length/checksum to equal compiled expected
+constants without opening the vector artifact. It parses the WebAssembly
+module and requires an empty import section (no WASI/host imports), one bounded
 exported memory and exactly the ABI exports enumerated by the contract. It
 instantiates that verified byte buffer directly—never a dynamic import or a
-second path/module instance—and executes the frozen golden vectors with
-bounded inputs before DDL. A static WASM validation gate rejects unknown
-sections/imports/exports, floating host bindings and ABI drift. Missing,
-unknown, extra or drifted code/contract/vector bytes block the migration
-before DDL. That is intentionally outside Gate R1: the current generalized
-runner remains SQL-only and must not add a transform hook or production
-sequence-3 entry. Exact artifact bytes are frozen only after Gate-R1 review;
-Gate R2 then implements and independently reviews this closed registry and
-same-transaction transform contract. This target is not a current
-implementation claim. The Gate-R2 runner then uses the same fenced
+second path/module instance. A static WASM validation gate rejects unknown
+sections/imports/exports, floating host bindings and ABI drift. The frozen 55
+ABI and 204 host vectors are executed only by explicit offline certification
+tests. Missing, unknown or drifted runtime bytes and identities block the
+migration before DDL. That is intentionally outside Gate R1. The Gate-R2 runner
+then uses the same fenced
 `DatabaseSync` connection and one transaction to:
 
 1. require `PRAGMA encoding` is exactly `UTF-8`, then execute the exact
@@ -4444,6 +4440,6 @@ migration/restart tests and production-path integration before claiming the
 corresponding capability. Contract acceptance and Gate R1 code-only `GO` close
 only those gates. The three byte-level contracts have contract-only `GO`; the
 separate exact 13-file inert artifact freeze has independent artifact-freeze
-`GO` with zero blockers. Gate R2 implementation and independent review is next.
-Gate R2 is not yet implemented or accepted; Sequence 3 is not production-wired;
-W0.2 runtime remains incomplete and unauthorized.
+`GO` with zero blockers. Sequence 3 is now production-wired locally with
+offline-only vector certification. W0.2 agent runtime remains incomplete and
+unauthorized.

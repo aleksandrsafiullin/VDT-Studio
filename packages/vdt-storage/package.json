@@ -11,6 +11,6 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --root ../.. packages/vdt-storage/src"
+    "test": "vitest run --root ../.. packages/vdt-storage/src --maxWorkers=1 --no-file-parallelism"
   }
 }

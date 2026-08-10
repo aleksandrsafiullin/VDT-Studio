@@ -59,15 +59,15 @@ Evidence: [W0.1](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#w0-1-go-2026-07-
 
 Gate R1 SQL-only code status: **independent code-only `GO` with zero blockers**.
 
-Next and only authorized package: **Gate R2 implementation and independent
-review**. Gate R2 is not yet implemented or accepted; no W0.2 runtime task is
-complete; Sequence 3 is not production-wired; W0.2 runtime remains incomplete
-and unauthorized; all V2 flags remain OFF; Windows durability is unverified;
-production/release remains `NO-GO`.
-Gate R2 delivery also remains `STOP`: the canonical 121,310,783-byte golden
-vectors exceed GitHub's normal 100 MiB limit and this checkout has no
-`.gitattributes`/Git LFS transport decision. Do not compress, omit or regenerate
-the frozen file.
+Sequence 3 is production-wired locally. Runtime migration verifies the exact
+manifest, SQL, WASM and ABI plus the frozen vector identity/checksum without
+opening the 121,310,783-byte registry; the 55 ABI and 204 host vectors remain
+offline certification evidence. W0.2 agent runtime remains incomplete and
+unauthorized, and all V2 flags remain OFF. Windows durability, native crash evidence and source-to-
+bundle equality remain unverified, so production/release remains `NO-GO`.
+Large-file delivery also remains `STOP`: the offline vector artifact exceeds
+GitHub's normal 100 MiB limit and this checkout has no `.gitattributes`/Git LFS
+transport decision. Do not compress, omit or regenerate the frozen file.
 
 Exit: concurrency, crash, large-file and security tests pass without lost revisions or silent partial calculations.
 

@@ -21,12 +21,12 @@ The design contract and Gate R1 SQL-only code have their separate independent
 `GO` decisions. The three Sequence 3 byte-level contracts are accepted with
 independent contract-only `GO` and zero blockers; this accepts only their
 reviewed bytes. The separate exact 13-file inert artifact freeze has
-independent artifact-freeze `GO` with zero blockers. The next and only
-authorized package is Gate R2 implementation and independent review. Gate R2
-is not yet implemented or accepted; Sequence 3 is not production-wired; W0.2
-runtime remains incomplete and unauthorized; all V2 flags remain OFF; Windows
-durability remains unverified; production/release remains `NO-GO`.
-Fresh build and no-wiring proof has zero frozen-artifact matches.
+independent artifact-freeze `GO` with zero blockers. Sequence 3 is now
+production-wired locally with the golden-vector registry restricted to offline
+certification. W0.2 agent runtime remains incomplete and unauthorized; all V2
+flags remain OFF; Windows durability, native crash evidence, package equality
+and large-file transport remain unverified; production/release remains
+`NO-GO`. The earlier build/no-wiring proof remains historical freeze evidence.
 
 ## Context
 
@@ -543,9 +543,11 @@ the SQL-only generalized runner:
 Gate R1 must not add a transform hook, closed registry, production sequence-3
 manifest entry, SQL or artifact. Gate R2 alone must prove that the frozen
 registry accepts only the reviewed transform identity, verifies the exact
-module/contract/vector bytes before DDL, and executes that transform plus SQL,
+module/contract bytes before DDL, binds the vector checksum through the trusted
+manifest and compiled constants, and executes that transform plus SQL,
 adoptions, application evidence and user-version advance on one fenced SQLite
-transaction.
+transaction. The full vector file is reserved for explicit offline
+certification.
 
 The additive tables and indexes for every coordinator, execution basis,
 provider/tool receipt, effect adapter, question/answer, manual operation,
@@ -573,13 +575,13 @@ The Gate-R1 SQL-only runner cannot manufacture those hashes and is not required
 or permitted to do so. The accepted-design
 `MigrationManifestV2` therefore preserves sequences 1/2 through their exact V1
 entry projection and old prefix hash, while sequence 3 alone binds the closed
-`legacy-agent-run-adoption-v1` transform. The runner verifies and executes the
-same immutable module bytes and golden vectors before DDL, then reads JSON TEXT
-as raw BLOB under `PRAGMA encoding=UTF-8`, fatal-decodes for validation, hashes
-the original bytes, and records `MigrationTransformApplicationV1` in the same
-transaction as SQL, adoptions, applied migration and user version. This is a
-Gate-R2 implementation/review target after the exact storage freeze, not Gate-R1
-or current implementation authority.
+`legacy-agent-run-adoption-v1` transform. The runner verifies the immutable
+SQL/module/ABI bytes and manifest graph before DDL, validates the frozen vector
+identity without opening the vector file, then reads JSON TEXT as raw BLOB under
+`PRAGMA encoding=UTF-8`, fatal-decodes for validation, hashes the original bytes,
+and records `MigrationTransformApplicationV1` in the same transaction as SQL,
+adoptions, applied migration and user version. The 55 ABI and 204 host vectors
+remain explicit offline certification evidence.
 
 ## Rollback
 

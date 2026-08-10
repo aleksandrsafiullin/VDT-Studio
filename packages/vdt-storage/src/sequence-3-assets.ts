@@ -45,7 +45,8 @@ const EXPECTED = Object.freeze({
   vectors: {
     basename: "legacy-agent-run-adoption-v1.golden-vectors.json",
     length: 121_310_783,
-    raw: "sha256:0cea8ae8156c3885219d11d496b686ab1a5420e01f3ebc74fa579be8eabe6467"
+    raw: "sha256:0cea8ae8156c3885219d11d496b686ab1a5420e01f3ebc74fa579be8eabe6467",
+    framed: "sha256:a4e95819f132dee113020b32b9cafff7ff96f18268dc286750a164523b462202"
   }
 } as const);
 
@@ -84,23 +85,70 @@ export interface Sequence3GoldenVectorRegistry {
   readonly vectorResultSetHash: Sha256;
 }
 
-interface RetainedAssets {
-  readonly public: VerifiedSequence3Assets;
-  readonly vectors: Sequence3GoldenVectorRegistry;
-}
-
-let retained: RetainedAssets | undefined;
+let retainedRuntime: VerifiedSequence3Assets | undefined;
+let retainedVectors: Sequence3GoldenVectorRegistry | undefined;
+const assetReadCounts: Record<keyof typeof ASSET_URLS, number> = {
+  manifest: 0,
+  sql: 0,
+  module: 0,
+  abi: 0,
+  vectors: 0
+};
 
 export function loadVerifiedSequence3Assets(): VerifiedSequence3Assets {
-  return loadRetained().public;
+  if (retainedRuntime) return retainedRuntime;
+  const manifestBytes = readExact("manifest");
+  const sqlBytes = readExact("sql");
+  const moduleBytes = readExact("module");
+  const abiBytes = readExact("abi");
+
+  const manifest = parseCanonicalJson(manifestBytes, true, "manifest");
+  const abi = parseCanonicalJson(abiBytes, false, "ABI contract");
+  validateManifest(manifest, sqlBytes, moduleBytes, abiBytes);
+  validateAbiIdentity(abi);
+  const compiled = validateStaticModule(moduleBytes);
+
+  const sequence3 = asRecord(asArray(manifest.entries, "manifest.entries")[2], "entry");
+  const entry = asRecord(sequence3.entry, "entry.entry");
+  const transform = asRecord(sequence3.transform, "entry.transform");
+  const sqlText = new TextDecoder("utf-8", { fatal: true }).decode(sqlBytes);
+  retainedRuntime = Object.freeze({
+    identity: TRANSFORM_IDENTITY,
+    sqlText,
+    module: compiled,
+    manifestHash: manifest.manifestHash as Sha256,
+    sqlChecksum: entry.sqlChecksum as Sha256,
+    moduleChecksum: transform.moduleChecksum as Sha256,
+    contractChecksum: transform.contractChecksum as Sha256,
+    goldenVectorsChecksum: transform.goldenVectorsChecksum as Sha256,
+    postconditionSchemaHash: entry.postconditionSchemaHash as Sha256
+  });
+  return retainedRuntime;
 }
 
 /**
- * Production preflight input. The transform host consumes every retained host
- * vector before a runner may proceed to backup or DDL.
+ * Explicit offline certification input. Production migration admission does
+ * not call this loader or open the golden-vector artifact.
  */
 export function loadSequence3TransformPreflightRegistry(): Sequence3GoldenVectorRegistry {
-  return loadRetained().vectors;
+  if (retainedVectors) return retainedVectors;
+  const runtime = loadVerifiedSequence3Assets();
+  const vectorBytes = readExact("vectors");
+  if (
+    hashFramed(
+      "vdt-studio/migration-transform-golden-vectors",
+      "migration_transform_golden_vectors_hash.v1",
+      TRANSFORM_IDENTITY as unknown as JsonValue,
+      vectorBytes
+    ) !== runtime.goldenVectorsChecksum
+  ) {
+    throw new Error("sequence3_manifest_asset_checksum_invalid");
+  }
+  const vectors = parseCanonicalJson(vectorBytes, false, "golden vectors");
+  const certified = validateVectorRegistry(vectors);
+  executeAbiVectors(runtime.module, certified.abiVectors);
+  retainedVectors = certified;
+  return retainedVectors;
 }
 
 /** Test-only seam. It is intentionally absent from the package entrypoint. */
@@ -108,42 +156,11 @@ export function __loadSequence3GoldenVectorsForTests(): Sequence3GoldenVectorReg
   return loadSequence3TransformPreflightRegistry();
 }
 
-function loadRetained(): RetainedAssets {
-  if (retained) return retained;
-  const manifestBytes = readExact("manifest");
-  const sqlBytes = readExact("sql");
-  const moduleBytes = readExact("module");
-  const abiBytes = readExact("abi");
-  const vectorBytes = readExact("vectors");
-
-  const manifest = parseCanonicalJson(manifestBytes, true, "manifest");
-  const abi = parseCanonicalJson(abiBytes, false, "ABI contract");
-  const vectors = parseCanonicalJson(vectorBytes, false, "golden vectors");
-  validateManifest(manifest, sqlBytes, moduleBytes, abiBytes, vectorBytes);
-  validateAbiIdentity(abi);
-  const registry = validateVectorRegistry(vectors);
-  const compiled = validateStaticModule(moduleBytes);
-  executeAbiVectors(compiled, registry.abiVectors);
-
-  const sequence3 = asRecord(asArray(manifest.entries, "manifest.entries")[2], "entry");
-  const entry = asRecord(sequence3.entry, "entry.entry");
-  const transform = asRecord(sequence3.transform, "entry.transform");
-  const sqlText = new TextDecoder("utf-8", { fatal: true }).decode(sqlBytes);
-  retained = Object.freeze({
-    public: Object.freeze({
-      identity: TRANSFORM_IDENTITY,
-      sqlText,
-      module: compiled,
-      manifestHash: manifest.manifestHash as Sha256,
-      sqlChecksum: entry.sqlChecksum as Sha256,
-      moduleChecksum: transform.moduleChecksum as Sha256,
-      contractChecksum: transform.contractChecksum as Sha256,
-      goldenVectorsChecksum: transform.goldenVectorsChecksum as Sha256,
-      postconditionSchemaHash: entry.postconditionSchemaHash as Sha256
-    }),
-    vectors: registry
-  });
-  return retained;
+/** Test-only observability seam; it is intentionally absent from the package entrypoint. */
+export function __sequence3AssetReadCountsForTests(): Readonly<
+  Record<keyof typeof ASSET_URLS, number>
+> {
+  return Object.freeze({ ...assetReadCounts });
 }
 
 function bundledAssetNamePattern(expectedBasename: string): RegExp {
@@ -216,6 +233,7 @@ function resolveSequence3AssetPath(
 }
 
 function readExact(kind: keyof typeof ASSET_URLS): Buffer {
+  assetReadCounts[kind] += 1;
   const url = ASSET_URLS[kind];
   const expected = EXPECTED[kind];
   const resolvedPath = resolveSequence3AssetPath(kind, url, expected.basename);
@@ -384,8 +402,7 @@ function validateManifest(
   manifest: Record<string, JsonValue>,
   sql: Buffer,
   module: Buffer,
-  abi: Buffer,
-  vectors: Buffer
+  abi: Buffer
 ): void {
   const historicalEntries = [
     {
@@ -494,7 +511,8 @@ function validateManifest(
     transform.phase !== "after_sql_before_application_record" ||
     transform.moduleByteLength !== module.length ||
     transform.contractByteLength !== abi.length ||
-    transform.goldenVectorsByteLength !== vectors.length
+    transform.goldenVectorsByteLength !== EXPECTED.vectors.length ||
+    transform.goldenVectorsChecksum !== EXPECTED.vectors.framed
   ) throw new Error("sequence3_manifest_graph_invalid");
   const sqlChecksum = hashFramed(
     "vdt-studio/sql-migration",
@@ -511,8 +529,7 @@ function validateManifest(
   );
   for (const [actual, domain, schema, body] of [
     [transform.moduleChecksum, "vdt-studio/migration-transform-module", "migration_transform_module_hash.v1", module],
-    [transform.contractChecksum, "vdt-studio/migration-transform-contract", "migration_transform_contract_hash.v1", abi],
-    [transform.goldenVectorsChecksum, "vdt-studio/migration-transform-golden-vectors", "migration_transform_golden_vectors_hash.v1", vectors]
+    [transform.contractChecksum, "vdt-studio/migration-transform-contract", "migration_transform_contract_hash.v1", abi]
   ] as const) {
     if (actual !== hashFramed(domain, schema, TRANSFORM_IDENTITY as unknown as JsonValue, body)) {
       throw new Error("sequence3_manifest_asset_checksum_invalid");

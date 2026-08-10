@@ -17,7 +17,6 @@ import {
   type VerifiedSequence3Assets
 } from "./sequence-3-assets";
 import {
-  preflightSequence3TransformHost,
   validateLegacyAgentRunsForSequence3,
   type Sequence3MigrationIdentity,
   type Sequence3TransformAccepted
@@ -407,7 +406,6 @@ function runStorageMigrationsForPlatform(
   let plan: ValidatedStorageProductionPlanV2;
   try {
     const assets = loadVerifiedSequence3Assets();
-    preflightSequence3TransformHost();
     plan = productionMigrationPlan(assets);
   } catch (error) {
     if (
@@ -418,7 +416,7 @@ function runStorageMigrationsForPlatform(
     }
     persistSequence3PreflightChecksumBlockWhenSafe(db, dataDir);
     throw migrationRecoveryRequired(
-      "Sequence 3 frozen artifact preflight failed."
+      "Sequence 3 runtime artifact verification failed."
     );
   }
   try {
@@ -459,6 +457,24 @@ export function __runStorageMigrationsWithPlanForTests(
       dataDir,
       options,
       plan as ValidatedStorageMigrationTestPlan
+    );
+  } catch (error) {
+    throw normalizeMigrationBoundaryError(error);
+  }
+}
+
+/** Test-only immutable bootstrap seam; it is intentionally absent from the package entrypoint. */
+export function __runBootstrapStorageMigrationsForTests(
+  db: DatabaseSync,
+  dataDir: string,
+  options: StorageMigrationOptions
+): void {
+  try {
+    runStorageMigrationsWithPlan(
+      db,
+      dataDir,
+      options,
+      BOOTSTRAP_MIGRATION_PLAN
     );
   } catch (error) {
     throw normalizeMigrationBoundaryError(error);

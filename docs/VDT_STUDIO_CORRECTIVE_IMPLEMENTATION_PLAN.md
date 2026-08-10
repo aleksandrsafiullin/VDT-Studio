@@ -2,7 +2,7 @@
 
 **Статус документа:** approved direction; Gate A complete with independent `GO`
 
-**Статус реализации:** Gate A complete; W0.1 complete with independent implementation/test `GO`; W0.2 design contract accepted with independent contract-only `GO`; Gate R1 SQL-only code accepted with independent code-only `GO`; three Sequence 3 byte-level contracts and the exact 13-file inert artifact freeze accepted with independent `GO`; Gate R2 is the next and only authorized implementation/review package and is not yet implemented or accepted; Wave 0 remains in progress and W0.2 runtime plus W0.3–W0.5 remain open
+**Статус реализации:** Gate A complete; W0.1 complete with independent implementation/test `GO`; W0.2 design contract accepted with independent contract-only `GO`; Gate R1 SQL-only code accepted with independent code-only `GO`; three Sequence 3 byte-level contracts and the exact 13-file inert artifact freeze accepted with independent `GO`; Sequence 3 is production-wired locally with golden vectors restricted to offline certification; Windows/native/packaging evidence remains open; Wave 0 remains in progress and W0.2 agent runtime plus W0.3–W0.5 remain open
 
 **Версия:** 1.0
 
@@ -808,11 +808,12 @@ artifact-freeze `GO` with zero blockers.** The exact 13-file inert scope,
 complete hash graph, fresh build/no-wiring proof and retained residuals are
 recorded at
 [`sequence-3-artifact-freeze-go-2026-07-31`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-artifact-freeze-go-2026-07-31).
-The next and only authorized package is Gate R2 implementation and independent
-review. Gate R2 is not yet implemented or accepted; Sequence 3 is not
-production-wired; W0.2 runtime remains incomplete and unauthorized; all V2
-flags remain OFF; Windows durability is unverified; production/release remains
-`NO-GO`.
+Sequence 3 is production-wired locally. Production verifies its exact runtime
+artifacts and the frozen vector identity without loading the 121,310,783-byte
+registry; full vector execution is offline certification only. W0.2 agent
+runtime remains incomplete and unauthorized; all V2 flags remain OFF; Windows
+durability, native crash evidence, package equality and large-file transport
+remain unverified; production/release remains `NO-GO`.
 
 Поверхности:
 
@@ -1915,7 +1916,7 @@ Next unblocked dependency:
 | Stage | Status | Exit evidence |
 |---|---|---|
 | Gate A — preflight/contract freeze | complete — independent `GO` | [`VDT_CORRECTIVE_EXECUTION_LOG.md`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#gate-a-2026-07-23) |
-| Wave 0 — safety foundation | in progress; W0.1 complete — independent implementation/test `GO`; W0.2 design contract accepted — independent contract-only `GO`; Gate R1 SQL-only code accepted — independent code-only `GO`; exact 13-file Sequence 3 artifact freeze accepted — independent artifact-freeze `GO`; Gate R2 and W0.2 runtime not implemented; W0.3–W0.5 open | [W0.1 evidence](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#w0-1-go-2026-07-24); [W0.2 contract evidence](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#w0-2-contract-go-2026-07-24); [Gate R1 code evidence](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#gate-r1-code-go-2026-07-24); [artifact-freeze evidence](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-artifact-freeze-go-2026-07-31) |
+| Wave 0 — safety foundation | in progress; W0.1 complete — independent implementation/test `GO`; W0.2 design contract accepted — independent contract-only `GO`; Gate R1 SQL-only code accepted — independent code-only `GO`; exact 13-file Sequence 3 artifact freeze accepted — independent artifact-freeze `GO`; Sequence 3 production-wired locally with offline-only vectors; W0.2 agent runtime and W0.3–W0.5 open | [W0.1 evidence](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#w0-1-go-2026-07-24); [W0.2 contract evidence](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#w0-2-contract-go-2026-07-24); [Gate R1 code evidence](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#gate-r1-code-go-2026-07-24); [artifact-freeze evidence](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-artifact-freeze-go-2026-07-31) |
 | Wave 1A — metric core | blocked by W0 | — |
 | Wave 1B — Skill Repository | blocked by W0 | — |
 | Wave 2 — agent-owned skill resolution | blocked by W1A/W1B | — |
@@ -1937,9 +1938,9 @@ SQL-only code has independent code-only `GO` with zero blockers. Wave 0 remains
 in progress, no W0.2 runtime task is complete, all V2 flags remain OFF,
 production/release remains `NO-GO`, and Windows durability is unverified. The
 exact 13-file inert Sequence 3 artifact freeze has independent artifact-freeze
-`GO` with zero blockers. The next and only authorized package is Gate R2
-implementation and independent review. Gate R2 is not yet implemented or
-accepted; do not production-wire Sequence 3 or start W0.2 runtime/production
+`GO` with zero blockers. Sequence 3 is now production-wired locally with the
+121,310,783-byte registry restricted to explicit offline certification; do not
+start W0.2 agent runtime/production
 work before that review. Do not begin Wave 1+ before written `GO` for all of
 Wave 0.
 Preserve the current dirty worktree and the 17 user-owned `* 2.md` files. Use

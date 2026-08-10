@@ -17,6 +17,8 @@ import {
   validateStrictVdtProjectCommit,
   VdtStorageError
 } from "./index";
+import * as storageApi from "./index";
+import { openBootstrapVdtDatabaseForTests } from "./sqlite-test-support";
 import type {
   ActorContextV1,
   RevisionCommitFaultPoint,
@@ -701,6 +703,13 @@ describe("atomic revision boundary", () => {
 });
 
 describe("ordered storage migrations", () => {
+  const openBootstrapVdtDatabase = openBootstrapVdtDatabaseForTests;
+
+  it("does not expose the bootstrap-only opener through the package API", () => {
+    expect("__openBootstrapVdtDatabaseForTests" in storageApi).toBe(false);
+    expect("openBootstrapVdtDatabaseForTests" in storageApi).toBe(false);
+  });
+
   it("resolves Webpack URL-shaped SQL assets without relying on URL identity", () => {
     const bundledModuleDirectory = path.join(
       tempRoot(),
@@ -754,7 +763,7 @@ describe("ordered storage migrations", () => {
 
   it("applies the immutable fresh manifest and verifies the post-W0.1 fingerprint", () => {
     const root = tempRoot();
-    const db = openVdtDatabase(root);
+    const db = openBootstrapVdtDatabase(root);
     const raw = new DatabaseSync(db.databasePath);
     expect(raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 2 });
     expect(computeSchemaHash(raw, 2)).toBe(ATOMIC_REVISION_SCHEMA_HASH);
@@ -793,7 +802,7 @@ describe("ordered storage migrations", () => {
           )
         )
       );
-      const db = openVdtDatabase(root, { dataDir });
+      const db = openBootstrapVdtDatabase(root, { dataDir });
       const raw = new DatabaseSync(db.databasePath);
       expect(raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 2 });
       expect(raw.prepare("SELECT COUNT(*) AS count FROM applied_migrations").get()).toEqual({
@@ -825,7 +834,7 @@ describe("ordered storage migrations", () => {
     const unrelatedBytes = Buffer.from("unrelated-admission-bytes");
     fs.writeFileSync(similarlyNamedPath, unrelatedBytes);
 
-    const opened = openVdtDatabase(root, { dataDir });
+    const opened = openBootstrapVdtDatabase(root, { dataDir });
     expect(fs.readFileSync(legacyAdmissionPath)).toEqual(partialBytes);
     expect(fs.readFileSync(similarlyNamedPath)).toEqual(unrelatedBytes);
     const raw = new DatabaseSync(opened.databasePath);
@@ -840,7 +849,7 @@ describe("ordered storage migrations", () => {
     const root = tempRoot();
     const dataDir = path.join(root, "data");
     const databasePath = createLegacyDatabase(dataDir, { revision: "valid" });
-    const db = openVdtDatabase(root, { dataDir });
+    const db = openBootstrapVdtDatabase(root, { dataDir });
     expect(db.getVdtRevisionHead("legacy_vdt")).toMatchObject({
       activeRevisionId: "legacy_revision",
       activeContentIdentity: {
@@ -869,7 +878,7 @@ describe("ordered storage migrations", () => {
     const root = tempRoot();
     const dataDir = path.join(root, "data");
     expect(() =>
-      openVdtDatabase(root, {
+      openBootstrapVdtDatabase(root, {
         dataDir,
         migrationLeaseMs: 0,
         migrationFaultInjector(point) {
@@ -877,7 +886,10 @@ describe("ordered storage migrations", () => {
         }
       })
     ).toThrow(`migration-fault:${faultPoint}`);
-    const recovered = openVdtDatabase(root, { dataDir, migrationLeaseMs: 0 });
+    const recovered = openBootstrapVdtDatabase(root, {
+      dataDir,
+      migrationLeaseMs: 0
+    });
     const raw = new DatabaseSync(recovered.databasePath);
     expect(raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 2 });
     expect(computeSchemaHash(raw, 2)).toBe(ATOMIC_REVISION_SCHEMA_HASH);
@@ -942,7 +954,7 @@ describe("ordered storage migrations", () => {
         ).toBe(false);
       }
 
-      const recovered = openVdtDatabase(root, {
+      const recovered = openBootstrapVdtDatabase(root, {
         dataDir,
         migrationLeaseMs: 0
       });
@@ -985,7 +997,7 @@ describe("ordered storage migrations", () => {
     const dataDir = path.join(root, "data");
     const firstTime = "2026-07-23T00:00:00.000Z";
     expect(() =>
-      openVdtDatabase(root, {
+      openBootstrapVdtDatabase(root, {
         dataDir,
         now: () => firstTime,
         migrationLeaseMs: 30_000,
@@ -997,7 +1009,7 @@ describe("ordered storage migrations", () => {
       })
     ).toThrow("crash-after-journal");
     try {
-      openVdtDatabase(root, {
+      openBootstrapVdtDatabase(root, {
         dataDir,
         now: () => "2026-07-23T00:00:29.999Z",
         migrationLeaseMs: 30_000
@@ -1008,7 +1020,7 @@ describe("ordered storage migrations", () => {
       expect((error as VdtStorageError).code).toBe("MIGRATION_IN_PROGRESS");
       expect((error as VdtStorageError).retryable).toBe(true);
     }
-    const recovered = openVdtDatabase(root, {
+    const recovered = openBootstrapVdtDatabase(root, {
       dataDir,
       now: () => "2026-07-23T00:00:30.000Z",
       migrationLeaseMs: 30_000
@@ -1030,7 +1042,7 @@ describe("ordered storage migrations", () => {
       const root = tempRoot();
       const dataDir = path.join(root, "data");
       expect(() =>
-        openVdtDatabase(root, {
+        openBootstrapVdtDatabase(root, {
           dataDir,
           migrationFaultInjector(point) {
             if (point !== "after_bootstrap_journal_fsynced") return;
@@ -1056,7 +1068,7 @@ describe("ordered storage migrations", () => {
     for (const mode of ["backup", "prefix"] as const) {
       const root = tempRoot();
       const dataDir = path.join(root, "data");
-      const db = openVdtDatabase(root, { dataDir });
+      const db = openBootstrapVdtDatabase(root, { dataDir });
       const databasePath = db.databasePath;
       if (mode === "backup") {
         const raw = new DatabaseSync(databasePath);
@@ -1077,13 +1089,15 @@ describe("ordered storage migrations", () => {
         raw.close();
       }
       db.close();
-      expect(() => openVdtDatabase(root, { dataDir })).toThrow(/MIGRATION_BLOCKED/);
+      expect(() => openBootstrapVdtDatabase(root, { dataDir })).toThrow(
+        /MIGRATION_BLOCKED/
+      );
     }
   });
 
   it("blocks ready-state restart with extra orphan backup evidence", () => {
     const root = tempRoot();
-    const db = openVdtDatabase(root);
+    const db = openBootstrapVdtDatabase(root);
     const databasePath = db.databasePath;
     db.close();
     const raw = new DatabaseSync(databasePath);
@@ -1099,7 +1113,7 @@ describe("ordered storage migrations", () => {
        ?, ?, ?, 'migrations/backups/does-not-exist.sqlite', 1)
     `).run(STORAGE_MIGRATION_MANIFEST.manifestHash, fakeHash, fakeHash);
     raw.close();
-    expect(() => openVdtDatabase(root)).toThrow(/MIGRATION_BLOCKED/);
+    expect(() => openBootstrapVdtDatabase(root)).toThrow(/MIGRATION_BLOCKED/);
   });
 
   it("blocks schema drift, tampered legacy bytes, and orphan legacy rows before additive DDL", () => {
@@ -1121,7 +1135,9 @@ describe("ordered storage migrations", () => {
           "utf8"
         );
       }
-      expect(() => openVdtDatabase(root, { dataDir })).toThrow(/MIGRATION_BLOCKED/);
+      expect(() => openBootstrapVdtDatabase(root, { dataDir })).toThrow(
+        /MIGRATION_BLOCKED/
+      );
       const verify = new DatabaseSync(databasePath);
       expect(verify.prepare("PRAGMA user_version").get()).toEqual({ user_version: 1 });
       expect(

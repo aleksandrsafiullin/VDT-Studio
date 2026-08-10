@@ -1,6 +1,6 @@
 # Sequence 3 Manifest, Packaging, Fence, And Fault Contract
 
-- Status: proposed inert byte-level contract; no runtime authority
+- Status: historical proposed inert byte-level contract; no runtime authority by itself
 - Migration sequence: `3`
 - Migration ID: `003-durable-agent-run-coordination`
 - User-version transition: `2 -> 3`
@@ -14,12 +14,11 @@ It is subordinate to the accepted W0.2 design in
 already freeze a literal. A conflict is a freeze `STOP`, not permission to
 choose a different value.
 
-This document does not authorize creation of a production manifest entry,
-runtime import, transform registry, resolver extension, package export,
-bundle resource, database migration, W0.2 runtime table, feature enablement or
-release claim. Files created during the later artifact-freeze step remain
-inert until an independent reviewer records `GO` for the complete byte set and
-Gate R2 is separately authorized. All V2 feature flags remain off and release
+This document by itself does not authorize a production manifest entry,
+runtime import, transform registry, package export, bundle resource, database
+migration, feature enablement or release claim. Sequence 3 is now
+production-wired by the later implementation, with golden vectors restricted
+to explicit offline certification. All V2 feature flags remain off and release
 status remains `NO-GO`.
 
 ## 1. Ownership And Gate Boundary
@@ -1149,10 +1148,11 @@ a `STOP`.
 ### 8.2 Gate R2 packaging rule
 
 Gate R2 may add static literal `new URL(..., import.meta.url)` references for
-the exact SQL, module, ABI contract, golden vectors and V2 manifest paths. It
-may not accept a caller path, environment path, manifest-supplied path,
-directory scan, glob, package lookup or callback. The closed registry maps its
-one exact key to those literal resources.
+the exact SQL, module, ABI contract and V2 manifest paths used in production.
+The exact golden-vector path is restricted to explicit offline/test
+certification loaders. Neither path may accept a caller path, environment path,
+manifest-supplied path, directory scan, glob, package lookup or callback. The
+closed registry maps its one exact key to those literal resources.
 
 The future resolver must:
 

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { hashFramed } from "./canonical";
+import { __sequence3AssetReadCountsForTests } from "./sequence-3-assets";
 import {
   __assertSequence3PlatformCapabilityForTests,
   __createStorageMigrationPlanForTests,
@@ -41,7 +42,9 @@ describe("Gate R2 Sequence 3 production migration", () => {
     "migrates an exact empty v2 database to v3 and reopens idempotently",
     () => {
       const fixture = createV2Fixture();
+      const vectorReadsBefore = __sequence3AssetReadCountsForTests().vectors;
       runProduction(fixture);
+      expect(__sequence3AssetReadCountsForTests().vectors).toBe(vectorReadsBefore);
       const first = readSequence3Evidence(fixture.databasePath);
       expect(first.version).toBe(3);
       expect(first.state).toEqual({

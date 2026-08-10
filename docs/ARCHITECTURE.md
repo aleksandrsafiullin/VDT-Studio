@@ -36,7 +36,7 @@ flowchart LR
 | `apps/web` | Next.js UI, API routes, Zustand UI/draft state and execution-client boundary |
 | `apps/desktop` | Tauri shell, reviewed native commands, sidecar host and private IPC |
 | `packages/vdt-core` | Graph/domain types, change sets, formula parser/evaluator, validation, scenarios, comparison and export |
-| `packages/vdt-storage` | SQLite project metadata, strict atomic revision commit/recovery, ordered W0.1 migrations, conversations and filesystem layout |
+| `packages/vdt-storage` | SQLite project metadata, strict atomic revision commit/recovery, production Sequence 3 migration, conversations and filesystem layout |
 | `packages/vdt-agent` | Current V1 skill parsing/classification/retrieval and recipe compilation; target single-copy repository contracts |
 | `packages/vdt-agent-runtime` | Run state, decision/tool loop, tool registry, feedback, research tools and mutation pipeline |
 | `packages/data-harness` | Experimental file parsing, profiling, semantic inference, data-agent loop and mapping proposals |
@@ -113,6 +113,16 @@ The browser-side `apps/web/lib/ai-execution-client.ts` selects one of:
 | Skills | `packages/vdt-agent/skills` for current bundled source | Single-copy repository: reviewed bundled source plus immutable verbatim user versions; ACL references; generated sidecar only |
 | Provider status | `release/provider-certification.json` | Canonical release metadata |
 
+### Sequence 3 runtime artifact policy
+
+Production migration admission verifies the frozen V2 manifest, Sequence 3
+SQL, WASM module, ABI contract, static WASM profile and closed transform
+identity. It validates the golden-vector length/checksum from the trusted
+manifest against compiled constants, but does not open, parse or execute the
+121,310,783-byte vector registry. The 55 ABI and 204 host vectors remain
+explicit offline certification evidence. Actual legacy `agent_runs` rows are
+validated and transformed inside the fenced Sequence 3 transaction.
+
 ## Trust Boundaries
 
 - Hosted web must not execute local CLIs.
@@ -131,7 +141,7 @@ The browser-side `apps/web/lib/ai-execution-client.ts` selects one of:
 5. Data-agent and VDT-agent orchestration are separate and inconsistent.
 6. Large `vdt-store.ts` and `data-harness/src/index.ts` modules mix too many responsibilities.
 7. There is no server-issued actor/tenant/workspace authorization context for the data/skill target model.
-8. The W0.1 ordered migration runner covers the frozen sequence-1/2 manifest only; an append-only extension design is required before a W0.2 sequence 3.
+8. Sequence 3 is production-wired locally, but Windows durability, native crash evidence and package transport remain unverified release gates.
 9. Real Windows Node 24 capability, concurrency and crash-recovery evidence is absent for the W0.1 durability claim.
 
 The active remediation sequence is maintained in `VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`; evidence is appended to `implementation/VDT_CORRECTIVE_EXECUTION_LOG.md`. Architectural decisions are recorded under `docs/adr/`.

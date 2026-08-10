@@ -6,16 +6,19 @@ This document proposes the byte-level contract
 `legacy-agent-run-adoption-abi.v1` for the design-reserved Sequence 3 migration
 `003-durable-agent-run-coordination`.
 
-Its status is **PROPOSED / INERT / NOT RUNTIME AUTHORITY**. It does not:
+Its artifact-freeze status was **PROPOSED / INERT / NOT RUNTIME AUTHORITY**.
+The current runtime implementation is governed by the 2026-08-10 policy
+override: Sequence 3 is production-wired, while the full golden-vector registry
+is offline certification evidence only. This document by itself does not:
 
 - add Sequence 3 to a production manifest;
 - authorize or create SQL, WebAssembly, JSON, or builder artifacts;
 - register a transform, alter the SQL-only Gate R1 runner, or enable W0.2;
 - authorize Gate R2, any V2 feature flag, or a production/release claim.
 
-The contract becomes an artifact-freeze input only after an independent
-GO/STOP review returns GO. Even then, execution remains prohibited until the
-separate Gate R2 implementation and review are explicitly authorized.
+The historical contract became an artifact-freeze input only after its
+independent GO/STOP review. Runtime authority now comes from the implemented
+code and current operational documentation, not from that historical freeze.
 
 Normative words `MUST`, `MUST NOT`, `REQUIRED`, `SHALL`, `SHALL NOT`,
 `SHOULD`, `SHOULD NOT`, and `MAY` have their RFC 2119 meanings. All integer
@@ -57,10 +60,11 @@ instance is not this contract.
 The Gate R2 storage host, on the same retained and fenced `DatabaseSync`
 connection and in the same Sequence 3 transaction, SHALL:
 
-1. verify the manifest, exact artifact bytes/checksums, frozen contract,
-   frozen vectors, static module profile, golden-vector results, migration
-   attempt, backup evidence, fence owner/generation, and precondition before
-   DDL;
+1. verify the manifest, exact SQL/module/ABI bytes and checksums, static module
+   profile, ABI identity, the manifest-bound golden-vector identity/checksum,
+   migration attempt, backup evidence, fence owner/generation, and
+   precondition before DDL; production does not open or execute the golden
+   vectors;
 2. run the exact frozen Sequence 3 SQL;
 3. count and stream legacy `agent_runs` rows in frozen byte order;
 4. inspect every SQLite storage class before coercion;
@@ -757,7 +761,8 @@ The displayed object is passed as metadata and is canonicalized internally by
 
 For zero legacy rows, the per-row function is invoked zero times,
 `inputLegacyRunCount=0`, `insertedAdoptionCount=0`, and
-`sortedAdoptions=[]`. The module's pre-DDL golden vectors still run. One
+`sortedAdoptions=[]`. Production still validates the runtime manifest, SQL,
+module and ABI, but does not load the golden-vector registry. One
 transform-application record and the normal applied-migration record are still
 required.
 
@@ -1955,10 +1960,13 @@ transactionality, crash recovery, durable ownership, or packaging.
 Gate R2 is a later gate, not a condition of artifact-freeze GO. Its independent
 review MUST add:
 
-1. production static loading of the exact frozen module/contract/vector bytes
-   and equality with their frozen lengths/checksums;
-2. production host validation matching all 204 host vectors and production
-   module invocation matching all 55 ABI vectors;
+1. production static loading of the exact frozen SQL/module/ABI bytes and
+   equality with their frozen lengths/checksums, plus equality of the
+   manifest's vector identity/checksum with compiled expected constants without
+   opening the vector artifact;
+2. offline certification matching all 204 host vectors and all 55 ABI vectors
+   against the same frozen module; the vector registry is test/review evidence,
+   not a production migration preflight;
 3. the same-connection Sequence 3 order: pre-application prefix/schema/
    `PRAGMA encoding` checks, SQL, legacy validation/transform/adoption,
    transform application, applied parent, state/user version, durable

@@ -73,22 +73,15 @@ const REQUIRED_SEQUENCE3_ARTIFACT_FREEZE_GO = [
   "13-file",
   "artifact-freeze `GO`",
   "zero blockers",
-  "build",
-  "no-wiring",
-  "Gate R2 implementation",
-  "independent review",
-  "Gate R2",
-  "not yet implemented or accepted",
   "Sequence 3",
-  "production-wired",
-  "W0.2 runtime",
+  "production-wired locally",
+  "offline certification",
+  "W0.2",
+  "runtime",
   "incomplete",
   "unauthorized",
-  "V2 flags",
   "OFF",
-  "Windows durability",
   "unverified",
-  "production/release",
   "`NO-GO`"
 ];
 
@@ -117,8 +110,8 @@ const REQUIRED_DOCS = [
   },
   {
     file: "docs/architecture/LEGACY_AGENT_RUN_ADOPTION_TRANSFORM_CONTRACT.md",
-    byteLength: 100231,
-    rawSha256: "sha256:4450f155de3a964ef35d96ed0297cc65cea1db23afaa687fc70976073b9b7bc7",
+    byteLength: 100814,
+    rawSha256: "sha256:951b1c7c74e488174bedf0c20d43fa52ffb8fa8d964b9e06b7506d9eca0c345b",
     snippets: [
       "# Sequence 3 Legacy Agent-Run Adoption Transform Contract",
       "PROPOSED / INERT / NOT RUNTIME AUTHORITY",
@@ -127,11 +120,11 @@ const REQUIRED_DOCS = [
   },
   {
     file: "docs/architecture/SEQUENCE_3_MANIFEST_PACKAGING_AND_FAULT_CONTRACT.md",
-    byteLength: 82409,
-    rawSha256: "sha256:c054ac6958e9dcde7ef2a1391f71cc941095f5ed0ad8a49830fd286e28715a25",
+    byteLength: 82446,
+    rawSha256: "sha256:8c872e65e2c38c6f4a17fca10f0cade2e0dbf5e61ae56155e30dcbdc862523cf",
     snippets: [
       "# Sequence 3 Manifest, Packaging, Fence, And Fault Contract",
-      "proposed inert byte-level contract; no runtime authority",
+      "historical proposed inert byte-level contract; no runtime authority by itself",
       "Artifact-freeze `GO` cannot satisfy Gate R2 or release evidence"
     ]
   },
@@ -146,7 +139,7 @@ const REQUIRED_DOCS = [
       "Gate A and W0.1 are complete with independent `GO`",
       "W0.2 design contract is accepted with independent contract-only `GO`",
       "Gate R1 SQL-only code has independent code-only `GO` with zero blockers",
-      "no W0.2 runtime task is complete",
+      "no W0.2 agent-runtime task is complete",
       ...REQUIRED_SEQUENCE3_ARTIFACT_FREEZE_GO,
       ...REQUIRED_SEQUENCE3_ARTIFACT_FREEZE_HASHES
     ],
@@ -170,7 +163,7 @@ const REQUIRED_DOCS = [
       "SEQUENCE_3_SQL_FREEZE_CONTRACT.md",
       "LEGACY_AGENT_RUN_ADOPTION_TRANSFORM_CONTRACT.md",
       "SEQUENCE_3_MANIFEST_PACKAGING_AND_FAULT_CONTRACT.md",
-      "no W0.2 runtime task is complete",
+      "no W0.2 agent-runtime task is complete",
       ...REQUIRED_SEQUENCE3_ARTIFACT_FREEZE_GO,
       ...REQUIRED_SEQUENCE3_ARTIFACT_FREEZE_HASHES
     ],

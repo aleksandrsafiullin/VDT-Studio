@@ -11,12 +11,11 @@ import {
   ATOMIC_REVISION_SCHEMA_HASH,
   STORAGE_MIGRATION_MANIFEST,
   computeSchemaHash,
-  openVdtDatabase,
-  runStorageMigrations,
   VdtStorageError
 } from "./index";
 import {
   __createStorageMigrationPlanForTests,
+  __runBootstrapStorageMigrationsForTests,
   __runStorageMigrationsWithPlanForTests
 } from "./migrations";
 import {
@@ -123,6 +122,7 @@ afterEach(() => {
 describe("generalized append-only storage migration plans", () => {
   it("keeps the immutable bootstrap prefix and rejects malformed extensions", () => {
     expect("__createStorageMigrationPlanForTests" in storageApi).toBe(false);
+    expect("__runBootstrapStorageMigrationsForTests" in storageApi).toBe(false);
     expect("__runStorageMigrationsWithPlanForTests" in storageApi).toBe(false);
     expect(STORAGE_MIGRATION_MANIFEST.manifestHash).toBe(
       BOOTSTRAP_MANIFEST_HASH
@@ -269,7 +269,11 @@ describe("generalized append-only storage migration plans", () => {
     expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({
       foreign_keys: 0
     });
-    runStorageMigrations(db, fixture.dataDir, migrationOptions());
+    __runBootstrapStorageMigrationsForTests(
+      db,
+      fixture.dataDir,
+      migrationOptions()
+    );
     expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({
       foreign_keys: 1
     });
@@ -292,7 +296,11 @@ describe("generalized append-only storage migration plans", () => {
     });
     db.exec("BEGIN;");
     expect(() =>
-      runStorageMigrations(db, fixture.dataDir, migrationOptions())
+      __runBootstrapStorageMigrationsForTests(
+        db,
+        fixture.dataDir,
+        migrationOptions()
+      )
     ).toThrow(/foreign-key enforcement could not be enabled outside a transaction/i);
     db.exec("ROLLBACK;");
     expect(db.prepare("PRAGMA user_version").get()).toEqual({
@@ -713,39 +721,43 @@ describe("generalized append-only storage migration plans", () => {
     15_000
   );
 
-  it("safely retries after SIGKILL following the zero-row pending unlink", async () => {
-    const fixture = storageFixture("existing");
-    const helper = fileURLToPath(
-      new URL("./migration-fk-crash-child.ts", import.meta.url)
-    );
-    await runCrashChild(
-      helper,
-      [
+  it(
+    "safely retries after SIGKILL following the zero-row pending unlink",
+    async () => {
+      const fixture = storageFixture("existing");
+      const helper = fileURLToPath(
+        new URL("./migration-fk-crash-child.ts", import.meta.url)
+      );
+      await runCrashChild(
+        helper,
+        [
+          fixture.databasePath,
+          fixture.dataDir,
+          "after_foreign_key_pending_unlinked",
+          "valid"
+        ],
+        "foreign-key zero-row unlink crash"
+      );
+      expect(
+        fs.readdirSync(
+          path.join(fixture.dataDir, "migrations", "migration-blocks")
+        )
+      ).toEqual([]);
+      runPlan(
         fixture.databasePath,
         fixture.dataDir,
-        "after_foreign_key_pending_unlinked",
-        "valid"
-      ],
-      "foreign-key zero-row unlink crash"
-    );
-    expect(
-      fs.readdirSync(
-        path.join(fixture.dataDir, "migrations", "migration-blocks")
-      )
-    ).toEqual([]);
-    runPlan(
-      fixture.databasePath,
-      fixture.dataDir,
-      TEST_MIGRATION_PLAN_VALID_DEFERRED_FK,
-      { leaseMs: 0 }
-    );
-    const db = new DatabaseSync(fixture.databasePath);
-    expect(db.prepare("PRAGMA user_version").get()).toEqual({
-      user_version: 3
-    });
-    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    db.close();
-  });
+        TEST_MIGRATION_PLAN_VALID_DEFERRED_FK,
+        { leaseMs: 0 }
+      );
+      const db = new DatabaseSync(fixture.databasePath);
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: 3
+      });
+      expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      db.close();
+    },
+    15_000
+  );
 
   it("does not block migration state when final-evidence exclusive create collides", () => {
     const fixture = storageFixture("existing");
@@ -804,74 +816,9 @@ describe("generalized append-only storage migration plans", () => {
     db.close();
   });
 
-  it("does not mutate a violating attempt after its owner fence changes", async () => {
-    const fixture = storageFixture("existing");
-    const helper = fileURLToPath(
-      new URL("./migration-fk-crash-child.ts", import.meta.url)
-    );
-    await runCrashChild(
-      helper,
-      [
-        fixture.databasePath,
-        fixture.dataDir,
-        "after_foreign_key_evidence_fsynced",
-        "invalid"
-      ],
-      "foreign-key changed-fence setup"
-    );
-    const db = new DatabaseSync(fixture.databasePath);
-    const original = db.prepare(`
-      SELECT attempt_id, owner_token, lease_generation
-      FROM migration_attempts WHERE target_manifest_hash = ?
-    `).get(
-      TEST_MIGRATION_PLAN_INVALID_DEFERRED_FK.manifest.manifestHash
-    ) as {
-      attempt_id: string;
-      owner_token: string;
-      lease_generation: number;
-    };
-    db.prepare(`
-      UPDATE migration_attempts
-      SET owner_token = 'replacement_owner',
-          lease_generation = lease_generation + 1,
-          lease_expires_at = lease_expires_at + 1000
-      WHERE attempt_id = ?
-    `).run(original.attempt_id);
-    const changed = db.prepare(`
-      SELECT owner_token, lease_generation, status
-      FROM migration_attempts WHERE attempt_id = ?
-    `).get(original.attempt_id);
-    db.close();
-
-    const error = captureError(() =>
-      runPlan(
-        fixture.databasePath,
-        fixture.dataDir,
-        TEST_MIGRATION_PLAN_INVALID_DEFERRED_FK,
-        { leaseMs: 0 }
-      )
-    );
-    expect(error).toMatchObject({
-      code: "MIGRATION_RECOVERY_REQUIRED",
-      retryable: false
-    });
-    const reopened = new DatabaseSync(fixture.databasePath);
-    expect(
-      reopened.prepare(`
-        SELECT owner_token, lease_generation, status
-        FROM migration_attempts WHERE attempt_id = ?
-      `).get(original.attempt_id)
-    ).toEqual(changed);
-    expect(
-      reopened.prepare(
-        "SELECT status, blocked_reason FROM migration_state"
-      ).get()
-    ).toEqual({ status: "ready", blocked_reason: null });
-    reopened.close();
-  });
-
-  it("rejects final-only and tampered evidence without a state write", async () => {
-    for (const mutation of ["remove_pending", "tamper_final"] as const) {
+  it(
+    "does not mutate a violating attempt after its owner fence changes",
+    async () => {
       const fixture = storageFixture("existing");
       const helper = fileURLToPath(
         new URL("./migration-fk-crash-child.ts", import.meta.url)
@@ -884,37 +831,32 @@ describe("generalized append-only storage migration plans", () => {
           "after_foreign_key_evidence_fsynced",
           "invalid"
         ],
-        `foreign-key ${mutation} setup`
+        "foreign-key changed-fence setup"
       );
-      const blockDir = path.join(
-        fixture.dataDir,
-        "migrations",
-        "migration-blocks"
-      );
-      const files = fs.readdirSync(blockDir);
-      if (mutation === "remove_pending") {
-        fs.unlinkSync(
-          path.join(
-            blockDir,
-            files.find((file) => file.endsWith(".pending.json"))!
-          )
-        );
-      } else {
-        const evidencePath = path.join(
-          blockDir,
-          files.find((file) => file.endsWith(".evidence.json"))!
-        );
-        const raw = fs.readFileSync(evidencePath, "utf8");
-        fs.writeFileSync(
-          evidencePath,
-          raw.replace(
-            /"evidenceHash":"sha256:([0-9a-f])/,
-            (_match, first: string) =>
-              `"evidenceHash":"sha256:${first === "0" ? "1" : "0"}`
-          )
-        );
-      }
-      const before = migrationEvidenceCounts(fixture.databasePath);
+      const db = new DatabaseSync(fixture.databasePath);
+      const original = db.prepare(`
+      SELECT attempt_id, owner_token, lease_generation
+      FROM migration_attempts WHERE target_manifest_hash = ?
+    `).get(
+      TEST_MIGRATION_PLAN_INVALID_DEFERRED_FK.manifest.manifestHash
+    ) as {
+      attempt_id: string;
+      owner_token: string;
+      lease_generation: number;
+    };
+      db.prepare(`
+      UPDATE migration_attempts
+      SET owner_token = 'replacement_owner',
+          lease_generation = lease_generation + 1,
+          lease_expires_at = lease_expires_at + 1000
+      WHERE attempt_id = ?
+    `).run(original.attempt_id);
+      const changed = db.prepare(`
+      SELECT owner_token, lease_generation, status
+      FROM migration_attempts WHERE attempt_id = ?
+    `).get(original.attempt_id);
+      db.close();
+
       const error = captureError(() =>
         runPlan(
           fixture.databasePath,
@@ -927,24 +869,102 @@ describe("generalized append-only storage migration plans", () => {
         code: "MIGRATION_RECOVERY_REQUIRED",
         retryable: false
       });
-      expect(migrationEvidenceCounts(fixture.databasePath)).toEqual(before);
-      const db = new DatabaseSync(fixture.databasePath);
+      const reopened = new DatabaseSync(fixture.databasePath);
       expect(
-        db.prepare(`
+        reopened.prepare(`
+        SELECT owner_token, lease_generation, status
+        FROM migration_attempts WHERE attempt_id = ?
+      `).get(original.attempt_id)
+      ).toEqual(changed);
+      expect(
+        reopened.prepare(
+          "SELECT status, blocked_reason FROM migration_state"
+        ).get()
+      ).toEqual({ status: "ready", blocked_reason: null });
+      reopened.close();
+    },
+    15_000
+  );
+
+  it(
+    "rejects final-only and tampered evidence without a state write",
+    async () => {
+      for (const mutation of ["remove_pending", "tamper_final"] as const) {
+        const fixture = storageFixture("existing");
+        const helper = fileURLToPath(
+          new URL("./migration-fk-crash-child.ts", import.meta.url)
+        );
+        await runCrashChild(
+          helper,
+          [
+            fixture.databasePath,
+            fixture.dataDir,
+            "after_foreign_key_evidence_fsynced",
+            "invalid"
+          ],
+          `foreign-key ${mutation} setup`
+        );
+        const blockDir = path.join(
+          fixture.dataDir,
+          "migrations",
+          "migration-blocks"
+        );
+        const files = fs.readdirSync(blockDir);
+        if (mutation === "remove_pending") {
+          fs.unlinkSync(
+            path.join(
+              blockDir,
+              files.find((file) => file.endsWith(".pending.json"))!
+            )
+          );
+        } else {
+          const evidencePath = path.join(
+          blockDir,
+          files.find((file) => file.endsWith(".evidence.json"))!
+        );
+          const raw = fs.readFileSync(evidencePath, "utf8");
+          fs.writeFileSync(
+            evidencePath,
+            raw.replace(
+              /"evidenceHash":"sha256:([0-9a-f])/,
+              (_match, first: string) =>
+                `"evidenceHash":"sha256:${first === "0" ? "1" : "0"}`
+            )
+          );
+        }
+        const before = migrationEvidenceCounts(fixture.databasePath);
+        const error = captureError(() =>
+          runPlan(
+            fixture.databasePath,
+            fixture.dataDir,
+            TEST_MIGRATION_PLAN_INVALID_DEFERRED_FK,
+            { leaseMs: 0 }
+          )
+        );
+        expect(error).toMatchObject({
+          code: "MIGRATION_RECOVERY_REQUIRED",
+          retryable: false
+        });
+        expect(migrationEvidenceCounts(fixture.databasePath)).toEqual(before);
+        const db = new DatabaseSync(fixture.databasePath);
+        expect(
+          db.prepare(`
           SELECT status FROM migration_attempts
           WHERE target_manifest_hash = ?
         `).get(
           TEST_MIGRATION_PLAN_INVALID_DEFERRED_FK.manifest.manifestHash
         )
-      ).toEqual({ status: "applying" });
-      expect(
-        db.prepare(
-          "SELECT status, blocked_reason FROM migration_state"
-        ).get()
-      ).toEqual({ status: "ready", blocked_reason: null });
-      db.close();
-    }
-  });
+        ).toEqual({ status: "applying" });
+        expect(
+          db.prepare(
+            "SELECT status, blocked_reason FROM migration_state"
+          ).get()
+        ).toEqual({ status: "ready", blocked_reason: null });
+        db.close();
+      }
+    },
+    30_000
+  );
 
   it("rejects an over-bound sidecar and a permissive block directory before DDL", () => {
     for (const mutation of ["oversize", "permissions"] as const) {
@@ -1568,7 +1588,9 @@ describe("generalized append-only storage migration plans", () => {
       "2026-07-24T00:00:00.000Z",
       "2026-07-24T00:00:00.010Z",
       "2026-07-24T00:00:00.015Z",
+      "2026-07-24T00:00:00.015Z",
       "2026-07-24T00:00:00.025Z",
+      "2026-07-24T00:00:00.030Z",
       "2026-07-24T00:00:00.030Z"
     ];
     let timeIndex = 0;
@@ -1683,6 +1705,7 @@ describe("generalized append-only storage migration plans", () => {
               "2026-07-24T02:00:00.010Z"
             ]
           : [
+              "2026-07-24T02:00:00.000Z",
               "2026-07-24T02:00:00.000Z",
               "2026-07-24T02:00:00.000Z",
               "2026-07-24T02:00:00.000Z",
@@ -1994,165 +2017,173 @@ describe("generalized append-only storage migration plans", () => {
     30_000
   );
 
-  it("recovers the retained main migration fence after a real SIGKILL", async () => {
-    const fixture = storageFixture("existing");
-    const helper = fileURLToPath(
-      new URL("./migration-later-crash-child.ts", import.meta.url)
-    );
-    await runCrashChild(
-      helper,
-      [
+  it(
+    "recovers the retained main migration fence after a real SIGKILL",
+    async () => {
+      const fixture = storageFixture("existing");
+      const helper = fileURLToPath(
+        new URL("./migration-later-crash-child.ts", import.meta.url)
+      );
+      await runCrashChild(
+        helper,
+        [
+          fixture.databasePath,
+          fixture.dataDir,
+          "after_admission_fence_acquired",
+          "0"
+        ],
+        "later migration admission SIGKILL"
+      );
+      expect(
+        fs.existsSync(
+          path.join(fixture.dataDir, ".migration-admission.sqlite")
+        )
+      ).toBe(false);
+      expect(
+        fs.existsSync(path.join(fixture.dataDir, ".migration-admission.lock"))
+      ).toBe(false);
+
+      runPlan(
         fixture.databasePath,
         fixture.dataDir,
-        "after_admission_fence_acquired",
-        "0"
-      ],
-      "later migration admission SIGKILL"
-    );
-    expect(
-      fs.existsSync(
-        path.join(fixture.dataDir, ".migration-admission.sqlite")
-      )
-    ).toBe(false);
-    expect(
-      fs.existsSync(path.join(fixture.dataDir, ".migration-admission.lock"))
-    ).toBe(false);
-
-    runPlan(
-      fixture.databasePath,
-      fixture.dataDir,
-      TEST_MIGRATION_PLAN_3,
-      { leaseMs: 0 }
-    );
-    const recovered = new DatabaseSync(fixture.databasePath);
-    expect(recovered.prepare("PRAGMA user_version").get()).toEqual({
-      user_version: 3
-    });
-    expect(
-      recovered.prepare(`
+        TEST_MIGRATION_PLAN_3,
+        { leaseMs: 0 }
+      );
+      const recovered = new DatabaseSync(fixture.databasePath);
+      expect(recovered.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: 3
+      });
+      expect(
+        recovered.prepare(`
         SELECT COUNT(*) AS count
         FROM migration_backup_evidence
         WHERE manifest_hash = ?
       `).get(TEST_SEQUENCE_3_MANIFEST_HASH)
-    ).toEqual({ count: 1 });
-    expect(
-      recovered.prepare(`
+      ).toEqual({ count: 1 });
+      expect(
+        recovered.prepare(`
         SELECT COUNT(*) AS count
         FROM migration_attempts
         WHERE target_manifest_hash = ?
       `).get(TEST_SEQUENCE_3_MANIFEST_HASH)
-    ).toEqual({ count: 1 });
-    expect(
-      recovered.prepare(`
+      ).toEqual({ count: 1 });
+      expect(
+        recovered.prepare(`
         SELECT COUNT(*) AS count
         FROM applied_migrations
         WHERE sequence = 3 AND manifest_hash = ?
       `).get(TEST_SEQUENCE_3_MANIFEST_HASH)
-    ).toEqual({ count: 1 });
-    recovered.close();
-  });
+      ).toEqual({ count: 1 });
+      recovered.close();
+    },
+    15_000
+  );
 
-  it("quarantines only a proven crash orphan and preserves unrelated matching paths", async () => {
-    const fixture = storageFixture("existing");
-    const backupDir = path.join(
-      fixture.dataDir,
-      "migrations",
-      "backups"
-    );
-    const unrelatedFile = path.join(
-      backupDir,
-      "later-migration_attempt_unrelated.sqlite"
-    );
-    const unrelatedBytes = Buffer.from("unrelated-flat-backup");
-    fs.writeFileSync(unrelatedFile, unrelatedBytes);
-    const unrelatedDirectory = path.join(
-      backupDir,
-      "later-migration_attempt_unrelated-directory.sqlite"
-    );
-    fs.mkdirSync(unrelatedDirectory);
-    fs.writeFileSync(
-      path.join(unrelatedDirectory, "payload.bin"),
-      "unrelated-directory"
-    );
-    const unrelatedLink = path.join(
-      backupDir,
-      "later-migration_attempt_unrelated-link.sqlite"
-    );
-    fs.symlinkSync(path.basename(unrelatedFile), unrelatedLink);
-    const invalidOwnedDirectory = path.join(
-      backupDir,
-      ".later-owned-migration_attempt_unrelated"
-    );
-    fs.mkdirSync(invalidOwnedDirectory);
-    const invalidOwnerBytes = Buffer.from('{"schemaVersion":"not-ours"}');
-    fs.writeFileSync(
-      path.join(invalidOwnedDirectory, "owner.json"),
-      invalidOwnerBytes
-    );
+  it(
+    "quarantines only a proven crash orphan and preserves unrelated matching paths",
+    async () => {
+      const fixture = storageFixture("existing");
+      const backupDir = path.join(
+        fixture.dataDir,
+        "migrations",
+        "backups"
+      );
+      const unrelatedFile = path.join(
+        backupDir,
+        "later-migration_attempt_unrelated.sqlite"
+      );
+      const unrelatedBytes = Buffer.from("unrelated-flat-backup");
+      fs.writeFileSync(unrelatedFile, unrelatedBytes);
+      const unrelatedDirectory = path.join(
+        backupDir,
+        "later-migration_attempt_unrelated-directory.sqlite"
+      );
+      fs.mkdirSync(unrelatedDirectory);
+      fs.writeFileSync(
+        path.join(unrelatedDirectory, "payload.bin"),
+        "unrelated-directory"
+      );
+      const unrelatedLink = path.join(
+        backupDir,
+        "later-migration_attempt_unrelated-link.sqlite"
+      );
+      fs.symlinkSync(path.basename(unrelatedFile), unrelatedLink);
+      const invalidOwnedDirectory = path.join(
+        backupDir,
+        ".later-owned-migration_attempt_unrelated"
+      );
+      fs.mkdirSync(invalidOwnedDirectory);
+      const invalidOwnerBytes = Buffer.from('{"schemaVersion":"not-ours"}');
+      fs.writeFileSync(
+        path.join(invalidOwnedDirectory, "owner.json"),
+        invalidOwnerBytes
+      );
 
-    const helper = fileURLToPath(
-      new URL("./migration-later-crash-child.ts", import.meta.url)
-    );
-    await runCrashChild(
-      helper,
-      [
+      const helper = fileURLToPath(
+        new URL("./migration-later-crash-child.ts", import.meta.url)
+      );
+      await runCrashChild(
+        helper,
+        [
+          fixture.databasePath,
+          fixture.dataDir,
+          "after_later_backup_fsynced",
+          "3"
+        ],
+        "owned later backup orphan setup"
+      );
+      runPlan(
         fixture.databasePath,
         fixture.dataDir,
-        "after_later_backup_fsynced",
-        "3"
-      ],
-      "owned later backup orphan setup"
-    );
-    runPlan(
-      fixture.databasePath,
-      fixture.dataDir,
-      TEST_MIGRATION_PLAN_4,
-      { leaseMs: 0 }
-    );
+        TEST_MIGRATION_PLAN_4,
+        { leaseMs: 0 }
+      );
 
-    expect(fs.readFileSync(unrelatedFile)).toEqual(unrelatedBytes);
-    expect(fs.lstatSync(unrelatedDirectory).isDirectory()).toBe(true);
-    expect(
-      fs.readFileSync(
-        path.join(unrelatedDirectory, "payload.bin"),
-        "utf8"
-      )
-    ).toBe("unrelated-directory");
-    expect(fs.lstatSync(unrelatedLink).isSymbolicLink()).toBe(true);
-    expect(fs.readlinkSync(unrelatedLink)).toBe(path.basename(unrelatedFile));
-    expect(
-      fs.readFileSync(
-        path.join(invalidOwnedDirectory, "owner.json")
-      )
-    ).toEqual(invalidOwnerBytes);
+      expect(fs.readFileSync(unrelatedFile)).toEqual(unrelatedBytes);
+      expect(fs.lstatSync(unrelatedDirectory).isDirectory()).toBe(true);
+      expect(
+        fs.readFileSync(
+          path.join(unrelatedDirectory, "payload.bin"),
+          "utf8"
+        )
+      ).toBe("unrelated-directory");
+      expect(fs.lstatSync(unrelatedLink).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(unrelatedLink)).toBe(path.basename(unrelatedFile));
+      expect(
+        fs.readFileSync(
+          path.join(invalidOwnedDirectory, "owner.json")
+        )
+      ).toEqual(invalidOwnerBytes);
 
-    const quarantineDir = path.join(
-      fixture.dataDir,
-      "migrations",
-      "orphaned-backups"
-    );
-    const quarantined = fs
-      .readdirSync(quarantineDir)
-      .filter((name) => name.startsWith(".later-owned-migration_attempt_"));
-    expect(quarantined).toHaveLength(1);
-    expect(
-      fs.existsSync(
-        path.join(quarantineDir, quarantined[0]!, "backup.sqlite")
-      )
-    ).toBe(true);
-    const db = new DatabaseSync(fixture.databasePath);
-    const active = db.prepare(`
+      const quarantineDir = path.join(
+        fixture.dataDir,
+        "migrations",
+        "orphaned-backups"
+      );
+      const quarantined = fs
+        .readdirSync(quarantineDir)
+        .filter((name) => name.startsWith(".later-owned-migration_attempt_"));
+      expect(quarantined).toHaveLength(1);
+      expect(
+        fs.existsSync(
+          path.join(quarantineDir, quarantined[0]!, "backup.sqlite")
+        )
+      ).toBe(true);
+      const db = new DatabaseSync(fixture.databasePath);
+      const active = db.prepare(`
       SELECT backup_relative_path
       FROM migration_backup_evidence
       WHERE manifest_hash = ?
     `).get(TEST_SEQUENCE_4_MANIFEST_HASH) as Record<string, unknown>;
-    db.close();
-    expect(
-      fs.existsSync(
-        path.join(fixture.dataDir, String(active.backup_relative_path))
-      )
-    ).toBe(true);
-  });
+      db.close();
+      expect(
+        fs.existsSync(
+          path.join(fixture.dataDir, String(active.backup_relative_path))
+        )
+      ).toBe(true);
+    },
+    30_000
+  );
 
   it("normalizes a preliminary SQLite lock and succeeds after close/reopen", () => {
     const fixture = storageFixture("existing");
@@ -2239,37 +2270,41 @@ describe("generalized append-only storage migration plans", () => {
     60_000
   );
 
-  it("blocks a committed-row mismatch instead of replaying it", async () => {
-    const fixture = storageFixture("existing");
-    const helper = fileURLToPath(
-      new URL("./migration-later-crash-child.ts", import.meta.url)
-    );
-    await runCrashChild(
-      helper,
-      [
-        fixture.databasePath,
-        fixture.dataDir,
-        "after_later_migration_committed",
-        "3"
-      ],
-      "later committed-row mismatch setup"
-    );
-    const db = new DatabaseSync(fixture.databasePath);
-    db.prepare(
-      "UPDATE applied_migrations SET sql_checksum = ? WHERE sequence = 3"
-    ).run(
-      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    );
-    db.close();
-    expect(() =>
-      runPlan(
-        fixture.databasePath,
-        fixture.dataDir,
-        TEST_MIGRATION_PLAN_4,
-        { leaseMs: 0 }
-      )
-    ).toThrow(/MIGRATION_BLOCKED/);
-  });
+  it(
+    "blocks a committed-row mismatch instead of replaying it",
+    async () => {
+      const fixture = storageFixture("existing");
+      const helper = fileURLToPath(
+        new URL("./migration-later-crash-child.ts", import.meta.url)
+      );
+      await runCrashChild(
+        helper,
+        [
+          fixture.databasePath,
+          fixture.dataDir,
+          "after_later_migration_committed",
+          "3"
+        ],
+        "later committed-row mismatch setup"
+      );
+      const db = new DatabaseSync(fixture.databasePath);
+      db.prepare(
+        "UPDATE applied_migrations SET sql_checksum = ? WHERE sequence = 3"
+      ).run(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      );
+      db.close();
+      expect(() =>
+        runPlan(
+          fixture.databasePath,
+          fixture.dataDir,
+          TEST_MIGRATION_PLAN_4,
+          { leaseMs: 0 }
+        )
+      ).toThrow(/MIGRATION_BLOCKED/);
+    },
+    15_000
+  );
 });
 
 function singleEntryPlan(input: {
@@ -2334,8 +2369,18 @@ function storageFixture(
     db.exec("PRAGMA user_version = 1;");
     db.close();
   } else if (mode === "existing") {
-    const opened = openVdtDatabase(root, { dataDir });
-    opened.close();
+    const db = new DatabaseSync(databasePath, { timeout: 30_000 });
+    try {
+      __runBootstrapStorageMigrationsForTests(
+        db,
+        dataDir,
+        migrationOptions()
+      );
+      db.exec("PRAGMA journal_mode = WAL;");
+      db.exec("PRAGMA foreign_keys = ON;");
+    } finally {
+      db.close();
+    }
   }
   return { root, dataDir, databasePath };
 }
@@ -2378,8 +2423,9 @@ function migrationOptions(
     ) => void;
   }> = {}
 ) {
+  const defaultNow = new Date().toISOString();
   return {
-    now: () => new Date().toISOString(),
+    now: () => defaultNow,
     busyTimeoutMs: 30_000,
     leaseMs: 30_000,
     ...overrides

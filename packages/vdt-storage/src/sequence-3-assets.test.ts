@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   __loadSequence3GoldenVectorsForTests,
+  __sequence3AssetReadCountsForTests,
+  loadSequence3TransformPreflightRegistry,
   loadVerifiedSequence3Assets
 } from "./sequence-3-assets";
 
@@ -18,6 +20,36 @@ describe("closed Sequence 3 assets", () => {
         "sha256:a4e95819f132dee113020b32b9cafff7ff96f18268dc286750a164523b462202"
     });
     expect(WebAssembly.Module.imports(first.module)).toEqual([]);
+  }, 30_000);
+
+  it("does not cache a registry whose ABI certification fails", () => {
+    const readsBefore = __sequence3AssetReadCountsForTests().vectors;
+    const originalInstance = WebAssembly.Instance;
+    Object.defineProperty(WebAssembly, "Instance", {
+      configurable: true,
+      writable: true,
+      value: class FailingInstance {
+        constructor() {
+          throw new Error("injected_abi_certification_failure");
+        }
+      }
+    });
+    try {
+      expect(() => loadSequence3TransformPreflightRegistry()).toThrow(
+        "injected_abi_certification_failure"
+      );
+    } finally {
+      Object.defineProperty(WebAssembly, "Instance", {
+        configurable: true,
+        writable: true,
+        value: originalInstance
+      });
+    }
+    expect(__sequence3AssetReadCountsForTests().vectors).toBe(readsBefore + 1);
+
+    const certified = loadSequence3TransformPreflightRegistry();
+    expect(__sequence3AssetReadCountsForTests().vectors).toBe(readsBefore + 2);
+    expect(certified.abiVectors).toHaveLength(55);
   }, 30_000);
 
   it("preflights the exact frozen vector cardinalities and hashes", () => {

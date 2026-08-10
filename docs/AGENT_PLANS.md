@@ -41,11 +41,12 @@ Historical read-only reconnaissance returned `STOP` until ADR-005 and the exact
 durable command, attempt, lease, manual-operation, merge/rebase and retry
 schemas were frozen; that contract gate now has independent contract-only
 `GO`. Gate R1 SQL-only code now has independent code-only `GO` with zero
-blockers. The next and only authorized package is Gate R2 implementation and
-independent review. Gate R2 is not yet implemented or accepted; Sequence 3 is
-not production-wired; W0.2 runtime remains incomplete and unauthorized; all
-V2 flags remain OFF; Windows durability remains unverified; production/release
-remains `NO-GO`.
+blockers. Sequence 3 is production-wired locally: production verifies the
+manifest, SQL, WASM and ABI plus the frozen vector identity without opening the
+121,310,783-byte registry. Full vector execution is offline certification only.
+W0.2 agent runtime remains incomplete and unauthorized; all V2 flags remain
+OFF; Windows durability, native crash evidence, package equality and
+large-file transport remain unverified; production/release remains `NO-GO`.
 
 1. complete Gate A inventory, contract freeze, documentation reconciliation and known-defect regression baselines;
 2. complete Wave 0 revision, coordinator, full-source ingestion, identity/authorization, migration and security foundations;

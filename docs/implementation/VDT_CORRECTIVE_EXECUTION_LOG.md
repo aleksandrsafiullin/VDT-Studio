@@ -998,3 +998,37 @@ artifact-freeze hash blocker: the file must not be compressed, omitted or
 regenerated outside a separately accepted decision.
 Historical `STOP` and narrower scoped `GO` checkpoints above remain immutable
 audit history.
+
+## Sequence 3 local migration core and offline-vector policy — 2026-08-10
+
+This checkpoint supersedes only the runtime-preflight and current-status
+statements after the historical
+[`sequence-3-artifact-freeze-go-2026-07-31`](#sequence-3-artifact-freeze-go-2026-07-31)
+record. The exact 13-file freeze retains artifact-freeze `GO` with zero
+blockers as historical evidence. Sequence 3 is now production-wired locally.
+
+Production migration reads and verifies only the V2 manifest, Sequence 3 SQL,
+WASM module and ABI contract. It validates the frozen vector length/checksum
+through the trusted manifest and compiled constants without opening the
+121,310,783-byte golden registry. The 55 ABI and 204 host vectors are retained
+for explicit offline certification; the offline loader still performs exact
+read, raw/framed hash, strict canonical JSON, registry and vector execution
+checks.
+
+Verification used exact Node **24.15.0** and pnpm **10.33.2**:
+
+- storage typecheck: pass;
+- focused assets, offline transform and production migration: **3 files,
+  11/11 tests passed in 20.61s**; the cold empty version-2 to version-3 case
+  completed in **389ms**;
+- legacy generalized migration regression: **62/62 passed**;
+- final serialized package run after independent-review corrections: **6 files,
+  138/138 tests passed in 60.67s**.
+- documentation verification: **30 documents passed**; `git diff --check`
+  also passed.
+
+Local migration-core result: **GO**. This is not production/release `GO` and
+does not authorize W0.2 agent runtime. W0.2 runtime remains incomplete and
+unauthorized; all V2 flags remain OFF. Windows durability, native crash
+evidence, package/source equality and large-file transport remain unverified;
+production/release remains `NO-GO`.

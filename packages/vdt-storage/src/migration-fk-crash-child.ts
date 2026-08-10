@@ -43,13 +43,14 @@ if (!allowed.has(faultPoint)) {
   );
 }
 
+const migrationNow = new Date().toISOString();
 const db = new DatabaseSync(databasePath, { timeout: 30_000 });
 try {
   __runStorageMigrationsWithPlanForTests(
     db,
     dataDir,
     {
-      now: () => new Date().toISOString(),
+      now: () => migrationNow,
       busyTimeoutMs: 30_000,
       leaseMs: 0,
       faultInjector(

@@ -144,11 +144,7 @@ export function validateLegacyAgentRunsForSequence3(
   );
 }
 
-/**
- * Executes every frozen host vector. A future runner must call this production
- * preflight before backup or DDL; this R2.1 slice intentionally does not wire
- * the migration runner.
- */
+/** Executes every frozen host vector for explicit offline certification. */
 export function preflightSequence3TransformHost(): void {
   if (hostPreflightComplete) return;
   const registry = loadSequence3TransformPreflightRegistry();
