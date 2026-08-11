@@ -21,7 +21,7 @@ import {
 import { CliAgentCard, type CliAgentDetectionView } from "./cli-agent-card";
 import { CliInstallGrid } from "./cli-install-grid";
 import { ProviderTestStatusBanner } from "./provider-diagnostics";
-import { useVdtStudioStore } from "./vdt-store";
+import { useVdtStudioStore, type ProviderTestStatus } from "./vdt-store";
 
 function AccordionSection({
   title,
@@ -290,6 +290,8 @@ export function LocalCliSettings() {
   const unpairRunner = useVdtStudioStore((state) => state.unpairRunner);
 
   const [installToast, setInstallToast] = useState<string | undefined>();
+  const [authenticatingCliId, setAuthenticatingCliId] = useState<CliAgentId | undefined>();
+  const [authStatusByAgent, setAuthStatusByAgent] = useState<Partial<Record<CliAgentId, ProviderTestStatus>>>({});
   const [pairingCode, setPairingCode] = useState("");
   const [localModelsByBackend, setLocalModelsByBackend] = useState<Partial<Record<LocalHttpModelBackendId, string[]>>>({});
   const [localModelLoadingByBackend, setLocalModelLoadingByBackend] = useState<Partial<Record<LocalHttpModelBackendId, boolean>>>({});
@@ -436,13 +438,49 @@ export function LocalCliSettings() {
   }
 
   async function handleAuthenticate(entry: CliCatalogEntry) {
+    setAuthenticatingCliId(entry.id);
+    setAuthStatusByAgent((current) => ({
+      ...current,
+      [entry.id]: {
+        kind: "info",
+        message: entry.id === "cursor-agent"
+          ? "Cursor CLI sign-in started. Complete the confirmation in your browser."
+          : `Opening ${entry.displayName} sign-in guidance…`
+      }
+    }));
     try {
       const action = await createAiExecutionClient().openProviderAuth(backendIdForCliAgent(entry.id));
+      if (action.action === "authenticated") {
+        setAuthStatusByAgent((current) => ({
+          ...current,
+          [entry.id]: { kind: "info", message: "Sign-in completed. Verifying CLI access and loading models…" }
+        }));
+        await rescanClis(entry.id);
+        setAuthStatusByAgent((current) => ({
+          ...current,
+          [entry.id]: { kind: "success", message: `${entry.displayName} is authenticated and ready.` }
+        }));
+        return;
+      }
+
       window.open(action.docsUrl ?? entry.docsUrl, "_blank", "noopener,noreferrer");
-      setInstallToast(action.label ?? `Opened ${entry.displayName} authentication help`);
-    } catch {
-      window.open(entry.docsUrl, "_blank", "noopener,noreferrer");
-      setInstallToast(`Opened ${entry.displayName} authentication help`);
+      setAuthStatusByAgent((current) => ({
+        ...current,
+        [entry.id]: {
+          kind: "info",
+          message: action.instructions ?? `Opened ${entry.displayName} sign-in guidance.`
+        }
+      }));
+    } catch (error) {
+      setAuthStatusByAgent((current) => ({
+        ...current,
+        [entry.id]: {
+          kind: "error",
+          message: error instanceof Error ? error.message : `${entry.displayName} sign-in failed.`
+        }
+      }));
+    } finally {
+      setAuthenticatingCliId(undefined);
     }
   }
 
@@ -570,7 +608,9 @@ export function LocalCliSettings() {
                   modelSelection={resolveModelSelection(entry.id)}
                   discoveredModels={cliDiscoveredModelsByAgent[entry.id] ?? []}
                   testStatus={cliTestStatusByAgent[entry.id]}
+                  authActionStatus={authStatusByAgent[entry.id]}
                   isTesting={Boolean(isTestingCliByAgent[entry.id])}
+                  isAuthenticating={authenticatingCliId === entry.id}
                   onSelect={() => setSelectedCliAgentId(entry.id)}
                   onTest={() => void testCli(entry.id)}
                   onAuthenticate={() => void handleAuthenticate(entry)}

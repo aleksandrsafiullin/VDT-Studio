@@ -156,7 +156,7 @@ async function routeSidecarRequest(message: SidecarRequestMessage, context: Loca
     return listRuntimeModels(requireBackendId(message.payload), context);
   }
   if (message.method === "open_provider_auth") {
-    return openRuntimeProviderAuth(requireBackendId(message.payload), context);
+    return await openRuntimeProviderAuth(requireBackendId(message.payload), context);
   }
   return { statusCode: 200, payload: { ok: true, appMode: "desktop" } };
 }

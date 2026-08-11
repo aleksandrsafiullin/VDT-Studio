@@ -19,7 +19,7 @@ VDT Studio Desktop is the required host for seamless subscription CLI and local-
 
 The Rust command implementations route through `src-tauri/src/sidecar_host.rs`, which owns sidecar auto-start, shutdown cleanup and framed pipe requests. The desktop app setup starts the managed runtime state on launch, and the frontend desktop execution client calls these reviewed commands instead of web runner routes when the Tauri bridge is present.
 
-`open_provider_auth` is intentionally instruction-only at this stage. It asks the sidecar for provider-owned authentication guidance and documentation URLs for reviewed subscription backends. It does not expose arbitrary command execution, paths, environment values, or plugin-based openers.
+`open_provider_auth` is a narrow provider-authentication command. For Cursor, the sidecar resolves the executable from reviewed aliases and runs only the manifest-owned `login` argument, with a bounded timeout and output buffer. The provider owns the browser confirmation and credential storage; after the child exits, the runtime verifies the CLI session before reporting success. Executable paths, arguments, environment values and credentials are never accepted from the frontend. Providers without a reviewed managed login command remain instruction-only and return provider-owned guidance/documentation.
 
 ## Disabled Surfaces
 

@@ -34,7 +34,7 @@ function authSummaryForStatus(status: ModelBackendStatus): string {
     case "ready":
       return "Cursor account is authenticated and ready.";
     case "authentication_required":
-      return "Cursor sign-in required. Run `agent login` in a terminal.";
+      return "Cursor sign-in required. Use Authenticate to start the Cursor CLI sign-in flow.";
     case "rate_limited":
       return "Cursor account is rate limited. Try again later.";
     case "unsupported_version":

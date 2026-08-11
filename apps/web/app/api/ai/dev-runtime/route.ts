@@ -77,6 +77,14 @@ export async function POST(request: Request) {
       return jsonRuntimeResult(await runtime.listRuntimeModels(backendId, context));
     }
 
+    if (operation === "open_provider_auth") {
+      const backendId = typeof body.backendId === "string" ? body.backendId.trim() : "";
+      if (!backendId) {
+        return NextResponse.json({ ok: false, error: "backendId is required." }, { status: 400 });
+      }
+      return jsonRuntimeResult(await runtime.openRuntimeProviderAuth(backendId, context));
+    }
+
     if (operation === "cancel") {
       const requestId = typeof body.requestId === "string" ? body.requestId : "";
       return jsonRuntimeResult(runtime.cancelRuntimeRequest(requestId, context));

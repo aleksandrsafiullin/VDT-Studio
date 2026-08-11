@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 
 const fakeCodex = fileURLToPath(new URL("../../../../../../packages/local-runner/src/server/fixtures/fake-codex.cjs", import.meta.url));
+const fakeCursor = fileURLToPath(new URL("../../../../../../packages/local-runner/src/server/fixtures/fake-cursor.cjs", import.meta.url));
 
 function request(body: unknown) {
   return new Request("http://localhost:3000/api/ai/dev-runtime", {
@@ -98,6 +99,41 @@ describe("development local runtime API route", () => {
     expect(body.ok).toBe(true);
     expect(body.backendId).toBe("ollama");
     expect(body.models).toEqual(["qwen3:latest"]);
+  });
+
+  it("runs and verifies the reviewed Cursor CLI sign-in flow", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-dev-auth-"));
+    try {
+      const fakeCursorExecutable = path.join(tempDir, "agent");
+      await copyFile(fakeCursor, fakeCursorExecutable);
+      await chmod(fakeCursorExecutable, 0o700);
+      vi.stubEnv("VDT_APP_MODE", "development_web");
+      (globalThis as typeof globalThis & { __vdtStudioDevelopmentRuntime?: unknown }).__vdtStudioDevelopmentRuntime =
+        createLocalRuntimeContext({
+          detection: { path: tempDir, probeTimeoutMs: 5_000 },
+          executor: { resolveExecutable: async () => fakeCursorExecutable },
+          providerAuth: {
+            execFile: async (executable, args) => {
+              expect(executable).toBe(fakeCursorExecutable);
+              expect(args).toEqual(["login"]);
+              return { stdout: "Cursor CLI authentication complete.\n", stderr: "" };
+            }
+          }
+        });
+
+      const response = await POST(request({ operation: "open_provider_auth", backendId: "cursor_subscription" }));
+      const body = await readJson(response) as Awaited<ReturnType<typeof readJson>> & { action?: string; label?: string };
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        ok: true,
+        backendId: "cursor_subscription",
+        action: "authenticated",
+        label: "Cursor Agent authenticated."
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("returns run progress snapshots for polling clients", async () => {

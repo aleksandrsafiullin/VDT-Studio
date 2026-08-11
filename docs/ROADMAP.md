@@ -13,6 +13,7 @@ Implemented at alpha level:
 - JSON/Markdown/SVG export and product CLI;
 - bounded provider contracts, local runner and desktop private-pipe sidecar foundation;
 - provider-owned model discovery for supported subscription CLIs and BYOK OpenAI-compatible, Anthropic and Gemini APIs, with explicit manual fallback and no static availability catalog;
+- managed Cursor CLI authentication through a fixed manifest command, provider browser confirmation, post-login verification and automatic rescan;
 - real agent decision/tool/feedback loop with local skill retrieval;
 - guarded one-click incoming-KPI decomposition that stops after the selected node's immediate child layer;
 - 18 registered task schemas, 17 exposed product tasks and phase-gate drift checks;

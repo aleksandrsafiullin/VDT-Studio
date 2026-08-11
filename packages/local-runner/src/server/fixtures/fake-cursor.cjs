@@ -59,6 +59,15 @@ function main() {
     process.exit(0);
   }
 
+  if (process.argv.includes("login")) {
+    if (mode === "auth-login-fail") {
+      process.stderr.write("Cursor CLI sign-in was cancelled.\n");
+      process.exit(1);
+    }
+    process.stdout.write("Cursor CLI authentication complete.\n");
+    process.exit(0);
+  }
+
   if (process.argv.includes("status") && process.argv.includes("--format")) {
     process.stdout.write(`${JSON.stringify({ loggedIn: true, status: "ready" })}\n`);
     process.exit(0);

@@ -71,7 +71,9 @@ interface CliAgentCardProps {
   modelSelection: CliModelSelection;
   discoveredModels: readonly string[];
   testStatus?: ProviderTestStatus | undefined;
+  authActionStatus?: ProviderTestStatus | undefined;
   isTesting: boolean;
+  isAuthenticating?: boolean | undefined;
   onSelect: () => void;
   onTest: () => void;
   onAuthenticate?: (() => void) | undefined;
@@ -85,7 +87,9 @@ export function CliAgentCard({
   modelSelection,
   discoveredModels,
   testStatus,
+  authActionStatus,
   isTesting,
+  isAuthenticating = false,
   onSelect,
   onTest,
   onAuthenticate,
@@ -118,7 +122,7 @@ export function CliAgentCard({
     not_installed: "bg-red-50 text-red-700"
   }[requestReadiness.state];
   const showAuthGuidance =
-    detection.status === "authentication_required" && detection.authSummary && !testStatus;
+    detection.status === "authentication_required" && detection.authSummary && !testStatus && !authActionStatus;
 
   return (
     <article
@@ -250,9 +254,19 @@ export function CliAgentCard({
               size="sm"
               variant="secondary"
               data-testid={`cli-agent-authenticate-${catalog.id}`}
+              disabled={isAuthenticating}
               onClick={onAuthenticate}
             >
-              Authenticate
+              {isAuthenticating ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  Waiting for browser
+                </>
+              ) : catalog.id === "cursor-agent" ? (
+                "Authenticate"
+              ) : (
+                "Sign-in help"
+              )}
             </Button>
           ) : null}
         </div>
@@ -261,6 +275,12 @@ export function CliAgentCard({
       {testStatus ? (
         <div className="border-t border-line px-3 py-2">
           <ProviderTestStatusBanner status={testStatus} testId={`provider-test-status-${catalog.id}`} />
+        </div>
+      ) : null}
+
+      {authActionStatus ? (
+        <div className="border-t border-line px-3 py-2">
+          <ProviderTestStatusBanner status={authActionStatus} testId={`provider-auth-status-${catalog.id}`} />
         </div>
       ) : null}
 

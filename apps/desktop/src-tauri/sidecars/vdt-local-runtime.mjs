@@ -6,6 +6,8 @@ import { randomUUID as randomUUID2 } from "node:crypto";
 
 // ../local-runner/src/server/runtime.ts
 import { randomUUID } from "node:crypto";
+import { execFile as execFile8 } from "node:child_process";
+import { promisify as promisify8 } from "node:util";
 
 // ../model-bridge/src/fake-backend.ts
 var FAKE_CAPABILITIES = Object.freeze({
@@ -1719,9 +1721,9 @@ var claudeSubscriptionCliAdapter = {
 async function testClaudeConnection(executable, signal) {
   let version = null;
   try {
-    const { execFile: execFile8 } = await import("node:child_process");
-    const { promisify: promisify8 } = await import("node:util");
-    const result = await promisify8(execFile8)(executable, ["--version"], {
+    const { execFile: execFile9 } = await import("node:child_process");
+    const { promisify: promisify9 } = await import("node:util");
+    const result = await promisify9(execFile9)(executable, ["--version"], {
       encoding: "utf8",
       timeout: 5e3,
       maxBuffer: 64 * 1024,
@@ -1746,7 +1748,6 @@ import { promisify as promisify2 } from "node:util";
 
 // ../model-bridge/src/subscription-cli/codex/constants.ts
 var CODEX_BACKEND_ID = "codex_subscription";
-var CODEX_CHATGPT_DEFAULT_MODEL = "gpt-5.5";
 var CODEX_FAST_SERVICE_TIER_ARGS = Object.freeze(["-c", 'service_tier="fast"']);
 
 // ../model-bridge/src/subscription-cli/codex/parser.ts
@@ -2012,8 +2013,6 @@ async function probeWithConnectionTest2(executable, options) {
         "--ignore-rules",
         "--sandbox",
         "workspace-write",
-        "--model",
-        CODEX_CHATGPT_DEFAULT_MODEL,
         "-c",
         "sandbox_workspace_write.network_access=true",
         ...CODEX_FAST_SERVICE_TIER_ARGS
@@ -2144,6 +2143,9 @@ function parseCodexModelList(output) {
   const models = [];
   const seen = /* @__PURE__ */ new Set();
   const add = (value) => {
+    if (isRecord4(value) && typeof value.visibility === "string" && value.visibility.toLowerCase() === "hide") {
+      return;
+    }
     const model = extractModelId(value);
     if (model && !seen.has(model)) {
       seen.add(model);
@@ -2187,18 +2189,14 @@ function parseCodexModelList(output) {
   }
   return Object.freeze(models);
 }
-function isSupportedCodexChatGptModel(model) {
-  const normalized = model.toLowerCase();
-  return !normalized.includes("-codex") && !normalized.includes("auto-review");
-}
 async function defaultExecFileProbe(executable, args, options) {
-  const { execFile: execFile8 } = await import("node:child_process");
-  const { promisify: promisify8 } = await import("node:util");
-  const result = await promisify8(execFile8)(executable, [...args], options);
+  const { execFile: execFile9 } = await import("node:child_process");
+  const { promisify: promisify9 } = await import("node:util");
+  const result = await promisify9(execFile9)(executable, [...args], options);
   return { stdout: result.stdout, stderr: result.stderr };
 }
 async function listCodexModels(executable, options = {}) {
-  const execFile8 = options.execFile ?? defaultExecFileProbe;
+  const execFile9 = options.execFile ?? defaultExecFileProbe;
   const execOptions = {
     encoding: "utf8",
     timeout: 1e4,
@@ -2209,19 +2207,19 @@ async function listCodexModels(executable, options = {}) {
   };
   let result;
   try {
-    result = await execFile8(executable, ["debug", "models"], execOptions);
+    result = await execFile9(executable, ["debug", "models"], execOptions);
   } catch (error2) {
     const text = error2 instanceof Error ? error2.message : String(error2);
     if (!/service_tier|unknown variant `default`|unknown variant "default"/i.test(text)) throw error2;
-    result = await execFile8(executable, ["debug", "models", ...CODEX_FAST_SERVICE_TIER_ARGS], execOptions);
+    result = await execFile9(executable, ["debug", "models", ...CODEX_FAST_SERVICE_TIER_ARGS], execOptions);
   }
   return parseCodexModelList(`${result.stdout}
-${result.stderr}`).filter(isSupportedCodexChatGptModel);
+${result.stderr}`);
 }
 function buildCodexDynamicArgs(input) {
   const args = [];
   if (input.cwd) args.push("-C", input.cwd);
-  args.push("--model", input.model ?? CODEX_CHATGPT_DEFAULT_MODEL);
+  if (input.model) args.push("--model", input.model);
   if (input.schemaPath) args.push("--output-schema", input.schemaPath);
   if (input.outputPath) args.push("--output-last-message", input.outputPath);
   assertArgsSafe(args);
@@ -2259,9 +2257,9 @@ var codexSubscriptionCliAdapter = {
 async function testCodexConnection(executable, signal) {
   let version = null;
   try {
-    const { execFile: execFile8 } = await import("node:child_process");
-    const { promisify: promisify8 } = await import("node:util");
-    const result = await promisify8(execFile8)(executable, ["--version"], {
+    const { execFile: execFile9 } = await import("node:child_process");
+    const { promisify: promisify9 } = await import("node:util");
+    const result = await promisify9(execFile9)(executable, ["--version"], {
       encoding: "utf8",
       timeout: 5e3,
       maxBuffer: 64 * 1024,
@@ -2533,7 +2531,7 @@ function authSummaryForStatus3(status) {
     case "ready":
       return "Cursor account is authenticated and ready.";
     case "authentication_required":
-      return "Cursor sign-in required. Run `agent login` in a terminal.";
+      return "Cursor sign-in required. Use Authenticate to start the Cursor CLI sign-in flow.";
     case "rate_limited":
       return "Cursor account is rate limited. Try again later.";
     case "unsupported_version":
@@ -2551,7 +2549,11 @@ function parseStatusJson3(stdout) {
     const payload = JSON.parse(stdout.trim());
     if (typeof payload !== "object" || payload === null) return void 0;
     const record = payload;
-    const loggedIn = record.loggedIn ?? record.logged_in ?? record.authenticated;
+    const statusMessage = [record.message, record.error, record.detail].filter((value) => typeof value === "string").join(" ").toLowerCase();
+    if (/unable to fetch user|authentication required|login required|sign.?in required|token (?:is )?(?:invalid|expired)/.test(statusMessage)) {
+      return "authentication_required";
+    }
+    const loggedIn = record.loggedIn ?? record.logged_in ?? record.authenticated ?? record.isAuthenticated;
     if (loggedIn === true) return "ready";
     if (loggedIn === false) return "authentication_required";
     const status = typeof record.status === "string" ? record.status.toLowerCase() : "";
@@ -2726,14 +2728,14 @@ function parseCursorAgentModelList(output) {
   return Object.freeze(models);
 }
 async function defaultExecFileProbe2(executable, args, options) {
-  const { execFile: execFile8 } = await import("node:child_process");
-  const { promisify: promisify8 } = await import("node:util");
-  const result = await promisify8(execFile8)(executable, [...args], options);
+  const { execFile: execFile9 } = await import("node:child_process");
+  const { promisify: promisify9 } = await import("node:util");
+  const result = await promisify9(execFile9)(executable, [...args], options);
   return { stdout: result.stdout, stderr: result.stderr };
 }
 async function listCursorAgentModels(executable, options = {}) {
-  const execFile8 = options.execFile ?? defaultExecFileProbe2;
-  const result = await execFile8(executable, ["models"], {
+  const execFile9 = options.execFile ?? defaultExecFileProbe2;
+  const result = await execFile9(executable, ["models"], {
     encoding: "utf8",
     timeout: 1e4,
     maxBuffer: 512 * 1024,
@@ -2787,9 +2789,9 @@ var cursorSubscriptionCliAdapter = {
 async function testCursorConnection(executable, signal) {
   let version = null;
   try {
-    const { execFile: execFile8 } = await import("node:child_process");
-    const { promisify: promisify8 } = await import("node:util");
-    const result = await promisify8(execFile8)(executable, ["--version"], {
+    const { execFile: execFile9 } = await import("node:child_process");
+    const { promisify: promisify9 } = await import("node:util");
+    const result = await promisify9(execFile9)(executable, ["--version"], {
       encoding: "utf8",
       timeout: 5e3,
       maxBuffer: 64 * 1024,
@@ -2969,9 +2971,9 @@ var geminiSubscriptionCliAdapter = {
 async function testGeminiConnection(executable, signal) {
   let version = null;
   try {
-    const { execFile: execFile8 } = await import("node:child_process");
-    const { promisify: promisify8 } = await import("node:util");
-    const result = await promisify8(execFile8)(executable, ["--version"], { encoding: "utf8", timeout: 5e3, maxBuffer: 64 * 1024, windowsHide: true, shell: false, signal });
+    const { execFile: execFile9 } = await import("node:child_process");
+    const { promisify: promisify9 } = await import("node:util");
+    const result = await promisify9(execFile9)(executable, ["--version"], { encoding: "utf8", timeout: 5e3, maxBuffer: 64 * 1024, windowsHide: true, shell: false, signal });
     version = parseGeminiVersionOutput(`${result.stdout}
 ${result.stderr}`)?.raw ?? null;
   } catch {
@@ -3155,9 +3157,9 @@ var copilotSubscriptionCliAdapter = {
 async function testCopilotConnection(executable, signal) {
   let version = null;
   try {
-    const { execFile: execFile8 } = await import("node:child_process");
-    const { promisify: promisify8 } = await import("node:util");
-    const result = await promisify8(execFile8)(executable, ["--version"], { encoding: "utf8", timeout: 5e3, maxBuffer: 64 * 1024, windowsHide: true, shell: false, signal });
+    const { execFile: execFile9 } = await import("node:child_process");
+    const { promisify: promisify9 } = await import("node:util");
+    const result = await promisify9(execFile9)(executable, ["--version"], { encoding: "utf8", timeout: 5e3, maxBuffer: 64 * 1024, windowsHide: true, shell: false, signal });
     version = parseCopilotVersionOutput(`${result.stdout}
 ${result.stderr}`)?.raw ?? null;
   } catch {
@@ -5705,7 +5707,8 @@ var BUILTIN_BACKEND_MANIFESTS = Object.freeze([
     cli: {
       executableAliases: ["agent", "cursor-agent", "cursor"],
       args: ["--print", "--output-format", "stream-json", "--stream-partial-output", "--mode", "ask"],
-      versionArgs: ["--version"]
+      versionArgs: ["--version"],
+      authArgs: ["login"]
     },
     safety: {
       toolsDisabled: false,
@@ -5850,7 +5853,10 @@ function publicManifest(manifest) {
 // ../local-runner/src/server/runtime.ts
 var LOCAL_RUNTIME_VERSION = "0.2.0";
 var MAX_RETAINED_RUNS = 200;
+var PROVIDER_AUTH_TIMEOUT_MS = 5 * 6e4;
+var PROVIDER_AUTH_MAX_BUFFER_BYTES = 128 * 1024;
 var TASK_TYPES = new Set(ALL_VDT_TASK_TYPES);
+var execFileAsync5 = promisify8(execFile8);
 var PROGRESS_LABELS = {
   preparing_request: "Preparing request",
   starting_backend: "Starting backend",
@@ -5885,6 +5891,7 @@ function createLocalRuntimeContext(config = {}) {
     config,
     manifests: createManifestRegistry(config.manifests),
     runs: /* @__PURE__ */ new Map(),
+    authInProgress: /* @__PURE__ */ new Set(),
     auditSink: config.auditSink ?? ((event) => process.stdout.write(`${JSON.stringify({ event: "vdt_runner_audit", ...event })}
 `)),
     adapterVersion: config.adapterVersion ?? LOCAL_RUNTIME_VERSION
@@ -6320,17 +6327,83 @@ function getRuntimeRun(requestId, context) {
   if (!run) throw new LocalRuntimeError(404, "RUN_NOT_FOUND", "Run was not found.");
   return { statusCode: 200, payload: { ok: true, run: publicRun(run) } };
 }
-function openRuntimeProviderAuth(backendId, context) {
+async function openRuntimeProviderAuth(backendId, context) {
   const manifest = context.manifests.get(backendId);
   if (!manifest) throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
   if (manifest.kind !== "subscription_cli") {
     throw new LocalRuntimeError(400, "AUTH_ACTION_UNAVAILABLE", "Provider authentication is only available for subscription backends.");
+  }
+  if (manifest.cli?.authArgs?.length) {
+    if (context.authInProgress.has(backendId)) {
+      throw new LocalRuntimeError(409, "AUTH_ALREADY_IN_PROGRESS", `${manifest.label} sign-in is already in progress.`);
+    }
+    const agentId = subscriptionAgentIdForBackend(backendId);
+    if (!agentId) {
+      throw new LocalRuntimeError(501, "AUTH_ACTION_UNAVAILABLE", "Provider authentication is not available for this backend.");
+    }
+    context.authInProgress.add(backendId);
+    try {
+      const detection = await detectSubscriptionCli(agentId, context.config.detection ?? {});
+      if (!detection.installed || !detection.executable) {
+        throw new LocalRuntimeError(404, "BACKEND_NOT_INSTALLED", `${manifest.label} is not installed.`);
+      }
+      const execImpl = context.config.providerAuth?.execFile ?? execFileAsync5;
+      await execImpl(detection.executable, [...manifest.cli.authArgs], {
+        encoding: "utf8",
+        timeout: context.config.providerAuth?.timeoutMs ?? PROVIDER_AUTH_TIMEOUT_MS,
+        maxBuffer: PROVIDER_AUTH_MAX_BUFFER_BYTES,
+        windowsHide: true,
+        shell: false,
+        env: context.config.providerAuth?.env ?? process.env
+      });
+      const verified = await detectRuntimeSubscriptionClis(context, agentId);
+      const verifiedPayload = isRecord10(verified.payload) ? verified.payload : void 0;
+      const agents = Array.isArray(verifiedPayload?.agents) ? verifiedPayload.agents : [];
+      const verifiedAgent = agents.find((candidate) => isRecord10(candidate) && candidate.id === agentId);
+      if (!isRecord10(verifiedAgent) || verifiedAgent.status !== "ready") {
+        throw new LocalRuntimeError(
+          401,
+          "AUTH_NOT_VERIFIED",
+          `${manifest.label} sign-in finished, but the CLI still cannot run authenticated requests.`
+        );
+      }
+      return {
+        statusCode: 200,
+        payload: {
+          ok: true,
+          backendId,
+          action: "authenticated",
+          label: `${manifest.label} authenticated.`
+        }
+      };
+    } catch (error2) {
+      if (error2 instanceof LocalRuntimeError) throw error2;
+      const execError = error2;
+      if (execError.killed || execError.code === "ETIMEDOUT" || execError.signal === "SIGTERM") {
+        throw new LocalRuntimeError(408, "AUTH_TIMEOUT", `${manifest.label} sign-in timed out before browser confirmation.`);
+      }
+      throw new LocalRuntimeError(
+        401,
+        "AUTH_LOGIN_FAILED",
+        `${manifest.label} sign-in did not complete. Try again or run the provider CLI login command in a terminal.`
+      );
+    } finally {
+      context.authInProgress.delete(backendId);
+    }
   }
   const action = providerAuthAction(backendId);
   if (!action) {
     throw new LocalRuntimeError(501, "AUTH_ACTION_UNAVAILABLE", "Provider authentication is not available for this backend.");
   }
   return { statusCode: 200, payload: { ok: true, backendId, ...action } };
+}
+function subscriptionAgentIdForBackend(backendId) {
+  if (backendId === "cursor_subscription") return "cursor-agent";
+  if (backendId === "codex_subscription") return "codex";
+  if (backendId === "claude_subscription") return "claude";
+  if (backendId === "gemini_subscription") return "gemini";
+  if (backendId === "copilot_subscription") return "copilot";
+  return void 0;
 }
 function parseCompletionPayload(value) {
   if (!isRecord10(value)) throw new LocalRuntimeError(400, "INVALID_BODY", "Completion body must be an object.");
@@ -6819,7 +6892,7 @@ async function routeSidecarRequest(message, context) {
     return listRuntimeModels(requireBackendId(message.payload), context);
   }
   if (message.method === "open_provider_auth") {
-    return openRuntimeProviderAuth(requireBackendId(message.payload), context);
+    return await openRuntimeProviderAuth(requireBackendId(message.payload), context);
   }
   return { statusCode: 200, payload: { ok: true, appMode: "desktop" } };
 }

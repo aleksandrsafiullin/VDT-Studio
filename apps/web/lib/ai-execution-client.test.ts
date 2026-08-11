@@ -171,6 +171,26 @@ describe("AiExecutionClient", () => {
       ]);
   });
 
+  it("runs development provider authentication through the managed dev runtime route", async () => {
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe("/api/ai/dev-runtime");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        operation: "open_provider_auth",
+        backendId: "cursor_subscription"
+      });
+      return jsonResponse({
+        ok: true,
+        backendId: "cursor_subscription",
+        action: "authenticated",
+        label: "Cursor Agent authenticated."
+      });
+    });
+
+    await expect(
+      new DevelopmentRunnerClient(fetcher as unknown as typeof fetch).openProviderAuth("cursor_subscription")
+    ).resolves.toMatchObject({ action: "authenticated", label: "Cursor Agent authenticated." });
+  });
+
   it("runs development local AI completions through the managed dev runtime route without pairing", async () => {
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
       expect(url).toBe("/api/ai/dev-runtime");

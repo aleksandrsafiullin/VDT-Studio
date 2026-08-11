@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
+import { promisify } from "node:util";
 import {
   isVdtSchemaId,
   schemaSupportsTask,
@@ -28,12 +30,28 @@ import { ALL_VDT_TASK_TYPES, createManifestRegistry, publicManifest } from "./ma
 
 export const LOCAL_RUNTIME_VERSION = "0.2.0";
 const MAX_RETAINED_RUNS = 200;
+const PROVIDER_AUTH_TIMEOUT_MS = 5 * 60_000;
+const PROVIDER_AUTH_MAX_BUFFER_BYTES = 128 * 1024;
 const TASK_TYPES = new Set<VdtAiTaskType>(ALL_VDT_TASK_TYPES);
+const execFileAsync = promisify(execFile);
+
+type ProviderAuthExecFile = (
+  executable: string,
+  args: readonly string[],
+  options: ExecFileOptionsWithStringEncoding
+) => Promise<{ stdout: string; stderr: string }>;
+
+export interface ProviderAuthOptions {
+  execFile?: ProviderAuthExecFile;
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+}
 
 export interface LocalRuntimeConfig {
   manifests?: readonly BackendManifest[];
   executor?: ExecutorOptions;
   detection?: DetectionOptions & { probeTimeoutMs?: number };
+  providerAuth?: ProviderAuthOptions;
   auditSink?: (event: AuditEvent) => void;
   adapterVersion?: string;
 }
@@ -58,6 +76,7 @@ export interface LocalRuntimeContext {
   config: LocalRuntimeConfig;
   manifests: ReadonlyMap<string, BackendManifest>;
   runs: Map<string, ActiveRun>;
+  authInProgress: Set<string>;
   auditSink: (event: AuditEvent) => void;
   adapterVersion: string;
 }
@@ -88,6 +107,7 @@ export function createLocalRuntimeContext(config: LocalRuntimeConfig = {}): Loca
     config,
     manifests: createManifestRegistry(config.manifests),
     runs: new Map(),
+    authInProgress: new Set(),
     auditSink: config.auditSink ?? ((event) => process.stdout.write(`${JSON.stringify({ event: "vdt_runner_audit", ...event })}\n`)),
     adapterVersion: config.adapterVersion ?? LOCAL_RUNTIME_VERSION
   };
@@ -574,17 +594,88 @@ export function getRuntimeRun(requestId: string, context: LocalRuntimeContext): 
   return { statusCode: 200, payload: { ok: true, run: publicRun(run) } };
 }
 
-export function openRuntimeProviderAuth(backendId: string, context: LocalRuntimeContext): RuntimeResult {
+export async function openRuntimeProviderAuth(backendId: string, context: LocalRuntimeContext): Promise<RuntimeResult> {
   const manifest = context.manifests.get(backendId);
   if (!manifest) throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
   if (manifest.kind !== "subscription_cli") {
     throw new LocalRuntimeError(400, "AUTH_ACTION_UNAVAILABLE", "Provider authentication is only available for subscription backends.");
+  }
+  if (manifest.cli?.authArgs?.length) {
+    if (context.authInProgress.has(backendId)) {
+      throw new LocalRuntimeError(409, "AUTH_ALREADY_IN_PROGRESS", `${manifest.label} sign-in is already in progress.`);
+    }
+
+    const agentId = subscriptionAgentIdForBackend(backendId);
+    if (!agentId) {
+      throw new LocalRuntimeError(501, "AUTH_ACTION_UNAVAILABLE", "Provider authentication is not available for this backend.");
+    }
+    context.authInProgress.add(backendId);
+    try {
+      const detection = await detectSubscriptionCli(agentId, context.config.detection ?? {});
+      if (!detection.installed || !detection.executable) {
+        throw new LocalRuntimeError(404, "BACKEND_NOT_INSTALLED", `${manifest.label} is not installed.`);
+      }
+
+      const execImpl = context.config.providerAuth?.execFile ?? execFileAsync;
+      await execImpl(detection.executable, [...manifest.cli.authArgs], {
+        encoding: "utf8",
+        timeout: context.config.providerAuth?.timeoutMs ?? PROVIDER_AUTH_TIMEOUT_MS,
+        maxBuffer: PROVIDER_AUTH_MAX_BUFFER_BYTES,
+        windowsHide: true,
+        shell: false,
+        env: context.config.providerAuth?.env ?? process.env
+      });
+
+      const verified = await detectRuntimeSubscriptionClis(context, agentId);
+      const verifiedPayload = isRecord(verified.payload) ? verified.payload : undefined;
+      const agents = Array.isArray(verifiedPayload?.agents) ? verifiedPayload.agents : [];
+      const verifiedAgent = agents.find((candidate) => isRecord(candidate) && candidate.id === agentId);
+      if (!isRecord(verifiedAgent) || verifiedAgent.status !== "ready") {
+        throw new LocalRuntimeError(
+          401,
+          "AUTH_NOT_VERIFIED",
+          `${manifest.label} sign-in finished, but the CLI still cannot run authenticated requests.`
+        );
+      }
+
+      return {
+        statusCode: 200,
+        payload: {
+          ok: true,
+          backendId,
+          action: "authenticated",
+          label: `${manifest.label} authenticated.`
+        }
+      };
+    } catch (error) {
+      if (error instanceof LocalRuntimeError) throw error;
+      const execError = error as NodeJS.ErrnoException & { killed?: boolean; signal?: string };
+      if (execError.killed || execError.code === "ETIMEDOUT" || execError.signal === "SIGTERM") {
+        throw new LocalRuntimeError(408, "AUTH_TIMEOUT", `${manifest.label} sign-in timed out before browser confirmation.`);
+      }
+      throw new LocalRuntimeError(
+        401,
+        "AUTH_LOGIN_FAILED",
+        `${manifest.label} sign-in did not complete. Try again or run the provider CLI login command in a terminal.`
+      );
+    } finally {
+      context.authInProgress.delete(backendId);
+    }
   }
   const action = providerAuthAction(backendId);
   if (!action) {
     throw new LocalRuntimeError(501, "AUTH_ACTION_UNAVAILABLE", "Provider authentication is not available for this backend.");
   }
   return { statusCode: 200, payload: { ok: true, backendId, ...action } };
+}
+
+function subscriptionAgentIdForBackend(backendId: string): SubscriptionCliId | undefined {
+  if (backendId === "cursor_subscription") return "cursor-agent";
+  if (backendId === "codex_subscription") return "codex";
+  if (backendId === "claude_subscription") return "claude";
+  if (backendId === "gemini_subscription") return "gemini";
+  if (backendId === "copilot_subscription") return "copilot";
+  return undefined;
 }
 
 export function parseCompletionPayload(value: unknown): CompletionRequest {

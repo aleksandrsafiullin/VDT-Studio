@@ -29,6 +29,7 @@ This threat model covers API/BYOK providers, subscription CLIs, local-model exec
 | Hosted web executes local CLI | App-mode checks fail closed; hosted copy routes users to Desktop |
 | Webview invokes arbitrary native capability | Reviewed Tauri commands only; no generic shell/filesystem/opener plugins |
 | Frontend supplies executable path/args/env/schema | Runtime parsers reject forbidden fields; manifests own execution details |
+| Browser turns provider authentication into arbitrary command execution | `open_provider_auth` accepts only a backend ID; Cursor resolves reviewed aliases and runs only manifest-owned `login`, with bounded time/output, single-flight execution and sanitized failures |
 | CLI argv injection/path traversal | Shared validation rejects NUL, traversal and reviewed dangerous flags |
 | Provider reads repository | Fresh temp workspaces, filtered environment and no browser-supplied cwd/path |
 | Sidecar stdout corrupts protocol | Bounded framed JSON on stdout; structured logs on stderr |
@@ -57,6 +58,7 @@ This threat model covers API/BYOK providers, subscription CLIs, local-model exec
 ## Provider And CLI Boundary
 
 - The browser never supplies executable paths, static arguments, environment or credentials to local CLI adapters.
+- Managed Cursor authentication deliberately inherits the host environment so the provider CLI can use its own browser/keychain flow, but the frontend supplies only `cursor_subscription`; the runtime fixes `agent login`, bounds execution, verifies the resulting session and never returns raw login output or one-time challenges.
 - Subscription backends remain at the status in `release/provider-certification.json`; fake tests are not live evidence.
 - Tool-capable Cursor receives a fresh ephemeral workspace, not the repository cwd or VDT MCP configuration.
 - Other reviewed subscription manifests deny tools through provider-owned flags/policies and validate output locally.

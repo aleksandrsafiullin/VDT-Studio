@@ -101,7 +101,7 @@ For a cheaper auth/connection-only check, append `-- --connection-only`.
 
 Auth/version detection (web UI): `agent status --format json` when available; otherwise a minimal stdin-based `--print` connection probe. Probes time out after 5 seconds.
 
-Cursor may report `status: authenticated` solely because token files exist while also returning `unable to fetch user details`. VDT treats that payload as `authentication_required`, not `ready`, because both protected generation and `agent models` reject the stale session. Settings then shows **Sign in to load models** until `agent login` restores a provider-validated session.
+Cursor may report `status: authenticated` solely because token files exist while also returning `unable to fetch user details`. VDT treats that payload as `authentication_required`, not `ready`, because both protected generation and `agent models` reject the stale session. Settings then shows **Sign in to load models**. Its **Authenticate** action runs the reviewed manifest-owned `agent login` flow, waits for Cursor's one-time browser confirmation, verifies CLI access and automatically rescans; merely signing into the normal Cursor dashboard does not complete this CLI exchange.
 
 Model discovery: `cursor-agent models`, parsed from JSON or line/table output.
 

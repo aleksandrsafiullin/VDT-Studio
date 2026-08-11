@@ -238,7 +238,7 @@ export interface StandaloneRunnerPairResult {
 export interface ProviderAuthActionResult {
   ok?: boolean;
   backendId?: string;
-  action?: "instructions";
+  action?: "authenticated" | "instructions";
   label?: string;
   instructions?: string;
   docsUrl?: string;
@@ -1335,8 +1335,19 @@ export class DevelopmentRunnerClient extends BaseWebAiExecutionClient {
   }
 
   override async openProviderAuth(backendId: string): Promise<ProviderAuthActionResult> {
-    void backendId;
-    throw new Error("Standalone runner authentication actions are not available in development web mode.");
+    const response = await this.fetcher("/api/ai/dev-runtime", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation: "open_provider_auth", backendId })
+    });
+    const payload = await readJsonResponse<ProviderAuthActionResult & {
+      error?: string | { message?: string };
+    }>(response, "Provider authentication failed.");
+    if (!payload.ok) {
+      const error = typeof payload.error === "object" ? payload.error?.message : payload.error;
+      throw new Error(error ?? "Provider authentication failed.");
+    }
+    return payload;
   }
 }
 

@@ -26,6 +26,8 @@ export interface BackendManifest {
     executableAliases: readonly [string, ...string[]];
     args: readonly string[];
     versionArgs: readonly string[];
+    /** Fixed provider-owned sign-in arguments. Never supplied by the frontend. */
+    authArgs?: readonly string[];
   };
   safety: {
     toolsDisabled: boolean;

@@ -36,9 +36,9 @@ describe("local runtime contract", () => {
     expect(JSON.stringify(result.payload)).not.toContain("executableAliases");
   });
 
-  it("returns provider-owned authentication instructions for subscription backends", () => {
+  it("returns provider-owned authentication instructions for subscription backends", async () => {
     const context = createLocalRuntimeContext({ auditSink: () => undefined });
-    const result = openRuntimeProviderAuth("codex_subscription", context);
+    const result = await openRuntimeProviderAuth("codex_subscription", context);
 
     expect(result.statusCode).toBe(200);
     expect(result.payload).toMatchObject({
@@ -49,6 +49,99 @@ describe("local runtime contract", () => {
       docsUrl: "https://developers.openai.com/codex/cli"
     });
     expect(JSON.stringify(result.payload)).not.toContain("command");
+  });
+
+  it("runs the fixed Cursor CLI login command and verifies protected access", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-cursor-auth-"));
+    try {
+      await symlink(fakeCursor, path.join(tempDir, "agent"));
+      const calls: Array<{ executable: string; args: readonly string[] }> = [];
+      const context = createLocalRuntimeContext({
+        auditSink: () => undefined,
+        detection: { path: tempDir, probeTimeoutMs: 5_000 },
+        executor: { resolveExecutable: async () => fakeCursor },
+        providerAuth: {
+          execFile: async (executable, args) => {
+            calls.push({ executable, args });
+            return { stdout: "Cursor CLI authentication complete.\n", stderr: "" };
+          }
+        }
+      });
+
+      await expect(openRuntimeProviderAuth("cursor_subscription", context)).resolves.toMatchObject({
+        statusCode: 200,
+        payload: {
+          ok: true,
+          backendId: "cursor_subscription",
+          action: "authenticated",
+          label: "Cursor Agent authenticated."
+        }
+      });
+      expect(calls).toEqual([{ executable: path.join(tempDir, "agent"), args: ["login"] }]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("sanitizes Cursor CLI login failures", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-cursor-auth-fail-"));
+    try {
+      await symlink(fakeCursor, path.join(tempDir, "agent"));
+      const context = createLocalRuntimeContext({
+        auditSink: () => undefined,
+        detection: { path: tempDir, probeTimeoutMs: 5_000 },
+        providerAuth: {
+          execFile: async () => {
+            throw Object.assign(new Error("secret one-time challenge"), { stderr: "secret one-time challenge" });
+          }
+        }
+      });
+
+      const error = await openRuntimeProviderAuth("cursor_subscription", context).catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ code: "AUTH_LOGIN_FAILED", statusCode: 401 });
+      expect(String((error as Error).message)).not.toContain("secret one-time challenge");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("allows only one Cursor CLI login flow at a time", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-cursor-auth-single-flight-"));
+    let releaseLogin: (() => void) | undefined;
+    const loginStarted = new Promise<void>((resolve) => {
+      releaseLogin = resolve;
+    });
+    let unblockLogin: (() => void) | undefined;
+    const loginBlocked = new Promise<void>((resolve) => {
+      unblockLogin = resolve;
+    });
+    try {
+      await symlink(fakeCursor, path.join(tempDir, "agent"));
+      const context = createLocalRuntimeContext({
+        auditSink: () => undefined,
+        detection: { path: tempDir, probeTimeoutMs: 5_000 },
+        executor: { resolveExecutable: async () => fakeCursor },
+        providerAuth: {
+          execFile: async () => {
+            releaseLogin?.();
+            await loginBlocked;
+            return { stdout: "Cursor CLI authentication complete.\n", stderr: "" };
+          }
+        }
+      });
+
+      const firstLogin = openRuntimeProviderAuth("cursor_subscription", context);
+      await loginStarted;
+      await expect(openRuntimeProviderAuth("cursor_subscription", context)).rejects.toMatchObject({
+        code: "AUTH_ALREADY_IN_PROGRESS",
+        statusCode: 409
+      });
+      unblockLogin?.();
+      await expect(firstLogin).resolves.toMatchObject({ statusCode: 200 });
+    } finally {
+      unblockLogin?.();
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("detects installed subscription CLIs and provider-owned models", async () => {
@@ -191,10 +284,10 @@ describe("local runtime contract", () => {
     }
   });
 
-  it("rejects provider authentication actions for local model backends", () => {
+  it("rejects provider authentication actions for local model backends", async () => {
     const context = createLocalRuntimeContext({ auditSink: () => undefined });
 
-    expect(() => openRuntimeProviderAuth("ollama", context)).toThrow("Provider authentication is only available");
+    await expect(openRuntimeProviderAuth("ollama", context)).rejects.toThrow("Provider authentication is only available");
   });
 
   it("runs mock completion outside the HTTP transport and records the run", async () => {

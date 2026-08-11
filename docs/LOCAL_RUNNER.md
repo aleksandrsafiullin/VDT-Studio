@@ -33,6 +33,8 @@ The web and desktop clients fail closed on subscription-CLI readiness. Finding a
 
 Provider auth probes must reflect request capability, not merely the presence of stored tokens. In particular, Cursor's `authenticated` status is mapped to `authentication_required` when the same payload reports that user details could not be fetched, because protected Cursor commands reject that session until `agent login` succeeds.
 
+Cursor's **Authenticate** action is not a dashboard/documentation link. The trusted desktop or development runtime resolves the reviewed Cursor executable, runs only the manifest-owned `login` argument, waits up to five minutes for Cursor's browser confirmation, verifies the resulting CLI session and then lets the client rescan models. The frontend cannot provide an executable, arguments, environment or credentials. Other providers remain instruction-only and are labelled **Sign-in help**.
+
 Subscription model choices are provider-owned. Codex and Cursor adapters populate Settings only from their reviewed model-list commands. Adapters without a confirmed machine-readable list command, and any failed/auth-blocked list probe, expose `auto` and manual entry instead of a hardcoded catalog. Local HTTP backends continue to load models from their manifest-owned `/models` or native Ollama endpoint.
 
 Example completion request:

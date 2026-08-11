@@ -67,7 +67,8 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     cli: {
       executableAliases: ["agent", "cursor-agent", "cursor"],
       args: ["--print", "--output-format", "stream-json", "--stream-partial-output", "--mode", "ask"],
-      versionArgs: ["--version"]
+      versionArgs: ["--version"],
+      authArgs: ["login"]
     },
     safety: {
       toolsDisabled: false,

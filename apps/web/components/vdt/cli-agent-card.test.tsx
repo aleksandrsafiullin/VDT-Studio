@@ -212,6 +212,38 @@ describe("CliAgentCard", () => {
     expect(html).not.toMatch(/data-testid="cli-agent-test-cursor-agent"[^>]*disabled/);
   });
 
+  it("shows a bounded waiting state while the Cursor CLI owns browser authentication", () => {
+    const html = renderToStaticMarkup(
+      <CliAgentCard
+        catalog={cursorCatalog}
+        detection={{
+          id: "cursor-agent",
+          installed: true,
+          executable: "/usr/local/bin/agent",
+          alias: "agent",
+          version: "0.46.0",
+          status: "authentication_required",
+          authSummary: "Cursor sign-in required."
+        }}
+        selected
+        modelSelection={{ source: "agent_default" }}
+        discoveredModels={[]}
+        authActionStatus={{ kind: "info", message: "Complete the confirmation in your browser." }}
+        isTesting={false}
+        isAuthenticating
+        onSelect={() => undefined}
+        onTest={() => undefined}
+        onAuthenticate={() => undefined}
+        onModelSelectionChange={() => undefined}
+      />
+    );
+
+    expect(html).toContain("Waiting for browser");
+    expect(html).toMatch(/data-testid="cli-agent-authenticate-cursor-agent"[^>]*disabled/);
+    expect(html).toContain('data-testid="provider-auth-status-cursor-agent"');
+    expect(html).toContain("Complete the confirmation in your browser.");
+  });
+
   it("disables test for unsupported_version and shows incompatible chip", () => {
     const html = renderToStaticMarkup(
       <CliAgentCard
