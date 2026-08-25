@@ -10,7 +10,8 @@
   },
   "exports": {
     ".": "./src/index.ts",
-    "./server-runtime": "./src/server/runtime.ts"
+    "./server-runtime": "./src/server/runtime.ts",
+    "./timeout-limits": "./src/timeout-limits.ts"
   },
   "scripts": {
     "start": "tsx src/server/index.ts",

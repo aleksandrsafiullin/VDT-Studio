@@ -173,6 +173,80 @@ describe("openVdtDatabase", () => {
     db.close();
   });
 
+  it("deletes VDT-bound conversations, messages, runs, and events without affecting other VDTs", () => {
+    const root = tempRoot();
+    const dataDir = path.join(root, "data");
+    const db = openVdtDatabase(root, { dataDir, now: fixedClock("2026-06-29T10:00:00.000Z") });
+    db.createProject({ id: "project_chat_delete", name: "Chat delete project", industry: "Mining" });
+    db.createVdt({
+      id: "vdt_delete_a",
+      projectId: "project_chat_delete",
+      name: "Delete A",
+      rootKpi: "Production Volume"
+    });
+    db.createVdt({
+      id: "vdt_keep_b",
+      projectId: "project_chat_delete",
+      name: "Keep B",
+      rootKpi: "Throughput"
+    });
+    db.createConversation({
+      id: "conversation_delete_a",
+      projectId: "project_chat_delete",
+      vdtId: "vdt_delete_a",
+      title: "VDT A thread"
+    });
+    db.appendMessage({
+      id: "message_delete_a",
+      conversationId: "conversation_delete_a",
+      role: "user",
+      content: "Build VDT A"
+    });
+    db.createAgentRun({
+      id: "run_delete_a",
+      projectId: "project_chat_delete",
+      vdtId: "vdt_delete_a",
+      conversationId: "conversation_delete_a",
+      status: "succeeded",
+      phase: "reporting",
+      request: { mode: "generate_vdt" }
+    });
+    db.appendAgentEvent({
+      runId: "run_delete_a",
+      seq: 1,
+      type: "classification",
+      phase: "classifying_request",
+      title: "Classified",
+      message: "Classified request"
+    });
+    db.createConversation({
+      id: "conversation_keep_b",
+      projectId: "project_chat_delete",
+      vdtId: "vdt_keep_b",
+      title: "VDT B thread"
+    });
+    db.createAgentRun({
+      id: "run_keep_b",
+      projectId: "project_chat_delete",
+      vdtId: "vdt_keep_b",
+      conversationId: "conversation_keep_b",
+      status: "succeeded",
+      phase: "reporting",
+      request: { mode: "generate_vdt" }
+    });
+
+    expect(db.deleteVdt("vdt_delete_a")).toBe(true);
+    expect(db.getVdt("vdt_delete_a")).toBeNull();
+    expect(db.getConversation("conversation_delete_a")).toBeNull();
+    expect(db.listMessages("conversation_delete_a")).toEqual([]);
+    expect(db.getAgentRun("run_delete_a")).toBeNull();
+    expect(db.listAgentEvents("run_delete_a")).toEqual([]);
+    expect(db.getVdt("vdt_keep_b")).toMatchObject({ id: "vdt_keep_b" });
+    expect(db.getConversation("conversation_keep_b")).toMatchObject({ id: "conversation_keep_b" });
+    expect(db.getAgentRun("run_keep_b")).toMatchObject({ id: "run_keep_b" });
+    db.close();
+  });
+
   it("redacts provider secrets from agent runs and message run contexts", () => {
     const root = tempRoot();
     const db = openVdtDatabase(root, { now: fixedClock("2026-06-29T06:00:00.000Z") });

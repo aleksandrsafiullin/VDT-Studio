@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/timeout-limits";
 import { productionVolumeProject } from "@vdt-studio/vdt-core";
 import {
   type AiExecutionProgressEvent,
@@ -266,7 +267,7 @@ describe("AiExecutionClient", () => {
         backendId: "codex_subscription",
         taskType: "generate_tree",
         schemaId: "generate-tree-v1",
-        timeoutMs: 120000
+        timeoutMs: AGENT_DECISION_TIMEOUT_FLOOR_MS
       });
       return jsonResponse({ ok: true, output: project });
     });
@@ -590,7 +591,7 @@ describe("AiExecutionClient", () => {
         backendId: "codex_subscription",
         taskType: "generate_tree",
         schemaId: "generate-tree-v1",
-        timeoutMs: 120000
+        timeoutMs: AGENT_DECISION_TIMEOUT_FLOOR_MS
       });
       return {
         project,

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createLocalRuntimeContext } from "@vdt-studio/local-runner/server-runtime";
+import { createLocalRuntimeContext, AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/server-runtime";
 import { VdtStorageError } from "@vdt-studio/storage";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as startRun } from "./route";
@@ -36,6 +36,7 @@ async function readJson(response: Response) {
     snapshot?: {
       runId: string;
       status: string;
+      request?: { workspace?: { vdtId?: string } };
       visibleContext?: { brief?: { businessContext?: string } };
       pendingQuestions?: Array<{ id: string }>;
       selectedSkills: Array<{ id: string }>;
@@ -172,6 +173,25 @@ describe("agent runs API", () => {
     expect(body.snapshot?.visibleContext?.brief?.businessContext).toBe("I have 5 Komatsu PC1250 and 2 Komatsu PC2000");
     const snapshot = await waitForRunSnapshot(body.runId!, (run) => run.selectedSkills.length > 0);
     expect(snapshot.selectedSkills.length).toBeGreaterThan(0);
+  });
+
+  it("preserves workspace.vdtId on stored agent run request", async () => {
+    const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+      mode: "continue_project",
+      input: {
+        prompt: "Extend the existing model",
+        rootKpi: "Production Volume"
+      },
+      workspace: {
+        projectId: "project_production_volume",
+        vdtId: "vdt_existing_001"
+      },
+      providerId: "mock"
+    }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(body.snapshot?.request?.workspace?.vdtId).toBe("vdt_existing_001");
   });
 
   it("returns a JSON error when an agent run snapshot cannot be loaded", async () => {
@@ -377,6 +397,48 @@ describe("agent runs API", () => {
     expect(body.snapshot?.status).toBe("running");
     const snapshot = await waitForRunSnapshot(body.runId!, (run) => run.status === "needs_user_input");
     expect(snapshot.selectedSkills.map((skill) => skill.id)).toEqual(["mining.haulage_truck_cycle"]);
+  });
+
+  it("elevates retry timeout via prepareRetryExecution before handling the message", async () => {
+    const startResponse = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+      mode: "generate_vdt",
+      input: {
+        prompt: "Build a haulage model.",
+        rootKpi: "Ore haulage",
+        unit: "tonnes/year",
+        timePeriod: "year"
+      },
+      providerId: "mock",
+      providerConfig: {
+        timeoutMs: 60_000
+      },
+      options: { maxSteps: 3 }
+    }));
+    const startBody = await readJson(startResponse);
+    expect(startResponse.status).toBe(200);
+    const runId = startBody.runId!;
+
+    agentRuntime.store.updateRun(runId, {
+      status: "needs_user_input",
+      phase: "reporting",
+      firstResponseCompleted: true,
+      retryableError: {
+        code: "TIMEOUT",
+        message: "Backend timed out.",
+        retryCount: 1,
+        createdAt: new Date().toISOString()
+      }
+    });
+
+    const response = await postMessage(jsonRequest(`http://localhost:3000/api/agent/runs/${runId}/messages`, {
+      type: "user_answer",
+      answers: { retry: "retry_last_step" }
+    }), {
+      params: Promise.resolve({ runId })
+    });
+
+    expect(response.status).toBe(200);
+    expect(agentRuntime.store.getState(runId).request.providerConfig?.timeoutMs).toBe(AGENT_DECISION_TIMEOUT_FLOOR_MS);
   });
 
   it("refreshes stale managed local runtime manifests before agent decisions", async () => {

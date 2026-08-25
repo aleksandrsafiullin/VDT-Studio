@@ -4,7 +4,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { createManifestRegistry } from "./manifests";
-import { EXECUTION_LIMITS, executeCompletion } from "./executor";
+import {
+  AGENT_DECISION_TIMEOUT_MAX_MS,
+  EXECUTION_LIMITS,
+  executeCompletion
+} from "./executor";
 
 const fakeCursor = fileURLToPath(new URL("./fixtures/fake-cursor.cjs", import.meta.url));
 const tempDirs: string[] = [];
@@ -33,6 +37,7 @@ function fakeCursorExecutor(env: NodeJS.ProcessEnv = process.env) {
 describe("cursor subscription executor", () => {
   it("keeps enough repair budget for full Cursor tree responses", () => {
     expect(EXECUTION_LIMITS.repairTimeoutMs).toBeGreaterThanOrEqual(60_000);
+    expect(EXECUTION_LIMITS.timeoutMs).toBe(AGENT_DECISION_TIMEOUT_MAX_MS);
   });
 
   it("executes certified cursor manifest through open-design-style ephemeral workspace mode", async () => {

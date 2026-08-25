@@ -30,6 +30,7 @@ import {
   type RunAiTaskInputMap,
   type RunAiTaskResult
 } from "@vdt-studio/ai-harness";
+import { AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/timeout-limits";
 import { makeId } from "@/lib/id";
 import {
   createAgentClient,
@@ -206,6 +207,7 @@ export interface GenerateActivityState {
 
 export interface AgentChatHistoryEntry {
   runId: string;
+  vdtId?: string | undefined;
   title: string;
   status: GenerateActivityStatus;
   startedAt: string;
@@ -619,6 +621,13 @@ export function hasActiveWorkspaceVdt(workspace: VdtWorkspaceState): boolean {
   );
 }
 
+export function shouldContinueOpenVdt(state: Pick<VdtStudioState, "project" | "workspace">): boolean {
+  return Boolean(
+    state.workspace.activeVdtId &&
+    state.project.graph.nodes.length > 0
+  );
+}
+
 function rootNodeForProject(project: VdtProject): VdtNode | undefined {
   return project.graph.nodes.find((node) => node.id === project.rootNodeId);
 }
@@ -681,15 +690,23 @@ function briefFromProject(project: VdtProject): BriefState {
 }
 
 function buildAgentWorkspaceContext(
-  state: Pick<VdtStudioState, "project" | "brief">
+  state: Pick<VdtStudioState, "project" | "brief" | "workspace">
 ): NonNullable<VdtAgentStartRequest["workspace"]> {
   const rootNode = state.project.graph.nodes.find((node) => node.id === state.project.rootNodeId);
   const projectName = state.project.name.trim() || rootNode?.name?.trim() || state.brief.rootKpi.trim() || "VDT Studio workspace";
   const industry = state.project.industry?.trim() || state.brief.industry?.trim();
   const description = state.project.description?.trim() || state.brief.goal?.trim();
+  const graphProjectId = safeWorkspaceProjectId(state.project.id || state.project.rootNodeId || projectName);
+  const activeProjectId = state.workspace.activeProjectId?.trim();
+  const chosenProjectId = activeProjectId || graphProjectId;
+  const vdtId = activeProjectId ? state.workspace.activeVdtId : undefined;
+  // #region agent log
+  fetch("http://127.0.0.1:7348/ingest/defc4400-920d-4081-a282-9bbd4f94c196", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "edfb47" }, body: JSON.stringify({ sessionId: "edfb47", location: "vdt-store.ts:buildAgentWorkspaceContext", message: "agent workspace project bind", data: { activeProjectId, graphProjectId, vdtId, chosenProjectId }, timestamp: Date.now(), hypothesisId: "A", runId: "post-fix" }) }).catch(() => {});
+  // #endregion
   return {
-    projectId: safeWorkspaceProjectId(state.project.id || state.project.rootNodeId || projectName),
+    projectId: chosenProjectId,
     projectName,
+    ...(vdtId ? { vdtId } : {}),
     ...(industry ? { industry } : {}),
     ...(description ? { description } : {})
   };
@@ -846,16 +863,16 @@ function activityTimeoutMs(
 ): number | undefined {
   const timeoutMs = providerConfig?.timeoutMs;
   if (typeof timeoutMs === "number" && Number.isSafeInteger(timeoutMs) && timeoutMs > 0) {
-    return backendId?.endsWith("_subscription") ? Math.max(timeoutMs, 120_000) : timeoutMs;
+    return backendId?.endsWith("_subscription") ? Math.max(timeoutMs, AGENT_DECISION_TIMEOUT_FLOOR_MS) : timeoutMs;
   }
 
   const timeoutSec = providerConfig?.timeoutSec;
   if (typeof timeoutSec === "number" && Number.isSafeInteger(timeoutSec) && timeoutSec > 0) {
     const value = timeoutSec * 1000;
-    return backendId?.endsWith("_subscription") ? Math.max(value, 120_000) : value;
+    return backendId?.endsWith("_subscription") ? Math.max(value, AGENT_DECISION_TIMEOUT_FLOOR_MS) : value;
   }
 
-  return backendId?.endsWith("_subscription") ? 120_000 : undefined;
+  return backendId?.endsWith("_subscription") ? AGENT_DECISION_TIMEOUT_FLOOR_MS : undefined;
 }
 
 function buildGenerateActivity(
@@ -1165,13 +1182,43 @@ function titleForAgentActivity(activity: GenerateActivityState): string {
   );
 }
 
-function historyEntryFromActivity(activity: GenerateActivityState): AgentChatHistoryEntry {
+export function vdtIdForAgentActivity(
+  activity: GenerateActivityState | undefined,
+  activeVdtId?: string | undefined
+): string | undefined {
+  if (!activity) return undefined;
+  const agentRunRequest = activity.agentRun?.request as { workspace?: { vdtId?: string } } | undefined;
+  return activity.runtimeAgentRun?.request.workspace?.vdtId
+    ?? agentRunRequest?.workspace?.vdtId
+    ?? activeVdtId;
+}
+
+export function filterAgentChatHistoryForVdt(
+  history: AgentChatHistoryEntry[],
+  activeVdtId: string | undefined
+): AgentChatHistoryEntry[] {
+  if (!activeVdtId) return [];
+  return history.filter((entry) => entry.vdtId === activeVdtId);
+}
+
+export function purgeAgentChatHistoryForVdt(
+  history: AgentChatHistoryEntry[],
+  vdtId: string
+): AgentChatHistoryEntry[] {
+  return history.filter((entry) => entry.vdtId !== vdtId);
+}
+
+function historyEntryFromActivity(
+  activity: GenerateActivityState,
+  activeVdtId?: string | undefined
+): AgentChatHistoryEntry {
   const messageCount = activity.agentChatMessages?.length ??
     activity.runtimeAgentRun?.chatMessages?.length ??
     activity.agentRun?.events.length ??
     0;
   return {
     runId: activity.runId,
+    vdtId: vdtIdForAgentActivity(activity, activeVdtId),
     title: titleForAgentActivity(activity),
     status: activity.status,
     startedAt: activity.startedAt,
@@ -1183,17 +1230,76 @@ function historyEntryFromActivity(activity: GenerateActivityState): AgentChatHis
 
 function upsertAgentChatHistory(
   history: AgentChatHistoryEntry[],
-  activity: GenerateActivityState | undefined
+  activity: GenerateActivityState | undefined,
+  activeVdtId?: string | undefined
 ): AgentChatHistoryEntry[] {
   if (!activity) return history;
-  const next = historyEntryFromActivity(activity);
-  return [next, ...history.filter((entry) => entry.runId !== next.runId)]
+  const next = historyEntryFromActivity(activity, activeVdtId);
+  const withoutDuplicate = history.filter((entry) => entry.runId !== next.runId);
+  const sameScope = [next, ...withoutDuplicate.filter((entry) => entry.vdtId === next.vdtId)]
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
     .slice(0, MAX_AGENT_CHAT_HISTORY);
+  const otherScopes = withoutDuplicate.filter((entry) => entry.vdtId !== next.vdtId);
+  return [...sameScope, ...otherScopes]
+    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+}
+
+function agentStateBelongsToVdt(state: VdtStudioState, vdtId: string): boolean {
+  const activityVdtId = vdtIdForAgentActivity(state.generateActivity, state.workspace.activeVdtId);
+  if (activityVdtId === vdtId) return true;
+  const runId = state.activeAgentRunId ?? state.agentRun?.runId ?? state.generateActivity?.runId;
+  if (!runId) return false;
+  const entry = state.agentChatHistory.find((candidate) => candidate.runId === runId);
+  return entry?.vdtId === vdtId;
+}
+
+function clearAgentStateForDeletedVdt(state: VdtStudioState, vdtId: string): Partial<VdtStudioState> {
+  if (!agentStateBelongsToVdt(state, vdtId)) return {};
+  const runId = state.activeAgentRunId ?? state.agentRun?.runId ?? state.generateActivity?.runId;
+  return {
+    ...(runId ? clearPersistedAgentRunState(state, runId) : {}),
+    generateActivity: undefined,
+    activeAgentRunId: undefined,
+    agentRun: undefined,
+    agentEvents: [],
+    agentPendingQuestions: undefined,
+    isGenerating: false,
+    agentConnectionStatus: "disconnected",
+    agentError: undefined,
+    aiError: undefined
+  };
 }
 
 function resumableAgentRunId(state: Pick<VdtStudioState, "activeAgentRunId" | "agentRun" | "generateActivity">): string | undefined {
   return state.activeAgentRunId ?? state.agentRun?.runId ?? state.generateActivity?.runId;
+}
+
+function isAgentRunNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("not found") || message.includes("could not be loaded") || message.includes("could not be reattached");
+}
+
+function clearPersistedAgentRunState(
+  state: VdtStudioState,
+  runId: string
+): Partial<VdtStudioState> {
+  const touchesRun =
+    state.activeAgentRunId === runId ||
+    state.agentRun?.runId === runId ||
+    state.generateActivity?.runId === runId;
+  if (!touchesRun) return {};
+  return {
+    activeAgentRunId: undefined,
+    agentRun: state.agentRun?.runId === runId ? undefined : state.agentRun,
+    generateActivity: state.generateActivity?.runId === runId ? undefined : state.generateActivity,
+    agentEvents: state.agentRun?.runId === runId ? [] : state.agentEvents,
+    agentPendingQuestions: state.agentRun?.runId === runId ? undefined : state.agentPendingQuestions,
+    isGenerating: false,
+    agentConnectionStatus: "disconnected",
+    agentError: undefined,
+    aiError: undefined
+  };
 }
 
 function applyAgentSnapshot(
@@ -1205,7 +1311,23 @@ function applyAgentSnapshot(
       return {};
     }
     const rawProject = snapshot.project ?? snapshot.draftProject;
-    const project = rawProject ? ensureScenario(rawProject) : undefined;
+    const shouldPreserveProjectId = Boolean(
+      state.project?.id &&
+      state.workspace.activeVdtId &&
+      (
+        snapshot.request.mode === "continue_project" ||
+        snapshot.request.mode === "deepen_node" ||
+        snapshot.request.mode === "review_project" ||
+        snapshot.request.workspace?.vdtId === state.workspace.activeVdtId
+      )
+    );
+    const project = rawProject
+      ? ensureScenario(
+          shouldPreserveProjectId
+            ? { ...rawProject, id: state.project.id }
+            : rawProject
+        )
+      : undefined;
     const preservedSelectedNodeId = project && state.selectedNodeId
       && project.graph.nodes.some((node) => node.id === state.selectedNodeId)
       ? state.selectedNodeId
@@ -1223,6 +1345,22 @@ function applyAgentSnapshot(
           requestProviderConfig
         );
     const legacyRun = legacyAgentRunFromRuntimeSnapshot(snapshot);
+    const errorMessage = snapshot.error?.message;
+    let publicStatus = snapshot.publicStatus;
+    if (status === "error") {
+      const resolvedErrorMessage = errorMessage ?? "Agent run failed.";
+      const hasUsefulErrorStatus = publicStatus?.phase === "retryable_error" && Boolean(publicStatus.message?.trim());
+      if (!hasUsefulErrorStatus) {
+        publicStatus = {
+          phase: "retryable_error",
+          message: resolvedErrorMessage,
+          updatedAt: snapshot.updatedAt ?? now
+        };
+      }
+      // #region agent log
+      fetch("http://127.0.0.1:7348/ingest/defc4400-920d-4081-a282-9bbd4f94c196", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "edfb47" }, body: JSON.stringify({ sessionId: "edfb47", location: "vdt-store.ts:applyAgentSnapshot", message: "terminal agent snapshot", data: { status: snapshot.status, publicStatusPhase: snapshot.publicStatus?.phase, errorMessage: resolvedErrorMessage, hasRetryableError: Boolean(snapshot.retryableError) }, timestamp: Date.now(), hypothesisId: "B", runId: "post-fix" }) }).catch(() => {});
+      // #endregion
+    }
     const nextActivity: GenerateActivityState = {
       ...activity,
       status,
@@ -1233,7 +1371,7 @@ function applyAgentSnapshot(
       selectedSkills: legacyRun.selectedSkills,
       agentEvents: legacyRun.events,
       agentChatMessages: snapshot.chatMessages,
-      publicStatus: snapshot.publicStatus,
+      publicStatus,
       retryableError: snapshot.retryableError,
       agentQuestions: snapshot.pendingQuestions,
       questionsForUser: snapshot.pendingQuestions?.map((question) => question.question),
@@ -1259,7 +1397,7 @@ function applyAgentSnapshot(
       agentError: snapshot.error?.message,
       isGenerating: status === "running" || status === "needs_user_input",
       generateActivity: nextActivity,
-      agentChatHistory: upsertAgentChatHistory(state.agentChatHistory, nextActivity)
+      agentChatHistory: upsertAgentChatHistory(state.agentChatHistory, nextActivity, state.workspace.activeVdtId)
     };
   });
 }
@@ -2301,6 +2439,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               ? summaryForProject(nextSummaries, owningSummary?.project.id ?? "")?.vdts[0]?.vdt.id
               : undefined;
           set((state) => ({
+            agentChatHistory: purgeAgentChatHistoryForVdt(state.agentChatHistory, vdtId),
+            ...clearAgentStateForDeletedVdt(state, vdtId),
             workspace: {
               ...state.workspace,
               projectSummaries: nextSummaries,
@@ -2773,6 +2913,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               void createAgentClient().getRun(runId)
                 .then((snapshot) => applyAgentSnapshot(set, snapshot))
                 .catch((error) => {
+                  if (isAgentRunNotFoundError(error)) {
+                    // #region agent log
+                    fetch("http://127.0.0.1:7348/ingest/defc4400-920d-4081-a282-9bbd4f94c196", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "edfb47" }, body: JSON.stringify({ sessionId: "edfb47", location: "vdt-store.ts:connectAgentEvents", message: "agent run hydrate 404", data: { runId, cleared: true }, timestamp: Date.now(), hypothesisId: "C", runId: "post-fix" }) }).catch(() => {});
+                    // #endregion
+                    set((current) => clearPersistedAgentRunState(current, runId));
+                    return;
+                  }
                   const message = error instanceof Error ? error.message : "Agent run could not be refreshed.";
                   set({ agentError: message, aiError: message, agentConnectionStatus: "error" });
                 });
@@ -2798,6 +2945,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             set({ agentConnectionStatus: "disconnected" });
           }
         } catch (error) {
+          if (isAgentRunNotFoundError(error)) {
+            // #region agent log
+            fetch("http://127.0.0.1:7348/ingest/defc4400-920d-4081-a282-9bbd4f94c196", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "edfb47" }, body: JSON.stringify({ sessionId: "edfb47", location: "vdt-store.ts:resumePersistedAgentRun", message: "agent run hydrate 404", data: { runId, cleared: true }, timestamp: Date.now(), hypothesisId: "C", runId: "post-fix" }) }).catch(() => {});
+            // #endregion
+            set((current) => clearPersistedAgentRunState(current, runId));
+            return;
+          }
           const message = error instanceof Error ? error.message : "Agent run could not be reattached.";
           set((current) => ({
             activeAgentRunId: undefined,
@@ -2827,7 +2981,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         activeAgentEventUnsubscribe?.();
         activeAgentEventUnsubscribe = undefined;
         set((state) => ({
-          agentChatHistory: upsertAgentChatHistory(state.agentChatHistory, state.generateActivity),
+          agentChatHistory: upsertAgentChatHistory(state.agentChatHistory, state.generateActivity, state.workspace.activeVdtId),
           generateActivity: undefined,
           activeAgentRunId: undefined,
           agentRun: undefined,
@@ -2844,12 +2998,15 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         const state = get();
         const entry = state.agentChatHistory.find((candidate) => candidate.runId === runId);
         if (!entry) return false;
+        if (entry.vdtId && entry.vdtId !== state.workspace.activeVdtId) {
+          return false;
+        }
         const snapshot = entry.activity.runtimeAgentRun;
         const active = isActiveRuntimeRun(snapshot);
         activeAgentEventUnsubscribe?.();
         activeAgentEventUnsubscribe = undefined;
         set((current) => ({
-          agentChatHistory: upsertAgentChatHistory(current.agentChatHistory, current.generateActivity),
+          agentChatHistory: upsertAgentChatHistory(current.agentChatHistory, current.generateActivity, current.workspace.activeVdtId),
           generateActivity: entry.activity,
           activeAgentRunId: active ? runId : undefined,
           agentRun: snapshot,
@@ -2914,6 +3071,16 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           set({ aiError: "Configure a real provider before starting the agent.", generateActivity: undefined });
           return false;
         }
+        if (state.workspace.activeVdtId && !state.workspace.activeProjectId?.trim()) {
+          const message = "This VDT is not linked to a workspace project. Open it from the project page and try again.";
+          set({
+            aiError: message,
+            agentError: message,
+            isGenerating: false,
+            agentConnectionStatus: "error"
+          });
+          return false;
+        }
         set({
           isGenerating: true,
           aiError: undefined,
@@ -2925,16 +3092,21 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         });
         try {
           const prompt = initialInstruction?.trim();
+          const shouldContinue = options?.includeCurrentProject ?? shouldContinueOpenVdt(state);
           const input: VdtAgentStartRequest["input"] = {
             ...state.brief,
             ...(prompt ? { prompt } : {}),
             ...(options?.selectedNodeId ? { selectedNodeId: options.selectedNodeId } : {}),
-            ...(options?.includeCurrentProject ? { project: state.project } : {})
+            ...(shouldContinue ? { project: state.project } : {})
           };
+          const workspace = buildAgentWorkspaceContext(state);
+          // #region agent log
+          fetch("http://127.0.0.1:7348/ingest/defc4400-920d-4081-a282-9bbd4f94c196", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "edfb47" }, body: JSON.stringify({ sessionId: "edfb47", location: "vdt-store.ts:startAgentRun", message: "agent run POST workspace", data: { workspaceProjectId: workspace.projectId, workspaceVdtId: workspace.vdtId, graphProjectId: state.project.id }, timestamp: Date.now(), hypothesisId: "A", runId: "post-fix" }) }).catch(() => {});
+          // #endregion
           const response = await createAgentClient().startRun({
-            mode: options?.mode ?? "generate_vdt",
+            mode: options?.mode ?? (shouldContinue ? "continue_project" : "generate_vdt"),
             input,
-            workspace: buildAgentWorkspaceContext(state),
+            workspace,
             providerId,
             providerConfig,
             options: {

@@ -1,4 +1,5 @@
 import type {
+  CalculationTraceItem,
   GraphCalculationResult,
   ValidationResult,
   VdtProject,
@@ -70,11 +71,13 @@ export function summarizeValidation(validation: ValidationResult): ValidationSta
 export function summarizeCalculation(calculation: GraphCalculationResult): CalculationStateSummary {
   return {
     rootNodeId: calculation.rootNodeId,
-    rootValue: calculation.rootValue,
+    ...(isFiniteNumber(calculation.rootValue)
+      ? { rootValue: calculation.rootValue }
+      : {}),
     valueCount: Object.keys(calculation.values).length,
     errors: calculation.errors.map(summarizeWarning),
     warnings: calculation.warnings.map(summarizeWarning),
-    tracePreview: calculation.trace.slice(0, 20)
+    tracePreview: calculation.trace.slice(0, 20).map(summarizeTraceItem)
   };
 }
 
@@ -102,14 +105,38 @@ export function summarizeEvents(events: VdtAgentEvent[], limit = MAX_RECENT_EVEN
 }
 
 function summarizeWarning(warning: VdtWarning): ValidationIssueSummary {
+  const repairHints = repairHintsForWarning(warning);
   return {
     type: warning.type,
     severity: warning.severity,
     message: warning.message,
-    nodeId: warning.nodeId,
-    edgeId: warning.edgeId,
-    repairHints: repairHintsForWarning(warning)
+    ...(warning.nodeId !== undefined ? { nodeId: warning.nodeId } : {}),
+    ...(warning.edgeId !== undefined ? { edgeId: warning.edgeId } : {}),
+    ...(repairHints !== undefined ? { repairHints } : {})
   };
+}
+
+function summarizeTraceItem(item: CalculationTraceItem): CalculationTraceItem {
+  return {
+    nodeId: item.nodeId,
+    nodeName: item.nodeName,
+    ...(item.formula !== undefined ? { formula: item.formula } : {}),
+    ...(item.resolvedFormula !== undefined
+      ? { resolvedFormula: item.resolvedFormula }
+      : {}),
+    ...(isFiniteNumber(item.value) ? { value: item.value } : {}),
+    ...(item.unit !== undefined ? { unit: item.unit } : {}),
+    inputs: item.inputs.map((input) => ({
+      nodeId: input.nodeId,
+      nodeName: input.nodeName,
+      ...(isFiniteNumber(input.value) ? { value: input.value } : {}),
+      ...(input.unit !== undefined ? { unit: input.unit } : {})
+    }))
+  };
+}
+
+function isFiniteNumber(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function repairHintsForWarning(warning: VdtWarning): string[] | undefined {

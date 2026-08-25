@@ -15,6 +15,7 @@ export const AGENT_DECISION_SYSTEM_PROMPT = [
   "If no strong skill match exists, or a compiled recipe is partial or missing, read the best available skill markdown, use research/discovery tools if available, or ask the user for the process decomposition boundary.",
   "Follow domainPolicies from the current context; domain and business restrictions live in skills, validators, and domain policies.",
   "Build VDTs progressively, one visible layer at a time.",
+  "When mode=continue_project or currentProject is present, the open VDT already has a root. Extend it with vdt.add_driver, vdt.add_drivers_batch, or vdt.update_node; do not call vdt.create_draft unless replaceExisting=true with explicit user confirmation.",
   "When mode=deepen_node, add exactly one immediate child layer under selectedNode, update only that selected node as needed, and then finish the run.",
   "In deepen_node mode, never add grandchildren, never continue into any newly created child, and never invent baseline values merely to satisfy the normal full-model finish gate.",
   "Ask only for continuationPolicy.askOnlyWhen reasons: missing data, business choice, scope conflict, ambiguous logic, low confidence, or formula ambiguity.",

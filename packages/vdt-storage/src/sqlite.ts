@@ -281,11 +281,37 @@ export class SqliteVdtDatabase implements VdtDatabase {
     return next;
   }
 
+  private deleteVdtAgentData(vdtId: string): void {
+    assertSafeId(vdtId, "vdtId");
+    this.db.prepare(`
+      DELETE FROM legacy_agent_run_adoptions_v1
+      WHERE vdt_id = ?
+         OR run_id IN (SELECT id FROM agent_runs WHERE vdt_id = ?)
+         OR conversation_id IN (SELECT id FROM conversations WHERE vdt_id = ?)
+    `).run(vdtId, vdtId, vdtId);
+    const conversationRows = this.db.prepare(`
+      SELECT id FROM conversations WHERE vdt_id = ?
+      UNION
+      SELECT conversation_id AS id FROM agent_runs WHERE vdt_id = ? AND conversation_id IS NOT NULL
+    `).all(vdtId, vdtId) as Row[];
+    const conversationIds = conversationRows
+      .map((row) => string(row.id))
+      .filter((id) => id.length > 0);
+    this.db.prepare("DELETE FROM agent_runs WHERE vdt_id = ?").run(vdtId);
+    if (conversationIds.length > 0) {
+      const placeholders = conversationIds.map(() => "?").join(", ");
+      this.db.prepare(`DELETE FROM conversations WHERE vdt_id = ? OR id IN (${placeholders})`).run(vdtId, ...conversationIds);
+    } else {
+      this.db.prepare("DELETE FROM conversations WHERE vdt_id = ?").run(vdtId);
+    }
+  }
+
   deleteVdt(vdtId: string): boolean {
     assertSafeId(vdtId, "vdtId");
     const current = this.getVdt(vdtId);
     if (!current) return false;
     const deleted = this.transaction(() => {
+      this.deleteVdtAgentData(vdtId);
       this.db.prepare("DELETE FROM legacy_revision_attestations WHERE vdt_id = ?").run(vdtId);
       this.db.prepare("DELETE FROM revision_commit_records WHERE vdt_id = ?").run(vdtId);
       this.db.prepare("DELETE FROM revision_commit_attempts WHERE vdt_id = ?").run(vdtId);

@@ -62,4 +62,33 @@ describe("structured feedback", () => {
       suggestedNextTools: expect.arrayContaining(["vdt.set_formula"])
     });
   });
+
+  it("suggests add_driver instead of create_draft when the graph already has nodes", () => {
+    const noDraft = feedbackFromToolEnvelope({
+      toolName: "vdt.add_driver",
+      ok: false,
+      error: { code: "NO_DRAFT_PROJECT", message: "VDT builder session is not available for this run." },
+      projectChanged: false,
+      emittedEventIds: []
+    }, { hasNonemptyGraph: true });
+    const draftExists = feedbackFromToolEnvelope({
+      toolName: "vdt.create_draft",
+      ok: false,
+      error: { code: "DRAFT_ALREADY_EXISTS", message: "Draft project already exists. Pass replaceExisting=true to replace it." },
+      projectChanged: false,
+      emittedEventIds: []
+    });
+    const forbidden = feedbackFromForbiddenFields(["nodes"], { hasNonemptyGraph: true });
+
+    expect(noDraft).toMatchObject({
+      suggestedNextTools: ["vdt.add_driver", "vdt.update_node"]
+    });
+    expect(draftExists).toMatchObject({
+      suggestedNextTools: ["vdt.add_driver", "vdt.update_node"]
+    });
+    expect(forbidden).toMatchObject({
+      suggestedNextTools: expect.not.arrayContaining(["vdt.create_draft"])
+    });
+    expect(forbidden?.suggestedNextTools).toEqual(expect.arrayContaining(["vdt.add_driver", "vdt.update_node"]));
+  });
 });

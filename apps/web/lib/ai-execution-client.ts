@@ -6,6 +6,7 @@ import {
   type RunAiTaskResult
 } from "@vdt-studio/ai-harness/browser";
 import type { VdtAiTaskType, VdtProject } from "@vdt-studio/vdt-core";
+import { AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/timeout-limits";
 import { resolveVdtAppMode, type VdtAppMode } from "./app-mode";
 import { CLI_CATALOG, type CliAgentId } from "./execution-mode-catalog";
 
@@ -582,8 +583,10 @@ function runtimeTimeoutMs(
   providerConfig: Record<string, unknown> | undefined
 ): number | undefined {
   const timeoutMs = desktopTimeoutMs(providerConfig);
-  if (taskType === "generate_tree" && backendId.endsWith("_subscription")) {
-    return Math.max(timeoutMs ?? 0, 120_000);
+  const subscriptionAgentTask = backendId.endsWith("_subscription") &&
+    (taskType === "generate_tree" || taskType === "agent_decision" || taskType === "agent_plan");
+  if (subscriptionAgentTask) {
+    return Math.max(timeoutMs ?? 0, AGENT_DECISION_TIMEOUT_FLOOR_MS);
   }
   return timeoutMs;
 }

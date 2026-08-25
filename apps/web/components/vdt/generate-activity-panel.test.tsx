@@ -104,6 +104,15 @@ function activity(overrides: Partial<GenerateActivityState> = {}): GenerateActiv
   };
 }
 
+function openingTagForTestId(html: string, testId: string): string | undefined {
+  const pattern = new RegExp(`<button[^>]*data-testid="${testId}"[^>]*>`, "i");
+  return html.match(pattern)?.[0];
+}
+
+function isDisabledOpeningTag(tag: string | undefined): boolean {
+  return tag ? /\sdisabled(?:=""|\s|>|$)/.test(tag) : false;
+}
+
 describe("GenerateActivityPanel", () => {
   it("renders the chat transcript and hides diagnostics by default", () => {
     const base = activity();
@@ -304,6 +313,54 @@ describe("GenerateActivityPanel", () => {
     expect(html).toContain("Unit mining cost");
     expect(html).toContain('data-testid="agent-answer-freeform"');
     expect(html).toContain("Custom answer or additional context");
+  });
+
+  it("renders retry controls when a retryable error is present", () => {
+    const html = renderToStaticMarkup(
+      <GenerateActivityPanel
+        activity={activity({
+          status: "needs_user_input",
+          retryableError: {
+            code: "TIMEOUT",
+            message: "The agent step timed out before finishing.",
+            retryCount: 1,
+            createdAt: "2026-06-24T10:00:05.000Z"
+          },
+          agentChatMessages: []
+        })}
+        onCancel={() => undefined}
+        onAnswer={() => undefined}
+      />
+    );
+
+    expect(html).toContain('data-testid="agent-retryable-error"');
+    expect(html).toContain('data-testid="retry-agent"');
+    expect(html).toContain('data-testid="continue-agent-smaller-step"');
+    expect(html).toContain('data-testid="cancel-generate"');
+    expect(html).toContain("sticky bottom-0 z-10");
+    expect(isDisabledOpeningTag(openingTagForTestId(html, "continue-agent-smaller-step"))).toBe(false);
+    expect(isDisabledOpeningTag(openingTagForTestId(html, "retry-agent"))).toBe(false);
+  });
+
+  it("disables retry actions when onAnswer is missing", () => {
+    const html = renderToStaticMarkup(
+      <GenerateActivityPanel
+        activity={activity({
+          status: "needs_user_input",
+          retryableError: {
+            code: "TIMEOUT",
+            message: "The agent step timed out before finishing.",
+            retryCount: 1,
+            createdAt: "2026-06-24T10:00:05.000Z"
+          },
+          agentChatMessages: []
+        })}
+        onCancel={() => undefined}
+      />
+    );
+
+    expect(isDisabledOpeningTag(openingTagForTestId(html, "continue-agent-smaller-step"))).toBe(true);
+    expect(isDisabledOpeningTag(openingTagForTestId(html, "retry-agent"))).toBe(true);
   });
 
   it("renders pending mutation preview and approval actions", () => {
@@ -524,6 +581,64 @@ describe("syncElapsedTracker", () => {
       Date.parse("2026-06-24T10:40:00.000Z")
     );
     expect(stillPaused.elapsed).toBe("0:45");
+  });
+
+  it("renders hard error text when failed snapshot keeps reading_request publicStatus", () => {
+    const persistError = "Workspace VDT vdt_1e25bc3e does not belong to project project_ore_shipped_by_dump_trucks.";
+    const html = renderToStaticMarkup(
+      <GenerateActivityPanel
+        activity={activity({
+          status: "error",
+          completedAt: "2026-06-24T10:00:05.000Z",
+          message: persistError,
+          publicStatus: {
+            phase: "reading_request",
+            message: "Agent is reading your request...",
+            updatedAt: "2026-06-24T10:00:01.000Z"
+          },
+          runtimeAgentRun: {
+            runId: "agent-run-1",
+            status: "failed",
+            phase: "planning_decomposition",
+            request: {
+              mode: "continue_project",
+              input: { rootKpi: "Ore mined", industry: "Mining" },
+              providerId: "local_runner"
+            },
+            selectedSkills: [],
+            events: [],
+            chatMessages: [],
+            visibleContext: {
+              threadId: "agent-run-1",
+              visibleTitle: "Ore mined",
+              brief: {
+                rootKpi: "Ore mined",
+                industry: "Mining"
+              },
+              visibleMessages: []
+            },
+            createdAt: "2026-06-24T10:00:00.000Z",
+            updatedAt: "2026-06-24T10:00:05.000Z",
+            error: {
+              code: "AGENT_DECISION_LOOP_FAILED",
+              message: persistError
+            },
+            publicStatus: {
+              phase: "reading_request",
+              message: "Agent is reading your request...",
+              updatedAt: "2026-06-24T10:00:01.000Z"
+            }
+          },
+          agentChatMessages: []
+        })}
+        onCancel={() => undefined}
+      />
+    );
+
+    expect(html).toContain('data-testid="agent-hard-error"');
+    expect(html).toContain(persistError);
+    expect(html).not.toContain("Agent is reading your request...");
+    expect(html).toContain("Needs attention");
   });
 
   it("caps pause accumulation at completedAt on terminal transition", () => {

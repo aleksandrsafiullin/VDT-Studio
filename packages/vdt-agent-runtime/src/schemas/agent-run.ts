@@ -34,7 +34,8 @@ export const agentStartRequestSchema = z.object({
     projectId: safeId(),
     projectName: optionalBoundedString(160),
     industry: optionalBoundedString(160),
-    description: optionalBoundedString(1_000)
+    description: optionalBoundedString(1_000),
+    vdtId: safeId().optional()
   }).optional(),
   providerId: boundedString(120),
   providerConfig: z.record(z.unknown()).optional(),

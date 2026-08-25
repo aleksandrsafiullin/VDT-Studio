@@ -69,7 +69,14 @@ export function feedbackFromZodError(
   });
 }
 
-export function feedbackFromForbiddenFields(fields: readonly string[]): AgentStructuredFeedback {
+export interface AgentFeedbackContext {
+  hasNonemptyGraph?: boolean | undefined;
+}
+
+export function feedbackFromForbiddenFields(
+  fields: readonly string[],
+  context?: AgentFeedbackContext
+): AgentStructuredFeedback {
   return createStructuredFeedback({
     kind: "forbidden_field",
     severity: "error",
@@ -77,12 +84,17 @@ export function feedbackFromForbiddenFields(fields: readonly string[]): AgentStr
     target: { taskType: "agent_decision" },
     expected: "A single small AgentDecision without full graph, full project, nodes, edges, driverPlan, or selectedSkillIds.",
     actual: fields,
-    suggestedNextTools: ["skill.search", "skill.read", "skill.compile_recipe", "vdt.create_draft"],
+    suggestedNextTools: context?.hasNonemptyGraph
+      ? ["skill.search", "skill.read", "skill.compile_recipe", "vdt.add_driver", "vdt.update_node"]
+      : ["skill.search", "skill.read", "skill.compile_recipe", "vdt.create_draft"],
     retryable: true
   });
 }
 
-export function feedbackFromToolEnvelope(envelope: AgentToolResultEnvelope): AgentStructuredFeedback | undefined {
+export function feedbackFromToolEnvelope(
+  envelope: AgentToolResultEnvelope,
+  context?: AgentFeedbackContext
+): AgentStructuredFeedback | undefined {
   if (envelope.ok) return undefined;
   const code = envelope.error?.code ?? "TOOL_FAILED";
   const message = envelope.error?.message ?? "Tool failed.";
@@ -92,7 +104,7 @@ export function feedbackFromToolEnvelope(envelope: AgentToolResultEnvelope): Age
     message,
     target: { toolName: envelope.toolName },
     actual: envelope.error?.details ?? envelope.error,
-    suggestedNextTools: suggestedToolsForToolError(code),
+    suggestedNextTools: suggestedToolsForToolError(code, context),
     retryable: true
   });
 }
@@ -167,13 +179,20 @@ function feedbackKindForToolError(code: string): AgentFeedbackKind {
   return "tool_failed";
 }
 
-function suggestedToolsForToolError(code: string): string[] | undefined {
+function suggestedToolsForToolError(code: string, context?: AgentFeedbackContext): string[] | undefined {
   if (code === "UNKNOWN_TOOL") return ["skill.list"];
   if (code === "INVALID_TOOL_ARGS") return undefined;
   if (/MISSING_FORMULA_REFERENCE|MISSING_FORMULA_REFERENCES/i.test(code)) {
     return ["formula.suggest_reference_repair", "vdt.set_formula"];
   }
-  if (/NO_DRAFT_PROJECT/i.test(code)) return ["vdt.create_draft"];
+  if (/NO_DRAFT_PROJECT/i.test(code)) {
+    return context?.hasNonemptyGraph
+      ? ["vdt.add_driver", "vdt.update_node"]
+      : ["vdt.create_draft"];
+  }
+  if (/DRAFT_ALREADY_EXISTS/i.test(code)) {
+    return ["vdt.add_driver", "vdt.update_node"];
+  }
   if (/RESEARCH_DISABLED_BY_USER/i.test(code)) return ["skill.search", "skill.read", "user.ask"];
   if (/RESEARCH_PROVIDER_NOT_CONFIGURED/i.test(code)) return ["user.ask"];
   return undefined;

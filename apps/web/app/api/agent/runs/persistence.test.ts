@@ -806,6 +806,764 @@ describe("SQLite agent run persistence", () => {
     expect(database.listProjects().map((project) => project.id)).toEqual(["project_agent_workspace"]);
     database.close();
   });
+
+  it("commits continue runs to bound workspace vdtId without creating a new VDT", () => {
+    const root = tempRoot();
+    const database = openVdtDatabase(root, {
+      dataDir: path.join(root, "data"),
+      now: fixedClock("2026-06-29T16:00:00.000Z")
+    });
+    const initialCommitSpy = vi.spyOn(database, "createVdtWithInitialSnapshot");
+    const { store, run, draft, projectId } = createDraftRun(
+      database,
+      "continue_bound_vdt"
+    );
+    store.updateRun(run.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+    const existingVdt = database.listVdts(projectId)[0]!;
+    const vdtCountBefore = database.listVdts(projectId).length;
+    expect(vdtCountBefore).toBe(1);
+    expect(initialCommitSpy).toHaveBeenCalledTimes(1);
+
+    const continueStore = new AgentRunStore({
+      now: fixedClock("2026-06-29T16:00:01.000Z"),
+      persistence: createTestPersistence(database)
+    });
+    const continueRun = continueStore.createRun({
+      mode: "continue_project",
+      input: {
+        prompt: "Add working time to the existing model.",
+        rootKpi: "Production Volume",
+        project: draft
+      },
+      workspace: {
+        projectId,
+        vdtId: existingVdt.id
+      },
+      providerId: "mock"
+    });
+    const proposal = buildAppliedProposal(continueRun.runId, draft, "continue_bound", {
+      baseRevision: 0,
+      baseRevisionId: "builder:0"
+    });
+    continueStore.updateRun(continueRun.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+    const replayState = database.getAgentRun(continueRun.runId)?.internalState?.__vdtStorageReplayStateV1 as {
+      initial?: { kind?: string };
+    } | undefined;
+    expect(replayState?.initial?.kind).toBe("existing_head_verified");
+    continueStore.updateRun(continueRun.runId, {
+      status: "running",
+      phase: "applying_graph",
+      draftProject: proposal.previewProject,
+      mutationProposals: [proposal],
+      validationState: proposal.validation
+    });
+
+    expect(database.listVdts(projectId)).toHaveLength(vdtCountBefore);
+    expect(initialCommitSpy).toHaveBeenCalledTimes(1);
+    const revisions = database.listVdtRevisions(existingVdt.id);
+    expect(revisions.map((revision) => revision.revisionNo)).toEqual([1, 2]);
+    expect(database.listMutationProposals(continueRun.runId)[0]?.baseRevisionId).toBe(
+      revisions[0]!.id
+    );
+    expect(database.getAgentRun(continueRun.runId)?.vdtId).toBe(existingVdt.id);
+    database.close();
+  });
+
+  it("applies two continue proposals against the persisted head in one updateRun", () => {
+    const root = tempRoot();
+    const database = openVdtDatabase(root, {
+      dataDir: path.join(root, "data"),
+      now: fixedClock("2026-06-29T16:15:00.000Z")
+    });
+    const { store, run, draft, projectId } = createDraftRun(
+      database,
+      "continue_two_proposals"
+    );
+    store.updateRun(run.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+    const existingVdt = database.listVdts(projectId)[0]!;
+    const vdtCountBefore = database.listVdts(projectId).length;
+
+    const continueStore = new AgentRunStore({
+      now: fixedClock("2026-06-29T16:15:01.000Z"),
+      persistence: createTestPersistence(database)
+    });
+    const continueRun = continueStore.createRun({
+      mode: "continue_project",
+      input: {
+        prompt: "Extend the existing model in two steps.",
+        rootKpi: "Production Volume",
+        project: draft
+      },
+      workspace: {
+        projectId,
+        vdtId: existingVdt.id
+      },
+      providerId: "mock"
+    });
+    const firstProposal = buildAppliedProposal(continueRun.runId, draft, "continue_two_a", {
+      baseRevision: 0,
+      baseRevisionId: "builder:0"
+    });
+    const secondProposal = buildAppliedProposal(continueRun.runId, draft, "continue_two_b", {
+      baseRevision: 0,
+      baseRevisionId: "builder:0",
+      draft: firstProposal.previewProject,
+      changeSet: addOperatingHoursChangeSet(),
+      title: "Add Operating hours layer",
+      summary: "Added Operating hours under Working time.",
+      selectedChangeIds: ["add_operating_hours"],
+      appliedAt: "2026-06-29T16:15:04.000Z"
+    });
+    continueStore.updateRun(continueRun.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+    continueStore.updateRun(continueRun.runId, {
+      status: "running",
+      phase: "applying_graph",
+      draftProject: secondProposal.previewProject,
+      mutationProposals: [firstProposal, secondProposal],
+      validationState: secondProposal.validation
+    });
+
+    expect(database.listVdts(projectId)).toHaveLength(vdtCountBefore);
+    expect(database.listVdtRevisions(existingVdt.id).map((revision) => revision.revisionNo)).toEqual([
+      1,
+      2,
+      3
+    ]);
+    expect(database.listMutationProposals(continueRun.runId)).toHaveLength(2);
+    database.close();
+  });
+
+  it("rejects graph projectId when workspace vdtId belongs to a different storage project", () => {
+    const root = tempRoot();
+    const database = openVdtDatabase(root, {
+      dataDir: path.join(root, "data"),
+      now: fixedClock("2026-06-29T16:45:00.000Z")
+    });
+    const storageProjectId = "project_Ore_haulage_abc";
+    const { store, run, draft, projectId } = createDraftRun(
+      database,
+      storageProjectId
+    );
+    store.updateRun(run.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+    const existingVdt = database.listVdts(projectId)[0]!;
+    expect(projectId).toBe(storageProjectId);
+    expect(draft.id).not.toBe(storageProjectId);
+
+    const continueStore = new AgentRunStore({
+      now: fixedClock("2026-06-29T16:45:01.000Z"),
+      persistence: createTestPersistence(database)
+    });
+    const continueRun = continueStore.createRun({
+      mode: "continue_project",
+      input: {
+        prompt: "Extend the model.",
+        rootKpi: "Production Volume",
+        project: draft
+      },
+      workspace: {
+        projectId: draft.id,
+        vdtId: existingVdt.id
+      },
+      providerId: "mock"
+    });
+
+    let error: unknown;
+    try {
+      continueStore.updateRun(continueRun.runId, {
+        status: "running",
+        phase: "building_graph",
+        draftProject: draft
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(VdtStorageError);
+    expect((error as VdtStorageError).message).toContain(`does not belong to project ${draft.id}`);
+    database.close();
+  });
+
+  it("persists continue runs when workspace projectId matches the bound storage project", () => {
+    const root = tempRoot();
+    const database = openVdtDatabase(root, {
+      dataDir: path.join(root, "data"),
+      now: fixedClock("2026-06-29T16:50:00.000Z")
+    });
+    const storageProjectId = "project_Ore_haulage_abc";
+    const { store, run, draft, projectId } = createDraftRun(
+      database,
+      storageProjectId
+    );
+    store.updateRun(run.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+    const existingVdt = database.listVdts(projectId)[0]!;
+
+    const continueStore = new AgentRunStore({
+      now: fixedClock("2026-06-29T16:50:01.000Z"),
+      persistence: createTestPersistence(database)
+    });
+    const continueRun = continueStore.createRun({
+      mode: "continue_project",
+      input: {
+        prompt: "Extend the model.",
+        rootKpi: "Production Volume",
+        project: draft
+      },
+      workspace: {
+        projectId: storageProjectId,
+        vdtId: existingVdt.id
+      },
+      providerId: "mock"
+    });
+    continueStore.updateRun(continueRun.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+
+    const replayState = database.getAgentRun(continueRun.runId)?.internalState?.__vdtStorageReplayStateV1 as {
+      initial?: { kind?: string };
+    } | undefined;
+    expect(replayState?.initial?.kind).toBe("existing_head_verified");
+    expect(database.getAgentRun(continueRun.runId)?.vdtId).toBe(existingVdt.id);
+    database.close();
+  });
+
+  it("rejects invalid workspace vdtId without minting an orphan VDT", () => {
+    const root = tempRoot();
+    const database = openVdtDatabase(root, {
+      dataDir: path.join(root, "data"),
+      now: fixedClock("2026-06-29T16:30:00.000Z")
+    });
+    const { store, run, draft, projectId } = createDraftRun(
+      database,
+      "continue_invalid_vdt"
+    );
+    store.updateRun(run.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+    const vdtCountBefore = database.listVdts(projectId).length;
+    database.createProject({
+      id: "other_project",
+      name: "Other project"
+    });
+    database.createVdt({
+      id: "vdt_other_project",
+      projectId: "other_project",
+      name: "Foreign VDT",
+      rootKpi: "Production Volume"
+    });
+
+    const continueStore = new AgentRunStore({
+      now: fixedClock("2026-06-29T16:30:01.000Z"),
+      persistence: createTestPersistence(database)
+    });
+    const continueRun = continueStore.createRun({
+      mode: "continue_project",
+      input: {
+        prompt: "Extend the model.",
+        rootKpi: "Production Volume",
+        project: draft
+      },
+      workspace: {
+        projectId,
+        vdtId: "vdt_other_project"
+      },
+      providerId: "mock"
+    });
+
+    let error: unknown;
+    try {
+      continueStore.updateRun(continueRun.runId, {
+        status: "running",
+        phase: "building_graph",
+        draftProject: draft
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(VdtStorageError);
+    expect((error as VdtStorageError).code).toBe("VDT_NOT_FOUND");
+    expect(database.listVdts(projectId)).toHaveLength(vdtCountBefore);
+    expect(database.listVdts("other_project")).toHaveLength(1);
+    database.close();
+  });
+
+  it("replays an applied continue proposal on a UI-created VDT without rewriting or failing the run", () => {
+    const root = tempRoot();
+    const database = openVdtDatabase(root, {
+      dataDir: path.join(root, "data"),
+      now: fixedClock("2026-06-29T17:15:00.000Z")
+    });
+    const projectId = "project_Ore_haulage_ui";
+    const draft = buildDraftProject();
+    database.createProject({
+      id: projectId,
+      name: "Ore haulage"
+    });
+    const runtime = database.getProjectRuntimeState(projectId)!;
+    const initialCommitSpy = vi.spyOn(database, "createVdtWithInitialSnapshot");
+    const userVdt = database.createVdtWithInitialSnapshot({
+      actor: testStorageActor(projectId),
+      command: {
+        schemaVersion: "create_vdt_with_initial_snapshot.v1",
+        projectId,
+        expectedRuntimeGeneration: runtime.runtimeGeneration,
+        expectedGenerationVersion: runtime.generationVersion,
+        idempotencyKey: `user-create:${projectId}:initial-v1`,
+        vdt: {
+          requestedVdtId: "vdt_ore_shipped",
+          name: "Ore shipped by dump trucks VDT",
+          rootKpi: "Ore shipped by dump trucks",
+          unit: "tonnes/month",
+          timePeriod: null,
+          status: "draft",
+          metadata: null
+        },
+        revisionIntent: {
+          source: "user",
+          summary: "Initial VDT snapshot",
+          validation: null,
+          calculation: null
+        }
+      },
+      project: draft
+    });
+    const vdtCountBefore = database.listVdts(projectId).length;
+    expect(vdtCountBefore).toBe(1);
+    expect(initialCommitSpy).toHaveBeenCalledTimes(1);
+    expect(database.listVdtRevisions(userVdt.vdt.id)[0]).toMatchObject({
+      revisionNo: 1,
+      source: "user",
+      summary: "Initial VDT snapshot"
+    });
+
+    const continueStore = new AgentRunStore({
+      now: fixedClock("2026-06-29T17:15:01.000Z"),
+      persistence: createTestPersistence(database)
+    });
+    const continueRun = continueStore.createRun({
+      mode: "continue_project",
+      input: {
+        prompt: "Add haul cycle time to the model.",
+        rootKpi: "Ore shipped by dump trucks",
+        project: draft
+      },
+      workspace: {
+        projectId,
+        vdtId: userVdt.vdt.id
+      },
+      providerId: "mock"
+    });
+    continueStore.updateRun(continueRun.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+    const proposal = buildAppliedProposal(
+      continueRun.runId,
+      draft,
+      "ui_continue_replay",
+      {
+        baseRevision: 0,
+        baseRevisionId: "builder:0",
+        calculation: incompleteCalculationSummary(draft.rootNodeId)
+      }
+    );
+    const appliedPatch = {
+      status: "running" as const,
+      phase: "building_graph" as const,
+      draftProject: proposal.previewProject,
+      mutationProposals: [proposal],
+      validationState: proposal.validation,
+      calculationState: proposal.calculation
+    };
+    continueStore.updateRun(continueRun.runId, appliedPatch);
+    continueStore.updateRun(continueRun.runId, appliedPatch);
+
+    const replayState = database.getAgentRun(continueRun.runId)?.internalState?.__vdtStorageReplayStateV1 as {
+      initial?: { kind?: string };
+      proposals?: unknown[];
+    } | undefined;
+    expect(replayState?.initial?.kind).toBe("existing_head_verified");
+    expect(replayState?.proposals).toHaveLength(1);
+    expect(database.listVdts(projectId)).toHaveLength(vdtCountBefore);
+    expect(initialCommitSpy).toHaveBeenCalledTimes(1);
+    expect(database.listVdtRevisions(userVdt.vdt.id)).toEqual([
+      expect.objectContaining({ revisionNo: 1, source: "user", summary: "Initial VDT snapshot" }),
+      expect.objectContaining({
+        revisionNo: 2,
+        source: "agent",
+        parentRevisionId: userVdt.revision.id,
+        calculation: proposal.calculation
+      })
+    ]);
+    expect(database.listMutationProposals(continueRun.runId)).toEqual([
+      expect.objectContaining({ status: "applied", calculation: proposal.calculation })
+    ]);
+
+    const recoveredStore = new AgentRunStore({
+      now: fixedClock("2026-06-29T17:15:05.000Z"),
+      persistence: createTestPersistence(database)
+    });
+    expect(recoveredStore.getSnapshot(continueRun.runId)).toMatchObject({
+      status: "running",
+      phase: "building_graph"
+    });
+    expect(database.listVdtRevisions(userVdt.vdt.id)).toHaveLength(2);
+    database.close();
+  });
+
+  it("rejects a foreign descendant after an applied continue proposal", () => {
+    const root = tempRoot();
+    const database = openVdtDatabase(root, {
+      dataDir: path.join(root, "data"),
+      now: fixedClock("2026-06-29T17:17:00.000Z")
+    });
+    const { store, run, draft, projectId } = createDraftRun(
+      database,
+      "continue_foreign_descendant"
+    );
+    store.updateRun(run.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+    const vdt = database.listVdts(projectId)[0]!;
+    const continueStore = new AgentRunStore({
+      now: fixedClock("2026-06-29T17:17:01.000Z"),
+      persistence: createTestPersistence(database)
+    });
+    const continueRun = continueStore.createRun({
+      mode: "continue_project",
+      input: {
+        prompt: "Extend the model.",
+        rootKpi: "Production Volume",
+        project: draft
+      },
+      workspace: { projectId, vdtId: vdt.id },
+      providerId: "mock"
+    });
+    continueStore.updateRun(continueRun.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+    const proposal = buildAppliedProposal(
+      continueRun.runId,
+      draft,
+      "foreign_descendant"
+    );
+    const appliedPatch = {
+      status: "running" as const,
+      phase: "building_graph" as const,
+      draftProject: proposal.previewProject,
+      mutationProposals: [proposal],
+      validationState: proposal.validation
+    };
+    continueStore.updateRun(continueRun.runId, appliedPatch);
+
+    const head = database.getVdtRevisionHead(vdt.id)!;
+    const runtime = database.getProjectRuntimeState(projectId)!;
+    database.commitVdtRevision({
+      projectId,
+      vdtId: vdt.id,
+      actor: testStorageActor(projectId),
+      command: {
+        schemaVersion: "revision_commit.v2",
+        expectedActiveRevisionId: head.activeRevisionId,
+        expectedActiveContentIdentity: head.activeContentIdentity,
+        expectedCommitGeneration: head.commitGeneration,
+        expectedRuntimeGeneration: runtime.runtimeGeneration,
+        expectedGenerationVersion: runtime.generationVersion,
+        idempotencyKey: `manual-foreign:${continueRun.runId}`,
+        intent: {
+          source: "user",
+          summary: "Manual descendant",
+          validation: null,
+          calculation: null
+        }
+      },
+      project: previewChangeSet(
+        proposal.previewProject,
+        addOperatingHoursChangeSet()
+      )
+    });
+
+    expect(() => continueStore.updateRun(continueRun.runId, appliedPatch)).toThrowError(
+      expect.objectContaining({
+        code: "AMBIGUOUS_REVISION_RECOVERY",
+        message: expect.stringContaining("exact recorded replay tip")
+      })
+    );
+    expect(database.listVdtRevisions(vdt.id)).toHaveLength(3);
+    database.close();
+  });
+
+  it("rejects a changed active head before a continue run records proposals", () => {
+    const root = tempRoot();
+    const database = openVdtDatabase(root, {
+      dataDir: path.join(root, "data"),
+      now: fixedClock("2026-06-29T17:18:00.000Z")
+    });
+    const { store, run, draft, projectId } = createDraftRun(
+      database,
+      "continue_changed_base"
+    );
+    store.updateRun(run.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+    const vdt = database.listVdts(projectId)[0]!;
+    const continueStore = new AgentRunStore({
+      now: fixedClock("2026-06-29T17:18:01.000Z"),
+      persistence: createTestPersistence(database)
+    });
+    const continueRun = continueStore.createRun({
+      mode: "continue_project",
+      input: { prompt: "Extend the model.", rootKpi: "Production Volume", project: draft },
+      workspace: { projectId, vdtId: vdt.id },
+      providerId: "mock"
+    });
+    const boundPatch = {
+      status: "running" as const,
+      phase: "building_graph" as const,
+      draftProject: draft
+    };
+    continueStore.updateRun(continueRun.runId, boundPatch);
+
+    const head = database.getVdtRevisionHead(vdt.id)!;
+    const runtime = database.getProjectRuntimeState(projectId)!;
+    database.commitVdtRevision({
+      projectId,
+      vdtId: vdt.id,
+      actor: testStorageActor(projectId),
+      command: {
+        schemaVersion: "revision_commit.v2",
+        expectedActiveRevisionId: head.activeRevisionId,
+        expectedActiveContentIdentity: head.activeContentIdentity,
+        expectedCommitGeneration: head.commitGeneration,
+        expectedRuntimeGeneration: runtime.runtimeGeneration,
+        expectedGenerationVersion: runtime.generationVersion,
+        idempotencyKey: `manual-before-proposal:${continueRun.runId}`,
+        intent: {
+          source: "user",
+          summary: "Manual head change",
+          validation: null,
+          calculation: null
+        }
+      },
+      project: previewChangeSet(draft, addWorkingTimeChangeSet())
+    });
+
+    expect(() => continueStore.updateRun(continueRun.runId, boundPatch)).toThrowError(
+      expect.objectContaining({ code: "AMBIGUOUS_REVISION_RECOVERY" })
+    );
+    database.close();
+  });
+
+  it("rejects tampering with the pinned continue revision bytes", () => {
+    const root = tempRoot();
+    const database = openVdtDatabase(root, {
+      dataDir: path.join(root, "data"),
+      now: fixedClock("2026-06-29T17:19:00.000Z")
+    });
+    const { store, run, draft, projectId } = createDraftRun(
+      database,
+      "continue_tampered_base"
+    );
+    store.updateRun(run.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+    const vdt = database.listVdts(projectId)[0]!;
+    const continueStore = new AgentRunStore({
+      now: fixedClock("2026-06-29T17:19:01.000Z"),
+      persistence: createTestPersistence(database)
+    });
+    const continueRun = continueStore.createRun({
+      mode: "continue_project",
+      input: { prompt: "Extend the model.", rootKpi: "Production Volume", project: draft },
+      workspace: { projectId, vdtId: vdt.id },
+      providerId: "mock"
+    });
+    const boundPatch = {
+      status: "running" as const,
+      phase: "building_graph" as const,
+      draftProject: draft
+    };
+    continueStore.updateRun(continueRun.runId, boundPatch);
+    const pinnedRevision = database.listVdtRevisions(vdt.id)[0]!;
+    fs.appendFileSync(path.join(database.dataDir, pinnedRevision.filePath), "\n", "utf8");
+
+    expect(() => continueStore.updateRun(continueRun.runId, boundPatch)).toThrowError(
+      expect.objectContaining({
+        message: expect.stringContaining("Revision graph hash mismatch")
+      })
+    );
+    database.close();
+  });
+
+  it("rejects unbound generate when the target VDT has a user-owned initial revision", () => {
+    const root = tempRoot();
+    const database = openVdtDatabase(root, {
+      dataDir: path.join(root, "data"),
+      now: fixedClock("2026-06-29T17:20:00.000Z")
+    });
+    const projectId = "unbound_user_vdt_guard";
+    const draft = buildDraftProject();
+    database.createProject({
+      id: projectId,
+      name: "User VDT guard"
+    });
+    const store = new AgentRunStore({
+      now: fixedClock("2026-06-29T17:20:01.000Z"),
+      persistence: createTestPersistence(database)
+    });
+    const run = store.createRun({
+      mode: "generate_vdt",
+      input: {
+        prompt: "Build a production volume VDT.",
+        rootKpi: "Production Volume",
+        unit: "t/year",
+        timePeriod: "year"
+      },
+      workspace: {
+        projectId,
+        projectName: "User VDT guard"
+      },
+      providerId: "mock"
+    });
+    const vdtId = testStorageVdtId(run.runId, draft);
+    const runtime = database.getProjectRuntimeState(projectId)!;
+    database.createVdtWithInitialSnapshot({
+      actor: testStorageActor(projectId),
+      command: {
+        schemaVersion: "create_vdt_with_initial_snapshot.v1",
+        projectId,
+        expectedRuntimeGeneration: runtime.runtimeGeneration,
+        expectedGenerationVersion: runtime.generationVersion,
+        idempotencyKey: `user-create:${vdtId}:initial-v1`,
+        vdt: {
+          requestedVdtId: vdtId,
+          name: "User-owned VDT",
+          rootKpi: "Production Volume",
+          unit: "t/year",
+          timePeriod: "year",
+          status: "draft",
+          metadata: null
+        },
+        revisionIntent: {
+          source: "user",
+          summary: "Initial VDT snapshot",
+          validation: null,
+          calculation: null
+        }
+      },
+      project: draft
+    });
+    const revisionCountBefore = database.listVdtRevisions(vdtId).length;
+
+    let error: unknown;
+    try {
+      store.updateRun(run.runId, {
+        status: "running",
+        phase: "building_graph",
+        draftProject: draft
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(VdtStorageError);
+    expect((error as VdtStorageError).code).toBe("VDT_NOT_READY");
+    expect((error as VdtStorageError).message).toContain(
+      "was not created from an agent-owned initial revision"
+    );
+    expect(database.listVdtRevisions(vdtId)).toHaveLength(revisionCountBefore);
+    database.close();
+  });
+
+  it("rejects missing workspace vdtId without minting an orphan VDT", () => {
+    const root = tempRoot();
+    const database = openVdtDatabase(root, {
+      dataDir: path.join(root, "data"),
+      now: fixedClock("2026-06-29T17:00:00.000Z")
+    });
+    const { store, run, draft, projectId } = createDraftRun(
+      database,
+      "continue_missing_vdt"
+    );
+    store.updateRun(run.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft
+    });
+    const vdtCountBefore = database.listVdts(projectId).length;
+
+    const continueStore = new AgentRunStore({
+      now: fixedClock("2026-06-29T17:00:01.000Z"),
+      persistence: createTestPersistence(database)
+    });
+    const continueRun = continueStore.createRun({
+      mode: "continue_project",
+      input: {
+        prompt: "Extend the model.",
+        rootKpi: "Production Volume",
+        project: draft
+      },
+      workspace: {
+        projectId,
+        vdtId: "vdt_does_not_exist"
+      },
+      providerId: "mock"
+    });
+
+    let error: unknown;
+    try {
+      continueStore.updateRun(continueRun.runId, {
+        status: "running",
+        phase: "building_graph",
+        draftProject: draft
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(VdtStorageError);
+    expect((error as VdtStorageError).code).toBe("VDT_NOT_FOUND");
+    expect(database.listVdts(projectId)).toHaveLength(vdtCountBefore);
+    expect(database.getVdt("vdt_does_not_exist")).toBeNull();
+    database.close();
+  });
 });
 
 function createDraftRun(
@@ -841,23 +1599,34 @@ function createDraftRun(
 function buildAppliedProposal(
   runId: string,
   draft: ReturnType<typeof buildDraftProject>,
-  suffix: string
+  suffix: string,
+  overrides: Partial<
+    Pick<
+      MutationProposal,
+      "baseRevision" | "baseRevisionId" | "title" | "summary" | "selectedChangeIds" | "appliedAt" | "calculation"
+    >
+  > & {
+    changeSet?: VdtChangeSet;
+    draft?: ReturnType<typeof buildDraftProject>;
+  } = {}
 ): MutationProposal {
-  const changeSet = addWorkingTimeChangeSet();
+  const sourceDraft = overrides.draft ?? draft;
+  const changeSet = overrides.changeSet ?? addWorkingTimeChangeSet();
   return {
     id: `${runId}:mutation:${suffix}`,
     runId,
     projectId: draft.id,
     vdtId: draft.rootNodeId,
-    baseRevisionId: "builder:1",
-    baseRevision: 1,
+    baseRevisionId: overrides.baseRevisionId ?? "builder:1",
+    baseRevision: overrides.baseRevision ?? 1,
     source: "agent",
-    title: "Add Working time layer",
-    summary: "Added Working time as the next visible layer.",
+    title: overrides.title ?? "Add Working time layer",
+    summary: overrides.summary ?? "Added Working time as the next visible layer.",
     changeSet,
-    selectedChangeIds: ["add_working_time"],
-    previewProject: previewChangeSet(draft, changeSet),
+    selectedChangeIds: overrides.selectedChangeIds ?? ["add_working_time"],
+    previewProject: previewChangeSet(sourceDraft, changeSet),
     validation: { valid: true, errors: [], warnings: [] },
+    ...(overrides.calculation ? { calculation: overrides.calculation } : {}),
     status: "applied",
     policy: {
       autoApply: true,
@@ -867,7 +1636,27 @@ function buildAppliedProposal(
       requireApprovalForDelete: false
     },
     createdAt: "2026-06-29T12:00:02.000Z",
-    appliedAt: "2026-06-29T12:00:03.000Z"
+    appliedAt: overrides.appliedAt ?? "2026-06-29T12:00:03.000Z"
+  };
+}
+
+function incompleteCalculationSummary(
+  rootNodeId: string
+): NonNullable<MutationProposal["calculation"]> {
+  return {
+    rootNodeId,
+    valueCount: 0,
+    errors: [
+      {
+        type: "missing_value",
+        severity: "error",
+        message: "The progressive tree is not calculable yet.",
+        nodeId: rootNodeId,
+        repairHints: ["Add the next driver layer."]
+      }
+    ],
+    warnings: [],
+    tracePreview: []
   };
 }
 
@@ -946,6 +1735,34 @@ function addWorkingTimeChangeSet(): VdtChangeSet {
         unit: "h/year",
         aiConfidence: 0.8,
         aiRationale: "Working time exposes downtime losses and supports deeper decomposition."
+      }
+    ],
+    updates: [],
+    deletions: [],
+    edgeChanges: [],
+    assumptions: [],
+    questions: [],
+    warnings: []
+  };
+}
+
+function addOperatingHoursChangeSet(): VdtChangeSet {
+  return {
+    id: "changeset_operating_hours_layer",
+    taskType: "generate_tree",
+    backendId: "mock",
+    createdAt: "2026-06-29T16:15:03.000Z",
+    additions: [
+      {
+        id: "add_operating_hours",
+        nodeId: "operating_hours",
+        parentNodeId: "working_time",
+        relation: "multiplicative_driver",
+        name: "Operating hours",
+        type: "input",
+        unit: "h/year",
+        aiConfidence: 0.8,
+        aiRationale: "Operating hours decompose working time into productive uptime."
       }
     ],
     updates: [],

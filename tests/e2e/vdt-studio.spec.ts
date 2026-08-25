@@ -301,6 +301,34 @@ function mockRuntimeStructuredOutputFailureSnapshot(prompt = "Build an excavatio
   };
 }
 
+function mockRuntimeAfterSmallerStepSnapshot() {
+  const timestamp = "2026-06-24T10:00:06.000Z";
+  const base = mockRuntimeStructuredOutputFailureSnapshot();
+  return {
+    ...base,
+    status: "running",
+    phase: "planning_decomposition",
+    retryableError: undefined,
+    publicStatus: {
+      phase: "planning_decomposition",
+      message: "Taking a smaller next step...",
+      updatedAt: timestamp
+    },
+    chatMessages: [
+      ...(base.chatMessages ?? []),
+      {
+        id: "agent-run-structured-output-failure:chat:3",
+        runId: base.runId,
+        role: "user",
+        kind: "answer",
+        text: "Continue with a smaller step",
+        createdAt: timestamp
+      }
+    ],
+    updatedAt: timestamp
+  };
+}
+
 function mockRuntimeNeedsInputSnapshot() {
   const timestamp = "2026-06-24T10:00:05.000Z";
   const questions = [
@@ -1070,6 +1098,13 @@ test("shows chat-first agent progress after mock VDT generation", async ({ page 
 test("keeps the user message visible when the agent provider returns unstructured output", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Agent retryable output smoke runs on desktop viewport.");
 
+  let capturedMessageBody:
+    | {
+        type?: string;
+        answers?: { continue?: string };
+      }
+    | undefined;
+
   await page.route("**/api/agent/runs", async (route) => {
     const requestBody = route.request().postDataJSON() as { input?: { prompt?: string } };
     const snapshot = mockRuntimeStructuredOutputFailureSnapshot(requestBody.input?.prompt);
@@ -1083,6 +1118,17 @@ test("keeps the user message visible when the agent provider returns unstructure
       })
     });
   });
+  await page.route("**/api/agent/runs/agent-run-structured-output-failure/messages", async (route) => {
+    capturedMessageBody = route.request().postDataJSON() as typeof capturedMessageBody;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        snapshot: mockRuntimeAfterSmallerStepSnapshot()
+      })
+    });
+  });
 
   await openSettingsModal(page);
   await page.getByTestId("execution-mode-tab-byok").click();
@@ -1093,6 +1139,7 @@ test("keeps the user message visible when the agent provider returns unstructure
   await page.getByTestId("agent-send-instruction").click();
 
   await expect(page.getByTestId("generate-activity-panel")).toBeVisible();
+  await expect(page.getByTestId("agent-activity-scroll")).toBeVisible();
   await expect(page.getByTestId("agent-chat-thread")).toContainText("Build an excavation model. I have 5 excavators.");
   await expect(page.getByTestId("agent-chat-thread")).toContainText("could not use as a structured agent response");
   await expect(page.getByTestId("agent-retryable-error")).toContainText(
@@ -1100,6 +1147,23 @@ test("keeps the user message visible when the agent provider returns unstructure
   );
   await expect(page.getByTestId("retry-agent")).toBeVisible();
   await expect(page.getByTestId("agent-instruction-input")).toHaveValue("");
+
+  const smallerStep = page.getByTestId("continue-agent-smaller-step");
+  await expect(smallerStep).toBeVisible();
+  await expect(smallerStep).toBeEnabled();
+
+  const [buttonBox, composerBox] = await Promise.all([
+    smallerStep.boundingBox(),
+    page.getByTestId("agent-composer").boundingBox()
+  ]);
+  expect(buttonBox).toBeTruthy();
+  expect(composerBox).toBeTruthy();
+  expect(buttonBox!.y + buttonBox!.height).toBeLessThanOrEqual(composerBox!.y + 2);
+
+  await smallerStep.click();
+  await expect.poll(() => capturedMessageBody?.type).toBe("user_answer");
+  expect(capturedMessageBody?.answers).toMatchObject({ continue: "smaller_step" });
+  await expect(page.getByTestId("generate-activity-panel")).toContainText("Taking a smaller next step...");
 });
 
 test("restores active agent chat and structured questions after page reload", async ({ page }, testInfo) => {

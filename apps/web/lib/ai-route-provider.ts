@@ -158,7 +158,7 @@ export function readLocalRunnerProviderConfig(value: unknown, origin: string): L
   if (!backendId) throw new Error("Local runner backendId is required.");
   if (!pairingToken) throw new Error("Pair the local runner before using a local backend.");
   const timeoutMs = typeof config.timeoutMs === "number" && Number.isSafeInteger(config.timeoutMs)
-    ? Math.min(Math.max(config.timeoutMs, 1_000), 120_000)
+    ? Math.min(Math.max(config.timeoutMs, 1_000), 300_000)
     : 60_000;
   return {
     runnerUrl,

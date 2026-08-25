@@ -15,9 +15,11 @@ import {
   type RevisionCommitCommandV2,
   type RevisionCommitIntentV1,
   type RevisionCommitResultV2,
+  type RevisionContentIdentityV1,
   type VdtDatabase,
   type VdtRecord,
-  type VdtRevisionHeadV2
+  type VdtRevisionHeadV2,
+  type VdtRevisionRecord
 } from "@vdt-studio/storage";
 import {
   hydrateAgentRunState,
@@ -79,10 +81,19 @@ interface AgentLegacyInitialBasisV1 {
   };
 }
 
+interface AgentExistingHeadReplayV1 {
+  kind: "existing_head_verified";
+  projectId: string;
+  vdtId: string;
+  revisionId: string;
+  contentIdentity: RevisionContentIdentityV1;
+}
+
 type AgentInitialReplayV1 =
   | AgentInitialCombinedReplayV1
   | AgentInitialRevisionReplayV1
-  | AgentLegacyInitialBasisV1;
+  | AgentLegacyInitialBasisV1
+  | AgentExistingHeadReplayV1;
 
 interface AgentProposalCommitReplayV1 {
   proposalStorageId: string;
@@ -97,6 +108,24 @@ interface AgentStorageReplayStateV1 {
   schemaVersion: "agent_storage_replay_state.v1";
   initial: AgentInitialReplayV1;
   proposals: AgentProposalCommitReplayV1[];
+}
+
+interface ExecutedProposalReplayV1 {
+  replay: AgentProposalCommitReplayV1;
+  committed: RevisionCommitResultV2;
+}
+
+interface ExecutedStorageReplayStateV1 {
+  initialRevisionId: string;
+  tipRevisionId: string;
+  tipContentIdentity: RevisionContentIdentityV1;
+  proposals: ExecutedProposalReplayV1[];
+}
+
+interface PersistMutationProposalResultV1 {
+  replayState: AgentStorageReplayStateV1;
+  tipRevisionId: string;
+  tipContentIdentity: RevisionContentIdentityV1;
 }
 
 export function createLazySqliteAgentRunPersistence(
@@ -265,7 +294,7 @@ function persistRunArtifacts(
     state,
     project,
     actor,
-    existingReplayState?.initial
+    existingReplayState
   );
   let replayState: AgentStorageReplayStateV1 = {
     schemaVersion: "agent_storage_replay_state.v1",
@@ -273,16 +302,39 @@ function persistRunArtifacts(
     proposals: existingReplayState?.proposals ?? []
   };
 
+  const executed = existingReplayState
+    ? executeStorageReplayState(
+        database,
+        existingReplayState,
+        () => actor,
+        existingReplayState.initial.kind === "existing_head_verified" ||
+          existingReplayState.proposals.length > 0
+      )
+    : initial.executed;
+  if (!executed) {
+    throw new VdtStorageError(
+      "AMBIGUOUS_REVISION_RECOVERY",
+      `Run ${state.runId} has no verified storage replay tip.`
+    );
+  }
+  let tipRevisionId = executed.tipRevisionId;
+  let tipContentIdentity = executed.tipContentIdentity;
+
   for (const proposal of state.mutationProposals ?? []) {
-    replayState = persistMutationProposal(
+    const persisted = persistMutationProposal(
       database,
       projectContext.projectId,
       state,
       initial.vdtId,
       proposal,
       actor,
-      replayState
+      replayState,
+      tipRevisionId,
+      tipContentIdentity
     );
+    replayState = persisted.replayState;
+    tipRevisionId = persisted.tipRevisionId;
+    tipContentIdentity = persisted.tipContentIdentity;
   }
   return replayState;
 }
@@ -293,11 +345,20 @@ function ensureInitialAgentVdt(
   state: VdtAgentRunState,
   project: VdtProject,
   actor: ActorContextV1,
-  persistedReplay?: AgentInitialReplayV1 | undefined
-): { vdtId: string; replay: AgentInitialReplayV1 } {
-  const vdtId = storageVdtId(state, project);
-  const idempotencyKey = `agent-run:${state.runId}:initial-v1`;
-  if (persistedReplay) {
+  persistedReplayState?: AgentStorageReplayStateV1 | undefined
+): {
+  vdtId: string;
+  replay: AgentInitialReplayV1;
+  executed?: ExecutedStorageReplayStateV1 | undefined;
+} {
+  const context = storageProjectContextFromState(state);
+  const vdtId = storageVdtId(state, project, context);
+  if (context.vdtId) {
+    validateBoundStorageVdt(database, vdtId, projectId);
+  }
+  const idempotencyKey = initialAgentIdempotencyKey(state, vdtId);
+  if (persistedReplayState) {
+    const persistedReplay = persistedReplayState.initial;
     if (
       persistedReplay.projectId !== projectId ||
       persistedReplay.vdtId !== vdtId
@@ -307,7 +368,6 @@ function ensureInitialAgentVdt(
         `Persisted initial replay basis does not match run ${state.runId}.`
       );
     }
-    executeInitialReplay(database, actor, persistedReplay);
     return { vdtId, replay: persistedReplay };
   }
 
@@ -358,8 +418,12 @@ function ensureInitialAgentVdt(
       initial: replay,
       proposals: []
     });
-    executeInitialReplay(database, actor, replay);
-    return { vdtId, replay };
+    const executedInitial = executeInitialReplay(database, actor, replay, true);
+    return {
+      vdtId,
+      replay,
+      executed: executedStorageReplayWithoutProposals(executedInitial)
+    };
   }
 
   const head = database.getVdtRevisionHead(vdtId);
@@ -382,8 +446,12 @@ function ensureInitialAgentVdt(
       initial: replay,
       proposals: []
     });
-    executeInitialReplay(database, actor, replay);
-    return { vdtId, replay };
+    const executedInitial = executeInitialReplay(database, actor, replay, true);
+    return {
+      vdtId,
+      replay,
+      executed: executedStorageReplayWithoutProposals(executedInitial)
+    };
   }
   if (
     head.activeContentIdentity !== null ||
@@ -417,8 +485,12 @@ function ensureInitialAgentVdt(
     initial: replay,
     proposals: []
   });
-  executeInitialReplay(database, actor, replay);
-  return { vdtId, replay };
+  const executedInitial = executeInitialReplay(database, actor, replay, true);
+  return {
+    vdtId,
+    replay,
+    executed: executedStorageReplayWithoutProposals(executedInitial)
+  };
 }
 
 function persistMutationProposal(
@@ -428,18 +500,32 @@ function persistMutationProposal(
   vdtId: string,
   proposal: MutationProposal,
   actor: ActorContextV1,
-  replayState: AgentStorageReplayStateV1
-): AgentStorageReplayStateV1 {
+  replayState: AgentStorageReplayStateV1,
+  verifiedTipRevisionId: string,
+  verifiedTipContentIdentity: RevisionContentIdentityV1
+): PersistMutationProposalResultV1 {
   const proposalId = storageProposalId(proposal);
+  let replay = replayState.proposals.find(
+    (item) => item.proposalStorageId === proposalId
+  );
+  const wasAlreadyRecorded = replay !== undefined;
   validateStrictVdtProjectCommit(proposal.previewProject);
   const previewFilePath = writePreviewProject(database, projectId, vdtId, proposal);
-  const baseRevision = database
-    .listVdtRevisions(vdtId)
-    .find((revision) => revision.revisionNo === proposal.baseRevision);
+  const baseRevision = resolveProposalBaseRevision(
+    database,
+    vdtId,
+    proposal,
+    replayState,
+    state,
+    replay,
+    verifiedTipRevisionId
+  );
   if (!baseRevision) {
     throw new VdtStorageError(
       "REVISION_CONFLICT",
-      `Proposal ${proposal.id} base revision ${proposal.baseRevision} is not persisted.`
+      usesPersistedHeadAsProposalBase(replayState, state)
+        ? `Proposal ${proposal.id} cannot resolve the persisted VDT head.`
+        : `Proposal ${proposal.id} base revision ${proposal.baseRevision} is not persisted.`
     );
   }
   const existing = database.getMutationProposal(proposalId);
@@ -481,9 +567,6 @@ function persistMutationProposal(
     if (!proposal.appliedAt) {
       throw new TypeError(`Applied proposal ${proposal.id} has no appliedAt timestamp.`);
     }
-    let replay = replayState.proposals.find(
-      (item) => item.proposalStorageId === proposalId
-    );
     if (!replay) {
       const runtime = requireProjectRuntimeState(database, projectId);
       const head = database.getVdtRevisionHead(vdtId);
@@ -493,9 +576,19 @@ function persistMutationProposal(
           `Proposal ${proposal.id} cannot resolve a committed VDT head.`
         );
       }
-      if (head.activeRevisionId !== baseRevision.id) {
+      if (
+        head.activeRevisionId !== baseRevision.id ||
+        !contentIdentityEqual(
+          head.activeContentIdentity,
+          verifiedTipContentIdentity
+        )
+      ) {
         if (existing?.status === "applied") {
-          return replayState;
+          return {
+            replayState,
+            tipRevisionId: verifiedTipRevisionId,
+            tipContentIdentity: verifiedTipContentIdentity
+          };
         }
         throw new VdtStorageError(
           "REVISION_CONFLICT",
@@ -530,6 +623,20 @@ function persistMutationProposal(
       };
       persistReplayCheckpoint(database, state, replayState);
     }
+    if (wasAlreadyRecorded) {
+      database.updateMutationProposal(proposalId, {
+        status: "applied",
+        appliedAt: proposal.appliedAt,
+        previewFilePath,
+        validation: proposal.validation,
+        calculation: proposal.calculation
+      });
+      return {
+        replayState,
+        tipRevisionId: verifiedTipRevisionId,
+        tipContentIdentity: verifiedTipContentIdentity
+      };
+    }
     const committed = executeProposalReplay(database, actor, replay);
     if (committed.revision.parentRevisionId !== baseRevision.id) {
       throw new VdtStorageError(
@@ -544,32 +651,116 @@ function persistMutationProposal(
       validation: proposal.validation,
       calculation: proposal.calculation
     });
+    if (!committed.head.activeContentIdentity) {
+      throw new VdtStorageError(
+        "AMBIGUOUS_REVISION_RECOVERY",
+        `Proposal ${proposal.id} commit has no exact content identity.`
+      );
+    }
+    return {
+      replayState,
+      tipRevisionId: committed.revision.id,
+      tipContentIdentity: committed.head.activeContentIdentity
+    };
   }
-  return replayState;
+  return {
+    replayState,
+    tipRevisionId: verifiedTipRevisionId,
+    tipContentIdentity: verifiedTipContentIdentity
+  };
+}
+
+function usesPersistedHeadAsProposalBase(
+  replayState: AgentStorageReplayStateV1,
+  state: VdtAgentRunState
+): boolean {
+  return (
+    replayState.initial.kind === "existing_head_verified" ||
+    Boolean(trimOptional(state.request.workspace?.vdtId))
+  );
+}
+
+function resolveProposalBaseRevision(
+  database: VdtDatabase,
+  vdtId: string,
+  proposal: MutationProposal,
+  replayState: AgentStorageReplayStateV1,
+  state: VdtAgentRunState,
+  replay: AgentProposalCommitReplayV1 | undefined,
+  verifiedTipRevisionId: string
+): VdtRevisionRecord | undefined {
+  if (replay?.command.expectedActiveRevisionId) {
+    return database.getVdtRevision(replay.command.expectedActiveRevisionId) ?? undefined;
+  }
+  if (usesPersistedHeadAsProposalBase(replayState, state)) {
+    return database.getVdtRevision(verifiedTipRevisionId) ?? undefined;
+  }
+  return database
+    .listVdtRevisions(vdtId)
+    .find((revision) => revision.revisionNo === proposal.baseRevision);
 }
 
 function executeInitialReplay(
   database: VdtDatabase,
   actor: ActorContextV1,
-  replay: AgentInitialReplayV1
-): void {
+  replay: AgentInitialReplayV1,
+  requireActiveHead: boolean
+): { revisionId: string; contentIdentity: RevisionContentIdentityV1 } {
   if (replay.kind === "combined_create") {
-    database.createVdtWithInitialSnapshot({
+    const committed = database.createVdtWithInitialSnapshot({
       actor,
       command: replay.command,
       project: replay.project
     });
-    return;
+    return replayRevisionFromCommit(
+      committed.revision,
+      committed.head.activeContentIdentity
+    );
   }
   if (replay.kind === "initial_revision") {
-    database.commitVdtRevision({
+    const committed = database.commitVdtRevision({
       projectId: replay.projectId,
       vdtId: replay.vdtId,
       actor,
       command: replay.command,
       project: replay.project
     });
-    return;
+    return replayRevisionFromCommit(
+      committed.revision,
+      committed.head.activeContentIdentity
+    );
+  }
+  if (replay.kind === "existing_head_verified") {
+    const vdt = database.getVdt(replay.vdtId);
+    const head = database.getVdtRevisionHead(replay.vdtId);
+    const revision = database.getVdtRevision(replay.revisionId);
+    if (
+      !vdt ||
+      vdt.projectId !== replay.projectId ||
+      !revision ||
+      revision.vdtId !== replay.vdtId
+    ) {
+      throw new VdtStorageError(
+        "AMBIGUOUS_REVISION_RECOVERY",
+        `Bound VDT head ${replay.vdtId} is no longer exact for continue replay.`
+      );
+    }
+    verifyRevisionContentIdentity(database, revision, replay.contentIdentity);
+    if (
+      requireActiveHead &&
+      (!head ||
+        head.activeRevisionId !== replay.revisionId ||
+        !contentIdentityEqual(head.activeContentIdentity, replay.contentIdentity))
+    ) {
+      throw new VdtStorageError(
+        "AMBIGUOUS_REVISION_RECOVERY",
+        `Bound VDT head ${replay.vdtId} is no longer exact for continue replay.`
+      );
+    }
+    return {
+      revisionId: replay.revisionId,
+      contentIdentity: replay.contentIdentity
+    };
   }
 
   const vdt = database.getVdt(replay.vdtId);
@@ -586,7 +777,23 @@ function executeInitialReplay(
       `Legacy initial revision basis is no longer exact for ${replay.vdtId}.`
     );
   }
-  database.readVdtRevision(revision);
+  verifyRevisionContentIdentity(database, revision, replay.contentIdentity);
+  const head = database.getVdtRevisionHead(replay.vdtId);
+  if (
+    requireActiveHead &&
+    (!head ||
+      head.activeRevisionId !== replay.revisionId ||
+      !contentIdentityEqual(head.activeContentIdentity, replay.contentIdentity))
+  ) {
+    throw new VdtStorageError(
+      "AMBIGUOUS_REVISION_RECOVERY",
+      `Legacy initial revision basis is no longer active for ${replay.vdtId}.`
+    );
+  }
+  return {
+    revisionId: replay.revisionId,
+    contentIdentity: replay.contentIdentity
+  };
 }
 
 function executeProposalReplay(
@@ -601,6 +808,142 @@ function executeProposalReplay(
     command: replay.command,
     project: replay.project
   });
+}
+
+function executeStorageReplayState(
+  database: VdtDatabase,
+  replayState: AgentStorageReplayStateV1,
+  actorFactory: (projectId: string) => ActorContextV1,
+  requireExactTip = true
+): ExecutedStorageReplayStateV1 {
+  const initial = executeInitialReplay(
+    database,
+    actorFactory(replayState.initial.projectId),
+    replayState.initial,
+    requireExactTip && replayState.proposals.length === 0
+  );
+  let expectedRevisionId = initial.revisionId;
+  let expectedContentIdentity = initial.contentIdentity;
+  const proposals: ExecutedProposalReplayV1[] = [];
+
+  for (const replay of replayState.proposals) {
+    if (
+      replay.projectId !== replayState.initial.projectId ||
+      replay.vdtId !== replayState.initial.vdtId ||
+      replay.command.expectedActiveRevisionId !== expectedRevisionId ||
+      !contentIdentityEqual(
+        replay.command.expectedActiveContentIdentity,
+        expectedContentIdentity
+      )
+    ) {
+      throw new VdtStorageError(
+        "AMBIGUOUS_REVISION_RECOVERY",
+        `Proposal ${replay.proposal.id} is not chained to the recorded continue replay basis.`
+      );
+    }
+
+    const committed = executeProposalReplay(
+      database,
+      actorFactory(replay.projectId),
+      replay
+    );
+    if (
+      committed.revision.vdtId !== replay.vdtId ||
+      committed.revision.parentRevisionId !== expectedRevisionId ||
+      committed.head.activeRevisionId !== committed.revision.id ||
+      !committed.head.activeContentIdentity
+    ) {
+      throw new VdtStorageError(
+        "AMBIGUOUS_REVISION_RECOVERY",
+        `Proposal ${replay.proposal.id} replay changed its persisted base.`
+      );
+    }
+    expectedRevisionId = committed.revision.id;
+    expectedContentIdentity = committed.head.activeContentIdentity;
+    proposals.push({ replay, committed });
+  }
+
+  if (requireExactTip) {
+    const liveHead = database.getVdtRevisionHead(replayState.initial.vdtId);
+    if (
+      !liveHead ||
+      liveHead.projectId !== replayState.initial.projectId ||
+      liveHead.activeRevisionId !== expectedRevisionId ||
+      !contentIdentityEqual(
+        liveHead.activeContentIdentity,
+        expectedContentIdentity
+      )
+    ) {
+      throw new VdtStorageError(
+        "AMBIGUOUS_REVISION_RECOVERY",
+        `VDT head ${replayState.initial.vdtId} is not the exact recorded replay tip.`
+      );
+    }
+  }
+
+  return {
+    initialRevisionId: initial.revisionId,
+    tipRevisionId: expectedRevisionId,
+    tipContentIdentity: expectedContentIdentity,
+    proposals
+  };
+}
+
+function executedStorageReplayWithoutProposals(initial: {
+  revisionId: string;
+  contentIdentity: RevisionContentIdentityV1;
+}): ExecutedStorageReplayStateV1 {
+  return {
+    initialRevisionId: initial.revisionId,
+    tipRevisionId: initial.revisionId,
+    tipContentIdentity: initial.contentIdentity,
+    proposals: []
+  };
+}
+
+function replayRevisionFromCommit(
+  revision: VdtRevisionRecord,
+  contentIdentity: RevisionContentIdentityV1 | null
+): { revisionId: string; contentIdentity: RevisionContentIdentityV1 } {
+  if (!contentIdentity) {
+    throw new VdtStorageError(
+      "AMBIGUOUS_REVISION_RECOVERY",
+      `Committed revision ${revision.id} has no exact content identity.`
+    );
+  }
+  return { revisionId: revision.id, contentIdentity };
+}
+
+function verifyRevisionContentIdentity(
+  database: VdtDatabase,
+  revision: VdtRevisionRecord,
+  expected: RevisionContentIdentityV1
+): void {
+  const project = database.readVdtRevision(revision);
+  const actual: RevisionContentIdentityV1 = expected.scheme === "legacy_graph_sha256"
+    ? {
+        scheme: "legacy_graph_sha256",
+        hash: `sha256:${revision.graphHash}`
+      }
+    : validateStrictVdtProjectCommit(project).contentIdentity;
+  if (!contentIdentityEqual(actual, expected)) {
+    throw new VdtStorageError(
+      "AMBIGUOUS_REVISION_RECOVERY",
+      `Revision ${revision.id} no longer matches its recorded content identity.`
+    );
+  }
+}
+
+function contentIdentityEqual(
+  left: RevisionContentIdentityV1 | null,
+  right: RevisionContentIdentityV1 | null
+): boolean {
+  return Boolean(
+    left &&
+      right &&
+      left.scheme === right.scheme &&
+      left.hash === right.hash
+  );
 }
 
 function reconstructExistingInitialReplay(
@@ -620,11 +963,20 @@ function reconstructExistingInitialReplay(
     );
   }
   const metadata = vdt.metadata ?? {};
-  if (initialRevision.source !== "agent") {
-    throw new VdtStorageError(
-      "VDT_NOT_READY",
-      `Existing VDT ${vdt.id} was not created from an agent-owned initial revision.`
-    );
+  const boundWorkspaceVdtId = trimOptional(state.request.workspace?.vdtId);
+  if (
+    boundWorkspaceVdtId &&
+    safeVdtId(boundWorkspaceVdtId) === vdt.id &&
+    head.activeRevisionId &&
+    head.activeContentIdentity
+  ) {
+    return {
+      kind: "existing_head_verified",
+      projectId: vdt.projectId,
+      vdtId: vdt.id,
+      revisionId: head.activeRevisionId,
+      contentIdentity: head.activeContentIdentity
+    };
   }
   if (
     head.activeContentIdentity.scheme === "legacy_graph_sha256" &&
@@ -645,6 +997,13 @@ function reconstructExistingInitialReplay(
 
   const initialProject = database.readVdtRevision(initialRevision);
   validateStrictVdtProjectCommit(initialProject);
+  if (initialRevision.source !== "agent") {
+    throw new VdtStorageError(
+      "VDT_NOT_READY",
+      `Existing VDT ${vdt.id} was not created from an agent-owned initial revision.`
+    );
+  }
+
   const sourceRunMatches = metadata.sourceRunId === state.runId;
   if (sourceRunMatches) {
     return {
@@ -656,7 +1015,7 @@ function reconstructExistingInitialReplay(
         projectId: vdt.projectId,
         expectedRuntimeGeneration: runtime.runtimeGeneration,
         expectedGenerationVersion: runtime.generationVersion,
-        idempotencyKey: `agent-run:${state.runId}:initial-v1`,
+        idempotencyKey: initialAgentIdempotencyKey(state, vdt.id),
         vdt: {
           requestedVdtId: vdt.id,
           name: vdt.name,
@@ -690,7 +1049,7 @@ function reconstructExistingInitialReplay(
       expectedCommitGeneration: 0,
       expectedRuntimeGeneration: runtime.runtimeGeneration,
       expectedGenerationVersion: runtime.generationVersion,
-      idempotencyKey: `agent-run:${state.runId}:initial-v1`,
+      idempotencyKey: initialAgentIdempotencyKey(state, vdt.id),
       intent: {
         source: initialRevision.source,
         summary: initialRevision.summary ?? null,
@@ -711,27 +1070,15 @@ function reconcilePersistedReplayState(
   if (!replayState) return state;
 
   let reconciled = state;
-  executeInitialReplay(
+  const executed = executeStorageReplayState(
     database,
-    actorFactory(replayState.initial.projectId),
-    replayState.initial
+    replayState,
+    actorFactory,
+    replayState.initial.kind === "existing_head_verified" ||
+      replayState.proposals.length > 0
   );
 
-  for (const replay of replayState.proposals) {
-    const committed = executeProposalReplay(
-      database,
-      actorFactory(replay.projectId),
-      replay
-    );
-    if (
-      committed.revision.parentRevisionId !==
-      replay.command.expectedActiveRevisionId
-    ) {
-      throw new VdtStorageError(
-        "AMBIGUOUS_REVISION_RECOVERY",
-        `Proposal ${replay.proposal.id} replay changed its persisted base.`
-      );
-    }
+  for (const { replay, committed } of executed.proposals) {
     database.updateMutationProposal(replay.proposalStorageId, {
       status: "applied",
       appliedAt:
@@ -902,13 +1249,52 @@ function writePreviewProject(database: VdtDatabase, projectId: string, vdtId: st
   return path.relative(database.dataDir, file);
 }
 
-function vdtIdFromState(state: VdtAgentRunState): string | undefined {
+function vdtIdFromState(
+  state: VdtAgentRunState,
+  context = storageProjectContextFromState(state)
+): string | undefined {
   const project = state.draftProject ?? state.project;
-  return project ? storageVdtId(state, project) : undefined;
+  return project ? storageVdtId(state, project, context) : undefined;
 }
 
-function storageVdtId(state: VdtAgentRunState, project: VdtProject): string {
+function storageVdtId(
+  state: VdtAgentRunState,
+  project: VdtProject,
+  context = storageProjectContextFromState(state)
+): string {
+  const boundVdtId = context.vdtId ?? trimOptional(state.request.workspace?.vdtId);
+  if (boundVdtId) {
+    return safeVdtId(boundVdtId);
+  }
   return safeStorageId("vdt", `${project.rootNodeId || project.id}_${state.runId}`);
+}
+
+function initialAgentIdempotencyKey(state: VdtAgentRunState, vdtId: string): string {
+  if (state.request.workspace?.vdtId) {
+    return `agent-run:${vdtId}:initial-v1`;
+  }
+  return `agent-run:${state.runId}:initial-v1`;
+}
+
+function validateBoundStorageVdt(
+  database: VdtDatabase,
+  vdtId: string,
+  projectId: string
+): VdtRecord {
+  const vdt = database.getVdt(vdtId);
+  if (!vdt) {
+    throw new VdtStorageError(
+      "VDT_NOT_FOUND",
+      `Workspace VDT ${vdtId} was not found.`
+    );
+  }
+  if (vdt.projectId !== projectId) {
+    throw new VdtStorageError(
+      "VDT_NOT_FOUND",
+      `Workspace VDT ${vdtId} does not belong to project ${projectId}.`
+    );
+  }
+  return vdt;
 }
 
 function storageProposalId(proposal: MutationProposal): string {
@@ -962,7 +1348,8 @@ function storageProjectContextFromState(state: VdtAgentRunState): StorageProject
       projectId: safeProjectId(requested.projectId),
       projectName: trimOptional(requested.projectName) ?? project?.name ?? rootNode?.name ?? DEFAULT_AGENT_PROJECT_NAME,
       industry: trimOptional(requested.industry) ?? trimOptional(project?.industry),
-      description: trimOptional(requested.description) ?? trimOptional(project?.description)
+      description: trimOptional(requested.description) ?? trimOptional(project?.description),
+      ...(requested.vdtId ? { vdtId: safeVdtId(requested.vdtId) } : {})
     };
   }
   if (project) {
@@ -985,6 +1372,15 @@ function safeProjectId(value: string): string {
     return assertSafeId(trimmed, "projectId");
   } catch {
     return safeStorageId("project", trimmed);
+  }
+}
+
+function safeVdtId(value: string): string {
+  const trimmed = value.trim();
+  try {
+    return assertSafeId(trimmed, "vdtId");
+  } catch {
+    return safeStorageId("vdt", trimmed);
   }
 }
 

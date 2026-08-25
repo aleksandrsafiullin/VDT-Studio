@@ -100,7 +100,7 @@ describe("ToolRegistry", () => {
     expect(project.graph.edges.at(-1)).toMatchObject({ relation: "positive_driver" });
   });
 
-  it("adds multiple VDT drivers in one batch tool call", async () => {
+  it("adds multiple VDT drivers and normalizes live enum aliases in one batch tool call", async () => {
     const store = new AgentRunStore({ now: () => "2026-06-26T00:00:00.000Z" });
     const run = store.createRun({
       mode: "generate_vdt",
@@ -124,19 +124,18 @@ describe("ToolRegistry", () => {
           parentNodeId: "excavation",
           nodeId: "excavator_count",
           name: "Excavator count",
-          type: "input",
+          type: "input_kpi",
           unit: "units",
-          relation: "multiplicative_driver",
+          relation: "multiply",
           baselineValue: 5
         },
         {
           parentNodeId: "excavation",
           nodeId: "shift_count",
           name: "Shift count",
-          type: "input",
+          type: "calculated_kpi",
           unit: "shifts/day",
-          relation: "multiplicative_driver",
-          baselineValue: 2
+          relation: "multiply"
         }
       ]
     }, {
@@ -158,6 +157,12 @@ describe("ToolRegistry", () => {
       "excavator_count",
       "shift_count"
     ]));
+    expect(project.graph.nodes.find((node) => node.id === "excavator_count")?.type).toBe("input");
+    expect(project.graph.nodes.find((node) => node.id === "shift_count")?.type).toBe("calculated");
+    expect(project.graph.edges.slice(-2).map((edge) => edge.relation)).toEqual([
+      "multiplicative_driver",
+      "multiplicative_driver"
+    ]);
     expect(store.getSnapshot(run.runId).events.some((event) => event.message.includes("Added 2 drivers"))).toBe(true);
   });
 

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, CircleAlert, History, MessageSquarePlus, Search, Send, Settings2, X } from "lucide-react";
+import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { DataImportWizard } from "@/components/data-import/data-import-wizard";
 import { Field, TextArea, TextInput } from "@/components/ui/field";
@@ -14,7 +15,7 @@ import {
 import { formatExecutionModeSummary } from "@/lib/format-execution-summary";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
-import { useVdtStudioStore } from "./vdt-store";
+import { filterAgentChatHistoryForVdt, shouldContinueOpenVdt, useVdtStudioStore } from "./vdt-store";
 import { GenerateActivityPanel } from "./generate-activity-panel";
 import { SettingsModal } from "./settings-modal";
 import type { AgentChatHistoryEntry } from "./vdt-store";
@@ -71,6 +72,13 @@ function formatChatTime(value: string) {
   });
 }
 
+export function agentActivityScrollClassName(hasRetryableError: boolean): string {
+  return clsx(
+    "min-h-0 flex-1 overflow-auto px-4 py-4",
+    hasRetryableError && "pb-48"
+  );
+}
+
 export function ExecutionReadinessDot({ state }: { state: CliRequestReadinessState }) {
   const statusClass = {
     checking: "bg-slate-400",
@@ -106,6 +114,11 @@ export function SetupRail() {
   const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
   const generateActivity = useVdtStudioStore((state) => state.generateActivity);
   const agentChatHistory = useVdtStudioStore((state) => state.agentChatHistory);
+  const activeVdtId = useVdtStudioStore((state) => state.workspace.activeVdtId);
+  const scopedAgentChatHistory = useMemo(
+    () => filterAgentChatHistoryForVdt(agentChatHistory, activeVdtId),
+    [agentChatHistory, activeVdtId]
+  );
   const pendingChangeSet = useVdtStudioStore((state) => state.pendingChangeSet);
   const changeSetSelection = useVdtStudioStore((state) => state.changeSetSelection);
   const aiError = useVdtStudioStore((state) => state.aiError);
@@ -161,6 +174,7 @@ export function SetupRail() {
     canUseConfiguredRuntime &&
     (!isGenerating || Boolean(generateActivity));
   const canStartNewChat = Boolean(generateActivity);
+  const hasRetryableError = Boolean(generateActivity?.retryableError);
   const researchUnavailable = researchMode !== "off" && researchStatus?.providerConfigured === false;
   const researchTooltip = researchModeTooltip(researchMode, researchStatus);
 
@@ -207,7 +221,11 @@ export function SetupRail() {
     if (!text || isRunningAiAction) return;
     if (!canUseConfiguredRuntime) return;
     if (!canContinueCurrentAgentRun) {
-      const accepted = await startAgentRun(text, { researchMode });
+      const shouldContinue = shouldContinueOpenVdt(useVdtStudioStore.getState());
+      const accepted = await startAgentRun(text, {
+        researchMode,
+        ...(shouldContinue ? { mode: "continue_project", includeCurrentProject: true } : {})
+      });
       if (accepted) setInstructionText("");
       return;
     }
@@ -301,17 +319,20 @@ export function SetupRail() {
       </section>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        <section className="min-h-0 flex-1 overflow-auto px-4 py-4">
+        <section
+          className={agentActivityScrollClassName(hasRetryableError)}
+          data-testid="agent-activity-scroll"
+        >
           <div className="space-y-3">
             {historyOpen ? (
               <section className="space-y-2" data-testid="agent-chat-history">
                 <div className="flex items-center justify-between gap-3">
                   <h3 className="text-xs font-semibold uppercase tracking-normal text-muted">Chat history</h3>
-                  <span className="text-xs text-muted">{agentChatHistory.length}</span>
+                  <span className="text-xs text-muted">{scopedAgentChatHistory.length}</span>
                 </div>
-                {agentChatHistory.length > 0 ? (
+                {scopedAgentChatHistory.length > 0 ? (
                   <div className="space-y-2">
-                    {agentChatHistory.map((entry) => {
+                    {scopedAgentChatHistory.map((entry) => {
                       const active = entry.runId === generateActivity?.runId;
                       return (
                         <button

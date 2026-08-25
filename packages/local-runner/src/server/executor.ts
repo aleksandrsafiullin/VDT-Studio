@@ -333,6 +333,13 @@ function parseMockNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+import {
+  AGENT_DECISION_TIMEOUT_FLOOR_MS,
+  AGENT_DECISION_TIMEOUT_MAX_MS
+} from "../timeout-limits";
+
+export { AGENT_DECISION_TIMEOUT_FLOOR_MS, AGENT_DECISION_TIMEOUT_MAX_MS };
+
 export const EXECUTION_LIMITS = Object.freeze({
   maxPromptBytes: 512 * 1024,
   maxLineBytes: 1024 * 1024,
@@ -341,7 +348,7 @@ export const EXECUTION_LIMITS = Object.freeze({
   maxResultBytes: 1024 * 1024,
   maxRepairExcerptBytes: 16 * 1024,
   repairTimeoutMs: 60_000,
-  timeoutMs: 120_000,
+  timeoutMs: AGENT_DECISION_TIMEOUT_MAX_MS,
   killGraceMs: 3_000
 });
 

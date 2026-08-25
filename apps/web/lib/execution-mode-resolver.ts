@@ -1,5 +1,8 @@
 import { resolveEffectiveByokUrls, resolveByokPreset } from "./byok-validation";
 import {
+  AGENT_DECISION_TIMEOUT_FLOOR_MS
+} from "@vdt-studio/local-runner/timeout-limits";
+import {
   resolveSelectedCliReadiness,
   type CliReadinessBackendStatus
 } from "./cli-readiness";
@@ -437,6 +440,11 @@ export function validateExecutionForGenerate(
   return readiness && !readiness.canExecute ? readiness.message : undefined;
 }
 
+function resolveLocalCliTimeoutMs(settings: ExecutionSettings, isSubscriptionCli: boolean): number {
+  const timeoutMs = (settings.timeoutSec ?? 60) * 1_000;
+  return isSubscriptionCli ? Math.max(timeoutMs, AGENT_DECISION_TIMEOUT_FLOOR_MS) : timeoutMs;
+}
+
 function resolveLocalCli(settings: ExecutionSettings): ResolvedExecutionProvider {
   const presetId = settings.localRunnerPresetId ?? "ollama_openai";
   const preset = getLocalRunnerPreset(presetId);
@@ -463,7 +471,7 @@ function resolveLocalCli(settings: ExecutionSettings): ResolvedExecutionProvider
           settings.cliModelSelection?.source === "custom"
             ? settings.cliModelSelection.customModel
             : undefined,
-        timeoutMs: (settings.timeoutSec ?? 60) * 1_000
+        timeoutMs: resolveLocalCliTimeoutMs(settings, true)
       }
     };
   }
@@ -472,7 +480,7 @@ function resolveLocalCli(settings: ExecutionSettings): ResolvedExecutionProvider
     runnerUrl: settings.runnerUrl ?? "http://127.0.0.1:8765",
     backendId: preset.modelBackendId ?? "ollama",
     model: settings.localModel ?? preset.model ?? "qwen3",
-    timeoutMs: (settings.timeoutSec ?? 60) * 1_000
+    timeoutMs: resolveLocalCliTimeoutMs(settings, false)
   };
 
   return {

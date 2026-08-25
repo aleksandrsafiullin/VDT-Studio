@@ -4,6 +4,8 @@ import { AgentToolError, type AgentTool, type AgentToolContext } from "../tool-r
 import { summarizeCalculation, summarizeValidation } from "../summaries";
 import type { SubagentReport, SubagentTask, VdtAgentRunState } from "../types";
 
+const SUBAGENT_TIMEOUT_MAX_MS = 300_000;
+
 const subagentTaskTypeSchema = z.enum([
   "brief_alignment",
   "level_decomposition",
@@ -25,7 +27,7 @@ const createTaskTool: AgentTool = {
     objective: z.string().max(600).optional(),
     targetNodeId: z.string().max(160).optional(),
     publicStatus: z.string().max(300).optional(),
-    timeoutMs: z.number().int().min(1_000).max(120_000).optional()
+    timeoutMs: z.number().int().min(1_000).max(SUBAGENT_TIMEOUT_MAX_MS).optional()
   }),
   outputSchema: z.record(z.unknown()),
   phase: "planning_decomposition",

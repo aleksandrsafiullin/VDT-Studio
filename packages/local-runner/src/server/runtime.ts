@@ -25,7 +25,18 @@ import {
   type VdtAgentRun
 } from "@vdt-studio/vdt-agent";
 import type { AuditEvent, BackendManifest, CompletionRequest, RunProgressPhase, RunSnapshot, RunStatus } from "../cli/types";
-import { executeCompletion, EXECUTION_LIMITS, listBackendModels, type ExecutorOptions } from "./executor";
+import {
+  AGENT_DECISION_TIMEOUT_FLOOR_MS,
+  AGENT_DECISION_TIMEOUT_MAX_MS
+} from "../timeout-limits";
+import {
+  executeCompletion,
+  EXECUTION_LIMITS,
+  listBackendModels,
+  type ExecutorOptions
+} from "./executor";
+
+export { AGENT_DECISION_TIMEOUT_FLOOR_MS, AGENT_DECISION_TIMEOUT_MAX_MS, EXECUTION_LIMITS };
 import { ALL_VDT_TASK_TYPES, createManifestRegistry, publicManifest } from "./manifests";
 
 export const LOCAL_RUNTIME_VERSION = "0.2.0";

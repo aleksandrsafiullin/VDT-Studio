@@ -39,7 +39,29 @@ describe("execution-mode-resolver", () => {
         runnerUrl: "http://127.0.0.1:8765",
         backendId: "claude_subscription",
         model: undefined,
-        timeoutMs: 60_000
+        timeoutMs: 180_000
+      }
+    });
+  });
+
+  it("floors subscription CLI timeout for cursor-agent instead of inheriting bare 60s", () => {
+    expect(
+      resolveExecutionSettings({
+        ...DEFAULT_EXECUTION_SETTINGS,
+        executionMode: "local_cli",
+        selectedCliAgentId: "cursor-agent",
+        localRunnerPresetId: "custom_cli_json",
+        runnerProviderId: "cli_stub",
+        runnerUrl: "http://127.0.0.1:8765",
+        timeoutSec: 60
+      })
+    ).toEqual({
+      providerId: "local_runner",
+      providerConfig: {
+        runnerUrl: "http://127.0.0.1:8765",
+        backendId: "cursor_subscription",
+        model: undefined,
+        timeoutMs: 180_000
       }
     });
   });

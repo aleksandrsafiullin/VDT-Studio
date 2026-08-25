@@ -18,6 +18,18 @@ describe("agent run schemas", () => {
     })).toMatchObject({ researchMode: "off" });
   });
 
+  it("accepts workspace vdtId on start requests", () => {
+    expect(agentStartRequestSchema.parse({
+      mode: "continue_project",
+      input: { rootKpi: "Revenue" },
+      workspace: {
+        projectId: "project_revenue",
+        vdtId: "vdt_existing_001"
+      },
+      providerId: "mock"
+    }).workspace?.vdtId).toBe("vdt_existing_001");
+  });
+
   it("rejects invalid researchMode values", () => {
     expect(agentStartRequestSchema.safeParse({
       mode: "generate_vdt",

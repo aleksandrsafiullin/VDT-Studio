@@ -160,6 +160,15 @@ export class VdtAgentRuntime {
         ...(message.answers ?? {}),
         ...answerRecordFromPayloads(answerPayloads)
       };
+
+      if (answerRecord.retry === "retry_last_step") {
+        return this.handleRetryLastStep(runId, state, answerPayloads, execution);
+      }
+
+      if (answerRecord.continue === "smaller_step") {
+        return this.handleSmallerStep(runId, state, answerPayloads, execution);
+      }
+
       const answeredContext = answersToContext(answerRecord);
       const answerDescription = describeAnswerPayloads(answerPayloads, state.pendingQuestions ?? []);
       this.store.updateRun(runId, {
@@ -512,6 +521,83 @@ export class VdtAgentRuntime {
     );
   }
 
+  private async handleRetryLastStep(
+    runId: string,
+    state: VdtAgentRunState,
+    answerPayloads: ReturnType<typeof answerPayloadsFromRecord>,
+    execution: VdtAgentExecutionOptions
+  ): Promise<VdtAgentRunSnapshot> {
+    const graphPresent = hasNonemptyGraph(state);
+    const decisionGuidance = graphPresent
+      ? "Resume the last failed step. A draft VDT already exists — continue building with vdt.add_driver or vdt.add_drivers_batch; do not call vdt.create_draft."
+      : "Resume the last failed step from where it left off.";
+    const answerDescription = describeAnswerPayloads(answerPayloads, state.pendingQuestions ?? []);
+
+    this.store.updateRun(runId, {
+      status: "running",
+      phase: "planning_decomposition",
+      pendingQuestions: undefined,
+      retryableError: undefined,
+      decisionGuidance,
+      answers: { ...state.answers, retry: "retry_last_step" },
+      request: state.request
+    });
+    this.store.appendChatMessage(runId, {
+      role: "user",
+      kind: "answer",
+      text: answerDescription || "Retry last step",
+      answers: answerPayloads
+    });
+    this.store.updatePublicStatus(runId, publicStatusForPhase("planning_decomposition", "Retrying the last step..."));
+    this.emit(runId, {
+      type: "user_answer_received",
+      phase: "planning_decomposition",
+      title: "Retry requested",
+      message: "Resuming the last failed agent step with an elevated timeout.",
+      metadata: { retry: "retry_last_step", graphPresent }
+    });
+    await this.executeRun(runId, execution);
+    this.store.updateRun(runId, { decisionGuidance: undefined });
+    return this.store.getSnapshot(runId);
+  }
+
+  private async handleSmallerStep(
+    runId: string,
+    state: VdtAgentRunState,
+    answerPayloads: ReturnType<typeof answerPayloadsFromRecord>,
+    execution: VdtAgentExecutionOptions
+  ): Promise<VdtAgentRunSnapshot> {
+    const decisionGuidance = "Add one driver under the existing root only; do not call vdt.create_draft.";
+    const answerDescription = describeAnswerPayloads(answerPayloads, state.pendingQuestions ?? []);
+
+    this.store.updateRun(runId, {
+      status: "running",
+      phase: "planning_decomposition",
+      pendingQuestions: undefined,
+      retryableError: undefined,
+      decisionGuidance,
+      answers: { ...state.answers, continue: "smaller_step" },
+      request: state.request
+    });
+    this.store.appendChatMessage(runId, {
+      role: "user",
+      kind: "answer",
+      text: answerDescription || "Continue with a smaller step",
+      answers: answerPayloads
+    });
+    this.store.updatePublicStatus(runId, publicStatusForPhase("planning_decomposition", "Taking a smaller next step..."));
+    this.emit(runId, {
+      type: "user_answer_received",
+      phase: "planning_decomposition",
+      title: "Smaller step requested",
+      message: "Resuming with a single-driver continuation instruction.",
+      metadata: { continue: "smaller_step" }
+    });
+    await this.executeRun(runId, execution);
+    this.store.updateRun(runId, { decisionGuidance: undefined });
+    return this.store.getSnapshot(runId);
+  }
+
   private async requestDecision(runId: string, execution: VdtAgentExecutionOptions): Promise<AgentDecision> {
     if (!execution.provider) {
       throw new Error("Agent mode requires a configured AI provider.");
@@ -568,7 +654,7 @@ export class VdtAgentRuntime {
         if (!isAgentDecisionRepairableError(error)) {
           throw error;
         }
-        const feedback = feedbackFromDecisionError(error);
+        const feedback = feedbackFromDecisionError(error, state);
         this.appendFeedback(runId, feedback);
         this.emit(runId, {
           type: "tool_call_completed",
@@ -609,7 +695,10 @@ export class VdtAgentRuntime {
 
     const toolResult = await this.tools.run(decision.toolName, decision.args, this.toolContext(runId));
     if (!toolResult.ok) {
-      const feedback = feedbackFromToolEnvelope(toolResult);
+      const state = this.store.getState(runId);
+      const feedback = feedbackFromToolEnvelope(toolResult, {
+        hasNonemptyGraph: hasNonemptyGraph(state)
+      });
       if (feedback) this.appendFeedback(runId, feedback);
       return "continue";
     }
@@ -646,8 +735,10 @@ export class VdtAgentRuntime {
 
   private buildAgentContext(runId: string): AgentDecisionContext {
     const state = this.store.getState(runId);
-    const project = state.builder?.getProject() ?? state.draftProject ?? state.project;
+    const project = effectiveProject(state);
     const selectedNodeId = state.request.input.selectedNodeId;
+    const continuationPolicy = continuationPolicyFromState(state);
+    const guidance = [continuationPolicy.guidance, state.decisionGuidance].filter(Boolean).join(" ");
     return {
       runId,
       mode: state.request.mode,
@@ -655,7 +746,9 @@ export class VdtAgentRuntime {
       userRequest: state.request.input,
       researchPolicy: researchPolicyFromState(state, this.tools.getMetadata().researchProviderStatus),
       briefReadiness: briefReadinessFromState(state),
-      continuationPolicy: continuationPolicyFromState(state),
+      continuationPolicy: guidance
+        ? { ...continuationPolicy, guidance }
+        : continuationPolicy,
       currentProject: project ? summarizeProject(project) : undefined,
       selectedNode: project && selectedNodeId ? summarizeNode(project, selectedNodeId) : undefined,
       selectedSkills: state.selectedSkills,
@@ -691,7 +784,7 @@ export class VdtAgentRuntime {
 
   private buildFirstResponseInput(runId: string): FirstResponseInput {
     const state = this.store.getState(runId);
-    const project = state.project ?? state.draftProject ?? state.request.input.project;
+    const project = effectiveProject(state);
     const rootNode = project?.graph.nodes.find((node) => node.id === project.rootNodeId);
     const selectedNode = state.request.input.selectedNodeId
       ? project?.graph.nodes.find((node) => node.id === state.request.input.selectedNodeId)
@@ -984,26 +1077,80 @@ export class VdtAgentRuntime {
     const message = error instanceof Error ? error.message : "Agent run failed.";
     const completedAt = new Date().toISOString();
     const project = state.builder?.getProject();
-    this.store.updateRun(runId, {
-      status: "failed",
-      phase: "reporting",
+    const patch = {
+      status: "failed" as const,
+      phase: "reporting" as const,
       error: { code, message },
       ...(project && project.graph.nodes.length > 0 ? { draftProject: project, project } : {}),
       completedAt
-    });
-    this.emit(runId, {
+    };
+    const persistError = this.persistRunUpdate(runId, patch);
+    if (persistError) {
+      this.emitPersistFailure(runId, persistError, code);
+    }
+    this.emitRunEvent(runId, {
       type: "error",
       phase: "reporting",
       title,
       message,
       metadata: { code }
     });
-    this.emit(runId, {
+    this.emitRunEvent(runId, {
       type: "run_completed",
       phase: "reporting",
       title: "Run failed",
       message: completionMessage
     });
+  }
+
+  private persistRunUpdate(
+    runId: string,
+    patch: Parameters<AgentRunStore["updateRun"]>[1]
+  ): unknown {
+    try {
+      this.store.updateRun(runId, patch);
+      return undefined;
+    } catch (persistError) {
+      return persistError;
+    }
+  }
+
+  private emitRunEvent(
+    runId: string,
+    event: Parameters<AgentRunStore["appendEvent"]>[1]
+  ): void {
+    try {
+      this.emit(runId, event);
+    } catch (persistError) {
+      this.emitPersistFailure(runId, persistError);
+    }
+  }
+
+  private emitPersistFailure(
+    runId: string,
+    persistError: unknown,
+    originalCode?: string
+  ): void {
+    const persistMessage = persistError instanceof Error
+      ? persistError.message
+      : "Failed to persist agent run state.";
+    console.error(
+      `[vdt-agent] Persist failure for run ${runId}: ${persistMessage}`
+    );
+    try {
+      this.store.appendEvent(runId, {
+        type: "error",
+        phase: "reporting",
+        title: "Run persistence failed",
+        message: persistMessage,
+        metadata: {
+          code: "PERSISTENCE_FAILED",
+          ...(originalCode ? { originalCode } : {})
+        }
+      });
+    } catch {
+      // In-memory run state is authoritative once persistence is unavailable.
+    }
   }
 
   private pauseForRetryableError(runId: string, error: unknown): void {
@@ -1071,6 +1218,51 @@ export function createVdtAgentRuntime(options?: VdtAgentRuntimeOptions): VdtAgen
   return new VdtAgentRuntime(options);
 }
 
+export interface PrepareRetryExecutionOptions {
+  timeoutFloorMs?: number;
+  timeoutMaxMs?: number;
+}
+
+export function prepareRetryExecution(
+  state: VdtAgentRunState,
+  message: AgentUserMessage,
+  options: PrepareRetryExecutionOptions = {}
+): VdtAgentStartRequest {
+  const timeoutFloorMs = options.timeoutFloorMs ?? 180_000;
+  const timeoutMaxMs = options.timeoutMaxMs ?? 300_000;
+
+  if (message.type !== "user_answer") return state.request;
+
+  const answers = {
+    ...(message.answers ?? {}),
+    ...answerRecordFromPayloads(
+      message.structuredAnswers && message.structuredAnswers.length > 0
+        ? message.structuredAnswers
+        : answerPayloadsFromRecord(message.answers ?? {})
+    )
+  };
+
+  if (answers.retry !== "retry_last_step" && answers.continue !== "smaller_step") {
+    return state.request;
+  }
+
+  const providerConfig = { ...(state.request.providerConfig ?? {}) };
+  if (answers.retry === "retry_last_step" && state.retryableError?.code === "TIMEOUT") {
+    const current = typeof providerConfig.timeoutMs === "number" ? providerConfig.timeoutMs : 0;
+    providerConfig.timeoutMs = elevateRetryTimeoutMs(current, timeoutFloorMs, timeoutMaxMs);
+  }
+
+  return {
+    ...state.request,
+    providerConfig
+  };
+}
+
+function elevateRetryTimeoutMs(current: number, floorMs: number, maxMs: number): number {
+  if (current < floorMs) return floorMs;
+  return Math.min(maxMs, current + 60_000);
+}
+
 class AgentDecisionRepairFailed extends Error {
   readonly code = "SCHEMA_REPAIR_FAILED";
 
@@ -1114,9 +1306,11 @@ function researchGuidance(mode: ResearchMode): string {
   return "Research is automatic: prefer complete local skills and visible context first, and call research.search_web only when local skills are incomplete, the process is unknown, or current benchmarks/standards/regulations are relevant. Use research as source discovery, not as single-shot report generation.";
 }
 
-function feedbackFromDecisionError(error: unknown): AgentStructuredFeedback {
+function feedbackFromDecisionError(error: unknown, state?: VdtAgentRunState): AgentStructuredFeedback {
   if (error instanceof AgentDecisionForbiddenFieldsError) {
-    return feedbackFromForbiddenFields(error.fields);
+    return feedbackFromForbiddenFields(error.fields, {
+      hasNonemptyGraph: state ? hasNonemptyGraph(state) : undefined
+    });
   }
   if (error instanceof z.ZodError) {
     return feedbackFromZodError(error, { taskType: "agent_decision" });
@@ -1150,13 +1344,28 @@ function isAgentDecisionStructuredOutputError(error: unknown): boolean {
     .test(error.message);
 }
 
-function inferPhaseForNextDecision(state: VdtAgentRunState): VdtAgentRunPhase {
+export function inferPhaseForNextDecision(state: VdtAgentRunState): VdtAgentRunPhase {
   if (state.validationState && !state.validationState.valid) return "repairing_graph";
-  if (!state.draftProject || state.draftProject.graph.nodes.length === 0) {
+  if (!hasNonemptyGraph(state)) {
     return state.selectedSkills.length > 0 ? "planning_decomposition" : "retrieving_skills";
   }
   if (state.calculationState?.errors.length) return "repairing_graph";
   return "building_graph";
+}
+
+export function effectiveProject(state: VdtAgentRunState): VdtProject | undefined {
+  const builderProject = state.builder?.getProject();
+  if (builderProject && builderProject.graph.nodes.length > 0) return builderProject;
+  if (state.draftProject && state.draftProject.graph.nodes.length > 0) return state.draftProject;
+  const inputProject = state.request.input.project;
+  if (inputProject && inputProject.graph.nodes.length > 0) return inputProject;
+  if (state.project && state.project.graph.nodes.length > 0) return state.project;
+  return builderProject ?? state.draftProject ?? state.project ?? inputProject;
+}
+
+export function hasNonemptyGraph(state: VdtAgentRunState): boolean {
+  const project = effectiveProject(state);
+  return Boolean(project && project.graph.nodes.length > 0);
 }
 
 function isGraphMutationTool(toolName: string): boolean {
@@ -1277,6 +1486,10 @@ function isPlaceholderRootKpi(value: string | undefined): boolean {
 }
 
 function continuationPolicyFromState(state: VdtAgentRunState): AgentDecisionContext["continuationPolicy"] {
+  const graphPresent = hasNonemptyGraph(state);
+  const guidance = graphPresent
+    ? "A draft VDT with a root node already exists. Do not call vdt.create_draft unless replaceExisting=true with explicit user confirmation. Extend the graph with vdt.add_driver, vdt.add_drivers_batch, or vdt.update_node."
+    : undefined;
   return {
     continueWithAssumptions: state.request.options?.continueWithAssumptions === true,
     maxNodesPerLayer: defaultProgressiveBuildPolicy.maxNodesPerLayer,
@@ -1287,7 +1500,8 @@ function continuationPolicyFromState(state: VdtAgentRunState): AgentDecisionCont
       "ambiguous_logic",
       "low_confidence",
       "formula_ambiguity"
-    ]
+    ],
+    ...(guidance ? { guidance } : {})
   };
 }
 

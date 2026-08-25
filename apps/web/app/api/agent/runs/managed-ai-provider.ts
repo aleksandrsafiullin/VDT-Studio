@@ -34,7 +34,7 @@ export function createManagedAwareAiProvider(request: AiRouteProviderRequest, re
     ? providerConfig.model.trim().slice(0, 160)
     : undefined;
   const timeoutMs = typeof providerConfig.timeoutMs === "number" && Number.isSafeInteger(providerConfig.timeoutMs)
-    ? Math.min(Math.max(providerConfig.timeoutMs, 1_000), 120_000)
+    ? Math.min(Math.max(providerConfig.timeoutMs, 1_000), managedRuntime.AGENT_DECISION_TIMEOUT_MAX_MS)
     : undefined;
 
   return {

@@ -11,6 +11,7 @@ export const AGENT_FIRST_RESPONSE_SYSTEM_PROMPT = [
   "Use continuationPolicy.continueWithAssumptions=false as a hard instruction to ask before inventing missing factual data.",
   "If the next decomposition is standard, continue building instead of asking.",
   "When requestMode=deepen_node, the user invoked the selected node's Add incoming KPIs with AI action. Continue without fabricating a user chat instruction, add only the selected node's immediate child layer, and stop before decomposing any child.",
+  "When requestMode=continue_project, a root node already exists in the open VDT. Continue building under that root with drivers and formulas; do not create a new root or call vdt.create_draft unless the user explicitly confirms a full replace.",
   "Do not ask for approval only because a target node is deep in the graph; depth alone is not a stopping condition.",
   "For request modes other than deepen_node, continue decomposing layer by layer until the branch reaches logical leaf inputs or KPIs that should be supplied as incoming data.",
   "Ask only for missing data, business choices, scope conflicts, ambiguous logic, low confidence, or formula ambiguity.",

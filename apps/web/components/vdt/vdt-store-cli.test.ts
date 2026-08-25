@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type MockedFunction } from "vitest";
 import { cloneProject, productionVolumeProject, type VdtChangeSet } from "@vdt-studio/vdt-core";
 import { productionVolumeReviewOutput } from "@vdt-studio/ai-harness";
-import { DEFAULT_EXECUTION_SETTINGS } from "@/lib/execution-mode-catalog";
+import { DEFAULT_EXECUTION_SETTINGS, type ExecutionSettings } from "@/lib/execution-mode-catalog";
 import type { VdtAgentRunSnapshot } from "@/lib/agent-client";
 
 const localStorageMock = (() => {
@@ -22,7 +22,8 @@ const localStorageMock = (() => {
 
 vi.stubGlobal("localStorage", localStorageMock);
 
-const { useVdtStudioStore } = await import("./vdt-store");
+const { shouldContinueOpenVdt, useVdtStudioStore, filterAgentChatHistoryForVdt, purgeAgentChatHistoryForVdt } = await import("./vdt-store");
+import * as vdtStorageClient from "@/lib/vdt-storage-client";
 
 beforeEach(() => {
   useVdtStudioStore.setState({
@@ -35,7 +36,11 @@ beforeEach(() => {
     agentEvents: [],
     agentPendingQuestions: undefined,
     agentError: undefined,
-    agentConnectionStatus: "disconnected"
+    agentConnectionStatus: "disconnected",
+    workspace: {
+      ...useVdtStudioStore.getState().workspace,
+      activeVdtId: undefined
+    }
   });
 });
 
@@ -108,6 +113,75 @@ function agentRunFixture(overrides: Record<string, unknown> = {}) {
     ],
     finalReport: "Validation result: Graph validation passed.",
     ...overrides
+  };
+}
+
+function byokExecutionSettings(): ExecutionSettings {
+  return {
+    ...DEFAULT_EXECUTION_SETTINGS,
+    executionMode: "byok",
+    gatewayPresetId: "openai-default",
+    byokGateway: "none",
+    byokProtocol: "openai",
+    useMockProvider: false,
+    apiKey: "test-key",
+    model: "gpt-test"
+  };
+}
+
+function mockAgentStartFetch(runId = "agent-run-start-1") {
+  const fetchMock = vi.mocked(fetch);
+  vi.stubGlobal("EventSource", class {
+    addEventListener() {}
+    close() {}
+  });
+  fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/api/agent/runs")) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          ok: true,
+          runId,
+          snapshot: {
+            runId,
+            status: "running",
+            phase: "planning_decomposition",
+            request: JSON.parse(String(init?.body)),
+            selectedSkills: [],
+            events: [],
+            createdAt: "2026-06-27T00:00:00.000Z",
+            updatedAt: "2026-06-27T00:00:00.000Z"
+          }
+        })
+      } as Response;
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ agents: [] })
+    } as Response;
+  });
+  return fetchMock;
+}
+
+function parseAgentStartBody(fetchMock: MockedFunction<typeof fetch>) {
+  const startCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/agent/runs"));
+  expect(startCall).toBeDefined();
+  const [, requestInit] = startCall!;
+  return JSON.parse(String(requestInit?.body)) as {
+    mode?: string;
+    input?: { prompt?: string; project?: { id?: string } };
+    workspace?: { vdtId?: string };
+  };
+}
+
+function emptyGraphProject() {
+  return {
+    ...cloneProject(productionVolumeProject),
+    graph: { nodes: [], edges: [] }
   };
 }
 
@@ -315,6 +389,318 @@ describe("vdt-store change-set workflow", () => {
     expect(useVdtStudioStore.getState().agentRun?.selectedSkills.map((skill) => skill.id)).toEqual([
       "mining.haulage_truck_cycle"
     ]);
+  });
+
+  it("startAgentRun on existing project sends continue_project with storage workspace projectId", async () => {
+    const prompt = "Add a maintenance downtime driver";
+    const vdtId = "vdt_existing_001";
+    const storageProjectId = "project_Ore_haulage_abc";
+    const project = {
+      ...cloneProject(productionVolumeProject),
+      id: "project_ore_shipped_by_dump_trucks"
+    };
+    const fetchMock = vi.mocked(fetch);
+    vi.stubGlobal("EventSource", class {
+      addEventListener() {}
+      close() {}
+    });
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/agent/runs")) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            ok: true,
+            runId: "agent-run-continue-1",
+            snapshot: {
+              runId: "agent-run-continue-1",
+              status: "running",
+              phase: "planning_decomposition",
+              request: JSON.parse(String(init?.body)),
+              selectedSkills: [],
+              events: [],
+              createdAt: "2026-06-27T00:00:00.000Z",
+              updatedAt: "2026-06-27T00:00:00.000Z"
+            }
+          })
+        } as Response;
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ agents: [] })
+      } as Response;
+    });
+    useVdtStudioStore.setState({
+      project,
+      workspace: {
+        ...useVdtStudioStore.getState().workspace,
+        activeProjectId: storageProjectId,
+        activeVdtId: vdtId
+      },
+      executionSettings: {
+        ...DEFAULT_EXECUTION_SETTINGS,
+        executionMode: "byok",
+        gatewayPresetId: "openai-default",
+        byokProtocol: "openai",
+        useMockProvider: false,
+        apiKey: "test-key",
+        model: "gpt-test"
+      },
+      brief: {
+        rootKpi: "Ore shipped by dump trucks",
+        industry: "Mining",
+        businessContext: "",
+        unit: "tonnes/month",
+        timePeriod: "month",
+        goal: "Extend the model",
+        levelOfDetail: "medium"
+      }
+    });
+
+    await useVdtStudioStore.getState().startAgentRun(prompt);
+
+    const startCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/agent/runs"));
+    expect(startCall).toBeDefined();
+    const [, requestInit] = startCall!;
+    const body = JSON.parse(String(requestInit?.body)) as {
+      mode?: string;
+      input?: { prompt?: string; project?: { id?: string } };
+      workspace?: { projectId?: string; vdtId?: string };
+    };
+    expect(body.mode).toBe("continue_project");
+    expect(body.input?.prompt).toBe(prompt);
+    expect(body.input?.project?.id).toBe("project_ore_shipped_by_dump_trucks");
+    expect(body.workspace?.projectId).toBe(storageProjectId);
+    expect(body.workspace?.projectId).not.toBe(project.id);
+    expect(body.workspace?.vdtId).toBe(vdtId);
+  });
+
+  it("resumePersistedAgentRun clears stale ids when backend run 404s", async () => {
+    const runId = "agent-run-missing";
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/api/agent/runs/${runId}`)) {
+        return {
+          ok: false,
+          status: 404,
+          text: async () => JSON.stringify({ error: { message: "Agent run was not found." } })
+        } as Response;
+      }
+      return jsonResponse({ agents: [] });
+    });
+
+    useVdtStudioStore.setState({
+      activeAgentRunId: runId,
+      generateActivity: {
+        runId,
+        status: "running",
+        phase: "waiting_provider",
+        phaseStartedAt: "2026-06-27T00:00:00.000Z",
+        startedAt: "2026-06-27T00:00:00.000Z",
+        updatedAt: "2026-06-27T00:00:00.000Z",
+        providerId: "openai_compatible",
+        providerLabel: "OpenAI",
+        appMode: "development_web",
+        canCancel: true,
+        cancelRequested: false
+      }
+    });
+
+    await useVdtStudioStore.getState().resumePersistedAgentRun();
+
+    const state = useVdtStudioStore.getState();
+    expect(state.activeAgentRunId).toBeUndefined();
+    expect(state.generateActivity).toBeUndefined();
+    expect(state.agentError).toBeUndefined();
+    expect(state.aiError).toBeUndefined();
+  });
+
+  it("connectAgentEvents clears stale ids when refresh fetch 404s", async () => {
+    const runId = "agent-run-sse-missing";
+    let agentEventHandler: ((event: MessageEvent) => void) | undefined;
+    vi.stubGlobal("EventSource", class {
+      addEventListener(type: string, handler: (event: MessageEvent) => void) {
+        if (type === "agent_event") {
+          agentEventHandler = handler;
+        }
+        if (type === "open") {
+          handler({} as MessageEvent);
+        }
+      }
+      close() {}
+    });
+
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/api/agent/runs/${runId}`)) {
+        return {
+          ok: false,
+          status: 404,
+          text: async () => JSON.stringify({ error: { message: "Agent run was not found." } })
+        } as Response;
+      }
+      return jsonResponse({ agents: [] });
+    });
+
+    useVdtStudioStore.setState({
+      activeAgentRunId: runId,
+      agentRun: runtimeSnapshotFixture({ runId, status: "running", completedAt: undefined }) as VdtAgentRunSnapshot,
+      generateActivity: {
+        runId,
+        status: "running",
+        phase: "waiting_provider",
+        phaseStartedAt: "2026-06-27T00:00:00.000Z",
+        startedAt: "2026-06-27T00:00:00.000Z",
+        updatedAt: "2026-06-27T00:00:00.000Z",
+        providerId: "openai_compatible",
+        providerLabel: "OpenAI",
+        appMode: "development_web",
+        canCancel: true,
+        cancelRequested: false
+      }
+    });
+
+    useVdtStudioStore.getState().connectAgentEvents(runId);
+    agentEventHandler?.({
+      data: JSON.stringify({
+        id: `${runId}:evt:error`,
+        runId,
+        seq: 1,
+        type: "error",
+        phase: "reporting",
+        title: "Run failed",
+        message: "Run failed",
+        timestamp: "2026-06-27T00:00:01.000Z"
+      })
+    } as MessageEvent);
+
+    await vi.waitFor(() => {
+      expect(useVdtStudioStore.getState().activeAgentRunId).toBeUndefined();
+    });
+    expect(useVdtStudioStore.getState().generateActivity).toBeUndefined();
+    expect(useVdtStudioStore.getState().agentError).toBeUndefined();
+  });
+
+  it("startAgentRun blocks when activeVdtId is set without activeProjectId", async () => {
+    const vdtId = "vdt_orphan_001";
+    const fetchMock = mockAgentStartFetch("agent-run-blocked");
+    const project = {
+      ...cloneProject(productionVolumeProject),
+      id: "project_ore_shipped_by_dump_trucks"
+    };
+    useVdtStudioStore.setState({
+      project,
+      workspace: {
+        ...useVdtStudioStore.getState().workspace,
+        activeVdtId: vdtId,
+        activeProjectId: undefined
+      },
+      executionSettings: byokExecutionSettings(),
+      brief: {
+        rootKpi: "Ore shipped by dump trucks",
+        industry: "Mining",
+        businessContext: "",
+        unit: "tonnes/month",
+        timePeriod: "month",
+        goal: "Extend the model",
+        levelOfDetail: "medium"
+      }
+    });
+
+    const started = await useVdtStudioStore.getState().startAgentRun("Extend the model");
+
+    expect(started).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/api/agent/runs"))).toBe(false);
+    expect(useVdtStudioStore.getState().agentError).toMatch(/workspace project/i);
+    expect(useVdtStudioStore.getState().isGenerating).toBe(false);
+  });
+
+  it("startAgentRun with empty graph uses generate_vdt without input.project", async () => {
+    mockAgentStartFetch("agent-run-generate-empty");
+    useVdtStudioStore.setState({
+      project: emptyGraphProject(),
+      workspace: {
+        ...useVdtStudioStore.getState().workspace,
+        activeVdtId: undefined
+      },
+      executionSettings: byokExecutionSettings(),
+      brief: {
+        rootKpi: "New KPI",
+        industry: "Mining",
+        businessContext: "",
+        unit: "tonnes/month",
+        timePeriod: "month",
+        goal: "Start fresh",
+        levelOfDetail: "medium"
+      }
+    });
+
+    await useVdtStudioStore.getState().startAgentRun("Build from scratch");
+
+    const body = parseAgentStartBody(vi.mocked(fetch));
+    expect(body.mode).toBe("generate_vdt");
+    expect(body.input?.project).toBeUndefined();
+    expect(body.workspace?.vdtId).toBeUndefined();
+  });
+
+  it("startAgentRun with nodes but no activeVdtId uses generate_vdt without input.project", async () => {
+    mockAgentStartFetch("agent-run-generate-no-vdt");
+    useVdtStudioStore.setState({
+      project: cloneProject(productionVolumeProject),
+      executionSettings: byokExecutionSettings(),
+      brief: {
+        rootKpi: "Production Volume",
+        industry: "Mining",
+        businessContext: "",
+        unit: "tonnes/month",
+        timePeriod: "month",
+        goal: "Extend the model",
+        levelOfDetail: "medium"
+      }
+    });
+
+    await useVdtStudioStore.getState().startAgentRun("Add a driver");
+
+    const body = parseAgentStartBody(vi.mocked(fetch));
+    expect(body.mode).toBe("generate_vdt");
+    expect(body.input?.project).toBeUndefined();
+    expect(body.workspace?.vdtId).toBeUndefined();
+  });
+
+  describe("shouldContinueOpenVdt", () => {
+    it("returns true only when activeVdtId and nodes are both present", () => {
+      const project = cloneProject(productionVolumeProject);
+      expect(shouldContinueOpenVdt({
+        project,
+        workspace: { ...useVdtStudioStore.getState().workspace, activeVdtId: "vdt_001" }
+      })).toBe(true);
+    });
+
+    it("returns false when activeVdtId is set but graph is empty", () => {
+      expect(shouldContinueOpenVdt({
+        project: emptyGraphProject(),
+        workspace: { ...useVdtStudioStore.getState().workspace, activeVdtId: "vdt_001" }
+      })).toBe(false);
+    });
+
+    it("returns false when graph has nodes but activeVdtId is missing", () => {
+      expect(shouldContinueOpenVdt({
+        project: cloneProject(productionVolumeProject),
+        workspace: { ...useVdtStudioStore.getState().workspace, activeVdtId: undefined }
+      })).toBe(false);
+    });
+
+    it("returns false when neither activeVdtId nor nodes are present", () => {
+      expect(shouldContinueOpenVdt({
+        project: emptyGraphProject(),
+        workspace: { ...useVdtStudioStore.getState().workspace, activeVdtId: undefined }
+      })).toBe(false);
+    });
   });
 
   it("sendAgentInstruction sends researchMode for the active agent run", async () => {
@@ -1222,7 +1608,7 @@ describe("vdt-store cli rescan", () => {
         providerId: "local_runner",
         providerConfig: expect.objectContaining({
           backendId: "cursor_subscription",
-          timeoutMs: 60_000
+          timeoutMs: 180_000
         })
       });
       expect(JSON.stringify(capturedBody)).not.toContain("pairingToken");
@@ -1293,7 +1679,7 @@ describe("vdt-store cli rescan", () => {
         providerId: "local_runner",
         providerConfig: expect.objectContaining({
           backendId: "codex_subscription",
-          timeoutMs: 60_000
+          timeoutMs: 180_000
         })
       });
       expect(JSON.stringify(capturedBody)).not.toContain("pairingToken");
@@ -1471,6 +1857,41 @@ describe("vdt-store generate activity", () => {
     expect(state.agentChatHistory[0]?.activity.agentChatMessages).toHaveLength(2);
   });
 
+  it("applyAgentGraphPatch rewrites stale publicStatus on terminal failure", () => {
+    const persistError = "Workspace VDT vdt_abc does not belong to project project_graph_slug.";
+    for (const stalePhase of ["reading_request", "building_draft"] as const) {
+      useVdtStudioStore.setState({
+        generateActivity: undefined,
+        activeAgentRunId: undefined,
+        agentRun: undefined
+      });
+      useVdtStudioStore.getState().applyAgentGraphPatch(runtimeSnapshotFixture({
+        runId: `agent-run-failed-${stalePhase}`,
+        status: "failed",
+        phase: "planning_decomposition",
+        completedAt: "2026-06-24T10:00:05.000Z",
+        error: { code: "AGENT_DECISION_LOOP_FAILED", message: persistError },
+        publicStatus: {
+          phase: stalePhase,
+          message: stalePhase === "reading_request"
+            ? "Agent is reading your request..."
+            : "Building draft graph layers...",
+          updatedAt: "2026-06-24T10:00:01.000Z"
+        },
+        chatMessages: [],
+        project: undefined,
+        selectedSkills: [],
+        events: []
+      }) as VdtAgentRunSnapshot);
+
+      const activity = useVdtStudioStore.getState().generateActivity;
+      expect(activity?.status).toBe("error");
+      expect(activity?.publicStatus?.phase).toBe("retryable_error");
+      expect(activity?.publicStatus?.message).toBe(persistError);
+      expect(activity?.publicStatus?.phase).not.toBe(stalePhase);
+    }
+  });
+
   it("starts a new agent chat by archiving the current transcript and clearing the panel", () => {
     const runId = "agent-run-new-chat";
     useVdtStudioStore.getState().applyAgentGraphPatch(runtimeSnapshotFixture({
@@ -1629,7 +2050,7 @@ describe("vdt-store generate activity", () => {
       providerId: "local_runner",
       providerConfig: expect.objectContaining({
         backendId: "codex_subscription",
-        timeoutMs: 60_000
+        timeoutMs: 180_000
       })
     });
     expect(activity).toMatchObject({
@@ -2151,5 +2572,168 @@ describe("vdt-store cloneScenario", () => {
 
     expect(useVdtStudioStore.getState().project).toBe(before);
     expect(useVdtStudioStore.getState().activeScenarioId).toBe(scenarioId);
+  });
+});
+
+describe("agent chat history VDT scoping", () => {
+  function vdtSummaryEntry(vdtId: string) {
+    return {
+      vdt: {
+        id: vdtId,
+        projectId: "project_scope",
+        name: `${vdtId} VDT`,
+        rootKpi: "Root KPI",
+        status: "draft" as const,
+        createdAt: "2026-06-29T13:00:00.000Z",
+        updatedAt: "2026-06-29T13:00:00.000Z"
+      },
+      head: {
+        schemaVersion: "vdt_revision_head.v2" as const,
+        projectId: "project_scope",
+        vdtId,
+        activeRevisionId: `revision_${vdtId}`,
+        activeContentIdentity: {
+          scheme: "legacy_graph_sha256" as const,
+          hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as `sha256:${string}`
+        },
+        pendingRevisionId: null,
+        commitGeneration: 1
+      },
+      revisionCount: 1
+    };
+  }
+
+  function seedHistoryForVdt(vdtId: string, runId: string, title: string) {
+    const workspace = useVdtStudioStore.getState().workspace;
+    const existingSummary = workspace.projectSummaries.find((summary) => summary.project.id === "project_scope");
+    const mergedVdts = [
+      ...(existingSummary?.vdts.filter((entry) => entry.vdt.id !== vdtId) ?? []),
+      vdtSummaryEntry(vdtId)
+    ];
+    useVdtStudioStore.setState({
+      workspace: {
+        ...workspace,
+        activeProjectId: "project_scope",
+        activeVdtId: vdtId,
+        activePanel: "vdt",
+        projectSummaries: [
+          {
+            project: {
+              id: "project_scope",
+              name: "Scope project",
+              createdAt: "2026-06-29T13:00:00.000Z",
+              updatedAt: "2026-06-29T13:00:00.000Z"
+            },
+            runtimeState: {
+              schemaVersion: "project_runtime_state.v1",
+              projectId: "project_scope",
+              runtimeGeneration: "v1",
+              generationVersion: 1,
+              migrationState: "shadow_ready",
+              writeState: "enabled",
+              updatedAt: "2026-06-29T13:00:00.000Z"
+            },
+            counts: {
+              vdts: mergedVdts.length,
+              revisions: mergedVdts.length,
+              conversations: 0,
+              agentRuns: 0,
+              mutationProposals: 0,
+              comparisons: 0
+            },
+            vdts: mergedVdts
+          }
+        ]
+      }
+    });
+    useVdtStudioStore.getState().applyAgentGraphPatch(runtimeSnapshotFixture({
+      runId,
+      request: {
+        mode: "generate_vdt",
+        input: { rootKpi: "Production Volume", industry: "Mining" },
+        providerId: "mock",
+        options: {
+          autoApplyPatches: true,
+          continueWithAssumptions: false,
+          maxSteps: 30
+        },
+        workspace: { projectId: "project_scope", vdtId, projectName: "Scope project" }
+      },
+      chatMessages: [
+        {
+          id: `msg-${runId}`,
+          runId,
+          role: "user",
+          kind: "instruction",
+          text: title,
+          createdAt: "2026-06-24T10:00:00.000Z"
+        }
+      ]
+    }) as VdtAgentRunSnapshot);
+  }
+
+  it("stores vdtId on history entries and filters the active VDT view", () => {
+    seedHistoryForVdt("vdt_a", "run-a", "Daily productivity");
+    useVdtStudioStore.setState({ generateActivity: undefined });
+    seedHistoryForVdt("vdt_b", "run-b", "Ore shipped by dump trucks");
+
+    const state = useVdtStudioStore.getState();
+    expect(state.agentChatHistory).toHaveLength(2);
+    expect(filterAgentChatHistoryForVdt(state.agentChatHistory, "vdt_a")).toEqual([
+      expect.objectContaining({ runId: "run-a", vdtId: "vdt_a", title: "Daily productivity" })
+    ]);
+    expect(filterAgentChatHistoryForVdt(state.agentChatHistory, "vdt_b")).toEqual([
+      expect.objectContaining({ runId: "run-b", vdtId: "vdt_b", title: "Ore shipped by dump trucks" })
+    ]);
+    expect(filterAgentChatHistoryForVdt(state.agentChatHistory, undefined)).toEqual([]);
+    expect(purgeAgentChatHistoryForVdt(state.agentChatHistory, "vdt_a")).toEqual([
+      expect.objectContaining({ runId: "run-b", vdtId: "vdt_b" })
+    ]);
+  });
+
+  it("deleteWorkspaceVdt removes only matching history and clears active chat state", async () => {
+    const deleteMock = vi.spyOn(vdtStorageClient, "deleteStoredVdt").mockResolvedValue(undefined);
+    seedHistoryForVdt("vdt_a", "run-a", "Daily productivity");
+    seedHistoryForVdt("vdt_b", "run-b", "Ore shipped by dump trucks");
+
+    const deletedOtherVdt = await useVdtStudioStore.getState().deleteWorkspaceVdt("vdt_a");
+    expect(deletedOtherVdt).toBe(true);
+    expect(deleteMock).toHaveBeenCalledWith("vdt_a");
+
+    let state = useVdtStudioStore.getState();
+    expect(state.agentChatHistory).toEqual([
+      expect.objectContaining({ runId: "run-b", vdtId: "vdt_b" })
+    ]);
+    expect(state.generateActivity).toMatchObject({ runId: "run-b" });
+
+    const deletedActiveVdt = await useVdtStudioStore.getState().deleteWorkspaceVdt("vdt_b");
+    expect(deletedActiveVdt).toBe(true);
+    state = useVdtStudioStore.getState();
+    expect(state.agentChatHistory).toEqual([]);
+    expect(state.generateActivity).toBeUndefined();
+    expect(state.activeAgentRunId).toBeUndefined();
+    expect(state.isGenerating).toBe(false);
+
+    deleteMock.mockRestore();
+  });
+
+  it("openAgentChat rejects history entries bound to another VDT", () => {
+    seedHistoryForVdt("vdt_a", "run-a", "Daily productivity");
+    seedHistoryForVdt("vdt_b", "run-b", "Ore shipped by dump trucks");
+    useVdtStudioStore.setState({
+      workspace: {
+        ...useVdtStudioStore.getState().workspace,
+        activeVdtId: "vdt_b"
+      },
+      generateActivity: undefined
+    });
+
+    const openedOtherVdt = useVdtStudioStore.getState().openAgentChat("run-a");
+    expect(openedOtherVdt).toBe(false);
+    expect(useVdtStudioStore.getState().generateActivity).toBeUndefined();
+
+    const openedActiveVdt = useVdtStudioStore.getState().openAgentChat("run-b");
+    expect(openedActiveVdt).toBe(true);
+    expect(useVdtStudioStore.getState().generateActivity).toMatchObject({ runId: "run-b" });
   });
 });

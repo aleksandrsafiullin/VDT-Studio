@@ -733,6 +733,16 @@ export function GenerateActivityPanel({
 }) {
   const elapsed = useActiveElapsed(activity);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const retryCardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!activity.retryableError) return;
+    retryCardRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [
+    activity.runId,
+    activity.retryableError?.code,
+    activity.retryableError?.createdAt
+  ]);
 
   const events = useMemo(() => activity.agentEvents ?? activity.agentRun?.events ?? [], [activity.agentEvents, activity.agentRun]);
   const selectedSkills = activity.selectedSkills ?? activity.agentRun?.selectedSkills ?? [];
@@ -743,6 +753,13 @@ export function GenerateActivityPanel({
   const visibleMessages = messages.filter((message) => message.kind !== "status");
   const latestStatusMessage = [...messages].reverse().find((message) => message.kind === "status");
   const publicStatus = latestStatusMessage?.status ?? activity.publicStatus;
+  const resolvedPublicStatus = activity.status === "error" && activity.message
+    ? {
+        phase: "retryable_error" as const,
+        message: activity.message,
+        updatedAt: activity.updatedAt
+      }
+    : publicStatus;
   const pendingGenericApproval = pendingMutation
     ? undefined
     : pendingGenericApprovalRequest(activity, events);
@@ -765,7 +782,7 @@ export function GenerateActivityPanel({
       </div>
 
       <ActivityStatusRow
-        status={publicStatus}
+        status={resolvedPublicStatus}
         activity={activity}
         elapsed={elapsed}
         onCancel={onCancel}
@@ -788,9 +805,13 @@ export function GenerateActivityPanel({
       ) : null}
 
       {activity.retryableError ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3" data-testid="agent-retryable-error">
+        <div
+          ref={retryCardRef}
+          className="sticky bottom-0 z-10 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 shadow-sm"
+          data-testid="agent-retryable-error"
+        >
           <p className="text-sm leading-5 text-ink">{activity.retryableError.message}</p>
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="relative z-10 mt-3 flex flex-wrap gap-2">
             <Button
               size="sm"
               variant="primary"
@@ -818,6 +839,13 @@ export function GenerateActivityPanel({
               Cancel
             </Button>
           </div>
+        </div>
+      ) : activity.status === "error" && activity.message ? (
+        <div
+          className="rounded-md border border-red-200 bg-red-50 px-3 py-3"
+          data-testid="agent-hard-error"
+        >
+          <p className="text-sm leading-5 text-ink">{activity.message}</p>
         </div>
       ) : null}
 

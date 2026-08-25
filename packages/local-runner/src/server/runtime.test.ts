@@ -724,4 +724,28 @@ describe("local runtime contract", () => {
       args: ["--unsafe"]
     })).toThrow("Completion body must not include args.");
   });
+
+  it("accepts agent decision timeouts up to the execution limit", () => {
+    const request = parseCompletionPayload({
+      requestId: crypto.randomUUID(),
+      backendId: "mock",
+      taskType: "agent_decision",
+      schemaId: "agent-decision-v1",
+      input: { runId: "run-1", step: 1 },
+      timeoutMs: 180_000
+    });
+
+    expect(request.timeoutMs).toBe(180_000);
+  });
+
+  it("rejects timeouts above the execution limit", () => {
+    expect(() => parseCompletionPayload({
+      requestId: crypto.randomUUID(),
+      backendId: "mock",
+      taskType: "agent_decision",
+      schemaId: "agent-decision-v1",
+      input: { runId: "run-1", step: 1 },
+      timeoutMs: 301_000
+    })).toThrow(/timeoutMs must be at most 300000/);
+  });
 });

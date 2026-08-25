@@ -449,6 +449,38 @@ describe("VDT project storage APIs", () => {
       }
     });
 
+    const dbBeforeDelete = openVdtDatabase(root, { dataDir });
+    dbBeforeDelete.createConversation({
+      id: "conversation_manual",
+      projectId: "project_manual",
+      vdtId: "vdt_manual",
+      title: "Manual VDT chat"
+    });
+    dbBeforeDelete.appendMessage({
+      id: "message_manual",
+      conversationId: "conversation_manual",
+      role: "user",
+      content: "Build the manual VDT"
+    });
+    dbBeforeDelete.createAgentRun({
+      id: "run_manual",
+      projectId: "project_manual",
+      vdtId: "vdt_manual",
+      conversationId: "conversation_manual",
+      status: "succeeded",
+      phase: "reporting",
+      request: { mode: "generate_vdt" }
+    });
+    dbBeforeDelete.appendAgentEvent({
+      runId: "run_manual",
+      seq: 1,
+      type: "classification",
+      phase: "classifying_request",
+      title: "Classified",
+      message: "Classified request"
+    });
+    dbBeforeDelete.close();
+
     const deleteVdtResponse = await deleteVdt(new Request("http://localhost:3000/api/vdt/vdts/vdt_manual", { method: "DELETE" }), {
       params: Promise.resolve({ vdtId: "vdt_manual" })
     });
@@ -457,6 +489,12 @@ describe("VDT project storage APIs", () => {
       ok: true,
       deletedVdtId: "vdt_manual"
     });
+
+    const dbAfterDelete = openVdtDatabase(root, { dataDir });
+    expect(dbAfterDelete.getConversation("conversation_manual")).toBeNull();
+    expect(dbAfterDelete.getAgentRun("run_manual")).toBeNull();
+    expect(dbAfterDelete.listAgentEvents("run_manual")).toEqual([]);
+    dbAfterDelete.close();
 
     const deleteProjectResponse = await deleteProject(new Request("http://localhost:3000/api/vdt/projects/project_manual", { method: "DELETE" }), {
       params: Promise.resolve({ projectId: "project_manual" })

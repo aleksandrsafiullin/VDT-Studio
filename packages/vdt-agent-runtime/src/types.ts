@@ -237,6 +237,7 @@ export interface VdtAgentWorkspaceContext {
   projectName?: string | undefined;
   industry?: string | undefined;
   description?: string | undefined;
+  vdtId?: string | undefined;
 }
 
 export interface VdtAgentStartRequest {
@@ -471,6 +472,7 @@ export interface AgentDecisionContext {
       | "low_confidence"
       | "formula_ambiguity"
     >;
+    guidance?: string | undefined;
   };
   currentProject?: ProjectSummary | undefined;
   visibleContext: AgentThreadContext;
@@ -587,4 +589,5 @@ export interface VdtAgentRunState extends VdtAgentRunSnapshot {
   validationState?: ValidationStateSummary | undefined;
   calculationState?: CalculationStateSummary | undefined;
   memoryNotes: Array<{ note: string; tags: string[]; createdAt: string }>;
+  decisionGuidance?: string | undefined;
 }

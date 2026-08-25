@@ -44,8 +44,8 @@ function normalizeNodeType(value: unknown): unknown {
   const normalized = normalizeEnumText(value);
   if (!normalized) return value;
   if (nodeTypeSchema.options.includes(normalized as never)) return normalized;
-  if (["driver", "factor", "lever", "input_driver", "variable"].includes(normalized)) return "input";
-  if (["calculation", "computed", "derived", "formula", "formula_node"].includes(normalized)) return "calculated";
+  if (["driver", "factor", "lever", "input_driver", "input_kpi", "variable"].includes(normalized)) return "input";
+  if (["calculation", "calculated_kpi", "computed", "derived", "formula", "formula_node"].includes(normalized)) return "calculated";
   if (["root", "kpi", "root_metric", "root_driver"].includes(normalized)) return "root_kpi";
   if (["external", "context", "external_driver"].includes(normalized)) return "external_factor";
   if (["data", "mapped", "data_source", "data_mapped_node"].includes(normalized)) return "data_mapped";
@@ -59,7 +59,7 @@ function normalizeEdgeRelation(value: unknown): unknown {
   if (["determines", "drives", "driver", "influences", "contributes", "affects", "impacts"].includes(normalized)) {
     return "positive_driver";
   }
-  if (["multiplies", "multiplier", "factor", "multiplicative"].includes(normalized)) return "multiplicative_driver";
+  if (["multiply", "multiplies", "multiplier", "factor", "multiplicative"].includes(normalized)) return "multiplicative_driver";
   if (["divides", "denominator", "inverse", "divisive"].includes(normalized)) return "divisive_driver";
   if (["adds", "addition", "component", "part", "additive"].includes(normalized)) return "additive_component";
   if (["subtracts", "reduction", "reduces", "negative", "decreases"].includes(normalized)) return "negative_driver";

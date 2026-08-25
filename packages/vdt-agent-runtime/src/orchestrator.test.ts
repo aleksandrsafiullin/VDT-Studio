@@ -3,8 +3,13 @@ import { calculateGraph, validateGraph, VdtBuilderSession } from "@vdt-studio/vd
 import { z } from "zod";
 import {
   createVdtAgentRuntime,
+  effectiveProject,
+  inferPhaseForNextDecision,
+  prepareRetryExecution,
   type AgentDecisionProvider
 } from "./orchestrator";
+import { AGENT_FIRST_RESPONSE_SYSTEM_PROMPT } from "./prompts/agent-first-response";
+import { AgentRunStore, type AgentRunPersistence } from "./run-store";
 import type { AgentDecision } from "./schemas/agent-decision";
 import type { FirstResponseInput, FirstResponseOutput } from "./schemas/agent-first-response";
 import { createDefaultToolRegistry } from "./tools";
@@ -1792,5 +1797,348 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
     expect(snapshot.chatMessages[0]?.text).toBe("Build an excavation model. I have 5 excavators.");
     expect(snapshot.chatMessages[1]?.text).toContain("could not use as a structured agent response");
     expect(provider.taskTypes).toEqual(["orchestrator_first_response"]);
+  });
+});
+
+describe("continue_project phase inference", () => {
+  function seededHaulageProject() {
+    const builder = new VdtBuilderSession({ now: () => "2026-08-10T00:00:00.000Z" });
+    builder.createDraft({
+      projectTitle: "Ore haulage Driver Model",
+      rootKpi: "Ore haulage",
+      unit: "tonnes/year",
+      timePeriod: "year"
+    });
+    return builder.getProject();
+  }
+
+  it("treats nonempty input.project as an existing graph for phase inference", () => {
+    const store = new AgentRunStore();
+    const project = seededHaulageProject();
+    const state = store.createRun({
+      mode: "continue_project",
+      input: {
+        rootKpi: "Ore haulage",
+        unit: "tonnes/year",
+        project
+      },
+      providerId: "phase-test"
+    });
+
+    expect(state.draftProject).toBeUndefined();
+    expect(effectiveProject(state)?.rootNodeId).toBe("ore_haulage");
+    expect(inferPhaseForNextDecision(state)).toBe("building_graph");
+  });
+
+  it("rejects vdt.create_draft without replaceExisting when the graph already has a root", async () => {
+    const runtime = createVdtAgentRuntime();
+    const project = seededHaulageProject();
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "vdt.create_draft",
+        statusMessage: "Trying to replace the open VDT root.",
+        args: {
+          projectTitle: "Replacement draft",
+          rootKpi: "New root"
+        }
+      },
+      {
+        type: "ask_user",
+        statusMessage: "Asking after draft already exists.",
+        questions: [{
+          id: "continue_after_draft_error",
+          question: "Should I add drivers under the existing root instead?",
+          reason: "A draft root already exists.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "continue_project",
+      input: {
+        rootKpi: "Ore haulage",
+        unit: "tonnes/year",
+        project
+      },
+      providerId: "decision-test",
+      options: { maxSteps: 4 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.lastFeedback).toMatchObject({
+      kind: "tool_failed",
+      target: { toolName: "vdt.create_draft" },
+      suggestedNextTools: expect.arrayContaining(["vdt.add_driver", "vdt.update_node"])
+    });
+    expect(snapshot.lastFeedback?.suggestedNextTools).not.toContain("vdt.create_draft");
+    expect(snapshot.lastFeedback?.actual).toMatchObject({ code: "DRAFT_ALREADY_EXISTS" });
+    expect(provider.decisionInputs[0]?.continuationPolicy.guidance).toContain("Do not call vdt.create_draft");
+    expect(provider.decisionInputs[0]?.currentProject?.rootNodeId).toBe("ore_haulage");
+  });
+
+  it("guides the next decision toward vdt.add_driver under the existing root", async () => {
+    const runtime = createVdtAgentRuntime();
+    const project = seededHaulageProject();
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "vdt.create_draft",
+        statusMessage: "Trying to create a duplicate root.",
+        args: {
+          projectTitle: "Duplicate draft",
+          rootKpi: "Ore haulage"
+        }
+      },
+      {
+        type: "call_tool",
+        toolName: "vdt.add_driver",
+        statusMessage: "Adding truck count under the existing root.",
+        args: {
+          parentNodeId: "ore_haulage",
+          nodeId: "number_of_trucks",
+          name: "Number of trucks",
+          type: "input",
+          unit: "trucks",
+          relation: "multiplicative_driver",
+          baselineValue: 5
+        }
+      },
+      {
+        type: "ask_user",
+        statusMessage: "Pausing after adding the first driver under the existing root.",
+        questions: [{
+          id: "continue_build",
+          question: "Should I add more haulage drivers under the existing root?",
+          reason: "The first driver was added successfully after create_draft was rejected.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "continue_project",
+      input: {
+        rootKpi: "Ore haulage",
+        unit: "tonnes/year",
+        project
+      },
+      providerId: "decision-test",
+      options: { autoApplyPatches: true, maxSteps: 6 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.draftProject?.graph.nodes.map((node) => node.id)).toEqual([
+      "ore_haulage",
+      "number_of_trucks"
+    ]);
+    expect(snapshot.events.some((event) =>
+      event.type === "tool_call_completed" &&
+      event.metadata?.toolName === "vdt.create_draft" &&
+      event.metadata?.ok === false &&
+      event.metadata?.code === "DRAFT_ALREADY_EXISTS"
+    )).toBe(true);
+  });
+
+  it("includes continue_project guidance in the first-response system prompt", () => {
+    expect(AGENT_FIRST_RESPONSE_SYSTEM_PROMPT).toContain("requestMode=continue_project");
+    expect(AGENT_FIRST_RESPONSE_SYSTEM_PROMPT).toContain("do not create a new root");
+  });
+
+  it("prepareRetryExecution elevates timeout after TIMEOUT before provider creation", () => {
+    const store = new AgentRunStore();
+    const run = store.createRun({
+      mode: "generate_vdt",
+      input: {
+        prompt: "Build a haulage model.",
+        rootKpi: "Ore haulage",
+        unit: "tonnes/year",
+        timePeriod: "year"
+      },
+      providerId: "timeout-test",
+      providerConfig: { timeoutMs: 60_000 },
+      options: { maxSteps: 3 }
+    });
+    store.updateRun(run.runId, {
+      retryableError: {
+        code: "TIMEOUT",
+        message: "Backend timed out.",
+        retryCount: 1,
+        createdAt: new Date().toISOString()
+      }
+    });
+
+    const prepared = prepareRetryExecution(store.getState(run.runId), {
+      type: "user_answer",
+      answers: { retry: "retry_last_step" }
+    }, { timeoutFloorMs: 180_000, timeoutMaxMs: 300_000 });
+
+    expect(prepared.providerConfig?.timeoutMs).toBe(180_000);
+  });
+
+  it("routes retry_last_step through dedicated decision guidance instead of businessContext merge", async () => {
+    const store = new AgentRunStore();
+    const runtime = createVdtAgentRuntime({ store });
+    const run = store.createRun({
+      mode: "generate_vdt",
+      input: {
+        prompt: "Build a haulage model.",
+        rootKpi: "Ore haulage",
+        unit: "tonnes/year",
+        timePeriod: "year",
+        businessContext: "Original brief"
+      },
+      providerId: "retry-test",
+      options: { maxSteps: 4 }
+    });
+    store.updateRun(run.runId, {
+      status: "needs_user_input",
+      phase: "reporting",
+      firstResponseCompleted: true,
+      retryableError: {
+        code: "TIMEOUT",
+        message: "Backend timed out.",
+        retryCount: 1,
+        createdAt: new Date().toISOString()
+      }
+    });
+
+    const provider: AgentDecisionProvider & { decisionInputs: AgentDecisionContext[] } = {
+      id: "retry-test",
+      decisionInputs: [],
+      async completeStructured(params) {
+        if (params.taskType === "agent_decision") {
+          this.decisionInputs.push(params.input as AgentDecisionContext);
+        }
+        return {
+          type: "finish",
+          summary: "Stopped after retry.",
+          nextSuggestedActions: ["Review the model."]
+        } as never;
+      }
+    };
+
+    const snapshot = await runtime.handleMessage(run.runId, {
+      type: "user_answer",
+      answers: { retry: "retry_last_step" }
+    }, { provider });
+
+    expect(provider.decisionInputs.length).toBeGreaterThan(0);
+    expect(snapshot.request.input.businessContext).toBe("Original brief");
+    expect(provider.decisionInputs.at(-1)?.continuationPolicy.guidance).toContain("Resume the last failed step");
+    expect(provider.decisionInputs.at(-1)?.continuationPolicy.guidance).not.toContain("User answer retry:");
+  });
+
+  it("routes smaller_step through dedicated decision guidance instead of businessContext merge", async () => {
+    const store = new AgentRunStore();
+    const runtime = createVdtAgentRuntime({ store });
+    const run = store.createRun({
+      mode: "generate_vdt",
+      input: {
+        prompt: "Build a haulage model.",
+        rootKpi: "Ore haulage",
+        unit: "tonnes/year",
+        timePeriod: "year",
+        businessContext: "Original brief"
+      },
+      providerId: "smaller-step-test",
+      options: { maxSteps: 4 }
+    });
+    store.updateRun(run.runId, {
+      status: "needs_user_input",
+      phase: "reporting",
+      firstResponseCompleted: true,
+      retryableError: {
+        code: "TIMEOUT",
+        message: "Backend timed out.",
+        retryCount: 1,
+        createdAt: new Date().toISOString()
+      }
+    });
+
+    const provider: AgentDecisionProvider & { decisionInputs: AgentDecisionContext[] } = {
+      id: "smaller-step-test",
+      decisionInputs: [],
+      async completeStructured(params) {
+        if (params.taskType === "agent_decision") {
+          this.decisionInputs.push(params.input as AgentDecisionContext);
+        }
+        return {
+          type: "finish",
+          summary: "Stopped after smaller step.",
+          nextSuggestedActions: ["Review the model."]
+        } as never;
+      }
+    };
+
+    const snapshot = await runtime.handleMessage(run.runId, {
+      type: "user_answer",
+      answers: { continue: "smaller_step" }
+    }, { provider });
+
+    expect(provider.decisionInputs.length).toBeGreaterThan(0);
+    expect(snapshot.request.input.businessContext).toBe("Original brief");
+    expect(provider.decisionInputs.at(-1)?.continuationPolicy.guidance).toContain(
+      "Add one driver under the existing root only; do not call vdt.create_draft."
+    );
+    expect(provider.decisionInputs.at(-1)?.continuationPolicy.guidance).not.toContain("User answer continue:");
+  });
+
+  it("marks a run failed in memory when persistence throws during failRun", async () => {
+    const failingPersistence: AgentRunPersistence = {
+      createRun() {},
+      updateRun(state) {
+        if (state.status === "failed") {
+          throw new Error("REVISION_CONFLICT: Proposal base revision 0 is not persisted.");
+        }
+      },
+      appendEvent(_event, state) {
+        if (state.status === "failed") {
+          throw new Error("REVISION_CONFLICT: Failed to persist failure event.");
+        }
+      },
+      getState: () => null,
+      getSnapshot: () => null
+    };
+    const store = new AgentRunStore({ persistence: failingPersistence });
+    const runtime = createVdtAgentRuntime({ store });
+    const provider: AgentDecisionProvider = {
+      id: "persist-fail-test",
+      async completeStructured(params) {
+        if (params.taskType === "orchestrator_first_response") {
+          return {
+            assistantMessage: "Starting the model.",
+            nextAction: "continue_building",
+            questions: [],
+            publicStatus: {
+              phase: "planning_model",
+              message: "Planning the VDT."
+            }
+          } as never;
+        }
+        throw new Error("Decision provider failed for persist test.");
+      }
+    };
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: {
+        prompt: "Build a production volume VDT.",
+        rootKpi: "Production Volume"
+      },
+      providerId: "persist-fail-test",
+      options: { maxSteps: 1 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("failed");
+    expect(snapshot.error?.code).toBe("AGENT_DECISION_LOOP_FAILED");
+    expect(snapshot.error?.message).toContain("Decision provider failed for persist test.");
+    expect(store.getState(snapshot.runId).status).toBe("failed");
+    expect(store.getState(snapshot.runId).events.some((event) =>
+      event.metadata?.code === "PERSISTENCE_FAILED"
+    )).toBe(true);
   });
 });

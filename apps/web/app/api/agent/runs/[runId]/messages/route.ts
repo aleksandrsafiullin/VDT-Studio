@@ -1,4 +1,8 @@
-import { agentUserMessageSchema } from "@vdt-studio/vdt-agent-runtime";
+import { agentUserMessageSchema, prepareRetryExecution } from "@vdt-studio/vdt-agent-runtime";
+import {
+  AGENT_DECISION_TIMEOUT_FLOOR_MS,
+  AGENT_DECISION_TIMEOUT_MAX_MS
+} from "@vdt-studio/local-runner/server-runtime";
 import { readMaxTokens } from "@/lib/ai-route-provider";
 import { agentRuntime, createAgentDecisionProvider, jsonError } from "../../runtime";
 
@@ -22,13 +26,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
 
   try {
     const state = agentRuntime.store.getState(runId);
+    const preparedRequest = prepareRetryExecution(state, parsed.data, {
+      timeoutFloorMs: AGENT_DECISION_TIMEOUT_FLOOR_MS,
+      timeoutMaxMs: AGENT_DECISION_TIMEOUT_MAX_MS
+    });
+    if (preparedRequest.providerConfig?.timeoutMs !== state.request.providerConfig?.timeoutMs) {
+      agentRuntime.store.updateRun(runId, { request: preparedRequest });
+    }
+    const requestForProvider = preparedRequest;
     const needsPlanner = parsed.data.type === "user_answer" ||
       parsed.data.type === "user_instruction" ||
       parsed.data.type === "deepen_node";
     const execution = needsPlanner
       ? {
-          provider: createAgentDecisionProvider(state.request, request.url),
-          maxTokens: readMaxTokens(state.request.providerConfig)
+          provider: createAgentDecisionProvider(requestForProvider, request.url),
+          maxTokens: readMaxTokens(requestForProvider.providerConfig)
         }
       : {};
     const snapshot = agentRuntime.handleMessageInBackground(runId, parsed.data, execution);
