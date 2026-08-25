@@ -12,6 +12,7 @@ import {
   validateGraph
 } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { downloadTextFile } from "@/lib/download";
 import { formatNumber } from "@/lib/format";
 import { ScenarioModal } from "./scenario-modal";
@@ -94,6 +95,7 @@ export function TopBar({ projectId }: TopBarProps) {
 
   const calculation = calculateGraph(project);
   const validation = validateGraph(project.graph, project.rootNodeId);
+  const graphStatusLabel = validation.valid ? "Model graph valid" : `${validation.errors.length} graph issues`;
   const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
   const activeScenario =
     project.scenarios.find((scenario) => scenario.id === activeScenarioId) ?? project.scenarios[0];
@@ -141,10 +143,16 @@ export function TopBar({ projectId }: TopBarProps) {
       </div>
 
       <div className="flex items-center gap-2">
-        <div className="hidden items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-1.5 text-xs font-medium text-muted md:flex">
-          <ShieldCheck className="h-4 w-4 text-teal" />
-          {validation.valid ? "Model graph valid" : `${validation.errors.length} graph issues`}
-        </div>
+        <Tooltip label={graphStatusLabel}>
+          <div
+            className="hidden h-8 w-8 items-center justify-center rounded-md border border-line bg-slate-50 text-muted md:flex"
+            role="status"
+            aria-label={graphStatusLabel}
+            data-testid="graph-validation-status"
+          >
+            <ShieldCheck className="h-4 w-4 text-teal" />
+          </div>
+        </Tooltip>
         <Button
           ref={scenarioModalTriggerRef}
           size="sm"

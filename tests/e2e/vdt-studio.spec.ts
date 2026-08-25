@@ -1025,7 +1025,7 @@ test("renders the workspace without invoking a mock provider", async ({ page }, 
   await expect(page.getByTestId("auto-distribute-layout")).toBeVisible();
 
   await expect(page.getByRole("heading", { name: "Production Volume Driver Model" })).toBeVisible();
-  await expect(page.getByText("Model graph valid")).toBeVisible();
+  await expect(page.getByRole("status", { name: "Model graph valid" })).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
 
@@ -2044,7 +2044,7 @@ test("generates JSON and SVG export artifacts without session credentials", asyn
   await page.getByTestId("byok-api-key").fill("session-only-export-key");
   await page.keyboard.press("Escape");
 
-  await expect(page.getByText("Model graph valid")).toBeVisible();
+  await expect(page.getByRole("status", { name: "Model graph valid" })).toBeVisible();
   await expect(page.getByTestId("export-menu-button")).toBeVisible();
   await page.getByTestId("export-menu-button").click();
   await page.getByTestId("export-json").click();
@@ -2923,7 +2923,7 @@ test.describe("visual formula editor", () => {
     expect(formulaAfterDnD).toContain("*");
     await expect(formulaRow.locator('[data-testid^="formula-token-drag-handle-"]')).toHaveCount(3);
 
-    const graphStillValid = await page.getByText("Model graph valid").isVisible();
+    const graphStillValid = await page.getByRole("status", { name: "Model graph valid" }).isVisible();
     if (graphStillValid) {
       await page.getByRole("tab", { name: "warnings" }).click();
       await expect(page.getByText("No formula errors for this node.")).toBeVisible();

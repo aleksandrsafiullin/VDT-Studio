@@ -55,6 +55,8 @@ describe("SetupRail agent composer", () => {
     expect(html).toContain('data-testid="agent-research-mode-toggle"');
     expect(html).toContain('data-research-mode="auto"');
     expect(html).toContain("Agent may search when local skills are not enough.");
+    expect(html).toContain("max-h-[min(40vh,20rem)]");
+    expect(html).toContain('data-testid="agent-instruction-input"');
   });
 
   it.each([

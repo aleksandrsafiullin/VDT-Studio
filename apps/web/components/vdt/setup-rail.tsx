@@ -94,6 +94,7 @@ export function SetupRail() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [instructionText, setInstructionText] = useState("");
+  const instructionInputRef = useRef<HTMLTextAreaElement>(null);
   const [researchMode, setResearchMode] = useState<ResearchMode>("auto");
   const [researchStatus, setResearchStatus] = useState<ResearchStatus | undefined>();
   const brief = useVdtStudioStore((state) => state.brief);
@@ -162,6 +163,13 @@ export function SetupRail() {
   const canStartNewChat = Boolean(generateActivity);
   const researchUnavailable = researchMode !== "off" && researchStatus?.providerConfigured === false;
   const researchTooltip = researchModeTooltip(researchMode, researchStatus);
+
+  useEffect(() => {
+    const el = instructionInputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [instructionText]);
 
   useEffect(() => {
     if (
@@ -259,16 +267,16 @@ export function SetupRail() {
           </div>
         }
       />
-      <section className="space-y-3 border-b border-line px-4 py-4">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-normal text-muted">Current brief</p>
-          <p className="mt-1 truncate text-sm font-semibold text-ink">{brief.rootKpi || "Untitled VDT"}</p>
+      <section className="space-y-1.5 border-b border-line px-4 py-2 [&_label]:!gap-1">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <p className="shrink-0 text-[11px] font-semibold uppercase tracking-normal text-muted">Current brief</p>
+          <p className="truncate text-sm font-semibold leading-snug text-ink">{brief.rootKpi || "Untitled VDT"}</p>
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <Field label="Root KPI">
             <TextInput
-              className="py-2"
+              className="!py-1.5"
               value={brief.rootKpi}
               onChange={(event) => setBriefField("rootKpi", event.target.value)}
             />
@@ -276,14 +284,14 @@ export function SetupRail() {
           <div className="grid grid-cols-2 gap-2">
             <Field label="Unit">
               <TextInput
-                className="py-2"
+                className="!py-1.5"
                 value={brief.unit ?? ""}
                 onChange={(event) => setBriefField("unit", event.target.value)}
               />
             </Field>
             <Field label="Period">
               <TextInput
-                className="py-2"
+                className="!py-1.5"
                 value={brief.timePeriod ?? ""}
                 onChange={(event) => setBriefField("timePeriod", event.target.value)}
               />
@@ -383,7 +391,7 @@ export function SetupRail() {
         </section>
 
         <form
-          className="border-t border-line bg-white px-4 py-3"
+          className="shrink-0 border-t border-line bg-white px-4 py-3"
           data-testid="agent-composer"
           onSubmit={(event) => {
             event.preventDefault();
@@ -391,7 +399,9 @@ export function SetupRail() {
           }}
         >
           <TextArea
-            className="min-h-24 resize-none rounded-md border-line bg-white p-3 text-sm leading-6 shadow-none focus:bg-white"
+            ref={instructionInputRef}
+            rows={3}
+            className="max-h-[min(40vh,20rem)] min-h-24 overflow-y-auto rounded-md border-line bg-white p-3 text-sm leading-6 shadow-none focus:bg-white"
             value={instructionText}
             onChange={(event) => setInstructionText(event.target.value)}
             placeholder="Describe the situation, data, constraints, and what to do next..."

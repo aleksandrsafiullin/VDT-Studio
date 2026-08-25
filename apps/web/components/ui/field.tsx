@@ -30,9 +30,13 @@ export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLIn
 });
 TextInput.displayName = "TextInput";
 
-export function TextArea({ className, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={clsx(controlClass, "min-h-20 resize-none", className)} {...props} />;
-}
+export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function TextArea(
+  { className, ...props },
+  ref
+) {
+  return <textarea ref={ref} className={clsx(controlClass, "min-h-20 resize-none", className)} {...props} />;
+});
+TextArea.displayName = "TextArea";
 
 export function SelectInput({ className, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
   return <select className={clsx(controlClass, "appearance-auto", className)} {...props} />;
