@@ -299,6 +299,73 @@ export function defaultAppendIndex(tokens: FormulaEditorToken[]): number {
   return findTrailingMinMaxCallRange(tokens)?.appendIndex ?? tokens.length;
 }
 
+export type FormulaInsertKind = "reference" | "comma" | "number" | "operator" | "function";
+
+export function clampCaretIndex(index: number, tokenLength: number): number {
+  if (tokenLength <= 0) {
+    return 0;
+  }
+  if (index < 0) {
+    return 0;
+  }
+  if (index > tokenLength) {
+    return tokenLength;
+  }
+  return index;
+}
+
+export function caretAfterInsert(insertIndex: number, insertedCount: number): number {
+  return insertIndex + insertedCount;
+}
+
+export function caretAfterRemove(
+  caretIndex: number,
+  removedIndex: number,
+  tokenLength: number
+): number {
+  const nextCaret =
+    removedIndex < caretIndex ? caretIndex - 1 : caretIndex;
+  return clampCaretIndex(nextCaret, tokenLength);
+}
+
+/** Adjust caret when a token is reordered within the list. */
+export function caretAfterReorder(
+  caretIndex: number,
+  fromIndex: number,
+  toIndex: number
+): number {
+  if (fromIndex === toIndex) {
+    return caretIndex;
+  }
+  if (caretIndex === fromIndex) {
+    return toIndex;
+  }
+  if (fromIndex < caretIndex && toIndex >= caretIndex) {
+    return caretIndex - 1;
+  }
+  if (fromIndex > caretIndex && toIndex <= caretIndex) {
+    return caretIndex + 1;
+  }
+  return caretIndex;
+}
+
+export function resolveInsertIndexAtCaret(
+  tokens: FormulaEditorToken[],
+  caretIndex: number,
+  kind: FormulaInsertKind
+): number {
+  const defaultIndex = defaultAppendIndex(tokens);
+  if (caretIndex !== defaultIndex) {
+    return caretIndex;
+  }
+
+  if (kind === "operator" || kind === "function") {
+    return tokens.length;
+  }
+
+  return defaultIndex;
+}
+
 export function resolveReferenceInsertIndex(tokens: FormulaEditorToken[], atIndex?: number): number {
   const range = findTrailingMinMaxCallRange(tokens);
   const appendIndex = range?.appendIndex ?? tokens.length;

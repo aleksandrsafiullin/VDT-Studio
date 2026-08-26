@@ -8,14 +8,14 @@ import {
 import type { DraggableAttributes } from "@dnd-kit/core";
 import { clsx } from "clsx";
 import { GripVertical } from "lucide-react";
-import { Fragment, useMemo, type ReactNode } from "react";
+import { Fragment, useMemo, type MouseEvent, type ReactNode } from "react";
 import type { VdtNode } from "@vdt-studio/vdt-core";
-import { FormulaInsertIndicator } from "./formula-insert-indicator";
 import {
   editorTokensToSegments,
   type FormulaEditorSegment,
   type FormulaEditorToken
 } from "./formula-editor-model";
+import { FormulaInsertSlot } from "./formula-insert-slot";
 import { FormulaFunctionToken } from "./formula-function-token";
 import { FormulaNumberToken } from "./formula-number-token";
 import { FormulaOperatorToken, FormulaCommaToken } from "./formula-operator-token";
@@ -27,12 +27,15 @@ export interface FormulaSortableTokenRowProps {
   onReorder: (fromIndex: number, toIndex: number) => void;
   onRemoveToken: (tokenId: string) => void;
   onUpdateNumber: (tokenId: string, raw: string) => void;
+  caretIndex: number;
+  onCaretIndexChange: (index: number) => void;
+  activeDrag: boolean | null;
+  dragInsertIndex?: number | null;
   isUnknownReference?: (nodeId: string) => boolean;
   className?: string;
   /** When true, renders only sortable items (drop zone wrapper lives in FormulaEditorDnd). */
   embedded?: boolean;
-  /** Index where the dragged token will land; renders a "|" marker before that position. */
-  insertIndex?: number | null;
+  registerTokenElement?: (tokenId: string, element: HTMLElement | null) => void;
 }
 
 interface SortableTokenItemProps {
@@ -41,6 +44,8 @@ interface SortableTokenItemProps {
   segment: FormulaEditorSegment;
   onRemoveToken: (tokenId: string) => void;
   onUpdateNumber: (tokenId: string, raw: string) => void;
+  onCaretIndexChange: (index: number) => void;
+  registerTokenElement?: (tokenId: string, element: HTMLElement | null) => void;
   isUnknownReference?: (nodeId: string) => boolean;
 }
 
@@ -75,12 +80,25 @@ function TokenDragHandle({
   );
 }
 
+function handleTokenBodyClick(event: MouseEvent<HTMLDivElement>, index: number, onCaretIndexChange: (index: number) => void) {
+  const target = event.target as HTMLElement;
+  if (target.closest("button, input, textarea")) {
+    return;
+  }
+
+  const rect = event.currentTarget.getBoundingClientRect();
+  const midpoint = rect.left + rect.width / 2;
+  onCaretIndexChange(event.clientX < midpoint ? index : index + 1);
+}
+
 function SortableTokenItem({
   id,
   index,
   segment,
   onRemoveToken,
   onUpdateNumber,
+  onCaretIndexChange,
+  registerTokenElement,
   isUnknownReference
 }: SortableTokenItemProps) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useSortable({
@@ -102,7 +120,15 @@ function SortableTokenItem({
   );
 
   return (
-    <div ref={setNodeRef} style={style} className="inline-flex items-center">
+    <div
+      ref={(node) => {
+        setNodeRef(node);
+        registerTokenElement?.(id, node);
+      }}
+      style={style}
+      className="inline-flex shrink-0 cursor-text items-center"
+      onClick={(event) => handleTokenBodyClick(event, index, onCaretIndexChange)}
+    >
       {renderSegmentToken(segment, {
         dragHandle,
         onRemoveToken,
@@ -322,8 +348,12 @@ function SortableTokenItems({
   nodes,
   onRemoveToken,
   onUpdateNumber,
+  caretIndex,
+  onCaretIndexChange,
+  activeDrag,
+  dragInsertIndex = null,
   isUnknownReference,
-  insertIndex = null
+  registerTokenElement
 }: Omit<FormulaSortableTokenRowProps, "onReorder" | "className" | "embedded">) {
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const segments = useMemo(
@@ -333,21 +363,46 @@ function SortableTokenItems({
   const sortableIds = useMemo(() => editorTokens.map((token) => token.id), [editorTokens]);
 
   return (
-    <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
-      {segments.map((segment, index) => (
-        <Fragment key={segment.id}>
-          {insertIndex === index ? <FormulaInsertIndicator /> : null}
-          <SortableTokenItem
-            id={segment.id}
-            index={index}
-            segment={segment}
-            onRemoveToken={onRemoveToken}
-            onUpdateNumber={onUpdateNumber}
-            {...(isUnknownReference !== undefined ? { isUnknownReference } : {})}
-          />
-        </Fragment>
-      ))}
-    </SortableContext>
+    <div
+      data-testid="formula-token-row"
+      className="flex flex-wrap content-start items-center gap-x-1 gap-y-2"
+    >
+      <FormulaInsertSlot
+        index={0}
+        showCaret={caretIndex === 0}
+        activeDrag={activeDrag}
+        dragInsertIndex={dragInsertIndex}
+        onClick={() => onCaretIndexChange(0)}
+      />
+      {segments.length === 0 ? (
+        <p className="pointer-events-none text-xs text-muted">
+          Drag nodes or use toolbar to build a formula.
+        </p>
+      ) : null}
+      <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
+        {segments.map((segment, index) => (
+          <Fragment key={segment.id}>
+            <SortableTokenItem
+              id={segment.id}
+              index={index}
+              segment={segment}
+              onRemoveToken={onRemoveToken}
+              onUpdateNumber={onUpdateNumber}
+              onCaretIndexChange={onCaretIndexChange}
+              {...(registerTokenElement !== undefined ? { registerTokenElement } : {})}
+              {...(isUnknownReference !== undefined ? { isUnknownReference } : {})}
+            />
+            <FormulaInsertSlot
+              index={index + 1}
+              showCaret={caretIndex === index + 1}
+              activeDrag={activeDrag}
+              dragInsertIndex={dragInsertIndex}
+              onClick={() => onCaretIndexChange(index + 1)}
+            />
+          </Fragment>
+        ))}
+      </SortableContext>
+    </div>
   );
 }
 
@@ -356,44 +411,42 @@ export function FormulaSortableTokenRow({
   nodes,
   onRemoveToken,
   onUpdateNumber,
+  caretIndex,
+  onCaretIndexChange,
+  activeDrag,
+  dragInsertIndex = null,
   isUnknownReference,
   className,
   embedded = false,
-  insertIndex = null
+  registerTokenElement
 }: FormulaSortableTokenRowProps) {
+  const row = (
+    <SortableTokenItems
+      editorTokens={editorTokens}
+      nodes={nodes}
+      onRemoveToken={onRemoveToken}
+      onUpdateNumber={onUpdateNumber}
+      caretIndex={caretIndex}
+      onCaretIndexChange={onCaretIndexChange}
+      activeDrag={activeDrag}
+      dragInsertIndex={dragInsertIndex}
+      {...(registerTokenElement !== undefined ? { registerTokenElement } : {})}
+      {...(isUnknownReference !== undefined ? { isUnknownReference } : {})}
+    />
+  );
+
   if (embedded) {
-    return (
-      <SortableTokenItems
-        editorTokens={editorTokens}
-        nodes={nodes}
-        onRemoveToken={onRemoveToken}
-        onUpdateNumber={onUpdateNumber}
-        insertIndex={insertIndex}
-        {...(isUnknownReference !== undefined ? { isUnknownReference } : {})}
-      />
-    );
+    return row;
   }
 
   return (
     <div
       className={clsx(
-        "flex min-h-[40px] flex-wrap items-center gap-1.5 rounded-lg border border-line bg-white p-2",
+        "rounded-lg border border-line bg-white p-2",
         className
       )}
-      data-testid="formula-token-row"
     >
-      {editorTokens.length === 0 ? (
-        <p className="text-xs text-muted">Drag nodes or use toolbar to build a formula.</p>
-      ) : (
-        <SortableTokenItems
-          editorTokens={editorTokens}
-          nodes={nodes}
-          onRemoveToken={onRemoveToken}
-          onUpdateNumber={onUpdateNumber}
-          insertIndex={insertIndex}
-          {...(isUnknownReference !== undefined ? { isUnknownReference } : {})}
-        />
-      )}
+      {row}
     </div>
   );
 }

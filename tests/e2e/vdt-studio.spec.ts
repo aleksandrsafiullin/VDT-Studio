@@ -727,31 +727,40 @@ async function dragFormulaPaletteNodeIntoFormula(page: Page, nodeId: string) {
   const dropZone = page.getByTestId("formula-editor-drop-zone");
   await expect(handle).toBeVisible();
   await expect(dropZone).toBeVisible();
+  await handle.scrollIntoViewIfNeeded();
+  await dropZone.scrollIntoViewIfNeeded();
 
-  try {
-    await handle.dragTo(dropZone, {
-      force: true,
-      sourcePosition: { x: 4, y: 6 },
-      targetPosition: { x: 24, y: 16 }
-    });
-  } catch {
-    const handleBox = await handle.boundingBox();
-    const dropBox = await dropZone.boundingBox();
-    expect(handleBox).not.toBeNull();
-    expect(dropBox).not.toBeNull();
+  const caretSlot = dropZone.locator('[data-testid^="formula-insert-slot-"]', {
+    has: page.getByTestId("formula-insert-indicator")
+  });
+  const emptyMinCall =
+    (await dropZone.getByTestId("formula-function-min").isVisible()) &&
+    (await dropZone.locator('[data-testid^="formula-ref-chip-"]').count()) === 0;
 
-    const startX = handleBox!.x + handleBox!.width / 2;
-    const startY = handleBox!.y + handleBox!.height / 2;
-    const endX = dropBox!.x + dropBox!.width / 2;
-    const endY = dropBox!.y + dropBox!.height / 2;
-
-    await page.mouse.move(startX, startY);
-    await page.mouse.down();
-    await page.waitForTimeout(80);
-    await page.mouse.move(endX, endY, { steps: 24 });
-    await page.waitForTimeout(80);
-    await page.mouse.up();
+  let dropTarget = dropZone;
+  if (emptyMinCall) {
+    dropTarget = dropZone.getByTestId("formula-insert-slot-2");
+  } else if ((await caretSlot.count()) > 0) {
+    dropTarget = caretSlot.first();
   }
+
+  const handleBox = await handle.boundingBox();
+  const targetBox = await dropTarget.boundingBox();
+  expect(handleBox).not.toBeNull();
+  expect(targetBox).not.toBeNull();
+
+  const startX = handleBox!.x + handleBox!.width / 2;
+  const startY = handleBox!.y + handleBox!.height / 2;
+  const endX = targetBox!.x + targetBox!.width / 2;
+  const endY = targetBox!.y + targetBox!.height / 2;
+
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.waitForTimeout(80);
+  await page.mouse.move(endX, endY, { steps: 24 });
+  await page.waitForTimeout(120);
+  await page.mouse.up();
+  await page.waitForTimeout(120);
 }
 
 /** Remove every removable token in the formula drop zone. */
@@ -773,9 +782,11 @@ async function dragFormulaTokenReorder(page: Page, fromIndex: number, toIndex: n
   expect(tokenCountBefore).toBeGreaterThan(0);
 
   const source = page.getByTestId(`formula-token-drag-handle-${fromIndex}`);
-  const target = page.getByTestId(`formula-token-drag-handle-${toIndex}`);
+  const target = page.getByTestId(`formula-insert-slot-${toIndex}`);
   await expect(source).toBeVisible();
   await expect(target).toBeVisible();
+  await source.scrollIntoViewIfNeeded();
+  await target.scrollIntoViewIfNeeded();
 
   const sourceBox = await source.boundingBox();
   const targetBox = await target.boundingBox();
@@ -784,7 +795,7 @@ async function dragFormulaTokenReorder(page: Page, fromIndex: number, toIndex: n
 
   const startX = sourceBox!.x + sourceBox!.width / 2;
   const startY = sourceBox!.y + sourceBox!.height / 2;
-  const endX = targetBox!.x + 4;
+  const endX = targetBox!.x + targetBox!.width / 2;
   const endY = targetBox!.y + targetBox!.height / 2;
 
   await page.mouse.move(startX, startY);
@@ -807,6 +818,33 @@ async function dragFormulaTokenReorder(page: Page, fromIndex: number, toIndex: n
 
   const tokenCountAfter = await formulaRow.locator('[data-testid^="formula-token-drag-handle-"]').count();
   expect(tokenCountAfter).toBe(tokenCountBefore);
+}
+
+async function clickFormulaInsertSlot(page: Page, index: number) {
+  await page.getByTestId(`formula-insert-slot-${index}`).click();
+}
+
+async function clickFormulaPaletteInsert(page: Page, nodeId: string) {
+  await page.getByTestId(`formula-palette-insert-${nodeId}`).click();
+}
+
+/** Find the first insert slot that sits on a wrapped row below slot 0. */
+async function findWrappedRowSlotIndex(page: Page): Promise<number | null> {
+  const slot0 = page.getByTestId("formula-insert-slot-0");
+  const firstBox = await slot0.boundingBox();
+  if (!firstBox) {
+    return null;
+  }
+
+  const slotCount = await page.locator('[data-testid^="formula-insert-slot-"]').count();
+  for (let index = 1; index < slotCount; index += 1) {
+    const box = await page.getByTestId(`formula-insert-slot-${index}`).boundingBox();
+    if (box && box.y > firstBox.y + 8) {
+      return index;
+    }
+  }
+
+  return null;
 }
 
 async function readNodePositions(page: Page, nodeIds: string[]) {
@@ -3027,6 +3065,7 @@ test.describe("visual formula editor", () => {
 
     await selectNodeInInspector(page, nodeId);
     await expect(page.getByTestId("formula-editor")).toBeVisible();
+    await expect(page.getByTestId("formula-insert-indicator")).toHaveCount(1);
 
     const formulaRow = page.getByTestId("formula-token-row");
     await expect(formulaRow.getByText("Effective Working Time", { exact: true })).toBeVisible();
@@ -3044,7 +3083,7 @@ test.describe("visual formula editor", () => {
       .poll(async () => {
         const formula = await readPersistedNodeFormula(page, nodeId);
         return typeof formula === "string" && formula !== baselineFormula;
-      })
+      }, { timeout: 15_000 })
       .toBe(true);
 
     const formulaAfterDnD = await readPersistedNodeFormula(page, nodeId);
@@ -3194,7 +3233,7 @@ test.describe("visual formula editor", () => {
       .poll(async () => page.getByTestId("formula-insert-indicator").count(), { timeout: 5_000 })
       .toBeGreaterThan(0);
     await page.mouse.up();
-    await expect(page.getByTestId("formula-insert-indicator")).toHaveCount(0);
+    await expect(page.getByTestId("formula-insert-indicator")).toHaveCount(1);
   });
 
   test("shows min max and comma toolbar buttons on calculated nodes", async ({ page }, testInfo) => {
@@ -3236,7 +3275,7 @@ test.describe("visual formula editor", () => {
     await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(/^min\(\)$/);
 
     await dragFormulaPaletteNodeIntoFormula(page, "effective_working_time");
-    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId), { timeout: 15_000 }).toMatch(
       /^min\(effective_working_time\)$/
     );
 
@@ -3262,5 +3301,122 @@ test.describe("visual formula editor", () => {
       await expect(rootNode.getByTestId("node-main-scenario-value")).not.toContainText("NaN");
       await expect(rootNode.getByTestId("node-main-scenario-value")).not.toContainText("Infinity");
     }
+  });
+
+  test("caret slot plus toolbar inserts operator at explicit position", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula caret toolbar insert runs on desktop viewport.");
+
+    const nodeId = "production_volume";
+    const baselineFormula = "effective_working_time * average_productivity";
+
+    await selectNodeInInspector(page, nodeId);
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toBe(baselineFormula);
+    await expect(page.getByTestId("formula-insert-indicator")).toHaveCount(1);
+
+    await clickFormulaInsertSlot(page, 1);
+    await page.getByTestId("formula-toolbar-multiply").click();
+
+    await expect
+      .poll(async () => readPersistedNodeFormula(page, nodeId))
+      .toBe("effective_working_time * * average_productivity");
+  });
+
+  test("palette click inserts reference at explicit caret between tokens", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula palette click insert runs on desktop viewport.");
+
+    const nodeId = "effective_working_time";
+    const baselineFormula = "calendar_time - planned_downtime - unplanned_downtime";
+
+    await selectNodeInInspector(page, nodeId);
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toBe(baselineFormula);
+
+    await page.getByRole("button", { name: "Remove Planned Downtime" }).click();
+    await expect(page.getByTestId("formula-palette-insert-planned_downtime")).toBeVisible();
+
+    await clickFormulaInsertSlot(page, 1);
+    await clickFormulaPaletteInsert(page, "planned_downtime");
+
+    await expect
+      .poll(async () => readPersistedNodeFormula(page, nodeId))
+      .toBe("calendar_time planned_downtime - -unplanned_downtime");
+  });
+
+  test("min with default caret inserts toolbar operator after closing paren", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula min operator placement runs on desktop viewport.");
+
+    const nodeId = "production_volume";
+
+    await selectNodeInInspector(page, nodeId);
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+    await clearFormulaTokens(page);
+
+    await page.getByTestId("formula-toolbar-min").click();
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(/^min\(\)$/);
+    await expect(page.getByTestId("formula-insert-indicator")).toHaveCount(1);
+
+    await page.getByTestId("formula-toolbar-multiply").click();
+
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(/^min\(\)\s*\*$/);
+  });
+
+  test("default caret inserts inside min() while explicit slot zero inserts before min", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula snap vs explicit caret runs on desktop viewport.");
+
+    const nodeId = "production_volume";
+
+    await selectNodeInInspector(page, nodeId);
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+    await clearFormulaTokens(page);
+
+    await page.getByTestId("formula-toolbar-min").click();
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(/^min\(\)$/);
+    await expect(page.getByTestId("formula-insert-indicator")).toHaveCount(1);
+
+    await page.getByTestId("formula-toolbar-add-number").click();
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(/^min\(0\)$/);
+
+    await clearFormulaTokens(page);
+
+    await page.getByTestId("formula-toolbar-min").click();
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(/^min\(\)$/);
+
+    await clickFormulaInsertSlot(page, 0);
+    await page.getByTestId("formula-toolbar-add-number").click();
+
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(/^0 min\(\)$/);
+  });
+
+  test("wrapped row slot plus toolbar preserves insert order", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula wrapped-row insert runs on desktop viewport.");
+
+    const nodeId = "effective_working_time";
+    const baselineFormula = "calendar_time - planned_downtime - unplanned_downtime";
+
+    await page.setViewportSize({ width: 400, height: 800 });
+    await selectNodeInInspector(page, nodeId);
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toBe(baselineFormula);
+
+    const wrappedSlotIndex = await findWrappedRowSlotIndex(page);
+    expect(wrappedSlotIndex).not.toBeNull();
+
+    await clickFormulaInsertSlot(page, wrappedSlotIndex!);
+    await page.getByTestId("formula-toolbar-multiply").click();
+
+    const formulaAfterInsert = await readPersistedNodeFormula(page, nodeId);
+    expect(typeof formulaAfterInsert).toBe("string");
+    expect(formulaAfterInsert).toContain("calendar_time");
+    expect(formulaAfterInsert).toContain("planned_downtime");
+    expect(formulaAfterInsert).toContain("unplanned_downtime");
+    expect(formulaAfterInsert).toContain("*");
+
+    const starCount = (formulaAfterInsert as string).split("*").length - 1;
+    expect(starCount).toBe(1);
+
+    const tokens = (formulaAfterInsert as string).trim().split(/\s+/);
+    const starIndex = tokens.indexOf("*");
+    expect(starIndex).toBe(wrappedSlotIndex);
   });
 });

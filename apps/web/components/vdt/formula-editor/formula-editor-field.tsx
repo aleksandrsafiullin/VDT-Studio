@@ -40,6 +40,8 @@ export function FormulaEditorField({
 
   const {
     editorTokens,
+    caretIndex,
+    setCaretIndex,
     paletteNodes,
     paletteEmptyMessage,
     validation,
@@ -100,6 +102,8 @@ export function FormulaEditorField({
           nodes={nodes}
           paletteNodes={paletteNodes}
           paletteEmptyMessage={paletteEmptyMessage}
+          caretIndex={caretIndex}
+          onCaretIndexChange={setCaretIndex}
           onReorder={reorder}
           onRemoveToken={removeToken}
           onUpdateNumber={updateNumber}

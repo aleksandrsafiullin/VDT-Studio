@@ -5,6 +5,10 @@ import {
   createEditorToken,
   createFunctionCallSkeleton,
   createReferenceToken,
+  caretAfterInsert,
+  caretAfterRemove,
+  caretAfterReorder,
+  clampCaretIndex,
   defaultAppendIndex,
   editorTokensToFormula,
   editorTokensToSegments,
@@ -17,8 +21,10 @@ import {
   parseFormulaToEditorTokens,
   removeEditorTokenById,
   resolveDisplayName,
+  resolveInsertIndexAtCaret,
   resolveReferenceInsertIndex,
-  validateFormulaString
+  validateFormulaString,
+  type FormulaInsertKind
 } from "./formula-editor-model";
 
 function makeNode(id: string, name: string): VdtNode {
@@ -362,5 +368,121 @@ describe("formula-editor-model", () => {
     );
 
     expect(palette.map((node) => node.id)).toEqual([]);
+  });
+});
+
+describe("formula-editor caret helpers", () => {
+  it("clampCaretIndex clamps to [0, tokenLength]", () => {
+    expect(clampCaretIndex(-1, 3)).toBe(0);
+    expect(clampCaretIndex(0, 3)).toBe(0);
+    expect(clampCaretIndex(2, 3)).toBe(2);
+    expect(clampCaretIndex(3, 3)).toBe(3);
+    expect(clampCaretIndex(5, 3)).toBe(3);
+    expect(clampCaretIndex(0, 0)).toBe(0);
+  });
+
+  it("caretAfterInsert places caret after inserted tokens", () => {
+    expect(caretAfterInsert(0, 1)).toBe(1);
+    expect(caretAfterInsert(2, 3)).toBe(5);
+  });
+
+  it("caretAfterRemove decrements when token removed before caret", () => {
+    expect(caretAfterRemove(3, 1, 4)).toBe(2);
+    expect(caretAfterRemove(2, 0, 3)).toBe(1);
+  });
+
+  it("caretAfterRemove keeps caret when token removed at or after caret", () => {
+    expect(caretAfterRemove(2, 2, 4)).toBe(2);
+    expect(caretAfterRemove(1, 3, 4)).toBe(1);
+  });
+
+  it("caretAfterRemove clamps when removal shortens token list", () => {
+    expect(caretAfterRemove(3, 0, 2)).toBe(2);
+  });
+
+  it("caretAfterReorder follows moved token when caret was on that token", () => {
+    expect(caretAfterReorder(0, 0, 2)).toBe(2);
+    expect(caretAfterReorder(3, 3, 1)).toBe(1);
+  });
+
+  it("caretAfterReorder shifts caret when a token moves across it", () => {
+    expect(caretAfterReorder(1, 0, 2)).toBe(0);
+    expect(caretAfterReorder(2, 3, 1)).toBe(3);
+  });
+
+  it("caretAfterReorder keeps caret when reorder does not cross it", () => {
+    expect(caretAfterReorder(3, 0, 2)).toBe(3);
+    expect(caretAfterReorder(0, 2, 3)).toBe(0);
+  });
+
+  it("caretAfterReorder is unchanged on no-op reorder", () => {
+    expect(caretAfterReorder(2, 1, 1)).toBe(2);
+  });
+});
+
+describe("resolveInsertIndexAtCaret", () => {
+  const kinds: FormulaInsertKind[] = ["reference", "comma", "number", "operator", "function"];
+
+  it("returns caretIndex verbatim when caret is not at default append index", () => {
+    const tokens = parseFormulaToEditorTokens("a + b");
+    const explicitCaret = 1;
+
+    for (const kind of kinds) {
+      expect(resolveInsertIndexAtCaret(tokens, explicitCaret, kind)).toBe(explicitCaret);
+    }
+  });
+
+  it("min() + default caret + operator inserts after closing paren", () => {
+    const tokens = parseFormulaToEditorTokens("min()");
+    const defaultCaret = defaultAppendIndex(tokens);
+
+    expect(defaultCaret).toBe(2);
+    expect(resolveInsertIndexAtCaret(tokens, defaultCaret, "operator")).toBe(tokens.length);
+    expect(tokens.length).toBe(3);
+  });
+
+  it("min() + default caret + reference inserts inside parens", () => {
+    const tokens = parseFormulaToEditorTokens("min()");
+    const defaultCaret = defaultAppendIndex(tokens);
+
+    expect(resolveInsertIndexAtCaret(tokens, defaultCaret, "reference")).toBe(defaultCaret);
+    expect(resolveInsertIndexAtCaret(tokens, defaultCaret, "comma")).toBe(defaultCaret);
+    expect(resolveInsertIndexAtCaret(tokens, defaultCaret, "number")).toBe(defaultCaret);
+  });
+
+  it("min() + default caret + function appends after closing paren", () => {
+    const tokens = parseFormulaToEditorTokens("min()");
+    const defaultCaret = defaultAppendIndex(tokens);
+
+    expect(resolveInsertIndexAtCaret(tokens, defaultCaret, "function")).toBe(tokens.length);
+  });
+
+  it("explicit caret at slot 0 on min() inserts before min", () => {
+    const tokens = parseFormulaToEditorTokens("min()");
+
+    expect(resolveInsertIndexAtCaret(tokens, 0, "operator")).toBe(0);
+    expect(resolveInsertIndexAtCaret(tokens, 0, "reference")).toBe(0);
+    expect(resolveInsertIndexAtCaret(tokens, 0, "function")).toBe(0);
+  });
+
+  it("explicit caret inside min() parens uses that index verbatim", () => {
+    const tokens = parseFormulaToEditorTokens("min(a)");
+    const insideCaret = 2;
+
+    for (const kind of kinds) {
+      expect(resolveInsertIndexAtCaret(tokens, insideCaret, kind)).toBe(insideCaret);
+    }
+  });
+
+  it("plain expression + default caret: operand kinds use defaultAppendIndex, operator/function append at end", () => {
+    const tokens = parseFormulaToEditorTokens("a + b");
+    const defaultCaret = defaultAppendIndex(tokens);
+
+    expect(defaultCaret).toBe(tokens.length);
+    expect(resolveInsertIndexAtCaret(tokens, defaultCaret, "reference")).toBe(defaultCaret);
+    expect(resolveInsertIndexAtCaret(tokens, defaultCaret, "comma")).toBe(defaultCaret);
+    expect(resolveInsertIndexAtCaret(tokens, defaultCaret, "number")).toBe(defaultCaret);
+    expect(resolveInsertIndexAtCaret(tokens, defaultCaret, "operator")).toBe(tokens.length);
+    expect(resolveInsertIndexAtCaret(tokens, defaultCaret, "function")).toBe(tokens.length);
   });
 });

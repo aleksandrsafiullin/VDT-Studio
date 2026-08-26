@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { VdtEdge, VdtNode } from "@vdt-studio/vdt-core";
 import {
+  caretAfterInsert,
+  caretAfterRemove,
+  caretAfterReorder,
+  clampCaretIndex,
   createCommaToken,
   createEditorToken,
   createFunctionCallSkeleton,
@@ -19,6 +23,7 @@ import {
   parseFormulaToEditorTokens,
   removeEditorTokenById,
   reorderEditorTokens,
+  resolveInsertIndexAtCaret,
   resolveReferenceInsertIndex,
   updateEditorNumberToken,
   validateFormulaString,
@@ -29,6 +34,8 @@ import {
 
 export interface UseFormulaEditorStateResult {
   editorTokens: FormulaEditorToken[];
+  caretIndex: number;
+  setCaretIndex: (index: number) => void;
   paletteNodes: VdtNode[];
   paletteEmptyMessage: string;
   validation: ReturnType<typeof validateFormulaString>;
@@ -51,18 +58,32 @@ export function useFormulaEditorState(
   currentNodeId: string,
   onFormulaChange: (formula: string) => void
 ): UseFormulaEditorStateResult {
-  const [editorTokens, setEditorTokens] = useState<FormulaEditorToken[]>(() => parseFormulaToEditorTokens(formula));
+  const initialTokens = parseFormulaToEditorTokens(formula);
+  const [editorTokens, setEditorTokens] = useState<FormulaEditorToken[]>(initialTokens);
+  const [caretIndex, setCaretIndexState] = useState(() => defaultAppendIndex(initialTokens));
   const editorTokensRef = useRef(editorTokens);
   editorTokensRef.current = editorTokens;
+  const caretIndexRef = useRef(caretIndex);
+  caretIndexRef.current = caretIndex;
   const lastEmittedFormulaRef = useRef(formula);
 
-  const applyTokenUpdate = useCallback(
-    (updater: (tokens: FormulaEditorToken[]) => FormulaEditorToken[]) => {
-      const next = updater(editorTokensRef.current);
+  const applyUpdate = useCallback(
+    (
+      updater: (
+        tokens: FormulaEditorToken[],
+        caret: number
+      ) => { tokens: FormulaEditorToken[]; caretIndex: number }
+    ) => {
+      const { tokens: next, caretIndex: nextCaret } = updater(
+        editorTokensRef.current,
+        caretIndexRef.current
+      );
       const nextFormula = editorTokensToFormula(next);
       editorTokensRef.current = next;
+      caretIndexRef.current = nextCaret;
       lastEmittedFormulaRef.current = nextFormula;
       setEditorTokens(next);
+      setCaretIndexState(nextCaret);
       onFormulaChange(nextFormula);
     },
     [onFormulaChange]
@@ -73,22 +94,24 @@ export function useFormulaEditorState(
       return;
     }
 
-    setEditorTokens((previous) => {
-      const currentFormula = editorTokensToFormula(previous);
-      if (currentFormula === formula) {
-        lastEmittedFormulaRef.current = formula;
-        return previous;
-      }
-
-      const next = parseFormulaToEditorTokens(formula);
-      if (next.length === 0 && formula.trim() !== "") {
-        return previous;
-      }
-
-      editorTokensRef.current = next;
+    const previous = editorTokensRef.current;
+    const currentFormula = editorTokensToFormula(previous);
+    if (currentFormula === formula) {
       lastEmittedFormulaRef.current = formula;
-      return next;
-    });
+      return;
+    }
+
+    const next = parseFormulaToEditorTokens(formula);
+    if (next.length === 0 && formula.trim() !== "") {
+      return;
+    }
+
+    const nextCaret = defaultAppendIndex(next);
+    editorTokensRef.current = next;
+    caretIndexRef.current = nextCaret;
+    lastEmittedFormulaRef.current = formula;
+    setEditorTokens(next);
+    setCaretIndexState(nextCaret);
   }, [formula]);
 
   const formulaString = useMemo(() => editorTokensToFormula(editorTokens), [editorTokens]);
@@ -104,11 +127,26 @@ export function useFormulaEditorState(
     return "All connected drivers are already in the formula.";
   }, [currentNodeId, edges]);
 
+  const setCaretIndex = useCallback((index: number) => {
+    const clamped = clampCaretIndex(index, editorTokensRef.current.length);
+    caretIndexRef.current = clamped;
+    setCaretIndexState(clamped);
+  }, []);
+
   const reorder = useCallback(
     (fromIndex: number, toIndex: number) => {
-      applyTokenUpdate((tokens) => reorderEditorTokens(tokens, fromIndex, toIndex));
+      applyUpdate((tokens, caret) => {
+        const next = reorderEditorTokens(tokens, fromIndex, toIndex);
+        if (next === tokens) {
+          return { tokens, caretIndex: caret };
+        }
+        return {
+          tokens: next,
+          caretIndex: caretAfterReorder(caret, fromIndex, toIndex)
+        };
+      });
     },
-    [applyTokenUpdate]
+    [applyUpdate]
   );
 
   const insertReference = useCallback(
@@ -119,63 +157,114 @@ export function useFormulaEditorState(
       if (!getConnectedNodeIds(currentNodeId, edges).has(nodeId)) {
         return;
       }
-      applyTokenUpdate((tokens) =>
-        insertEditorTokenAt(tokens, createReferenceToken(nodeId), resolveReferenceInsertIndex(tokens, atIndex))
-      );
+      applyUpdate((tokens, caret) => {
+        const insertIndex =
+          atIndex === undefined
+            ? resolveReferenceInsertIndex(tokens)
+            : clampCaretIndex(atIndex, tokens.length);
+        const next = insertEditorTokenAt(tokens, createReferenceToken(nodeId), insertIndex);
+        return {
+          tokens: next,
+          caretIndex: caretAfterInsert(insertIndex, 1)
+        };
+      });
     },
-    [applyTokenUpdate, currentNodeId, edges, formulaString]
+    [applyUpdate, currentNodeId, edges, formulaString]
   );
 
   const insertOperator = useCallback(
     (op: FormulaEditorOperator) => {
-      applyTokenUpdate((tokens) => insertEditorTokenAt(tokens, createEditorToken(operatorToToken(op))));
+      applyUpdate((tokens, caret) => {
+        const insertIndex = resolveInsertIndexAtCaret(tokens, caret, "operator");
+        const next = insertEditorTokenAt(tokens, createEditorToken(operatorToToken(op)), insertIndex);
+        return {
+          tokens: next,
+          caretIndex: caretAfterInsert(insertIndex, 1)
+        };
+      });
     },
-    [applyTokenUpdate]
+    [applyUpdate]
   );
 
   const insertFunction = useCallback(
     (name: FormulaEditorFunctionName) => {
-      applyTokenUpdate((tokens) => insertEditorTokensAt(tokens, createFunctionCallSkeleton(name)));
+      applyUpdate((tokens, caret) => {
+        const skeleton = createFunctionCallSkeleton(name);
+        const insertIndex = resolveInsertIndexAtCaret(tokens, caret, "function");
+        const next = insertEditorTokensAt(tokens, skeleton, insertIndex);
+        return {
+          tokens: next,
+          caretIndex: defaultAppendIndex(next)
+        };
+      });
     },
-    [applyTokenUpdate]
+    [applyUpdate]
   );
 
   const insertComma = useCallback(() => {
-    applyTokenUpdate((tokens) => insertEditorTokenAt(tokens, createCommaToken(), defaultAppendIndex(tokens)));
-  }, [applyTokenUpdate]);
+    applyUpdate((tokens, caret) => {
+      const insertIndex = resolveInsertIndexAtCaret(tokens, caret, "comma");
+      const next = insertEditorTokenAt(tokens, createCommaToken(), insertIndex);
+      return {
+        tokens: next,
+        caretIndex: caretAfterInsert(insertIndex, 1)
+      };
+    });
+  }, [applyUpdate]);
 
   const insertNumber = useCallback(
     (raw?: string) => {
-      applyTokenUpdate((tokens) =>
-        insertEditorTokenAt(tokens, createNumberToken(raw), defaultAppendIndex(tokens))
-      );
+      applyUpdate((tokens, caret) => {
+        const insertIndex = resolveInsertIndexAtCaret(tokens, caret, "number");
+        const next = insertEditorTokenAt(tokens, createNumberToken(raw), insertIndex);
+        return {
+          tokens: next,
+          caretIndex: caretAfterInsert(insertIndex, 1)
+        };
+      });
     },
-    [applyTokenUpdate]
+    [applyUpdate]
   );
 
   const updateNumber = useCallback(
     (tokenId: string, raw: string) => {
-      applyTokenUpdate((tokens) =>
-        tokens.map((entry) => (entry.id === tokenId ? updateEditorNumberToken(entry, raw) : entry))
-      );
+      applyUpdate((tokens, caret) => ({
+        tokens: tokens.map((entry) =>
+          entry.id === tokenId ? updateEditorNumberToken(entry, raw) : entry
+        ),
+        caretIndex: caret
+      }));
     },
-    [applyTokenUpdate]
+    [applyUpdate]
   );
 
   const removeToken = useCallback(
     (tokenId: string) => {
-      applyTokenUpdate((tokens) => removeEditorTokenById(tokens, tokenId));
+      applyUpdate((tokens, caret) => {
+        const removedIndex = tokens.findIndex((entry) => entry.id === tokenId);
+        if (removedIndex < 0) {
+          return { tokens, caretIndex: caret };
+        }
+        const next = removeEditorTokenById(tokens, tokenId);
+        return {
+          tokens: next,
+          caretIndex: caretAfterRemove(caret, removedIndex, next.length)
+        };
+      });
     },
-    [applyTokenUpdate]
+    [applyUpdate]
   );
 
   const setFromFormulaString = useCallback(
     (raw: string) => {
       const nextTokens = parseFormulaToEditorTokens(raw);
       const nextFormula = editorTokensToFormula(nextTokens);
+      const nextCaret = defaultAppendIndex(nextTokens);
       editorTokensRef.current = nextTokens;
+      caretIndexRef.current = nextCaret;
       lastEmittedFormulaRef.current = nextFormula;
       setEditorTokens(nextTokens);
+      setCaretIndexState(nextCaret);
       onFormulaChange(nextFormula);
     },
     [onFormulaChange]
@@ -183,6 +272,8 @@ export function useFormulaEditorState(
 
   return {
     editorTokens,
+    caretIndex,
+    setCaretIndex,
     paletteNodes,
     paletteEmptyMessage,
     validation,

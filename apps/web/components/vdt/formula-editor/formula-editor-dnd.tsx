@@ -3,28 +3,31 @@
 import {
   DndContext,
   DragOverlay,
-  KeyboardSensor,
   PointerSensor,
-  closestCorners,
+  pointerWithin,
   useDraggable,
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
+  type DragMoveEvent,
   type DragOverEvent,
-  type DragStartEvent
+  type DragStartEvent,
+  type UniqueIdentifier
 } from "@dnd-kit/core";
-import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { clsx } from "clsx";
 import { GripVertical } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { VdtNode } from "@vdt-studio/vdt-core";
 import {
   editorTokensToSegments,
   resolveDisplayName,
+  resolveInsertIndexAtCaret,
   type FormulaEditorFunctionName,
   type FormulaEditorOperator,
-  type FormulaEditorSegment
+  type FormulaEditorSegment,
+  type FormulaEditorToken
 } from "./formula-editor-model";
 import { FormulaNodePalette } from "./formula-node-palette";
 import { FormulaOperatorToolbar } from "./formula-operator-toolbar";
@@ -36,11 +39,27 @@ import {
 } from "./formula-sortable-token-row";
 import {
   FORMULA_EDITOR_DROP_ZONE_ID,
-  resolveFormulaInsertIndex
+  getDragPointerCoordinates,
+  resolveFormulaDragInsertIndex,
+  resolveFormulaDropTarget,
+  resolveReorderTargetIndex
 } from "./formula-drag-insert-index";
-import { FormulaInsertIndicator } from "./formula-insert-indicator";
+import { parseFormulaInsertSlotIndex, type FormulaTokenRect } from "./formula-pointer-insert-index";
 
 export { FORMULA_EDITOR_DROP_ZONE_ID } from "./formula-drag-insert-index";
+
+const formulaEditorCollisionDetection: CollisionDetection = (args) => {
+  const collisions = pointerWithin(args);
+  if (collisions.length === 0) {
+    return collisions;
+  }
+
+  const slotCollisions = collisions.filter(
+    (collision) => parseFormulaInsertSlotIndex(String(collision.id)) !== null
+  );
+
+  return slotCollisions.length > 0 ? slotCollisions : collisions;
+};
 
 export const FORMULA_DRAG_TYPE = {
   paletteNode: "palette-node",
@@ -61,11 +80,22 @@ function paletteDraggableId(nodeId: string) {
   return `palette-${nodeId}`;
 }
 
-function FormulaPaletteDraggableNode({ node }: { node: VdtNode }) {
+function FormulaPaletteDraggableNode({
+  node,
+  editorTokens,
+  caretIndex,
+  onInsertReference
+}: {
+  node: VdtNode;
+  editorTokens: FormulaEditorToken[];
+  caretIndex: number;
+  onInsertReference: (nodeId: string, atIndex: number) => void;
+}) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: paletteDraggableId(node.id),
     data: { type: FORMULA_DRAG_TYPE.paletteNode, nodeId: node.id } satisfies PaletteDragData
   });
+  const draggablePointerDown = listeners?.onPointerDown;
 
   return (
     <div ref={setNodeRef} className={clsx("inline-flex", isDragging && "opacity-0")}>
@@ -73,10 +103,21 @@ function FormulaPaletteDraggableNode({ node }: { node: VdtNode }) {
         nodeId={node.id}
         displayName={node.name}
         testId={`formula-palette-node-${node.id}`}
+        insertTestId={`formula-palette-insert-${node.id}`}
+        onBodyClick={() =>
+          onInsertReference(
+            node.id,
+            resolveInsertIndexAtCaret(editorTokens, caretIndex, "reference")
+          )
+        }
         dragHandle={
           <span
             {...attributes}
             {...listeners}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              draggablePointerDown?.(event);
+            }}
             className="inline-flex shrink-0 cursor-grab text-slate-400 active:cursor-grabbing"
             aria-label={`Drag ${node.name} into formula`}
             data-testid={`formula-palette-drag-handle-${node.id}`}
@@ -91,21 +132,49 @@ function FormulaPaletteDraggableNode({ node }: { node: VdtNode }) {
 
 function FormulaEditorDropZone({
   children,
-  className
+  className,
+  caretIndex,
+  onCaretIndexChange
 }: {
   children: ReactNode;
   className?: string;
+  caretIndex: number;
+  onCaretIndexChange: (index: number) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: FORMULA_EDITOR_DROP_ZONE_ID,
     data: { type: "formula-drop-zone" }
   });
 
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("input, textarea, [contenteditable=true]")) {
+      return;
+    }
+
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      return;
+    }
+
+    // Arrow keys move the caret only; reorder is pointer-driven via insert slots.
+    event.stopPropagation();
+
+    if (event.key === "ArrowLeft") {
+      onCaretIndexChange(caretIndex - 1);
+      return;
+    }
+
+    onCaretIndexChange(caretIndex + 1);
+  };
+
   return (
     <div
       ref={setNodeRef}
+      tabIndex={0}
+      aria-label="Formula editor"
+      onKeyDown={handleKeyDown}
       className={clsx(
-        "flex min-h-[40px] flex-wrap items-center gap-1.5 rounded-lg border border-line bg-white p-2",
+        "flex min-h-10 flex-wrap content-start items-center gap-x-1 gap-y-2 rounded-lg border border-line bg-white p-2 outline-none focus-visible:ring-2 focus-visible:ring-blue-200/80",
         isOver && "ring-2 ring-blue-200/80",
         className
       )}
@@ -116,7 +185,8 @@ function FormulaEditorDropZone({
   );
 }
 
-export interface FormulaEditorDndProps extends Omit<FormulaSortableTokenRowProps, "className"> {
+export interface FormulaEditorDndProps
+  extends Omit<FormulaSortableTokenRowProps, "className" | "activeDrag" | "dragInsertIndex"> {
   dndContextId: string;
   paletteNodes: VdtNode[];
   onInsertReference: (nodeId: string, atIndex?: number) => void;
@@ -134,6 +204,8 @@ export function FormulaEditorDnd({
   onRemoveToken,
   onUpdateNumber,
   onInsertReference,
+  caretIndex,
+  onCaretIndexChange,
   isUnknownReference,
   paletteEmptyMessage,
   className,
@@ -141,6 +213,7 @@ export function FormulaEditorDnd({
 }: FormulaEditorDndProps) {
   const [activeDrag, setActiveDrag] = useState<ActiveDragState>(null);
   const [insertIndex, setInsertIndex] = useState<number | null>(null);
+  const tokenElementsRef = useRef(new Map<string, HTMLElement>());
 
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const segments = useMemo(
@@ -148,10 +221,64 @@ export function FormulaEditorDnd({
     [editorTokens, nodesById]
   );
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  const registerTokenElement = useCallback((tokenId: string, element: HTMLElement | null) => {
+    if (element) {
+      tokenElementsRef.current.set(tokenId, element);
+      return;
+    }
+
+    tokenElementsRef.current.delete(tokenId);
+  }, []);
+
+  const collectTokenRects = useCallback(
+    (excludeTokenId?: UniqueIdentifier): FormulaTokenRect[] => {
+      const rects: FormulaTokenRect[] = [];
+
+      for (const token of editorTokens) {
+        if (excludeTokenId !== undefined && token.id === excludeTokenId) {
+          continue;
+        }
+
+        const element = tokenElementsRef.current.get(token.id);
+        if (!element) {
+          continue;
+        }
+
+        const rect = element.getBoundingClientRect();
+        rects.push({
+          id: token.id,
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height
+        });
+      }
+
+      return rects;
+    },
+    [editorTokens]
   );
+
+  const isReorderDrag = useCallback(
+    (activeId: UniqueIdentifier) => editorTokens.some((token) => token.id === activeId),
+    [editorTokens]
+  );
+
+  const resolveDragInsertIndex = useCallback(
+    (event: DragMoveEvent) =>
+      resolveFormulaDragInsertIndex({
+        overId: event.over?.id,
+        editorTokens,
+        pointer: getDragPointerCoordinates(event),
+        tokenRects: collectTokenRects(
+          isReorderDrag(event.active.id) ? event.active.id : undefined
+        )
+      }),
+    [collectTokenRects, editorTokens, isReorderDrag]
+  );
+
+  // Pointer-only: reorder uses slot drops, not sortable keyboard coordinates.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   const handleDragStart = (event: DragStartEvent) => {
     setInsertIndex(null);
@@ -174,19 +301,42 @@ export function FormulaEditorDnd({
   };
 
   const handleDragOver = (event: DragOverEvent) => {
-    setInsertIndex(resolveFormulaInsertIndex(event.over?.id, editorTokens, event.active.id));
+    setInsertIndex(resolveDragInsertIndex(event));
+  };
+
+  const handleDragMove = (event: DragMoveEvent) => {
+    setInsertIndex(resolveDragInsertIndex(event));
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
+    const { active } = event;
+    const trackedInsertIndex = insertIndex;
+    const pointer = getDragPointerCoordinates(event);
+    const tokenRects = collectTokenRects(
+      isReorderDrag(active.id) ? active.id : undefined
+    );
+    let dropTarget = resolveFormulaDropTarget({
+      overId: event.over?.id,
+      editorTokens,
+      pointer,
+      tokenRects
+    });
+
+    const dragType = active.data.current?.type;
+    if (
+      dropTarget.kind === "none" &&
+      trackedInsertIndex !== null &&
+      dragType === FORMULA_DRAG_TYPE.paletteNode
+    ) {
+      dropTarget = { kind: "explicit", index: trackedInsertIndex };
+    }
+
     setActiveDrag(null);
     setInsertIndex(null);
 
-    if (!over) {
+    if (dropTarget.kind === "none") {
       return;
     }
-
-    const dragType = active.data.current?.type;
 
     if (dragType === FORMULA_DRAG_TYPE.paletteNode) {
       const nodeId = String(active.data.current?.nodeId ?? "");
@@ -194,27 +344,29 @@ export function FormulaEditorDnd({
         return;
       }
 
-      if (over.id === FORMULA_EDITOR_DROP_ZONE_ID) {
+      if (dropTarget.kind === "snap") {
         onInsertReference(nodeId);
         return;
       }
 
-      const overTokenIndex = editorTokens.findIndex((token) => token.id === over.id);
-      if (overTokenIndex !== -1) {
-        onInsertReference(nodeId, overTokenIndex);
+      if (dropTarget.kind === "explicit") {
+        onInsertReference(nodeId, dropTarget.index);
       }
 
       return;
     }
 
-    if (active.id === over.id) {
+    const fromIndex = editorTokens.findIndex((token) => token.id === active.id);
+    if (fromIndex === -1) {
       return;
     }
 
-    const fromIndex = editorTokens.findIndex((token) => token.id === active.id);
-    const toIndex = editorTokens.findIndex((token) => token.id === over.id);
+    if (dropTarget.kind !== "explicit") {
+      return;
+    }
 
-    if (fromIndex === -1 || toIndex === -1) {
+    const toIndex = resolveReorderTargetIndex(fromIndex, dropTarget.index);
+    if (fromIndex === toIndex) {
       return;
     }
 
@@ -230,40 +382,45 @@ export function FormulaEditorDnd({
     <DndContext
       id={dndContextId}
       sensors={sensors}
-      collisionDetection={closestCorners}
+      collisionDetection={formulaEditorCollisionDetection}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
+      onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
       <div className={clsx("space-y-3", className)}>
-        <FormulaEditorDropZone {...(dropZoneClassName !== undefined ? { className: dropZoneClassName } : {})}>
-          {segments.length === 0 ? (
-            activeDrag && insertIndex === 0 ? (
-              <FormulaInsertIndicator />
-            ) : (
-              <p className="text-xs text-muted">Drag nodes or use toolbar to build a formula.</p>
-            )
-          ) : (
-            <div className="contents" data-testid="formula-token-row">
-              <FormulaSortableTokenRow
-                editorTokens={editorTokens}
-                nodes={nodes}
-                onReorder={onReorder}
-                onRemoveToken={onRemoveToken}
-                onUpdateNumber={onUpdateNumber}
-                insertIndex={insertIndex}
-                {...(isUnknownReference !== undefined ? { isUnknownReference } : {})}
-                embedded
-              />
-            </div>
-          )}
-          {segments.length > 0 && insertIndex === segments.length ? <FormulaInsertIndicator /> : null}
+        <FormulaEditorDropZone
+          caretIndex={caretIndex}
+          onCaretIndexChange={onCaretIndexChange}
+          {...(dropZoneClassName !== undefined ? { className: dropZoneClassName } : {})}
+        >
+          <FormulaSortableTokenRow
+            editorTokens={editorTokens}
+            nodes={nodes}
+            onReorder={onReorder}
+            onRemoveToken={onRemoveToken}
+            onUpdateNumber={onUpdateNumber}
+            caretIndex={caretIndex}
+            onCaretIndexChange={onCaretIndexChange}
+            activeDrag={activeDrag !== null}
+            dragInsertIndex={insertIndex}
+            registerTokenElement={registerTokenElement}
+            {...(isUnknownReference !== undefined ? { isUnknownReference } : {})}
+            embedded
+          />
         </FormulaEditorDropZone>
 
         <FormulaNodePalette
           nodes={paletteNodes}
-          renderNode={(node) => <FormulaPaletteDraggableNode node={node} />}
+          renderNode={(node) => (
+            <FormulaPaletteDraggableNode
+              node={node}
+              editorTokens={editorTokens}
+              caretIndex={caretIndex}
+              onInsertReference={onInsertReference}
+            />
+          )}
           {...(paletteEmptyMessage !== undefined ? { emptyMessage: paletteEmptyMessage } : {})}
         />
       </div>

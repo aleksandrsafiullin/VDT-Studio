@@ -9,8 +9,10 @@ export interface FormulaReferenceChipProps {
   displayName: string;
   tokenId?: string;
   testId?: string;
+  insertTestId?: string;
   unknownRef?: boolean;
   onRemove?: () => void;
+  onBodyClick?: () => void;
   dragHandle?: ReactNode;
   dragHandleProps?: HTMLAttributes<HTMLElement>;
   className?: string;
@@ -21,8 +23,10 @@ export function FormulaReferenceChip({
   displayName,
   tokenId,
   testId,
+  insertTestId,
   unknownRef = false,
   onRemove,
+  onBodyClick,
   dragHandle,
   dragHandleProps,
   className
@@ -53,9 +57,29 @@ export function FormulaReferenceChip({
           <GripVertical className="h-3.5 w-3.5" />
         </span>
       )}
-      <span className="truncate" title={displayName}>
-        {displayName}
-      </span>
+      {onBodyClick ? (
+        <span
+          role="button"
+          tabIndex={0}
+          className="truncate cursor-pointer"
+          title={displayName}
+          data-testid={insertTestId}
+          aria-label={`Insert ${displayName} at caret`}
+          onClick={onBodyClick}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onBodyClick();
+            }
+          }}
+        >
+          {displayName}
+        </span>
+      ) : (
+        <span className="truncate" title={displayName}>
+          {displayName}
+        </span>
+      )}
       {onRemove ? (
         <button
           type="button"
