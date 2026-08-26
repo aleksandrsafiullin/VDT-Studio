@@ -10,7 +10,6 @@ import {
   answerRecordFromPayloads,
   answerPayloadsFromRecord,
   describeAnswerPayloads,
-  normalizeUserQuestions,
   publicStatusForPhase
 } from "./chat-messages";
 import {
@@ -30,24 +29,25 @@ import {
   rejectPendingMutationProposal
 } from "./mutation-pipeline";
 import { AGENT_DECISION_SYSTEM_PROMPT } from "./prompts/agent-decision";
-import { AGENT_FIRST_RESPONSE_SYSTEM_PROMPT } from "./prompts/agent-first-response";
 import { AgentRunStore } from "./run-store";
 import {
+  agentDecisionSchema,
   AgentDecisionForbiddenFieldsError,
   parseAndGuardAgentDecision,
-  type AgentDecision
+  type AgentDecision,
+  type AgentToolCall
 } from "./schemas/agent-decision";
-import { firstResponseSchema, type FirstResponseInput, type FirstResponseOutput } from "./schemas/agent-first-response";
 import { ToolRegistry, type AgentToolContext } from "./tool-registry";
 import { createDefaultToolRegistry } from "./tools";
 import { validateExcavationProject } from "./tools/excavation-tools";
 import { validateMiningProject } from "./tools/mining-validation";
 import {
+  buildFormulaBacklog,
   summarizeCalculation,
   summarizeEvents,
   summarizeManualChanges,
   summarizeNode,
-  summarizeProject,
+  summarizeProjectForDecision,
   summarizeValidation
 } from "./summaries";
 import type {
@@ -64,9 +64,10 @@ import type {
   VdtAgentStartRequest
 } from "./types";
 
-const MAX_DECISION_REPAIR_ATTEMPTS = 2;
+const MAX_DECISION_REPAIR_ATTEMPTS = 1;
 const MAX_FINISH_REPAIR_ATTEMPTS = 3;
-const rawAgentDecisionProviderSchema = z.unknown();
+const rawAgentDecisionProviderSchema = agentDecisionSchema;
+const FORBIDDEN_BATCH_TOOL_NAMES = new Set(["user.ask", "user.request_approval"]);
 
 export interface AgentDecisionProvider {
   id: string;
@@ -150,6 +151,28 @@ export class VdtAgentRuntime {
       if (message.type !== "manual_project_change") {
         return this.store.getSnapshot(runId);
       }
+    }
+
+    if (message.type === "continue_run") {
+      if (state.status !== "needs_user_input" || state.retryableError?.code !== "MAX_STEPS_EXCEEDED") {
+        return this.store.getSnapshot(runId);
+      }
+      this.store.updateRun(runId, {
+        status: "running",
+        phase: "planning_decomposition",
+        retryableError: undefined,
+        error: undefined
+      });
+      this.store.updatePublicStatus(runId, publicStatusForPhase("planning_decomposition", "Continuing from the saved VDT draft..."));
+      this.emit(runId, {
+        type: "user_answer_received",
+        phase: "planning_decomposition",
+        title: "Run continuation requested",
+        message: "Continuing the agent run from the saved tree.",
+        metadata: { messageType: "continue_run" }
+      });
+      await this.executeRun(runId, execution);
+      return this.store.getSnapshot(runId);
     }
 
     if (message.type === "user_answer") {
@@ -389,11 +412,6 @@ export class VdtAgentRuntime {
   private async executeRun(runId: string, execution: VdtAgentExecutionOptions): Promise<void> {
     try {
       this.ensureBuilder(runId);
-      await this.ensureFirstResponse(runId, execution);
-      const firstResponseState = this.store.getState(runId);
-      if (firstResponseState.status === "needs_user_input" || firstResponseState.status === "waiting_approval") {
-        return;
-      }
       await this.runDecisionLoop(runId, execution);
     } catch (error) {
       const state = this.store.getState(runId);
@@ -412,77 +430,6 @@ export class VdtAgentRuntime {
         );
       }
     }
-  }
-
-  private async ensureFirstResponse(runId: string, execution: VdtAgentExecutionOptions): Promise<void> {
-    const state = this.store.getState(runId);
-    if (state.firstResponseCompleted) return;
-    if (!execution.provider) {
-      throw new Error("Agent mode requires a configured AI provider.");
-    }
-
-    const input = this.buildFirstResponseInput(runId);
-    this.emit(runId, {
-      type: "tool_call_started",
-      phase: "classifying_request",
-      title: "First response requested",
-      message: "Asked the orchestrator to write the first visible response.",
-      metadata: { taskType: "orchestrator_first_response", providerId: execution.provider.id }
-    });
-
-    const raw = await execution.provider.completeStructured<FirstResponseInput, FirstResponseOutput>({
-      taskType: "orchestrator_first_response",
-      input,
-      schema: firstResponseSchema,
-      systemPrompt: AGENT_FIRST_RESPONSE_SYSTEM_PROMPT,
-      userPrompt: JSON.stringify(input, null, 2),
-      temperature: 0.2,
-      maxTokens: Math.min(execution.maxTokens ?? 2_000, 2_000),
-      signal: state.abortController.signal
-    });
-    const firstResponse = firstResponseSchema.parse(raw);
-    const questions = normalizeUserQuestions(firstResponse.questions ?? []);
-
-    this.store.appendChatMessage(runId, {
-      role: "assistant",
-      kind: "assistant_message",
-      text: firstResponse.assistantMessage
-    });
-    this.store.updatePublicStatus(runId, firstResponse.publicStatus);
-    this.emit(runId, {
-      type: "assistant_message",
-      phase: "classifying_request",
-      title: "Assistant message",
-      message: firstResponse.assistantMessage,
-      metadata: { taskType: "orchestrator_first_response", nextAction: firstResponse.nextAction }
-    });
-
-    if (firstResponse.nextAction === "ask_user" && questions.length > 0) {
-      this.store.updateRun(runId, {
-        status: "needs_user_input",
-        phase: "asking_clarifying_questions",
-        pendingQuestions: questions,
-        firstResponseCompleted: true
-      });
-      this.store.appendChatMessage(runId, {
-        role: "assistant",
-        kind: "question",
-        questions
-      });
-      this.store.updatePublicStatus(runId, publicStatusForPhase("asking_clarifying_questions", "Waiting for your answer."));
-      this.emit(runId, {
-        type: "clarifying_questions",
-        phase: "asking_clarifying_questions",
-        title: "Clarifying questions",
-        message: `Agent needs ${questions.length} answer${questions.length === 1 ? "" : "s"} before continuing.`,
-        questions
-      });
-      return;
-    }
-
-    this.store.updateRun(runId, {
-      firstResponseCompleted: true
-    });
   }
 
   private async runDecisionLoop(runId: string, execution: VdtAgentExecutionOptions): Promise<void> {
@@ -512,13 +459,7 @@ export class VdtAgentRuntime {
       if (outcome === "paused" || outcome === "finished") return;
     }
 
-    this.failRun(
-      runId,
-      new Error("Agent exceeded maxSteps."),
-      "MAX_STEPS_EXCEEDED",
-      "Agent stopped",
-      "Agent exceeded the maximum number of allowed steps."
-    );
+    this.pauseForMaxSteps(runId, maxSteps);
   }
 
   private async handleRetryLastStep(
@@ -619,6 +560,8 @@ export class VdtAgentRuntime {
         }
       });
 
+      const startedAt = Date.now();
+      let attemptRecorded = false;
       try {
         const raw = await execution.provider.completeStructured<AgentDecisionContext, unknown>({
           taskType: "agent_decision",
@@ -630,6 +573,8 @@ export class VdtAgentRuntime {
           maxTokens: execution.maxTokens,
           signal: state.abortController.signal
         });
+        this.recordLlmDecisionAttempt(runId, startedAt, raw, attempt > 0);
+        attemptRecorded = true;
         const decision = parseAndGuardAgentDecision(raw);
 
         this.emit(runId, {
@@ -638,6 +583,8 @@ export class VdtAgentRuntime {
           title: "AI decision received",
           message: decision.type === "call_tool"
             ? `AI chose tool ${decision.toolName}.`
+            : decision.type === "call_tools"
+              ? `AI chose ${decision.calls.length} sequential tool calls.`
             : decision.type === "ask_user"
               ? "AI chose to ask the user for clarification."
               : "AI chose to finish the run.",
@@ -645,12 +592,14 @@ export class VdtAgentRuntime {
             taskType: "agent_decision",
             decisionType: decision.type,
             toolName: decision.type === "call_tool" ? decision.toolName : undefined,
+            toolNames: decision.type === "call_tools" ? decision.calls.map((call) => call.toolName) : undefined,
             repairAttempt: attempt
           }
         });
 
         return decision;
       } catch (error) {
+        if (!attemptRecorded) this.recordLlmDecisionAttempt(runId, startedAt, undefined, attempt > 0);
         if (!isAgentDecisionRepairableError(error)) {
           throw error;
         }
@@ -684,6 +633,7 @@ export class VdtAgentRuntime {
     _execution: VdtAgentExecutionOptions
   ): Promise<"continue" | "paused" | "finished"> {
     if (decision.type === "ask_user") {
+      this.incrementToolCallCount(runId);
       await this.tools.run("user.ask", { questions: decision.questions }, this.toolContext(runId));
       return "paused";
     }
@@ -693,22 +643,60 @@ export class VdtAgentRuntime {
       return finished ? "finished" : "continue";
     }
 
-    const toolResult = await this.tools.run(decision.toolName, decision.args, this.toolContext(runId));
+    if (decision.type === "call_tools") {
+      const state = this.store.getState(runId);
+      const forbiddenTool = decision.calls.find((call) => FORBIDDEN_BATCH_TOOL_NAMES.has(call.toolName));
+      if (state.request.mode === "deepen_node" || forbiddenTool) {
+        this.appendFeedback(runId, createStructuredFeedback({
+          kind: "business_rule_failed",
+          severity: "error",
+          message: state.request.mode === "deepen_node"
+            ? "deepen_node accepts exactly one tool call per decision."
+            : `${forbiddenTool?.toolName ?? "Interactive tools"} cannot be queued inside call_tools.`,
+          target: { taskType: "agent_decision" },
+          expected: state.request.mode === "deepen_node"
+            ? "Return call_tool with one immediate-child mutation."
+            : "Return ask_user separately; mutation approval is created by the mutation pipeline.",
+          retryable: true
+        }));
+        return "continue";
+      }
+
+      for (const call of decision.calls) {
+        const outcome = await this.executeToolCall(runId, call);
+        if (outcome === "paused") return "paused";
+        if (outcome === "stop") return "continue";
+      }
+      return "continue";
+    }
+
+    const outcome = await this.executeToolCall(runId, decision);
+    return outcome === "paused" ? "paused" : "continue";
+  }
+
+  private async executeToolCall(
+    runId: string,
+    call: AgentToolCall
+  ): Promise<"continue" | "stop" | "paused"> {
+    this.incrementToolCallCount(runId);
+    const toolResult = await this.tools.run(call.toolName, call.args, this.toolContext(runId));
     if (!toolResult.ok) {
       const state = this.store.getState(runId);
       const feedback = feedbackFromToolEnvelope(toolResult, {
         hasNonemptyGraph: hasNonemptyGraph(state)
       });
       if (feedback) this.appendFeedback(runId, feedback);
-      return "continue";
+      return "stop";
     }
-    if (toolResult.ok && (toolResult.projectChanged || isGraphMutationTool(decision.toolName))) {
+    if (toolResult.projectChanged || isGraphMutationTool(call.toolName)) {
       await this.validateAfterMutation(runId, {
-        includeSkillValidations: decision.toolName.startsWith("excavation.")
+        includeSkillValidations: call.toolName.startsWith("excavation.")
       });
       this.store.updateRun(runId, { repairAttemptCount: undefined });
     }
 
+    const state = this.store.getState(runId);
+    if (state.status === "needs_user_input" || state.status === "waiting_approval") return "paused";
     return "continue";
   }
 
@@ -717,10 +705,14 @@ export class VdtAgentRuntime {
     const message = decision.statusMessage.trim();
     if (!message) return;
     const state = this.store.getState(runId);
+    const isFirstAgentMessage = !state.firstResponseCompleted;
     const updated = this.store.updatePublicStatus(runId, publicStatusForPhase(state.phase, message));
+    if (isFirstAgentMessage) {
+      this.store.updateRun(runId, { firstResponseCompleted: true });
+    }
     this.store.appendChatMessage(runId, {
       role: "assistant",
-      kind: "status",
+      kind: isFirstAgentMessage ? "assistant_message" : "status",
       text: message,
       status: updated.publicStatus
     });
@@ -739,6 +731,12 @@ export class VdtAgentRuntime {
     const selectedNodeId = state.request.input.selectedNodeId;
     const continuationPolicy = continuationPolicyFromState(state);
     const guidance = [continuationPolicy.guidance, state.decisionGuidance].filter(Boolean).join(" ");
+    const formulaBacklog = project ? buildFormulaBacklog(project) : [];
+    const priorityNodeIds = [
+      ...(state.progressiveBuild?.frontierNodeIds ?? []),
+      ...(selectedNodeId ? [selectedNodeId] : []),
+      ...recentNodeIdsFromEvents(state.events)
+    ];
     return {
       runId,
       mode: state.request.mode,
@@ -749,7 +747,8 @@ export class VdtAgentRuntime {
       continuationPolicy: guidance
         ? { ...continuationPolicy, guidance }
         : continuationPolicy,
-      currentProject: project ? summarizeProject(project) : undefined,
+      currentProject: project ? summarizeProjectForDecision(project, priorityNodeIds) : undefined,
+      formulaBacklog,
       selectedNode: project && selectedNodeId ? summarizeNode(project, selectedNodeId) : undefined,
       selectedSkills: state.selectedSkills,
       domainPolicies: policySummaryForRun(state),
@@ -772,51 +771,14 @@ export class VdtAgentRuntime {
       validationState: state.validationState,
       calculationState: state.calculationState,
       constraints: {
-        maxOneToolCallPerDecision: true,
+        maxOneToolCallPerDecision: state.request.mode === "deepen_node",
+        maxToolCallsPerDecision: state.request.mode === "deepen_node" ? 1 : 6,
         mustUseToolsForGraphChanges: true,
         cannotReturnFullGraph: true,
         cannotExposeHiddenReasoning: true,
         mustUseFeedbackBeforeRetry: true,
         singleLayerDecompositionOnly: state.request.mode === "deepen_node"
       }
-    };
-  }
-
-  private buildFirstResponseInput(runId: string): FirstResponseInput {
-    const state = this.store.getState(runId);
-    const project = effectiveProject(state);
-    const rootNode = project?.graph.nodes.find((node) => node.id === project.rootNodeId);
-    const selectedNode = state.request.input.selectedNodeId
-      ? project?.graph.nodes.find((node) => node.id === state.request.input.selectedNodeId)
-      : undefined;
-    const lastUserMessage = [...state.chatMessages].reverse().find((message) => message.role === "user");
-    return {
-      requestMode: state.request.mode,
-      brief: state.visibleContext.brief,
-      briefReadiness: briefReadinessFromState(state),
-      continuationPolicy: continuationPolicyFromState(state),
-      currentUserMessage: lastUserMessage?.text ?? state.request.input.prompt ?? state.request.input.businessContext ?? state.visibleContext.brief.rootKpi,
-      ...(project && rootNode
-        ? {
-            currentProjectSummary: {
-              title: project.name,
-              rootNodeName: rootNode.name,
-              ...(rootNode.unit ? { unit: rootNode.unit } : {})
-            }
-          }
-        : {}),
-      ...(selectedNode
-        ? {
-            selectedNode: {
-              id: selectedNode.id,
-              name: selectedNode.name
-            }
-          }
-        : {}),
-      visibleChatSummary: state.chatMessages
-        .slice(-8)
-        .map((message) => `${message.role}: ${message.text ?? message.kind}`)
-        .join("\n")
     };
   }
 
@@ -930,6 +892,13 @@ export class VdtAgentRuntime {
       }
     }
 
+    if (!isSingleLayerDecomposition) {
+      const formulaBacklog = buildFormulaBacklog(project);
+      if (formulaBacklog.length > 0) {
+        throw new Error(`Cannot finish: calculated nodes still need formulas: ${formulaBacklog.map((item) => item.nodeId).join(", ")}.`);
+      }
+    }
+
     const validation = this.validateProjectForRun(runId, project);
     if (!validation.valid) {
       this.store.updateRun(runId, { phase: "repairing_graph", validationState: validation });
@@ -968,7 +937,8 @@ export class VdtAgentRuntime {
       finalReport: decision.summary,
       completedAt: new Date().toISOString(),
       validationState: validation,
-      calculationState: calculationSummary
+      calculationState: calculationSummary,
+      firstResponseCompleted: true
     });
     this.store.appendChatMessage(runId, {
       role: "assistant",
@@ -1035,6 +1005,59 @@ export class VdtAgentRuntime {
     });
   }
 
+  private recordLlmDecisionAttempt(
+    runId: string,
+    startedAt: number,
+    output: unknown,
+    repair: boolean
+  ): void {
+    const state = this.store.getState(runId);
+    const telemetry = state.performanceTelemetry;
+    this.store.updateRun(runId, {
+      performanceTelemetry: {
+        decisionLatenciesMs: [...telemetry.decisionLatenciesMs, Math.max(0, Date.now() - startedAt)],
+        toolCallCount: telemetry.toolCallCount,
+        outputBytes: telemetry.outputBytes + serializedByteLength(output),
+        repairCount: telemetry.repairCount + (repair ? 1 : 0)
+      }
+    });
+    this.refreshPerformanceSummary(runId);
+  }
+
+  private incrementToolCallCount(runId: string): void {
+    const state = this.store.getState(runId);
+    this.store.updateRun(runId, {
+      performanceTelemetry: {
+        ...state.performanceTelemetry,
+        toolCallCount: state.performanceTelemetry.toolCallCount + 1
+      }
+    });
+    this.refreshPerformanceSummary(runId);
+  }
+
+  private refreshPerformanceSummary(runId: string): void {
+    const state = this.store.getState(runId);
+    const latencies = [...state.performanceTelemetry.decisionLatenciesMs].sort((left, right) => left - right);
+    const model = providerModelFromRequest(state.request);
+    this.store.updateRun(runId, {
+      performanceSummary: {
+        providerId: state.request.providerId,
+        ...(model ? { model } : {}),
+        wallClockMs: Math.max(0, Date.now() - Date.parse(state.createdAt)),
+        llmDecisionCount: latencies.length,
+        toolCallCount: state.performanceTelemetry.toolCallCount,
+        ...(latencies.length > 0
+          ? {
+              decisionLatencyP50Ms: percentileNearestRank(latencies, 0.5),
+              decisionLatencyP95Ms: percentileNearestRank(latencies, 0.95)
+            }
+          : {}),
+        outputBytes: state.performanceTelemetry.outputBytes,
+        repairCount: state.performanceTelemetry.repairCount
+      }
+    });
+  }
+
   private pauseForFinishRepairInput(runId: string, message: string, repairAttemptCount: number): void {
     const state = this.store.getState(runId);
     if (state.status === "cancelled" || state.status === "failed" || state.status === "succeeded") return;
@@ -1072,6 +1095,7 @@ export class VdtAgentRuntime {
     title: string,
     completionMessage: string
   ): void {
+    this.refreshPerformanceSummary(runId);
     const state = this.store.getState(runId);
     if (state.status === "cancelled") return;
     const message = error instanceof Error ? error.message : "Agent run failed.";
@@ -1154,6 +1178,7 @@ export class VdtAgentRuntime {
   }
 
   private pauseForRetryableError(runId: string, error: unknown): void {
+    this.refreshPerformanceSummary(runId);
     const state = this.store.getState(runId);
     if (state.status === "cancelled") return;
     const message = error instanceof Error ? error.message : "Backend execution timed out.";
@@ -1189,6 +1214,42 @@ export class VdtAgentRuntime {
       title: userMessage.title,
       message,
       metadata: { code: retryableError.code, retryable: true, retryCount }
+    });
+  }
+
+  private pauseForMaxSteps(runId: string, maxSteps: number): void {
+    this.refreshPerformanceSummary(runId);
+    const state = this.store.getState(runId);
+    if (state.status === "cancelled" || state.status === "failed" || state.status === "succeeded") return;
+    const project = state.builder?.getProject() ?? state.draftProject;
+    const retryCount = (state.retryableError?.retryCount ?? 0) + 1;
+    this.store.updateRun(runId, {
+      status: "needs_user_input",
+      phase: "reporting",
+      error: undefined,
+      retryableError: {
+        code: "MAX_STEPS_EXCEEDED",
+        message: `Agent reached the ${maxSteps}-step safety limit.`,
+        retryCount,
+        createdAt: new Date().toISOString()
+      },
+      ...(project && project.graph.nodes.length > 0 ? { draftProject: project, project } : {})
+    });
+    this.store.appendChatMessage(runId, {
+      role: "assistant",
+      kind: "retryable_error",
+      text: "The safety step limit was reached. The current VDT draft was saved and can be continued."
+    });
+    this.store.updatePublicStatus(runId, {
+      phase: "retryable_error",
+      message: "Step limit reached. Continue from the saved draft when ready."
+    });
+    this.emit(runId, {
+      type: "error",
+      phase: "reporting",
+      title: "Step limit reached",
+      message: `Paused after ${maxSteps} steps with the current tree saved.`,
+      metadata: { code: "MAX_STEPS_EXCEEDED", retryable: true, retryCount }
     });
   }
 
@@ -1446,6 +1507,31 @@ function answersToContext(answers: Record<string, string | number | string[]>): 
     .join("\n");
 }
 
+function serializedByteLength(value: unknown): number {
+  if (value === undefined) return 0;
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  } catch {
+    return 0;
+  }
+}
+
+function percentileNearestRank(sortedValues: readonly number[], percentile: number): number {
+  if (sortedValues.length === 0) return 0;
+  const index = Math.max(0, Math.ceil(percentile * sortedValues.length) - 1);
+  return sortedValues[Math.min(index, sortedValues.length - 1)] ?? 0;
+}
+
+function providerModelFromRequest(request: VdtAgentStartRequest): string | undefined {
+  const config = request.providerConfig;
+  if (!config) return undefined;
+  for (const key of ["model", "modelId", "deployment", "deploymentName"] as const) {
+    const value = config[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
 function pendingApprovalRequestText(state: VdtAgentRunState): string {
   const latestApprovalEvent = [...state.events]
     .reverse()
@@ -1470,7 +1556,29 @@ function summarizeProgressiveBuild(state: VdtAgentRunState["progressiveBuild"]):
   };
 }
 
-function briefReadinessFromState(state: VdtAgentRunState): FirstResponseInput["briefReadiness"] {
+function recentNodeIdsFromEvents(events: VdtAgentRunState["events"]): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: unknown): void => {
+    if (typeof value !== "string" || !value || seen.has(value)) return;
+    seen.add(value);
+    ids.push(value);
+  };
+  for (const event of events.slice(-12).reverse()) {
+    const metadata = event.metadata;
+    if (!metadata) continue;
+    add(metadata.nodeId);
+    add(metadata.targetNodeId);
+    add(metadata.rootNodeId);
+    for (const key of ["nodeIds", "createdNodeIds", "frontierNodeIds"] as const) {
+      const values = metadata[key];
+      if (Array.isArray(values)) values.forEach(add);
+    }
+  }
+  return ids;
+}
+
+function briefReadinessFromState(state: VdtAgentRunState): AgentDecisionContext["briefReadiness"] {
   const rootKpiIsPlaceholder = isPlaceholderRootKpi(state.visibleContext.brief.rootKpi);
   return {
     rootKpiIsPlaceholder,

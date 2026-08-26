@@ -365,6 +365,80 @@ describe("local runtime contract", () => {
     });
   });
 
+  it("runs agent-decision-v2 through the same mock backend contract", async () => {
+    const context = createLocalRuntimeContext({ auditSink: () => undefined });
+    const request = parseCompletionPayload({
+      requestId: crypto.randomUUID(),
+      backendId: "mock",
+      taskType: "agent_decision",
+      schemaId: "agent-decision-v2",
+      input: {
+        data: {
+          runId: "run-v2",
+          currentProject: { nodes: [] },
+          recentEvents: [],
+          userAnswers: {}
+        },
+        systemPrompt: "Return one v2 agent decision.",
+        userPrompt: "Build a VDT for ore haulage."
+      }
+    });
+
+    const result = await completeRuntime(request, context);
+
+    expect(result.statusCode).toBe(200);
+    expect(result.payload).toMatchObject({
+      ok: true,
+      output: {
+        type: "call_tools",
+        calls: [
+          { toolName: "skill.search" },
+          { toolName: "skill.read" },
+          { toolName: "skill.compile_recipe" }
+        ]
+      },
+      run: { taskType: "agent_decision", schemaId: "agent-decision-v2", status: "succeeded" }
+    });
+  });
+
+  it("returns the complete v2 haulage build as one six-call batch", async () => {
+    const context = createLocalRuntimeContext({ auditSink: () => undefined });
+    const request = parseCompletionPayload({
+      requestId: crypto.randomUUID(),
+      backendId: "mock",
+      taskType: "agent_decision",
+      schemaId: "agent-decision-v2",
+      input: {
+        data: {
+          runId: "run-v2-build",
+          currentProject: { nodes: [{ id: "ore_haulage" }] },
+          recentEvents: ["skill.search", "skill.read", "skill.compile_recipe"].map((toolName) => ({ metadata: { toolName } })),
+          userAnswers: { payload_per_trip_t: "40 tonnes", operating_hours: "4000 hours/year" }
+        },
+        systemPrompt: "Return one v2 agent decision.",
+        userPrompt: "Continue the ore haulage VDT."
+      }
+    });
+
+    const result = await completeRuntime(request, context);
+
+    expect(result.statusCode).toBe(200);
+    expect(result.payload).toMatchObject({
+      ok: true,
+      output: {
+        type: "call_tools",
+        calls: [
+          { toolName: "vdt.add_drivers_batch" },
+          { toolName: "vdt.add_drivers_batch" },
+          { toolName: "vdt.add_drivers_batch" },
+          { toolName: "vdt.add_drivers_batch" },
+          { toolName: "vdt.add_driver" },
+          { toolName: "vdt.set_formula" }
+        ]
+      }
+    });
+  });
+
   it("runs orchestrator_first_response through the mock backend contract", async () => {
     const context = createLocalRuntimeContext({ auditSink: () => undefined });
     const request = parseCompletionPayload({

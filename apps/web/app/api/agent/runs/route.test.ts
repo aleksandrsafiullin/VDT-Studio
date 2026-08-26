@@ -3,14 +3,24 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLocalRuntimeContext, AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/server-runtime";
+import type { AgentCapabilityProfile } from "@vdt-studio/vdt-agent-runtime";
+import { VdtBuilderSession } from "@vdt-studio/vdt-core";
 import { VdtStorageError } from "@vdt-studio/storage";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { POST as startRun } from "./route";
+import { GET as getExecutionBindings, POST as startRun } from "./route";
 import { GET as getRun } from "./[runId]/route";
 import { GET as getEvents } from "./[runId]/events/route";
 import { POST as postMessage } from "./[runId]/messages/route";
 import { POST as cancelRun } from "./[runId]/cancel/route";
-import { agentRuntime } from "./runtime";
+import { agentExecutionBindingRegistry, agentRuntime } from "./runtime";
+import { DEFAULT_MODEL_AGENT_EXECUTION_BINDING_ID } from "./execution-bindings";
+import {
+  buildModelProviderTurnPayload,
+  currentModelAgentToolCatalogHash,
+  deriveModelAgentSessionBindingId,
+  isStructuredModelAgentRunActive,
+  resetActiveSupervisorRunsForTests
+} from "./supervisor-runtime";
 
 const fakeCodex = fileURLToPath(new URL("../../../../../../packages/local-runner/src/server/fixtures/fake-codex.cjs", import.meta.url));
 const runtimeGlobal = globalThis as typeof globalThis & {
@@ -27,6 +37,15 @@ function jsonRequest(url: string, body: unknown, init?: RequestInit) {
   });
 }
 
+function openAiStructuredResponse(output: unknown): Response {
+  return new Response(JSON.stringify({
+    choices: [{ message: { content: JSON.stringify(output) } }]
+  }), {
+    status: 200,
+    headers: { "content-type": "application/json" }
+  });
+}
+
 async function readJson(response: Response) {
   return await response.json() as {
     schemaVersion?: string;
@@ -36,7 +55,27 @@ async function readJson(response: Response) {
     snapshot?: {
       runId: string;
       status: string;
-      request?: { workspace?: { vdtId?: string } };
+      request?: {
+        executionBindingId?: string;
+        providerConfig?: Record<string, unknown>;
+        workspace?: { vdtId?: string };
+      };
+      executionSummary?: {
+        executionProfile: string;
+        engineAdapterId: string;
+        backendId: string;
+        modelId: string;
+        protocolVersion: string;
+        cliVersion: string | null;
+        toolIsolation: string;
+        qualificationStatus: string;
+        capabilityEvidenceHash: string | null;
+        capabilityProfileHash: string;
+        toolCatalogHash: string;
+        sessionStatus?: string;
+        recoveryStatus?: string;
+        sessionEpoch?: number;
+      };
       visibleContext?: { brief?: { businessContext?: string } };
       pendingQuestions?: Array<{ id: string }>;
       selectedSkills: Array<{ id: string }>;
@@ -75,7 +114,14 @@ async function waitForRunSnapshot(
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error(`Timed out waiting for agent run "${runId}".`);
+  const state = agentRuntime.store.getState(runId);
+  throw new Error(`Timed out waiting for agent run "${runId}": ${JSON.stringify({
+    status: state.status,
+    error: state.error,
+    pendingQuestions: state.pendingQuestions?.map((question) => question.id),
+    lastToolResult: state.lastToolResult,
+    durableTail: state.supervisorPersistenceV2?.eventOutbox?.slice(-4)
+  })}`);
 }
 
 async function waitForManagedRuntimeRun() {
@@ -96,6 +142,22 @@ async function waitForManagedRuntimeCancelled() {
   throw new Error("Timed out waiting for managed runtime cancellation.");
 }
 
+async function waitForProviderCalls(providerFetch: { mock: { calls: unknown[][] } }, count: number) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    if (providerFetch.mock.calls.length >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${count} provider call${count === 1 ? "" : "s"}.`);
+}
+
+async function waitForSupervisorReleased(runId: string) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (!isStructuredModelAgentRunActive(runId)) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for Supervisor lifecycle cleanup for ${runId}.`);
+}
+
 beforeEach(() => {
   vi.stubEnv("VDT_APP_MODE", "development_web");
 });
@@ -103,10 +165,813 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  resetActiveSupervisorRunsForTests();
   delete runtimeGlobal.__vdtStudioDevelopmentRuntime;
 });
 
 describe("agent runs API", () => {
+  it("publishes only read-only binding summaries and selects the server default by opaque ID", async () => {
+    const response = getExecutionBindings();
+    const body = await response.json() as {
+      schemaVersion: number;
+      ok: boolean;
+      defaultBindingId: string | null;
+      bindings: Array<Record<string, unknown>>;
+    };
+
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(body).toMatchObject({
+      schemaVersion: 1,
+      ok: true,
+      defaultBindingId: DEFAULT_MODEL_AGENT_EXECUTION_BINDING_ID,
+      bindings: [expect.objectContaining({
+        bindingId: DEFAULT_MODEL_AGENT_EXECUTION_BINDING_ID,
+        executionProfile: "model_agent",
+        engineAdapterId: "http-structured-replay-canary-v1",
+        backendId: "mock",
+        modelId: "deterministic-test-model"
+      })]
+    });
+    expect(JSON.stringify(body)).not.toMatch(/apiKey|executable|providerConfig|securityConfig/);
+  });
+
+  it("serializes the initial delta once and keeps later continuation prompts bounded", () => {
+    const marker = `large-context-${"x".repeat(32_000)}`;
+    const contextHash = `sha256:${"a".repeat(64)}`;
+    const payload = buildModelProviderTurnPayload({
+      exchangeId: "exchange-1",
+      stableCallKey: "turn-1",
+      previousCursor: null,
+      delta: {
+        type: "initial_context",
+        context: { marker, project: { nodes: [{ id: "root" }] } },
+        contextHash
+      }
+    });
+
+    expect(payload.input).toEqual({
+      exchangeId: "exchange-1",
+      stableCallKey: "turn-1",
+      previousCursor: null,
+      deltaType: "initial_context"
+    });
+    expect(payload.input).not.toHaveProperty("delta");
+    expect(payload.userPrompt.split(marker)).toHaveLength(2);
+
+    const secondPayload = buildModelProviderTurnPayload({
+      exchangeId: "exchange-2",
+      stableCallKey: "turn-2",
+      previousCursor: "cursor-1",
+      delta: {
+        type: "tool_results",
+        batchId: "batch-1",
+        results: [{ status: "succeeded", resultHash: `sha256:${"b".repeat(64)}` }]
+      }
+    }, {
+      schemaVersion: 1,
+      contextHash,
+      confirmedTurnCount: 1,
+      lastConfirmed: {
+        exchangeId: "exchange-1",
+        stableCallKey: "turn-1",
+        cursor: "cursor-1",
+        inputHash: `sha256:${"c".repeat(64)}`,
+        outputHash: `sha256:${"d".repeat(64)}`
+      },
+      semanticState: "Goal: build Ore hauled VDT. Confirmed: initial brief. Pending: apply the first tool batch."
+    });
+    const secondPrompt = JSON.parse(secondPayload.userPrompt) as Record<string, unknown>;
+    expect(secondPrompt).not.toHaveProperty("initialContext");
+    expect(secondPrompt).not.toHaveProperty("project");
+    expect(secondPrompt).toMatchObject({
+      sessionContinuation: {
+        semanticState: "Goal: build Ore hauled VDT. Confirmed: initial brief. Pending: apply the first tool batch."
+      }
+    });
+    expect(secondPayload.userPrompt).not.toContain(marker);
+    expect(secondPayload.userPrompt).not.toContain('"initialContext"');
+    expect(secondPayload.userPrompt).not.toContain('"project"');
+    expect(new TextEncoder().encode(secondPayload.userPrompt).byteLength).toBeLessThan(2_048);
+    expect(deriveModelAgentSessionBindingId("binding", "run-a")).not.toBe(
+      deriveModelAgentSessionBindingId("binding", "run-b")
+    );
+  });
+
+  it("resolves a binding-only start on the server and persists its authoritative execution identity", async () => {
+    const hash = `sha256:${"b".repeat(64)}`;
+    const capability: Extract<AgentCapabilityProfile, { executionProfile: "model_agent" }> = {
+      schemaVersion: 1,
+      executionProfile: "model_agent",
+      engineId: "in-product-model-agent",
+      engineAdapterId: "legacy-micro-cli-compat-test-v1",
+      backendId: "mock",
+      protocolVersion: "structured-turn-v1",
+      sessionStrategy: "structured_turn",
+      toolCatalogHash: hash,
+      toolIsolation: "permission_only",
+      qualification: {
+        status: "unverified",
+        platform: { os: "test", arch: "test", runtimeVersion: "node-test" },
+        testedAt: null,
+        evidenceHash: null
+      },
+      supportsNativeSession: false,
+      supportsResume: false,
+      supportsStructuredEvents: true,
+      supportsToolBridge: true,
+      supportsQuestions: true,
+      supportsCancellation: true,
+      supportsUsageMetrics: true,
+      cli: null
+    };
+    const bindingId = `model_agent_route_${Date.now()}`;
+    const dispose = agentExecutionBindingRegistry.register({
+      bindingId,
+      enabled: true,
+      modelId: "mock-model-server-owned",
+      capability,
+      legacyCompatibilityAdapter: {
+        providerId: "mock",
+        providerConfig: { maxTokens: 1_234, apiKey: "server-secret-must-not-echo" }
+      }
+    });
+
+    try {
+      const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+        mode: "generate_vdt",
+        input: { rootKpi: "Ore hauled" },
+        executionBindingId: bindingId
+      }));
+      const body = await readJson(response);
+
+      expect(response.status).toBe(200);
+      expect(body.snapshot?.request).toMatchObject({ executionBindingId: bindingId });
+      expect(body.snapshot?.request?.providerConfig).toBeUndefined();
+      expect(body.snapshot?.executionSummary).toMatchObject({
+        executionProfile: "model_agent",
+        engineAdapterId: "legacy-micro-cli-compat-test-v1",
+        backendId: "mock",
+        modelId: "mock-model-server-owned",
+        protocolVersion: "structured-turn-v1",
+        cliVersion: null,
+        toolIsolation: "permission_only",
+        qualificationStatus: "unverified",
+        capabilityEvidenceHash: null,
+        capabilityProfileHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+        toolCatalogHash: hash
+      });
+      expect(agentRuntime.store.getState(body.runId!).executionSummary).toMatchObject(
+        body.snapshot?.executionSummary ?? {}
+      );
+    } finally {
+      dispose();
+    }
+  });
+
+  it("runs a binding-only Model Agent through one Supervisor session and resumes it with deltas", async () => {
+    const toolCatalogHash = currentModelAgentToolCatalogHash();
+    const capability: Extract<AgentCapabilityProfile, { executionProfile: "model_agent" }> = {
+      schemaVersion: 1,
+      executionProfile: "model_agent",
+      engineId: "in-product-model-agent",
+      engineAdapterId: "http-structured-turn-test-v1",
+      backendId: "openai_compatible",
+      protocolVersion: "structured-turn-v1",
+      sessionStrategy: "structured_turn",
+      toolCatalogHash,
+      toolIsolation: "permission_only",
+      qualification: {
+        status: "unverified",
+        platform: { os: "test", arch: "test", runtimeVersion: "node-test" },
+        testedAt: null,
+        evidenceHash: null
+      },
+      supportsNativeSession: false,
+      supportsResume: false,
+      supportsStructuredEvents: true,
+      supportsToolBridge: true,
+      supportsQuestions: true,
+      supportsCancellation: true,
+      supportsUsageMetrics: false,
+      cli: null
+    };
+    const firstTurn = {
+      turnId: "turn-1",
+      sessionState: "Goal: build Ore hauled VDT. Pending: confirm reporting period before graph work.",
+      assistantMessage: {
+        messageId: "message-1",
+        text: "I will build the VDT in this bound session."
+      },
+      action: {
+        type: "question",
+        messageId: "question-message-1",
+        questionSetId: "question-set-1",
+        questions: [{
+          id: "period",
+          question: "Which reporting period should I use?",
+          reason: "The root formula needs one time basis.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    };
+    const secondTurn = {
+      turnId: "turn-2",
+      sessionState: "Goal: build Ore hauled VDT. Reporting period confirmed. Pending: confirm root unit.",
+      assistantMessage: {
+        messageId: "message-2",
+        text: "I kept the same session and received the reporting period."
+      },
+      action: {
+        type: "question",
+        messageId: "question-message-2",
+        questionSetId: "question-set-2",
+        questions: [{
+          id: "unit",
+          question: "Which root unit should I use?",
+          reason: "The calculation must have a consistent unit.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    };
+    const providerFetch = vi.fn()
+      .mockResolvedValueOnce(openAiStructuredResponse(firstTurn))
+      .mockResolvedValueOnce(openAiStructuredResponse(secondTurn))
+      .mockResolvedValueOnce(openAiStructuredResponse(firstTurn));
+    vi.stubGlobal("fetch", providerFetch);
+
+    const bindingId = `structured_model_route_${Date.now()}`;
+    const dispose = agentExecutionBindingRegistry.register({
+      bindingId,
+      enabled: true,
+      modelId: "server-owned-model",
+      capability,
+      modelEngineAdapter: {
+        providerId: "openai_compatible",
+        providerConfig: {
+          baseUrl: "https://models.example.test/v1",
+          apiKey: "server-secret-must-not-echo",
+          model: "server-owned-model"
+        },
+        maxTokens: 4_000
+      }
+    });
+
+    try {
+      const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+        mode: "generate_vdt",
+        input: { rootKpi: "Ore hauled", prompt: "Build an Ore hauled VDT." },
+        executionBindingId: bindingId
+      }));
+      const body = await readJson(response);
+      expect(response.status).toBe(200);
+      expect(body.snapshot?.request?.providerConfig).toBeUndefined();
+
+      const waiting = await waitForRunSnapshot(body.runId!, (snapshot) =>
+        snapshot.status === "needs_user_input" && snapshot.pendingQuestions?.[0]?.id === "period"
+      );
+      expect(waiting.executionSummary).toMatchObject({
+        executionProfile: "model_agent",
+        engineAdapterId: "http-structured-turn-test-v1",
+        backendId: "openai_compatible",
+        modelId: "server-owned-model",
+        sessionEpoch: 1
+      });
+      expect(providerFetch).toHaveBeenCalledTimes(1);
+
+      const instructionDuringQuestion = await postMessage(jsonRequest(
+        `http://localhost:3000/api/agent/runs/${body.runId}/messages`,
+        { type: "user_instruction", text: "Skip the active question." }
+      ), { params: Promise.resolve({ runId: body.runId! }) });
+      expect(instructionDuringQuestion.status).toBe(409);
+      expect(await readJson(instructionDuringQuestion)).toMatchObject({
+        error: { code: "MODEL_AGENT_INTERACTION_RESPONSE_REQUIRED" }
+      });
+
+      const firstProviderBody = JSON.parse(String((providerFetch.mock.calls[0]?.[1] as RequestInit).body)) as {
+        messages: Array<{ role: string; content: string }>;
+      };
+      const firstPrompt = JSON.parse(firstProviderBody.messages.find((message) => message.role === "user")!.content) as {
+        delta: { type: string; context?: { tools?: unknown[] } };
+      };
+      expect(firstPrompt.delta.type).toBe("initial_context");
+      expect(firstPrompt.delta.context?.tools?.length).toBeGreaterThan(10);
+
+      const answerResponse = await postMessage(jsonRequest(
+        `http://localhost:3000/api/agent/runs/${body.runId}/messages`,
+        { type: "user_answer", answers: { period: "year" } }
+      ), { params: Promise.resolve({ runId: body.runId! }) });
+      expect(answerResponse.status).toBe(200);
+
+      await waitForRunSnapshot(body.runId!, (snapshot) =>
+        snapshot.status === "needs_user_input" && snapshot.pendingQuestions?.[0]?.id === "unit"
+      );
+      expect(providerFetch).toHaveBeenCalledTimes(2);
+      const secondProviderBody = JSON.parse(String((providerFetch.mock.calls[1]?.[1] as RequestInit).body)) as {
+        messages: Array<{ role: string; content: string }>;
+      };
+      const secondPrompt = JSON.parse(secondProviderBody.messages.find((message) => message.role === "user")!.content) as {
+        delta: { type: string; context?: unknown };
+        sessionContinuation: {
+          schemaVersion: number;
+          contextHash: string;
+          confirmedTurnCount: number;
+          semanticState: string;
+          lastConfirmed: {
+            exchangeId: string;
+            stableCallKey: string;
+            cursor: string;
+            inputHash: string;
+            outputHash: string;
+          };
+        };
+      };
+      expect(secondPrompt.delta).toMatchObject({ type: "human_input" });
+      expect(secondPrompt.delta).not.toHaveProperty("context");
+      expect(secondPrompt.sessionContinuation).toMatchObject({
+        schemaVersion: 1,
+        confirmedTurnCount: 1,
+        semanticState: firstTurn.sessionState,
+        lastConfirmed: {
+          exchangeId: "exchange-1-1",
+          stableCallKey: "turn-1-1"
+        }
+      });
+      expect(secondPrompt.sessionContinuation.contextHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+      expect(secondPrompt.sessionContinuation.lastConfirmed.inputHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+      expect(secondPrompt.sessionContinuation.lastConfirmed.outputHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+      const secondPromptText = JSON.stringify(secondPrompt);
+      expect(secondPromptText).not.toContain('"initialContext"');
+      expect(secondPromptText).not.toContain('"project"');
+      expect(new TextEncoder().encode(secondPromptText).byteLength).toBeLessThan(8_192);
+
+      const eventsResponse = await getEvents(new Request(
+        `http://localhost:3000/api/agent/runs/${body.runId}/events`
+      ), { params: Promise.resolve({ runId: body.runId! }) });
+      const reader = eventsResponse.body!.getReader();
+      const firstChunk = await reader.read();
+      reader.releaseLock();
+      await eventsResponse.body?.cancel();
+      const firstSseChunk = new TextDecoder().decode(firstChunk.value);
+      expect(firstSseChunk).toContain("event: agent_event");
+      expect(firstSseChunk).toContain('"schemaVersion":2');
+      expect(firstSseChunk).toContain('"source":"runtime"');
+
+      const secondRunResponse = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+        mode: "generate_vdt",
+        input: { rootKpi: "Ore hauled second run" },
+        executionBindingId: bindingId
+      }));
+      const secondRunBody = await readJson(secondRunResponse);
+      expect(secondRunResponse.status).toBe(200);
+      await waitForRunSnapshot(secondRunBody.runId!, (snapshot) => snapshot.status === "needs_user_input");
+      const firstSessionBinding = agentRuntime.store.getState(body.runId!).supervisorPersistenceV2?.binding.bindingId;
+      const secondSessionBinding = agentRuntime.store.getState(secondRunBody.runId!).supervisorPersistenceV2?.binding.bindingId;
+      expect(firstSessionBinding).toMatch(/^session-binding:[a-f0-9]{40}$/);
+      expect(secondSessionBinding).toMatch(/^session-binding:[a-f0-9]{40}$/);
+      expect(secondSessionBinding).not.toBe(firstSessionBinding);
+      expect(agentRuntime.store.getState(body.runId!).request.executionBindingId).toBe(bindingId);
+      expect(agentRuntime.store.getState(secondRunBody.runId!).request.executionBindingId).toBe(bindingId);
+      expect(providerFetch).toHaveBeenCalledTimes(3);
+
+      const secondCancelled = await cancelRun(new Request(
+        `http://localhost:3000/api/agent/runs/${secondRunBody.runId}/cancel`,
+        { method: "POST" }
+      ), { params: Promise.resolve({ runId: secondRunBody.runId! }) });
+      expect((await readJson(secondCancelled)).status).toBe("cancelled");
+      await waitForSupervisorReleased(secondRunBody.runId!);
+
+      const cancelled = await cancelRun(new Request(
+        `http://localhost:3000/api/agent/runs/${body.runId}/cancel`,
+        { method: "POST" }
+      ), { params: Promise.resolve({ runId: body.runId! }) });
+      expect(await readJson(cancelled)).toMatchObject({
+        ok: true,
+        status: "cancelled",
+        snapshot: { status: "cancelled" }
+      });
+      await waitForSupervisorReleased(body.runId!);
+      expect(isStructuredModelAgentRunActive(body.runId!)).toBe(false);
+      expect(providerFetch).toHaveBeenCalledTimes(3);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("rejects a model mutation made stale during inference and sends a reconciliation delta", async () => {
+    const toolCatalogHash = currentModelAgentToolCatalogHash();
+    const capability: Extract<AgentCapabilityProfile, { executionProfile: "model_agent" }> = {
+      schemaVersion: 1,
+      executionProfile: "model_agent",
+      engineId: "in-product-model-agent",
+      engineAdapterId: "http-stale-reconciliation-test-v1",
+      backendId: "openai_compatible",
+      protocolVersion: "structured-turn-v1",
+      sessionStrategy: "structured_turn",
+      toolCatalogHash,
+      toolIsolation: "permission_only",
+      qualification: {
+        status: "unverified",
+        platform: { os: "test", arch: "test", runtimeVersion: "node-test" },
+        testedAt: null,
+        evidenceHash: null
+      },
+      supportsNativeSession: false,
+      supportsResume: false,
+      supportsStructuredEvents: true,
+      supportsToolBridge: true,
+      supportsQuestions: true,
+      supportsCancellation: true,
+      supportsUsageMetrics: false,
+      cli: null
+    };
+    const initialBuilder = new VdtBuilderSession({ now: () => "2026-08-26T10:00:00.000Z" });
+    initialBuilder.createDraft({ projectTitle: "Ore hauled", rootKpi: "Ore hauled" });
+    const initialProject = initialBuilder.getProject();
+    const rootNodeId = initialProject.rootNodeId;
+    let resolveInference!: (response: Response) => void;
+    const inference = new Promise<Response>((resolve) => {
+      resolveInference = resolve;
+    });
+    const correctedQuestion = {
+      turnId: "turn-after-reconciliation",
+      sessionState: "Goal: continue the current VDT. Manual root rename confirmed; stale driver discarded.",
+      assistantMessage: {
+        messageId: "message-after-reconciliation",
+        text: "I reconciled the manual project change and discarded the stale mutation."
+      },
+      action: {
+        type: "question",
+        messageId: "question-after-reconciliation",
+        questionSetId: "question-set-after-reconciliation",
+        questions: [{
+          id: "continue-after-manual-change",
+          question: "Should I continue from the manually updated project head?",
+          reason: "The previous mutation was fenced as stale.",
+          required: true,
+          expectedAnswerType: "text"
+        }]
+      }
+    };
+    const providerFetch = vi.fn()
+      .mockImplementationOnce(() => inference)
+      .mockResolvedValueOnce(openAiStructuredResponse(correctedQuestion));
+    vi.stubGlobal("fetch", providerFetch);
+
+    const bindingId = `structured_stale_route_${Date.now()}`;
+    const dispose = agentExecutionBindingRegistry.register({
+      bindingId,
+      enabled: true,
+      modelId: "server-owned-model",
+      capability,
+      modelEngineAdapter: {
+        providerId: "openai_compatible",
+        providerConfig: {
+          baseUrl: "https://models.example.test/v1",
+          apiKey: "server-secret-must-not-echo",
+          model: "server-owned-model"
+        }
+      }
+    });
+
+    try {
+      const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+        mode: "generate_vdt",
+        input: { rootKpi: "Ore hauled", project: initialProject },
+        executionBindingId: bindingId
+      }));
+      const body = await readJson(response);
+      expect(response.status).toBe(200);
+      await waitForProviderCalls(providerFetch, 1);
+      expect(providerFetch).toHaveBeenCalledTimes(1);
+
+      const manualResponse = await postMessage(jsonRequest(
+        `http://localhost:3000/api/agent/runs/${body.runId}/messages`,
+        {
+          type: "manual_project_change",
+          projectRevision: initialBuilder.getRevision() + 1,
+          change: {
+            kind: "node_updated",
+            nodeId: rootNodeId,
+            patch: { name: "Manually updated Ore hauled" },
+            summary: "User renamed the root while inference was active."
+          }
+        }
+      ), { params: Promise.resolve({ runId: body.runId! }) });
+      expect(manualResponse.status).toBe(200);
+
+      const queuedInstructionResponse = await postMessage(jsonRequest(
+        `http://localhost:3000/api/agent/runs/${body.runId}/messages`,
+        {
+          type: "user_instruction",
+          text: "Keep the manually revised root name in the next checkpoint."
+        }
+      ), { params: Promise.resolve({ runId: body.runId! }) });
+      expect(queuedInstructionResponse.status).toBe(200);
+
+      resolveInference(openAiStructuredResponse({
+        turnId: "stale-turn",
+        sessionState: "Goal: continue the current VDT. Proposed stale driver from the prior head.",
+        assistantMessage: {
+          messageId: "stale-message",
+          text: "I prepared the next driver from the earlier project head."
+        },
+        action: {
+          type: "action_batch",
+          batch: {
+            calls: [{
+              externalCallId: "stale-add-driver",
+              toolName: "vdt.add_driver",
+              args: {
+                parentNodeId: rootNodeId,
+                nodeId: "must_not_be_added",
+                name: "Stale driver",
+                type: "input",
+                relation: "positive",
+                baselineValue: 1
+              }
+            }]
+          }
+        }
+      }));
+
+      await waitForRunSnapshot(body.runId!, (snapshot) =>
+        snapshot.status === "needs_user_input"
+        && snapshot.pendingQuestions?.[0]?.id === "continue-after-manual-change"
+      );
+      expect(providerFetch).toHaveBeenCalledTimes(2);
+      const secondProviderBody = JSON.parse(String((providerFetch.mock.calls[1]?.[1] as RequestInit).body)) as {
+        messages: Array<{ role: string; content: string }>;
+      };
+      const secondPrompt = JSON.parse(secondProviderBody.messages.find((message) => message.role === "user")!.content) as {
+        delta: {
+          type: string;
+          checkpointDelta?: {
+            type?: string;
+            reconciliation?: { expectedRevision?: number; currentRevision?: number; manualChanges?: unknown[] };
+            results?: Array<{ resultCode?: string }>;
+          };
+          inputs?: Array<{ type?: string; text?: string }>;
+        };
+      };
+      expect(secondPrompt.delta).toMatchObject({
+        type: "checkpoint_inputs",
+        checkpointDelta: {
+          type: "manual_reconciliation",
+          reconciliation: {
+            manualChanges: [expect.objectContaining({ kind: "node_updated", nodeId: rootNodeId })]
+          },
+          results: [expect.objectContaining({ resultCode: "STALE_REVISION" })]
+        },
+        inputs: [{
+          type: "user_instruction",
+          text: "Keep the manually revised root name in the next checkpoint."
+        }]
+      });
+
+      const project = agentRuntime.store.getState(body.runId!).builder!.getProject();
+      expect(project.graph.nodes.map((node) => node.id)).not.toContain("must_not_be_added");
+      expect(project.graph.nodes.find((node) => node.id === rootNodeId)?.name)
+        .toBe("Manually updated Ore hauled");
+      expect(agentRuntime.store.getState(body.runId!).supervisorPersistenceV2?.eventOutbox).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "checkpoint",
+            payload: expect.objectContaining({ reason: "manual_reconciliation" })
+          })
+        ])
+      );
+    } finally {
+      dispose();
+    }
+  });
+
+  it("applies an approved mutation through one durable control receipt and replays the acknowledgement", async () => {
+    const toolCatalogHash = currentModelAgentToolCatalogHash();
+    const capability: Extract<AgentCapabilityProfile, { executionProfile: "model_agent" }> = {
+      schemaVersion: 1,
+      executionProfile: "model_agent",
+      engineId: "in-product-model-agent",
+      engineAdapterId: "http-approved-proposal-test-v1",
+      backendId: "openai_compatible",
+      protocolVersion: "structured-turn-v1",
+      sessionStrategy: "structured_turn",
+      toolCatalogHash,
+      toolIsolation: "permission_only",
+      qualification: {
+        status: "unverified",
+        platform: { os: "test", arch: "test", runtimeVersion: "node-test" },
+        testedAt: null,
+        evidenceHash: null
+      },
+      supportsNativeSession: false,
+      supportsResume: false,
+      supportsStructuredEvents: true,
+      supportsToolBridge: true,
+      supportsQuestions: true,
+      supportsCancellation: true,
+      supportsUsageMetrics: false,
+      cli: null
+    };
+    const initialBuilder = new VdtBuilderSession({ now: () => "2026-08-26T10:00:00.000Z" });
+    initialBuilder.createDraft({ projectTitle: "Ore hauled", rootKpi: "Ore hauled" });
+    const initialProject = initialBuilder.getProject();
+    const rootNodeId = initialProject.rootNodeId;
+    const providerFetch = vi.fn()
+      .mockResolvedValueOnce(openAiStructuredResponse({
+        turnId: "proposal-turn",
+        sessionState: "Goal: build Ore hauled VDT. Pending: user approval for the first driver.",
+        assistantMessage: {
+          messageId: "proposal-message",
+          text: "I prepared the first driver for approval."
+        },
+        action: {
+          type: "action_batch",
+          batch: {
+            calls: [{
+              externalCallId: "propose-approved-driver",
+              toolName: "vdt.add_driver",
+              args: {
+                parentNodeId: rootNodeId,
+                nodeId: "approved_driver",
+                name: "Approved driver",
+                type: "input",
+                relation: "positive_driver",
+                baselineValue: 1
+              }
+            }]
+          }
+        }
+      }))
+      .mockResolvedValueOnce(openAiStructuredResponse({
+        turnId: "post-approval-turn",
+        sessionState: "Goal: build Ore hauled VDT. First driver applied. Pending: confirm the next layer.",
+        assistantMessage: {
+          messageId: "post-approval-message",
+          text: "The approved driver is now part of the current project."
+        },
+        action: {
+          type: "question",
+          messageId: "post-approval-question-message",
+          questionSetId: "post-approval-question-set",
+          questions: [{
+            id: "continue-after-approval",
+            question: "Should I add the next driver layer?",
+            reason: "The first approved operation is complete.",
+            required: true,
+            expectedAnswerType: "text"
+          }]
+        }
+      }));
+    vi.stubGlobal("fetch", providerFetch);
+
+    const bindingId = `structured_approved_proposal_${Date.now()}`;
+    const dispose = agentExecutionBindingRegistry.register({
+      bindingId,
+      enabled: true,
+      modelId: "server-owned-model",
+      capability,
+      modelEngineAdapter: {
+        providerId: "openai_compatible",
+        providerConfig: {
+          baseUrl: "https://models.example.test/v1",
+          apiKey: "server-secret-must-not-echo",
+          model: "server-owned-model"
+        }
+      }
+    });
+
+    try {
+      const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+        mode: "generate_vdt",
+        input: { rootKpi: "Ore hauled", project: initialProject },
+        executionBindingId: bindingId,
+        options: { autoApplyPatches: false }
+      }));
+      const body = await readJson(response);
+      expect(response.status).toBe(200);
+
+      await waitForRunSnapshot(body.runId!, (snapshot) => snapshot.status === "waiting_approval");
+      const beforeApproval = agentRuntime.store.getState(body.runId!);
+      const proposal = beforeApproval.pendingMutationProposal;
+      expect(proposal).toBeDefined();
+      expect(beforeApproval.builder?.getProject().graph.nodes.map((node) => node.id))
+        .not.toContain("approved_driver");
+      const baseRevision = beforeApproval.builder!.getRevision();
+      const priorCheckpointId = beforeApproval.supervisorPersistenceV2?.checkpoint?.checkpointId;
+      const approvalBody = {
+        type: "approval",
+        approved: true,
+        proposalId: proposal!.id,
+        selectedChangeIds: proposal!.selectedChangeIds
+      };
+
+      const approved = await postMessage(jsonRequest(
+        `http://localhost:3000/api/agent/runs/${body.runId}/messages`,
+        approvalBody
+      ), { params: Promise.resolve({ runId: body.runId! }) });
+      expect(approved.status).toBe(200);
+
+      await waitForRunSnapshot(body.runId!, (snapshot) =>
+        snapshot.status === "needs_user_input"
+        && snapshot.pendingQuestions?.[0]?.id === "continue-after-approval"
+      );
+      const afterApproval = agentRuntime.store.getState(body.runId!);
+      const committedRevision = afterApproval.builder!.getRevision();
+      expect(committedRevision).toBeGreaterThan(baseRevision);
+      expect(afterApproval.builder!.getProject().graph.nodes.filter((node) => node.id === "approved_driver"))
+        .toHaveLength(1);
+      expect(afterApproval.supervisorPersistenceV2?.checkpoint?.checkpointId)
+        .not.toBe(priorCheckpointId);
+      expect(afterApproval.supervisorPersistenceV2?.eventOutbox).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: "checkpoint",
+          payload: expect.objectContaining({ reason: "human_input_accepted" })
+        })
+      ]));
+
+      const controlReceipts = afterApproval.supervisorPersistenceV2?.toolOperationReceipts.filter(
+        (receipt) => receipt.toolName === "control.apply_approved_proposal"
+      ) ?? [];
+      expect(controlReceipts.at(-1)).toMatchObject({
+        externalCallId: expect.stringMatching(/^approval-apply-[a-f0-9]{40}$/),
+        state: "completed",
+        expectedRevision: baseRevision,
+        committedRevision,
+        replayResult: expect.objectContaining({
+          status: "succeeded",
+          resultCode: "APPROVED_PROPOSAL_APPLIED"
+        })
+      });
+
+      const secondProviderBody = JSON.parse(String((providerFetch.mock.calls[1]?.[1] as RequestInit).body));
+      const secondProviderWire = JSON.stringify(secondProviderBody);
+      expect(secondProviderWire).not.toContain("control.apply_approved_proposal");
+      expect(secondProviderWire).not.toContain("committedRevision");
+      expect(secondProviderWire).not.toContain(proposal!.id);
+      const providerCallsBeforeReplay = providerFetch.mock.calls.length;
+
+      const replay = await postMessage(jsonRequest(
+        `http://localhost:3000/api/agent/runs/${body.runId}/messages`,
+        approvalBody
+      ), { params: Promise.resolve({ runId: body.runId! }) });
+      expect(replay.status).toBe(200);
+      expect(providerFetch).toHaveBeenCalledTimes(providerCallsBeforeReplay);
+
+      const afterReplay = agentRuntime.store.getState(body.runId!);
+      expect(afterReplay.builder!.getRevision()).toBe(committedRevision);
+      expect(afterReplay.builder!.getProject().graph.nodes.filter((node) => node.id === "approved_driver"))
+        .toHaveLength(1);
+      expect(afterReplay.status).toBe("needs_user_input");
+      expect(afterReplay.pendingQuestions?.[0]?.id).toBe("continue-after-approval");
+      expect(afterReplay.supervisorPersistenceV2?.toolOperationReceipts.filter(
+        (receipt) => receipt.toolName === "control.apply_approved_proposal" && receipt.state === "completed"
+      )).toHaveLength(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("fails closed for unknown bindings and rejects client-owned target configuration", async () => {
+    const missing = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+      mode: "generate_vdt",
+      input: { rootKpi: "Ore hauled" },
+      executionBindingId: "missing_server_binding"
+    }));
+    expect(missing.status).toBe(409);
+    expect(await readJson(missing)).toMatchObject({
+      error: { code: "AGENT_EXECUTION_BINDING_UNAVAILABLE" }
+    });
+
+    for (const field of ["executionProfile", "engineAdapterId", "executable", "model", "securityConfig"] as const) {
+      const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+        mode: "generate_vdt",
+        input: { rootKpi: "Ore hauled" },
+        executionBindingId: "missing_server_binding",
+        [field]: "client-owned"
+      }));
+      expect(response.status).toBe(400);
+    }
+  });
+
+  it("keeps the legacy per-decision provider route disabled in production without explicit opt-in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VDT_AGENT_LEGACY_COMPATIBILITY_ENABLED", "false");
+
+    const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+      mode: "generate_vdt",
+      input: { rootKpi: "Ore hauled" },
+      providerId: "mock"
+    }));
+
+    expect(response.status).toBe(409);
+    expect(await readJson(response)).toMatchObject({
+      error: { code: "AGENT_LEGACY_COMPATIBILITY_DISABLED" }
+    });
+  });
+
   it.each([
     ["hosted_web", "desktop"],
     ["invalid", "desktop"],

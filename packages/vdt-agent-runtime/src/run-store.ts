@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { VdtBuilderSession } from "@vdt-studio/vdt-core";
+import {
+  recoverAgentSupervisorPersistenceState,
+  sanitizeAgentSupervisorPersistenceState,
+  summarizeAgentSupervisorPersistenceState
+} from "./agent-supervisor-persistence";
 import { AgentEventBus } from "./event-bus";
 import type {
   AgentEventInput,
@@ -16,6 +21,7 @@ import type {
 } from "./types";
 
 export interface PersistedAgentRunState {
+  schemaVersion: 2;
   snapshot: VdtAgentRunSnapshot;
   seq: number;
   chatSeq: number;
@@ -29,7 +35,9 @@ export interface PersistedAgentRunState {
   repairAttemptCount?: VdtAgentRunState["repairAttemptCount"] | undefined;
   validationState?: VdtAgentRunState["validationState"] | undefined;
   calculationState?: VdtAgentRunState["calculationState"] | undefined;
+  performanceTelemetry?: VdtAgentRunState["performanceTelemetry"] | undefined;
   memoryNotes: VdtAgentRunState["memoryNotes"];
+  supervisorPersistenceV2?: VdtAgentRunState["supervisorPersistenceV2"] | undefined;
 }
 
 export interface AgentRunPersistence {
@@ -88,7 +96,13 @@ export class AgentRunStore {
       answers: {},
       manualChanges: [],
       recipes: [],
-      memoryNotes: []
+      memoryNotes: [],
+      performanceTelemetry: {
+        decisionLatenciesMs: [],
+        toolCallCount: 0,
+        outputBytes: 0,
+        repairCount: 0
+      }
     };
     state.visibleContext = visibleContextFromState(state);
     this.runs.set(runId, state);
@@ -272,6 +286,9 @@ export class AgentRunStore {
 
 export function snapshotFromState(state: VdtAgentRunState): VdtAgentRunSnapshot {
   const visibleContext = visibleContextFromState(state);
+  const executionSummary = state.supervisorPersistenceV2
+    ? summarizeAgentSupervisorPersistenceState(state.supervisorPersistenceV2)
+    : state.executionSummary;
   return {
     runId: state.runId,
     status: state.status,
@@ -289,6 +306,8 @@ export function snapshotFromState(state: VdtAgentRunState): VdtAgentRunSnapshot 
     pendingChangeSet: state.pendingChangeSet,
     pendingMutationProposal: state.pendingMutationProposal,
     finalReport: state.finalReport,
+    executionSummary,
+    performanceSummary: state.performanceSummary,
     error: state.error,
     retryableError: state.retryableError,
     feedbackHistory: redactSecrets(state.feedbackHistory) as VdtAgentRunState["feedbackHistory"],
@@ -307,6 +326,7 @@ export function snapshotFromState(state: VdtAgentRunState): VdtAgentRunSnapshot 
 
 export function serializeAgentRunState(state: VdtAgentRunState): PersistedAgentRunState {
   return {
+    schemaVersion: 2,
     snapshot: snapshotFromState(state),
     seq: state.seq,
     chatSeq: state.chatSeq,
@@ -320,12 +340,23 @@ export function serializeAgentRunState(state: VdtAgentRunState): PersistedAgentR
     repairAttemptCount: state.repairAttemptCount,
     validationState: state.validationState,
     calculationState: state.calculationState,
-    memoryNotes: redactSecrets(state.memoryNotes) as VdtAgentRunState["memoryNotes"]
+    performanceTelemetry: state.performanceTelemetry,
+    memoryNotes: redactSecrets(state.memoryNotes) as VdtAgentRunState["memoryNotes"],
+    supervisorPersistenceV2: state.supervisorPersistenceV2
+      ? sanitizeAgentSupervisorPersistenceState(state.supervisorPersistenceV2)
+      : undefined
   };
 }
 
 export function hydrateAgentRunState(persisted: PersistedAgentRunState): VdtAgentRunState {
+  const schemaVersion = (persisted as { schemaVersion?: unknown }).schemaVersion;
+  if (schemaVersion !== undefined && schemaVersion !== 2) {
+    throw new Error(`Unsupported persisted agent run state schemaVersion: ${String(schemaVersion)}.`);
+  }
   const snapshot = persisted.snapshot;
+  const supervisorPersistenceV2 = persisted.supervisorPersistenceV2
+    ? recoverAgentSupervisorPersistenceState(persisted.supervisorPersistenceV2)
+    : undefined;
   return {
     runId: snapshot.runId,
     status: snapshot.status,
@@ -343,6 +374,10 @@ export function hydrateAgentRunState(persisted: PersistedAgentRunState): VdtAgen
     pendingChangeSet: snapshot.pendingChangeSet,
     pendingMutationProposal: snapshot.pendingMutationProposal,
     finalReport: snapshot.finalReport,
+    executionSummary: supervisorPersistenceV2
+      ? summarizeAgentSupervisorPersistenceState(supervisorPersistenceV2)
+      : snapshot.executionSummary,
+    performanceSummary: snapshot.performanceSummary,
     error: snapshot.error,
     retryableError: snapshot.retryableError,
     artifacts: snapshot.artifacts,
@@ -366,7 +401,14 @@ export function hydrateAgentRunState(persisted: PersistedAgentRunState): VdtAgen
     repairAttemptCount: persisted.repairAttemptCount ?? snapshot.repairAttemptCount,
     validationState: persisted.validationState,
     calculationState: persisted.calculationState,
-    memoryNotes: persisted.memoryNotes
+    memoryNotes: persisted.memoryNotes,
+    performanceTelemetry: persisted.performanceTelemetry ?? {
+      decisionLatenciesMs: [],
+      toolCallCount: 0,
+      outputBytes: 0,
+      repairCount: 0
+    },
+    supervisorPersistenceV2
   };
 }
 

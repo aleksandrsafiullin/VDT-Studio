@@ -1,4 +1,9 @@
 import { agentRuntime, jsonError } from "../runtime";
+import { compactPublicAgentSnapshot } from "../public-snapshot";
+import {
+  compactSupervisorAwareSnapshot,
+  isPersistedSupervisorRun
+} from "../supervisor-runtime";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ runId: string }> }) {
   try {
@@ -6,7 +11,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ run
     if (!agentRuntime.store.has(runId)) {
       return jsonError("Agent run was not found.", 404, "RUN_NOT_FOUND");
     }
-    const snapshot = agentRuntime.store.getSnapshot(runId);
+    const stored = agentRuntime.store.getSnapshot(runId);
+    const snapshot = await isPersistedSupervisorRun(runId)
+      ? await compactSupervisorAwareSnapshot(stored)
+      : compactPublicAgentSnapshot(stored);
     return Response.json({ ok: true, snapshot });
   } catch (error) {
     return jsonError(

@@ -170,6 +170,9 @@ importers:
 
   packages/model-bridge:
     dependencies:
+      '@vdt-studio/vdt-agent-runtime':
+        specifier: workspace:*
+        version: link:../vdt-agent-runtime
       '@vdt-studio/vdt-core':
         specifier: workspace:*
         version: link:../vdt-core

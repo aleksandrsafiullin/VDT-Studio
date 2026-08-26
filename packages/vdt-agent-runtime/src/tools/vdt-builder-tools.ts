@@ -1,10 +1,18 @@
 import { z } from "zod";
 import {
   extractFormulaReferences,
+  serializeFormulaTokens,
+  stableSnakeId,
+  tokenizeFormula,
+  uniqueId,
   type VdtBuilderSession,
   type VdtChangeSet,
+  type VdtEdge,
   type VdtEdgeRelation,
-  type VdtNodePatch
+  type VdtNode,
+  type VdtNodeAddition,
+  type VdtNodePatch,
+  type VdtProject
 } from "@vdt-studio/vdt-core";
 import { defaultProgressiveBuildPolicy, proposeAndMaybeApplyMutation } from "../mutation-pipeline";
 import { AgentToolError, type AgentTool, type AgentToolContext } from "../tool-registry";
@@ -44,6 +52,18 @@ function normalizeNodeType(value: unknown): unknown {
   const normalized = normalizeEnumText(value);
   if (!normalized) return value;
   if (nodeTypeSchema.options.includes(normalized as never)) return normalized;
+  if (edgeRelationSchema.options.includes(normalized as never)) {
+    throw new AgentToolError(
+      "ENUM_FIELD_MISMATCH",
+      `Node field "type" received edge relation "${normalized}". Use a node type such as "input" and pass "${normalized}" in the "relation" field.`,
+      {
+        field: "type",
+        received: normalized,
+        expected: nodeTypeSchema.options,
+        relationField: "relation"
+      }
+    );
+  }
   if (["driver", "factor", "lever", "input_driver", "input_kpi", "variable"].includes(normalized)) return "input";
   if (["calculation", "calculated_kpi", "computed", "derived", "formula", "formula_node"].includes(normalized)) return "calculated";
   if (["root", "kpi", "root_metric", "root_driver"].includes(normalized)) return "root_kpi";
@@ -61,7 +81,7 @@ function normalizeEdgeRelation(value: unknown): unknown {
   }
   if (["multiply", "multiplies", "multiplier", "factor", "multiplicative"].includes(normalized)) return "multiplicative_driver";
   if (["divides", "denominator", "inverse", "divisive"].includes(normalized)) return "divisive_driver";
-  if (["adds", "addition", "component", "part", "additive"].includes(normalized)) return "additive_component";
+  if (["adds", "addition", "component", "part", "additive", "additive_driver"].includes(normalized)) return "additive_component";
   if (["subtracts", "reduction", "reduces", "negative", "decreases"].includes(normalized)) return "negative_driver";
   if (["dependency", "formula", "formula_reference", "depends_on"].includes(normalized)) return "formula_dependency";
   return value;
@@ -105,11 +125,34 @@ const nodePatchSchema = z.object({
   materiality: optionalInput(z.enum(["high", "medium", "low", "unknown"]))
 }).strict();
 
+const vdtNodeIdSchema = z.string()
+  .min(1)
+  .max(160)
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Node ids must be valid formula identifiers.");
+
+const instantiateNodeOverrideSchema = nodePatchSchema.extend({
+  nodeId: optionalInput(vdtNodeIdSchema),
+  relation: optionalInput(edgeRelationInputSchema),
+  aiRationale: optionalInput(z.string().max(800))
+}).strict();
+
+const instantiateSubtreeInputSchema = z.object({
+  sourceRootNodeId: z.string().min(1).max(160),
+  targetParentNodeId: z.string().min(1).max(160),
+  overrides: optionalInput(
+    z.record(z.string().min(1).max(160), instantiateNodeOverrideSchema)
+      .refine((value) => Object.keys(value).length <= 200, "At most 200 node overrides are allowed.")
+  )
+}).strict();
+
+type InstantiateNodeOverride = z.infer<typeof instantiateNodeOverrideSchema>;
+
 export function createVdtBuilderTools(): AgentTool[] {
   return [
     createDraftTool,
     addDriverTool,
     addDriversBatchTool,
+    instantiateSubtreeTool,
     addEdgeTool,
     updateNodeTool,
     deleteNodeTool,
@@ -230,9 +273,10 @@ const addDriverTool: AgentTool = {
 
 const addDriversBatchTool: AgentTool = {
   name: "vdt.add_drivers_batch",
-  description: `Add 2 to ${defaultProgressiveBuildPolicy.maxNodesPerLayer} sibling driver nodes under one parent in one visible layer.`,
+  description: `Add 2 to ${defaultProgressiveBuildPolicy.maxNodesPerLayer} sibling driver nodes under one parent in one visible layer, optionally setting that parent's explicit formula atomically.`,
   inputSchema: z.object({
-    drivers: z.array(addDriverInputSchema).min(2).max(defaultProgressiveBuildPolicy.maxNodesPerLayer)
+    drivers: z.array(addDriverInputSchema).min(2).max(defaultProgressiveBuildPolicy.maxNodesPerLayer),
+    parentFormula: optionalInput(z.string().min(1).max(500))
   }),
   outputSchema: z.record(z.unknown()),
   mutatesProject: true,
@@ -252,7 +296,7 @@ const addDriversBatchTool: AgentTool = {
     const changeSets: VdtChangeSet[] = [];
 
     for (const driver of drivers) {
-      const project = builder.getProject();
+      const project = previewBuilder.getProject();
       const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
       if (!nodeIds.has(driver.parentNodeId)) {
         throw new AgentToolError("PARENT_NOT_FOUND", `Parent node "${driver.parentNodeId}" was not found.`);
@@ -269,7 +313,20 @@ const addDriversBatchTool: AgentTool = {
       added.push({ nodeId, edgeId, parentNodeId: driver.parentNodeId, name: driver.name });
     }
 
-    const summary = `Added ${added.length} drivers: ${added.map((driver) => `"${driver.name}"`).join(", ")}.`;
+    if (input.parentFormula) {
+      const previewProject = previewBuilder.getProject();
+      assertFormulaReferencesIfPresent(previewProject, input.parentFormula, targetNodeId);
+      const formulaResult = previewBuilder.setFormula({
+        nodeId: targetNodeId,
+        formula: input.parentFormula
+      });
+      changeSets.push(requireChangeSet(formulaResult.changeSet));
+    }
+
+    const summary = [
+      `Added ${added.length} drivers: ${added.map((driver) => `"${driver.name}"`).join(", ")}.`,
+      input.parentFormula ? `Set the explicit formula for "${targetNodeId}" in the same atomic change.` : undefined
+    ].filter(Boolean).join(" ");
     const mutation = proposeAndMaybeApplyMutation(context, {
       title: "Drivers added",
       summary,
@@ -279,6 +336,129 @@ const addDriversBatchTool: AgentTool = {
     return {
       nodeIds: added.map((driver) => driver.nodeId),
       edgeIds: added.map((driver) => driver.edgeId),
+      revision: mutation.revision,
+      validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
+    };
+  }
+};
+
+const instantiateSubtreeTool: AgentTool = {
+  name: "vdt.instantiate_subtree",
+  description: "Clone one deterministic non-root subtree under an existing parent, with new node ids, source-id-keyed overrides, and internal formula-reference remapping.",
+  inputSchema: instantiateSubtreeInputSchema,
+  outputSchema: z.record(z.unknown()),
+  mutatesProject: true,
+  requiresDraftProject: true,
+  phase: "building_graph",
+  run(context, input) {
+    const builder = requireBuilder(context.builder);
+    const project = builder.getProject();
+    const nodesById = new Map(project.graph.nodes.map((node) => [node.id, node]));
+    const sourceRoot = nodesById.get(input.sourceRootNodeId);
+    if (!sourceRoot) {
+      throw new AgentToolError("SOURCE_NOT_FOUND", `Source subtree root "${input.sourceRootNodeId}" was not found.`);
+    }
+    if (!nodesById.has(input.targetParentNodeId)) {
+      throw new AgentToolError("PARENT_NOT_FOUND", `Target parent node "${input.targetParentNodeId}" was not found.`);
+    }
+    if (sourceRoot.id === project.rootNodeId || sourceRoot.type === "root_kpi") {
+      throw new AgentToolError("SOURCE_ROOT_NOT_CLONEABLE", "The project root cannot be instantiated as a child subtree.");
+    }
+
+    const discovered = discoverDeterministicSubtree(project, sourceRoot.id);
+    const sourceNodeIds = new Set(discovered.orderedNodeIds);
+    if (sourceNodeIds.has(input.targetParentNodeId)) {
+      throw new AgentToolError(
+        "TARGET_INSIDE_SOURCE_SUBTREE",
+        `Target parent "${input.targetParentNodeId}" is inside source subtree "${sourceRoot.id}".`
+      );
+    }
+
+    const overrides = input.overrides ?? {};
+    const unknownOverrideIds = Object.keys(overrides).filter((sourceNodeId) => !sourceNodeIds.has(sourceNodeId));
+    if (unknownOverrideIds.length > 0) {
+      throw new AgentToolError(
+        "UNKNOWN_SUBTREE_OVERRIDE",
+        `Overrides reference nodes outside the source subtree: ${unknownOverrideIds.join(", ")}.`,
+        { sourceRootNodeId: sourceRoot.id, unknownSourceNodeIds: unknownOverrideIds }
+      );
+    }
+
+    const sourceToTargetNodeIds = allocateSubtreeNodeIds(
+      discovered.orderedNodeIds,
+      nodesById,
+      overrides,
+      new Set(nodesById.keys()),
+      sourceRoot.id
+    );
+    const additions = discovered.orderedNodeIds.map((sourceNodeId, index) => {
+      const sourceNode = nodesById.get(sourceNodeId)!;
+      const override = overrides[sourceNodeId];
+      const incomingEdge = discovered.incomingEdgeByNodeId.get(sourceNodeId)!;
+      const targetNodeId = sourceToTargetNodeIds[sourceNodeId]!;
+      const parentNodeId = sourceNodeId === sourceRoot.id
+        ? input.targetParentNodeId
+        : sourceToTargetNodeIds[incomingEdge.sourceNodeId]!;
+      const formula = remapSubtreeFormula(
+        override?.formula ?? sourceNode.formula,
+        sourceNodeId,
+        sourceNodeIds,
+        sourceToTargetNodeIds
+      );
+      const type = override?.type ?? sourceNode.type;
+      if (type === "root_kpi") {
+        throw new AgentToolError(
+          "CLONED_NODE_TYPE_INVALID",
+          `Cloned node "${sourceNodeId}" cannot have type "root_kpi".`
+        );
+      }
+      return subtreeAddition({
+        id: `instantiate_${index + 1}_${targetNodeId}`,
+        sourceNode,
+        override,
+        nodeId: targetNodeId,
+        parentNodeId,
+        relation: override?.relation ?? incomingEdge.relation,
+        formula
+      });
+    });
+    const statusUpdates = discovered.orderedNodeIds.flatMap((sourceNodeId, index) => {
+      const status = overrides[sourceNodeId]?.status;
+      if (!status) return [];
+      return [{
+        id: `instantiate_status_${index + 1}_${sourceToTargetNodeIds[sourceNodeId]}`,
+        nodeId: sourceToTargetNodeIds[sourceNodeId]!,
+        patch: { status }
+      }];
+    });
+    const changeSet: VdtChangeSet = {
+      id: `changeset_${context.runId}_instantiate_${builder.getRevision() + 1}`,
+      taskType: "generate_tree",
+      backendId: context.getRun().request.providerId,
+      createdAt: new Date().toISOString(),
+      additions,
+      updates: statusUpdates,
+      deletions: [],
+      edgeChanges: [],
+      assumptions: [],
+      questions: [],
+      warnings: []
+    };
+    const targetRootNodeId = sourceToTargetNodeIds[sourceRoot.id]!;
+    const mutation = proposeAndMaybeApplyMutation(context, {
+      title: "Subtree instantiated",
+      summary: `Instantiated ${additions.length} nodes from "${sourceRoot.name}" under "${input.targetParentNodeId}".`,
+      changeSet,
+      targetNodeId: input.targetParentNodeId,
+      allowSkillDefinedDepth: true
+    });
+    return {
+      sourceRootNodeId: sourceRoot.id,
+      targetRootNodeId,
+      sourceToTargetNodeIds,
+      nodeIds: additions.map((addition) => addition.nodeId),
+      edgeIds: additions.map((addition) => `edge_${addition.parentNodeId}_${addition.nodeId}`),
       revision: mutation.revision,
       validation: mutation.validation,
       mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
@@ -498,6 +678,195 @@ const calculateTool: AgentTool = {
     return calculation;
   }
 };
+
+function discoverDeterministicSubtree(
+  project: VdtProject,
+  sourceRootNodeId: string
+): {
+  orderedNodeIds: string[];
+  incomingEdgeByNodeId: Map<string, VdtEdge>;
+} {
+  const nodesById = new Map(project.graph.nodes.map((node) => [node.id, node]));
+  const outgoingBySource = new Map<string, VdtEdge[]>();
+  const incomingByTarget = new Map<string, VdtEdge[]>();
+  for (const edge of project.graph.edges) {
+    if (!nodesById.has(edge.sourceNodeId) || !nodesById.has(edge.targetNodeId)) {
+      throw new AgentToolError(
+        "INVALID_SOURCE_GRAPH",
+        `Edge "${edge.id}" references a missing node; the source subtree cannot be instantiated.`
+      );
+    }
+    outgoingBySource.set(edge.sourceNodeId, [...(outgoingBySource.get(edge.sourceNodeId) ?? []), edge]);
+    incomingByTarget.set(edge.targetNodeId, [...(incomingByTarget.get(edge.targetNodeId) ?? []), edge]);
+  }
+  for (const edges of outgoingBySource.values()) edges.sort(compareEdgesDeterministically);
+  for (const edges of incomingByTarget.values()) edges.sort(compareEdgesDeterministically);
+
+  const orderedNodeIds: string[] = [];
+  const discovered = new Set<string>();
+  const queue = [sourceRootNodeId];
+  while (queue.length > 0) {
+    const nodeId = queue.shift()!;
+    if (discovered.has(nodeId)) continue;
+    discovered.add(nodeId);
+    orderedNodeIds.push(nodeId);
+    if (orderedNodeIds.length > 200) {
+      throw new AgentToolError("SUBTREE_TOO_LARGE", "A subtree instantiation is limited to 200 nodes.");
+    }
+    for (const edge of outgoingBySource.get(nodeId) ?? []) queue.push(edge.targetNodeId);
+  }
+
+  const incomingEdgeByNodeId = new Map<string, VdtEdge>();
+  for (const nodeId of orderedNodeIds) {
+    const incoming = incomingByTarget.get(nodeId) ?? [];
+    const internal = incoming.filter((edge) => discovered.has(edge.sourceNodeId));
+    const external = incoming.filter((edge) => !discovered.has(edge.sourceNodeId));
+    if (nodeId === sourceRootNodeId) {
+      if (internal.length > 0 || external.length !== 1) {
+        throw ambiguousSubtreeError(sourceRootNodeId, nodeId, incoming);
+      }
+      incomingEdgeByNodeId.set(nodeId, external[0]!);
+      continue;
+    }
+    if (internal.length !== 1 || external.length > 0) {
+      throw ambiguousSubtreeError(sourceRootNodeId, nodeId, incoming);
+    }
+    incomingEdgeByNodeId.set(nodeId, internal[0]!);
+  }
+
+  return { orderedNodeIds, incomingEdgeByNodeId };
+}
+
+function compareEdgesDeterministically(left: VdtEdge, right: VdtEdge): number {
+  if (left.targetNodeId !== right.targetNodeId) return left.targetNodeId < right.targetNodeId ? -1 : 1;
+  if (left.sourceNodeId !== right.sourceNodeId) return left.sourceNodeId < right.sourceNodeId ? -1 : 1;
+  if (left.id === right.id) return 0;
+  return left.id < right.id ? -1 : 1;
+}
+
+function ambiguousSubtreeError(sourceRootNodeId: string, nodeId: string, incoming: VdtEdge[]): AgentToolError {
+  return new AgentToolError(
+    "AMBIGUOUS_SUBTREE",
+    `Source subtree "${sourceRootNodeId}" is not a strict tree at node "${nodeId}".`,
+    {
+      sourceRootNodeId,
+      nodeId,
+      incomingEdges: incoming.map((edge) => ({
+        edgeId: edge.id,
+        sourceNodeId: edge.sourceNodeId,
+        relation: edge.relation
+      }))
+    }
+  );
+}
+
+function allocateSubtreeNodeIds(
+  orderedSourceNodeIds: string[],
+  sourceNodesById: ReadonlyMap<string, VdtNode>,
+  overrides: Record<string, InstantiateNodeOverride>,
+  existingNodeIds: Set<string>,
+  sourceRootNodeId: string
+): Record<string, string> {
+  const mapping: Record<string, string> = {};
+  for (const sourceNodeId of orderedSourceNodeIds) {
+    const sourceNode = sourceNodesById.get(sourceNodeId)!;
+    const override = overrides[sourceNodeId];
+    const explicitNodeId = override?.nodeId;
+    let baseNodeId: string;
+    if (explicitNodeId) {
+      baseNodeId = explicitNodeId;
+      if (existingNodeIds.has(baseNodeId)) {
+        throw new AgentToolError("NODE_ID_EXISTS", `Cloned node id "${baseNodeId}" already exists.`);
+      }
+    } else if (override?.name) {
+      baseNodeId = stableSnakeId(override.name, "driver");
+    } else if (sourceNodeId === sourceRootNodeId) {
+      baseNodeId = stableSnakeId(`${sourceNodeId}_copy`, "driver_copy");
+    } else {
+      const targetRootNodeId = mapping[sourceRootNodeId]!;
+      const sourcePrefix = `${sourceRootNodeId}_`;
+      const suffix = sourceNodeId.startsWith(sourcePrefix)
+        ? sourceNodeId.slice(sourceRootNodeId.length)
+        : `_${sourceNodeId}`;
+      baseNodeId = stableSnakeId(`${targetRootNodeId}${suffix}`, "driver_copy");
+    }
+    const targetNodeId = explicitNodeId ? baseNodeId : uniqueId(baseNodeId, existingNodeIds);
+    existingNodeIds.add(targetNodeId);
+    mapping[sourceNode.id] = targetNodeId;
+  }
+  return mapping;
+}
+
+function remapSubtreeFormula(
+  formula: string | undefined,
+  sourceNodeId: string,
+  sourceNodeIds: ReadonlySet<string>,
+  sourceToTargetNodeIds: Readonly<Record<string, string>>
+): string | undefined {
+  if (!formula?.trim()) return undefined;
+  let references: string[];
+  try {
+    references = extractFormulaReferences(formula);
+  } catch (error) {
+    throw new AgentToolError(
+      "FORMULA_PARSE_ERROR",
+      `Formula for source node "${sourceNodeId}" could not be parsed: ${error instanceof Error ? error.message : "invalid formula"}`
+    );
+  }
+  const externalReferences = references.filter((reference) => !sourceNodeIds.has(reference));
+  if (externalReferences.length > 0) {
+    throw new AgentToolError(
+      "EXTERNAL_SUBTREE_REFERENCE",
+      `Formula for source node "${sourceNodeId}" references nodes outside the source subtree: ${externalReferences.join(", ")}.`,
+      { sourceNodeId, externalReferences }
+    );
+  }
+  const tokens = tokenizeFormula(formula);
+  const remapped = tokens.map((token, index) => {
+    if (token.type !== "identifier") return token;
+    const next = tokens[index + 1];
+    if ((token.value === "min" || token.value === "max") && next?.type === "left_paren") return token;
+    const targetNodeId = sourceToTargetNodeIds[token.value];
+    return targetNodeId ? { ...token, value: targetNodeId } : token;
+  });
+  return serializeFormulaTokens(remapped);
+}
+
+function subtreeAddition(input: {
+  id: string;
+  sourceNode: VdtNode;
+  override: InstantiateNodeOverride | undefined;
+  nodeId: string;
+  parentNodeId: string;
+  relation: VdtEdgeRelation;
+  formula: string | undefined;
+}): VdtNodeAddition {
+  const { sourceNode, override } = input;
+  return {
+    id: input.id,
+    nodeId: input.nodeId,
+    parentNodeId: input.parentNodeId,
+    relation: input.relation,
+    name: override?.name ?? sourceNode.name,
+    description: override?.description ?? sourceNode.description,
+    type: override?.type ?? sourceNode.type,
+    unit: override?.unit ?? sourceNode.unit,
+    formula: input.formula,
+    value: override?.value ?? sourceNode.value,
+    baselineValue: override?.baselineValue ?? sourceNode.baselineValue,
+    valueStatus: override?.valueStatus ?? sourceNode.valueStatus,
+    valueSource: override?.valueSource ?? sourceNode.valueSource,
+    aiConfidence: sourceNode.aiConfidence,
+    aiRationale: override?.aiRationale ?? `Instantiated from source node "${sourceNode.id}".`,
+    assumptions: override?.assumptions ?? sourceNode.assumptions,
+    tags: override?.tags ?? sourceNode.tags,
+    owner: sourceNode.owner,
+    controllability: override?.controllability ?? sourceNode.controllability,
+    materiality: override?.materiality ?? sourceNode.materiality,
+    fixedInScenario: sourceNode.fixedInScenario,
+    dataMapping: sourceNode.dataMapping
+  };
+}
 
 function protectedBriefFromRun(context: AgentToolContext): {
   rootKpi?: string | undefined;

@@ -1,6 +1,6 @@
 # Agentic VDT Runtime Implementation Spec
 
-> **Status:** active normative target, partially implemented. This document describes required behavior, not proof of current readiness. For current implementation status use `AI_HARNESS.md`, `PRODUCTION_READINESS.md` and ADR-002. The corrective contract in ADR-003 and `VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md` supersedes conflicting classifier/skill-routing requirements below. Last contract review: 2026-07-23.
+> **Status:** active normative target, partially implemented. This document describes required behavior, not proof of current readiness. For current implementation status use `AI_HARNESS.md`, `PRODUCTION_READINESS.md`, ADR-002 and ADR-006. The corrective contracts in ADR-003, ADR-006 and `VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md` supersede conflicting classifier, skill-routing, one-decision/one-tool and event-origin requirements below. Last contract review: 2026-08-26.
 
 ## Corrective contract freeze
 
@@ -17,6 +17,53 @@ This section is normative and overrides any conflicting later reference to keywo
 - Keep V2 default-off/local-only until the corrective gates pass.
 
 The target skill tools are `skill.catalog_overview`, `skill.catalog_page`, `skill.discover`, `skill.read`, `skill.select`, `skill.report_gap` and selected-version-only `skill.compile_recipe`. Their ownership, hash, ACL, revocation, migration and feature-flag boundaries are defined in [ADR-003](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md). Existing V1 tools/events remain implementation evidence until their owning migration wave; they are not the V2 design.
+
+## Bounded dual-profile execution freeze
+
+This section is normative and overrides conflicting later references to a
+universal repeated `AgentDecision` loop or the older minimum event shape.
+
+- Every run binds immutably to one execution profile, engine adapter, backend,
+  concrete model, settings hash, capability hash, tool-catalog hash and logical
+  session epoch.
+- `external_cli_agent` lets a qualified external agent own the cognitive loop
+  in one native or checkpoint-resumed logical session. `model_agent` lets
+  `InProductModelAgentEngine` own that loop through structured HTTP/local
+  turns. The micro-CLI decision loop is compatibility-only and never a silent
+  fallback.
+- `VdtRunSupervisor` owns lifecycle, durable checkpoints, revisions, questions,
+  approvals, cancellation, recovery and finish. No SQLite lease spans an
+  unbounded model/CLI wait.
+- `VdtToolGateway` receives only `{ externalCallId, toolName, args }`; it derives
+  authority from the server binding, reserves an idempotent receipt and applies
+  the exact catalog/phase/policy/preview/validation/calculation boundary.
+- An `ActionBatch` contains one to six ordered calls, executes sequentially and
+  stops on the first error, pause or approval. A question, approval or finish
+  request is the only call in its batch.
+- The engine protocol supplies one initial brief/project summary/tool catalog;
+  later exchanges are checkpoint, tool-result, manual-change or human-input
+  deltas, and the same large delta is never duplicated in both structured input
+  and escaped prompt. Persistent transports must transmit that initial context
+  only once. The generic stateless HTTP correctness adapter currently replays
+  the confirmed transcript (bounded to 4 MiB) because Chat Completions exposes
+  no continuation cursor; it is unqualified for the speed target until replaced
+  by provider-native continuation/caching or supported by measured p95 evidence.
+- External execution uses a private empty workspace and exactly one per-run VDT
+  transport. Shell, filesystem, Git, database, WebFetch, foreign/global MCP,
+  repository instructions, apps/plugins and subagents are denied. Availability
+  requires `hard_verified` evidence for the exact adapter/version/protocol,
+  tool catalog and platform; drift fails closed.
+- Event V2 separates agent prose from facts. `external_agent`/`vdt_agent` may
+  author only `assistant_message`, `question` and `final`; `runtime` owns
+  runtime status/checkpoint; `tool_gateway` owns tool/approval facts. Streaming
+  deltas are transient; one completed message is durable.
+- `run.request_finish` is a deterministic handshake. A verified finish receipt
+  permits exactly one final from the same session; success is durable only
+  after that final. Unsafe recovery remains `recovery_required` and never
+  invents final prose or a replacement session.
+- Session binding, engine/tool receipts, finish receipt, checkpoint and Event V2
+  form an additive Sequence 4 contract. Sequence 3 bytes and authority remain
+  unchanged.
 
 ## Purpose
 
@@ -415,3 +462,55 @@ For UI work, also run a browser smoke test against `http://127.0.0.1:3000`:
 - verify cancel and timeout states show the actual failed step.
 
 If live provider verification is skipped, say so explicitly and explain why.
+
+## Compatibility decision batching amendment (2026-08-26)
+
+The implemented compatibility extension is `agent-decision-v2`. It retains `call_tool`, `ask_user` and `finish`, and adds `call_tools` with 2-6 ordered application-tool calls. This is bounded execution compression, not a return to `driverPlan`: calls are individually registry-validated, executed sequentially, and discarded after the first error, pause or approval. `deepen_node` still permits only one immediate-layer tool call.
+
+All configured providers receive the same registered decision contract and canonical normalization. The selected provider/model owns the full run; no faster hidden decision backend or automatic provider replacement is permitted. Ordinary completion additionally requires an empty bottom-up formula backlog, valid graph/calculation and a finite root value. The default 40-step budget is a safety bound; exhaustion saves the tree and waits for structured `continue_run`.
+
+This amendment describes the still-wired micro-CLI compatibility runtime, not
+the public target profile boundary. The compatibility orchestrator now also
+removes its independent `orchestrator_first_response` call: the first
+`AgentDecision.statusMessage` is the first visible agent reply, while the old
+task stays registered for schema/transport compatibility. In a session engine
+the first agent message, questions, corrections and final all come from the same
+logical session; there are no independent first-response or finish inference
+calls.
+
+## Session implementation and qualification status (2026-08-26)
+
+Implemented foundation: engine/session/capability contracts, Supervisor,
+Gateway, receipt replay, Event V2 outbox, structured Model Agent engine,
+deterministic finish verifier, compact execution projection,
+`vdt.instantiate_subtree`, local enum/formula fixes, Cursor ACP and
+checkpoint/resume canaries, and the fixed-fixture benchmark harness. The
+checkpoint canary executes one bounded `ActionBatch` before resuming the same
+opaque Cursor session and remains default-off with unverified isolation.
+
+Current target-path behavior: a registered server-owned structured Model Agent
+binding selects one public-route Supervisor and one engine; stale model
+mutations are rejected by a server-derived builder-revision fence and returned
+to the same session as a compact `manual_reconciliation` delta. The additive
+Sequence 4 SQLite migration and append-only authority schema are production-
+wired after unchanged Sequence 3. With a SQLite-backed AgentRunStore, the public
+Supervisor writes all seven normalized tables as primary authority, requires
+the current epoch, records per-write 30-second fence audit metadata and
+atomically reserves tool calls. This is not yet the full ADR-005 shared lease.
+It derives the authoritative project ID from the run row, projects the effective
+current epoch and fails closed rather than silently falling back. The V1 run row remains a secondary readable projection. An
+exchange is durably marked `in_flight` before provider execution.
+
+Still unavailable: a hard-qualified External capability, executable
+Codex/Claude session adapters, a restart auto-resume coordinator, builder
+revision reconstruction, paused question/approval restoration, removal of the
+compatibility loop and a successful post-change live profile benchmark.
+Finish-receipt hydration and exact-successor recovered finalization exist in
+the Supervisor/Sequence 4 authority, but have no public process-loss
+coordinator. Typed
+Codex/Claude checkpoint protocol canaries exist only behind unavailable
+capabilities and injected fake runners; they are not live protocol or isolation
+evidence. Qualification requires 3/3 cold runs at no more than 420 seconds and
+at least 20 warm runs with p95 no more than 420 seconds on the same fixed
+fixture and verified execution identity. The approximately 180-second median
+remains a stretch target, not an implementation claim.

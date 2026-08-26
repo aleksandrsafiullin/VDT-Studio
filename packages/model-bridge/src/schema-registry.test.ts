@@ -62,12 +62,13 @@ describe("schema registry", () => {
     }
   });
 
-  it("maps each output schema id to its canonical task type", () => {
+  it("maps each output schema id to its canonical task type and selects the latest task schema", () => {
     for (const schemaId of VDT_OUTPUT_SCHEMA_IDS) {
       const taskType = schemaTasks[schemaId];
       expect(schemaSupportsTask(schemaId, taskType)).toBe(true);
       expect(schemaIdForTask(taskType)).toBe(schemaId);
     }
+    expect(schemaIdForTask("agent_decision")).toBe("agent-decision-v2");
   });
 
   it("validates golden fixtures for every output schema id", () => {
@@ -201,7 +202,7 @@ describe("schema registry", () => {
 
   it("schemaIdForTask returns the expected schema for each task", () => {
     expect(schemaIdForTask("orchestrator_first_response")).toBe("orchestrator-first-response-v1");
-    expect(schemaIdForTask("agent_decision")).toBe("agent-decision-v1");
+    expect(schemaIdForTask("agent_decision")).toBe("agent-decision-v2");
     expect(schemaIdForTask("agent_plan")).toBe("agent-plan-v1");
     expect(schemaIdForTask("deepen_node")).toBe("deepen-node-v1");
     expect(schemaIdForTask("review_model")).toBe("review-model-v1");
@@ -234,6 +235,17 @@ describe("schema registry", () => {
     ]);
   });
 
+  it("emits callsJson in the flat strict agent-decision-v2 wire schema", () => {
+    const schema = getStrictResponseJsonSchema("agent-decision-v2");
+
+    expect(schema).not.toHaveProperty("anyOf");
+    expect(schema.properties).toMatchObject({
+      type: { type: "string", enum: ["call_tool", "call_tools", "ask_user", "finish"] },
+      callsJson: { type: "string" }
+    });
+    expect(schema.required).toContain("callsJson");
+  });
+
   it("normalizes agent-decision strict response encoding before registered validation", () => {
     const normalized = normalizeRegisteredSchemaOutput("agent-decision-v1", {
       type: "call_tool",
@@ -252,6 +264,29 @@ describe("schema registry", () => {
       statusMessage: "Searching for a haulage skill."
     });
     expect(validateRegisteredSchema("agent-decision-v1", normalized)).toBe(true);
+  });
+
+  it("normalizes agent-decision-v2 callsJson into canonical sequential calls", () => {
+    const normalized = normalizeRegisteredSchemaOutput("agent-decision-v2", {
+      type: "call_tools",
+      toolName: "",
+      argsJson: "{}",
+      callsJson: "[{\"toolName\":\"project.get_node\",\"args\":{\"nodeId\":\"root\"}},{\"toolName\":\"project.get_subtree\",\"args\":{\"nodeId\":\"root\",\"maxDepth\":2}}]",
+      statusMessage: "Inspecting the current project.",
+      questionsJson: "[]",
+      summary: "",
+      nextSuggestedActions: []
+    });
+
+    expect(normalized).toEqual({
+      type: "call_tools",
+      calls: [
+        { toolName: "project.get_node", args: { nodeId: "root" } },
+        { toolName: "project.get_subtree", args: { nodeId: "root", maxDepth: 2 } }
+      ],
+      statusMessage: "Inspecting the current project."
+    });
+    expect(validateRegisteredSchema("agent-decision-v2", normalized)).toBe(true);
   });
 
   it("normalizes user-question tool aliases to ask_user decisions", () => {

@@ -13,7 +13,7 @@ const safeId = (max = 128) => boundedString(max).regex(
 
 export const researchModeSchema = z.enum(["auto", "on", "off"]);
 
-export const agentStartRequestSchema = z.object({
+const agentStartRequestCommonShape = {
   mode: z.enum(["generate_vdt", "continue_project", "deepen_node", "review_project"]),
   input: z.object({
     prompt: optionalBoundedString(2_000),
@@ -37,18 +37,50 @@ export const agentStartRequestSchema = z.object({
     description: optionalBoundedString(1_000),
     vdtId: safeId().optional()
   }).optional(),
-  providerId: boundedString(120),
-  providerConfig: z.record(z.unknown()).optional(),
   options: z.object({
     autoApplyPatches: z.boolean().optional(),
     askBeforeFirstPatch: z.boolean().optional(),
-    maxSteps: z.number().int().min(1).max(30).optional(),
+    maxSteps: z.number().int().min(1).max(60).optional(),
     maxAutoDepth: z.number().int().min(1).max(8).optional(),
     continueWithAssumptions: z.boolean().optional(),
     researchMode: researchModeSchema.optional()
   }).optional()
-}).superRefine((value, ctx) => {
-  for (const forbidden of ["command", "args", "argsText", "cwd", "env", "schema", "systemPrompt", "userPrompt"]) {
+} as const;
+
+/**
+ * New execution-profile starts cross the public boundary with one opaque,
+ * server-managed binding ID. The strict object deliberately rejects client
+ * attempts to choose an adapter, executable, model, or security policy.
+ */
+const executionBindingStartRequestSchema = z.object({
+  ...agentStartRequestCommonShape,
+  executionBindingId: safeId(160)
+}).strict();
+
+/**
+ * Temporary compatibility shape for the existing micro-CLI/provider loop.
+ * It remains intentionally separate so a request cannot combine a binding ID
+ * with caller-managed provider configuration.
+ */
+const legacyProviderStartRequestSchema = z.object({
+  ...agentStartRequestCommonShape,
+  providerId: boundedString(120),
+  providerConfig: z.record(z.unknown()).optional()
+}).strict().superRefine((value, ctx) => {
+  for (const forbidden of [
+    "command",
+    "executable",
+    "args",
+    "argsText",
+    "cwd",
+    "env",
+    "schema",
+    "systemPrompt",
+    "userPrompt",
+    "executionProfile",
+    "engineAdapterId",
+    "securityConfig"
+  ]) {
     if (value.providerConfig && forbidden in value.providerConfig) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -58,3 +90,8 @@ export const agentStartRequestSchema = z.object({
     }
   }
 });
+
+export const agentStartRequestSchema = z.union([
+  executionBindingStartRequestSchema,
+  legacyProviderStartRequestSchema
+]);

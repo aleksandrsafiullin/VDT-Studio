@@ -71,6 +71,28 @@ describe("codex subscription executor", () => {
     expect(result.output).toMatchObject({ projectTitle: "Fake Codex tree", rootNodeId: "root" });
   });
 
+  it("normalizes Codex agent-decision-v2 callsJson to canonical call_tools", async () => {
+    const result = await executeCompletion(
+      codexManifest(),
+      {
+        requestId: crypto.randomUUID(),
+        backendId: "codex_subscription",
+        taskType: "agent_decision",
+        schemaId: "agent-decision-v2",
+        input: { runId: "run", currentProject: { nodes: [] } }
+      },
+      new AbortController().signal,
+      fakeCodexExecutor()
+    );
+    expect(result.output).toMatchObject({
+      type: "call_tools",
+      calls: [
+        { toolName: "project.get_node", args: { nodeId: "root" } },
+        { toolName: "project.get_subtree", args: { nodeId: "root", maxDepth: 2 } }
+      ]
+    });
+  });
+
   it("fails schema validation for bad-schema fake mode", async () => {
     await expect(
       executeCompletion(
@@ -161,6 +183,28 @@ describe("claude subscription executor", () => {
     );
     expect(result.schemaValid).toBe(true);
     expect(result.output).toMatchObject({ projectTitle: "Fake Claude tree", rootNodeId: "root" });
+  });
+
+  it("normalizes Claude agent-decision-v2 callsJson to canonical call_tools", async () => {
+    const result = await executeCompletion(
+      claudeManifest(),
+      {
+        requestId: crypto.randomUUID(),
+        backendId: "claude_subscription",
+        taskType: "agent_decision",
+        schemaId: "agent-decision-v2",
+        input: { runId: "run", currentProject: { nodes: [] } }
+      },
+      new AbortController().signal,
+      fakeClaudeExecutor()
+    );
+    expect(result.output).toMatchObject({
+      type: "call_tools",
+      calls: [
+        { toolName: "project.get_node", args: { nodeId: "root" } },
+        { toolName: "project.get_subtree", args: { nodeId: "root", maxDepth: 2 } }
+      ]
+    });
   });
 
   it("fails schema validation for bad-schema fake mode", async () => {

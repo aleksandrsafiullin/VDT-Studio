@@ -109,6 +109,34 @@ describe("structured completion providers", () => {
     });
   });
 
+  it("uses Azure strict JSON Schema when supplied", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({ choices: [{ message: { content: "{\"answer\":\"azure-strict\"}" } }] })
+    );
+    const provider = new AzureOpenAiProvider({
+      endpoint: "https://unit.openai.azure.com",
+      apiKey: "azure-secret",
+      deployment: "test",
+      apiVersion: "2024-10-21",
+      fetch: fetchMock
+    });
+    const schema = {
+      type: "object",
+      properties: { answer: { type: "string" } },
+      required: ["answer"],
+      additionalProperties: false
+    };
+
+    await expect(provider.completeStructured({ ...params, schema })).resolves.toEqual({ answer: "azure-strict" });
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      response_format: {
+        type: "json_schema",
+        json_schema: { strict: true, schema }
+      }
+    });
+  });
+
   it("calls Gemini generateContent in JSON mode", async () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
       jsonResponse({ candidates: [{ content: { parts: [{ text: "{\"answer\":\"gemini\"}" }] } }] })

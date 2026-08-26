@@ -23,7 +23,7 @@ The repository does not contain the previously referenced `Technical Specificati
 | `pnpm docs:verify` | Pass: 26 required documentation contracts verified |
 | `pnpm security:audit` | **Fail: 11 vulnerabilities: 6 high, 5 moderate** |
 
-No credentialed live-provider, browser E2E, native installer or clean-machine desktop test was executed during this review. Windows W0.1 storage durability is unverified.
+No credentialed live-provider run passed during this review. Cursor and Codex agent-decision-v2 qualification attempts were executed but failed structured terminal-output validation; browser E2E, native installer and clean-machine desktop tests were not executed. Windows W0.1 storage durability is unverified.
 
 ## Implemented Alpha Foundations
 
@@ -59,19 +59,104 @@ the complete platform crash matrix, package/bundle equality and transport for
 the over-100-MiB offline artifact remain unverified. Production/release remains
 `NO-GO` and all V2 feature flags remain OFF.
 
+## Sequence 4 Bounded-Execution Schema
+
+The additive Sequence 4 migration is production-wired as a separate fenced
+attempt after unchanged Sequence 3. Storage tests cover immutable bindings,
+exact-next session epochs, checkpoints, contiguous exchange/tool/finish receipt
+transitions, Event V2 sequence/hash predecessors, V1 readability and fail-
+closed External binding admission (`qualified + hard_verified + evidence`).
+
+For a SQLite-backed AgentRunStore, this is now also normalized runtime-authority
+`GO`: the public structured Supervisor writes all seven Sequence 4 tables as its
+primary authority, uses the authoritative `agent_runs.project_id`, projects the
+effective current session epoch, records a fresh 30-second audit fence on each
+write and atomically reserves each tool call. This is not yet the ADR-005
+shared ownership lease with acquisition, heartbeat, expiry takeover and
+release. Failure to establish normalized authority is fail-closed; there is no
+silent fallback. The V1 run row remains a readable secondary projection.
+
+This is still not recovery `GO`. The route does not yet coordinate a safe
+restart/epoch advance and resume, reconstruct the builder at its persisted
+revision, restore paused question/approval state or hydrate a verified finish
+receipt.
+
 ## Working-Tree Data Correctness Update
 
 The 2026-08-10 focused data-harness/API checks close the known 4096-byte preview defect in the current working tree: text parsers prefer immutable full bytes, and a 1,000-row CSV regression passes. The incoming-category path also refuses to materialize Baselines from tables marked `truncated`.
 
 This is not release evidence: the checks ran on local Node 26 outside the supported Node 24 range, adapter snapshots do not yet expose separate original/parsed/sample counts everywhere, and the broader upload security and parser-isolation gates remain open.
 
+## Working-Tree Agent Decision V2 Update
+
+The current working tree adds provider-neutral `agent-decision-v2` batching, atomic sibling-plus-parent-formula proposals, a bottom-up formula backlog, compact decision context, resumable step-limit pauses and informational per-run performance summaries. The v1 schema remains registered. Deterministic runtime/model-bridge/AI-harness tests cover normalization, strict API payloads, sequential execution, first-error/approval stops, formula rollback and continuation.
+
+This does not promote any provider certification. On 2026-08-26, Cursor failed both partial-output A/B variants (`BACKEND_PARSE_FAILED`, 83,678 ms with the flag and 91,657 ms without it), and Codex returned `SCHEMA_INVALID` after 91,444 ms; all three attempts produced zero schema-valid output bytes. The Cursor flag was retained. Three successful credentialed haulage runs per available provider/model, browser/native checks and the aggregate release gates are still required before release claims change.
+
+## Working-Tree Session Execution Foundation
+
+The working tree adds the ADR-006 session-oriented foundation: immutable
+execution bindings and capability evidence, `VdtRunSupervisor`, a strict
+`VdtToolGateway`, bounded engine/tool/checkpoint receipts, Event V2 hash-chain
+projection, `InProductModelAgentEngine`, deterministic finish receipts, compact
+public snapshots and default-off Cursor ACP plus checkpoint/resume engine
+canaries. It also adds
+deterministic subtree instantiation, strict enum-field diagnostics, safe numeric
+comma parsing and a sanitized fixed-fixture benchmark harness.
+
+This is **partial/binding-registry default-off**, not a provider, recovery,
+security or performance `GO`:
+
+- a registered server-owned structured Model Agent binding uses the public
+  Supervisor path, while provider-ID requests remain explicitly on the legacy
+  micro-CLI compatibility runtime only under its separate production opt-in;
+  the default Model binding is registered but disabled and undiscoverable until
+  `VDT_MODEL_AGENT_ENABLED=true`, and there is no silent fallback;
+- the legacy orchestrator no longer invokes `orchestrator_first_response`; its
+  first `AgentDecision.statusMessage` supplies the first UX reply while the old
+  task remains compatibility-registered;
+- SQLite-backed Supervisor persistence uses normalized Sequence 4 as primary
+  authority with current-epoch checks, per-write fence audit metadata, atomic
+  tool reservation and a durable pre-provider
+  `in_flight` exchange checkpoint. Controller-loss recovery nevertheless stays
+  fail-closed: the auto-resume coordinator, persisted builder reconstruction,
+  and paused question/approval restoration are not implemented. Supervisor and
+  Sequence 4 finish-receipt hydration/finalization exist, but no public
+  process-loss coordinator invokes them automatically;
+- Cursor ACP and Cursor checkpoint/resume have no accepted `hard_verified`
+  negative-security evidence and are unavailable as public External profiles.
+  The checkpoint adapter's fake-runner tests do not prove that print mode
+  cannot execute an unreported built-in tool. Codex/Claude have typed,
+  default-unavailable protocol canaries and deterministic negative tests, but
+  no executable External session engine, live qualification or hard-isolation
+  evidence; and
+- no successful post-change External or Model Agent live benchmark was run.
+  The historical 903.7-second sample is context only. The release criterion is
+  3/3 cold runs at no more than 420 seconds plus at least 20 warm runs with p95
+  no more than 420 seconds; approximately 180 seconds is only a stretch median.
+  The generic stateless Model Agent transport now sends initial context once,
+  then a required server-private semantic checkpoint capped at 16 KiB,
+  confirmed hashes/cursor and only the current delta. It does not replay the raw
+  project or transcript, but that checkpoint is not durable, so the adapter
+  advertises `supportsResume=false`. A provider-native continuation/cached
+  session or measured same-model benchmark is still required.
+
 ## P0 Correctness Blockers
 
 ### Agent/manual-change race
 
-More than one decision loop can operate on a run, base revision is not enforced at apply, and stale agent snapshots can overwrite unsupported manual-change types.
+More than one legacy compatibility decision loop can still operate on a public
+run, and unsupported manual-change types are not fully merged. The structured
+Model Agent path now removes the per-tool loop for its own run, rejects a stale
+mutating/finish call before execution, sends a compact reconciliation delta to
+the same session and rechecks an approved proposal's base revision. This closes
+the narrow in-memory overwrite case, but not the blocker as a whole: the legacy
+path remains and the restart coordinator does not yet rehydrate the SQLite
+authority into safe resume or complete operation-level reconciliation.
 
-Required: per-run coordinator/lease, serialized attempt, operation-level merge and revision CAS.
+Required: complete public-route adoption, restart-safe builder/interaction
+rehydration and auto-resume coordination, operation-level merge and
+revision CAS.
 
 ## P0 Release And Security Blockers
 
@@ -107,6 +192,10 @@ The upload path also lacks pre-buffer streaming limits, archive expansion budget
 
 - Canonical provider status is `release/provider-certification.json`; most real providers are not live-verified.
 - Complete credentialed live generation/agent smokes before raising a provider's support level.
+- Treat backend/CLI readiness and External execution-profile qualification as
+  separate gates. External requires exact adapter/version/protocol/tool-catalog
+  evidence, hard isolation and the negative shell/filesystem/Git/WebFetch/MCP/
+  subagent suite; executable detection or permission-only flags are not enough.
 - Run an independent security review of BYOK proxy, CLI boundaries and upload/data egress.
 - Replace the bundled Node sidecar with a reviewed self-contained binary.
 - Pass `pnpm desktop:native:preflight` with Rust/Cargo, pinned Tauri CLI, signing and Windows targets.

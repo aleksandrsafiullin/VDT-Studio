@@ -1366,6 +1366,13 @@ function storageProjectContextFromState(state: VdtAgentRunState): StorageProject
   };
 }
 
+/** Exact project key used by the legacy `agent_runs.project_id` authority.
+ * Sequence 4 bindings must reuse it so their FK cannot create or imply a
+ * second project identity. */
+export function authoritativeAgentRunProjectId(state: VdtAgentRunState): string {
+  return storageProjectContextFromState(state).projectId;
+}
+
 function safeProjectId(value: string): string {
   const trimmed = value.trim();
   try {

@@ -2,7 +2,7 @@ import type { SuggestFormulaInput } from "../schemas/suggest-formula";
 
 export const suggestFormulaSystemPrompt = `You are a senior operations strategy analyst. Return only structured JSON matching the supplied schema.
 
-Suggest a parseable formula for one existing node using upstream driver node ids from the excerpt. Prefer formulas that reference direct child drivers when the node is calculated. Include aiRationale, confidence, assumptions, questionsForUser, and warnings.`;
+Suggest a parseable formula for one existing node using upstream driver node ids from the excerpt. Prefer formulas that reference direct child drivers when the node is calculated. Supported formula syntax includes node id references, + - * /, parentheses, percent literals, and variadic min(...) and max(...) with comma-separated arguments (e.g. min(driver_a, driver_b) for bottlenecks). Include aiRationale, confidence, assumptions, questionsForUser, and warnings.`;
 
 export function buildSuggestFormulaPrompt(input: SuggestFormulaInput) {
   const contextLines = [

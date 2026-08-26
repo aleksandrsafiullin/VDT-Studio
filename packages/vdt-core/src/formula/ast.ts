@@ -2,7 +2,8 @@ export type FormulaExpression =
   | { type: "number"; value: number; raw: string }
   | { type: "reference"; name: string }
   | { type: "unary"; operator: "-"; expression: FormulaExpression }
-  | { type: "binary"; operator: "+" | "-" | "*" | "/"; left: FormulaExpression; right: FormulaExpression };
+  | { type: "binary"; operator: "+" | "-" | "*" | "/"; left: FormulaExpression; right: FormulaExpression }
+  | { type: "call"; name: "min" | "max"; args: FormulaExpression[] };
 
 export type FormulaToken =
   | { type: "number"; value: number; raw: string }
@@ -10,6 +11,7 @@ export type FormulaToken =
   | { type: "operator"; value: "+" | "-" | "*" | "/" }
   | { type: "left_paren" }
   | { type: "right_paren" }
+  | { type: "comma" }
   | { type: "eof" };
 
 export class FormulaParseError extends Error {

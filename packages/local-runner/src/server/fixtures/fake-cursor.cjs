@@ -17,6 +17,21 @@ function buildOutput(payload) {
   if (payload.schemaId === "connection-test-v1") {
     return { ok: true };
   }
+  if (payload.schemaId === "agent-decision-v2") {
+    return {
+      type: "call_tools",
+      toolName: "",
+      argsJson: "{}",
+      callsJson: JSON.stringify([
+        { toolName: "project.get_node", args: { nodeId: "root" } },
+        { toolName: "project.get_subtree", args: { nodeId: "root", maxDepth: 2 } }
+      ]),
+      statusMessage: "Inspecting the project.",
+      questionsJson: "[]",
+      summary: "",
+      nextSuggestedActions: []
+    };
+  }
   return {
     projectTitle: "Fake Cursor tree",
     rootNodeId: "root",

@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { AiProvider } from "@vdt-studio/ai-harness";
 import * as managedRuntime from "@vdt-studio/local-runner/server-runtime";
-import { schemaIdForTask } from "@vdt-studio/model-bridge";
+import {
+  getStrictResponseJsonSchema,
+  normalizeRegisteredSchemaOutput,
+  schemaIdForTask,
+  validateRegisteredSchemaDetailed
+} from "@vdt-studio/model-bridge";
 import {
   createAiProvider,
   type AiRouteProviderRequest
@@ -21,7 +26,7 @@ export function createManagedAwareAiProvider(request: AiRouteProviderRequest, re
     typeof providerConfig.pairingToken !== "string";
 
   if (!needsManagedLocalRuntime) {
-    return createAiProvider(request, requestUrl);
+    return withRegisteredAgentDecisionSchema(createAiProvider(request, requestUrl));
   }
 
   if (!resolveTrustedStorageWriteMode()) {
@@ -65,7 +70,7 @@ export function createManagedAwareAiProvider(request: AiRouteProviderRequest, re
           input: {
             data: params.input,
             systemPrompt: params.systemPrompt,
-            userPrompt: params.userPrompt
+            userPrompt: managedRunnerPrompt(params.taskType, params.userPrompt)
           },
           ...(selectedModel ? { model: selectedModel } : {}),
           ...(timeoutMs ? { timeoutMs } : {})
@@ -85,6 +90,46 @@ export function createManagedAwareAiProvider(request: AiRouteProviderRequest, re
       } finally {
         params.signal?.removeEventListener("abort", abort);
       }
+    }
+  };
+}
+
+/**
+ * The managed runner serializes the complete `data` object into its canonical
+ * CLI prompt. Repeating the same 70-170 KiB agent context in `userPrompt`
+ * doubles provider input and makes every checkpoint progressively slower.
+ * Direct HTTP providers still receive the original prompt; this compaction is
+ * only for the managed envelope that already carries `data` losslessly.
+ */
+function managedRunnerPrompt(taskType: string, userPrompt: string): string {
+  if (taskType === "agent_decision" || taskType === "orchestrator_first_response") {
+    return "Use input.data as the canonical VDT context and return only the requested structured response.";
+  }
+  return userPrompt;
+}
+
+function withRegisteredAgentDecisionSchema(provider: AiProvider): AiProvider {
+  return {
+    id: provider.id,
+    name: provider.name,
+    type: provider.type,
+    async completeStructured(params) {
+      if (params.taskType !== "agent_decision") {
+        return provider.completeStructured(params) as Promise<never>;
+      }
+      const schemaId = schemaIdForTask(params.taskType);
+      const raw = await provider.completeStructured({
+        ...params,
+        schema: getStrictResponseJsonSchema(schemaId)
+      });
+      const normalized = normalizeRegisteredSchemaOutput(schemaId, raw);
+      const validation = validateRegisteredSchemaDetailed(schemaId, normalized);
+      if (!validation.valid) {
+        const error = new Error(`AI response failed schema validation: ${validation.errors.join(" ")}`);
+        (error as { code?: string }).code = "SCHEMA_INVALID";
+        throw error;
+      }
+      return normalized as never;
     }
   };
 }

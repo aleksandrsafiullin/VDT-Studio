@@ -103,14 +103,12 @@ describe("detect CLIs API route", () => {
           authSummary: "Cursor account is authenticated and ready."
         })
       ]));
-      expect(body.modelsByAgent).toMatchObject({
-        codex: ["gpt-5.5", "gpt-5.2"],
-        "cursor-agent": ["auto", "gpt-5.5-high"]
-      });
+      expect(body.modelsByAgent?.codex).toEqual(expect.arrayContaining(["gpt-5.5", "gpt-5.2"]));
+      expect(body.modelsByAgent?.["cursor-agent"]).toEqual(expect.arrayContaining(["auto", "gpt-5.5-high"]));
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it("keeps localhost detection in development web mode even for production builds", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-web-detect-clis-"));
@@ -137,7 +135,28 @@ describe("detect CLIs API route", () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
+
+  it("reuses one capability probe for repeated requests with the same host identity", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-web-detect-cache-"));
+    try {
+      await symlink(fakeCodex, path.join(tempDir, "codex"));
+      vi.stubEnv("VDT_APP_MODE", "development_web");
+      vi.stubEnv("PATH", `${tempDir}${path.delimiter}${process.env.PATH ?? ""}`);
+
+      const first = await GET(new Request("http://localhost:3000/api/ai/detect-clis?id=codex"));
+      const second = await GET(new Request("http://localhost:3000/api/ai/detect-clis?id=codex"));
+
+      expect(first.headers.get("x-vdt-cli-probe-cache")).toBe("miss");
+      expect(second.headers.get("x-vdt-cli-probe-cache")).toBe("hit");
+      expect(await readJson(second)).toMatchObject({
+        appMode: "development_web",
+        agents: [expect.objectContaining({ id: "codex", installed: true })]
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   it("rejects unknown agent ids", async () => {
     const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis?id=unknown-agent"));

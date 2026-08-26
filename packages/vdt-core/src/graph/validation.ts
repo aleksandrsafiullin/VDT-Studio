@@ -70,6 +70,35 @@ function collectUnitWarnings(
     return collectUnitWarnings(node, expression.expression, nodeById, warnings, `${path}-unary`);
   }
 
+  if (expression.type === "call") {
+    const argUnits: (string | undefined)[] = [];
+    for (const arg of expression.args) {
+      argUnits.push(
+        collectUnitWarnings(node, arg, nodeById, warnings, `${path}-arg-${argUnits.length}`)
+      );
+    }
+
+    for (let index = 0; index < argUnits.length; index += 1) {
+      for (let otherIndex = index + 1; otherIndex < argUnits.length; otherIndex += 1) {
+        const leftUnit = argUnits[index];
+        const rightUnit = argUnits[otherIndex];
+        if (leftUnit && rightUnit && !unitsCompatible(leftUnit, rightUnit)) {
+          warnings.push(
+            warning(
+              `validation-unit-mismatch-${node.id}-${path}-${index}-${otherIndex}`,
+              "unit_mismatch",
+              `Formula for "${node.name}" combines incompatible units in "${expression.name}(...)": ` +
+                `"${leftUnit}" and "${rightUnit}"`,
+              node.id
+            )
+          );
+        }
+      }
+    }
+
+    return argUnits.find((unit) => unit !== undefined);
+  }
+
   const leftUnit = collectUnitWarnings(node, expression.left, nodeById, warnings, `${path}-left`);
   const rightUnit = collectUnitWarnings(node, expression.right, nodeById, warnings, `${path}-right`);
 

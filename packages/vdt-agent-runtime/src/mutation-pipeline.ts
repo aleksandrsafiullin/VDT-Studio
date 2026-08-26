@@ -70,12 +70,18 @@ export function proposeAndMaybeApplyMutation(
   const validation = summarizeValidation(validateGraph(previewProject));
   const calculation = validation.valid ? summarizeCalculation(calculateGraph(previewProject)) : undefined;
   const policy = mutationPolicyForRun(context);
-  const scope = progressiveScopeForMutation(baseProject, changeSet, normalizedInput.targetNodeId);
+  const boundedScope = progressiveScopeForMutation(baseProject, changeSet, normalizedInput.targetNodeId);
+  const boundedScopeError = validateProgressiveMutationScope(baseProject, changeSet, boundedScope);
+  const bypassBoundedScope = normalizedInput.allowSkillDefinedDepth === true && boundedScopeError !== undefined;
+  const scope = bypassBoundedScope ? undefined : boundedScope;
   const scopeError = validateSingleLayerRunScope(
     state,
     changeSet,
     normalizedInput.targetNodeId
-  ) ?? validateProgressiveMutationScope(baseProject, changeSet, scope);
+  ) ?? (bypassBoundedScope ? undefined : boundedScopeError);
+  const approvalRequired = !scopeError
+    && validation.valid
+    && requiresApproval(policy, changeSet, state.mutationProposals ?? []);
   const proposal = buildMutationProposal({
     runId: context.runId,
     project: baseProject,
@@ -101,6 +107,7 @@ export function proposeAndMaybeApplyMutation(
       status: proposal.status,
       selectedChangeIds,
       validationValid: validation.valid,
+      approvalRequired,
       targetNodeId: scope?.targetNodeId
     }
   });
@@ -126,7 +133,7 @@ export function proposeAndMaybeApplyMutation(
     );
   }
 
-  if (requiresApproval(policy, changeSet, state.mutationProposals ?? [])) {
+  if (approvalRequired) {
     storeProposal(context, proposal, { pending: true });
     context.store.updateRun(context.runId, {
       status: "waiting_approval",
@@ -251,6 +258,36 @@ function applyProposalToBuilder(
   const builder = context.builder;
   if (!builder) throw new AgentToolError("NO_DRAFT_PROJECT", "VDT builder session is not available for this run.");
   const beforeRevision = builder.getRevision();
+  if (beforeRevision !== proposal.baseRevision) {
+    const message = `Proposal revision ${proposal.baseRevision} is stale; current revision is ${beforeRevision}.`;
+    const failed = updateProposal(proposal, {
+      status: "failed",
+      failureReason: message
+    });
+    storeProposal(context, failed);
+    context.store.updateRun(context.runId, {
+      pendingMutationProposal: undefined,
+      pendingChangeSet: undefined
+    });
+    context.emit({
+      type: "mutation_rejected",
+      phase: "applying_graph",
+      title: "Stale mutation proposal rejected",
+      message,
+      patch: failed.changeSet,
+      metadata: {
+        proposalId: failed.id,
+        status: failed.status,
+        expectedRevision: proposal.baseRevision,
+        currentRevision: beforeRevision
+      }
+    });
+    throw new AgentToolError("STALE_REVISION", message, {
+      proposalId: failed.id,
+      expectedRevision: proposal.baseRevision,
+      currentRevision: beforeRevision
+    });
+  }
   const result = builder.applyChangeSet(proposal.changeSet, new Set(selectedChangeIds));
   const afterRevision = builder.getRevision();
 

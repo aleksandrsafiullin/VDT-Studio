@@ -3,8 +3,8 @@
 import type {
   AgentUserMessage,
   VdtAgentEvent,
-  VdtAgentRunSnapshot,
-  VdtAgentStartRequest
+  VdtAgentPublicStartRequest,
+  VdtAgentRunSnapshot
 } from "@vdt-studio/vdt-agent-runtime";
 
 export type {
@@ -17,6 +17,7 @@ export type {
   RetryableAgentError,
   VdtAgentEvent,
   VdtAgentQuestion,
+  VdtAgentPublicStartRequest,
   VdtAgentRunSnapshot,
   VdtAgentStartRequest
 } from "@vdt-studio/vdt-agent-runtime";
@@ -27,6 +28,22 @@ export interface StartAgentRunResponse {
   snapshot: VdtAgentRunSnapshot;
 }
 
+export interface PublicAgentExecutionBindingSummary {
+  bindingId: string;
+  executionProfile: "model_agent" | "external_cli_agent";
+  engineId: string;
+  engineAdapterId: string;
+  backendId: string;
+  modelId: string;
+}
+
+export interface AgentExecutionBindingSelection {
+  schemaVersion: 1;
+  ok: true;
+  defaultBindingId: string | null;
+  bindings: PublicAgentExecutionBindingSummary[];
+}
+
 export interface AgentEventHandlers {
   onEvent?: (event: VdtAgentEvent) => void;
   onError?: (error: Event) => void;
@@ -34,7 +51,8 @@ export interface AgentEventHandlers {
 }
 
 export interface AgentClient {
-  startRun(request: VdtAgentStartRequest): Promise<StartAgentRunResponse>;
+  getExecutionBindings(): Promise<AgentExecutionBindingSelection>;
+  startRun(request: VdtAgentPublicStartRequest): Promise<StartAgentRunResponse>;
   getRun(runId: string): Promise<VdtAgentRunSnapshot>;
   subscribe(runId: string, handlers: AgentEventHandlers): () => void;
   sendMessage(runId: string, message: AgentUserMessage): Promise<VdtAgentRunSnapshot>;
@@ -43,6 +61,13 @@ export interface AgentClient {
 
 export function createAgentClient(fetcher: typeof fetch = fetch): AgentClient {
   return {
+    async getExecutionBindings() {
+      const response = await fetcher("/api/agent/runs", { cache: "no-store" });
+      return readJsonResponse<AgentExecutionBindingSelection>(
+        response,
+        "Agent execution bindings could not be loaded."
+      );
+    },
     async startRun(request) {
       const response = await fetcher("/api/agent/runs", {
         method: "POST",

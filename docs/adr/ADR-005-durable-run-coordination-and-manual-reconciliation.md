@@ -15,6 +15,7 @@
   [evidence](../implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-artifact-freeze-go-2026-07-31)
 - Program: [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](../VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md), W0.2
 - Depends on: [`ADR-003`](ADR-003-single-copy-skills-and-agent-owned-resolution.md) and [`ADR-004`](ADR-004-atomic-revision-commit-and-legacy-migration-adoption.md)
+- Bounded-execution amendment: [`ADR-006`](ADR-006-bounded-dual-profile-agent-execution.md)
 - Exact accepted schemas: [`CORRECTIVE_GATE_A_CONTRACT_SCHEMAS.md`](../architecture/CORRECTIVE_GATE_A_CONTRACT_SCHEMAS.md#w02-accepted-durable-run-coordination-contract)
 
 The design contract and Gate R1 SQL-only code have their separate independent
@@ -93,12 +94,21 @@ validated against actual durable state when claimed.
 
 There is one lease policy for the first implementation: 30-second lease duration, heartbeat every 10 seconds, and a five-second SQLite busy timeout. Heartbeat extends expiry only for the exact current owner tuple. Lease generation changes on initial acquisition, expired takeover or control-plane cancellation. Takeover uses a new cryptographically random owner token and the next generation. All expiry decisions use the storage-owned clock inside the acquisition transaction, not a request/model timestamp.
 
-One attempt executes one bounded turn: one queued command, at most one provider
-decision and one selected tool call, at most one immutable staged effect and at
-most one fenced commit. The attempt then becomes terminal. If the agent should
-continue, its terminal transaction enqueues a server-owned idempotent
-`drive_run` command for the next turn. The coordinator never holds one lease
-across an unbounded multi-step decision loop.
+One attempt executes one bounded unit: one queued command and at most one
+receipted engine exchange, Gateway tool operation or checkpoint, one immutable
+staged effect and one fenced commit. An `ActionBatch` is a sequence of these
+individually receipted tool operations, not one unbounded storage attempt. The
+compatibility contract calls this **one bounded turn**. The attempt then becomes
+terminal. If execution should continue, its terminal
+transaction enqueues a server-owned idempotent `drive_run` command for the next
+bounded unit.
+
+ADR-006 permits one logical engine session to remain alive for the whole run.
+That cognitive/session lifetime does not own a SQLite lease: no lease spans an
+unbounded CLI/model wait, question pause or multi-step loop. The legacy
+provider-decision path may still use one provider decision plus its selected
+tool as a compatibility turn, but that shape is no longer the universal
+architecture.
 
 The start command persists a 1..30 turn limit. Reserving a provider decision
 atomically consumes one turn; restart of the same receipt does not consume
@@ -174,13 +184,17 @@ correct answer/approval/merge resolution behind it.
 
 ### Provider/tool calls are receipted and tools cannot own mutation
 
-Each attempt first persists at most one `ProviderDecisionReceiptV1` and one
-`ToolCallReceiptV1`, including exact canonical input/output hashes, stable call
-key and `prepared -> in_flight -> completed|failed|ambiguous` state. Restart
-reuses a verified terminal receipt. It invokes a `prepared` record once, but
-never blindly repeats `in_flight` work: only an exact provider/adapter
-same-key lookup may settle it; otherwise it becomes durable ambiguity and a
-new authenticated retry/attempt is required.
+The compatibility path persists at most one `ProviderDecisionReceiptV1` and
+one `ToolCallReceiptV1` per turn. ADR-006 adds
+`AgentEngineExchangeReceiptV2` and `AgentToolOperationReceiptV2` so a persistent
+logical session receives the same bounded receipt/fence treatment without
+being reduced to repeated independent provider decisions. Every receipt keeps
+exact canonical input/output hashes, a stable call key and
+`prepared -> in_flight -> completed|failed|ambiguous` state. Restart reuses a
+verified terminal receipt. It invokes a `prepared` record once, but never
+blindly repeats `in_flight` work: only an exact provider/adapter same-key lookup
+or stable replay call ID may settle it; otherwise it remains durable ambiguity
+and requires an explicit recovery action.
 
 Provider-receipt reservation and invocation require the receipt's
 binding/provider/concrete-model/settings-hash tuple to equal the immutable

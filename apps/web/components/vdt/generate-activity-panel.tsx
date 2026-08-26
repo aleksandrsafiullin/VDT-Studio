@@ -582,7 +582,7 @@ function MutationPreviewCard({
 }: {
   proposal: PendingMutationProposal;
   canSubmit: boolean;
-  onApproval: ((approved: boolean, selectedChangeIds?: string[] | undefined) => void) | undefined;
+  onApproval: ((approved: boolean, selectedChangeIds?: string[] | undefined, proposalId?: string | undefined) => void) | undefined;
 }) {
   const counts = mutationCounts(proposal);
   const labels = mutationChangeLabels(proposal);
@@ -614,7 +614,7 @@ function MutationPreviewCard({
           variant="primary"
           icon={<CheckCircle2 className="h-3.5 w-3.5" />}
           disabled={!canSubmit}
-          onClick={() => onApproval?.(true, proposal.selectedChangeIds)}
+          onClick={() => onApproval?.(true, proposal.selectedChangeIds, proposal.id)}
           data-testid="approve-mutation"
         >
           Apply mutation
@@ -625,7 +625,7 @@ function MutationPreviewCard({
           variant="danger"
           icon={<X className="h-3.5 w-3.5" />}
           disabled={!canSubmit}
-          onClick={() => onApproval?.(false)}
+          onClick={() => onApproval?.(false, undefined, proposal.id)}
           data-testid="reject-mutation"
         >
           Reject
@@ -642,7 +642,7 @@ function GenericApprovalCard({
 }: {
   request: GenericApprovalRequest;
   canSubmit: boolean;
-  onApproval: ((approved: boolean, selectedChangeIds?: string[] | undefined) => void) | undefined;
+  onApproval: ((approved: boolean, selectedChangeIds?: string[] | undefined, proposalId?: string | undefined) => void) | undefined;
 }) {
   return (
     <section
@@ -722,13 +722,15 @@ export function GenerateActivityPanel({
   activity,
   onCancel,
   onAnswer,
+  onContinueRun,
   onApproval,
   diagnostics = false
 }: {
   activity: GenerateActivityState;
   onCancel: () => void;
   onAnswer?: (answers: AgentAnswerSubmission) => void;
-  onApproval?: (approved: boolean, selectedChangeIds?: string[] | undefined) => void;
+  onContinueRun?: () => void;
+  onApproval?: (approved: boolean, selectedChangeIds?: string[] | undefined, proposalId?: string | undefined) => void;
   diagnostics?: boolean | undefined;
 }) {
   const elapsed = useActiveElapsed(activity);
@@ -812,24 +814,39 @@ export function GenerateActivityPanel({
         >
           <p className="text-sm leading-5 text-ink">{activity.retryableError.message}</p>
           <div className="relative z-10 mt-3 flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="primary"
-              icon={<RotateCcw className="h-3.5 w-3.5" />}
-              disabled={!onAnswer}
-              onClick={() => onAnswer?.({ retry: "retry_last_step" })}
-              data-testid="retry-agent"
-            >
-              Retry last step
-            </Button>
-            <Button
-              size="sm"
-              disabled={!onAnswer}
-              onClick={() => onAnswer?.({ continue: "smaller_step" })}
-              data-testid="continue-agent-smaller-step"
-            >
-              Smaller step
-            </Button>
+            {activity.retryableError.code === "MAX_STEPS_EXCEEDED" ? (
+              <Button
+                size="sm"
+                variant="primary"
+                icon={<RotateCcw className="h-3.5 w-3.5" />}
+                disabled={!onContinueRun}
+                onClick={onContinueRun}
+                data-testid="continue-agent-run"
+              >
+                Continue run
+              </Button>
+            ) : (
+              <>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  icon={<RotateCcw className="h-3.5 w-3.5" />}
+                  disabled={!onAnswer}
+                  onClick={() => onAnswer?.({ retry: "retry_last_step" })}
+                  data-testid="retry-agent"
+                >
+                  Retry last step
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={!onAnswer}
+                  onClick={() => onAnswer?.({ continue: "smaller_step" })}
+                  data-testid="continue-agent-smaller-step"
+                >
+                  Smaller step
+                </Button>
+              </>
+            )}
             <Button
               size="sm"
               icon={<X className="h-3.5 w-3.5" />}

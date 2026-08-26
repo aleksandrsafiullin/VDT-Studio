@@ -62,7 +62,11 @@ export class LocalRunnerProvider implements AiProvider {
           schemaId: connectionTest ? "connection-test-v1" : schemaIdForTask(params.taskType),
           input: connectionTest
             ? { probe: true }
-            : { data: params.input, systemPrompt: params.systemPrompt, userPrompt: params.userPrompt },
+            : {
+                data: params.input,
+                systemPrompt: params.systemPrompt,
+                userPrompt: compactRunnerPrompt(params.taskType, params.userPrompt)
+              },
           ...(params.model ?? this.config.model ? { model: params.model ?? this.config.model } : {}),
           ...(this.config.timeoutMs ? { timeoutMs: this.config.timeoutMs } : {})
         })
@@ -80,4 +84,11 @@ export class LocalRunnerProvider implements AiProvider {
     if (payload.output === undefined) throw new Error("Local runner response did not include structured output.");
     return payload.output as TOutput;
   }
+}
+
+function compactRunnerPrompt(taskType: AiTaskType, userPrompt: string): string {
+  if (taskType === "agent_decision" || taskType === "orchestrator_first_response") {
+    return "Use input.data as the canonical VDT context and return only the requested structured response.";
+  }
+  return userPrompt;
 }

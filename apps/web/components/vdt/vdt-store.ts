@@ -42,6 +42,7 @@ import {
   type RetryableAgentError as RuntimeRetryableAgentError,
   type VdtAgentEvent as RuntimeAgentEvent,
   type VdtAgentQuestion as RuntimeAgentQuestion,
+  type VdtAgentPublicStartRequest,
   type VdtAgentRunSnapshot as RuntimeAgentRunSnapshot,
   type VdtAgentStartRequest
 } from "@/lib/agent-client";
@@ -463,12 +464,18 @@ interface VdtStudioState {
       selectedNodeId?: string;
       includeCurrentProject?: boolean;
       researchMode?: ResearchMode | undefined;
+      executionBindingId?: string | undefined;
     }
   ) => Promise<boolean>;
   resumePersistedAgentRun: () => Promise<void>;
   connectAgentEvents: (runId: string) => void;
   sendAgentAnswers: (answers: Record<string, string | number | string[]> | RuntimeAgentAnswerPayload[]) => Promise<void>;
-  sendAgentApproval: (approved: boolean, selectedChangeIds?: string[] | undefined) => Promise<void>;
+  continueAgentRun: () => Promise<void>;
+  sendAgentApproval: (
+    approved: boolean,
+    selectedChangeIds?: string[] | undefined,
+    proposalId?: string | undefined
+  ) => Promise<void>;
   sendAgentInstruction: (text: string, selectedNodeId?: string, researchMode?: ResearchMode) => Promise<boolean>;
   sendManualProjectChange: (change: ManualProjectChange) => Promise<void>;
   addManualIncomingKpi: (parentNodeId: string) => void;
@@ -1135,11 +1142,9 @@ function shouldRefreshAgentSnapshot(event: RuntimeAgentEvent): boolean {
   return event.type === "assistant_message" ||
     event.type === "clarifying_questions" ||
     event.type === "plan_proposed" ||
-    event.type === "mutation_proposed" ||
+    (event.type === "mutation_proposed" && event.metadata?.approvalRequired === true) ||
     event.type === "mutation_applied" ||
     event.type === "mutation_rejected" ||
-    event.type === "graph_patch" ||
-    event.type === "graph_validation" ||
     event.type === "final_report" ||
     event.type === "error" ||
     event.type === "run_completed";
@@ -1334,7 +1339,11 @@ function applyAgentSnapshot(
       : undefined;
     const status = mapRuntimeStatus(snapshot);
     const now = nowIso();
-    const requestProviderId = snapshot.request.providerId as ProviderId;
+    const requestProviderId = (
+      snapshot.request.providerId
+      ?? snapshot.executionSummary?.backendId
+      ?? state.providerId
+    ) as ProviderId;
     const requestProviderConfig = snapshot.request.providerConfig as Record<string, unknown> | undefined;
     const activity = state.generateActivity?.runId === snapshot.runId
       ? state.generateActivity
@@ -3042,34 +3051,37 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       startAgentRun: async (initialInstruction, options) => {
         if (get().isGenerating) return false;
         const state = get();
+        const requestedExecutionBindingId = options?.executionBindingId?.trim();
         const { executionSettings, cliDetectionAgents, cliDetectionError, isRescanningClis } = state;
-        if (executionSettings.executionMode === "local_cli" && !hasLocalAiUi(resolveVdtAppMode())) {
-          set({ aiError: HOSTED_WEB_LOCAL_AI_MESSAGE, generateActivity: undefined });
-          return false;
-        }
-        if (executionSettings.executionMode === "byok") {
-          const validationErrors = validateByokSettings(executionSettings);
-          if (hasByokFieldErrors(validationErrors)) {
-            set({
-              byokFieldErrors: validationErrors,
-              aiError: "Fix BYOK settings before starting the agent.",
-              generateActivity: undefined
-            });
+        const { providerId, providerConfig } = resolveExecutionSettings(state.executionSettings);
+        if (!requestedExecutionBindingId) {
+          if (executionSettings.executionMode === "local_cli" && !hasLocalAiUi(resolveVdtAppMode())) {
+            set({ aiError: HOSTED_WEB_LOCAL_AI_MESSAGE, generateActivity: undefined });
             return false;
           }
-        }
-        const executionError = validateExecutionForGenerate(executionSettings, cliDetectionAgents, {
-          isScanning: isRescanningClis,
-          detectionError: cliDetectionError
-        });
-        if (executionError) {
-          set({ aiError: executionError, generateActivity: undefined });
-          return false;
-        }
-        const { providerId, providerConfig } = resolveExecutionSettings(state.executionSettings);
-        if (providerId === "mock") {
-          set({ aiError: "Configure a real provider before starting the agent.", generateActivity: undefined });
-          return false;
+          if (executionSettings.executionMode === "byok") {
+            const validationErrors = validateByokSettings(executionSettings);
+            if (hasByokFieldErrors(validationErrors)) {
+              set({
+                byokFieldErrors: validationErrors,
+                aiError: "Fix BYOK settings before starting the agent.",
+                generateActivity: undefined
+              });
+              return false;
+            }
+          }
+          const executionError = validateExecutionForGenerate(executionSettings, cliDetectionAgents, {
+            isScanning: isRescanningClis,
+            detectionError: cliDetectionError
+          });
+          if (executionError) {
+            set({ aiError: executionError, generateActivity: undefined });
+            return false;
+          }
+          if (providerId === "mock") {
+            set({ aiError: "Configure a real provider before starting the agent.", generateActivity: undefined });
+            return false;
+          }
         }
         if (state.workspace.activeVdtId && !state.workspace.activeProjectId?.trim()) {
           const message = "This VDT is not linked to a workspace project. Open it from the project page and try again.";
@@ -3103,19 +3115,21 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           // #region agent log
           fetch("http://127.0.0.1:7348/ingest/defc4400-920d-4081-a282-9bbd4f94c196", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "edfb47" }, body: JSON.stringify({ sessionId: "edfb47", location: "vdt-store.ts:startAgentRun", message: "agent run POST workspace", data: { workspaceProjectId: workspace.projectId, workspaceVdtId: workspace.vdtId, graphProjectId: state.project.id }, timestamp: Date.now(), hypothesisId: "A", runId: "post-fix" }) }).catch(() => {});
           // #endregion
-          const response = await createAgentClient().startRun({
+          const commonRequest = {
             mode: options?.mode ?? (shouldContinue ? "continue_project" : "generate_vdt"),
             input,
             workspace,
-            providerId,
-            providerConfig,
             options: {
               autoApplyPatches: true,
               continueWithAssumptions: false,
-              maxSteps: 30,
+              maxSteps: 40,
               researchMode: options?.researchMode ?? "auto"
             }
-          });
+          };
+          const startRequest: VdtAgentPublicStartRequest = requestedExecutionBindingId
+            ? { ...commonRequest, executionBindingId: requestedExecutionBindingId }
+            : { ...commonRequest, providerId, providerConfig };
+          const response = await createAgentClient().startRun(startRequest);
           set({ activeAgentRunId: response.runId });
           applyAgentSnapshot(set, response.snapshot);
           get().connectAgentEvents(response.runId);
@@ -3194,7 +3208,59 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }));
         }
       },
-      sendAgentApproval: async (approved, selectedChangeIds) => {
+      continueAgentRun: async () => {
+        const runId = get().agentRun?.runId ?? get().activeAgentRunId ?? get().generateActivity?.runId;
+        if (!runId) {
+          const message = "Agent run was not found. Reload the page or start a new run.";
+          set({ agentError: message, aiError: message });
+          return;
+        }
+        const submittedAt = nowIso();
+        set((state) => ({
+          aiError: undefined,
+          agentError: undefined,
+          isGenerating: true,
+          activeAgentRunId: state.activeAgentRunId ?? runId,
+          generateActivity: state.generateActivity?.runId === runId
+            ? {
+                ...state.generateActivity,
+                status: "running",
+                canCancel: true,
+                cancelRequested: false,
+                publicStatus: {
+                  phase: "planning_model",
+                  message: "Continuing from the saved VDT draft...",
+                  updatedAt: submittedAt
+                },
+                retryableError: undefined,
+                message: undefined,
+                completedAt: undefined,
+                updatedAt: submittedAt
+              }
+            : state.generateActivity
+        }));
+        try {
+          const snapshot = await createAgentClient().sendMessage(runId, { type: "continue_run" });
+          applyAgentSnapshot(set, snapshot);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Agent run could not be continued.";
+          set((state) => ({
+            agentError: message,
+            aiError: message,
+            agentConnectionStatus: "error",
+            generateActivity: state.generateActivity?.runId === runId
+              ? {
+                  ...state.generateActivity,
+                  status: "needs_user_input",
+                  canCancel: true,
+                  message,
+                  updatedAt: nowIso()
+                }
+              : state.generateActivity
+          }));
+        }
+      },
+      sendAgentApproval: async (approved, selectedChangeIds, proposalId) => {
         const runId = get().agentRun?.runId ?? get().activeAgentRunId ?? get().generateActivity?.runId;
         if (!runId) {
           const message = "Agent run was not found. Reload the page or start a new run.";
@@ -3230,6 +3296,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           const snapshot = await createAgentClient().sendMessage(runId, {
             type: "approval",
             approved,
+            ...(proposalId ? { proposalId } : {}),
             ...(selectedChangeIds && selectedChangeIds.length > 0 ? { selectedChangeIds } : {})
           });
           applyAgentSnapshot(set, snapshot);
@@ -3550,7 +3617,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             options: {
               autoApplyPatches: true,
               continueWithAssumptions: false,
-              maxSteps: 30
+              maxSteps: 40
             }
           });
           set({ activeAgentRunId: response.runId });

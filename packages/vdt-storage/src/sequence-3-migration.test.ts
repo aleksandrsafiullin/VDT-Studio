@@ -9,9 +9,9 @@ import { __sequence3AssetReadCountsForTests } from "./sequence-3-assets";
 import {
   __assertSequence3PlatformCapabilityForTests,
   __createStorageMigrationPlanForTests,
+  __runSequence3StorageMigrationsForTests,
   __runStorageMigrationsForPlatformTests,
-  __runStorageMigrationsWithPlanForTests,
-  runStorageMigrations
+  __runStorageMigrationsWithPlanForTests
 } from "./migrations";
 import type {
   JsonValue,
@@ -353,7 +353,7 @@ function runProduction(
 ): void {
   const db = new DatabaseSync(fixture.databasePath, { timeout: 30_000 });
   try {
-    runStorageMigrations(db, fixture.dataDir, {
+    __runSequence3StorageMigrationsForTests(db, fixture.dataDir, {
       ...migrationOptions("production"),
       faultInjector
     });

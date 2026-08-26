@@ -1,7 +1,7 @@
 "use client";
 
 import { clsx } from "clsx";
-import type { FormulaEditorOperator } from "./formula-editor-model";
+import type { FormulaEditorFunctionName, FormulaEditorOperator } from "./formula-editor-model";
 
 const toolbarItems: Array<{ op: FormulaEditorOperator; label: string; ariaLabel: string }> = [
   { op: "+", label: "+", ariaLabel: "Insert plus" },
@@ -12,13 +12,26 @@ const toolbarItems: Array<{ op: FormulaEditorOperator; label: string; ariaLabel:
   { op: ")", label: ")", ariaLabel: "Insert right parenthesis" }
 ];
 
+const functionToolbarItems: Array<{ name: FormulaEditorFunctionName; ariaLabel: string }> = [
+  { name: "min", ariaLabel: "Insert min function" },
+  { name: "max", ariaLabel: "Insert max function" }
+];
+
 export interface FormulaOperatorToolbarProps {
   onInsert: (op: FormulaEditorOperator) => void;
+  onInsertFunction: (name: FormulaEditorFunctionName) => void;
+  onInsertComma: () => void;
   onAddNumber: () => void;
   className?: string;
 }
 
-export function FormulaOperatorToolbar({ onInsert, onAddNumber, className }: FormulaOperatorToolbarProps) {
+export function FormulaOperatorToolbar({
+  onInsert,
+  onInsertFunction,
+  onInsertComma,
+  onAddNumber,
+  className
+}: FormulaOperatorToolbarProps) {
   return (
     <div
       className={clsx("flex flex-wrap items-center gap-1.5", className)}
@@ -38,6 +51,27 @@ export function FormulaOperatorToolbar({ onInsert, onAddNumber, className }: For
           {label}
         </button>
       ))}
+      {functionToolbarItems.map(({ name, ariaLabel }) => (
+        <button
+          key={name}
+          type="button"
+          className="inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+          aria-label={ariaLabel}
+          data-testid={`formula-toolbar-${name}`}
+          onClick={() => onInsertFunction(name)}
+        >
+          {name}
+        </button>
+      ))}
+      <button
+        type="button"
+        className="inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+        aria-label="Insert comma"
+        data-testid="formula-toolbar-comma"
+        onClick={onInsertComma}
+      >
+        ,
+      </button>
       <button
         type="button"
         className="inline-flex h-8 items-center justify-center rounded-md border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"

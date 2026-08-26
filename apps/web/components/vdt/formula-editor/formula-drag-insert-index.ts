@@ -1,5 +1,5 @@
 import type { UniqueIdentifier } from "@dnd-kit/core";
-import type { FormulaEditorToken } from "./formula-editor-model";
+import { defaultAppendIndex, type FormulaEditorToken } from "./formula-editor-model";
 
 export const FORMULA_EDITOR_DROP_ZONE_ID = "formula-editor-drop-zone";
 
@@ -13,7 +13,7 @@ export function resolveFormulaInsertIndex(
   }
 
   if (overId === FORMULA_EDITOR_DROP_ZONE_ID) {
-    return editorTokens.length;
+    return defaultAppendIndex(editorTokens);
   }
 
   const overIndex = editorTokens.findIndex((token) => token.id === overId);

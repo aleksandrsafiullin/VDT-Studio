@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AiCompletionParams, AiProvider, OpenAiCompatibleProviderConfig } from "../types";
-import { requestProviderJson } from "./provider-utils";
+import { asJsonSchema, requestProviderJson } from "./provider-utils";
 
 function parseJsonResponse(raw: string) {
   const trimmed = raw.trim();
@@ -19,10 +19,12 @@ export class OpenAiCompatibleProvider implements AiProvider {
     params: AiCompletionParams<TInput>
   ): Promise<TOutput> {
     const schema = params.schema instanceof z.ZodType ? params.schema : undefined;
+    const jsonSchema = asJsonSchema(params.schema);
     let lastError: unknown;
 
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const payload = (await requestProviderJson({
+    const maxAttempts = jsonSchema ? 1 : 2;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const request = (responseFormat: Record<string, unknown>) => requestProviderJson({
         providerName: "OpenAI-compatible provider",
         fetch: globalThis.fetch,
         url: `${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`,
@@ -38,7 +40,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
             model: params.model ?? this.config.model,
             temperature: params.temperature ?? 0.2,
             max_tokens: params.maxTokens ?? 2200,
-            response_format: { type: "json_object" },
+            response_format: responseFormat,
             messages: [
               { role: "system", content: params.systemPrompt },
               {
@@ -51,9 +53,18 @@ export class OpenAiCompatibleProvider implements AiProvider {
             ]
           })
         }
-      })) as {
+      });
+      let payload: {
         choices?: { message?: { content?: string } }[];
       };
+      try {
+        payload = (await request(jsonSchema
+          ? { type: "json_schema", json_schema: { name: "vdt_agent_decision", strict: true, schema: jsonSchema } }
+          : { type: "json_object" })) as typeof payload;
+      } catch (error) {
+        if (!jsonSchema || !isStructuredSchemaUnsupported(error)) throw error;
+        payload = (await request({ type: "json_object" })) as typeof payload;
+      }
       const content = payload.choices?.[0]?.message?.content;
 
       if (!content) {
@@ -74,4 +85,8 @@ export class OpenAiCompatibleProvider implements AiProvider {
         : "AI response could not be parsed or validated."
     );
   }
+}
+
+function isStructuredSchemaUnsupported(error: unknown): boolean {
+  return error instanceof Error && /status (400|404|422)\b/.test(error.message);
 }

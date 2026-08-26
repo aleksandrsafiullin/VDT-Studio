@@ -2,7 +2,7 @@ import type { VdtAiTaskType } from "@vdt-studio/vdt-core";
 
 export const VDT_OUTPUT_SCHEMA_IDS = [
   "orchestrator-first-response-v1",
-  "agent-decision-v1",
+  "agent-decision-v2",
   "agent-plan-v1",
   "data-agent-decision-v1",
   "analyze-raw-dataset-v1",
@@ -21,14 +21,18 @@ export const VDT_OUTPUT_SCHEMA_IDS = [
   "generate-executive-summary-v1"
 ] as const;
 
-export const VDT_SCHEMA_IDS = ["connection-test-v1", ...VDT_OUTPUT_SCHEMA_IDS] as const;
+export const VDT_COMPATIBILITY_SCHEMA_IDS = ["agent-decision-v1"] as const;
+export const VDT_SCHEMA_IDS = ["connection-test-v1", ...VDT_COMPATIBILITY_SCHEMA_IDS, ...VDT_OUTPUT_SCHEMA_IDS] as const;
 
 export type VdtOutputSchemaId = (typeof VDT_OUTPUT_SCHEMA_IDS)[number];
 export type VdtSchemaId = (typeof VDT_SCHEMA_IDS)[number];
 
-const schemaTask: Record<VdtOutputSchemaId, VdtAiTaskType> = {
+type VdtTaskSchemaId = Exclude<VdtSchemaId, "connection-test-v1">;
+
+const schemaTask: Record<VdtTaskSchemaId, VdtAiTaskType> = {
   "orchestrator-first-response-v1": "orchestrator_first_response",
   "agent-decision-v1": "agent_decision",
+  "agent-decision-v2": "agent_decision",
   "agent-plan-v1": "agent_plan",
   "data-agent-decision-v1": "data_agent_decision",
   "analyze-raw-dataset-v1": "analyze_raw_dataset",
@@ -48,10 +52,10 @@ const schemaTask: Record<VdtOutputSchemaId, VdtAiTaskType> = {
 };
 
 const taskToSchemaId = Object.fromEntries(
-  Object.entries(schemaTask).map(([schemaId, taskType]) => [taskType, schemaId])
+  VDT_OUTPUT_SCHEMA_IDS.map((schemaId) => [schemaTask[schemaId], schemaId])
 ) as Record<VdtAiTaskType, VdtOutputSchemaId>;
 
-/** Maps each output schema ID to its canonical task type (one-to-one). */
+/** Maps canonical and compatibility schema IDs to their task type. */
 export const schemaTasks: Record<VdtSchemaId, VdtAiTaskType> = {
   "connection-test-v1": "generate_tree",
   ...schemaTask
@@ -372,6 +376,31 @@ const agentDecisionSchema = {
   additionalProperties: false
 };
 
+const agentDecisionToolCallItemSchema = objectSchema(
+  {
+    toolName: { type: "string", minLength: 1, maxLength: 120 },
+    args: { type: "object", properties: {}, required: [], additionalProperties: true }
+  },
+  ["toolName", "args"]
+);
+
+const agentDecisionCallToolsSchema = objectSchema(
+  {
+    type: { type: "string", const: "call_tools" },
+    calls: { type: "array", minItems: 2, maxItems: 6, items: agentDecisionToolCallItemSchema },
+    statusMessage: { type: "string", minLength: 1, maxLength: 500 }
+  },
+  ["type", "calls", "statusMessage"]
+);
+
+const agentDecisionV2Schema = {
+  type: "object",
+  anyOf: [agentDecisionCallToolSchema, agentDecisionCallToolsSchema, agentDecisionAskUserSchema, agentDecisionFinishSchema],
+  properties: {},
+  required: [],
+  additionalProperties: false
+};
+
 const agentDecisionStrictResponseSchema = objectSchema(
   {
     type: enumProp(["call_tool", "ask_user", "finish"]),
@@ -404,6 +433,45 @@ const agentDecisionStrictResponseSchema = objectSchema(
     }
   },
   ["type", "toolName", "argsJson", "statusMessage", "questionsJson", "summary", "nextSuggestedActions"]
+);
+
+const agentDecisionV2StrictResponseSchema = objectSchema(
+  {
+    type: enumProp(["call_tool", "call_tools", "ask_user", "finish"]),
+    toolName: { type: "string", maxLength: 120 },
+    argsJson: {
+      type: "string",
+      maxLength: MAX_OUTPUT_STRING_LENGTH,
+      description: "A JSON object string containing arguments for call_tool. Use {} for other decision types."
+    },
+    callsJson: {
+      type: "string",
+      maxLength: MAX_OUTPUT_STRING_LENGTH,
+      description: "A JSON array string with 2-6 sequential {toolName,args} calls. Use [] unless type is call_tools."
+    },
+    statusMessage: {
+      type: "string",
+      minLength: 1,
+      maxLength: 500,
+      description: "A concise user-visible status message for this decision."
+    },
+    questionsJson: {
+      type: "string",
+      maxLength: MAX_OUTPUT_STRING_LENGTH,
+      description: "A JSON array string containing user questions. Use [] unless type is ask_user."
+    },
+    summary: {
+      type: "string",
+      maxLength: 2_000,
+      description: "Finish summary. Use an empty string unless type is finish."
+    },
+    nextSuggestedActions: {
+      type: "array",
+      maxItems: 10,
+      items: { type: "string", maxLength: 300 }
+    }
+  },
+  ["type", "toolName", "argsJson", "callsJson", "statusMessage", "questionsJson", "summary", "nextSuggestedActions"]
 );
 
 const dataDiscoveryToolNameProp = enumProp([
@@ -997,6 +1065,17 @@ function normalizeAgentDecisionOutput(output: Record<string, unknown>): Record<s
       statusMessage: normalizeStatusMessage(output.statusMessage, toolName ? `Calling ${toolName}.` : "Calling the next tool.")
     };
   }
+  if (output.type === "call_tools") {
+    const calls = parseJsonObjectArrayString(output.callsJson ?? output.calls) ?? [];
+    return {
+      type: output.type,
+      calls: calls.map((call) => ({
+        toolName: typeof call.toolName === "string" ? call.toolName : "",
+        args: parseJsonObjectString(call.argsJson ?? call.args) ?? {}
+      })),
+      statusMessage: normalizeStatusMessage(output.statusMessage, "Running the next tool steps.")
+    };
+  }
   if (output.type === "ask_user") {
     const questions =
       parseJsonObjectArrayString(output.questionsJson ?? output.questions) ??
@@ -1018,7 +1097,9 @@ function normalizeAgentDecisionOutput(output: Record<string, unknown>): Record<s
 }
 
 export function normalizeRegisteredSchemaOutput(schemaId: VdtSchemaId, output: unknown): unknown {
-  if (schemaId === "agent-decision-v1" && isRecord(output)) return normalizeAgentDecisionOutput(output);
+  if ((schemaId === "agent-decision-v1" || schemaId === "agent-decision-v2") && isRecord(output)) {
+    return normalizeAgentDecisionOutput(output);
+  }
   if (schemaId === "generate-tree-v1" && isRecord(output)) return orientGenerateTreeEdgesFromRoot(output);
   return output;
 }
@@ -1032,6 +1113,7 @@ const jsonSchemas: Record<VdtSchemaId, Record<string, unknown>> = {
   },
   "orchestrator-first-response-v1": orchestratorFirstResponseSchema,
   "agent-decision-v1": agentDecisionSchema,
+  "agent-decision-v2": agentDecisionV2Schema,
   "agent-plan-v1": objectSchema(
     {
       buildIntent: agentBuildIntentSchema,
@@ -1216,6 +1298,7 @@ function toStrictResponseJsonSchema(schema: unknown): unknown {
 
 export function getStrictResponseJsonSchema(schemaId: VdtSchemaId): Record<string, unknown> {
   if (schemaId === "agent-decision-v1") return agentDecisionStrictResponseSchema;
+  if (schemaId === "agent-decision-v2") return agentDecisionV2StrictResponseSchema;
   return toStrictResponseJsonSchema(jsonSchemas[schemaId]) as Record<string, unknown>;
 }
 
@@ -1229,6 +1312,32 @@ const validators: Record<VdtSchemaId, (output: Record<string, unknown>) => boole
   "agent-decision-v1": (output) => {
     for (const forbidden of ["driverPlan", "nodes", "edges", "rootFormula", "project", "fullProject", "fullGraph", "selectedSkillIds"]) {
       if (forbidden in output) return false;
+    }
+    if (output.type === "call_tool") {
+      return typeof output.toolName === "string" && isRecord(output.args) && typeof output.statusMessage === "string";
+    }
+    if (output.type === "ask_user") {
+      return isObjectArray(output.questions) && (output.questions as unknown[]).length > 0 && typeof output.statusMessage === "string";
+    }
+    if (output.type === "finish") {
+      return typeof output.summary === "string" && isStringArray(output.nextSuggestedActions);
+    }
+    return false;
+  },
+  "agent-decision-v2": (output) => {
+    for (const forbidden of ["driverPlan", "nodes", "edges", "rootFormula", "project", "fullProject", "fullGraph", "selectedSkillIds"]) {
+      if (forbidden in output) return false;
+    }
+    if (output.type === "call_tools") {
+      if (!isObjectArray(output.calls)) return false;
+      const calls = output.calls as Record<string, unknown>[];
+      if (calls.length < 2 || calls.length > 6) return false;
+      return calls.every((call) =>
+        typeof call.toolName === "string" &&
+        call.toolName !== "user.ask" &&
+        call.toolName !== "user.request_approval" &&
+        isRecord(call.args)
+      ) && typeof output.statusMessage === "string";
     }
     if (output.type === "call_tool") {
       return typeof output.toolName === "string" && isRecord(output.args) && typeof output.statusMessage === "string";

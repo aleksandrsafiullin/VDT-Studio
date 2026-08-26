@@ -14,6 +14,7 @@ function isIdentifierPart(char: string) {
 
 export function tokenizeFormula(formula: string): FormulaToken[] {
   const tokens: FormulaToken[] = [];
+  const functionParentheses: boolean[] = [];
   let index = 0;
 
   while (index < formula.length) {
@@ -48,6 +49,14 @@ export function tokenizeFormula(formula: string): FormulaToken[] {
           continue;
         }
 
+        if (next === "," && !functionParentheses.includes(true)) {
+          const comma = scanCommaNumericSegment(formula, start, index, hasDot);
+          if (comma) {
+            index = comma.end;
+            continue;
+          }
+        }
+
         if (!isDigit(next)) {
           break;
         }
@@ -61,7 +70,7 @@ export function tokenizeFormula(formula: string): FormulaToken[] {
       }
 
       let raw = numericRaw;
-      let value = Number(numericRaw);
+      let value = Number(normalizeNumericLiteral(numericRaw));
 
       if (formula[index] === "%") {
         raw = `${numericRaw}%`;
@@ -95,12 +104,20 @@ export function tokenizeFormula(formula: string): FormulaToken[] {
 
     if (char === "(") {
       tokens.push({ type: "left_paren" });
+      functionParentheses.push(tokens.at(-2)?.type === "identifier");
       index += 1;
       continue;
     }
 
     if (char === ")") {
       tokens.push({ type: "right_paren" });
+      functionParentheses.pop();
+      index += 1;
+      continue;
+    }
+
+    if (char === ",") {
+      tokens.push({ type: "comma" });
       index += 1;
       continue;
     }
@@ -110,6 +127,60 @@ export function tokenizeFormula(formula: string): FormulaToken[] {
 
   tokens.push({ type: "eof" });
   return tokens;
+}
+
+interface CommaNumericSegment {
+  end: number;
+}
+
+/**
+ * A comma is part of a numeric literal only outside a function call. Inside
+ * min/max it remains an argument separator, so min(1,2) cannot silently turn
+ * into min(1.2). The accepted numeric forms are a decimal comma (1,85) or
+ * conventional three-digit grouping (1,000 and 1,000,000).
+ */
+function scanCommaNumericSegment(
+  formula: string,
+  start: number,
+  commaIndex: number,
+  hasDot: boolean
+): CommaNumericSegment | undefined {
+  if (hasDot || !isDigit(formula[commaIndex - 1] ?? "") || !isDigit(formula[commaIndex + 1] ?? "")) {
+    return undefined;
+  }
+
+  let end = commaIndex + 1;
+  while (isDigit(formula[end] ?? "")) end += 1;
+  const firstGroupLength = end - (commaIndex + 1);
+  const next = formula[end];
+
+  if (next === ",") {
+    if (firstGroupLength !== 3) return undefined;
+    let cursor = end;
+    while (formula[cursor] === ",") {
+      const groupStart = cursor + 1;
+      cursor = groupStart;
+      while (isDigit(formula[cursor] ?? "")) cursor += 1;
+      if (cursor - groupStart !== 3) return undefined;
+    }
+    return { end: cursor };
+  }
+
+  const integerLength = commaIndex - start;
+  if (integerLength < 1 || firstGroupLength < 1) return undefined;
+  return { end };
+}
+
+function normalizeNumericLiteral(raw: string): string {
+  if (!raw.includes(",")) return raw;
+  const groups = raw.split(",");
+  if (groups.length > 2 && groups.slice(1).every((group) => group.length === 3)) {
+    return groups.join("");
+  }
+  if (groups.length === 2 && groups[1]?.length === 3) {
+    return groups.join("");
+  }
+  return raw.replace(",", ".");
 }
 
 class FormulaParser {
@@ -187,6 +258,13 @@ class FormulaParser {
     }
 
     if (token.type === "identifier") {
+      const next = this.peek();
+      if (next.type === "left_paren") {
+        if (token.value === "min" || token.value === "max") {
+          return this.parseCall(token.value);
+        }
+        throw new FormulaParseError(`Unknown function "${token.value}".`);
+      }
       return { type: "reference", name: token.value };
     }
 
@@ -200,6 +278,34 @@ class FormulaParser {
     }
 
     throw new FormulaParseError("Expected a number, reference, or parenthesized expression.");
+  }
+
+  private parseCall(name: "min" | "max"): FormulaExpression {
+    const open = this.advance();
+    if (open.type !== "left_paren") {
+      throw new FormulaParseError("Expected '(' after function name.");
+    }
+
+    if (this.peek().type === "right_paren") {
+      throw new FormulaParseError(`Function "${name}" requires at least one argument.`);
+    }
+
+    const args: FormulaExpression[] = [this.parseAdditive()];
+
+    while (this.peek().type === "comma") {
+      this.advance();
+      if (this.peek().type === "right_paren") {
+        throw new FormulaParseError("Trailing comma in function call.");
+      }
+      args.push(this.parseAdditive());
+    }
+
+    if (this.peek().type !== "right_paren") {
+      throw new FormulaParseError("Missing closing parenthesis in function call.");
+    }
+    this.advance();
+
+    return { type: "call", name, args };
   }
 
   private peek() {

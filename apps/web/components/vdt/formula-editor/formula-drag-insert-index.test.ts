@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseFormulaToEditorTokens } from "./formula-editor-model";
 import {
   FORMULA_EDITOR_DROP_ZONE_ID,
   resolveFormulaInsertIndex
@@ -11,8 +12,13 @@ describe("resolveFormulaInsertIndex", () => {
     expect(resolveFormulaInsertIndex(undefined, tokens)).toBeNull();
   });
 
-  it("returns token length when hovering the drop zone", () => {
+  it("returns token length when hovering the drop zone for plain tokens", () => {
     expect(resolveFormulaInsertIndex(FORMULA_EDITOR_DROP_ZONE_ID, tokens)).toBe(1);
+  });
+
+  it("returns index before closing paren when hovering drop zone on min()", () => {
+    const minTokens = parseFormulaToEditorTokens("min()");
+    expect(resolveFormulaInsertIndex(FORMULA_EDITOR_DROP_ZONE_ID, minTokens)).toBe(2);
   });
 
   it("returns the hovered token index for palette and reorder drops", () => {

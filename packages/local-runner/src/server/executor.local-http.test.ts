@@ -25,6 +25,47 @@ function chatTextResponse(content: string): Response {
 }
 
 describe("local HTTP executor repair", () => {
+  it("uses agent-decision-v2 strict JSON Schema and normalizes callsJson", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchMock: typeof fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return chatResponse({
+        type: "call_tools",
+        toolName: "",
+        argsJson: "{}",
+        callsJson: "[{\"toolName\":\"project.get_node\",\"args\":{\"nodeId\":\"root\"}},{\"toolName\":\"project.get_subtree\",\"args\":{\"nodeId\":\"root\",\"maxDepth\":2}}]",
+        statusMessage: "Inspecting the project.",
+        questionsJson: "[]",
+        summary: "",
+        nextSuggestedActions: []
+      });
+    };
+
+    const result = await executeCompletion(
+      localHttpManifest(),
+      {
+        requestId: crypto.randomUUID(),
+        backendId: "ollama",
+        taskType: "agent_decision",
+        schemaId: "agent-decision-v2",
+        input: { runId: "run", currentProject: { nodes: [] } }
+      },
+      new AbortController().signal,
+      { fetch: fetchMock }
+    );
+
+    expect(result.output).toEqual({
+      type: "call_tools",
+      calls: [
+        { toolName: "project.get_node", args: { nodeId: "root" } },
+        { toolName: "project.get_subtree", args: { nodeId: "root", maxDepth: 2 } }
+      ],
+      statusMessage: "Inspecting the project."
+    });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]?.response_format).toMatchObject({ type: "json_schema", json_schema: { strict: true } });
+  });
+
   it("performs one bounded repair attempt after schema validation fails", async () => {
     const bodies: Array<{ messages?: Array<{ role: string; content: string }> }> = [];
     const fetchMock: typeof fetch = async (_input, init) => {

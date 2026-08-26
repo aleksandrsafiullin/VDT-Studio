@@ -30,6 +30,45 @@ describe("agent run schemas", () => {
     }).workspace?.vdtId).toBe("vdt_existing_001");
   });
 
+  it("accepts an opaque execution binding without client-managed execution configuration", () => {
+    expect(agentStartRequestSchema.parse({
+      mode: "generate_vdt",
+      input: { rootKpi: "Ore hauled" },
+      executionBindingId: "model_agent_primary"
+    })).toMatchObject({ executionBindingId: "model_agent_primary" });
+
+    for (const clientOwnedField of [
+      "executionProfile",
+      "engineAdapterId",
+      "executable",
+      "model",
+      "securityConfig"
+    ]) {
+      expect(agentStartRequestSchema.safeParse({
+        mode: "generate_vdt",
+        input: { rootKpi: "Ore hauled" },
+        executionBindingId: "model_agent_primary",
+        [clientOwnedField]: "client-controlled"
+      }).success).toBe(false);
+    }
+  });
+
+  it("does not allow mixing a server binding with the legacy provider shape", () => {
+    expect(agentStartRequestSchema.safeParse({
+      mode: "generate_vdt",
+      input: { rootKpi: "Ore hauled" },
+      executionBindingId: "model_agent_primary",
+      providerId: "local_runner"
+    }).success).toBe(false);
+
+    expect(agentStartRequestSchema.safeParse({
+      mode: "generate_vdt",
+      input: { rootKpi: "Ore hauled" },
+      executionBindingId: "model_agent_primary",
+      providerConfig: { model: "client-model" }
+    }).success).toBe(false);
+  });
+
   it("rejects invalid researchMode values", () => {
     expect(agentStartRequestSchema.safeParse({
       mode: "generate_vdt",
@@ -57,6 +96,22 @@ describe("agent run schemas", () => {
     expect(agentUserMessageSchema.safeParse({
       type: "deepen_node",
       selectedNodeId: ""
+    }).success).toBe(false);
+  });
+
+  it("accepts structured continuation and caps maxSteps at 60", () => {
+    expect(agentUserMessageSchema.parse({ type: "continue_run" })).toEqual({ type: "continue_run" });
+    expect(agentStartRequestSchema.safeParse({
+      mode: "generate_vdt",
+      input: { rootKpi: "Revenue" },
+      providerId: "mock",
+      options: { maxSteps: 60 }
+    }).success).toBe(true);
+    expect(agentStartRequestSchema.safeParse({
+      mode: "generate_vdt",
+      input: { rootKpi: "Revenue" },
+      providerId: "mock",
+      options: { maxSteps: 61 }
     }).success).toBe(false);
   });
 });

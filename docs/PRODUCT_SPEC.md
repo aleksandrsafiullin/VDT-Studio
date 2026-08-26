@@ -50,7 +50,15 @@ Current status: implemented for basic arithmetic. Dimensional algebra, visual-cy
 - Respect user research policy and manual changes.
 - Support semi-manual node decomposition: **Add incoming KPIs with AI** adds only one immediate child layer per click, without adding a user instruction to the visible chat or recursively expanding the new children.
 
-Current status: working legacy agent prototype. It still uses deterministic domain/term classification and can select a generic fallback automatically. Per-run serialization, complete tool schemas, agent-owned cross-language resolution, restart recovery and reliable manual-change merge are incomplete.
+Current status: working legacy agent prototype plus a default-off, partially
+wired dual-profile Supervisor foundation. The structured Model Agent path has
+one immutable run binding, durable Sequence 4 checkpoints/receipts/events,
+serialized Gateway mutations, stale-revision reconciliation and deterministic
+finish verification. The normal UI still starts the legacy compatibility loop;
+generic stateless HTTP transcript replay is not speed-qualified, External CLI
+profiles lack hard-isolation/live evidence, and restart/finish recovery remains
+incomplete. Legacy deterministic skill selection and automatic generic fallback
+also remain live.
 
 ### Skills and process discovery
 
@@ -124,7 +132,7 @@ Current status: implemented. PNG, Excel, PowerPoint and PDF outputs are planned.
 | Project/VDT workspace | Alpha foundation |
 | Basic factor-tree editing and arithmetic | Implemented with known validation gaps |
 | Scenario calculation and trace | Implemented |
-| Agent decision/tool loop | Working prototype |
+| Agent decision/tool loop | Legacy working prototype; dual-profile Supervisor foundation partial/default-off and not speed-qualified |
 | Skill selection | Legacy deterministic retrieval; agent-owned single-copy target not implemented |
 | Web process research | Search-only prototype |
 | Auditable benchmark workflow | Planned |

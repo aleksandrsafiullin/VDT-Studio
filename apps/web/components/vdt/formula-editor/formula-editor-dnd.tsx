@@ -22,6 +22,7 @@ import type { VdtNode } from "@vdt-studio/vdt-core";
 import {
   editorTokensToSegments,
   resolveDisplayName,
+  type FormulaEditorFunctionName,
   type FormulaEditorOperator,
   type FormulaEditorSegment
 } from "./formula-editor-model";
@@ -194,7 +195,7 @@ export function FormulaEditorDnd({
       }
 
       if (over.id === FORMULA_EDITOR_DROP_ZONE_ID) {
-        onInsertReference(nodeId, editorTokens.length);
+        onInsertReference(nodeId);
         return;
       }
 
@@ -293,11 +294,15 @@ export function FormulaEditorDnd({
 
 export interface FormulaEditorInteractionsProps extends FormulaEditorDndProps {
   onInsertOperator: (op: FormulaEditorOperator) => void;
+  onInsertFunction: (name: FormulaEditorFunctionName) => void;
+  onInsertComma: () => void;
   onInsertNumber: (raw?: string) => void;
 }
 
 export function FormulaEditorInteractions({
   onInsertOperator,
+  onInsertFunction,
+  onInsertComma,
   onInsertNumber,
   ...dndProps
 }: FormulaEditorInteractionsProps) {
@@ -305,6 +310,8 @@ export function FormulaEditorInteractions({
     <div className="space-y-3">
       <FormulaOperatorToolbar
         onInsert={onInsertOperator}
+        onInsertFunction={onInsertFunction}
+        onInsertComma={onInsertComma}
         onAddNumber={() => onInsertNumber()}
       />
       <FormulaEditorDnd {...dndProps} />

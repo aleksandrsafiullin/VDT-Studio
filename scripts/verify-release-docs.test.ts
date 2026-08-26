@@ -359,8 +359,10 @@ const sequence3ArtifactFreezeStatus = [
   "Gate R2 implementation",
   "independent review",
   "Gate R2 is not yet implemented or accepted",
-  "Sequence 3 is not production-wired",
+  "Sequence 3 is not production-wired locally",
+  "offline certification is not release certification",
   "W0.2 runtime remains incomplete and unauthorized",
+  "no W0.2 agent-runtime task is complete",
   "all V2 flags remain OFF",
   "Windows durability is unverified",
   "production/release remains `NO-GO`"
@@ -680,7 +682,7 @@ describe("verify-release-docs", () => {
       ],
       [
         "README.md",
-        "no W0.2 runtime task is complete"
+        "no W0.2 agent-runtime task is complete"
       ],
       [
         "docs/AGENT_PLANS.md",
@@ -720,7 +722,7 @@ describe("verify-release-docs", () => {
       ],
       [
         "docs/README.md",
-        "no W0.2 runtime task is complete"
+        "no W0.2 agent-runtime task is complete"
       ],
       [
         "docs/VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md",

@@ -1989,3 +1989,13 @@ not:
 ```text
 ИИ → большой JSON/driverPlan → приложение пытается построить всё сразу
 ```
+
+---
+
+## Amendment: `agent-decision-v2` provider-neutral batching
+
+New runs use `agent-decision-v2`, while `agent-decision-v1` remains accepted for compatibility. The new `call_tools` decision contains 2-6 ordered `{toolName,args}` calls; strict transports encode this list as `callsJson` and normalize it centrally. `user.ask` and `user.request_approval` are forbidden in a batch. Execution stops immediately on error, pause or approval, and `deepen_node` stays single-call/single-level.
+
+`vdt.add_drivers_batch.parentFormula` is explicit and atomic with its child additions. Decision context includes a bottom-up formula backlog, 24 prioritized nodes and 12 recent events. Normal finish requires an empty backlog, a valid graph, successful calculation and finite root value. The default step bound is 40 (schema cap 60); exhaustion persists the draft and waits for a structured `continue_run` message.
+
+OpenAI, Azure OpenAI, subscription CLIs and local HTTP models use one canonical feature contract. Transport-specific structured-output mechanisms may differ, but no provider loses agent functions because it is slower or lacks native strict schema, and no selected provider/model is silently replaced. `performanceSummary` is informational only.

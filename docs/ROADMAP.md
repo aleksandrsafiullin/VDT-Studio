@@ -55,7 +55,12 @@ Evidence: [W0.1](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#w0-1-go-2026-07-
 [Sequence 3 artifact freeze](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-artifact-freeze-go-2026-07-31).
 
 - [x] W0.1: make revision reservation/file write atomic and revision-CAS aware through one strict domain commit boundary, `O_CREAT | O_EXCL` publication and migrated manual/create/agent callers.
-- [ ] W0.2: serialize agent attempts per run and merge manual changes by operation/revision.
+- [ ] W0.2: serialize agent attempts per run and merge manual changes by
+  operation/revision. The working tree now contains partial/default-off
+  Supervisor, Gateway, Sequence 4 receipt/event/checkpoint authority and narrow
+  stale-revision reconciliation. Public UI adoption, provider-native
+  continuation, complete restart/finish recovery, operation-level merge and
+  live qualification remain open; this is not a W0.2 `GO`.
 - [ ] W0.3: the 4096-byte preview/source defect is fixed in the working tree and truncated tables cannot materialize category Baselines; separate original/parsed/sample counts across every adapter remain open.
 - [ ] W0.4: remove high-severity upload/image dependencies; add streaming limits, parser isolation, lifecycle and local-only/auth boundaries.
 - [ ] W0.5: make SQLite the durable owner, complete dirty-navigation/metadata reconciliation and enforce sticky runtime generation with no mixed V1/V2 writes.

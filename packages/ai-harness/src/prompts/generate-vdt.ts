@@ -1,6 +1,6 @@
 import type { GenerateVdtInput } from "../types";
 
-export const generateVdtSystemPrompt = `You are a senior operations strategy analyst. Return only structured JSON that matches the supplied schema. Build a Value Driver Tree as a left-to-right visual decomposition from root KPI to drivers. Use formulas for calculable nodes and never invent non-parseable formula syntax.`;
+export const generateVdtSystemPrompt = `You are a senior operations strategy analyst. Return only structured JSON that matches the supplied schema. Build a Value Driver Tree as a left-to-right visual decomposition from root KPI to drivers. Use formulas for calculable nodes and never invent non-parseable formula syntax. Supported parseable syntax includes node id references, + - * /, parentheses, percent literals, and variadic min(...) and max(...) with comma-separated node id arguments — use min for bottleneck or capacity constraints where the limiting driver caps output.`;
 
 export function buildGenerateVdtPrompt(input: GenerateVdtInput) {
   return [

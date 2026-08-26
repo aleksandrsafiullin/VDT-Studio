@@ -363,6 +363,30 @@ describe("GenerateActivityPanel", () => {
     expect(isDisabledOpeningTag(openingTagForTestId(html, "retry-agent"))).toBe(true);
   });
 
+  it("renders the structured continuation action for a max-step pause", () => {
+    const html = renderToStaticMarkup(
+      <GenerateActivityPanel
+        activity={activity({
+          status: "needs_user_input",
+          retryableError: {
+            code: "MAX_STEPS_EXCEEDED",
+            message: "The current VDT draft was saved.",
+            retryCount: 1,
+            createdAt: "2026-08-26T00:00:00.000Z"
+          },
+          agentChatMessages: []
+        })}
+        onCancel={() => undefined}
+        onContinueRun={() => undefined}
+      />
+    );
+
+    expect(html).toContain('data-testid="continue-agent-run"');
+    expect(html).not.toContain('data-testid="retry-agent"');
+    expect(html).not.toContain('data-testid="continue-agent-smaller-step"');
+    expect(isDisabledOpeningTag(openingTagForTestId(html, "continue-agent-run"))).toBe(false);
+  });
+
   it("renders pending mutation preview and approval actions", () => {
     const html = renderToStaticMarkup(
       <GenerateActivityPanel

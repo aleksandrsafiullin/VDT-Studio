@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@vdt-studio/vdt-agent-runtime": "workspace:*",
     "@vdt-studio/vdt-core": "workspace:*"
   },
   "exports": {

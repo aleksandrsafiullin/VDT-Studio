@@ -132,6 +132,7 @@ export function SetupRail() {
   const startNewAgentChat = useVdtStudioStore((state) => state.startNewAgentChat);
   const openAgentChat = useVdtStudioStore((state) => state.openAgentChat);
   const sendAgentAnswers = useVdtStudioStore((state) => state.sendAgentAnswers);
+  const continueAgentRun = useVdtStudioStore((state) => state.continueAgentRun);
   const sendAgentApproval = useVdtStudioStore((state) => state.sendAgentApproval);
   const sendAgentInstruction = useVdtStudioStore((state) => state.sendAgentInstruction);
   const cancelGenerate = useVdtStudioStore((state) => state.cancelGenerate);
@@ -370,7 +371,12 @@ export function SetupRail() {
                 activity={generateActivity}
                 onCancel={cancelGenerate}
                 onAnswer={(answers) => void sendAgentAnswers(answers)}
-                onApproval={(approved, selectedChangeIds) => void sendAgentApproval(approved, selectedChangeIds)}
+                onContinueRun={() => void continueAgentRun()}
+                onApproval={(approved, selectedChangeIds, proposalId) => void sendAgentApproval(
+                  approved,
+                  selectedChangeIds,
+                  proposalId
+                )}
               />
             ) : null}
 

@@ -208,7 +208,7 @@ function runtimeSnapshotFixture(overrides: Record<string, unknown> = {}) {
     options: {
       autoApplyPatches: true,
       continueWithAssumptions: false,
-      maxSteps: 30
+      maxSteps: 40
     }
   };
 
@@ -389,6 +389,25 @@ describe("vdt-store change-set workflow", () => {
     expect(useVdtStudioStore.getState().agentRun?.selectedSkills.map((skill) => skill.id)).toEqual([
       "mining.haulage_truck_cycle"
     ]);
+  });
+
+  it("startAgentRun can select a discovered server binding without sending provider authority", async () => {
+    const fetchMock = mockAgentStartFetch("agent-run-bound-model");
+
+    const started = await useVdtStudioStore.getState().startAgentRun(
+      "Build through the bound Model Agent.",
+      { executionBindingId: "model_agent_default" }
+    );
+
+    const body = parseAgentStartBody(fetchMock) as ReturnType<typeof parseAgentStartBody> & {
+      executionBindingId?: string;
+      providerId?: string;
+      providerConfig?: unknown;
+    };
+    expect(started).toBe(true);
+    expect(body.executionBindingId).toBe("model_agent_default");
+    expect(body).not.toHaveProperty("providerId");
+    expect(body).not.toHaveProperty("providerConfig");
   });
 
   it("startAgentRun on existing project sends continue_project with storage workspace projectId", async () => {
@@ -896,11 +915,16 @@ describe("vdt-store change-set workflow", () => {
       }
     });
 
-    await useVdtStudioStore.getState().sendAgentApproval(true, ["add_working_time"]);
+    await useVdtStudioStore.getState().sendAgentApproval(
+      true,
+      ["add_working_time"],
+      "agent-run-approval:mutation:1"
+    );
 
     expect(capturedMessageBody).toEqual({
       type: "approval",
       approved: true,
+      proposalId: "agent-run-approval:mutation:1",
       selectedChangeIds: ["add_working_time"]
     });
     expect(useVdtStudioStore.getState().agentRun?.runId).toBe("agent-run-approval");
@@ -2655,7 +2679,7 @@ describe("agent chat history VDT scoping", () => {
         options: {
           autoApplyPatches: true,
           continueWithAssumptions: false,
-          maxSteps: 30
+          maxSteps: 40
         },
         workspace: { projectId: "project_scope", vdtId, projectName: "Scope project" }
       },

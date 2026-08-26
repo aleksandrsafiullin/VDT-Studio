@@ -19,6 +19,10 @@ export function extractReferencesFromAst(expression: FormulaExpression, referenc
   } else if (expression.type === "binary") {
     extractReferencesFromAst(expression.left, references);
     extractReferencesFromAst(expression.right, references);
+  } else if (expression.type === "call") {
+    for (const arg of expression.args) {
+      extractReferencesFromAst(arg, references);
+    }
   }
 
   return [...references];
@@ -64,6 +68,10 @@ export function evaluateAst(expression: FormulaExpression, resolve: (reference: 
       }
       return left / right;
     }
+    case "call": {
+      const values = expression.args.map((arg) => evaluateAst(arg, resolve));
+      return expression.name === "min" ? Math.min(...values) : Math.max(...values);
+    }
   }
 }
 
@@ -100,9 +108,28 @@ export function evaluateFormula(formula: string, values: Record<string, number>)
   }
 }
 
+function formatResolvedAst(expression: FormulaExpression, values: Record<string, number>): string {
+  switch (expression.type) {
+    case "number":
+      return expression.raw;
+    case "reference": {
+      const value = values[expression.name];
+      return value === undefined ? expression.name : String(Number(value.toFixed(6)));
+    }
+    case "unary":
+      return `-${formatResolvedAst(expression.expression, values)}`;
+    case "binary": {
+      const left = formatResolvedAst(expression.left, values);
+      const right = formatResolvedAst(expression.right, values);
+      return `${left} ${expression.operator} ${right}`;
+    }
+    case "call": {
+      const args = expression.args.map((arg) => formatResolvedAst(arg, values));
+      return `${expression.name}(${args.join(", ")})`;
+    }
+  }
+}
+
 export function resolveFormulaText(formula: string, values: Record<string, number>) {
-  return formula.replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (reference) => {
-    const value = values[reference];
-    return value === undefined ? reference : String(Number(value.toFixed(6)));
-  });
+  return formatResolvedAst(parseFormula(formula), values);
 }

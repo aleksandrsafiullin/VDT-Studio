@@ -17,7 +17,46 @@ VDT Studio is an AI-first, local-first workspace for building editable Value Dri
 
 Raw-data discovery currently proposes semantic models and metadata mappings. Its narrow incoming-KPI path can also calculate a materialized baseline for each detected category—for example, downtime hours by reason—when one complete parsed table contains a confirmed numeric measure. General mapping execution, refresh, reconciliation and production-trusted KPI baselines are not implemented. Web research currently returns search results but does not yet provide an auditable benchmark evidence pipeline. These limitations are tracked in [Data ingestion](docs/DATA_INGESTION.md) and the [roadmap](docs/ROADMAP.md).
 
-The active corrective program is [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](docs/VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md). Gate A and W0.1 are complete with independent `GO`: local revision writes now use one strict CAS/idempotency commit boundary and exclusive-create no-clobber publication. The W0.2 design contract is accepted with independent contract-only `GO`, and Gate R1 SQL-only code has independent code-only `GO` with zero blockers, but no W0.2 agent-runtime task is complete. The three Sequence 3 byte-level contracts retain their independent contract-only `GO`; the separate 13-file inert artifact freeze retains its independent artifact-freeze `GO` with zero blockers; see the [2026-07-31 artifact-freeze checkpoint](docs/implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-artifact-freeze-go-2026-07-31). The accepted freeze is bound to verifier raw SHA-256 `817a090c48ba580fb5145ae0958f61e7be2255126f3dba17fcb65359f737c7ec`, freeze-record raw SHA-256 `6d5497733df9d1a184be34897ee20bba09355192239cdb904088b452d0b5dc73`, framed freeze-record hash `sha256:6aca44eded3fe69cac16f30fd0f4419523e49507ac6be099ec64d2e53efa6e7a` and V2 manifest hash `sha256:791fc7c7cce9abd11b2509ddaa6ba9e92e469178a3d1add6803b083295c849e8`. Sequence 3 is now production-wired locally: runtime admission verifies manifest/SQL/WASM/ABI integrity and the frozen vector identity, but the 121,310,783-byte golden registry is offline certification evidence only and is never loaded by production migration. W0.2 agent runtime remains incomplete and unauthorized; all V2 flags stay OFF; Windows durability, native crash evidence, package equality and large-file transport remain unverified; production/release remains `NO-GO`.
+The active corrective program is
+[`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](docs/VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md).
+Gate A and W0.1 are complete with independent `GO`: local revision writes use
+one strict CAS/idempotency commit boundary and exclusive-create no-clobber
+publication. The W0.2 design contract is accepted with independent contract-only `GO`,
+and Gate R1 SQL-only code has independent code-only `GO` with zero blockers.
+However, no W0.2 agent-runtime task is complete as a release-qualified
+end-to-end task; W0.2 remains incomplete and unauthorized as a whole.
+
+The three Sequence 3 byte-level contracts retain independent contract-only
+`GO`; the separate 13-file inert artifact freeze retains artifact-freeze `GO`.
+See the [2026-07-31 artifact-freeze checkpoint](docs/implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#sequence-3-artifact-freeze-go-2026-07-31).
+The accepted freeze is bound to verifier raw SHA-256
+`817a090c48ba580fb5145ae0958f61e7be2255126f3dba17fcb65359f737c7ec`,
+freeze-record raw SHA-256
+`6d5497733df9d1a184be34897ee20bba09355192239cdb904088b452d0b5dc73`,
+framed freeze-record hash
+`sha256:6aca44eded3fe69cac16f30fd0f4419523e49507ac6be099ec64d2e53efa6e7a`
+and V2 manifest hash
+`sha256:791fc7c7cce9abd11b2509ddaa6ba9e92e469178a3d1add6803b083295c849e8`.
+Sequence 3 is production-wired locally: runtime admission verifies
+manifest/SQL/WASM/ABI integrity and frozen vector identity, while the
+121,310,783-byte golden registry remains offline certification evidence and is
+never loaded by production migration.
+
+For a SQLite-backed AgentRunStore, the public structured Supervisor uses all
+seven normalized Sequence 4 tables as primary authority with current-epoch and
+per-write fence audit metadata; the V1 run row remains a secondary readable
+projection. Supervisor/Sequence 4 finish hydration and exact-successor
+finalization are implemented, but restart auto-resume, builder reconstruction,
+paused-interaction recovery and live/security qualification remain open. All
+V2 flags stay OFF; Windows durability, native crash evidence, package equality
+and large-file transport remain unverified. Production/release remains
+`NO-GO`.
+
+Implementation note: the current Sequence 4 "30-second per-attempt fence"
+records current-epoch, token and expiry audit metadata for a bounded write; it
+does not yet implement the ADR-005 shared lease acquisition, heartbeat,
+takeover and release state machine. Atomic tool-call reservation is the
+implemented cross-instance execute-once guard.
 
 ## Quickstart
 
@@ -30,6 +69,8 @@ corepack enable
 pnpm install --frozen-lockfile
 pnpm dev
 ```
+
+On macOS you can double-click `run.command` to start, stop or restart the local web app. From Terminal: `./run.command start`, `./run.command stop`, `./run.command restart`.
 
 Open the URL printed by Next.js. For standalone local-runner development:
 
@@ -70,7 +111,7 @@ The schema registry contains 18 task contracts. Seventeen are exposed product ta
 
 | Category | Exposed tasks |
 |---|---|
-| Agent loop | `orchestrator_first_response`, `agent_decision` |
+| Compatibility agent registry | `orchestrator_first_response` (registered only), `agent_decision` |
 | Data discovery | `data_agent_decision`, `analyze_raw_dataset`, `review_dataset_proposal` |
 | Generate | `generate_tree` |
 | Graph mutation | `deepen_node`, `simplify_branch`, `suggest_alternative`, `suggest_formula` |
@@ -78,6 +119,8 @@ The schema registry contains 18 task contracts. Seventeen are exposed product ta
 | Explanation | `explain_node`, `explain_scenario`, `generate_executive_summary` |
 
 Project creation runs through `/api/agent/runs`. Data discovery runs through `/api/data/discovery/runs`. `/api/ai/generate-vdt` is retained for BYOK connection tests and session-key model discovery; direct generation on that route returns `410`. Other bounded tasks use `/api/ai/run-task`.
+
+The legacy build runtime no longer invokes a separate `orchestrator_first_response` inference. Its first user-facing agent message is the `statusMessage` from the first `agent_decision`; the older task contract remains registered only for transport/schema compatibility.
 
 ## Model Configuration
 

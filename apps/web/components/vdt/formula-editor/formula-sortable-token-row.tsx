@@ -16,8 +16,9 @@ import {
   type FormulaEditorSegment,
   type FormulaEditorToken
 } from "./formula-editor-model";
+import { FormulaFunctionToken } from "./formula-function-token";
 import { FormulaNumberToken } from "./formula-number-token";
-import { FormulaOperatorToken } from "./formula-operator-token";
+import { FormulaOperatorToken, FormulaCommaToken } from "./formula-operator-token";
 import { FormulaReferenceChip } from "./formula-reference-chip";
 
 export interface FormulaSortableTokenRowProps {
@@ -199,6 +200,40 @@ function renderSegmentToken(
           </button>
         </span>
       );
+    case "function":
+      return (
+        <span className="inline-flex items-center gap-1">
+          {dragHandle}
+          <FormulaFunctionToken name={segment.name} />
+          <button
+            type="button"
+            className="inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            aria-label={`Remove ${segment.name} function`}
+            data-testid={`formula-operator-remove-${segment.id}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => onRemoveToken(segment.id)}
+          >
+            ×
+          </button>
+        </span>
+      );
+    case "comma":
+      return (
+        <span className="inline-flex items-center gap-1">
+          {dragHandle}
+          <FormulaCommaToken />
+          <button
+            type="button"
+            className="inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            aria-label="Remove comma"
+            data-testid={`formula-operator-remove-${segment.id}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => onRemoveToken(segment.id)}
+          >
+            ×
+          </button>
+        </span>
+      );
     default:
       return null;
   }
@@ -257,6 +292,24 @@ export function FormulaTokenGhostChip({ segment }: { segment: FormulaEditorSegme
             <GripVertical className="h-3.5 w-3.5" />
           </span>
           <FormulaOperatorToken operator=")" />
+        </span>
+      );
+    case "function":
+      return (
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-flex shrink-0 text-slate-400" aria-hidden>
+            <GripVertical className="h-3.5 w-3.5" />
+          </span>
+          <FormulaFunctionToken name={segment.name} />
+        </span>
+      );
+    case "comma":
+      return (
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-flex shrink-0 text-slate-400" aria-hidden>
+            <GripVertical className="h-3.5 w-3.5" />
+          </span>
+          <FormulaCommaToken />
         </span>
       );
     default:

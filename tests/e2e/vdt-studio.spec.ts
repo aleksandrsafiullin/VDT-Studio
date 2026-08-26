@@ -10,8 +10,33 @@ function loadProductionVolumeExample() {
   return JSON.parse(fs.readFileSync(productionVolumeExamplePath, "utf8")) as Record<string, unknown>;
 }
 
+type ProjectRuntimeState = {
+  runtimeGeneration: "v1" | "v2";
+  generationVersion: number;
+};
+
+function runtimeCasFromState(runtimeState: ProjectRuntimeState) {
+  return {
+    schemaVersion: "project_runtime_cas.v1" as const,
+    runtimeGeneration: runtimeState.runtimeGeneration,
+    generationVersion: runtimeState.generationVersion
+  };
+}
+
+async function readProjectRuntimeState(page: Page, projectId: string): Promise<ProjectRuntimeState> {
+  const projectResponse = await page.request.get(`/api/vdt/projects/${projectId}`);
+  expect(projectResponse.ok()).toBeTruthy();
+  const payload = (await projectResponse.json()) as {
+    summary?: { runtimeState?: ProjectRuntimeState };
+  };
+  const runtimeState = payload.summary?.runtimeState;
+  expect(runtimeState).toBeDefined();
+  return runtimeState!;
+}
+
 async function seedProductionVolumeWorkspace(page: Page) {
   const project = loadProductionVolumeExample();
+
   const createProject = await page.request.post("/api/vdt/projects", {
     data: {
       id: E2E_PROJECT_ID,
@@ -19,18 +44,47 @@ async function seedProductionVolumeWorkspace(page: Page) {
       industry: project.industry
     }
   });
-  if (createProject.status() !== 409) {
+
+  let runtimeState: ProjectRuntimeState;
+  if (createProject.status() === 201) {
+    const payload = (await createProject.json()) as {
+      summary?: { runtimeState?: ProjectRuntimeState };
+    };
+    runtimeState = payload.summary?.runtimeState!;
+    expect(runtimeState).toBeDefined();
+  } else if (createProject.status() === 409) {
+    runtimeState = await readProjectRuntimeState(page, E2E_PROJECT_ID);
+
+    const projectResponse = await page.request.get(`/api/vdt/projects/${E2E_PROJECT_ID}`);
+    const projectPayload = (await projectResponse.json()) as {
+      vdts?: Array<{ vdt: { id: string } }>;
+    };
+    if (projectPayload.vdts?.some((entry) => entry.vdt.id === E2E_VDT_ID)) {
+      return;
+    }
+  } else {
     expect(createProject.ok()).toBeTruthy();
+    return;
   }
 
   const createVdt = await page.request.post(`/api/vdt/projects/${E2E_PROJECT_ID}/vdts`, {
     data: {
-      id: E2E_VDT_ID,
-      name: project.name,
-      rootKpi: "Production Volume",
+      schemaVersion: "create_vdt_with_initial_http_request.v1",
+      idempotencyKey: `create-vdt:${E2E_PROJECT_ID}:${E2E_VDT_ID}`,
+      expectedRuntime: runtimeCasFromState(runtimeState),
+      vdt: {
+        requestedVdtId: E2E_VDT_ID,
+        name: String(project.name ?? "Production Volume Driver Model"),
+        rootKpi: "Production Volume",
+        unit: null,
+        timePeriod: null,
+        status: "draft",
+        metadata: null
+      },
       project
     }
   });
+
   if (createVdt.status() !== 409) {
     expect(createVdt.ok()).toBeTruthy();
   }
@@ -697,6 +751,18 @@ async function dragFormulaPaletteNodeIntoFormula(page: Page, nodeId: string) {
     await page.mouse.move(endX, endY, { steps: 24 });
     await page.waitForTimeout(80);
     await page.mouse.up();
+  }
+}
+
+/** Remove every removable token in the formula drop zone. */
+async function clearFormulaTokens(page: Page) {
+  const dropZone = page.getByTestId("formula-editor-drop-zone");
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const removeButtons = dropZone.getByRole("button", { name: /^Remove / });
+    if ((await removeButtons.count()) === 0) {
+      return;
+    }
+    await removeButtons.first().click();
   }
 }
 
@@ -2963,7 +3029,7 @@ test.describe("visual formula editor", () => {
     await expect(page.getByTestId("formula-editor")).toBeVisible();
 
     const formulaRow = page.getByTestId("formula-token-row");
-    await expect(formulaRow.getByText("Working time", { exact: true })).toBeVisible();
+    await expect(formulaRow.getByText("Effective Working Time", { exact: true })).toBeVisible();
     await expect(formulaRow.getByText("Average Productivity", { exact: true })).toBeVisible();
     await expect(formulaRow.getByText("effective_working_time")).toHaveCount(0);
     await expect(formulaRow.getByText("average_productivity")).toHaveCount(0);
@@ -3129,5 +3195,72 @@ test.describe("visual formula editor", () => {
       .toBeGreaterThan(0);
     await page.mouse.up();
     await expect(page.getByTestId("formula-insert-indicator")).toHaveCount(0);
+  });
+
+  test("shows min max and comma toolbar buttons on calculated nodes", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula min/max toolbar runs on desktop viewport.");
+
+    await selectNodeInInspector(page, "production_volume");
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+    await expect(page.getByTestId("formula-toolbar-min")).toBeVisible();
+    await expect(page.getByTestId("formula-toolbar-max")).toBeVisible();
+    await expect(page.getByTestId("formula-toolbar-comma")).toBeVisible();
+  });
+
+  test("insert min via toolbar on cleared formula shows function chip", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula min toolbar insert runs on desktop viewport.");
+
+    const nodeId = "production_volume";
+
+    await selectNodeInInspector(page, nodeId);
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+    await clearFormulaTokens(page);
+
+    await page.getByTestId("formula-toolbar-min").click();
+    await expect(page.getByTestId("formula-function-min")).toBeVisible();
+
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(/^min\(\)$/);
+  });
+
+  test("insert min function via toolbar and persist formula", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Formula min persist runs on desktop viewport.");
+
+    const nodeId = "production_volume";
+
+    await selectNodeInInspector(page, nodeId);
+    await expect(page.getByTestId("formula-editor")).toBeVisible();
+    await clearFormulaTokens(page);
+
+    await page.getByTestId("formula-toolbar-min").click();
+    await expect(page.getByTestId("formula-function-min")).toBeVisible();
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(/^min\(\)$/);
+
+    await dragFormulaPaletteNodeIntoFormula(page, "effective_working_time");
+    await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(
+      /^min\(effective_working_time\)$/
+    );
+
+    await page.getByTestId("formula-toolbar-comma").click();
+    await dragFormulaPaletteNodeIntoFormula(page, "average_productivity");
+
+    await expect
+      .poll(async () => readPersistedNodeFormula(page, nodeId))
+      .toMatch(/^min\(effective_working_time,\s*average_productivity\)$/);
+
+    const formulaRow = page.getByTestId("formula-token-row");
+    await expect(page.getByTestId("formula-function-min")).toBeVisible();
+    await expect(formulaRow.getByTestId("formula-function-min")).toHaveCount(1);
+    await expect(formulaRow.getByText("min", { exact: true })).toHaveCount(1);
+    await expect(page.getByTestId("formula-operator-comma")).toBeVisible();
+    await expect(page.getByTestId("formula-palette-node-effective_working_time")).toHaveCount(0);
+    await expect(page.getByTestId("formula-palette-node-average_productivity")).toHaveCount(0);
+
+    const graphStillValid = await page.getByRole("status", { name: "Model graph valid" }).isVisible();
+    if (graphStillValid) {
+      const rootNode = reactFlowNode(page, nodeId);
+      await expect(rootNode.getByTestId("node-main-scenario-value")).toBeVisible();
+      await expect(rootNode.getByTestId("node-main-scenario-value")).not.toContainText("NaN");
+      await expect(rootNode.getByTestId("node-main-scenario-value")).not.toContainText("Infinity");
+    }
   });
 });

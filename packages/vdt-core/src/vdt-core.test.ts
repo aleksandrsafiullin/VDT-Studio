@@ -8,11 +8,13 @@ import {
   calculateScenario,
   calculateScenarioGraph,
   calculateScenarioMultiplicativeEffect,
+  buildFormulaReferenceRelations,
   compareVdtProjects,
   createVersionSnapshot,
   diffChangeSet,
   evaluateAst,
   evaluateFormula,
+  extractFormulaReferences,
   exportProjectSvg,
   exportProjectJson,
   exportProjectMarkdown,
@@ -28,6 +30,7 @@ import {
   productionVolumeProject,
   rankScenarioInputNodes,
   resolveFormulaEdgeRelation,
+  resolveFormulaText,
   restoreVersionSnapshot,
   serializeFormulaTokens,
   tokenizeFormula,
@@ -48,6 +51,234 @@ describe("formula engine", () => {
     expect(missing.errors[0]?.type).toBe("missing_value");
     expect(missing.references).toEqual(["a", "b"]);
     expect(evaluateFormula("a / b", { a: 1, b: 0 }).errors[0]?.type).toBe("division_by_zero");
+  });
+
+  it("parses decimal-comma and grouped numeric literals without global comma replacement", () => {
+    expect(evaluateFormula("1,85 * rate", { rate: 10 }).value).toBe(18.5);
+    expect(evaluateFormula("1,000 * rate", { rate: 2 }).value).toBe(2_000);
+    expect(evaluateFormula("1,000,000 / rate", { rate: 4 }).value).toBe(250_000);
+  });
+});
+
+describe("min/max formula parsing", () => {
+  it("tokenizes min(a, b) with comma token", () => {
+    const tokens = tokenizeFormula("min(a, b)");
+    expect(tokens.map((token) => token.type)).toEqual([
+      "identifier",
+      "left_paren",
+      "identifier",
+      "comma",
+      "identifier",
+      "right_paren",
+      "eof"
+    ]);
+  });
+
+  it("parses min(a, b) as a call with two reference args", () => {
+    expect(parseFormula("min(a, b)")).toEqual({
+      type: "call",
+      name: "min",
+      args: [
+        { type: "reference", name: "a" },
+        { type: "reference", name: "b" }
+      ]
+    });
+  });
+
+  it("parses min(a, b, c) as a call with three args", () => {
+    expect(parseFormula("min(a, b, c)")).toEqual({
+      type: "call",
+      name: "min",
+      args: [
+        { type: "reference", name: "a" },
+        { type: "reference", name: "b" },
+        { type: "reference", name: "c" }
+      ]
+    });
+  });
+
+  it("parses max(0, a - b) with number and binary args", () => {
+    expect(parseFormula("max(0, a - b)")).toEqual({
+      type: "call",
+      name: "max",
+      args: [
+        { type: "number", value: 0, raw: "0" },
+        {
+          type: "binary",
+          operator: "-",
+          left: { type: "reference", name: "a" },
+          right: { type: "reference", name: "b" }
+        }
+      ]
+    });
+  });
+
+  it("keeps numeric commas inside min/max as argument separators", () => {
+    expect(parseFormula("min(1,2)")).toEqual({
+      type: "call",
+      name: "min",
+      args: [
+        { type: "number", value: 1, raw: "1" },
+        { type: "number", value: 2, raw: "2" }
+      ]
+    });
+  });
+
+  it("parses nested min/max calls", () => {
+    expect(parseFormula("min(a, max(b, c))")).toEqual({
+      type: "call",
+      name: "min",
+      args: [
+        { type: "reference", name: "a" },
+        {
+          type: "call",
+          name: "max",
+          args: [
+            { type: "reference", name: "b" },
+            { type: "reference", name: "c" }
+          ]
+        }
+      ]
+    });
+  });
+
+  it("parses min call as a multiplicative operand", () => {
+    expect(parseFormula("min(a, b) * yield")).toEqual({
+      type: "binary",
+      operator: "*",
+      left: {
+        type: "call",
+        name: "min",
+        args: [
+          { type: "reference", name: "a" },
+          { type: "reference", name: "b" }
+        ]
+      },
+      right: { type: "reference", name: "yield" }
+    });
+  });
+
+  it("parses bare min as a node reference", () => {
+    expect(parseFormula("min")).toEqual({ type: "reference", name: "min" });
+  });
+
+  it("rejects zero-argument min and max calls", () => {
+    expect(() => parseFormula("min()")).toThrow(FormulaParseError);
+    expect(() => parseFormula("max()")).toThrow(FormulaParseError);
+  });
+
+  it("rejects unknown function calls", () => {
+    expect(() => parseFormula("avg(a)")).toThrow(FormulaParseError);
+  });
+
+  it("rejects trailing comma in function calls", () => {
+    expect(() => parseFormula("min(a,)")).toThrow(FormulaParseError);
+  });
+
+  it("extracts references from min/max call args", () => {
+    expect(extractFormulaReferences("min(a, max(b, c))")).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("min/max formula evaluation", () => {
+  it("evaluates min and max with reference args", () => {
+    expect(evaluateFormula("min(a, b)", { a: 10, b: 7 }).value).toBe(7);
+    expect(evaluateFormula("max(0, target - actual)", { target: 5, actual: 8 }).value).toBe(0);
+  });
+
+  it("evaluates nested min/max calls", () => {
+    expect(evaluateFormula("min(a, max(b, c))", { a: 10, b: 7, c: 12 }).value).toBe(10);
+    expect(evaluateFormula("min(a, max(b, c))", { a: 15, b: 7, c: 3 }).value).toBe(7);
+  });
+
+  it("evaluates min/max as multiplicative operands", () => {
+    expect(evaluateFormula("min(a, b) * c", { a: 10, b: 7, c: 3 }).value).toBe(21);
+  });
+
+  it("evaluates single-arg min", () => {
+    expect(evaluateFormula("min(a)", { a: 42 }).value).toBe(42);
+  });
+
+  it("distinguishes bare min reference from min() call in reference extraction", () => {
+    expect(extractFormulaReferences("min + a")).toEqual(["min", "a"]);
+    expect(extractFormulaReferences("min(a, b)")).toEqual(["a", "b"]);
+  });
+
+  it("reports missing_value with full reference list for min/max formulas", () => {
+    const missing = evaluateFormula("min(a, b)", { a: 10 });
+    expect(missing.errors[0]?.type).toBe("missing_value");
+    expect(missing.references).toEqual(["a", "b"]);
+  });
+
+  it("resolves formula text without replacing min/max function names", () => {
+    expect(resolveFormulaText("min(a, b)", { a: 10, b: 7 })).toBe("min(10, 7)");
+    expect(resolveFormulaText("max(0, target - actual)", { target: 5, actual: 8 })).toBe("max(0, 5 - 8)");
+    expect(resolveFormulaText("min(a, max(b, c))", { a: 10, b: 7, c: 12 })).toBe("min(10, max(7, 12))");
+    expect(resolveFormulaText("min + a", { min: 3, a: 5 })).toBe("3 + 5");
+  });
+
+  it("calculateGraph evaluates bottleneck min formula", () => {
+    const project: VdtProject = {
+      ...productionVolumeProject,
+      rootNodeId: "bottleneck",
+      graph: {
+        nodes: [
+          {
+            id: "bottleneck",
+            name: "Bottleneck",
+            type: "root_kpi",
+            status: "accepted",
+            formula: "min(driver_a, driver_b)",
+            aiGenerated: false,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z"
+          },
+          {
+            id: "driver_a",
+            name: "Driver A",
+            type: "input",
+            status: "accepted",
+            baselineValue: 100,
+            aiGenerated: false,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z"
+          },
+          {
+            id: "driver_b",
+            name: "Driver B",
+            type: "input",
+            status: "accepted",
+            baselineValue: 75,
+            aiGenerated: false,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        edges: [
+          {
+            id: "edge_bottleneck_driver_a",
+            sourceNodeId: "bottleneck",
+            targetNodeId: "driver_a",
+            relation: "positive_driver",
+            aiGenerated: false
+          },
+          {
+            id: "edge_bottleneck_driver_b",
+            sourceNodeId: "bottleneck",
+            targetNodeId: "driver_b",
+            relation: "positive_driver",
+            aiGenerated: false
+          }
+        ]
+      },
+      scenarios: []
+    };
+
+    const result = calculateGraph(project);
+    expect(result.errors).toHaveLength(0);
+    expect(result.values.bottleneck).toBe(75);
+    expect(result.rootValue).toBe(75);
+    expect(result.trace.find((item) => item.nodeId === "bottleneck")?.resolvedFormula).toBe("min(100, 75)");
   });
 });
 
@@ -104,6 +335,17 @@ describe("serializeFormulaTokens", () => {
     expect(serializeFormulaTokens(tokenizeFormula("calendar_time - planned_downtime - unplanned_downtime"))).toBe(
       "calendar_time - planned_downtime - unplanned_downtime"
     );
+  });
+
+  it("normalizes min/max call comma spacing without space before parens", () => {
+    expect(serializeFormulaTokens(tokenizeFormula("min(a,b)"))).toBe("min(a, b)");
+    expect(serializeFormulaTokens(tokenizeFormula("min(a, b)"))).toBe("min(a, b)");
+    expect(serializeFormulaTokens(tokenizeFormula("min(a, b, c)"))).toBe("min(a, b, c)");
+    expect(serializeFormulaTokens(tokenizeFormula("min(a, max(b, c))"))).toBe("min(a, max(b, c))");
+
+    assertParseEquivalent("min(a, b)", { a: 10, b: 7 });
+    assertParseEquivalent("min(a, max(b, c))", { a: 10, b: 7, c: 12 });
+    assertParseEquivalent("max(0, a - b)", { a: 5, b: 8 });
   });
 });
 
@@ -206,6 +448,46 @@ describe("formula edge relations", () => {
       "operating_hours",
       "cycle_time_h"
     ]);
+  });
+
+  it("walks min/max call args via AST without treating function names as refs", () => {
+    expect(getFormulaReferenceOrder("min(a, b)")).toEqual(["a", "b"]);
+    expect(getFormulaReferenceOrder("min(a, max(b, c))")).toEqual(["a", "b", "c"]);
+    expect(getFormulaReferenceOrder("max(0, -a)")).toEqual(["a"]);
+
+    const nestedRelations = buildFormulaReferenceRelations("min(a, max(b, c))");
+    expect(nestedRelations.get("a")).toBe("formula_dependency");
+    expect(nestedRelations.get("b")).toBe("formula_dependency");
+    expect(nestedRelations.get("c")).toBe("formula_dependency");
+    expect(nestedRelations.has("min")).toBe(false);
+    expect(nestedRelations.has("max")).toBe(false);
+
+    const maxDiffRelations = buildFormulaReferenceRelations("max(0, target - actual)");
+    expect(maxDiffRelations.get("target")).toBe("formula_dependency");
+    expect(maxDiffRelations.get("actual")).toBe("subtractive_component");
+  });
+
+  it("assigns call arg refs formula_dependency inside outer binary expressions", () => {
+    const relations = buildFormulaReferenceRelations("a + min(b, c)");
+    expect(relations.get("a")).toBe("formula_dependency");
+    expect(relations.get("b")).toBe("formula_dependency");
+    expect(relations.get("c")).toBe("formula_dependency");
+
+    expect(resolveFormulaEdgeRelation("a + min(b, c)", "b", "additive_component")).toBe("formula_dependency");
+  });
+
+  it("distinguishes bare min node ref from min() call in edge relations", () => {
+    expect(getFormulaReferenceOrder("min + a")).toEqual(["min", "a"]);
+    expect(buildFormulaReferenceRelations("min + a").get("min")).toBe("formula_dependency");
+    expect(buildFormulaReferenceRelations("min + a").get("a")).toBe("additive_component");
+    expect(getFormulaReferenceOrder("min(a, b)")).toEqual(["a", "b"]);
+  });
+
+  it("keeps first-occurrence relation when the same ref appears in call and outer binary", () => {
+    const relations = buildFormulaReferenceRelations("min(b, a) + a");
+    expect(getFormulaReferenceOrder("min(b, a) + a")).toEqual(["b", "a"]);
+    expect(relations.get("a")).toBe("formula_dependency");
+    expect(relations.get("b")).toBe("formula_dependency");
   });
 });
 
@@ -762,6 +1044,19 @@ describe("graph validation", () => {
       ...productionVolumeProject.graph,
       nodes: productionVolumeProject.graph.nodes.map((node) =>
         node.id === "effective_working_time" ? { ...node, formula: "calendar_time + nominal_rate" } : node
+      )
+    };
+
+    const result = validateGraph(graph, productionVolumeProject.rootNodeId);
+
+    expect(result.warnings.some((warning) => warning.type === "unit_mismatch")).toBe(true);
+  });
+
+  it("warns on unit mismatches inside min/max calls", () => {
+    const graph = {
+      ...productionVolumeProject.graph,
+      nodes: productionVolumeProject.graph.nodes.map((node) =>
+        node.id === "effective_working_time" ? { ...node, formula: "min(calendar_time, nominal_rate)" } : node
       )
     };
 

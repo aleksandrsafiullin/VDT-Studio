@@ -61,6 +61,20 @@ This threat model covers API/BYOK providers, subscription CLIs, local-model exec
 - Managed Cursor authentication deliberately inherits the host environment so the provider CLI can use its own browser/keychain flow, but the frontend supplies only `cursor_subscription`; the runtime fixes `agent login`, bounds execution, verifies the resulting session and never returns raw login output or one-time challenges.
 - Subscription backends remain at the status in `release/provider-certification.json`; fake tests are not live evidence.
 - Tool-capable Cursor receives a fresh ephemeral workspace, not the repository cwd or VDT MCP configuration.
+- The experimental checkpoint/resume Cursor engine additionally uses a stable
+  private empty workspace, a private HOME/config root and an explicit
+  credential environment allowlist; any observed Cursor tool event, workspace
+  write, session drift or unknown stream event stops the run. Because Cursor
+  print mode still contains built-in tools and no credentialed adversarial
+  sandbox evidence exists, this is an unverified default-off canary, not a
+  hard-isolation or public-capability claim.
+- Codex and Claude checkpoint candidates are narrower typed protocol canaries,
+  not executable engines. Injected fake runners verify sanitized environments,
+  one server-owned VDT MCP configuration, exact opaque session resume and
+  fail-closed handling of reported shell/built-in/foreign-tool activity. Their
+  capability remains `unverified`, public engine methods reject, and neither
+  provider's event stream proves absence of unreported effects. Codex
+  subscription-auth isolation and the Claude CLI protocol were not live-tested.
 - Other reviewed subscription manifests deny tools through provider-owned flags/policies and validate output locally.
 - An unavailable required sandbox produces `UNSAFE_CONFIGURATION`.
 

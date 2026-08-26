@@ -23,6 +23,28 @@ describe("OpenAI-compatible provider response limits", () => {
     vi.unstubAllGlobals();
   });
 
+  it("uses strict JSON Schema when the caller supplies a registered schema", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      choices: [{ message: { content: "{\"answer\":\"strict\"}" } }]
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+    const schema = {
+      type: "object",
+      properties: { answer: { type: "string" } },
+      required: ["answer"],
+      additionalProperties: false
+    };
+
+    await expect(createProvider().completeStructured({ ...params, schema })).resolves.toEqual({ answer: "strict" });
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      response_format: {
+        type: "json_schema",
+        json_schema: { strict: true, schema }
+      }
+    });
+  });
+
   it("rejects a response whose declared content length exceeds the limit", async () => {
     const fetchMock = vi.fn(async () =>
       new Response("upstream-secret-response", {

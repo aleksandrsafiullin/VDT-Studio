@@ -12,6 +12,8 @@ function tokenText(token: FormulaToken): string {
       return "(";
     case "right_paren":
       return ")";
+    case "comma":
+      return ",";
     case "eof":
       return "";
   }
@@ -39,12 +41,20 @@ function shouldInsertSpaceBetween(tokens: FormulaToken[], index: number): boolea
     return false;
   }
 
-  if (next.type === "right_paren") {
+  if (next.type === "right_paren" || next.type === "comma") {
     return false;
   }
 
   if (previous.type === "left_paren") {
     return false;
+  }
+
+  if (previous.type === "identifier" && next.type === "left_paren") {
+    return false;
+  }
+
+  if (previous.type === "comma") {
+    return true;
   }
 
   if (previous.type === "operator") {

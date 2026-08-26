@@ -1,6 +1,6 @@
 # Formula And Calculation Engine
 
-Last reviewed against the working tree: **2026-08-10**.
+Last reviewed against the working tree: **2026-08-26**.
 
 ## Contract
 
@@ -12,9 +12,14 @@ Supported syntax:
 - finite numeric literals;
 - percentage literals such as `90%`;
 - parentheses;
-- binary `+`, `-`, `*` and `/`.
+- binary `+`, `-`, `*` and `/`;
+- variadic `min(...)` and `max(...)` calls with at least one argument.
 
-Functions such as `min`, `max`, conditional logic, lookup, aggregation, time lag and rolling windows are not supported.
+Functions such as conditional logic, lookup, aggregation, time lag and rolling windows are not supported.
+
+### `min` / `max` and bare node references
+
+`min` and `max` are reserved function names when followed by `(`. `min(a, b)` parses as a call; `min` alone parses as a reference to a graph node whose id is `min`. The same applies to `max`. Formula dependency extraction and edge-relation mapping walk the AST: call arguments are `formula_dependency` operands; function names are never graph node ids in those maps.
 
 ## Evaluation
 
@@ -24,6 +29,8 @@ For each graph node:
 2. a node without a formula uses `baselineValue ?? value`;
 3. a formula parses into the internal AST and recursively resolves referenced nodes;
 4. the engine records the result and a calculation trace.
+
+`min(...)` and `max(...)` evaluate to `Math.min` / `Math.max` over their fully resolved numeric arguments.
 
 `dataMapping` is not executed by the formula engine. A `data_mapped` node still requires a materialized `baselineValue` or `value`; otherwise calculation reports `missing_value`. The experimental incoming-category file flow can materialize that `baselineValue` before the change set reaches the formula engine; this does not make mappings refreshable or generally executable.
 
@@ -39,7 +46,7 @@ For each graph node:
 
 ## Unit Validation
 
-Current validation normalizes unit text and checks obvious mismatches for additive `+` and `-` expressions. It does not perform dimensional algebra for multiplication/division, currency/base-year conversion, percentage scale or time-grain reconciliation.
+Current validation normalizes unit text and checks obvious mismatches for additive `+` and `-` expressions and for `min(...)` / `max(...)` argument lists (any pair of defined argument units must match). It does not perform dimensional algebra for multiplication/division, currency/base-year conversion, percentage scale or time-grain reconciliation.
 
 Consequences:
 

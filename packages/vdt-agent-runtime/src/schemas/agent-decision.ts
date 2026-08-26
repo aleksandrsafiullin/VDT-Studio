@@ -1,11 +1,15 @@
 import { z } from "zod";
 import { agentQuestionSchema } from "./agent-event";
 
-export const agentDecisionSchema = z.discriminatedUnion("type", [
+const agentToolCallSchema = z.object({
+  toolName: z.string().min(1).max(120),
+  args: z.record(z.unknown())
+});
+
+export const agentDecisionV1Schema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("call_tool"),
-    toolName: z.string().min(1).max(120),
-    args: z.record(z.unknown()),
+    ...agentToolCallSchema.shape,
     statusMessage: z.string().min(1).max(500)
   }),
   z.object({
@@ -20,6 +24,17 @@ export const agentDecisionSchema = z.discriminatedUnion("type", [
   })
 ]);
 
+export const agentDecisionSchema = z.discriminatedUnion("type", [
+  ...agentDecisionV1Schema.options,
+  z.object({
+    type: z.literal("call_tools"),
+    calls: z.array(agentToolCallSchema).min(2).max(6),
+    statusMessage: z.string().min(1).max(500)
+  })
+]);
+
+export type AgentDecisionV1 = z.infer<typeof agentDecisionV1Schema>;
+export type AgentToolCall = z.infer<typeof agentToolCallSchema>;
 export type AgentDecision = z.infer<typeof agentDecisionSchema>;
 
 export const FORBIDDEN_AGENT_DECISION_FIELDS = [

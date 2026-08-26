@@ -74,6 +74,31 @@ describe("cursor subscription executor", () => {
     expect(result.output).toMatchObject({ projectTitle: "Fake Cursor tree", rootNodeId: "root" });
   });
 
+  it("normalizes Cursor agent-decision-v2 callsJson to canonical call_tools", async () => {
+    const result = await executeCompletion(
+      cursorManifest(),
+      {
+        requestId: crypto.randomUUID(),
+        backendId: "cursor_subscription",
+        taskType: "agent_decision",
+        schemaId: "agent-decision-v2",
+        input: { runId: "run", currentProject: { nodes: [] } }
+      },
+      new AbortController().signal,
+      fakeCursorExecutor()
+    );
+
+    expect(result.schemaValid).toBe(true);
+    expect(result.output).toEqual({
+      type: "call_tools",
+      calls: [
+        { toolName: "project.get_node", args: { nodeId: "root" } },
+        { toolName: "project.get_subtree", args: { nodeId: "root", maxDepth: 2 } }
+      ],
+      statusMessage: "Inspecting the project."
+    });
+  });
+
   it("orients reversed Cursor generate-tree edges before schema validation", async () => {
     const result = await executeCompletion(
       cursorManifest(),

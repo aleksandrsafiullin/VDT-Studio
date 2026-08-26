@@ -1,4 +1,6 @@
-import type { VdtOutputSchemaId } from "../schema-registry";
+import type { VdtSchemaId } from "../schema-registry";
+
+type RegisteredOutputSchemaId = Exclude<VdtSchemaId, "connection-test-v1">;
 
 const advisory = {
   assumptions: ["Baseline month is representative."],
@@ -6,7 +8,7 @@ const advisory = {
   warnings: [{ severity: "info", message: "Sample warning." }]
 };
 
-export const VALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
+export const VALID_SCHEMA_FIXTURES: Record<RegisteredOutputSchemaId, unknown> = {
   "orchestrator-first-response-v1": {
     assistantMessage: "I will use the visible brief as the source of truth and start by checking the requested VDT scope.",
     nextAction: "continue_building",
@@ -25,6 +27,20 @@ export const VALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
       maxSkills: 3
     },
     statusMessage: "Searching for a truck haulage skill."
+  },
+  "agent-decision-v2": {
+    type: "call_tools",
+    calls: [
+      {
+        toolName: "skill.search",
+        args: { rootKpi: "Ore haulage", industry: "Mining", maxSkills: 3 }
+      },
+      {
+        toolName: "project.get_subtree",
+        args: { nodeId: "root", maxDepth: 2 }
+      }
+    ],
+    statusMessage: "Inspecting the relevant haulage context."
   },
   "agent-plan-v1": {
     buildIntent: {
@@ -248,7 +264,7 @@ export const VALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
   }
 };
 
-export const INVALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
+export const INVALID_SCHEMA_FIXTURES: Record<RegisteredOutputSchemaId, unknown> = {
   "orchestrator-first-response-v1": {
     assistantMessage: "",
     nextAction: "replace_scope",
@@ -261,6 +277,14 @@ export const INVALID_SCHEMA_FIXTURES: Record<VdtOutputSchemaId, unknown> = {
     args: {},
     statusMessage: "Returning a forbidden full plan.",
     driverPlan: []
+  },
+  "agent-decision-v2": {
+    type: "call_tools",
+    calls: [
+      { toolName: "user.ask", args: {} },
+      { toolName: "project.get_node", args: { nodeId: "root" } }
+    ],
+    statusMessage: "Invalid interactive batch."
   },
   "agent-plan-v1": {
     selectedSkillIds: ["mining.production_volume"],

@@ -38,6 +38,7 @@
     "docs:verify": "node scripts/verify-release-docs.mjs",
     "certification:verify": "node scripts/verify-provider-certification.mjs",
     "evaluation:verify": "node --import tsx scripts/evaluate-providers.mjs",
+    "benchmark:agent-build": "node --import tsx scripts/agent-build-benchmark.mjs",
     "live:agent:codex": "tsx scripts/live-agent-cli-smoke.mjs --backend codex_subscription",
     "live:agent:codex:api": "tsx scripts/live-agent-cli-smoke.mjs --backend codex_subscription --base-url http://127.0.0.1:3000",
     "live:agent:cursor": "tsx scripts/live-agent-cli-smoke.mjs --backend cursor_subscription",

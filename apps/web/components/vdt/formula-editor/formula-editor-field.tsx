@@ -47,6 +47,8 @@ export function FormulaEditorField({
     reorder,
     insertReference,
     insertOperator,
+    insertFunction,
+    insertComma,
     insertNumber,
     updateNumber,
     removeToken,
@@ -103,6 +105,8 @@ export function FormulaEditorField({
           onUpdateNumber={updateNumber}
           onInsertReference={insertReference}
           onInsertOperator={insertOperator}
+          onInsertFunction={insertFunction}
+          onInsertComma={insertComma}
           onInsertNumber={insertNumber}
           isUnknownReference={isUnknownReference}
         />

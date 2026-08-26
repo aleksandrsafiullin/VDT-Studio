@@ -3,21 +3,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { VdtEdge, VdtNode } from "@vdt-studio/vdt-core";
 import {
+  createCommaToken,
   createEditorToken,
+  createFunctionCallSkeleton,
   createNumberToken,
   createReferenceToken,
+  defaultAppendIndex,
   editorTokensToFormula,
   getConnectedNodeIds,
   getPaletteNodes,
   getReferencedNodeIds,
   insertEditorTokenAt,
+  insertEditorTokensAt,
   operatorToToken,
   parseFormulaToEditorTokens,
   removeEditorTokenById,
   reorderEditorTokens,
+  resolveReferenceInsertIndex,
   updateEditorNumberToken,
   validateFormulaString,
   type FormulaEditorOperator,
+  type FormulaEditorFunctionName,
   type FormulaEditorToken
 } from "./formula-editor-model";
 
@@ -30,6 +36,8 @@ export interface UseFormulaEditorStateResult {
   reorder: (fromIndex: number, toIndex: number) => void;
   insertReference: (nodeId: string, atIndex?: number) => void;
   insertOperator: (op: FormulaEditorOperator) => void;
+  insertFunction: (name: FormulaEditorFunctionName) => void;
+  insertComma: () => void;
   insertNumber: (raw?: string) => void;
   updateNumber: (tokenId: string, raw: string) => void;
   removeToken: (tokenId: string) => void;
@@ -111,7 +119,9 @@ export function useFormulaEditorState(
       if (!getConnectedNodeIds(currentNodeId, edges).has(nodeId)) {
         return;
       }
-      applyTokenUpdate((tokens) => insertEditorTokenAt(tokens, createReferenceToken(nodeId), atIndex));
+      applyTokenUpdate((tokens) =>
+        insertEditorTokenAt(tokens, createReferenceToken(nodeId), resolveReferenceInsertIndex(tokens, atIndex))
+      );
     },
     [applyTokenUpdate, currentNodeId, edges, formulaString]
   );
@@ -123,9 +133,22 @@ export function useFormulaEditorState(
     [applyTokenUpdate]
   );
 
+  const insertFunction = useCallback(
+    (name: FormulaEditorFunctionName) => {
+      applyTokenUpdate((tokens) => insertEditorTokensAt(tokens, createFunctionCallSkeleton(name)));
+    },
+    [applyTokenUpdate]
+  );
+
+  const insertComma = useCallback(() => {
+    applyTokenUpdate((tokens) => insertEditorTokenAt(tokens, createCommaToken(), defaultAppendIndex(tokens)));
+  }, [applyTokenUpdate]);
+
   const insertNumber = useCallback(
     (raw?: string) => {
-      applyTokenUpdate((tokens) => insertEditorTokenAt(tokens, createNumberToken(raw)));
+      applyTokenUpdate((tokens) =>
+        insertEditorTokenAt(tokens, createNumberToken(raw), defaultAppendIndex(tokens))
+      );
     },
     [applyTokenUpdate]
   );
@@ -167,6 +190,8 @@ export function useFormulaEditorState(
     reorder,
     insertReference,
     insertOperator,
+    insertFunction,
+    insertComma,
     insertNumber,
     updateNumber,
     removeToken,

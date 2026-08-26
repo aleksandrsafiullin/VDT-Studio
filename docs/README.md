@@ -1,6 +1,6 @@
 # VDT Studio Documentation Map
 
-Last reviewed against the working tree: **2026-07-24**.
+Last reviewed against the working tree: **2026-08-26**.
 
 This page defines which documents are current, normative, historical or generated. Use it before planning or implementing repository changes.
 
@@ -72,11 +72,12 @@ Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md`, the
 
 | ADR | Status |
 |---|---|
-| [`ADR-001`](adr/ADR-001-model-backends-not-agent-orchestration.md) | Superseded in part; retained as the decision that removed external coding-agent control |
-| [`ADR-002`](adr/ADR-002-bounded-in-product-agent-runtime.md) | Accepted; current in-product agent architecture |
+| [`ADR-001`](adr/ADR-001-model-backends-not-agent-orchestration.md) | Superseded in part by ADR-002 and ADR-006; retained shell/repository/filesystem and provider-authority boundary |
+| [`ADR-002`](adr/ADR-002-bounded-in-product-agent-runtime.md) | Accepted for the ADR-006 `model_agent` profile; no longer the universal execution architecture |
 | [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) | Accepted target contract; implementation not started |
 | [`ADR-004`](adr/ADR-004-atomic-revision-commit-and-legacy-migration-adoption.md) | Accepted and implemented for W0.1; independent implementation/test `GO` |
-| [`ADR-005`](adr/ADR-005-durable-run-coordination-and-manual-reconciliation.md) | Accepted W0.2 design contract with independent contract-only `GO`; Gate R1 SQL-only code and the three byte-level contracts have separate scoped `GO` decisions; sequence 3 and all runtime authority remain separately gated |
+| [`ADR-005`](adr/ADR-005-durable-run-coordination-and-manual-reconciliation.md) | Accepted W0.2 durable authority; ADR-006 amends bounded attempts without weakening SQLite, fence or receipt requirements |
+| [`ADR-006`](adr/ADR-006-bounded-dual-profile-agent-execution.md) | Accepted dual-profile target architecture; tested foundations are implemented, public Supervisor/storage wiring is partial, external execution remains default-off and unqualified |
 
 ## Historical And Reference-Only Documents
 

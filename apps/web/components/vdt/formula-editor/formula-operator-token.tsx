@@ -38,3 +38,18 @@ export function FormulaOperatorToken({ operator, className }: FormulaOperatorTok
     </span>
   );
 }
+
+export function FormulaCommaToken({ className }: { className?: string }) {
+  return (
+    <span
+      className={clsx(
+        "inline-flex items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700",
+        className
+      )}
+      data-testid="formula-operator-comma"
+      aria-hidden
+    >
+      ,
+    </span>
+  );
+}

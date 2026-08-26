@@ -1,5 +1,6 @@
 import type { AiCompletionParams, AiProvider, AzureOpenAiProviderConfig } from "../types";
 import {
+  asJsonSchema,
   parseStructuredOutput,
   requestProviderJson,
   requireNonEmptyText,
@@ -20,7 +21,8 @@ export class AzureOpenAiProvider implements AiProvider {
   async completeStructured<TInput, TOutput>(params: AiCompletionParams<TInput>): Promise<TOutput> {
     const endpoint = trimTrailingSlash(this.config.endpoint);
     const url = `${endpoint}/openai/deployments/${encodeURIComponent(this.config.deployment)}/chat/completions?api-version=${encodeURIComponent(this.config.apiVersion)}`;
-    const payload = (await requestProviderJson({
+    const jsonSchema = asJsonSchema(params.schema);
+    const request = (responseFormat: Record<string, unknown>) => requestProviderJson({
       providerName: "Azure OpenAI",
       fetch: this.config.fetch ?? globalThis.fetch,
       url,
@@ -36,7 +38,7 @@ export class AzureOpenAiProvider implements AiProvider {
         body: JSON.stringify({
           temperature: params.temperature ?? 0.2,
           max_tokens: params.maxTokens ?? 2200,
-          response_format: { type: "json_object" },
+          response_format: responseFormat,
           messages: [
             { role: "system", content: params.systemPrompt },
             {
@@ -46,9 +48,22 @@ export class AzureOpenAiProvider implements AiProvider {
           ]
         })
       }
-    })) as AzureChatCompletionResponse;
+    });
+    let payload: AzureChatCompletionResponse;
+    try {
+      payload = (await request(jsonSchema
+        ? { type: "json_schema", json_schema: { name: "vdt_agent_decision", strict: true, schema: jsonSchema } }
+        : { type: "json_object" })) as AzureChatCompletionResponse;
+    } catch (error) {
+      if (!jsonSchema || !isStructuredSchemaUnsupported(error)) throw error;
+      payload = (await request({ type: "json_object" })) as AzureChatCompletionResponse;
+    }
 
     const content = payload.choices?.[0]?.message?.content;
     return parseStructuredOutput<TOutput>(requireNonEmptyText(content, "Azure OpenAI"), params.schema);
   }
+}
+
+function isStructuredSchemaUnsupported(error: unknown): boolean {
+  return error instanceof Error && /status (400|404|422)\b/.test(error.message);
 }

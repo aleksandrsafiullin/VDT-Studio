@@ -3,8 +3,9 @@
 import { clsx } from "clsx";
 import type { ReactNode } from "react";
 import type { FormulaEditorSegment } from "./formula-editor-model";
+import { FormulaFunctionToken } from "./formula-function-token";
 import { FormulaNumberToken } from "./formula-number-token";
-import { FormulaOperatorToken } from "./formula-operator-token";
+import { FormulaOperatorToken, FormulaCommaToken } from "./formula-operator-token";
 import { FormulaReferenceChip } from "./formula-reference-chip";
 
 export interface FormulaTokenRowProps {
@@ -100,6 +101,38 @@ export function FormulaTokenRow({
                     type="button"
                     className="inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
                     aria-label="Remove right parenthesis"
+                    data-testid={`formula-operator-remove-${segment.id}`}
+                    onClick={() => onRemoveToken(segment.id)}
+                  >
+                    ×
+                  </button>
+                </span>
+              );
+            case "function":
+              return (
+                <span key={segment.id} className="inline-flex items-center gap-1">
+                  {dragHandle}
+                  <FormulaFunctionToken name={segment.name} />
+                  <button
+                    type="button"
+                    className="inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                    aria-label={`Remove ${segment.name} function`}
+                    data-testid={`formula-operator-remove-${segment.id}`}
+                    onClick={() => onRemoveToken(segment.id)}
+                  >
+                    ×
+                  </button>
+                </span>
+              );
+            case "comma":
+              return (
+                <span key={segment.id} className="inline-flex items-center gap-1">
+                  {dragHandle}
+                  <FormulaCommaToken />
+                  <button
+                    type="button"
+                    className="inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                    aria-label="Remove comma"
                     data-testid={`formula-operator-remove-${segment.id}`}
                     onClick={() => onRemoveToken(segment.id)}
                   >

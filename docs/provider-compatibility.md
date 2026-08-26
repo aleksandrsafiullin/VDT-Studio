@@ -1,6 +1,6 @@
 # Provider Compatibility
 
-Last reviewed against canonical metadata: **2026-07-23**. The certification file itself is dated **2026-06-22**; no newer credentialed live verification was performed during the documentation refresh.
+Last reviewed against canonical metadata and the current working tree: **2026-08-26**. The certification file itself is dated **2026-06-22**. The 2026-08-26 agent-decision-v2 qualification attempts below did not pass and therefore do not promote provider certification.
 
 VDT Studio certifies subscription CLIs against reviewed manifest flags, structured-output contracts, and (where required) OS sandbox profiles. This document records tested versions, platform support, and explicit non-goals.
 
@@ -32,6 +32,32 @@ Settings must not translate an unknown or in-progress detection into `not_instal
 Model-list success is separate from request readiness. A green CLI readiness badge means the provider probe can execute a request; it does not authorize VDT to invent model availability. A model shown as **Live from CLI** or loaded from a BYOK provider came from that current provider response. When discovery is unavailable, the UI says so and permits manual entry without presenting catalog suggestions as verified.
 
 Azure OpenAI is intentionally different: execution requires a deployment name, while the Azure model catalog reports base models rather than the resource's deployment names. Settings therefore keeps Deployment as a manual field and does not present base-model results as executable deployments.
+
+## Backend status versus execution-profile qualification
+
+The backend labels below describe the existing task/compatibility adapters.
+They do not make the ADR-006 `external_cli_agent` profile available. Execution
+profile qualification is a separate fail-closed capability record bound to the
+exact engine adapter, backend, model policy, CLI and protocol versions,
+tool-catalog hash, platform, test timestamp and evidence hash.
+
+- `model_agent`: the structured-turn engine foundation exists, but the public
+  route still uses the micro-CLI `AgentDecision` compatibility loop.
+- `external_cli_agent`: no adapter currently has accepted `hard_verified`
+  isolation evidence; the profile is unavailable in product UI/API.
+- executable/auth/model readiness, a manifest `alpha`/`beta` label or a
+  permission flag cannot substitute for profile qualification. Version,
+  protocol or tool-catalog drift makes prior evidence unusable.
+- there is no silent fallback to the compatibility loop, another backend or a
+  new logical session after an execution binding is accepted.
+
+Profile qualification additionally requires functional/recovery checks, the
+negative shell/filesystem/Git/WebFetch/foreign-MCP/project-instruction/subagent
+suite and the fixed Ore hauled benchmark: 3/3 cold successful runs no slower
+than 420 seconds, followed by at least 20 warm runs with p95 no slower than 420
+seconds. The approximately 180-second median is a stretch target, not a current
+support or speed claim. No qualifying session benchmark was completed in this
+review.
 
 ## Canonical release status
 
@@ -83,7 +109,7 @@ For a cheaper auth/connection-only check, append `-- --connection-only`.
 | Minimum version | `0.45.0` (`CURSOR_CLI_MIN_VERSION`) |
 | Release status | **Beta** |
 | Tested in CI | Fake backend + open-design-style ephemeral workspace executor tests; mocked e2e |
-| Maintainer live verification | **2026-06-23:** version/auth/model-list probes passed on the maintainer machine. **2026-06-24:** Cursor was switched to the open-design-style adapter posture: normal provider auth is inherited, prompt is delivered through stdin, and `--workspace` points at a fresh owner-only VDT temp directory. Maintainer live rerun pending. |
+| Maintainer live verification | **2026-06-23:** version/auth/model-list probes passed on the maintainer machine. **2026-06-24:** Cursor was switched to the open-design-style adapter posture. **2026-08-26:** two real `agent-decision-v2` qualification attempts reached Cursor but produced no schema-valid terminal result (`BACKEND_PARSE_FAILED`), so the live gate remains open. |
 | OS sandbox | Not required for Cursor in the current manifest. Cursor is constrained by a fresh VDT temp workspace rather than an OS-specific wrapper. |
 | CLI tool mode | Cursor runs in `--mode ask` for direct schema-bound JSON responses. VDT does not claim all Cursor internals are disabled; certification depends on `ephemeralWorkspaceOnly`, reviewed args, no `--force`/`--yolo`, no repo cwd, no VDT MCP injection and no browser-supplied paths/env. |
 | Platform matrix | **Beta:** macOS, Linux and Windows when `agent`/`cursor-agent` is on PATH and Cursor account auth is ready. |
@@ -99,22 +125,68 @@ For a cheaper auth/connection-only check, append `-- --connection-only`.
 
 `--force` and `--yolo` are not allowed. `--trust` is not static; the runner enables it only when the installed CLI advertises `--trust` in `--help`, and only for the fresh owner-only temp workspace. Arbitrary trust paths remain forbidden. Dynamic spawn args: optional `--trust`, `--model`, `--workspace <temp>`. Prompt text is delivered through stdin, never argv.
 
+`--stream-partial-output` remains enabled. A 2026-08-26 A/B agent-decision-v2 run produced `BACKEND_PARSE_FAILED` both with the flag (83,678 ms) and without it (91,657 ms), with zero schema-valid output bytes in both cases. Because removing the flag neither restored terminal result parsing nor reduced latency, and could not establish the required cancellation/diagnostics equivalence on a successful run, the reviewed manifest was left unchanged.
+
+### Cursor External-profile canaries
+
+`packages/model-bridge/src/agent-engines/` contains a default-off Cursor ACP
+engine canary. It maps one persistent ACP logical session to the canonical
+engine interface, streams completed messages/questions, supports cancellation
+and same-session resume, and routes the server-created VDT MCP bridge through
+`VdtToolGateway`. The trusted host factory must supply the private workspace;
+the low-level transport currently proves only that cwd is an absolute non-root
+path, not that it is empty or outside the repository. Model arguments do not
+carry run/project/actor/revision authority.
+
+This code is deterministic integration evidence only. No accepted adversarial
+test proves that the shipped Cursor version cannot reach shell, filesystem,
+Git, WebFetch, foreign MCP, project instructions or subagents. The capability
+therefore reports `unverified`, stays default-off and is not promoted by the
+Cursor backend's existing Beta label.
+
+The same package also contains an experimental
+`CursorResumeCheckpointEngine` / `CursorResumeCheckpointTransport`. It starts
+one print-mode process for the initial segment, executes each returned
+one-to-six-call `ActionBatch` sequentially through `VdtToolGateway`, and starts
+the next process only at that durable checkpoint, a human pause or recovery.
+Every later process uses `--resume` with the exact opaque session ID. The
+adapter requires an exact server-probed CLI version, a stable private
+environment ID, an empty non-repository workspace, a private HOME/config root
+and a small environment allowlist; it fails closed on session drift, unknown
+stream protocol, workspace writes, credential output or any Cursor
+`tool_call`. It never uses `--trust`, `--force` or `--yolo`.
+
+Cursor documents that print mode still has built-in write and bash tools.
+These local negative tests are therefore boundary diagnostics, not proof that
+the provider could not execute an unreported built-in capability. The
+checkpoint adapter always reports `toolIsolation: unverified`, is default-off,
+has no production/public binding and is not an automatic fallback from ACP or
+the compatibility runtime. It requires its own credentialed adversarial hard-
+isolation qualification before release.
+
 Auth/version detection (web UI): `agent status --format json` when available; otherwise a minimal stdin-based `--print` connection probe. Probes time out after 5 seconds.
 
 Cursor may report `status: authenticated` solely because token files exist while also returning `unable to fetch user details`. VDT treats that payload as `authentication_required`, not `ready`, because both protected generation and `agent models` reject the stale session. Settings then shows **Sign in to load models**. Its **Authenticate** action runs the reviewed manifest-owned `agent login` flow, waits for Cursor's one-time browser confirmation, verifies CLI access and automatically rescans; merely signing into the normal Cursor dashboard does not complete this CLI exchange.
 
 Model discovery: `cursor-agent models`, parsed from JSON or line/table output.
 
-### Not supported
+### Not supported in the public product profile
 
 - `--yolo`, broad/persistent trust, or user-selected trust paths
-- ACP (Agent Client Protocol) transports
-- MCP server configuration from VDT Studio (CLI MCP config is not injected)
+- qualified Cursor External execution (both ACP and checkpoint/resume canaries
+  above are default-off and unverified)
+- user- or model-supplied MCP server configuration (the canary accepts only the
+  server-created per-run VDT Gateway bridge)
 - Arbitrary user-supplied executable paths or argument overrides
 
 ### Current beta boundary
 
-Cursor now follows the same adapter posture used by open-design: VDT delegates the agent loop to the installed Cursor CLI and constrains the run by giving it only a new temp workspace. This avoids OS-specific sandbox/keychain/provider-state coupling, but it is a weaker isolation boundary than a hardened OS sandbox. Do not promote Cursor above beta until a normal developer terminal confirms live `connection-test-v1` and `generate-tree-v1` with the user's signed-in Cursor account.
+The current public compatibility adapter delegates each bounded provider
+decision to the installed Cursor CLI in a fresh temp workspace; it does not
+preserve one cognitive session for the whole VDT run. This avoids
+repository-cwd coupling but remains a weaker boundary than hard isolation. Do
+not promote either the backend or the distinct External profile without their
+respective live, functional, recovery, security and benchmark gates.
 
 ## Codex CLI (`codex_subscription`)
 
@@ -124,7 +196,7 @@ Cursor now follows the same adapter posture used by open-design: VDT delegates t
 | Minimum version | `0.20.0` (`CODEX_CLI_MIN_VERSION`) |
 | Release status | **Alpha** |
 | Tested in CI | Fake backend (`fake-codex.cjs`) + adapter/parser fixtures; mocked e2e |
-| Maintainer live verification | Date TBD — run `pnpm live:codex` on a ChatGPT-signed-in machine |
+| Maintainer live verification | **2026-08-26:** a real `agent-decision-v2` qualification attempt reached Codex CLI but returned `SCHEMA_INVALID` after 91,444 ms with zero schema-valid output bytes. Three-run certification remains pending. |
 | Auth modes | ChatGPT subscription sign-in (`codex login`); API-key mode is not used by VDT Studio |
 | OS sandbox | Codex CLI `--sandbox workspace-write` in a fresh temp cwd; no VDT OS-specific wrapper |
 | Platform matrix | **Alpha:** macOS, Linux, Windows when `codex` is on PATH and certified manifest flags apply; not supported until maintainer live and security gates pass |
@@ -163,6 +235,24 @@ Model discovery: `codex debug models`, parsed from JSON, JSONL or table output. 
 - API-key billing mode from VDT Studio settings (subscription auth only)
 - MCP or tool execution from VDT tasks
 
+A typed `codex exec`/`exec resume` checkpoint protocol canary now exists in
+`packages/model-bridge`. It pins the opaque thread ID, supplies only one
+required `vdt_gateway` MCP configuration, keeps prompt/checkpoint bytes on
+stdin and rejects reported shell/file/web/foreign-MCP activity. The canary has
+no default process runner: its public engine ports always return
+`EXTERNAL_ENGINE_NOT_QUALIFIED`, and deterministic fake-CLI diagnostics are
+the only enabled execution path. This does not change the Alpha compatibility
+adapter or expose an External binding.
+
+The canary is not live-qualified. Codex still has a built-in command execution
+surface even under its read-only sandbox, reported stream events cannot prove
+absence of unreported activity, private subscription-auth seeding is not
+implemented, and exact-version MCP/resume output has not passed recovery or
+adversarial tests. The reviewed protocol surface follows the official
+[Codex CLI reference](https://developers.openai.com/codex/cli/reference) and
+[Codex MCP configuration](https://developers.openai.com/codex/mcp); neither is
+a hard-isolation guarantee.
+
 ## Claude Code (`claude_subscription`)
 
 | Field | Value |
@@ -196,6 +286,23 @@ Auth/version detection (web UI): `claude auth status --json` when available; oth
 - All tools disabled; no MCP; no persistent sessions
 - Only the bounded task prompt and schema are sent to Claude Code
 - Local schema validation is authoritative
+
+The persistent Claude External candidate cannot reuse this compatibility flag
+set unchanged: `--disallowedTools *` blocks the strict VDT MCP as well as
+foreign tools. A typed checkpoint protocol canary now exists in
+`packages/model-bridge`; it combines `--tools ""`, `--strict-mcp-config`, one
+server-owned `vdt_gateway` configuration, an exact opaque `--resume` session
+ID and fail-closed stream parsing. Like the Codex canary, it has no default
+runner, its public engine ports always reject as unqualified, and only injected
+fake-CLI diagnostics can execute.
+
+Claude CLI is not installed in the reviewed environment, so the interaction
+between `--bare`, explicit MCP configuration, MCP tool-name encoding,
+structured stream events and resume persistence is not live evidence. The
+arguments are based on the official [Claude CLI
+reference](https://code.claude.com/docs/en/cli-usage) and must pass pinned-
+version functional, recovery and adversarial qualification before any engine
+can become available. No automatic backend/profile fallback exists.
 
 ### Not supported
 

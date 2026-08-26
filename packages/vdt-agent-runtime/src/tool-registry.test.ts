@@ -137,7 +137,8 @@ describe("ToolRegistry", () => {
           unit: "shifts/day",
           relation: "multiply"
         }
-      ]
+      ],
+      parentFormula: "excavator_count * shift_count"
     }, {
       runId: run.runId,
       store,
@@ -159,11 +160,49 @@ describe("ToolRegistry", () => {
     ]));
     expect(project.graph.nodes.find((node) => node.id === "excavator_count")?.type).toBe("input");
     expect(project.graph.nodes.find((node) => node.id === "shift_count")?.type).toBe("calculated");
+    expect(project.graph.nodes.find((node) => node.id === "excavation")?.formula).toBe("excavator_count * shift_count");
     expect(project.graph.edges.slice(-2).map((edge) => edge.relation)).toEqual([
       "multiplicative_driver",
       "multiplicative_driver"
     ]);
     expect(store.getSnapshot(run.runId).events.some((event) => event.message.includes("Added 2 drivers"))).toBe(true);
+  });
+
+  it("rolls back the whole driver batch when parentFormula is invalid", async () => {
+    const store = new AgentRunStore({ now: () => "2026-06-26T00:00:00.000Z" });
+    const run = store.createRun({
+      mode: "generate_vdt",
+      input: { rootKpi: "Revenue" },
+      providerId: "mock",
+      options: { autoApplyPatches: true }
+    });
+    const builder = new VdtBuilderSession({ now: () => "2026-06-26T00:00:00.000Z" });
+    builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue" });
+    store.updateRun(run.runId, { builder, draftProject: builder.getProject() });
+    const registry = createDefaultToolRegistry();
+
+    const result = await registry.run("vdt.add_drivers_batch", {
+      drivers: [
+        { parentNodeId: "revenue", nodeId: "price", name: "Price", type: "input", baselineValue: 10 },
+        { parentNodeId: "revenue", nodeId: "volume", name: "Volume", type: "input", baselineValue: 5 }
+      ],
+      parentFormula: "price * missing_volume"
+    }, {
+      runId: run.runId,
+      store,
+      emit: (event) => store.appendEvent(run.runId, event),
+      getRun: () => store.getSnapshot(run.runId),
+      updateRun: (patch) => {
+        store.updateRun(run.runId, patch);
+      },
+      builder,
+      signal: run.abortController.signal
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("MISSING_FORMULA_REFERENCES");
+    expect(builder.getProject().graph.nodes.map((node) => node.id)).toEqual(["revenue"]);
+    expect(store.getSnapshot(run.runId).pendingMutationProposal).toBeUndefined();
   });
 
   it("creates a pending mutation proposal instead of directly mutating when auto-apply is off", async () => {

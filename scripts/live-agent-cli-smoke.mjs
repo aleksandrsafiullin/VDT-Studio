@@ -133,7 +133,7 @@ function createLivePlanningProvider(options) {
           requestId,
           backendId: options.backend,
           taskType: "agent_decision",
-          schemaId: "agent-decision-v1",
+          schemaId: "agent-decision-v2",
           input: {
             data: params.input,
             systemPrompt: params.systemPrompt,
@@ -240,7 +240,12 @@ async function finishRunLoop(snapshot, options, sendAnswers) {
 
   for (let round = 1; snapshot.status === "needs_user_input" && round <= options.maxRounds; round += 1) {
     const questions = snapshot.pendingQuestions ?? [];
-    assert(questions.length > 0, "Agent reported needs_user_input without pending questions.");
+    if (questions.length === 0) {
+      const retryable = snapshot.retryableError;
+      throw new Error(retryable
+        ? `Agent paused with ${retryable.code}: ${retryable.message}`
+        : "Agent reported needs_user_input without pending questions.");
+    }
     const answers = Object.fromEntries(questions.map((question) => [question.id, answerQuestion(question)]));
     printStep("RUN", `answer clarification round ${round}`, Object.keys(answers).join(", "));
     snapshot = await sendAnswers(snapshot.runId, answers);
@@ -252,6 +257,19 @@ async function finishRunLoop(snapshot, options, sendAnswers) {
   assert(snapshot.status !== "failed", `Agent failed: ${snapshot.error?.message ?? "unknown error"}`);
   assert(snapshot.status === "succeeded", `Expected succeeded, got ${snapshot.status}.`);
   validateSnapshot(snapshot, options);
+  if (snapshot.performanceSummary) {
+    printStep("INFO", "performance summary", [
+      `provider=${snapshot.performanceSummary.providerId}`,
+      snapshot.performanceSummary.model ? `model=${snapshot.performanceSummary.model}` : undefined,
+      `wallClockMs=${snapshot.performanceSummary.wallClockMs}`,
+      `llmDecisions=${snapshot.performanceSummary.llmDecisionCount}`,
+      `toolCalls=${snapshot.performanceSummary.toolCallCount}`,
+      `p50Ms=${snapshot.performanceSummary.decisionLatencyP50Ms ?? "n/a"}`,
+      `p95Ms=${snapshot.performanceSummary.decisionLatencyP95Ms ?? "n/a"}`,
+      `outputBytes=${snapshot.performanceSummary.outputBytes}`,
+      `repairs=${snapshot.performanceSummary.repairCount}`
+    ].filter(Boolean).join("; "));
+  }
   printStep("PASS", "live agent VDT smoke", `runId=${snapshot.runId}; nodes=${snapshot.draftProject.graph.nodes.length}`);
 }
 

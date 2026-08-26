@@ -47,8 +47,12 @@ export const agentUserMessageSchema = z.discriminatedUnion("type", [
     selectedNodeId: z.string().trim().min(1).max(160)
   }),
   z.object({
+    type: z.literal("continue_run")
+  }),
+  z.object({
     type: z.literal("approval"),
     approved: z.boolean(),
-    selectedChangeIds: z.array(z.string()).optional()
+    proposalId: z.string().trim().min(1).max(160).optional(),
+    selectedChangeIds: z.array(z.string().trim().min(1).max(160)).max(200).optional()
   })
 ]);

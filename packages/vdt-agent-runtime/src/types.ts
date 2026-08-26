@@ -9,6 +9,10 @@ import type {
   VdtWarning
 } from "@vdt-studio/vdt-core";
 import type { VdtAgentQuestion, VdtSkillRecipe } from "@vdt-studio/vdt-agent";
+import type {
+  AgentExecutionSummaryV2,
+  AgentSupervisorPersistenceStateV2
+} from "./agent-supervisor-persistence";
 import type { AgentDomainPolicySummary } from "./domain-policies";
 import type { AgentStructuredFeedback } from "./feedback";
 
@@ -159,7 +163,13 @@ export interface AgentThreadContext {
 }
 
 export interface RetryableAgentError {
-  code: "TIMEOUT" | "PROVIDER_UNAVAILABLE" | "SCHEMA_REPAIR_FAILED" | "STRUCTURED_OUTPUT_FAILED" | "SUBAGENT_FAILED";
+  code:
+    | "TIMEOUT"
+    | "PROVIDER_UNAVAILABLE"
+    | "SCHEMA_REPAIR_FAILED"
+    | "STRUCTURED_OUTPUT_FAILED"
+    | "SUBAGENT_FAILED"
+    | "MAX_STEPS_EXCEEDED";
   message: string;
   failedStepId?: string | undefined;
   failedSubagentTaskId?: string | undefined;
@@ -240,12 +250,10 @@ export interface VdtAgentWorkspaceContext {
   vdtId?: string | undefined;
 }
 
-export interface VdtAgentStartRequest {
+export interface VdtAgentStartRequestBase {
   mode: VdtAgentMode;
   input: VdtAgentStartInput;
   workspace?: VdtAgentWorkspaceContext | undefined;
-  providerId: string;
-  providerConfig?: Record<string, unknown> | undefined;
   options?: {
     autoApplyPatches?: boolean | undefined;
     askBeforeFirstPatch?: boolean | undefined;
@@ -254,6 +262,36 @@ export interface VdtAgentStartRequest {
     continueWithAssumptions?: boolean | undefined;
     researchMode?: ResearchMode | undefined;
   } | undefined;
+}
+
+/** Public target-profile request. All execution configuration is resolved by
+ * the server from this opaque identifier. */
+export interface VdtAgentExecutionBindingStartRequest extends VdtAgentStartRequestBase {
+  executionBindingId: string;
+  providerId?: never;
+  providerConfig?: never;
+}
+
+/** Public compatibility request for the legacy per-decision provider loop. */
+export interface VdtAgentLegacyProviderStartRequest extends VdtAgentStartRequestBase {
+  providerId: string;
+  providerConfig?: Record<string, unknown> | undefined;
+  executionBindingId?: never;
+}
+
+export type VdtAgentPublicStartRequest =
+  | VdtAgentExecutionBindingStartRequest
+  | VdtAgentLegacyProviderStartRequest;
+
+/**
+ * Internal request consumed by the legacy runtime. A binding-based public
+ * request is resolved to this shape on the server; `executionBindingId` keeps
+ * subsequent turns bound to the same immutable server definition.
+ */
+export interface VdtAgentStartRequest extends VdtAgentStartRequestBase {
+  providerId: string;
+  providerConfig?: Record<string, unknown> | undefined;
+  executionBindingId?: string | undefined;
 }
 
 export interface VdtBuildPlan {
@@ -422,6 +460,32 @@ export interface AgentEventSummary {
   metadata?: Record<string, unknown> | undefined;
 }
 
+export interface FormulaBacklogItem {
+  nodeId: string;
+  name: string;
+  depth: number;
+  childIds: string[];
+}
+
+export interface AgentRunPerformanceSummary {
+  providerId: string;
+  model?: string | undefined;
+  wallClockMs: number;
+  llmDecisionCount: number;
+  toolCallCount: number;
+  decisionLatencyP50Ms?: number | undefined;
+  decisionLatencyP95Ms?: number | undefined;
+  outputBytes: number;
+  repairCount: number;
+}
+
+export interface AgentRunPerformanceTelemetry {
+  decisionLatenciesMs: number[];
+  toolCallCount: number;
+  outputBytes: number;
+  repairCount: number;
+}
+
 export interface AgentToolSpec {
   name: string;
   description: string;
@@ -475,6 +539,7 @@ export interface AgentDecisionContext {
     guidance?: string | undefined;
   };
   currentProject?: ProjectSummary | undefined;
+  formulaBacklog: FormulaBacklogItem[];
   visibleContext: AgentThreadContext;
   selectedNode?: NodeSummary | undefined;
   selectedSkills: VdtAgentSelectedSkill[];
@@ -492,7 +557,8 @@ export interface AgentDecisionContext {
   validationState?: ValidationStateSummary | undefined;
   calculationState?: CalculationStateSummary | undefined;
   constraints: {
-    maxOneToolCallPerDecision: true;
+    maxOneToolCallPerDecision: boolean;
+    maxToolCallsPerDecision: number;
     mustUseToolsForGraphChanges: true;
     cannotReturnFullGraph: true;
     cannotExposeHiddenReasoning: true;
@@ -523,8 +589,12 @@ export type AgentUserMessage =
       selectedNodeId: string;
     }
   | {
+      type: "continue_run";
+    }
+  | {
       type: "approval";
       approved: boolean;
+      proposalId?: string | undefined;
       selectedChangeIds?: string[] | undefined;
     };
 
@@ -545,6 +615,10 @@ export interface VdtAgentRunSnapshot {
   pendingChangeSet?: VdtChangeSet | undefined;
   pendingMutationProposal?: MutationProposal | undefined;
   finalReport?: string | undefined;
+  /** Compact read-only execution projection. Durable bindings, checkpoints,
+   * external session IDs, and receipts stay in internal run state. */
+  executionSummary?: AgentExecutionSummaryV2 | undefined;
+  performanceSummary?: AgentRunPerformanceSummary | undefined;
   error?: { code: string; message: string } | undefined;
   retryableError?: RetryableAgentError | undefined;
   feedbackHistory?: AgentStructuredFeedback[] | undefined;
@@ -590,4 +664,7 @@ export interface VdtAgentRunState extends VdtAgentRunSnapshot {
   calculationState?: CalculationStateSummary | undefined;
   memoryNotes: Array<{ note: string; tags: string[]; createdAt: string }>;
   decisionGuidance?: string | undefined;
+  performanceTelemetry: AgentRunPerformanceTelemetry;
+  /** Additive Sequence 4 runtime state persisted inside existing internal JSON. */
+  supervisorPersistenceV2?: AgentSupervisorPersistenceStateV2 | undefined;
 }

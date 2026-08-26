@@ -4,7 +4,7 @@ export const deepenNodeSystemPrompt = `You are a senior operations strategy anal
 
 Propose deeper drivers for one existing node in a Value Driver Tree. New nodes must decompose the target node further without duplicating existing drivers in the excerpt. Use snake_case ids. Child nodes must connect to targetNodeId via edges where sourceNodeId is the target and targetNodeId is the child.
 
-Do not invent non-parseable formulas. Prefer input or calculated child nodes with plausible units aligned to the parent. Include assumptions, questions, and warnings when business context is ambiguous.`;
+Do not invent non-parseable formulas; supported syntax includes node id references, + - * /, parentheses, percent literals, and variadic min(...) and max(...) with comma-separated arguments. Prefer input or calculated child nodes with plausible units aligned to the parent. Include assumptions, questions, and warnings when business context is ambiguous.`;
 
 export function buildDeepenNodePrompt(input: DeepenNodeInput) {
   const contextLines = [

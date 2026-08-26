@@ -118,6 +118,7 @@ function structuredDecisionFailureProvider(
 }
 
 function timeoutAfterFirstResponseProvider(firstResponse: FirstResponseOutput): AgentDecisionProvider & { taskTypes: string[] } {
+  let questionPublished = false;
   return {
     id: "timeout-test",
     taskTypes: [],
@@ -125,6 +126,14 @@ function timeoutAfterFirstResponseProvider(firstResponse: FirstResponseOutput): 
       this.taskTypes.push(params.taskType);
       if (params.taskType === "orchestrator_first_response") {
         return firstResponse as never;
+      }
+      if (!questionPublished) {
+        questionPublished = true;
+        return {
+          type: "ask_user",
+          statusMessage: firstResponse.assistantMessage,
+          questions: firstResponse.questions
+        } as never;
       }
       const error = new Error("Backend execution timed out.");
       (error as { code?: string }).code = "TIMEOUT";
@@ -453,8 +462,8 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
     expect(snapshot.events.some((event) =>
       event.type === "mutation_rejected" && /selected KPI/.test(event.message)
     )).toBe(true);
-    expect(provider.firstResponseInputs[0]).toMatchObject({
-      requestMode: "deepen_node",
+    expect(provider.decisionInputs[0]).toMatchObject({
+      mode: "deepen_node",
       selectedNode: { id: "ore_mined", name: "Ore mined" }
     });
     expect(provider.decisionInputs.every((input) =>
@@ -1078,9 +1087,9 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
 
   it("asks for modeling direction before skill selection when the visible root KPI is a placeholder", async () => {
     const runtime = createVdtAgentRuntime();
-    const provider = scriptedProvider([], {
-      assistantMessage: "I can use those inputs, but first I need to confirm what VDT you want to build.",
-      nextAction: "ask_user",
+    const provider = scriptedProvider([{
+      type: "ask_user",
+      statusMessage: "I can use those inputs, but first I need to confirm what VDT you want to build.",
       questions: [
         {
           id: "model_direction",
@@ -1091,12 +1100,8 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
           freeTextAllowed: true,
           placeholder: "Describe the target output, KPI, or business question for the tree."
         }
-      ],
-      publicStatus: {
-        phase: "asking_questions",
-        message: "Confirming what VDT to build."
-      }
-    });
+      ]
+    }]);
 
     const snapshot = await runtime.startRun({
       mode: "generate_vdt",
@@ -1110,9 +1115,8 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
     }, { provider });
 
     expect(snapshot.status).toBe("needs_user_input");
-    expect(provider.taskTypes).toEqual(["orchestrator_first_response"]);
-    expect(provider.decisionInputs).toEqual([]);
-    expect(provider.firstResponseInputs[0]?.briefReadiness).toMatchObject({
+    expect(provider.taskTypes).toEqual(["agent_decision"]);
+    expect(provider.decisionInputs[0]?.briefReadiness).toMatchObject({
       rootKpiIsPlaceholder: true,
       directionStatus: "needs_agent_judgment"
     });
@@ -1128,9 +1132,9 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
 
   it("splits compound fleet and shift clarification into structured fields", async () => {
     const runtime = createVdtAgentRuntime();
-    const provider = scriptedProvider([], {
-      assistantMessage: "I need to confirm the operating setup before building the tree.",
-      nextAction: "ask_user",
+    const provider = scriptedProvider([{
+      type: "ask_user",
+      statusMessage: "I need to confirm the operating setup before building the tree.",
       questions: [
         {
           id: "confirm_fleet_and_shifts",
@@ -1139,12 +1143,8 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
           required: true,
           expectedAnswerType: "text"
         }
-      ],
-      publicStatus: {
-        phase: "asking_questions",
-        message: "Confirming fleet and shift inputs."
-      }
-    });
+      ]
+    }]);
 
     const snapshot = await runtime.startRun({
       mode: "generate_vdt",
@@ -1172,9 +1172,9 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
 
   it("normalizes compound numeric clarifications into separate answer fields", async () => {
     const runtime = createVdtAgentRuntime();
-    const provider = scriptedProvider([], {
-      assistantMessage: "I need to confirm the missing operating inputs before building the tree.",
-      nextAction: "ask_user",
+    const provider = scriptedProvider([{
+      type: "ask_user",
+      statusMessage: "I need to confirm the missing operating inputs before building the tree.",
       questions: [
         {
           id: "fleet_counts",
@@ -1197,12 +1197,8 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
           required: true,
           expectedAnswerType: "text"
         }
-      ],
-      publicStatus: {
-        phase: "asking_questions",
-        message: "Confirming missing inputs."
-      }
-    });
+      ]
+    }]);
 
     const snapshot = await runtime.startRun({
       mode: "generate_vdt",
@@ -1359,7 +1355,7 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
 
     expect(snapshot.status).toBe("succeeded");
     expect(snapshot.pendingQuestions).toBeUndefined();
-    expect(provider.firstResponseInputs[0]?.continuationPolicy).toMatchObject({
+    expect(provider.decisionInputs[0]?.continuationPolicy).toMatchObject({
       continueWithAssumptions: false,
       maxNodesPerLayer: 8
     });
@@ -1438,8 +1434,7 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
       }
     }, { provider });
 
-    expect(provider.taskTypes[0]).toBe("orchestrator_first_response");
-    expect(provider.taskTypes.slice(1).every((taskType) => taskType === "agent_decision")).toBe(true);
+    expect(provider.taskTypes.every((taskType) => taskType === "agent_decision")).toBe(true);
     expect(resumed.status).toBe("succeeded");
     expect(resumed.project).toBeDefined();
     expect(resumed.events.some((event) => event.metadata?.taskType === "agent_plan")).toBe(false);
@@ -1451,7 +1446,7 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
       "final_report"
     ]));
     expect(resumed.chatMessages.find((message) => message.kind === "assistant_message")?.text).toBe(
-      "I will use the visible brief as the source of truth before drafting."
+      "Searching haulage skills."
     );
 
     const project = resumed.project!;
@@ -1571,6 +1566,25 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
     const runtime = createVdtAgentRuntime();
     const provider = scriptedProvider([
       {
+        type: "ask_user",
+        statusMessage: "I will build an excavation VDT in tonnes/year. Should this stay excavation-only, or should haulage also constrain output?",
+        questions: [
+          {
+            id: "scope",
+            question: "Should this model include only excavation/loading, or should truck haulage also constrain output?",
+            reason: "Excavation and haulage can be separate bottlenecks.",
+            required: true,
+            answerKind: "single_choice",
+            options: [
+              { id: "excavation_only", label: "Excavation only", value: "excavation_only" },
+              { id: "include_haulage", label: "Include haulage constraint", value: "include_haulage" }
+            ],
+            freeTextAllowed: true,
+            placeholder: "Example: Excavation only. Use PC1250, bucket 6.7 m3, 4200 hours/year."
+          }
+        ]
+      },
+      {
         type: "call_tool",
         toolName: "vdt.create_draft",
         statusMessage: "Trying a stale haulage draft.",
@@ -1656,29 +1670,7 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
         summary: "Draft ready. Built the excavation-only VDT.",
         nextSuggestedActions: []
       }
-    ], {
-      assistantMessage: "I will build an excavation VDT in tonnes/year. Should this stay excavation-only, or should haulage also constrain output?",
-      nextAction: "ask_user",
-      questions: [
-        {
-          id: "scope",
-          question: "Should this model include only excavation/loading, or should truck haulage also constrain output?",
-          reason: "Excavation and haulage can be separate bottlenecks.",
-          required: true,
-          answerKind: "single_choice",
-          options: [
-            { id: "excavation_only", label: "Excavation only", value: "excavation_only" },
-            { id: "include_haulage", label: "Include haulage constraint", value: "include_haulage" }
-          ],
-          freeTextAllowed: true,
-          placeholder: "Example: Excavation only. Use PC1250, bucket 6.7 m3, 4200 hours/year."
-        }
-      ],
-      publicStatus: {
-        phase: "asking_questions",
-        message: "Waiting for scope confirmation."
-      }
-    });
+    ]);
 
     const start = await runtime.startRun({
       mode: "generate_vdt",
@@ -1785,7 +1777,7 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
     }, { provider });
 
     expect(snapshot.status).toBe("needs_user_input");
-    expect(snapshot.retryableError).toMatchObject({ code: "STRUCTURED_OUTPUT_FAILED" });
+    expect(snapshot.retryableError).toMatchObject({ code: "SCHEMA_REPAIR_FAILED" });
     expect(snapshot.publicStatus).toMatchObject({
       phase: "retryable_error",
       message: expect.stringContaining("unstructured answer")
@@ -1796,7 +1788,7 @@ describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
     ]);
     expect(snapshot.chatMessages[0]?.text).toBe("Build an excavation model. I have 5 excavators.");
     expect(snapshot.chatMessages[1]?.text).toContain("could not use as a structured agent response");
-    expect(provider.taskTypes).toEqual(["orchestrator_first_response"]);
+    expect(provider.taskTypes).toEqual(["agent_decision", "agent_decision"]);
   });
 });
 
@@ -2085,6 +2077,246 @@ describe("continue_project phase inference", () => {
       "Add one driver under the existing root only; do not call vdt.create_draft."
     );
     expect(provider.decisionInputs.at(-1)?.continuationPolicy.guidance).not.toContain("User answer continue:");
+  });
+
+  it("executes agent-decision-v2 calls sequentially and exposes performanceSummary", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([
+      {
+        type: "call_tools",
+        statusMessage: "Creating and completing the first model layer.",
+        calls: [
+          {
+            toolName: "vdt.create_draft",
+            args: { projectTitle: "Revenue Driver Model", rootKpi: "Revenue", unit: "USD" }
+          },
+          {
+            toolName: "vdt.add_drivers_batch",
+            args: {
+              drivers: [
+                { parentNodeId: "revenue", nodeId: "price", name: "Price", type: "input", baselineValue: 10 },
+                { parentNodeId: "revenue", nodeId: "volume", name: "Volume", type: "input", baselineValue: 5 }
+              ],
+              parentFormula: "price * volume"
+            }
+          }
+        ]
+      },
+      { type: "finish", summary: "Built a calculable revenue VDT.", nextSuggestedActions: [] }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { rootKpi: "Revenue", unit: "USD" },
+      providerId: "decision-test",
+      providerConfig: { model: "test-model" },
+      options: { autoApplyPatches: true, maxSteps: 3 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("succeeded");
+    expect(snapshot.project?.graph.nodes.map((node) => node.id)).toEqual(["revenue", "price", "volume"]);
+    expect(snapshot.project?.graph.nodes.find((node) => node.id === "revenue")?.formula).toBe("price * volume");
+    expect(snapshot.performanceSummary).toMatchObject({
+      providerId: "decision-test",
+      model: "test-model",
+      llmDecisionCount: 2,
+      toolCallCount: 2,
+      repairCount: 0
+    });
+    expect(snapshot.performanceSummary?.outputBytes).toBeGreaterThan(0);
+  });
+
+  it("builds a 55-node two-fleet fixture in no more than eight LLM decisions", async () => {
+    const branchIds = [
+      "haulage_fleet",
+      "excavation_fleet",
+      "availability",
+      "utilization",
+      "cycle_efficiency",
+      "payload_quality",
+      "calendar_capacity"
+    ];
+    const rootDrivers = branchIds.map((nodeId) => ({
+      parentNodeId: "annual_mine_output",
+      nodeId,
+      name: nodeId.replaceAll("_", " "),
+      type: "calculated",
+      unit: "units"
+    }));
+    const branchCall = (branchId: string, childCount: number) => {
+      const childIds = Array.from({ length: childCount }, (_, index) => `${branchId}_input_${index + 1}`);
+      return {
+        toolName: "vdt.add_drivers_batch",
+        args: {
+          drivers: childIds.map((nodeId, index) => ({
+            parentNodeId: branchId,
+            nodeId,
+            name: `${branchId.replaceAll("_", " ")} input ${index + 1}`,
+            type: "input",
+            unit: "units",
+            baselineValue: index + 1
+          })),
+          parentFormula: childIds.join(" + ")
+        }
+      };
+    };
+    const branchCalls = branchIds.map((branchId, index) => branchCall(branchId, index < 2 ? 6 : 7));
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([
+      {
+        type: "call_tools",
+        statusMessage: "Creating the mine-output root and first branch layers.",
+        calls: [
+          {
+            toolName: "vdt.create_draft",
+            args: { projectTitle: "Annual Mine Output", rootKpi: "Annual Mine Output", unit: "units" }
+          },
+          {
+            toolName: "vdt.add_drivers_batch",
+            args: {
+              drivers: rootDrivers,
+              parentFormula: branchIds.join(" + ")
+            }
+          },
+          ...branchCalls.slice(0, 4)
+        ]
+      },
+      {
+        type: "call_tools",
+        statusMessage: "Completing the remaining branches and calculating the tree.",
+        calls: [
+          ...branchCalls.slice(4),
+          { toolName: "vdt.calculate", args: {} }
+        ]
+      },
+      { type: "finish", summary: "Built the complete two-fleet mine-output tree.", nextSuggestedActions: [] }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { rootKpi: "Annual Mine Output", industry: "Mining", unit: "units" },
+      providerId: "decision-test",
+      options: { autoApplyPatches: true, maxSteps: 8 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("succeeded");
+    expect(snapshot.project?.graph.nodes).toHaveLength(55);
+    expect(snapshot.project?.graph.nodes.some((node) => node.id === "haulage_fleet")).toBe(true);
+    expect(snapshot.project?.graph.nodes.some((node) => node.id === "excavation_fleet")).toBe(true);
+    const parents = new Set(snapshot.project?.graph.edges.map((edge) => edge.sourceNodeId) ?? []);
+    expect(snapshot.project?.graph.nodes.filter((node) =>
+      parents.has(node.id) && (node.type === "root_kpi" || node.type === "calculated") && !node.formula?.trim()
+    )).toHaveLength(0);
+    expect(snapshot.performanceSummary?.llmDecisionCount).toBeLessThanOrEqual(8);
+    expect(calculateGraph(snapshot.project!).rootValue).toBeTypeOf("number");
+  });
+
+  it("stops a call_tools batch on the first error", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([
+      {
+        type: "call_tools",
+        statusMessage: "Trying two sequential steps.",
+        calls: [
+          { toolName: "missing.tool", args: {} },
+          { toolName: "vdt.create_draft", args: { projectTitle: "Revenue", rootKpi: "Revenue" } }
+        ]
+      },
+      {
+        type: "ask_user",
+        statusMessage: "A corrected tool choice is needed.",
+        questions: [{ id: "next_step", question: "Continue?", reason: "The first tool failed.", required: true }]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { rootKpi: "Revenue" },
+      providerId: "decision-test",
+      options: { autoApplyPatches: true, maxSteps: 2 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.draftProject?.graph.nodes ?? []).toHaveLength(0);
+    expect(snapshot.events.filter((event) => event.metadata?.toolName === "vdt.create_draft")).toHaveLength(0);
+    expect(snapshot.performanceSummary?.toolCallCount).toBe(2);
+  });
+
+  it("does not execute queued calls after a mutation enters approval", async () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue" });
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([
+      {
+        type: "call_tools",
+        statusMessage: "Preparing revenue drivers and a formula.",
+        calls: [
+          {
+            toolName: "vdt.add_drivers_batch",
+            args: {
+              drivers: [
+                { parentNodeId: "revenue", nodeId: "price", name: "Price", type: "input", baselineValue: 10 },
+                { parentNodeId: "revenue", nodeId: "volume", name: "Volume", type: "input", baselineValue: 5 }
+              ]
+            }
+          },
+          { toolName: "vdt.set_formula", args: { nodeId: "revenue", formula: "price * volume" } }
+        ]
+      }
+    ]);
+
+    const snapshot = await runtime.startRun({
+      mode: "continue_project",
+      input: { rootKpi: "Revenue", project: builder.getProject() },
+      providerId: "decision-test",
+      options: { autoApplyPatches: false, maxSteps: 2 }
+    }, { provider });
+
+    expect(snapshot.status).toBe("waiting_approval");
+    expect(snapshot.mutationProposals).toHaveLength(1);
+    expect(snapshot.pendingMutationProposal?.changeSet.updates).toHaveLength(0);
+    expect(snapshot.performanceSummary?.toolCallCount).toBe(1);
+  });
+
+  it("pauses at maxSteps and resumes only through the structured continue_run message", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = scriptedProvider([
+      {
+        type: "call_tool",
+        toolName: "vdt.create_draft",
+        statusMessage: "Creating the revenue root.",
+        args: { projectTitle: "Revenue", rootKpi: "Revenue" }
+      },
+      {
+        type: "call_tools",
+        statusMessage: "Adding revenue inputs.",
+        calls: [
+          { toolName: "vdt.add_driver", args: { parentNodeId: "revenue", nodeId: "price", name: "Price", type: "input", baselineValue: 10 } },
+          { toolName: "vdt.add_driver", args: { parentNodeId: "revenue", nodeId: "volume", name: "Volume", type: "input", baselineValue: 5 } },
+          { toolName: "vdt.set_formula", args: { nodeId: "revenue", formula: "price * volume" } }
+        ]
+      },
+      { type: "finish", summary: "Revenue VDT complete.", nextSuggestedActions: [] }
+    ]);
+
+    const first = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { rootKpi: "Revenue" },
+      providerId: "decision-test",
+      options: { autoApplyPatches: true, maxSteps: 1 }
+    }, { provider });
+    expect(first.status).toBe("needs_user_input");
+    expect(first.retryableError?.code).toBe("MAX_STEPS_EXCEEDED");
+    expect(first.project?.graph.nodes.map((node) => node.id)).toEqual(["revenue"]);
+
+    const second = await runtime.handleMessage(first.runId, { type: "continue_run" }, { provider });
+    expect(second.status).toBe("needs_user_input");
+    expect(second.project?.graph.nodes.map((node) => node.id)).toEqual(["revenue", "price", "volume"]);
+
+    const final = await runtime.handleMessage(first.runId, { type: "continue_run" }, { provider });
+    expect(final.status).toBe("succeeded");
+    expect(final.chatMessages.filter((message) => message.role === "user" && message.kind === "instruction")).toHaveLength(0);
+    expect(final.events.filter((event) => event.metadata?.messageType === "continue_run")).toHaveLength(2);
   });
 
   it("marks a run failed in memory when persistence throws during failRun", async () => {

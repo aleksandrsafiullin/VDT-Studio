@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "id": "ore-hauled-two-fleet",
+  "version": "1.0.0",
+  "description": "Sanitized fixed continue-project benchmark for two ore-haulage truck fleets.",
+  "startRequest": {
+    "mode": "continue_project",
+    "input": {
+      "prompt": "- Открытый карьер, только руда (вскрыша не моделируем). Самосвалы жёстко закреплены за рудой\n- Маршрут: забой → дробилка. Плечо откатки одностороннее 4.2 км, обратно 4.2 км.\n- Календарь: 2 смены х 12 ч, капремонт на каждую машину 10 дней в году\n\nПарк самосвалов (2 класса):\n1) 18 шт. BelAZ-75131, номинал 130 т, фактический payload factor 0.92, объём кузова 73 м³.\n2) 6 шт. CAT 793D, номинал 220 т, payload factor 0.90, объём кузова 129 м³.\nПлотность руды в рыхлом теле 1.85 т/м³, body fill factor 0.95.\n\nПогрузка: 3 шт. экскаватора CAT 6030 (ковш 16.5 м³). Не углубляй экскавацию, только время погрузки в цикле самосвала.\n\nЦикл (ч/рейс, среднее по парку):\n- установка под экскаватор: 0.8 мин\n- погрузка: 3.5 мин (BelAZ) / 5.5 мин (CAT 793D)\n- гружёный ход: 4.2 км / 22 км/ч\n- установка на дробилке: 0.6 мин\n- разгрузка: 1.2 мин\n- порожний обратный ход: 4.2 км / 32 км/ч\n\nОсновные типы простоев (ч/мес на 1 машину, явно разделить в дереве):\nПлановые:\n- ТО / PM: 48 ч\n- Заправка: 12 ч\n- Пересменка + осмотр: 30 ч\nНеплановые:\n- Поломки (двигатель/гидравлика/электрика): 36 ч\n- Шины: 8 ч\n- Ожидание экскаватора (queue at loader): 24 ч\n- Ожидание на дробилке: 10 ч\n- Нет водителя: 16 ч\n- Погода / дорога: 14 ч",
+      "rootKpi": "Ore hauled 2",
+      "industry": "Mining",
+      "unit": "tonnes/year",
+      "timePeriod": "Year",
+      "levelOfDetail": "medium",
+      "project": {
+        "id": "benchmark_project_ore_hauled_2",
+        "name": "Ore hauled 2",
+        "industry": "Mining",
+        "rootNodeId": "ore_hauled_2",
+        "graph": {
+          "nodes": [
+            {
+              "id": "ore_hauled_2",
+              "name": "Ore hauled 2",
+              "type": "root_kpi",
+              "status": "ai_suggested",
+              "unit": "tonnes/year",
+              "aiGenerated": true,
+              "aiConfidence": 0.78,
+              "aiRationale": "Created as the root KPI for the benchmark draft.",
+              "assumptions": [
+                "Time period: Year"
+              ],
+              "position": {
+                "x": 48,
+                "y": 48
+              },
+              "createdAt": "2026-08-26T00:00:00.000Z",
+              "updatedAt": "2026-08-26T00:00:00.000Z"
+            }
+          ],
+          "edges": []
+        },
+        "scenarios": [
+          {
+            "id": "base_scenario",
+            "name": "Base scenario",
+            "description": "Baseline values for the benchmark draft.",
+            "isMain": true,
+            "overrides": [],
+            "createdAt": "2026-08-26T00:00:00.000Z",
+            "updatedAt": "2026-08-26T00:00:00.000Z"
+          }
+        ],
+        "dataSources": [],
+        "aiSettings": {
+          "defaultProviderId": "vdt_builder"
+        },
+        "versions": [],
+        "createdAt": "2026-08-26T00:00:00.000Z",
+        "updatedAt": "2026-08-26T00:00:00.000Z"
+      }
+    },
+    "workspace": {
+      "projectId": "benchmark_project_ore_hauled_2",
+      "projectName": "Ore hauled 2",
+      "industry": "Mining",
+      "vdtId": "benchmark_vdt_ore_hauled_2"
+    },
+    "options": {
+      "autoApplyPatches": true,
+      "maxSteps": 40,
+      "continueWithAssumptions": false,
+      "researchMode": "auto"
+    }
+  },
+  "acceptance": {
+    "rootNodeId": "ore_hauled_2",
+    "rootNodeType": "root_kpi",
+    "nodeCount": 73,
+    "edgeCount": 72,
+    "depth": 6,
+    "requiredFleetLabels": [
+      "belaz-75131",
+      "cat 793d"
+    ],
+    "maxElapsedWallMs": 420000,
+    "stretchMedianWallMs": 180000
+  }
+}

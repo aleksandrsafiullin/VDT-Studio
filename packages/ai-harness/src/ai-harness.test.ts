@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { calculateGraph, previewChangeSet, productionVolumeProject, validateGraph } from "@vdt-studio/vdt-core";
+import {
+  calculateGraph,
+  parseFormula,
+  previewChangeSet,
+  productionVolumeProject,
+  validateGraph,
+  type VdtProject
+} from "@vdt-studio/vdt-core";
 import {
   averageProductivitySimplifyOutput,
   deepenNodeOutputSchema,
@@ -598,6 +605,87 @@ describe("AI harness", () => {
         "mock"
       )
     ).toThrow(/cannot be parsed/);
+  });
+
+  it("accepts suggest_formula min(...) bottleneck formulas", () => {
+    expect(parseFormula("min(driver_a, driver_b)")).toEqual({
+      type: "call",
+      name: "min",
+      args: [
+        { type: "reference", name: "driver_a" },
+        { type: "reference", name: "driver_b" }
+      ]
+    });
+
+    const bottleneckProject: VdtProject = {
+      ...productionVolumeProject,
+      rootNodeId: "bottleneck",
+      graph: {
+        nodes: [
+          {
+            id: "bottleneck",
+            name: "Bottleneck",
+            type: "root_kpi",
+            status: "accepted",
+            formula: "driver_a",
+            aiGenerated: false,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z"
+          },
+          {
+            id: "driver_a",
+            name: "Driver A",
+            type: "input",
+            status: "accepted",
+            baselineValue: 100,
+            aiGenerated: false,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z"
+          },
+          {
+            id: "driver_b",
+            name: "Driver B",
+            type: "input",
+            status: "accepted",
+            baselineValue: 75,
+            aiGenerated: false,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        edges: [
+          {
+            id: "edge_bottleneck_driver_a",
+            sourceNodeId: "bottleneck",
+            targetNodeId: "driver_a",
+            relation: "positive_driver",
+            aiGenerated: false
+          },
+          {
+            id: "edge_bottleneck_driver_b",
+            sourceNodeId: "bottleneck",
+            targetNodeId: "driver_b",
+            relation: "positive_driver",
+            aiGenerated: false
+          }
+        ]
+      }
+    };
+
+    const minFormulaOutput = {
+      ...productionVolumeFormulaOutput,
+      nodeId: "bottleneck",
+      proposedFormula: "min(driver_a, driver_b)"
+    };
+
+    const { changeSet } = validateAndMapSuggestFormula(
+      bottleneckProject,
+      minFormulaOutput,
+      "bottleneck",
+      "mock"
+    );
+
+    expect(changeSet.updates[0]?.patch.formula).toBe("min(driver_a, driver_b)");
   });
 
   it("validates check_units advisory output", () => {

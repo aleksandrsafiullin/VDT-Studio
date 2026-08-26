@@ -685,28 +685,28 @@ function mockAgentDecision(input: unknown): unknown {
   const recentEvents = Array.isArray(context?.recentEvents) ? context.recentEvents : [];
   const hasTool = (toolName: string) => recentEvents.some((event) => asRecord(event)?.metadata && asRecord(asRecord(event)?.metadata)?.toolName === toolName);
 
+  const missingSkillCalls: Array<{ toolName: string; args: Record<string, unknown> }> = [];
   if (!hasTool("skill.search")) {
-    return {
-      type: "call_tool",
-      toolName: "skill.search",
-      args: { rootKpi: "Ore haulage", industry: "Mining", maxSkills: 3 },
-      statusMessage: "Searching for the truck haulage skill."
-    };
+    missingSkillCalls.push({ toolName: "skill.search", args: { rootKpi: "Ore haulage", industry: "Mining", maxSkills: 3 } });
   }
   if (!hasTool("skill.read")) {
-    return {
-      type: "call_tool",
-      toolName: "skill.read",
-      args: { skillId: "mining.haulage_truck_cycle" },
-      statusMessage: "Reading the truck haulage skill."
-    };
+    missingSkillCalls.push({ toolName: "skill.read", args: { skillId: "mining.haulage_truck_cycle" } });
   }
   if (!hasTool("skill.compile_recipe")) {
+    missingSkillCalls.push({ toolName: "skill.compile_recipe", args: { skillId: "mining.haulage_truck_cycle" } });
+  }
+  if (missingSkillCalls.length >= 2) {
+    return {
+      type: "call_tools",
+      calls: missingSkillCalls,
+      statusMessage: "Finding, reading, and compiling the truck haulage skill."
+    };
+  }
+  if (missingSkillCalls.length === 1) {
     return {
       type: "call_tool",
-      toolName: "skill.compile_recipe",
-      args: { skillId: "mining.haulage_truck_cycle" },
-      statusMessage: "Compiling the truck haulage recipe."
+      ...missingSkillCalls[0],
+      statusMessage: "Completing the truck haulage skill context."
     };
   }
   if (answers.payload_per_trip_t === undefined || answers.operating_hours === undefined) {
@@ -747,6 +747,74 @@ function mockAgentDecision(input: unknown): unknown {
   });
   const payload = parseMockNumber(answers.payload_per_trip_t) ?? 40;
   const operatingHours = parseMockNumber(answers.operating_hours) ?? 4000;
+  if ([
+    "number_of_trucks",
+    "trips_per_truck",
+    "payload_per_trip_t",
+    "operating_hours",
+    "cycle_time_h",
+    "loaded_travel_time_h",
+    "empty_return_time_h",
+    "haul_distance_km",
+    "loaded_speed_kmh",
+    "empty_speed_kmh"
+  ].every((nodeId) => !nodeIds.has(nodeId))) {
+    return {
+      type: "call_tools",
+      calls: [
+        {
+          toolName: "vdt.add_drivers_batch",
+          args: {
+            drivers: [
+              { parentNodeId: "ore_haulage", nodeId: "number_of_trucks", name: "Number of trucks", type: "input", unit: "trucks", relation: "multiplicative_driver", baselineValue: 5 },
+              { parentNodeId: "ore_haulage", nodeId: "trips_per_truck", name: "Trips per truck", type: "calculated", unit: "trips/truck/year", relation: "multiplicative_driver" },
+              { parentNodeId: "ore_haulage", nodeId: "payload_per_trip_t", name: "Payload per trip", type: "input", unit: "tonnes/trip", relation: "multiplicative_driver", baselineValue: payload }
+            ],
+            parentFormula: "number_of_trucks * trips_per_truck * payload_per_trip_t"
+          }
+        },
+        {
+          toolName: "vdt.add_drivers_batch",
+          args: {
+            drivers: [
+              { parentNodeId: "trips_per_truck", nodeId: "operating_hours", name: "Operating hours", type: "input", unit: "h/year", relation: "formula_dependency", baselineValue: operatingHours },
+              { parentNodeId: "trips_per_truck", nodeId: "cycle_time_h", name: "Cycle time", type: "calculated", unit: "h/trip", relation: "divisive_driver" }
+            ],
+            parentFormula: "operating_hours / cycle_time_h"
+          }
+        },
+        {
+          toolName: "vdt.add_drivers_batch",
+          args: {
+            drivers: [
+              { parentNodeId: "cycle_time_h", nodeId: "loaded_travel_time_h", name: "Loaded travel time", type: "calculated", unit: "h/trip", relation: "additive_component" },
+              { parentNodeId: "cycle_time_h", nodeId: "empty_return_time_h", name: "Empty return time", type: "calculated", unit: "h/trip", relation: "additive_component" }
+            ],
+            parentFormula: "loaded_travel_time_h + empty_return_time_h"
+          }
+        },
+        {
+          toolName: "vdt.add_drivers_batch",
+          args: {
+            drivers: [
+              { parentNodeId: "loaded_travel_time_h", nodeId: "haul_distance_km", name: "Average haul distance", type: "input", unit: "km", relation: "formula_dependency", baselineValue: 2.7 },
+              { parentNodeId: "loaded_travel_time_h", nodeId: "loaded_speed_kmh", name: "Average loaded speed", type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 7 }
+            ],
+            parentFormula: "haul_distance_km / loaded_speed_kmh"
+          }
+        },
+        {
+          toolName: "vdt.add_driver",
+          args: { parentNodeId: "empty_return_time_h", nodeId: "empty_speed_kmh", name: "Average empty speed", type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 11 }
+        },
+        {
+          toolName: "vdt.set_formula",
+          args: { nodeId: "empty_return_time_h", formula: "haul_distance_km / empty_speed_kmh" }
+        }
+      ],
+      statusMessage: "Building the complete truck-cycle tree and its formulas."
+    };
+  }
   if (!nodeIds.has("number_of_trucks")) return add("number_of_trucks", "Number of trucks", "ore_haulage", { type: "input", unit: "trucks", relation: "multiplicative_driver", baselineValue: 5 });
   if (!nodeIds.has("trips_per_truck")) return add("trips_per_truck", "Trips per truck", "ore_haulage", { type: "calculated", unit: "trips/truck/year", relation: "multiplicative_driver" });
   if (!nodeIds.has("payload_per_trip_t")) return add("payload_per_trip_t", "Payload per trip", "ore_haulage", { type: "input", unit: "tonnes/trip", relation: "multiplicative_driver", baselineValue: payload });

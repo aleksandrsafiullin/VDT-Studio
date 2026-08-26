@@ -12,6 +12,18 @@ const SUBSCRIPTION_CLI_AGENTS = [
 type SubscriptionCliAgent = (typeof SUBSCRIPTION_CLI_AGENTS)[number];
 type SubscriptionCliAgentId = SubscriptionCliAgent["id"];
 
+interface CliDetectionCacheEntry {
+  expiresAt: number;
+  promise: Promise<unknown>;
+}
+
+const detectionCacheGlobal = globalThis as typeof globalThis & {
+  __vdtCliDetectionCache?: Map<string, CliDetectionCacheEntry>;
+};
+const detectionCache = detectionCacheGlobal.__vdtCliDetectionCache ?? new Map<string, CliDetectionCacheEntry>();
+if (process.env.NODE_ENV !== "production") detectionCacheGlobal.__vdtCliDetectionCache = detectionCache;
+const DETECTION_CACHE_TTL_MS = 30_000;
+
 const agentIds = new Set<string>(SUBSCRIPTION_CLI_AGENTS.map((agent) => agent.id));
 
 function isSubscriptionCliAgentId(value: string): value is SubscriptionCliAgentId {
@@ -40,7 +52,7 @@ function desktopDetectionUnavailable(agent: SubscriptionCliAgent) {
   };
 }
 
-async function developmentWebDetection(agentId?: SubscriptionCliAgentId) {
+async function developmentWebDetectionPayload(agentId?: SubscriptionCliAgentId) {
   const { detectSubscriptionCli, detectSubscriptionClis, enrichSubscriptionCliDetections } = await import("@vdt-studio/model-bridge/node");
   const { getSubscriptionCliAdapter } = await import("@vdt-studio/model-bridge");
   const detected = agentId ? [await detectSubscriptionCli(agentId)] : await detectSubscriptionClis();
@@ -62,12 +74,39 @@ async function developmentWebDetection(agentId?: SubscriptionCliAgentId) {
     })
   );
 
-  return NextResponse.json({
+  return {
     appMode: "development_web",
     ok: true,
     agents,
     modelsByAgent
+  };
+}
+
+async function developmentWebDetection(agentId?: SubscriptionCliAgentId) {
+  const key = JSON.stringify({
+    agentId: agentId ?? "all",
+    path: process.env.PATH ?? "",
+    pathExt: process.env.PATHEXT ?? "",
+    platform: process.platform,
+    arch: process.arch
   });
+  const now = Date.now();
+  const cached = detectionCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return NextResponse.json(await cached.promise, {
+      headers: { "x-vdt-cli-probe-cache": "hit" }
+    });
+  }
+  const promise = developmentWebDetectionPayload(agentId);
+  detectionCache.set(key, { expiresAt: now + DETECTION_CACHE_TTL_MS, promise });
+  try {
+    return NextResponse.json(await promise, {
+      headers: { "x-vdt-cli-probe-cache": "miss" }
+    });
+  } catch (error) {
+    detectionCache.delete(key);
+    throw error;
+  }
 }
 
 export async function GET(request: Request) {

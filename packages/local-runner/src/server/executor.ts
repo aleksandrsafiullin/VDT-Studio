@@ -58,6 +58,14 @@ const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
     },
     statusMessage: "Searching for the most relevant VDT skill."
   },
+  "agent-decision-v2": {
+    type: "call_tools",
+    calls: [
+      { toolName: "skill.search", args: { rootKpi: "Ore haulage", industry: "Mining", maxSkills: 3 } },
+      { toolName: "project.get_subtree", args: { nodeId: "root", maxDepth: 2 } }
+    ],
+    statusMessage: "Inspecting the most relevant VDT context."
+  },
   "agent-plan-v1": {
     buildIntent: {
       rootKpi: "Ore haulage",
@@ -273,12 +281,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function mockOutput(schemaId: VdtSchemaId, input: unknown): Record<string, unknown> {
-  if (schemaId === "agent-decision-v1") return mockAgentDecision(input);
+  if (schemaId === "agent-decision-v1" || schemaId === "agent-decision-v2") return mockAgentDecision(input, schemaId);
   if (isRecord(input) && validateRegisteredSchema(schemaId, input)) return input;
   return MOCK_STUB_OUTPUT[schemaId];
 }
 
-function mockAgentDecision(input: unknown): Record<string, unknown> {
+function mockAgentDecision(input: unknown, schemaId: "agent-decision-v1" | "agent-decision-v2"): Record<string, unknown> {
   const context = isRecord(input) && isRecord(input.data) ? input.data : input;
   const record = isRecord(context) ? context : {};
   const project = isRecord(record.currentProject) ? record.currentProject : undefined;
@@ -291,6 +299,17 @@ function mockAgentDecision(input: unknown): Record<string, unknown> {
     return event.metadata.toolName === toolName;
   });
 
+  if (schemaId === "agent-decision-v2" && !hasTool("skill.search") && !hasTool("skill.read") && !hasTool("skill.compile_recipe")) {
+    return {
+      type: "call_tools",
+      calls: [
+        { toolName: "skill.search", args: { rootKpi: "Ore haulage", industry: "Mining", maxSkills: 3 } },
+        { toolName: "skill.read", args: { skillId: "mining.haulage_truck_cycle" } },
+        { toolName: "skill.compile_recipe", args: { skillId: "mining.haulage_truck_cycle" } }
+      ],
+      statusMessage: "Finding, reading, and compiling the truck haulage skill."
+    };
+  }
   if (!hasTool("skill.search")) return { type: "call_tool", toolName: "skill.search", args: { rootKpi: "Ore haulage", industry: "Mining", maxSkills: 3 }, statusMessage: "Searching for the truck haulage skill." };
   if (!hasTool("skill.read")) return { type: "call_tool", toolName: "skill.read", args: { skillId: "mining.haulage_truck_cycle" }, statusMessage: "Reading the truck haulage skill." };
   if (!hasTool("skill.compile_recipe")) return { type: "call_tool", toolName: "skill.compile_recipe", args: { skillId: "mining.haulage_truck_cycle" }, statusMessage: "Compiling the truck haulage recipe." };
@@ -308,6 +327,74 @@ function mockAgentDecision(input: unknown): Record<string, unknown> {
   const payload = parseMockNumber(answers.payload_per_trip_t) ?? 40;
   const operatingHours = parseMockNumber(answers.operating_hours) ?? 4000;
   const add = (nodeId: string, name: string, parentNodeId: string, extra: Record<string, unknown>) => ({ type: "call_tool", toolName: "vdt.add_driver", args: { parentNodeId, nodeId, name, ...extra }, statusMessage: `Adding ${name}.` });
+  if (schemaId === "agent-decision-v2" && [
+    "number_of_trucks",
+    "trips_per_truck",
+    "payload_per_trip_t",
+    "operating_hours",
+    "cycle_time_h",
+    "loaded_travel_time_h",
+    "empty_return_time_h",
+    "haul_distance_km",
+    "loaded_speed_kmh",
+    "empty_speed_kmh"
+  ].every((nodeId) => !nodeIds.has(nodeId))) {
+    return {
+      type: "call_tools",
+      calls: [
+        {
+          toolName: "vdt.add_drivers_batch",
+          args: {
+            drivers: [
+              { parentNodeId: "ore_haulage", nodeId: "number_of_trucks", name: "Number of trucks", type: "input", unit: "trucks", relation: "multiplicative_driver", baselineValue: 5 },
+              { parentNodeId: "ore_haulage", nodeId: "trips_per_truck", name: "Trips per truck", type: "calculated", unit: "trips/truck/year", relation: "multiplicative_driver" },
+              { parentNodeId: "ore_haulage", nodeId: "payload_per_trip_t", name: "Payload per trip", type: "input", unit: "tonnes/trip", relation: "multiplicative_driver", baselineValue: payload }
+            ],
+            parentFormula: "number_of_trucks * trips_per_truck * payload_per_trip_t"
+          }
+        },
+        {
+          toolName: "vdt.add_drivers_batch",
+          args: {
+            drivers: [
+              { parentNodeId: "trips_per_truck", nodeId: "operating_hours", name: "Operating hours", type: "input", unit: "h/year", relation: "formula_dependency", baselineValue: operatingHours },
+              { parentNodeId: "trips_per_truck", nodeId: "cycle_time_h", name: "Cycle time", type: "calculated", unit: "h/trip", relation: "divisive_driver" }
+            ],
+            parentFormula: "operating_hours / cycle_time_h"
+          }
+        },
+        {
+          toolName: "vdt.add_drivers_batch",
+          args: {
+            drivers: [
+              { parentNodeId: "cycle_time_h", nodeId: "loaded_travel_time_h", name: "Loaded travel time", type: "calculated", unit: "h/trip", relation: "additive_component" },
+              { parentNodeId: "cycle_time_h", nodeId: "empty_return_time_h", name: "Empty return time", type: "calculated", unit: "h/trip", relation: "additive_component" }
+            ],
+            parentFormula: "loaded_travel_time_h + empty_return_time_h"
+          }
+        },
+        {
+          toolName: "vdt.add_drivers_batch",
+          args: {
+            drivers: [
+              { parentNodeId: "loaded_travel_time_h", nodeId: "haul_distance_km", name: "Average haul distance", type: "input", unit: "km", relation: "formula_dependency", baselineValue: 2.7 },
+              { parentNodeId: "loaded_travel_time_h", nodeId: "loaded_speed_kmh", name: "Average loaded speed", type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 7 }
+            ],
+            parentFormula: "haul_distance_km / loaded_speed_kmh"
+          }
+        },
+        {
+          toolName: "vdt.add_driver",
+          args: { parentNodeId: "empty_return_time_h", nodeId: "empty_speed_kmh", name: "Average empty speed", type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 11 }
+        },
+        {
+          toolName: "vdt.set_formula",
+          args: { nodeId: "empty_return_time_h", formula: "haul_distance_km / empty_speed_kmh" }
+        }
+      ],
+      statusMessage: "Building the complete truck-cycle tree and its formulas."
+    };
+  }
   if (!nodeIds.has("number_of_trucks")) return add("number_of_trucks", "Number of trucks", "ore_haulage", { type: "input", unit: "trucks", relation: "multiplicative_driver", baselineValue: 5 });
   if (!nodeIds.has("trips_per_truck")) return add("trips_per_truck", "Trips per truck", "ore_haulage", { type: "calculated", unit: "trips/truck/year", relation: "multiplicative_driver", formula: "operating_hours / cycle_time_h" });
   if (!nodeIds.has("payload_per_trip_t")) return add("payload_per_trip_t", "Payload per trip", "ore_haulage", { type: "input", unit: "tonnes/trip", relation: "multiplicative_driver", baselineValue: payload });
@@ -589,11 +676,15 @@ function buildRepairMessages(
 
 function buildSubscriptionPrompt(request: CompletionRequest): string {
   const schemaId = request.schemaId as VdtSchemaId;
-  const schemaInstructions = schemaId === "agent-decision-v1"
+  const schemaInstructions = schemaId === "agent-decision-v1" || schemaId === "agent-decision-v2"
     ? [
         "Agent decision encoding:",
-        "- Return the strict fields type, toolName, argsJson, statusMessage, questionsJson, summary, and nextSuggestedActions.",
+        `- Return the strict fields type, toolName, argsJson, ${schemaId === "agent-decision-v2" ? "callsJson, " : ""}statusMessage, questionsJson, summary, and nextSuggestedActions.`,
         "- For call_tool, set toolName and put the tool arguments in argsJson as a JSON object string.",
+        ...(schemaId === "agent-decision-v2" ? [
+          "- For call_tools, put 2-6 sequential {toolName,args} objects in callsJson as a JSON array string.",
+          "- Never put user.ask or user.request_approval inside call_tools."
+        ] : []),
         "- For call_tool, toolName must exactly match one availableTools.name from the input context.",
         "- For ask_user, put the question array in questionsJson as a JSON array string.",
         "- Never call request_user_input, ask_user, or user.ask as a tool; use type ask_user instead.",
@@ -617,10 +708,14 @@ function buildSubscriptionPrompt(request: CompletionRequest): string {
 
 function buildRepairPrompt(request: CompletionRequest, invalidJson: string, parsedOutput: unknown): string {
   const schemaId = request.schemaId as VdtSchemaId;
-  const schemaInstructions = schemaId === "agent-decision-v1"
+  const schemaInstructions = schemaId === "agent-decision-v1" || schemaId === "agent-decision-v2"
     ? [
-        "For agent-decision-v1, return strict fields type, toolName, argsJson, statusMessage, questionsJson, summary, and nextSuggestedActions.",
+        `For ${schemaId}, return strict fields type, toolName, argsJson, ${schemaId === "agent-decision-v2" ? "callsJson, " : ""}statusMessage, questionsJson, summary, and nextSuggestedActions.`,
         "Encode tool arguments as an argsJson JSON object string and user questions as a questionsJson JSON array string.",
+        ...(schemaId === "agent-decision-v2" ? [
+          "Encode call_tools as 2-6 sequential {toolName,args} objects in the callsJson JSON array string.",
+          "Never put user.ask or user.request_approval inside call_tools."
+        ] : []),
         "For call_tool, toolName must exactly match one availableTools.name from the input context.",
         "Never call request_user_input, ask_user, or user.ask as a tool; use type ask_user instead.",
         "Use {} for unused argsJson, [] for unused questionsJson, and a non-empty statusMessage."
@@ -641,6 +736,30 @@ function buildRepairPrompt(request: CompletionRequest, invalidJson: string, pars
 }
 
 async function probeExecutableVersion(executable: string, versionArgs: readonly string[]): Promise<string | undefined> {
+  const cacheKey = await executableProbeCacheKey(executable, `version:${versionArgs.join("\u0000")}`);
+  const cached = executableProbeCache.get(cacheKey);
+  if (cached) return cached;
+  const probe = probeExecutableVersionUncached(executable, versionArgs);
+  executableProbeCache.set(cacheKey, probe);
+  return probe;
+}
+
+const executableProbeCache = new Map<string, Promise<string | undefined>>();
+const executableHelpCache = new Map<string, Promise<boolean>>();
+
+async function executableProbeCacheKey(executable: string, operation: string): Promise<string> {
+  try {
+    const metadata = await lstat(executable);
+    return `${executable}\u0000${metadata.size}\u0000${metadata.mtimeMs}\u0000${operation}`;
+  } catch {
+    return `${executable}\u0000unknown\u0000${operation}`;
+  }
+}
+
+async function probeExecutableVersionUncached(
+  executable: string,
+  versionArgs: readonly string[]
+): Promise<string | undefined> {
   try {
     const result = await promisify(execFile)(executable, [...versionArgs], {
       encoding: "utf8",
@@ -657,6 +776,15 @@ async function probeExecutableVersion(executable: string, versionArgs: readonly 
 }
 
 async function executableHelpIncludes(executable: string, needle: string): Promise<boolean> {
+  const cacheKey = await executableProbeCacheKey(executable, `help:${needle}`);
+  const cached = executableHelpCache.get(cacheKey);
+  if (cached) return cached;
+  const probe = executableHelpIncludesUncached(executable, needle);
+  executableHelpCache.set(cacheKey, probe);
+  return probe;
+}
+
+async function executableHelpIncludesUncached(executable: string, needle: string): Promise<boolean> {
   try {
     const result = await promisify(execFile)(executable, ["--help"], {
       encoding: "utf8",
@@ -802,6 +930,7 @@ async function executeCli(
     let completionSettled = false;
     let streamingResult: ExecutionResult | undefined;
     let streamingError: unknown;
+    let lastStreamingParseByteLength = 0;
     const stopChildAfterStreamingResult = () => {
       child.kill("SIGTERM");
       const streamKill = setTimeout(() => child.kill("SIGKILL"), 50);
@@ -820,9 +949,17 @@ async function executeCli(
         completionSettled = true;
         reject(error);
       };
-      const trySettleFromStream = () => {
+      const trySettleFromStream = (force = false) => {
         if (!adapter?.parseStreamingOutput) return;
         if (streamingResult || streamingError !== undefined) return;
+        const currentByteLength = byteLength(stdout);
+        // Cursor previously reparsed the complete accumulated JSONL stream on
+        // every small stdout chunk. Large agent responses therefore became an
+        // avoidable O(n^2) CPU path. Parse at bounded intervals, and always on
+        // terminal/error markers; final output is still parsed after process
+        // close by the normal adapter path.
+        if (!force && currentByteLength - lastStreamingParseByteLength < 64 * 1024) return;
+        lastStreamingParseByteLength = currentByteLength;
         let output: unknown;
         try {
           output = normalizeRegisteredSchemaOutput(
@@ -852,13 +989,14 @@ async function executeCli(
         fail(error);
       });
       child.stdout.on("data", (chunk: Buffer | string) => {
-        stdout += chunk.toString();
+        const chunkText = chunk.toString();
+        stdout += chunkText;
         if (byteLength(stdout) > EXECUTION_LIMITS.maxStdoutBytes) {
           outputLimitExceeded = true;
           terminate();
           return;
         }
-        trySettleFromStream();
+        trySettleFromStream(/"type"\s*:\s*"(?:result|error|done)"/.test(chunkText));
       });
       child.stderr.on("data", (chunk: Buffer | string) => {
         stderr += chunk.toString();
@@ -867,7 +1005,7 @@ async function executeCli(
           terminate();
           return;
         }
-        trySettleFromStream();
+        trySettleFromStream(true);
       });
       child.once("close", (code) => {
         if (streamingError !== undefined) {
@@ -971,6 +1109,7 @@ async function executeCli(
     async (error: unknown) => {
       const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
       if (code !== "SCHEMA_INVALID" && code !== "BACKEND_PARSE_FAILED") throw error;
+      if (request.schemaId === "agent-decision-v2") throw error;
       const parsedOutput = typeof error === "object" && error !== null && "output" in error ? (error as { output?: unknown }).output : undefined;
       const invalidText =
         parsedOutput === undefined
@@ -1153,23 +1292,40 @@ async function postLocalHttpChat(
   signal.addEventListener("abort", abort, { once: true });
   const timeout = setTimeout(abort, Math.min(timeoutMs, EXECUTION_LIMITS.timeoutMs));
   timeout.unref?.();
-  let response: Response;
-  let rawResponse: string;
+  let response: Response | undefined;
+  let rawResponse = "";
+  const responseFormats: Record<string, unknown>[] = request.schemaId === "agent-decision-v2"
+    ? [
+        {
+          type: "json_schema",
+          json_schema: {
+            name: "vdt_agent_decision",
+            strict: true,
+            schema: getStrictResponseJsonSchema(request.schemaId as VdtSchemaId)
+          }
+        },
+        { type: "json_object" }
+      ]
+    : [{ type: "json_object" }];
   try {
-    response = await (options.fetch ?? fetch)(`${manifest.localHttp.baseUrl}/chat/completions`, {
-      method: "POST",
-      redirect: "error",
-      signal: controller.signal,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model: request.model ?? manifest.localHttp.defaultModel,
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages
-      })
-    });
-    rawResponse = await readBoundedResponse(response);
-    assertLineLimit(rawResponse);
+    for (const [index, responseFormat] of responseFormats.entries()) {
+      response = await (options.fetch ?? fetch)(`${manifest.localHttp.baseUrl}/chat/completions`, {
+        method: "POST",
+        redirect: "error",
+        signal: controller.signal,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: request.model ?? manifest.localHttp.defaultModel,
+          temperature: 0,
+          response_format: responseFormat,
+          messages
+        })
+      });
+      rawResponse = await readBoundedResponse(response);
+      assertLineLimit(rawResponse);
+      const strictUnsupported = index === 0 && responseFormats.length > 1 && [400, 404, 422].includes(response.status);
+      if (!strictUnsupported) break;
+    }
   } catch (error) {
     if (controller.signal.aborted) {
       if (signal.aborted) throw abortError();
@@ -1180,6 +1336,7 @@ async function postLocalHttpChat(
     clearTimeout(timeout);
     signal.removeEventListener("abort", abort);
   }
+  if (!response) throw Object.assign(new Error("Local provider returned no response."), { code: "INVALID_PROVIDER_RESPONSE" });
   if (!response.ok) throw Object.assign(new Error(`Local provider failed with status ${response.status}.`), { code: "LOCAL_HTTP_FAILED" });
   const envelope = JSON.parse(rawResponse) as { choices?: Array<{ message?: { content?: unknown } }> };
   const content = envelope.choices?.[0]?.message?.content;
@@ -1214,6 +1371,13 @@ async function executeLocalHttp(
     output = undefined;
   }
   if (schemaValid) return { output, outputBytes: byteLength(content), schemaValid };
+  if (schemaId === "agent-decision-v2") {
+    throw Object.assign(new Error("Backend output failed registered schema validation."), {
+      code: "SCHEMA_INVALID",
+      output,
+      rawText: content
+    });
+  }
 
   let repairedContent: string;
   let repairedOutput: unknown;

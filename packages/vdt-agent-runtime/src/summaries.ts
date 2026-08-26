@@ -8,6 +8,7 @@ import type {
 import type {
   AgentEventSummary,
   CalculationStateSummary,
+  FormulaBacklogItem,
   ManualChangeSummary,
   NodeSummary,
   ProjectSummary,
@@ -18,7 +19,8 @@ import type {
 } from "./types";
 
 export const MAX_CONTEXT_NODES = 60;
-export const MAX_RECENT_EVENTS = 30;
+export const MAX_DECISION_CONTEXT_NODES = 24;
+export const MAX_RECENT_EVENTS = 12;
 export const MAX_MANUAL_CHANGES = 20;
 
 export function summarizeProject(project: VdtProject, maxNodes = MAX_CONTEXT_NODES): ProjectSummary {
@@ -54,6 +56,93 @@ export function summarizeProject(project: VdtProject, maxNodes = MAX_CONTEXT_NOD
       })),
     truncated: project.graph.nodes.length > maxNodes
   };
+}
+
+export function summarizeProjectForDecision(
+  project: VdtProject,
+  priorityNodeIds: readonly string[] = [],
+  maxNodes = MAX_DECISION_CONTEXT_NODES
+): ProjectSummary {
+  const parentByNodeId = new Map<string, string>();
+  for (const edge of project.graph.edges) {
+    if (!parentByNodeId.has(edge.targetNodeId)) parentByNodeId.set(edge.targetNodeId, edge.sourceNodeId);
+  }
+  const knownNodeIds = new Set(project.graph.nodes.map((node) => node.id));
+  const selected: string[] = [];
+  const selectedSet = new Set<string>();
+  const add = (nodeId: string): void => {
+    if (selected.length >= maxNodes || selectedSet.has(nodeId) || !knownNodeIds.has(nodeId)) return;
+    selectedSet.add(nodeId);
+    selected.push(nodeId);
+  };
+  const addWithPath = (nodeId: string): void => {
+    const path: string[] = [];
+    const seen = new Set<string>();
+    let current: string | undefined = nodeId;
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      path.unshift(current);
+      current = parentByNodeId.get(current);
+    }
+    path.forEach(add);
+  };
+
+  add(project.rootNodeId);
+  for (const nodeId of priorityNodeIds) addWithPath(nodeId);
+  for (const item of buildFormulaBacklog(project)) addWithPath(item.nodeId);
+  for (const node of project.graph.nodes) add(node.id);
+
+  const nodeById = new Map(project.graph.nodes.map((node) => [node.id, node]));
+  const prioritizedProject: VdtProject = {
+    ...project,
+    graph: {
+      ...project.graph,
+      nodes: selected.map((nodeId) => nodeById.get(nodeId)!).filter(Boolean),
+      edges: project.graph.edges.filter((edge) => selectedSet.has(edge.sourceNodeId) && selectedSet.has(edge.targetNodeId))
+    }
+  };
+  const summary = summarizeProject(prioritizedProject, maxNodes);
+  return {
+    ...summary,
+    nodeCount: project.graph.nodes.length,
+    edgeCount: project.graph.edges.length,
+    truncated: project.graph.nodes.length > selected.length
+  };
+}
+
+export function buildFormulaBacklog(project: VdtProject): FormulaBacklogItem[] {
+  const childIdsByNode = new Map<string, string[]>();
+  const parentByNodeId = new Map<string, string>();
+  for (const edge of project.graph.edges) {
+    childIdsByNode.set(edge.sourceNodeId, [...(childIdsByNode.get(edge.sourceNodeId) ?? []), edge.targetNodeId]);
+    if (!parentByNodeId.has(edge.targetNodeId)) parentByNodeId.set(edge.targetNodeId, edge.sourceNodeId);
+  }
+  const depthFor = (nodeId: string): number => {
+    let depth = 0;
+    let current = parentByNodeId.get(nodeId);
+    const seen = new Set([nodeId]);
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      depth += 1;
+      current = parentByNodeId.get(current);
+    }
+    return depth;
+  };
+
+  return project.graph.nodes
+    .filter((node) => {
+      const childIds = childIdsByNode.get(node.id) ?? [];
+      return childIds.length > 0 &&
+        (node.type === "root_kpi" || node.type === "calculated") &&
+        !node.formula?.trim();
+    })
+    .map((node) => ({
+      nodeId: node.id,
+      name: node.name,
+      depth: depthFor(node.id),
+      childIds: childIdsByNode.get(node.id) ?? []
+    }))
+    .sort((left, right) => right.depth - left.depth || left.nodeId.localeCompare(right.nodeId));
 }
 
 export function summarizeNode(project: VdtProject, nodeId: string): NodeSummary | undefined {
@@ -93,7 +182,7 @@ export function summarizeManualChanges(state: VdtAgentRunState, limit = MAX_MANU
 }
 
 export function summarizeEvents(events: VdtAgentEvent[], limit = MAX_RECENT_EVENTS): AgentEventSummary[] {
-  return events.slice(-limit).map((event) => ({
+  return events.filter(isSignificantAgentEvent).slice(-limit).map((event) => ({
     id: event.id,
     seq: event.seq,
     type: event.type,
@@ -102,6 +191,12 @@ export function summarizeEvents(events: VdtAgentEvent[], limit = MAX_RECENT_EVEN
     message: event.message,
     metadata: event.metadata
   }));
+}
+
+function isSignificantAgentEvent(event: VdtAgentEvent): boolean {
+  if (event.type === "tool_call_started" || event.type === "assistant_message") return false;
+  if (event.type === "tool_call_completed" && event.metadata?.taskType === "agent_decision") return false;
+  return true;
 }
 
 function summarizeWarning(warning: VdtWarning): ValidationIssueSummary {
