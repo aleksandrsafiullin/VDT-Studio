@@ -66,8 +66,8 @@ export function describeCliDetection(
       agentId,
       state: "ready",
       canExecute: true,
-      label: "Ready",
-      message: `${agentName} is installed, authenticated, and ready to run requests.`
+      label: "CLI ready",
+      message: `${agentName} is installed and authenticated. VDT session-binding availability is checked separately when a run starts.`
     };
   }
 

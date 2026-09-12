@@ -12,6 +12,9 @@ import {
   agentRuntime,
   agentExecutionBindingRegistry,
   createAgentDecisionProvider,
+  ensureServerManagedExecutionBindings,
+  externalAgentEngineForBinding,
+  isCliSessionCanaryEnabled,
   isLegacyAgentCompatibilityEnabled,
   jsonError,
   readAgentProviderConfig,
@@ -20,15 +23,19 @@ import {
 import {
   AgentExecutionBindingError,
   DEFAULT_MODEL_AGENT_EXECUTION_BINDING_ID,
+  isExternalCliExecutionBinding,
   isStructuredModelExecutionBinding
 } from "./execution-bindings";
 import { compactPublicAgentSnapshot } from "./public-snapshot";
 import {
   PublicSupervisorRunError,
+  externalCliDisplayName,
+  startExternalCliAgentRun,
   startStructuredModelAgentRun
 } from "./supervisor-runtime";
 
-export function GET() {
+export async function GET() {
+  await ensureServerManagedExecutionBindings();
   const bindings = agentExecutionBindingRegistry.summaries();
   const defaultBindingId = bindings.some((binding) =>
     binding.bindingId === DEFAULT_MODEL_AGENT_EXECUTION_BINDING_ID
@@ -52,6 +59,8 @@ export async function POST(request: Request) {
       "Agent runs with SQLite persistence are disabled outside an explicitly trusted local application mode."
     ));
   }
+
+  await ensureServerManagedExecutionBindings();
 
   let raw: unknown;
   try {
@@ -103,6 +112,34 @@ export async function POST(request: Request) {
       return storageWriteErrorResponse(
         error,
         "The bound Model Agent session could not be initialized."
+      );
+    }
+  }
+
+  if (resolved.binding && isExternalCliExecutionBinding(resolved.binding)) {
+    const engine = externalAgentEngineForBinding(resolved.binding.bindingId);
+    if (!engine) {
+      return jsonError(
+        "The requested external execution engine is not wired on this host.",
+        409,
+        "AGENT_EXTERNAL_ENGINE_NOT_WIRED"
+      );
+    }
+    try {
+      const snapshot = await startExternalCliAgentRun({
+        request: resolved.request,
+        bindingDefinition: resolved.binding,
+        engine,
+        allowUnqualifiedExternalCanary: isCliSessionCanaryEnabled()
+      });
+      return Response.json({ ok: true, runId: snapshot.runId, snapshot });
+    } catch (error) {
+      if (error instanceof PublicSupervisorRunError) {
+        return jsonError(error.message, error.status, error.code);
+      }
+      return storageWriteErrorResponse(
+        error,
+        `The bound ${externalCliDisplayName(resolved.binding.capability.backendId)} session could not be initialized.`
       );
     }
   }

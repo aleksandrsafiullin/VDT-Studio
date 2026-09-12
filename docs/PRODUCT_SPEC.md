@@ -50,13 +50,18 @@ Current status: implemented for basic arithmetic. Dimensional algebra, visual-cy
 - Respect user research policy and manual changes.
 - Support semi-manual node decomposition: **Add incoming KPIs with AI** adds only one immediate child layer per click, without adding a user instruction to the visible chat or recursively expanding the new children.
 
-Current status: working legacy agent prototype plus a default-off, partially
-wired dual-profile Supervisor foundation. The structured Model Agent path has
+Current status: working legacy agent prototype plus a production-disabled,
+checkpoint/resume Cursor qualification canary and a partially qualified dual-profile
+Supervisor foundation. The structured Model Agent path has
 one immutable run binding, durable Sequence 4 checkpoints/receipts/events,
 serialized Gateway mutations, stale-revision reconciliation and deterministic
-finish verification. The normal UI still starts the legacy compatibility loop;
-generic stateless HTTP transcript replay is not speed-qualified, External CLI
-profiles lack hard-isolation/live evidence, and restart/finish recovery remains
+finish verification. The trusted-local development launcher enables the
+explicitly unverified Cursor canary; if that server-managed binding is
+unavailable, Send fails closed instead of
+silently starting the per-decision compatibility loop. The candidate canary
+remains `unverified`, is not a production External profile,
+and has no hard-isolation/live benchmark evidence. Generic stateless HTTP
+transcript replay is not speed-qualified, and restart/finish recovery remains
 incomplete. Legacy deterministic skill selection and automatic generic fallback
 also remain live.
 

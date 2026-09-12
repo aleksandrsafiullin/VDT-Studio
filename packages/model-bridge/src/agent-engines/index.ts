@@ -1,4 +1,10 @@
 export * from "./action-batch";
+export * from "./checkpoint-turn";
+export * from "./checkpoint-transport-common";
+export * from "./claude-resume-checkpoint-engine";
+export * from "./claude-resume-checkpoint-transport";
+export * from "./codex-resume-checkpoint-engine";
+export * from "./codex-resume-checkpoint-transport";
 export * from "./cursor-acp-agent-engine";
 export * from "./cursor-acp-engine";
 export * from "./cursor-acp-transport";
@@ -6,3 +12,4 @@ export * from "./cursor-acp-types";
 export * from "./cursor-resume-checkpoint-engine";
 export * from "./cursor-resume-checkpoint-transport";
 export * from "./persistent-cli-checkpoint-canaries";
+export * from "./resume-checkpoint-engine-core";

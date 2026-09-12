@@ -25,7 +25,7 @@ describe("CLI request readiness", () => {
       resolveSelectedCliReadiness(cursorSettings, [
         { id: "cursor-agent", installed: true, status: "ready" }
       ])
-    ).toMatchObject({ state: "ready", canExecute: true, label: "Ready" });
+    ).toMatchObject({ state: "ready", canExecute: true, label: "CLI ready" });
 
     expect(
       resolveSelectedCliReadiness(cursorSettings, [

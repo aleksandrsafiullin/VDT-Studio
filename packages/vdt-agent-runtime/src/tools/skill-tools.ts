@@ -85,7 +85,7 @@ const skillSearchTool: AgentTool = {
 
 const skillReadTool: AgentTool = {
   name: "skill.read",
-  description: "Read a selected local VDT skill excerpt and structured metadata.",
+  description: "Read a local VDT skill excerpt and structured metadata without selecting or activating it.",
   inputSchema: z.object({
     skillId: z.string().min(1).max(160),
     maxChars: z.number().int().min(200).max(10_000).optional()
@@ -99,21 +99,6 @@ const skillReadTool: AgentTool = {
     const [excerpt] = readSkillExcerpts([skill], input.maxChars);
     if (!excerpt) throw new AgentToolError("SKILL_READ_FAILED", `Skill "${input.skillId}" could not be read.`);
     const recipe = compileSkillRecipe(skill);
-    if (!context.store.getState(context.runId).selectedSkills.some((selected) => selected.id === skill.id)) {
-      context.store.updateRun(context.runId, {
-        selectedSkills: [
-          ...context.store.getState(context.runId).selectedSkills,
-          {
-            id: skill.id,
-            path: skill.path,
-            title: skill.title,
-            score: 100,
-            reason: "Read by agent decision.",
-            matchedTerms: []
-          }
-        ]
-      });
-    }
     context.emit({
       type: "skill_read",
       phase: "reading_skills",
@@ -154,6 +139,19 @@ const skillCompileRecipeTool: AgentTool = {
     if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", `Skill "${input.skillId}" was not found.`);
     const recipe = compileSkillRecipe(skill);
     const state = context.store.getState(context.runId);
+    const selectedSkills = state.selectedSkills.some((selected) => selected.id === skill.id)
+      ? state.selectedSkills
+      : [
+          ...state.selectedSkills,
+          {
+            id: skill.id,
+            path: skill.path,
+            title: skill.title,
+            score: 100,
+            reason: "Compiled explicitly by agent decision.",
+            matchedTerms: []
+          }
+        ];
     const feedback = recipe.recipeQuality === "complete"
       ? undefined
       : createStructuredFeedback({
@@ -167,6 +165,7 @@ const skillCompileRecipeTool: AgentTool = {
           retryable: true
         });
     context.store.updateRun(context.runId, {
+      selectedSkills,
       recipes: [
         ...state.recipes.filter((existing) => existing.skillId !== recipe.skillId),
         recipe

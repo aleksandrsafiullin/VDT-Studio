@@ -33,6 +33,9 @@ import {
 import { AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/timeout-limits";
 import { makeId } from "@/lib/id";
 import {
+  buildAgentPublicStartRequest
+} from "@/lib/agent-start-resolver";
+import {
   createAgentClient,
   type AgentAnswerPayload as RuntimeAgentAnswerPayload,
   type AgentChatMessage as RuntimeAgentChatMessage,
@@ -42,7 +45,6 @@ import {
   type RetryableAgentError as RuntimeRetryableAgentError,
   type VdtAgentEvent as RuntimeAgentEvent,
   type VdtAgentQuestion as RuntimeAgentQuestion,
-  type VdtAgentPublicStartRequest,
   type VdtAgentRunSnapshot as RuntimeAgentRunSnapshot,
   type VdtAgentStartRequest
 } from "@/lib/agent-client";
@@ -707,9 +709,6 @@ function buildAgentWorkspaceContext(
   const activeProjectId = state.workspace.activeProjectId?.trim();
   const chosenProjectId = activeProjectId || graphProjectId;
   const vdtId = activeProjectId ? state.workspace.activeVdtId : undefined;
-  // #region agent log
-  fetch("http://127.0.0.1:7348/ingest/defc4400-920d-4081-a282-9bbd4f94c196", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "edfb47" }, body: JSON.stringify({ sessionId: "edfb47", location: "vdt-store.ts:buildAgentWorkspaceContext", message: "agent workspace project bind", data: { activeProjectId, graphProjectId, vdtId, chosenProjectId }, timestamp: Date.now(), hypothesisId: "A", runId: "post-fix" }) }).catch(() => {});
-  // #endregion
   return {
     projectId: chosenProjectId,
     projectName,
@@ -1340,8 +1339,8 @@ function applyAgentSnapshot(
     const status = mapRuntimeStatus(snapshot);
     const now = nowIso();
     const requestProviderId = (
-      snapshot.request.providerId
-      ?? snapshot.executionSummary?.backendId
+      snapshot.executionSummary?.backendId
+      ?? snapshot.request.providerId
       ?? state.providerId
     ) as ProviderId;
     const requestProviderConfig = snapshot.request.providerConfig as Record<string, unknown> | undefined;
@@ -1366,9 +1365,6 @@ function applyAgentSnapshot(
           updatedAt: snapshot.updatedAt ?? now
         };
       }
-      // #region agent log
-      fetch("http://127.0.0.1:7348/ingest/defc4400-920d-4081-a282-9bbd4f94c196", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "edfb47" }, body: JSON.stringify({ sessionId: "edfb47", location: "vdt-store.ts:applyAgentSnapshot", message: "terminal agent snapshot", data: { status: snapshot.status, publicStatusPhase: snapshot.publicStatus?.phase, errorMessage: resolvedErrorMessage, hasRetryableError: Boolean(snapshot.retryableError) }, timestamp: Date.now(), hypothesisId: "B", runId: "post-fix" }) }).catch(() => {});
-      // #endregion
     }
     const nextActivity: GenerateActivityState = {
       ...activity,
@@ -2923,9 +2919,6 @@ export const useVdtStudioStore = create<VdtStudioState>()(
                 .then((snapshot) => applyAgentSnapshot(set, snapshot))
                 .catch((error) => {
                   if (isAgentRunNotFoundError(error)) {
-                    // #region agent log
-                    fetch("http://127.0.0.1:7348/ingest/defc4400-920d-4081-a282-9bbd4f94c196", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "edfb47" }, body: JSON.stringify({ sessionId: "edfb47", location: "vdt-store.ts:connectAgentEvents", message: "agent run hydrate 404", data: { runId, cleared: true }, timestamp: Date.now(), hypothesisId: "C", runId: "post-fix" }) }).catch(() => {});
-                    // #endregion
                     set((current) => clearPersistedAgentRunState(current, runId));
                     return;
                   }
@@ -2955,9 +2948,6 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
         } catch (error) {
           if (isAgentRunNotFoundError(error)) {
-            // #region agent log
-            fetch("http://127.0.0.1:7348/ingest/defc4400-920d-4081-a282-9bbd4f94c196", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "edfb47" }, body: JSON.stringify({ sessionId: "edfb47", location: "vdt-store.ts:resumePersistedAgentRun", message: "agent run hydrate 404", data: { runId, cleared: true }, timestamp: Date.now(), hypothesisId: "C", runId: "post-fix" }) }).catch(() => {});
-            // #endregion
             set((current) => clearPersistedAgentRunState(current, runId));
             return;
           }
@@ -3112,9 +3102,6 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             ...(shouldContinue ? { project: state.project } : {})
           };
           const workspace = buildAgentWorkspaceContext(state);
-          // #region agent log
-          fetch("http://127.0.0.1:7348/ingest/defc4400-920d-4081-a282-9bbd4f94c196", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "edfb47" }, body: JSON.stringify({ sessionId: "edfb47", location: "vdt-store.ts:startAgentRun", message: "agent run POST workspace", data: { workspaceProjectId: workspace.projectId, workspaceVdtId: workspace.vdtId, graphProjectId: state.project.id }, timestamp: Date.now(), hypothesisId: "A", runId: "post-fix" }) }).catch(() => {});
-          // #endregion
           const commonRequest = {
             mode: options?.mode ?? (shouldContinue ? "continue_project" : "generate_vdt"),
             input,
@@ -3126,9 +3113,17 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               researchMode: options?.researchMode ?? "auto"
             }
           };
-          const startRequest: VdtAgentPublicStartRequest = requestedExecutionBindingId
-            ? { ...commonRequest, executionBindingId: requestedExecutionBindingId }
-            : { ...commonRequest, providerId, providerConfig };
+          const bindings = await createAgentClient().getExecutionBindings();
+          const startRequest = buildAgentPublicStartRequest(
+            commonRequest,
+            state.executionSettings,
+            bindings,
+            {
+              explicitBindingId: requestedExecutionBindingId,
+              providerId,
+              providerConfig
+            }
+          );
           const response = await createAgentClient().startRun(startRequest);
           set({ activeAgentRunId: response.runId });
           applyAgentSnapshot(set, response.snapshot);
@@ -3588,6 +3583,12 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           set({ aiError: "Pair the local runner before generating.", generateActivity: undefined });
           return;
         }
+        const resolvedProviderConfig =
+          providerId === "mock"
+            ? undefined
+            : needsPairing
+              ? { ...providerConfig, pairingToken: runnerPairingToken }
+              : providerConfig;
 
         set({
           isGenerating: true,
@@ -3603,23 +3604,26 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         });
 
         try {
-          const response = await createAgentClient().startRun({
-            mode: "generate_vdt",
-            input: brief,
-            workspace: buildAgentWorkspaceContext(state),
-            providerId,
-            providerConfig:
-              providerId === "mock"
-                ? undefined
-                : needsPairing
-                  ? { ...providerConfig, pairingToken: runnerPairingToken }
-                  : providerConfig,
-            options: {
-              autoApplyPatches: true,
-              continueWithAssumptions: false,
-              maxSteps: 40
+          const bindings = await createAgentClient().getExecutionBindings();
+          const startRequest = buildAgentPublicStartRequest(
+            {
+              mode: "generate_vdt",
+              input: brief,
+              workspace: buildAgentWorkspaceContext(state),
+              options: {
+                autoApplyPatches: true,
+                continueWithAssumptions: false,
+                maxSteps: 40
+              }
+            },
+            executionSettings,
+            bindings,
+            {
+              providerId,
+              providerConfig: resolvedProviderConfig
             }
-          });
+          );
+          const response = await createAgentClient().startRun(startRequest);
           set({ activeAgentRunId: response.runId });
           applyAgentSnapshot(set, response.snapshot);
           if (isActiveRuntimeRun(response.snapshot)) {

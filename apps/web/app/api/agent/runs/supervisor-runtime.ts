@@ -3,6 +3,7 @@ import type { AiProvider } from "@vdt-studio/ai-harness";
 import { VdtBuilderSession, type VdtNodePatch } from "@vdt-studio/vdt-core";
 import {
   AgentRunEventOutbox,
+  AgentRunStateSupervisorPersistence,
   AgentToolError,
   StructuredInProductModelAgentEngine,
   VdtRunSupervisor,
@@ -12,6 +13,7 @@ import {
   summarizeAgentSupervisorPersistenceState,
   verifyDeterministicRunFinish,
   type AgentHumanInput,
+  type AgentExecutionEngine,
   type AgentRunEventV2,
   type AgentSessionBinding,
   type AgentSupervisorPersistence,
@@ -28,6 +30,10 @@ import { createAiProvider } from "@/lib/ai-route-provider";
 import { compactPublicAgentSnapshot } from "./public-snapshot";
 import type { PublicAgentRunSnapshot } from "./public-snapshot";
 import type { StructuredModelAgentExecutionBindingDefinition } from "./execution-bindings";
+import type {
+  AgentExecutionBindingDefinition,
+  ExternalCliExecutionBindingDefinition
+} from "./execution-bindings";
 import {
   TARGET_MODEL_AGENT_TOOLS,
   modelAgentToolCatalog,
@@ -46,9 +52,48 @@ Use only tools from the supplied immutable VDT tool catalog. Never request shell
 
 Return exactly one object matching the response schema. The first turn must include an assistantMessage or a question. Use action_batch for 1-6 ordered calls. The runtime executes calls sequentially and stops after the first failure, pause, or approval. Questions, approvals, and run.request_finish must be alone in a batch.
 
+Opening summary: the first user-facing assistant message must restate the accepted task in the user's language and outline the intended plan in 3-6 short steps before or alongside the first tool batch.
+
+Research: when the domain, KPI, or decomposition boundary is unfamiliar, or the user asks for standards/best practice, use research.search_web (purpose standards, best_practices, process_components, benchmarks, or regulations) to ground the decomposition before building. Respect options.researchMode from the brief: never call research.search_web when it is off. Surface sources used; never fabricate citations.
+
+Questions: ask only for missing data, a required business choice, scope conflict, ambiguous logic, low confidence, or formula ambiguity. When one of those applies, use user.ask with 1-5 precise questions. Prefer single_choice/multi_choice with concrete labelled options and always leave an escape hatch via freeTextAllowed:true or an option with requiresFreeText:true. Use fields/revealsFields for follow-up numbers. Mark required honestly and give a short reason.
+
+Full catalog: use skills, excavation, research, validation, calculation, layout, repair, and memory tools — not only vdt.* mutations.
+
 Every response must include sessionState: a concise server-private semantic checkpoint (maximum 16 KiB) containing the current goal, confirmed progress, working node IDs, unresolved corrections, and next intended work. Never copy the raw project, full tool catalog, secrets, prompts, or long history into sessionState. The next stateless HTTP turn receives this state with the confirmed cursor/hashes and the new checkpoint delta.
 
 Before final, call run.request_finish. Only after its successful tool result may you return final, and finishReceiptId must exactly match that result. After the first turn, sessionContinuation contains the bounded semantic checkpoint and confirmed cursor/hash proof; delta contains only the new checkpoint information. Continue from those fields and do not ask for the full initial context again.`;
+
+const ADMITTED_CLI_SESSION_CANARIES = [
+  { bindingId: "cursor_session_canary", engineAdapterId: "cursor-resume-checkpoint-v1" },
+  { bindingId: "codex_session_canary", engineAdapterId: "codex-resume-checkpoint-v1" },
+  { bindingId: "claude_session_canary", engineAdapterId: "claude-resume-checkpoint-v1" }
+] as const;
+
+const CLI_BACKEND_DISPLAY_NAMES: Record<string, string> = {
+  cursor_subscription: "Cursor",
+  codex_subscription: "Codex",
+  claude_subscription: "Claude",
+  gemini_subscription: "Gemini",
+  copilot_subscription: "Copilot"
+};
+
+function externalCliDisplayName(backendId: string): string {
+  return CLI_BACKEND_DISPLAY_NAMES[backendId] ?? "CLI";
+}
+
+export function isAdmittedCliSessionCanary(input: {
+  bindingId: string;
+  engineAdapterId: string;
+  allowUnqualifiedExternalCanary?: boolean | undefined;
+}): boolean {
+  return input.allowUnqualifiedExternalCanary === true
+    && ADMITTED_CLI_SESSION_CANARIES.some(
+      (entry) => entry.bindingId === input.bindingId && entry.engineAdapterId === input.engineAdapterId
+    );
+}
+
+export { externalCliDisplayName };
 
 type SupervisorEventSubscriber = (event: AgentRunEventV2) => void;
 
@@ -90,10 +135,66 @@ export async function startStructuredModelAgentRun(input: {
   requestUrl: string;
 }): Promise<PublicAgentRunSnapshot> {
   const { request, bindingDefinition, requestUrl } = input;
+  return startSupervisorAgentRun({
+    request,
+    bindingDefinition,
+    engineFactory: (initialContextDelta) => {
+      const provider = createStructuredModelProvider(bindingDefinition, requestUrl);
+      return new StructuredInProductModelAgentEngine({
+        capability: bindingDefinition.capability,
+        transport: new AiProviderStructuredTurnTransport(
+          provider,
+          bindingDefinition,
+          initialContextDelta
+        )
+      });
+    }
+  });
+}
+
+export async function startExternalCliAgentRun(input: {
+  request: VdtAgentStartRequest;
+  bindingDefinition: ExternalCliExecutionBindingDefinition;
+  engine: AgentExecutionEngine;
+  allowUnqualifiedExternalCanary?: boolean | undefined;
+}): Promise<PublicAgentRunSnapshot> {
+  const capability = input.bindingDefinition.capability;
+  const hardQualified = (
+    capability.qualification.status !== "qualified"
+    || capability.toolIsolation !== "hard_verified"
+    || capability.qualification.evidenceHash === null
+  ) === false;
+  const admittedCliCanary = isAdmittedCliSessionCanary({
+    bindingId: input.bindingDefinition.bindingId,
+    engineAdapterId: capability.engineAdapterId,
+    allowUnqualifiedExternalCanary: input.allowUnqualifiedExternalCanary
+  });
+  if (!hardQualified && !admittedCliCanary) {
+    const label = externalCliDisplayName(capability.backendId);
+    throw new PublicSupervisorRunError(
+      "AGENT_EXTERNAL_CAPABILITY_UNQUALIFIED",
+      `The ${label} session adapter is not hard-qualified on this host. The run was not started and was not redirected to legacy micro-CLI.`,
+      409
+    );
+  }
+  return startSupervisorAgentRun({
+    ...input,
+    allowUnqualifiedExternalCanary: admittedCliCanary
+  });
+}
+
+async function startSupervisorAgentRun(input: {
+  request: VdtAgentStartRequest;
+  bindingDefinition: AgentExecutionBindingDefinition;
+  engine?: AgentExecutionEngine | undefined;
+  engineFactory?: ((initialContext: Extract<ModelAgentTurnDelta, { type: "initial_context" }>) => AgentExecutionEngine) | undefined;
+  allowUnqualifiedExternalCanary?: boolean | undefined;
+}): Promise<PublicAgentRunSnapshot> {
+  const { request, bindingDefinition } = input;
   const actualToolCatalogHash = currentModelAgentToolCatalogHash();
   if (actualToolCatalogHash !== bindingDefinition.capability.toolCatalogHash) {
     throw new PublicSupervisorRunError(
-      "MODEL_TOOL_CATALOG_MISMATCH",
+      "AGENT_TOOL_CATALOG_MISMATCH",
       "The execution binding tool catalog no longer matches this host.",
       409
     );
@@ -116,15 +217,10 @@ export async function startStructuredModelAgentRun(input: {
     context: initialContext,
     contextHash: hashJson(initialContext)
   };
-  const provider = createStructuredModelProvider(bindingDefinition, requestUrl);
-  const engine = new StructuredInProductModelAgentEngine({
-    capability: bindingDefinition.capability,
-    transport: new AiProviderStructuredTurnTransport(
-      provider,
-      bindingDefinition,
-      initialContextDelta
-    )
-  });
+  const engine = input.engine ?? input.engineFactory?.(initialContextDelta);
+  if (!engine) {
+    throw new PublicSupervisorRunError("AGENT_ENGINE_NOT_WIRED", "The selected execution engine is not wired on this host.", 409);
+  }
   agentRuntime.store.updateRun(runId, {
     status: "running",
     phase: "classifying_request",
@@ -133,13 +229,17 @@ export async function startStructuredModelAgentRun(input: {
   });
   agentRuntime.store.updatePublicStatus(runId, {
     phase: "reading_request",
-    message: "Opening the bound Model Agent session..."
+    message: `Opening the bound ${
+      bindingDefinition.capability.executionProfile === "external_cli_agent"
+        ? externalCliDisplayName(bindingDefinition.capability.backendId)
+        : "Model Agent"
+    } session...`
   });
   agentRuntime.store.appendEvent(runId, {
     type: "run_started",
     phase: "classifying_request",
     title: "Agent run started",
-    message: "Started the bound VDT Model Agent run."
+    message: "Started the bound VDT agent session."
   });
   if (request.input.prompt?.trim()) {
     agentRuntime.store.appendChatMessage(runId, {
@@ -155,7 +255,11 @@ export async function startStructuredModelAgentRun(input: {
     bindingDefinition,
     authoritativeAgentRunProjectId(agentRuntime.store.getState(runId))
   );
-  const persistence = createAgentSupervisorPersistence(agentRuntime.store);
+  const unverifiedExternalCanary = bindingDefinition.capability.executionProfile === "external_cli_agent"
+    && bindingDefinition.capability.qualification.status !== "qualified";
+  const persistence = unverifiedExternalCanary
+    ? new AgentRunStateSupervisorPersistence(agentRuntime.store)
+    : createAgentSupervisorPersistence(agentRuntime.store);
   const subscribers = new Set<SupervisorEventSubscriber>();
   const active: ActiveSupervisorRun = {
     supervisor: undefined as unknown as VdtRunSupervisor,
@@ -178,11 +282,11 @@ export async function startStructuredModelAgentRun(input: {
       }
     }
   });
-  let supervisor!: VdtRunSupervisor;
-  supervisor = new VdtRunSupervisor({
+  const supervisor = new VdtRunSupervisor({
     engine,
     binding,
     persistence,
+    allowUnqualifiedExternalCanary: input.allowUnqualifiedExternalCanary,
     outbox,
     gateway: {
       tools: agentRuntime.tools,
@@ -216,7 +320,7 @@ export async function startStructuredModelAgentRun(input: {
       const project = builder.getProject();
       const revisionAfterSnapshot = builder.getRevision();
       return verifyDeterministicRunFinish({
-        binding: supervisor.binding,
+        binding: active.supervisor.binding,
         project,
         currentRevision: revisionAfterSnapshot,
         expectedHeadRevision: expectedProjectRevision ?? revisionBeforeSnapshot,
@@ -269,7 +373,7 @@ export async function startStructuredModelAgentRun(input: {
           type: "run_completed",
           phase: "reporting",
           title: "Run completed",
-          message: "Model Agent completed with a verified VDT.",
+          message: "Bound agent session completed with a verified VDT.",
           metadata: { finishReceiptId: receiptId }
         });
       }
@@ -291,11 +395,11 @@ export async function startStructuredModelAgentRun(input: {
       // The original start failure remains the public error. Run ownership was
       // already fenced before cleanup attempted to close process-local handles.
     }
-    const message = safeErrorMessage(error, "The bound Model Agent session could not be opened.");
+    const message = safeErrorMessage(error, "The bound agent session could not be opened.");
     agentRuntime.store.updateRun(runId, {
       status: "failed",
       phase: "reporting",
-      error: { code: errorCode(error, "MODEL_AGENT_START_FAILED"), message },
+      error: { code: errorCode(error, "AGENT_SESSION_START_FAILED"), message },
       completedAt: new Date().toISOString()
     });
     throw error;
@@ -827,7 +931,7 @@ function createStructuredModelProvider(
 function createSessionBinding(
   runId: string,
   request: VdtAgentStartRequest,
-  definition: StructuredModelAgentExecutionBindingDefinition,
+  definition: AgentExecutionBindingDefinition,
   projectId: string
 ): AgentSessionBinding {
   const capability = definition.capability;
@@ -836,18 +940,18 @@ function createSessionBinding(
     bindingId: deriveModelAgentSessionBindingId(definition.bindingId, runId),
     runId,
     projectId,
-    executionProfile: "model_agent",
+    executionProfile: capability.executionProfile,
     engineId: capability.engineId,
     engineAdapterId: capability.engineAdapterId,
     backendId: capability.backendId,
     modelId: definition.modelId,
     protocolVersion: capability.protocolVersion,
-    cliVersion: null,
+    cliVersion: capability.cli?.version ?? null,
     toolIsolation: capability.toolIsolation,
     qualificationStatus: capability.qualification.status,
     capabilityEvidenceHash: capability.qualification.evidenceHash,
     settingsHash: hashJson({
-      adapter: definition.modelEngineAdapter,
+      engineAdapterId: capability.engineAdapterId,
       modelId: definition.modelId
     }),
     capabilityProfileHash: hashJson(capability),
@@ -870,7 +974,7 @@ export function deriveModelAgentSessionBindingId(
 
 function createInitialContext(
   request: VdtAgentStartRequest,
-  definition: StructuredModelAgentExecutionBindingDefinition,
+  definition: AgentExecutionBindingDefinition,
   builder: VdtBuilderSession
 ): Readonly<Record<string, unknown>> {
   const project = builder.getProject();

@@ -5,8 +5,19 @@ import { ToolRegistry, type AgentToolContext } from "../tool-registry";
 import { createSkillTools } from "./skill-tools";
 
 describe("skill tools", () => {
+  it("keeps skill.read selection-neutral", async () => {
+    const { registry, context, store, runId } = testRegistry();
+
+    const result = await registry.run("skill.read", {
+      skillId: "mining.excavation"
+    }, context);
+
+    expect(result.ok).toBe(true);
+    expect(store.getState(runId).selectedSkills).toEqual([]);
+  });
+
   it("returns recipe quality, source, and warnings from skill.compile_recipe", async () => {
-    const { registry, context } = testRegistry();
+    const { registry, context, store, runId } = testRegistry();
 
     const result = await registry.run("skill.compile_recipe", {
       skillId: "mining.drill_and_blast"
@@ -19,6 +30,9 @@ describe("skill tools", () => {
       recipeSource: "template",
       warnings: expect.any(Array)
     });
+    expect(store.getState(runId).selectedSkills.map((skill) => skill.id)).toEqual([
+      "mining.drill_and_blast"
+    ]);
   });
 
   it("does not seed a missing generic-support recipe as a domain draft", async () => {

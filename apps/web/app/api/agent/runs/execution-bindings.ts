@@ -124,6 +124,9 @@ export interface AgentExecutionBindingRegistryOptions {
   /** Registration is also gated on concrete host wiring. Qualification alone
    * must never expose an adapter that cannot actually preserve its session. */
   externalEngineWired?: boolean | undefined;
+  /** Explicit trusted-local development canary. This exposes an unverified
+   * binding without changing its qualification or isolation claims. */
+  allowUnverifiedExternalCanary?: boolean | undefined;
 }
 
 /**
@@ -137,6 +140,7 @@ export class AgentExecutionBindingRegistry {
   private readonly seenBindingIds = new Set<string>();
   private readonly externalProfilesEnabled: boolean;
   private readonly externalEngineWired: boolean;
+  private readonly allowUnverifiedExternalCanary: boolean;
 
   constructor(
     definitions: readonly AgentExecutionBindingDefinition[] = [],
@@ -144,6 +148,7 @@ export class AgentExecutionBindingRegistry {
   ) {
     this.externalProfilesEnabled = options.externalProfilesEnabled === true;
     this.externalEngineWired = options.externalEngineWired === true;
+    this.allowUnverifiedExternalCanary = options.allowUnverifiedExternalCanary === true;
     for (const definition of definitions) this.register(definition);
   }
 
@@ -195,10 +200,9 @@ export class AgentExecutionBindingRegistry {
           "External CLI execution profiles are disabled on this host."
         );
       }
-      const availability = assessExternalAgentCapability(
-        definition.capability,
-        definition.currentQualification
-      );
+      const availability = this.allowUnverifiedExternalCanary
+        ? assessExternalCanaryIdentity(definition.capability, definition.currentQualification)
+        : assessExternalAgentCapability(definition.capability, definition.currentQualification);
       if (!availability.available) {
         throw new AgentExecutionBindingError(
           "EXTERNAL_CAPABILITY_UNAVAILABLE",
@@ -220,6 +224,22 @@ export class AgentExecutionBindingRegistry {
     }
     return summaries;
   }
+}
+
+function assessExternalCanaryIdentity(
+  capability: Extract<AgentCapabilityProfile, { executionProfile: "external_cli_agent" }>,
+  requirement: AgentCapabilityQualificationRequirement
+): { available: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+  if (capability.engineAdapterId !== requirement.engineAdapterId) reasons.push("ADAPTER_MISMATCH");
+  if (capability.backendId !== requirement.backendId) reasons.push("BACKEND_MISMATCH");
+  if (capability.cli.version !== requirement.cliVersion) reasons.push("CLI_VERSION_MISMATCH");
+  if (capability.protocolVersion !== requirement.protocolVersion) reasons.push("PROTOCOL_VERSION_MISMATCH");
+  if (capability.toolCatalogHash !== requirement.toolCatalogHash) reasons.push("TOOL_CATALOG_HASH_MISMATCH");
+  if (JSON.stringify(capability.qualification.platform) !== JSON.stringify(requirement.platform)) {
+    reasons.push("PLATFORM_MISMATCH");
+  }
+  return { available: reasons.length === 0, reasons };
 }
 
 /**
@@ -511,6 +531,12 @@ export function isLegacyModelExecutionBinding(
   definition: AgentExecutionBindingDefinition
 ): definition is LegacyModelAgentExecutionBindingDefinition {
   return "legacyCompatibilityAdapter" in definition && definition.legacyCompatibilityAdapter !== undefined;
+}
+
+export function isExternalCliExecutionBinding(
+  definition: AgentExecutionBindingDefinition
+): definition is ExternalCliExecutionBindingDefinition {
+  return "currentQualification" in definition;
 }
 
 function wouldLaunchSubscriptionCli(

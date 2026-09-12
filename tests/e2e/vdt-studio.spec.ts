@@ -2984,14 +2984,13 @@ test("shows usage limits copy on subscription CLI cards", async ({ page }, testI
   await expect(usageNote).toContainText("selected model");
 });
 
-test("generates through managed Local CLI runtime without standalone pairing", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "chromium", "Managed Local CLI generate runs on desktop viewport.");
+test("sends Cursor generation through the server-managed session binding", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Cursor session binding smoke runs on desktop viewport.");
 
   let agentRunRequestBody:
     | {
         mode?: string;
-        providerId?: string;
-        providerConfig?: { backendId?: string; timeoutMs?: number; pairingToken?: string };
+        executionBindingId?: string;
         input?: { prompt?: string };
       }
     | undefined;
@@ -3003,13 +3002,13 @@ test("generates through managed Local CLI runtime without standalone pairing", a
       body: JSON.stringify({
         agents: [
           {
-            id: "codex",
+            id: "cursor-agent",
             installed: true,
-            executable: "/usr/local/bin/codex",
-            alias: "codex",
-            version: "0.25.0",
+            executable: "/Users/test/.local/bin/agent",
+            alias: "agent",
+            version: "2026.08.11-e8db854",
             status: "ready",
-            authSummary: "ChatGPT subscription is authenticated and ready.",
+            authSummary: "Cursor account is authenticated and ready.",
             diagnostics: []
           }
         ]
@@ -3018,16 +3017,33 @@ test("generates through managed Local CLI runtime without standalone pairing", a
   });
 
   await page.route("**/api/agent/runs", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schemaVersion: 1,
+          ok: true,
+          defaultBindingId: null,
+          bindings: [{
+            bindingId: "cursor_session_canary",
+            executionProfile: "external_cli_agent",
+            engineId: "cursor-resume-checkpoint",
+            engineAdapterId: "cursor-resume-checkpoint-v1",
+            backendId: "cursor_subscription",
+            modelId: "cursor-grok-4.6-medium"
+          }]
+        })
+      });
+      return;
+    }
     agentRunRequestBody = route.request().postDataJSON() as typeof agentRunRequestBody;
     expect(agentRunRequestBody).toMatchObject({
-      mode: "generate_vdt",
-      providerId: "local_runner",
-      providerConfig: {
-        backendId: "codex_subscription",
-        timeoutMs: 60_000
-      }
+      mode: "continue_project",
+      executionBindingId: "cursor_session_canary"
     });
-    expect(JSON.stringify(agentRunRequestBody)).not.toContain("pairingToken");
+    expect(agentRunRequestBody).not.toHaveProperty("providerId");
+    expect(agentRunRequestBody).not.toHaveProperty("providerConfig");
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -3045,15 +3061,14 @@ test("generates through managed Local CLI runtime without standalone pairing", a
   await openSettingsModal(page);
   await page.getByTestId("execution-mode-tab-local-cli").click();
   await expect(page.getByTestId("execution-mode-panel-local-cli")).toBeVisible();
-  await expect(page.getByTestId("cli-agent-card-codex")).toBeVisible({ timeout: 10_000 });
-  await page.getByTestId("cli-agent-select-codex").click();
+  await expect(page.getByTestId("cli-agent-card-cursor-agent")).toBeVisible({ timeout: 10_000 });
+  await page.getByTestId("cli-agent-select-cursor-agent").click();
   await page.keyboard.press("Escape");
 
   await page.getByTestId("agent-instruction-input").fill("Build a revenue model from the current brief.");
   await page.getByTestId("agent-send-instruction").click();
-  await expect.poll(() => agentRunRequestBody?.providerConfig?.backendId).toBe("codex_subscription");
+  await expect.poll(() => agentRunRequestBody?.executionBindingId).toBe("cursor_session_canary");
   await expect(page.getByRole("heading", { name: "Revenue Driver Model" })).toBeVisible();
-  await expect(page.getByTestId("generate-final-report")).toContainText("Validation result: Graph validation passed.");
 });
 
 test.describe("visual formula editor", () => {

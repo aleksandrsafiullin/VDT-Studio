@@ -1505,6 +1505,39 @@ function defaultDataDir(projectRoot: string): string {
   return path.join(projectRoot, ".vdt");
 }
 
+function resolveConfiguredDataDir(projectRoot: string): string {
+  const resolvedProjectRoot = path.resolve(projectRoot);
+  const configuredDataDir = process.env.VDT_DATA_DIR;
+  if (!configuredDataDir) return defaultDataDir(resolvedProjectRoot);
+  return path.isAbsolute(configuredDataDir)
+    ? path.resolve(configuredDataDir)
+    : path.resolve(resolvedProjectRoot, configuredDataDir);
+}
+
+function existingDirectoryPath(value: string): string | null {
+  try {
+    const stat = fs.statSync(value);
+    if (!stat.isDirectory()) return null;
+    return path.resolve(value);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/** Roots that CLI checkpoint sandboxes must not overlap: the app workspace and SQLite storage. */
+export function resolveCliSessionForbiddenRoots(projectRoot: string = process.cwd()): readonly string[] {
+  const resolvedProjectRoot = path.resolve(projectRoot);
+  const dataDir = resolveConfiguredDataDir(resolvedProjectRoot);
+  if (dataDir === resolvedProjectRoot) {
+    return [resolvedProjectRoot];
+  }
+  const existingDataDir = existingDirectoryPath(dataDir);
+  return existingDataDir ? [resolvedProjectRoot, existingDataDir] : [resolvedProjectRoot];
+}
+
 function safePathSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]+/g, "_").slice(-80) || "workspace";
 }

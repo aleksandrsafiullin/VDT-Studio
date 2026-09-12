@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { mkdir, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import path from "node:path";
 import {
   AgentRunStore,
   AgentRunStateSupervisorPersistence,
@@ -7,6 +10,7 @@ import {
   researchProviderStatus,
   resolveResearchProviderFromEnv,
   type AgentDecisionProvider,
+  type AgentExecutionEngine,
   type AgentExecutionSummaryV2,
   type AgentSupervisorPersistence,
   type ResearchProviderStatus,
@@ -22,7 +26,8 @@ import {
   type StorageWriteEnvironment
 } from "../../vdt/storage-write-adapter";
 import {
-  createLazySqliteAgentRunPersistence
+  createLazySqliteAgentRunPersistence,
+  resolveCliSessionForbiddenRoots
 } from "./persistence";
 import {
   createLazyProjectedSqliteAgentSupervisorPersistence,
@@ -34,19 +39,42 @@ import {
   AgentExecutionBindingRegistry,
   createDefaultModelAgentExecutionBinding,
   executionBindingSummary,
+  isExternalCliExecutionBinding,
   isLegacyModelExecutionBinding,
   isStructuredModelExecutionBinding,
   type AgentExecutionBindingDefinition,
   type LegacyModelAgentExecutionBindingDefinition
 } from "./execution-bindings";
-import { modelAgentToolCatalogHash } from "./model-agent-tool-catalog";
+import { TARGET_MODEL_AGENT_TOOLS, modelAgentToolCatalogHash } from "./model-agent-tool-catalog";
 
 const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtAgentRuntime?: ReturnType<typeof createVdtAgentRuntime>;
   __vdtAgentExecutionBindingRegistry?: AgentExecutionBindingRegistry;
   __vdtSqliteBackedAgentRunStores?: WeakSet<AgentRunStore>;
   __vdtAgentSupervisorReadAuthorities?: WeakMap<AgentRunStore, AgentSupervisorPersistence>;
+  __vdtExternalAgentEngines?: Map<string, AgentExecutionEngine>;
+  __vdtCursorSessionBindingProbe?: Promise<void>;
+  __vdtCliSessionRegistrationOutcomes?: Map<CliSessionRegistrarKey, CliSessionRegistrationOutcome>;
 };
+
+const CLI_SESSION_REGISTRAR_KEYS = ["cursor", "codex", "claude"] as const;
+type CliSessionRegistrarKey = typeof CLI_SESSION_REGISTRAR_KEYS[number];
+type CliSessionRegistrationOutcome = "registered" | "absent" | "failed";
+type CliSessionRegistrationResult = Exclude<CliSessionRegistrationOutcome, "failed">;
+
+function cliSessionRegistrationOutcomes(): Map<CliSessionRegistrarKey, CliSessionRegistrationOutcome> {
+  if (!runtimeGlobal.__vdtCliSessionRegistrationOutcomes) {
+    runtimeGlobal.__vdtCliSessionRegistrationOutcomes = new Map();
+  }
+  return runtimeGlobal.__vdtCliSessionRegistrationOutcomes;
+}
+
+function cliSessionRegistrationProbeNeeded(): boolean {
+  return CLI_SESSION_REGISTRAR_KEYS.some((key) => {
+    const outcome = cliSessionRegistrationOutcomes().get(key);
+    return outcome !== "registered" && outcome !== "absent";
+  });
+}
 
 const sqliteBackedAgentRunStores =
   runtimeGlobal.__vdtSqliteBackedAgentRunStores ?? new WeakSet<AgentRunStore>();
@@ -60,8 +88,16 @@ export const agentRuntime =
     tools: createAgentToolRegistryFromEnv()
   });
 
+const cliSessionCanaryEnabled = isCliSessionCanaryEnabled();
+
 export const agentExecutionBindingRegistry =
-  runtimeGlobal.__vdtAgentExecutionBindingRegistry ?? new AgentExecutionBindingRegistry();
+  runtimeGlobal.__vdtAgentExecutionBindingRegistry ?? new AgentExecutionBindingRegistry([], {
+    externalProfilesEnabled: cliSessionCanaryEnabled,
+    externalEngineWired: cliSessionCanaryEnabled,
+    allowUnverifiedExternalCanary: cliSessionCanaryEnabled
+  });
+
+const externalAgentEngines = runtimeGlobal.__vdtExternalAgentEngines ?? new Map<string, AgentExecutionEngine>();
 
 ensureDefaultModelAgentBinding(agentExecutionBindingRegistry);
 
@@ -70,6 +106,37 @@ if (process.env.NODE_ENV !== "production") {
   runtimeGlobal.__vdtAgentExecutionBindingRegistry = agentExecutionBindingRegistry;
   runtimeGlobal.__vdtSqliteBackedAgentRunStores = sqliteBackedAgentRunStores;
   runtimeGlobal.__vdtAgentSupervisorReadAuthorities = supervisorReadAuthorities;
+  runtimeGlobal.__vdtExternalAgentEngines = externalAgentEngines;
+}
+
+export const CURSOR_SESSION_EXECUTION_BINDING_ID = "cursor_session_canary";
+export const CODEX_SESSION_EXECUTION_BINDING_ID = "codex_session_canary";
+export const CLAUDE_SESSION_EXECUTION_BINDING_ID = "claude_session_canary";
+
+export async function ensureServerManagedExecutionBindings(): Promise<void> {
+  if (!cliSessionCanaryEnabled) return;
+  if (!cliSessionRegistrationProbeNeeded()) return;
+  const existing = runtimeGlobal.__vdtCursorSessionBindingProbe;
+  if (existing) {
+    try {
+      await existing;
+    } catch {
+      delete runtimeGlobal.__vdtCursorSessionBindingProbe;
+    }
+    if (!cliSessionRegistrationProbeNeeded()) return;
+  }
+  const probe = registerCliSessionCanaries();
+  if (process.env.NODE_ENV !== "production") {
+    runtimeGlobal.__vdtCursorSessionBindingProbe = probe;
+  }
+  await probe;
+  if (cliSessionRegistrationProbeNeeded()) {
+    delete runtimeGlobal.__vdtCursorSessionBindingProbe;
+  }
+}
+
+export function externalAgentEngineForBinding(bindingId: string): AgentExecutionEngine | undefined {
+  return externalAgentEngines.get(bindingId);
 }
 
 export function createAgentDecisionProvider(request: VdtAgentStartRequest, requestUrl: string): AgentDecisionProvider {
@@ -109,6 +176,16 @@ export function resolveAgentStartRequest(
       binding
     };
   }
+  if (isExternalCliExecutionBinding(binding)) {
+    return {
+      request: {
+        ...common,
+        executionBindingId,
+        providerId: "external_cli_agent"
+      },
+      binding
+    };
+  }
   if (!isLegacyModelExecutionBinding(binding)) {
     throw new AgentExecutionBindingError(
       "EXTERNAL_ENGINE_NOT_WIRED",
@@ -140,7 +217,35 @@ export function isLegacyAgentCompatibilityEnabled(
     readonly VDT_AGENT_LEGACY_COMPATIBILITY_ENABLED?: string | undefined;
   } = process.env
 ): boolean {
-  return env.NODE_ENV === "test" || env.VDT_AGENT_LEGACY_COMPATIBILITY_ENABLED === "true";
+  return (
+    env.NODE_ENV === "test" ||
+    env.VDT_AGENT_LEGACY_COMPATIBILITY_ENABLED === "true"
+  );
+}
+
+export function isCliSessionCanaryEnabled(
+  env: {
+    readonly NODE_ENV?: string | undefined;
+    readonly NEXT_PHASE?: string | undefined;
+    readonly VDT_CURSOR_SESSION_CANARY_ENABLED?: string | undefined;
+    readonly VDT_CLI_SESSION_CANARY_ENABLED?: string | undefined;
+  } = process.env
+): boolean {
+  return env.NODE_ENV !== "production"
+    && env.NEXT_PHASE !== "phase-production-build"
+    && (env.VDT_CLI_SESSION_CANARY_ENABLED === "true" || env.VDT_CURSOR_SESSION_CANARY_ENABLED === "true");
+}
+
+export function isCursorSessionCanaryEnabled(
+  env: {
+    readonly NODE_ENV?: string | undefined;
+    readonly NEXT_PHASE?: string | undefined;
+    readonly VDT_CURSOR_SESSION_CANARY_ENABLED?: string | undefined;
+  } = process.env
+): boolean {
+  return env.NODE_ENV !== "production"
+    && env.NEXT_PHASE !== "phase-production-build"
+    && env.VDT_CURSOR_SESSION_CANARY_ENABLED === "true";
 }
 
 export function createAgentToolRegistryFromEnv(
@@ -229,6 +334,258 @@ function ensureDefaultModelAgentBinding(registry: AgentExecutionBindingRegistry)
     ) return;
     throw error;
   }
+}
+
+async function registerCliSessionCanaries(): Promise<void> {
+  if (!resolveTrustedStorageWriteMode()) return;
+  const outcomes = cliSessionRegistrationOutcomes();
+  const pending = CLI_SESSION_REGISTRAR_KEYS.filter((key) => {
+    const outcome = outcomes.get(key);
+    return outcome !== "registered" && outcome !== "absent";
+  });
+  if (pending.length === 0) return;
+
+  const bridge = await import("@vdt-studio/model-bridge/node");
+  const { evaluateCursorVersion } = await import("@vdt-studio/model-bridge");
+  await Promise.allSettled(pending.map(async (key) => {
+    try {
+      if (key === "cursor") {
+        outcomes.set(key, await registerCursorSessionCanary(bridge, evaluateCursorVersion));
+        return;
+      }
+      if (key === "codex") {
+        outcomes.set(key, await registerCodexSessionCanary(bridge));
+        return;
+      }
+      outcomes.set(key, await registerClaudeSessionCanary(bridge));
+    } catch {
+      outcomes.set(key, "failed");
+    }
+  }));
+}
+
+type ModelBridgeNode = typeof import("@vdt-studio/model-bridge/node");
+
+async function registerCursorSessionCanary(
+  bridge: ModelBridgeNode,
+  evaluateCursorVersion: (version: string | null) => { supported: boolean }
+): Promise<CliSessionRegistrationResult> {
+  if (agentExecutionBindingRegistry.has(CURSOR_SESSION_EXECUTION_BINDING_ID)) return "registered";
+  const {
+    CursorResumeCheckpointEngine,
+    CursorResumeCheckpointTransport,
+    detectSubscriptionCli
+  } = bridge;
+  const detection = await detectSubscriptionCli("cursor-agent");
+  const versionEvaluation = evaluateCursorVersion(detection.version);
+  if (!detection.installed || !detection.executable || !detection.version || !versionEvaluation.supported) return "absent";
+
+  const toolCatalogHash = modelAgentToolCatalogHash(agentRuntime.tools);
+  const transport = new CursorResumeCheckpointTransport({
+    executable: detection.executable,
+    validatedCliVersion: detection.version,
+    timeoutMs: readPositiveIntegerEnv("VDT_CURSOR_SESSION_SEGMENT_TIMEOUT_MS", 180_000)
+  });
+  const engine = new CursorResumeCheckpointEngine({
+    transport,
+    cliVersion: detection.version,
+    toolCatalogHash,
+    allowedToolNames: TARGET_MODEL_AGENT_TOOLS,
+    enableUnverifiedCanary: true,
+    sessionEnvironmentFactory: async ({ binding, recovery }) => createCliSessionEnvironment({
+      bindingId: binding.bindingId,
+      slug: "cursor",
+      recovery,
+      credentialEnvironment: cursorCredentialEnvironment(),
+      preauthorizeEmptyWorkspace: true
+    }),
+    resolveBinding: resolveDurableSessionBinding
+  });
+  registerCliSessionBinding({
+    bindingId: CURSOR_SESSION_EXECUTION_BINDING_ID,
+    engine,
+    modelId: process.env.VDT_CURSOR_SESSION_MODEL?.trim() || "cursor-grok-4.6-medium"
+  });
+  return "registered";
+}
+
+async function registerCodexSessionCanary(bridge: ModelBridgeNode): Promise<CliSessionRegistrationResult> {
+  if (agentExecutionBindingRegistry.has(CODEX_SESSION_EXECUTION_BINDING_ID)) return "registered";
+  const {
+    CodexResumeCheckpointEngine,
+    CodexResumeCheckpointTransport,
+    detectSubscriptionCli
+  } = bridge;
+  const detection = await detectSubscriptionCli("codex");
+  if (!detection.installed || !detection.executable || !detection.version) return "absent";
+
+  const toolCatalogHash = modelAgentToolCatalogHash(agentRuntime.tools);
+  const transport = new CodexResumeCheckpointTransport({
+    executable: detection.executable,
+    validatedCliVersion: detection.version,
+    timeoutMs: readPositiveIntegerEnv("VDT_CODEX_SESSION_SEGMENT_TIMEOUT_MS", 180_000)
+  });
+  const engine = new CodexResumeCheckpointEngine({
+    transport,
+    cliVersion: detection.version,
+    toolCatalogHash,
+    allowedToolNames: TARGET_MODEL_AGENT_TOOLS,
+    enableUnverifiedCanary: true,
+    sessionEnvironmentFactory: async ({ binding, recovery }) => createCliSessionEnvironment({
+      bindingId: binding.bindingId,
+      slug: "codex",
+      recovery,
+      credentialEnvironment: codexCredentialEnvironment(),
+      preauthorizeEmptyWorkspace: false
+    }),
+    resolveBinding: resolveDurableSessionBinding
+  });
+  registerCliSessionBinding({
+    bindingId: CODEX_SESSION_EXECUTION_BINDING_ID,
+    engine,
+    modelId: process.env.VDT_CODEX_SESSION_MODEL?.trim() || "gpt-5.4"
+  });
+  return "registered";
+}
+
+async function registerClaudeSessionCanary(bridge: ModelBridgeNode): Promise<CliSessionRegistrationResult> {
+  if (agentExecutionBindingRegistry.has(CLAUDE_SESSION_EXECUTION_BINDING_ID)) return "registered";
+  const {
+    ClaudeResumeCheckpointEngine,
+    ClaudeResumeCheckpointTransport,
+    detectSubscriptionCli
+  } = bridge;
+  const detection = await detectSubscriptionCli("claude");
+  if (!detection.installed || !detection.executable || !detection.version) return "absent";
+
+  const toolCatalogHash = modelAgentToolCatalogHash(agentRuntime.tools);
+  const transport = new ClaudeResumeCheckpointTransport({
+    executable: detection.executable,
+    validatedCliVersion: detection.version,
+    timeoutMs: readPositiveIntegerEnv("VDT_CLAUDE_SESSION_SEGMENT_TIMEOUT_MS", 180_000)
+  });
+  const engine = new ClaudeResumeCheckpointEngine({
+    transport,
+    cliVersion: detection.version,
+    toolCatalogHash,
+    allowedToolNames: TARGET_MODEL_AGENT_TOOLS,
+    enableUnverifiedCanary: true,
+    sessionEnvironmentFactory: async ({ binding, recovery }) => createCliSessionEnvironment({
+      bindingId: binding.bindingId,
+      slug: "claude",
+      recovery,
+      credentialEnvironment: claudeCredentialEnvironment(),
+      preauthorizeEmptyWorkspace: false
+    }),
+    resolveBinding: resolveDurableSessionBinding
+  });
+  registerCliSessionBinding({
+    bindingId: CLAUDE_SESSION_EXECUTION_BINDING_ID,
+    engine,
+    modelId: process.env.VDT_CLAUDE_SESSION_MODEL?.trim() || "claude-sonnet-4-6"
+  });
+  return "registered";
+}
+
+function registerCliSessionBinding(input: {
+  bindingId: string;
+  engine: AgentExecutionEngine;
+  modelId: string;
+}): void {
+  const capability = input.engine.capability;
+  if (capability.executionProfile !== "external_cli_agent") return;
+  const definition = {
+    bindingId: input.bindingId,
+    enabled: true,
+    modelId: input.modelId,
+    capability,
+    currentQualification: {
+      engineAdapterId: capability.engineAdapterId,
+      backendId: capability.backendId,
+      cliVersion: capability.cli.version,
+      protocolVersion: capability.protocolVersion,
+      toolCatalogHash: capability.toolCatalogHash,
+      platform: capability.qualification.platform
+    }
+  } as const;
+  agentExecutionBindingRegistry.register(definition);
+  externalAgentEngines.set(definition.bindingId, input.engine);
+}
+
+async function createCliSessionEnvironment(input: {
+  bindingId: string;
+  slug: string;
+  recovery: boolean;
+  credentialEnvironment: Array<{ name: string; value: string }>;
+  preauthorizeEmptyWorkspace: boolean;
+}) {
+  const root = path.join(
+    tmpdir(),
+    `vdt-studio-${input.slug}-sessions`,
+    createHash("sha256").update(input.bindingId).digest("hex")
+  );
+  const workspace = path.join(root, "workspace");
+  const state = path.join(root, "state");
+  if (!input.recovery) await rm(root, { recursive: true, force: true });
+  await mkdir(workspace, { recursive: true, mode: 0o700 });
+  await mkdir(state, { recursive: true, mode: 0o700 });
+  // Accepted trusted-local canary tradeoff: subscription CLIs need the real
+  // auth home to resume opaque sessions. The process still runs in an empty
+  // private workspace; a minimal auth-only home is the long-term fix.
+  return {
+    environmentId: `${input.slug}-${createHash("sha256").update(input.bindingId).digest("hex").slice(0, 32)}`,
+    privateWorkspacePath: workspace,
+    privateStatePath: state,
+    trustedSubscriptionAuthHomePath: homedir(),
+    preauthorizeEmptyWorkspace: input.preauthorizeEmptyWorkspace,
+    forbiddenRoots: resolveCliSessionForbiddenRoots(),
+    credentialEnvironment: input.credentialEnvironment
+  };
+}
+
+async function resolveDurableSessionBinding(checkpoint: { runId: string }) {
+  const durable = await new AgentRunStateSupervisorPersistence(agentRuntime.store).load(checkpoint.runId);
+  if (!durable?.binding) {
+    throw Object.assign(new Error("The durable CLI session binding was not found."), {
+      code: "CLI_SESSION_BINDING_NOT_FOUND"
+    });
+  }
+  return durable.binding;
+}
+
+function credentialEnvironmentFromAllowlist(allowed: readonly string[]): Array<{ name: string; value: string }> {
+  return allowed.flatMap((name) => {
+    const value = process.env[name];
+    return value ? [{ name, value }] : [];
+  });
+}
+
+function cursorCredentialEnvironment(): Array<{ name: string; value: string }> {
+  return credentialEnvironmentFromAllowlist([
+    "CURSOR_API_KEY", "HTTP_PROXY", "HTTPS_PROXY", "LANG", "LC_ALL", "NODE_EXTRA_CA_CERTS",
+    "NO_PROXY", "SSL_CERT_DIR", "SSL_CERT_FILE", "PATH", "USER", "LOGNAME"
+  ]);
+}
+
+function codexCredentialEnvironment(): Array<{ name: string; value: string }> {
+  return credentialEnvironmentFromAllowlist([
+    "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_HOME", "HTTP_PROXY", "HTTPS_PROXY", "LANG", "LC_ALL",
+    "NODE_EXTRA_CA_CERTS", "NO_PROXY", "SSL_CERT_DIR", "SSL_CERT_FILE", "PATH", "USER", "LOGNAME"
+  ]);
+}
+
+function claudeCredentialEnvironment(): Array<{ name: string; value: string }> {
+  return credentialEnvironmentFromAllowlist([
+    "ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "HTTP_PROXY", "HTTPS_PROXY", "LANG", "LC_ALL",
+    "NODE_EXTRA_CA_CERTS", "NO_PROXY", "SSL_CERT_DIR", "SSL_CERT_FILE", "PATH", "USER", "LOGNAME"
+  ]);
+}
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
 function isNextProductionBuild(): boolean {

@@ -26,6 +26,10 @@ const fakeCodex = fileURLToPath(new URL("../../../../../../packages/local-runner
 const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtAgentRuntime?: unknown;
   __vdtStudioDevelopmentRuntime?: ReturnType<typeof createLocalRuntimeContext>;
+  __vdtAgentExecutionBindingRegistry?: unknown;
+  __vdtExternalAgentEngines?: unknown;
+  __vdtCursorSessionBindingProbe?: unknown;
+  __vdtCliSessionRegistrationOutcomes?: unknown;
 };
 
 function jsonRequest(url: string, body: unknown, init?: RequestInit) {
@@ -172,7 +176,7 @@ afterEach(() => {
 
 describe("agent runs API", () => {
   it("publishes only read-only binding summaries and selects the server default by opaque ID", async () => {
-    const response = getExecutionBindings();
+    const response = await getExecutionBindings();
     const body = await response.json() as {
       schemaVersion: number;
       ok: boolean;
@@ -972,6 +976,21 @@ describe("agent runs API", () => {
     });
   });
 
+  it("keeps legacy provider starts disabled in development without explicit opt-in", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VDT_AGENT_LEGACY_COMPATIBILITY_ENABLED", "false");
+
+    const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+      mode: "generate_vdt",
+      input: { rootKpi: "Ore hauled", prompt: "Build a haulage model" },
+      providerId: "mock"
+    }));
+    const body = await readJson(response);
+
+    expect(response.status).toBe(409);
+    expect(body.error?.code).toBe("AGENT_LEGACY_COMPATIBILITY_DISABLED");
+  });
+
   it.each([
     ["hosted_web", "desktop"],
     ["invalid", "desktop"],
@@ -1418,4 +1437,67 @@ describe("agent runs API", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    ["codex_session_canary", "codex", "Codex"],
+    ["claude_session_canary", "claude", "Claude"]
+  ] as const)("POST routes %s through startExternalCliAgentRun", async (bindingId, cliId, label) => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");
+    delete runtimeGlobal.__vdtAgentRuntime;
+    delete runtimeGlobal.__vdtAgentExecutionBindingRegistry;
+    delete runtimeGlobal.__vdtExternalAgentEngines;
+    delete runtimeGlobal.__vdtCursorSessionBindingProbe;
+    delete runtimeGlobal.__vdtCliSessionRegistrationOutcomes;
+    vi.resetModules();
+
+    vi.doMock("@vdt-studio/model-bridge/node", async (importOriginal) => {
+      const original = await importOriginal<typeof import("@vdt-studio/model-bridge/node")>();
+      return {
+        ...original,
+        detectSubscriptionCli: vi.fn(async (id: string) => {
+          if (id !== cliId) {
+            return { id, backendId: id, installed: false, executable: null, version: null, alias: id };
+          }
+          return {
+            id,
+            backendId: `${cliId}_subscription`,
+            installed: true,
+            executable: `/opt/vdt-test/bin/${cliId}`,
+            version: "1.0.0",
+            alias: cliId
+          };
+        })
+      };
+    });
+
+    const runtime = await import("./runtime");
+    await runtime.ensureServerManagedExecutionBindings();
+    expect(runtime.externalAgentEngineForBinding(bindingId)).toBeDefined();
+
+    const supervisor = await import("./supervisor-runtime");
+    const startSpy = vi.spyOn(supervisor, "startExternalCliAgentRun").mockRejectedValue(
+      new supervisor.PublicSupervisorRunError(
+        "AGENT_EXTERNAL_CAPABILITY_UNQUALIFIED",
+        `The ${label} session adapter is not hard-qualified on this host.`,
+        409
+      )
+    );
+
+    const { POST } = await import("./route");
+    const response = await POST(jsonRequest("http://localhost:3000/api/agent/runs", {
+      mode: "generate_vdt",
+      input: { rootKpi: "Ore hauled" },
+      executionBindingId: bindingId
+    }));
+    const body = await readJson(response);
+
+    expect(startSpy).toHaveBeenCalledWith(expect.objectContaining({
+      bindingDefinition: expect.objectContaining({ bindingId }),
+      allowUnqualifiedExternalCanary: true
+    }));
+    expect(response.status).toBe(409);
+    expect(body.error?.code).toBe("AGENT_EXTERNAL_CAPABILITY_UNQUALIFIED");
+    expect(body.error?.message).toContain(label);
+  }, 15_000);
 });

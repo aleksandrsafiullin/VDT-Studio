@@ -298,6 +298,52 @@ describe("CursorResumeCheckpointEngine", () => {
     expect(opened.binding.externalSessionId).toBe("opaque-cursor-session");
   });
 
+  it("normalizes non-plain gateway error details before the next Cursor resume", async () => {
+    const environment = await createEnvironment();
+    const runner = new ScriptedRunner([
+      (request) => stream(request, turn({
+        type: "action_batch",
+        calls: [{ externalCallId: "call-invalid", toolName: "vdt.echo", args: { value: 1 } }]
+      }, "I will validate this call.")),
+      (request) => stream(request, turn({
+        type: "final",
+        finishReceiptId: "missing-finish-receipt"
+      }, "The run cannot actually finish without its receipt."))
+    ]);
+    const h = harness({
+      runner,
+      environment,
+      executeTool: async (call) => gatewayResult(call, {
+        status: "failed",
+        resultCode: "INVALID_TOOL_ARGS",
+        payload: {
+          error: {
+            code: "INVALID_TOOL_ARGS",
+            message: "Invalid tool arguments.",
+            details: [{ unionErrors: [new Error("branch one"), new Error("branch two")] }]
+          }
+        }
+      })
+    });
+    const context = { brief: "wire-normalization" };
+    const opened = await h.engine.openSession({
+      binding: bindingFor(h.engine),
+      initialContext: context,
+      initialContextHash: hashText(JSON.stringify(context))
+    }, h.host);
+
+    const events = await collect(opened.events());
+
+    expect(runner.requests).toHaveLength(2);
+    expect(runner.requests[1]?.stdin).toContain("INVALID_TOOL_ARGS");
+    expect(events.at(-1)).toMatchObject({
+      type: "transport_error",
+      code: "CURSOR_CHECKPOINT_FINAL_WITHOUT_RECEIPT"
+    });
+    expect(events.map((event) => event.type === "transport_error" && event.code))
+      .not.toContain("CURSOR_CHECKPOINT_JSON_INVALID");
+  });
+
   it("checkpoints a user.ask pause and resumes the same session after submit", async () => {
     const environment = await createEnvironment();
     const runner = new ScriptedRunner([

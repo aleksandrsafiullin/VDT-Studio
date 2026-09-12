@@ -157,8 +157,10 @@ export class VdtRunSupervisor {
       throw new VdtRunSupervisorError("RUN_ALREADY_BOUND", "The run supervisor can only open one engine session.");
     }
     this.statusValue = "opening";
+    let bindingDurable = this.persistence === undefined;
     try {
       await this.persistence?.createBinding(this.expectedBinding);
+      bindingDurable = true;
       await this.appendRuntimeStatus("SESSION_OPENING", "Opening the bound agent execution session.", "opening");
       const session = await this.engine.openSession({ ...input, binding: this.expectedBinding }, this.engineHost());
       await this.adoptSession(session, false);
@@ -168,7 +170,17 @@ export class VdtRunSupervisor {
       this.startConsumer();
     } catch (error) {
       this.statusValue = "failed";
-      await this.appendError("SESSION_OPEN_FAILED", error, false);
+      // An outbox event is authoritative only after the immutable binding is
+      // durable. If the binding transaction itself failed, attempting an event
+      // append would both fail its FK/authority check and mask the real cause.
+      if (bindingDurable) {
+        try {
+          await this.appendError("SESSION_OPEN_FAILED", error, false);
+        } catch {
+          // Preserve the session-open failure; event persistence has its own
+          // bounded recovery path once binding authority exists.
+        }
+      }
       throw error;
     }
   }

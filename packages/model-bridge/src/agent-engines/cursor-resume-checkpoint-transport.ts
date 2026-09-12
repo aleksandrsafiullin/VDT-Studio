@@ -2,7 +2,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
-import { parseCheckpointActionBatch, type CheckpointActionBatch } from "./action-batch";
+import { type CheckpointActionBatch } from "./action-batch";
+import { parseCheckpointTurn, type CheckpointTurn } from "./checkpoint-turn";
 
 export const CURSOR_CHECKPOINT_PROTOCOL_VERSION = "vdt-cursor-checkpoint-v1" as const;
 
@@ -10,7 +11,6 @@ const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_PROMPT_BYTES = 1024 * 1024;
 const DEFAULT_MAX_LINES = 100_000;
 const DEFAULT_TIMEOUT_MS = 180_000;
-const MAX_ASSISTANT_TEXT_BYTES = 64 * 1024;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
 const SAFE_HASH = /^sha256:[a-f0-9]{64}$/;
 const SAFE_CREDENTIAL_ENVIRONMENT = new Set([
@@ -19,14 +19,16 @@ const SAFE_CREDENTIAL_ENVIRONMENT = new Set([
   "HTTPS_PROXY",
   "LANG",
   "LC_ALL",
+  "LOGNAME",
   "NODE_EXTRA_CA_CERTS",
   "NO_PROXY",
+  "PATH",
   "SSL_CERT_DIR",
-  "SSL_CERT_FILE"
+  "SSL_CERT_FILE",
+  "USER"
 ]);
 const FORBIDDEN_ARGUMENTS = new Set([
   "--force",
-  "--trust",
   "--yolo",
   "--dangerously-skip-permissions"
 ]);
@@ -35,6 +37,7 @@ const ALLOWED_CURSOR_EVENT_TYPES = new Set([
   "error",
   "result",
   "system",
+  "thinking",
   "user"
 ]);
 
@@ -74,6 +77,13 @@ export interface CursorResumeCheckpointEnvironment {
   readonly privateWorkspacePath: string;
   /** Empty-on-open private HOME/config root that persists Cursor's opaque session state across resumes. */
   readonly privateStatePath: string;
+  /** Development-only subscription authentication root. When present, Cursor
+   * receives this server-owned HOME instead of the empty private state root.
+   * The process still runs in the empty private workspace. */
+  readonly trustedSubscriptionAuthHomePath?: string;
+  /** Server acknowledgement for the already-verified empty private workspace.
+   * This only suppresses Cursor's workspace prompt; it does not approve tools. */
+  readonly preauthorizeEmptyWorkspace?: boolean;
   /** Repository, project and database roots that the private paths must not overlap. */
   readonly forbiddenRoots: readonly string[];
   /** Server-owned credentials and network trust only. Arbitrary environment inheritance is forbidden. */
@@ -160,29 +170,6 @@ function positiveInteger(value: number | undefined, fallback: number, field: str
   return selected;
 }
 
-function assertExactKeys(value: Record<string, unknown>, expected: readonly string[], field: string): void {
-  const keys = Object.keys(value).sort();
-  const required = [...expected].sort();
-  if (keys.length !== required.length || keys.some((key, index) => key !== required[index])) {
-    throw checkpointError(
-      "CURSOR_CHECKPOINT_PROTOCOL_INVALID",
-      `${field} must contain exactly: ${required.join(", ")}.`
-    );
-  }
-}
-
-function assertSafeId(value: unknown, field: string): asserts value is string {
-  if (typeof value !== "string" || !SAFE_ID.test(value)) {
-    throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", `${field} is invalid.`);
-  }
-}
-
-function assertText(value: unknown, field: string, maxBytes = MAX_ASSISTANT_TEXT_BYTES): asserts value is string {
-  if (typeof value !== "string" || !value.trim() || byteLength(value) > maxBytes || value.includes("\0")) {
-    throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", `${field} is invalid.`);
-  }
-}
-
 function assertSessionId(value: unknown, field: string): asserts value is string {
   if (
     typeof value !== "string"
@@ -201,73 +188,12 @@ function sanitizeProcessMessage(value: string, fallback: string): string {
 }
 
 function parseTurn(raw: string, allowedToolNames: readonly string[]): CursorCheckpointTurn {
-  if (byteLength(raw) > DEFAULT_MAX_PROMPT_BYTES) {
-    throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", "Cursor checkpoint response is too large.");
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw.trim()) as unknown;
-  } catch {
-    throw checkpointError(
-      "CURSOR_CHECKPOINT_PROTOCOL_INVALID",
-      "Cursor checkpoint result must be exactly one JSON object without prose or fences."
-    );
-  }
-  if (!isRecord(parsed)) {
-    throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", "Cursor checkpoint result must be a JSON object.");
-  }
-  assertExactKeys(parsed, ["action", "assistantMessage", "protocolVersion"], "checkpoint result");
-  if (parsed.protocolVersion !== CURSOR_CHECKPOINT_PROTOCOL_VERSION) {
-    throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_MISMATCH", "Cursor checkpoint protocol version changed or is unknown.");
-  }
-  if (!isRecord(parsed.action) || typeof parsed.action.type !== "string") {
-    throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", "checkpoint result action is invalid.");
-  }
-
-  if (parsed.action.type === "action_batch") {
-    assertExactKeys(parsed.action, ["batch", "type"], "checkpoint result action");
-    let assistantMessage: CursorCheckpointAssistantMessage | null = null;
-    if (parsed.assistantMessage !== null) {
-      if (!isRecord(parsed.assistantMessage)) {
-        throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", "assistantMessage is invalid.");
-      }
-      assertExactKeys(parsed.assistantMessage, ["messageId", "text"], "assistantMessage");
-      assertSafeId(parsed.assistantMessage.messageId, "assistantMessage.messageId");
-      assertText(parsed.assistantMessage.text, "assistantMessage.text", 8_000);
-      assistantMessage = Object.freeze({
-        messageId: parsed.assistantMessage.messageId,
-        text: parsed.assistantMessage.text
-      });
-    }
-    const batch = parseCheckpointActionBatch(parsed.action.batch, { allowedToolNames });
-    return Object.freeze({
-      protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
-      assistantMessage,
-      action: Object.freeze({ type: "action_batch", batch })
-    });
-  }
-
-  if (parsed.action.type === "final") {
-    if (parsed.assistantMessage !== null) {
-      throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", "A final checkpoint cannot duplicate assistantMessage.");
-    }
-    assertExactKeys(parsed.action, ["finishReceiptId", "messageId", "text", "type"], "checkpoint final action");
-    assertSafeId(parsed.action.messageId, "final.messageId");
-    assertSafeId(parsed.action.finishReceiptId, "final.finishReceiptId");
-    assertText(parsed.action.text, "final.text", 8_000);
-    return Object.freeze({
-      protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
-      assistantMessage: null,
-      action: Object.freeze({
-        type: "final",
-        messageId: parsed.action.messageId,
-        finishReceiptId: parsed.action.finishReceiptId,
-        text: parsed.action.text
-      })
-    });
-  }
-
-  throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", "Cursor checkpoint action type is unknown.");
+  const turn = parseCheckpointTurn(raw, {
+    protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+    allowedToolNames,
+    errorPrefix: "CURSOR_CHECKPOINT"
+  });
+  return turn as CursorCheckpointTurn;
 }
 
 function canonicalPathContains(parent: string, candidate: string): boolean {
@@ -289,7 +215,7 @@ async function canonicalDirectory(value: string, field: string): Promise<string>
 async function assertPrivateEnvironment(
   environment: CursorResumeCheckpointEnvironment,
   open: boolean
-): Promise<{ workspace: string; state: string }> {
+): Promise<{ workspace: string; state: string; authHome?: string }> {
   if (!SAFE_ID.test(environment.environmentId)) {
     throw checkpointError("CURSOR_CHECKPOINT_UNSAFE_ENVIRONMENT", "environmentId is invalid.");
   }
@@ -298,6 +224,15 @@ async function assertPrivateEnvironment(
   }
   const workspace = await canonicalDirectory(environment.privateWorkspacePath, "privateWorkspacePath");
   const state = await canonicalDirectory(environment.privateStatePath, "privateStatePath");
+  const authHome = environment.trustedSubscriptionAuthHomePath
+    ? await canonicalDirectory(environment.trustedSubscriptionAuthHomePath, "trustedSubscriptionAuthHomePath")
+    : undefined;
+  if (environment.preauthorizeEmptyWorkspace && !authHome) {
+    throw checkpointError(
+      "CURSOR_CHECKPOINT_UNSAFE_ENVIRONMENT",
+      "Preauthorizing a private workspace requires an explicit trusted subscription auth home."
+    );
+  }
   if (canonicalPathContains(workspace, state) || canonicalPathContains(state, workspace)) {
     throw checkpointError("CURSOR_CHECKPOINT_UNSAFE_ENVIRONMENT", "Private workspace and state directories must not overlap.");
   }
@@ -328,18 +263,21 @@ async function assertPrivateEnvironment(
       );
     }
   }
-  return { workspace, state };
+  return { workspace, state, ...(authHome ? { authHome } : {}) };
 }
 
 function buildEnvironment(
   state: string,
+  authHome: string | undefined,
   entries: readonly CursorCheckpointCredentialEnvironmentEntry[]
 ): Readonly<Record<string, string>> {
   const output: Record<string, string> = Object.create(null) as Record<string, string>;
-  output.HOME = state;
-  output.USERPROFILE = state;
-  output.CURSOR_CONFIG_DIR = path.join(state, "cursor-config");
-  output.XDG_CONFIG_HOME = path.join(state, "xdg-config");
+  output.HOME = authHome ?? state;
+  output.USERPROFILE = authHome ?? state;
+  if (!authHome) {
+    output.CURSOR_CONFIG_DIR = path.join(state, "cursor-config");
+    output.XDG_CONFIG_HOME = path.join(state, "xdg-config");
+  }
   const names = new Set<string>();
   for (const entry of entries) {
     if (
@@ -440,7 +378,19 @@ function parseCursorOutput(input: {
         throw checkpointError("SECURITY_BOUNDARY_BREACH", "Cursor reported an unsafe permission mode.");
       }
     }
-    if (event.type === "assistant" || event.type === "user" || event.type === "system" || event.type === "result") {
+    if (
+      event.type === "thinking"
+      && !new Set(["delta", "completed"]).has(typeof event.subtype === "string" ? event.subtype : "")
+    ) {
+      throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_MISMATCH", "Cursor stream contained an unknown thinking event subtype.");
+    }
+    if (
+      event.type === "assistant"
+      || event.type === "user"
+      || event.type === "system"
+      || event.type === "thinking"
+      || event.type === "result"
+    ) {
       assertSessionId(event.session_id, `${event.type}.session_id`);
       if (sessionId === undefined) sessionId = event.session_id;
       else if (event.session_id !== sessionId) {
@@ -586,7 +536,7 @@ export class CursorResumeCheckpointTransport {
 
     const resolved = await assertPrivateEnvironment(input.environment, input.mode === "open");
     const credentials = input.environment.credentialEnvironment ?? [];
-    const environment = buildEnvironment(resolved.state, credentials);
+    const environment = buildEnvironment(resolved.state, resolved.authHome, credentials);
     const args = [
       "--print",
       "--output-format",
@@ -596,6 +546,7 @@ export class CursorResumeCheckpointTransport {
       "ask",
       "--workspace",
       resolved.workspace,
+      ...(input.environment.preauthorizeEmptyWorkspace ? ["--trust"] : []),
       "--model",
       input.model,
       ...(input.mode === "resume" ? ["--resume", input.expectedSessionId!] : [])

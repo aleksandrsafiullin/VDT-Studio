@@ -139,10 +139,18 @@ commas without globally replacing commas or changing `min(a,b)` semantics.
   their typed response and cannot be bypassed by a generic instruction.
 - Cursor ACP is a default-off, unverified canary. No External profile has
   `hard_verified` isolation evidence, and no adapter is publicly available.
-- Cursor checkpoint/resume is also implemented only as a default-off,
-  unverified canary. Its deterministic tests prove one opaque session ID,
+- Cursor checkpoint/resume is an unverified trusted-local qualification
+  canary behind `VDT_CURSOR_SESSION_CANARY_ENABLED=true`; the trusted-local
+  development `run.command` enables it while production builds still reject it.
+  The candidate binding pins the probed CLI version, model and
+  tool-catalog hash. Normal Cursor UI starts fail closed when no qualified
+  binding exists and never falls back to the per-decision loop. Deterministic
+  tests and a credentialed local smoke prove one opaque session ID,
   ActionBatch-before-resume sequencing and fail-closed parsing, but not hard
-  provider isolation. Codex and Claude now have typed, default-unavailable
+  provider isolation. Subscription authentication uses the trusted user's
+  Cursor home while execution remains in an empty private workspace; the
+  canary acknowledges trust only for that verified empty workspace and never
+  enables force/yolo. Codex and Claude now have typed, default-unavailable
   checkpoint protocol canaries with injected fake-runner tests; executable
   session engines, live protocol evidence and hard isolation remain incomplete.
 - A manual node update during structured inference fences the next stale
@@ -167,7 +175,9 @@ Known limitations:
 
 - classification domains are limited to `mining`, `finance`, `saas` and `generic`;
 - normalization is effectively English/ASCII and does not reliably classify Russian or Kazakh requests;
-- `skill.read` currently mutates selection and no revision-aware explicit selection command exists;
+- `skill.read` is selection-neutral; the V1 compatibility runtime currently
+  activates selection only when `skill.compile_recipe` is called, because the
+  revision-aware `skill.select` command is not implemented yet;
 - no-match can select the generic skill automatically;
 - a recipe can be labelled complete without executable formula closure;
 - per-skill evaluation coverage is incomplete.
@@ -183,7 +193,8 @@ The accepted corrective target is documented in [`ADR-003`](adr/ADR-003-single-c
 - translated copies, language aliases and keyword/regex/marker classifiers are not the multilingual architecture;
 - publishable recipe artifacts in Wave 1B depend on the strict metric/formula/input/recipe schemas from Wave 1A.1.
 
-This target is not implemented. Actor and authorization context must be server-issued; model/tool/request data cannot choose principal, tenant, workspace, project, roles or approval authority. Corrective feature flags remain server-owned, fail-closed and default OFF.
+Only the selection-neutral `skill.read` behavior is implemented from this
+target. Actor and authorization context must be server-issued; model/tool/request data cannot choose principal, tenant, workspace, project, roles or approval authority. Corrective feature flags remain server-owned, fail-closed and default OFF.
 
 Skill changes must keep source registry, recipe mappings, tests and generated sidecar resources aligned. Run:
 

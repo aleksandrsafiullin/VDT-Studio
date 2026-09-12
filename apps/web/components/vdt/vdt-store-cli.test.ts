@@ -129,7 +129,72 @@ function byokExecutionSettings(): ExecutionSettings {
   };
 }
 
-function mockAgentStartFetch(runId = "agent-run-start-1") {
+function agentExecutionBindingsGetResponse(options?: {
+  backendId?: string;
+  externalBackendId?: string;
+  externalModelId?: string;
+  empty?: boolean;
+}) {
+  if (options?.empty) {
+    return {
+      schemaVersion: 1,
+      ok: true,
+      defaultBindingId: null,
+      bindings: []
+    };
+  }
+
+  if (options?.externalBackendId) {
+    return {
+      schemaVersion: 1,
+      ok: true,
+      defaultBindingId: null,
+      bindings: [{
+        bindingId: `${options.externalBackendId}_session`,
+        executionProfile: "external_cli_agent",
+        engineId: "checkpoint-session",
+        engineAdapterId: "checkpoint-session-v1",
+        backendId: options.externalBackendId,
+        modelId: options.externalModelId ?? "agent-default"
+      }]
+    };
+  }
+
+  const backendId = options?.backendId ?? "openai_compatible";
+  return {
+    schemaVersion: 1,
+    ok: true,
+    defaultBindingId: "model_agent_default",
+    bindings: [{
+      bindingId: "model_agent_default",
+      executionProfile: "model_agent",
+      engineId: "in-product-model-agent",
+      engineAdapterId: "http-structured-replay-canary-v1",
+      backendId,
+      modelId: "gpt-test"
+    }]
+  };
+}
+
+function respondAgentRunsEndpoint(
+  url: string,
+  init: RequestInit | undefined,
+  options: {
+    bindings?: ReturnType<typeof agentExecutionBindingsGetResponse>;
+    onPost: (init?: RequestInit) => Response | Promise<Response>;
+  }
+): Response | Promise<Response> | null {
+  if (!url.endsWith("/api/agent/runs")) return null;
+  if (init?.method === "POST") {
+    return options.onPost(init);
+  }
+  return jsonResponse(options.bindings ?? agentExecutionBindingsGetResponse());
+}
+
+function mockAgentStartFetch(
+  runId = "agent-run-start-1",
+  bindings: ReturnType<typeof agentExecutionBindingsGetResponse> = agentExecutionBindingsGetResponse()
+) {
   const fetchMock = vi.mocked(fetch);
   vi.stubGlobal("EventSource", class {
     addEventListener() {}
@@ -137,8 +202,9 @@ function mockAgentStartFetch(runId = "agent-run-start-1") {
   });
   fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url.endsWith("/api/agent/runs")) {
-      return {
+    const agentRunsResponse = respondAgentRunsEndpoint(url, init, {
+      bindings,
+      onPost: (postInit) => ({
         ok: true,
         status: 200,
         text: async () => JSON.stringify({
@@ -148,15 +214,16 @@ function mockAgentStartFetch(runId = "agent-run-start-1") {
             runId,
             status: "running",
             phase: "planning_decomposition",
-            request: JSON.parse(String(init?.body)),
+            request: JSON.parse(String(postInit?.body)),
             selectedSkills: [],
             events: [],
             createdAt: "2026-06-27T00:00:00.000Z",
             updatedAt: "2026-06-27T00:00:00.000Z"
           }
         })
-      } as Response;
-    }
+      } as Response)
+    });
+    if (agentRunsResponse) return agentRunsResponse;
 
     return {
       ok: true,
@@ -168,13 +235,18 @@ function mockAgentStartFetch(runId = "agent-run-start-1") {
 }
 
 function parseAgentStartBody(fetchMock: MockedFunction<typeof fetch>) {
-  const startCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/agent/runs"));
+  const startCall = fetchMock.mock.calls.find(
+    ([url, init]) => String(url).endsWith("/api/agent/runs") && init?.method === "POST"
+  );
   expect(startCall).toBeDefined();
   const [, requestInit] = startCall!;
   return JSON.parse(String(requestInit?.body)) as {
     mode?: string;
-    input?: { prompt?: string; project?: { id?: string } };
+    input?: { prompt?: string; project?: { id?: string }; businessContext?: string };
     workspace?: { vdtId?: string };
+    executionBindingId?: string;
+    providerId?: string;
+    providerConfig?: unknown;
   };
 }
 
@@ -324,8 +396,8 @@ describe("vdt-store change-set workflow", () => {
     });
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/agent/runs")) {
-        return {
+      const agentRunsResponse = respondAgentRunsEndpoint(url, init, {
+        onPost: (postInit) => ({
           ok: true,
           status: 200,
           text: async () => JSON.stringify({
@@ -335,7 +407,7 @@ describe("vdt-store change-set workflow", () => {
               runId: "agent-run-start-1",
               status: "needs_user_input",
               phase: "asking_clarifying_questions",
-              request: JSON.parse(String(init?.body)),
+              request: JSON.parse(String(postInit?.body)),
               selectedSkills: [{ id: "mining.haulage_truck_cycle", path: "mining/haulage-truck-cycle.md", title: "Truck cycle", score: 92, reason: "AI selected truck cycle.", matchedTerms: [] }],
               events: [],
               pendingQuestions: [{ id: "payload_per_trip_t", question: "Payload?", reason: "Needed.", required: true }],
@@ -343,8 +415,9 @@ describe("vdt-store change-set workflow", () => {
               updatedAt: "2026-06-27T00:00:00.000Z"
             }
           })
-        } as Response;
-      }
+        } as Response)
+      });
+      if (agentRunsResponse) return agentRunsResponse;
 
       return {
         ok: true,
@@ -375,20 +448,73 @@ describe("vdt-store change-set workflow", () => {
 
     await useVdtStudioStore.getState().startAgentRun(prompt, { researchMode: "on" });
 
-    const startCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/agent/runs"));
-    expect(startCall).toBeDefined();
-    const [, requestInit] = startCall!;
-    const body = JSON.parse(String(requestInit?.body)) as {
-      input?: { prompt?: string; businessContext?: string };
-      providerId?: string;
-    };
-    expect(body.providerId).toBe("openai_compatible");
+    const body = parseAgentStartBody(fetchMock);
+    expect(body.executionBindingId).toBe("model_agent_default");
+    expect(body).not.toHaveProperty("providerId");
+    expect(body).not.toHaveProperty("providerConfig");
     expect((body as { options?: { researchMode?: string } }).options?.researchMode).toBe("on");
     expect(body.input?.prompt).toBe(prompt);
     expect(body.input?.businessContext ?? "").not.toContain(prompt);
     expect(useVdtStudioStore.getState().agentRun?.selectedSkills.map((skill) => skill.id)).toEqual([
       "mining.haulage_truck_cycle"
     ]);
+  });
+
+  it("startAgentRun fails locally for BYOK when no server binding is available", async () => {
+    const fetchMock = mockAgentStartFetch("agent-run-unbound", agentExecutionBindingsGetResponse({ empty: true }));
+    useVdtStudioStore.setState({
+      executionSettings: byokExecutionSettings(),
+      brief: {
+        rootKpi: "Ore haulage",
+        industry: "Mining",
+        businessContext: "",
+        unit: "tonnes/year",
+        timePeriod: "year",
+        goal: "Build a VDT",
+        levelOfDetail: "medium"
+      }
+    });
+
+    const started = await useVdtStudioStore.getState().startAgentRun("Build a model");
+
+    expect(started).toBe(false);
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) => String(url).endsWith("/api/agent/runs") && init?.method === "POST"
+      )
+    ).toBe(false);
+    expect(useVdtStudioStore.getState().agentError).toMatch(/server-managed execution binding/i);
+    expect(useVdtStudioStore.getState().isGenerating).toBe(false);
+  });
+
+  it("startAgentRun fails locally for BYOK when bindings backendId does not match providerId", async () => {
+    const fetchMock = mockAgentStartFetch(
+      "agent-run-mismatch",
+      agentExecutionBindingsGetResponse({ backendId: "mock" })
+    );
+    useVdtStudioStore.setState({
+      executionSettings: byokExecutionSettings(),
+      brief: {
+        rootKpi: "Ore haulage",
+        industry: "Mining",
+        businessContext: "",
+        unit: "tonnes/year",
+        timePeriod: "year",
+        goal: "Build a VDT",
+        levelOfDetail: "medium"
+      }
+    });
+
+    const started = await useVdtStudioStore.getState().startAgentRun("Build a model");
+
+    expect(started).toBe(false);
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) => String(url).endsWith("/api/agent/runs") && init?.method === "POST"
+      )
+    ).toBe(false);
+    expect(useVdtStudioStore.getState().agentError).toMatch(/server-managed execution binding/i);
+    expect(useVdtStudioStore.getState().isGenerating).toBe(false);
   });
 
   it("startAgentRun can select a discovered server binding without sending provider authority", async () => {
@@ -425,8 +551,8 @@ describe("vdt-store change-set workflow", () => {
     });
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/agent/runs")) {
-        return {
+      const agentRunsResponse = respondAgentRunsEndpoint(url, init, {
+        onPost: (postInit) => ({
           ok: true,
           status: 200,
           text: async () => JSON.stringify({
@@ -436,15 +562,16 @@ describe("vdt-store change-set workflow", () => {
               runId: "agent-run-continue-1",
               status: "running",
               phase: "planning_decomposition",
-              request: JSON.parse(String(init?.body)),
+              request: JSON.parse(String(postInit?.body)),
               selectedSkills: [],
               events: [],
               createdAt: "2026-06-27T00:00:00.000Z",
               updatedAt: "2026-06-27T00:00:00.000Z"
             }
           })
-        } as Response;
-      }
+        } as Response)
+      });
+      if (agentRunsResponse) return agentRunsResponse;
 
       return {
         ok: true,
@@ -481,12 +608,7 @@ describe("vdt-store change-set workflow", () => {
 
     await useVdtStudioStore.getState().startAgentRun(prompt);
 
-    const startCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/agent/runs"));
-    expect(startCall).toBeDefined();
-    const [, requestInit] = startCall!;
-    const body = JSON.parse(String(requestInit?.body)) as {
-      mode?: string;
-      input?: { prompt?: string; project?: { id?: string } };
+    const body = parseAgentStartBody(fetchMock) as ReturnType<typeof parseAgentStartBody> & {
       workspace?: { projectId?: string; vdtId?: string };
     };
     expect(body.mode).toBe("continue_project");
@@ -1221,20 +1343,23 @@ describe("vdt-store change-set workflow", () => {
     let capturedStartBody: Record<string, unknown> | undefined;
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/agent/runs")) {
-        capturedStartBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        return jsonResponse({
-          ok: true,
-          runId: "agent-run-continue-project",
-          snapshot: runtimeSnapshotFixture({
+      const agentRunsResponse = respondAgentRunsEndpoint(url, init, {
+        onPost: (postInit) => {
+          capturedStartBody = JSON.parse(String(postInit?.body)) as Record<string, unknown>;
+          return jsonResponse({
+            ok: true,
             runId: "agent-run-continue-project",
-            status: "running",
-            phase: "building_graph",
-            completedAt: undefined,
-            request: capturedStartBody
-          })
-        });
-      }
+            snapshot: runtimeSnapshotFixture({
+              runId: "agent-run-continue-project",
+              status: "running",
+              phase: "building_graph",
+              completedAt: undefined,
+              request: capturedStartBody
+            })
+          });
+        }
+      });
+      if (agentRunsResponse) return agentRunsResponse;
       return jsonResponse({ agents: [] });
     });
 
@@ -1580,17 +1705,21 @@ describe("vdt-store cli rescan", () => {
     let capturedBody: Record<string, unknown> | undefined;
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/agent/runs")) {
-        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        return jsonResponse({
-          ok: true,
-          runId: "agent-run-cursor",
-          snapshot: runtimeSnapshotFixture({
+      const agentRunsResponse = respondAgentRunsEndpoint(url, init, {
+        bindings: agentExecutionBindingsGetResponse({ externalBackendId: "cursor_subscription" }),
+        onPost: (postInit) => {
+          capturedBody = JSON.parse(String(postInit?.body)) as Record<string, unknown>;
+          return jsonResponse({
+            ok: true,
             runId: "agent-run-cursor",
-            request: capturedBody
-          })
-        });
-      }
+            snapshot: runtimeSnapshotFixture({
+              runId: "agent-run-cursor",
+              request: capturedBody
+            })
+          });
+        }
+      });
+      if (agentRunsResponse) return agentRunsResponse;
       return jsonResponse({ agents: [] });
     });
 
@@ -1629,12 +1758,10 @@ describe("vdt-store cli rescan", () => {
 
       expect(capturedBody).toMatchObject({
         mode: "generate_vdt",
-        providerId: "local_runner",
-        providerConfig: expect.objectContaining({
-          backendId: "cursor_subscription",
-          timeoutMs: 180_000
-        })
+        executionBindingId: "cursor_subscription_session"
       });
+      expect(capturedBody).not.toHaveProperty("providerId");
+      expect(capturedBody).not.toHaveProperty("providerConfig");
       expect(JSON.stringify(capturedBody)).not.toContain("pairingToken");
       const state = useVdtStudioStore.getState();
       expect(state.aiError).toBeUndefined();
@@ -1645,23 +1772,27 @@ describe("vdt-store cli rescan", () => {
     }
   });
 
-  it("starts Codex CLI generation through the canonical agent run without standalone pairing", async () => {
+  it("fails closed for Codex CLI when no server-managed session adapter is registered", async () => {
     vi.stubEnv("NEXT_PUBLIC_VDT_APP_MODE", "desktop");
     const fetchMock = vi.mocked(fetch);
     let capturedBody: Record<string, unknown> | undefined;
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/agent/runs")) {
-        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        return jsonResponse({
-          ok: true,
-          runId: "agent-run-codex",
-          snapshot: runtimeSnapshotFixture({
+      const agentRunsResponse = respondAgentRunsEndpoint(url, init, {
+        bindings: agentExecutionBindingsGetResponse({ empty: true }),
+        onPost: (postInit) => {
+          capturedBody = JSON.parse(String(postInit?.body)) as Record<string, unknown>;
+          return jsonResponse({
+            ok: true,
             runId: "agent-run-codex",
-            request: capturedBody
-          })
-        });
-      }
+            snapshot: runtimeSnapshotFixture({
+              runId: "agent-run-codex",
+              request: capturedBody
+            })
+          });
+        }
+      });
+      if (agentRunsResponse) return agentRunsResponse;
       return jsonResponse({ agents: [] });
     });
 
@@ -1698,18 +1829,10 @@ describe("vdt-store cli rescan", () => {
 
       await useVdtStudioStore.getState().generateWithAi();
 
-      expect(capturedBody).toMatchObject({
-        mode: "generate_vdt",
-        providerId: "local_runner",
-        providerConfig: expect.objectContaining({
-          backendId: "codex_subscription",
-          timeoutMs: 180_000
-        })
-      });
-      expect(JSON.stringify(capturedBody)).not.toContain("pairingToken");
+      expect(capturedBody).toBeUndefined();
       const state = useVdtStudioStore.getState();
-      expect(state.aiError).toBeUndefined();
-      expect(state.agentRun?.runId).toBe("agent-run-codex");
+      expect(state.aiError).toMatch(/no qualified server-managed Codex session binding is available/i);
+      expect(state.agentRun).toBeUndefined();
       expect(state.isGenerating).toBe(false);
     } finally {
       vi.unstubAllEnvs();
@@ -1760,11 +1883,13 @@ describe("vdt-store cli rescan", () => {
       ]
     });
 
-    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/agent/runs")) {
-        return jsonResponse({ ok: false, error: providerMessage }, 502);
-      }
+      const agentRunsResponse = respondAgentRunsEndpoint(url, init, {
+        bindings: agentExecutionBindingsGetResponse({ externalBackendId: "claude_subscription" }),
+        onPost: () => jsonResponse({ ok: false, error: providerMessage }, 502)
+      });
+      if (agentRunsResponse) return agentRunsResponse;
       return jsonResponse({ agents: [] });
     });
 
@@ -1774,7 +1899,9 @@ describe("vdt-store cli rescan", () => {
     expect(state.aiError).toContain(providerMessage);
     expect(state.isGenerating).toBe(false);
 
-    const generateCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/agent/runs"));
+    const generateCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).endsWith("/api/agent/runs") && init?.method === "POST"
+    );
     expect(generateCall).toBeDefined();
   });
 
@@ -1785,19 +1912,18 @@ describe("vdt-store generate activity", () => {
     localStorageMock.clear();
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        text: async () => JSON.stringify({
-          ok: true,
-          runId: "agent-run-store-1",
-          snapshot: runtimeSnapshotFixture()
-        }),
-        json: async () => ({
-          ok: true,
-          runId: "agent-run-store-1",
-          snapshot: runtimeSnapshotFixture()
-        })
+      vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const agentRunsResponse = respondAgentRunsEndpoint(url, init, {
+          bindings: agentExecutionBindingsGetResponse({ backendId: "mock" }),
+          onPost: () => jsonResponse({
+            ok: true,
+            runId: "agent-run-store-1",
+            snapshot: runtimeSnapshotFixture()
+          })
+        });
+        if (agentRunsResponse) return agentRunsResponse;
+        return jsonResponse({ agents: [] });
       })
     );
     useVdtStudioStore.setState({
@@ -2022,17 +2148,22 @@ describe("vdt-store generate activity", () => {
     let capturedStartBody: Record<string, unknown> | undefined;
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/agent/runs")) {
-        capturedStartBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        return jsonResponse({
-          ok: true,
-          runId: "agent-run-local-cli",
-          snapshot: runtimeSnapshotFixture({
+      const agentRunsResponse = respondAgentRunsEndpoint(url, init, {
+        bindings: agentExecutionBindingsGetResponse({ externalBackendId: "codex_subscription" }),
+        onPost: (postInit) => {
+          capturedStartBody = JSON.parse(String(postInit?.body)) as Record<string, unknown>;
+          return jsonResponse({
+            ok: true,
             runId: "agent-run-local-cli",
-            request: capturedStartBody
-          })
-        });
-      }
+            snapshot: runtimeSnapshotFixture({
+              runId: "agent-run-local-cli",
+              request: capturedStartBody,
+              executionSummary: { backendId: "codex_subscription" }
+            })
+          });
+        }
+      });
+      if (agentRunsResponse) return agentRunsResponse;
 
       return jsonResponse({ agents: [] });
     });
@@ -2071,12 +2202,9 @@ describe("vdt-store generate activity", () => {
     const activity = useVdtStudioStore.getState().generateActivity;
     expect(capturedStartBody).toMatchObject({
       mode: "generate_vdt",
-      providerId: "local_runner",
-      providerConfig: expect.objectContaining({
-        backendId: "codex_subscription",
-        timeoutMs: 180_000
-      })
+      executionBindingId: "codex_subscription_session"
     });
+    expect(capturedStartBody).not.toHaveProperty("providerId");
     expect(activity).toMatchObject({
       status: "ready",
       phase: "ready",
@@ -2103,35 +2231,39 @@ describe("vdt-store generate activity", () => {
     let cancelRequested = false;
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/agent/runs")) {
-        capturedStartBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        return jsonResponse({
-          ok: true,
-          runId: "agent-run-needs-input",
-          snapshot: runtimeSnapshotFixture({
+      const agentRunsResponse = respondAgentRunsEndpoint(url, init, {
+        bindings: agentExecutionBindingsGetResponse({ externalBackendId: "codex_subscription" }),
+        onPost: (postInit) => {
+          capturedStartBody = JSON.parse(String(postInit?.body)) as Record<string, unknown>;
+          return jsonResponse({
+            ok: true,
             runId: "agent-run-needs-input",
-            status: "needs_user_input",
-            phase: "asking_clarifying_questions",
-            request: capturedStartBody,
-            project: undefined,
-            finalReport: undefined,
-            pendingQuestions: [
-              {
-                id: "rated_truck_payload",
-                question: "What is the rated truck payload?",
-                reason: "Needed to calculate haulage capacity.",
-                required: true
-              }
-            ],
-            publicStatus: {
-              phase: "waiting_user",
-              message: "Waiting for your answer.",
-              updatedAt: "2026-06-24T10:00:05.000Z"
-            },
-            completedAt: undefined
-          })
-        });
-      }
+            snapshot: runtimeSnapshotFixture({
+              runId: "agent-run-needs-input",
+              status: "needs_user_input",
+              phase: "asking_clarifying_questions",
+              request: capturedStartBody,
+              project: undefined,
+              finalReport: undefined,
+              pendingQuestions: [
+                {
+                  id: "rated_truck_payload",
+                  question: "What is the rated truck payload?",
+                  reason: "Needed to calculate haulage capacity.",
+                  required: true
+                }
+              ],
+              publicStatus: {
+                phase: "waiting_user",
+                message: "Waiting for your answer.",
+                updatedAt: "2026-06-24T10:00:05.000Z"
+              },
+              completedAt: undefined
+            })
+          });
+        }
+      });
+      if (agentRunsResponse) return agentRunsResponse;
       if (url.endsWith("/api/agent/runs/agent-run-needs-input/cancel")) {
         cancelRequested = true;
         return jsonResponse({ ok: true });
@@ -2191,7 +2323,7 @@ describe("vdt-store generate activity", () => {
     await useVdtStudioStore.getState().generateWithAi();
     expect(capturedStartBody).toMatchObject({
       mode: "generate_vdt",
-      providerId: "local_runner"
+      executionBindingId: "codex_subscription_session"
     });
     await vi.waitFor(() => expect(useVdtStudioStore.getState().generateActivity?.status).toBe("needs_user_input"));
 
@@ -2209,10 +2341,11 @@ describe("vdt-store generate activity", () => {
     stubEventSource();
     let cancelRequested = false;
     const fetchMock = vi.mocked(fetch);
-    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/agent/runs")) {
-        return jsonResponse({
+      const agentRunsResponse = respondAgentRunsEndpoint(url, init, {
+        bindings: agentExecutionBindingsGetResponse({ backendId: "mock" }),
+        onPost: () => jsonResponse({
           ok: true,
           runId: "agent-run-cancel",
           snapshot: runtimeSnapshotFixture({
@@ -2228,8 +2361,9 @@ describe("vdt-store generate activity", () => {
             },
             completedAt: undefined
           })
-        });
-      }
+        })
+      });
+      if (agentRunsResponse) return agentRunsResponse;
       if (url.endsWith("/api/agent/runs/agent-run-cancel/cancel")) {
         cancelRequested = true;
         return jsonResponse({ ok: true });
@@ -2282,17 +2416,21 @@ describe("vdt-store generate activity", () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/agent/runs")) {
-        const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        return jsonResponse({
-          ok: true,
-          runId: "agent-run-no-legacy",
-          snapshot: runtimeSnapshotFixture({
+      const agentRunsResponse = respondAgentRunsEndpoint(url, init, {
+        bindings: agentExecutionBindingsGetResponse({ backendId: "mock" }),
+        onPost: (postInit) => {
+          const request = JSON.parse(String(postInit?.body)) as Record<string, unknown>;
+          return jsonResponse({
+            ok: true,
             runId: "agent-run-no-legacy",
-            request
-          })
-        });
-      }
+            snapshot: runtimeSnapshotFixture({
+              runId: "agent-run-no-legacy",
+              request
+            })
+          });
+        }
+      });
+      if (agentRunsResponse) return agentRunsResponse;
       return jsonResponse({ agents: [] });
     });
 

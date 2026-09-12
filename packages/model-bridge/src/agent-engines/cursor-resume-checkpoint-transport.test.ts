@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -32,6 +32,84 @@ function actionBatchResult(sessionId: string): string {
       batch: {
         calls: [{ externalCallId: "call-1", toolName: "vdt.echo", args: { value: 1 } }]
       }
+    }
+  });
+}
+
+function directCallsResult(): string {
+  return JSON.stringify({
+    protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+    assistantMessage: null,
+    action: {
+      type: "action_batch",
+      calls: [{ externalCallId: "call-direct-1", toolName: "vdt.echo", args: { value: 2 } }]
+    }
+  });
+}
+
+function directCallsWithStringMessageResult(): string {
+  return JSON.stringify({
+    protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+    assistantMessage: "I will build the two fleet branches.",
+    action: {
+      type: "action_batch",
+      calls: [{ externalCallId: "call-string-1", toolName: "vdt.echo", args: { value: 3 } }]
+    }
+  });
+}
+
+function userAskResult(): string {
+  return JSON.stringify({
+    protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+    assistantMessage: "I need one topology choice.",
+    action: {
+      type: "user.ask",
+      questions: [{
+        id: "fleet_split",
+        question: "Use two fleet branches?",
+        reason: "Prevents averaging unlike fleets.",
+        required: true,
+        expectedAnswerType: "choice",
+        options: [
+          { id: "two_branches", label: "Two fleet branches" },
+          { id: "weighted_average", label: "Weighted average" }
+        ]
+      }]
+    }
+  });
+}
+
+function compactFinalResult(): string {
+  return JSON.stringify({
+    protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+    assistantMessage: "Ore hauled is complete and validated.",
+    action: {
+      type: "final",
+      finishReceiptId: "finish-receipt-1"
+    }
+  });
+}
+
+function nestedUserAskBatchResult(): string {
+  return JSON.stringify({
+    protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+    assistantMessage: "Confirm the fleet topology.",
+    action: {
+      type: "action_batch",
+      calls: [{
+        externalCallId: "call-nested-ask",
+        toolName: "user.ask",
+        args: {
+          questions: [{
+            id: "fleet_split",
+            question: "Use two branches?",
+            reason: "The truck classes differ.",
+            required: true,
+            expectedAnswerType: "choice",
+            options: [{ id: "yes", label: "Yes" }, { id: "no", label: "No" }]
+          }]
+        }
+      }]
     }
   });
 }
@@ -176,6 +254,241 @@ describe("CursorResumeCheckpointTransport", () => {
     }, ["vdt.echo"])).rejects.toMatchObject({ code: "SECURITY_BOUNDARY_BREACH" });
   });
 
+  it("uses an explicit trusted subscription auth home without exposing the private state as config", async () => {
+    const isolated = await environment();
+    const authHome = await temporaryDirectory("vdt-cursor-auth-home-");
+    const runner = new FakeRunner((request) => processResult(stream({
+      cwd: request.cwd,
+      sessionId: "cursor-session-auth"
+    })));
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent",
+      validatedCliVersion: "2026.08.1",
+      runner
+    });
+
+    await transport.executeSegment({
+      mode: "open",
+      environment: {
+        ...isolated,
+        trustedSubscriptionAuthHomePath: authHome,
+        preauthorizeEmptyWorkspace: true,
+        credentialEnvironment: [
+          { name: "PATH", value: "/usr/bin:/bin" },
+          { name: "USER", value: "trusted-user" },
+          { name: "LOGNAME", value: "trusted-user" }
+        ]
+      },
+      model: "auto",
+      prompt: "open",
+      signal: new AbortController().signal
+    }, ["vdt.echo"]);
+
+    const canonicalAuthHome = await realpath(authHome);
+    expect(runner.requests[0]?.environment).toEqual({
+      HOME: canonicalAuthHome,
+      USERPROFILE: canonicalAuthHome,
+      PATH: "/usr/bin:/bin",
+      USER: "trusted-user",
+      LOGNAME: "trusted-user"
+    });
+    expect(runner.requests[0]?.environment).not.toHaveProperty("CURSOR_CONFIG_DIR");
+    expect(runner.requests[0]?.environment).not.toHaveProperty("XDG_CONFIG_HOME");
+    expect(runner.requests[0]?.args).toContain("--trust");
+  });
+
+  it("accepts the current Cursor thinking delta envelope but rejects unknown thinking subtypes", async () => {
+    const isolated = await environment();
+    const runner = new FakeRunner((request, index) => processResult(stream({
+      cwd: request.cwd,
+      sessionId: "cursor-session-thinking",
+      extra: [{
+        type: "thinking",
+        subtype: index === 0 ? "delta" : "future-thinking-kind",
+        text: "bounded reasoning delta",
+        session_id: "cursor-session-thinking"
+      }]
+    })));
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent",
+      validatedCliVersion: "2026.08.1",
+      runner
+    });
+    const common = {
+      mode: "open" as const,
+      environment: isolated,
+      model: "auto",
+      prompt: "open",
+      signal: new AbortController().signal
+    };
+
+    await expect(transport.executeSegment(common, ["vdt.echo"])).resolves.toMatchObject({
+      sessionId: "cursor-session-thinking"
+    });
+    await expect(transport.executeSegment(common, ["vdt.echo"]))
+      .rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_PROTOCOL_MISMATCH" });
+  });
+
+  it("normalizes Cursor's unambiguous direct calls action into an ActionBatch", async () => {
+    const isolated = await environment();
+    const runner = new FakeRunner((request) => processResult(stream({
+      cwd: request.cwd,
+      sessionId: "cursor-session-direct-calls",
+      result: directCallsResult()
+    })));
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent",
+      validatedCliVersion: "2026.08.1",
+      runner
+    });
+
+    const result = await transport.executeSegment({
+      mode: "open",
+      environment: isolated,
+      model: "auto",
+      prompt: "open",
+      signal: new AbortController().signal
+    }, ["vdt.echo"]);
+
+    expect(result.turn.action).toMatchObject({
+      type: "action_batch",
+      batch: { calls: [{ externalCallId: "call-direct-1", toolName: "vdt.echo" }] }
+    });
+  });
+
+  it("normalizes Cursor's string assistant message with a stable transport ID", async () => {
+    const isolated = await environment();
+    const runner = new FakeRunner((request) => processResult(stream({
+      cwd: request.cwd,
+      sessionId: "cursor-session-string-message",
+      result: directCallsWithStringMessageResult()
+    })));
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent",
+      validatedCliVersion: "2026.08.1",
+      runner
+    });
+
+    const result = await transport.executeSegment({
+      mode: "open",
+      environment: isolated,
+      model: "auto",
+      prompt: "open",
+      signal: new AbortController().signal
+    }, ["vdt.echo"]);
+
+    expect(result.turn).toMatchObject({
+      assistantMessage: {
+        messageId: expect.stringMatching(/^message-[a-f0-9]{24}$/),
+        text: "I will build the two fleet branches."
+      }
+    });
+  });
+
+  it("normalizes Cursor's dedicated user.ask control action into a one-call batch", async () => {
+    const isolated = await environment();
+    const runner = new FakeRunner((request) => processResult(stream({
+      cwd: request.cwd,
+      sessionId: "cursor-session-user-ask",
+      result: userAskResult()
+    })));
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent",
+      validatedCliVersion: "2026.08.1",
+      runner
+    });
+
+    const result = await transport.executeSegment({
+      mode: "open",
+      environment: isolated,
+      model: "auto",
+      prompt: "open",
+      signal: new AbortController().signal
+    }, ["user.ask"]);
+
+    expect(result.turn).toMatchObject({
+      assistantMessage: { text: "I need one topology choice." },
+      action: {
+        type: "action_batch",
+        batch: { calls: [{ toolName: "user.ask" }] }
+      }
+    });
+    if (result.turn.action.type !== "action_batch") throw new Error("Expected an action batch.");
+    expect(result.turn.action.batch.calls[0]?.args).toMatchObject({
+      questions: [{
+        expectedAnswerType: "single_choice",
+        options: [
+          { id: "two_branches", value: "two_branches" },
+          { id: "weighted_average", value: "weighted_average" }
+        ]
+      }]
+    });
+  });
+
+  it("normalizes Cursor's compact final while keeping exactly one durable final message", async () => {
+    const isolated = await environment();
+    const runner = new FakeRunner((request) => processResult(stream({
+      cwd: request.cwd,
+      sessionId: "cursor-session-compact-final",
+      result: compactFinalResult()
+    })));
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent",
+      validatedCliVersion: "2026.08.1",
+      runner
+    });
+
+    const result = await transport.executeSegment({
+      mode: "resume",
+      environment: isolated,
+      model: "auto",
+      prompt: "finish",
+      expectedSessionId: "cursor-session-compact-final",
+      signal: new AbortController().signal
+    }, ["run.request_finish"]);
+
+    expect(result.turn).toEqual({
+      protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+      assistantMessage: null,
+      action: {
+        type: "final",
+        messageId: expect.stringMatching(/^message-[a-f0-9]{24}$/),
+        finishReceiptId: "finish-receipt-1",
+        text: "Ore hauled is complete and validated."
+      }
+    });
+  });
+
+  it("normalizes user.ask aliases inside a regular Cursor ActionBatch", async () => {
+    const isolated = await environment();
+    const runner = new FakeRunner((request) => processResult(stream({
+      cwd: request.cwd,
+      sessionId: "cursor-session-nested-ask",
+      result: nestedUserAskBatchResult()
+    })));
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent",
+      validatedCliVersion: "2026.08.1",
+      runner
+    });
+
+    const result = await transport.executeSegment({
+      mode: "open",
+      environment: isolated,
+      model: "auto",
+      prompt: "open",
+      signal: new AbortController().signal
+    }, ["user.ask"]);
+
+    if (result.turn.action.type !== "action_batch") throw new Error("Expected an action batch.");
+    expect(result.turn.action.batch.calls[0]?.args).toMatchObject({
+      questions: [{
+        expectedAnswerType: "single_choice",
+        options: [{ id: "yes", value: "yes" }, { id: "no", value: "no" }]
+      }]
+    });
+  });
+
   it("fails closed on session drift, unknown stream events, and workspace writes", async () => {
     const isolated = await environment();
     const outputs = [
@@ -222,7 +535,7 @@ describe("CursorResumeCheckpointTransport", () => {
     const isolated = await environment();
     const unsafe = {
       ...isolated,
-      credentialEnvironment: [{ name: "PATH", value: "/usr/local/bin" }]
+      credentialEnvironment: [{ name: "SHELL", value: "/bin/zsh" }]
     };
     const runner = new FakeRunner(() => processResult(""));
     const transport = new CursorResumeCheckpointTransport({

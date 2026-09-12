@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sequenceFromLastEventId } from "./route";
+import { sequenceFromLastEventId } from "./sse-cursor";
 
 const HASH_1 = `sha256:${"1".repeat(64)}`;
 const HASH_2 = `sha256:${"2".repeat(64)}`;

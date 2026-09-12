@@ -104,7 +104,7 @@ canaries. It also adds
 deterministic subtree instantiation, strict enum-field diagnostics, safe numeric
 comma parsing and a sanitized fixed-fixture benchmark harness.
 
-This is **partial/binding-registry default-off**, not a provider, recovery,
+This is **trusted-local canary wiring**, not a provider, recovery,
 security or performance `GO`:
 
 - a registered server-owned structured Model Agent binding uses the public
@@ -112,6 +112,10 @@ security or performance `GO`:
   micro-CLI compatibility runtime only under its separate production opt-in;
   the default Model binding is registered but disabled and undiscoverable until
   `VDT_MODEL_AGENT_ENABLED=true`, and there is no silent fallback;
+- trusted-local development `run.command` enables the explicitly unverified
+  Cursor checkpoint/resume canary and disables legacy fallback. Production
+  builds still reject the canary; a missing candidate binding fails closed
+  instead of reopening the per-decision CLI loop;
 - the legacy orchestrator no longer invokes `orchestrator_first_response`; its
   first `AgentDecision.statusMessage` supplies the first UX reply while the old
   task remains compatibility-registered;
@@ -124,8 +128,12 @@ security or performance `GO`:
   Sequence 4 finish-receipt hydration/finalization exist, but no public
   process-loss coordinator invokes them automatically;
 - Cursor ACP and Cursor checkpoint/resume have no accepted `hard_verified`
-  negative-security evidence and are unavailable as public External profiles.
-  The checkpoint adapter's fake-runner tests do not prove that print mode
+  negative-security evidence. ACP remains unavailable; checkpoint/resume is
+  available only as an explicit trusted-local qualification candidate, and
+  public start rejects it while it remains `unverified`. A local probe also
+  confirmed that the existing Cursor subscription login is unavailable inside
+  the required private HOME (`Authentication required`). The checkpoint adapter's fake-runner
+  tests do not prove that print mode
   cannot execute an unreported built-in tool. Codex/Claude have typed,
   default-unavailable protocol canaries and deterministic negative tests, but
   no executable External session engine, live qualification or hard-isolation

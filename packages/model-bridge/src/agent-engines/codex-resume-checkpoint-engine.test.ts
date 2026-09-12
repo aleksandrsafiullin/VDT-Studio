@@ -1,0 +1,245 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import type {
+  AgentEngineEvent,
+  AgentEngineHost,
+  AgentSessionBinding,
+  VdtGatewayToolCall,
+  VdtGatewayToolResult
+} from "@vdt-studio/vdt-agent-runtime";
+import { afterEach, describe, expect, it } from "vitest";
+import { VDT_CHECKPOINT_TURN_PROTOCOL_VERSION } from "./persistent-cli-checkpoint-canaries";
+import {
+  CodexResumeCheckpointEngine,
+  codexResumeCheckpointCapabilityHash
+} from "./codex-resume-checkpoint-engine";
+import {
+  CodexResumeCheckpointTransport,
+  type CodexResumeCheckpointEnvironment
+} from "./codex-resume-checkpoint-transport";
+import type { CheckpointProcessRequest, CheckpointProcessResult, CheckpointProcessRunner } from "./checkpoint-transport-common";
+
+const TOOL_CATALOG_HASH = `sha256:${"b".repeat(64)}`;
+const temporaryDirectories: string[] = [];
+
+async function temporaryDirectory(prefix: string): Promise<string> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), prefix));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+});
+
+function hashText(value: string): string {
+  return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
+}
+
+function turn(action: unknown, assistantMessage: unknown = null): string {
+  return JSON.stringify({
+    protocolVersion: VDT_CHECKPOINT_TURN_PROTOCOL_VERSION,
+    assistantMessage,
+    action
+  });
+}
+
+function codexStream(sessionId: string, turnText: string): string {
+  return [
+    { type: "thread.started", thread_id: sessionId },
+    { type: "turn.started" },
+    { type: "item.completed", item: { id: "item-1", type: "agent_message", text: turnText } },
+    { type: "turn.completed" }
+  ].map((event) => JSON.stringify(event)).join("\n") + "\n";
+}
+
+class FakeRunner implements CheckpointProcessRunner {
+  readonly requests: CheckpointProcessRequest[] = [];
+  readonly #respond: (request: CheckpointProcessRequest, index: number) => CheckpointProcessResult | Promise<CheckpointProcessResult>;
+
+  constructor(respond: (request: CheckpointProcessRequest, index: number) => CheckpointProcessResult | Promise<CheckpointProcessResult>) {
+    this.#respond = respond;
+  }
+
+  async run(request: CheckpointProcessRequest): Promise<CheckpointProcessResult> {
+    const copy = { ...request, args: [...request.args], environment: { ...request.environment } };
+    this.requests.push(copy);
+    return this.#respond(copy, this.requests.length - 1);
+  }
+}
+
+class EmptyRunner implements CheckpointProcessRunner {
+  run(): Promise<CheckpointProcessResult> {
+    return Promise.resolve({ exitCode: 0, signal: null, stdout: "", stderr: "" });
+  }
+}
+
+async function environment(): Promise<CodexResumeCheckpointEnvironment> {
+  return {
+    environmentId: "codex-env",
+    privateWorkspacePath: await temporaryDirectory("vdt-codex-engine-workspace-"),
+    privateStatePath: await temporaryDirectory("vdt-codex-engine-state-"),
+    forbiddenRoots: [await temporaryDirectory("vdt-codex-engine-forbidden-")]
+  };
+}
+
+function bindingFor(engine: CodexResumeCheckpointEngine): AgentSessionBinding {
+  return {
+    schemaVersion: 2,
+    bindingId: "binding-codex",
+    runId: "run-1",
+    projectId: "project-1",
+    executionProfile: "external_cli_agent",
+    engineId: engine.capability.engineId,
+    engineAdapterId: engine.capability.engineAdapterId,
+    backendId: engine.capability.backendId,
+    modelId: "gpt-5.4",
+    protocolVersion: engine.capability.protocolVersion,
+    cliVersion: engine.capability.cli.version,
+    toolIsolation: "unverified",
+    qualificationStatus: "unverified",
+    capabilityEvidenceHash: null,
+    settingsHash: TOOL_CATALOG_HASH,
+    capabilityProfileHash: codexResumeCheckpointCapabilityHash(engine.capability),
+    toolCatalogHash: TOOL_CATALOG_HASH,
+    externalSessionId: null,
+    sessionEpoch: 1,
+    boundAt: "2026-08-26T10:00:00.000Z"
+  };
+}
+
+function gatewayResult(call: VdtGatewayToolCall, input: Partial<VdtGatewayToolResult> = {}): VdtGatewayToolResult {
+  return {
+    externalCallId: call.externalCallId,
+    toolName: call.toolName,
+    status: "succeeded",
+    resultCode: "OK",
+    resultHash: hashText(`${call.externalCallId}:${call.toolName}`),
+    payload: { ok: true },
+    ...input
+  };
+}
+
+async function collect(events: AsyncIterable<AgentEngineEvent>): Promise<AgentEngineEvent[]> {
+  const output: AgentEngineEvent[] = [];
+  for await (const event of events) output.push(event);
+  return output;
+}
+
+describe("CodexResumeCheckpointEngine", () => {
+  it("exposes codex_subscription capability and is default-off", async () => {
+    const env = await environment();
+    const engine = new CodexResumeCheckpointEngine({
+      transport: new CodexResumeCheckpointTransport({
+        executable: "/opt/codex/codex",
+        validatedCliVersion: "0.146.0",
+        runner: new EmptyRunner()
+      }),
+      cliVersion: "0.146.0",
+      toolCatalogHash: TOOL_CATALOG_HASH,
+      allowedToolNames: ["vdt.echo"],
+      sessionEnvironmentFactory: () => env,
+      resolveBinding: async () => { throw new Error("unused"); }
+    });
+    expect(engine.capability).toMatchObject({
+      backendId: "codex_subscription",
+      engineAdapterId: "codex-resume-checkpoint-v1",
+      toolIsolation: "unverified",
+      qualification: { status: "unverified" }
+    });
+    await expect(engine.openSession({
+      binding: bindingFor(engine),
+      initialContext: { brief: "blocked" },
+      initialContextHash: TOOL_CATALOG_HASH
+    }, { signal: new AbortController().signal, executeTool: async () => ({}) as never }))
+      .rejects.toMatchObject({ code: "EXTERNAL_ENGINE_NOT_QUALIFIED" });
+  });
+
+  it("opens an unverified canary session, executes a batch, and pauses on user.ask", async () => {
+    const env = await environment();
+    const executed: VdtGatewayToolCall[] = [];
+    const runner = new FakeRunner((request, index) => ({
+      exitCode: 0,
+      signal: null,
+      stdout: codexStream(
+        "codex-thread-open",
+        turn(
+          index === 0
+            ? {
+                type: "action_batch",
+                batch: {
+                  calls: [{ externalCallId: "call-echo", toolName: "vdt.echo", args: { value: 1 } }]
+                }
+              }
+            : {
+                type: "action_batch",
+                batch: {
+                  calls: [{
+                    externalCallId: "question-1",
+                    toolName: "user.ask",
+                    args: {
+                      questions: [{
+                        id: "fleet-size",
+                        question: "How many trucks should be modeled?",
+                        reason: "The fleet size is required for the branch.",
+                        required: true,
+                        answerKind: "number"
+                      }]
+                    }
+                  }]
+                }
+              },
+          index === 0 ? { messageId: "message-open", text: "I will inspect the VDT graph." } : null
+        )
+      ),
+      stderr: ""
+    }));
+    const engine = new CodexResumeCheckpointEngine({
+      transport: new CodexResumeCheckpointTransport({
+        executable: "/opt/codex/codex",
+        validatedCliVersion: "0.146.0",
+        runner
+      }),
+      cliVersion: "0.146.0",
+      toolCatalogHash: TOOL_CATALOG_HASH,
+      allowedToolNames: ["vdt.echo", "user.ask"],
+      sessionEnvironmentFactory: () => env,
+      resolveBinding: async () => { throw new Error("unused"); },
+      enableUnverifiedCanary: true,
+      now: () => "2026-08-26T10:00:00.000Z",
+      idFactory: () => "checkpoint-id"
+    });
+    const host: AgentEngineHost = {
+      signal: new AbortController().signal,
+      executeTool: async (call) => {
+        executed.push(call);
+        return call.toolName === "user.ask"
+          ? gatewayResult(call, { status: "waiting_user", resultCode: "QUESTION_REQUIRED" })
+          : gatewayResult(call);
+      }
+    };
+    const context = { brief: "codex-open-fixture" };
+    const session = await engine.openSession({
+      binding: bindingFor(engine),
+      initialContext: context,
+      initialContextHash: hashText(JSON.stringify(context))
+    }, host);
+    const events = await collect(session.events());
+
+    expect(executed.map((call) => call.toolName)).toEqual(["vdt.echo", "user.ask"]);
+    expect(runner.requests).toHaveLength(2);
+    expect(events.map((event) => event.type)).toEqual([
+      "assistant_message",
+      "checkpoint_requested",
+      "checkpoint_requested",
+      "question"
+    ]);
+    expect(events[0]).toMatchObject({
+      type: "assistant_message",
+      text: "I will inspect the VDT graph."
+    });
+    expect(session.binding.externalSessionId).toBe("codex-thread-open");
+  });
+});

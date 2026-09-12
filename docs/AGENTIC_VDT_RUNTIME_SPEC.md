@@ -486,31 +486,41 @@ deterministic finish verifier, compact execution projection,
 `vdt.instantiate_subtree`, local enum/formula fixes, Cursor ACP and
 checkpoint/resume canaries, and the fixed-fixture benchmark harness. The
 checkpoint canary executes one bounded `ActionBatch` before resuming the same
-opaque Cursor session and remains default-off with unverified isolation.
+opaque Cursor session and remains production-disabled with unverified isolation.
 
 Current target-path behavior: a registered server-owned structured Model Agent
-binding selects one public-route Supervisor and one engine; stale model
+binding selects one public-route Supervisor and one engine. An explicitly
+enabled Cursor checkpoint/resume qualification canary can register a candidate
+server-owned External binding from a one-time CLI version probe; the trusted-
+local development launcher enables this explicitly unverified candidate while
+production builds do not. The UI selects an admitted
+exact backend/model binding or fails closed, with no per-decision compatibility
+fallback. Stale model
 mutations are rejected by a server-derived builder-revision fence and returned
 to the same session as a compact `manual_reconciliation` delta. The additive
 Sequence 4 SQLite migration and append-only authority schema are production-
-wired after unchanged Sequence 3. With a SQLite-backed AgentRunStore, the public
-Supervisor writes all seven normalized tables as primary authority, requires
-the current epoch, records per-write 30-second fence audit metadata and
-atomically reserves tool calls. This is not yet the full ADR-005 shared lease.
-It derives the authoritative project ID from the run row, projects the effective
-current epoch and fails closed rather than silently falling back. The V1 run row remains a secondary readable projection. An
+wired after unchanged Sequence 3. With a SQLite-backed AgentRunStore, qualified
+profiles write all seven normalized tables as primary authority and require
+the current epoch, record per-write 30-second fence audit metadata and
+atomically reserve tool calls. This is not yet the full ADR-005 shared lease.
+The unverified trusted-local Cursor canary instead keeps the complete V2
+authority inside the durable V1 run projection because Sequence 4 intentionally
+rejects unqualified External bindings. The runtime derives the authoritative
+project ID from the run row, projects the effective current epoch and fails
+closed rather than silently falling back. An
 exchange is durably marked `in_flight` before provider execution.
 
 Still unavailable: a hard-qualified External capability, executable
 Codex/Claude session adapters, a restart auto-resume coordinator, builder
 revision reconstruction, paused question/approval restoration, removal of the
-compatibility loop and a successful post-change live profile benchmark.
+compatibility loop and a successful terminal post-change live profile benchmark.
 Finish-receipt hydration and exact-successor recovered finalization exist in
 the Supervisor/Sequence 4 authority, but have no public process-loss
 coordinator. Typed
 Codex/Claude checkpoint protocol canaries exist only behind unavailable
 capabilities and injected fake runners; they are not live protocol or isolation
-evidence. Qualification requires 3/3 cold runs at no more than 420 seconds and
+evidence. The Cursor checkpoint canary is executable but remains explicitly
+`unverified` and development-only. Qualification requires 3/3 cold runs at no more than 420 seconds and
 at least 20 warm runs with p95 no more than 420 seconds on the same fixed
 fixture and verified execution identity. The approximately 180-second median
 remains a stretch target, not an implementation claim.

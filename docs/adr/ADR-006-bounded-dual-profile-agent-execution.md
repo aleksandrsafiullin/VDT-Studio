@@ -189,7 +189,8 @@ foundations:
 - a canonical Cursor ACP engine adapter with one logical ACP session,
   streamed messages/questions, Gateway-routed MCP calls, cancellation and
   same-session resume;
-- a separate default-off Cursor checkpoint/resume engine that pins one opaque
+- a separate trusted-local, default-off-by-environment Cursor
+  checkpoint/resume engine that pins one opaque
   session ID, executes a bounded ActionBatch through the Gateway before each
   `--resume`, isolates workspace/config/environment inputs and fails closed on
   any observed foreign tool or protocol/session drift;
@@ -227,18 +228,24 @@ explicitly incomplete:
   Its adapter therefore reports an unverified capability and is unavailable
   as a public External profile unless an explicit development-canary gate is
   used;
-- both Cursor adapters remain unqualified and publicly unavailable. The
-  checkpoint transport's deterministic process/fake tests do not prove that
+- Cursor ACP remains unqualified and publicly unavailable. The checkpoint
+  adapter has development-only candidate wiring behind an explicit
+  trusted-local canary flag; the normal trusted-local development launcher
+  enables that canary and disables legacy fallback. The adapter still reports
+  `unverified`, and its deterministic process/fake tests do not prove that
   Cursor print mode cannot execute an unreported built-in capability;
   Codex/Claude now have typed, default-unavailable checkpoint protocol
   canaries, but executable adapters, pinned-version live/recovery/security
   qualification, hosted trusted-host exposure and removal of the micro-CLI
-  compatibility path are not complete; and
+  compatibility path outside the normal Cursor UI are not complete; and
 - no successful cold/warm session benchmark was run in this implementation
   review. The historical 903.7-second run is context, not a post-change causal
   baseline, and neither 420 seconds nor the 180-second stretch target is a
   current speed claim. Live performance and adversarial security qualification
-  therefore remain explicit `NO-GO` gates.
+  therefore remain explicit `NO-GO` gates. A trusted-local probe also showed
+  that the existing Cursor subscription login is unavailable in the required
+  private HOME; weakening that boundary or labelling the checkpoint adapter
+  `hard_verified` without evidence is not an admissible workaround.
 
 ## Relationship To Earlier Decisions
 

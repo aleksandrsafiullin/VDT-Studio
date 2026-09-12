@@ -151,10 +151,13 @@ one-to-six-call `ActionBatch` sequentially through `VdtToolGateway`, and starts
 the next process only at that durable checkpoint, a human pause or recovery.
 Every later process uses `--resume` with the exact opaque session ID. The
 adapter requires an exact server-probed CLI version, a stable private
-environment ID, an empty non-repository workspace, a private HOME/config root
-and a small environment allowlist; it fails closed on session drift, unknown
+environment ID, an empty non-repository workspace and a small environment
+allowlist. API-key mode uses a private HOME/config root; the trusted-local
+subscription canary uses the authenticated user's Cursor home and supplies
+`--trust` only after verifying that the private workspace is empty. It fails
+closed on session drift, unknown
 stream protocol, workspace writes, credential output or any Cursor
-`tool_call`. It never uses `--trust`, `--force` or `--yolo`.
+`tool_call`. It never uses `--force` or `--yolo`.
 
 Cursor documents that print mode still has built-in write and bash tools.
 These local negative tests are therefore boundary diagnostics, not proof that

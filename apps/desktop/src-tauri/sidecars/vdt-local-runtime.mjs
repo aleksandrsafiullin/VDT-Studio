@@ -3313,6 +3313,19 @@ var FORBIDDEN_TOOL_PREFIXES = Object.freeze([
   "web."
 ]);
 
+// ../model-bridge/src/agent-engines/checkpoint-turn.ts
+var DEFAULT_MAX_PROMPT_BYTES = 1024 * 1024;
+var MAX_ASSISTANT_TEXT_BYTES = 64 * 1024;
+
+// ../model-bridge/src/agent-engines/checkpoint-transport-common.ts
+var DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+var DEFAULT_MAX_PROMPT_BYTES2 = 1024 * 1024;
+
+// ../model-bridge/src/agent-engines/persistent-cli-checkpoint-canaries.ts
+var CODEX_CHECKPOINT_PROTOCOL_VERSION = "codex-exec-jsonl-checkpoint-v1";
+var CLAUDE_CHECKPOINT_PROTOCOL_VERSION = "claude-stream-json-checkpoint-v1";
+var VDT_CHECKPOINT_TURN_PROTOCOL_VERSION = "vdt-checkpoint-turn-v1";
+
 // ../../node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/external.js
 var external_exports = {};
 __export(external_exports, {
@@ -10990,8 +11003,11 @@ var AGENT_DECISION_SYSTEM_PROMPT = [
   "The visible brief and visible conversation are authoritative.",
   "Do not override root KPI, title, unit, period, fleet, domain or scope with examples, skills, recipes or mock defaults.",
   "Use briefReadiness to decide whether the requested model direction is defined before selecting skills or building.",
+  "Opening summary: the first user-facing status message must restate the accepted task in the user's language and outline the intended plan in 3-6 short steps before the first tool batch.",
   "Follow researchPolicy exactly. Never use research.search_web when researchPolicy.mode is off.",
-  "When researchPolicy.mode is on or auto permits research, use research.search_web only as source discovery feeding the next AgentDecision, not as single-shot report generation.",
+  "When researchPolicy.mode is on or auto permits research, use research.search_web (purpose standards, best_practices, process_components, benchmarks, or regulations) to ground decomposition in recognized frameworks before building. Surface sources used; never fabricate citations.",
+  "When data is missing or a business choice is required, return ask_user with 1-5 precise questions only for continuationPolicy.askOnlyWhen reasons: missing data, business choice, scope conflict, ambiguous logic, low confidence, or formula ambiguity. Prefer single_choice/multi_choice with concrete labelled options and always leave an escape hatch via freeTextAllowed or requiresFreeText on an option. Use fields/revealsFields for follow-up numbers.",
+  "Use the full tool catalog \u2014 skills, excavation, research, validation, calculation, layout, repair, memory \u2014 not only vdt.* mutations.",
   "If no strong skill match exists, or a compiled recipe is partial or missing, read the best available skill markdown, use research/discovery tools if available, or ask the user for the process decomposition boundary.",
   "Follow domainPolicies from the current context; domain and business restrictions live in skills, validators, and domain policies.",
   "Build VDTs progressively, one visible layer at a time.",
@@ -14258,7 +14274,7 @@ var skillSearchTool = {
 };
 var skillReadTool = {
   name: "skill.read",
-  description: "Read a selected local VDT skill excerpt and structured metadata.",
+  description: "Read a local VDT skill excerpt and structured metadata without selecting or activating it.",
   inputSchema: external_exports.object({
     skillId: external_exports.string().min(1).max(160),
     maxChars: external_exports.number().int().min(200).max(1e4).optional()
@@ -14272,21 +14288,6 @@ var skillReadTool = {
     const [excerpt] = readSkillExcerpts([skill], input.maxChars);
     if (!excerpt) throw new AgentToolError("SKILL_READ_FAILED", `Skill "${input.skillId}" could not be read.`);
     const recipe = compileSkillRecipe(skill);
-    if (!context.store.getState(context.runId).selectedSkills.some((selected) => selected.id === skill.id)) {
-      context.store.updateRun(context.runId, {
-        selectedSkills: [
-          ...context.store.getState(context.runId).selectedSkills,
-          {
-            id: skill.id,
-            path: skill.path,
-            title: skill.title,
-            score: 100,
-            reason: "Read by agent decision.",
-            matchedTerms: []
-          }
-        ]
-      });
-    }
     context.emit({
       type: "skill_read",
       phase: "reading_skills",
@@ -14326,6 +14327,17 @@ var skillCompileRecipeTool = {
     if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", `Skill "${input.skillId}" was not found.`);
     const recipe = compileSkillRecipe(skill);
     const state = context.store.getState(context.runId);
+    const selectedSkills = state.selectedSkills.some((selected) => selected.id === skill.id) ? state.selectedSkills : [
+      ...state.selectedSkills,
+      {
+        id: skill.id,
+        path: skill.path,
+        title: skill.title,
+        score: 100,
+        reason: "Compiled explicitly by agent decision.",
+        matchedTerms: []
+      }
+    ];
     const feedback = recipe.recipeQuality === "complete" ? void 0 : createStructuredFeedback({
       kind: "recipe_incomplete",
       severity: "warning",
@@ -14337,6 +14349,7 @@ var skillCompileRecipeTool = {
       retryable: true
     });
     context.store.updateRun(context.runId, {
+      selectedSkills,
       recipes: [
         ...state.recipes.filter((existing) => existing.skillId !== recipe.skillId),
         recipe
@@ -15878,6 +15891,44 @@ var agentPlanSchema = external_exports.object({
   confidence: external_exports.number().finite().min(0).max(1)
 });
 
+// ../model-bridge/src/agent-engines/resume-checkpoint-engine-core.ts
+var SHARED_PROMPT_RULES = Object.freeze({
+  openingSummary: "The first user-facing assistant message must restate the accepted task in the user's language and outline the intended plan in 3-6 short steps before or alongside the first tool batch.",
+  research: "When the domain, KPI, or decomposition boundary is unfamiliar, or the user asks for standards/best practice, use research.search_web (purpose standards, best_practices, process_components, benchmarks, or regulations) before building. Respect options.researchMode from the brief: never call research.search_web when it is off. Surface sources used; never fabricate citations.",
+  questions: "Ask only for missing data, a required business choice, scope conflict, ambiguous logic, low confidence, or formula ambiguity. When one of those applies, use user.ask with 1-5 precise questions. Prefer single_choice/multi_choice with concrete labelled options and always leave an escape hatch via freeTextAllowed:true or an option with requiresFreeText:true. Use fields/revealsFields for follow-up numbers. Mark required honestly and give a short reason.",
+  fullCatalog: "Use the whole tool catalog \u2014 skills, excavation, research, validation, calculation, layout, repair, memory \u2014 not only vdt.* mutations."
+});
+
+// ../model-bridge/src/agent-engines/claude-resume-checkpoint-engine.ts
+var CLAUDE_DESCRIPTOR = Object.freeze({
+  engineId: "claude-resume-checkpoint",
+  engineAdapterId: "claude-resume-checkpoint-v1",
+  backendId: "claude_subscription",
+  cliName: "claude",
+  sessionSlug: "claude",
+  protocolVersion: CLAUDE_CHECKPOINT_PROTOCOL_VERSION,
+  turnProtocolVersion: VDT_CHECKPOINT_TURN_PROTOCOL_VERSION,
+  errorPrefix: "CLAUDE_CHECKPOINT",
+  cliLabel: "Claude",
+  supportsUsageMetrics: false,
+  securityConstraint: "Do not use Claude shell, file, Git, web, browser, MCP, or tool_use capabilities. Use only the returned ActionBatch JSON protocol and VDT tools executed by the host gateway."
+});
+
+// ../model-bridge/src/agent-engines/codex-resume-checkpoint-engine.ts
+var CODEX_DESCRIPTOR = Object.freeze({
+  engineId: "codex-resume-checkpoint",
+  engineAdapterId: "codex-resume-checkpoint-v1",
+  backendId: "codex_subscription",
+  cliName: "codex",
+  sessionSlug: "codex",
+  protocolVersion: CODEX_CHECKPOINT_PROTOCOL_VERSION,
+  turnProtocolVersion: VDT_CHECKPOINT_TURN_PROTOCOL_VERSION,
+  errorPrefix: "CODEX_CHECKPOINT",
+  cliLabel: "Codex",
+  supportsUsageMetrics: true,
+  securityConstraint: "Do not use Codex shell, file, Git, web, browser, MCP, or approval bypass modes. Use only the returned ActionBatch JSON protocol and VDT tools executed by the host gateway."
+});
+
 // ../model-bridge/src/agent-engines/cursor-acp-engine.ts
 var MAX_PROMPT_BYTES = 1024 * 1024;
 var MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
@@ -15900,9 +15951,8 @@ var DEFAULT_MAX_STDERR_BYTES = 256 * 1024;
 var DEFAULT_MAX_OUTGOING_BYTES = 4 * 1024 * 1024;
 
 // ../model-bridge/src/agent-engines/cursor-resume-checkpoint-transport.ts
-var DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
-var DEFAULT_MAX_PROMPT_BYTES = 1024 * 1024;
-var MAX_ASSISTANT_TEXT_BYTES = 64 * 1024;
+var DEFAULT_MAX_OUTPUT_BYTES2 = 4 * 1024 * 1024;
+var DEFAULT_MAX_PROMPT_BYTES3 = 1024 * 1024;
 
 // ../model-bridge/src/enrich-detection.ts
 async function enrichSubscriptionCliDetection(agent, options = {}) {
@@ -16395,7 +16445,7 @@ var ALLOWED_ENV_KEYS = [
   "VDT_FAKE_COPILOT_MODE"
 ];
 var CODEX_HOME_COPY_FILES = ["auth.json", "installation_id", "models_cache.json"];
-function byteLength7(value) {
+function byteLength8(value) {
   return Buffer.byteLength(value, "utf8");
 }
 function abortError(message = "Completion was cancelled.") {
@@ -16504,15 +16554,15 @@ function assertManifestSafe(manifest) {
 }
 function assertLineLimit(value) {
   for (const line of value.split(/\r?\n/)) {
-    if (byteLength7(line) > EXECUTION_LIMITS.maxLineBytes) {
+    if (byteLength8(line) > EXECUTION_LIMITS.maxLineBytes) {
       throw Object.assign(new Error("Backend output line exceeds the configured limit."), { code: "OUTPUT_LINE_TOO_LARGE" });
     }
   }
 }
 function truncateForRepair(value) {
-  if (byteLength7(value) <= EXECUTION_LIMITS.maxRepairExcerptBytes) return value;
+  if (byteLength8(value) <= EXECUTION_LIMITS.maxRepairExcerptBytes) return value;
   let end = Math.min(value.length, EXECUTION_LIMITS.maxRepairExcerptBytes);
-  while (end > 0 && byteLength7(value.slice(0, end)) > EXECUTION_LIMITS.maxRepairExcerptBytes) {
+  while (end > 0 && byteLength8(value.slice(0, end)) > EXECUTION_LIMITS.maxRepairExcerptBytes) {
     end -= 1;
   }
   return `${value.slice(0, end)}
@@ -16521,14 +16571,14 @@ function truncateForRepair(value) {
 function tailForDiagnostics(value, maxBytes = 2048) {
   if (!value.trim()) return "";
   let start = Math.max(0, value.length - maxBytes);
-  while (start < value.length && byteLength7(value.slice(start)) > maxBytes) {
+  while (start < value.length && byteLength8(value.slice(start)) > maxBytes) {
     start += 1;
   }
   return value.slice(start).replace(/\s+/g, " ").trim();
 }
 function timeoutDiagnostic(stdout, stderr, timeoutMs) {
-  const stdoutBytes = byteLength7(stdout);
-  const stderrBytes = byteLength7(stderr);
+  const stdoutBytes = byteLength8(stdout);
+  const stderrBytes = byteLength8(stderr);
   const parts = [`after ${timeoutMs}ms`, `stdout=${stdoutBytes} bytes`, `stderr=${stderrBytes} bytes`];
   const stderrTail = tailForDiagnostics(stderr);
   const stdoutTail = tailForDiagnostics(stdout);
@@ -16693,12 +16743,12 @@ async function executeCli(manifest, request, signal, options) {
     input: request.input,
     ...request.model ? { model: request.model } : {}
   });
-  if (byteLength7(payload) > EXECUTION_LIMITS.maxPromptBytes) {
+  if (byteLength8(payload) > EXECUTION_LIMITS.maxPromptBytes) {
     throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
   }
   const executableVersion = manifest.cli?.versionArgs?.length && !isJavaScriptExecutable(executable) ? await probeExecutableVersion(executable, manifest.cli.versionArgs) : void 0;
   async function runCliAttempt(prompt, timeoutMs, requestJson = payload) {
-    if (byteLength7(prompt) > EXECUTION_LIMITS.maxPromptBytes) {
+    if (byteLength8(prompt) > EXECUTION_LIMITS.maxPromptBytes) {
       throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
     }
     const tempRoot = options.tempRoot ?? os3.tmpdir();
@@ -16804,7 +16854,7 @@ async function executeCli(manifest, request, signal, options) {
       const trySettleFromStream = (force = false) => {
         if (!adapter?.parseStreamingOutput) return;
         if (streamingResult || streamingError !== void 0) return;
-        const currentByteLength = byteLength7(stdout);
+        const currentByteLength = byteLength8(stdout);
         if (!force && currentByteLength - lastStreamingParseByteLength < 64 * 1024) return;
         lastStreamingParseByteLength = currentByteLength;
         let output;
@@ -16822,7 +16872,7 @@ async function executeCli(manifest, request, signal, options) {
         streamingResult = {
           output,
           rawText: stdout,
-          outputBytes: byteLength7(stdout),
+          outputBytes: byteLength8(stdout),
           schemaValid: true,
           exitCode: 0,
           ...executableVersion === void 0 ? {} : { executableVersion }
@@ -16837,7 +16887,7 @@ async function executeCli(manifest, request, signal, options) {
       child.stdout.on("data", (chunk) => {
         const chunkText = chunk.toString();
         stdout += chunkText;
-        if (byteLength7(stdout) > EXECUTION_LIMITS.maxStdoutBytes) {
+        if (byteLength8(stdout) > EXECUTION_LIMITS.maxStdoutBytes) {
           outputLimitExceeded = true;
           terminate();
           return;
@@ -16846,7 +16896,7 @@ async function executeCli(manifest, request, signal, options) {
       });
       child.stderr.on("data", (chunk) => {
         stderr += chunk.toString();
-        if (byteLength7(stderr) > EXECUTION_LIMITS.maxStderrBytes) {
+        if (byteLength8(stderr) > EXECUTION_LIMITS.maxStderrBytes) {
           outputLimitExceeded = true;
           terminate();
           return;
@@ -16884,7 +16934,7 @@ async function executeCli(manifest, request, signal, options) {
       if (completed.type === "stream") return completed.result;
       const exitCode = completed.exitCode;
       if (cancelled) {
-        if (byteLength7(stdout) > EXECUTION_LIMITS.maxStdoutBytes || byteLength7(stderr) > EXECUTION_LIMITS.maxStderrBytes) {
+        if (byteLength8(stdout) > EXECUTION_LIMITS.maxStdoutBytes || byteLength8(stderr) > EXECUTION_LIMITS.maxStderrBytes) {
           throw Object.assign(new Error("Backend output exceeded the configured limit."), { code: "OUTPUT_TOO_LARGE" });
         }
         if (signal.aborted) throw abortError();
@@ -16901,13 +16951,13 @@ async function executeCli(manifest, request, signal, options) {
             throw error2;
           }
         }
-        throw Object.assign(new Error(`Backend exited with code ${exitCode}; stderr contained ${byteLength7(stderr)} bytes.`), {
+        throw Object.assign(new Error(`Backend exited with code ${exitCode}; stderr contained ${byteLength8(stderr)} bytes.`), {
           code: "BACKEND_EXIT_FAILED",
           exitCode
         });
       }
       assertLineLimit(stdout);
-      if (byteLength7(stdout) > EXECUTION_LIMITS.maxResultBytes && !adapter) {
+      if (byteLength8(stdout) > EXECUTION_LIMITS.maxResultBytes && !adapter) {
         throw Object.assign(new Error("Backend result exceeds the configured limit."), { code: "OUTPUT_TOO_LARGE" });
       }
       const parsedOutput = adapter ? adapter.parseOutput(stdout, stderr, request.schemaId) : extractBoundedJson(stdout, EXECUTION_LIMITS.maxResultBytes);
@@ -16923,7 +16973,7 @@ async function executeCli(manifest, request, signal, options) {
       return {
         output,
         rawText: stdout,
-        outputBytes: byteLength7(stdout),
+        outputBytes: byteLength8(stdout),
         schemaValid,
         exitCode,
         ...executableVersion === void 0 ? {} : { executableVersion }
@@ -16970,7 +17020,7 @@ async function executeCli(manifest, request, signal, options) {
       }
       return {
         ...repaired,
-        outputBytes: repaired.outputBytes + byteLength7(invalidText),
+        outputBytes: repaired.outputBytes + byteLength8(invalidText),
         repaired: true,
         repairAttempted: true,
         repairSucceeded: true
@@ -17166,7 +17216,7 @@ async function executeLocalHttp(manifest, request, signal, options) {
   } catch {
     output = void 0;
   }
-  if (schemaValid) return { output, outputBytes: byteLength7(content), schemaValid };
+  if (schemaValid) return { output, outputBytes: byteLength8(content), schemaValid };
   if (schemaId === "agent-decision-v2") {
     throw Object.assign(new Error("Backend output failed registered schema validation."), {
       code: "SCHEMA_INVALID",
@@ -17203,7 +17253,7 @@ async function executeLocalHttp(manifest, request, signal, options) {
   }
   return {
     output: repairedOutput,
-    outputBytes: byteLength7(content) + byteLength7(repairedContent),
+    outputBytes: byteLength8(content) + byteLength8(repairedContent),
     schemaValid: true,
     repaired: true,
     repairAttempted: true,
@@ -17220,14 +17270,14 @@ async function executeCompletion(manifest, request, signal, options = {}) {
     input: request.input,
     ...request.model ? { model: request.model } : {}
   });
-  if (byteLength7(prompt) > EXECUTION_LIMITS.maxPromptBytes) {
+  if (byteLength8(prompt) > EXECUTION_LIMITS.maxPromptBytes) {
     throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
   }
   if (manifest.kind === "mock") {
     const output = mockOutput(request.schemaId, request.input);
     const schemaValid = validateRegisteredSchema(request.schemaId, output);
     if (!schemaValid) throw Object.assign(new Error("Mock input failed registered schema validation."), { code: "SCHEMA_INVALID" });
-    return { output, outputBytes: byteLength7(JSON.stringify(output)), schemaValid };
+    return { output, outputBytes: byteLength8(JSON.stringify(output)), schemaValid };
   }
   if (manifest.kind === "local_http") return executeLocalHttp(manifest, request, signal, options);
   return executeCli(manifest, request, signal, options);

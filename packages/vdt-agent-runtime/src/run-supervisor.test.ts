@@ -29,6 +29,37 @@ const HASH_B = `sha256:${"b".repeat(64)}`;
 const HASH_C = `sha256:${"c".repeat(64)}`;
 
 describe("VdtRunSupervisor", () => {
+  it("preserves the binding-write failure instead of masking it with an outbox append", async () => {
+    const fixture = baseFixture();
+    const bindingFailure = Object.assign(new Error("binding authority rejected the capability"), {
+      code: "BINDING_AUTHORITY_REJECTED"
+    });
+    class FailingBindingPersistence extends InMemoryAgentSupervisorPersistence {
+      override async createBinding(): Promise<never> {
+        throw bindingFailure;
+      }
+    }
+    const persistence = new FailingBindingPersistence();
+    const outbox = new AgentRunEventOutbox(fixture.binding.runId, {
+      sink: { append: (event) => persistence.appendEvent(event) }
+    });
+    const engine = new FakeEngine(fixture.capability, fixture.binding, async function* () {});
+    const supervisor = new VdtRunSupervisor({
+      engine,
+      binding: fixture.binding,
+      gateway: fixture.gateway,
+      persistence,
+      outbox,
+      verifyFinish: fixture.verifyFinish
+    });
+
+    await expect(supervisor.start({ initialContext: {}, initialContextHash: HASH_A }))
+      .rejects.toBe(bindingFailure);
+    expect(engine.openCount).toBe(0);
+    expect(supervisor.status).toBe("failed");
+    expect(outbox.snapshot()).toEqual([]);
+  });
+
   it("keeps one binding and accepts first message and final from the same session", async () => {
     const fixture = supervisorFixture(async function* (host) {
       yield { type: "assistant_message", messageId: "message-1", text: "I will build Ore hauled." };

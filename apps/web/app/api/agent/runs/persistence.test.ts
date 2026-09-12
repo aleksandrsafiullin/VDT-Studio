@@ -8,7 +8,7 @@ import { openVdtDatabase, VdtStorageError } from "@vdt-studio/storage";
 import { previewChangeSet, VdtBuilderSession, type VdtChangeSet } from "@vdt-studio/vdt-core";
 import { AgentRunStore, type MutationProposal } from "@vdt-studio/vdt-agent-runtime";
 import { createStorageWriteActor } from "@/app/api/vdt/storage-write-adapter";
-import { createSqliteAgentRunPersistence } from "./persistence";
+import { createSqliteAgentRunPersistence, resolveCliSessionForbiddenRoots } from "./persistence";
 
 const tempDirs: string[] = [];
 
@@ -1773,3 +1773,30 @@ function addOperatingHoursChangeSet(): VdtChangeSet {
     warnings: []
   };
 }
+
+describe("resolveCliSessionForbiddenRoots", () => {
+  it("skips a missing data directory and includes it once it exists", () => {
+    const root = tempRoot();
+    const dataDir = path.join(root, ".vdt");
+    vi.stubEnv("VDT_DATA_DIR", dataDir);
+
+    expect(resolveCliSessionForbiddenRoots(root)).toEqual([path.resolve(root)]);
+
+    fs.mkdirSync(dataDir, { recursive: true });
+    expect(resolveCliSessionForbiddenRoots(root)).toEqual([path.resolve(root), path.resolve(dataDir)]);
+  });
+
+  it("dedupes when VDT_DATA_DIR resolves to the project root", () => {
+    const root = tempRoot();
+    vi.stubEnv("VDT_DATA_DIR", root);
+    expect(resolveCliSessionForbiddenRoots(root)).toEqual([path.resolve(root)]);
+  });
+
+  it("resolves a relative VDT_DATA_DIR against the project root", () => {
+    const root = tempRoot();
+    const dataDir = path.join(root, "relative-data");
+    fs.mkdirSync(dataDir, { recursive: true });
+    vi.stubEnv("VDT_DATA_DIR", "relative-data");
+    expect(resolveCliSessionForbiddenRoots(root)).toEqual([path.resolve(root), path.resolve(dataDir)]);
+  });
+});
