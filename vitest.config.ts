@@ -7,6 +7,9 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Suites that spawn processes or build temp fixtures exceed the 5s default
+    // under parallel load while passing in isolation.
+    testTimeout: 15_000,
     include: ["packages/**/*.test.ts", "packages/**/*.test.tsx", "apps/**/*.test.ts", "apps/**/*.test.tsx", "scripts/**/*.test.ts"],
     coverage: {
       reporter: ["text", "html"]

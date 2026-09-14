@@ -4,11 +4,20 @@ import { VdtBuilderSession, type VdtNodePatch } from "@vdt-studio/vdt-core";
 import {
   AgentRunEventOutbox,
   AgentRunStateSupervisorPersistence,
-  AgentToolError,
+  isAgentToolError,
   StructuredInProductModelAgentEngine,
   VdtRunSupervisor,
+  AGENT_QUESTION_PROMPT_RULE,
+  AGENT_FINISH_MISSING_VALUE_PROMPT_RULE,
+  AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE,
+  AGENT_RESEARCH_PROVIDER_FAILED_PROMPT_RULE,
+  NATIVE_WEB_SEARCH_EVENT_CODE,
+  CHECKPOINT_RESPONSE_ENVELOPE_PROMPT_RULE,
+  CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE,
+  CHECKPOINT_FINISH_ORDER_PROMPT_RULE,
   agentQuestionSchema,
   applyPendingMutationProposal,
+  groundedAnswerRecord,
   rejectPendingMutationProposal,
   summarizeAgentSupervisorPersistenceState,
   verifyDeterministicRunFinish,
@@ -39,6 +48,7 @@ import {
   modelAgentToolCatalog,
   modelAgentToolCatalogHash
 } from "./model-agent-tool-catalog";
+import { writeCanaryMetricsSidecarAtTerminal } from "./canary-metrics-sidecar";
 import { authoritativeAgentRunProjectId } from "./persistence";
 import {
   agentRuntime,
@@ -46,23 +56,25 @@ import {
   createAgentSupervisorReadPersistence
 } from "./runtime";
 
-const MODEL_AGENT_SYSTEM_PROMPT = `You are the in-product VDT Model Agent. You own one logical structured-turn session for the whole run.
+export const MODEL_AGENT_SYSTEM_PROMPT = `You are the in-product VDT Model Agent. You own one logical structured-turn session for the whole run.
 
 Use only tools from the supplied immutable VDT tool catalog. Never request shell, filesystem, Git, web, foreign MCP, plugins, apps, or subagents. Do not claim factual runtime progress in prose. Runtime status comes only from the Supervisor.
 
-Return exactly one object matching the response schema. The first turn must include an assistantMessage or a question. Use action_batch for 1-6 ordered calls. The runtime executes calls sequentially and stops after the first failure, pause, or approval. Questions, approvals, and run.request_finish must be alone in a batch.
+${CHECKPOINT_RESPONSE_ENVELOPE_PROMPT_RULE} Return exactly one object matching the response schema. The first turn must include an assistantMessage or a question. action.type must be exactly one of: action_batch, question, or final. Never invent names such as tool_call or tool_calls. ${CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE} The runtime executes calls sequentially and stops after the first failure, pause, or approval.
 
 Opening summary: the first user-facing assistant message must restate the accepted task in the user's language and outline the intended plan in 3-6 short steps before or alongside the first tool batch.
 
-Research: when the domain, KPI, or decomposition boundary is unfamiliar, or the user asks for standards/best practice, use research.search_web (purpose standards, best_practices, process_components, benchmarks, or regulations) to ground the decomposition before building. Respect options.researchMode from the brief: never call research.search_web when it is off. Surface sources used; never fabricate citations.
+Research: when the domain, KPI, or decomposition boundary is unfamiliar, or the user asks for standards/best practice, use research.search_web (purpose standards, best_practices, process_components, benchmarks, or regulations) to ground the decomposition before building. Respect options.researchMode from the brief: never call research.search_web when it is off. Surface sources used; never fabricate citations. ${AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE} ${AGENT_RESEARCH_PROVIDER_FAILED_PROMPT_RULE}
 
-Questions: ask only for missing data, a required business choice, scope conflict, ambiguous logic, low confidence, or formula ambiguity. When one of those applies, use user.ask with 1-5 precise questions. Prefer single_choice/multi_choice with concrete labelled options and always leave an escape hatch via freeTextAllowed:true or an option with requiresFreeText:true. Use fields/revealsFields for follow-up numbers. Mark required honestly and give a short reason.
+Questions: ${AGENT_QUESTION_PROMPT_RULE}
+
+Finish: ${AGENT_FINISH_MISSING_VALUE_PROMPT_RULE} ${CHECKPOINT_FINISH_ORDER_PROMPT_RULE}
 
 Full catalog: use skills, excavation, research, validation, calculation, layout, repair, and memory tools — not only vdt.* mutations.
 
 Every response must include sessionState: a concise server-private semantic checkpoint (maximum 16 KiB) containing the current goal, confirmed progress, working node IDs, unresolved corrections, and next intended work. Never copy the raw project, full tool catalog, secrets, prompts, or long history into sessionState. The next stateless HTTP turn receives this state with the confirmed cursor/hashes and the new checkpoint delta.
 
-Before final, call run.request_finish. Only after its successful tool result may you return final, and finishReceiptId must exactly match that result. After the first turn, sessionContinuation contains the bounded semantic checkpoint and confirmed cursor/hash proof; delta contains only the new checkpoint information. Continue from those fields and do not ask for the full initial context again.`;
+After the first turn, sessionContinuation contains the bounded semantic checkpoint and confirmed cursor/hash proof; delta contains only the new checkpoint information. Continue from those fields and do not ask for the full initial context again.`;
 
 const ADMITTED_CLI_SESSION_CANARIES = [
   { bindingId: "cursor_session_canary", engineAdapterId: "cursor-resume-checkpoint-v1" },
@@ -358,7 +370,8 @@ async function startSupervisorAgentRun(input: {
         pendingPlan: undefined,
         pendingChangeSet: undefined,
         firstResponseCompleted: true,
-        completedAt
+        completedAt,
+        ...safeCliSessionTelemetryPatch(runId, active.supervisor, { includeLatencyPercentiles: true })
       });
       agentRuntime.store.updatePublicStatus(runId, {
         phase: "ready",
@@ -387,6 +400,7 @@ async function startSupervisorAgentRun(input: {
       initialContext,
       initialContextHash: initialContextDelta.contextHash
     });
+    persistCliSessionTelemetry(runId, supervisor);
     watchActiveSupervisorLifecycle(runId, active);
   } catch (error) {
     try {
@@ -428,6 +442,7 @@ export async function compactSupervisorAwareSnapshot(
     && snapshot.status !== "succeeded"
     && snapshot.status !== "failed"
     && snapshot.status !== "cancelled"
+    && snapshot.status !== "recovery_required"
     && compact.executionSummary
   ) {
     compact.executionSummary = {
@@ -495,6 +510,13 @@ export async function handleStructuredModelAgentMessage(
     if (!active.questionSetId) {
       throw new PublicSupervisorRunError("MODEL_AGENT_QUESTION_MISSING", "The run has no pending question set.");
     }
+    const current = agentRuntime.store.getState(runId);
+    const answers = groundedAnswerRecord(
+      current.answers,
+      message.answers,
+      message.structuredAnswers,
+      current.pendingQuestions
+    );
     input = {
       type: "user_answer",
       questionSetId: active.questionSetId,
@@ -509,7 +531,10 @@ export async function handleStructuredModelAgentMessage(
       text: "User answered the pending Model Agent questions.",
       answers: message.structuredAnswers ?? []
     });
-    agentRuntime.store.updateRun(runId, { pendingQuestions: undefined });
+    agentRuntime.store.updateRun(runId, {
+      pendingQuestions: undefined,
+      answers
+    });
   } else if (message.type === "user_instruction") {
     const state = agentRuntime.store.getState(runId);
     if (active.questionSetId || state.status === "waiting_approval") {
@@ -600,7 +625,7 @@ export async function handleStructuredModelAgentMessage(
               projectChanged: true
             };
           } catch (error) {
-            if (!(error instanceof AgentToolError)) throw error;
+            if (!isAgentToolError(error)) throw error;
             return {
               status: "failed" as const,
               resultCode: error.code,
@@ -703,7 +728,20 @@ export async function cancelStructuredModelAgentRun(runId: string): Promise<Publ
       409
     );
   }
-  await active.supervisor.cancel("User cancelled the run.");
+  const cancelled = await active.supervisor.cancel("User cancelled the run.");
+  if (!cancelled.armed) {
+    throw new PublicSupervisorRunError(
+      "MODEL_AGENT_FINAL_COMMITTED",
+      "The run already started its durable final commit and can no longer be cancelled.",
+      409
+    );
+  }
+  agentRuntime.store.updateRun(runId, {
+    status: "cancelled",
+    phase: "reporting",
+    completedAt: new Date().toISOString(),
+    ...safeCliSessionTelemetryPatch(runId, active.supervisor, { includeLatencyPercentiles: true })
+  });
   watchActiveSupervisorLifecycle(runId, active);
   return await compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
 }
@@ -744,12 +782,110 @@ function shouldReleaseSupervisor(status: VdtRunSupervisor["status"]): boolean {
 
 async function releaseActiveSupervisorRun(runId: string, active: ActiveSupervisorRun): Promise<void> {
   if (activeRuns.get(runId) !== active) return;
+  persistCliSessionTelemetry(runId, active.supervisor, { includeLatencyPercentiles: true });
+  persistCanaryMetricsSidecar(runId, active);
   try {
     await active.supervisor.close();
   } finally {
     if (activeRuns.get(runId) === active) activeRuns.delete(runId);
     await active.persistence.close?.();
   }
+}
+
+/** Terminal/release only. Never per event. Writer only — this module does not read the sidecar. */
+function persistCanaryMetricsSidecar(runId: string, active: ActiveSupervisorRun): void {
+  try {
+    writeCanaryMetricsSidecarAtTerminal({
+      runId,
+      supervisorStatus: active.supervisor.status,
+      telemetry: active.supervisor.snapshotPerformanceTelemetry(),
+      binding: active.supervisor.binding,
+      createdAt: agentRuntime.store.getState(runId).createdAt
+    });
+  } catch {
+    // Sidecar I/O must never fail the user-visible run.
+  }
+}
+
+/** Full-state SQLite write. Call only at start, readable pause/terminal, or release — never per event. */
+function persistCliSessionTelemetry(
+  runId: string,
+  supervisor: VdtRunSupervisor,
+  options?: { includeLatencyPercentiles?: boolean }
+): void {
+  try {
+    const patch = cliSessionTelemetryPatch(runId, supervisor, options);
+    if (!patch) return;
+    agentRuntime.store.updateRun(runId, patch);
+  } catch {
+    // Telemetry I/O must never fail a run.
+  }
+}
+
+function safeCliSessionTelemetryPatch(
+  runId: string,
+  supervisor: VdtRunSupervisor,
+  options?: { includeLatencyPercentiles?: boolean }
+): ReturnType<typeof cliSessionTelemetryPatch> | Record<string, never> {
+  try {
+    return cliSessionTelemetryPatch(runId, supervisor, options) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function cliSessionTelemetryPatch(
+  runId: string,
+  supervisor: VdtRunSupervisor,
+  options?: { includeLatencyPercentiles?: boolean }
+): {
+  performanceTelemetry: NonNullable<ReturnType<VdtRunSupervisor["snapshotPerformanceTelemetry"]>>;
+  performanceSummary: {
+    providerId: string;
+    wallClockMs: number;
+    llmDecisionCount: number;
+    toolCallCount: number;
+    outputBytes: number;
+    repairCount: number;
+    decisionLatencyP50Ms?: number;
+    decisionLatencyP95Ms?: number;
+  };
+} | undefined {
+  const telemetry = supervisor.snapshotPerformanceTelemetry();
+  if (!telemetry) return undefined;
+  const state = agentRuntime.store.getState(runId);
+  return {
+    performanceTelemetry: telemetry,
+    performanceSummary: {
+      providerId: state.request.providerId,
+      wallClockMs: Math.max(0, Date.now() - Date.parse(state.createdAt)),
+      llmDecisionCount: telemetry.decisionLatenciesMs.length,
+      toolCallCount: telemetry.toolCallCount,
+      outputBytes: telemetry.outputBytes,
+      repairCount: telemetry.repairCount,
+      ...(options?.includeLatencyPercentiles === true
+        ? latencyPercentiles(telemetry.decisionLatenciesMs)
+        : {})
+    }
+  };
+}
+
+function latencyPercentiles(latencies: readonly number[]): {
+  decisionLatencyP50Ms: number;
+  decisionLatencyP95Ms: number;
+} | Record<string, never> {
+  if (latencies.length === 0) return {};
+  const sorted = [...latencies].sort((left, right) => left - right);
+  return {
+    decisionLatencyP50Ms: nearestRankPercentile(sorted, 0.5),
+    decisionLatencyP95Ms: nearestRankPercentile(sorted, 0.95)
+  };
+}
+
+function nearestRankPercentile(sortedValues: readonly number[], percentile: number): number {
+  if (sortedValues.length === 0) return 0;
+  const index = Math.max(0, Math.ceil(percentile * sortedValues.length) - 1);
+  return sortedValues[Math.min(index, sortedValues.length - 1)] ?? 0;
 }
 
 class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
@@ -1063,7 +1199,8 @@ function syncDurableEventToLegacyState(
     agentRuntime.store.updateRun(runId, {
       status: "needs_user_input",
       phase: "asking_clarifying_questions",
-      pendingQuestions: questions
+      pendingQuestions: questions,
+      ...safeCliSessionTelemetryPatch(runId, active.supervisor)
     });
     const currentMessages = agentRuntime.store.getState(runId).chatMessages;
     const last = currentMessages.at(-1);
@@ -1087,7 +1224,13 @@ function syncDurableEventToLegacyState(
       title: "Clarifying questions",
       message: `Model Agent needs ${questions.length} answer${questions.length === 1 ? "" : "s"}.`,
       questions,
-      metadata: { eventV2Id: event.id, questionSetId: event.payload.questionSetId }
+      metadata: {
+        eventV2Id: event.id,
+        questionSetId: event.payload.questionSetId,
+        ...(event.payload.droppedQuestionKeysSummary
+          ? { droppedQuestionKeysSummary: event.payload.droppedQuestionKeysSummary }
+          : {})
+      }
     });
     return;
   }
@@ -1101,10 +1244,33 @@ function syncDurableEventToLegacyState(
       agentRuntime.store.updateRun(runId, {
         status: "cancelled",
         phase: "reporting",
-        completedAt: event.timestamp
+        completedAt: event.timestamp,
+        ...safeCliSessionTelemetryPatch(runId, active.supervisor, { includeLatencyPercentiles: true })
       });
     } else if (state === "succeeded") {
-      agentRuntime.store.updateRun(runId, { status: "succeeded", phase: "reporting" });
+      agentRuntime.store.updateRun(runId, {
+        status: "succeeded",
+        phase: "reporting",
+        ...safeCliSessionTelemetryPatch(runId, active.supervisor, { includeLatencyPercentiles: true })
+      });
+    } else if (state === "recovery_required") {
+      agentRuntime.store.updateRun(runId, {
+        status: "recovery_required",
+        phase: "reporting",
+        retryableError: {
+          code: "RECOVERY_REQUIRED",
+          message: event.payload.message,
+          retryCount: 0,
+          createdAt: event.timestamp
+        },
+        ...safeCliSessionTelemetryPatch(runId, active.supervisor, { includeLatencyPercentiles: true })
+      });
+      agentRuntime.store.updatePublicStatus(runId, {
+        phase: "retryable_error",
+        message: event.payload.message,
+        updatedAt: event.timestamp
+      });
+      return;
     }
     agentRuntime.store.updatePublicStatus(runId, {
       phase: state === "succeeded" ? "ready" : "building_draft",
@@ -1120,7 +1286,7 @@ function syncDurableEventToLegacyState(
       phase: "building_graph",
       title: "VDT tool started",
       message: `Running ${event.payload.toolName}.`,
-      metadata: { eventV2Id: event.id, externalCallId: event.payload.externalCallId }
+      metadata: { eventV2Id: event.id, externalCallId: event.payload.externalCallId, toolName: event.payload.toolName }
     });
     return;
   }
@@ -1145,7 +1311,10 @@ function syncDurableEventToLegacyState(
     return;
   }
   if (event.type === "approval_required") {
-    agentRuntime.store.updateRun(runId, { status: "waiting_approval" });
+    agentRuntime.store.updateRun(runId, {
+      status: "waiting_approval",
+      ...safeCliSessionTelemetryPatch(runId, active.supervisor)
+    });
     agentRuntime.store.updatePublicStatus(runId, {
       phase: "waiting_user",
       message: event.payload.summary
@@ -1154,6 +1323,40 @@ function syncDurableEventToLegacyState(
   }
   if (event.type === "warning" || event.type === "error") {
     const retryable = event.payload.retryable;
+    if (event.type === "warning" && event.source === "runtime" && event.payload.code === NATIVE_WEB_SEARCH_EVENT_CODE) {
+      agentRuntime.store.appendChatMessage(runId, {
+        role: "system",
+        kind: "assistant_message",
+        text: event.payload.message
+      });
+      const current = agentRuntime.store.getState(runId);
+      agentRuntime.store.updatePublicStatus(runId, {
+        phase: current.publicStatus?.phase ?? "building_draft",
+        message: event.payload.message
+      });
+      agentRuntime.store.appendEvent(runId, {
+        type: "tool_call_completed",
+        phase: current.phase,
+        title: "Native web search",
+        message: event.payload.message,
+        metadata: {
+          eventV2Id: event.id,
+          code: event.payload.code,
+          visible: true
+        }
+      });
+      return;
+    }
+    if (event.type === "warning" && event.source === "runtime" && event.payload.code === "TRANSPORT_DIAGNOSTIC") {
+      agentRuntime.store.appendEvent(runId, {
+        type: "tool_call_completed",
+        phase: agentRuntime.store.getState(runId).phase,
+        title: "Transport diagnostic",
+        message: event.payload.message,
+        metadata: { eventV2Id: event.id, code: event.payload.code, informational: true }
+      });
+      return;
+    }
     if (event.source === "tool_gateway") {
       // A bounded domain-tool rejection is feedback for the same cognitive
       // session, not a terminal runtime failure. Security breaches are
@@ -1163,6 +1366,25 @@ function syncDurableEventToLegacyState(
         type: "error",
         phase: "planning_decomposition",
         title: retryable ? "VDT tool needs reconciliation" : "VDT tool rejected",
+        message: event.payload.message,
+        metadata: { eventV2Id: event.id, code: event.payload.code, retryable }
+      });
+      return;
+    }
+    const currentStatus = agentRuntime.store.getState(runId).status;
+    if (retryable && currentStatus === "recovery_required") {
+      agentRuntime.store.updateRun(runId, {
+        retryableError: {
+          code: "RECOVERY_REQUIRED",
+          message: event.payload.message,
+          retryCount: 0,
+          createdAt: event.timestamp
+        }
+      });
+      agentRuntime.store.appendEvent(runId, {
+        type: "error",
+        phase: "reporting",
+        title: "Model Agent paused",
         message: event.payload.message,
         metadata: { eventV2Id: event.id, code: event.payload.code, retryable }
       });
@@ -1180,7 +1402,10 @@ function syncDurableEventToLegacyState(
               createdAt: event.timestamp
             }
           }
-        : { error: { code: event.payload.code, message: event.payload.message }, completedAt: event.timestamp })
+        : { error: { code: event.payload.code, message: event.payload.message }, completedAt: event.timestamp }),
+      ...safeCliSessionTelemetryPatch(runId, active.supervisor, {
+        includeLatencyPercentiles: retryable !== true
+      })
     });
     agentRuntime.store.appendEvent(runId, {
       type: "error",

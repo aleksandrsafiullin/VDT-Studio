@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
+  compactGatewayFeedback,
   feedbackFromForbiddenFields,
   feedbackFromToolEnvelope,
   feedbackFromValidation,
@@ -90,5 +91,117 @@ describe("structured feedback", () => {
       suggestedNextTools: expect.not.arrayContaining(["vdt.create_draft"])
     });
     expect(forbidden?.suggestedNextTools).toEqual(expect.arrayContaining(["vdt.add_driver", "vdt.update_node"]));
+  });
+
+  it("maps a missing research provider to research_required and suggests user.ask", () => {
+    const envelope = {
+      toolName: "research.search_web",
+      ok: false as const,
+      error: {
+        code: "RESEARCH_PROVIDER_NOT_CONFIGURED",
+        message: "Research provider is not configured. Ask the user for process details or continue with explicit assumptions.",
+        details: { providerConfigured: false }
+      },
+      projectChanged: false,
+      emittedEventIds: []
+    };
+    const feedback = feedbackFromToolEnvelope(envelope);
+    const gateway = compactGatewayFeedback(envelope);
+
+    expect(feedback).toMatchObject({
+      kind: "research_required",
+      target: { toolName: "research.search_web" },
+      suggestedNextTools: ["user.ask"],
+      retryable: false
+    });
+    expect(gateway).toEqual({
+      kind: "research_required",
+      message: envelope.error.message,
+      retryable: false,
+      suggestedNextTools: ["user.ask"]
+    });
+  });
+
+  it("maps a configured-but-broken research provider as a non-retryable tool failure", () => {
+    const envelope = {
+      toolName: "research.search_web",
+      ok: false as const,
+      error: {
+        code: "RESEARCH_PROVIDER_AUTH_FAILED",
+        message: "Research provider \"brave\" request failed with status 401."
+      },
+      projectChanged: false,
+      emittedEventIds: []
+    };
+    const feedback = feedbackFromToolEnvelope(envelope);
+    const gateway = compactGatewayFeedback(envelope);
+
+    expect(feedback).toMatchObject({
+      kind: "tool_failed",
+      target: { toolName: "research.search_web" },
+      suggestedNextTools: ["user.ask"],
+      retryable: false
+    });
+    expect(gateway).toEqual({
+      kind: "tool_failed",
+      message: envelope.error.message,
+      retryable: false,
+      suggestedNextTools: ["user.ask"]
+    });
+  });
+
+  it("keeps a missing proposal base non-retryable and a pending lock retryable", () => {
+    const missingBase = feedbackFromToolEnvelope({
+      toolName: "vdt.update_node",
+      ok: false,
+      error: {
+        code: "PROPOSAL_BASE_NOT_PERSISTED",
+        message: "Proposal run:mutation:28 cannot resolve a persisted VDT base revision."
+      },
+      projectChanged: false,
+      emittedEventIds: []
+    });
+    const pendingLock = feedbackFromToolEnvelope({
+      toolName: "vdt.update_node",
+      ok: false,
+      error: {
+        code: "REVISION_CONFLICT",
+        message: "Another pending revision owns this VDT."
+      },
+      projectChanged: false,
+      emittedEventIds: []
+    });
+
+    expect(missingBase).toMatchObject({ retryable: false });
+    expect(pendingLock).toMatchObject({ retryable: true });
+  });
+
+  it("keeps research unavailable retryable and stable 4xx terminal", () => {
+    const reset = feedbackFromToolEnvelope({
+      toolName: "research.search_web",
+      ok: false,
+      error: {
+        code: "RESEARCH_PROVIDER_UNAVAILABLE",
+        message: "Research provider \"brave\" request failed: fetch failed"
+      },
+      projectChanged: false,
+      emittedEventIds: []
+    });
+    const stable4xx = feedbackFromToolEnvelope({
+      toolName: "research.search_web",
+      ok: false,
+      error: {
+        code: "RESEARCH_PROVIDER_FAILED",
+        message: "Research provider \"brave\" request failed with status 404."
+      },
+      projectChanged: false,
+      emittedEventIds: []
+    });
+
+    expect(reset).toMatchObject({ retryable: true });
+    expect(stable4xx).toMatchObject({
+      retryable: false,
+      suggestedNextTools: ["user.ask"]
+    });
   });
 });

@@ -439,6 +439,36 @@ describe("CursorAcpEngine", () => {
     await vi.waitFor(() => expect(transport.closed).toBe(true));
   });
 
+  it("records Cursor ACP native web_search instead of treating it as SECURITY_BOUNDARY_BREACH", async () => {
+    const transport = new FakeCursorAcpTransport();
+    const session = await engine(transport).openSession(baseStart(await privateWorkspace()));
+
+    transport.emit({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: transport.sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "search-1",
+          toolName: "web_search",
+          title: "Search the web",
+          kind: "web_search",
+          rawInput: { query: "haulage cycle time" }
+        }
+      }
+    });
+    const events = await takeUntil(session.events(), (event) =>
+      event.type === "warning" && event.code === "NATIVE_WEB_SEARCH"
+    );
+    expect(events.at(-1)).toMatchObject({
+      type: "warning",
+      code: "NATIVE_WEB_SEARCH",
+      message: expect.stringContaining("haulage cycle time")
+    });
+    expect(transport.closed).toBe(false);
+  });
+
   it("loads the same opaque session without replaying history as new events", async () => {
     const firstTransport = new FakeCursorAcpTransport();
     const firstSession = await engine(firstTransport).openSession(baseStart(await privateWorkspace()));

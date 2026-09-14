@@ -10,6 +10,7 @@ import {
   answerRecordFromPayloads,
   answerPayloadsFromRecord,
   describeAnswerPayloads,
+  groundedAnswerRecord,
   publicStatusForPhase
 } from "./chat-messages";
 import {
@@ -179,10 +180,12 @@ export class VdtAgentRuntime {
       const answerPayloads = message.structuredAnswers && message.structuredAnswers.length > 0
         ? message.structuredAnswers
         : answerPayloadsFromRecord(message.answers ?? {});
-      const answerRecord = {
-        ...(message.answers ?? {}),
-        ...answerRecordFromPayloads(answerPayloads)
-      };
+      const answerRecord = groundedAnswerRecord(
+        state.answers,
+        message.answers,
+        message.structuredAnswers,
+        state.pendingQuestions
+      );
 
       if (answerRecord.retry === "retry_last_step") {
         return this.handleRetryLastStep(runId, state, answerPayloads, execution);
@@ -1015,8 +1018,8 @@ export class VdtAgentRuntime {
     const telemetry = state.performanceTelemetry;
     this.store.updateRun(runId, {
       performanceTelemetry: {
+        ...telemetry,
         decisionLatenciesMs: [...telemetry.decisionLatenciesMs, Math.max(0, Date.now() - startedAt)],
-        toolCallCount: telemetry.toolCallCount,
         outputBytes: telemetry.outputBytes + serializedByteLength(output),
         repairCount: telemetry.repairCount + (repair ? 1 : 0)
       }

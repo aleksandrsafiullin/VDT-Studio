@@ -26,21 +26,51 @@ export function answerPayloadsFromRecord(
 export function answerRecordFromPayloads(
   answers: AgentAnswerPayload[]
 ): Record<string, string | number | string[]> {
-  return Object.fromEntries(answers.map((answer) => {
-    const fields = answer.fields
-      ? Object.entries(answer.fields)
-        .filter(([, value]) => String(value).trim().length > 0)
-        .map(([key, value]) => `${key}: ${value}`)
+  const record: Record<string, string | number | string[]> = {};
+  for (const answer of answers) {
+    const fieldEntries = answer.fields
+      ? Object.entries(answer.fields).filter(([, value]) => String(value).trim().length > 0)
       : [];
+    const fields = fieldEntries.map(([key, value]) => `${key}: ${value}`);
     const selected = answer.selectedOptionIds && answer.selectedOptionIds.length > 0
       ? answer.selectedOptionIds
       : undefined;
     const freeText = answer.freeText?.trim();
     const combined = [...fields, freeText].filter((value): value is string => Boolean(value));
-    if (selected && combined.length === 0) return [answer.questionId, selected];
-    if (selected && combined.length > 0) return [answer.questionId, [...selected, ...combined]];
-    return [answer.questionId, combined.join("; ")];
-  }));
+    if (selected && combined.length === 0) record[answer.questionId] = selected;
+    else if (selected && combined.length > 0) record[answer.questionId] = [...selected, ...combined];
+    else record[answer.questionId] = combined.join("; ");
+    for (const [fieldId, value] of fieldEntries) {
+      record[fieldId] = value;
+    }
+  }
+  return record;
+}
+
+export function groundedAnswerRecord(
+  existing: Record<string, string | number | string[]>,
+  answers: Record<string, string | number | string[]> | undefined,
+  structured: AgentAnswerPayload[] | undefined,
+  questions: VdtAgentQuestion[] | undefined
+): Record<string, string | number | string[]> {
+  const payloads = structured && structured.length > 0
+    ? structured
+    : answerPayloadsFromRecord(answers ?? {});
+  const next: Record<string, string | number | string[]> = {
+    ...existing,
+    ...answerRecordFromPayloads(payloads),
+    ...(answers ?? {})
+  };
+  for (const question of questions ?? []) {
+    if (!Object.prototype.hasOwnProperty.call(next, question.id)) continue;
+    const fields = question.fields ?? [];
+    if (fields.length !== 1) continue;
+    const fieldId = fields[0]!.id;
+    const questionValue = next[question.id];
+    if (questionValue === undefined || Object.prototype.hasOwnProperty.call(next, fieldId)) continue;
+    next[fieldId] = questionValue;
+  }
+  return next;
 }
 
 export function describeAnswerPayloads(answers: AgentAnswerPayload[], questions: VdtAgentQuestion[] = []): string {

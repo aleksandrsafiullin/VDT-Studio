@@ -209,7 +209,9 @@ original binding epoch. Each write records a fresh 30-second audit fence and
 tool-call reservation is atomic, but the ADR-005 shared lease with heartbeat
 and takeover is not implemented. Failure to open or use this authority fails
 closed; there is no silent fallback to JSON persistence. V1 runs remain readable through a secondary
-projection. Restart recovery is still fail-closed because the auto-resume
+projection. Unverified External canaries never write Sequence 4; spawn, segment
+and logical-session counters live on the V1 `performanceTelemetry` sibling, not
+on `AgentExecutionSummaryV2`. Restart recovery is still fail-closed because the auto-resume
 coordinator and state rehydration described below are not implemented.
 
 ## Trust Boundaries

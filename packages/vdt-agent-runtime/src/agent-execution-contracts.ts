@@ -486,6 +486,7 @@ export type AgentEngineEvent =
       messageId: string;
       questionSetId: string;
       questions: readonly Readonly<Record<string, unknown>>[];
+      droppedQuestionKeysSummary?: string;
     }
   | {
       type: "tool_request";
@@ -494,6 +495,11 @@ export type AgentEngineEvent =
   | {
       type: "checkpoint_requested";
       reason: string;
+    }
+  | {
+      type: "transport_note";
+      code: string;
+      message: string;
     }
   | {
       type: "final";

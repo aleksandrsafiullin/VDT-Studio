@@ -105,8 +105,27 @@ export function feedbackFromToolEnvelope(
     target: { toolName: envelope.toolName },
     actual: envelope.error?.details ?? envelope.error,
     suggestedNextTools: suggestedToolsForToolError(code, context),
-    retryable: true
+    retryable: isRetryableToolFeedback(code)
   });
+}
+
+export function compactGatewayFeedback(
+  envelope: AgentToolResultEnvelope,
+  context?: AgentFeedbackContext
+): {
+  kind: AgentFeedbackKind;
+  message: string;
+  retryable: boolean;
+  suggestedNextTools?: string[] | undefined;
+} | undefined {
+  const feedback = feedbackFromToolEnvelope(envelope, context);
+  if (!feedback) return undefined;
+  return {
+    kind: feedback.kind,
+    message: feedback.message,
+    retryable: feedback.retryable,
+    ...(feedback.suggestedNextTools ? { suggestedNextTools: feedback.suggestedNextTools } : {})
+  };
 }
 
 export function feedbackFromValidation(validation: ValidationStateSummary): AgentStructuredFeedback | undefined {
@@ -179,6 +198,21 @@ function feedbackKindForToolError(code: string): AgentFeedbackKind {
   return "tool_failed";
 }
 
+function isRetryableToolFeedback(code: string): boolean {
+  return !NON_RETRYABLE_TOOL_FEEDBACK_CODES.has(code);
+}
+
+const NON_RETRYABLE_TOOL_FEEDBACK_CODES = new Set([
+  "RESEARCH_PROVIDER_NOT_CONFIGURED",
+  "RESEARCH_DISABLED_BY_USER",
+  "RESEARCH_PROVIDER_AUTH_FAILED",
+  "RESEARCH_PROVIDER_FAILED",
+  "RESEARCH_PROVIDER_BAD_RESPONSE",
+  "PROPOSAL_BASE_NOT_PERSISTED",
+  "PROPOSAL_BASE_NOT_CURRENT",
+  "USER_PROVIDED_VALUE_UNGROUNDED"
+]);
+
 function suggestedToolsForToolError(code: string, context?: AgentFeedbackContext): string[] | undefined {
   if (code === "UNKNOWN_TOOL") return ["skill.list"];
   if (code === "INVALID_TOOL_ARGS") return undefined;
@@ -195,5 +229,12 @@ function suggestedToolsForToolError(code: string, context?: AgentFeedbackContext
   }
   if (/RESEARCH_DISABLED_BY_USER/i.test(code)) return ["skill.search", "skill.read", "user.ask"];
   if (/RESEARCH_PROVIDER_NOT_CONFIGURED/i.test(code)) return ["user.ask"];
+  if (
+    code === "RESEARCH_PROVIDER_AUTH_FAILED"
+    || code === "RESEARCH_PROVIDER_FAILED"
+    || code === "RESEARCH_PROVIDER_BAD_RESPONSE"
+  ) {
+    return ["user.ask"];
+  }
   return undefined;
 }

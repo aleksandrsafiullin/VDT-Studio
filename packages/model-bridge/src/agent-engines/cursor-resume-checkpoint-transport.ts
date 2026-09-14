@@ -3,7 +3,22 @@ import { createHash } from "node:crypto";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { type CheckpointActionBatch } from "./action-batch";
+import { omittedCheckpointStreamEvidence, recordCheckpointEventType } from "./checkpoint-protocol-reporting";
+import {
+  invokeCountedCheckpointRunner,
+  sameCanonicalWorkspacePath,
+  wrapSpawnCountingRunner,
+  attachSessionIdToError,
+  type SpawnCountableRunner
+} from "./checkpoint-transport-common";
 import { parseCheckpointTurn, type CheckpointTurn } from "./checkpoint-turn";
+import {
+  extractSearchQuery,
+  inspectCursorStreamToolCall,
+  NativeWebSearchCollector,
+  attachNativeWebSearchToError,
+  type NativeWebSearchRecord
+} from "./native-web-search";
 
 export const CURSOR_CHECKPOINT_PROTOCOL_VERSION = "vdt-cursor-checkpoint-v1" as const;
 
@@ -130,6 +145,10 @@ export interface CursorResumeCheckpointSegmentResult {
   readonly inputHash: string;
   readonly outputHash: string;
   readonly turn: CursorCheckpointTurn;
+  readonly nativeWebSearch?: NativeWebSearchRecord;
+  readonly processSpawnCount?: number;
+  readonly inferenceMs?: number;
+  readonly outputBytes?: number;
 }
 
 export interface CursorResumeCheckpointTransportOptions {
@@ -312,7 +331,7 @@ function parseCursorOutput(input: {
   maxLines: number;
   allowedToolNames: readonly string[];
   credentials: readonly CursorCheckpointCredentialEnvironmentEntry[];
-}): { sessionId: string; turn: CursorCheckpointTurn } {
+}): { sessionId: string; turn: CursorCheckpointTurn; nativeWebSearch?: NativeWebSearchRecord } {
   const { result } = input;
   if (containsCredentialLeak(`${result.stdout}\n${result.stderr}`, input.credentials)) {
     throw checkpointError("SECURITY_BOUNDARY_BREACH", "Cursor checkpoint output exposed a server-owned credential.");
@@ -333,6 +352,9 @@ function parseCursorOutput(input: {
   let sessionId = input.expectedSessionId;
   let sawInit = false;
   let terminalSeen = false;
+  const eventTypeSequence: string[] = [];
+  const webSearches = new NativeWebSearchCollector();
+  try {
   for (const rawLine of result.stdout.split(/\r?\n/)) {
     if (!rawLine.trim()) continue;
     lineCount += 1;
@@ -349,6 +371,15 @@ function parseCursorOutput(input: {
       throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", "Cursor stream contained malformed NDJSON.");
     }
     if (isRecord(event) && event.type === "tool_call") {
+      const inspection = inspectCursorStreamToolCall(event);
+      if (inspection.kind === "native_web_search") {
+        webSearches.observe({
+          id: inspection.id,
+          query: inspection.query ?? extractSearchQuery(event),
+          eventType: typeof event.subtype === "string" ? event.subtype : event.type
+        });
+        continue;
+      }
       throw checkpointError(
         "SECURITY_BOUNDARY_BREACH",
         "Cursor attempted a built-in or foreign tool during checkpoint execution."
@@ -357,6 +388,7 @@ function parseCursorOutput(input: {
     if (!isRecord(event) || typeof event.type !== "string" || !ALLOWED_CURSOR_EVENT_TYPES.has(event.type)) {
       throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_MISMATCH", "Cursor stream contained an unknown event type.");
     }
+    recordCheckpointEventType(eventTypeSequence, event);
     if (event.type === "error") {
       throw checkpointError(
         "CURSOR_CHECKPOINT_PROCESS_FAILED",
@@ -368,7 +400,7 @@ function parseCursorOutput(input: {
         throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", "Cursor stream has an invalid system initialization event.");
       }
       sawInit = true;
-      if (typeof event.cwd !== "string" || path.resolve(event.cwd) !== input.workspace) {
+      if (!sameCanonicalWorkspacePath(event.cwd, input.workspace)) {
         throw checkpointError("SECURITY_BOUNDARY_BREACH", "Cursor reported execution outside the private checkpoint workspace.");
       }
       if (
@@ -398,6 +430,9 @@ function parseCursorOutput(input: {
       }
     }
     if (event.type === "result") {
+      // Cursor print-mode exposes one terminal `result` string, not multiple
+      // completed agent_message items. Envelope selection for multi-message
+      // Codex turns lives in selectCheckpointTurnFromAgentMessages.
       if (event.subtype !== "success" || event.is_error !== false || typeof event.result !== "string") {
         throw checkpointError("CURSOR_CHECKPOINT_PROCESS_FAILED", "Cursor terminal result was not successful structured output.");
       }
@@ -406,9 +441,33 @@ function parseCursorOutput(input: {
     }
   }
   if (!sawInit || !terminal || !sessionId) {
-    throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", "Cursor stream omitted initialization or terminal result evidence.");
+    const omitted = omittedCheckpointStreamEvidence({
+      cliLabel: "Cursor",
+      observation: {
+        parsedLineCount: lineCount,
+        eventTypeSequence,
+        stdoutEmpty: !result.stdout.trim(),
+        exitCode: result.exitCode,
+        signal: result.signal
+      },
+      required: {
+        init: sawInit,
+        terminal: Boolean(terminal),
+        session: Boolean(sessionId)
+      }
+    });
+    throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", omitted.message, omitted.details);
   }
-  return { sessionId, turn: parseTurn(terminal.result as string, input.allowedToolNames) };
+  const nativeWebSearch = webSearches.snapshot();
+  return {
+    sessionId,
+    turn: parseTurn(terminal.result as string, input.allowedToolNames),
+    ...(nativeWebSearch ? { nativeWebSearch } : {})
+  };
+  } catch (error) {
+    attachSessionIdToError(error, sessionId);
+    attachNativeWebSearchToError(error, webSearches.snapshot());
+  }
 }
 
 export class NodeCursorResumeProcessRunner implements CursorResumeProcessRunner {
@@ -496,7 +555,7 @@ export class NodeCursorResumeProcessRunner implements CursorResumeProcessRunner 
 export class CursorResumeCheckpointTransport {
   readonly validatedCliVersion: string;
   readonly #executable: string;
-  readonly #runner: CursorResumeProcessRunner;
+  readonly #runner: SpawnCountableRunner<CursorResumeProcessRequest, CursorResumeProcessResult>;
   readonly #timeoutMs: number;
   readonly #maxOutputBytes: number;
   readonly #maxPromptBytes: number;
@@ -511,11 +570,15 @@ export class CursorResumeCheckpointTransport {
     }
     this.#executable = options.executable;
     this.validatedCliVersion = options.validatedCliVersion;
-    this.#runner = options.runner ?? new NodeCursorResumeProcessRunner();
+    this.#runner = wrapSpawnCountingRunner(options.runner ?? new NodeCursorResumeProcessRunner());
     this.#timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs");
     this.#maxOutputBytes = positiveInteger(options.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES, "maxOutputBytes");
     this.#maxPromptBytes = positiveInteger(options.maxPromptBytes, DEFAULT_MAX_PROMPT_BYTES, "maxPromptBytes");
     this.#maxLines = positiveInteger(options.maxLines, DEFAULT_MAX_LINES, "maxLines");
+  }
+
+  get processSpawnCount(): number {
+    return this.#runner.processSpawnCount;
   }
 
   async executeSegment(
@@ -554,7 +617,7 @@ export class CursorResumeCheckpointTransport {
     if (args.some((arg) => FORBIDDEN_ARGUMENTS.has(arg))) {
       throw checkpointError("SECURITY_BOUNDARY_BREACH", "Cursor checkpoint arguments enabled a forbidden trust mode.");
     }
-    const result = await this.#runner.run({
+    const spawned = await invokeCountedCheckpointRunner(this.#runner, {
       executable: this.#executable,
       args: Object.freeze(args),
       cwd: resolved.workspace,
@@ -564,6 +627,7 @@ export class CursorResumeCheckpointTransport {
       timeoutMs: this.#timeoutMs,
       maxOutputBytes: this.#maxOutputBytes
     });
+    const result = spawned.result;
     if ((await readdir(resolved.workspace)).length > 0) {
       throw checkpointError(
         "SECURITY_BOUNDARY_BREACH",
@@ -583,7 +647,11 @@ export class CursorResumeCheckpointTransport {
       sessionId: parsed.sessionId,
       inputHash: hashText(input.prompt),
       outputHash: hashText(JSON.stringify(parsed.turn)),
-      turn: parsed.turn
+      turn: parsed.turn,
+      processSpawnCount: spawned.processSpawnCount,
+      inferenceMs: spawned.inferenceMs,
+      outputBytes: spawned.outputBytes,
+      ...(parsed.nativeWebSearch ? { nativeWebSearch: parsed.nativeWebSearch } : {})
     });
   }
 }

@@ -121,6 +121,19 @@ describe("verifyDeterministicRunFinish", () => {
       supervisorState: state
     })).toMatchObject({ accepted: false, code: "OPERATION_LEDGER_NOT_SETTLED" });
   });
+
+  it("rejects missing_value calculation errors and a non-finite root", () => {
+    const project = structuredClone(productionVolumeProject);
+    project.graph.nodes = project.graph.nodes.map((node) => (
+      node.formula?.trim()
+        ? node
+        : { ...node, baselineValue: undefined, value: undefined }
+    ));
+    expect(verifyDeterministicRunFinish({ ...readyInput(), project })).toMatchObject({
+      accepted: false,
+      code: "CALCULATION_ERRORS"
+    });
+  });
 });
 
 function readyInput() {

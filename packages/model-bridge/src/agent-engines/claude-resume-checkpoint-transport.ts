@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
+import { omittedCheckpointStreamEvidence, recordCheckpointEventType } from "./checkpoint-protocol-reporting";
 import { parseCheckpointTurn } from "./checkpoint-turn";
 import {
   DEFAULT_MAX_LINES,
@@ -9,15 +10,22 @@ import {
   NodeCheckpointProcessRunner,
   assertPrivateCheckpointEnvironment,
   assertSessionId,
+  attachSessionIdToError,
   byteLength,
   checkpointTransportError,
   containsCredentialLeak,
   hashText,
+  invokeCountedCheckpointRunner,
   positiveInteger,
+  sameCanonicalWorkspacePath,
   sanitizeProcessMessage,
+  wrapSpawnCountingRunner,
   type CheckpointCredentialEnvironmentEntry,
+  type CheckpointProcessRequest,
+  type CheckpointProcessResult,
   type CheckpointProcessRunner,
-  type CheckpointPrivateEnvironment
+  type CheckpointPrivateEnvironment,
+  type SpawnCountableRunner
 } from "./checkpoint-transport-common";
 import {
   CLAUDE_CHECKPOINT_PROTOCOL_VERSION,
@@ -86,6 +94,8 @@ function parseClaudeStreamOutput(input: {
   maxBytes: number;
   maxLines: number;
   allowedToolNames: readonly string[];
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
 }): { sessionId: string; turn: CheckpointTurn } {
   if (byteLength(input.stdout) > input.maxBytes) {
     throw checkpointTransportError(`${ERROR_PREFIX}_OUTPUT_TOO_LARGE`, "Claude output is too large.");
@@ -94,6 +104,8 @@ function parseClaudeStreamOutput(input: {
   let initialized = false;
   let turn: CheckpointTurn | undefined;
   let lineCount = 0;
+  const eventTypeSequence: string[] = [];
+  try {
   for (const line of input.stdout.split(/\r?\n/)) {
     if (!line.trim()) continue;
     lineCount += 1;
@@ -109,6 +121,7 @@ function parseClaudeStreamOutput(input: {
     if (!isRecord(event) || typeof event.type !== "string") {
       throw checkpointTransportError(`${ERROR_PREFIX}_PROTOCOL_INVALID`, "Claude output event is invalid.");
     }
+    recordCheckpointEventType(eventTypeSequence, event);
     if (event.type === "system") {
       if (event.subtype !== "init" || initialized) {
         throw checkpointTransportError(`${ERROR_PREFIX}_PROTOCOL_INVALID`, "Claude initialization event is invalid.");
@@ -119,7 +132,7 @@ function parseClaudeStreamOutput(input: {
         throw checkpointTransportError(`${ERROR_PREFIX}_SESSION_MISMATCH`, "Claude resumed a different session.");
       }
       sessionId = event.session_id;
-      if (typeof event.cwd !== "string" || path.resolve(event.cwd) !== input.workspace) {
+      if (!sameCanonicalWorkspacePath(event.cwd, input.workspace)) {
         throw checkpointTransportError("SECURITY_BOUNDARY_BREACH", "Claude reported execution outside the private checkpoint workspace.");
       }
       continue;
@@ -160,9 +173,28 @@ function parseClaudeStreamOutput(input: {
     throw checkpointTransportError(`${ERROR_PREFIX}_PROTOCOL_MISMATCH`, "Claude emitted an unknown stream event.");
   }
   if (!initialized || !sessionId || !turn) {
-    throw checkpointTransportError(`${ERROR_PREFIX}_PROTOCOL_INVALID`, "Claude output omitted initialization or terminal result evidence.");
+    const omitted = omittedCheckpointStreamEvidence({
+      cliLabel: CLI_LABEL,
+      observation: {
+        parsedLineCount: lineCount,
+        eventTypeSequence,
+        stdoutEmpty: !input.stdout.trim(),
+        exitCode: input.exitCode,
+        signal: input.signal
+      },
+      required: {
+        init: initialized,
+        terminal: Boolean(turn),
+        session: Boolean(sessionId)
+      }
+    });
+    throw checkpointTransportError(`${ERROR_PREFIX}_PROTOCOL_INVALID`, omitted.message, omitted.details);
   }
   return { sessionId, turn };
+  } catch (error) {
+    attachSessionIdToError(error, sessionId);
+    throw error;
+  }
 }
 
 function buildClaudeEnvironment(
@@ -173,7 +205,8 @@ function buildClaudeEnvironment(
   const output: Record<string, string> = Object.create(null) as Record<string, string>;
   output.HOME = authHome ?? state;
   output.USERPROFILE = authHome ?? state;
-  output.CLAUDE_CONFIG_DIR = authHome ?? state;
+  // Unverified against a real Claude CLI — convention is $HOME/.claude, not $HOME.
+  output.CLAUDE_CONFIG_DIR = authHome ? path.join(authHome, ".claude") : state;
   const names = new Set<string>();
   for (const entry of entries) {
     if (
@@ -196,7 +229,7 @@ function buildClaudeEnvironment(
 export class ClaudeResumeCheckpointTransport {
   readonly validatedCliVersion: string;
   readonly #executable: string;
-  readonly #runner: CheckpointProcessRunner;
+  readonly #runner: SpawnCountableRunner<CheckpointProcessRequest, CheckpointProcessResult>;
   readonly #timeoutMs: number;
   readonly #maxOutputBytes: number;
   readonly #maxPromptBytes: number;
@@ -211,11 +244,15 @@ export class ClaudeResumeCheckpointTransport {
     }
     this.#executable = options.executable;
     this.validatedCliVersion = options.validatedCliVersion;
-    this.#runner = options.runner ?? new NodeCheckpointProcessRunner(ERROR_PREFIX, CLI_LABEL);
+    this.#runner = wrapSpawnCountingRunner(options.runner ?? new NodeCheckpointProcessRunner(ERROR_PREFIX, CLI_LABEL));
     this.#timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs", ERROR_PREFIX);
     this.#maxOutputBytes = positiveInteger(options.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES, "maxOutputBytes", ERROR_PREFIX);
     this.#maxPromptBytes = positiveInteger(options.maxPromptBytes, DEFAULT_MAX_PROMPT_BYTES, "maxPromptBytes", ERROR_PREFIX);
     this.#maxLines = positiveInteger(options.maxLines, DEFAULT_MAX_LINES, "maxLines", ERROR_PREFIX);
+  }
+
+  get processSpawnCount(): number {
+    return this.#runner.processSpawnCount;
   }
 
   async executeSegment(
@@ -252,7 +289,7 @@ export class ClaudeResumeCheckpointTransport {
       ...(input.mode === "resume" ? ["--resume", input.expectedSessionId!] : [])
     ];
     assertClaudeCheckpointArgumentsAllowed(args);
-    const result = await this.#runner.run({
+    const spawned = await invokeCountedCheckpointRunner(this.#runner, {
       executable: this.#executable,
       args: Object.freeze(args),
       cwd: resolved.workspace,
@@ -262,6 +299,7 @@ export class ClaudeResumeCheckpointTransport {
       timeoutMs: this.#timeoutMs,
       maxOutputBytes: this.#maxOutputBytes
     });
+    const result = spawned.result;
     if (containsCredentialLeak(`${result.stdout}\n${result.stderr}`, credentials)) {
       throw checkpointTransportError("SECURITY_BOUNDARY_BREACH", "Claude checkpoint output exposed a server-owned credential.");
     }
@@ -287,13 +325,18 @@ export class ClaudeResumeCheckpointTransport {
       ...(input.expectedSessionId !== undefined ? { expectedSessionId: input.expectedSessionId } : {}),
       maxBytes: this.#maxOutputBytes,
       maxLines: this.#maxLines,
-      allowedToolNames
+      allowedToolNames,
+      exitCode: result.exitCode,
+      signal: result.signal
     });
     return Object.freeze({
       sessionId: parsed.sessionId,
       inputHash: hashText(input.prompt),
       outputHash: hashText(JSON.stringify(parsed.turn)),
-      turn: parsed.turn
+      turn: parsed.turn,
+      processSpawnCount: spawned.processSpawnCount,
+      inferenceMs: spawned.inferenceMs,
+      outputBytes: spawned.outputBytes
     });
   }
 }

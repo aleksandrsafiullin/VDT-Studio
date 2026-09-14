@@ -128,11 +128,12 @@ function gatewayReceiptFromPersistence(
 }
 
 function compactReplayResult(result: VdtGatewayToolResult): VdtGatewayToolResult {
-  const bytes = Buffer.byteLength(JSON.stringify(result), "utf8");
+  const compacted = JSON.parse(JSON.stringify(result)) as VdtGatewayToolResult;
+  const bytes = Buffer.byteLength(JSON.stringify(compacted), "utf8");
   if (bytes > 256 * 1024) {
     throw new Error("Gateway replay result exceeds the 256 KiB durable replay limit.");
   }
-  return structuredClone(result);
+  return compacted;
 }
 
 function stableReceiptId(bindingId: string, externalCallId: string): string {

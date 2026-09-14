@@ -13,14 +13,23 @@ import type {
   AgentExecutionSummaryV2,
   AgentSupervisorPersistenceStateV2
 } from "./agent-supervisor-persistence";
+import type { AgentRunPerformanceTelemetry } from "./performance-telemetry";
 import type { AgentDomainPolicySummary } from "./domain-policies";
 import type { AgentStructuredFeedback } from "./feedback";
+
+export {
+  AGENT_RUN_PERFORMANCE_TELEMETRY_GRANT_FIELD_DENYLIST,
+  emptyAgentRunPerformanceTelemetry,
+  hydrateAgentRunPerformanceTelemetry,
+  type AgentRunPerformanceTelemetry
+} from "./performance-telemetry";
 
 export type VdtAgentRunStatus =
   | "queued"
   | "running"
   | "needs_user_input"
   | "waiting_approval"
+  | "recovery_required"
   | "succeeded"
   | "failed"
   | "cancelled";
@@ -169,7 +178,8 @@ export interface RetryableAgentError {
     | "SCHEMA_REPAIR_FAILED"
     | "STRUCTURED_OUTPUT_FAILED"
     | "SUBAGENT_FAILED"
-    | "MAX_STEPS_EXCEEDED";
+    | "MAX_STEPS_EXCEEDED"
+    | "RECOVERY_REQUIRED";
   message: string;
   failedStepId?: string | undefined;
   failedSubagentTaskId?: string | undefined;
@@ -479,12 +489,6 @@ export interface AgentRunPerformanceSummary {
   repairCount: number;
 }
 
-export interface AgentRunPerformanceTelemetry {
-  decisionLatenciesMs: number[];
-  toolCallCount: number;
-  outputBytes: number;
-  repairCount: number;
-}
 
 export interface AgentToolSpec {
   name: string;
@@ -619,6 +623,8 @@ export interface VdtAgentRunSnapshot {
    * external session IDs, and receipts stay in internal run state. */
   executionSummary?: AgentExecutionSummaryV2 | undefined;
   performanceSummary?: AgentRunPerformanceSummary | undefined;
+  /** Untrusted measurement sibling. Never a qualification grant. */
+  performanceTelemetry?: AgentRunPerformanceTelemetry | undefined;
   error?: { code: string; message: string } | undefined;
   retryableError?: RetryableAgentError | undefined;
   feedbackHistory?: AgentStructuredFeedback[] | undefined;

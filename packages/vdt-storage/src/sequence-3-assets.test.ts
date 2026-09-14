@@ -7,7 +7,8 @@ import {
   loadVerifiedSequence3Assets
 } from "./sequence-3-assets";
 
-describe("closed Sequence 3 assets", () => {
+// Same 121 MiB golden-vector inflate as the host suite; ABI-fail forces a second load.
+describe("closed Sequence 3 assets", { timeout: 240_000 }, () => {
   it("loads the exact manifest graph and zero-import module once", () => {
     const first = loadVerifiedSequence3Assets();
     const second = loadVerifiedSequence3Assets();
@@ -32,7 +33,7 @@ describe("closed Sequence 3 assets", () => {
       uncompressedFramedChecksum:
         "sha256:a4e95819f132dee113020b32b9cafff7ff96f18268dc286750a164523b462202"
     });
-  }, 30_000);
+  });
 
   it("does not cache a registry whose ABI certification fails", () => {
     const readsBefore = __sequence3AssetReadCountsForTests().vectors;
@@ -62,7 +63,7 @@ describe("closed Sequence 3 assets", () => {
     const certified = loadSequence3TransformPreflightRegistry();
     expect(__sequence3AssetReadCountsForTests().vectors).toBe(readsBefore + 2);
     expect(certified.abiVectors).toHaveLength(55);
-  }, 30_000);
+  });
 
   it("preflights the exact frozen vector cardinalities and hashes", () => {
     const vectors = __loadSequence3GoldenVectorsForTests();
@@ -76,5 +77,5 @@ describe("closed Sequence 3 assets", () => {
     expect(vectors.vectorResultSetHash).toBe(
       "sha256:494c7fc1ba5d730e30de733c620554ee6badad9db42a5a33aa1b06c36dfac3d1"
     );
-  }, 30_000);
+  });
 });

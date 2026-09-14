@@ -1,3 +1,5 @@
+export * from "./agent-question-prompt";
+export { groundedAnswerRecord } from "./chat-messages";
 export * from "./agent-event-outbox";
 export * from "./agent-execution-contracts";
 export * from "./agent-supervisor-persistence";
@@ -6,9 +8,11 @@ export * from "./feedback";
 export * from "./finish-verifier";
 export * from "./in-product-model-agent-engine";
 export * from "./mcp-shape";
+export * from "./metrics-only";
 export * from "./mutation-pipeline";
 export * from "./orchestrator";
 export * from "./run-store";
+export * from "./schema-issue-summary";
 export * from "./run-supervisor";
 export * from "./schemas/agent-decision";
 export * from "./schemas/agent-event";

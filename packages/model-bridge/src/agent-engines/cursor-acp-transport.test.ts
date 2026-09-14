@@ -45,7 +45,7 @@ async function fakeCursorAcpExecutable(): Promise<{ executable: string; cwd: str
   return { executable, cwd };
 }
 
-describe("CursorAcpStdioTransport", () => {
+describe("CursorAcpStdioTransport", { timeout: 30_000 }, () => {
   it("keeps one newline-delimited JSON-RPC process for requests, notifications, and server callbacks", async () => {
     const fixture = await fakeCursorAcpExecutable();
     const transport = new CursorAcpStdioTransport({

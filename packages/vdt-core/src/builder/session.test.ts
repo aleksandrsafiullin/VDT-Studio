@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { calculateGraph } from "../formula/calculate";
 import { VdtBuilderSession } from "./session";
 
 describe("VdtBuilderSession", () => {
@@ -71,5 +72,57 @@ describe("VdtBuilderSession", () => {
 
     expect(layout.project.graph.nodes.every((node) => node.position)).toBe(true);
     expect(validation.validation.valid).toBe(true);
+  });
+
+  it("persists a user-supplied value and calculates a fully populated tree", () => {
+    const builder = new VdtBuilderSession({ now: () => "2026-09-13T00:00:00.000Z" });
+    builder.createDraft({ projectTitle: "Annual haulage", rootKpi: "Annual haulage" });
+    const leaves = [
+      { nodeId: "truck_count", name: "Truck count", value: 12 },
+      { nodeId: "payload_t_per_trip", name: "Payload t per trip", value: 40 },
+      { nodeId: "trips_per_hour_per_truck", name: "Trips per hour per truck", value: 2 },
+      { nodeId: "scheduled_hours_per_year", name: "Scheduled hours per year", value: 5000 },
+      { nodeId: "mechanical_availability", name: "Mechanical availability", value: 0.9 },
+      { nodeId: "operating_utilization", name: "Operating utilization", value: 0.8 }
+    ] as const;
+    for (const leaf of leaves) {
+      builder.addDriver({
+        parentNodeId: "annual_haulage",
+        nodeId: leaf.nodeId,
+        name: leaf.name,
+        type: "input",
+        relation: "multiplicative_driver"
+      });
+    }
+    builder.setFormula({
+      nodeId: "annual_haulage",
+      formula: "truck_count * payload_t_per_trip * trips_per_hour_per_truck * scheduled_hours_per_year * mechanical_availability * operating_utilization"
+    });
+    for (const leaf of leaves) {
+      builder.updateNode({
+        nodeId: leaf.nodeId,
+        patch: {
+          value: leaf.value,
+          baselineValue: leaf.value,
+          valueStatus: "user_provided_value",
+          valueSource: {
+            acceptedByUserInDialog: true,
+            note: "User supplied"
+          }
+        }
+      });
+    }
+
+    const truck = builder.getProject().graph.nodes.find((node) => node.id === "truck_count");
+    expect(truck).toMatchObject({
+      value: 12,
+      baselineValue: 12,
+      valueStatus: "user_provided_value",
+      valueSource: { acceptedByUserInDialog: true, note: "User supplied" }
+    });
+
+    const calculation = calculateGraph(builder.getProject());
+    expect(calculation.errors).toHaveLength(0);
+    expect(calculation.rootValue).toBeCloseTo(12 * 40 * 2 * 5000 * 0.9 * 0.8);
   });
 });

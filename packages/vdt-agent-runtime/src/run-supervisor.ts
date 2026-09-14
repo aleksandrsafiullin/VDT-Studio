@@ -35,6 +35,7 @@ import {
   type VdtToolGatewayOptions
 } from "./tool-gateway";
 import { AgentSupervisorToolGatewayLedger } from "./tool-gateway-persistence";
+import type { AgentRunPerformanceTelemetry } from "./performance-telemetry";
 
 export type VdtRunSupervisorStatus =
   | "idle"
@@ -102,6 +103,7 @@ export class VdtRunSupervisor {
   private verifiedFinish?: { receiptId: string; receiptHash: string };
   private finalCommitStarted = false;
   private lastCheckpointTimestampMs: number | null = null;
+  private lastPerformanceTelemetry: AgentRunPerformanceTelemetry | undefined;
   private statusValue: VdtRunSupervisorStatus = "idle";
 
   constructor(options: VdtRunSupervisorOptions) {
@@ -150,6 +152,13 @@ export class VdtRunSupervisor {
 
   get binding(): AgentSessionBinding {
     return structuredClone(this.activeBinding ?? this.expectedBinding);
+  }
+
+  snapshotPerformanceTelemetry(): AgentRunPerformanceTelemetry | undefined {
+    const session = this.session as { snapshotPerformanceTelemetry?: () => AgentRunPerformanceTelemetry } | undefined;
+    const snapshot = session?.snapshotPerformanceTelemetry?.();
+    if (snapshot) this.lastPerformanceTelemetry = snapshot;
+    return this.lastPerformanceTelemetry;
   }
 
   async start(input: Omit<AgentEngineStart, "binding">): Promise<void> {
@@ -325,15 +334,24 @@ export class VdtRunSupervisor {
     this.startConsumer();
   }
 
-  async cancel(reason = "User cancelled the run."): Promise<void> {
-    if (isTerminalStatus(this.statusValue) || this.finalCommitStarted) return;
+  async cancel(reason = "User cancelled the run."): Promise<{ armed: boolean }> {
+    if (isTerminalStatus(this.statusValue) || this.finalCommitStarted) {
+      return { armed: false };
+    }
     this.abortController.abort(reason);
+    this.gateway.abortActiveExecution(reason);
+    this.statusValue = "cancelled";
     try {
       await this.session?.cancel(reason);
     } finally {
-      this.statusValue = "cancelled";
-      await this.appendRuntimeStatus("RUN_CANCELLED", "Agent execution was cancelled.", "cancelled");
+      const projected = this.appendRuntimeStatus("RUN_CANCELLED", "Agent execution was cancelled.", "cancelled");
+      if (this.gateway.hasInFlightExecution()) {
+        void projected.catch(() => undefined);
+        return { armed: true };
+      }
+      await projected;
     }
+    return { armed: true };
   }
 
   async close(): Promise<void> {
@@ -363,6 +381,7 @@ export class VdtRunSupervisor {
     this.activeBinding = binding;
     this.expectedBinding = binding;
     this.session = session;
+    this.snapshotPerformanceTelemetry();
     await this.persistence?.createBinding(binding);
   }
 
@@ -379,19 +398,32 @@ export class VdtRunSupervisor {
       for await (const event of session.events()) {
         if (this.abortController.signal.aborted) return;
         await this.handleEngineEvent(event);
+        this.snapshotPerformanceTelemetry();
         if (isTerminalStatus(this.statusValue) || this.statusValue === "recovery_required") return;
       }
       if (this.statusValue === "running" || this.statusValue === "finishing") {
         this.statusValue = "recovery_required";
+        await this.appendRuntimeStatus(
+          "ENGINE_STREAM_INTERRUPTED",
+          "The engine stream ended without a durable interaction checkpoint or final event. Recover this run from the last durable checkpoint.",
+          "recovery_required"
+        );
         await this.appendWarning(
           "ENGINE_STREAM_INTERRUPTED",
-          "The engine stream ended without a durable interaction checkpoint or final event.",
+          "The engine stream ended without a durable interaction checkpoint or final event. Recover this run from the last durable checkpoint.",
           true
         );
       }
     } catch (error) {
       if (this.abortController.signal.aborted) return;
       this.statusValue = "recovery_required";
+      await this.appendRuntimeStatus(
+        "ENGINE_STREAM_FAILED",
+        error instanceof Error
+          ? error.message
+          : "The engine stream failed and requires same-session recovery.",
+        "recovery_required"
+      );
       await this.appendError("ENGINE_STREAM_FAILED", error, true);
     }
   }
@@ -431,7 +463,10 @@ export class VdtRunSupervisor {
           payload: {
             questionSetId: event.questionSetId,
             checkpointId: checkpoint.checkpointId,
-            questions: event.questions as never
+            questions: event.questions as never,
+            ...(event.droppedQuestionKeysSummary
+              ? { droppedQuestionKeysSummary: event.droppedQuestionKeysSummary }
+              : {})
           }
         });
         return;
@@ -451,6 +486,18 @@ export class VdtRunSupervisor {
           event.reason === "manual_reconciliation" ? "manual_reconciliation" : "engine_exchange"
         );
         return;
+      case "transport_note":
+        await this.outbox.append({
+          type: "warning",
+          source: "runtime",
+          payload: {
+            code: event.code,
+            message: event.message,
+            retryable: false,
+            detailsHash: null
+          }
+        });
+        return;
       case "final":
         await this.acceptFinal(event, source, sessionId);
         return;
@@ -460,6 +507,9 @@ export class VdtRunSupervisor {
           return;
         }
         this.statusValue = event.retryable ? "recovery_required" : "failed";
+        if (event.retryable) {
+          await this.appendRuntimeStatus(event.code, event.message, "recovery_required");
+        }
         await this.appendError(event.code, new Error(event.message), event.retryable);
         return;
       case "usage":

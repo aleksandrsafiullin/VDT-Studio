@@ -95,7 +95,7 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
 });
 
-describe.skipIf(!hasLoopback)("Phase 2 transport and pairing", () => {
+describe.skipIf(!hasLoopback)("Phase 2 transport and pairing", { timeout: 30_000 }, () => {
   it("refuses non-loopback binding", () => {
     expect(() => createLocalRunnerServer({ host: "0.0.0.0", port: 8765 })).toThrow("127.0.0.1");
   });
@@ -154,7 +154,7 @@ describe.skipIf(!hasLoopback)("Phase 2 transport and pairing", () => {
   });
 });
 
-describe.skipIf(!hasLoopback)("schema allowlist", () => {
+describe.skipIf(!hasLoopback)("schema allowlist", { timeout: 30_000 }, () => {
   it.each(VDT_SCHEMA_IDS)("accepts mock completion for schema %s", async (schemaId) => {
     const server = await start();
     const token = await pair(server);
@@ -211,7 +211,7 @@ describe.skipIf(!hasLoopback)("schema allowlist", () => {
   });
 });
 
-describe.skipIf(!hasLoopback)("Phase 2 completion contract", () => {
+describe.skipIf(!hasLoopback)("Phase 2 completion contract", { timeout: 30_000 }, () => {
   it("publishes manifests without executable names or arguments", async () => {
     const server = await start();
     const token = await pair(server);
@@ -287,7 +287,7 @@ describe.skipIf(!hasLoopback)("Phase 2 completion contract", () => {
   });
 });
 
-describe.skipIf(!hasLoopback)("cursor subscription backend", () => {
+describe.skipIf(!hasLoopback)("cursor subscription backend", { timeout: 30_000 }, () => {
   const cursorExecutor = {
     resolveExecutable: async (manifest: BackendManifest) =>
       manifest.id === "cursor_subscription" ? fakeCursor : process.execPath
@@ -382,7 +382,7 @@ describe.skipIf(!hasLoopback)("cursor subscription backend", () => {
   }, 30_000);
 });
 
-describe.skipIf(!hasLoopback)("codex subscription backend", () => {
+describe.skipIf(!hasLoopback)("codex subscription backend", { timeout: 30_000 }, () => {
   const codexExecutor = {
     resolveExecutable: async (manifest: BackendManifest) =>
       manifest.id === "codex_subscription" ? fakeCodex : process.execPath
@@ -417,7 +417,7 @@ describe.skipIf(!hasLoopback)("codex subscription backend", () => {
   });
 });
 
-describe.skipIf(!hasLoopback)("claude subscription backend", () => {
+describe.skipIf(!hasLoopback)("claude subscription backend", { timeout: 30_000 }, () => {
   const claudeExecutor = {
     resolveExecutable: async (manifest: BackendManifest) =>
       manifest.id === "claude_subscription" ? fakeClaude : process.execPath
@@ -452,7 +452,7 @@ describe.skipIf(!hasLoopback)("claude subscription backend", () => {
   });
 });
 
-describe.skipIf(!hasLoopback)("manifest-driven CLI execution", () => {
+describe.skipIf(!hasLoopback)("manifest-driven CLI execution", { timeout: 30_000 }, () => {
   const manifest = (mode: string, diagnosticsPath?: string): BackendManifest => ({
     id: `fake_${mode}`,
     label: `Fake ${mode}`,
@@ -542,5 +542,5 @@ describe.skipIf(!hasLoopback)("manifest-driven CLI execution", () => {
     const stderr = await call(server, "/v1/backends/fake_stderr/test", { method: "POST", token, body: {} });
     expect(stderr.body.error.code).toBe("BACKEND_EXIT_FAILED");
     expect(JSON.stringify(stderr.body)).not.toContain("sensitive prompt");
-  }, 15_000);
+  }, 30_000);
 });

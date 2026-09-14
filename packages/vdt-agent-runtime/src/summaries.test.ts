@@ -26,6 +26,7 @@ describe("calculation summaries", () => {
       type: "calculated",
       relation: "multiplicative_driver"
     });
+    builder.setFormula({ nodeId: "ore_shipped", formula: "truck_count * trips_per_truck" });
 
     const calculation = calculateGraph(builder.getProject());
     expect(calculation.rootValue).toBeUndefined();
@@ -34,6 +35,11 @@ describe("calculation summaries", () => {
     const summary = summarizeCalculation(calculation);
     expect(summary).not.toHaveProperty("rootValue");
     expect(summary).toStrictEqual(JSON.parse(JSON.stringify(summary)));
+    const missing = summary.errors.find((error) => error.type === "missing_value");
+    expect(missing?.repairHints).toEqual([
+      "If this run already has a user answer for the node, write it with vdt.update_node using value or baselineValue, valueStatus \"user_provided_value\", and a valueSource noting the user supplied it in this run.",
+      "Otherwise ask the user, or write an assumed number with valueStatus default_assumption and an explicit assumption note — never as user-supplied, researched, measured, or benchmarked. A number from the agent's own native web search uses the same default_assumption status with valueSource.sourceTier native_web_search; it is not a research.search_web citation."
+    ]);
   });
 });
 

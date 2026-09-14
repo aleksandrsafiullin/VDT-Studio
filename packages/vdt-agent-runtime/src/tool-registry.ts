@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { VdtBuilderSession } from "@vdt-studio/vdt-core";
+import { persistFailureFields } from "./persist-failure-log";
+import { schemaIssueSummary } from "./schema-issue-summary";
 import type { AgentRunStore } from "./run-store";
 import type {
   AgentEventInput,
@@ -48,13 +50,37 @@ export class AgentToolError extends Error {
     this.name = "AgentToolError";
     this.code = code;
     this.details = details;
+    Object.setPrototypeOf(this, new.target.prototype);
   }
+}
+
+export function isAgentToolError(error: unknown): error is AgentToolError {
+  if (error instanceof AgentToolError) return true;
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; code?: unknown; message?: unknown; details?: unknown };
+  return candidate.name === "AgentToolError"
+    && typeof candidate.code === "string"
+    && typeof candidate.message === "string";
+}
+
+export function isVdtStorageError(error: unknown): error is Error & { code: string } {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
+  return candidate.name === "VdtStorageError"
+    && typeof candidate.code === "string"
+    && candidate.code.length > 0
+    && typeof candidate.message === "string";
 }
 
 export class ToolRegistry {
   private readonly tools = new Map<string, AgentTool<unknown, unknown>>();
+  private persistFailureCountValue = 0;
 
   constructor(private readonly metadata: ToolRegistryMetadata = {}) {}
+
+  persistFailureCount(): number {
+    return this.persistFailureCountValue;
+  }
 
   getMetadata(): ToolRegistryMetadata {
     return this.metadata;
@@ -140,12 +166,17 @@ export class ToolRegistry {
       });
     } catch (error) {
       const toolError = normalizeToolError(error);
-      context.emit({
-        type: "tool_call_completed",
-        title: "Tool call failed",
-        message: toolError.message,
-        metadata: { toolName: name, ok: false, code: toolError.code }
-      });
+      try {
+        context.emit({
+          type: "tool_call_completed",
+          title: "Tool call failed",
+          message: toolError.message,
+          metadata: { toolName: name, ok: false, code: toolError.code }
+        });
+      } catch {
+        // A failed envelope must still return to the gateway so a deterministic
+        // rejection cannot be misclassified as an ambiguous mutation.
+      }
       return this.storeEnvelope(context, {
         toolName: name,
         ok: false,
@@ -159,23 +190,44 @@ export class ToolRegistry {
   }
 
   private storeEnvelope(context: AgentToolContext, envelope: AgentToolResultEnvelope): AgentToolResultEnvelope {
-    context.updateRun({ lastToolResult: envelope });
+    try {
+      context.updateRun({ lastToolResult: envelope });
+    } catch (error) {
+      // The caller still receives the exact tool outcome. Persistence of
+      // lastToolResult must not convert a known failure into a thrown
+      // ambiguous tool call. Count/log so a SQLite lock is diagnosable.
+      this.persistFailureCountValue += 1;
+      console.warn("[vdt-tool-registry] lastToolResult persist failed", {
+        count: this.persistFailureCountValue,
+        runId: context.runId,
+        toolName: envelope.toolName,
+        ok: envelope.ok,
+        toolCode: envelope.error?.code,
+        ...persistFailureFields(error)
+      });
+    }
     return envelope;
   }
 }
 
 function normalizeToolError(error: unknown): NonNullable<AgentToolResultEnvelope["error"]> {
-  if (error instanceof AgentToolError) {
+  if (isAgentToolError(error)) {
     return {
       code: error.code,
       message: error.message,
       details: error.details
     };
   }
+  if (isVdtStorageError(error)) {
+    return {
+      code: error.code,
+      message: error.message
+    };
+  }
   if (error instanceof z.ZodError) {
     return {
       code: "INVALID_TOOL_ARGS",
-      message: error.issues.map((issue) => issue.message).join("; "),
+      message: schemaIssueSummary(error.issues) || "Tool arguments did not match the schema.",
       details: error.issues
     };
   }

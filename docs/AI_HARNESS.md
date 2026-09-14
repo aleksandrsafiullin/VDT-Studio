@@ -1,6 +1,6 @@
 # AI And Agent Harness
 
-Last reviewed against the working tree: **2026-08-26**.
+Last reviewed against the working tree: **2026-09-13**.
 
 ## Scope
 
@@ -125,7 +125,10 @@ commas without globally replacing commas or changing `min(a,b)` semantics.
   remains readable as a secondary compatibility projection.
 - Process-restart auto-resume is not wired. An active controller fences stale
   callbacks, but after controller loss the public projection and message API
-  report `recovery_required`; no replacement session is invented. A recovery
+  report `recovery_required`; no replacement session is invented. A live
+  supervisor that enters `recovery_required` now also appends `runtime_status`
+  with `state: recovery_required`, so the public snapshot leaves `running`
+  before `activeRuns` drops. A recovery
   coordinator, builder-revision reconstruction, paused question/approval
   restoration remain required. The Supervisor and Sequence 4 authority can
   hydrate a verified finish receipt, preserve exactly one durable `final` and
@@ -206,6 +209,8 @@ pnpm desktop:sidecar:verify
 ## Research
 
 `research.search_web` supports Brave or Tavily when configured by environment. It returns bounded search results with title, URL, source, snippet and retrieval time. Research policy is included in agent context and can be changed during a run.
+
+Session agents (Supervisor `model_agent` and every `external_cli_agent` checkpoint CLI) must not stall when those keys are missing. `research.search_web` returns `RESEARCH_PROVIDER_NOT_CONFIGURED` as a visible tool refusal, structured feedback maps that code to `research_required` and suggests `user.ask`, and the agent must ask the user or state an explicit assumption instead of retrying the same search. The setup rail shows amber with a tooltip when research mode is on/auto and `GET /api/agent/research/status` reports `providerConfigured: false`. There is no default API key and no silent no-op success.
 
 Current research is search-only:
 

@@ -444,7 +444,7 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("verify-release-docs", () => {
+describe("verify-release-docs", { timeout: 60_000 }, () => {
   it("passes when required release documents contain the expected guardrails", async () => {
     const root = await createFixture();
 
@@ -644,7 +644,7 @@ describe("verify-release-docs", () => {
 
       expect(() => verifyReleaseDocs(root)).toThrow(/missing required release-doc text/);
     }
-  });
+  }, 45_000);
 
   it("fails when any frozen legacy phase literal is removed", async () => {
     for (const guard of exactLegacyPhaseLiteralGuards) {

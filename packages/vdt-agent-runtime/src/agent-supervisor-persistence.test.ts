@@ -287,6 +287,34 @@ describe("AgentSupervisorPersistence", () => {
       externalSessionBound: true,
       pendingOperation: "tool_call"
     });
+    expect(publicSnapshot.executionSummary).not.toHaveProperty("logicalSessionCount");
+    expect(publicSnapshot.executionSummary).not.toHaveProperty("processSpawnCount");
+    expect(publicSnapshot.executionSummary).not.toHaveProperty("segmentCount");
+    expect(publicSnapshot.executionSummary).not.toHaveProperty("resumeCount");
+    expect(Object.keys(publicSnapshot.executionSummary ?? {}).sort()).toEqual([
+      "backendId",
+      "boundAt",
+      "capabilityEvidenceHash",
+      "capabilityProfileHash",
+      "cliVersion",
+      "engineAdapterId",
+      "engineId",
+      "executionProfile",
+      "externalSessionBound",
+      "finishState",
+      "lastCheckpointId",
+      "modelId",
+      "pendingOperation",
+      "protocolVersion",
+      "qualificationStatus",
+      "recoveryStatus",
+      "schemaVersion",
+      "sessionEpoch",
+      "sessionStatus",
+      "toolCatalogHash",
+      "toolIsolation",
+      "updatedAt"
+    ]);
     const publicJson = JSON.stringify(publicSnapshot);
     expect(publicJson).not.toContain("cursor-session-secret");
     expect(publicJson).not.toContain("settingsHash");

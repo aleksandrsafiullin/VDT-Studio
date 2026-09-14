@@ -117,15 +117,25 @@ export function proposeAndMaybeApplyMutation(
       status: "failed",
       failureReason: scopeError ?? validation.errors.map((error) => error.message).join("; ")
     });
-    storeProposal(context, failed);
-    context.emit({
-      type: "mutation_rejected",
-      phase: "previewing_mutation",
-      title: scopeError ? "Mutation scope rejected" : "Mutation validation failed",
-      message: failed.failureReason ?? "Mutation proposal failed validation.",
-      patch: failed.changeSet,
-      metadata: { proposalId: failed.id, status: failed.status }
-    });
+    try {
+      storeProposal(context, failed);
+    } catch {
+      // Proposal persistence is not a mutation. The graph was not applied.
+    }
+    try {
+      context.emit({
+        type: "mutation_rejected",
+        phase: "previewing_mutation",
+        title: scopeError ? "Mutation scope rejected" : "Mutation validation failed",
+        message: failed.failureReason ?? "Mutation proposal failed validation.",
+        patch: failed.changeSet,
+        metadata: { proposalId: failed.id, status: failed.status }
+      });
+    } catch {
+      // Intentional forensic gap: a rejected mutation still returns
+      // MUTATION_VALIDATION_FAILED even if this event cannot be appended.
+      // The graph was not applied; do not escalate to ambiguous.
+    }
     throw new AgentToolError(
       scopeError ? "MUTATION_SCOPE_VIOLATION" : "MUTATION_VALIDATION_FAILED",
       failed.failureReason ?? "Mutation proposal failed validation.",

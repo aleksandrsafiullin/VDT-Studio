@@ -21,7 +21,7 @@ const localStorageMock = (() => {
 
 vi.stubGlobal("localStorage", localStorageMock);
 
-const { ExecutionReadinessDot, SetupRail, agentActivityScrollClassName } = await import("./setup-rail");
+const { ExecutionReadinessDot, SetupRail, agentActivityScrollClassName, researchModeTooltip, researchToggleClassName } = await import("./setup-rail");
 const { useVdtStudioStore } = await import("./vdt-store");
 
 describe("SetupRail agent composer", () => {
@@ -76,6 +76,21 @@ describe("SetupRail agent composer", () => {
     expect(agentActivityScrollClassName(false)).toBe("min-h-0 flex-1 overflow-auto px-4 py-4");
     expect(agentActivityScrollClassName(true)).toContain("pb-48");
     expect(agentActivityScrollClassName(true)).toContain("overflow-auto");
+  });
+
+  it("shows amber and a tooltip when research is on and the provider is unconfigured", () => {
+    const status = { providerConfigured: false as const, providerId: "noop" };
+    expect(researchModeTooltip("on", status)).toBe(
+      "Agent should use research for unknown/current process context. Research provider is not configured."
+    );
+    expect(researchModeTooltip("auto", status)).toContain("Research provider is not configured.");
+    expect(researchModeTooltip("off", status)).not.toContain("Research provider is not configured.");
+    expect(researchToggleClassName("on", true)).toContain("bg-amber-50");
+    expect(researchToggleClassName("on", true)).toContain("text-amber-700");
+    expect(researchToggleClassName("on", true)).not.toContain("bg-emerald-50");
+    expect(researchToggleClassName("on", false)).toContain("bg-emerald-50");
+    expect(researchToggleClassName("off", true)).toContain("bg-amber-50");
+    expect(researchToggleClassName("off", true)).not.toContain("bg-slate-50");
   });
 
   it("keeps retry controls inside the scroll region when activity has a retryable error", () => {

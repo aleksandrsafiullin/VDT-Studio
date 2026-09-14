@@ -10,7 +10,10 @@ import {
   vdtGatewayToolCallSchema,
   vdtGatewayToolResultSchema
 } from "./agent-execution-contracts";
-import type { AgentToolContext, ToolRegistry } from "./tool-registry";
+import { persistFailureFields } from "./persist-failure-log";
+import { compactGatewayFeedback } from "./feedback";
+import { isAgentToolError, isVdtStorageError, type AgentToolContext, ToolRegistry } from "./tool-registry";
+import type { AgentToolResultEnvelope } from "./types";
 
 const FORBIDDEN_EXTERNAL_TOOLS = new Set([
   "user.show_status",
@@ -174,6 +177,8 @@ export class VdtToolGateway {
     projectHash: string | null;
   } | null = null;
   private executionTail: Promise<void> = Promise.resolve();
+  private inFlightExecutions = 0;
+  private persistFailureCountValue = 0;
 
   constructor(options: VdtToolGatewayOptions) {
     this.bindingValue = structuredClone(options.binding);
@@ -209,6 +214,21 @@ export class VdtToolGateway {
     return structuredClone(this.bindingValue);
   }
 
+  hasInFlightExecution(): boolean {
+    return this.inFlightExecutions > 0;
+  }
+
+  persistFailureCount(): number {
+    return this.persistFailureCountValue;
+  }
+
+  abortActiveExecution(reason = "The run was cancelled."): void {
+    const context = this.toolContext();
+    if (!context.signal.aborted) {
+      context.store.getState(context.runId).abortController.abort(reason);
+    }
+  }
+
   /** Trusted recovery control-plane operation. Execution identity and opaque
    * session stay fixed; only the exact next durable epoch may be adopted. */
   advanceSessionBinding(rawBinding: AgentSessionBinding): void {
@@ -232,7 +252,10 @@ export class VdtToolGateway {
       ));
     }
 
-    const execution = this.executionTail.then(() => this.executeSerialized(call));
+    this.inFlightExecutions += 1;
+    const execution = this.executionTail.then(() => this.executeSerialized(call)).finally(() => {
+      this.inFlightExecutions -= 1;
+    });
     this.executionTail = execution.then(() => undefined, () => undefined);
     return execution;
   }
@@ -252,7 +275,10 @@ export class VdtToolGateway {
       ));
     }
     const call = parsed.data;
-    const execution = this.executionTail.then(() => this.executeTrustedControlSerialized(call, apply));
+    this.inFlightExecutions += 1;
+    const execution = this.executionTail.then(() => this.executeTrustedControlSerialized(call, apply)).finally(() => {
+      this.inFlightExecutions -= 1;
+    });
     this.executionTail = execution.then(() => undefined, () => undefined);
     return execution;
   }
@@ -373,19 +399,37 @@ export class VdtToolGateway {
       mutatesProject: this.tools.getSpec(canonicalToolName(call.toolName))?.mutatesProject === true
     });
 
+    const revisionBeforeExecute = context.builder?.getRevision() ?? null;
+    const finishSealBefore = this.verifiedFinishSeal?.receiptId ?? null;
     let result: VdtGatewayToolResult;
     try {
-      result = call.toolName === "run.request_finish"
-        ? await this.executeFinish(call)
-        : await this.executeRegistryTool(call, context);
-      if (
-        result.status !== "failed"
-        && this.tools.getSpec(canonicalToolName(call.toolName))?.mutatesProject === true
-      ) {
-        this.expectedProjectRevision = context.builder?.getRevision() ?? this.expectedProjectRevision;
+      // executeSerialized already passed the pre-publish abort check. Recheck
+      // after tool_call so a cancel that arrived while the outbox was blocked
+      // cannot still execute on a run the API has already stopped.
+      if (context.signal.aborted) {
+        result = failedResult(call.externalCallId, call.toolName, "RUN_CANCELLED", {
+          message: "The run was cancelled before tool execution.",
+          mutationApplied: false
+        });
+      } else {
+        result = call.toolName === "run.request_finish"
+          ? await this.executeFinish(call)
+          : await this.executeRegistryTool(call, context);
+        if (
+          result.status !== "failed"
+          && this.tools.getSpec(canonicalToolName(call.toolName))?.mutatesProject === true
+        ) {
+          this.expectedProjectRevision = context.builder?.getRevision() ?? this.expectedProjectRevision;
+        }
       }
     } catch (error) {
-      return await this.stopOnAmbiguousExecution(baseReceipt, call, error);
+      return await this.failUnappliedOrStopAmbiguous(
+        baseReceipt,
+        call,
+        error,
+        revisionBeforeExecute,
+        finishSealBefore
+      );
     }
 
     await this.persistTerminalReceipt(
@@ -622,17 +666,29 @@ export class VdtToolGateway {
           : "failed";
     const payload = envelope.ok
       ? compactToolPayload(envelope.output, envelope)
-      : {
-          error: envelope.error ?? { code: "TOOL_FAILED", message: "Tool failed." },
-          validation: envelope.validation
-        };
-    return resultEnvelope(
-      call.externalCallId,
-      call.toolName,
-      status,
-      envelope.ok ? "OK" : envelope.error?.code ?? "TOOL_FAILED",
-      payload
-    );
+      : failedToolPayload(envelope, context);
+    try {
+      return resultEnvelope(
+        call.externalCallId,
+        call.toolName,
+        status,
+        envelope.ok ? "OK" : envelope.error?.code ?? "TOOL_FAILED",
+        payload
+      );
+    } catch (error) {
+      if (status === "failed") {
+        return failedResult(
+          call.externalCallId,
+          call.toolName,
+          envelope.error?.code ?? "TOOL_FAILED",
+          {
+            ...failedToolPayload(envelope, context),
+            mutationApplied: false
+          }
+        );
+      }
+      throw error;
+    }
   }
 
   private async executeFinish(call: VdtGatewayToolCall): Promise<VdtGatewayToolResult> {
@@ -694,6 +750,11 @@ export class VdtToolGateway {
       await this.finishReceipt(receipt, result, state);
       return;
     } catch (error) {
+      this.notePersistFailure("terminal_receipt", error, {
+        externalCallId: call.externalCallId,
+        toolName: call.toolName,
+        state
+      });
       const observed = await this.ledger.get(receipt.bindingId, receipt.externalCallId)
         .catch(() => undefined);
       if (
@@ -709,8 +770,89 @@ export class VdtToolGateway {
         // terminal receipt won and is safe to replay.
         return;
       }
+      if (state === "failed") {
+        try {
+          await this.finishReceipt(
+            receipt,
+            failedResult(call.externalCallId, call.toolName, result.resultCode, {
+              error: { code: result.resultCode, message: "Tool failed." },
+              mutationApplied: false
+            }),
+            "failed"
+          );
+          return;
+        } catch (compactError) {
+          this.notePersistFailure("terminal_receipt_compact", compactError, {
+            externalCallId: call.externalCallId,
+            toolName: call.toolName,
+            state
+          });
+        }
+      }
       await this.stopOnAmbiguousExecution(receipt, call, error);
     }
+  }
+
+  private didCallLand(
+    call: VdtGatewayToolCall,
+    revisionBeforeExecute: number | null,
+    finishSealBefore: string | null
+  ): boolean {
+    const revisionAfter = this.toolContext().builder?.getRevision() ?? null;
+    if (revisionBeforeExecute !== revisionAfter) return true;
+    if (call.toolName !== "run.request_finish") return false;
+    // run.request_finish seals the verified head without bumping builder
+    // revision. A new seal is the finish equivalent of commit().
+    const finishSealAfter = this.verifiedFinishSeal?.receiptId ?? null;
+    return finishSealAfter !== null && finishSealAfter !== finishSealBefore;
+  }
+
+  private async failUnappliedOrStopAmbiguous(
+    receipt: VdtGatewayOperationReceipt,
+    call: VdtGatewayToolCall,
+    error: unknown,
+    revisionBeforeExecute: number | null,
+    finishSealBefore: string | null
+  ): Promise<VdtGatewayToolResult> {
+    if (this.didCallLand(call, revisionBeforeExecute, finishSealBefore)) {
+      return await this.stopOnAmbiguousExecution(receipt, call, error);
+    }
+    const result = failedResult(
+      call.externalCallId,
+      call.toolName,
+      isAgentToolError(error) ? error.code : errorCodeFromUnknown(error),
+      {
+        ...failedToolPayload(toolErrorEnvelope(call.toolName, error), this.toolContext()),
+        mutationApplied: false
+      }
+    );
+    await this.persistTerminalReceipt(receipt, call, result, "failed");
+    try {
+      await this.publish("tool_result", call, {
+        status: result.status,
+        resultCode: result.resultCode,
+        resultHash: result.resultHash,
+        retryable: isRetryableResultCode(result.resultCode)
+      });
+    } catch {
+      // The failed receipt is already authoritative; the engine still receives
+      // the deterministic rejection even if the v2 event cannot be appended.
+    }
+    return result;
+  }
+
+  private notePersistFailure(
+    phase: string,
+    error: unknown,
+    extra: Readonly<Record<string, unknown>>
+  ): void {
+    this.persistFailureCountValue += 1;
+    console.warn("[vdt-tool-gateway] persist failure", {
+      count: this.persistFailureCountValue,
+      phase,
+      ...extra,
+      ...persistFailureFields(error)
+    });
   }
 
   private async stopOnAmbiguousExecution(
@@ -837,6 +979,54 @@ function failedResult(
   return resultEnvelope(externalCallId, toolName, "failed", resultCode, payload);
 }
 
+function errorCodeFromUnknown(error: unknown): string {
+  if (isAgentToolError(error)) return error.code;
+  if (isVdtStorageError(error)) return error.code;
+  if (error instanceof VdtToolGatewayError) return error.code;
+  return "TOOL_FAILED";
+}
+
+function toolContextHasGraph(context: AgentToolContext): boolean {
+  const project = context.builder?.getProject() ?? context.getRun().draftProject;
+  return Boolean(project && project.graph.nodes.length > 0);
+}
+
+function toolErrorEnvelope(toolName: string, error: unknown): AgentToolResultEnvelope {
+  if (isAgentToolError(error)) {
+    return {
+      toolName,
+      ok: false,
+      error: { code: error.code, message: error.message, details: error.details },
+      projectChanged: false,
+      emittedEventIds: []
+    };
+  }
+  return {
+    toolName,
+    ok: false,
+    error: {
+      code: errorCodeFromUnknown(error),
+      message: error instanceof Error ? error.message : "Tool execution failed."
+    },
+    projectChanged: false,
+    emittedEventIds: []
+  };
+}
+
+function failedToolPayload(
+  envelope: AgentToolResultEnvelope,
+  context: AgentToolContext
+): Record<string, unknown> {
+  const feedback = compactGatewayFeedback(envelope, {
+    hasNonemptyGraph: toolContextHasGraph(context)
+  });
+  return {
+    error: envelope.error ?? { code: "TOOL_FAILED", message: "Tool failed." },
+    validation: envelope.validation,
+    ...(feedback ? { feedback } : {})
+  };
+}
+
 function compactToolPayload(output: unknown, envelope: {
   projectChanged: boolean;
   validation?: unknown;
@@ -856,6 +1046,9 @@ function canonicalToolName(toolName: string): string {
 }
 
 function isRetryableResultCode(code: string): boolean {
+  if (code === "PROPOSAL_BASE_NOT_PERSISTED" || code === "PROPOSAL_BASE_NOT_CURRENT") {
+    return false;
+  }
   return /(?:TIMEOUT|RATE_LIMIT|STALE|CONFLICT|RETRY|UNAVAILABLE|INTERRUPTED)/i.test(code);
 }
 

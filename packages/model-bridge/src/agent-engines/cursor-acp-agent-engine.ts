@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   agentEngineCheckpointSchema,
   finishReceiptV2Schema,
+  NATIVE_WEB_SEARCH_EVENT_CODE,
   type AgentCapabilityProfile,
   type AgentEngineCheckpoint,
   type AgentEngineEvent,
@@ -688,6 +689,14 @@ class CanonicalCursorAcpSession implements AgentRunSession {
           continue;
         }
         if (event.type === "warning") {
+          if (event.code === NATIVE_WEB_SEARCH_EVENT_CODE) {
+            yield {
+              type: "transport_note",
+              code: event.code,
+              message: event.message
+            };
+            continue;
+          }
           yield { type: "checkpoint_requested", reason: event.code };
           continue;
         }

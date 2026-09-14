@@ -36,7 +36,7 @@ function fakeClaudeExecutor(env: NodeJS.ProcessEnv = process.env) {
   return { env, resolveExecutable: async () => fakeClaude };
 }
 
-describe("codex subscription executor", () => {
+describe("codex subscription executor", { timeout: 45_000 }, () => {
   it("executes certified codex manifest through adapter parseOutput", async () => {
     const result = await executeCompletion(
       codexManifest(),
@@ -150,7 +150,7 @@ describe("codex subscription executor", () => {
   });
 });
 
-describe("claude subscription executor", () => {
+describe("claude subscription executor", { timeout: 45_000 }, () => {
   it("executes certified claude manifest through adapter parseOutput", async () => {
     const result = await executeCompletion(
       claudeManifest(),

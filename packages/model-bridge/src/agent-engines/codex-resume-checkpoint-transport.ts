@@ -1,6 +1,14 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import { parseCheckpointTurn } from "./checkpoint-turn";
+import {
+  codexItemDiagnosticText,
+  omittedCheckpointStreamEvidence,
+  recordCheckpointEventType,
+  resolveCodexItemType,
+  safeProtocolLabel,
+  summarizeCodexItemDiagnostics
+} from "./checkpoint-protocol-reporting";
+import { selectCheckpointTurnFromAgentMessages } from "./checkpoint-turn";
 import {
   DEFAULT_MAX_LINES,
   DEFAULT_MAX_OUTPUT_BYTES,
@@ -13,13 +21,17 @@ import {
   checkpointTransportError,
   containsCredentialLeak,
   hashText,
+  attachSessionIdToError,
+  invokeCountedCheckpointRunner,
   positiveInteger,
   sanitizeProcessMessage,
+  wrapSpawnCountingRunner,
   type CheckpointCredentialEnvironmentEntry,
   type CheckpointProcessRequest,
   type CheckpointProcessResult,
   type CheckpointProcessRunner,
-  type CheckpointPrivateEnvironment
+  type CheckpointPrivateEnvironment,
+  type SpawnCountableRunner
 } from "./checkpoint-transport-common";
 import {
   CODEX_CHECKPOINT_PROTOCOL_VERSION,
@@ -27,6 +39,14 @@ import {
 } from "./persistent-cli-checkpoint-canaries";
 import type { CheckpointTurn } from "./checkpoint-turn";
 import type { ResumeCheckpointSegmentInput, ResumeCheckpointSegmentResult } from "./resume-checkpoint-engine-core";
+import {
+  extractSearchQuery,
+  isForbiddenCodexNativeItemType,
+  NativeWebSearchCollector,
+  attachNativeWebSearchToError,
+  withForcedCodexSearchFlag,
+  type NativeWebSearchRecord
+} from "./native-web-search";
 
 const ERROR_PREFIX = "CODEX_CHECKPOINT";
 const CLI_LABEL = "Codex";
@@ -72,8 +92,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function codexItemType(item: Record<string, unknown>): string | undefined {
-  const value = item.type ?? item.item_type;
-  return typeof value === "string" ? value : undefined;
+  const resolved = resolveCodexItemType(item);
+  if (!resolved.agreed) {
+    throw checkpointTransportError(
+      "SECURITY_BOUNDARY_BREACH",
+      "Codex item type fields disagreed."
+    );
+  }
+  return resolved.type;
 }
 
 function parseCodexStreamOutput(input: {
@@ -82,16 +108,21 @@ function parseCodexStreamOutput(input: {
   maxBytes: number;
   maxLines: number;
   allowedToolNames: readonly string[];
-}): { sessionId: string; turn: CheckpointTurn } {
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+}): { sessionId: string; turn: CheckpointTurn; segmentDiagnosticSummary?: string; nativeWebSearch?: NativeWebSearchRecord } {
   if (byteLength(input.stdout) > input.maxBytes) {
     throw checkpointTransportError(`${ERROR_PREFIX}_OUTPUT_TOO_LARGE`, "Codex output is too large.");
   }
   let sessionId = input.expectedSessionId;
   let started = false;
   let completed = false;
-  let finalText: string | undefined;
-  let completedMessages = 0;
+  const agentMessages: string[] = [];
+  const itemDiagnostics: string[] = [];
+  const webSearches = new NativeWebSearchCollector();
   let lineCount = 0;
+  const eventTypeSequence: string[] = [];
+  try {
   for (const line of input.stdout.split(/\r?\n/)) {
     if (!line.trim()) continue;
     lineCount += 1;
@@ -107,6 +138,7 @@ function parseCodexStreamOutput(input: {
     if (!isRecord(event) || typeof event.type !== "string") {
       throw checkpointTransportError(`${ERROR_PREFIX}_PROTOCOL_INVALID`, "Codex output event is invalid.");
     }
+    recordCheckpointEventType(eventTypeSequence, event);
     if (event.type === "thread.started") {
       if (started) throw checkpointTransportError(`${ERROR_PREFIX}_PROTOCOL_INVALID`, "Codex emitted duplicate thread.started.");
       assertSessionId(event.thread_id, "thread.started.thread_id", ERROR_PREFIX);
@@ -128,41 +160,74 @@ function parseCodexStreamOutput(input: {
     if (event.type === "item.started" || event.type === "item.updated" || event.type === "item.completed") {
       if (!isRecord(event.item)) throw checkpointTransportError(`${ERROR_PREFIX}_PROTOCOL_INVALID`, "Codex item event is invalid.");
       const type = codexItemType(event.item);
-      if (
-        type === "command_execution"
-        || type === "file_change"
-        || type === "web_search"
-        || type === "collab_tool_call"
-        || type === "mcp_tool_call"
-      ) {
+      if (isForbiddenCodexNativeItemType(type) || type === "mcp_tool_call") {
         throw checkpointTransportError("SECURITY_BOUNDARY_BREACH", `Codex attempted forbidden ${type ?? "foreign tool"}.`);
+      }
+      if (type === "web_search") {
+        webSearches.observe({
+          id: typeof event.item.id === "string" ? event.item.id : undefined,
+          query: extractSearchQuery(event.item),
+          eventType: event.type
+        });
+        continue;
       }
       if (type === "agent_message" || type === "assistant_message") {
         if (event.type === "item.completed" && typeof event.item.text === "string") {
-          completedMessages += 1;
-          if (completedMessages > 1) {
-            throw checkpointTransportError(`${ERROR_PREFIX}_PROTOCOL_INVALID`, "Codex emitted multiple completed agent messages.");
-          }
-          finalText = event.item.text;
+          agentMessages.push(event.item.text);
         }
         continue;
       }
       if (type === "reasoning" || type === "todo_list") continue;
-      throw checkpointTransportError(`${ERROR_PREFIX}_PROTOCOL_MISMATCH`, "Codex emitted an unknown item type.");
+      if (type === "error") {
+        const diagnostic = codexItemDiagnosticText(event.item);
+        if (diagnostic && itemDiagnostics.length < 3) itemDiagnostics.push(diagnostic);
+        continue;
+      }
+      throw checkpointTransportError(
+        `${ERROR_PREFIX}_PROTOCOL_MISMATCH`,
+        `Codex emitted an unknown item type: ${safeProtocolLabel(type)}.`
+      );
     }
-    throw checkpointTransportError(`${ERROR_PREFIX}_PROTOCOL_MISMATCH`, "Codex emitted an unknown stream event.");
+    throw checkpointTransportError(
+      `${ERROR_PREFIX}_PROTOCOL_MISMATCH`,
+      `Codex emitted an unknown stream event: ${safeProtocolLabel(event.type)}.`
+    );
   }
-  if (!started || !completed || !sessionId || !finalText) {
-    throw checkpointTransportError(`${ERROR_PREFIX}_PROTOCOL_INVALID`, "Codex output omitted thread, terminal turn, or agent message evidence.");
+  if (!started || !completed || !sessionId || agentMessages.length === 0) {
+    const omitted = omittedCheckpointStreamEvidence({
+      cliLabel: CLI_LABEL,
+      observation: {
+        parsedLineCount: lineCount,
+        eventTypeSequence,
+        stdoutEmpty: !input.stdout.trim(),
+        exitCode: input.exitCode,
+        signal: input.signal
+      },
+      required: {
+        init: started,
+        terminal: completed,
+        session: Boolean(sessionId),
+        agentMessage: agentMessages.length > 0
+      }
+    });
+    throw checkpointTransportError(`${ERROR_PREFIX}_PROTOCOL_INVALID`, omitted.message, omitted.details);
   }
+  const segmentDiagnosticSummary = summarizeCodexItemDiagnostics(itemDiagnostics);
+  const nativeWebSearch = webSearches.snapshot();
   return {
     sessionId,
-    turn: parseCheckpointTurn(finalText, {
+    turn: selectCheckpointTurnFromAgentMessages(agentMessages, {
       protocolVersion: VDT_CHECKPOINT_TURN_PROTOCOL_VERSION,
       allowedToolNames: input.allowedToolNames,
       errorPrefix: ERROR_PREFIX
-    })
+    }),
+    ...(segmentDiagnosticSummary ? { segmentDiagnosticSummary } : {}),
+    ...(nativeWebSearch ? { nativeWebSearch } : {})
   };
+  } catch (error) {
+    attachSessionIdToError(error, sessionId);
+    attachNativeWebSearchToError(error, webSearches.snapshot());
+  }
 }
 
 function buildCodexEnvironment(
@@ -173,7 +238,7 @@ function buildCodexEnvironment(
   const output: Record<string, string> = Object.create(null) as Record<string, string>;
   output.HOME = authHome ?? state;
   output.USERPROFILE = authHome ?? state;
-  output.CODEX_HOME = authHome ?? state;
+  output.CODEX_HOME = authHome ? path.join(authHome, ".codex") : state;
   const names = new Set<string>();
   for (const entry of entries) {
     if (
@@ -196,7 +261,7 @@ function buildCodexEnvironment(
 export class CodexResumeCheckpointTransport {
   readonly validatedCliVersion: string;
   readonly #executable: string;
-  readonly #runner: CheckpointProcessRunner;
+  readonly #runner: SpawnCountableRunner<CheckpointProcessRequest, CheckpointProcessResult>;
   readonly #timeoutMs: number;
   readonly #maxOutputBytes: number;
   readonly #maxPromptBytes: number;
@@ -211,11 +276,15 @@ export class CodexResumeCheckpointTransport {
     }
     this.#executable = options.executable;
     this.validatedCliVersion = options.validatedCliVersion;
-    this.#runner = options.runner ?? new NodeCheckpointProcessRunner(ERROR_PREFIX, CLI_LABEL);
+    this.#runner = wrapSpawnCountingRunner(options.runner ?? new NodeCheckpointProcessRunner(ERROR_PREFIX, CLI_LABEL));
     this.#timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs", ERROR_PREFIX);
     this.#maxOutputBytes = positiveInteger(options.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES, "maxOutputBytes", ERROR_PREFIX);
     this.#maxPromptBytes = positiveInteger(options.maxPromptBytes, DEFAULT_MAX_PROMPT_BYTES, "maxPromptBytes", ERROR_PREFIX);
     this.#maxLines = positiveInteger(options.maxLines, DEFAULT_MAX_LINES, "maxLines", ERROR_PREFIX);
+  }
+
+  get processSpawnCount(): number {
+    return this.#runner.processSpawnCount;
   }
 
   async executeSegment(
@@ -237,24 +306,39 @@ export class CodexResumeCheckpointTransport {
     const resolved = await assertPrivateCheckpointEnvironment(input.environment, input.mode === "open", ERROR_PREFIX, CLI_LABEL);
     const credentials = input.environment.credentialEnvironment ?? [];
     const environment = buildCodexEnvironment(resolved.state, resolved.authHome, credentials);
-    const common = [
-      "--json",
-      "--color",
-      "never",
-      "--skip-git-repo-check",
-      "--ignore-user-config",
-      "--sandbox",
-      "read-only",
-      "--model",
-      input.model
-    ];
-    const args = input.mode === "open"
-      ? ["exec", ...common, "-C", resolved.workspace, "-"]
-      : ["exec", "resume", ...common, input.expectedSessionId!, "-"];
+    const args = withForcedCodexSearchFlag(input.mode === "open"
+      ? [
+        "exec",
+        "--json",
+        "--color",
+        "never",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--sandbox",
+        "read-only",
+        "--model",
+        input.model,
+        "-C",
+        resolved.workspace,
+        "-"
+      ]
+      : [
+        "exec",
+        "resume",
+        "--json",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "-c",
+        'sandbox_mode="read-only"',
+        "--model",
+        input.model,
+        input.expectedSessionId!,
+        "-"
+      ], input.forceNativeWebSearch === true);
     if (args.some((arg) => FORBIDDEN_ARGUMENTS.has(arg))) {
       throw checkpointTransportError("SECURITY_BOUNDARY_BREACH", "Codex checkpoint arguments enabled a forbidden trust mode.");
     }
-    const result = await this.#runner.run({
+    const spawned = await invokeCountedCheckpointRunner(this.#runner, {
       executable: this.#executable,
       args: Object.freeze(args),
       cwd: resolved.workspace,
@@ -264,6 +348,7 @@ export class CodexResumeCheckpointTransport {
       timeoutMs: this.#timeoutMs,
       maxOutputBytes: this.#maxOutputBytes
     });
+    const result = spawned.result;
     if (containsCredentialLeak(`${result.stdout}\n${result.stderr}`, credentials)) {
       throw checkpointTransportError("SECURITY_BOUNDARY_BREACH", "Codex checkpoint output exposed a server-owned credential.");
     }
@@ -288,13 +373,20 @@ export class CodexResumeCheckpointTransport {
       ...(input.expectedSessionId !== undefined ? { expectedSessionId: input.expectedSessionId } : {}),
       maxBytes: this.#maxOutputBytes,
       maxLines: this.#maxLines,
-      allowedToolNames
+      allowedToolNames,
+      exitCode: result.exitCode,
+      signal: result.signal
     });
     return Object.freeze({
       sessionId: parsed.sessionId,
       inputHash: hashText(input.prompt),
       outputHash: hashText(JSON.stringify(parsed.turn)),
-      turn: parsed.turn
+      turn: parsed.turn,
+      processSpawnCount: spawned.processSpawnCount,
+      inferenceMs: spawned.inferenceMs,
+      outputBytes: spawned.outputBytes,
+      ...(parsed.segmentDiagnosticSummary ? { segmentDiagnosticSummary: parsed.segmentDiagnosticSummary } : {}),
+      ...(parsed.nativeWebSearch ? { nativeWebSearch: parsed.nativeWebSearch } : {})
     });
   }
 }

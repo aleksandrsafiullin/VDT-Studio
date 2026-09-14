@@ -21,6 +21,12 @@ import type {
   CursorAcpTransport,
   CursorAcpVdtMcpServer
 } from "./cursor-acp-types";
+import {
+  extractSearchQuery,
+  formatNativeWebSearchNotice,
+  isNativeWebSearchTool,
+  NATIVE_WEB_SEARCH_EVENT_CODE
+} from "./native-web-search";
 
 const ACP_PROTOCOL_VERSION = 1;
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 15_000;
@@ -409,6 +415,7 @@ class CursorAcpSession implements CursorAcpRunSession {
   readonly #onObservation: ((observation: CursorAcpObservation) => void) | undefined;
   readonly #events = new AsyncEventQueue<CursorAcpSessionEvent>();
   readonly #toolNamesByCallId = new Map<string, string>();
+  readonly #nativeWebSearchCallIds = new Set<string>();
   readonly #messageTextById = new Map<string, string>();
   readonly #messageOrder: string[] = [];
   readonly #detachMessage: () => void;
@@ -525,6 +532,7 @@ class CursorAcpSession implements CursorAcpRunSession {
     this.#activeInputHash = inputHash;
     this.#state = "running";
     this.#toolNamesByCallId.clear();
+    this.#nativeWebSearchCallIds.clear();
     this.#messageTextById.clear();
     this.#messageOrder.splice(0);
     this.#emit({ type: "runtime_status", source: "runtime", status: "turn_started", turnId });
@@ -793,8 +801,13 @@ class CursorAcpSession implements CursorAcpRunSession {
   #handleToolReported(update: Record<string, unknown>): void {
     this.#flushMessages();
     const toolCallId = typeof update.toolCallId === "string" ? update.toolCallId : undefined;
-    const toolName = this.#extractToolName(update);
+    const extractedName = this.#extractToolName(update);
+    const rawName = typeof update.toolName === "string" ? update.toolName
+      : typeof update.name === "string" ? update.name
+        : undefined;
+    const toolName = extractedName ?? rawName;
     const kind = typeof update.kind === "string" ? update.kind : undefined;
+    if (this.#recordNativeWebSearch(toolCallId, toolName, kind, update)) return;
     if (!toolCallId || !SAFE_ID.test(toolCallId) || !toolName || !this.#allowedToolNames.has(toolName)) {
       void this.#securityBreach("Cursor ACP reported a tool outside the session VDT allowlist.");
       return;
@@ -816,6 +829,14 @@ class CursorAcpSession implements CursorAcpRunSession {
 
   #handleToolUpdated(update: Record<string, unknown>): void {
     const toolCallId = typeof update.toolCallId === "string" ? update.toolCallId : undefined;
+    if (toolCallId && this.#nativeWebSearchCallIds.has(toolCallId)) return;
+    const extractedName = this.#extractToolName(update);
+    const rawName = typeof update.toolName === "string" ? update.toolName
+      : typeof update.name === "string" ? update.name
+        : undefined;
+    const reportedName = extractedName ?? rawName;
+    const kind = typeof update.kind === "string" ? update.kind : undefined;
+    if (this.#recordNativeWebSearch(toolCallId, reportedName, kind, update)) return;
     const toolName = toolCallId ? this.#toolNamesByCallId.get(toolCallId) : undefined;
     if (!toolCallId || !toolName) {
       void this.#securityBreach("Cursor ACP updated an unknown or non-VDT tool call.");
@@ -829,6 +850,30 @@ class CursorAcpSession implements CursorAcpRunSession {
       ...(typeof update.status === "string" ? { status: update.status } : {}),
       timestamp: this.#now().toISOString()
     });
+  }
+
+  #recordNativeWebSearch(
+    toolCallId: string | undefined,
+    toolName: string | undefined,
+    kind: string | undefined,
+    update: Record<string, unknown>
+  ): boolean {
+    if (!toolCallId || !SAFE_ID.test(toolCallId) || !isNativeWebSearchTool(toolName, kind)) {
+      return false;
+    }
+    if (this.#nativeWebSearchCallIds.has(toolCallId)) return true;
+    this.#nativeWebSearchCallIds.add(toolCallId);
+    const query = extractSearchQuery(isRecord(update.rawInput) ? update.rawInput : update);
+    this.#emit({
+      type: "warning",
+      source: "runtime",
+      code: NATIVE_WEB_SEARCH_EVENT_CODE,
+      message: formatNativeWebSearchNotice({
+        count: 1,
+        queries: query ? [query] : []
+      })
+    });
+    return true;
   }
 
   #extractToolName(update: Record<string, unknown>): string | undefined {

@@ -10,6 +10,21 @@ import type {
   ExternalCliAgentEngine
 } from "@vdt-studio/vdt-agent-runtime";
 import { parseCheckpointActionBatch, type CheckpointActionBatch } from "./action-batch";
+import { selectCheckpointTurnFromAgentMessages } from "./checkpoint-turn";
+import {
+  omittedCheckpointStreamEvidence,
+  recordCheckpointEventType,
+  resolveCodexItemType
+} from "./checkpoint-protocol-reporting";
+import { sameCanonicalWorkspacePath } from "./checkpoint-transport-common";
+import {
+  extractSearchQuery,
+  isForbiddenCodexNativeItemType,
+  NativeWebSearchCollector,
+  attachNativeWebSearchToError,
+  withForcedCodexSearchFlag,
+  type NativeWebSearchRecord
+} from "./native-web-search";
 
 const SAFE_HASH = /^sha256:[a-f0-9]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
@@ -116,6 +131,7 @@ export interface PersistentCliSegmentResult {
   readonly turn: PersistentCheckpointTurn;
   readonly inputHash: string;
   readonly outputHash: string;
+  readonly nativeWebSearch?: NativeWebSearchRecord;
 }
 
 export interface PersistentCliSegmentInput {
@@ -125,6 +141,7 @@ export interface PersistentCliSegmentInput {
   readonly prompt: string;
   readonly expectedSessionId?: string;
   readonly signal: AbortSignal;
+  readonly forceNativeWebSearch?: boolean;
 }
 
 interface PersistentCanaryOptions {
@@ -504,9 +521,9 @@ export class CodexResumeCheckpointCanary extends UnavailablePersistentCheckpoint
       input.model,
       ...codexMcpConfigArgs(input.environment.vdtMcpServer, this.#tools)
     ];
-    const args = input.mode === "open"
+    const args = withForcedCodexSearchFlag(input.mode === "open"
       ? ["exec", "--color", "never", "--sandbox", "read-only", "-C", prepared.workspace, ...common, "-"]
-      : ["exec", "resume", ...common, input.expectedSessionId!, "-"];
+      : ["exec", "resume", ...common, input.expectedSessionId!, "-"], input.forceNativeWebSearch === true);
     if (args.includes("--ephemeral") || args.includes("--yolo") || args.includes("--dangerously-bypass-approvals-and-sandbox")) {
       throw canaryError("SECURITY_BOUNDARY_BREACH", "Codex canary enabled a forbidden execution mode.");
     }
@@ -527,7 +544,10 @@ export class CodexResumeCheckpointCanary extends UnavailablePersistentCheckpoint
     if ((await readdir(prepared.workspace)).length > 0) {
       throw canaryError("SECURITY_BOUNDARY_BREACH", "Codex wrote to the private checkpoint workspace.");
     }
-    const parsed = parseCodexCheckpointStream(result.stdout, this.#tools, input.expectedSessionId);
+    const parsed = parseCodexCheckpointStream(result.stdout, this.#tools, input.expectedSessionId, {
+      exitCode: result.exitCode,
+      signal: result.signal
+    });
     return Object.freeze({
       ...parsed,
       inputHash: hashText(input.prompt),
@@ -600,7 +620,10 @@ export class ClaudeResumeCheckpointCanary extends UnavailablePersistentCheckpoin
     if ((await readdir(prepared.workspace)).length > 0) {
       throw canaryError("SECURITY_BOUNDARY_BREACH", "Claude wrote to the private checkpoint workspace.");
     }
-    const parsed = parseClaudeCheckpointStream(result.stdout, this.#tools, input.expectedSessionId, prepared.workspace);
+    const parsed = parseClaudeCheckpointStream(result.stdout, this.#tools, input.expectedSessionId, prepared.workspace, {
+      exitCode: result.exitCode,
+      signal: result.signal
+    });
     return Object.freeze({
       ...parsed,
       inputHash: hashText(input.prompt),
@@ -610,8 +633,11 @@ export class ClaudeResumeCheckpointCanary extends UnavailablePersistentCheckpoin
 }
 
 function codexItemType(item: Record<string, unknown>): string | undefined {
-  const value = item.type ?? item.item_type;
-  return typeof value === "string" ? value : undefined;
+  const resolved = resolveCodexItemType(item);
+  if (!resolved.agreed) {
+    throw canaryError("SECURITY_BOUNDARY_BREACH", "Codex item type fields disagreed.");
+  }
+  return resolved.type;
 }
 
 function assertAllowedCodexMcpItem(item: Record<string, unknown>, tools: readonly string[]): void {
@@ -625,15 +651,18 @@ function assertAllowedCodexMcpItem(item: Record<string, unknown>, tools: readonl
 export function parseCodexCheckpointStream(
   stdout: string,
   allowedToolNames: readonly string[],
-  expectedSessionId?: string
-): { sessionId: string; turn: PersistentCheckpointTurn } {
+  expectedSessionId?: string,
+  process?: { exitCode: number | null; signal: NodeJS.Signals | null }
+): { sessionId: string; turn: PersistentCheckpointTurn; nativeWebSearch?: NativeWebSearchRecord } {
   if (byteLength(stdout) > 4 * 1024 * 1024) throw canaryError("CHECKPOINT_OUTPUT_TOO_LARGE", "Codex output is too large.");
   let sessionId = expectedSessionId;
   let started = false;
   let completed = false;
-  let finalText: string | undefined;
-  let completedMessages = 0;
+  const agentMessages: string[] = [];
   let lineCount = 0;
+  const eventTypeSequence: string[] = [];
+  const webSearches = new NativeWebSearchCollector();
+  try {
   for (const line of stdout.split(/\r?\n/)) {
     if (!line.trim()) continue;
     lineCount += 1;
@@ -647,6 +676,7 @@ export function parseCodexCheckpointStream(
     if (!isRecord(event) || typeof event.type !== "string") {
       throw canaryError("CHECKPOINT_PROTOCOL_INVALID", "Codex output event is invalid.");
     }
+    recordCheckpointEventType(eventTypeSequence, event);
     if (event.type === "thread.started") {
       if (started) throw canaryError("CHECKPOINT_PROTOCOL_INVALID", "Codex emitted duplicate thread.started.");
       assertSessionId(event.thread_id, "thread.started.thread_id");
@@ -668,8 +698,16 @@ export function parseCodexCheckpointStream(
     if (event.type === "item.started" || event.type === "item.updated" || event.type === "item.completed") {
       if (!isRecord(event.item)) throw canaryError("CHECKPOINT_PROTOCOL_INVALID", "Codex item event is invalid.");
       const type = codexItemType(event.item);
-      if (type === "command_execution" || type === "file_change" || type === "web_search" || type === "collab_tool_call") {
+      if (isForbiddenCodexNativeItemType(type)) {
         throw canaryError("SECURITY_BOUNDARY_BREACH", `Codex attempted forbidden ${type}.`);
+      }
+      if (type === "web_search") {
+        webSearches.observe({
+          id: typeof event.item.id === "string" ? event.item.id : undefined,
+          query: extractSearchQuery(event.item),
+          eventType: event.type
+        });
+        continue;
       }
       if (type === "mcp_tool_call") {
         assertAllowedCodexMcpItem(event.item, allowedToolNames);
@@ -677,23 +715,49 @@ export function parseCodexCheckpointStream(
       }
       if (type === "agent_message" || type === "assistant_message") {
         if (event.type === "item.completed" && typeof event.item.text === "string") {
-          completedMessages += 1;
-          if (completedMessages > 1) {
-            throw canaryError("CHECKPOINT_PROTOCOL_INVALID", "Codex emitted multiple completed agent messages.");
-          }
-          finalText = event.item.text;
+          agentMessages.push(event.item.text);
         }
         continue;
       }
       if (type === "reasoning" || type === "todo_list") continue;
+      // Live Codex emits informational item.type=error; skip like the transport.
+      if (type === "error") continue;
       throw canaryError("CHECKPOINT_PROTOCOL_MISMATCH", "Codex emitted an unknown item type.");
     }
     throw canaryError("CHECKPOINT_PROTOCOL_MISMATCH", "Codex emitted an unknown stream event.");
   }
-  if (!started || !completed || !sessionId || !finalText) {
-    throw canaryError("CHECKPOINT_PROTOCOL_INVALID", "Codex output omitted thread, terminal turn, or agent message evidence.");
+  if (!started || !completed || !sessionId || agentMessages.length === 0) {
+    const omitted = omittedCheckpointStreamEvidence({
+      cliLabel: "Codex",
+      observation: {
+        parsedLineCount: lineCount,
+        eventTypeSequence,
+        stdoutEmpty: !stdout.trim(),
+        exitCode: process?.exitCode ?? null,
+        signal: process?.signal ?? null
+      },
+      required: {
+        init: started,
+        terminal: completed,
+        session: Boolean(sessionId),
+        agentMessage: agentMessages.length > 0
+      }
+    });
+    throw canaryError("CHECKPOINT_PROTOCOL_INVALID", omitted.message, omitted.details);
   }
-  return { sessionId, turn: parsePersistentCheckpointTurn(finalText, allowedToolNames) };
+  const nativeWebSearch = webSearches.snapshot();
+  return {
+    sessionId,
+    turn: selectCheckpointTurnFromAgentMessages(agentMessages, {
+      protocolVersion: VDT_CHECKPOINT_TURN_PROTOCOL_VERSION,
+      allowedToolNames,
+      errorPrefix: "CHECKPOINT"
+    }) as PersistentCheckpointTurn,
+    ...(nativeWebSearch ? { nativeWebSearch } : {})
+  };
+  } catch (error) {
+    attachNativeWebSearchToError(error, webSearches.snapshot());
+  }
 }
 
 function claudeToolName(block: Record<string, unknown>): string | undefined {
@@ -718,13 +782,15 @@ export function parseClaudeCheckpointStream(
   stdout: string,
   allowedToolNames: readonly string[],
   expectedSessionId?: string,
-  expectedCwd?: string
+  expectedCwd?: string,
+  process?: { exitCode: number | null; signal: NodeJS.Signals | null }
 ): { sessionId: string; turn: PersistentCheckpointTurn } {
   if (byteLength(stdout) > 4 * 1024 * 1024) throw canaryError("CHECKPOINT_OUTPUT_TOO_LARGE", "Claude output is too large.");
   let sessionId = expectedSessionId;
   let initialized = false;
   let turn: PersistentCheckpointTurn | undefined;
   let lineCount = 0;
+  const eventTypeSequence: string[] = [];
   for (const line of stdout.split(/\r?\n/)) {
     if (!line.trim()) continue;
     lineCount += 1;
@@ -738,6 +804,7 @@ export function parseClaudeCheckpointStream(
     if (!isRecord(event) || typeof event.type !== "string") {
       throw canaryError("CHECKPOINT_PROTOCOL_INVALID", "Claude output event is invalid.");
     }
+    recordCheckpointEventType(eventTypeSequence, event);
     if (event.type === "system") {
       if (event.subtype !== "init" || initialized) {
         throw canaryError("CHECKPOINT_PROTOCOL_INVALID", "Claude initialization event is invalid.");
@@ -748,7 +815,7 @@ export function parseClaudeCheckpointStream(
         throw canaryError("CHECKPOINT_SESSION_MISMATCH", "Claude resumed a different session.");
       }
       sessionId = event.session_id;
-      if (expectedCwd !== undefined && (typeof event.cwd !== "string" || path.resolve(event.cwd) !== expectedCwd)) {
+      if (expectedCwd !== undefined && !sameCanonicalWorkspacePath(event.cwd, expectedCwd)) {
         throw canaryError("SECURITY_BOUNDARY_BREACH", "Claude reported execution outside the private workspace.");
       }
       continue;
@@ -777,7 +844,22 @@ export function parseClaudeCheckpointStream(
     throw canaryError("CHECKPOINT_PROTOCOL_MISMATCH", "Claude emitted an unknown stream event.");
   }
   if (!initialized || !sessionId || !turn) {
-    throw canaryError("CHECKPOINT_PROTOCOL_INVALID", "Claude output omitted initialization or terminal result evidence.");
+    const omitted = omittedCheckpointStreamEvidence({
+      cliLabel: "Claude",
+      observation: {
+        parsedLineCount: lineCount,
+        eventTypeSequence,
+        stdoutEmpty: !stdout.trim(),
+        exitCode: process?.exitCode ?? null,
+        signal: process?.signal ?? null
+      },
+      required: {
+        init: initialized,
+        terminal: Boolean(turn),
+        session: Boolean(sessionId)
+      }
+    });
+    throw canaryError("CHECKPOINT_PROTOCOL_INVALID", omitted.message, omitted.details);
   }
   return { sessionId, turn };
 }

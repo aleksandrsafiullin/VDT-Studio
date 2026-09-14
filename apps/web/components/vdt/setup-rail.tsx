@@ -38,7 +38,7 @@ function nextResearchMode(mode: ResearchMode): ResearchMode {
   return RESEARCH_MODES[(RESEARCH_MODES.indexOf(mode) + 1) % RESEARCH_MODES.length] ?? "auto";
 }
 
-function researchModeTooltip(mode: ResearchMode, status: ResearchStatus | undefined): string {
+export function researchModeTooltip(mode: ResearchMode, status: ResearchStatus | undefined): string {
   const base = RESEARCH_MODE_TOOLTIP[mode];
   if (mode !== "off" && status?.providerConfigured === false) {
     return `${base} Research provider is not configured.`;
@@ -46,10 +46,23 @@ function researchModeTooltip(mode: ResearchMode, status: ResearchStatus | undefi
   return base;
 }
 
+export function researchToggleClassName(mode: ResearchMode, unavailable: boolean): string {
+  const tone = unavailable
+    ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+    : mode === "on"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+      : mode === "off"
+        ? "border-slate-200 bg-slate-50 text-slate-400 hover:bg-slate-100"
+        : "";
+  return ["h-9 w-9 shrink-0", tone].filter(Boolean).join(" ");
+}
+
 function chatStatusLabel(status: AgentChatHistoryEntry["status"]) {
   switch (status) {
     case "needs_user_input":
       return "Waiting";
+    case "recovery_required":
+      return "Recoverable";
     case "ready":
       return "Ready";
     case "error":
@@ -458,12 +471,7 @@ export function SetupRail() {
             </button>
             <Button
               type="button"
-              className={[
-                "h-9 w-9 shrink-0",
-                researchMode === "on" ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "",
-                researchMode === "off" ? "border-slate-200 bg-slate-50 text-slate-400 hover:bg-slate-100" : "",
-                researchUnavailable ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" : ""
-              ].filter(Boolean).join(" ")}
+              className={researchToggleClassName(researchMode, researchUnavailable)}
               size="icon"
               variant="secondary"
               icon={<Search className="h-4 w-4" />}

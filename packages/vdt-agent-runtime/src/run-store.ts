@@ -6,18 +6,20 @@ import {
   summarizeAgentSupervisorPersistenceState
 } from "./agent-supervisor-persistence";
 import { AgentEventBus } from "./event-bus";
-import type {
-  AgentEventInput,
-  AgentChatMessage,
-  AgentThreadContext,
-  ManualProjectChange,
-  PublicAgentStatus,
-  VdtAgentEvent,
-  VdtAgentRunPhase,
-  VdtAgentRunSnapshot,
-  VdtAgentRunState,
-  VdtAgentRunStatus,
-  VdtAgentStartRequest
+import {
+  emptyAgentRunPerformanceTelemetry,
+  hydrateAgentRunPerformanceTelemetry,
+  type AgentEventInput,
+  type AgentChatMessage,
+  type AgentThreadContext,
+  type ManualProjectChange,
+  type PublicAgentStatus,
+  type VdtAgentEvent,
+  type VdtAgentRunPhase,
+  type VdtAgentRunSnapshot,
+  type VdtAgentRunState,
+  type VdtAgentRunStatus,
+  type VdtAgentStartRequest
 } from "./types";
 
 export interface PersistedAgentRunState {
@@ -97,12 +99,7 @@ export class AgentRunStore {
       manualChanges: [],
       recipes: [],
       memoryNotes: [],
-      performanceTelemetry: {
-        decisionLatenciesMs: [],
-        toolCallCount: 0,
-        outputBytes: 0,
-        repairCount: 0
-      }
+      performanceTelemetry: emptyAgentRunPerformanceTelemetry()
     };
     state.visibleContext = visibleContextFromState(state);
     this.runs.set(runId, state);
@@ -308,6 +305,7 @@ export function snapshotFromState(state: VdtAgentRunState): VdtAgentRunSnapshot 
     finalReport: state.finalReport,
     executionSummary,
     performanceSummary: state.performanceSummary,
+    performanceTelemetry: state.performanceTelemetry,
     error: state.error,
     retryableError: state.retryableError,
     feedbackHistory: redactSecrets(state.feedbackHistory) as VdtAgentRunState["feedbackHistory"],
@@ -402,12 +400,7 @@ export function hydrateAgentRunState(persisted: PersistedAgentRunState): VdtAgen
     validationState: persisted.validationState,
     calculationState: persisted.calculationState,
     memoryNotes: persisted.memoryNotes,
-    performanceTelemetry: persisted.performanceTelemetry ?? {
-      decisionLatenciesMs: [],
-      toolCallCount: 0,
-      outputBytes: 0,
-      repairCount: 0
-    },
+    performanceTelemetry: hydrateAgentRunPerformanceTelemetry(persisted.performanceTelemetry),
     supervisorPersistenceV2
   };
 }

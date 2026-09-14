@@ -1,58 +1,89 @@
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { JsonValue } from "./types";
-import { __loadSequence3GoldenVectorsForTests } from "./sequence-3-assets";
-import {
-  __evaluateSequence3HostVectorForTests,
-  preflightSequence3TransformHost
-} from "./sequence-3-transform";
 
-describe("Sequence 3 legacy-adoption host", () => {
-  it("matches all 204 frozen host vectors exactly", () => {
-    const registry = __loadSequence3GoldenVectorsForTests();
-    expect(() => preflightSequence3TransformHost()).not.toThrow();
-    expect(() => preflightSequence3TransformHost()).not.toThrow();
-    let accepted = 0;
-    let blocked = 0;
-    for (const vector of registry.hostVectors) {
-      const expected = vector.expected as Record<string, JsonValue>;
-      if (expected.outcome === "accepted") accepted += 1;
-      else blocked += 1;
+const helper = fileURLToPath(new URL("./sequence-3-transform.host-child.ts", import.meta.url));
+const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
+
+type HostSuiteReport = {
+  counts: { accepted: number; blocked: number };
+  knownAnswers: Array<{
+    id: string;
+    expected: JsonValue;
+    first: JsonValue;
+    second: JsonValue;
+  }>;
+  mutated: JsonValue;
+};
+
+let hostSuitePromise: Promise<HostSuiteReport> | undefined;
+
+function runHostSuiteInChild(): Promise<HostSuiteReport> {
+  hostSuitePromise ??= new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--import", "tsx", helper], {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code !== 0) {
+        reject(
+          new Error(
+            `Sequence 3 host suite child exited (code=${String(code)}, signal=${String(signal)}): ${
+              stderr || stdout
+            }`
+          )
+        );
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout.trim()) as HostSuiteReport);
+      } catch (error) {
+        reject(
+          new Error(
+            `Sequence 3 host suite child returned invalid JSON: ${stdout}; ${String(error)}`
+          )
+        );
+      }
+    });
+  });
+  return hostSuitePromise;
+}
+
+// Child pays the ~105s inflate+parse; this worker stays free for Vitest RPC.
+describe("Sequence 3 legacy-adoption host", { timeout: 240_000 }, () => {
+  it("matches all 204 frozen host vectors exactly", async () => {
+    const report = await runHostSuiteInChild();
+    expect(report.counts).toEqual({ accepted: 36, blocked: 168 });
+  });
+
+  it("is deterministic for baseline and empty input known answers", async () => {
+    const report = await runHostSuiteInChild();
+    expect(report.knownAnswers.map((entry) => entry.id)).toEqual([
+      "host.valid.baseline",
+      "host.valid.empty_input"
+    ]);
+    for (const entry of report.knownAnswers) {
+      expect(entry.first).toEqual(entry.expected);
+      expect(entry.second).toEqual(entry.expected);
     }
-    expect({ accepted, blocked }).toEqual({ accepted: 36, blocked: 168 });
-  }, 120_000);
+  });
 
-  it("is deterministic for baseline and empty input known answers", () => {
-    const registry = __loadSequence3GoldenVectorsForTests();
-    for (const id of ["host.valid.baseline", "host.valid.empty_input"]) {
-      const vector = registry.hostVectors.find((value) => value.vectorId === id)!;
-      const run = () => __evaluateSequence3HostVectorForTests(
-        vector.input as Record<string, JsonValue>,
-        registry.fixtureMigrationIdentity as Record<string, JsonValue>,
-        registry.fixtureCommitTimestamp
-      );
-      expect(run()).toEqual(vector.expected);
-      expect(run()).toEqual(vector.expected);
-    }
-  }, 30_000);
-
-  it("rejects a successful module that mutates the input-output gap", () => {
-    const registry = __loadSequence3GoldenVectorsForTests();
-    const source = registry.hostVectors.find(
-      (value) => value.vectorId === "host.error.wasm.outside_output_mutated"
-    )!;
-    const input = structuredClone(source.input) as Record<string, JsonValue>;
-    const behavior = input.wasmBehavior as Record<string, JsonValue>;
-    const writes = behavior.memoryWrites as Record<string, JsonValue>[];
-    const outsideWrite = writes.find((write) => write.offset === 200)!;
-    outsideWrite.offset = 100;
-
-    expect(
-      __evaluateSequence3HostVectorForTests(
-        input,
-        registry.fixtureMigrationIdentity as Record<string, JsonValue>,
-        registry.fixtureCommitTimestamp
-      )
-    ).toEqual({
+  it("rejects a successful module that mutates the input-output gap", async () => {
+    const report = await runHostSuiteInChild();
+    expect(report.mutated).toEqual({
       outcome: "blocked",
       code: "LAR_HOST_WASM_OUTPUT",
       failingRowIndex: 0,

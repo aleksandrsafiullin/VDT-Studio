@@ -3313,18 +3313,251 @@ var FORBIDDEN_TOOL_PREFIXES = Object.freeze([
   "web."
 ]);
 
-// ../model-bridge/src/agent-engines/checkpoint-turn.ts
-var DEFAULT_MAX_PROMPT_BYTES = 1024 * 1024;
-var MAX_ASSISTANT_TEXT_BYTES = 64 * 1024;
+// ../vdt-agent-runtime/src/agent-question-prompt.ts
+var AGENT_QUESTION_WHEN_TO_ASK = "Ask only for missing data, a required business choice, scope conflict, ambiguous logic, low confidence, or formula ambiguity. When one of those applies, use user.ask with 1-5 precise questions.";
+var AGENT_QUESTION_OBJECT_CONTRACT = "Each question object may use only: required id, question, reason, required; optional expectedAnswerType (text|number|single_choice|multi_choice), answerKind (text|number|single_choice|multi_choice|field_group), options (string or {id,label,value,revealsFields?,requiresFreeText?}), fields ({id,label,kind text|number,unit?,required?,placeholder?}), freeTextAllowed, placeholder, defaultValue. No other keys permitted \u2014 use expectedAnswerType for answer type, never type, responseType, or label.";
+var AGENT_QUESTION_PRESENTATION_HINTS = "Prefer single_choice/multi_choice with concrete labelled options and always leave an escape hatch via freeTextAllowed:true or an option with requiresFreeText:true. Use fields/revealsFields for follow-up numbers. Mark required honestly and give a short reason.";
+var AGENT_QUESTION_WRITEBACK_PROMPT_RULE = 'Numeric answers from the user in this run must be written into the model promptly. vdt.add_driver can set baselineValue at creation but cannot set valueStatus or valueSource; follow with vdt.update_node to set value, baselineValue, valueStatus "user_provided_value", and a valueSource recording that the user supplied them in this run. An assumed number must be written with valueStatus "default_assumption" and an explicit note naming it as an assumption \u2014 never with user-supplied or researched provenance, and never presented as measured or benchmarked. Asking without recording is a failure.';
+var AGENT_NATIVE_WEB_SEARCH_PROVENANCE_PROMPT_RULE = "A number obtained from the agent's own native web search is not a user answer and is not a research.search_web citation. Write it with valueStatus default_assumption and a valueSource whose sourceTier is native_web_search and whose note states it came from the agent's own web search and was not verified through research.search_web. Never use user_provided_value, and never present it as measured, benchmarked, or product-researched evidence.";
+var AGENT_QUESTION_PROMPT_RULE = [
+  AGENT_QUESTION_WHEN_TO_ASK,
+  AGENT_QUESTION_OBJECT_CONTRACT,
+  AGENT_QUESTION_PRESENTATION_HINTS,
+  AGENT_QUESTION_WRITEBACK_PROMPT_RULE
+].join(" ");
+var CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE = "Use action_batch for 1-6 sequential VDT calls via batch.calls or calls. user.ask, approval.request, and run.request_finish must each be the only call in their batch.";
+var CHECKPOINT_FINISH_ORDER_PROMPT_RULE = "Call run.request_finish only after the tree is built and vdt.calculate has produced a finite rootValue \u2014 never as an opening move. Use final only after a successful run.request_finish receipt, citing that exact finishReceiptId.";
+var CHECKPOINT_ACTION_TYPE_PROMPT_RULE = `action.type must be exactly one of: action_batch, user.ask, or final. Never invent names such as tool_call or tool_calls. ${CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE} Use user.ask only for 1-5 questions. ${CHECKPOINT_FINISH_ORDER_PROMPT_RULE}`;
+var AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE = "If research.search_web returns RESEARCH_PROVIDER_NOT_CONFIGURED or RESEARCH_DISABLED_BY_USER, do not retry that tool. Call user.ask for the missing process details, or write assumed numbers with valueStatus default_assumption and an explicit assumption note.";
+var AGENT_RESEARCH_PROVIDER_FAILED_PROMPT_RULE = "If research.search_web returns RESEARCH_PROVIDER_AUTH_FAILED, RESEARCH_PROVIDER_FAILED, or RESEARCH_PROVIDER_BAD_RESPONSE, do not retry that tool. Those failures are terminal for research this run. Call user.ask, or write assumed numbers with valueStatus default_assumption and an explicit assumption note.";
+var AGENT_FINISH_MISSING_VALUE_PROMPT_RULE = "run.request_finish rejects any vdt.calculate missing_value error and requires a finite rootValue. Write this run's user answers onto leaf inputs before calling it. Do not finish with unpopulated leaves. An assumed leaf must use valueStatus default_assumption and an explicit assumption note \u2014 never user_provided_value or researched provenance. A leaf sourced from native web search uses the same default_assumption status with valueSource.sourceTier native_web_search.";
+var CHECKPOINT_RESPONSE_ENVELOPE_PROMPT_RULE = "Return exactly one bare JSON object. No markdown fences, no language tags, and no prose before or after the object.";
 
-// ../model-bridge/src/agent-engines/checkpoint-transport-common.ts
-var DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
-var DEFAULT_MAX_PROMPT_BYTES2 = 1024 * 1024;
-
-// ../model-bridge/src/agent-engines/persistent-cli-checkpoint-canaries.ts
-var CODEX_CHECKPOINT_PROTOCOL_VERSION = "codex-exec-jsonl-checkpoint-v1";
-var CLAUDE_CHECKPOINT_PROTOCOL_VERSION = "claude-stream-json-checkpoint-v1";
-var VDT_CHECKPOINT_TURN_PROTOCOL_VERSION = "vdt-checkpoint-turn-v1";
+// ../vdt-agent-runtime/src/chat-messages.ts
+function normalizeUserQuestions(questions) {
+  return questions.flatMap((question) => normalizeOneQuestion(question)).slice(0, 5);
+}
+function publicStatusForPhase(phase, message) {
+  switch (phase) {
+    case "classifying_request":
+      return { phase: "reading_request", message: message ?? "Reading your request..." };
+    case "asking_clarifying_questions":
+      return { phase: "waiting_user", message: message ?? "Waiting for your answer." };
+    case "retrieving_skills":
+    case "reading_skills":
+    case "planning_decomposition":
+      return { phase: "planning_model", message: message ?? "Planning the VDT structure..." };
+    case "building_graph":
+    case "previewing_mutation":
+    case "applying_graph":
+      return { phase: "building_draft", message: message ?? "Drafting the driver tree..." };
+    case "validating_graph":
+    case "repairing_graph":
+      return { phase: "checking_model", message: message ?? "Checking formulas and units..." };
+    case "reporting":
+      return { phase: "ready", message: message ?? "Draft ready." };
+  }
+}
+function normalizeOneQuestion(question) {
+  const fleetQuestions = splitFleetAndShiftQuestion(question);
+  if (fleetQuestions) return fleetQuestions;
+  const fieldGroupQuestion = inferFieldGroupQuestion(question);
+  if (fieldGroupQuestion) return [fieldGroupQuestion];
+  return [normalizeQuestionDefaults(question)];
+}
+function normalizeQuestionDefaults(question) {
+  const answerKind = question.answerKind ?? question.expectedAnswerType ?? inferAnswerKind(question);
+  const freeTextAllowed = question.freeTextAllowed ?? (question.fields && question.fields.length > 0 ? false : true);
+  return {
+    ...question,
+    answerKind,
+    freeTextAllowed,
+    placeholder: question.placeholder ?? (freeTextAllowed ? "Add details or provide a custom answer..." : void 0)
+  };
+}
+function splitFleetAndShiftQuestion(question) {
+  if (hasExplicitAnswerStructure(question)) return void 0;
+  const text = question.question.toLowerCase();
+  const mentionsFleet = /excavator|truck|haul\s*truck|dump\s*truck|самосвал|экскаватор/.test(text);
+  const mentionsShift = /shift|смен/.test(text);
+  if (!mentionsFleet || !mentionsShift) return void 0;
+  return [
+    normalizeQuestionDefaults({
+      id: `${question.id}_fleet`.replace(/_{2,}/g, "_"),
+      question: "What fleet is in scope?",
+      reason: question.reason || "Fleet counts determine the available loading and hauling capacity.",
+      required: question.required,
+      answerKind: "field_group",
+      freeTextAllowed: false,
+      fields: [
+        {
+          id: "excavator_count",
+          label: "Excavators",
+          kind: "number",
+          unit: "units",
+          required: /excavator|экскаватор/.test(text),
+          placeholder: "5"
+        },
+        {
+          id: "haul_truck_count",
+          label: "Haul trucks",
+          kind: "number",
+          unit: "units",
+          required: /truck|самосвал/.test(text),
+          placeholder: "10"
+        }
+      ]
+    }),
+    normalizeQuestionDefaults({
+      id: `${question.id}_shifts`.replace(/_{2,}/g, "_"),
+      question: "How many shifts does the fleet work?",
+      reason: "Shift pattern determines annual working time and downtime assumptions.",
+      required: question.required,
+      answerKind: "field_group",
+      freeTextAllowed: true,
+      placeholder: "Add which equipment works in each shift if it differs.",
+      fields: [
+        {
+          id: "shifts_per_day",
+          label: "Shifts per day",
+          kind: "number",
+          unit: "shifts/day",
+          required: true,
+          placeholder: "2"
+        }
+      ]
+    })
+  ];
+}
+function inferFieldGroupQuestion(question) {
+  if (hasExplicitAnswerStructure(question)) return void 0;
+  const text = question.question.toLowerCase();
+  const mentionsExcavators = /excavator|экскаватор/.test(text);
+  const mentionsTrucks = /truck|haul\s*truck|dump\s*truck|самосвал/.test(text);
+  const mentionsReverseShovel = /reverse\s+shovel|backhoe|обратн/.test(text);
+  const mentionsStraightShovel = /straight\s+shovel|face\s+shovel|прям/.test(text);
+  const mentionsHours = /hour|час/.test(text);
+  const mentionsDaysPerYear = /(day|дн).*(year|год)|(year|год).*(day|дн)/.test(text);
+  const mentionsDistance = /distance|km|км/.test(text);
+  const mentionsSpeed = /speed|km\/h|км\/ч/.test(text);
+  if (mentionsReverseShovel && mentionsStraightShovel) {
+    return normalizeQuestionDefaults({
+      ...question,
+      answerKind: "field_group",
+      freeTextAllowed: false,
+      fields: [
+        {
+          id: "reverse_shovel_count",
+          label: "Reverse shovel excavators",
+          kind: "number",
+          unit: "units",
+          required: true,
+          placeholder: "3"
+        },
+        {
+          id: "straight_shovel_count",
+          label: "Straight shovel excavators",
+          kind: "number",
+          unit: "units",
+          required: true,
+          placeholder: "2"
+        }
+      ]
+    });
+  }
+  if (mentionsExcavators && mentionsTrucks) {
+    return normalizeQuestionDefaults({
+      ...question,
+      answerKind: "field_group",
+      freeTextAllowed: false,
+      fields: [
+        {
+          id: "excavator_count",
+          label: "Excavators",
+          kind: "number",
+          unit: "units",
+          required: true,
+          placeholder: "5"
+        },
+        {
+          id: "haul_truck_count",
+          label: "Haul trucks",
+          kind: "number",
+          unit: "units",
+          required: true,
+          placeholder: "10"
+        }
+      ]
+    });
+  }
+  if (mentionsHours && mentionsDaysPerYear) {
+    return normalizeQuestionDefaults({
+      ...question,
+      answerKind: "field_group",
+      freeTextAllowed: true,
+      fields: [
+        {
+          id: /shift|смен/.test(text) ? "hours_per_shift" : "operating_hours",
+          label: /shift|смен/.test(text) ? "Hours per shift" : "Operating hours",
+          kind: "number",
+          unit: "h",
+          required: true,
+          placeholder: "12"
+        },
+        {
+          id: "working_days_per_year",
+          label: "Working days per year",
+          kind: "number",
+          unit: "days/year",
+          required: true,
+          placeholder: "350"
+        }
+      ]
+    });
+  }
+  if (mentionsDistance && mentionsSpeed) {
+    return normalizeQuestionDefaults({
+      ...question,
+      answerKind: "field_group",
+      freeTextAllowed: true,
+      fields: [
+        {
+          id: "haul_distance_km",
+          label: "Haul distance",
+          kind: "number",
+          unit: "km",
+          required: true,
+          placeholder: "2.7"
+        },
+        {
+          id: "loaded_speed_kmh",
+          label: "Loaded speed",
+          kind: "number",
+          unit: "km/h",
+          required: false,
+          placeholder: "7"
+        },
+        {
+          id: "empty_speed_kmh",
+          label: "Empty speed",
+          kind: "number",
+          unit: "km/h",
+          required: false,
+          placeholder: "11"
+        }
+      ]
+    });
+  }
+  return void 0;
+}
+function hasExplicitAnswerStructure(question) {
+  return (question.fields?.length ?? 0) > 0 || (question.options?.length ?? 0) > 0;
+}
+function inferAnswerKind(question) {
+  if (question.fields && question.fields.length > 0) return "field_group";
+  if (question.options && question.options.length > 0) return "single_choice";
+  return "text";
+}
 
 // ../../node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/external.js
 var external_exports = {};
@@ -7517,7 +7750,8 @@ var questionEventSchema = external_exports.object({
   payload: external_exports.object({
     questionSetId: safeIdSchema,
     checkpointId: safeIdSchema,
-    questions: external_exports.array(agentQuestionSchema2.strict()).min(1).max(5)
+    questions: external_exports.array(agentQuestionSchema2.strict()).min(1).max(5),
+    droppedQuestionKeysSummary: external_exports.string().max(500).optional()
   }).strict()
 }).strict();
 var runtimeStatusEventSchema = external_exports.object({
@@ -10293,7 +10527,10 @@ function repairHintsForWarning(warning3) {
     return ["Use project.get_node and a repair tool, or ask the user if the intended graph relation is ambiguous."];
   }
   if (warning3.type === "missing_value") {
-    return ["Ask the user for the missing value or add an assumption node with a baselineValue."];
+    return [
+      'If this run already has a user answer for the node, write it with vdt.update_node using value or baselineValue, valueStatus "user_provided_value", and a valueSource noting the user supplied it in this run.',
+      "Otherwise ask the user, or write an assumed number with valueStatus default_assumption and an explicit assumption note \u2014 never as user-supplied, researched, measured, or benchmarked. A number from the agent's own native web search uses the same default_assumption status with valueSource.sourceTier native_web_search; it is not a research.search_web citation."
+    ];
   }
   return void 0;
 }
@@ -10345,8 +10582,15 @@ var AgentToolError = class extends Error {
     this.name = "AgentToolError";
     this.code = code;
     this.details = details;
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 };
+function isAgentToolError(error2) {
+  if (error2 instanceof AgentToolError) return true;
+  if (!error2 || typeof error2 !== "object") return false;
+  const candidate = error2;
+  return candidate.name === "AgentToolError" && typeof candidate.code === "string" && typeof candidate.message === "string";
+}
 
 // ../vdt-agent-runtime/src/mutation-pipeline.ts
 var defaultAgentMutationPolicy = {
@@ -10421,15 +10665,21 @@ function proposeAndMaybeApplyMutation(context, input) {
       status: "failed",
       failureReason: scopeError ?? validation.errors.map((error2) => error2.message).join("; ")
     });
-    storeProposal(context, failed);
-    context.emit({
-      type: "mutation_rejected",
-      phase: "previewing_mutation",
-      title: scopeError ? "Mutation scope rejected" : "Mutation validation failed",
-      message: failed.failureReason ?? "Mutation proposal failed validation.",
-      patch: failed.changeSet,
-      metadata: { proposalId: failed.id, status: failed.status }
-    });
+    try {
+      storeProposal(context, failed);
+    } catch {
+    }
+    try {
+      context.emit({
+        type: "mutation_rejected",
+        phase: "previewing_mutation",
+        title: scopeError ? "Mutation scope rejected" : "Mutation validation failed",
+        message: failed.failureReason ?? "Mutation proposal failed validation.",
+        patch: failed.changeSet,
+        metadata: { proposalId: failed.id, status: failed.status }
+      });
+    } catch {
+    }
     throw new AgentToolError(
       scopeError ? "MUTATION_SCOPE_VIOLATION" : "MUTATION_VALIDATION_FAILED",
       failed.failureReason ?? "Mutation proposal failed validation.",
@@ -10763,239 +11013,13 @@ function normalizeChangeSetForApply(changeSet2) {
   };
 }
 
-// ../vdt-agent-runtime/src/chat-messages.ts
-function normalizeUserQuestions(questions) {
-  return questions.flatMap((question) => normalizeOneQuestion(question)).slice(0, 5);
-}
-function publicStatusForPhase(phase, message) {
-  switch (phase) {
-    case "classifying_request":
-      return { phase: "reading_request", message: message ?? "Reading your request..." };
-    case "asking_clarifying_questions":
-      return { phase: "waiting_user", message: message ?? "Waiting for your answer." };
-    case "retrieving_skills":
-    case "reading_skills":
-    case "planning_decomposition":
-      return { phase: "planning_model", message: message ?? "Planning the VDT structure..." };
-    case "building_graph":
-    case "previewing_mutation":
-    case "applying_graph":
-      return { phase: "building_draft", message: message ?? "Drafting the driver tree..." };
-    case "validating_graph":
-    case "repairing_graph":
-      return { phase: "checking_model", message: message ?? "Checking formulas and units..." };
-    case "reporting":
-      return { phase: "ready", message: message ?? "Draft ready." };
-  }
-}
-function normalizeOneQuestion(question) {
-  const fleetQuestions = splitFleetAndShiftQuestion(question);
-  if (fleetQuestions) return fleetQuestions;
-  const fieldGroupQuestion = inferFieldGroupQuestion(question);
-  if (fieldGroupQuestion) return [fieldGroupQuestion];
-  return [normalizeQuestionDefaults(question)];
-}
-function normalizeQuestionDefaults(question) {
-  const answerKind = question.answerKind ?? question.expectedAnswerType ?? inferAnswerKind(question);
-  const freeTextAllowed = question.freeTextAllowed ?? (question.fields && question.fields.length > 0 ? false : true);
-  return {
-    ...question,
-    answerKind,
-    freeTextAllowed,
-    placeholder: question.placeholder ?? (freeTextAllowed ? "Add details or provide a custom answer..." : void 0)
-  };
-}
-function splitFleetAndShiftQuestion(question) {
-  if (hasExplicitAnswerStructure(question)) return void 0;
-  const text = question.question.toLowerCase();
-  const mentionsFleet = /excavator|truck|haul\s*truck|dump\s*truck|самосвал|экскаватор/.test(text);
-  const mentionsShift = /shift|смен/.test(text);
-  if (!mentionsFleet || !mentionsShift) return void 0;
-  return [
-    normalizeQuestionDefaults({
-      id: `${question.id}_fleet`.replace(/_{2,}/g, "_"),
-      question: "What fleet is in scope?",
-      reason: question.reason || "Fleet counts determine the available loading and hauling capacity.",
-      required: question.required,
-      answerKind: "field_group",
-      freeTextAllowed: false,
-      fields: [
-        {
-          id: "excavator_count",
-          label: "Excavators",
-          kind: "number",
-          unit: "units",
-          required: /excavator|экскаватор/.test(text),
-          placeholder: "5"
-        },
-        {
-          id: "haul_truck_count",
-          label: "Haul trucks",
-          kind: "number",
-          unit: "units",
-          required: /truck|самосвал/.test(text),
-          placeholder: "10"
-        }
-      ]
-    }),
-    normalizeQuestionDefaults({
-      id: `${question.id}_shifts`.replace(/_{2,}/g, "_"),
-      question: "How many shifts does the fleet work?",
-      reason: "Shift pattern determines annual working time and downtime assumptions.",
-      required: question.required,
-      answerKind: "field_group",
-      freeTextAllowed: true,
-      placeholder: "Add which equipment works in each shift if it differs.",
-      fields: [
-        {
-          id: "shifts_per_day",
-          label: "Shifts per day",
-          kind: "number",
-          unit: "shifts/day",
-          required: true,
-          placeholder: "2"
-        }
-      ]
-    })
-  ];
-}
-function inferFieldGroupQuestion(question) {
-  if (hasExplicitAnswerStructure(question)) return void 0;
-  const text = question.question.toLowerCase();
-  const mentionsExcavators = /excavator|экскаватор/.test(text);
-  const mentionsTrucks = /truck|haul\s*truck|dump\s*truck|самосвал/.test(text);
-  const mentionsReverseShovel = /reverse\s+shovel|backhoe|обратн/.test(text);
-  const mentionsStraightShovel = /straight\s+shovel|face\s+shovel|прям/.test(text);
-  const mentionsHours = /hour|час/.test(text);
-  const mentionsDaysPerYear = /(day|дн).*(year|год)|(year|год).*(day|дн)/.test(text);
-  const mentionsDistance = /distance|km|км/.test(text);
-  const mentionsSpeed = /speed|km\/h|км\/ч/.test(text);
-  if (mentionsReverseShovel && mentionsStraightShovel) {
-    return normalizeQuestionDefaults({
-      ...question,
-      answerKind: "field_group",
-      freeTextAllowed: false,
-      fields: [
-        {
-          id: "reverse_shovel_count",
-          label: "Reverse shovel excavators",
-          kind: "number",
-          unit: "units",
-          required: true,
-          placeholder: "3"
-        },
-        {
-          id: "straight_shovel_count",
-          label: "Straight shovel excavators",
-          kind: "number",
-          unit: "units",
-          required: true,
-          placeholder: "2"
-        }
-      ]
-    });
-  }
-  if (mentionsExcavators && mentionsTrucks) {
-    return normalizeQuestionDefaults({
-      ...question,
-      answerKind: "field_group",
-      freeTextAllowed: false,
-      fields: [
-        {
-          id: "excavator_count",
-          label: "Excavators",
-          kind: "number",
-          unit: "units",
-          required: true,
-          placeholder: "5"
-        },
-        {
-          id: "haul_truck_count",
-          label: "Haul trucks",
-          kind: "number",
-          unit: "units",
-          required: true,
-          placeholder: "10"
-        }
-      ]
-    });
-  }
-  if (mentionsHours && mentionsDaysPerYear) {
-    return normalizeQuestionDefaults({
-      ...question,
-      answerKind: "field_group",
-      freeTextAllowed: true,
-      fields: [
-        {
-          id: /shift|смен/.test(text) ? "hours_per_shift" : "operating_hours",
-          label: /shift|смен/.test(text) ? "Hours per shift" : "Operating hours",
-          kind: "number",
-          unit: "h",
-          required: true,
-          placeholder: "12"
-        },
-        {
-          id: "working_days_per_year",
-          label: "Working days per year",
-          kind: "number",
-          unit: "days/year",
-          required: true,
-          placeholder: "350"
-        }
-      ]
-    });
-  }
-  if (mentionsDistance && mentionsSpeed) {
-    return normalizeQuestionDefaults({
-      ...question,
-      answerKind: "field_group",
-      freeTextAllowed: true,
-      fields: [
-        {
-          id: "haul_distance_km",
-          label: "Haul distance",
-          kind: "number",
-          unit: "km",
-          required: true,
-          placeholder: "2.7"
-        },
-        {
-          id: "loaded_speed_kmh",
-          label: "Loaded speed",
-          kind: "number",
-          unit: "km/h",
-          required: false,
-          placeholder: "7"
-        },
-        {
-          id: "empty_speed_kmh",
-          label: "Empty speed",
-          kind: "number",
-          unit: "km/h",
-          required: false,
-          placeholder: "11"
-        }
-      ]
-    });
-  }
-  return void 0;
-}
-function hasExplicitAnswerStructure(question) {
-  return (question.fields?.length ?? 0) > 0 || (question.options?.length ?? 0) > 0;
-}
-function inferAnswerKind(question) {
-  if (question.fields && question.fields.length > 0) return "field_group";
-  if (question.options && question.options.length > 0) return "single_choice";
-  return "text";
-}
-
 // ../vdt-agent-runtime/src/prompts/agent-decision.ts
 var AGENT_DECISION_SYSTEM_PROMPT = [
   "You are the VDT Studio agent.",
   "Choose one small decision at a time. For ordinary runs, call_tools may contain 2-6 sequential calls when each call logically depends on the previous result.",
   "Return only AgentDecision JSON.",
   "For call_tool, toolName must exactly match one of availableTools.name from the current context.",
-  "For call_tools, every calls[].toolName must exactly match availableTools.name. Never include user.ask or user.request_approval in a batch; return ask_user separately and let the mutation pipeline create approvals.",
+  "For call_tools, every calls[].toolName must exactly match availableTools.name. Never include user.ask, user.request_approval, or run.request_finish in a batch; return ask_user separately and let the mutation pipeline create approvals.",
   "Never return a full graph, full project, nodes array, edges array, driverPlan, fullGraph, fullProject, or selectedSkillIds.",
   "All graph changes must be made through VDT tools.",
   "For user questions, return type ask_user with precise structured questions.",
@@ -11006,7 +11030,11 @@ var AGENT_DECISION_SYSTEM_PROMPT = [
   "Opening summary: the first user-facing status message must restate the accepted task in the user's language and outline the intended plan in 3-6 short steps before the first tool batch.",
   "Follow researchPolicy exactly. Never use research.search_web when researchPolicy.mode is off.",
   "When researchPolicy.mode is on or auto permits research, use research.search_web (purpose standards, best_practices, process_components, benchmarks, or regulations) to ground decomposition in recognized frameworks before building. Surface sources used; never fabricate citations.",
-  "When data is missing or a business choice is required, return ask_user with 1-5 precise questions only for continuationPolicy.askOnlyWhen reasons: missing data, business choice, scope conflict, ambiguous logic, low confidence, or formula ambiguity. Prefer single_choice/multi_choice with concrete labelled options and always leave an escape hatch via freeTextAllowed or requiresFreeText on an option. Use fields/revealsFields for follow-up numbers.",
+  AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE,
+  AGENT_RESEARCH_PROVIDER_FAILED_PROMPT_RULE,
+  AGENT_QUESTION_PROMPT_RULE,
+  CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE,
+  CHECKPOINT_FINISH_ORDER_PROMPT_RULE,
   "Use the full tool catalog \u2014 skills, excavation, research, validation, calculation, layout, repair, memory \u2014 not only vdt.* mutations.",
   "If no strong skill match exists, or a compiled recipe is partial or missing, read the best available skill markdown, use research/discovery tools if available, or ask the user for the process decomposition boundary.",
   "Follow domainPolicies from the current context; domain and business restrictions live in skills, validators, and domain policies.",
@@ -11020,7 +11048,7 @@ var AGENT_DECISION_SYSTEM_PROMPT = [
   "When adding several sibling drivers under the same parent, prefer vdt.add_drivers_batch over repeated vdt.add_driver calls.",
   "When vdt.add_drivers_batch creates all references needed by its parent, pass an explicit parentFormula so the children and formula are validated and applied atomically. Never infer arithmetic only from edge relation labels.",
   "Work through formulaBacklog bottom-up before finish. Each listed calculated node has children but no formula.",
-  "Finish only when the VDT is valid and calculable, or ask the user when missing business data would otherwise create a false model.",
+  AGENT_FINISH_MISSING_VALUE_PROMPT_RULE,
   "Never expose hidden chain-of-thought. Use concise status messages only."
 ].join("\n");
 
@@ -11198,6 +11226,20 @@ function requireChangeSet(changeSet2) {
   if (!changeSet2) throw new AgentToolError("MUTATION_CHANGESET_MISSING", "Builder operation did not produce a change set.");
   return changeSet2;
 }
+function wrapBuilderError(error2) {
+  if (isAgentToolError(error2)) throw error2;
+  const message = error2 instanceof Error ? error2.message : "Builder operation failed.";
+  if (message.includes("connected edges")) {
+    throw new AgentToolError("NODE_HAS_CONNECTED_EDGES", message);
+  }
+  if (message.includes("Root node cannot")) {
+    throw new AgentToolError("ROOT_NODE_PROTECTED", message);
+  }
+  if (/does not exist/.test(message)) {
+    throw new AgentToolError("NODE_NOT_FOUND", message);
+  }
+  throw new AgentToolError("BUILDER_OPERATION_FAILED", message);
+}
 function combineChangeSets(changeSets, context) {
   if (changeSets.length === 0) {
     throw new AgentToolError("MUTATION_CHANGESET_MISSING", "Batch operation did not produce change sets.");
@@ -11216,6 +11258,31 @@ function combineChangeSets(changeSets, context) {
     questions: changeSets.flatMap((changeSet2) => changeSet2.questions),
     warnings: changeSets.flatMap((changeSet2) => changeSet2.warnings)
   };
+}
+
+// ../vdt-agent-runtime/src/tools/value-provenance.ts
+function runHasUserAnswerForNode(context, nodeId) {
+  const state = context.store.getState(context.runId);
+  if (Object.prototype.hasOwnProperty.call(state.answers, nodeId)) return true;
+  for (const value of Object.values(state.answers)) {
+    if (typeof value === "string" && fieldAnswerMentionsNode(value, nodeId)) return true;
+    if (Array.isArray(value) && value.some((item) => fieldAnswerMentionsNode(item, nodeId))) return true;
+  }
+  for (const question of state.pendingQuestions ?? []) {
+    if (question.id === nodeId) return true;
+    if (question.fields?.some((field) => field.id === nodeId)) return true;
+  }
+  return false;
+}
+function assertUserProvidedValueGrounded(context, nodeId) {
+  if (runHasUserAnswerForNode(context, nodeId)) return;
+  throw new AgentToolError(
+    "USER_PROVIDED_VALUE_UNGROUNDED",
+    `valueStatus user_provided_value requires a user answer in this run for node "${nodeId}". Write assumed numbers with valueStatus default_assumption and an explicit assumption note.`
+  );
+}
+function fieldAnswerMentionsNode(value, nodeId) {
+  return value.split(";").some((part) => part.trim().startsWith(`${nodeId}:`));
 }
 
 // ../vdt-agent-runtime/src/tools/excavation-tools.ts
@@ -11346,6 +11413,9 @@ var excavationWriteInputValueTool = {
     const project = builder.getProject();
     if (!project.graph.nodes.some((node) => node.id === input.nodeId)) {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
+    }
+    if (input.valueStatus === "user_provided_value") {
+      assertUserProvidedValueGrounded(context, input.nodeId);
     }
     const patch = {
       status: input.valueStatus === "unknown" ? "needs_data" : input.valueStatus === "default_assumption" ? "assumption" : "accepted",
@@ -15210,6 +15280,7 @@ var instantiateSubtreeTool = {
       }
       return subtreeAddition({
         id: `instantiate_${index + 1}_${targetNodeId}`,
+        context,
         sourceNode,
         override,
         nodeId: targetNodeId,
@@ -15324,6 +15395,9 @@ var updateNodeTool = {
       }
     }
     assertFormulaReferencesIfPresent(project, input.patch.formula, input.nodeId);
+    if (input.patch.valueStatus === "user_provided_value") {
+      assertUserProvidedValueGrounded(context, input.nodeId);
+    }
     const previewBuilder = cloneBuilder(context);
     const result = previewBuilder.updateNode({ nodeId: input.nodeId, patch: input.patch });
     const mutation = proposeAndMaybeApplyMutation(context, {
@@ -15354,9 +15428,20 @@ var deleteNodeTool = {
   run(context, input) {
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
+    if (!project.graph.nodes.some((node) => node.id === input.nodeId)) {
+      throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
+    }
+    if (input.nodeId === project.rootNodeId) {
+      throw new AgentToolError("ROOT_NODE_PROTECTED", "Root node cannot be deleted.");
+    }
     const removedEdgeIds = project.graph.edges.filter((edge) => edge.sourceNodeId === input.nodeId || edge.targetNodeId === input.nodeId).map((edge) => edge.id);
     const previewBuilder = cloneBuilder(context);
-    const result = previewBuilder.deleteNode(input);
+    let result;
+    try {
+      result = previewBuilder.deleteNode(input);
+    } catch (error2) {
+      wrapBuilderError(error2);
+    }
     const mutation = proposeAndMaybeApplyMutation(context, {
       title: "Node deleted",
       summary: result.event.message,
@@ -15588,6 +15673,18 @@ function remapSubtreeFormula(formula, sourceNodeId, sourceNodeIds, sourceToTarge
 }
 function subtreeAddition(input) {
   const { sourceNode, override } = input;
+  const requestedStatus = override?.valueStatus ?? sourceNode.valueStatus;
+  const requestedSource = override?.valueSource ?? sourceNode.valueSource;
+  if (override?.valueStatus === "user_provided_value") {
+    assertUserProvidedValueGrounded(input.context, input.nodeId);
+  }
+  const groundedUserValue = requestedStatus === "user_provided_value" && runHasUserAnswerForNode(input.context, input.nodeId);
+  const valueStatus = requestedStatus === "user_provided_value" && !groundedUserValue ? "default_assumption" : requestedStatus;
+  const valueSource = requestedStatus === "user_provided_value" && !groundedUserValue ? {
+    ...requestedSource,
+    acceptedByUserInDialog: false,
+    note: requestedSource?.note ? `${requestedSource.note} Copied from source node "${sourceNode.id}"; not a user answer for this node.` : `Copied from source node "${sourceNode.id}"; not a user answer for this node.`
+  } : requestedSource;
   return {
     id: input.id,
     nodeId: input.nodeId,
@@ -15600,8 +15697,8 @@ function subtreeAddition(input) {
     formula: input.formula,
     value: override?.value ?? sourceNode.value,
     baselineValue: override?.baselineValue ?? sourceNode.baselineValue,
-    valueStatus: override?.valueStatus ?? sourceNode.valueStatus,
-    valueSource: override?.valueSource ?? sourceNode.valueSource,
+    valueStatus,
+    valueSource,
     aiConfidence: sourceNode.aiConfidence,
     aiRationale: override?.aiRationale ?? `Instantiated from source node "${sourceNode.id}".`,
     assumptions: override?.assumptions ?? sourceNode.assumptions,
@@ -15891,12 +15988,41 @@ var agentPlanSchema = external_exports.object({
   confidence: external_exports.number().finite().min(0).max(1)
 });
 
+// ../model-bridge/src/agent-engines/checkpoint-turn.ts
+var DEFAULT_MAX_PROMPT_BYTES = 1024 * 1024;
+var MAX_ASSISTANT_TEXT_BYTES = 64 * 1024;
+
+// ../model-bridge/src/agent-engines/checkpoint-transport-common.ts
+var DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+var DEFAULT_MAX_PROMPT_BYTES2 = 1024 * 1024;
+
+// ../model-bridge/src/agent-engines/native-web-search.ts
+var FORBIDDEN_CODEX_NATIVE_ITEM_TYPES = Object.freeze([
+  "command_execution",
+  "file_change",
+  "collab_tool_call"
+]);
+
+// ../model-bridge/src/agent-engines/persistent-cli-checkpoint-canaries.ts
+var CODEX_CHECKPOINT_PROTOCOL_VERSION = "codex-exec-jsonl-checkpoint-v1";
+var CLAUDE_CHECKPOINT_PROTOCOL_VERSION = "claude-stream-json-checkpoint-v1";
+var VDT_CHECKPOINT_TURN_PROTOCOL_VERSION = "vdt-checkpoint-turn-v1";
+
 // ../model-bridge/src/agent-engines/resume-checkpoint-engine-core.ts
 var SHARED_PROMPT_RULES = Object.freeze({
   openingSummary: "The first user-facing assistant message must restate the accepted task in the user's language and outline the intended plan in 3-6 short steps before or alongside the first tool batch.",
-  research: "When the domain, KPI, or decomposition boundary is unfamiliar, or the user asks for standards/best practice, use research.search_web (purpose standards, best_practices, process_components, benchmarks, or regulations) before building. Respect options.researchMode from the brief: never call research.search_web when it is off. Surface sources used; never fabricate citations.",
-  questions: "Ask only for missing data, a required business choice, scope conflict, ambiguous logic, low confidence, or formula ambiguity. When one of those applies, use user.ask with 1-5 precise questions. Prefer single_choice/multi_choice with concrete labelled options and always leave an escape hatch via freeTextAllowed:true or an option with requiresFreeText:true. Use fields/revealsFields for follow-up numbers. Mark required honestly and give a short reason.",
+  research: `When the domain, KPI, or decomposition boundary is unfamiliar, or the user asks for standards/best practice, prefer research.search_web (purpose standards, best_practices, process_components, benchmarks, or regulations) before building. Respect options.researchMode from the brief: never call research.search_web when it is off. Native CLI web search may still occur; ${AGENT_NATIVE_WEB_SEARCH_PROVENANCE_PROMPT_RULE} Surface sources used; never fabricate citations. ${AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE} ${AGENT_RESEARCH_PROVIDER_FAILED_PROMPT_RULE}`,
+  questions: AGENT_QUESTION_PROMPT_RULE,
+  finishMissingValues: AGENT_FINISH_MISSING_VALUE_PROMPT_RULE,
+  actionTypes: CHECKPOINT_ACTION_TYPE_PROMPT_RULE,
+  actionBatch: CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE,
+  finishOrder: CHECKPOINT_FINISH_ORDER_PROMPT_RULE,
+  envelope: CHECKPOINT_RESPONSE_ENVELOPE_PROMPT_RULE,
   fullCatalog: "Use the whole tool catalog \u2014 skills, excavation, research, validation, calculation, layout, repair, memory \u2014 not only vdt.* mutations."
+});
+var SHARED_RESUME_CONSTRAINTS = Object.freeze({
+  response: `${SHARED_PROMPT_RULES.envelope} ${SHARED_PROMPT_RULES.actionTypes} After a recoverable tool result, continue with action.type action_batch, user.ask, or final. Write any stated assumptions in assistantMessage only \u2014 never as action.type.`,
+  research: `${AGENT_NATIVE_WEB_SEARCH_PROVENANCE_PROMPT_RULE} ${AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE} ${AGENT_RESEARCH_PROVIDER_FAILED_PROMPT_RULE}`
 });
 
 // ../model-bridge/src/agent-engines/claude-resume-checkpoint-engine.ts
@@ -15926,7 +16052,7 @@ var CODEX_DESCRIPTOR = Object.freeze({
   errorPrefix: "CODEX_CHECKPOINT",
   cliLabel: "Codex",
   supportsUsageMetrics: true,
-  securityConstraint: "Do not use Codex shell, file, Git, web, browser, MCP, or approval bypass modes. Use only the returned ActionBatch JSON protocol and VDT tools executed by the host gateway."
+  securityConstraint: "Do not use Codex shell, file, Git, browser, MCP, or approval bypass modes. Native web search is allowed; write numbers from it with valueStatus default_assumption and valueSource.sourceTier native_web_search, never as user_provided_value or research.search_web citations. Use only the returned ActionBatch JSON protocol and VDT tools executed by the host gateway."
 });
 
 // ../model-bridge/src/agent-engines/cursor-acp-engine.ts

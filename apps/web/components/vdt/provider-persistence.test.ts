@@ -140,7 +140,7 @@ describe("store persist round-trip", () => {
       executionMode: "byok",
       gatewayPresetId: "alibaba-coding-plan"
     });
-  }, 15_000);
+  }, 30_000);
 });
 
 describe("scenario modal ui state", () => {

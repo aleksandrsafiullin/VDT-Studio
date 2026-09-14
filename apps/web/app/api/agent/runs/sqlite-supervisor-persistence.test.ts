@@ -4,12 +4,16 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { VdtBuilderSession } from "@vdt-studio/vdt-core";
 import {
   AgentSupervisorToolGatewayLedger,
   AgentRunEventOutbox,
+  AgentRunStateSupervisorPersistence,
+  AgentRunStore,
   InMemoryAgentSupervisorPersistence,
   ToolRegistry,
   VdtToolGateway,
+  createDefaultToolRegistry,
   type AgentCapabilityProfile,
   type AgentEngineCheckpoint,
   type AgentEngineExchangeReceiptV2,
@@ -20,6 +24,8 @@ import {
   type FinishReceiptV2
 } from "@vdt-studio/vdt-agent-runtime";
 import { openVdtDatabase, type VdtDatabase } from "@vdt-studio/storage";
+import { createStorageWriteActor } from "@/app/api/vdt/storage-write-adapter";
+import { createSqliteAgentRunPersistence } from "./persistence";
 import {
   ProjectedAgentSupervisorPersistence,
   SqliteAgentSupervisorPersistence
@@ -34,7 +40,7 @@ afterEach(() => {
   }
 });
 
-describe("SqliteAgentSupervisorPersistence", () => {
+describe("SqliteAgentSupervisorPersistence", { timeout: 30_000 }, () => {
   it("persists all seven Sequence 4 projections and reloads terminal receipts after restart", async () => {
     const fixture = createFixture("restart");
     const first = createAuthority(fixture.database.databasePath);
@@ -526,6 +532,88 @@ describe("SqliteAgentSupervisorPersistence", () => {
     })).rejects.toThrow("exact successor session epoch");
 
     authority.close();
+    fixture.database.close();
+  });
+
+  it("persists a failed add_driver terminal receipt when a formula references a missing node", async () => {
+    const fixture = createFixture("add-driver-missing-ref");
+    const store = new AgentRunStore({
+      now: () => NOW,
+      persistence: createSqliteAgentRunPersistence(fixture.database, {
+        actorFactory: (projectId) => createStorageWriteActor(projectId, {
+          env: { VDT_APP_MODE: "development_web" },
+          now: () => NOW
+        })
+      })
+    });
+    const state = store.createRun({
+      mode: "generate_vdt",
+      input: { rootKpi: "Ore hauled" },
+      workspace: { projectId: fixture.projectId, projectName: `Project ${fixture.projectId}` },
+      providerId: "model-test",
+      options: { autoApplyPatches: true }
+    });
+    const builder = new VdtBuilderSession({ now: () => NOW });
+    builder.createDraft({ projectTitle: "Haulage", rootKpi: "Ore hauled" });
+    store.updateRun(state.runId, { builder, draftProject: builder.getProject() });
+    const authority = createAuthority(fixture.database.databasePath);
+    const binding = modelBinding(state.runId, fixture.projectId);
+    const persistence = new ProjectedAgentSupervisorPersistence(
+      authority,
+      new AgentRunStateSupervisorPersistence(store)
+    );
+    await persistence.createBinding(binding);
+    const gateway = new VdtToolGateway({
+      binding,
+      capability: modelCapability(binding),
+      tools: createDefaultToolRegistry(),
+      toolContext: (): AgentToolContext => ({
+        runId: state.runId,
+        store,
+        emit: (event) => { store.appendEvent(state.runId, event); },
+        getRun: () => store.getSnapshot(state.runId),
+        updateRun: (patch) => { store.updateRun(state.runId, patch); },
+        builder,
+        signal: store.getState(state.runId).abortController.signal
+      }),
+      allowedTools: new Set(["vdt.add_driver"]),
+      ledger: new AgentSupervisorToolGatewayLedger({
+        binding,
+        persistence,
+        getRevision: () => builder.getRevision()
+      })
+    });
+
+    const result = await gateway.execute({
+      externalCallId: "add-cycle-time-08",
+      toolName: "vdt.add_driver",
+      args: {
+        parentNodeId: builder.getProject().rootNodeId,
+        nodeId: "cycle_time",
+        name: "Cycle time",
+        type: "calculated",
+        formula: "loading_time_h"
+      }
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      resultCode: "MUTATION_VALIDATION_FAILED"
+    });
+    expect(builder.getProject().graph.nodes.map((node) => node.id)).not.toContain("cycle_time");
+    expect(gateway.persistFailureCount()).toBe(0);
+    await expect(persistence.getToolOperationReceipt(state.runId, "add-cycle-time-08"))
+      .resolves.toMatchObject({
+        state: "failed",
+        resultCode: "MUTATION_VALIDATION_FAILED"
+      });
+    const stored = await persistence.getToolOperationReceipt(state.runId, "add-cycle-time-08");
+    expect(JSON.stringify(stored?.replayResult)).toContain("loading_time_h");
+    const persistedProposal = fixture.database.listMutationProposals(state.runId)[0];
+    expect(persistedProposal).toMatchObject({ status: "failed" });
+    expect(JSON.stringify(persistedProposal?.validation)).toContain("loading_time_h");
+
+    await persistence.close();
     fixture.database.close();
   });
 });

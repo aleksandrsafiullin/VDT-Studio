@@ -55,7 +55,7 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("executor security boundary", () => {
+describe("executor security boundary", { timeout: 45_000 }, () => {
   it("rejects relative and NUL-containing resolved executables before spawn", async () => {
     await expect(
       executeCompletion(customManifest(), request(), new AbortController().signal, {

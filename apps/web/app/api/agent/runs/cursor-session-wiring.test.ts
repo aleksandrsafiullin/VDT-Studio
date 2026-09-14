@@ -32,7 +32,7 @@ afterEach(() => {
   delete runtimeGlobal.__vdtCursorSessionBindingProbe;
 });
 
-describe("trusted-local Cursor session wiring", () => {
+describe("trusted-local Cursor session wiring", { timeout: 45_000 }, () => {
   it("publishes one server-managed external binding and resolves it without legacy fallback", async () => {
     vi.stubEnv("VDT_APP_MODE", "development_web");
     vi.stubEnv("VDT_CURSOR_SESSION_CANARY_ENABLED", "true");

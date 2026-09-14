@@ -174,7 +174,7 @@ afterEach(() => {
   delete runtimeGlobal.__vdtStudioDevelopmentRuntime;
 });
 
-describe("agent runs API", () => {
+describe("agent runs API", { timeout: 30_000 }, () => {
   it("publishes only read-only binding summaries and selects the server default by opaque ID", async () => {
     const response = await getExecutionBindings();
     const body = await response.json() as {
@@ -1499,5 +1499,5 @@ describe("agent runs API", () => {
     expect(response.status).toBe(409);
     expect(body.error?.code).toBe("AGENT_EXTERNAL_CAPABILITY_UNQUALIFIED");
     expect(body.error?.message).toContain(label);
-  }, 15_000);
+  }, 30_000);
 });

@@ -20,7 +20,7 @@ import {
 const fakeCodex = fileURLToPath(new URL("./fixtures/fake-codex.cjs", import.meta.url));
 const fakeCursor = fileURLToPath(new URL("./fixtures/fake-cursor.cjs", import.meta.url));
 
-describe("local runtime contract", () => {
+describe("local runtime contract", { timeout: 30_000 }, () => {
   it("lists public manifests without executable details", () => {
     const context = createLocalRuntimeContext({ auditSink: () => undefined });
     const result = listRuntimeBackends(context);

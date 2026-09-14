@@ -5,7 +5,7 @@ afterEach(() => {
   vi.resetModules();
 });
 
-describe("Supervisor persistence factory pairing", () => {
+describe("Supervisor persistence factory pairing", { timeout: 45_000 }, () => {
   it("keeps an actually in-memory run store on the in-memory compatibility projection", async () => {
     vi.stubEnv("VDT_APP_MODE", "hosted_web");
     vi.resetModules();

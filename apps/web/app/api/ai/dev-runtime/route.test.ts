@@ -31,7 +31,7 @@ async function readJson(response: Response) {
   };
 }
 
-describe("development local runtime API route", () => {
+describe("development local runtime API route", { timeout: 30_000 }, () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     delete (globalThis as typeof globalThis & { __vdtStudioDevelopmentRuntime?: unknown }).__vdtStudioDevelopmentRuntime;

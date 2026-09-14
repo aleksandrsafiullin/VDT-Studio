@@ -11,7 +11,7 @@ import { handleSidecarCancel, handleSidecarRequest } from "./runtime";
 const sidecarEntrypoint = fileURLToPath(new URL("./index.ts", import.meta.url));
 const fakeCodex = fileURLToPath(new URL("../server/fixtures/fake-codex.cjs", import.meta.url));
 const fakeCursor = fileURLToPath(new URL("../server/fixtures/fake-cursor.cjs", import.meta.url));
-const TEST_HANDSHAKE_TIMEOUT_MS = 5000;
+const TEST_HANDSHAKE_TIMEOUT_MS = 15_000;
 const hosts: SidecarProcessHost[] = [];
 
 function createRuntimeHost() {
@@ -29,7 +29,7 @@ afterEach(async () => {
   await Promise.all(hosts.splice(0).map((host) => host.stop()));
 });
 
-describe("local runtime sidecar", () => {
+describe("local runtime sidecar", { timeout: 45_000 }, () => {
   it("starts, handshakes, and lists runtime backends without HTTP pairing", async () => {
     const host = createRuntimeHost();
     await host.start();

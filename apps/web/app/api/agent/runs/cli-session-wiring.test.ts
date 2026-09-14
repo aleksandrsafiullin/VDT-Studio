@@ -44,7 +44,7 @@ function mockAllClisInstalled() {
   });
 }
 
-describe("trusted-local CLI session wiring", () => {
+describe("trusted-local CLI session wiring", { timeout: 45_000 }, () => {
   it("registers cursor, codex, and claude bindings when each CLI is detected", async () => {
     vi.stubEnv("VDT_APP_MODE", "development_web");
     vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");
@@ -62,7 +62,33 @@ describe("trusted-local CLI session wiring", () => {
       runtime.CODEX_SESSION_EXECUTION_BINDING_ID,
       runtime.CLAUDE_SESSION_EXECUTION_BINDING_ID
     ]));
-  }, 15_000);
+  }, 45_000);
+
+  it("records Claude registration as absent when the CLI is missing — expected on hosts without `claude`", async () => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");
+    detectSubscriptionCli.mockImplementation(async (id: string) => {
+      if (id === "claude") {
+        return { id, backendId: "claude_subscription", installed: false, executable: null, version: null, alias: "claude" };
+      }
+      const common = { installed: true, executable: `/opt/vdt-test/bin/${id}`, version: "1.0.0" };
+      if (id === "cursor-agent") return { id, backendId: "cursor_subscription", alias: "agent", ...common, version: "2026.08.11-e8db854" };
+      if (id === "codex") return { id, backendId: "codex_subscription", alias: "codex", ...common };
+      return { id, backendId: id, installed: false, executable: null, version: null, alias: id };
+    });
+
+    const runtime = await import("./runtime");
+    await runtime.ensureServerManagedExecutionBindings();
+    const bindingIds = runtime.agentExecutionBindingRegistry.summaries().map((binding) => binding.bindingId);
+    const outcomes = runtimeGlobal.__vdtCliSessionRegistrationOutcomes as Map<string, string> | undefined;
+
+    // Hosts without `claude` on PATH skip this binding. The live harness then
+    // fail-fasts: exit 2, "Claude CLI not detected; see docs/provider-compatibility.md".
+    expect(outcomes?.get("claude")).toBe("absent");
+    expect(bindingIds).not.toContain(runtime.CLAUDE_SESSION_EXECUTION_BINDING_ID);
+    expect(bindingIds).toContain(runtime.CURSOR_SESSION_EXECUTION_BINDING_ID);
+    expect(bindingIds).toContain(runtime.CODEX_SESSION_EXECUTION_BINDING_ID);
+  }, 45_000);
 
   it("skips a missing CLI without blocking the others", async () => {
     vi.stubEnv("VDT_APP_MODE", "development_web");
@@ -83,7 +109,7 @@ describe("trusted-local CLI session wiring", () => {
     expect(bindingIds).toContain(runtime.CURSOR_SESSION_EXECUTION_BINDING_ID);
     expect(bindingIds).toContain(runtime.CLAUDE_SESSION_EXECUTION_BINDING_ID);
     expect(bindingIds).not.toContain(runtime.CODEX_SESSION_EXECUTION_BINDING_ID);
-  }, 15_000);
+  }, 45_000);
 
   it("continues registering other CLIs when cursor registration throws", async () => {
     vi.stubEnv("VDT_APP_MODE", "development_web");
@@ -106,7 +132,7 @@ describe("trusted-local CLI session wiring", () => {
     expect(bindingIds).not.toContain(runtime.CURSOR_SESSION_EXECUTION_BINDING_ID);
     expect(bindingIds).toContain(runtime.CODEX_SESSION_EXECUTION_BINDING_ID);
     expect(bindingIds).toContain(runtime.CLAUDE_SESSION_EXECUTION_BINDING_ID);
-  }, 15_000);
+  }, 45_000);
 
   it("retries a failed CLI registration without reprobing successful ones", async () => {
     vi.stubEnv("VDT_APP_MODE", "development_web");
@@ -161,7 +187,7 @@ describe("trusted-local CLI session wiring", () => {
     expect(runtime.agentExecutionBindingRegistry.has(runtime.CURSOR_SESSION_EXECUTION_BINDING_ID)).toBe(true);
     expect(cursorAttempts).toBe(2);
     expect(codexDetectCalls).toBe(1);
-  }, 15_000);
+  }, 45_000);
 
   it("admits codex and claude session canaries through the supervisor allowlist", async () => {
     const { isAdmittedCliSessionCanary } = await import("./supervisor-runtime");

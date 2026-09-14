@@ -247,4 +247,57 @@ describe("ClaudeResumeCheckpointEngine", () => {
     });
     expect(session.binding.externalSessionId).toBe("claude-session-open");
   });
+
+  it("ends a mixed run.request_finish first turn in a diagnosable transport_error", async () => {
+    const env = await environment();
+    const runner = new FakeRunner((request) => ({
+      exitCode: 0,
+      signal: null,
+      stdout: claudeStream(
+        request.cwd,
+        "claude-session-mixed",
+        turn({
+          type: "action_batch",
+          batch: {
+            calls: [
+              { externalCallId: "echo-1", toolName: "vdt.echo", args: { value: 1 } },
+              { externalCallId: "finish-1", toolName: "run.request_finish", args: {} }
+            ]
+          }
+        }, { messageId: "message-open", text: "I will inspect the VDT graph." })
+      ),
+      stderr: ""
+    }));
+    const engine = new ClaudeResumeCheckpointEngine({
+      transport: new ClaudeResumeCheckpointTransport({
+        executable: "/opt/claude/claude",
+        validatedCliVersion: "2.1.0",
+        runner
+      }),
+      cliVersion: "2.1.0",
+      toolCatalogHash: TOOL_CATALOG_HASH,
+      allowedToolNames: ["vdt.echo", "run.request_finish"],
+      sessionEnvironmentFactory: () => env,
+      resolveBinding: async () => { throw new Error("unused"); },
+      enableUnverifiedCanary: true
+    });
+    const session = await engine.openSession({
+      binding: bindingFor(engine),
+      initialContext: { brief: "mixed-open" },
+      initialContextHash: hashText(JSON.stringify({ brief: "mixed-open" }))
+    }, {
+      signal: new AbortController().signal,
+      executeTool: async () => {
+        throw new Error("executeTool must not run on a mixed first turn.");
+      }
+    });
+    const events = await collect(session.events());
+    expect(session.binding.externalSessionId).toBe("claude-session-mixed");
+    expect(events).toEqual([{
+      type: "transport_error",
+      code: "ACTION_BATCH_CONTROL_TOOL_MIXED",
+      message: "run.request_finish must be the only call in an action batch.",
+      retryable: true
+    }]);
+  });
 });

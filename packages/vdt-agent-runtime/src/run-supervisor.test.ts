@@ -116,6 +116,21 @@ describe("VdtRunSupervisor", () => {
     expect(fixture.supervisor.eventsAfter(0).some((event) => event.type === "final")).toBe(false);
   });
 
+  it("projects recovery_required onto runtime_status when the engine stream ends silently", async () => {
+    const fixture = supervisorFixture(async function* () {});
+
+    await fixture.supervisor.start({ initialContext: {}, initialContextHash: HASH_A });
+    await fixture.supervisor.wait();
+
+    expect(fixture.supervisor.status).toBe("recovery_required");
+    expect(fixture.supervisor.eventsAfter(0).some((event) =>
+      event.type === "runtime_status" && event.payload.state === "recovery_required"
+    )).toBe(true);
+    expect(fixture.supervisor.eventsAfter(0).some((event) =>
+      event.type === "warning" && event.payload.code === "ENGINE_STREAM_INTERRUPTED"
+    )).toBe(true);
+  });
+
   it("does not commit final when the verified project head changes before the agent message", async () => {
     const fixture = baseFixture();
     const builder = new VdtBuilderSession({
@@ -255,6 +270,33 @@ describe("VdtRunSupervisor", () => {
     expect(fixture.session.cancelled).toEqual(["Observed forbidden shell execution."]);
   });
 
+  it("records native web search as a runtime warning without failing the run", async () => {
+    const fixture = supervisorFixture(async function* () {
+      yield {
+        type: "transport_note",
+        code: "NATIVE_WEB_SEARCH",
+        message: "Native web search used once. Queries: \"haulage cycle time\". Results were not captured through research.search_web."
+      };
+      yield { type: "assistant_message", messageId: "message-1", text: "I will build Ore hauled." };
+    });
+
+    await fixture.supervisor.start({ initialContext: {}, initialContextHash: HASH_A });
+    await fixture.supervisor.wait();
+
+    expect(fixture.supervisor.status).not.toBe("failed");
+    expect(fixture.supervisor.eventsAfter(0).some((event) =>
+      event.type === "error" && event.payload.code === "SECURITY_BOUNDARY_BREACH"
+    )).toBe(false);
+    expect(fixture.supervisor.eventsAfter(0)).toContainEqual(expect.objectContaining({
+      type: "warning",
+      source: "runtime",
+      payload: expect.objectContaining({
+        code: "NATIVE_WEB_SEARCH",
+        message: expect.stringContaining("haulage cycle time")
+      })
+    }));
+  });
+
   it("lets an already-started durable final commit win over a concurrent cancel", async () => {
     const fixture = baseFixture();
     const persistence = new InMemoryAgentSupervisorPersistence();
@@ -309,7 +351,7 @@ describe("VdtRunSupervisor", () => {
 
     await supervisor.start({ initialContext: {}, initialContextHash: HASH_A });
     await finalStarted;
-    await supervisor.cancel("Too late to cancel the durable final.");
+    await expect(supervisor.cancel("Too late to cancel the durable final.")).resolves.toEqual({ armed: false });
     releaseFinal();
     await supervisor.wait();
 
@@ -319,6 +361,55 @@ describe("VdtRunSupervisor", () => {
       event.type === "runtime_status" && event.payload.code === "RUN_CANCELLED"
     )).toHaveLength(0);
     expect(supervisor.eventsAfter(0).filter((event) => event.type === "final")).toHaveLength(1);
+  });
+
+  it("cancels while a tool call is blocked on the outbox", async () => {
+    const fixture = baseFixture();
+    const persistence = new InMemoryAgentSupervisorPersistence();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let toolCallStarted!: () => void;
+    const toolCallSeen = new Promise<void>((resolve) => { toolCallStarted = resolve; });
+    const outbox = new AgentRunEventOutbox(fixture.binding.runId, {
+      sink: {
+        append: async (event) => {
+          if (event.type === "tool_call") {
+            toolCallStarted();
+            await blocked;
+          }
+          await persistence.appendEvent(event);
+        }
+      }
+    });
+    const engine = new FakeEngine(fixture.capability, fixture.binding, async function* (host) {
+      yield { type: "assistant_message", messageId: "message-wedge", text: "Calling a tool." };
+      await host.executeTool({
+        externalCallId: "echo-blocked",
+        toolName: "vdt.echo",
+        args: { value: "x" }
+      });
+    });
+    const supervisor = new VdtRunSupervisor({
+      engine,
+      binding: fixture.binding,
+      gateway: fixture.gateway,
+      persistence,
+      outbox,
+      verifyFinish: fixture.verifyFinish
+    });
+
+    await supervisor.start({ initialContext: {}, initialContextHash: HASH_A });
+    await toolCallSeen;
+    await expect(supervisor.cancel("Stop the wedged run.")).resolves.toEqual({ armed: true });
+    expect(supervisor.status).toBe("cancelled");
+    release();
+    await supervisor.wait();
+    expect(supervisor.eventsAfter(0).some((event) =>
+      event.type === "tool_result" && event.payload.resultCode === "RUN_CANCELLED"
+    )).toBe(true);
+    expect(supervisor.eventsAfter(0).some((event) =>
+      event.type === "tool_result" && event.payload.status === "succeeded"
+    )).toBe(false);
   });
 
   it("stops the bound session when the gateway observes a forbidden tool call", async () => {

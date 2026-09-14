@@ -159,6 +159,31 @@ describe("GenerateActivityPanel", () => {
     expect(html).toContain('data-testid="cancel-generate"');
   });
 
+  it("shows a native web search runtime notice in the chat thread", () => {
+    const html = renderToStaticMarkup(
+      <GenerateActivityPanel
+        activity={activity({
+          agentChatMessages: [
+            ...(activity().agentChatMessages ?? []),
+            {
+              id: "agent-run-1:chat:search",
+              runId: "agent-run-1",
+              role: "system",
+              kind: "assistant_message",
+              text: "Native web search used once. Queries: \"haulage cycle time\". Results were not captured through research.search_web.",
+              createdAt: "2026-06-24T10:00:04.000Z"
+            }
+          ]
+        })}
+        onCancel={() => undefined}
+      />
+    );
+    expect(html).toContain("Native web search used once");
+    expect(html).toContain("haulage cycle time");
+    expect(html).toContain("Runtime");
+    expect(html).not.toContain('data-testid="generate-agent-events"');
+  });
+
   it("keeps technical diagnostics available in debug mode", () => {
     const html = renderToStaticMarkup(
       <GenerateActivityPanel activity={activity()} onCancel={() => undefined} diagnostics />
@@ -195,6 +220,39 @@ describe("GenerateActivityPanel", () => {
     expect(html).toContain("VDT ready");
     expect(html).toContain("Validation result: Graph validation passed.");
     expect(html).not.toContain('data-testid="cancel-generate"');
+  });
+
+  it("renders recovery_required as a recoverable pause, not a hard failure", () => {
+    const html = renderToStaticMarkup(
+      <GenerateActivityPanel
+        activity={activity({
+          status: "recovery_required",
+          canCancel: true,
+          retryableError: {
+            code: "RECOVERY_REQUIRED",
+            message: "Recover this run from the last durable checkpoint.",
+            retryCount: 0,
+            createdAt: "2026-06-24T10:00:05.000Z"
+          },
+          runtimeAgentRun: {
+            status: "recovery_required"
+          } as GenerateActivityState["runtimeAgentRun"],
+          agentRun: {
+            ...activity().agentRun!,
+            status: "recovery_required",
+            phase: "reporting"
+          },
+          agentChatMessages: []
+        })}
+        onCancel={() => undefined}
+      />
+    );
+
+    expect(html).toContain("Recovery needed");
+    expect(html).toContain('data-testid="cancel-generate"');
+    expect(html).toContain('data-testid="agent-retryable-error"');
+    expect(html).not.toContain('data-testid="agent-hard-error"');
+    expect(html).not.toContain("animate-spin");
   });
 
   it("renders questions for needs_user_input status", () => {

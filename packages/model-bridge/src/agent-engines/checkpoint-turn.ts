@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
+import { AGENT_QUESTION_SCHEMA_KEYS } from "@vdt-studio/vdt-agent-runtime";
 import { parseCheckpointActionBatch, type CheckpointActionBatch } from "./action-batch";
+import { collectCheckpointEnvelopeCandidates, type CheckpointEnvelopeCandidate } from "./checkpoint-envelope";
+import { safeProtocolLabel } from "./checkpoint-protocol-reporting";
+import { summarizeDroppedQuestionKeys } from "./checkpoint-protocol-reporting";
+
+export const CHECKPOINT_DROPPED_QUESTION_KEYS_ARG = "__vdtDroppedQuestionKeys";
 
 const DEFAULT_MAX_PROMPT_BYTES = 1024 * 1024;
 const MAX_ASSISTANT_TEXT_BYTES = 64 * 1024;
@@ -21,7 +27,7 @@ export type CheckpointTurn =
     }
   | {
       readonly protocolVersion: string;
-      readonly assistantMessage: null;
+      readonly assistantMessage: CheckpointAssistantMessage | null;
       readonly action: {
         readonly type: "final";
         readonly messageId: string;
@@ -79,15 +85,32 @@ function assertText(
   }
 }
 
-function normalizeCheckpointQuestions(value: unknown): unknown {
-  if (!Array.isArray(value)) return value;
-  return value.map((question) => {
+interface NormalizedCheckpointQuestions {
+  readonly questions: unknown;
+  readonly droppedKeysByIndex: readonly { index: number; keys: readonly string[] }[];
+}
+
+function normalizeCheckpointQuestions(value: unknown): NormalizedCheckpointQuestions {
+  if (!Array.isArray(value)) return { questions: value, droppedKeysByIndex: [] };
+  const droppedKeysByIndex: { index: number; keys: string[] }[] = [];
+  const questions = value.map((question, index) => {
     if (!isRecord(question)) return question;
-    const expectedAnswerType = question.expectedAnswerType === "enum" || question.expectedAnswerType === "choice"
+    const { label, type, ...rest } = question;
+    const normalized: Record<string, unknown> = { ...rest };
+    if (normalized.question === undefined && typeof label === "string") {
+      normalized.question = label;
+    }
+    if (normalized.expectedAnswerType === undefined && typeof type === "string") {
+      normalized.expectedAnswerType = type;
+    }
+    const droppedKeys = Object.keys(normalized).filter((key) => !AGENT_QUESTION_SCHEMA_KEYS.has(key));
+    for (const key of droppedKeys) delete normalized[key];
+    if (droppedKeys.length > 0) droppedKeysByIndex.push({ index, keys: droppedKeys });
+    const expectedAnswerType = normalized.expectedAnswerType === "enum" || normalized.expectedAnswerType === "choice"
       ? "single_choice"
-      : question.expectedAnswerType;
-    const options = Array.isArray(question.options)
-      ? question.options.map((option) => {
+      : normalized.expectedAnswerType;
+    const options = Array.isArray(normalized.options)
+      ? normalized.options.map((option) => {
           if (
             isRecord(option)
             && typeof option.id === "string"
@@ -98,13 +121,35 @@ function normalizeCheckpointQuestions(value: unknown): unknown {
           }
           return option;
         })
-      : question.options;
+      : normalized.options;
     return {
-      ...question,
+      ...normalized,
       ...(expectedAnswerType !== undefined ? { expectedAnswerType } : {}),
       ...(options !== undefined ? { options } : {})
     };
   });
+  return { questions, droppedKeysByIndex };
+}
+
+function attachNormalizedUserAskArgs(
+  args: Record<string, unknown>
+): Record<string, unknown> {
+  const { questions, droppedKeysByIndex } = normalizeCheckpointQuestions(args.questions);
+  const droppedSummary = summarizeDroppedQuestionKeys(droppedKeysByIndex);
+  return {
+    ...args,
+    questions,
+    ...(droppedSummary ? { [CHECKPOINT_DROPPED_QUESTION_KEYS_ARG]: droppedSummary } : {})
+  };
+}
+
+const CANONICAL_CHECKPOINT_ACTION_TYPES = new Set(["action_batch", "user.ask", "final"]);
+const ACTION_BATCH_TYPE_ALIASES = new Set(["tool_call", "tool_calls"]);
+
+function normalizeCheckpointActionType(type: string): string {
+  if (CANONICAL_CHECKPOINT_ACTION_TYPES.has(type)) return type;
+  if (ACTION_BATCH_TYPE_ALIASES.has(type)) return "action_batch";
+  return type;
 }
 
 function normalizeCheckpointActionBatch(value: unknown): unknown {
@@ -115,10 +160,7 @@ function normalizeCheckpointActionBatch(value: unknown): unknown {
       if (!isRecord(call) || call.toolName !== "user.ask" || !isRecord(call.args)) return call;
       return {
         ...call,
-        args: {
-          ...call.args,
-          questions: normalizeCheckpointQuestions(call.args.questions)
-        }
+        args: attachNormalizedUserAskArgs(call.args)
       };
     })
   };
@@ -127,13 +169,43 @@ function normalizeCheckpointActionBatch(value: unknown): unknown {
 /** Lenient checkpoint-turn parser shared by Cursor, Codex, and Claude transports. */
 export function parseCheckpointTurn(raw: string, options: ParseCheckpointTurnOptions): CheckpointTurn {
   const maxPromptBytes = options.maxPromptBytes ?? DEFAULT_MAX_PROMPT_BYTES;
-  const { protocolVersion, allowedToolNames, errorPrefix } = options;
   if (byteLength(raw) > maxPromptBytes) {
-    throw checkpointTurnError(`${errorPrefix}_PROTOCOL_INVALID`, "Checkpoint response is too large.");
+    throw checkpointTurnError(`${options.errorPrefix}_PROTOCOL_INVALID`, "Checkpoint response is too large.");
   }
+  const trimmed = raw.trim();
+  const candidates = collectCheckpointEnvelopeCandidates(raw);
+  const parsed: Array<{ candidate: CheckpointEnvelopeCandidate; turn: CheckpointTurn }> = [];
+  for (const candidate of candidates) {
+    try {
+      parsed.push({ candidate, turn: parseUnwrappedCheckpointTurn(candidate.payload, options) });
+    } catch (error) {
+      if (errorCodeOf(error)?.endsWith("_PROTOCOL_AMBIGUOUS")) throw error;
+    }
+  }
+  if (parsed.length > 1) {
+    throw checkpointTurnError(
+      `${options.errorPrefix}_PROTOCOL_AMBIGUOUS`,
+      `Checkpoint result is ambiguous: found ${parsed.length} candidate JSON objects.`
+    );
+  }
+  if (parsed.length === 1) {
+    return withInlineNarration(parsed[0]!.turn, trimmed, parsed[0]!.candidate);
+  }
+  if (candidates.length === 1) {
+    return parseUnwrappedCheckpointTurn(candidates[0]!.payload, options);
+  }
+  throw checkpointTurnError(
+    `${options.errorPrefix}_PROTOCOL_INVALID`,
+    "Checkpoint result must be exactly one JSON object without prose or fences."
+  );
+}
+
+/** Parse a payload that is already a single unwrapped JSON object. */
+function parseUnwrappedCheckpointTurn(unwrapped: string, options: ParseCheckpointTurnOptions): CheckpointTurn {
+  const { protocolVersion, allowedToolNames, errorPrefix } = options;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw.trim()) as unknown;
+    parsed = JSON.parse(unwrapped) as unknown;
   } catch {
     throw checkpointTurnError(
       `${errorPrefix}_PROTOCOL_INVALID`,
@@ -151,7 +223,9 @@ export function parseCheckpointTurn(raw: string, options: ParseCheckpointTurnOpt
     throw checkpointTurnError(`${errorPrefix}_PROTOCOL_INVALID`, "checkpoint result action is invalid.");
   }
 
-  if (parsed.action.type === "action_batch") {
+  const actionType = normalizeCheckpointActionType(parsed.action.type);
+
+  if (actionType === "action_batch") {
     const actionKeys = Object.keys(parsed.action).sort();
     const usesWrappedBatch = actionKeys.length === 2 && actionKeys[0] === "batch" && actionKeys[1] === "type";
     const usesDirectCalls = actionKeys.length === 2 && actionKeys[0] === "calls" && actionKeys[1] === "type";
@@ -195,7 +269,7 @@ export function parseCheckpointTurn(raw: string, options: ParseCheckpointTurnOpt
     });
   }
 
-  if (parsed.action.type === "user.ask") {
+  if (actionType === "user.ask") {
     assertExactKeys(parsed.action, ["questions", "type"], "checkpoint user.ask action", errorPrefix);
     if (parsed.assistantMessage !== null && typeof parsed.assistantMessage !== "string") {
       throw checkpointTurnError(`${errorPrefix}_PROTOCOL_INVALID`, "user.ask assistantMessage must be text or null.");
@@ -203,16 +277,16 @@ export function parseCheckpointTurn(raw: string, options: ParseCheckpointTurnOpt
     if (typeof parsed.assistantMessage === "string") {
       assertText(parsed.assistantMessage, "assistantMessage", errorPrefix, 8_000);
     }
-    const questions = normalizeCheckpointQuestions(parsed.action.questions);
+    const askArgs = attachNormalizedUserAskArgs({ questions: parsed.action.questions });
     const controlHash = createHash("sha256")
-      .update(JSON.stringify(questions), "utf8")
+      .update(JSON.stringify(askArgs.questions), "utf8")
       .digest("hex")
       .slice(0, 24);
     const batch = parseCheckpointActionBatch({
       calls: [{
         externalCallId: `control-ask-${controlHash}`,
         toolName: "user.ask",
-        args: { questions }
+        args: askArgs
       }]
     }, { allowedToolNames });
     return Object.freeze({
@@ -227,7 +301,7 @@ export function parseCheckpointTurn(raw: string, options: ParseCheckpointTurnOpt
     });
   }
 
-  if (parsed.action.type === "final") {
+  if (actionType === "final") {
     const finalKeys = Object.keys(parsed.action).sort();
     const canonicalFinal = finalKeys.length === 4
       && finalKeys[0] === "finishReceiptId"
@@ -266,5 +340,99 @@ export function parseCheckpointTurn(raw: string, options: ParseCheckpointTurnOpt
     });
   }
 
-  throw checkpointTurnError(`${errorPrefix}_PROTOCOL_INVALID`, "Checkpoint action type is unknown.");
+  throw checkpointTurnError(
+    `${errorPrefix}_PROTOCOL_INVALID`,
+    `Checkpoint action type is unknown: ${safeProtocolLabel(parsed.action.type)}.`
+  );
+}
+
+/** Pick the unique agent message that parses as a checkpoint envelope.
+ * Extra JSON envelopes are the same PROTOCOL_AMBIGUOUS case unwrap already uses.
+ * Non-envelope messages stay as assistant narration in stream order. */
+export function selectCheckpointTurnFromAgentMessages(
+  messages: readonly string[],
+  options: ParseCheckpointTurnOptions
+): CheckpointTurn {
+  if (messages.length === 0) {
+    throw checkpointTurnError(
+      `${options.errorPrefix}_PROTOCOL_INVALID`,
+      "Checkpoint result must be exactly one JSON object without prose or fences."
+    );
+  }
+  const parsed: Array<{ index: number; turn: CheckpointTurn }> = [];
+  for (const [index, raw] of messages.entries()) {
+    try {
+      parsed.push({ index, turn: parseCheckpointTurn(raw, options) });
+    } catch (error) {
+      if (errorCodeOf(error)?.endsWith("_PROTOCOL_AMBIGUOUS")) throw error;
+    }
+  }
+  if (parsed.length > 1) {
+    throw checkpointTurnError(
+      `${options.errorPrefix}_PROTOCOL_AMBIGUOUS`,
+      `Checkpoint result is ambiguous: found ${parsed.length} candidate JSON objects.`
+    );
+  }
+  if (parsed.length === 0) {
+    if (messages.length === 1) return parseCheckpointTurn(messages[0]!, options);
+    throw checkpointTurnError(
+      `${options.errorPrefix}_PROTOCOL_INVALID`,
+      "Checkpoint result must be exactly one JSON object without prose or fences."
+    );
+  }
+  const winner = parsed[0]!;
+  return withStreamNarration(winner.turn, messages, winner.index);
+}
+
+function withInlineNarration(
+  turn: CheckpointTurn,
+  source: string,
+  winner: CheckpointEnvelopeCandidate
+): CheckpointTurn {
+  return withStreamNarration(turn, [
+    source.slice(0, winner.start),
+    source.slice(winner.start, winner.end),
+    source.slice(winner.end)
+  ], 1);
+}
+
+function withStreamNarration(
+  turn: CheckpointTurn,
+  messages: readonly string[],
+  envelopeIndex: number
+): CheckpointTurn {
+  const parts: string[] = [];
+  for (const [index, raw] of messages.entries()) {
+    if (index === envelopeIndex) {
+      const inner = turn.assistantMessage?.text?.trim();
+      if (inner) parts.push(inner);
+      continue;
+    }
+    const prose = raw.trim();
+    if (prose) parts.push(prose);
+  }
+  if (parts.length === 0) return turn;
+  const text = parts.join("\n\n");
+  if (turn.assistantMessage?.text === text) return turn;
+  const messageId = turn.assistantMessage?.messageId
+    ?? `message-${createHash("sha256").update(text, "utf8").digest("hex").slice(0, 24)}`;
+  const assistantMessage = Object.freeze({ messageId, text });
+  if (turn.action.type === "action_batch") {
+    return Object.freeze({
+      protocolVersion: turn.protocolVersion,
+      assistantMessage,
+      action: turn.action
+    });
+  }
+  return Object.freeze({
+    protocolVersion: turn.protocolVersion,
+    assistantMessage,
+    action: turn.action
+  });
+}
+
+function errorCodeOf(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
 }

@@ -25,6 +25,12 @@ export function isWaitingForUser(
     || activity.runtimeAgentRun?.status === "waiting_approval";
 }
 
+function isElapsedPaused(
+  activity: Pick<GenerateActivityState, "status" | "runtimeAgentRun">
+): boolean {
+  return isWaitingForUser(activity) || activity.status === "recovery_required";
+}
+
 export function formatActiveElapsed(
   startedAt: string,
   completedAt: string | undefined,
@@ -63,7 +69,7 @@ function initElapsedTracker(
   now = Date.now()
 ): ElapsedTrackerState {
   const state: ElapsedTrackerState = { runId, pausedMs: 0, pauseStartedAt: null };
-  if (!isWaitingForUser(activity)) return state;
+  if (!isElapsedPaused(activity)) return state;
   const pauseStart = Date.parse(activity.updatedAt);
   state.pauseStartedAt = Number.isFinite(pauseStart) ? pauseStart : now;
   return state;
@@ -78,7 +84,7 @@ export function syncElapsedTracker(
     ? state
     : initElapsedTracker(activity.runId, activity, now);
 
-  const waiting = isWaitingForUser(activity);
+  const waiting = isElapsedPaused(activity);
   if (waiting) {
     if (next.pauseStartedAt === null) {
       const pauseStart = Date.parse(activity.updatedAt);
@@ -124,7 +130,7 @@ function useActiveElapsed(activity: GenerateActivityState): string {
     trackerRef.current = state;
     setElapsed(nextElapsed);
 
-    const waiting = isWaitingForUser(activity);
+    const waiting = isElapsedPaused(activity);
     const isActiveRunning = activity.status === "running" && !waiting && !activity.completedAt;
     if (!isActiveRunning) return undefined;
 
@@ -150,6 +156,7 @@ function statusLabel(activity: GenerateActivityState) {
   if (activity.runtimeAgentRun?.status === "waiting_approval") return "Needs approval";
   if (activity.status === "ready") return activity.schemaId === "deepen-node-v1" ? "Patch ready" : "VDT ready";
   if (activity.status === "needs_user_input") return "Needs input";
+  if (activity.status === "recovery_required") return "Recovery needed";
   if (activity.status === "error") return "Needs attention";
   if (activity.status === "cancelled") return "Cancelled";
   if (activity.cancelRequested) return "Cancelling";
@@ -334,7 +341,7 @@ function MessageBubble({
       data-testid={`agent-chat-message-${message.role}`}
     >
       <div className="text-xs font-semibold uppercase tracking-normal text-muted">
-        {isUser ? "User" : message.kind === "retryable_error" ? "Needs attention" : "Agent"}
+        {isUser ? "User" : message.role === "system" && message.kind !== "retryable_error" ? "Runtime" : message.kind === "retryable_error" ? "Needs attention" : "Agent"}
       </div>
       {message.text ? (
         <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">{message.text}</p>
@@ -367,8 +374,9 @@ function ActivityStatusRow({
   onCancel: () => void;
 }) {
   const isWorking = activity.status === "running" || activity.status === "needs_user_input";
+  const isRecoverable = activity.status === "recovery_required";
   const isTerminal = activity.status === "ready" || activity.status === "error" || activity.status === "cancelled";
-  if (!status && !isWorking && !isTerminal) return null;
+  if (!status && !isWorking && !isRecoverable && !isTerminal) return null;
   return (
     <div
       className="flex items-center gap-3 rounded-md border border-blue-100 bg-white px-3 py-2"
@@ -376,6 +384,8 @@ function ActivityStatusRow({
     >
       {isWorking ? (
         <Loader2 className="h-4 w-4 shrink-0 animate-spin text-accent" aria-hidden="true" />
+      ) : isRecoverable ? (
+        <RotateCcw className="h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
       ) : (
         <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
       )}
@@ -389,7 +399,7 @@ function ActivityStatusRow({
         <Clock3 className="h-3.5 w-3.5" aria-hidden="true" />
         <span data-testid="generate-activity-elapsed">{elapsed}</span>
       </div>
-      {isWorking ? (
+      {isWorking || isRecoverable ? (
         <Button
           size="sm"
           variant="ghost"

@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -169,6 +169,59 @@ function processResult(stdout: string, overrides: Partial<CursorResumeProcessRes
   };
 }
 
+async function workspaceAlias(canonicalDirectory: string): Promise<string | undefined> {
+  const canonical = await realpath(canonicalDirectory);
+  const alias = path.join(await temporaryDirectory("vdt-cwd-alias-"), "workspace");
+  try {
+    await symlink(canonical, alias, "dir");
+    return alias;
+  } catch {
+    return undefined;
+  }
+}
+
+function expectOmittedDiagnostic(
+  error: unknown,
+  missing: string,
+  extras: {
+    parsedLines: number;
+    eventTypes: string;
+    stdoutEmpty?: boolean;
+    secret?: string;
+  }
+): void {
+  const failure = error as Error;
+  const stdoutEmpty = extras.stdoutEmpty ?? false;
+  expect(failure.message).toContain(`(${missing})`);
+  expect(failure.message).toContain(`parsed_lines=${extras.parsedLines}`);
+  expect(failure.message).toContain(`event_types=${extras.eventTypes}`);
+  expect(failure.message).toContain(`stdout_empty=${stdoutEmpty}`);
+  expect(failure.message).toContain("exit=0");
+  expect(failure.message).toContain("signal=none");
+  if (missing !== "missing_init") expect(failure.message).not.toContain("missing_init");
+  if (missing !== "missing_terminal") expect(failure.message).not.toContain("missing_terminal");
+  if (missing !== "empty_stdout") expect(failure.message).not.toContain("empty_stdout");
+  if (extras.secret) expect(failure.message).not.toContain(extras.secret);
+}
+
+async function executeOpen(
+  isolated: CursorResumeCheckpointEnvironment,
+  runner: FakeRunner
+): Promise<unknown> {
+  const transport = new CursorResumeCheckpointTransport({
+    executable: "/opt/cursor/cursor-agent",
+    validatedCliVersion: "2026.08.1",
+    runner
+  });
+  return transport.executeSegment({
+    mode: "open",
+    environment: isolated,
+    model: "auto",
+    prompt: "open",
+    signal: new AbortController().signal
+  }, ["vdt.echo"]).then(() => undefined, (value: unknown) => value);
+}
+
 describe("CursorResumeCheckpointTransport", () => {
   it("opens and resumes the exact opaque session with shell-free reviewed arguments", async () => {
     const isolated = await environment();
@@ -252,6 +305,38 @@ describe("CursorResumeCheckpointTransport", () => {
       prompt: "open",
       signal: new AbortController().signal
     }, ["vdt.echo"])).rejects.toMatchObject({ code: "SECURITY_BOUNDARY_BREACH" });
+  });
+
+  it("records Cursor native web search tool_calls instead of treating them as SECURITY_BOUNDARY_BREACH", async () => {
+    const isolated = await environment();
+    const runner = new FakeRunner((request) => processResult(stream({
+      cwd: request.cwd,
+      sessionId: "cursor-session-search",
+      extra: [{
+        type: "tool_call",
+        subtype: "started",
+        call_id: "search-1",
+        tool_call: { webSearchToolCall: { args: { searchTerm: "ore hauled drivers" } } },
+        session_id: "cursor-session-search"
+      }]
+    })));
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent",
+      validatedCliVersion: "2026.08.1",
+      runner
+    });
+    const result = await transport.executeSegment({
+      mode: "open",
+      environment: isolated,
+      model: "auto",
+      prompt: "open",
+      signal: new AbortController().signal
+    }, ["vdt.echo"]);
+    expect(result.turn.action.type).toBe("action_batch");
+    expect(result.nativeWebSearch).toEqual({
+      count: 1,
+      queries: ["ore hauled drivers"]
+    });
   });
 
   it("uses an explicit trusted subscription auth home without exposing the private state as config", async () => {
@@ -550,5 +635,128 @@ describe("CursorResumeCheckpointTransport", () => {
       prompt: "open",
       signal: new AbortController().signal
     }, ["vdt.echo"])).rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_UNSAFE_ENVIRONMENT" });
+  });
+
+  it("names missing_init when the stream has a terminal result but no system init", async () => {
+    const isolated = await environment();
+    const secret = "DO_NOT_ECHO_MODEL_OUTPUT_9f3a";
+    const runner = new FakeRunner(() => processResult([
+      { type: "assistant", session_id: "cursor-session-missing-init" },
+      {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: actionBatchResult("cursor-session-missing-init").replace("I will inspect the VDT graph.", secret),
+        session_id: "cursor-session-missing-init"
+      }
+    ].map((event) => JSON.stringify(event)).join("\n") + "\n"));
+    const error = await executeOpen(isolated, runner);
+
+    expect(error).toMatchObject({
+      code: "CURSOR_CHECKPOINT_PROTOCOL_INVALID",
+      missingEvidence: ["missing_init"],
+      parsedLineCount: 2,
+      eventTypes: "assistant,result.success",
+      stdoutEmpty: false,
+      exitCode: 0,
+      signal: "none"
+    });
+    expectOmittedDiagnostic(error, "missing_init", {
+      parsedLines: 2,
+      eventTypes: "assistant,result.success",
+      secret
+    });
+  });
+
+  it("names missing_terminal when the stream has system init but no result event", async () => {
+    const isolated = await environment();
+    const runner = new FakeRunner((request) => processResult(JSON.stringify({
+      type: "system",
+      subtype: "init",
+      cwd: request.cwd,
+      session_id: "cursor-session-missing-terminal",
+      permissionMode: "ask"
+    }) + "\n"));
+    const error = await executeOpen(isolated, runner);
+
+    expect(error).toMatchObject({
+      code: "CURSOR_CHECKPOINT_PROTOCOL_INVALID",
+      missingEvidence: ["missing_terminal"],
+      parsedLineCount: 1,
+      eventTypes: "system.init",
+      stdoutEmpty: false,
+      exitCode: 0,
+      signal: "none"
+    });
+    expectOmittedDiagnostic(error, "missing_terminal", {
+      parsedLines: 1,
+      eventTypes: "system.init"
+    });
+  });
+
+  it("names empty_stdout when Cursor exits 0 with no stream bytes", async () => {
+    const isolated = await environment();
+    const runner = new FakeRunner(() => processResult(""));
+    const error = await executeOpen(isolated, runner);
+
+    expect(error).toMatchObject({
+      code: "CURSOR_CHECKPOINT_PROTOCOL_INVALID",
+      missingEvidence: ["empty_stdout"],
+      parsedLineCount: 0,
+      eventTypes: "<none>",
+      stdoutEmpty: true,
+      exitCode: 0,
+      signal: "none"
+    });
+    expectOmittedDiagnostic(error, "empty_stdout", {
+      parsedLines: 0,
+      eventTypes: "<none>",
+      stdoutEmpty: true
+    });
+  });
+
+  it("accepts a reported cwd that canonicalises onto the private workspace", async () => {
+    const isolated = await environment();
+    const runner = new FakeRunner(async (request) => {
+      const alias = await workspaceAlias(request.cwd) ?? isolated.privateWorkspacePath;
+      return processResult(stream({ cwd: alias, sessionId: "cursor-session-cwd-alias" }));
+    });
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent",
+      validatedCliVersion: "2026.08.1",
+      runner
+    });
+    await expect(transport.executeSegment({
+      mode: "open",
+      environment: isolated,
+      model: "auto",
+      prompt: "open",
+      signal: new AbortController().signal
+    }, ["vdt.echo"])).resolves.toMatchObject({ sessionId: "cursor-session-cwd-alias" });
+  });
+
+  it("still rejects a reported cwd that canonicalises to a different directory", async () => {
+    const isolated = await environment();
+    const other = await temporaryDirectory("vdt-cursor-other-cwd-");
+    const runner = new FakeRunner((request, index) => processResult(stream({
+      cwd: index === 0 ? other : ".",
+      sessionId: "cursor-session-cwd-breach"
+    })));
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent",
+      validatedCliVersion: "2026.08.1",
+      runner
+    });
+    const common = {
+      mode: "open" as const,
+      environment: isolated,
+      model: "auto",
+      prompt: "open",
+      signal: new AbortController().signal
+    };
+    await expect(transport.executeSegment(common, ["vdt.echo"]))
+      .rejects.toMatchObject({ code: "SECURITY_BOUNDARY_BREACH" });
+    await expect(transport.executeSegment(common, ["vdt.echo"]))
+      .rejects.toMatchObject({ code: "SECURITY_BOUNDARY_BREACH" });
   });
 });

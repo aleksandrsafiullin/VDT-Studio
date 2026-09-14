@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
 import {
+  assertDensePlainJson,
   assertSafeId,
   openVdtDatabase,
   validateStrictVdtProjectCommit,
@@ -35,15 +35,18 @@ import {
 } from "@vdt-studio/vdt-agent-runtime";
 import type { VdtProject } from "@vdt-studio/vdt-core";
 import { createStorageWriteActor } from "@/app/api/vdt/storage-write-adapter";
+import { defaultAgentRunDataDir, resolveConfiguredDataDir } from "./agent-data-dir";
 
 const DEFAULT_AGENT_PROJECT_ID = "project_agent_workspace";
 const DEFAULT_AGENT_PROJECT_NAME = "VDT Studio workspace";
 const STORAGE_REPLAY_STATE_KEY = "__vdtStorageReplayStateV1";
 
 export function openAgentRunPersistenceDatabase(projectRoot: string): VdtDatabase {
-  const dataDir = process.env.VDT_DATA_DIR ?? defaultDataDir(projectRoot);
+  const dataDir = process.env.VDT_DATA_DIR ?? defaultAgentRunDataDir(projectRoot);
   return openVdtDatabase(projectRoot, { dataDir });
 }
+
+export { resolveConfiguredDataDir } from "./agent-data-dir";
 
 interface SqliteAgentRunPersistenceOptions {
   actorFactory?: ((projectId: string) => ActorContextV1) | undefined;
@@ -504,28 +507,66 @@ function persistMutationProposal(
   verifiedTipRevisionId: string,
   verifiedTipContentIdentity: RevisionContentIdentityV1
 ): PersistMutationProposalResultV1 {
+  try {
+    return persistMutationProposalRecord(
+      database,
+      projectId,
+      state,
+      vdtId,
+      proposal,
+      actor,
+      replayState,
+      verifiedTipRevisionId,
+      verifiedTipContentIdentity
+    );
+  } catch (error) {
+    if (error instanceof VdtStorageError) throw error;
+    const wrapped = new VdtStorageError(
+      "AGENT_MUTATION_PROPOSAL_PERSIST_FAILED",
+      `Persisting mutation proposal ${proposal.id} (status=${proposal.status}) failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    wrapped.cause = error;
+    throw wrapped;
+  }
+}
+
+function persistMutationProposalRecord(
+  database: VdtDatabase,
+  projectId: string,
+  state: VdtAgentRunState,
+  vdtId: string,
+  proposal: MutationProposal,
+  actor: ActorContextV1,
+  replayState: AgentStorageReplayStateV1,
+  verifiedTipRevisionId: string,
+  verifiedTipContentIdentity: RevisionContentIdentityV1
+): PersistMutationProposalResultV1 {
   const proposalId = storageProposalId(proposal);
   let replay = replayState.proposals.find(
     (item) => item.proposalStorageId === proposalId
   );
   const wasAlreadyRecorded = replay !== undefined;
-  validateStrictVdtProjectCommit(proposal.previewProject);
+  // Density/toJSON is required for every preview artifact. Graph import
+  // (validateStrictVdtProjectCommit → importProjectJson) is only for applied
+  // commits; a failed formula would otherwise rethrow and drop the receipt.
+  assertDensePlainJson(proposal.previewProject);
+  if (proposal.status === "applied") {
+    validateStrictVdtProjectCommit(proposal.previewProject);
+  }
   const previewFilePath = writePreviewProject(database, projectId, vdtId, proposal);
   const baseRevision = resolveProposalBaseRevision(
     database,
     vdtId,
     proposal,
-    replayState,
-    state,
     replay,
     verifiedTipRevisionId
   );
   if (!baseRevision) {
     throw new VdtStorageError(
-      "REVISION_CONFLICT",
-      usesPersistedHeadAsProposalBase(replayState, state)
-        ? `Proposal ${proposal.id} cannot resolve the persisted VDT head.`
-        : `Proposal ${proposal.id} base revision ${proposal.baseRevision} is not persisted.`
+      "PROPOSAL_BASE_NOT_PERSISTED",
+      `Proposal ${proposal.id} cannot resolve a persisted VDT base revision.`
     );
   }
   const existing = database.getMutationProposal(proposalId);
@@ -572,7 +613,7 @@ function persistMutationProposal(
       const head = database.getVdtRevisionHead(vdtId);
       if (!head || !head.activeRevisionId || !head.activeContentIdentity) {
         throw new VdtStorageError(
-          "REVISION_CONFLICT",
+          "PROPOSAL_BASE_NOT_PERSISTED",
           `Proposal ${proposal.id} cannot resolve a committed VDT head.`
         );
       }
@@ -591,7 +632,7 @@ function persistMutationProposal(
           };
         }
         throw new VdtStorageError(
-          "REVISION_CONFLICT",
+          "PROPOSAL_BASE_NOT_CURRENT",
           `Proposal ${proposal.id} base revision is not the current VDT head.`
         );
       }
@@ -640,7 +681,7 @@ function persistMutationProposal(
     const committed = executeProposalReplay(database, actor, replay);
     if (committed.revision.parentRevisionId !== baseRevision.id) {
       throw new VdtStorageError(
-        "REVISION_CONFLICT",
+        "PROPOSAL_BASE_NOT_CURRENT",
         `Proposal ${proposal.id} replay is not bound to its persisted base revision.`
       );
     }
@@ -670,31 +711,18 @@ function persistMutationProposal(
   };
 }
 
-function usesPersistedHeadAsProposalBase(
-  replayState: AgentStorageReplayStateV1,
-  state: VdtAgentRunState
-): boolean {
-  return (
-    replayState.initial.kind === "existing_head_verified" ||
-    Boolean(trimOptional(state.request.workspace?.vdtId))
-  );
-}
-
 function resolveProposalBaseRevision(
   database: VdtDatabase,
   vdtId: string,
   proposal: MutationProposal,
-  replayState: AgentStorageReplayStateV1,
-  state: VdtAgentRunState,
   replay: AgentProposalCommitReplayV1 | undefined,
   verifiedTipRevisionId: string
 ): VdtRevisionRecord | undefined {
   if (replay?.command.expectedActiveRevisionId) {
     return database.getVdtRevision(replay.command.expectedActiveRevisionId) ?? undefined;
   }
-  if (usesPersistedHeadAsProposalBase(replayState, state)) {
-    return database.getVdtRevision(verifiedTipRevisionId) ?? undefined;
-  }
+  const tip = database.getVdtRevision(verifiedTipRevisionId);
+  if (tip) return tip;
   return database
     .listVdtRevisions(vdtId)
     .find((revision) => revision.revisionNo === proposal.baseRevision);
@@ -1496,22 +1524,6 @@ function safeStorageId(prefix: string, value: string): string {
     .replace(/^[^A-Za-z0-9]+/, "")
     .slice(0, 90) || "item";
   return assertSafeId(`${prefix}_${safeBody}_${hash}`, prefix);
-}
-
-function defaultDataDir(projectRoot: string): string {
-  if (process.env.NODE_ENV === "test") {
-    return path.join(os.tmpdir(), "vdt-studio-agent-runs-test", safePathSegment(projectRoot), String(process.pid));
-  }
-  return path.join(projectRoot, ".vdt");
-}
-
-function resolveConfiguredDataDir(projectRoot: string): string {
-  const resolvedProjectRoot = path.resolve(projectRoot);
-  const configuredDataDir = process.env.VDT_DATA_DIR;
-  if (!configuredDataDir) return defaultDataDir(resolvedProjectRoot);
-  return path.isAbsolute(configuredDataDir)
-    ? path.resolve(configuredDataDir)
-    : path.resolve(resolvedProjectRoot, configuredDataDir);
 }
 
 function existingDirectoryPath(value: string): string | null {

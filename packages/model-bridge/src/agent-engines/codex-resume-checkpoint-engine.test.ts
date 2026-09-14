@@ -2,12 +2,14 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type {
-  AgentEngineEvent,
-  AgentEngineHost,
-  AgentSessionBinding,
-  VdtGatewayToolCall,
-  VdtGatewayToolResult
+import {
+  CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE,
+  CHECKPOINT_FINISH_ORDER_PROMPT_RULE,
+  type AgentEngineEvent,
+  type AgentEngineHost,
+  type AgentSessionBinding,
+  type VdtGatewayToolCall,
+  type VdtGatewayToolResult
 } from "@vdt-studio/vdt-agent-runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { VDT_CHECKPOINT_TURN_PROTOCOL_VERSION } from "./persistent-cli-checkpoint-canaries";
@@ -241,5 +243,140 @@ describe("CodexResumeCheckpointEngine", () => {
       text: "I will inspect the VDT graph."
     });
     expect(session.binding.externalSessionId).toBe("codex-thread-open");
+    const telemetry = (session as unknown as { snapshotPerformanceTelemetry: () => {
+      segmentCount: number;
+      processSpawnCount: number;
+      logicalSessionCount: number;
+      resumeCount: number;
+      toolCallCount: number;
+      opaqueSessionIdHash: string | null;
+    } }).snapshotPerformanceTelemetry();
+    expect(runner.requests).toHaveLength(2);
+    expect(telemetry.segmentCount).toBe(2);
+    expect(telemetry.processSpawnCount).toBe(runner.requests.length);
+    expect(telemetry.processSpawnCount).toBe(telemetry.segmentCount);
+    expect(telemetry.logicalSessionCount).toBe(1);
+    expect(telemetry.resumeCount).toBe(1);
+    expect(telemetry.toolCallCount).toBe(2);
+    expect(telemetry.opaqueSessionIdHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(JSON.stringify(telemetry)).not.toContain("codex-thread-open");
+  });
+});
+
+describe("CodexResumeCheckpointEngine.open contract violations", () => {
+  const mixedTools = [
+    ["run.request_finish", "run.request_finish must be the only call in an action batch."],
+    ["user.ask", "user.ask must be the only call in an action batch."],
+    ["approval.request", "approval.request must be the only call in an action batch."]
+  ] as const;
+
+  function mixedControlArgs(toolName: string): Record<string, unknown> {
+    if (toolName !== "user.ask") return {};
+    return {
+      questions: [{
+        id: "fleet-size",
+        question: "How many trucks should be modeled?",
+        reason: "The fleet size is required for the branch.",
+        required: true,
+        answerKind: "number"
+      }]
+    };
+  }
+
+  function mixedControlAction(toolName: string) {
+    return {
+      type: "action_batch",
+      batch: {
+        calls: [
+          { externalCallId: "echo-1", toolName: "vdt.echo", args: { value: 1 } },
+          { externalCallId: "control-1", toolName, args: mixedControlArgs(toolName) }
+        ]
+      }
+    };
+  }
+
+  async function openMixedSession(toolName: string) {
+    const env = await environment();
+    const runner = new FakeRunner(() => ({
+      exitCode: 0,
+      signal: null,
+      stdout: codexStream(
+        "codex-thread-mixed",
+        turn(mixedControlAction(toolName), {
+          messageId: "message-open",
+          text: "I will inspect the VDT graph."
+        })
+      ),
+      stderr: ""
+    }));
+    const engine = new CodexResumeCheckpointEngine({
+      transport: new CodexResumeCheckpointTransport({
+        executable: "/opt/codex/codex",
+        validatedCliVersion: "0.146.0",
+        runner
+      }),
+      cliVersion: "0.146.0",
+      toolCatalogHash: TOOL_CATALOG_HASH,
+      allowedToolNames: ["vdt.echo", "user.ask", "approval.request", "run.request_finish"],
+      sessionEnvironmentFactory: () => env,
+      resolveBinding: async () => { throw new Error("unused"); },
+      enableUnverifiedCanary: true,
+      now: () => "2026-08-26T10:00:00.000Z",
+      idFactory: () => "checkpoint-id"
+    });
+    const session = await engine.openSession({
+      binding: bindingFor(engine),
+      initialContext: { brief: "mixed-open" },
+      initialContextHash: hashText(JSON.stringify({ brief: "mixed-open" }))
+    }, {
+      signal: new AbortController().signal,
+      executeTool: async () => {
+        throw new Error("executeTool must not run on a mixed first turn.");
+      }
+    });
+    return { session, runner };
+  }
+
+  for (const [toolName, message] of mixedTools) {
+    it(`ends a mixed ${toolName} first turn in a diagnosable transport_error`, async () => {
+      const { session, runner } = await openMixedSession(toolName);
+      const events = await collect(session.events());
+      expect(session.binding.externalSessionId).toBe("codex-thread-mixed");
+      expect(runner.requests[0]?.stdin).toContain(CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE);
+      expect(runner.requests[0]?.stdin).toContain(CHECKPOINT_FINISH_ORDER_PROMPT_RULE);
+      expect(events).toEqual([{
+        type: "transport_error",
+        code: "ACTION_BATCH_CONTROL_TOOL_MIXED",
+        message,
+        retryable: true
+      }]);
+    });
+  }
+
+  it("still fails loudly for a genuine internal error during open", async () => {
+    const env = await environment();
+    const engine = new CodexResumeCheckpointEngine({
+      transport: new CodexResumeCheckpointTransport({
+        executable: "/opt/codex/codex",
+        validatedCliVersion: "0.146.0",
+        runner: new FakeRunner(() => {
+          throw new Error("sqlite disk I/O failed");
+        })
+      }),
+      cliVersion: "0.146.0",
+      toolCatalogHash: TOOL_CATALOG_HASH,
+      allowedToolNames: ["vdt.echo"],
+      sessionEnvironmentFactory: () => env,
+      resolveBinding: async () => { throw new Error("unused"); },
+      enableUnverifiedCanary: true
+    });
+    await expect(engine.openSession({
+      binding: bindingFor(engine),
+      initialContext: { brief: "internal-open" },
+      initialContextHash: hashText(JSON.stringify({ brief: "internal-open" }))
+    }, {
+      signal: new AbortController().signal,
+      executeTool: async () => ({}) as never
+    })).rejects.toThrow("sqlite disk I/O failed");
   });
 });

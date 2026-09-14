@@ -37,7 +37,7 @@ export class NoopResearchProvider implements ResearchProvider {
   async search(): Promise<ResearchSearchResult[]> {
     throw new AgentToolError(
       "RESEARCH_PROVIDER_NOT_CONFIGURED",
-      "Research provider is not configured. Ask the user for process details or continue with explicit assumptions.",
+      "Research provider is not configured. Ask the user for process details, or write assumed numbers with valueStatus default_assumption and an explicit assumption note.",
       { providerConfigured: false }
     );
   }

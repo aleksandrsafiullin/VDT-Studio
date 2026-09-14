@@ -339,6 +339,26 @@ describe("excavation runtime tools", () => {
     expect(JSON.stringify(suggestion.output)).not.toContain("cat_6060_bucket_and_pass_context");
   });
 
+  it("rejects user_provided_value when this run has no user answer for that node", async () => {
+    const { builder, context } = createExcavationContext("excavation_output");
+    const registry = createDefaultToolRegistry();
+    await registry.run("excavation.seed_topology", {
+      materialMode: "ore_tonnes",
+      rootKpi: "excavation_output"
+    }, context);
+
+    const result = await registry.run("excavation.write_input_value", {
+      nodeId: "average_bucket_volume_m3",
+      value: 12,
+      valueStatus: "user_provided_value",
+      source: { acceptedByUserInDialog: true, note: "Invented" }
+    }, context);
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("USER_PROVIDED_VALUE_UNGROUNDED");
+    expect(builder.getProject().graph.nodes.find((node) => node.id === "average_bucket_volume_m3")?.valueStatus).toBe("unknown");
+  });
+
   it("uses excavation eval JSON from tests only and preserves numeric formula sanity", async () => {
     const skillsRoot = join(dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url))))), "vdt-agent", "skills");
     const evals = JSON.parse(await readFile(join(skillsRoot, "mining/evals/excavation.evals.json"), "utf8"));
@@ -352,7 +372,9 @@ describe("excavation runtime tools", () => {
       scope: "productivity",
       rootKpi: "excavator_productivity"
     }, context);
-    for (const [nodeId, value] of Object.entries(numericCase.input_values as Record<string, number>)) {
+    const inputValues = numericCase.input_values as Record<string, number>;
+    context.updateRun({ answers: inputValues });
+    for (const [nodeId, value] of Object.entries(inputValues)) {
       await registry.run("excavation.write_input_value", {
         nodeId,
         value,

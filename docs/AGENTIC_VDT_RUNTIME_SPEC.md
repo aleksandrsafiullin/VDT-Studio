@@ -60,7 +60,9 @@ universal repeated `AgentDecision` loop or the older minimum event shape.
 - `run.request_finish` is a deterministic handshake. A verified finish receipt
   permits exactly one final from the same session; success is durable only
   after that final. Unsafe recovery remains `recovery_required` and never
-  invents final prose or a replacement session.
+  invents final prose or a replacement session. A supervisor that enters
+  `recovery_required` projects that state through Event V2 `runtime_status`
+  so the public run snapshot does not stay `running`.
 - Session binding, engine/tool receipts, finish receipt, checkpoint and Event V2
   form an additive Sequence 4 contract. Sequence 3 bytes and authority remain
   unchanged.
@@ -505,7 +507,10 @@ the current epoch, record per-write 30-second fence audit metadata and
 atomically reserve tool calls. This is not yet the full ADR-005 shared lease.
 The unverified trusted-local Cursor canary instead keeps the complete V2
 authority inside the durable V1 run projection because Sequence 4 intentionally
-rejects unqualified External bindings. The runtime derives the authoritative
+rejects unqualified External bindings. Engine-authoritative spawn, segment and
+logical-session counters for those canaries are stored on the V1
+`performanceTelemetry` sibling (hashed opaque session id only) and are not
+copied onto `AgentExecutionSummaryV2`. The runtime derives the authoritative
 project ID from the run row, projects the effective current epoch and fails
 closed rather than silently falling back. An
 exchange is durably marked `in_flight` before provider execution.

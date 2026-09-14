@@ -159,7 +159,7 @@ export type GenerateActivityPhase =
   | "building_canvas"
   | "ready";
 
-export type GenerateActivityStatus = "running" | "needs_user_input" | "ready" | "error" | "cancelled";
+export type GenerateActivityStatus = "running" | "needs_user_input" | "recovery_required" | "ready" | "error" | "cancelled";
 export type GenerateActivityDetailStatus = "pending" | "running" | "complete" | "error" | "cancelled";
 
 export interface GenerateActivityDetail {
@@ -1069,7 +1069,9 @@ function legacyAgentRunFromRuntimeSnapshot(snapshot: RuntimeAgentRunSnapshot): V
   const events = snapshot.events ?? [];
   return {
     runId: snapshot.runId,
-    status: snapshot.status === "queued" || snapshot.status === "waiting_approval" ? "running" : snapshot.status,
+    status: snapshot.status === "queued" || snapshot.status === "waiting_approval"
+      ? "running"
+      : snapshot.status,
     phase: mapRuntimeAgentPhase(snapshot.phase),
     request,
     selectedSkills: selectedSkills.map((skill) => ({
@@ -1151,19 +1153,25 @@ function shouldRefreshAgentSnapshot(event: RuntimeAgentEvent): boolean {
 
 function mapRuntimeStatus(snapshot: RuntimeAgentRunSnapshot): GenerateActivityStatus {
   if (snapshot.status === "needs_user_input") return "needs_user_input";
+  if (snapshot.status === "recovery_required") return "recovery_required";
   if (snapshot.status === "succeeded") return "ready";
   if (snapshot.status === "failed") return "error";
   if (snapshot.status === "cancelled") return "cancelled";
   return "running";
 }
 
+function isCancellableActivityStatus(status: GenerateActivityStatus | undefined): boolean {
+  return status === "running" || status === "needs_user_input" || status === "recovery_required";
+}
+
 function isActiveActivity(activity: GenerateActivityState | undefined): boolean {
-  return activity?.status === "running" || activity?.status === "needs_user_input";
+  return isCancellableActivityStatus(activity?.status);
 }
 
 function isActiveRuntimeRun(snapshot: RuntimeAgentRunSnapshot | undefined): boolean {
   return snapshot?.status === "queued" || snapshot?.status === "running" ||
-    snapshot?.status === "needs_user_input" || snapshot?.status === "waiting_approval";
+    snapshot?.status === "needs_user_input" || snapshot?.status === "waiting_approval" ||
+    snapshot?.status === "recovery_required";
 }
 
 const MAX_AGENT_CHAT_HISTORY = 20;
@@ -1370,7 +1378,7 @@ function applyAgentSnapshot(
       ...activity,
       status,
       phase: status === "ready" ? "ready" : activity.phase,
-      canCancel: status === "running" || status === "needs_user_input",
+      canCancel: isCancellableActivityStatus(status),
       agentRun: legacyRun,
       runtimeAgentRun: snapshot,
       selectedSkills: legacyRun.selectedSkills,
@@ -1446,7 +1454,7 @@ function applyGenerateProgressEvent(
         repairAttempted: event.repairAttempted ?? activity.repairAttempted,
         repairSucceeded: event.repairSucceeded ?? activity.repairSucceeded,
         errorCode: event.error?.code ?? activity.errorCode,
-        canCancel: (status === "running" || status === "needs_user_input") && !activity.cancelRequested,
+        canCancel: isCancellableActivityStatus(status) && !activity.cancelRequested,
         message: event.error?.message ?? activity.message,
         details: mergeActivityDetails(activity.details, event.details, event.updatedAt, status),
         completedAt,
@@ -3514,7 +3522,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       },
       cancelGenerate: () => {
         const activity = get().generateActivity;
-        if (!activity || (activity.status !== "running" && activity.status !== "needs_user_input")) return;
+        if (!activity || !isCancellableActivityStatus(activity.status)) return;
         if (get().activeAgentRunId) {
           const requestedAt = nowIso();
           set({

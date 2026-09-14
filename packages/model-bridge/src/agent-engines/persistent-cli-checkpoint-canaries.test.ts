@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -104,6 +104,20 @@ function codexStream(input: {
       type: "item.completed",
       item: { id: "item-1", type: "agent_message", text: JSON.stringify(input.turn ?? checkpointTurn()) }
     },
+    { type: "turn.completed" }
+  ].map((event) => JSON.stringify(event)).join("\n") + "\n";
+}
+
+const OPENING_SUMMARY = "Accepted: build a VDT model for Ore haulage (tonnes/year) using your provided trucking inputs.";
+
+function codexAgentMessageStream(sessionId: string, texts: readonly string[]): string {
+  return [
+    { type: "thread.started", thread_id: sessionId },
+    { type: "turn.started" },
+    ...texts.map((text, index) => ({
+      type: "item.completed",
+      item: { id: `item-${index + 1}`, type: "agent_message", text }
+    })),
     { type: "turn.completed" }
   ].map((event) => JSON.stringify(event)).join("\n") + "\n";
 }
@@ -281,6 +295,131 @@ describe("persistent CLI checkpoint canaries", () => {
       .rejects.toMatchObject({ code: "CHECKPOINT_SESSION_MISMATCH" });
   });
 
+  it("records Codex native web_search instead of treating it as SECURITY_BOUNDARY_BREACH", async () => {
+    // Policy 2026-09-14: native web search is allowed; this previously sat in the forbidden-item list.
+    const isolated = await environment();
+    const runner = new FakeCliRunner(() => result(codexStream({
+      sessionId: "codex-session-search",
+      extra: [{
+        type: "item.completed",
+        item: { id: "search-1", type: "web_search", query: "haulage cycle time" }
+      }]
+    })));
+    const parsed = await codexCanary(runner).runProtocolDiagnostic(segment(isolated, "open"));
+    expect(parsed.sessionId).toBe("codex-session-search");
+    expect(parsed.nativeWebSearch).toEqual({
+      count: 1,
+      queries: ["haulage cycle time"]
+    });
+  });
+
+  it("keeps native web search on a later Codex protocol failure", async () => {
+    const isolated = await environment();
+    const runner = new FakeCliRunner(() => result(codexStream({
+      sessionId: "codex-session-search-dup",
+      extra: [
+        {
+          type: "item.completed",
+          item: { id: "search-1", type: "web_search", query: "haulage cycle time" }
+        },
+        {
+          type: "item.completed",
+          item: { id: "msg-a", type: "agent_message", text: JSON.stringify(checkpointTurn()) }
+        }
+      ]
+    })));
+    await expect(codexCanary(runner).runProtocolDiagnostic(segment(isolated, "open")))
+      .rejects.toMatchObject({
+        code: "CHECKPOINT_PROTOCOL_AMBIGUOUS",
+        nativeWebSearch: {
+          count: 1,
+          queries: ["haulage cycle time"]
+        }
+      });
+  });
+
+  it("records Codex opening-summary prose plus a checkpoint envelope", async () => {
+    const isolated = await environment();
+    const runner = new FakeCliRunner(() => result(codexAgentMessageStream(
+      "codex-session-prose-then-envelope",
+      [OPENING_SUMMARY, JSON.stringify(checkpointTurn())]
+    )));
+    const parsed = await codexCanary(runner).runProtocolDiagnostic(segment(isolated, "open"));
+    expect(parsed.turn.action.type).toBe("action_batch");
+    expect(parsed.turn.assistantMessage?.text).toContain(OPENING_SUMMARY);
+  });
+
+  it("selects a Codex envelope even when prose follows it", async () => {
+    const isolated = await environment();
+    const runner = new FakeCliRunner(() => result(codexAgentMessageStream(
+      "codex-session-envelope-then-prose",
+      [JSON.stringify(checkpointTurn()), OPENING_SUMMARY]
+    )));
+    const parsed = await codexCanary(runner).runProtocolDiagnostic(segment(isolated, "open"));
+    expect(parsed.turn.action.type).toBe("action_batch");
+    if (parsed.turn.action.type !== "action_batch") throw new Error("expected action_batch");
+    expect(parsed.turn.action.batch.calls[0]?.externalCallId).toBe("call-1");
+    expect(parsed.turn.assistantMessage?.text).toContain(OPENING_SUMMARY);
+  });
+
+  it("rejects two parseable Codex envelopes as PROTOCOL_AMBIGUOUS", async () => {
+    const isolated = await environment();
+    const second = {
+      ...checkpointTurn(),
+      assistantMessage: { messageId: "message-2", text: "A second envelope." }
+    };
+    const runner = new FakeCliRunner(() => result(codexAgentMessageStream(
+      "codex-session-two-envelopes",
+      [JSON.stringify(checkpointTurn()), JSON.stringify(second)]
+    )));
+    await expect(codexCanary(runner).runProtocolDiagnostic(segment(isolated, "open")))
+      .rejects.toMatchObject({
+        code: "CHECKPOINT_PROTOCOL_AMBIGUOUS",
+        message: expect.stringMatching(/ambiguous: found 2 candidate JSON objects/)
+      });
+  });
+
+  it("keeps today's diagnostic when no Codex agent message is a parseable envelope", async () => {
+    const isolated = await environment();
+    const runner = new FakeCliRunner(() => result(codexAgentMessageStream(
+      "codex-session-prose-only",
+      [OPENING_SUMMARY, "Still just prose."]
+    )));
+    await expect(codexCanary(runner).runProtocolDiagnostic(segment(isolated, "open")))
+      .rejects.toMatchObject({
+        code: "CHECKPOINT_PROTOCOL_INVALID",
+        message: "Checkpoint result must be exactly one JSON object without prose or fences."
+      });
+  });
+
+  it("still fails closed on Codex file_change and collab_tool_call", async () => {
+    const isolated = await environment();
+    const runner = new FakeCliRunner((_request, index) => result(codexStream({
+      sessionId: "codex-session-1",
+      extra: [{
+        type: "item.completed",
+        item: index === 0
+          ? { type: "file_change", changes: [{ path: "secret.txt" }] }
+          : { type: "collab_tool_call", tool: "collab" }
+      }]
+    })));
+    const engine = codexCanary(runner);
+    await expect(engine.runProtocolDiagnostic(segment(isolated, "open")))
+      .rejects.toMatchObject({ code: "SECURITY_BOUNDARY_BREACH" });
+    await expect(engine.runProtocolDiagnostic(segment(isolated, "open")))
+      .rejects.toMatchObject({ code: "SECURITY_BOUNDARY_BREACH" });
+  });
+
+  it("passes --search when native web search is forced on", async () => {
+    const isolated = await environment();
+    const runner = new FakeCliRunner(() => result(codexStream({ sessionId: "codex-session-search-flag" })));
+    await codexCanary(runner).runProtocolDiagnostic({
+      ...segment(isolated, "open"),
+      forceNativeWebSearch: true
+    });
+    expect(runner.requests[0]?.args).toEqual(expect.arrayContaining(["--search"]));
+  });
+
   it("fails closed on Claude built-in tools, foreign MCP, malformed events, and session drift", async () => {
     const isolated = await environment();
     const outputs = [
@@ -379,5 +518,176 @@ describe("persistent CLI checkpoint canaries", () => {
     expect(failure).toMatchObject({ code: "CHECKPOINT_PROCESS_FAILED", exitCode: 1 });
     expect((failure as Error).message).not.toContain("private prompt");
     expect((failure as Error).message).not.toContain("credential material");
+  });
+
+  it("names omitted Codex stream evidence without echoing agent message text", async () => {
+    const isolated = await environment();
+    const secret = "DO_NOT_ECHO_MODEL_OUTPUT_9f3a";
+    const engine = codexCanary(new FakeCliRunner((_request, index) => {
+      if (index === 0) {
+        return result([
+          { type: "turn.started" },
+          { type: "item.completed", item: { id: "item-1", type: "agent_message", text: JSON.stringify({ ...checkpointTurn(), assistantMessage: { messageId: "message-1", text: secret } }) } },
+          { type: "turn.completed" }
+        ].map((event) => JSON.stringify(event)).join("\n") + "\n");
+      }
+      if (index === 1) {
+        return result([
+          { type: "thread.started", thread_id: "codex-session-missing-terminal" },
+          { type: "turn.started" },
+          { type: "item.completed", item: { id: "item-1", type: "agent_message", text: JSON.stringify(checkpointTurn()) } }
+        ].map((event) => JSON.stringify(event)).join("\n") + "\n");
+      }
+      return result("");
+    }));
+
+    const missingInit = await engine.runProtocolDiagnostic(segment(isolated, "resume", "codex-session-missing-init"))
+      .then(() => undefined, (value: unknown) => value);
+    expect(missingInit).toMatchObject({
+      code: "CHECKPOINT_PROTOCOL_INVALID",
+      missingEvidence: ["missing_init"],
+      eventTypes: "turn.started,item.completed,turn.completed",
+      stdoutEmpty: false,
+      exitCode: 0
+    });
+    expect((missingInit as Error).message).toContain("(missing_init)");
+    expect((missingInit as Error).message).not.toContain(secret);
+
+    const missingTerminal = await engine.runProtocolDiagnostic(segment(isolated, "open"))
+      .then(() => undefined, (value: unknown) => value);
+    expect(missingTerminal).toMatchObject({
+      code: "CHECKPOINT_PROTOCOL_INVALID",
+      missingEvidence: ["missing_terminal"],
+      eventTypes: "thread.started,turn.started,item.completed",
+      stdoutEmpty: false
+    });
+    expect((missingTerminal as Error).message).toContain("(missing_terminal)");
+    expect((missingTerminal as Error).message).not.toContain("missing_init");
+
+    const empty = await engine.runProtocolDiagnostic(segment(isolated, "open"))
+      .then(() => undefined, (value: unknown) => value);
+    expect(empty).toMatchObject({
+      code: "CHECKPOINT_PROTOCOL_INVALID",
+      missingEvidence: ["empty_stdout"],
+      parsedLineCount: 0,
+      eventTypes: "<none>",
+      stdoutEmpty: true,
+      exitCode: 0
+    });
+    expect((empty as Error).message).toContain("(empty_stdout)");
+    expect((empty as Error).message).not.toContain("missing_init");
+  });
+
+  it("names omitted Claude stream evidence for missing init, missing terminal, and empty stdout", async () => {
+    const isolated = await environment();
+    const secret = "DO_NOT_ECHO_MODEL_OUTPUT_9f3a";
+    const engine = claudeCanary(new FakeCliRunner((request, index) => {
+      if (index === 0) {
+        const turn = checkpointTurn();
+        (turn.assistantMessage as { text: string }).text = secret;
+        return result(JSON.stringify({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          session_id: "claude-session-missing-init",
+          structured_output: turn
+        }) + "\n");
+      }
+      if (index === 1) {
+        return result(JSON.stringify({
+          type: "system",
+          subtype: "init",
+          cwd: request.cwd,
+          session_id: "claude-session-missing-terminal"
+        }) + "\n");
+      }
+      return result("");
+    }));
+
+    const missingInit = await engine.runProtocolDiagnostic(segment(isolated, "resume", "claude-session-missing-init"))
+      .then(() => undefined, (value: unknown) => value);
+    expect(missingInit).toMatchObject({
+      code: "CHECKPOINT_PROTOCOL_INVALID",
+      missingEvidence: ["missing_init"],
+      eventTypes: "result.success",
+      stdoutEmpty: false,
+      exitCode: 0
+    });
+    expect((missingInit as Error).message).toContain("(missing_init)");
+    expect((missingInit as Error).message).not.toContain(secret);
+
+    const missingTerminal = await engine.runProtocolDiagnostic(segment(isolated, "open"))
+      .then(() => undefined, (value: unknown) => value);
+    expect(missingTerminal).toMatchObject({
+      code: "CHECKPOINT_PROTOCOL_INVALID",
+      missingEvidence: ["missing_terminal"],
+      eventTypes: "system.init",
+      stdoutEmpty: false
+    });
+    expect((missingTerminal as Error).message).toContain("(missing_terminal)");
+
+    const empty = await engine.runProtocolDiagnostic(segment(isolated, "open"))
+      .then(() => undefined, (value: unknown) => value);
+    expect(empty).toMatchObject({
+      code: "CHECKPOINT_PROTOCOL_INVALID",
+      missingEvidence: ["empty_stdout"],
+      parsedLineCount: 0,
+      eventTypes: "<none>",
+      stdoutEmpty: true
+    });
+    expect((empty as Error).message).toContain("(empty_stdout)");
+  });
+
+  it("skips informational Codex error items and still parses a healthy turn", async () => {
+    const isolated = await environment();
+    const leak = "DO_NOT_ECHO_MODEL_OUTPUT_9f3a";
+    const runner = new FakeCliRunner(() => result(codexStream({
+      sessionId: "codex-session-error-item",
+      extra: [{
+        type: "item.completed",
+        item: { id: "diag-1", type: "error", text: leak }
+      }]
+    })));
+    const parsed = await codexCanary(runner).runProtocolDiagnostic(segment(isolated, "open"));
+    expect(parsed.sessionId).toBe("codex-session-error-item");
+    expect(parsed.turn.action.type).toBe("action_batch");
+  });
+
+  it("treats disagreeing Codex item type fields as SECURITY_BOUNDARY_BREACH", async () => {
+    const isolated = await environment();
+    const leak = "DO_NOT_ECHO_MODEL_OUTPUT_9f3a";
+    const runner = new FakeCliRunner(() => result(codexStream({
+      sessionId: "codex-session-type-disagree",
+      extra: [{
+        type: "item.completed",
+        item: { id: "masked", type: "error", item_type: "web_search", text: leak }
+      }]
+    })));
+    const error = await codexCanary(runner).runProtocolDiagnostic(segment(isolated, "open"))
+      .then(() => undefined, (value: unknown) => value);
+    expect(error).toMatchObject({ code: "SECURITY_BOUNDARY_BREACH" });
+    expect((error as Error).message).not.toContain(leak);
+  });
+
+  it("accepts a Claude reported cwd that canonicalises onto the private workspace", async () => {
+    const isolated = await environment();
+    const runner = new FakeCliRunner(async (request) => {
+      const alias = path.join(await temporaryDirectory("vdt-claude-canary-alias-"), "workspace");
+      await symlink(await realpath(request.cwd), alias, "dir");
+      return result(claudeStream({ cwd: alias, sessionId: "claude-session-cwd-alias" }));
+    });
+    await expect(claudeCanary(runner).runProtocolDiagnostic(segment(isolated, "open")))
+      .resolves.toMatchObject({ sessionId: "claude-session-cwd-alias" });
+  });
+
+  it("rejects a Claude reported cwd that canonicalises to a different directory", async () => {
+    const isolated = await environment();
+    const other = await temporaryDirectory("vdt-claude-canary-other-");
+    const runner = new FakeCliRunner(() => result(claudeStream({
+      cwd: other,
+      sessionId: "claude-session-cwd-breach"
+    })));
+    await expect(claudeCanary(runner).runProtocolDiagnostic(segment(isolated, "open")))
+      .rejects.toMatchObject({ code: "SECURITY_BOUNDARY_BREACH" });
   });
 });

@@ -1,4 +1,4 @@
-import { AgentToolError } from "../tool-registry";
+import { AgentToolError, isAgentToolError } from "../tool-registry";
 import type { ResearchProvider, ResearchPurpose, ResearchSearchResult } from "./research-tools";
 
 type ResearchFetch = typeof fetch;
@@ -182,7 +182,7 @@ async function fetchResearchJson(
       );
     }
   } catch (error) {
-    if (error instanceof AgentToolError) throw error;
+    if (isAgentToolError(error)) throw error;
     if (controller.signal.aborted) {
       throw new AgentToolError(
         timedOut ? "RESEARCH_PROVIDER_TIMEOUT" : "RESEARCH_PROVIDER_ABORTED",
@@ -193,7 +193,7 @@ async function fetchResearchJson(
       );
     }
     throw new AgentToolError(
-      "RESEARCH_PROVIDER_FAILED",
+      researchTransportErrorCode(error),
       error instanceof Error
         ? `Research provider "${providerId}" request failed: ${error.message}`
         : `Research provider "${providerId}" request failed.`,
@@ -278,7 +278,7 @@ function noConfiguredProvider(reason?: string): ResearchProvider {
     async search() {
       throw new AgentToolError(
         "RESEARCH_PROVIDER_NOT_CONFIGURED",
-        reason ?? "Research provider is not configured. Ask the user for process details or continue with explicit assumptions.",
+        reason ?? "Research provider is not configured. Ask the user for process details, or write assumed numbers with valueStatus default_assumption and an explicit assumption note.",
         { providerConfigured: false }
       );
     }
@@ -305,6 +305,17 @@ function researchErrorCode(status: number): string {
   if (status === 429) return "RESEARCH_PROVIDER_RATE_LIMITED";
   if (status >= 500) return "RESEARCH_PROVIDER_UNAVAILABLE";
   return "RESEARCH_PROVIDER_FAILED";
+}
+
+function researchTransportErrorCode(error: unknown): string {
+  if (isAbortAdjacentError(error)) return "RESEARCH_PROVIDER_TIMEOUT";
+  return "RESEARCH_PROVIDER_UNAVAILABLE";
+}
+
+function isAbortAdjacentError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "AbortError" || error.name === "TimeoutError") return true;
+  return /aborted|timed?\s*out|timeout/i.test(error.message);
 }
 
 function readPositiveInteger(value: string | undefined, fallback: number, min: number, max: number): number {

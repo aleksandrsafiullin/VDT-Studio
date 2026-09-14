@@ -116,4 +116,44 @@ describe("public structured Model Agent recovery boundary", () => {
     expect(agentRuntime.store.getState(state.runId).supervisorPersistenceV2?.binding.sessionEpoch).toBe(1);
     expect(agentRuntime.store.getState(state.runId).supervisorPersistenceV2?.checkpoint?.sessionEpoch).toBe(1);
   });
+
+  it("returns 409 and does not write cancelled when cancel cannot arm", async () => {
+    const executionBindingId = `final_commit_cancel_${Date.now()}`;
+    const state = agentRuntime.store.createRun({
+      mode: "generate_vdt",
+      input: { rootKpi: "Ore hauled" },
+      workspace: { projectId: `final_commit_project_${Date.now()}` },
+      executionBindingId,
+      providerId: "model_agent"
+    });
+    const activeRuns = (globalThis as typeof globalThis & {
+      __vdtActiveSupervisorRuns?: Map<string, {
+        supervisor: { cancel: () => Promise<{ armed: boolean }>; status: string; close: () => Promise<void>; wait: () => Promise<void> };
+        persistence: { close?: () => Promise<void> };
+        subscribers: Set<unknown>;
+        questionSetId: string | null;
+      }>;
+    }).__vdtActiveSupervisorRuns;
+    expect(activeRuns).toBeDefined();
+    activeRuns!.set(state.runId, {
+      supervisor: {
+        cancel: async () => ({ armed: false }),
+        status: "finishing",
+        close: async () => undefined,
+        wait: async () => undefined
+      },
+      persistence: {},
+      subscribers: new Set(),
+      questionSetId: null
+    });
+
+    await expect(cancelStructuredModelAgentRun(state.runId)).rejects.toEqual(
+      expect.objectContaining<Partial<PublicSupervisorRunError>>({
+        code: "MODEL_AGENT_FINAL_COMMITTED",
+        status: 409
+      })
+    );
+    expect(agentRuntime.store.getState(state.runId).status).not.toBe("cancelled");
+    activeRuns!.delete(state.runId);
+  });
 });

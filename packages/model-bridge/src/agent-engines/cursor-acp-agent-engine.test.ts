@@ -3,16 +3,17 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type {
-  AgentEngineCheckpoint,
-  AgentEngineEvent,
-  AgentEngineHost,
-  AgentEngineStart,
-  AgentSessionBinding,
-  ExternalCliAgentEngine,
-  FinishReceiptV2,
-  VdtGatewayToolCall,
-  VdtGatewayToolResult
+import {
+  NATIVE_WEB_SEARCH_EVENT_CODE,
+  type AgentEngineCheckpoint,
+  type AgentEngineEvent,
+  type AgentEngineHost,
+  type AgentEngineStart,
+  type AgentSessionBinding,
+  type ExternalCliAgentEngine,
+  type FinishReceiptV2,
+  type VdtGatewayToolCall,
+  type VdtGatewayToolResult
 } from "@vdt-studio/vdt-agent-runtime";
 import {
   CursorAcpEngine,
@@ -512,6 +513,41 @@ describe("CursorAcpEngine canonical adapter", () => {
         }
       }
     });
+    transport.finishPrompt();
+    await session.close();
+  });
+
+  it("records Cursor ACP native web_search as a transport_note instead of SECURITY_BOUNDARY_BREACH", async () => {
+    const harness = makeHarness();
+    const session = await harness.engine.openSession(harness.start, harness.host);
+    const transport = harness.transports[0];
+    if (!transport) throw new Error("Harness has no transport.");
+    await session.checkpoint();
+    const eventStream = session.events();
+    transport.emit({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: transport.sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "search-1",
+          toolName: "web_search",
+          title: "Search the web",
+          kind: "web_search",
+          rawInput: { query: "haulage cycle time" }
+        }
+      }
+    });
+    const events = await takeUntil(eventStream, (event) =>
+      event.type === "transport_note" && event.code === NATIVE_WEB_SEARCH_EVENT_CODE
+    );
+    expect(events.at(-1)).toMatchObject({
+      type: "transport_note",
+      code: NATIVE_WEB_SEARCH_EVENT_CODE,
+      message: expect.stringContaining("haulage cycle time")
+    });
+    expect(events.some((event) => event.type === "transport_error")).toBe(false);
     transport.finishPrompt();
     await session.close();
   });

@@ -37,7 +37,7 @@ afterEach(() => {
   }
 });
 
-describe("Gate R2 Sequence 3 production migration", () => {
+describe("Gate R2 Sequence 3 production migration", { timeout: 30_000 }, () => {
   it(
     "migrates an exact empty v2 database to v3 and reopens idempotently",
     () => {

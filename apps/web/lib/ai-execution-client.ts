@@ -81,7 +81,7 @@ export type AiExecutionProgressPhase =
 export type AiExecutionProgressStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
 export type AiExecutionProgressDetailStatus = "pending" | "running" | "complete" | "error" | "cancelled";
 
-export type VdtAgentStatus = "running" | "needs_user_input" | "waiting_approval" | "succeeded" | "failed" | "cancelled";
+export type VdtAgentStatus = "running" | "needs_user_input" | "waiting_approval" | "recovery_required" | "succeeded" | "failed" | "cancelled";
 
 export type VdtAgentPhase =
   | "classifying_request"

@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openVdtDatabase, VdtStorageError } from "@vdt-studio/storage";
 import { previewChangeSet, VdtBuilderSession, type VdtChangeSet } from "@vdt-studio/vdt-core";
-import { AgentRunStore, type MutationProposal } from "@vdt-studio/vdt-agent-runtime";
+import { AgentRunStore, createDefaultToolRegistry, type MutationProposal } from "@vdt-studio/vdt-agent-runtime";
 import { createStorageWriteActor } from "@/app/api/vdt/storage-write-adapter";
 import { createSqliteAgentRunPersistence, resolveCliSessionForbiddenRoots } from "./persistence";
 
@@ -19,7 +19,7 @@ afterEach(() => {
   }
 });
 
-describe("SQLite agent run persistence", () => {
+describe("SQLite agent run persistence", { timeout: 30_000 }, () => {
   it("persists redacted agent runs and events for recovery after a new store is created", () => {
     const root = tempRoot();
     const dataDir = path.join(root, "data");
@@ -329,6 +329,106 @@ describe("SQLite agent run persistence", () => {
     database.close();
   });
 
+  it("persists a failed add_driver proposal whose preview formula references a missing node", () => {
+    const root = tempRoot();
+    const dataDir = path.join(root, "data");
+    const database = openVdtDatabase(root, {
+      dataDir,
+      now: fixedClock("2026-06-29T11:00:00.000Z")
+    });
+    const store = new AgentRunStore({
+      now: fixedClock("2026-06-29T11:00:01.000Z"),
+      persistence: createTestPersistence(database)
+    });
+    const run = store.createRun({
+      mode: "generate_vdt",
+      input: {
+        prompt: "Build a production volume VDT.",
+        rootKpi: "Production Volume",
+        unit: "t/year",
+        timePeriod: "year"
+      },
+      workspace: {
+        projectId: "mine_plan_project",
+        projectName: "Mine plan",
+        industry: "Mining"
+      },
+      providerId: "mock",
+      options: { autoApplyPatches: true }
+    });
+    const draft = buildDraftProject();
+    store.updateRun(run.runId, {
+      status: "running",
+      phase: "building_graph",
+      draftProject: draft,
+      validationState: { valid: true, errors: [], warnings: [] }
+    });
+    const changeSet = addCycleTimeChangeSet();
+    const previewProject = previewChangeSet(draft, changeSet);
+    const proposal: MutationProposal = {
+      id: `${run.runId}:mutation:1`,
+      runId: run.runId,
+      projectId: draft.id,
+      vdtId: draft.rootNodeId,
+      baseRevisionId: "builder:1",
+      baseRevision: 1,
+      source: "agent",
+      title: "Add Cycle time",
+      summary: "Rejected Cycle time because the formula references a missing node.",
+      changeSet,
+      selectedChangeIds: ["add_cycle_time"],
+      previewProject,
+      validation: {
+        valid: false,
+        errors: [
+          {
+            type: "unknown_reference",
+            severity: "error",
+            message: 'The formula for "Cycle time" references missing node "loading_time_h"',
+            nodeId: "cycle_time"
+          }
+        ],
+        warnings: []
+      },
+      status: "failed",
+      failureReason: 'The formula for "Cycle time" references missing node "loading_time_h"',
+      policy: {
+        autoApply: true,
+        askBeforeFirstPatch: false,
+        requireApprovalForGraphStructure: false,
+        requireApprovalForFormulaChanges: false,
+        requireApprovalForDelete: false
+      },
+      createdAt: "2026-06-29T11:00:02.000Z"
+    };
+
+    expect(() => {
+      store.updateRun(run.runId, {
+        status: "running",
+        phase: "previewing_mutation",
+        draftProject: draft,
+        mutationProposals: [proposal]
+      });
+    }).not.toThrow();
+
+    const persistedProposal = database.listMutationProposals(run.runId)[0];
+    expect(persistedProposal).toMatchObject({
+      status: "failed",
+      title: "Add Cycle time"
+    });
+    expect(JSON.stringify(persistedProposal?.validation)).toContain("loading_time_h");
+    const vdt = database.listVdts("mine_plan_project")[0]!;
+    expect(database.listVdtRevisions(vdt.id).map((revision) => revision.revisionNo)).toEqual([1]);
+    expect(database.readVdtRevision(database.listVdtRevisions(vdt.id)[0]!)).not.toMatchObject({
+      graph: {
+        nodes: expect.arrayContaining([
+          expect.objectContaining({ id: "cycle_time" })
+        ])
+      }
+    });
+    database.close();
+  });
+
   it("uses one agent-sourced combined initial commit and treats repeated state persistence as replay", () => {
     const root = tempRoot();
     const database = openVdtDatabase(root, {
@@ -504,7 +604,7 @@ describe("SQLite agent run persistence", () => {
       conflict = error;
     }
     expect(conflict).toBeInstanceOf(VdtStorageError);
-    expect((conflict as VdtStorageError).code).toBe("REVISION_CONFLICT");
+    expect((conflict as VdtStorageError).code).toBe("PROPOSAL_BASE_NOT_CURRENT");
     expect(database.getVdtRevisionHead(vdt.id)?.activeRevisionId).toBe(
       manualWinner.revision.id
     );
@@ -1564,6 +1664,85 @@ describe("SQLite agent run persistence", () => {
     expect(database.getVdt("vdt_does_not_exist")).toBeNull();
     database.close();
   });
+
+  it("persists a value write after vdt.layout instead of failing on a missing builder revision", async () => {
+    const root = tempRoot();
+    const database = openVdtDatabase(root, {
+      dataDir: path.join(root, "data"),
+      now: fixedClock("2026-09-13T12:00:00.000Z")
+    });
+    const { store, run, projectId } = createDraftRun(database, "agent_layout_then_write");
+    store.updateRun(run.runId, {
+      request: {
+        ...store.getState(run.runId).request,
+        options: { autoApplyPatches: true }
+      }
+    });
+    const builder = new VdtBuilderSession({ now: fixedClock("2026-09-13T12:00:00.000Z") });
+    const context = {
+      runId: run.runId,
+      store,
+      emit: (event: Parameters<typeof store.appendEvent>[1]) => store.appendEvent(run.runId, event),
+      getRun: () => store.getSnapshot(run.runId),
+      updateRun: (patch: Parameters<typeof store.updateRun>[1]) => store.updateRun(run.runId, patch),
+      builder,
+      signal: store.getState(run.runId).abortController.signal
+    };
+    const registry = createDefaultToolRegistry();
+
+    const draft = await registry.run("vdt.create_draft", {
+      projectTitle: "Production Volume Driver Model",
+      rootKpi: "Production Volume",
+      unit: "t/year",
+      timePeriod: "year"
+    }, context);
+    expect(draft.ok).toBe(true);
+    const rootNodeId = builder.getProject().rootNodeId;
+    const added = await registry.run("vdt.add_driver", {
+      parentNodeId: rootNodeId,
+      nodeId: "payload_t",
+      name: "Payload",
+      type: "input"
+    }, context);
+    expect(added.ok).toBe(true);
+
+    const vdt = database.listVdts(projectId)[0]!;
+    const revisionsAfterAdd = database.listVdtRevisions(vdt.id);
+    const builderRevisionAfterAdd = builder.getRevision();
+    expect(revisionsAfterAdd.length).toBeGreaterThanOrEqual(1);
+
+    const layout = await registry.run("vdt.layout", {}, context);
+    expect(layout.ok).toBe(true);
+    expect(builder.getRevision()).toBeGreaterThan(builderRevisionAfterAdd);
+    expect(database.listVdtRevisions(vdt.id)).toHaveLength(revisionsAfterAdd.length);
+
+    store.updateRun(run.runId, { answers: { payload_t: 40 } });
+    const write = await registry.run("vdt.update_node", {
+      nodeId: "payload_t",
+      patch: {
+        value: 40,
+        baselineValue: 40,
+        valueStatus: "user_provided_value",
+        valueSource: { note: "User supplied in this run" }
+      }
+    }, context);
+    expect(write.ok).toBe(true);
+    expect(write.error).toBeUndefined();
+    const revisionsAfterWrite = database.listVdtRevisions(vdt.id);
+    expect(revisionsAfterWrite.length).toBe(revisionsAfterAdd.length + 1);
+    const committed = database.readVdtRevision(revisionsAfterWrite.at(-1)!);
+    const live = builder.getProject();
+    const livePayload = live.graph.nodes.find((node) => node.id === "payload_t");
+    expect(livePayload?.position).toEqual(expect.objectContaining({
+      x: expect.any(Number),
+      y: expect.any(Number)
+    }));
+    expect(committed.graph.nodes.find((node) => node.id === "payload_t")?.position).toEqual(livePayload?.position);
+    for (const node of live.graph.nodes) {
+      expect(committed.graph.nodes.find((item) => item.id === node.id)?.position).toEqual(node.position);
+    }
+    database.close();
+  });
 });
 
 function createDraftRun(
@@ -1716,6 +1895,34 @@ function buildDraftProject() {
     unit: "t/year",
     timePeriod: "year"
   }).project;
+}
+
+function addCycleTimeChangeSet(): VdtChangeSet {
+  return {
+    id: "changeset_cycle_time",
+    taskType: "generate_tree",
+    backendId: "mock",
+    createdAt: "2026-06-29T11:00:02.000Z",
+    additions: [
+      {
+        id: "add_cycle_time",
+        nodeId: "cycle_time",
+        parentNodeId: "production_volume",
+        relation: "multiplicative_driver",
+        name: "Cycle time",
+        type: "calculated",
+        formula: "loading_time_h",
+        aiConfidence: 0.8,
+        aiRationale: "Cycle time should decompose loading time once that driver exists."
+      }
+    ],
+    updates: [],
+    deletions: [],
+    edgeChanges: [],
+    assumptions: [],
+    questions: [],
+    warnings: []
+  };
 }
 
 function addWorkingTimeChangeSet(): VdtChangeSet {

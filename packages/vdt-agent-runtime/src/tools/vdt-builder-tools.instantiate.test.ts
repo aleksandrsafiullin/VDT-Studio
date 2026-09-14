@@ -153,6 +153,37 @@ describe("vdt.instantiate_subtree", () => {
       .toBe("additive_component");
   });
 
+  it("does not copy user_provided_value onto ungrounded cloned nodes", async () => {
+    const { builder, context } = createToolContext();
+    context.store.updateRun(context.runId, { answers: { fleet_payload: 100 } });
+    const registry = createDefaultToolRegistry();
+    const stamped = await registry.run("vdt.update_node", {
+      nodeId: "fleet_payload",
+      patch: {
+        value: 100,
+        baselineValue: 100,
+        valueStatus: "user_provided_value",
+        valueSource: { acceptedByUserInDialog: true, note: "User supplied" }
+      }
+    }, context);
+    expect(stamped.ok).toBe(true);
+
+    const result = await registry.run("vdt.instantiate_subtree", {
+      sourceRootNodeId: "fleet",
+      targetParentNodeId: "ore_hauled",
+      overrides: { fleet: { nodeId: "cat_fleet", name: "CAT fleet" } }
+    }, context);
+
+    expect(result.ok).toBe(true);
+    expect(builder.getProject().graph.nodes.find((node) => node.id === "fleet_payload")).toMatchObject({
+      valueStatus: "user_provided_value"
+    });
+    expect(builder.getProject().graph.nodes.find((node) => node.id === "cat_fleet_payload")).toMatchObject({
+      valueStatus: "default_assumption",
+      valueSource: expect.objectContaining({ acceptedByUserInDialog: false })
+    });
+  });
+
   it("rejects unknown input fields before constructing a proposal", async () => {
     const { context } = createToolContext();
     const registry = createDefaultToolRegistry();

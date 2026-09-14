@@ -124,6 +124,46 @@ describe("research providers", () => {
     expect(`${error instanceof Error ? error.message : ""}${JSON.stringify((error as { details?: unknown }).details)}`)
       .not.toContain("brave-secret");
   });
+
+  it("maps a connection reset to unavailable so research stays retryable", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      const error = new TypeError("fetch failed");
+      error.cause = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+      throw error;
+    });
+    const provider = resolveResearchProviderFromEnv({
+      VDT_RESEARCH_PROVIDER: "brave",
+      BRAVE_SEARCH_API_KEY: "brave-secret"
+    }, { fetch: fetcher });
+
+    const error = await provider.search("mine production process drivers", {
+      purpose: "process_components",
+      maxResults: 3
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "RESEARCH_PROVIDER_UNAVAILABLE",
+      details: { providerId: "brave" }
+    });
+  });
+
+  it("keeps a stable 4xx as RESEARCH_PROVIDER_FAILED", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => jsonResponse({ error: "not found" }, 404));
+    const provider = resolveResearchProviderFromEnv({
+      VDT_RESEARCH_PROVIDER: "brave",
+      BRAVE_SEARCH_API_KEY: "brave-secret"
+    }, { fetch: fetcher });
+
+    const error = await provider.search("mine production process drivers", {
+      purpose: "process_components",
+      maxResults: 3
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "RESEARCH_PROVIDER_FAILED",
+      details: { providerId: "brave", status: 404 }
+    });
+  });
 });
 
 function jsonResponse(body: unknown, status = 200): Response {

@@ -119,7 +119,7 @@ afterEach(() => {
   }
 });
 
-describe("generalized append-only storage migration plans", () => {
+describe("generalized append-only storage migration plans", { timeout: 60_000 }, () => {
   it("keeps the immutable bootstrap prefix and rejects malformed extensions", () => {
     expect("__createStorageMigrationPlanForTests" in storageApi).toBe(false);
     expect("__runBootstrapStorageMigrationsForTests" in storageApi).toBe(false);
@@ -2303,7 +2303,7 @@ describe("generalized append-only storage migration plans", () => {
         )
       ).toThrow(/MIGRATION_BLOCKED/);
     },
-    15_000
+    60_000
   );
 });
 

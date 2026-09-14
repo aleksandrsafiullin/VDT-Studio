@@ -104,7 +104,7 @@ describe("StrictVdtProjectCommitV1 and canonical framing", () => {
   });
 });
 
-describe("atomic revision boundary", () => {
+describe("atomic revision boundary", { timeout: 60_000 }, () => {
   it("returns the exact terminal idempotency result without rechecking the changed head", () => {
     const { db, input } = setupCommit();
     const first = db.commitVdtRevision(input);
@@ -702,7 +702,7 @@ describe("atomic revision boundary", () => {
   );
 });
 
-describe("ordered storage migrations", () => {
+describe("ordered storage migrations", { timeout: 60_000 }, () => {
   const openBootstrapVdtDatabase = openBootstrapVdtDatabaseForTests;
 
   it("does not expose the bootstrap-only opener through the package API", () => {

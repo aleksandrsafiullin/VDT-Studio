@@ -118,6 +118,38 @@ describe("AgentRunStore persistence", () => {
     expect(recoveredStore.getSnapshot(state.runId).lastFeedback).toMatchObject({ kind: "tool_failed" });
     expect(events).toHaveLength(1);
   });
+
+  it("hydrates missing CLI session counters on performanceTelemetry without grant fields", () => {
+    const store = new AgentRunStore({ now: fixedClock("2026-06-29T10:00:00.000Z") });
+    const state = store.createRun({
+      mode: "generate_vdt",
+      input: { rootKpi: "Ore hauled" },
+      providerId: "mock"
+    });
+    expect(state.performanceTelemetry).toMatchObject({
+      segmentCount: 0,
+      processSpawnCount: 0,
+      logicalSessionCount: 0,
+      opaqueSessionIdHash: null
+    });
+    const persisted = serializeAgentRunState(state);
+    persisted.performanceTelemetry = {
+      decisionLatenciesMs: [12],
+      toolCallCount: 4,
+      outputBytes: 8,
+      repairCount: 0
+    } as typeof persisted.performanceTelemetry;
+    const hydrated = hydrateAgentRunState(persisted);
+    expect(hydrated.performanceTelemetry).toMatchObject({
+      decisionLatenciesMs: [12],
+      toolCallCount: 4,
+      segmentCount: 0,
+      processSpawnCount: 0,
+      logicalSessionCount: 0,
+      opaqueSessionIdHash: null
+    });
+    expect(hydrated.performanceTelemetry).not.toHaveProperty("qualificationStatus");
+  });
 });
 
 function stateSnapshot(state: VdtAgentRunState): VdtAgentRunSnapshot {

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -71,6 +71,30 @@ async function environment(): Promise<ClaudeResumeCheckpointEnvironment> {
     privateStatePath: await temporaryDirectory("vdt-claude-state-"),
     forbiddenRoots: [await temporaryDirectory("vdt-claude-forbidden-")]
   };
+}
+
+function expectClaudeOmitted(
+  error: unknown,
+  missing: string,
+  extras: {
+    parsedLines: number;
+    eventTypes: string;
+    stdoutEmpty?: boolean;
+    secret?: string;
+  }
+): void {
+  const failure = error as Error;
+  const stdoutEmpty = extras.stdoutEmpty ?? false;
+  expect(failure.message).toContain(`(${missing})`);
+  expect(failure.message).toContain(`parsed_lines=${extras.parsedLines}`);
+  expect(failure.message).toContain(`event_types=${extras.eventTypes}`);
+  expect(failure.message).toContain(`stdout_empty=${stdoutEmpty}`);
+  expect(failure.message).toContain("exit=0");
+  expect(failure.message).toContain("signal=none");
+  if (missing !== "missing_init") expect(failure.message).not.toContain("missing_init");
+  if (missing !== "missing_terminal") expect(failure.message).not.toContain("missing_terminal");
+  if (missing !== "empty_stdout") expect(failure.message).not.toContain("empty_stdout");
+  if (extras.secret) expect(failure.message).not.toContain(extras.secret);
 }
 
 describe("ClaudeResumeCheckpointTransport", () => {
@@ -182,6 +206,79 @@ describe("ClaudeResumeCheckpointTransport", () => {
     }, ["vdt.echo"])).rejects.toMatchObject({ code: "CLAUDE_CHECKPOINT_SESSION_MISMATCH" });
   });
 
+  it("uses an explicit trusted subscription auth home for credentials without exposing private state", async () => {
+    const env = await environment();
+    const authHome = await temporaryDirectory("vdt-claude-auth-home-");
+    const runner = new FakeRunner((request) => ({
+      exitCode: 0,
+      signal: null,
+      stdout: claudeStream(request.cwd, "claude-session-auth"),
+      stderr: ""
+    }));
+    const transport = new ClaudeResumeCheckpointTransport({
+      executable: "/opt/claude/claude",
+      validatedCliVersion: "2.1.0",
+      runner
+    });
+
+    await transport.executeSegment({
+      mode: "open",
+      environment: {
+        ...env,
+        trustedSubscriptionAuthHomePath: authHome,
+        preauthorizeEmptyWorkspace: true,
+        credentialEnvironment: [
+          { name: "PATH", value: "/usr/bin:/bin" },
+          { name: "USER", value: "trusted-user" },
+          { name: "LOGNAME", value: "trusted-user" }
+        ]
+      },
+      model: "claude-sonnet-4-6",
+      prompt: '{"delta":"open"}',
+      signal: new AbortController().signal
+    }, ["vdt.echo"]);
+
+    const canonicalAuthHome = await realpath(authHome);
+    expect(runner.requests[0]?.environment).toEqual({
+      HOME: canonicalAuthHome,
+      USERPROFILE: canonicalAuthHome,
+      CLAUDE_CONFIG_DIR: path.join(canonicalAuthHome, ".claude"),
+      PATH: "/usr/bin:/bin",
+      USER: "trusted-user",
+      LOGNAME: "trusted-user"
+    });
+  });
+
+  it("pins CLAUDE_CONFIG_DIR to the isolated state directory without auth home", async () => {
+    const env = await environment();
+    const runner = new FakeRunner((request) => ({
+      exitCode: 0,
+      signal: null,
+      stdout: claudeStream(request.cwd, "claude-session-isolated"),
+      stderr: ""
+    }));
+    const transport = new ClaudeResumeCheckpointTransport({
+      executable: "/opt/claude/claude",
+      validatedCliVersion: "2.1.0",
+      runner
+    });
+
+    await transport.executeSegment({
+      mode: "open",
+      environment: env,
+      model: "claude-sonnet-4-6",
+      prompt: '{"delta":"open"}',
+      signal: new AbortController().signal
+    }, ["vdt.echo"]);
+
+    const canonicalState = await realpath(env.privateStatePath);
+    expect(runner.requests[0]?.environment).toEqual({
+      HOME: canonicalState,
+      USERPROFILE: canonicalState,
+      CLAUDE_CONFIG_DIR: canonicalState
+    });
+  });
+
   it("rejects credential leaks in stdout", async () => {
     const env: ClaudeResumeCheckpointEnvironment = {
       ...(await environment()),
@@ -223,5 +320,142 @@ describe("ClaudeResumeCheckpointTransport", () => {
       "--permission-mode",
       "dontAsk"
     ])).not.toThrow();
+  });
+
+  it("names missing_init when resume has a terminal result but no system init", async () => {
+    const env = await environment();
+    const secret = "DO_NOT_ECHO_MODEL_OUTPUT_9f3a";
+    const turn = checkpointTurn();
+    (turn.assistantMessage as { text: string }).text = secret;
+    const runner = new FakeRunner(() => ({
+      exitCode: 0,
+      signal: null,
+      stdout: JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        session_id: "claude-session-missing-init",
+        structured_output: turn
+      }) + "\n",
+      stderr: ""
+    }));
+    const error = await new ClaudeResumeCheckpointTransport({
+      executable: "/opt/claude/claude",
+      validatedCliVersion: "2.1.0",
+      runner
+    }).executeSegment({
+      mode: "resume",
+      environment: env,
+      model: "claude-sonnet-4-6",
+      prompt: "{}",
+      expectedSessionId: "claude-session-missing-init",
+      signal: new AbortController().signal
+    }, ["vdt.echo"]).then(() => undefined, (value: unknown) => value);
+
+    expect(error).toMatchObject({
+      code: "CLAUDE_CHECKPOINT_PROTOCOL_INVALID",
+      missingEvidence: ["missing_init"],
+      parsedLineCount: 1,
+      eventTypes: "result.success",
+      stdoutEmpty: false,
+      exitCode: 0,
+      signal: "none"
+    });
+    expectClaudeOmitted(error, "missing_init", { parsedLines: 1, eventTypes: "result.success", secret });
+  });
+
+  it("names missing_terminal when the stream has system init but no result event", async () => {
+    const env = await environment();
+    const runner = new FakeRunner((request) => ({
+      exitCode: 0,
+      signal: null,
+      stdout: JSON.stringify({
+        type: "system",
+        subtype: "init",
+        cwd: request.cwd,
+        session_id: "claude-session-missing-terminal"
+      }) + "\n",
+      stderr: ""
+    }));
+    const error = await new ClaudeResumeCheckpointTransport({
+      executable: "/opt/claude/claude",
+      validatedCliVersion: "2.1.0",
+      runner
+    }).executeSegment({
+      mode: "open",
+      environment: env,
+      model: "claude-sonnet-4-6",
+      prompt: "{}",
+      signal: new AbortController().signal
+    }, ["vdt.echo"]).then(() => undefined, (value: unknown) => value);
+
+    expect(error).toMatchObject({
+      code: "CLAUDE_CHECKPOINT_PROTOCOL_INVALID",
+      missingEvidence: ["missing_terminal"],
+      parsedLineCount: 1,
+      eventTypes: "system.init",
+      stdoutEmpty: false,
+      exitCode: 0,
+      signal: "none"
+    });
+    expectClaudeOmitted(error, "missing_terminal", { parsedLines: 1, eventTypes: "system.init" });
+  });
+
+  it("names empty_stdout when Claude exits 0 with no stream bytes", async () => {
+    const env = await environment();
+    const runner = new FakeRunner(() => ({
+      exitCode: 0,
+      signal: null,
+      stdout: "",
+      stderr: ""
+    }));
+    const error = await new ClaudeResumeCheckpointTransport({
+      executable: "/opt/claude/claude",
+      validatedCliVersion: "2.1.0",
+      runner
+    }).executeSegment({
+      mode: "open",
+      environment: env,
+      model: "claude-sonnet-4-6",
+      prompt: "{}",
+      signal: new AbortController().signal
+    }, ["vdt.echo"]).then(() => undefined, (value: unknown) => value);
+
+    expect(error).toMatchObject({
+      code: "CLAUDE_CHECKPOINT_PROTOCOL_INVALID",
+      missingEvidence: ["empty_stdout"],
+      parsedLineCount: 0,
+      eventTypes: "<none>",
+      stdoutEmpty: true,
+      exitCode: 0,
+      signal: "none"
+    });
+    expectClaudeOmitted(error, "empty_stdout", { parsedLines: 0, eventTypes: "<none>", stdoutEmpty: true });
+  });
+
+  it("accepts a reported cwd that canonicalises onto the private workspace", async () => {
+    const env = await environment();
+    const runner = new FakeRunner(async (request) => {
+      const alias = path.join(await temporaryDirectory("vdt-claude-cwd-alias-"), "workspace");
+      await symlink(await realpath(request.cwd), alias, "dir");
+      return {
+        exitCode: 0,
+        signal: null,
+        stdout: claudeStream(alias, "claude-session-cwd-alias"),
+        stderr: ""
+      };
+    });
+    const transport = new ClaudeResumeCheckpointTransport({
+      executable: "/opt/claude/claude",
+      validatedCliVersion: "2.1.0",
+      runner
+    });
+    await expect(transport.executeSegment({
+      mode: "open",
+      environment: env,
+      model: "claude-sonnet-4-6",
+      prompt: "{}",
+      signal: new AbortController().signal
+    }, ["vdt.echo"])).resolves.toMatchObject({ sessionId: "claude-session-cwd-alias" });
   });
 });

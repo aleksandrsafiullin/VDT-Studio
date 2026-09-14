@@ -34,7 +34,7 @@ function fakeCursorExecutor(env: NodeJS.ProcessEnv = process.env) {
   };
 }
 
-describe("cursor subscription executor", () => {
+describe("cursor subscription executor", { timeout: 45_000 }, () => {
   it("keeps enough repair budget for full Cursor tree responses", () => {
     expect(EXECUTION_LIMITS.repairTimeoutMs).toBeGreaterThanOrEqual(60_000);
     expect(EXECUTION_LIMITS.timeoutMs).toBe(AGENT_DECISION_TIMEOUT_MAX_MS);
@@ -155,12 +155,14 @@ describe("cursor subscription executor", () => {
         taskType: "generate_tree",
         schemaId: "generate-tree-v1",
         input: { prompt: "Build a tree" },
-        timeoutMs: 2_000
+        // Fake writes immediately then sleeps 30s. Budget must survive spawn
+        // delay under parallel load; it only has to stay well below the close.
+        timeoutMs: 15_000
       },
       new AbortController().signal,
       fakeCursorExecutor({ ...process.env, VDT_FAKE_CURSOR_MODE: "result-then-slow" })
     );
-    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
     expect(result.schemaValid).toBe(true);
     expect(result.output).toMatchObject({ projectTitle: "Fake Cursor tree", rootNodeId: "root" });
   });

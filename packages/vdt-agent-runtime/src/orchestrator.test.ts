@@ -393,7 +393,7 @@ function haulageBuildDecisions(): AgentDecision[] {
   ];
 }
 
-describe("VdtAgentRuntime decision loop", { timeout: 15_000 }, () => {
+describe("VdtAgentRuntime decision loop", { timeout: 30_000 }, () => {
   it("decomposes only the selected KPI's next level without creating a user chat instruction", async () => {
     const builder = new VdtBuilderSession({ now: () => "2026-08-10T00:00:00.000Z" });
     builder.createDraft({

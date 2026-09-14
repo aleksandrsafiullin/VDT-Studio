@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 export * from "./skill-questions";
 export * from "./skill-recipe";
 
-export type VdtAgentStatus = "running" | "needs_user_input" | "waiting_approval" | "succeeded" | "failed" | "cancelled";
+export type VdtAgentStatus = "running" | "needs_user_input" | "waiting_approval" | "recovery_required" | "succeeded" | "failed" | "cancelled";
 
 export type VdtAgentPhase =
   | "classifying_request"

@@ -15,7 +15,7 @@ describe("research tools", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toMatchObject({
       code: "RESEARCH_PROVIDER_NOT_CONFIGURED",
-      message: "Research provider is not configured. Ask the user for process details or continue with explicit assumptions."
+      message: "Research provider is not configured. Ask the user for process details, or write assumed numbers with valueStatus default_assumption and an explicit assumption note."
     });
   });
 

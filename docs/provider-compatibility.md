@@ -1,6 +1,8 @@
 # Provider Compatibility
 
-Last reviewed against canonical metadata and the current working tree: **2026-08-26**. The certification file itself is dated **2026-06-22**. The 2026-08-26 agent-decision-v2 qualification attempts below did not pass and therefore do not promote provider certification.
+Last reviewed against canonical metadata and the current working tree: **2026-09-14**. The certification file itself is dated **2026-06-22**. The 2026-08-26 agent-decision-v2 qualification attempts below did not pass and therefore do not promote provider certification.
+
+Checkpoint-session live status last reviewed **2026-09-13**: Codex and Cursor opt-in harnesses reached `full_success` with a calculable tree; Claude checkpoint session remains **unverified** (`claude` CLI not installed on the maintainer machine). That asymmetry is not a qualification promotion — see [CLI checkpoint session canaries](#cli-checkpoint-session-canaries).
 
 VDT Studio certifies subscription CLIs against reviewed manifest flags, structured-output contracts, and (where required) OS sandbox profiles. This document records tested versions, platform support, and explicit non-goals.
 
@@ -97,9 +99,14 @@ Run live probes from a normal developer terminal, not from a sandboxed CI contai
 pnpm live:codex
 pnpm live:cursor
 pnpm live:copilot -- --connection-only
+pnpm live:cli-session:codex
+pnpm live:cli-session:cursor
+pnpm live:cli-session:claude
 ```
 
-For a cheaper auth/connection-only check, append `-- --connection-only`.
+For a cheaper auth/connection-only check on the compatibility adapters, append `-- --connection-only`.
+
+`pnpm live:cli-session:*` is a separate opt-in Supervisor checkpoint harness (never default CI). Codex and Cursor have been demonstrated live; `pnpm live:cli-session:claude` is expected to fail fast on the maintainer machine.
 
 ## Cursor Agent (`cursor_subscription`)
 
@@ -157,7 +164,8 @@ subscription canary uses the authenticated user's Cursor home and supplies
 `--trust` only after verifying that the private workspace is empty. It fails
 closed on session drift, unknown
 stream protocol, workspace writes, credential output or any Cursor
-`tool_call`. It never uses `--force` or `--yolo`.
+`tool_call` other than native web search (which is recorded on the run).
+It never uses `--force` or `--yolo`.
 
 Cursor documents that print mode still has built-in write and bash tools.
 These local negative tests are therefore boundary diagnostics, not proof that
@@ -166,6 +174,12 @@ checkpoint adapter always reports `toolIsolation: unverified`, is default-off,
 has no production/public binding and is not an automatic fallback from ACP or
 the compatibility runtime. It requires its own credentialed adversarial hard-
 isolation qualification before release.
+
+Opt-in maintainer live smoke (`pnpm live:cli-session:cursor`) has since reached
+harness `full_success` with a calculable haulage tree. That is a demonstration,
+not qualification: `qualification.status` remains `unverified` and the binding
+stays default-off. Claude is not in the same category — see
+[CLI checkpoint session canaries](#cli-checkpoint-session-canaries).
 
 Auth/version detection (web UI): `agent status --format json` when available; otherwise a minimal stdin-based `--print` connection probe. Probes time out after 5 seconds.
 
@@ -241,13 +255,21 @@ Model discovery: `codex debug models`, parsed from JSON, JSONL or table output. 
 A typed `codex exec`/`exec resume` checkpoint protocol canary now exists in
 `packages/model-bridge`. It pins the opaque thread ID, supplies only one
 required `vdt_gateway` MCP configuration, keeps prompt/checkpoint bytes on
-stdin and rejects reported shell/file/web/foreign-MCP activity. The canary has
+stdin and rejects reported shell/file/foreign-MCP activity. Native web search
+is allowed and recorded. The canary has
 no default process runner: its public engine ports always return
 `EXTERNAL_ENGINE_NOT_QUALIFIED`, and deterministic fake-CLI diagnostics are
 the only enabled execution path. This does not change the Alpha compatibility
 adapter or expose an External binding.
 
-The canary is not live-qualified. Codex still has a built-in command execution
+The canary is not live-qualified. Opt-in maintainer live smoke
+(`pnpm live:cli-session:codex`) has since reached harness `full_success` with a
+calculable haulage tree. Functional demonstration is not isolation
+qualification: `qualification.status` remains `unverified` and the binding stays
+default-off. Claude has no equivalent live run — see
+[CLI checkpoint session canaries](#cli-checkpoint-session-canaries).
+
+Codex still has a built-in command execution
 surface even under its read-only sandbox, reported stream events cannot prove
 absence of unreported activity, private subscription-auth seeding is not
 implemented, and exact-version MCP/resume output has not passed recovery or
@@ -255,6 +277,21 @@ adversarial tests. The reviewed protocol surface follows the official
 [Codex CLI reference](https://developers.openai.com/codex/cli/reference) and
 [Codex MCP configuration](https://developers.openai.com/codex/mcp); neither is
 a hard-isolation guarantee.
+
+### Native web search
+
+Codex models expose native web search on the `exec` JSONL session path even
+when VDT does not pass `--search` and does pass `--ignore-user-config`. Config
+toggles such as `-c tools.web_search=false` do not suppress it. `--search` is
+used only to force search on when `options.researchMode` is `on`; it is not a
+way to turn search off. `--no-search` is not a valid Codex flag.
+
+Stream `item.type=web_search` is recorded on the run (count and query text
+when present) and is not a security-boundary breach. Shell
+(`command_execution`), file changes, collaboration tools, and MCP tool calls
+remain forbidden. Native results bypass `research.search_web`, so they carry
+no auditable citations; values must be written as `default_assumption` with
+`valueSource.sourceTier=native_web_search`.
 
 ## Claude Code (`claude_subscription`)
 
@@ -295,22 +332,66 @@ set unchanged: `--disallowedTools *` blocks the strict VDT MCP as well as
 foreign tools. A typed checkpoint protocol canary now exists in
 `packages/model-bridge`; it combines `--tools ""`, `--strict-mcp-config`, one
 server-owned `vdt_gateway` configuration, an exact opaque `--resume` session
-ID and fail-closed stream parsing. Like the Codex canary, it has no default
-runner, its public engine ports always reject as unqualified, and only injected
-fake-CLI diagnostics can execute.
-
-Claude CLI is not installed in the reviewed environment, so the interaction
-between `--bare`, explicit MCP configuration, MCP tool-name encoding,
-structured stream events and resume persistence is not live evidence. The
-arguments are based on the official [Claude CLI
-reference](https://code.claude.com/docs/en/cli-usage) and must pass pinned-
-version functional, recovery and adversarial qualification before any engine
-can become available. No automatic backend/profile fallback exists.
+ID and fail-closed stream parsing. Public engine ports still reject as
+unqualified; only injected fake-CLI diagnostics execute. That is **not** the
+same live posture as Codex or Cursor — see
+[CLI checkpoint session canaries](#cli-checkpoint-session-canaries).
 
 ### Not supported
 
 - Tool use, MCP servers, session persistence, or `--allowedTools` overrides from VDT Studio
 - Arbitrary user-supplied executable paths or argument overrides
+- Treating Claude checkpoint session as validated, qualified, or CI-required
+
+## CLI checkpoint session canaries
+
+These Supervisor bindings (`codex_session_canary`, `cursor_session_canary`,
+`claude_session_canary`) are default-off trusted-local canaries. They are **not**
+an External-profile qualification record. This section does **not** change
+`qualification.status` (`unverified`) or `enabled` defaults.
+
+| Binding | CLI on PATH | Maintainer live as of 2026-09-13 |
+| --- | --- | --- |
+| `codex_session_canary` | `codex` | Demonstrated: opt-in harness reached `full_success` with a calculable haulage tree. Qualification remains `unverified`. |
+| `cursor_session_canary` | `cursor-agent` / `agent` | Demonstrated: opt-in harness reached `full_success` with a calculable haulage tree. Qualification remains `unverified`. |
+| `claude_session_canary` | `claude` | **Unverified.** Requires the `claude` CLI on PATH. Not validated on the maintainer machine as of 2026-09-13. No live run. Fake-runner unit tests only. |
+
+Do not treat the three rows as equal support. Codex and Cursor have been run
+end to end against real CLIs. Claude has not been run at all.
+
+Registration (`register*SessionCanary` in the agent-runs runtime) returns
+`"absent"` when `detectSubscriptionCli` does not find the executable. For Claude
+that `"absent"` outcome is **expected** on hosts without the CLI; the binding is
+omitted from `GET /api/agent/runs`. The live harness
+(`pnpm live:cli-session:claude`) then exits **2** with
+`Claude CLI not detected; see docs/provider-compatibility.md`.
+
+Admission onto the Supervisor path still requires
+`allowUnqualifiedExternalCanary`, exactly as for Codex and Cursor. Claude is in
+`ADMITTED_CLI_SESSION_CANARIES` so the wiring exists; that is not a
+qualification claim and is not a CI live gate.
+
+### Claude checkpoint session — unverified
+
+- Requires the `claude` CLI on PATH and Claude Pro / subscription login.
+- Not validated on the maintainer machine as of **2026-09-13** (plan date for
+  the CLI checkpoint live-qualification work).
+- Engine coverage is fake-process-runner tests only
+  (`claude-resume-checkpoint-engine.test.ts`).
+- `claude-resume-checkpoint-transport.ts` sets `CLAUDE_CONFIG_DIR` to
+  `path.join(authHome, ".claude")` by analogy with the Codex auth-home isolation
+  fix. That mapping has **never** been checked against a real Claude CLI. The
+  code is left as is; do not document it as verified.
+- CLI flag interaction (`--bare`, explicit MCP configuration, MCP tool-name
+  encoding, structured stream events, resume persistence) is also not live
+  evidence. Arguments follow the official [Claude CLI
+  reference](https://code.claude.com/docs/en/cli-usage) and still need
+  pinned-version functional, recovery and adversarial qualification before any
+  engine can become available.
+- Promoting `qualification.status` or adding Claude live runs to required CI is
+  out of scope. Future qualification needs a dedicated host (or Linux/macOS
+  runner) with `claude` installed — not this plan.
+- No automatic backend/profile fallback exists.
 
 ## Gemini CLI (`gemini_subscription`)
 

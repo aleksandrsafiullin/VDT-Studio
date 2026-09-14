@@ -31,7 +31,7 @@ const CODEX_DESCRIPTOR: ResumeCheckpointProviderDescriptor = Object.freeze({
   errorPrefix: "CODEX_CHECKPOINT",
   cliLabel: "Codex",
   supportsUsageMetrics: true,
-  securityConstraint: "Do not use Codex shell, file, Git, web, browser, MCP, or approval bypass modes. Use only the returned ActionBatch JSON protocol and VDT tools executed by the host gateway."
+  securityConstraint: "Do not use Codex shell, file, Git, browser, MCP, or approval bypass modes. Native web search is allowed; write numbers from it with valueStatus default_assumption and valueSource.sourceTier native_web_search, never as user_provided_value or research.search_web citations. Use only the returned ActionBatch JSON protocol and VDT tools executed by the host gateway."
 });
 
 export type CodexResumeCheckpointEnvironmentFactory = (

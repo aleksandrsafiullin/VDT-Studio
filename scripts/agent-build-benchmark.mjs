@@ -5,6 +5,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { calculateGraph, validateGraph } from "../packages/vdt-core/src/index.ts";
+import {
+  assertMetricsOnly,
+  containsSecret,
+  redactSensitiveText
+} from "../packages/vdt-agent-runtime/src/metrics-only.ts";
+
+export { assertMetricsOnly, redactSensitiveText };
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(SCRIPT_PATH);
@@ -23,46 +30,6 @@ const TERMINAL_OR_STOPPED_STATUSES = new Set([
 ]);
 const VALID_PROFILES = new Set(["external_cli_agent", "model_agent"]);
 const VALID_SAMPLE_TEMPERATURES = new Set(["cold", "warm"]);
-const FORBIDDEN_METRICS_KEYS = new Set([
-  "prompt",
-  "rawprompt",
-  "systemprompt",
-  "userprompt",
-  "request",
-  "requestbody",
-  "response",
-  "responsebody",
-  "raw",
-  "input",
-  "output",
-  "result",
-  "payload",
-  "body",
-  "headers",
-  "environment",
-  "env",
-  "secret",
-  "apikey",
-  "accesstoken",
-  "refreshtoken",
-  "authorization",
-  "cookie",
-  "password",
-  "credential",
-  "database",
-  "dbpath",
-  "snapshot",
-  "events",
-  "messages",
-  "graph",
-  "project",
-  "content"
-]);
-const SECRET_PATTERNS = [
-  /\bBearer\s+[A-Za-z0-9._~+\/-]{8,}={0,2}\b/giu,
-  /\b(?:sk|rk|pk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9._-]{8,}\b/giu,
-  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)\s*[:=]\s*[^\s,;]+/giu
-];
 const KNOWN_DISQUALIFYING_FAILURES = [
   "MAX_STEPS_EXCEEDED",
   "ENUM_FIELD_MISMATCH",
@@ -158,50 +125,6 @@ export function sha256(value) {
 
 export function computeFixtureHash(fixture) {
   return sha256(fixture);
-}
-
-function normalizeKey(key) {
-  return key.toLowerCase().replace(/[^a-z0-9]/gu, "");
-}
-
-function containsSecret(text) {
-  return SECRET_PATTERNS.some((pattern) => {
-    pattern.lastIndex = 0;
-    return pattern.test(text);
-  });
-}
-
-export function redactSensitiveText(value) {
-  let result = String(value);
-  for (const pattern of SECRET_PATTERNS) {
-    pattern.lastIndex = 0;
-    result = result.replace(pattern, "[REDACTED]");
-  }
-  return result;
-}
-
-/**
- * Benchmark artifacts are deliberately narrower than runtime snapshots. This
- * guard fails if a future edit accidentally serializes prompts, messages,
- * projects, credentials, or raw provider content into an artifact.
- */
-export function assertMetricsOnly(value, path = "$") {
-  if (Array.isArray(value)) {
-    value.forEach((entry, index) => assertMetricsOnly(entry, `${path}[${index}]`));
-    return;
-  }
-  if (!isRecord(value)) {
-    if (typeof value === "string" && containsSecret(value)) {
-      fail(`Sensitive value is not allowed in benchmark output at ${path}.`);
-    }
-    return;
-  }
-  for (const [key, entry] of Object.entries(value)) {
-    if (FORBIDDEN_METRICS_KEYS.has(normalizeKey(key))) {
-      fail(`Raw or sensitive field "${key}" is not allowed in benchmark output at ${path}.`);
-    }
-    assertMetricsOnly(entry, `${path}.${key}`);
-  }
 }
 
 function requireExactKeys(value, keys, path) {

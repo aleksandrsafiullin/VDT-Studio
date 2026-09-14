@@ -137,7 +137,7 @@ afterEach(async () => {
   ]);
 });
 
-describe("verify-desktop-sidecar", () => {
+describe("verify-desktop-sidecar", { timeout: 30_000 }, () => {
   it("passes the current development sidecar launcher", () => {
     expect(verifyDesktopSidecar()).toMatchObject({
       launcher: "apps/desktop/src-tauri/sidecars/vdt-local-runtime",

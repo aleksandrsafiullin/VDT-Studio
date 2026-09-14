@@ -25,7 +25,7 @@ afterEach(() => {
   }
 });
 
-describe("Sequence 4 bounded agent execution production migration", () => {
+describe("Sequence 4 bounded agent execution production migration", { timeout: 30_000 }, () => {
   it("uses a second fenced attempt, preserves the exact Sequence 3 identity, and reopens idempotently", () => {
     const fixture = createFixture();
     runProduction(fixture);

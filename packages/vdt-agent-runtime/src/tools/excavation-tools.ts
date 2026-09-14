@@ -18,6 +18,7 @@ import { proposeAndMaybeApplyMutation } from "../mutation-pipeline";
 import { AgentToolError, type AgentTool, type AgentToolContext } from "../tool-registry";
 import { summarizeValidation } from "../summaries";
 import { requireBuilder } from "./builder-mutation-utils";
+import { assertUserProvidedValueGrounded } from "./value-provenance";
 
 type MaterialMode = "ore_tonnes" | "rock_solid_m3" | "mixed_ore_tonnes_and_rock_m3";
 type ExcavationScope = "output" | "productivity";
@@ -204,6 +205,9 @@ const excavationWriteInputValueTool: AgentTool = {
     const project = builder.getProject();
     if (!project.graph.nodes.some((node) => node.id === input.nodeId)) {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
+    }
+    if (input.valueStatus === "user_provided_value") {
+      assertUserProvidedValueGrounded(context, input.nodeId);
     }
     const patch: VdtNodePatch = {
       status: input.valueStatus === "unknown" ? "needs_data" : input.valueStatus === "default_assumption" ? "assumption" : "accepted",

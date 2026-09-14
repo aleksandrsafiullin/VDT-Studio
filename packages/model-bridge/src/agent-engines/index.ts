@@ -1,6 +1,7 @@
 export * from "./action-batch";
 export * from "./checkpoint-turn";
 export * from "./checkpoint-transport-common";
+export * from "./cli-session-performance-telemetry";
 export * from "./claude-resume-checkpoint-engine";
 export * from "./claude-resume-checkpoint-transport";
 export * from "./codex-resume-checkpoint-engine";
@@ -11,5 +12,6 @@ export * from "./cursor-acp-transport";
 export * from "./cursor-acp-types";
 export * from "./cursor-resume-checkpoint-engine";
 export * from "./cursor-resume-checkpoint-transport";
+export * from "./native-web-search";
 export * from "./persistent-cli-checkpoint-canaries";
 export * from "./resume-checkpoint-engine-core";

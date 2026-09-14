@@ -248,7 +248,10 @@ function repairHintsForWarning(warning: VdtWarning): string[] | undefined {
     return ["Use project.get_node and a repair tool, or ask the user if the intended graph relation is ambiguous."];
   }
   if (warning.type === "missing_value") {
-    return ["Ask the user for the missing value or add an assumption node with a baselineValue."];
+    return [
+      "If this run already has a user answer for the node, write it with vdt.update_node using value or baselineValue, valueStatus \"user_provided_value\", and a valueSource noting the user supplied it in this run.",
+      "Otherwise ask the user, or write an assumed number with valueStatus default_assumption and an explicit assumption note — never as user-supplied, researched, measured, or benchmarked. A number from the agent's own native web search uses the same default_assumption status with valueSource.sourceTier native_web_search; it is not a research.search_web citation."
+    ];
   }
   return undefined;
 }

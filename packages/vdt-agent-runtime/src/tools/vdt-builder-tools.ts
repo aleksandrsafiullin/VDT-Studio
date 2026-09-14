@@ -17,7 +17,8 @@ import {
 import { defaultProgressiveBuildPolicy, proposeAndMaybeApplyMutation } from "../mutation-pipeline";
 import { AgentToolError, type AgentTool, type AgentToolContext } from "../tool-registry";
 import { summarizeCalculation, summarizeValidation } from "../summaries";
-import { cloneBuilder, combineChangeSets, requireBuilder, requireChangeSet } from "./builder-mutation-utils";
+import { cloneBuilder, combineChangeSets, requireBuilder, requireChangeSet, wrapBuilderError } from "./builder-mutation-utils";
+import { assertUserProvidedValueGrounded, runHasUserAnswerForNode } from "./value-provenance";
 
 const nodeTypeSchema = z.enum(["root_kpi", "calculated", "input", "assumption", "external_factor", "data_mapped"]);
 const nodeStatusSchema = z.enum([
@@ -415,6 +416,7 @@ const instantiateSubtreeTool: AgentTool = {
       }
       return subtreeAddition({
         id: `instantiate_${index + 1}_${targetNodeId}`,
+        context,
         sourceNode,
         override,
         nodeId: targetNodeId,
@@ -533,6 +535,9 @@ const updateNodeTool: AgentTool = {
       }
     }
     assertFormulaReferencesIfPresent(project, input.patch.formula, input.nodeId);
+    if (input.patch.valueStatus === "user_provided_value") {
+      assertUserProvidedValueGrounded(context, input.nodeId);
+    }
     const previewBuilder = cloneBuilder(context);
     const result = previewBuilder.updateNode({ nodeId: input.nodeId, patch: input.patch as VdtNodePatch });
     const mutation = proposeAndMaybeApplyMutation(context, {
@@ -564,11 +569,22 @@ const deleteNodeTool: AgentTool = {
   run(context, input) {
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
+    if (!project.graph.nodes.some((node) => node.id === input.nodeId)) {
+      throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
+    }
+    if (input.nodeId === project.rootNodeId) {
+      throw new AgentToolError("ROOT_NODE_PROTECTED", "Root node cannot be deleted.");
+    }
     const removedEdgeIds = project.graph.edges
       .filter((edge) => edge.sourceNodeId === input.nodeId || edge.targetNodeId === input.nodeId)
       .map((edge) => edge.id);
     const previewBuilder = cloneBuilder(context);
-    const result = previewBuilder.deleteNode(input);
+    let result;
+    try {
+      result = previewBuilder.deleteNode(input);
+    } catch (error) {
+      wrapBuilderError(error);
+    }
     const mutation = proposeAndMaybeApplyMutation(context, {
       title: "Node deleted",
       summary: result.event.message,
@@ -834,6 +850,7 @@ function remapSubtreeFormula(
 
 function subtreeAddition(input: {
   id: string;
+  context: AgentToolContext;
   sourceNode: VdtNode;
   override: InstantiateNodeOverride | undefined;
   nodeId: string;
@@ -842,6 +859,25 @@ function subtreeAddition(input: {
   formula: string | undefined;
 }): VdtNodeAddition {
   const { sourceNode, override } = input;
+  const requestedStatus = override?.valueStatus ?? sourceNode.valueStatus;
+  const requestedSource = override?.valueSource ?? sourceNode.valueSource;
+  if (override?.valueStatus === "user_provided_value") {
+    assertUserProvidedValueGrounded(input.context, input.nodeId);
+  }
+  const groundedUserValue = requestedStatus === "user_provided_value"
+    && runHasUserAnswerForNode(input.context, input.nodeId);
+  const valueStatus = requestedStatus === "user_provided_value" && !groundedUserValue
+    ? "default_assumption"
+    : requestedStatus;
+  const valueSource = requestedStatus === "user_provided_value" && !groundedUserValue
+    ? {
+      ...requestedSource,
+      acceptedByUserInDialog: false,
+      note: requestedSource?.note
+        ? `${requestedSource.note} Copied from source node "${sourceNode.id}"; not a user answer for this node.`
+        : `Copied from source node "${sourceNode.id}"; not a user answer for this node.`
+    }
+    : requestedSource;
   return {
     id: input.id,
     nodeId: input.nodeId,
@@ -854,8 +890,8 @@ function subtreeAddition(input: {
     formula: input.formula,
     value: override?.value ?? sourceNode.value,
     baselineValue: override?.baselineValue ?? sourceNode.baselineValue,
-    valueStatus: override?.valueStatus ?? sourceNode.valueStatus,
-    valueSource: override?.valueSource ?? sourceNode.valueSource,
+    valueStatus,
+    valueSource,
     aiConfidence: sourceNode.aiConfidence,
     aiRationale: override?.aiRationale ?? `Instantiated from source node "${sourceNode.id}".`,
     assumptions: override?.assumptions ?? sourceNode.assumptions,

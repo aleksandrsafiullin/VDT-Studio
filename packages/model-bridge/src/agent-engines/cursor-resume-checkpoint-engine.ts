@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  AGENT_QUESTION_PROMPT_RULE,
+  AGENT_FINISH_MISSING_VALUE_PROMPT_RULE,
+  CHECKPOINT_ACTION_TYPE_PROMPT_RULE,
+  CHECKPOINT_RESPONSE_ENVELOPE_PROMPT_RULE,
+  NATIVE_WEB_SEARCH_EVENT_CODE,
   agentEngineCheckpointSchema,
-  agentQuestionSchema,
   agentSessionBindingSchema,
   vdtGatewayToolResultSchema,
   type AgentCapabilityProfile,
@@ -24,6 +28,19 @@ import {
   type CursorCheckpointTurn,
   type CursorResumeCheckpointEnvironment
 } from "./cursor-resume-checkpoint-transport";
+import {
+  evaluateWaitingUserAskPayload,
+  missingPendingDeltaTransportError,
+  SHARED_PROMPT_RULES,
+  SHARED_RESUME_CONSTRAINTS
+} from "./resume-checkpoint-engine-core";
+import {
+  CliSessionPerformanceCounters,
+  recordTransportSegmentFailure,
+  recordTransportSegmentSuccess
+} from "./cli-session-performance-telemetry";
+import { formatNativeWebSearchNotice, nativeWebSearchFromError, type NativeWebSearchRecord } from "./native-web-search";
+import { isModelContractViolation, sessionIdFromError } from "./checkpoint-transport-common";
 
 const SAFE_HASH = /^sha256:[a-f0-9]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
@@ -90,6 +107,24 @@ function safeErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof Error) || !error.message.trim()) return fallback;
   if (/api.?key|authorization|cookie|password|secret|token/i.test(error.message)) return fallback;
   return error.message.slice(0, 1_000);
+}
+
+type PendingOpenFailure = {
+  readonly code: string;
+  readonly message: string;
+  readonly retryable: boolean;
+  readonly nativeWebSearch?: NativeWebSearchRecord;
+};
+
+function pendingOpenFailureFromError(error: unknown, fallbackCode: string, fallbackMessage: string): PendingOpenFailure {
+  const code = errorCode(error, fallbackCode);
+  const nativeWebSearch = nativeWebSearchFromError(error);
+  return {
+    code,
+    message: safeErrorMessage(error, fallbackMessage),
+    retryable: code !== "SECURITY_BOUNDARY_BREACH",
+    ...(nativeWebSearch ? { nativeWebSearch } : {})
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -258,21 +293,24 @@ function parseSegmentNumber(checkpoint: AgentEngineCheckpoint): number {
   return parsed;
 }
 
-function buildInitialPrompt(
+export function buildCursorResumeCheckpointInitialPrompt(
   start: AgentEngineStart,
   allowedToolNames: readonly string[]
 ): string {
   return canonicalJson({
     protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
     constraints: {
-      response: "Return exactly one JSON object with protocolVersion, assistantMessage, and action.",
-      actionBatch: "Use action.type=action_batch with 1-6 sequential VDT calls. Never mix user.ask, approval.request, or run.request_finish with another call.",
-      final: "Call run.request_finish first. Only after its successful receipt may action.type=final cite that exact finishReceiptId.",
+      response: `${CHECKPOINT_RESPONSE_ENVELOPE_PROMPT_RULE} The object must contain protocolVersion, assistantMessage, and action.`,
+      envelope: CHECKPOINT_RESPONSE_ENVELOPE_PROMPT_RULE,
+      actionTypes: CHECKPOINT_ACTION_TYPE_PROMPT_RULE,
+      actionBatch: SHARED_PROMPT_RULES.actionBatch,
+      final: `${SHARED_PROMPT_RULES.finishOrder} ${AGENT_FINISH_MISSING_VALUE_PROMPT_RULE}`,
       authority: "Tool calls contain only externalCallId, toolName, and args. Never include run/project/revision/actor/permission/idempotency authority.",
-      security: "Do not use Cursor shell, file, Git, web, browser, subagent, project-instruction, plugin, global MCP, or approval capabilities. Use only the returned ActionBatch JSON protocol.",
+      security: "Do not use Cursor shell, file, Git, browser, subagent, project-instruction, plugin, global MCP, or approval capabilities. Native web search is allowed; write numbers from it with valueStatus default_assumption and valueSource.sourceTier native_web_search, never as user_provided_value or research.search_web citations. Use only the returned ActionBatch JSON protocol.",
       openingSummary: "The first user-facing assistant message must restate the accepted task in the user's language and outline the intended plan in 3-6 short steps before or alongside the first tool batch.",
-      research: "When the domain, KPI, or decomposition boundary is unfamiliar, or the user asks for standards/best practice, use research.search_web (purpose standards, best_practices, process_components, benchmarks, or regulations) before building. Respect options.researchMode from the brief: never call research.search_web when it is off. Surface sources used; never fabricate citations.",
-      questions: "Ask only for missing data, a required business choice, scope conflict, ambiguous logic, low confidence, or formula ambiguity. When one of those applies, use user.ask with 1-5 precise questions. Prefer single_choice/multi_choice with concrete labelled options and always leave an escape hatch via freeTextAllowed:true or an option with requiresFreeText:true. Use fields/revealsFields for follow-up numbers. Mark required honestly and give a short reason.",
+      research: SHARED_PROMPT_RULES.research,
+      questions: AGENT_QUESTION_PROMPT_RULE,
+      finishMissingValues: AGENT_FINISH_MISSING_VALUE_PROMPT_RULE,
       fullCatalog: "Use the whole tool catalog — skills, excavation, research, validation, calculation, layout, repair, memory — not only vdt.* mutations."
     },
     toolCatalog: {
@@ -290,6 +328,7 @@ function buildInitialPrompt(
 function buildResumePrompt(delta: CursorCheckpointDelta): string {
   return canonicalJson({
     protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+    constraints: SHARED_RESUME_CONSTRAINTS,
     delta
   });
 }
@@ -333,6 +372,13 @@ class CursorResumeCheckpointSession implements AgentRunSession {
   #closed = false;
   #streamActive = false;
   #questionSetId: string | null = null;
+  /** Counts schema-correction retries for the current unresolved question set.
+   * Incremented before the resume segment; reset only when a valid set is
+   * accepted. Capped by QUESTION_PAYLOAD_RETRY_LIMIT so this cannot loop. */
+  #questionPayloadRetryCount = 0;
+  #pendingNativeWebSearch: NativeWebSearchRecord | undefined;
+  #pendingOpenFailure: PendingOpenFailure | undefined;
+  readonly #counters: CliSessionPerformanceCounters;
 
   private constructor(input: {
     binding: AgentSessionBinding;
@@ -352,6 +398,9 @@ class CursorResumeCheckpointSession implements AgentRunSession {
     finishReceipt?: AgentEngineCheckpoint["finishReceipt"];
     segmentCount: number;
     firstUserFacingEvent: boolean;
+    pendingNativeWebSearch?: NativeWebSearchRecord;
+    pendingOpenFailure?: PendingOpenFailure;
+    counters?: CliSessionPerformanceCounters;
   }) {
     this.#binding = input.binding;
     this.#transport = input.transport;
@@ -370,6 +419,9 @@ class CursorResumeCheckpointSession implements AgentRunSession {
     this.#finishReceipt = input.finishReceipt ?? null;
     this.#segmentCount = input.segmentCount;
     this.#firstUserFacingEvent = input.firstUserFacingEvent;
+    this.#pendingNativeWebSearch = input.pendingNativeWebSearch;
+    this.#pendingOpenFailure = input.pendingOpenFailure;
+    this.#counters = input.counters ?? new CliSessionPerformanceCounters();
     this.#hostAbortListener = () => this.#abortController.abort(this.#host.signal.reason);
     if (this.#host.signal.aborted) this.#hostAbortListener();
     else this.#host.signal.addEventListener("abort", this.#hostAbortListener, { once: true });
@@ -385,13 +437,61 @@ class CursorResumeCheckpointSession implements AgentRunSession {
     idFactory: () => string;
     maxSegments: number;
   }): Promise<CursorResumeCheckpointSession> {
-    const result = await input.transport.executeSegment({
+    const counters = new CliSessionPerformanceCounters();
+    const prompt = buildCursorResumeCheckpointInitialPrompt(input.start, input.allowedToolNames);
+    let result;
+    try {
+      result = await input.transport.executeSegment({
+        mode: "open",
+        environment: input.environment,
+        model: input.start.binding.modelId,
+        prompt,
+        signal: input.host.signal
+      }, input.allowedToolNames);
+    } catch (error) {
+      if (!isModelContractViolation(error)) throw error;
+      recordTransportSegmentFailure(counters, input.transport, error);
+      const failure = pendingOpenFailureFromError(
+        error,
+        "CURSOR_CHECKPOINT_PROTOCOL_INVALID",
+        "Cursor checkpoint process failed."
+      );
+      const sessionId = sessionIdFromError(error) ?? `unopened-${input.idFactory()}`;
+      return new CursorResumeCheckpointSession({
+        binding: Object.freeze({ ...input.start.binding, externalSessionId: sessionId }),
+        transport: input.transport,
+        environment: input.environment,
+        host: input.host,
+        allowedToolNames: input.allowedToolNames,
+        now: input.now,
+        idFactory: input.idFactory,
+        maxSegments: input.maxSegments,
+        lastInput: {
+          cursor: segmentCursor(input.environment, "input", 1),
+          contentHash: hashText(prompt)
+        },
+        lastOutput: {
+          cursor: segmentCursor(input.environment, "output", 1),
+          contentHash: hashText(failure.message)
+        },
+        activeExchange: {
+          exchangeId: "cursor-segment-1",
+          stableCallKey: "cursor-segment-1",
+          state: "ambiguous"
+        },
+        segmentCount: 1,
+        firstUserFacingEvent: false,
+        counters,
+        pendingOpenFailure: failure
+      });
+    }
+    recordTransportSegmentSuccess(counters, input.transport, {
       mode: "open",
-      environment: input.environment,
-      model: input.start.binding.modelId,
-      prompt: buildInitialPrompt(input.start, input.allowedToolNames),
-      signal: input.host.signal
-    }, input.allowedToolNames);
+      sessionId: result.sessionId,
+      ...(result.processSpawnCount !== undefined ? { processSpawnCount: result.processSpawnCount } : {}),
+      ...(result.inferenceMs !== undefined ? { inferenceMs: result.inferenceMs } : {}),
+      ...(result.outputBytes !== undefined ? { outputBytes: result.outputBytes } : {})
+    });
     const binding = Object.freeze({ ...input.start.binding, externalSessionId: result.sessionId });
     return new CursorResumeCheckpointSession({
       binding,
@@ -417,7 +517,9 @@ class CursorResumeCheckpointSession implements AgentRunSession {
         state: "completed"
       },
       segmentCount: 1,
-      firstUserFacingEvent: false
+      firstUserFacingEvent: false,
+      counters,
+      ...(result.nativeWebSearch ? { pendingNativeWebSearch: result.nativeWebSearch } : {})
     });
   }
 
@@ -432,6 +534,8 @@ class CursorResumeCheckpointSession implements AgentRunSession {
     idFactory: () => string;
     maxSegments: number;
   }): CursorResumeCheckpointSession {
+    const counters = new CliSessionPerformanceCounters();
+    counters.hydrateExistingSession(input.binding.externalSessionId, parseSegmentNumber(input.checkpoint));
     return new CursorResumeCheckpointSession({
       binding: input.binding,
       transport: input.transport,
@@ -456,12 +560,41 @@ class CursorResumeCheckpointSession implements AgentRunSession {
       activeToolCall: input.checkpoint.activeToolCall,
       finishReceipt: input.checkpoint.finishReceipt,
       segmentCount: parseSegmentNumber(input.checkpoint),
-      firstUserFacingEvent: input.checkpoint.lastConfirmedOutput !== null
+      firstUserFacingEvent: input.checkpoint.lastConfirmedOutput !== null,
+      counters
+    });
+  }
+
+  static createMissingPendingDeltaForTests(input: {
+    binding: AgentSessionBinding;
+    transport: CursorResumeCheckpointTransport;
+    environment: CursorResumeCheckpointEnvironment;
+    host: AgentEngineHost;
+    allowedToolNames?: readonly string[];
+  }): CursorResumeCheckpointSession {
+    const hash = `sha256:${"a".repeat(64)}`;
+    return new CursorResumeCheckpointSession({
+      binding: input.binding,
+      transport: input.transport,
+      environment: input.environment,
+      host: input.host,
+      allowedToolNames: input.allowedToolNames ?? ["vdt.echo"],
+      now: () => "2026-08-26T10:00:00.000Z",
+      idFactory: () => "id-1",
+      maxSegments: 240,
+      lastInput: { cursor: "cursor-input-1", contentHash: hash },
+      lastOutput: { cursor: "cursor-output-1", contentHash: hash },
+      segmentCount: 1,
+      firstUserFacingEvent: true
     });
   }
 
   get binding(): AgentSessionBinding {
     return this.#binding;
+  }
+
+  snapshotPerformanceTelemetry() {
+    return this.#counters.snapshot();
   }
 
   events(): AsyncIterable<AgentEngineEvent> {
@@ -523,13 +656,35 @@ class CursorResumeCheckpointSession implements AgentRunSession {
 
   async *#events(): AsyncGenerator<AgentEngineEvent> {
     try {
+      if (this.#pendingOpenFailure) {
+        const failure = this.#pendingOpenFailure;
+        this.#pendingOpenFailure = undefined;
+        if (failure.nativeWebSearch) {
+          yield {
+            type: "transport_note",
+            code: NATIVE_WEB_SEARCH_EVENT_CODE,
+            message: formatNativeWebSearchNotice(failure.nativeWebSearch)
+          };
+        }
+        yield {
+          type: "transport_error",
+          code: failure.code,
+          message: failure.message,
+          retryable: failure.retryable
+        };
+        return;
+      }
       while (!this.#closed && !this.#terminal && !this.#paused) {
         if (this.#abortController.signal.aborted) return;
         let turn = this.#pendingTurn;
         this.#pendingTurn = null;
         if (!turn) {
           const delta = this.#pendingDelta;
-          if (!delta) return;
+          if (!delta) {
+            this.#terminal = true;
+            yield missingPendingDeltaTransportError("CURSOR_CHECKPOINT", "Cursor");
+            return;
+          }
           if (this.#segmentCount >= this.#maxSegments) {
             this.#terminal = true;
             yield {
@@ -553,8 +708,17 @@ class CursorResumeCheckpointSession implements AgentRunSession {
               signal: this.#abortController.signal
             }, this.#allowedToolNames);
             if (result.sessionId !== this.#binding.externalSessionId) {
-              throw engineError("CURSOR_CHECKPOINT_SESSION_MISMATCH", "Cursor resume returned a different opaque session ID.");
+              const mismatch = engineError("CURSOR_CHECKPOINT_SESSION_MISMATCH", "Cursor resume returned a different opaque session ID.");
+              recordTransportSegmentFailure(this.#counters, this.#transport, mismatch);
+              throw mismatch;
             }
+            recordTransportSegmentSuccess(this.#counters, this.#transport, {
+              mode: "resume",
+              sessionId: result.sessionId,
+              ...(result.processSpawnCount !== undefined ? { processSpawnCount: result.processSpawnCount } : {}),
+              ...(result.inferenceMs !== undefined ? { inferenceMs: result.inferenceMs } : {}),
+              ...(result.outputBytes !== undefined ? { outputBytes: result.outputBytes } : {})
+            });
             this.#segmentCount = nextSegment;
             this.#lastInput = {
               cursor: segmentCursor(this.#environment, "input", nextSegment),
@@ -566,11 +730,21 @@ class CursorResumeCheckpointSession implements AgentRunSession {
             };
             this.#activeExchange = { exchangeId, stableCallKey: exchangeId, state: "completed" };
             this.#pendingDelta = null;
+            this.#pendingNativeWebSearch = result.nativeWebSearch;
             turn = result.turn;
           } catch (error) {
+            recordTransportSegmentFailure(this.#counters, this.#transport, error);
             this.#activeExchange = { exchangeId, stableCallKey: exchangeId, state: "ambiguous" };
             const code = errorCode(error, "CURSOR_CHECKPOINT_PROCESS_FAILED");
             if (code === "SECURITY_BOUNDARY_BREACH") this.#terminal = true;
+            const recordedSearch = nativeWebSearchFromError(error);
+            if (recordedSearch) {
+              yield {
+                type: "transport_note",
+                code: NATIVE_WEB_SEARCH_EVENT_CODE,
+                message: formatNativeWebSearchNotice(recordedSearch)
+              };
+            }
             yield {
               type: "transport_error",
               code,
@@ -579,6 +753,15 @@ class CursorResumeCheckpointSession implements AgentRunSession {
             };
             return;
           }
+        }
+
+        if (this.#pendingNativeWebSearch) {
+          yield {
+            type: "transport_note",
+            code: NATIVE_WEB_SEARCH_EVENT_CODE,
+            message: formatNativeWebSearchNotice(this.#pendingNativeWebSearch)
+          };
+          this.#pendingNativeWebSearch = undefined;
         }
 
         if (turn.assistantMessage) {
@@ -623,47 +806,56 @@ class CursorResumeCheckpointSession implements AgentRunSession {
         }
 
         const execution = await this.#executeBatch(turn.action.batch);
-        this.#pendingDelta = {
-          type: "tool_results",
-          batchId: `cursor-batch-${this.#segmentCount}`,
-          results: execution.results
-        };
-        yield { type: "checkpoint_requested", reason: "cursor_action_batch_completed" };
-
         if (execution.pause === "waiting_user") {
-          const call = execution.pausedCall;
-          if (!call || call.toolName !== "user.ask") {
-            this.#terminal = true;
-            yield {
-              type: "transport_error",
-              code: "CURSOR_CHECKPOINT_QUESTION_INVALID",
-              message: "A waiting-user result must come from the user.ask control tool.",
-              retryable: false
+          const decision = evaluateWaitingUserAskPayload({
+            pausedCall: execution.pausedCall,
+            results: execution.results,
+            retryCount: this.#questionPayloadRetryCount,
+            errorPrefix: "CURSOR_CHECKPOINT",
+            normalizeResult: toGatewayWireResult
+          });
+          if (decision.kind === "retry") {
+            this.#questionPayloadRetryCount += 1;
+            this.#counters.repairCount += 1;
+            this.#pendingDelta = {
+              type: "tool_results",
+              batchId: `cursor-batch-${this.#segmentCount}`,
+              results: decision.results
             };
+            yield decision.note;
+            yield { type: "checkpoint_requested", reason: "cursor_action_batch_completed" };
+            continue;
+          }
+          this.#pendingDelta = {
+            type: "tool_results",
+            batchId: `cursor-batch-${this.#segmentCount}`,
+            results: execution.results
+          };
+          yield { type: "checkpoint_requested", reason: "cursor_action_batch_completed" };
+          if (decision.kind === "terminal") {
+            this.#terminal = true;
+            yield decision.error;
             return;
           }
-          const parsed = agentQuestionSchema.strict().array().min(1).max(5).safeParse(call.args.questions);
-          if (!parsed.success) {
-            this.#terminal = true;
-            yield {
-              type: "transport_error",
-              code: "CURSOR_CHECKPOINT_QUESTION_INVALID",
-              message: "user.ask did not contain a valid VDT question checkpoint.",
-              retryable: false
-            };
-            return;
-          }
+          const call = execution.pausedCall!;
           const questionSetId = `cursor-question-${call.externalCallId}`;
+          this.#questionPayloadRetryCount = 0;
           this.#questionSetId = questionSetId;
           this.#paused = true;
           yield {
             type: "question",
             messageId: questionSetId,
             questionSetId,
-            questions: parsed.data
+            questions: decision.questions
           };
           return;
         }
+        this.#pendingDelta = {
+          type: "tool_results",
+          batchId: `cursor-batch-${this.#segmentCount}`,
+          results: execution.results
+        };
+        yield { type: "checkpoint_requested", reason: "cursor_action_batch_completed" };
         if (execution.pause === "waiting_approval") {
           this.#paused = true;
           return;
@@ -683,6 +875,7 @@ class CursorResumeCheckpointSession implements AgentRunSession {
     let pause: "waiting_user" | "waiting_approval" | null = null;
     let pausedCall: VdtGatewayToolCall | null = null;
     for (const call of batch.calls) {
+      this.#counters.toolCallCount += 1;
       this.#activeToolCall = {
         externalCallId: call.externalCallId,
         toolName: call.toolName,
@@ -832,4 +1025,14 @@ export class CursorResumeCheckpointEngine implements ExternalCliAgentEngine {
       "Cursor checkpoint/resume is an unverified default-off canary and has no public fallback authority."
     );
   }
+}
+
+export function createCursorResumeCheckpointSessionMissingPendingDeltaForTests(input: {
+  binding: AgentSessionBinding;
+  transport: CursorResumeCheckpointTransport;
+  environment: CursorResumeCheckpointEnvironment;
+  host: AgentEngineHost;
+  allowedToolNames?: readonly string[];
+}): AgentRunSession {
+  return CursorResumeCheckpointSession.createMissingPendingDeltaForTests(input);
 }

@@ -53,6 +53,16 @@ describe("agent runs runtime research tools", () => {
     expect(JSON.stringify(status)).not.toContain(secret);
   });
 
+  it("reports an unconfigured research provider without inventing a silent success", () => {
+    const status = resolveAgentResearchStatusFromEnv({
+      VDT_RESEARCH_PROVIDER: "noop"
+    });
+    expect(status).toEqual({
+      providerConfigured: false,
+      providerId: "noop"
+    });
+  });
+
   it("does not open SQLite until the first persistence operation", () => {
     const databaseFactory = vi.fn(() => {
       throw new VdtStorageError(

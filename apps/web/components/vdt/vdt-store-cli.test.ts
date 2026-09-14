@@ -1970,6 +1970,41 @@ describe("vdt-store generate activity", () => {
     expect(state.generateActivity?.summary).toBe("Validation result: Graph validation passed.");
   });
 
+  it("keeps recovery_required as a cancellable paused run instead of a terminal error", () => {
+    useVdtStudioStore.setState({
+      generateActivity: undefined,
+      activeAgentRunId: undefined,
+      agentRun: undefined
+    });
+    useVdtStudioStore.getState().applyAgentGraphPatch(runtimeSnapshotFixture({
+      runId: "agent-run-recovery",
+      status: "recovery_required",
+      phase: "reporting",
+      completedAt: undefined,
+      retryableError: {
+        code: "RECOVERY_REQUIRED",
+        message: "Recover this run from the last durable checkpoint.",
+        retryCount: 0,
+        createdAt: "2026-06-24T10:00:05.000Z"
+      },
+      publicStatus: {
+        phase: "retryable_error",
+        message: "Recover this run from the last durable checkpoint.",
+        updatedAt: "2026-06-24T10:00:05.000Z"
+      }
+    }) as VdtAgentRunSnapshot);
+
+    const state = useVdtStudioStore.getState();
+    expect(state.generateActivity).toMatchObject({
+      status: "recovery_required",
+      canCancel: true,
+      completedAt: undefined
+    });
+    expect(state.generateActivity?.agentRun?.status).toBe("recovery_required");
+    expect(state.activeAgentRunId).toBe("agent-run-recovery");
+    expect(state.isGenerating).toBe(false);
+  });
+
   it("stores agent runtime snapshots in chat history using the first user message as the title", () => {
     const runId = "agent-run-history";
     useVdtStudioStore.getState().applyAgentGraphPatch(runtimeSnapshotFixture({

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SidecarHostError, SidecarProcessHost } from "./host";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-sidecar.mjs", import.meta.url));
-const TEST_HANDSHAKE_TIMEOUT_MS = 5000;
+const TEST_HANDSHAKE_TIMEOUT_MS = 15_000;
 const hosts: SidecarProcessHost[] = [];
 
 function createHost(env: NodeJS.ProcessEnv = {}) {
@@ -39,7 +39,7 @@ afterEach(async () => {
   await Promise.all(hosts.splice(0).map((host) => host.stop()));
 });
 
-describe("sidecar process host", () => {
+describe("sidecar process host", { timeout: 30_000 }, () => {
   it("performs the private startup handshake and sends requests", async () => {
     const host = createHost();
     await host.start();

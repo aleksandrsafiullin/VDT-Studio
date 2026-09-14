@@ -81,7 +81,8 @@ const questionEventSchema = z.object({
   payload: z.object({
     questionSetId: safeIdSchema,
     checkpointId: safeIdSchema,
-    questions: z.array(agentQuestionSchema.strict()).min(1).max(5)
+    questions: z.array(agentQuestionSchema.strict()).min(1).max(5),
+    droppedQuestionKeysSummary: z.string().max(500).optional()
   }).strict()
 }).strict();
 

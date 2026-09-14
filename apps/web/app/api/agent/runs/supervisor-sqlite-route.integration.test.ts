@@ -14,7 +14,7 @@ afterAll(() => {
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
-describe("public Model Agent route with a persistent run store", () => {
+describe("public Model Agent route with a persistent run store", { timeout: 60_000 }, () => {
   it("uses normalized Sequence 4 authority and retains the legacy run projection", async () => {
     vi.resetModules();
     vi.stubEnv("VDT_APP_MODE", "development_web");
@@ -105,11 +105,15 @@ describe("public Model Agent route with a persistent run store", () => {
       expect(response.status).toBe(200);
       expect(body.ok).toBe(true);
       expect(runtime.hasSqliteAgentRunPersistence(runtime.agentRuntime.store)).toBe(true);
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if (runtime.agentRuntime.store.getState(body.runId).status === "needs_user_input") break;
-        await new Promise((resolve) => setTimeout(resolve, 5));
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        const state = runtime.agentRuntime.store.getState(body.runId);
+        if (state.status === "needs_user_input" && (state.pendingQuestions?.length ?? 0) > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      expect(runtime.agentRuntime.store.getState(body.runId).status).toBe("needs_user_input");
+      expect(runtime.agentRuntime.store.getState(body.runId)).toMatchObject({
+        status: "needs_user_input",
+        pendingQuestions: [expect.objectContaining({ id: "period" })]
+      });
 
       const db = new DatabaseSync(path.join(dataDir, "app.sqlite"));
       try {

@@ -102,9 +102,11 @@ platform. Version or catalog drift fails closed until requalification.
 
 External execution uses a private empty workspace outside the repository and
 SQLite paths. Its only product capability is the per-run VDT Gateway bridge.
-Shell, filesystem, Git, WebFetch, foreign MCP servers, project instructions,
-subagents and provider approval requests are denied. An attempted use is a
-`SECURITY_BOUNDARY_BREACH`, not an approval opportunity or fallback trigger.
+Shell, filesystem, Git, WebFetch/HTTP fetch, foreign MCP servers, project
+instructions, subagents and provider approval requests are denied. Native web
+search is permitted (see the 2026-09-14 amendment). An attempted use of a
+denied capability is a `SECURITY_BOUNDARY_BREACH`, not an approval opportunity
+or fallback trigger.
 
 Cursor is the first target adapter. ACP/native integration remains a canary
 until adversarial qualification proves the boundary. A resume/checkpoint
@@ -246,6 +248,31 @@ explicitly incomplete:
   that the existing Cursor subscription login is unavailable in the required
   private HOME; weakening that boundary or labelling the checkpoint adapter
   `hard_verified` without evidence is not an admissible workaround.
+
+## Amendment 2026-09-14 — native web search
+
+Codex `exec` JSONL exposes native `web_search` even when VDT does not pass
+`--search` and does pass `--ignore-user-config`. Config toggles such as
+`-c tools.web_search=false` do not suppress it. `--search` only forces search
+on when product `researchMode` is `on`; it is not a disable switch, and
+`--no-search` is not a valid Codex flag.
+
+Native web search (`web_search` stream items on Codex; Cursor web-search tool
+calls on the checkpoint and ACP paths) is therefore no longer a
+`SECURITY_BOUNDARY_BREACH`. Shell execution, file changes, collaboration
+tools, foreign MCP tool calls, WebFetch/HTTP fetch, the read-only sandbox,
+private empty workspace, and forbidden roots are unchanged. Attempted use of
+those remains a `SECURITY_BOUNDARY_BREACH`.
+
+Each allowed native search is recorded on the run (count and query text when
+the stream carries it) as a visible runtime notice, not only a diagnostics
+accordion entry. Numbers taken from native search must use existing
+`valueStatus default_assumption` with `valueSource.sourceTier=native_web_search`;
+they are neither `user_provided_value` nor `research.search_web` citations.
+
+Residual risks: search queries are composed by the model and may carry project
+data to the search provider; native results have no auditable citation
+pipeline because they bypass `research.search_web`.
 
 ## Relationship To Earlier Decisions
 

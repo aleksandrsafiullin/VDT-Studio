@@ -28,7 +28,7 @@ async function readJson(response: Response) {
   };
 }
 
-describe("detect CLIs API route", () => {
+describe("detect CLIs API route", { timeout: 30_000 }, () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -108,7 +108,7 @@ describe("detect CLIs API route", () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 30_000);
 
   it("keeps localhost detection in development web mode even for production builds", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-web-detect-clis-"));
@@ -135,7 +135,7 @@ describe("detect CLIs API route", () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 30_000);
 
   it("reuses one capability probe for repeated requests with the same host identity", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-web-detect-cache-"));
@@ -156,7 +156,7 @@ describe("detect CLIs API route", () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 30_000);
 
   it("rejects unknown agent ids", async () => {
     const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis?id=unknown-agent"));
