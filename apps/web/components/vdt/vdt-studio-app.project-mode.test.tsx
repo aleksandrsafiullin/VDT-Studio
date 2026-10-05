@@ -58,7 +58,7 @@ describe("VdtStudioApp project mode", () => {
   it("shows project management without VDT editor surfaces", () => {
     const html = renderToStaticMarkup(<VdtStudioApp projectId="project_mode_test" />);
 
-    expect(html).toContain('data-testid="workspace-mode-project"');
+    expect(html).toContain('data-testid="workspace-home"');
     expect(html).toContain('data-testid="workspace-mode-vdt"');
     expect(html).toContain("disabled");
     expect(html).toContain("Project management");

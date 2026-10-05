@@ -28,7 +28,7 @@ No credentialed live-provider run passed during this review. Cursor and Codex ag
 ## Implemented Alpha Foundations
 
 - Project/VDT workspace, local SQLite metadata and hashed revision files.
-- Canvas editing, basic arithmetic formulas, scenarios, trace and JSON/Markdown/SVG export.
+- Canvas editing, basic arithmetic formulas, scenarios, trace and JSON/Markdown/editable Excel export with Source inputs, compact selected/scratch scenario analysis and matching VDT Potential. Workbook values retain full precision with a maximum two-decimal display and space-separated thousands (CLI: JSON/Markdown).
 - Bounded model-provider contracts and local output validation.
 - Real VDT agent decision/tool/feedback loop, skills and run events.
 - Research policy and search provider adapters.

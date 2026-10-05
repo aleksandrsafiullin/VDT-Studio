@@ -2,18 +2,19 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { ArrowLeft, Download, FileImage, FileJson, Folder, GitBranch, Route, ShieldCheck, Sparkles, Upload } from "lucide-react";
+import { ArrowLeft, Download, FileJson, FileSpreadsheet, Folder, GitBranch, Route, ShieldCheck, Sparkles, Upload } from "lucide-react";
 import {
   calculateGraph,
+  EXCEL_MIME_TYPE,
+  exportProjectExcel,
   exportProjectJson,
   exportProjectMarkdown,
-  exportProjectSvg,
   importProjectJson,
   validateGraph
 } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
-import { downloadTextFile } from "@/lib/download";
+import { downloadBinaryFile, downloadTextFile, getExcelDownloadFilename } from "@/lib/download";
 import { formatNumber } from "@/lib/format";
 import { ScenarioModal } from "./scenario-modal";
 import { SettingsModal } from "./settings-modal";
@@ -39,7 +40,7 @@ export function TopBar({ projectId }: TopBarProps) {
   const openScenarioModal = useVdtStudioStore((state) => state.openScenarioModal);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scenarioModalTriggerRef = useRef<HTMLButtonElement>(null);
-  const [importError, setImportError] = useState<string>();
+  const [fileError, setFileError] = useState<string>();
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -113,9 +114,9 @@ export function TopBar({ projectId }: TopBarProps) {
     try {
       const importedProject = importProjectJson(await file.text());
       replaceProject(importedProject);
-      setImportError(undefined);
+      setFileError(undefined);
     } catch (error) {
-      setImportError(error instanceof Error ? error.message : "Project JSON could not be imported.");
+      setFileError(error instanceof Error ? error.message : "Project JSON could not be imported.");
     }
   }
 
@@ -227,15 +228,24 @@ export function TopBar({ projectId }: TopBarProps) {
               <button
                 type="button"
                 role="menuitem"
-                data-testid="export-svg"
+                data-testid="export-excel"
                 className={exportMenuItemClass}
                 onClick={() => {
-                  downloadTextFile(`${project.id}.svg`, exportProjectSvg(project), "image/svg+xml");
+                  try {
+                    downloadBinaryFile(
+                      getExcelDownloadFilename(project.name),
+                      exportProjectExcel(project, { scenarioId: activeScenarioId }),
+                      EXCEL_MIME_TYPE
+                    );
+                    setFileError(undefined);
+                  } catch (error) {
+                    setFileError(error instanceof Error ? error.message : "Excel workbook could not be exported.");
+                  }
                   setExportMenuOpen(false);
                 }}
               >
-                <FileImage className="h-4 w-4" />
-                SVG
+                <FileSpreadsheet className="h-4 w-4" />
+                Excel
               </button>
               <button
                 type="button"
@@ -258,12 +268,12 @@ export function TopBar({ projectId }: TopBarProps) {
         <SettingsModal />
         <ScenarioModal triggerRef={scenarioModalTriggerRef} />
       </div>
-      {importError ? (
+      {fileError ? (
         <div
           className="absolute right-4 top-12 z-20 max-w-[420px] rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700 shadow-sm"
           role="alert"
         >
-          {importError}
+          {fileError}
         </div>
       ) : null}
     </header>

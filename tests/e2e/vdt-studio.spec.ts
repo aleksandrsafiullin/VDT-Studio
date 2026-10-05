@@ -1,13 +1,143 @@
 import fs from "node:fs";
 import path from "node:path";
+import { inflateRawSync } from "node:zlib";
 import { expect, test, type Page } from "@playwright/test";
+import {
+  calculateGraph,
+  calculateIsolatedRootEffect,
+  calculateScenario,
+  calculateScenarioGraph,
+  calculateScenarioMultiplicativeEffect,
+  getExcelNodeCells,
+  getExcelWorkbookCells,
+  importProjectJson
+} from "../../packages/vdt-core/src/index";
 
 const E2E_PROJECT_ID = "project_e2e_production_volume";
 const E2E_VDT_ID = "vdt_e2e_production_volume";
+const EXCEL_EXPORT_TEST_TITLE = "downloads editable Excel, JSON and Markdown exports without session credentials";
 const productionVolumeExamplePath = path.join(process.cwd(), "examples", "production-volume.json");
 
 function loadProductionVolumeExample() {
   return JSON.parse(fs.readFileSync(productionVolumeExamplePath, "utf8")) as Record<string, unknown>;
+}
+
+function readXlsxXmlEntries(bytes: Buffer) {
+  // Read ZIP's central directory so the assertions inspect the actual browser
+  // download, independent of the workbook writer's serializer.
+  let directoryEnd = bytes.length - 22;
+  while (directoryEnd >= 0 && bytes.readUInt32LE(directoryEnd) !== 0x06054b50) directoryEnd -= 1;
+  expect(directoryEnd, "download contains a ZIP end-of-directory record").toBeGreaterThanOrEqual(0);
+  const entryCount = bytes.readUInt16LE(directoryEnd + 10);
+  let cursor = bytes.readUInt32LE(directoryEnd + 16);
+  const entries = new Map<string, string>();
+  for (let index = 0; index < entryCount; index += 1) {
+    expect(bytes.readUInt32LE(cursor)).toBe(0x02014b50);
+    const method = bytes.readUInt16LE(cursor + 10);
+    const compressedSize = bytes.readUInt32LE(cursor + 20);
+    const filenameLength = bytes.readUInt16LE(cursor + 28);
+    const extraLength = bytes.readUInt16LE(cursor + 30);
+    const commentLength = bytes.readUInt16LE(cursor + 32);
+    const localOffset = bytes.readUInt32LE(cursor + 42);
+    const filename = bytes.subarray(cursor + 46, cursor + 46 + filenameLength).toString("utf8");
+    expect(bytes.readUInt32LE(localOffset)).toBe(0x04034b50);
+    const dataOffset = localOffset + 30 + bytes.readUInt16LE(localOffset + 26) + bytes.readUInt16LE(localOffset + 28);
+    const data = bytes.subarray(dataOffset, dataOffset + compressedSize);
+    expect([0, 8]).toContain(method);
+    if (filename.endsWith(".xml") || filename.endsWith(".rels")) {
+      entries.set(filename, (method === 8 ? inflateRawSync(data) : data).toString("utf8"));
+    }
+    cursor += 46 + filenameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+function xmlAttribute(element: string, name: string) {
+  const value = element.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1];
+  return value?.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
+function workbookWorksheets(entries: Map<string, string>) {
+  const workbook = entries.get("xl/workbook.xml")!;
+  const relationships = entries.get("xl/_rels/workbook.xml.rels")!;
+  expect(workbook).toBeDefined();
+  expect(relationships).toBeDefined();
+  const targets = new Map([...relationships.matchAll(/<Relationship\b[^>]*\/>/g)].map(([element]) => [
+    xmlAttribute(element, "Id"), xmlAttribute(element, "Target")!
+  ]));
+  return [...workbook.matchAll(/<sheet\b[^>]*\/>/g)].map(([element]) => {
+    const target = targets.get(xmlAttribute(element, "r:id"));
+    expect(target, "sheet relationship resolves to a workbook part").toBeDefined();
+    const part = target!.startsWith("/") ? target!.slice(1) : path.posix.normalize(`xl/${target}`);
+    const xml = entries.get(part);
+    expect(xml, `workbook contains sheet part ${part}`).toBeDefined();
+    return { name: xmlAttribute(element, "name")!, state: xmlAttribute(element, "state"), xml: xml! };
+  });
+}
+
+function worksheetCell(xml: string, address: string) {
+  const match = xml.match(new RegExp(`<c\\b[^>]*\\br="${address}"[^>]*>([\\s\\S]*?)<\\/c>`));
+  expect(match, `worksheet contains ${address}`).not.toBeNull();
+  return match![1]!;
+}
+
+function expectNumericFormula(xml: string, address: string, expected: number | undefined) {
+  const cell = worksheetCell(xml, address);
+  expect(cell).toContain("<f>");
+  expect(expected).toBeDefined();
+  const value = cell.match(/<v>([^<]+)<\/v>/)?.[1];
+  expect(value, `formula ${address} has a numeric cache`).toBeDefined();
+  expect(Number(value)).toBeCloseTo(expected!, 8);
+}
+
+function worksheetNumberFormat(xml: string, address: string, styles: string) {
+  const cell = xml.match(new RegExp(`<c\\b[^>]*\\br="${address}"[^>]*>`))?.[0];
+  expect(cell, `worksheet contains styled numeric cell ${address}`).toBeDefined();
+  const styleIndex = Number(xmlAttribute(cell!, "s") ?? 0);
+  const cellStyles = styles.match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/)?.[1] ?? "";
+  const style = [...cellStyles.matchAll(/<xf\b[^>]*>/g)][styleIndex]?.[0];
+  expect(style, `style ${styleIndex} is defined`).toBeDefined();
+  const formatId = xmlAttribute(style!, "numFmtId");
+  const format = [...styles.matchAll(/<numFmt\b[^>]*\/>/g)].find(([element]) => xmlAttribute(element, "numFmtId") === formatId)?.[0];
+  expect(format, `numeric cell ${address} uses an explicit display format`).toBeDefined();
+  return xmlAttribute(format!, "formatCode")!;
+}
+
+function worksheetRangeContains(ranges: string, address: string) {
+  const position = (reference: string) => {
+    const match = reference.replace(/\$/g, "").match(/^([A-Z]+)(\d+)$/)!;
+    return { column: [...match[1]!].reduce((column, letter) => column * 26 + letter.charCodeAt(0) - 64, 0), row: Number(match[2]) };
+  };
+  const cell = position(address);
+  return ranges.split(/\s+/).some((range) => {
+    const [first, last = first] = range.split(":");
+    const start = position(first!);
+    const end = position(last!);
+    return cell.column >= start.column && cell.column <= end.column && cell.row >= start.row && cell.row <= end.row;
+  });
+}
+
+function expectGroupedNumberFormat(xml: string, address: string, styles: string, prefix?: string, percent = false) {
+  const format = worksheetNumberFormat(xml, address, styles);
+  expect(format).toContain("0.00");
+  expect(format).not.toContain("General");
+  if (prefix) expect(format).toContain(`"${prefix}"`);
+  if (percent) expect(format).toContain('"%"');
+  const formatting = [...xml.matchAll(/<conditionalFormatting\b[^>]*>([\s\S]*?)<\/conditionalFormatting>/g)]
+    .find(([element]) => worksheetRangeContains(xmlAttribute(element, "sqref")!, address));
+  expect(formatting, `numeric cell ${address} has live grouping rules`).toBeDefined();
+  const differentialStyles = styles.match(/<dxfs\b[^>]*>([\s\S]*?)<\/dxfs>/)?.[1] ?? "";
+  const formats = [...differentialStyles.matchAll(/<dxf\b[^>]*>([\s\S]*?)<\/dxf>/g)].map(([, element]) => {
+    const numberFormat = element!.match(/<numFmt\b[^>]*\/>/)?.[0];
+    return numberFormat ? xmlAttribute(numberFormat, "formatCode") : undefined;
+  });
+  const rules = [...formatting![1]!.matchAll(/<cfRule\b[^>]*>([\s\S]*?)<\/cfRule>/g)];
+  const groupedFormats = rules.map(([element]) => formats[Number(xmlAttribute(element, "dxfId"))]).filter((code) => code?.includes("\\ "));
+  expect(groupedFormats.length, "grouping uses literal spaces rather than global Excel separators").toBeGreaterThan(0);
+  for (const code of [format, ...groupedFormats]) {
+    const decimalPlaces = [...code!.matchAll(/\.(0+|#+)/g)].map((match) => match[1]!.length);
+    expect(decimalPlaces.every((places) => places <= 2), `format ${code} displays at most two decimals`).toBe(true);
+  }
 }
 
 type ProjectRuntimeState = {
@@ -90,9 +220,14 @@ async function seedProductionVolumeWorkspace(page: Page) {
   }
 }
 
-async function openProductionVolumeEditor(page: Page) {
+async function openProductionVolumeEditor(page: Page, options: { viaProjectCard?: boolean } = {}) {
   await seedProductionVolumeWorkspace(page);
-  await page.goto(`/projects/${E2E_PROJECT_ID}?vdt=${E2E_VDT_ID}`);
+  if (options.viaProjectCard) {
+    await page.goto(`/projects/${E2E_PROJECT_ID}`);
+    await page.getByTestId(`project-vdt-card-${E2E_VDT_ID}`).click();
+  } else {
+    await page.goto(`/projects/${E2E_PROJECT_ID}?vdt=${E2E_VDT_ID}`);
+  }
   await expect(page.getByTestId("vdt-canvas")).toBeVisible();
 }
 
@@ -1108,7 +1243,7 @@ async function openKpiSpacingPopover(page: Page) {
   return panel;
 }
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     const capturedExports: { filename: string; type: string; text: string }[] = [];
     Reflect.set(window, "__vdtCapturedExports", capturedExports);
@@ -1119,7 +1254,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  await openProductionVolumeEditor(page);
+  await openProductionVolumeEditor(page, { viaProjectCard: testInfo.title === EXCEL_EXPORT_TEST_TITLE });
 });
 
 test("home page lists projects and opens workspace", async ({ page }, testInfo) => {
@@ -1130,7 +1265,7 @@ test("home page lists projects and opens workspace", async ({ page }, testInfo) 
   await expect(page.getByTestId(`project-card-${E2E_PROJECT_ID}`)).toBeVisible();
   await page.getByTestId(`open-project-${E2E_PROJECT_ID}`).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${E2E_PROJECT_ID}$`));
-  await expect(page.getByTestId("workspace-mode-project")).toBeVisible();
+  await expect(page.getByTestId("workspace-home")).toHaveAttribute("href", "/");
   await page.getByTestId(`project-vdt-card-${E2E_VDT_ID}`).click();
   await expect(page).toHaveURL(new RegExp(`vdt=${E2E_VDT_ID}`));
   await expect(page.getByTestId("vdt-canvas")).toBeVisible();
@@ -2203,8 +2338,16 @@ test("overrides table fits within the modal middle column", async ({ page }, tes
   expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
 });
 
-test("generates JSON and SVG export artifacts without session credentials", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "chromium", "Export artifact smoke runs on desktop viewport.");
+test(EXCEL_EXPORT_TEST_TITLE, async ({ page }, testInfo) => {
+  await openScenarioModal(page);
+  if (testInfo.project.name === "chromium") {
+    await page.getByTestId("new-scenario").click();
+    await expect(page.getByTestId("main-scenario-checkbox")).not.toBeChecked();
+    await fillScenarioOverride(page, "unplanned_downtime", "20");
+    await fillScenarioOverride(page, "nominal_rate", "250.123456");
+  }
+  const selectedScenarioId = await page.getByTestId("scenario-select").inputValue();
+  await closeScenarioModal(page);
 
   await openSettingsModal(page);
   await page.getByTestId("execution-mode-tab-byok").click();
@@ -2212,14 +2355,18 @@ test("generates JSON and SVG export artifacts without session credentials", asyn
   await page.getByTestId("byok-api-key").fill("session-only-export-key");
   await page.keyboard.press("Escape");
 
-  await expect(page.getByRole("status", { name: "Model graph valid" })).toBeVisible();
+  await expect(page.getByTestId("graph-validation-status")).toHaveAttribute("aria-label", "Model graph valid");
   await expect(page.getByTestId("export-menu-button")).toBeVisible();
   await page.getByTestId("export-menu-button").click();
+  await expect(page.getByRole("menuitem", { name: "Excel", exact: true })).toBeVisible();
+  await expect(page.getByTestId("export-svg")).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /SVG|PNG|image/i })).toHaveCount(0);
   await page.getByTestId("export-json").click();
   await expect
     .poll(() => page.evaluate(() => Reflect.get(window, "__vdtCapturedExports")?.length ?? 0))
     .toBeGreaterThanOrEqual(1);
   const jsonArtifact = await page.evaluate(() => Reflect.get(window, "__vdtCapturedExports")?.[0]);
+  const exportedProject = importProjectJson(jsonArtifact.text);
   const json = JSON.parse(jsonArtifact.text) as { rootNodeId?: string };
   expect(jsonArtifact.type).toBe("application/json");
   expect(json.rootNodeId).toBe("production_volume");
@@ -2233,21 +2380,112 @@ test("generates JSON and SVG export artifacts without session credentials", asyn
     .not.toContain("session-only-export-key");
 
   await page.getByTestId("export-menu-button").click();
-  await page.getByTestId("export-svg").click();
-  await expect
-    .poll(() => page.evaluate(() => Reflect.get(window, "__vdtCapturedExports")?.length ?? 0))
-    .toBeGreaterThanOrEqual(2);
-  const svgArtifact = await page.evaluate(() => Reflect.get(window, "__vdtCapturedExports")?.[1]);
-  expect(svgArtifact.type).toBe("image/svg+xml");
-  expect(svgArtifact.text).toContain("<svg");
-  expect(svgArtifact.text).toContain("Production Volume Driver Model");
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByTestId("export-excel").click()
+  ]);
+  expect(download.suggestedFilename()).toBe(`${exportedProject.name}.xlsx`);
+  const workbookPath = testInfo.outputPath("vdt-export.xlsx");
+  await download.saveAs(workbookPath);
+  const entries = readXlsxXmlEntries(fs.readFileSync(workbookPath));
+  expect(entries.get("[Content_Types].xml")).toContain("spreadsheetml.sheet.main+xml");
+  const worksheets = workbookWorksheets(entries);
+  expect(worksheets.map((sheet) => sheet.name)).toEqual(["Scenario Mode", "VDT", "Source", "Guide", "_Scenario Calc"]);
+  expect(entries.get("xl/workbook.xml")).toMatch(/<workbookView\b[^>]*activeTab="0"/);
+  expect(worksheets.slice(0, 4).every((sheet) => sheet.state !== "hidden")).toBe(true);
+  expect(worksheets[4]!.state).toBe("hidden");
+  const worksheet = worksheets.find((sheet) => sheet.name === "VDT")!.xml;
+  expect(worksheet).toContain("Production Volume");
+  const styles = entries.get("xl/styles.xml")!;
+  expect(styles).toContain("<borders");
+  expect(styles).toContain("<numFmts");
+  for (const column of [2, 3, 5, 6]) {
+    expect(worksheet).toContain(`<col min="${column}" max="${column}" width="3"`);
+  }
+  const connectorCells = [...worksheet.matchAll(/<c r="[BCEF]\d+" s="[567]">([\s\S]*?)<\/c>/g)];
+  expect(connectorCells.length).toBeGreaterThan(0);
+  for (const cell of connectorCells) expect(cell[1]).toBe("");
+  const cells = getExcelNodeCells(exportedProject);
+  const rootCells = cells[exportedProject.rootNodeId]!;
+  const baseline = calculateGraph(exportedProject);
+  expectNumericFormula(worksheet, rootCells.baselineCell, baseline.rootValue);
+  const mainScenario = exportedProject.scenarios.find((scenario) => scenario.isMain);
+  const selectedScenario = exportedProject.scenarios.find((scenario) => scenario.id === selectedScenarioId);
+  expect(selectedScenario).toBeDefined();
+  if (testInfo.project.name === "chromium") expect(selectedScenario?.isMain).not.toBe(true);
+  const potential = calculateScenarioGraph(exportedProject, selectedScenario!);
+  expectNumericFormula(worksheet, rootCells.potentialCell, potential.rootValue);
+  expect(new Set(Object.values(cells).map((cell) => cell.column))).toEqual(new Set([1, 4, 7]));
+  for (const treeCells of Object.values(cells)) {
+    expectGroupedNumberFormat(worksheet, treeCells.baselineCell, styles, "Base: ");
+    expectGroupedNumberFormat(worksheet, treeCells.potentialCell, styles, "Potential: ");
+  }
+
+  const workbookCells = getExcelWorkbookCells(exportedProject, { scenarioId: selectedScenarioId });
+  const source = worksheets.find((sheet) => sheet.name === "Source")!.xml;
+  const sourceTable = entries.get("xl/tables/table1.xml")!;
+  expect(source).toContain('<tableParts count="1">');
+  expect(sourceTable).toContain('name="SourceInputs"');
+  expect([...sourceTable.matchAll(/<tableColumn\b[^>]*\bname="([^"]+)"/g)].map((match) => match[1]))
+    .toEqual(["KPI", "Value", "Source", "Comment"]);
+  for (const [nodeId, sourceCell] of Object.entries(workbookCells.source)) {
+    expect(worksheetCell(source, sourceCell.valueCell)).toContain(`<v>${baseline.values[nodeId]}</v>`);
+    expect(worksheetCell(worksheet, cells[nodeId]!.baselineCell)).toContain("SourceInputs[Value]");
+    expectGroupedNumberFormat(source, sourceCell.valueCell, styles);
+  }
+
+  const scenario = worksheets.find((sheet) => sheet.name === "Scenario Mode")!.xml;
+  const calculation = worksheets.find((sheet) => sheet.name === "_Scenario Calc")!.xml;
+  expect(scenario).toContain(selectedScenario!.name);
+  for (const instruction of ["Edit Scenario numbers", "Blank Scenario =", "Total change minus the sum", "Tree Potential uses"]) {
+    expect(scenario).not.toContain(instruction);
+  }
+  const totals = workbookCells.scenario.totals;
+  const residualRow = totals.multiplicativeEffectCell.match(/\d+$/)![0];
+  const residualRowXml = scenario.match(new RegExp(`<row\\b[^>]*\\br="${residualRow}"[^>]*>([\\s\\S]*?)<\\/row>`))?.[1];
+  expect(residualRowXml, "Multiplicative effect label and value share a row").toContain("Multiplicative effect");
+  expect(residualRowXml).toContain(`r="${totals.multiplicativeEffectCell}"`);
+  const result = calculateScenario(exportedProject, selectedScenario!);
+  expectNumericFormula(scenario, totals.baselineCell, result.baselineValue);
+  expectNumericFormula(scenario, totals.scenarioCell, result.scenarioValue);
+  expectNumericFormula(scenario, totals.absoluteChangeCell, result.absoluteChange);
+  expectNumericFormula(scenario, totals.percentageChangeCell, result.percentageChange);
+  expectNumericFormula(scenario, totals.multiplicativeEffectCell, calculateScenarioMultiplicativeEffect(exportedProject, selectedScenario!).multiplicativeEffect);
+  for (const [name, address] of Object.entries(totals)) {
+    expectGroupedNumberFormat(scenario, address, styles, undefined, name === "percentageChangeCell");
+  }
+  expectNumericFormula(calculation, workbookCells.scenario.calculation.selectedRootCell, result.scenarioValue);
+  for (const [nodeId, driver] of Object.entries(workbookCells.scenario.drivers)) {
+    const override = selectedScenario!.overrides.find((entry) => entry.nodeId === nodeId);
+    const value = override?.value ?? baseline.values[nodeId]!;
+    if (!override) {
+      expect(worksheetCell(scenario, driver.scenarioCell)).toContain(`<f>${driver.baselineCell}</f>`);
+    }
+    for (const address of [driver.baselineCell, driver.scenarioCell, driver.effectCell]) {
+      expectGroupedNumberFormat(scenario, address, styles);
+    }
+    expectNumericFormula(scenario, driver.effectCell, calculateIsolatedRootEffect(exportedProject, nodeId, value));
+    expectNumericFormula(calculation, driver.isolatedRootCell!, calculateGraph(exportedProject, { overrides: [{ nodeId, value }] }).rootValue);
+  }
+  if (testInfo.project.name === "chromium") {
+    expect(result.scenarioValue).not.toBe(calculateScenarioGraph(exportedProject, mainScenario!).rootValue);
+    const preciseInput = worksheetCell(scenario, workbookCells.scenario.drivers.nominal_rate!.scenarioCell);
+    expect(preciseInput).toContain("<v>250.123456</v>");
+  }
+
+  const workbookXml = [...entries.values()].join("\n");
+  expect(workbookXml).not.toContain("session-only-export-key");
+  for (const field of ["apiKey", "localApiKey", "pairingToken", "runnerPairingToken", "accessToken", "providerToken"]) {
+    expect(workbookXml).not.toContain(field);
+  }
+  await expect(page.getByRole("menu", { name: "Export options" })).toHaveCount(0);
 
   await page.getByTestId("export-menu-button").click();
   await page.getByTestId("export-markdown").click();
   await expect
     .poll(() => page.evaluate(() => Reflect.get(window, "__vdtCapturedExports")?.length ?? 0))
-    .toBeGreaterThanOrEqual(3);
-  const markdownArtifact = await page.evaluate(() => Reflect.get(window, "__vdtCapturedExports")?.[2]);
+    .toBeGreaterThanOrEqual(2);
+  const markdownArtifact = await page.evaluate(() => Reflect.get(window, "__vdtCapturedExports")?.[1]);
   expect(markdownArtifact.type).toBe("text/markdown");
 });
 

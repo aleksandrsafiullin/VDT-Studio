@@ -31,7 +31,7 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
   const workspace = useVdtStudioStore((state) => state.workspace);
   const setPanelWidth = useVdtStudioStore((state) => state.setPanelWidth);
   const resumePersistedAgentRun = useVdtStudioStore((state) => state.resumePersistedAgentRun);
-  const { openWorkspaceVdt, showProjectWorkspace } = useWorkspaceRouteSync(projectId);
+  const { openWorkspaceVdt } = useWorkspaceRouteSync(projectId);
   const isDesktop = useDesktopLayout();
   const isProjectMode = workspace.activePanel === "project" || !hasActiveWorkspaceVdt(workspace);
   const leftCollapsed = !isProjectMode && isDesktop && ui.leftPanelCollapsed;
@@ -69,7 +69,7 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
       <TopBar projectId={projectId} />
       <div className={`vdt-workspace-grid relative grid min-h-0 flex-1 grid-cols-1 ${isProjectMode ? "vdt-workspace-grid-project" : ""}`}>
         <div className="min-h-0 lg:block">
-          <WorkspaceModeRail appleStyle={isProjectMode} onProjectMode={showProjectWorkspace} />
+          <WorkspaceModeRail appleStyle={isProjectMode} />
         </div>
         <div className="min-h-0 lg:block">
           {isProjectMode ? <ProjectManagementPanel urlScopedProjectId={projectId} /> : <SetupRail />}

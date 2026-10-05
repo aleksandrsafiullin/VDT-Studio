@@ -8,9 +8,9 @@ This roadmap is the operational summary of the authoritative [`VDT_STUDIO_CORREC
 
 Implemented at alpha level:
 
-- project/VDT workspace and local SQLite revision storage;
+- project/VDT workspace and local SQLite revision storage, including a rail Home link, editor back navigation to the project workspace and browser Back/Forward synchronization;
 - editable left-to-right canvas, basic formula engine, scenarios and trace;
-- JSON/Markdown/SVG export and product CLI;
+- JSON/Markdown/editable Excel export and product CLI (JSON/Markdown);
 - bounded provider contracts, local runner and desktop private-pipe sidecar foundation;
 - provider-owned model discovery for supported subscription CLIs and BYOK OpenAI-compatible, Anthropic and Gemini APIs, with explicit manual fallback and no static availability catalog;
 - managed Cursor CLI authentication through a fixed manifest command, provider browser confirmation, post-login verification and automatic rescan;
@@ -171,8 +171,11 @@ Priority: **P2**. Depends on a certified Wave 5.
 3. Digital PDF tables.
 4. Scanned PDF/OCR with confidence and mandatory reconciliation.
 5. Database/API connectors, scheduled refresh and multi-file joins.
-6. PNG canvas export.
-7. Excel calculation model, PowerPoint summary and PDF report output.
+6. PowerPoint summary and PDF report output.
+
+Editable Excel calculation export is implemented independently of this wave. It replaces image export with a full left-to-right VDT workbook, live Baseline/selected-scenario Potential formulas and native cell-border connectors. The filename follows the VDT display name. Visible sheets are ordered Scenario Mode, VDT, Source, Guide. Numbers display at most two decimals and space-separated thousands while preserving full calculation precision. An editable Source table owns numeric inputs, and compact Scenario Mode mirrors selected-scenario totals, isolated input-driver effects and the interaction residual with live formulas. Unconfigured scenario values link to the same-row Baseline cells; changing scenario values updates VDT Potential, including non-main scenarios and scratch analysis. Workbook import/synchronization and external source refresh remain outside the implemented export scope.
+
+Scenario Mode parity boundaries remain explicit in the product contract: duplicate imported overrides normalize to one final value per driver, and unchanged/scratch analysis has a zero residual rather than an omitted readout. The workbook does not reproduce the application's duplicate-count interaction artifact.
 
 Each input/output adapter requires its own conformance corpus and explicit unsupported behavior.
 

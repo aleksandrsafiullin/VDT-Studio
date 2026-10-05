@@ -6,16 +6,22 @@ VDT Studio is an AI-first, local-first workspace for building editable Value Dri
 
 ## Current Product Surface
 
-- Project and VDT workspace backed by local SQLite metadata and revision files.
+- Project and VDT workspace backed by local SQLite metadata and revision files. The workspace rail's Home link opens the home page; the editor header's back link opens the project workspace. Navigation respects browser Back/Forward.
 - Left-to-right editable factor-tree canvas with node review and change-set previews.
 - Deterministic formula evaluation, scenario calculation and calculation trace.
 - In-product agent runtime with bounded tools, skills, structured events and a calculation-aware finish gate.
 - BYOK API providers, fixed local HTTP backends and reviewed subscription-CLI adapters.
 - Standalone paired local runner for development and a private-pipe desktop sidecar foundation.
-- JSON, Markdown and deterministic SVG export.
+- JSON, Markdown and editable Excel (`.xlsx`) export.
 - Experimental raw-data discovery for CSV/TSV, XLS/XLSX, JSON/NDJSON and Parquet.
 
 Raw-data discovery currently proposes semantic models and metadata mappings. Its narrow incoming-KPI path can also calculate a materialized baseline for each detected category—for example, downtime hours by reason—when one complete parsed table contains a confirmed numeric measure. General mapping execution, refresh, reconciliation and production-trusted KPI baselines are not implemented. Web research currently returns search results but does not yet provide an auditable benchmark evidence pipeline. These limitations are tracked in [Data ingestion](docs/DATA_INGESTION.md) and the [roadmap](docs/ROADMAP.md).
+
+`Export -> Excel` downloads `<VDT display name>.xlsx`, preserving spaces and Unicode while replacing unsafe filename characters. The visible sheets are ordered `Scenario Mode`, `VDT`, `Source`, `Guide`. Numbers display at most two decimal places with spaces between thousands; their full precision remains available to formulas. The full VDT uses native spreadsheet cells and formulas. Each KPI is a vertical block containing its name and unit, Baseline and Potential. Parents sit to the left of their children; two narrow blank columns between levels contain cell-border connectors.
+
+`Scenario Mode` mirrors the selected application scenario (or the first scenario if none is selected) in a compact view of baseline/scenario totals, absolute/percentage change, input-driver effects and the multiplicative effect. Unconfigured scenario values initially link to the Baseline cell in the same row; enter a number to override them. Scenario edits recalculate the totals, effects and every VDT Potential value, including for a non-main scenario. Without configured scenarios, the same controls provide scratch analysis and update Potential.
+
+The `Source` sheet contains an editable Excel table with `KPI`, `Value`, `Source`, `Comment`. Change its numeric Value cells to recalculate the tree and scenario analysis. Keep KPI labels unchanged; sorting and filtering are supported. `Guide` explains inputs, formulas and unavailable calculations. Source/Comment are workbook metadata and do not refresh external data. Excel import, synchronization and image export are not provided by the application; the CLI retains JSON and Markdown output.
 
 The active corrective program is
 [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](docs/VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md).

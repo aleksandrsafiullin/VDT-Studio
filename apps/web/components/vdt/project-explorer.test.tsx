@@ -18,7 +18,7 @@ describe("ProjectExplorer", () => {
     expect(html).toContain('data-testid="project-explorer-comparisons"');
     expect(html).toContain('data-testid="project-explorer-files"');
     expect(html).toContain("1 snapshot baseline");
-    expect(html).toContain("JSON, SVG, and Markdown exports");
+    expect(html).toContain("JSON, Excel, and Markdown exports");
   });
 
   it("renders storage-backed workspace counts when provided", () => {

@@ -92,7 +92,7 @@ export function ProjectExplorer({ project, generateActivity, storedSummary: init
     {
       id: "files",
       label: "Files / exports",
-      detail: "JSON, SVG, and Markdown exports",
+      detail: "JSON, Excel, and Markdown exports",
       Icon: FileJson
     }
   ];

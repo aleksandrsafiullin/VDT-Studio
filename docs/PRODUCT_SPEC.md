@@ -28,6 +28,7 @@ The root KPI appears on the left and drivers expand to the right. The canvas is 
 - Persist local metadata in SQLite and VDT snapshots as hashed revision files.
 - List, load and compare saved revisions.
 - Preserve user work across reloads while avoiding silent conflict or stale overwrite.
+- Open the home page (`/`) using the workspace rail's Home link, and return from the VDT editor to its project workspace using the header back link; browser Back/Forward reconciles the selected VDT without repeated redirects.
 
 Current status: implemented as an alpha foundation. W0.1 atomic revision conflict handling is implemented: manual/create/agent writers use one strict CAS/idempotency boundary and an exclusive-create no-clobber final path. Conflicts preserve local unsaved work, and failed auto-save blocks navigation. A single durable source-of-truth policy and metadata/revision ownership remain W0.5 blockers; Windows durability is unverified.
 
@@ -105,10 +106,20 @@ Current status: implemented at alpha levels that vary by provider. Canonical rel
 ### Export
 
 - JSON project export/import.
-- Markdown and deterministic SVG export.
+- Markdown project export.
+- Editable Excel workbook export from the application, replacing image export.
+- Download `<VDT display name>.xlsx`, preserving ordinary spaces and Unicode. Replace filesystem-unsafe characters, remove trailing Windows dots/spaces, protect reserved Windows filenames and use a fallback for empty/invalid names. JSON and Markdown download naming is unchanged.
+- Export the complete graph, including shared and disconnected KPIs, once per KPI; the selected/expanded canvas view does not limit output.
+- Lay out parent KPIs on the left and children on the right. Each KPI occupies three vertically stacked cells in one column: name with unit, numeric Baseline, numeric Potential. Same-level KPIs share a column at separate rows. Exactly two narrow empty columns separate levels, with connectors drawn using native cell borders.
+- Translate supported VDT formulas into live Excel formulas referencing stable KPI cell mappings. Editing numeric inputs recalculates dependent KPIs. VDT Potential always uses the scenario controls in the exported `Scenario Mode`, including explicit zero overrides and fixed-in-scenario rules. This applies to selected non-main scenarios and scratch analysis. Missing inputs and invalid calculations remain unavailable rather than becoming zero.
+- Display numeric values with space-separated thousands and at most two decimal places, retaining full precision in stored values and formulas. Magnitudes at least `1e48` use scientific notation with two decimal places. Percentage values retain the application's 0–100 scale with a literal percent-sign format.
+- Provide a native Excel table on `Source` with exactly `KPI`, `Value`, `Source`, `Comment`. Formula-free KPI values of every node type are editable here; VDT Baseline cells link to these authoritative values. Unique KPI labels are lookup keys and must remain unchanged; sorting/filtering preserves the bindings. Preserve available provenance as editable metadata without introducing external data refresh connections.
+- Provide a compact `Scenario Mode` for the selected application scenario, falling back to the first scenario, or scratch analysis when no scenarios exist. Mirror Total BASELINE, Total SCENARIO, absolute and percentage changes, editable overridable input/data-mapped drivers, isolated root effects and Multiplicative effect (total root change minus summed isolated driver effects). Keep the Multiplicative effect label and value on the same row; explanatory instructions belong in `Guide`. Unconfigured scenario cells link directly to the Baseline cell on the same sheet and row. Replacing that formula with a number creates an override; a default reference on a formula-bearing driver preserves its absence of an override so upstream scenario changes still recalculate it. Preserve configured calculated overrides separately. Scenario edits recalculate totals/effects and VDT Potential through native formulas.
 - Product CLI validation, calculation and export.
 
-Current status: implemented. PNG, Excel, PowerPoint and PDF outputs are planned.
+Current status: JSON, Markdown and Excel are implemented. Visible Excel sheets are ordered `Scenario Mode`, `VDT`, `Source`, `Guide`, followed by the hidden `_Scenario Calc` calculation sheet. The workbook excludes session credentials. It is a standalone calculation copy, with no workbook import/synchronization. The CLI exports JSON and Markdown. PowerPoint and PDF outputs remain planned.
+
+Known Scenario Mode parity boundary: duplicate imported overrides use the last value once per displayed driver; the workbook does not reproduce repeated-override counting in the application's interaction helper. An unchanged scenario shows zero driver effects and a zero interaction residual, including scratch mode; the application may omit that readout when no overrides exist. These behaviors are explained in Guide.
 
 ## Correctness Rules
 

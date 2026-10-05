@@ -16,6 +16,7 @@ export * from "./scenario/scenario";
 export * from "./scenario/sensitivity";
 export * from "./comparison/compare";
 export * from "./export/export";
+export * from "./export/excel";
 export * from "./examples/production-volume";
 export * from "./versioning/snapshot";
 export * from "./utils";
