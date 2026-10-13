@@ -11,7 +11,7 @@
     "@vdt-studio/model-bridge": "workspace:*",
     "@vdt-studio/vdt-agent": "workspace:*",
     "@vdt-studio/vdt-core": "workspace:*",
-    "zod": "^3.25.64"
+    "zod": "^4.4.3"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
