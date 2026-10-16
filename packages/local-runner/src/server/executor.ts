@@ -17,6 +17,7 @@ import {
   type VdtSchemaId
 } from "@vdt-studio/model-bridge";
 import type { BackendManifest, CompletionRequest } from "../cli/types";
+import { selectCodexExecutable } from "@vdt-studio/model-bridge/node";
 
 const advisoryStub = Object.freeze({
   assumptions: [] as string[],
@@ -191,9 +192,7 @@ const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
     type: "tool_call",
     toolName: "table.profile",
     rationale: "Profile the detected table before proposing semantic roles.",
-    input: {
-      tableId: "table_1"
-    }
+    input: {}
   },
   "analyze-raw-dataset-v1": {
     datasetId: "mock_dataset",
@@ -493,6 +492,11 @@ async function defaultResolveExecutable(manifest: BackendManifest, env: NodeJS.P
   const cli = manifest.cli;
   if (!cli) throw Object.assign(new Error("Backend has no executable manifest."), { code: "INVALID_MANIFEST" });
   const pathValue = env.PATH ?? "";
+  if (manifest.id === "codex_subscription") {
+    const selected = await selectCodexExecutable({ path: pathValue, env });
+    if (selected) return selected.executable;
+    throw Object.assign(new Error("Codex CLI executable was not found on a safe absolute PATH entry."), { code: "BACKEND_NOT_INSTALLED" });
+  }
   for (const alias of cli.executableAliases) {
     if (alias.includes("\0") || path.basename(alias) !== alias || alias === "." || alias === "..") continue;
     for (const directory of pathValue.split(path.delimiter).filter((entry) => path.isAbsolute(entry))) {

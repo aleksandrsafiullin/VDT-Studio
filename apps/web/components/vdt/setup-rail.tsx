@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, CircleAlert, History, MessageSquarePlus, Search, Send, Settings2, X } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
-import { DataImportWizard } from "@/components/data-import/data-import-wizard";
+import { DataImportAttachmentButton } from "@/components/data-import/data-import-attachment-button";
 import { Field, TextArea, TextInput } from "@/components/ui/field";
 import { Panel, PanelCollapseTab, PanelToggleButton, PanelHeader } from "@/components/ui/panel";
 import { hasByokFieldErrors, validateByokSettings } from "@/lib/byok-validation";
@@ -448,7 +448,7 @@ export function SetupRail() {
             data-testid="agent-instruction-input"
           />
           <div className="mt-2 flex items-center gap-2">
-            <DataImportWizard />
+            <DataImportAttachmentButton />
             <button
               type="button"
               className={[

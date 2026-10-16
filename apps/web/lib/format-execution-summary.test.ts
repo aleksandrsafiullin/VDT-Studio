@@ -5,7 +5,7 @@ import { formatExecutionModeSummary } from "./format-execution-summary";
 describe("formatExecutionModeSummary", () => {
   it("summarizes the default real BYOK execution", () => {
     expect(formatExecutionModeSummary(DEFAULT_EXECUTION_SETTINGS)).toEqual({
-      modeLabel: "BYOK",
+      modeLabel: "API keys",
       primary: "OpenAI · OpenAI",
       secondary: "gpt-5.5"
     });
@@ -20,7 +20,7 @@ describe("formatExecutionModeSummary", () => {
         localModel: "qwen3"
       })
     ).toEqual({
-      modeLabel: "Local CLI",
+      modeLabel: "Local models",
       primary: "Ollama",
       secondary: "qwen3"
     });
@@ -37,7 +37,7 @@ describe("formatExecutionModeSummary", () => {
         cliModelSelection: { source: "custom", customModel: "claude-sonnet-4-5" }
       })
     ).toEqual({
-      modeLabel: "Local CLI",
+      modeLabel: "CLI subscriptions",
       primary: "Claude Code",
       secondary: "claude-sonnet-4-5"
     });
@@ -54,7 +54,7 @@ describe("formatExecutionModeSummary", () => {
         localModel: "qwen3"
       })
     ).toEqual({
-      modeLabel: "Local CLI",
+      modeLabel: "Local models",
       primary: "Ollama",
       secondary: "qwen3"
     });
@@ -72,7 +72,7 @@ describe("formatExecutionModeSummary", () => {
         cliModelSelection: { source: "custom", customModel: "gpt-5.5" }
       })
     ).toEqual({
-      modeLabel: "Local CLI",
+      modeLabel: "Local models",
       primary: "Ollama",
       secondary: "qwen3:latest"
     });
@@ -89,7 +89,7 @@ describe("formatExecutionModeSummary", () => {
         model: "gpt-5.4-mini"
       })
     ).toEqual({
-      modeLabel: "BYOK",
+      modeLabel: "API keys",
       primary: "OpenAI · OpenAI",
       secondary: "gpt-5.4-mini"
     });
@@ -106,7 +106,7 @@ describe("formatExecutionModeSummary", () => {
         model: "qwen3-coder-plus"
       })
     ).toEqual({
-      modeLabel: "BYOK",
+      modeLabel: "API keys",
       primary: "OpenAI · Alibaba Cloud Coding Plan",
       secondary: "qwen3-coder-plus"
     });

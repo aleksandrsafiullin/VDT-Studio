@@ -94,6 +94,22 @@ export function collectChangeSetStructureWarnings(
 ): VdtWarning[] {
   const errors: VdtWarning[] = [];
   const seenEntryIds = new Set<string>();
+  if (changeSet.additions.some((addition) => addition.tags?.includes("incoming_kpi_breakdown"))) {
+    const allEntries = [
+      ...changeSet.additions, ...changeSet.updates, ...changeSet.deletions, ...changeSet.edgeChanges,
+      ...(changeSet.dataSourceChanges ?? []), ...(changeSet.dataMappingChanges ?? []), ...(changeSet.taxonomyChanges ?? [])
+    ];
+    const selectedIds = new Set([
+      ...filtered.additions, ...filtered.updates, ...filtered.deletions, ...filtered.edgeChanges,
+      ...filtered.dataSourceChanges, ...filtered.dataMappingChanges, ...filtered.taxonomyChanges
+    ].map((entry) => entry.id));
+    if (selectedIds.size > 0 && allEntries.some((entry) => !selectedIds.has(entry.id))) {
+      errors.push(warning({
+        severity: "error", type: "data_discovery_validation_failed",
+        message: "A file-derived incoming KPI hierarchy, its source and its formulas must be applied together. Select the complete breakdown."
+      }));
+    }
+  }
 
   for (const entry of [
     ...changeSet.additions,

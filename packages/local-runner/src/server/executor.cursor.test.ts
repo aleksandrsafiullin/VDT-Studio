@@ -1,3 +1,4 @@
+import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtemp, rm, writeFile, chmod } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -182,6 +183,25 @@ describe("cursor subscription executor", { timeout: 45_000 }, () => {
         fakeCursorExecutor({ ...process.env, VDT_FAKE_CURSOR_MODE: "bad-schema" })
       )
     ).rejects.toMatchObject({ code: "SCHEMA_INVALID" });
+  });
+
+  it("does not repair or repeat a Cursor usage-limit failure", async () => {
+    let modelAttempts = 0;
+    const error = await executeCompletion(
+      cursorManifest(),
+      { requestId: crypto.randomUUID(), backendId: "cursor_subscription", taskType: "data_agent_decision", schemaId: "data-agent-decision-v1", input: {} },
+      new AbortController().signal,
+      {
+        ...fakeCursorExecutor({ ...process.env, VDT_FAKE_CURSOR_MODE: "usage-exhausted" }),
+        spawn: (command, args, options) => {
+          modelAttempts += 1;
+          return nodeSpawn(command, [...args], options) as ChildProcessWithoutNullStreams;
+        }
+      }
+    ).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "RATE_LIMITED" });
+    expect(error).not.toHaveProperty("repairAttempted");
+    expect(modelAttempts).toBe(1);
   });
 
   it("repairs one invalid cursor schema response", async () => {

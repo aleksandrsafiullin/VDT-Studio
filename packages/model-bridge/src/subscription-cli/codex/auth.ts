@@ -53,13 +53,15 @@ function parseStatusJson(stdout: string): ModelBackendStatus | undefined {
     const payload = JSON.parse(stdout.trim()) as unknown;
     if (typeof payload !== "object" || payload === null) return undefined;
     const record = payload as Record<string, unknown>;
+    const status = typeof record.status === "string" ? record.status.trim().toLowerCase() : "";
+    if (/^(?:unauthenticated|not[_ -](?:authenticated|logged[_ -]in)|authentication[_ -]required|login[_ -]required)$/.test(status)) {
+      return "authentication_required";
+    }
+    if (/^rate[_ -]limited$/.test(status)) return "rate_limited";
     const loggedIn = record.loggedIn ?? record.logged_in ?? record.authenticated ?? record.isAuthenticated;
-    if (loggedIn === true) return "ready";
     if (loggedIn === false) return "authentication_required";
-    const status = typeof record.status === "string" ? record.status.toLowerCase() : "";
-    if (status.includes("ready") || status.includes("authenticated") || status.includes("logged")) return "ready";
-    if (status.includes("login") || status.includes("auth")) return "authentication_required";
-    if (status.includes("rate")) return "rate_limited";
+    if (loggedIn === true) return "ready";
+    if (["ready", "authenticated", "logged_in", "logged in"].includes(status)) return "ready";
     return undefined;
   } catch {
     return undefined;
@@ -67,10 +69,11 @@ function parseStatusJson(stdout: string): ModelBackendStatus | undefined {
 }
 
 function parseStatusText(output: string): ModelBackendStatus | undefined {
+  if (output.trim().startsWith("{") || output.trim().startsWith("[")) return undefined;
   const text = output.toLowerCase();
-  if (/logged in|authenticated|using chatgpt/.test(text)) return "ready";
-  if (/not logged|log in|login required|sign.?in|authenticate/.test(text)) return "authentication_required";
+  if (/not logged|not authenticated|unauthenticated|log in|login required|sign.?in/.test(text)) return "authentication_required";
   if (/rate.?limit|quota|usage limit/.test(text)) return "rate_limited";
+  if (/\blogged in\b|\bauthenticated\b|using chatgpt/.test(text)) return "ready";
   return undefined;
 }
 
@@ -128,7 +131,7 @@ async function probeWithStatusCommand(
     const mapped =
       parseStatusJson(result.stdout) ??
       parseStatusText(`${result.stdout}\n${result.stderr}`) ??
-      (result.stderr ? classifyAuthFailure(result.stderr, result.stdout, 0) : "ready");
+      (result.stderr ? classifyAuthFailure(result.stderr, result.stdout, 0) : "installed");
     return {
       backendId: CODEX_BACKEND_ID,
       status: mapped,
@@ -143,7 +146,7 @@ async function probeWithStatusCommand(
         const mapped =
           parseStatusText(`${result.stdout}\n${result.stderr}`) ??
           parseStatusJson(result.stdout) ??
-          (result.stderr ? classifyAuthFailure(result.stderr, result.stdout, 0) : "ready");
+          (result.stderr ? classifyAuthFailure(result.stderr, result.stdout, 0) : "installed");
         return {
           backendId: CODEX_BACKEND_ID,
           status: mapped,

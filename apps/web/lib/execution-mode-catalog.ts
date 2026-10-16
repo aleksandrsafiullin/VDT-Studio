@@ -13,6 +13,7 @@ export const CLI_AGENT_IDS = ["cursor-agent", "codex", "claude", "gemini", "copi
 export type CliAgentId = (typeof CLI_AGENT_IDS)[number];
 
 export type LocalRunnerPresetId = "ollama_openai" | "lm_studio_openai" | "vllm_openai" | "custom_cli_json";
+export type LocalModelPresetId = Exclude<LocalRunnerPresetId, "custom_cli_json">;
 
 export type LocalHttpModelBackendId = "ollama" | "lm_studio" | "vllm";
 
@@ -101,6 +102,7 @@ export interface ExecutionSettings {
   runnerProviderId?: "local_http_stub" | "cli_stub" | undefined;
   localBaseUrl?: string | undefined;
   localModel?: string | undefined;
+  savedLocalModelSelection?: { presetId: LocalModelPresetId; model?: string | undefined } | undefined;
   localApiKey?: string | undefined;
   command?: string | undefined;
   argsText?: string | undefined;

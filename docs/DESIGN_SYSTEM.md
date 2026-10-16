@@ -21,3 +21,4 @@ VDT Studio uses a calm analytical-workspace style:
 - Data review must show whether results are full, sampled, truncated or unverified.
 - A mapping preview must show source columns, aggregation/formula, unit, period, filters, coverage, resulting value and target KPI before apply.
 - Destructive or stale agent changes require explicit conflict/approval UI.
+- Execution mode settings separate CLI, Local models and API keys into top-level tabs. The CLI panel leads with the active chat provider/model and a single subscription list. Keep Test, Sign in and reversible removal beside each provider; keep provider diagnostics, memory overrides and developer runner pairing in secondary disclosures; local model servers have their own full panel. Removal feedback must identify any chat fallback and memory reset, and move keyboard focus to Undo.

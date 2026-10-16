@@ -18,7 +18,7 @@ export function ExecutionModeSummaryCard({ onConfigure }: ExecutionModeSummaryCa
       ? {
           modeLabel: "API keys",
           primary: "Hosted web",
-          secondary: "Local AI is available in VDT Studio Desktop"
+          secondary: "CLI subscriptions and local models are available in VDT Studio Desktop"
         }
       : formatExecutionModeSummary(executionSettings);
 

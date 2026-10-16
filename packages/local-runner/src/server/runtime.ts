@@ -148,7 +148,7 @@ export async function detectRuntimeSubscriptionClis(
 
   await Promise.all(
     agents.map(async (agent) => {
-      if (!agent.installed || !agent.executable) {
+      if (!agent.installed || !agent.executable || agent.status !== "ready") {
         modelsByAgent[agent.id] = [];
         return;
       }
@@ -205,6 +205,42 @@ export async function testRuntimeBackend(backendId: string, context: LocalRuntim
     input: { probe: true },
     timeoutMs: 30_000
   }, context);
+}
+
+/** Settings checks CLI/session readiness; the standalone runner retains its full schema probe. */
+export async function checkRuntimeBackendReadiness(backendId: string, context: LocalRuntimeContext): Promise<RuntimeResult> {
+  const manifest = context.manifests.get(backendId);
+  if (!manifest) throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
+  if (manifest.kind !== "subscription_cli") return testRuntimeBackend(backendId, context);
+
+  const agentId = subscriptionAgentIdForBackend(backendId);
+  if (!agentId) {
+    throw new LocalRuntimeError(400, "UNSUPPORTED_BACKEND", "This subscription backend has no reviewed readiness probe.");
+  }
+  if (context.authInProgress.has(backendId)) {
+    throw new LocalRuntimeError(409, "AUTH_ALREADY_IN_PROGRESS", `${manifest.label} sign-in is still in progress. Finish signing in before testing.`);
+  }
+
+  const options = context.config.detection ?? {};
+  const detection = await detectSubscriptionCli(agentId, options);
+  if (!detection.installed) {
+    throw new LocalRuntimeError(404, "BACKEND_NOT_INSTALLED", `${manifest.label} is not installed. Install the provider CLI, then rescan.`);
+  }
+  const [agent] = await enrichSubscriptionCliDetections([detection], {
+    probeTimeoutMs: options.probeTimeoutMs ?? 10_000
+  });
+  if (agent?.installed && agent.status === "ready") {
+    return { statusCode: 200, payload: { ok: true, backendId, status: "ready" } };
+  }
+
+  const status = agent?.status;
+  const code = status === "authentication_required" ? "AUTH_REQUIRED"
+    : status === "rate_limited" ? "RATE_LIMITED"
+      : status === "unsupported_version" ? "UNSUPPORTED_VERSION"
+        : status === "unavailable" ? "POLICY_DISABLED"
+          : "READINESS_NOT_VERIFIED";
+  const message = agent?.authSummary ?? `${manifest.label} access could not be verified. Rescan and try again.`;
+  throw new LocalRuntimeError(status === "authentication_required" ? 401 : 502, code, message);
 }
 
 export async function completeRuntime(request: CompletionRequest, context: LocalRuntimeContext): Promise<RuntimeResult> {

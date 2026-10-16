@@ -61,13 +61,15 @@ function parseStatusJson(stdout: string): ModelBackendStatus | undefined {
       return "authentication_required";
     }
 
+    const status = typeof record.status === "string" ? record.status.trim().toLowerCase() : "";
+    if (/^(?:unauthenticated|not[_ -](?:authenticated|logged[_ -]in)|authentication[_ -]required|login[_ -]required)$/.test(status)) {
+      return "authentication_required";
+    }
+    if (/^rate[_ -]limited$/.test(status)) return "rate_limited";
     const loggedIn = record.loggedIn ?? record.logged_in ?? record.authenticated ?? record.isAuthenticated;
-    if (loggedIn === true) return "ready";
     if (loggedIn === false) return "authentication_required";
-    const status = typeof record.status === "string" ? record.status.toLowerCase() : "";
-    if (status.includes("ready") || status.includes("authenticated")) return "ready";
-    if (status.includes("login") || status.includes("auth")) return "authentication_required";
-    if (status.includes("rate")) return "rate_limited";
+    if (loggedIn === true) return "ready";
+    if (["ready", "authenticated", "logged_in", "logged in"].includes(status)) return "ready";
     return undefined;
   } catch {
     return undefined;
@@ -97,11 +99,14 @@ async function runExec(
 async function probeWithStatusCommand(executable: string, options: ProbeCursorAuthOptions): Promise<ModelBackendDetectionResult | null> {
   try {
     const result = await runExec(executable, ["status", "--format", "json"], options);
-    const mapped = parseStatusJson(result.stdout) ?? (result.stderr ? classifyAuthFailure(result.stderr, result.stdout, 0) : "ready");
+    const mapped = parseStatusJson(result.stdout) ?? (result.stderr ? classifyAuthFailure(result.stderr, result.stdout, 0) : "installed");
+    const accountVerificationFailed = mapped === "authentication_required" && /unable to fetch user/i.test(result.stdout);
     return {
       backendId: CURSOR_BACKEND_ID,
       status: mapped,
-      authSummary: authSummaryForStatus(mapped),
+      authSummary: accountVerificationFailed
+        ? "Cursor has a stored session, but could not verify account access. Reconnect with Sign in, then rescan."
+        : authSummaryForStatus(mapped),
       diagnostics: mapped === "ready" ? [] : [result.stderr.trim() || result.stdout.trim()].filter(Boolean)
     };
   } catch (error) {

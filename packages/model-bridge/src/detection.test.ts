@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { detectSubscriptionCli, findExecutableOnPath, parseCursorModelList, SUBSCRIPTION_CLI_IDS } from "./detection";
 
 describe("subscription CLI detection", () => {
@@ -21,15 +24,20 @@ describe("subscription CLI detection", () => {
   });
 
   it("reports installed binaries even when version probing fails", async () => {
-    const result = await detectSubscriptionCli("codex", {
-      path: "/tools",
-      platform: "linux",
-      executableCheck: async () => true,
-      versionProbe: async () => { throw new Error("probe failed"); }
-    });
-    expect(result.installed).toBe(true);
-    expect(result.version).toBeNull();
-    expect(result.error).toBe("probe failed");
+    const directory = await mkdtemp(path.join(os.tmpdir(), "vdt-detect-codex-failed-"));
+    try {
+      await writeFile(path.join(directory, "codex"), "unused", { mode: 0o700 });
+      const result = await detectSubscriptionCli("codex", {
+        path: directory,
+        executableCheck: async () => true,
+        versionProbe: async () => { throw new Error("probe failed"); }
+      });
+      expect(result.installed).toBe(true);
+      expect(result.version).toBeNull();
+      expect(result.error).toBe("Codex CLI version probe failed.");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("parses the Cursor model listing deterministically", () => {

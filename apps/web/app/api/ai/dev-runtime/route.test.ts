@@ -74,10 +74,33 @@ describe("development local runtime API route", { timeout: 30_000 }, () => {
 
       expect(response.status).toBe(200);
       expect(body.ok).toBe(true);
+      expect(body.run).toBeUndefined();
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it("returns an actionable failure when a subscription session cannot be verified", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-dev-unverified-test-"));
+    try {
+      const executable = path.join(tempDir, "agent");
+      await copyFile(fakeCursor, executable);
+      await chmod(executable, 0o700);
+      vi.stubEnv("VDT_APP_MODE", "development_web");
+      vi.stubEnv("VDT_FAKE_CURSOR_MODE", "status-unverified");
+      (globalThis as typeof globalThis & { __vdtStudioDevelopmentRuntime?: unknown }).__vdtStudioDevelopmentRuntime =
+        createLocalRuntimeContext({ auditSink: () => undefined, detection: { path: tempDir } });
+
+      const response = await POST(request({ operation: "test", backendId: "cursor_subscription" }));
+      expect(response.status).toBe(401);
+      expect(await readJson(response)).toMatchObject({
+        ok: false,
+        error: { code: "AUTH_REQUIRED", message: expect.stringContaining("stored session") }
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 
   it("lists local HTTP models through the managed runtime", async () => {
     vi.stubEnv("VDT_APP_MODE", "development_web");

@@ -238,7 +238,11 @@ Auth/version detection (web UI): `codex login status --json` when available; oth
 
 Runtime auth isolation: VDT creates a writable per-run `CODEX_HOME` inside the temp execution cwd and copies only `auth.json`, `installation_id`, and `models_cache.json` when present. This keeps ChatGPT subscription auth available while preventing VDT runs from mutating the user's real `~/.codex` session, state, skills, or rule files.
 
-Model discovery: `codex debug models`, parsed from JSON, JSONL or table output. If a legacy `service_tier = "default"` config blocks the command, VDT retries discovery with `-c service_tier="fast"`. VDT returns IDs the installed Codex CLI marks visible and omits records whose CLI-owned metadata says `visibility: "hide"`; there is no VDT-maintained model-name allowlist. Execution remains authoritative if the CLI later rejects a selected ID.
+Model discovery: `codex debug models`, parsed from JSON, JSONL or table output. If a legacy `service_tier = "default"` config blocks the command, VDT retries discovery with `-c service_tier="fast"`. VDT returns IDs the selected installed Codex CLI marks visible and omits records whose CLI-owned metadata says `visibility: "hide"`; there is no VDT-maintained model-name allowlist. Detection, readiness, model discovery, default compatibility execution and detected External binding wiring use the same executable selection policy: newest recognizable Codex version already on safe absolute `PATH`, stable over same-core prerelease, and `PATH` order for equivalent versions. Other providers keep their existing alias/`PATH` policy; trusted executor overrides remain explicit host authority. See [Local Runner](LOCAL_RUNNER.md) for candidate/probe bounds. Execution remains authoritative if the CLI later rejects a selected ID.
+
+Model availability can differ between installed CLI versions even for the same signed-in account. A successful catalog refresh does not prove that every advertised model can execute VDT requests, and selecting a newer installed CLI does not promote provider certification. VDT does not download or update a CLI to populate the picker.
+
+Codex raw model-catalog output is bounded to 2 MiB per output stream with a ten-second command timeout. The catalog includes provider instruction text as well as model metadata; the previous 512 KiB limit could reject a valid current catalog before parsing. Only parsed model IDs populate Settings. Oversized output still fails discovery rather than creating unbounded buffers, and other CLI catalog limits are unchanged.
 
 ### Limitations
 

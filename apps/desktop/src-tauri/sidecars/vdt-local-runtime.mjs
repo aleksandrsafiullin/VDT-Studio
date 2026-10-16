@@ -12,7 +12,7 @@ import { randomUUID as randomUUID2 } from "node:crypto";
 
 // ../local-runner/src/server/runtime.ts
 import { randomUUID } from "node:crypto";
-import { execFile as execFile8 } from "node:child_process";
+import { execFile as execFile9 } from "node:child_process";
 import { promisify as promisify8 } from "node:util";
 
 // ../model-bridge/src/fake-backend.ts
@@ -123,14 +123,218 @@ function extractBoundedJson(raw, maxBytes) {
   try {
     return JSON.parse(candidate);
   } catch {
-    const object = findBalancedObject(candidate);
-    if (!object) throw new Error("Model output did not contain one complete JSON object.");
+    const object2 = findBalancedObject(candidate);
+    if (!object2) throw new Error("Model output did not contain one complete JSON object.");
     try {
-      return JSON.parse(object);
+      return JSON.parse(object2);
     } catch {
       throw new Error("Model output contained malformed JSON.");
     }
   }
+}
+
+// ../model-bridge/src/data-schema-contracts.ts
+var DATA_DISCOVERY_SCHEMA_IDS = ["data-agent-decision-v1", "analyze-raw-dataset-v1", "review-dataset-proposal-v1"];
+function record(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function object(properties, required = Object.keys(properties)) {
+  return { type: "object", properties, required, additionalProperties: false };
+}
+var text = (maxLength = 500) => ({ type: "string", minLength: 1, maxLength });
+var choice = (...values) => ({ type: "string", enum: values });
+var array = (items, maxItems, minItems = 0) => ({ type: "array", items, minItems, maxItems });
+var integer = (minimum, maximum) => ({ type: "integer", minimum, maximum });
+var confidence = { type: "number", minimum: 0, maximum: 1 };
+var id = text(200);
+var column = text(500);
+var strings = array({ type: "string", maxLength: 12e3 }, 250);
+var incomingKpiProposal = object({
+  tableId: id,
+  categoryColumns: array(column, 4, 1),
+  duration: { anyOf: [
+    object({ mode: { const: "column", type: "string" }, column, unit: choice("seconds", "minutes", "hours", "days", "target") }),
+    object({ mode: { const: "timestamps", type: "string" }, startColumn: column, endColumn: column, format: choice("iso", "excel_serial", "dmy", "mdy"), timezoneOffsetMinutes: integer(-840, 840) }, ["mode", "startColumn", "endColumn"])
+  ] },
+  numberFormat: choice("decimal_dot", "decimal_comma"),
+  normalization: { anyOf: [
+    object({ mode: { const: "period_total", type: "string" } }),
+    object({ mode: { const: "per_day", type: "string" }, basis: choice("calendar_days", "operating_days", "entity_days"), denominator: { type: "number", exclusiveMinimum: 0, maximum: Number.MAX_SAFE_INTEGER } }, ["mode", "basis"])
+  ] },
+  period: object({ start: { ...text(10), pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, end: { ...text(10), pattern: "^\\d{4}-\\d{2}-\\d{2}$" } }),
+  missingCategoryPolicy: { type: "string", const: "include_unknown" }
+}, []);
+var evidence = object({
+  type: choice("column_name", "value_pattern", "distribution", "aggregation_result", "data_quality", "cross_column_relationship", "user_confirmation", "model_reasoning"),
+  message: text(1e3),
+  strength: choice("weak", "medium", "strong"),
+  observationRef: text(200)
+}, ["type", "message", "strength"]);
+var rawColumn = object({
+  tableId: id,
+  columnName: text(200),
+  physicalType: choice("string", "number", "date", "boolean", "mixed", "unknown"),
+  logicalType: choice("identifier", "category", "text", "measure", "duration", "timestamp", "date", "currency", "percentage", "status", "other"),
+  semanticRole: text(120),
+  unit: text(80),
+  confidence,
+  evidence: array(evidence, 12, 1),
+  profileRef: text(240)
+}, ["tableId", "columnName", "physicalType", "logicalType", "confidence", "evidence", "profileRef"]);
+var metric = object({
+  id,
+  name: text(200),
+  description: text(800),
+  sourceTableId: id,
+  sourceColumns: array(text(200), 20, 1),
+  aggregation: choice("sum", "count", "avg", "min", "max", "ratio", "distinct_count", "custom"),
+  unit: text(80),
+  formula: text(1e3),
+  dimensions: array(id, 20),
+  confidence,
+  evidence: array(evidence, 12, 1),
+  limitations: array({ type: "string", maxLength: 500 }, 10)
+}, ["id", "name", "description", "sourceTableId", "sourceColumns", "aggregation", "confidence", "evidence", "limitations"]);
+var rawAnalysis = object({
+  datasetId: id,
+  incomingKpiOptions: incomingKpiProposal,
+  summary: object({ rowCount: integer(0, Number.MAX_SAFE_INTEGER), tableCount: integer(0, 25), likelyDatasetKind: text(200), confidence, description: text(1e3) }),
+  columns: array(rawColumn, 500),
+  metricCandidates: array(metric, 50),
+  assumptions: strings,
+  questionsForUser: strings,
+  warnings: strings
+}, ["datasetId", "summary", "columns", "metricCandidates", "assumptions", "questionsForUser", "warnings"]);
+var table = object({ tableId: id });
+var tablePreview = object({ tableId: id, limit: integer(1, 50) }, ["tableId"]);
+var columnInput = object({ tableId: id, columnName: column });
+var groupedFields = { tableId: id, dimension: column, measure: column, aggregation: choice("sum", "count", "avg", "min", "max", "distinct_count"), limit: integer(1, 100) };
+var noInputTools = [
+  "file.inspect",
+  "file.preview_raw",
+  "file.detect_tables",
+  "table.list",
+  "table.profile",
+  "table.quality_report",
+  "table.flatten_json",
+  "text.suggest_taxonomy_candidates",
+  "text.classification_diagnostics",
+  "semantic.detect_entities",
+  "semantic.detect_measures",
+  "semantic.detect_dimensions",
+  "semantic.detect_events",
+  "semantic.build_dataset_summary",
+  "vdt.project_excerpt",
+  "vdt.find_matching_nodes",
+  "vdt.propose_metric_bindings",
+  "vdt.validate_formula_candidates",
+  "vdt.validate_change_set"
+];
+function tool(names, input) {
+  return object({ type: { type: "string", const: "tool_call" }, toolName: choice(...names), rationale: text(1e3), input });
+}
+var decision = { anyOf: [
+  tool(noInputTools, object({})),
+  tool(["table.preview", "table.sample"], tablePreview),
+  tool(["table.select_columns"], object({ tableId: id, columns: array(column, 80, 1), limit: integer(1, 50) }, ["tableId", "columns"])),
+  tool(["column.profile", "column.detect_type", "column.detect_unit", "column.semantic_role_candidates", "column.sample_values", "column.value_distribution", "column.parse_candidates", "table.outliers", "text.normalize_values", "text.cluster_values", "text.extract_keywords"], columnInput),
+  tool(["table.group_by"], object(groupedFields, ["tableId", "dimension"])),
+  tool(["table.pivot"], object({ ...groupedFields, pivot: column }, ["tableId", "dimension", "pivot"])),
+  tool(["table.time_series"], object({ ...groupedFields, dateColumn: column, grain: choice("day", "week", "month") }, ["tableId", "dimension", "dateColumn"])),
+  tool(["table.correlate"], object({ tableId: id, leftColumn: column, rightColumn: column })),
+  tool(["table.duplicates"], object({ tableId: id, columns: array(column, 80) }, ["tableId"])),
+  tool(["table.cardinality_matrix"], table),
+  object({ type: { type: "string", const: "final_proposal" }, rationale: text(2e3), result: rawAnalysis }),
+  object({ type: { type: "string", const: "ask_user" }, questions: array(text(500), 5, 1), rationale: text(1e3) })
+] };
+var DATA_DISCOVERY_JSON_SCHEMAS = {
+  "data-agent-decision-v1": decision,
+  "analyze-raw-dataset-v1": rawAnalysis,
+  "review-dataset-proposal-v1": rawAnalysis
+};
+function isDataDiscoverySchemaId(value) {
+  return DATA_DISCOVERY_SCHEMA_IDS.includes(value);
+}
+function strictDataDiscoverySchema(schemaId) {
+  return strictSchema(DATA_DISCOVERY_JSON_SCHEMAS[schemaId]);
+}
+function strictSchema(schema) {
+  if (Array.isArray(schema.anyOf)) return { ...schema, anyOf: schema.anyOf.map((branch) => strictSchema(branch)) };
+  if (schema.type === "array") return { ...schema, items: strictSchema(schema.items) };
+  if (schema.type !== "object") return { ...schema };
+  const properties = schema.properties;
+  const required = new Set(schema.required);
+  return object(Object.fromEntries(Object.entries(properties).map(([key, child]) => [
+    key,
+    required.has(key) ? strictSchema(child) : { anyOf: [strictSchema(child), { type: "null" }] }
+  ])));
+}
+function normalizeDataDiscoveryOutput(schemaId, output) {
+  return normalizeOptionalNulls(DATA_DISCOVERY_JSON_SCHEMAS[schemaId], output);
+}
+function normalizeOptionalNulls(schema, value) {
+  if (Array.isArray(schema.anyOf)) {
+    const branches = schema.anyOf.filter((branch) => matchesDiscriminators(branch, value));
+    return branches.length === 1 ? normalizeOptionalNulls(branches[0], value) : value;
+  }
+  if (schema.type === "array" && Array.isArray(value)) return value.map((item) => normalizeOptionalNulls(schema.items, item));
+  if (schema.type !== "object" || !record(value)) return value;
+  const properties = schema.properties;
+  const required = new Set(schema.required);
+  return Object.fromEntries(Object.entries(value).flatMap(([key, item]) => {
+    if (!Object.hasOwn(properties, key)) return [[key, item]];
+    const child = properties[key];
+    if (item === null && !required.has(key)) return [];
+    return [[key, normalizeOptionalNulls(child, item)]];
+  }));
+}
+function matchesDiscriminators(schema, value) {
+  if (!record(value) || !record(schema.properties)) return false;
+  return Object.entries(schema.properties).every(([key, property]) => {
+    if (!["type", "toolName", "mode"].includes(key) || !record(property)) return true;
+    if ("const" in property) return Object.hasOwn(value, key) && value[key] === property.const;
+    if (Array.isArray(property.enum)) return Object.hasOwn(value, key) && property.enum.includes(value[key]);
+    return true;
+  });
+}
+function validateDataDiscoveryOutput(schemaId, value) {
+  const errors = validate(DATA_DISCOVERY_JSON_SCHEMAS[schemaId], value, "$");
+  return { valid: errors.length === 0, errors };
+}
+function validate(schema, value, path7) {
+  if (Array.isArray(schema.anyOf)) {
+    const results = schema.anyOf.map((branch) => validate(branch, value, path7));
+    return results.some((errors2) => errors2.length === 0) ? [] : results.flat().slice(0, 16);
+  }
+  const errors = [];
+  if (schema.type === "object") {
+    if (!record(value)) return [`${path7} must be an object.`];
+    const properties = schema.properties;
+    for (const key of schema.required) if (!Object.hasOwn(value, key)) errors.push(`${path7}.${key} is required.`);
+    for (const [key, item] of Object.entries(value)) {
+      if (!Object.hasOwn(properties, key)) errors.push(`${path7}.${key} is not an approved field.`);
+      else errors.push(...validate(properties[key], item, `${path7}.${key}`));
+    }
+  } else if (schema.type === "array") {
+    if (!Array.isArray(value)) return [`${path7} must be an array.`];
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) errors.push(`${path7} has too few items.`);
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) errors.push(`${path7} has too many items.`);
+    value.forEach((item, index) => errors.push(...validate(schema.items, item, `${path7}[${index}]`)));
+  } else if (schema.type === "string") {
+    if (typeof value !== "string") return [`${path7} must be a string.`];
+    if (typeof schema.minLength === "number" && value.length < schema.minLength) errors.push(`${path7} is too short.`);
+    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) errors.push(`${path7} is too long.`);
+    if (typeof schema.pattern === "string" && !new RegExp(schema.pattern).test(value)) errors.push(`${path7} has an invalid format.`);
+  } else if (schema.type === "number" || schema.type === "integer") {
+    if (typeof value !== "number" || !Number.isFinite(value)) return [`${path7} must be a finite number.`];
+    if (schema.type === "integer" && !Number.isInteger(value)) errors.push(`${path7} must be an integer.`);
+    if (typeof schema.minimum === "number" && value < schema.minimum) errors.push(`${path7} is below the minimum.`);
+    if (typeof schema.maximum === "number" && value > schema.maximum) errors.push(`${path7} exceeds the maximum.`);
+    if (typeof schema.exclusiveMinimum === "number" && value <= schema.exclusiveMinimum) errors.push(`${path7} must be greater than ${schema.exclusiveMinimum}.`);
+  }
+  if ("const" in schema && schema.const !== value) errors.push(`${path7} must equal ${String(schema.const)}.`);
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) errors.push(`${path7} is not an allowed value.`);
+  return errors;
 }
 
 // ../model-bridge/src/schema-registry.ts
@@ -553,161 +757,6 @@ var agentDecisionV2StrictResponseSchema = objectSchema(
   },
   ["type", "toolName", "argsJson", "callsJson", "statusMessage", "questionsJson", "summary", "nextSuggestedActions"]
 );
-var dataDiscoveryToolNameProp = enumProp([
-  "file.inspect",
-  "file.preview_raw",
-  "file.detect_tables",
-  "table.list",
-  "table.preview",
-  "table.sample",
-  "table.profile",
-  "table.quality_report",
-  "table.flatten_json",
-  "table.select_columns",
-  "column.profile",
-  "column.detect_type",
-  "column.detect_unit",
-  "column.sample_values",
-  "column.value_distribution",
-  "column.parse_candidates",
-  "column.semantic_role_candidates",
-  "table.group_by",
-  "table.pivot",
-  "table.time_series",
-  "table.correlate",
-  "table.outliers",
-  "table.duplicates",
-  "table.cardinality_matrix",
-  "text.normalize_values",
-  "text.cluster_values",
-  "text.extract_keywords",
-  "text.suggest_taxonomy_candidates",
-  "text.classification_diagnostics",
-  "semantic.detect_entities",
-  "semantic.detect_measures",
-  "semantic.detect_dimensions",
-  "semantic.detect_events",
-  "semantic.build_dataset_summary",
-  "vdt.project_excerpt",
-  "vdt.find_matching_nodes",
-  "vdt.propose_metric_bindings",
-  "vdt.validate_formula_candidates",
-  "vdt.validate_change_set"
-]);
-var dataAgentDecisionToolCallSchema = objectSchema(
-  {
-    type: { type: "string", const: "tool_call" },
-    toolName: dataDiscoveryToolNameProp,
-    rationale: { type: "string", minLength: 1, maxLength: 1e3 },
-    input: { type: "object", properties: {}, required: [], additionalProperties: true }
-  },
-  ["type", "toolName", "rationale", "input"]
-);
-var dataAgentDecisionFinalSchema = objectSchema(
-  {
-    type: { type: "string", const: "final_proposal" },
-    rationale: { type: "string", minLength: 1, maxLength: 2e3 },
-    result: { type: "object", properties: {}, required: [], additionalProperties: true }
-  },
-  ["type", "rationale", "result"]
-);
-var dataAgentDecisionAskUserSchema = objectSchema(
-  {
-    type: { type: "string", const: "ask_user" },
-    questions: { type: "array", minItems: 1, maxItems: 5, items: { type: "string", minLength: 1, maxLength: 500 } },
-    rationale: { type: "string", minLength: 1, maxLength: 1e3 }
-  },
-  ["type", "questions", "rationale"]
-);
-var dataAgentDecisionSchema = {
-  type: "object",
-  anyOf: [dataAgentDecisionToolCallSchema, dataAgentDecisionFinalSchema, dataAgentDecisionAskUserSchema],
-  properties: {},
-  required: [],
-  additionalProperties: false
-};
-var dataEvidenceSchema = objectSchema(
-  {
-    type: enumProp([
-      "column_name",
-      "value_pattern",
-      "distribution",
-      "aggregation_result",
-      "data_quality",
-      "cross_column_relationship",
-      "user_confirmation",
-      "model_reasoning"
-    ]),
-    message: { type: "string", minLength: 1, maxLength: 1e3 },
-    strength: enumProp(["weak", "medium", "strong"]),
-    observationRef: { type: "string", maxLength: 200 }
-  },
-  ["type", "message", "strength"]
-);
-var rawDatasetColumnSchema = objectSchema(
-  {
-    tableId: nodeIdProp,
-    columnName: { type: "string", minLength: 1, maxLength: 200 },
-    physicalType: enumProp(["string", "number", "date", "boolean", "mixed", "unknown"]),
-    logicalType: enumProp([
-      "identifier",
-      "category",
-      "text",
-      "measure",
-      "duration",
-      "timestamp",
-      "date",
-      "currency",
-      "percentage",
-      "status",
-      "other"
-    ]),
-    semanticRole: { type: "string", maxLength: 120 },
-    unit: { type: "string", maxLength: 80 },
-    confidence: confidenceProp,
-    evidence: { type: "array", minItems: 1, maxItems: 12, items: dataEvidenceSchema },
-    profileRef: { type: "string", minLength: 1, maxLength: 240 }
-  },
-  ["tableId", "columnName", "physicalType", "logicalType", "confidence", "evidence", "profileRef"]
-);
-var rawDatasetMetricCandidateSchema = objectSchema(
-  {
-    id: nodeIdProp,
-    name: { type: "string", minLength: 1, maxLength: 200 },
-    description: { type: "string", minLength: 1, maxLength: 800 },
-    sourceTableId: nodeIdProp,
-    sourceColumns: { type: "array", minItems: 1, maxItems: 20, items: { type: "string", minLength: 1, maxLength: 200 } },
-    aggregation: enumProp(["sum", "count", "avg", "min", "max", "ratio", "distinct_count", "custom"]),
-    unit: { type: "string", maxLength: 80 },
-    formula: { type: "string", maxLength: 1e3 },
-    dimensions: { type: "array", maxItems: 20, items: nodeIdProp },
-    confidence: confidenceProp,
-    evidence: { type: "array", minItems: 1, maxItems: 12, items: dataEvidenceSchema },
-    limitations: { type: "array", maxItems: 10, items: { type: "string", maxLength: 500 } }
-  },
-  ["id", "name", "description", "sourceTableId", "sourceColumns", "aggregation", "confidence", "evidence", "limitations"]
-);
-var rawDatasetAnalysisSchema = objectSchema(
-  {
-    datasetId: { type: "string", minLength: 1, maxLength: 200 },
-    summary: objectSchema(
-      {
-        rowCount: { type: "number", minimum: 0 },
-        tableCount: { type: "number", minimum: 0 },
-        likelyDatasetKind: { type: "string", minLength: 1, maxLength: 200 },
-        confidence: confidenceProp,
-        description: { type: "string", minLength: 1, maxLength: 1e3 }
-      },
-      ["rowCount", "tableCount", "likelyDatasetKind", "confidence", "description"]
-    ),
-    columns: arrayProp(rawDatasetColumnSchema, 500),
-    metricCandidates: arrayProp(rawDatasetMetricCandidateSchema, 50),
-    assumptions: stringArrayProp,
-    questionsForUser: stringArrayProp,
-    warnings: stringArrayProp
-  },
-  ["datasetId", "summary", "columns", "metricCandidates", "assumptions", "questionsForUser", "warnings"]
-);
 var nodeUpdateSchema = objectSchema(
   {
     id: nodeIdProp,
@@ -1034,17 +1083,17 @@ function normalizeStatusMessage(value, fallback) {
   return typeof value === "string" && value.trim() ? value : fallback;
 }
 var userQuestionToolAliases = /* @__PURE__ */ new Set(["request_user_input", "ask_user", "user.ask", "user.request_input"]);
-function questionFromRecord(record, index = 0) {
-  const question = typeof record.question === "string" && record.question.trim() ? record.question : typeof record.message === "string" && record.message.trim() ? record.message : void 0;
+function questionFromRecord(record2, index = 0) {
+  const question = typeof record2.question === "string" && record2.question.trim() ? record2.question : typeof record2.message === "string" && record2.message.trim() ? record2.message : void 0;
   if (!question) return void 0;
   return {
-    id: typeof record.id === "string" && record.id.trim() ? record.id : `question_${index + 1}`,
+    id: typeof record2.id === "string" && record2.id.trim() ? record2.id : `question_${index + 1}`,
     question,
-    reason: typeof record.reason === "string" && record.reason.trim() ? record.reason : "The agent needs this information before continuing.",
-    required: typeof record.required === "boolean" ? record.required : true,
-    ...typeof record.expectedAnswerType === "string" ? { expectedAnswerType: record.expectedAnswerType } : {},
-    ...isStringArray(record.options) ? { options: record.options } : {},
-    ...record.defaultValue === void 0 ? {} : { defaultValue: record.defaultValue }
+    reason: typeof record2.reason === "string" && record2.reason.trim() ? record2.reason : "The agent needs this information before continuing.",
+    required: typeof record2.required === "boolean" ? record2.required : true,
+    ...typeof record2.expectedAnswerType === "string" ? { expectedAnswerType: record2.expectedAnswerType } : {},
+    ...isStringArray(record2.options) ? { options: record2.options } : {},
+    ...record2.defaultValue === void 0 ? {} : { defaultValue: record2.defaultValue }
   };
 }
 function questionsFromArgs(args) {
@@ -1112,6 +1161,7 @@ function normalizeAgentDecisionOutput(output) {
   return output;
 }
 function normalizeRegisteredSchemaOutput(schemaId, output) {
+  if (isDataDiscoverySchemaId(schemaId)) return normalizeDataDiscoveryOutput(schemaId, output);
   if ((schemaId === "agent-decision-v1" || schemaId === "agent-decision-v2") && isRecord(output)) {
     return normalizeAgentDecisionOutput(output);
   }
@@ -1156,9 +1206,9 @@ var jsonSchemas = {
       "confidence"
     ]
   ),
-  "data-agent-decision-v1": dataAgentDecisionSchema,
-  "analyze-raw-dataset-v1": rawDatasetAnalysisSchema,
-  "review-dataset-proposal-v1": rawDatasetAnalysisSchema,
+  "data-agent-decision-v1": DATA_DISCOVERY_JSON_SCHEMAS["data-agent-decision-v1"],
+  "analyze-raw-dataset-v1": DATA_DISCOVERY_JSON_SCHEMAS["analyze-raw-dataset-v1"],
+  "review-dataset-proposal-v1": DATA_DISCOVERY_JSON_SCHEMAS["review-dataset-proposal-v1"],
   "generate-tree-v1": objectSchema(
     {
       projectTitle: stringProp,
@@ -1303,6 +1353,7 @@ function toStrictResponseJsonSchema(schema) {
   return result;
 }
 function getStrictResponseJsonSchema(schemaId) {
+  if (isDataDiscoverySchemaId(schemaId)) return strictDataDiscoverySchema(schemaId);
   if (schemaId === "agent-decision-v1") return agentDecisionStrictResponseSchema;
   if (schemaId === "agent-decision-v2") return agentDecisionV2StrictResponseSchema;
   return toStrictResponseJsonSchema(jsonSchemas[schemaId]);
@@ -1349,20 +1400,9 @@ var validators = {
     return false;
   },
   "agent-plan-v1": (output) => isRecord(output.buildIntent) && isStringArray(output.selectedSkillIds) && typeof output.skillRationale === "string" && isObjectArray(output.extractedInputs) && isObjectArray(output.missingInputs) && isObjectArray(output.driverPlan) && typeof output.rootFormula === "string" && validateAdvisoryArrays(output) && typeof output.confidence === "number",
-  "data-agent-decision-v1": (output) => {
-    if (output.type === "tool_call") {
-      return typeof output.toolName === "string" && typeof output.rationale === "string" && isRecord(output.input);
-    }
-    if (output.type === "final_proposal") {
-      return typeof output.rationale === "string" && isRecord(output.result);
-    }
-    if (output.type === "ask_user") {
-      return isStringArray(output.questions) && output.questions.length > 0 && typeof output.rationale === "string";
-    }
-    return false;
-  },
-  "analyze-raw-dataset-v1": validateRawDatasetAnalysisOutput,
-  "review-dataset-proposal-v1": validateRawDatasetAnalysisOutput,
+  "data-agent-decision-v1": (output) => validateDataDiscoveryOutput("data-agent-decision-v1", output).valid,
+  "analyze-raw-dataset-v1": (output) => validateDataDiscoveryOutput("analyze-raw-dataset-v1", output).valid,
+  "review-dataset-proposal-v1": (output) => validateDataDiscoveryOutput("review-dataset-proposal-v1", output).valid,
   "generate-tree-v1": (output) => typeof output.projectTitle === "string" && typeof output.rootNodeId === "string" && isObjectArray(output.nodes) && output.nodes.length > 0 && isObjectArray(output.edges) && validateAdvisoryArrays(output) && validateGenerateTreeGraph(output).valid,
   "deepen-node-v1": (output) => typeof output.targetNodeId === "string" && isObjectArray(output.nodes) && output.nodes.length > 0 && isObjectArray(output.edges) && validateAdvisoryArrays(output),
   "simplify-branch-v1": (output) => typeof output.branchRootNodeId === "string" && isObjectArray(output.nodeRemovals) && isObjectArray(output.edgeChanges) && typeof output.rationale === "string" && validateAdvisoryArrays(output),
@@ -1376,16 +1416,15 @@ var validators = {
   "explain-scenario-v1": (output) => typeof output.scenarioId === "string" && typeof output.narrative === "string" && isObjectArray(output.impactHighlights) && isStringArray(output.assumptions) && isStringArray(output.questionsForUser),
   "generate-executive-summary-v1": (output) => typeof output.headline === "string" && isStringArray(output.keyDrivers) && isStringArray(output.risks) && isStringArray(output.recommendations)
 };
-function validateRawDatasetAnalysisOutput(output) {
-  return typeof output.datasetId === "string" && isRecord(output.summary) && isObjectArray(output.columns) && isObjectArray(output.metricCandidates) && isStringArray(output.assumptions) && isStringArray(output.questionsForUser) && isStringArray(output.warnings);
-}
 function validateRegisteredSchema(schemaId, output) {
+  if (isDataDiscoverySchemaId(schemaId)) return validateDataDiscoveryOutput(schemaId, output).valid;
   if (!isRecord(output)) return false;
   const schema = jsonSchemas[schemaId];
   if (!schema || !hasRequiredKeys(output, schema.required ?? [])) return false;
   return validators[schemaId](output) && validateJsonSchemaSubset(schema, output).valid;
 }
 function validateRegisteredSchemaDetailed(schemaId, output) {
+  if (isDataDiscoverySchemaId(schemaId)) return validateDataDiscoveryOutput(schemaId, output);
   const schema = jsonSchemas[schemaId];
   if (!schema) return { valid: false, errors: [`Unknown schema ${schemaId}.`] };
   const subset = validateJsonSchemaSubset(schema, output);
@@ -1399,10 +1438,10 @@ function validateRegisteredSchemaDetailed(schemaId, output) {
   }
   return { valid: true, errors: [] };
 }
-function validateJsonSchemaSubset(schema, value, path6 = "$") {
+function validateJsonSchemaSubset(schema, value, path7 = "$") {
   if (!isRecord(schema)) return { valid: true, errors: [] };
   if (Array.isArray(schema.anyOf)) {
-    const branchResults = schema.anyOf.map((branch) => validateJsonSchemaSubset(branch, value, path6));
+    const branchResults = schema.anyOf.map((branch) => validateJsonSchemaSubset(branch, value, path7));
     if (branchResults.some((result) => result.valid)) {
       return { valid: true, errors: [] };
     }
@@ -1415,57 +1454,57 @@ function validateJsonSchemaSubset(schema, value, path6 = "$") {
   const type = schema.type;
   if (type === "object") {
     if (!isRecord(value)) {
-      return { valid: false, errors: [`${path6} must be an object.`] };
+      return { valid: false, errors: [`${path7} must be an object.`] };
     }
     const properties = isRecord(schema.properties) ? schema.properties : {};
     const required = Array.isArray(schema.required) ? schema.required.filter((key) => typeof key === "string") : [];
     for (const key of required) {
-      if (!(key in value)) errors.push(`${path6}.${key} is required.`);
+      if (!(key in value)) errors.push(`${path7}.${key} is required.`);
     }
     if (schema.additionalProperties === false) {
       for (const key of Object.keys(value)) {
-        if (!(key in properties)) errors.push(`${path6}.${key} is not an approved field.`);
+        if (!(key in properties)) errors.push(`${path7}.${key} is not an approved field.`);
       }
     }
     for (const [key, propertySchema] of Object.entries(properties)) {
-      if (key in value) errors.push(...validateJsonSchemaSubset(propertySchema, value[key], `${path6}.${key}`).errors);
+      if (key in value) errors.push(...validateJsonSchemaSubset(propertySchema, value[key], `${path7}.${key}`).errors);
     }
   } else if (type === "array") {
     if (!Array.isArray(value)) {
-      return { valid: false, errors: [`${path6} must be an array.`] };
+      return { valid: false, errors: [`${path7} must be an array.`] };
     }
     if (typeof schema.minItems === "number" && value.length < schema.minItems) {
-      errors.push(`${path6} must contain at least ${schema.minItems} item(s).`);
+      errors.push(`${path7} must contain at least ${schema.minItems} item(s).`);
     }
     if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
-      errors.push(`${path6} must contain at most ${schema.maxItems} item(s).`);
+      errors.push(`${path7} must contain at most ${schema.maxItems} item(s).`);
     }
     value.forEach((item, index) => {
-      errors.push(...validateJsonSchemaSubset(schema.items, item, `${path6}[${index}]`).errors);
+      errors.push(...validateJsonSchemaSubset(schema.items, item, `${path7}[${index}]`).errors);
     });
   } else if (type === "string") {
     if (typeof value !== "string") {
-      return { valid: false, errors: [`${path6} must be a string.`] };
+      return { valid: false, errors: [`${path7} must be a string.`] };
     }
     if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
-      errors.push(`${path6} must be at most ${schema.maxLength} character(s).`);
+      errors.push(`${path7} must be at most ${schema.maxLength} character(s).`);
     }
   } else if (type === "number") {
     if (typeof value !== "number" || !Number.isFinite(value)) {
-      return { valid: false, errors: [`${path6} must be a finite number.`] };
+      return { valid: false, errors: [`${path7} must be a finite number.`] };
     }
     if (typeof schema.minimum === "number" && value < schema.minimum) {
-      errors.push(`${path6} must be at least ${schema.minimum}.`);
+      errors.push(`${path7} must be at least ${schema.minimum}.`);
     }
     if (typeof schema.maximum === "number" && value > schema.maximum) {
-      errors.push(`${path6} must be at most ${schema.maximum}.`);
+      errors.push(`${path7} must be at most ${schema.maximum}.`);
     }
   } else if (type === "boolean") {
     if (typeof value !== "boolean") {
-      return { valid: false, errors: [`${path6} must be a boolean.`] };
+      return { valid: false, errors: [`${path7} must be a boolean.`] };
     }
   }
-  if ("const" in schema && value !== schema.const) errors.push(`${path6} must equal ${String(schema.const)}.`);
+  if ("const" in schema && value !== schema.const) errors.push(`${path7} must equal ${String(schema.const)}.`);
   return { valid: errors.length === 0, errors };
 }
 
@@ -1609,14 +1648,16 @@ function parseStatusJson(stdout) {
   try {
     const payload = JSON.parse(stdout.trim());
     if (typeof payload !== "object" || payload === null) return void 0;
-    const record = payload;
-    const loggedIn = record.loggedIn ?? record.logged_in ?? record.authenticated ?? record.isAuthenticated;
-    if (loggedIn === true) return "ready";
+    const record2 = payload;
+    const status = typeof record2.status === "string" ? record2.status.trim().toLowerCase() : "";
+    if (/^(?:unauthenticated|not[_ -](?:authenticated|logged[_ -]in)|authentication[_ -]required|login[_ -]required)$/.test(status)) {
+      return "authentication_required";
+    }
+    if (/^rate[_ -]limited$/.test(status)) return "rate_limited";
+    const loggedIn = record2.loggedIn ?? record2.logged_in ?? record2.authenticated ?? record2.isAuthenticated;
     if (loggedIn === false) return "authentication_required";
-    const status = typeof record.status === "string" ? record.status.toLowerCase() : "";
-    if (status.includes("ready") || status.includes("authenticated") || status.includes("logged")) return "ready";
-    if (status.includes("login") || status.includes("auth")) return "authentication_required";
-    if (status.includes("rate")) return "rate_limited";
+    if (loggedIn === true) return "ready";
+    if (["ready", "authenticated", "logged_in", "logged in"].includes(status)) return "ready";
     return void 0;
   } catch {
     return void 0;
@@ -1638,7 +1679,7 @@ async function runExec(executable, args, options) {
 async function probeWithStatusCommand(executable, options) {
   try {
     const result = await runExec(executable, ["auth", "status", "--json"], options);
-    const mapped = parseStatusJson(result.stdout) ?? (result.stderr ? classifyAuthFailure(result.stderr, result.stdout, 0) : "ready");
+    const mapped = parseStatusJson(result.stdout) ?? (result.stderr ? classifyAuthFailure(result.stderr, result.stdout, 0) : "installed");
     return {
       backendId: CLAUDE_BACKEND_ID,
       status: mapped,
@@ -1827,9 +1868,9 @@ var claudeSubscriptionCliAdapter = {
 async function testClaudeConnection(executable, signal) {
   let version = null;
   try {
-    const { execFile: execFile9 } = await import("node:child_process");
+    const { execFile: execFile10 } = await import("node:child_process");
     const { promisify: promisify9 } = await import("node:util");
-    const result = await promisify9(execFile9)(executable, ["--version"], {
+    const result = await promisify9(execFile10)(executable, ["--version"], {
       encoding: "utf8",
       timeout: 5e3,
       maxBuffer: 64 * 1024,
@@ -1855,6 +1896,7 @@ import { promisify as promisify2 } from "node:util";
 // ../model-bridge/src/subscription-cli/codex/constants.ts
 var CODEX_BACKEND_ID = "codex_subscription";
 var CODEX_FAST_SERVICE_TIER_ARGS = Object.freeze(["-c", 'service_tier="fast"']);
+var CODEX_MODEL_CATALOG_MAX_BYTES = 2 * 1024 * 1024;
 
 // ../model-bridge/src/subscription-cli/codex/parser.ts
 var DEFAULT_CODEX_EXEC_PARSE_LIMITS = Object.freeze({
@@ -1944,8 +1986,8 @@ ${stderr}`.trim();
       continue;
     }
     if (event.type === "item.completed" && isRecord3(event.item)) {
-      const text = agentMessageText(event.item);
-      if (text) lastAgentText = text;
+      const text2 = agentMessageText(event.item);
+      if (text2) lastAgentText = text2;
     }
   }
   if (terminalError) return { output: void 0, error: terminalError };
@@ -1999,37 +2041,40 @@ function parseStatusJson2(stdout) {
   try {
     const payload = JSON.parse(stdout.trim());
     if (typeof payload !== "object" || payload === null) return void 0;
-    const record = payload;
-    const loggedIn = record.loggedIn ?? record.logged_in ?? record.authenticated ?? record.isAuthenticated;
-    if (loggedIn === true) return "ready";
+    const record2 = payload;
+    const status = typeof record2.status === "string" ? record2.status.trim().toLowerCase() : "";
+    if (/^(?:unauthenticated|not[_ -](?:authenticated|logged[_ -]in)|authentication[_ -]required|login[_ -]required)$/.test(status)) {
+      return "authentication_required";
+    }
+    if (/^rate[_ -]limited$/.test(status)) return "rate_limited";
+    const loggedIn = record2.loggedIn ?? record2.logged_in ?? record2.authenticated ?? record2.isAuthenticated;
     if (loggedIn === false) return "authentication_required";
-    const status = typeof record.status === "string" ? record.status.toLowerCase() : "";
-    if (status.includes("ready") || status.includes("authenticated") || status.includes("logged")) return "ready";
-    if (status.includes("login") || status.includes("auth")) return "authentication_required";
-    if (status.includes("rate")) return "rate_limited";
+    if (loggedIn === true) return "ready";
+    if (["ready", "authenticated", "logged_in", "logged in"].includes(status)) return "ready";
     return void 0;
   } catch {
     return void 0;
   }
 }
 function parseStatusText(output) {
-  const text = output.toLowerCase();
-  if (/logged in|authenticated|using chatgpt/.test(text)) return "ready";
-  if (/not logged|log in|login required|sign.?in|authenticate/.test(text)) return "authentication_required";
-  if (/rate.?limit|quota|usage limit/.test(text)) return "rate_limited";
+  if (output.trim().startsWith("{") || output.trim().startsWith("[")) return void 0;
+  const text2 = output.toLowerCase();
+  if (/not logged|not authenticated|unauthenticated|log in|login required|sign.?in/.test(text2)) return "authentication_required";
+  if (/rate.?limit|quota|usage limit/.test(text2)) return "rate_limited";
+  if (/\blogged in\b|\bauthenticated\b|using chatgpt/.test(text2)) return "ready";
   return void 0;
 }
 function isUnsupportedJsonFlag(error2) {
-  const text = `${error2.stderr ?? ""}
+  const text2 = `${error2.stderr ?? ""}
 ${error2.stdout ?? ""}
 ${error2.message ?? ""}`;
-  return /unexpected argument '--json'|unknown option.*--json|unrecognized.*--json/i.test(text);
+  return /unexpected argument '--json'|unknown option.*--json|unrecognized.*--json/i.test(text2);
 }
 function isLegacyServiceTierConfigError(error2) {
-  const text = `${error2.stderr ?? ""}
+  const text2 = `${error2.stderr ?? ""}
 ${error2.stdout ?? ""}
 ${error2.message ?? ""}`;
-  return /service_tier|unknown variant `default`|unknown variant "default"/i.test(text);
+  return /service_tier|unknown variant `default`|unknown variant "default"/i.test(text2);
 }
 async function runExec2(executable, args, options, input) {
   const execImpl = options.execFileImpl ?? execFileAsync2;
@@ -2058,7 +2103,7 @@ async function probeWithStatusCommand2(executable, options) {
   try {
     const result = await runExecWithConfigFallback(executable, ["login", "status", "--json"], options);
     const mapped = parseStatusJson2(result.stdout) ?? parseStatusText(`${result.stdout}
-${result.stderr}`) ?? (result.stderr ? classifyAuthFailure2(result.stderr, result.stdout, 0) : "ready");
+${result.stderr}`) ?? (result.stderr ? classifyAuthFailure2(result.stderr, result.stdout, 0) : "installed");
     return {
       backendId: CODEX_BACKEND_ID,
       status: mapped,
@@ -2071,7 +2116,7 @@ ${result.stderr}`) ?? (result.stderr ? classifyAuthFailure2(result.stderr, resul
       try {
         const result = await runExecWithConfigFallback(executable, ["login", "status"], options);
         const mapped = parseStatusText(`${result.stdout}
-${result.stderr}`) ?? parseStatusJson2(result.stdout) ?? (result.stderr ? classifyAuthFailure2(result.stderr, result.stdout, 0) : "ready");
+${result.stderr}`) ?? parseStatusJson2(result.stdout) ?? (result.stderr ? classifyAuthFailure2(result.stderr, result.stdout, 0) : "installed");
         return {
           backendId: CODEX_BACKEND_ID,
           status: mapped,
@@ -2278,10 +2323,10 @@ function parseCodexModelList(output) {
   } catch {
   }
   for (const line of trimmed.split(/\r?\n/)) {
-    const text = line.trim();
-    if (!text || /^[-=\s]+$/.test(text)) continue;
+    const text2 = line.trim();
+    if (!text2 || /^[-=\s]+$/.test(text2)) continue;
     try {
-      const parsed = JSON.parse(text);
+      const parsed = JSON.parse(text2);
       if (isRecord4(parsed) && Array.isArray(parsed.models)) {
         parsed.models.forEach(add);
       } else {
@@ -2290,34 +2335,34 @@ function parseCodexModelList(output) {
       continue;
     } catch {
     }
-    const firstToken = text.match(/^([a-zA-Z0-9][a-zA-Z0-9._:/-]*)\b/)?.[1];
+    const firstToken = text2.match(/^([a-zA-Z0-9][a-zA-Z0-9._:/-]*)\b/)?.[1];
     if (firstToken && !["model", "models", "name", "id", "warning", "warn", "error"].includes(firstToken.toLowerCase())) add(firstToken);
   }
   return Object.freeze(models);
 }
 async function defaultExecFileProbe(executable, args, options) {
-  const { execFile: execFile9 } = await import("node:child_process");
+  const { execFile: execFile10 } = await import("node:child_process");
   const { promisify: promisify9 } = await import("node:util");
-  const result = await promisify9(execFile9)(executable, [...args], options);
+  const result = await promisify9(execFile10)(executable, [...args], options);
   return { stdout: result.stdout, stderr: result.stderr };
 }
 async function listCodexModels(executable, options = {}) {
-  const execFile9 = options.execFile ?? defaultExecFileProbe;
+  const execFile10 = options.execFile ?? defaultExecFileProbe;
   const execOptions = {
     encoding: "utf8",
     timeout: 1e4,
-    maxBuffer: 512 * 1024,
+    maxBuffer: CODEX_MODEL_CATALOG_MAX_BYTES,
     windowsHide: true,
     shell: false,
     ...options.signal ? { signal: options.signal } : {}
   };
   let result;
   try {
-    result = await execFile9(executable, ["debug", "models"], execOptions);
+    result = await execFile10(executable, ["debug", "models"], execOptions);
   } catch (error2) {
-    const text = error2 instanceof Error ? error2.message : String(error2);
-    if (!/service_tier|unknown variant `default`|unknown variant "default"/i.test(text)) throw error2;
-    result = await execFile9(executable, ["debug", "models", ...CODEX_FAST_SERVICE_TIER_ARGS], execOptions);
+    const text2 = error2 instanceof Error ? error2.message : String(error2);
+    if (!/service_tier|unknown variant `default`|unknown variant "default"/i.test(text2)) throw error2;
+    result = await execFile10(executable, ["debug", "models", ...CODEX_FAST_SERVICE_TIER_ARGS], execOptions);
   }
   return parseCodexModelList(`${result.stdout}
 ${result.stderr}`);
@@ -2363,9 +2408,9 @@ var codexSubscriptionCliAdapter = {
 async function testCodexConnection(executable, signal) {
   let version = null;
   try {
-    const { execFile: execFile9 } = await import("node:child_process");
+    const { execFile: execFile10 } = await import("node:child_process");
     const { promisify: promisify9 } = await import("node:util");
-    const result = await promisify9(execFile9)(executable, ["--version"], {
+    const result = await promisify9(execFile10)(executable, ["--version"], {
       encoding: "utf8",
       timeout: 5e3,
       maxBuffer: 64 * 1024,
@@ -2385,10 +2430,10 @@ ${result.stderr}`.trim())?.raw ?? null;
 }
 
 // ../model-bridge/src/subscription-cli/cursor/adapter.ts
-import path2 from "node:path";
+import path3 from "node:path";
 
 // ../model-bridge/src/subscription-cli/cursor/auth.ts
-import { execFile as execFile4 } from "node:child_process";
+import { execFile as execFile5 } from "node:child_process";
 import { promisify as promisify4 } from "node:util";
 
 // ../model-bridge/src/subscription-cli/cursor/parser.ts
@@ -2437,8 +2482,8 @@ function parseCursorStreamJson(stdout, limits = DEFAULT_CURSOR_STREAM_PARSE_LIMI
     }
     if (!isRecord5(event) || typeof event.type !== "string") continue;
     if (event.type === "assistant") {
-      const text = assistantText(event);
-      if (text) lastAssistantText = text;
+      const text2 = assistantText(event);
+      if (text2) lastAssistantText = text2;
       continue;
     }
     if (event.type === "error") {
@@ -2481,11 +2526,245 @@ function parseCursorStreamJson(stdout, limits = DEFAULT_CURSOR_STREAM_PARSE_LIMI
 }
 
 // ../model-bridge/src/detection.ts
-import { execFile as execFile3 } from "node:child_process";
+import { execFile as execFile4 } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { access } from "node:fs/promises";
-import path from "node:path";
+import { access as access2 } from "node:fs/promises";
+import path2 from "node:path";
 import { promisify as promisify3 } from "node:util";
+
+// ../model-bridge/src/subscription-cli/codex/executable-selection.ts
+import { execFile as execFile3, spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { access, lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+var CODEX_SELECTION_LIMITS = Object.freeze({
+  maxDirectories: 128,
+  maxCandidates: 8,
+  concurrency: 2,
+  versionTimeoutMs: 1500,
+  terminationGraceMs: 1250,
+  taskkillTimeoutMs: 1e3,
+  maxVersionBytes: 64 * 1024
+});
+function versionOf(value) {
+  const match = value?.match(/^(?:codex(?:-cli)?\s+)?v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z.-]+)?$/);
+  if (!match) return void 0;
+  const core = match.slice(1, 4).map(Number);
+  const prerelease = match[4]?.split(".") ?? [];
+  if (core.some((part) => !Number.isSafeInteger(part)) || prerelease.some((part) => /^0\d+$/.test(part))) return void 0;
+  return { core, prerelease };
+}
+function compareVersions(left, right) {
+  for (let index = 0; index < 3; index += 1) {
+    const difference = left.core[index] - right.core[index];
+    if (difference) return difference;
+  }
+  if (!left.prerelease.length || !right.prerelease.length) return Number(!left.prerelease.length) - Number(!right.prerelease.length);
+  for (let index = 0; index < Math.max(left.prerelease.length, right.prerelease.length); index += 1) {
+    const a = left.prerelease[index];
+    const b = right.prerelease[index];
+    if (a === b) continue;
+    if (a === void 0 || b === void 0) return a === void 0 ? -1 : 1;
+    const aNumeric = /^\d+$/.test(a);
+    const bNumeric = /^\d+$/.test(b);
+    if (aNumeric && bNumeric) return a.length !== b.length ? a.length - b.length : a < b ? -1 : 1;
+    if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
+    return a < b ? -1 : 1;
+  }
+  return 0;
+}
+function inside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative);
+}
+async function currentWorkspaceRoot() {
+  const cwd = await realpath(process.cwd());
+  let root = cwd;
+  let directory = cwd;
+  for (let level = 0; level < 12; level += 1) {
+    if (await lstat(path.join(directory, ".git")).catch(() => void 0) || await lstat(path.join(directory, "pnpm-workspace.yaml")).catch(() => void 0)) root = directory;
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return root;
+}
+async function candidatesOnPath(options) {
+  const platform = options.platform ?? process.platform;
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const env = options.env ?? process.env;
+  const directories = (options.path ?? env.PATH ?? "").split(platform === "win32" ? ";" : ":").filter((directory) => pathApi.isAbsolute(directory) && !directory.includes("\0")).slice(0, CODEX_SELECTION_LIMITS.maxDirectories);
+  const extensions = platform === "win32" ? ["", ...(options.pathExt ?? env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").map((part) => part.trim().toLowerCase())] : [""];
+  const workspace = await currentWorkspaceRoot();
+  const seen = /* @__PURE__ */ new Set();
+  for (const directory of directories) {
+    for (const extension of extensions) {
+      if (!/^(?:|\.[a-z0-9]+)$/.test(extension)) continue;
+      const candidate = pathApi.join(directory, `codex${extension}`);
+      if (inside(workspace, candidate)) continue;
+      try {
+        const info = await lstat(candidate);
+        if (!info.isFile() && !info.isSymbolicLink()) continue;
+        const resolved = await realpath(candidate);
+        if (!path.isAbsolute(resolved) || inside(workspace, resolved) || !(await lstat(resolved)).isFile()) continue;
+        await access(resolved, constants.X_OK);
+        if (options.executableCheck && !await options.executableCheck(candidate)) continue;
+        seen.add(resolved);
+        if (seen.size >= CODEX_SELECTION_LIMITS.maxCandidates) return [...seen];
+      } catch {
+      }
+    }
+  }
+  return [...seen];
+}
+function versionEnvironment(source) {
+  const result = { NODE_ENV: source.NODE_ENV ?? "production" };
+  for (const key of ["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "LC_CTYPE", "SystemRoot", "WINDIR"]) {
+    if (source[key] !== void 0) result[key] = source[key];
+  }
+  return result;
+}
+async function probeVersion(executable, cwd, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, ["--version"], {
+      cwd,
+      env,
+      shell: false,
+      windowsHide: true,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    let bytes = 0;
+    let failure;
+    let settled = false;
+    let terminating = false;
+    let termination = Promise.resolve();
+    let terminationDeadline;
+    const finish = (error2) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (terminationDeadline) clearTimeout(terminationDeadline);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      child.unref();
+      if (error2) reject(error2);
+      else resolve({ stdout, stderr });
+    };
+    const terminate = () => {
+      if (terminating) return;
+      terminating = true;
+      terminationDeadline = setTimeout(() => {
+        finish(failure ?? new Error("Codex CLI version probe cleanup timed out."));
+      }, CODEX_SELECTION_LIMITS.terminationGraceMs);
+      if (!child.pid) return;
+      if (process.platform === "win32") {
+        const taskkill = path.win32.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows", "System32", "taskkill.exe");
+        termination = new Promise((done) => {
+          let completed = false;
+          let killer;
+          const complete = () => {
+            if (completed) return;
+            completed = true;
+            clearTimeout(killerDeadline);
+            killer?.kill("SIGKILL");
+            killer?.stdout?.destroy();
+            killer?.stderr?.destroy();
+            killer?.unref();
+            child.kill("SIGKILL");
+            done();
+          };
+          const killerDeadline = setTimeout(complete, CODEX_SELECTION_LIMITS.taskkillTimeoutMs);
+          try {
+            killer = execFile3(taskkill, ["/pid", String(child.pid), "/T", "/F"], {
+              timeout: CODEX_SELECTION_LIMITS.taskkillTimeoutMs,
+              killSignal: "SIGKILL",
+              maxBuffer: 1024,
+              windowsHide: true,
+              shell: false
+            }, complete);
+          } catch {
+            complete();
+          }
+        });
+      } else {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          child.kill("SIGKILL");
+        }
+      }
+    };
+    const timeout = setTimeout(() => {
+      failure ??= new Error("Codex CLI version probe timed out.");
+      terminate();
+    }, CODEX_SELECTION_LIMITS.versionTimeoutMs);
+    const collect = (chunk, stream) => {
+      if (failure || settled) return;
+      bytes += chunk.length;
+      if (bytes > CODEX_SELECTION_LIMITS.maxVersionBytes) {
+        failure = new Error("Codex CLI version output exceeded the limit.");
+        terminate();
+      } else if (stream === "stdout") stdout += chunk.toString("utf8");
+      else stderr += chunk.toString("utf8");
+    };
+    child.stdout.on("data", (chunk) => collect(chunk, "stdout"));
+    child.stderr.on("data", (chunk) => collect(chunk, "stderr"));
+    child.once("error", () => {
+      failure ??= new Error("Codex CLI version probe failed.");
+      terminate();
+    });
+    child.once("close", (code) => {
+      clearTimeout(timeout);
+      if (process.platform !== "win32") terminate();
+      void termination.then(() => finish(failure ?? (code !== 0 ? new Error("Codex CLI version probe failed.") : void 0)));
+    });
+  });
+}
+async function selectCodexExecutable(options = {}) {
+  const candidates = await candidatesOnPath(options);
+  if (!candidates.length) return null;
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "vdt-codex-selection-"));
+  try {
+    const env = versionEnvironment(options.env ?? process.env);
+    const results = [];
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(candidates.length, CODEX_SELECTION_LIMITS.concurrency) }, async () => {
+      while (next < candidates.length) {
+        const index = next++;
+        const executable = candidates[index];
+        try {
+          const result = options.versionProbe ? await options.versionProbe(executable, ["--version"]) : await probeVersion(executable, cwd, env);
+          const raw = `${result.stdout}
+${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim().slice(0, 160) || null;
+          const version = versionOf(raw) ? raw : null;
+          results[index] = {
+            executable,
+            alias: "codex",
+            version,
+            ...version ? {} : { error: "Codex CLI version was not recognized." }
+          };
+        } catch {
+          results[index] = { executable, alias: "codex", version: null, error: "Codex CLI version probe failed." };
+        }
+      }
+    }));
+    let selected = results[0];
+    for (const result of results.slice(1)) {
+      const version = versionOf(result.version);
+      const current = versionOf(selected.version);
+      if (version && (!current || compareVersions(version, current) > 0)) selected = result;
+    }
+    return selected;
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+}
+
+// ../model-bridge/src/detection.ts
 var SUBSCRIPTION_CLI_IDS = ["cursor-agent", "codex", "claude", "gemini", "copilot"];
 var SUBSCRIPTION_CLI_DEFINITIONS = Object.freeze([
   { id: "cursor-agent", backendId: "cursor_subscription", aliases: ["agent", "cursor-agent", "cursor"], versionArgs: ["--version"] },
@@ -2494,14 +2773,14 @@ var SUBSCRIPTION_CLI_DEFINITIONS = Object.freeze([
   { id: "gemini", backendId: "gemini_subscription", aliases: ["gemini"], versionArgs: ["--version"] },
   { id: "copilot", backendId: "copilot_subscription", aliases: ["copilot"], versionArgs: ["--version"] }
 ]);
-var execFileAsync3 = promisify3(execFile3);
+var execFileAsync3 = promisify3(execFile4);
 var definitions = new Map(SUBSCRIPTION_CLI_DEFINITIONS.map((definition) => [definition.id, definition]));
 function isSubscriptionCliId(value) {
   return definitions.has(value);
 }
 var defaultExecutableCheck = async (candidate) => {
   try {
-    await access(candidate, fsConstants.X_OK);
+    await access2(candidate, fsConstants.X_OK);
     return true;
   } catch {
     return false;
@@ -2522,7 +2801,7 @@ async function findExecutableOnPath(aliases, options = {}) {
   const pathValue = options.path ?? process.env.PATH ?? "";
   const pathExt = options.pathExt ?? process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
   const check = options.executableCheck ?? defaultExecutableCheck;
-  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const pathApi = platform === "win32" ? path2.win32 : path2.posix;
   const directories = pathValue.split(platform === "win32" ? ";" : ":").filter(Boolean);
   for (const alias of aliases) {
     if (pathApi.basename(alias) !== alias || alias === "." || alias === "..") continue;
@@ -2536,19 +2815,23 @@ async function findExecutableOnPath(aliases, options = {}) {
   }
   return null;
 }
-async function detectSubscriptionCli(id, options = {}) {
-  const definition = definitions.get(id);
-  if (!definition) throw new Error(`Unknown subscription CLI: ${id}`);
+async function detectSubscriptionCli(id2, options = {}) {
+  const definition = definitions.get(id2);
+  if (!definition) throw new Error(`Unknown subscription CLI: ${id2}`);
+  if (id2 === "codex") {
+    const selected = await selectCodexExecutable(options);
+    return selected ? { id: id2, backendId: definition.backendId, installed: true, ...selected } : { id: id2, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
+  }
   const match = await findExecutableOnPath(definition.aliases, options);
-  if (!match) return { id, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
+  if (!match) return { id: id2, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
   try {
     const result = await (options.versionProbe ?? defaultVersionProbe)(match.executable, definition.versionArgs);
     const version = `${result.stdout}
 ${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim() || null;
-    return { id, backendId: definition.backendId, installed: true, executable: match.executable, alias: match.alias, version };
+    return { id: id2, backendId: definition.backendId, installed: true, executable: match.executable, alias: match.alias, version };
   } catch (error2) {
     return {
-      id,
+      id: id2,
       backendId: definition.backendId,
       installed: true,
       executable: match.executable,
@@ -2559,7 +2842,7 @@ ${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim() || null;
   }
 }
 async function detectSubscriptionClis(options = {}) {
-  return Promise.all(SUBSCRIPTION_CLI_IDS.map((id) => detectSubscriptionCli(id, options)));
+  return Promise.all(SUBSCRIPTION_CLI_IDS.map((id2) => detectSubscriptionCli(id2, options)));
 }
 
 // ../model-bridge/src/subscription-cli/cursor/version.ts
@@ -2622,7 +2905,7 @@ function evaluateCursorVersion(version) {
 var CURSOR_BACKEND_ID = "cursor_subscription";
 
 // ../model-bridge/src/subscription-cli/cursor/auth.ts
-var execFileAsync4 = promisify4(execFile4);
+var execFileAsync4 = promisify4(execFile5);
 var CURSOR_CONNECTION_TEST_PROMPT = 'Respond with only valid JSON matching {"ok":true}. No markdown, commentary, or extra keys.';
 function classifyAuthFailure3(stderr, stdout, exitCode) {
   const haystack = `${stderr}
@@ -2654,18 +2937,20 @@ function parseStatusJson3(stdout) {
   try {
     const payload = JSON.parse(stdout.trim());
     if (typeof payload !== "object" || payload === null) return void 0;
-    const record = payload;
-    const statusMessage = [record.message, record.error, record.detail].filter((value) => typeof value === "string").join(" ").toLowerCase();
+    const record2 = payload;
+    const statusMessage = [record2.message, record2.error, record2.detail].filter((value) => typeof value === "string").join(" ").toLowerCase();
     if (/unable to fetch user|authentication required|login required|sign.?in required|token (?:is )?(?:invalid|expired)/.test(statusMessage)) {
       return "authentication_required";
     }
-    const loggedIn = record.loggedIn ?? record.logged_in ?? record.authenticated ?? record.isAuthenticated;
-    if (loggedIn === true) return "ready";
+    const status = typeof record2.status === "string" ? record2.status.trim().toLowerCase() : "";
+    if (/^(?:unauthenticated|not[_ -](?:authenticated|logged[_ -]in)|authentication[_ -]required|login[_ -]required)$/.test(status)) {
+      return "authentication_required";
+    }
+    if (/^rate[_ -]limited$/.test(status)) return "rate_limited";
+    const loggedIn = record2.loggedIn ?? record2.logged_in ?? record2.authenticated ?? record2.isAuthenticated;
     if (loggedIn === false) return "authentication_required";
-    const status = typeof record.status === "string" ? record.status.toLowerCase() : "";
-    if (status.includes("ready") || status.includes("authenticated")) return "ready";
-    if (status.includes("login") || status.includes("auth")) return "authentication_required";
-    if (status.includes("rate")) return "rate_limited";
+    if (loggedIn === true) return "ready";
+    if (["ready", "authenticated", "logged_in", "logged in"].includes(status)) return "ready";
     return void 0;
   } catch {
     return void 0;
@@ -2688,11 +2973,12 @@ async function runExec3(executable, args, options, input) {
 async function probeWithStatusCommand3(executable, options) {
   try {
     const result = await runExec3(executable, ["status", "--format", "json"], options);
-    const mapped = parseStatusJson3(result.stdout) ?? (result.stderr ? classifyAuthFailure3(result.stderr, result.stdout, 0) : "ready");
+    const mapped = parseStatusJson3(result.stdout) ?? (result.stderr ? classifyAuthFailure3(result.stderr, result.stdout, 0) : "installed");
+    const accountVerificationFailed = mapped === "authentication_required" && /unable to fetch user/i.test(result.stdout);
     return {
       backendId: CURSOR_BACKEND_ID,
       status: mapped,
-      authSummary: authSummaryForStatus3(mapped),
+      authSummary: accountVerificationFailed ? "Cursor has a stored session, but could not verify account access. Reconnect with Sign in, then rescan." : authSummaryForStatus3(mapped),
       diagnostics: mapped === "ready" ? [] : [result.stderr.trim() || result.stdout.trim()].filter(Boolean)
     };
   } catch (error2) {
@@ -2776,7 +3062,7 @@ function buildCursorDynamicArgs(input) {
   const args = [];
   if (input.enableWorkspaceTrust) args.push("--trust");
   if (input.model) args.push("--model", input.model);
-  const workspace = input.cwd ?? (input.promptPath ? path2.dirname(input.promptPath) : void 0);
+  const workspace = input.cwd ?? (input.promptPath ? path3.dirname(input.promptPath) : void 0);
   if (workspace) args.push("--workspace", workspace);
   assertArgsSafe(args, { allowScopedTrust: input.enableWorkspaceTrust === true });
   return Object.freeze(args);
@@ -2785,7 +3071,7 @@ function isRecord6(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function mapCursorError(message) {
-  return /auth|login|sign[\s-]?in/i.test(message) ? "AUTH_REQUIRED" : /rate.?limit/i.test(message) ? "RATE_LIMITED" : "BACKEND_PARSE_FAILED";
+  return /auth|login|sign[\s-]?in/i.test(message) ? "AUTH_REQUIRED" : /rate.?limit|quota|usage limit|out of usage/i.test(message) ? "RATE_LIMITED" : "BACKEND_PARSE_FAILED";
 }
 function extractModelId2(value) {
   if (typeof value === "string") return value.trim() || void 0;
@@ -2826,22 +3112,22 @@ function parseCursorAgentModelList(output) {
   } catch {
   }
   for (const line of trimmed.split(/\r?\n/)) {
-    const text = line.trim().replace(/^[-*]\s+/, "");
-    if (!text || /^[-=\s]+$/.test(text) || /no models available/i.test(text)) continue;
-    const model = text.match(/^([a-zA-Z0-9][a-zA-Z0-9._:/-]*)(?:\s+-\s+|\s{2,}|$)/)?.[1];
+    const text2 = line.trim().replace(/^[-*]\s+/, "");
+    if (!text2 || /^[-=\s]+$/.test(text2) || /no models available/i.test(text2)) continue;
+    const model = text2.match(/^([a-zA-Z0-9][a-zA-Z0-9._:/-]*)(?:\s+-\s+|\s{2,}|$)/)?.[1];
     if (model && !["model", "models", "name", "id"].includes(model.toLowerCase())) add(model);
   }
   return Object.freeze(models);
 }
 async function defaultExecFileProbe2(executable, args, options) {
-  const { execFile: execFile9 } = await import("node:child_process");
+  const { execFile: execFile10 } = await import("node:child_process");
   const { promisify: promisify9 } = await import("node:util");
-  const result = await promisify9(execFile9)(executable, [...args], options);
+  const result = await promisify9(execFile10)(executable, [...args], options);
   return { stdout: result.stdout, stderr: result.stderr };
 }
 async function listCursorAgentModels(executable, options = {}) {
-  const execFile9 = options.execFile ?? defaultExecFileProbe2;
-  const result = await execFile9(executable, ["models"], {
+  const execFile10 = options.execFile ?? defaultExecFileProbe2;
+  const result = await execFile10(executable, ["models"], {
     encoding: "utf8",
     timeout: 1e4,
     maxBuffer: 512 * 1024,
@@ -2895,9 +3181,9 @@ var cursorSubscriptionCliAdapter = {
 async function testCursorConnection(executable, signal) {
   let version = null;
   try {
-    const { execFile: execFile9 } = await import("node:child_process");
+    const { execFile: execFile10 } = await import("node:child_process");
     const { promisify: promisify9 } = await import("node:util");
-    const result = await promisify9(execFile9)(executable, ["--version"], {
+    const result = await promisify9(execFile10)(executable, ["--version"], {
       encoding: "utf8",
       timeout: 5e3,
       maxBuffer: 64 * 1024,
@@ -2917,10 +3203,10 @@ ${result.stderr}`.trim())?.raw ?? null;
 }
 
 // ../model-bridge/src/subscription-cli/gemini/auth.ts
-import { execFile as execFile5 } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path3 from "node:path";
+import { execFile as execFile6 } from "node:child_process";
+import { mkdtemp as mkdtemp2, rm as rm2, writeFile } from "node:fs/promises";
+import os2 from "node:os";
+import path4 from "node:path";
 import { promisify as promisify5 } from "node:util";
 
 // ../model-bridge/src/subscription-cli/gemini/parser.ts
@@ -2963,10 +3249,10 @@ function parseGeminiJsonOutput(stdout, stderr, maxBytes = MAX_BYTES) {
 
 // ../model-bridge/src/subscription-cli/gemini/auth.ts
 var GEMINI_CONNECTION_TEST_PROMPT = 'Respond with only valid JSON matching {"ok":true}. No tools, markdown, or commentary.';
-function classify(text) {
-  if (/quota|rate.?limit|capacity|resource.?exhausted|429|daily limit/i.test(text)) return "rate_limited";
-  if (/policy|code assist.*disabled|organization.*disabled/i.test(text)) return "unavailable";
-  if (/auth|login|sign[\s-]?in|not logged|google account|credentials/i.test(text)) return "authentication_required";
+function classify(text2) {
+  if (/quota|rate.?limit|capacity|resource.?exhausted|429|daily limit/i.test(text2)) return "rate_limited";
+  if (/policy|code assist.*disabled|organization.*disabled/i.test(text2)) return "unavailable";
+  if (/auth|login|sign[\s-]?in|not logged|google account|credentials/i.test(text2)) return "authentication_required";
   return "error";
 }
 function summary(status) {
@@ -2981,11 +3267,11 @@ async function probeGeminiAuth(executable, options = {}) {
   if (options.versionStatus?.status === "unsupported_version") {
     return { backendId: GEMINI_BACKEND_ID, status: "unsupported_version", authSummary: summary("unsupported_version"), diagnostics: [...options.versionStatus.diagnostics] };
   }
-  const cwd = await mkdtemp(path3.join(os.tmpdir(), "vdt-gemini-probe-"));
-  const policyPath = path3.join(cwd, "deny-all-tools.toml");
+  const cwd = await mkdtemp2(path4.join(os2.tmpdir(), "vdt-gemini-probe-"));
+  const policyPath = path4.join(cwd, "deny-all-tools.toml");
   await writeFile(policyPath, '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n', { encoding: "utf8", mode: 384 });
   try {
-    const probe = options.execFileImpl ?? promisify5(execFile5);
+    const probe = options.execFileImpl ?? promisify5(execFile6);
     const execOptions = { encoding: "utf8", cwd, timeout: options.timeoutMs ?? 15e3, maxBuffer: 512 * 1024, windowsHide: true, shell: false, signal: options.signal };
     const result = await probe(executable, ["--output-format", "json", "--approval-mode", "default", "--admin-policy", policyPath, "--prompt", GEMINI_CONNECTION_TEST_PROMPT], execOptions);
     const parsed = parseGeminiJsonOutput(result.stdout, result.stderr);
@@ -3003,7 +3289,7 @@ ${execError.message}`.trim();
     const status = classify(message);
     return { backendId: GEMINI_BACKEND_ID, status, authSummary: summary(status), diagnostics: [message] };
   } finally {
-    await rm(cwd, { recursive: true, force: true });
+    await rm2(cwd, { recursive: true, force: true });
   }
 }
 
@@ -3077,9 +3363,9 @@ var geminiSubscriptionCliAdapter = {
 async function testGeminiConnection(executable, signal) {
   let version = null;
   try {
-    const { execFile: execFile9 } = await import("node:child_process");
+    const { execFile: execFile10 } = await import("node:child_process");
     const { promisify: promisify9 } = await import("node:util");
-    const result = await promisify9(execFile9)(executable, ["--version"], { encoding: "utf8", timeout: 5e3, maxBuffer: 64 * 1024, windowsHide: true, shell: false, signal });
+    const result = await promisify9(execFile10)(executable, ["--version"], { encoding: "utf8", timeout: 5e3, maxBuffer: 64 * 1024, windowsHide: true, shell: false, signal });
     version = parseGeminiVersionOutput(`${result.stdout}
 ${result.stderr}`)?.raw ?? null;
   } catch {
@@ -3089,10 +3375,10 @@ ${result.stderr}`)?.raw ?? null;
 }
 
 // ../model-bridge/src/subscription-cli/copilot/auth.ts
-import { execFile as execFile6 } from "node:child_process";
-import { mkdtemp as mkdtemp2, rm as rm2 } from "node:fs/promises";
-import os2 from "node:os";
-import path4 from "node:path";
+import { execFile as execFile7 } from "node:child_process";
+import { mkdtemp as mkdtemp3, rm as rm3 } from "node:fs/promises";
+import os3 from "node:os";
+import path5 from "node:path";
 import { promisify as promisify6 } from "node:util";
 
 // ../model-bridge/src/subscription-cli/copilot/parser.ts
@@ -3155,10 +3441,10 @@ function parseCopilotJsonlOutput(stdout, stderr, maxBytes = MAX_BYTES2) {
 
 // ../model-bridge/src/subscription-cli/copilot/auth.ts
 var COPILOT_CONNECTION_TEST_PROMPT = 'Respond with only valid JSON matching {"ok":true}. Do not use tools, markdown, or commentary.';
-function classify2(text) {
-  if (/premium request|quota|usage limit|rate.?limit|429|budget/i.test(text)) return "rate_limited";
-  if (/organization.*policy|policy.*disabled|copilot cli.*disabled|plan.*unavailable/i.test(text)) return "unavailable";
-  if (/auth|login|sign[\s-]?in|not logged|credentials/i.test(text)) return "authentication_required";
+function classify2(text2) {
+  if (/premium request|quota|usage limit|rate.?limit|429|budget/i.test(text2)) return "rate_limited";
+  if (/organization.*policy|policy.*disabled|copilot cli.*disabled|plan.*unavailable/i.test(text2)) return "unavailable";
+  if (/auth|login|sign[\s-]?in|not logged|credentials/i.test(text2)) return "authentication_required";
   return "error";
 }
 function summary2(status) {
@@ -3173,9 +3459,9 @@ async function probeCopilotAuth(executable, options = {}) {
   if (options.versionStatus?.status === "unsupported_version") {
     return { backendId: COPILOT_BACKEND_ID, status: "unsupported_version", authSummary: summary2("unsupported_version"), diagnostics: [...options.versionStatus.diagnostics] };
   }
-  const cwd = await mkdtemp2(path4.join(os2.tmpdir(), "vdt-copilot-probe-"));
+  const cwd = await mkdtemp3(path5.join(os3.tmpdir(), "vdt-copilot-probe-"));
   try {
-    const probe = options.execFileImpl ?? promisify6(execFile6);
+    const probe = options.execFileImpl ?? promisify6(execFile7);
     const execOptions = { encoding: "utf8", cwd, timeout: options.timeoutMs ?? 15e3, maxBuffer: 512 * 1024, windowsHide: true, shell: false, signal: options.signal };
     const args = ["--output-format=json", "--stream=off", "--available-tools=", "--disable-builtin-mcps", "--no-custom-instructions", "--no-ask-user", "--no-auto-update", "--prompt", COPILOT_CONNECTION_TEST_PROMPT];
     const result = await probe(executable, args, execOptions);
@@ -3194,7 +3480,7 @@ ${execError.message}`.trim();
     const status = classify2(message);
     return { backendId: COPILOT_BACKEND_ID, status, authSummary: summary2(status), diagnostics: [message] };
   } finally {
-    await rm2(cwd, { recursive: true, force: true });
+    await rm3(cwd, { recursive: true, force: true });
   }
 }
 
@@ -3263,9 +3549,9 @@ var copilotSubscriptionCliAdapter = {
 async function testCopilotConnection(executable, signal) {
   let version = null;
   try {
-    const { execFile: execFile9 } = await import("node:child_process");
+    const { execFile: execFile10 } = await import("node:child_process");
     const { promisify: promisify9 } = await import("node:util");
-    const result = await promisify9(execFile9)(executable, ["--version"], { encoding: "utf8", timeout: 5e3, maxBuffer: 64 * 1024, windowsHide: true, shell: false, signal });
+    const result = await promisify9(execFile10)(executable, ["--version"], { encoding: "utf8", timeout: 5e3, maxBuffer: 64 * 1024, windowsHide: true, shell: false, signal });
     version = parseCopilotVersionOutput(`${result.stdout}
 ${result.stderr}`)?.raw ?? null;
   } catch {
@@ -3377,9 +3663,9 @@ function normalizeQuestionDefaults(question) {
 }
 function splitFleetAndShiftQuestion(question) {
   if (hasExplicitAnswerStructure(question)) return void 0;
-  const text = question.question.toLowerCase();
-  const mentionsFleet = /excavator|truck|haul\s*truck|dump\s*truck|самосвал|экскаватор/.test(text);
-  const mentionsShift = /shift|смен/.test(text);
+  const text2 = question.question.toLowerCase();
+  const mentionsFleet = /excavator|truck|haul\s*truck|dump\s*truck|самосвал|экскаватор/.test(text2);
+  const mentionsShift = /shift|смен/.test(text2);
   if (!mentionsFleet || !mentionsShift) return void 0;
   return [
     normalizeQuestionDefaults({
@@ -3395,7 +3681,7 @@ function splitFleetAndShiftQuestion(question) {
           label: "Excavators",
           kind: "number",
           unit: "units",
-          required: /excavator|экскаватор/.test(text),
+          required: /excavator|экскаватор/.test(text2),
           placeholder: "5"
         },
         {
@@ -3403,7 +3689,7 @@ function splitFleetAndShiftQuestion(question) {
           label: "Haul trucks",
           kind: "number",
           unit: "units",
-          required: /truck|самосвал/.test(text),
+          required: /truck|самосвал/.test(text2),
           placeholder: "10"
         }
       ]
@@ -3431,15 +3717,15 @@ function splitFleetAndShiftQuestion(question) {
 }
 function inferFieldGroupQuestion(question) {
   if (hasExplicitAnswerStructure(question)) return void 0;
-  const text = question.question.toLowerCase();
-  const mentionsExcavators = /excavator|экскаватор/.test(text);
-  const mentionsTrucks = /truck|haul\s*truck|dump\s*truck|самосвал/.test(text);
-  const mentionsReverseShovel = /reverse\s+shovel|backhoe|обратн/.test(text);
-  const mentionsStraightShovel = /straight\s+shovel|face\s+shovel|прям/.test(text);
-  const mentionsHours = /hour|час/.test(text);
-  const mentionsDaysPerYear = /(day|дн).*(year|год)|(year|год).*(day|дн)/.test(text);
-  const mentionsDistance = /distance|km|км/.test(text);
-  const mentionsSpeed = /speed|km\/h|км\/ч/.test(text);
+  const text2 = question.question.toLowerCase();
+  const mentionsExcavators = /excavator|экскаватор/.test(text2);
+  const mentionsTrucks = /truck|haul\s*truck|dump\s*truck|самосвал/.test(text2);
+  const mentionsReverseShovel = /reverse\s+shovel|backhoe|обратн/.test(text2);
+  const mentionsStraightShovel = /straight\s+shovel|face\s+shovel|прям/.test(text2);
+  const mentionsHours = /hour|час/.test(text2);
+  const mentionsDaysPerYear = /(day|дн).*(year|год)|(year|год).*(day|дн)/.test(text2);
+  const mentionsDistance = /distance|km|км/.test(text2);
+  const mentionsSpeed = /speed|km\/h|км\/ч/.test(text2);
   if (mentionsReverseShovel && mentionsStraightShovel) {
     return normalizeQuestionDefaults({
       ...question,
@@ -3497,8 +3783,8 @@ function inferFieldGroupQuestion(question) {
       freeTextAllowed: true,
       fields: [
         {
-          id: /shift|смен/.test(text) ? "hours_per_shift" : "operating_hours",
-          label: /shift|смен/.test(text) ? "Hours per shift" : "Operating hours",
+          id: /shift|смен/.test(text2) ? "hours_per_shift" : "operating_hours",
+          label: /shift|смен/.test(text2) ? "Hours per shift" : "Operating hours",
           kind: "number",
           unit: "h",
           required: true,
@@ -3703,10 +3989,10 @@ var util;
       return obj[e];
     });
   };
-  util2.objectKeys = typeof Object.keys === "function" ? (obj) => Object.keys(obj) : (object) => {
+  util2.objectKeys = typeof Object.keys === "function" ? (obj) => Object.keys(obj) : (object2) => {
     const keys = [];
-    for (const key in object) {
-      if (Object.prototype.hasOwnProperty.call(object, key)) {
+    for (const key in object2) {
+      if (Object.prototype.hasOwnProperty.call(object2, key)) {
         keys.push(key);
       }
     }
@@ -3720,8 +4006,8 @@ var util;
     return void 0;
   };
   util2.isInteger = typeof Number.isInteger === "function" ? (val) => Number.isInteger(val) : (val) => typeof val === "number" && Number.isFinite(val) && Math.floor(val) === val;
-  function joinValues(array, separator = " | ") {
-    return array.map((val) => typeof val === "string" ? `'${val}'` : val).join(separator);
+  function joinValues(array2, separator = " | ") {
+    return array2.map((val) => typeof val === "string" ? `'${val}'` : val).join(separator);
   }
   util2.joinValues = joinValues;
   util2.jsonStringifyReplacer = (_, value) => {
@@ -4037,8 +4323,8 @@ function getErrorMap() {
 
 // ../../node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path6, errorMaps, issueData } = params;
-  const fullPath = [...path6, ...issueData.path || []];
+  const { data, path: path7, errorMaps, issueData } = params;
+  const fullPath = [...path7, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -4154,11 +4440,11 @@ var errorUtil;
 
 // ../../node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path6, key) {
+  constructor(parent, value, path7, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path6;
+    this._path = path7;
     this._key = key;
   }
   get path() {
@@ -8161,19 +8447,19 @@ var MODEL_CONTROLLED_AUTHORITY_KEYS = /* @__PURE__ */ new Set([
 function normalizedAuthorityKey(key) {
   return key.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
-function findModelControlledAuthorityKey(value, path6 = [], visited = /* @__PURE__ */ new WeakSet()) {
+function findModelControlledAuthorityKey(value, path7 = [], visited = /* @__PURE__ */ new WeakSet()) {
   if (value === null || typeof value !== "object") return void 0;
   if (visited.has(value)) return void 0;
   visited.add(value);
   if (Array.isArray(value)) {
     for (const [index, entry] of value.entries()) {
-      const found = findModelControlledAuthorityKey(entry, [...path6, index], visited);
+      const found = findModelControlledAuthorityKey(entry, [...path7, index], visited);
       if (found) return found;
     }
     return void 0;
   }
   for (const [key, entry] of Object.entries(value)) {
-    const entryPath = [...path6, key];
+    const entryPath = [...path7, key];
     if (MODEL_CONTROLLED_AUTHORITY_KEYS.has(normalizedAuthorityKey(key))) {
       return entryPath;
     }
@@ -8829,9 +9115,9 @@ function resolveFormulaText(formula, values) {
 function isProject(input) {
   return "graph" in input && "rootNodeId" in input;
 }
-function issue(id, severity, type, message, nodeId, edgeId) {
+function issue(id2, severity, type, message, nodeId, edgeId) {
   return {
-    id,
+    id: id2,
     severity,
     type,
     message,
@@ -8839,11 +9125,11 @@ function issue(id, severity, type, message, nodeId, edgeId) {
     ...edgeId ? { edgeId } : {}
   };
 }
-function error(id, type, message, nodeId, edgeId) {
-  return issue(id, "error", type, message, nodeId, edgeId);
+function error(id2, type, message, nodeId, edgeId) {
+  return issue(id2, "error", type, message, nodeId, edgeId);
 }
-function warning(id, type, message, nodeId, edgeId) {
-  return issue(id, "warning", type, message, nodeId, edgeId);
+function warning(id2, type, message, nodeId, edgeId) {
+  return issue(id2, "warning", type, message, nodeId, edgeId);
 }
 function getRootNodeId(input, rootNodeId) {
   if (rootNodeId) return rootNodeId;
@@ -8858,7 +9144,7 @@ function normalizeUnit(unit) {
 function unitsCompatible(left, right) {
   return normalizeUnit(left) === normalizeUnit(right);
 }
-function collectUnitWarnings(node, expression, nodeById, warnings, path6 = "root") {
+function collectUnitWarnings(node, expression, nodeById, warnings, path7 = "root") {
   if (expression.type === "number") {
     return void 0;
   }
@@ -8866,13 +9152,13 @@ function collectUnitWarnings(node, expression, nodeById, warnings, path6 = "root
     return normalizeUnit(nodeById.get(expression.name)?.unit);
   }
   if (expression.type === "unary") {
-    return collectUnitWarnings(node, expression.expression, nodeById, warnings, `${path6}-unary`);
+    return collectUnitWarnings(node, expression.expression, nodeById, warnings, `${path7}-unary`);
   }
   if (expression.type === "call") {
     const argUnits = [];
     for (const arg of expression.args) {
       argUnits.push(
-        collectUnitWarnings(node, arg, nodeById, warnings, `${path6}-arg-${argUnits.length}`)
+        collectUnitWarnings(node, arg, nodeById, warnings, `${path7}-arg-${argUnits.length}`)
       );
     }
     for (let index = 0; index < argUnits.length; index += 1) {
@@ -8882,7 +9168,7 @@ function collectUnitWarnings(node, expression, nodeById, warnings, path6 = "root
         if (leftUnit2 && rightUnit2 && !unitsCompatible(leftUnit2, rightUnit2)) {
           warnings.push(
             warning(
-              `validation-unit-mismatch-${node.id}-${path6}-${index}-${otherIndex}`,
+              `validation-unit-mismatch-${node.id}-${path7}-${index}-${otherIndex}`,
               "unit_mismatch",
               `Formula for "${node.name}" combines incompatible units in "${expression.name}(...)": "${leftUnit2}" and "${rightUnit2}"`,
               node.id
@@ -8893,12 +9179,12 @@ function collectUnitWarnings(node, expression, nodeById, warnings, path6 = "root
     }
     return argUnits.find((unit) => unit !== void 0);
   }
-  const leftUnit = collectUnitWarnings(node, expression.left, nodeById, warnings, `${path6}-left`);
-  const rightUnit = collectUnitWarnings(node, expression.right, nodeById, warnings, `${path6}-right`);
+  const leftUnit = collectUnitWarnings(node, expression.left, nodeById, warnings, `${path7}-left`);
+  const rightUnit = collectUnitWarnings(node, expression.right, nodeById, warnings, `${path7}-right`);
   if ((expression.operator === "+" || expression.operator === "-") && leftUnit && rightUnit && !unitsCompatible(leftUnit, rightUnit)) {
     warnings.push(
       warning(
-        `validation-unit-mismatch-${node.id}-${path6}`,
+        `validation-unit-mismatch-${node.id}-${path7}`,
         "unit_mismatch",
         `Formula for "${node.name}" combines incompatible units with "${expression.operator}": "${leftUnit}" and "${rightUnit}"`,
         node.id
@@ -9151,7 +9437,7 @@ function cloneProject(value) {
 
 // ../vdt-core/src/changeset/mutate.ts
 function filterChangeSet(changeSet2, selection) {
-  const isSelected = (id) => !selection || selection.has(id);
+  const isSelected = (id2) => !selection || selection.has(id2);
   return {
     additions: changeSet2.additions.filter((entry) => isSelected(entry.id)),
     updates: changeSet2.updates.filter((entry) => isSelected(entry.id)),
@@ -9211,6 +9497,33 @@ function additionToEdge(addition2) {
 function collectChangeSetStructureWarnings(changeSet2, project, filtered) {
   const errors = [];
   const seenEntryIds = /* @__PURE__ */ new Set();
+  if (changeSet2.additions.some((addition2) => addition2.tags?.includes("incoming_kpi_breakdown"))) {
+    const allEntries = [
+      ...changeSet2.additions,
+      ...changeSet2.updates,
+      ...changeSet2.deletions,
+      ...changeSet2.edgeChanges,
+      ...changeSet2.dataSourceChanges ?? [],
+      ...changeSet2.dataMappingChanges ?? [],
+      ...changeSet2.taxonomyChanges ?? []
+    ];
+    const selectedIds = new Set([
+      ...filtered.additions,
+      ...filtered.updates,
+      ...filtered.deletions,
+      ...filtered.edgeChanges,
+      ...filtered.dataSourceChanges,
+      ...filtered.dataMappingChanges,
+      ...filtered.taxonomyChanges
+    ].map((entry) => entry.id));
+    if (selectedIds.size > 0 && allEntries.some((entry) => !selectedIds.has(entry.id))) {
+      errors.push(warning2({
+        severity: "error",
+        type: "data_discovery_validation_failed",
+        message: "A file-derived incoming KPI hierarchy, its source and its formulas must be applied together. Select the complete breakdown."
+      }));
+    }
+  }
   for (const entry of [
     ...changeSet2.additions,
     ...changeSet2.updates,
@@ -9349,8 +9662,8 @@ function collectChangeSetStructureWarnings(changeSet2, project, filtered) {
       );
       continue;
     }
-    const table = source.schema?.tables.find((candidate) => candidate.tableId === change.taxonomy.sourceTableId);
-    if (!table) {
+    const table2 = source.schema?.tables.find((candidate) => candidate.tableId === change.taxonomy.sourceTableId);
+    if (!table2) {
       errors.push(
         warning2({
           severity: "error",
@@ -9360,8 +9673,8 @@ function collectChangeSetStructureWarnings(changeSet2, project, filtered) {
       );
       continue;
     }
-    const fields = new Set(table.fields.map((field) => field.name));
-    const missingColumn = change.taxonomy.sourceColumns.find((column) => !fields.has(column));
+    const fields = new Set(table2.fields.map((field) => field.name));
+    const missingColumn = change.taxonomy.sourceColumns.find((column2) => !fields.has(column2));
     if (missingColumn) {
       errors.push(
         warning2({
@@ -9383,14 +9696,14 @@ function validateDataMappingReference(mapping, existingDataSourcesById, proposed
   if (!tableId) {
     return `Data mapping for field ${mapping.field} must specify a source table.`;
   }
-  const table = source.schema?.tables.find((candidate) => candidate.tableId === tableId);
-  if (!table) {
+  const table2 = source.schema?.tables.find((candidate) => candidate.tableId === tableId);
+  if (!table2) {
     return `Data mapping references unknown table: ${tableId}`;
   }
   if (mapping.field === "*" && mapping.aggregation === "count") {
     return void 0;
   }
-  if (!table.fields.some((field) => field.name === mapping.field)) {
+  if (!table2.fields.some((field) => field.name === mapping.field)) {
     return `Data mapping references unknown field: ${tableId}.${mapping.field}`;
   }
   return void 0;
@@ -9548,10 +9861,10 @@ function definedProperties(value) {
     Object.entries(value).filter(([, entry]) => entry !== void 0)
   );
 }
-function confidenceLabel(confidence) {
-  if (confidence === void 0) return "medium";
-  if (confidence >= 0.8) return "high";
-  if (confidence >= 0.55) return "medium";
+function confidenceLabel(confidence2) {
+  if (confidence2 === void 0) return "medium";
+  if (confidence2 >= 0.8) return "high";
+  if (confidence2 >= 0.55) return "medium";
   return "low";
 }
 
@@ -9802,9 +10115,9 @@ function orderSiblings(childIds, nodesById, existing) {
   });
   return [...positionedSorted, ...unpositioned.sort(byName)];
 }
-function layoutSubtree(nodeId, depth, childrenBySource, nodesById, options, path6) {
+function layoutSubtree(nodeId, depth, childrenBySource, nodesById, options, path7) {
   const x = options.margin + depth * (options.cardWidth + options.horizontalGap);
-  const nextPath = new Set(path6);
+  const nextPath = new Set(path7);
   nextPath.add(nodeId);
   const childIds = orderSiblings(
     childrenBySource.get(nodeId) ?? [],
@@ -9825,8 +10138,8 @@ function layoutSubtree(nodeId, depth, childrenBySource, nodesById, options, path
   for (const childId of childIds) {
     const childLayout = layoutSubtree(childId, depth + 1, childrenBySource, nodesById, options, nextPath);
     const yOffset = cursor - childLayout.top;
-    for (const [id, position] of childLayout.positions) {
-      positions.set(id, { x: position.x, y: position.y + yOffset });
+    for (const [id2, position] of childLayout.positions) {
+      positions.set(id2, { x: position.x, y: position.y + yOffset });
     }
     const shiftedTop = childLayout.top + yOffset;
     const shiftedBottom = childLayout.bottom + yOffset;
@@ -10400,6 +10713,22 @@ function serializeFormulaTokens(tokens) {
   }
   return parts.join("");
 }
+
+// ../vdt-core/src/export/excel.ts
+var NUMBER_KINDS = ["base", "potential", "plain", "percent"];
+var SPACE_GROUPS = 15;
+var SCIENTIFIC_THRESHOLD = "1E48";
+var NUMBER_RULES_PER_KIND = SPACE_GROUPS + 1;
+function numberFormat(kind, groups = 0, scientific = false) {
+  const prefix = kind === "base" ? '"Base: "' : kind === "potential" ? '"Potential: "' : "";
+  const suffix = kind === "percent" ? '"%"' : "";
+  const mask = scientific ? "0.00E+00" : groups ? "#" + "\\ ###".repeat(groups - 1) + "\\ ##0.00" : "0.00";
+  return prefix ? `${prefix}${mask};${prefix}-${mask}` : mask + suffix;
+}
+var numberRules = NUMBER_KINDS.flatMap((kind) => [
+  { kind, threshold: SCIENTIFIC_THRESHOLD, format: numberFormat(kind, 0, true) },
+  ...Array.from({ length: SPACE_GROUPS }, (_, i) => ({ kind, threshold: `1E${(SPACE_GROUPS - i) * 3}`, format: numberFormat(kind, SPACE_GROUPS - i) }))
+]);
 
 // ../vdt-agent-runtime/src/summaries.ts
 var MAX_CONTEXT_NODES = 60;
@@ -11830,9 +12159,9 @@ function addition(parentNodeId, node) {
     tags: node.tags
   };
 }
-function inputNode(id, name, unit) {
+function inputNode(id2, name, unit) {
   return {
-    id,
+    id: id2,
     name,
     type: "input",
     unit,
@@ -11841,12 +12170,12 @@ function inputNode(id, name, unit) {
     assumptions: ["Collect value through dialog; do not silently default."]
   };
 }
-function calculatedNode(id, name, unit) {
-  return { id, name, type: "calculated", unit, valueStatus: "calculated", relation: "formula_dependency" };
+function calculatedNode(id2, name, unit) {
+  return { id: id2, name, type: "calculated", unit, valueStatus: "calculated", relation: "formula_dependency" };
 }
-function constantNode(id, name, unit, value) {
+function constantNode(id2, name, unit, value) {
   return {
-    id,
+    id: id2,
     name,
     type: "assumption",
     unit,
@@ -11959,14 +12288,14 @@ async function defaultSuggestion(nodeId, materialKey) {
   }
   return null;
 }
-function defaultReference(nodeId, value, unit, range, sourceTier, confidence, catalogRef) {
+function defaultReference(nodeId, value, unit, range, sourceTier, confidence2, catalogRef) {
   return {
     nodeId,
     value,
     unit,
     range,
     sourceTier,
-    confidence,
+    confidence: confidence2,
     catalogRef,
     assumptionStatus: "default_assumption",
     editableInDialog: true,
@@ -11989,46 +12318,46 @@ async function readReferenceFile(fileName) {
   }
   throw new AgentToolError("REFERENCE_FILE_NOT_FOUND", `Excavation reference file "${fileName}" was not found.`);
 }
-function dialoguePolicySection(text, section) {
+function dialoguePolicySection(text2, section) {
   if (section === "runtime_principles") {
     return {
       referenceFile: "references/excavation-dialogue-flow.yaml",
-      interactionMode: scalarAfter(text, "interaction_mode"),
-      noMissingInputsPanel: booleanAfter(text, "no_missing_inputs_panel"),
-      topologyBeforeInputValues: booleanAfter(text, "topology_before_input_values"),
-      maxQuestionsPerTurn: numberAfter(text, "max_questions_per_turn"),
-      acceptedDefaultsStatus: scalarAfter(text, "store_accepted_defaults_as"),
-      skippedValuesStatus: scalarAfter(text, "store_skipped_values_as"),
-      readinessAccessAsDowntime: booleanAfter(text, "model_readiness_access_as_downtime"),
-      noReadinessAccessMinCaps: booleanAfter(text, "do_not_create_readiness_access_min_caps")
+      interactionMode: scalarAfter(text2, "interaction_mode"),
+      noMissingInputsPanel: booleanAfter(text2, "no_missing_inputs_panel"),
+      topologyBeforeInputValues: booleanAfter(text2, "topology_before_input_values"),
+      maxQuestionsPerTurn: numberAfter(text2, "max_questions_per_turn"),
+      acceptedDefaultsStatus: scalarAfter(text2, "store_accepted_defaults_as"),
+      skippedValuesStatus: scalarAfter(text2, "store_skipped_values_as"),
+      readinessAccessAsDowntime: booleanAfter(text2, "model_readiness_access_as_downtime"),
+      noReadinessAccessMinCaps: booleanAfter(text2, "do_not_create_readiness_access_min_caps")
     };
   }
   if (section === "topology_questions") {
     return {
       referenceFile: "references/excavation-dialogue-flow.yaml",
-      topologyQuestionIds: listItemIds(text, "topology_question_bank"),
-      maxQuestionsPerTurn: numberAfter(text, "max_questions_per_turn"),
+      topologyQuestionIds: listItemIds(text2, "topology_question_bank"),
+      maxQuestionsPerTurn: numberAfter(text2, "max_questions_per_turn"),
       topologyOnlyBeforeValues: true
     };
   }
   if (section === "reference_lookup_policy") {
     return {
       referenceFile: "references/excavation-dialogue-flow.yaml",
-      defaultsCatalogNodes: nestedList(text, "load_defaults_catalog_for_nodes"),
-      equipmentCatalogNodes: nestedList(text, "load_equipment_catalog_for_nodes"),
-      noReferenceDefaultsForNodes: nestedList(text, "no_reference_defaults_for_nodes"),
+      defaultsCatalogNodes: nestedList(text2, "load_defaults_catalog_for_nodes"),
+      equipmentCatalogNodes: nestedList(text2, "load_equipment_catalog_for_nodes"),
+      noReferenceDefaultsForNodes: nestedList(text2, "no_reference_defaults_for_nodes"),
       loadOnlyActiveQuestionEntries: true
     };
   }
   if (section === "final_validation") {
     return {
       referenceFile: "references/excavation-dialogue-flow.yaml",
-      requiredChecks: nestedList(text, "required_checks")
+      requiredChecks: nestedList(text2, "required_checks")
     };
   }
   return {
     referenceFile: "references/excavation-dialogue-flow.yaml",
-    inputKpiQuestionOrder: nestedList(text, "input_kpi_question_order"),
+    inputKpiQuestionOrder: nestedList(text2, "input_kpi_question_order"),
     answerOptions: ["enter_custom_value", "use_suggested_reference_value_when_available", "leave_unknown_for_now"],
     valueStatuses: {
       customUserValue: "user_provided_value",
@@ -12037,20 +12366,20 @@ function dialoguePolicySection(text, section) {
     }
   };
 }
-function scalarAfter(text, key) {
+function scalarAfter(text2, key) {
   return new RegExp(`\\n\\s*${key}:\\s*([^\\n]+)`).exec(`
-${text}`)?.[1]?.trim();
+${text2}`)?.[1]?.trim();
 }
-function booleanAfter(text, key) {
-  const value = scalarAfter(text, key);
+function booleanAfter(text2, key) {
+  const value = scalarAfter(text2, key);
   return value === "true" ? true : value === "false" ? false : void 0;
 }
-function numberAfter(text, key) {
-  const value = Number(scalarAfter(text, key));
+function numberAfter(text2, key) {
+  const value = Number(scalarAfter(text2, key));
   return Number.isFinite(value) ? value : void 0;
 }
-function nestedList(text, key) {
-  const lines = text.split(/\r?\n/);
+function nestedList(text2, key) {
+  const lines = text2.split(/\r?\n/);
   const start = lines.findIndex((line) => line.trim() === `${key}:`);
   if (start === -1) return [];
   const values = [];
@@ -12062,8 +12391,8 @@ function nestedList(text, key) {
   }
   return values;
 }
-function listItemIds(text, key) {
-  const lines = text.split(/\r?\n/);
+function listItemIds(text2, key) {
+  const lines = text2.split(/\r?\n/);
   const start = lines.findIndex((line) => line.trim() === `${key}:`);
   if (start === -1) return [];
   const values = [];
@@ -12224,10 +12553,10 @@ function requireFormula(project, nodeId, expectedFormula, errors) {
     ));
   }
 }
-function excavationWarning(id, message, nodeId) {
+function excavationWarning(id2, message, nodeId) {
   return warning2({
-    id: `excavation_${id}`,
-    severity: id.startsWith("fleet_") || id.startsWith("unknown_") || id.startsWith("mixed_units") ? "warning" : "error",
+    id: `excavation_${id2}`,
+    severity: id2.startsWith("fleet_") || id2.startsWith("unknown_") || id2.startsWith("mixed_units") ? "warning" : "error",
     type: "invalid_graph",
     message,
     nodeId
@@ -12901,8 +13230,8 @@ var proposeDecompositionTool = {
     };
   }
 };
-function extractCandidateDrivers(text, sourceIds) {
-  const normalized = text.toLowerCase();
+function extractCandidateDrivers(text2, sourceIds) {
+  const normalized = text2.toLowerCase();
   const drivers = [];
   addIfMatched(drivers, normalized, sourceIds, ["time", "hours", "shift", "downtime", "delay", "availability"], {
     id: "working_time",
@@ -12948,16 +13277,16 @@ function extractCandidateDrivers(text, sourceIds) {
   }
   return drivers;
 }
-function addIfMatched(drivers, text, sourceIds, terms, driver) {
-  if (!terms.some((term) => text.includes(term))) return;
+function addIfMatched(drivers, text2, sourceIds, terms, driver) {
+  if (!terms.some((term) => text2.includes(term))) return;
   drivers.push({ ...driver, sourceIds });
 }
-function missingClarifications(rootKpi, drivers, text) {
+function missingClarifications(rootKpi, drivers, text2) {
   const clarifications = [];
-  if (!/\b(day|week|month|quarter|year|shift|period)\b/i.test(text)) {
+  if (!/\b(day|week|month|quarter|year|shift|period)\b/i.test(text2)) {
     clarifications.push(`What time period should "${rootKpi}" use?`);
   }
-  if (!/\b(unit|tonnes|hours|usd|percent|m3|bcm|rate)\b/i.test(text)) {
+  if (!/\b(unit|tonnes|hours|usd|percent|m3|bcm|rate)\b/i.test(text2)) {
     clarifications.push(`What unit should "${rootKpi}" use?`);
   }
   if (drivers.some((driver) => driver.confidence < 0.5)) {
@@ -13440,19 +13769,19 @@ function supportGenericDrivers() {
   const generic = RECIPE_TEMPLATES["generic.logical_kpi_decomposition"];
   return generic.initialDrivers.map((driver) => ({ ...driver }));
 }
-function extractDriverTemplates(text) {
+function extractDriverTemplates(text2) {
   const drivers = /* @__PURE__ */ new Map();
-  const matches = text.matchAll(/```(?:text)?\n([\s\S]*?)```/g);
+  const matches = text2.matchAll(/```(?:text)?\n([\s\S]*?)```/g);
   for (const match of matches) {
     const lines = (match[1] ?? "").split("\n");
     for (const line of lines.slice(1)) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.includes("=") || /^[-*]/.test(trimmed)) continue;
       if (!/^[a-zA-Z][a-zA-Z0-9_\s/()-]+$/.test(trimmed)) continue;
-      const id = stableRecipeId(trimmed);
-      if (!drivers.has(id)) {
-        drivers.set(id, {
-          id,
+      const id2 = stableRecipeId(trimmed);
+      if (!drivers.has(id2)) {
+        drivers.set(id2, {
+          id: id2,
           name: titleFromId(trimmed),
           type: "calculated",
           relation: "positive_driver"
@@ -13462,9 +13791,9 @@ function extractDriverTemplates(text) {
   }
   return [...drivers.values()].slice(0, 8);
 }
-function extractFormulaTemplates(text) {
+function extractFormulaTemplates(text2) {
   const formulas = [];
-  const matches = text.matchAll(/```(?:text)?\n([\s\S]*?)```/g);
+  const matches = text2.matchAll(/```(?:text)?\n([\s\S]*?)```/g);
   for (const match of matches) {
     const body = match[1] ?? "";
     for (const line of body.split("\n")) {
@@ -13626,12 +13955,12 @@ function parseFrontmatter(markdown) {
     body: lines.slice(closeIndex + 1).join("\n").trim()
   };
 }
-function parseSkillMarkdown(path6, markdown) {
+function parseSkillMarkdown(path7, markdown) {
   const parsed = parseFrontmatter(markdown);
-  const frontmatter = normalizeSkillFrontmatter(parsed.attributes, path6);
+  const frontmatter = normalizeSkillFrontmatter(parsed.attributes, path7);
   return {
     id: frontmatter.id,
-    path: path6,
+    path: path7,
     title: frontmatter.title,
     domain: frontmatter.domain,
     frontmatter,
@@ -13668,8 +13997,8 @@ function loadSkillLibraryFromMemory(sources) {
     throw new Error("Skill library source map must include registry.md.");
   }
   const registry2 = parseRegistryMarkdown(registrySource);
-  const skillPaths = Object.keys(sources).filter((path6) => path6 !== "registry.md" && path6 !== "skills/registry.md");
-  const skills = skillPaths.sort().map((path6) => parseSkillMarkdown(path6, sources[path6]));
+  const skillPaths = Object.keys(sources).filter((path7) => path7 !== "registry.md" && path7 !== "skills/registry.md");
+  const skills = skillPaths.sort().map((path7) => parseSkillMarkdown(path7, sources[path7]));
   assertRegistryCoversSkills(registry2, skills);
   return {
     registry: registry2,
@@ -13684,8 +14013,8 @@ async function loadSkillLibraryFromFs(rootDir) {
   const markdownPaths = await collectMarkdownFiles(rootDir, readdir, join3);
   const sources = { "registry.md": registrySource };
   await Promise.all(
-    markdownPaths.filter((path6) => !path6.endsWith("registry.md")).map(async (path6) => {
-      sources[relative(rootDir, path6).replaceAll("\\", "/")] = await readFile3(path6, "utf8");
+    markdownPaths.filter((path7) => !path7.endsWith("registry.md")).map(async (path7) => {
+      sources[relative(rootDir, path7).replaceAll("\\", "/")] = await readFile3(path7, "utf8");
     })
   );
   return loadSkillLibraryFromMemory(sources);
@@ -13702,10 +14031,10 @@ async function resolveDefaultSkillRoot() {
     join2(dirname2(moduleDir), "vdt-agent-skills"),
     join2(dirname2(moduleDir), "skills")
   ];
-  const { access: access2 } = await import("node:fs/promises");
+  const { access: access3 } = await import("node:fs/promises");
   for (const candidate of candidates) {
     try {
-      await access2(join2(candidate, "registry.md"));
+      await access3(join2(candidate, "registry.md"));
       return candidate;
     } catch {
     }
@@ -14027,11 +14356,11 @@ function parseBlockScalarFrontmatterValue(lines, index, marker) {
 function parseStringValue(value) {
   return value.replace(/^["']|["']$/g, "").trim();
 }
-function normalizeSkillFrontmatter(attributes, path6) {
+function normalizeSkillFrontmatter(attributes, path7) {
   const getString = (key) => {
     const value = attributes[key];
     if (typeof value !== "string" || !value.trim()) {
-      throw new Error(`Skill ${path6} is missing required string frontmatter: ${key}.`);
+      throw new Error(`Skill ${path7} is missing required string frontmatter: ${key}.`);
     }
     return value.trim();
   };
@@ -14042,11 +14371,11 @@ function normalizeSkillFrontmatter(attributes, path6) {
   const getStringArray = (key) => {
     const value = attributes[key];
     if (!Array.isArray(value)) {
-      throw new Error(`Skill ${path6} is missing required list frontmatter: ${key}.`);
+      throw new Error(`Skill ${path7} is missing required list frontmatter: ${key}.`);
     }
     const values = value.map((item) => item.trim()).filter(Boolean);
     if (values.length === 0) {
-      throw new Error(`Skill ${path6} must define at least one value for frontmatter list: ${key}.`);
+      throw new Error(`Skill ${path7} must define at least one value for frontmatter list: ${key}.`);
     }
     return values;
   };
@@ -14054,7 +14383,7 @@ function normalizeSkillFrontmatter(attributes, path6) {
     const value = attributes[key];
     if (value === void 0) return [];
     if (!Array.isArray(value)) {
-      throw new Error(`Skill ${path6} frontmatter must be a list: ${key}.`);
+      throw new Error(`Skill ${path7} frontmatter must be a list: ${key}.`);
     }
     return value.map((item) => item.trim()).filter(Boolean);
   };
@@ -14139,11 +14468,11 @@ async function collectMarkdownFiles(rootDir, readdir, join3) {
   const entries = await readdir(rootDir, { withFileTypes: true });
   const nested = await Promise.all(
     entries.map(async (entry) => {
-      const path6 = join3(rootDir, entry.name);
+      const path7 = join3(rootDir, entry.name);
       if (entry.isDirectory()) {
-        return collectMarkdownFiles(path6, readdir, join3);
+        return collectMarkdownFiles(path7, readdir, join3);
       }
-      return entry.isFile() && entry.name.endsWith(".md") ? [path6] : [];
+      return entry.isFile() && entry.name.endsWith(".md") ? [path7] : [];
     })
   );
   return nested.flat().sort();
@@ -14512,7 +14841,7 @@ var skillSeedDraftFromRecipeTool = {
       changeSets.push(requireChangeSet(result.changeSet));
       appliedFormulaNodeIds.push(targetNodeId);
     }
-    const missingInputs = recipe.requiredInputs.filter((id) => knownInputs[id] === void 0);
+    const missingInputs = recipe.requiredInputs.filter((id2) => knownInputs[id2] === void 0);
     if (changeSets.length === 0) {
       const latest2 = builder.getProject();
       const validation = summarizeValidation(builder.validate().validation);
@@ -16081,10 +16410,29 @@ var DEFAULT_MAX_OUTPUT_BYTES2 = 4 * 1024 * 1024;
 var DEFAULT_MAX_PROMPT_BYTES3 = 1024 * 1024;
 
 // ../model-bridge/src/enrich-detection.ts
+function publicDetection(agent) {
+  return agent.error ? { ...agent, error: "CLI version probe failed." } : agent;
+}
+function probeDiagnostics(status) {
+  switch (status) {
+    case "ready":
+      return [];
+    case "authentication_required":
+      return ["The provider could not verify an active CLI session. Complete provider sign-in, then rescan."];
+    case "rate_limited":
+      return ["The provider reported an account or request limit. Check your plan and try again later."];
+    case "unsupported_version":
+      return ["Update the provider CLI to a supported version, then rescan."];
+    case "unavailable":
+      return ["Provider access is unavailable for the current account, plan or organization policy."];
+    default:
+      return ["CLI access was not verified. Check the provider CLI in a terminal, then rescan."];
+  }
+}
 async function enrichSubscriptionCliDetection(agent, options = {}) {
   if (!agent.installed || !agent.executable) {
     return {
-      ...agent,
+      ...publicDetection(agent),
       status: "not_installed",
       diagnostics: []
     };
@@ -16094,31 +16442,32 @@ async function enrichSubscriptionCliDetection(agent, options = {}) {
     try {
       const probe = await adapter.probeAuth(agent.executable, options.signal);
       return {
-        ...agent,
+        ...publicDetection(agent),
         status: probe.status,
         ...probe.authSummary ? { authSummary: probe.authSummary } : {},
-        diagnostics: probe.diagnostics
+        diagnostics: probeDiagnostics(probe.status)
       };
-    } catch (error2) {
+    } catch {
       if (options.signal?.aborted) {
         return {
-          ...agent,
+          ...publicDetection(agent),
           status: "installed",
           authSummary: "Authentication probe timed out.",
           diagnostics: ["CLI enrichment timed out before auth could be verified."]
         };
       }
       return {
-        ...agent,
+        ...publicDetection(agent),
         status: "error",
-        diagnostics: [error2 instanceof Error ? error2.message : "Auth probe failed."]
+        authSummary: "CLI authentication could not be verified. Check the provider CLI, then rescan.",
+        diagnostics: probeDiagnostics("error")
       };
     }
   }
   const diagnostics = [];
-  if (agent.error) diagnostics.push(`Version probe failed: ${agent.error}`);
+  if (agent.error) diagnostics.push("CLI version probe failed.");
   return {
-    ...agent,
+    ...publicDetection(agent),
     status: "installed",
     diagnostics
   };
@@ -16142,10 +16491,10 @@ async function enrichSubscriptionCliDetections(agents, options = {}) {
 var AGENT_DECISION_TIMEOUT_MAX_MS = 3e5;
 
 // ../local-runner/src/server/executor.ts
-import { execFile as execFile7, spawn as nodeSpawn } from "node:child_process";
-import { chmod, copyFile, lstat, mkdir, mkdtemp as mkdtemp3, readFile as readFile2, realpath, rm as rm3, writeFile as writeFile2 } from "node:fs/promises";
-import os3 from "node:os";
-import path5 from "node:path";
+import { execFile as execFile8, spawn as nodeSpawn } from "node:child_process";
+import { chmod, copyFile, lstat as lstat2, mkdir, mkdtemp as mkdtemp4, readFile as readFile2, realpath as realpath2, rm as rm4, writeFile as writeFile2 } from "node:fs/promises";
+import os4 from "node:os";
+import path6 from "node:path";
 import { promisify as promisify7 } from "node:util";
 var advisoryStub = Object.freeze({
   assumptions: [],
@@ -16318,9 +16667,7 @@ var MOCK_STUB_OUTPUT = {
     type: "tool_call",
     toolName: "table.profile",
     rationale: "Profile the detected table before proposing semantic roles.",
-    input: {
-      tableId: "table_1"
-    }
+    input: {}
   },
   "analyze-raw-dataset-v1": {
     datasetId: "mock_dataset",
@@ -16412,12 +16759,12 @@ function mockOutput(schemaId, input) {
 }
 function mockAgentDecision(input, schemaId) {
   const context = isRecord9(input) && isRecord9(input.data) ? input.data : input;
-  const record = isRecord9(context) ? context : {};
-  const project = isRecord9(record.currentProject) ? record.currentProject : void 0;
+  const record2 = isRecord9(context) ? context : {};
+  const project = isRecord9(record2.currentProject) ? record2.currentProject : void 0;
   const nodes = Array.isArray(project?.nodes) ? project.nodes : [];
   const nodeIds = new Set(nodes.flatMap((node) => isRecord9(node) && typeof node.id === "string" ? [node.id] : []));
-  const answers = isRecord9(record.userAnswers) ? record.userAnswers : {};
-  const recentEvents = Array.isArray(record.recentEvents) ? record.recentEvents : [];
+  const answers = isRecord9(record2.userAnswers) ? record2.userAnswers : {};
+  const recentEvents = Array.isArray(record2.recentEvents) ? record2.recentEvents : [];
   const hasTool = (toolName) => recentEvents.some((event) => {
     if (!isRecord9(event) || !isRecord9(event.metadata)) return false;
     return event.metadata.toolName === toolName;
@@ -16594,19 +16941,24 @@ async function defaultResolveExecutable(manifest, env) {
   const cli = manifest.cli;
   if (!cli) throw Object.assign(new Error("Backend has no executable manifest."), { code: "INVALID_MANIFEST" });
   const pathValue = env.PATH ?? "";
+  if (manifest.id === "codex_subscription") {
+    const selected = await selectCodexExecutable({ path: pathValue, env });
+    if (selected) return selected.executable;
+    throw Object.assign(new Error("Codex CLI executable was not found on a safe absolute PATH entry."), { code: "BACKEND_NOT_INSTALLED" });
+  }
   for (const alias of cli.executableAliases) {
-    if (alias.includes("\0") || path5.basename(alias) !== alias || alias === "." || alias === "..") continue;
-    for (const directory of pathValue.split(path5.delimiter).filter((entry) => path5.isAbsolute(entry))) {
-      const candidate = path5.resolve(directory, alias);
+    if (alias.includes("\0") || path6.basename(alias) !== alias || alias === "." || alias === "..") continue;
+    for (const directory of pathValue.split(path6.delimiter).filter((entry) => path6.isAbsolute(entry))) {
+      const candidate = path6.resolve(directory, alias);
       try {
-        const info = await lstat(candidate);
+        const info = await lstat2(candidate);
         if (!info.isSymbolicLink() && !info.isFile()) continue;
-        const resolved = await realpath(candidate);
-        if (!path5.isAbsolute(resolved)) continue;
-        const resolvedInfo = await lstat(resolved);
+        const resolved = await realpath2(candidate);
+        if (!path6.isAbsolute(resolved)) continue;
+        const resolvedInfo = await lstat2(resolved);
         if (!resolvedInfo.isFile()) continue;
-        const projectRoot = path5.resolve(process.cwd());
-        if (resolved === projectRoot || resolved.startsWith(`${projectRoot}${path5.sep}`)) continue;
+        const projectRoot = path6.resolve(process.cwd());
+        if (resolved === projectRoot || resolved.startsWith(`${projectRoot}${path6.sep}`)) continue;
         return resolved;
       } catch {
       }
@@ -16617,11 +16969,11 @@ async function defaultResolveExecutable(manifest, env) {
   });
 }
 async function normalizeResolvedExecutable(executable) {
-  if (!path5.isAbsolute(executable) || executable.includes("\0")) {
+  if (!path6.isAbsolute(executable) || executable.includes("\0")) {
     throw Object.assign(new Error("Resolved executable must be an absolute path without NUL bytes."), { code: "UNSAFE_EXECUTABLE" });
   }
   try {
-    return await realpath(executable);
+    return await realpath2(executable);
   } catch {
     return executable;
   }
@@ -16630,8 +16982,8 @@ function isJavaScriptExecutable(executable) {
   return /\.(?:mjs|cjs|js)$/i.test(executable);
 }
 function isPathInside(root, candidate) {
-  const relative = path5.relative(path5.resolve(root), path5.resolve(candidate));
-  return relative === "" || !!relative && !relative.startsWith("..") && !path5.isAbsolute(relative);
+  const relative = path6.relative(path6.resolve(root), path6.resolve(candidate));
+  return relative === "" || !!relative && !relative.startsWith("..") && !path6.isAbsolute(relative);
 }
 function shouldLocalizeJavaScriptExecutable(executable, options) {
   return options.resolveExecutable !== void 0 && isPathInside(process.cwd(), executable);
@@ -16641,8 +16993,8 @@ function errorCode(error2) {
 }
 async function copyCodexHomeFile(sourceDir, targetDir, fileName) {
   try {
-    const targetPath = path5.join(targetDir, fileName);
-    await copyFile(path5.join(sourceDir, fileName), targetPath);
+    const targetPath = path6.join(targetDir, fileName);
+    await copyFile(path6.join(sourceDir, fileName), targetPath);
     await chmod(targetPath, 384);
   } catch (error2) {
     if (errorCode(error2) === "ENOENT") return;
@@ -16650,9 +17002,9 @@ async function copyCodexHomeFile(sourceDir, targetDir, fileName) {
   }
 }
 async function prepareEphemeralCodexHome(cwd, envSource) {
-  const sourceCodexHome = envSource.CODEX_HOME ?? (envSource.HOME ? path5.join(envSource.HOME, ".codex") : void 0);
+  const sourceCodexHome = envSource.CODEX_HOME ?? (envSource.HOME ? path6.join(envSource.HOME, ".codex") : void 0);
   if (!sourceCodexHome) return void 0;
-  const codexHome = path5.join(cwd, "codex-home");
+  const codexHome = path6.join(cwd, "codex-home");
   await mkdir(codexHome, { recursive: true, mode: 448 });
   await chmod(codexHome, 448);
   for (const fileName of CODEX_HOME_COPY_FILES) {
@@ -16812,7 +17164,7 @@ var executableProbeCache = /* @__PURE__ */ new Map();
 var executableHelpCache = /* @__PURE__ */ new Map();
 async function executableProbeCacheKey(executable, operation) {
   try {
-    const metadata = await lstat(executable);
+    const metadata = await lstat2(executable);
     return `${executable}\0${metadata.size}\0${metadata.mtimeMs}\0${operation}`;
   } catch {
     return `${executable}\0unknown\0${operation}`;
@@ -16820,7 +17172,7 @@ async function executableProbeCacheKey(executable, operation) {
 }
 async function probeExecutableVersionUncached(executable, versionArgs) {
   try {
-    const result = await promisify7(execFile7)(executable, [...versionArgs], {
+    const result = await promisify7(execFile8)(executable, [...versionArgs], {
       encoding: "utf8",
       timeout: 5e3,
       maxBuffer: 64 * 1024,
@@ -16844,7 +17196,7 @@ async function executableHelpIncludes(executable, needle) {
 }
 async function executableHelpIncludesUncached(executable, needle) {
   try {
-    const result = await promisify7(execFile7)(executable, ["--help"], {
+    const result = await promisify7(execFile8)(executable, ["--help"], {
       encoding: "utf8",
       timeout: 5e3,
       maxBuffer: 256 * 1024,
@@ -16877,23 +17229,23 @@ async function executeCli(manifest, request, signal, options) {
     if (byteLength8(prompt) > EXECUTION_LIMITS.maxPromptBytes) {
       throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
     }
-    const tempRoot = options.tempRoot ?? os3.tmpdir();
+    const tempRoot = options.tempRoot ?? os4.tmpdir();
     await mkdir(tempRoot, { recursive: true });
-    const cwd = await mkdtemp3(path5.join(tempRoot, "vdt-run-"));
+    const cwd = await mkdtemp4(path6.join(tempRoot, "vdt-run-"));
     await chmod(cwd, 448);
-    const requestPath = path5.join(cwd, "request.json");
+    const requestPath = path6.join(cwd, "request.json");
     await writeFile2(requestPath, requestJson, { encoding: "utf8", mode: 384, flag: "wx" });
-    const promptPath = path5.join(cwd, "prompt.txt");
+    const promptPath = path6.join(cwd, "prompt.txt");
     await writeFile2(promptPath, prompt, { encoding: "utf8", mode: 384, flag: "wx" });
-    const schemaPath = path5.join(cwd, "schema.json");
+    const schemaPath = path6.join(cwd, "schema.json");
     await writeFile2(schemaPath, `${JSON.stringify(getStrictResponseJsonSchema(request.schemaId), null, 2)}
 `, {
       encoding: "utf8",
       mode: 384,
       flag: "wx"
     });
-    const outputPath = path5.join(cwd, "last-message.json");
-    const toolPolicyPath = path5.join(cwd, "deny-all-tools.toml");
+    const outputPath = path6.join(cwd, "last-message.json");
+    const toolPolicyPath = path6.join(cwd, "deny-all-tools.toml");
     await writeFile2(
       toolPolicyPath,
       '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n',
@@ -16919,7 +17271,7 @@ async function executeCli(manifest, request, signal, options) {
     if (isJavaScriptExecutable(executable)) {
       let scriptPath = executable;
       if (shouldLocalizeJavaScriptExecutable(executable, options)) {
-        scriptPath = path5.join(cwd, path5.basename(executable));
+        scriptPath = path6.join(cwd, path6.basename(executable));
         await copyFile(executable, scriptPath);
         await chmod(scriptPath, 448);
       }
@@ -16929,7 +17281,7 @@ async function executeCli(manifest, request, signal, options) {
     let finalArgs = spawnArgs;
     const childEnv = safeEnvironment(envSource);
     if (manifest.id === "cursor_subscription") {
-      childEnv.NODE_COMPILE_CACHE = path5.join(cwd, "node-compile-cache");
+      childEnv.NODE_COMPILE_CACHE = path6.join(cwd, "node-compile-cache");
     }
     if (manifest.id === "codex_subscription") {
       const codexHome = await prepareEphemeralCodexHome(cwd, envSource);
@@ -17116,7 +17468,7 @@ async function executeCli(manifest, request, signal, options) {
       signal.removeEventListener("abort", terminate);
       if (timeout) clearTimeout(timeout);
       if (forceKill) clearTimeout(forceKill);
-      await rm3(cwd, { recursive: true, force: true });
+      await rm4(cwd, { recursive: true, force: true });
     }
   }
   const first = await runCliAttempt(buildSubscriptionPrompt(request), request.timeoutMs ?? EXECUTION_LIMITS.timeoutMs).catch(
@@ -17207,12 +17559,12 @@ function collectModelNames(payload) {
       return;
     }
     if (!value || typeof value !== "object") return;
-    const record = value;
-    addModelName(models, seen, record.id);
-    addModelName(models, seen, record.name);
-    addModelName(models, seen, record.model);
-    if (Array.isArray(record.data)) visit(record.data);
-    if (Array.isArray(record.models)) visit(record.models);
+    const record2 = value;
+    addModelName(models, seen, record2.id);
+    addModelName(models, seen, record2.name);
+    addModelName(models, seen, record2.model);
+    if (Array.isArray(record2.data)) visit(record2.data);
+    if (Array.isArray(record2.models)) visit(record2.models);
   };
   visit(payload);
   return models;
@@ -17420,7 +17772,7 @@ async function listBackendModels(manifest, signal, options = {}) {
   const envSource = options.env ?? process.env;
   const executable = await normalizeResolvedExecutable(await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource));
   const fixtureExecFile = isJavaScriptExecutable(executable) ? (async (_executable, args, execOptions) => {
-    const result = await promisify7(execFile7)(process.execPath, [executable, ...args], execOptions);
+    const result = await promisify7(execFile8)(process.execPath, [executable, ...args], execOptions);
     return { stdout: result.stdout, stderr: result.stderr };
   }) : void 0;
   return adapter.listModels(executable, { signal, ...fixtureExecFile ? { execFile: fixtureExecFile } : {} });
@@ -17635,7 +17987,7 @@ var MAX_RETAINED_RUNS = 200;
 var PROVIDER_AUTH_TIMEOUT_MS = 5 * 6e4;
 var PROVIDER_AUTH_MAX_BUFFER_BYTES = 128 * 1024;
 var TASK_TYPES = new Set(ALL_VDT_TASK_TYPES);
-var execFileAsync5 = promisify8(execFile8);
+var execFileAsync5 = promisify8(execFile9);
 var PROGRESS_LABELS = {
   preparing_request: "Preparing request",
   starting_backend: "Starting backend",
@@ -17690,7 +18042,7 @@ async function detectRuntimeSubscriptionClis(context, agentId) {
   const modelsByAgent = {};
   await Promise.all(
     agents.map(async (agent) => {
-      if (!agent.installed || !agent.executable) {
+      if (!agent.installed || !agent.executable || agent.status !== "ready") {
         modelsByAgent[agent.id] = [];
         return;
       }
@@ -17744,6 +18096,33 @@ async function testRuntimeBackend(backendId, context) {
     input: { probe: true },
     timeoutMs: 3e4
   }, context);
+}
+async function checkRuntimeBackendReadiness(backendId, context) {
+  const manifest = context.manifests.get(backendId);
+  if (!manifest) throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
+  if (manifest.kind !== "subscription_cli") return testRuntimeBackend(backendId, context);
+  const agentId = subscriptionAgentIdForBackend(backendId);
+  if (!agentId) {
+    throw new LocalRuntimeError(400, "UNSUPPORTED_BACKEND", "This subscription backend has no reviewed readiness probe.");
+  }
+  if (context.authInProgress.has(backendId)) {
+    throw new LocalRuntimeError(409, "AUTH_ALREADY_IN_PROGRESS", `${manifest.label} sign-in is still in progress. Finish signing in before testing.`);
+  }
+  const options = context.config.detection ?? {};
+  const detection = await detectSubscriptionCli(agentId, options);
+  if (!detection.installed) {
+    throw new LocalRuntimeError(404, "BACKEND_NOT_INSTALLED", `${manifest.label} is not installed. Install the provider CLI, then rescan.`);
+  }
+  const [agent] = await enrichSubscriptionCliDetections([detection], {
+    probeTimeoutMs: options.probeTimeoutMs ?? 1e4
+  });
+  if (agent?.installed && agent.status === "ready") {
+    return { statusCode: 200, payload: { ok: true, backendId, status: "ready" } };
+  }
+  const status = agent?.status;
+  const code = status === "authentication_required" ? "AUTH_REQUIRED" : status === "rate_limited" ? "RATE_LIMITED" : status === "unsupported_version" ? "UNSUPPORTED_VERSION" : status === "unavailable" ? "POLICY_DISABLED" : "READINESS_NOT_VERIFIED";
+  const message = agent?.authSummary ?? `${manifest.label} access could not be verified. Rescan and try again.`;
+  throw new LocalRuntimeError(status === "authentication_required" ? 401 : 502, code, message);
 }
 async function completeRuntime(request, context) {
   if (context.runs.has(request.requestId)) throw new LocalRuntimeError(409, "DUPLICATE_REQUEST_ID", "requestId already exists.");
@@ -18432,68 +18811,68 @@ function applyTracking(message, options) {
   }
 }
 function validateSidecarMessage(value) {
-  const object = asObject(value, "Sidecar message must be a JSON object.");
-  requireProtocolVersion(object);
-  const type = requireString(object.type, "type");
+  const object2 = asObject(value, "Sidecar message must be a JSON object.");
+  requireProtocolVersion(object2);
+  const type = requireString(object2.type, "type");
   if (!MESSAGE_TYPES.has(type)) {
     throw new SidecarProtocolError("UNKNOWN_MESSAGE_TYPE", `Unknown sidecar message type: ${type}.`);
   }
-  if (type === "hello") return validateHello(object);
-  if (type === "ready") return validateReady(object);
-  if (type === "request") return validateRequest(object);
-  if (type === "response") return validateResponse(object);
-  if (type === "cancel") return validateCancel(object);
-  return validateEvent(object);
+  if (type === "hello") return validateHello(object2);
+  if (type === "ready") return validateReady(object2);
+  if (type === "request") return validateRequest(object2);
+  if (type === "response") return validateResponse(object2);
+  if (type === "cancel") return validateCancel(object2);
+  return validateEvent(object2);
 }
-function validateHello(object) {
-  assertKnownKeys(object, ["protocolVersion", "type", "nonce"]);
-  const nonce = requireBoundedString(object.nonce, "nonce", 128);
+function validateHello(object2) {
+  assertKnownKeys(object2, ["protocolVersion", "type", "nonce"]);
+  const nonce = requireBoundedString(object2.nonce, "nonce", 128);
   return { protocolVersion: SIDECAR_PROTOCOL_VERSION, type: "hello", nonce };
 }
-function validateReady(object) {
-  assertKnownKeys(object, ["protocolVersion", "type", "nonce"]);
-  const nonce = requireBoundedString(object.nonce, "nonce", 128);
+function validateReady(object2) {
+  assertKnownKeys(object2, ["protocolVersion", "type", "nonce"]);
+  const nonce = requireBoundedString(object2.nonce, "nonce", 128);
   return { protocolVersion: SIDECAR_PROTOCOL_VERSION, type: "ready", nonce };
 }
-function validateRequest(object) {
-  assertKnownKeys(object, ["protocolVersion", "type", "requestId", "method", "payload"]);
-  const requestId = requireRequestId(object.requestId);
-  const method = requireString(object.method, "method");
+function validateRequest(object2) {
+  assertKnownKeys(object2, ["protocolVersion", "type", "requestId", "method", "payload"]);
+  const requestId = requireRequestId(object2.requestId);
+  const method = requireString(object2.method, "method");
   if (!REQUEST_METHOD_SET.has(method)) {
     throw new SidecarProtocolError("UNKNOWN_METHOD", `Unknown sidecar request method: ${method}.`);
   }
   const requestMethod = method;
-  const payload = asJsonObject(object.payload, "Request payload must be a JSON object.");
+  const payload = asJsonObject(object2.payload, "Request payload must be a JSON object.");
   validateRequestPayload(requestMethod, payload);
   return { protocolVersion: SIDECAR_PROTOCOL_VERSION, type: "request", requestId, method: requestMethod, payload };
 }
-function validateResponse(object) {
-  assertKnownKeys(object, ["protocolVersion", "type", "requestId", "ok", "payload", "error"]);
-  const requestId = requireRequestId(object.requestId);
-  if (typeof object.ok !== "boolean") throw new SidecarProtocolError("INVALID_MESSAGE", "Response ok must be a boolean.");
-  if (object.error !== void 0) {
-    const error2 = asObject(object.error, "Response error must be a JSON object.");
+function validateResponse(object2) {
+  assertKnownKeys(object2, ["protocolVersion", "type", "requestId", "ok", "payload", "error"]);
+  const requestId = requireRequestId(object2.requestId);
+  if (typeof object2.ok !== "boolean") throw new SidecarProtocolError("INVALID_MESSAGE", "Response ok must be a boolean.");
+  if (object2.error !== void 0) {
+    const error2 = asObject(object2.error, "Response error must be a JSON object.");
     assertKnownKeys(error2, ["code", "message"]);
     const code = requireBoundedString(error2.code, "error.code", 120);
     const message = requireBoundedString(error2.message, "error.message", 500);
-    if (object.ok) throw new SidecarProtocolError("INVALID_MESSAGE", "Successful responses must not include error.");
+    if (object2.ok) throw new SidecarProtocolError("INVALID_MESSAGE", "Successful responses must not include error.");
     return { protocolVersion: SIDECAR_PROTOCOL_VERSION, type: "response", requestId, ok: false, error: { code, message } };
   }
-  if (!object.ok) throw new SidecarProtocolError("INVALID_MESSAGE", "Failed responses must include error.");
-  const payload = object.payload;
+  if (!object2.ok) throw new SidecarProtocolError("INVALID_MESSAGE", "Failed responses must include error.");
+  const payload = object2.payload;
   return payload === void 0 ? { protocolVersion: SIDECAR_PROTOCOL_VERSION, type: "response", requestId, ok: true } : { protocolVersion: SIDECAR_PROTOCOL_VERSION, type: "response", requestId, ok: true, payload: asJsonValue(payload, "payload") };
 }
-function validateCancel(object) {
-  assertKnownKeys(object, ["protocolVersion", "type", "requestId"]);
-  return { protocolVersion: SIDECAR_PROTOCOL_VERSION, type: "cancel", requestId: requireRequestId(object.requestId) };
+function validateCancel(object2) {
+  assertKnownKeys(object2, ["protocolVersion", "type", "requestId"]);
+  return { protocolVersion: SIDECAR_PROTOCOL_VERSION, type: "cancel", requestId: requireRequestId(object2.requestId) };
 }
-function validateEvent(object) {
-  assertKnownKeys(object, ["protocolVersion", "type", "event", "payload"]);
-  const event = requireString(object.event, "event");
+function validateEvent(object2) {
+  assertKnownKeys(object2, ["protocolVersion", "type", "event", "payload"]);
+  const event = requireString(object2.event, "event");
   if (!EVENT_SET.has(event)) {
     throw new SidecarProtocolError("UNKNOWN_EVENT", `Unknown sidecar event: ${event}.`);
   }
-  const payload = asJsonObject(object.payload, "Event payload must be a JSON object.");
+  const payload = asJsonObject(object2.payload, "Event payload must be a JSON object.");
   return { protocolVersion: SIDECAR_PROTOCOL_VERSION, type: "event", event, payload };
 }
 function validateRequestPayload(method, payload) {
@@ -18509,8 +18888,8 @@ function validateRequestPayload(method, payload) {
     throw new SidecarProtocolError("INVALID_PAYLOAD", "timeoutMs must be a positive safe integer.");
   }
 }
-function requireProtocolVersion(object) {
-  if (object.protocolVersion !== SIDECAR_PROTOCOL_VERSION) {
+function requireProtocolVersion(object2) {
+  if (object2.protocolVersion !== SIDECAR_PROTOCOL_VERSION) {
     throw new SidecarProtocolError("INVALID_PROTOCOL_VERSION", `Sidecar protocolVersion must be ${SIDECAR_PROTOCOL_VERSION}.`);
   }
 }
@@ -18561,9 +18940,9 @@ function asJsonValue(value, fieldName) {
   }
   throw new SidecarProtocolError("INVALID_PAYLOAD", `${fieldName} must be JSON serializable.`);
 }
-function assertKnownKeys(object, allowedKeys) {
+function assertKnownKeys(object2, allowedKeys) {
   const allowed = new Set(allowedKeys);
-  for (const key of Object.keys(object)) {
+  for (const key of Object.keys(object2)) {
     if (!allowed.has(key)) throw new SidecarProtocolError("UNKNOWN_FIELD", `Unknown sidecar field: ${key}.`);
   }
 }
@@ -18658,7 +19037,7 @@ async function routeSidecarRequest(message, context) {
     const agentId = typeof message.payload.agentId === "string" ? message.payload.agentId : void 0;
     return detectRuntimeSubscriptionClis(context, agentId);
   }
-  if (message.method === "test_backend") return testRuntimeBackend(requireBackendId(message.payload), context);
+  if (message.method === "test_backend") return checkRuntimeBackendReadiness(requireBackendId(message.payload), context);
   if (message.method === "complete") {
     return completeRuntime(parseCompletionPayload({ ...message.payload, requestId: message.requestId }), context);
   }

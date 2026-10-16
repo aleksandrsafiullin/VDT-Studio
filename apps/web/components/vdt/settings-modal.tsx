@@ -199,7 +199,7 @@ export function SettingsModal({
                     />
                   </header>
 
-                  <div className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,#f8fafc_0%,#eef4fb_100%)] px-5 py-5 sm:px-7 sm:py-6">
+                  <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5 sm:px-7 sm:py-6">
                     {activeSection === "execution" ? <ExecutionModeSettings /> : null}
                     {activeSection === "display" ? <DisplaySettings /> : null}
                   </div>

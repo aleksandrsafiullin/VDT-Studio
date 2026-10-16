@@ -6,6 +6,7 @@ import {
   NO_EXECUTION_BINDING_MESSAGE,
   buildAgentPublicStartRequest,
   formatNoExternalExecutionBindingMessage,
+  formatNoLocalModelExecutionBindingMessage,
   resolveExecutionBindingId
 } from "./agent-start-resolver";
 
@@ -62,6 +63,65 @@ function bindingsFixture(
 }
 
 describe("agent-start-resolver", () => {
+  const localSettings = {
+    ...DEFAULT_EXECUTION_SETTINGS,
+    executionMode: "local_cli" as const,
+    runnerProviderId: "local_http_stub" as const,
+    localRunnerPresetId: "ollama_openai" as const,
+    selectedCliAgentId: "codex" as const,
+    localModel: "qwen3"
+  };
+  const localBinding = {
+    bindingId: "ollama_exact_model",
+    executionProfile: "model_agent" as const,
+    engineId: "in-product-model-agent",
+    engineAdapterId: "server-owned-local-adapter",
+    backendId: "ollama",
+    modelId: "qwen3"
+  };
+
+  it("matches Local models only to an exact server-owned Model Agent backend/model", () => {
+    const resolved = resolveExecutionSettings(localSettings);
+    const bindings = bindingsFixture({ bindings: [localBinding] });
+    expect(resolveExecutionBindingId(bindings, localSettings, resolved.providerId, resolved.providerConfig)).toBe("ollama_exact_model");
+    const request = buildAgentPublicStartRequest(commonRequest, localSettings, bindings, resolved);
+    expect(request).toEqual({ ...commonRequest, executionBindingId: "ollama_exact_model" });
+    expect(request).not.toHaveProperty("providerConfig");
+  });
+
+  it.each([
+    { ...localBinding, modelId: "a-different-model" },
+    { ...localBinding, backendId: "local_runner" },
+    { ...localBinding, backendId: "openai_compatible" },
+    { ...localBinding, executionProfile: "external_cli_agent" as const }
+  ])("rejects incompatible Local models bindings without default or generic fallback: %j", (binding) => {
+    const resolved = resolveExecutionSettings(localSettings);
+    const bindings = bindingsFixture({ defaultBindingId: binding.bindingId, bindings: [binding] });
+    expect(resolveExecutionBindingId(bindings, localSettings, resolved.providerId, resolved.providerConfig)).toBeNull();
+    expect(() => buildAgentPublicStartRequest(commonRequest, localSettings, bindings, resolved)).toThrow(formatNoLocalModelExecutionBindingMessage("ollama"));
+  });
+
+  it("requires a local backend ID and matches the backend when no model was supplied", () => {
+    const bindings = bindingsFixture({ bindings: [localBinding] });
+    expect(resolveExecutionBindingId(bindings, localSettings, "local_runner", { model: "qwen3" })).toBeNull();
+    expect(resolveExecutionBindingId(bindings, localSettings, "local_runner", { backendId: "ollama" })).toBe("ollama_exact_model");
+  });
+
+  it.each(["local_runner", "openai_compatible"])("rejects a generic/API backend even when Local models config and binding both match %s", (backendId) => {
+    const bindings = bindingsFixture({ bindings: [{ ...localBinding, backendId }], defaultBindingId: localBinding.bindingId });
+    const providerConfig = { backendId, model: "qwen3" };
+    expect(resolveExecutionBindingId(bindings, localSettings, "local_runner", providerConfig)).toBeNull();
+    expect(() => buildAgentPublicStartRequest(commonRequest, localSettings, bindings, { providerId: "local_runner", providerConfig })).toThrow(formatNoLocalModelExecutionBindingMessage(backendId));
+  });
+
+  it("keeps explicit binding authority and reports local-specific unavailable errors", () => {
+    const resolved = resolveExecutionSettings(localSettings);
+    const bindings = bindingsFixture({ bindings: [], defaultBindingId: null });
+    expect(buildAgentPublicStartRequest(commonRequest, localSettings, bindings, { ...resolved, explicitBindingId: "explicit-server-binding" })).toEqual({ ...commonRequest, executionBindingId: "explicit-server-binding" });
+    expect(() => buildAgentPublicStartRequest(commonRequest, localSettings, bindings, resolved)).toThrow("Settings and model discovery do not create an agent binding");
+    expect(() => buildAgentPublicStartRequest(commonRequest, localSettings, bindings, resolved)).not.toThrow("CLI is installed");
+  });
+
   it("uses explicit executionBindingId without provider authority", () => {
     const request = buildAgentPublicStartRequest(
       commonRequest,

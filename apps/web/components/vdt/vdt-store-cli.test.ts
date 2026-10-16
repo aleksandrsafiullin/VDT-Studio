@@ -3,6 +3,7 @@ import { cloneProject, productionVolumeProject, type VdtChangeSet } from "@vdt-s
 import { productionVolumeReviewOutput } from "@vdt-studio/ai-harness";
 import { DEFAULT_EXECUTION_SETTINGS, type ExecutionSettings } from "@/lib/execution-mode-catalog";
 import type { VdtAgentRunSnapshot } from "@/lib/agent-client";
+import { resolveSelectedCliReadiness } from "@/lib/cli-readiness";
 
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
@@ -1463,6 +1464,9 @@ describe("vdt-store cli rescan", () => {
     );
     useVdtStudioStore.setState({
       cliDetectionAgents: undefined,
+      removedCliAgentIds: [],
+      isTestingCliByAgent: {},
+      cliTestStatusByAgent: {},
       cliDetectionError: undefined,
       isRescanningClis: false,
       rescanningCliId: undefined,
@@ -1484,6 +1488,191 @@ describe("vdt-store cli rescan", () => {
       providerId: "local_runner",
       runnerPairingToken: "test-session-token"
     });
+  });
+
+  it("removes a selected subscription persistently, resets its memory override and shows a safe ready fallback", async () => {
+    useVdtStudioStore.setState({
+      cliDetectionAgents: [
+        { id: "claude", installed: true, alias: "claude", executable: "/bin/claude", version: "1", status: "ready" },
+        { id: "codex", installed: true, alias: "codex", executable: "/bin/codex", version: "1", status: "ready" }
+      ],
+      cliModelByAgent: { codex: { source: "custom", customModel: "codex-test-model" } },
+      executionSettings: {
+        ...useVdtStudioStore.getState().executionSettings,
+        memoryModelMode: "selected_cli", memoryCliAgentId: "claude"
+      }
+    });
+    useVdtStudioStore.getState().removeCliAgent("claude");
+    expect(useVdtStudioStore.getState()).toMatchObject({
+      removedCliAgentIds: ["claude"],
+      executionSettings: { selectedCliAgentId: "codex", memoryModelMode: "same_as_chat", cliModelSelection: { customModel: "codex-test-model" } }
+    });
+    const persisted = JSON.parse(localStorageMock.getItem("vdt-studio-state")!).state;
+    expect(persisted.removedCliAgentIds).toEqual(["claude"]);
+    await useVdtStudioStore.persist.rehydrate();
+    expect(useVdtStudioStore.getState().removedCliAgentIds).toEqual(["claude"]);
+    expect(useVdtStudioStore.getState().executionSettings.memoryCliAgentId).toBeUndefined();
+  });
+
+  it("keeps the final removed provider unselected through rescans and reload, with explicit restoration", async () => {
+    const claude = { id: "claude" as const, installed: true, alias: "claude", executable: "/bin/claude", version: "1", status: "ready" as const };
+    useVdtStudioStore.setState({ cliDetectionAgents: [claude] });
+    useVdtStudioStore.getState().removeCliAgent("claude");
+    expect(useVdtStudioStore.getState().executionSettings.selectedCliAgentId).toBeUndefined();
+    expect(useVdtStudioStore.getState().executionSettings.command).toBeUndefined();
+    vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => ({ agents: [claude] }) } as Response);
+    await useVdtStudioStore.getState().rescanClis();
+    await useVdtStudioStore.persist.rehydrate();
+    expect(useVdtStudioStore.getState().removedCliAgentIds).toEqual(["claude"]);
+    expect(useVdtStudioStore.getState().executionSettings.selectedCliAgentId).toBeUndefined();
+    useVdtStudioStore.getState().setSelectedCliAgentId("claude");
+    expect(useVdtStudioStore.getState().executionSettings.selectedCliAgentId).toBeUndefined();
+    useVdtStudioStore.getState().restoreCliAgent("claude");
+    useVdtStudioStore.getState().setSelectedCliAgentId("claude");
+    expect(useVdtStudioStore.getState().executionSettings.selectedCliAgentId).toBe("claude");
+    expect(useVdtStudioStore.getState().removedCliAgentIds).toEqual([]);
+  });
+
+  it("deduplicates a pending rescan and does not reselect a provider removed during detection", async () => {
+    let resolveScan!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementation(() => new Promise((resolve) => { resolveScan = resolve; }));
+    const first = useVdtStudioStore.getState().rescanClis();
+    const duplicate = useVdtStudioStore.getState().rescanClis();
+    expect(fetch).toHaveBeenCalledOnce();
+    useVdtStudioStore.getState().removeCliAgent("claude");
+    resolveScan({ ok: true, json: async () => ({ agents: [{ id: "claude", installed: true, alias: "claude", executable: "/bin/claude", version: "1", status: "ready" }] }) } as Response);
+    await Promise.all([first, duplicate]);
+    expect(useVdtStudioStore.getState().executionSettings.selectedCliAgentId).toBeUndefined();
+    expect(useVdtStudioStore.getState().removedCliAgentIds).toEqual(["claude"]);
+  });
+
+  it("deduplicates pending tests and discards a late result after provider removal", async () => {
+    let resolveTest!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementation(() => new Promise((resolve) => { resolveTest = resolve; }));
+    useVdtStudioStore.setState({ cliDetectionAgents: [{ id: "claude", installed: true, alias: "claude", executable: "/bin/claude", version: "1", status: "ready" }] });
+    const first = useVdtStudioStore.getState().testCli("claude");
+    await useVdtStudioStore.getState().testCli("claude");
+    expect(fetch).toHaveBeenCalledOnce();
+    useVdtStudioStore.getState().removeCliAgent("claude");
+    resolveTest({ ok: true, json: async () => ({ ok: true }) } as Response);
+    await first;
+    expect(useVdtStudioStore.getState().cliTestStatusByAgent.claude).toBeUndefined();
+    expect(useVdtStudioStore.getState().isTestingCliByAgent.claude).toBe(false);
+    expect(useVdtStudioStore.getState().executionSettings.selectedCliAgentId).toBeUndefined();
+  });
+
+  it("retries a failed access check without retaining the previous error", async () => {
+    useVdtStudioStore.setState({ cliDetectionAgents: [{ id: "claude", installed: true, alias: "claude", executable: "/bin/claude", version: "1", status: "ready" }] });
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 502, json: async () => ({ ok: false, error: "CLI session unavailable" }) } as Response);
+    await useVdtStudioStore.getState().testCli("claude");
+    expect(useVdtStudioStore.getState().cliTestStatusByAgent.claude?.kind).toBe("error");
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) } as Response);
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ agents: [{ id: "claude", installed: true, alias: "claude", executable: "/bin/claude", version: "1", status: "ready" }] }) } as Response);
+    await useVdtStudioStore.getState().testCli("claude");
+    expect(useVdtStudioStore.getState().cliTestStatusByAgent.claude).toEqual({ kind: "success", message: "Claude Code: CLI access verified. The provider reports an active session." });
+  });
+
+  it("invalidates ready access while testing and keeps rejected authentication fail-closed", async () => {
+    const claude = { id: "claude" as const, installed: true, alias: "claude", executable: "/bin/claude", version: "1", status: "ready" as const };
+    useVdtStudioStore.setState({ cliDetectionAgents: [claude] });
+    let finishTest!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementation(() => new Promise((resolve) => { finishTest = resolve; }));
+    const run = useVdtStudioStore.getState().testCli("claude");
+    let state = useVdtStudioStore.getState();
+    expect(resolveSelectedCliReadiness(state.executionSettings, state.cliDetectionAgents)?.canExecute).toBe(false);
+    finishTest({ ok: false, status: 401, json: async () => ({ ok: false, error: "AUTH_REQUIRED: provider sign-in required." }) } as Response);
+    await run;
+    state = useVdtStudioStore.getState();
+    expect(state.cliDetectionAgents?.[0]?.status).toBe("error");
+    expect(resolveSelectedCliReadiness(state.executionSettings, state.cliDetectionAgents)?.canExecute).toBe(false);
+    expect(state.cliTestStatusByAgent.claude).toMatchObject({ kind: "error", message: "AUTH_REQUIRED: provider sign-in required." });
+  });
+
+  it.each(["authentication_required", "missing", "scan_error"])("does not report Test success when fresh verification is %s", async (outcome) => {
+    const claude = { id: "claude" as const, installed: true, alias: "claude", executable: "/bin/claude", version: "1", status: "ready" as const };
+    useVdtStudioStore.setState({ cliDetectionAgents: [claude] });
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) } as Response);
+    vi.mocked(fetch).mockResolvedValueOnce(outcome === "scan_error"
+      ? { ok: false, status: 503, json: async () => ({ error: "Runtime verification unavailable" }) } as Response
+      : { ok: true, json: async () => ({ agents: outcome === "missing" ? [] : [{ ...claude, status: outcome }] }) } as Response);
+    await useVdtStudioStore.getState().testCli("claude");
+    const state = useVdtStudioStore.getState();
+    expect(state.cliTestStatusByAgent.claude?.kind).not.toBe("success");
+    expect(state.isTestingCliByAgent.claude).toBe(false);
+    expect(resolveSelectedCliReadiness(state.executionSettings, state.cliDetectionAgents, { detectionError: state.cliDetectionError })?.canExecute).toBe(false);
+  });
+
+  it("awaits an overlapping full scan, preserves other providers, then requires a fresh targeted result", async () => {
+    const claude = { id: "claude" as const, installed: true, alias: "claude", executable: "/bin/claude", version: "1", status: "ready" as const };
+    const codex = { id: "codex" as const, installed: true, alias: "codex", executable: "/bin/codex", version: "1", status: "ready" as const };
+    useVdtStudioStore.setState({ cliDetectionAgents: [claude, codex] });
+    const scans: Array<(response: Response) => void> = [];
+    vi.mocked(fetch).mockImplementation((input) => String(input).includes("detect-clis")
+      ? new Promise((resolve) => { scans.push(resolve); })
+      : Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response));
+    const fullScan = useVdtStudioStore.getState().rescanClis();
+    const test = useVdtStudioStore.getState().testCli("claude");
+    await vi.waitFor(() => expect(scans).toHaveLength(1));
+    expect(useVdtStudioStore.getState().cliTestStatusByAgent.claude).toBeUndefined();
+    scans[0]!({ ok: true, json: async () => ({ agents: [claude, { ...codex, status: "rate_limited" }] }) } as Response);
+    await fullScan;
+    await vi.waitFor(() => expect(scans).toHaveLength(2));
+    const pending = useVdtStudioStore.getState();
+    expect(pending.isTestingCliByAgent.claude).toBe(true);
+    expect(pending.cliTestStatusByAgent.claude).toBeUndefined();
+    expect(pending.cliDetectionAgents?.find((agent) => agent.id === "codex")?.status).toBe("rate_limited");
+    expect(resolveSelectedCliReadiness(pending.executionSettings, pending.cliDetectionAgents, { isScanning: pending.isRescanningClis })?.canExecute).toBe(false);
+    scans[1]!({ ok: true, json: async () => ({ agents: [{ ...claude, status: "authentication_required" }] }) } as Response);
+    await test;
+    expect(useVdtStudioStore.getState().cliTestStatusByAgent.claude?.kind).toBe("info");
+    expect(useVdtStudioStore.getState().cliDetectionAgents?.find((agent) => agent.id === "claude")?.status).toBe("authentication_required");
+  });
+
+  it("ignores a late ready scan after Test rejects", async () => {
+    const claude = { id: "claude" as const, installed: true, alias: "claude", executable: "/bin/claude", version: "1", status: "ready" as const };
+    useVdtStudioStore.setState({ cliDetectionAgents: [claude] });
+    let finishScan!: (response: Response) => void;
+    let finishTest!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementation((input) => new Promise((resolve) => {
+      if (String(input).includes("detect-clis")) finishScan = resolve;
+      else finishTest = resolve;
+    }));
+    const test = useVdtStudioStore.getState().testCli("claude");
+    const scan = useVdtStudioStore.getState().rescanClis();
+    finishTest({ ok: false, status: 401, json: async () => ({ error: "AUTH_REQUIRED" }) } as Response);
+    await test;
+    finishScan({ ok: true, json: async () => ({ agents: [claude] }) } as Response);
+    await scan;
+    const state = useVdtStudioStore.getState();
+    expect(state.cliDetectionAgents?.[0]?.status).toBe("error");
+    expect(resolveSelectedCliReadiness(state.executionSettings, state.cliDetectionAgents)?.canExecute).toBe(false);
+  });
+
+  it("does not publish or reselect from a late Test result after remove and add back", async () => {
+    useVdtStudioStore.setState({ cliDetectionAgents: [{ id: "claude", installed: true, alias: "claude", executable: "/bin/claude", version: "1", status: "ready" }] });
+    let finishTest!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementation(() => new Promise((resolve) => { finishTest = resolve; }));
+    const test = useVdtStudioStore.getState().testCli("claude");
+    useVdtStudioStore.getState().removeCliAgent("claude");
+    useVdtStudioStore.getState().restoreCliAgent("claude");
+    finishTest({ ok: true, json: async () => ({ ok: true }) } as Response);
+    await test;
+    const state = useVdtStudioStore.getState();
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(state.executionSettings.selectedCliAgentId).toBeUndefined();
+    expect(state.cliTestStatusByAgent.claude).toBeUndefined();
+    expect(state.cliDetectionAgents?.[0]?.status).toBe("installed");
+  });
+
+  it("does not auto-select blocked remaining providers after removal, rescan or reload", async () => {
+    const claude = { id: "claude" as const, installed: true, alias: "claude", executable: "/bin/claude", version: "1", status: "ready" as const };
+    const codex = { id: "codex" as const, installed: true, alias: "codex", executable: "/bin/codex", version: "1", status: "authentication_required" as const };
+    useVdtStudioStore.setState({ cliDetectionAgents: [claude, codex] });
+    useVdtStudioStore.getState().removeCliAgent("claude");
+    vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => ({ agents: [claude, codex] }) } as Response);
+    await useVdtStudioStore.getState().rescanClis();
+    await useVdtStudioStore.persist.rehydrate();
+    expect(useVdtStudioStore.getState().executionSettings.selectedCliAgentId).toBeUndefined();
   });
 
   it("sets empty detection agents on failed rescan instead of leaving undefined", async () => {
@@ -1598,7 +1787,7 @@ describe("vdt-store cli rescan", () => {
       return {
         ok: true,
         status: 200,
-        json: async () => ({ agents: [] })
+        json: async () => ({ agents: [{ id: "claude", installed: true, executable: "/bin/claude", alias: "claude", version: "1", status: "ready" }] })
       } as Response;
     });
 
@@ -1658,7 +1847,7 @@ describe("vdt-store cli rescan", () => {
       return {
         ok: true,
         status: 200,
-        json: async () => ({ agents: [] })
+        json: async () => ({ agents: [{ id: "codex", installed: true, executable: "/bin/codex", alias: "codex", version: "1", status: "ready" }] })
       } as Response;
     });
 
@@ -2932,5 +3121,43 @@ describe("agent chat history VDT scoping", () => {
     const openedActiveVdt = useVdtStudioStore.getState().openAgentChat("run-b");
     expect(openedActiveVdt).toBe(true);
     expect(useVdtStudioStore.getState().generateActivity).toMatchObject({ runId: "run-b" });
+  });
+});
+
+describe("execution category selection", () => {
+  beforeEach(() => {
+    localStorageMock.clear();
+    useVdtStudioStore.setState({
+      executionSettings: { ...DEFAULT_EXECUTION_SETTINGS, selectedCliAgentId: "codex", cliModelSelection: { source: "custom", customModel: "cloud-choice" }, memoryModelMode: "selected_cli", memoryCliAgentId: "claude" },
+      removedCliAgentIds: [], cliDetectionAgents: undefined, cliDetectionError: undefined, isRescanningClis: false,
+      providerId: "openai_compatible", providerConfig: {}, cliModelByAgent: {}
+    });
+  });
+
+  it("restores local server/model and CLI model choices through switches and hydration without altering memory", async () => {
+    const store = useVdtStudioStore;
+    store.getState().setExecutionCategory("local_models");
+    store.getState().setLocalRunnerPreset("lm_studio_openai");
+    store.getState().setExecutionSettingsField("localModel", "local-choice");
+    store.getState().setExecutionCategory("cli_subscriptions");
+    expect(store.getState().executionSettings).toMatchObject({ runnerProviderId: "cli_stub", localRunnerPresetId: "custom_cli_json", cliModelSelection: { customModel: "cloud-choice" } });
+    store.getState().setExecutionCategory("byok");
+    await store.persist.rehydrate();
+    store.getState().setExecutionCategory("local_models");
+    expect(store.getState().executionSettings).toMatchObject({ localRunnerPresetId: "lm_studio_openai", localModel: "local-choice", memoryModelMode: "selected_cli", memoryCliAgentId: "claude" });
+    store.getState().setLocalRunnerPreset("vllm_openai");
+    expect(store.getState().executionSettings.localModel).toBe("local-model");
+  });
+
+  it("does not activate a CLI when a pending scan finishes after switching to Local models", async () => {
+    const store = useVdtStudioStore;
+    store.getState().setExecutionCategory("cli_subscriptions");
+    let finishScan!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { finishScan = resolve; })));
+    const scan = store.getState().rescanClis();
+    store.getState().setExecutionCategory("local_models");
+    finishScan({ ok: true, json: async () => ({ agents: [{ id: "cursor-agent", installed: true, executable: "/bin/agent", alias: "agent", version: "1", status: "ready" }] }) } as Response);
+    await scan;
+    expect(store.getState().executionSettings).toMatchObject({ runnerProviderId: "local_http_stub", localRunnerPresetId: "ollama_openai", memoryModelMode: "selected_cli", memoryCliAgentId: "claude" });
   });
 });

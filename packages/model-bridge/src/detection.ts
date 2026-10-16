@@ -3,6 +3,8 @@ import { constants as fsConstants } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { selectCodexExecutable } from "./subscription-cli/codex/executable-selection";
+import { CODEX_MODEL_CATALOG_MAX_BYTES } from "./subscription-cli/codex/constants";
 
 export const SUBSCRIPTION_CLI_IDS = ["cursor-agent", "codex", "claude", "gemini", "copilot"] as const;
 export type SubscriptionCliId = (typeof SUBSCRIPTION_CLI_IDS)[number];
@@ -99,6 +101,12 @@ export async function detectSubscriptionCli(
 ): Promise<SubscriptionCliDetectionResult> {
   const definition = definitions.get(id);
   if (!definition) throw new Error(`Unknown subscription CLI: ${id}`);
+  if (id === "codex") {
+    const selected = await selectCodexExecutable(options);
+    return selected
+      ? { id, backendId: definition.backendId, installed: true, ...selected }
+      : { id, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
+  }
   const match = await findExecutableOnPath(definition.aliases, options);
   if (!match) return { id, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
   try {
@@ -189,7 +197,7 @@ export async function discoverSubscriptionCliModels(id: SubscriptionCliId, execu
   const result = await execFileAsync(executable, args, {
     encoding: "utf8",
     timeout: 10_000,
-    maxBuffer: 512 * 1024,
+    maxBuffer: id === "codex" ? CODEX_MODEL_CATALOG_MAX_BYTES : 512 * 1024,
     windowsHide: true,
     shell: false
   });

@@ -67,6 +67,7 @@ API / UI
 ```
 
 `model_agent` uses `InProductModelAgentEngine` and structured HTTP/local turns.
+The frontend distinguishes Local models from subscription CLIs despite their shared internal `local_cli` execution mode. Local model starts select only an existing `model_agent` binding with the exact resolved backend ID and, when supplied, selected model; CLI starts retain exact `external_cli_agent` matching. Settings and model discovery do not provision bindings. Without a compatible server-owned local-model binding the start remains unavailable; there is no generic runner/default/API fallback, and the server's adapter capability checks and existing release limitations still apply.
 `external_cli_agent` uses a qualified native or checkpoint-resume session whose
 only application capability is the VDT Gateway. Profile, adapter, backend,
 model, settings hash, capability hash, tool-catalog hash and session epoch are
@@ -226,7 +227,11 @@ Therefore search results may inform a draft but must not be represented as an au
 
 ## Data-Agent Prototype
 
-`packages/data-harness` contains a separate decision loop for raw-data discovery. The current UI does not pass provider configuration, so normal wizard runs use deterministic heuristics. The data-agent allowlist does not include the main skill or research tools.
+`packages/data-harness` contains a separate experimental decision loop for raw-data discovery. The file workflow passes the configured provider through `createManagedAwareAiProvider`; the data-agent allowlist does not include the main skill or research tools. Incoming-KPI discovery accepts bounded semantic mapping suggestions, then requires explicit table/category/additive-value-unit/normalization confirmation and answers to any provider clarification questions. Provider output cannot calculate or silently accept the partition. Structured review edits and final staging reload retained project-owned source bytes, verify their SHA-256 and deterministically rebuild the complete hierarchy without another provider call by default. Unresolved questions, invalid rows, incomplete coverage and depth/node limits block staging. The additive compiler accepts numeric values, durations or explicit start/end timestamps; arbitrary ratios and joins remain out of scope. A reporting period labels the full extract and denominator rather than filtering rows. Generated KPI Descriptions record source and calculation provenance; the result still enters the normal change preview.
+
+The three data task contracts (`data-agent-decision-v1`, `analyze-raw-dataset-v1`, `review-dataset-proposal-v1`) share a canonical model-bridge contract. Managed CLI execution uses that registry rather than accepting a request-supplied schema override. Its closed decision union preserves each allowlisted tool's typed arguments and the complete final analysis; the analysis/review contract includes the incoming mapping proposal. Unknown mapping decisions are nullable only in the strict model response and are removed only when they correspond to known optional fields in the selected `type`/`toolName`/`mode` branch. Required nulls, null array items and unknown/human fields remain validation failures. Provider output cannot set `confirmed` or `clarificationAnswers`; only the user's structured review supplies those. Enum values, integer limits/offsets, nonempty strings and positive denominators are checked canonically for these three tasks. Other task contracts retain their existing validation/projection behavior.
+
+Cursor usage-exhaustion responses use the existing `RATE_LIMITED` failure code and do not trigger JSON repair or a repeated model attempt. File discovery returns a fixed actionable HTTP 429 message for that code; raw CLI stderr is not shown, and this failure does not imply that the provider sign-in is invalid.
 
 This split is transitional. The target is a specialized sub-run of the main coordinator with the same policy, evidence store, cancellation, retry and approval contracts. See `DATA_INGESTION.md`.
 

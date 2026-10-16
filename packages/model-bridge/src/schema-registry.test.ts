@@ -49,10 +49,13 @@ describe("schema registry", () => {
 
   it("keeps every registered object schema closed to top-level drift", () => {
     for (const schemaId of VDT_SCHEMA_IDS) {
-      expect(getRegisteredJsonSchema(schemaId)).toMatchObject({
-        type: "object",
-        additionalProperties: false
-      });
+      const schema = getRegisteredJsonSchema(schemaId);
+      if (schemaId === "data-agent-decision-v1") {
+        expect(schema).not.toHaveProperty("properties");
+        for (const branch of schema.anyOf as Record<string, unknown>[]) {
+          expect(branch).toMatchObject({ type: "object", additionalProperties: false });
+        }
+      } else expect(schema).toMatchObject({ type: "object", additionalProperties: false });
     }
   });
 

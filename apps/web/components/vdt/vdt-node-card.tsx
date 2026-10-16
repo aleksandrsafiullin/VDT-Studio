@@ -5,7 +5,7 @@ import type { NodeProps } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
 import type { VdtNode } from "@vdt-studio/vdt-core";
 import { clsx } from "clsx";
-import { GitBranchPlus, Sparkles } from "lucide-react";
+import { FileUp, GitBranchPlus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -31,6 +31,7 @@ export interface VdtNodeCardData extends Record<string, unknown> {
   onSelect?: ((nodeId: string) => void) | undefined;
   onAddManualIncomingKpi?: ((nodeId: string) => void) | undefined;
   onAddAiIncomingKpis?: ((nodeId: string) => void) | undefined;
+  onAddFileIncomingKpis?: ((nodeId: string) => void) | undefined;
 }
 
 function ValueRow({
@@ -126,7 +127,7 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
         ) : null}
         <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-accent" />
       </div>
-      <div className="absolute -right-14 top-1/2 z-30 flex h-24 w-14 -translate-y-1/2 items-center justify-end opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100">
+      <div className="absolute -right-14 top-1/2 z-30 flex h-32 w-14 -translate-y-1/2 items-center justify-end opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100">
         <div className="nodrag nopan flex flex-col gap-1 rounded-md border border-line bg-white p-1 shadow-lg">
           <Tooltip label="Add incoming KPI manually" className="block">
             <Button
@@ -159,6 +160,23 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
               onClick={(event) => {
                 stopActionEvent(event);
                 nodeData.onAddAiIncomingKpis?.(node.id);
+              }}
+            />
+          </Tooltip>
+          <Tooltip label="Add incoming KPIs from file" className="block">
+            <Button
+              type="button"
+              size="icon"
+              variant="secondary"
+              className="h-8 w-8"
+              icon={<FileUp className="h-4 w-4" />}
+              aria-label={`Add incoming KPIs from file for ${node.name}`}
+              data-testid="node-add-file-incoming-kpis"
+              disabled={!nodeData.onAddFileIncomingKpis}
+              onMouseDown={stopActionEvent}
+              onClick={(event) => {
+                stopActionEvent(event);
+                nodeData.onAddFileIncomingKpis?.(node.id);
               }}
             />
           </Tooltip>

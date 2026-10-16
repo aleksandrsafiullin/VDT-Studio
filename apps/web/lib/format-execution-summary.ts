@@ -6,6 +6,7 @@ import {
   type CliModelSelection,
   type ExecutionSettings
 } from "./execution-mode-catalog";
+import { resolveExecutionCategory } from "./execution-category";
 
 export interface ExecutionModeSummary {
   modeLabel: string;
@@ -34,7 +35,7 @@ function resolveCliModelLabel(
   }
 
   if (agentId) {
-    return getCliCatalogEntry(agentId).primaryCommand;
+    return "Provider default";
   }
 
   return undefined;
@@ -44,35 +45,30 @@ export function formatExecutionModeSummary(settings: ExecutionSettings): Executi
   if (settings.executionMode === "local_cli") {
     const presetId = settings.localRunnerPresetId ?? "ollama_openai";
     const preset = getLocalRunnerPreset(presetId);
-    let runnerProviderId = settings.runnerProviderId ?? preset.runnerProviderId;
-    if (runnerProviderId === "cli_stub" && preset.runnerProviderId === "local_http_stub") {
-      runnerProviderId = "local_http_stub";
-    }
-
-    if (runnerProviderId === "cli_stub" && settings.selectedCliAgentId) {
-      const agent = getCliCatalogEntry(settings.selectedCliAgentId);
+    if (resolveExecutionCategory(settings) === "cli_subscriptions") {
+      const agent = settings.selectedCliAgentId ? getCliCatalogEntry(settings.selectedCliAgentId) : undefined;
       const model = resolveCliModelLabel(
         settings.selectedCliAgentId,
         settings.cliModelSelection,
         undefined
       );
       return {
-        modeLabel: "Local CLI",
-        primary: agent.displayName,
+        modeLabel: "CLI subscriptions",
+        primary: agent?.displayName ?? "Choose a CLI",
         secondary: model
       };
     }
 
     return {
-      modeLabel: "Local CLI",
-      primary: preset.label,
+      modeLabel: "Local models",
+      primary: preset.runnerProviderId === "local_http_stub" ? preset.label : getLocalRunnerPreset("ollama_openai").label,
       secondary: settings.localModel?.trim() || preset.model
     };
   }
 
   if (settings.useMockProvider || settings.gatewayPresetId === "mock") {
     return {
-      modeLabel: "BYOK",
+      modeLabel: "API keys",
       primary: "Runtime not configured",
       secondary: "Select a real provider"
     };
@@ -85,7 +81,7 @@ export function formatExecutionModeSummary(settings: ExecutionSettings): Executi
   const model = settings.model?.trim() || preset.model;
 
   return {
-    modeLabel: "BYOK",
+    modeLabel: "API keys",
     primary: `${protocolLabel} · ${preset.label}`,
     secondary: model
   };

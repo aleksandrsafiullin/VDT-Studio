@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { describe, expect, it, vi } from "vitest";
+import { chmod, copyFile, mkdtemp, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,7 @@ import { productionVolumeProject } from "@vdt-studio/vdt-core";
 import type { AuditEvent } from "../cli/types";
 import {
   createLocalRuntimeContext,
+  checkRuntimeBackendReadiness,
   completeRuntime,
   cancelRuntimeRequest,
   detectRuntimeSubscriptionClis,
@@ -21,6 +22,61 @@ const fakeCodex = fileURLToPath(new URL("./fixtures/fake-codex.cjs", import.meta
 const fakeCursor = fileURLToPath(new URL("./fixtures/fake-cursor.cjs", import.meta.url));
 
 describe("local runtime contract", { timeout: 30_000 }, () => {
+  it("checks subscription readiness without creating a model completion run", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-readiness-"));
+    try {
+      await copyFile(fakeCodex, path.join(tempDir, "codex"));
+      await chmod(path.join(tempDir, "codex"), 0o700);
+      const resolveExecutable = vi.fn(async () => { throw new Error("Completion execution must not start."); });
+      const context = createLocalRuntimeContext({
+        auditSink: () => undefined,
+        detection: { path: tempDir },
+        executor: { resolveExecutable }
+      });
+
+      await expect(checkRuntimeBackendReadiness("codex_subscription", context)).resolves.toEqual({
+        statusCode: 200,
+        payload: { ok: true, backendId: "codex_subscription", status: "ready" }
+      });
+      expect(resolveExecutable).not.toHaveBeenCalled();
+      expect(context.runs.size).toBe(0);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not report an unverified Cursor session as a successful test", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-unverified-readiness-"));
+    try {
+      await symlink(fakeCursor, path.join(tempDir, "agent"));
+      vi.stubEnv("VDT_FAKE_CURSOR_MODE", "status-unverified");
+      const context = createLocalRuntimeContext({ auditSink: () => undefined, detection: { path: tempDir } });
+
+      await expect(checkRuntimeBackendReadiness("cursor_subscription", context)).rejects.toMatchObject({
+        code: "AUTH_REQUIRED",
+        statusCode: 401,
+        message: expect.stringContaining("stored session")
+      });
+      expect(context.runs.size).toBe(0);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns actionable missing-CLI and active-login test errors", async () => {
+    const context = createLocalRuntimeContext({ auditSink: () => undefined, detection: { path: "" } });
+    await expect(checkRuntimeBackendReadiness("codex_subscription", context)).rejects.toMatchObject({
+      code: "BACKEND_NOT_INSTALLED",
+      message: expect.stringContaining("Install the provider CLI")
+    });
+    context.authInProgress.add("cursor_subscription");
+    await expect(checkRuntimeBackendReadiness("cursor_subscription", context)).rejects.toMatchObject({
+      code: "AUTH_ALREADY_IN_PROGRESS",
+      statusCode: 409
+    });
+  });
+
   it("lists public manifests without executable details", () => {
     const context = createLocalRuntimeContext({ auditSink: () => undefined });
     const result = listRuntimeBackends(context);
@@ -147,7 +203,8 @@ describe("local runtime contract", { timeout: 30_000 }, () => {
   it("detects installed subscription CLIs and provider-owned models", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-detect-clis-"));
     try {
-      await symlink(fakeCodex, path.join(tempDir, "codex"));
+      await copyFile(fakeCodex, path.join(tempDir, "codex"));
+      await chmod(path.join(tempDir, "codex"), 0o700);
       await symlink(fakeCursor, path.join(tempDir, "agent"));
       const context = createLocalRuntimeContext({
         auditSink: () => undefined,

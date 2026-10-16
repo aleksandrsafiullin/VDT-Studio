@@ -22,6 +22,8 @@ import {
   resolveFormulaEdgeRelation
 } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
+import { DataImportWizard } from "@/components/data-import/data-import-wizard";
+import { requestIncomingKpisFromFile } from "@/components/data-import/import-context";
 import { SquareGrid2x2 } from "./canvas-toolbar-icons";
 import { KpiSpacingPopover } from "./kpi-spacing-popover";
 import { VdtNodeCard, type VdtNodeCardData } from "./vdt-node-card";
@@ -101,7 +103,8 @@ export function VdtCanvas() {
           onAddManualIncomingKpi: addManualIncomingKpi,
           onAddAiIncomingKpis: (nodeId) => {
             void requestIncomingKpisWithAi(nodeId);
-          }
+          },
+          onAddFileIncomingKpis: requestIncomingKpisFromFile
         }
       })),
     [
@@ -211,6 +214,7 @@ export function VdtCanvas() {
       className="relative flex-1 min-h-0 w-full overflow-hidden bg-canvas"
       data-testid="vdt-canvas"
     >
+      <DataImportWizard />
       <div className="absolute left-4 top-4 z-10 flex items-center gap-2">
         <Button
           size="sm"

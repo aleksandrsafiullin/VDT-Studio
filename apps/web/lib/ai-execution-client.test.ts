@@ -102,6 +102,14 @@ describe("AiExecutionClient", () => {
     expect(result.agents[0]?.authSummary).toBe(HOSTED_WEB_LOCAL_AI_MESSAGE);
   });
 
+  it("does not call local CLI testing or authentication from hosted web mode", async () => {
+    const fetcher = vi.fn();
+    const client = createAiExecutionClient("hosted_web", fetcher as unknown as typeof fetch);
+    await expect(client.testBackend("codex_subscription", { providerId: "local_runner" })).rejects.toThrow(HOSTED_WEB_LOCAL_AI_MESSAGE);
+    await expect(client.openProviderAuth("cursor_subscription")).rejects.toThrow(HOSTED_WEB_LOCAL_AI_MESSAGE);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("uses the development detection route only for the development runner client", async () => {
     const fetcher = vi.fn(async () =>
       jsonResponse({
@@ -156,6 +164,25 @@ describe("AiExecutionClient", () => {
         providerId: "local_runner"
       })
     ).resolves.toEqual({ ok: true });
+  });
+
+  it("preserves actionable errors from an unsuccessful development readiness response", async () => {
+    const fetcher = vi.fn(async () => jsonResponse({
+      ok: false, error: { code: "AUTH_REQUIRED", message: "Reconnect the provider, then rescan." }
+    }));
+    await expect(new DevelopmentRunnerClient(fetcher as unknown as typeof fetch).testBackend("cursor_subscription", {
+      providerId: "local_runner"
+    })).rejects.toThrow("Reconnect the provider, then rescan.");
+  });
+
+  it("uses the local backend ID as test authority even when request metadata names an API provider", async () => {
+    const fetcher = vi.fn(async (url: string) => {
+      expect(url).toBe("/api/ai/dev-runtime");
+      return jsonResponse({ ok: true });
+    });
+    await expect(new DevelopmentRunnerClient(fetcher as unknown as typeof fetch).testBackend("codex_subscription", {
+      providerId: "mock"
+    })).resolves.toEqual({ ok: true });
   });
 
   it("lists development local HTTP models through the managed dev runtime route", async () => {
@@ -507,6 +534,23 @@ describe("AiExecutionClient", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it.each([undefined, null, {}, { ok: false }, { ok: "true" }])("does not report an unverified desktop test response as success: %j", async (result) => {
+    const fetcher = vi.fn();
+    const invoke = vi.fn(async () => result);
+    await expect(new DesktopAiExecutionClient(fetcher as unknown as typeof fetch, invoke).testBackend("codex_subscription", {
+      providerId: "local_runner"
+    })).rejects.toThrow("did not return a verified result");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("preserves native IPC string failures as actionable errors", async () => {
+    const fetcher = vi.fn();
+    const invoke = vi.fn(async () => { throw "AUTH_REQUIRED: Complete provider sign-in, then rescan."; });
+    const client = new DesktopAiExecutionClient(fetcher as unknown as typeof fetch, invoke);
+    await expect(client.testBackend("cursor_subscription", { providerId: "local_runner" })).rejects.toThrow("Complete provider sign-in");
+    await expect(client.openProviderAuth("cursor_subscription")).rejects.toThrow("Complete provider sign-in");
+  });
+
   it("routes desktop provider authentication through the reviewed Tauri command", async () => {
     const fetcher = vi.fn();
     const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
@@ -523,6 +567,25 @@ describe("AiExecutionClient", () => {
     await expect(new DesktopAiExecutionClient(fetcher as unknown as typeof fetch, invoke).openProviderAuth("codex_subscription"))
       .resolves.toMatchObject({ action: "instructions", docsUrl: "https://developers.openai.com/codex/cli" });
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    undefined,
+    { ok: false, error: "Provider sign-in was cancelled." },
+    { ok: true },
+    { ok: true, action: "instructions" },
+    { ok: true, action: "instructions", instructions: "", docsUrl: "" },
+    { ok: true, backendId: "codex_subscription", action: "authenticated" }
+  ])("rejects incomplete or unsuccessful desktop sign-in results: %j", async (result) => {
+    const invoke = vi.fn(async () => result);
+    await expect(new DesktopAiExecutionClient(vi.fn() as unknown as typeof fetch, invoke).openProviderAuth("cursor_subscription"))
+      .rejects.toThrow();
+  });
+
+  it("rejects mismatched development sign-in results", async () => {
+    const fetcher = vi.fn(async () => jsonResponse({ ok: true, backendId: "codex_subscription", action: "authenticated" }));
+    await expect(new DevelopmentRunnerClient(fetcher as unknown as typeof fetch).openProviderAuth("cursor_subscription"))
+      .rejects.toThrow("invalid result");
   });
 
   it("detects desktop subscription CLIs through the Tauri command bridge", async () => {

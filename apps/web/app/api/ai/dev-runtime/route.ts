@@ -62,7 +62,7 @@ export async function POST(request: Request) {
       if (!backendId) {
         return NextResponse.json({ ok: false, error: "backendId is required." }, { status: 400 });
       }
-      return jsonRuntimeResult(await runtime.testRuntimeBackend(backendId, context));
+      return jsonRuntimeResult(await runtime.checkRuntimeBackendReadiness(backendId, context));
     }
 
     if (operation === "complete") {

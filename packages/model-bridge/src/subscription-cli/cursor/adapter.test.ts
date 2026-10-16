@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { assertArgsSafe } from "../security";
 import { buildCursorDynamicArgs, cursorSubscriptionCliAdapter, listCursorAgentModels, parseCursorAgentModelList } from "./adapter";
@@ -85,6 +86,26 @@ describe("cursorSubscriptionCliAdapter", () => {
         "connection-test-v1"
       )
     ).toThrow(/\.cursor\/projects/);
+  });
+
+  it("classifies observed usage exhaustion as RATE_LIMITED in final and streaming output", () => {
+    const stdout = '{"type":"system"}\n{"type":"user"}\n';
+    const usage = readFileSync(new URL("./fixtures/usage-exhausted.stderr.txt", import.meta.url), "utf8");
+    expect(Buffer.byteLength(usage)).toBe(149);
+    expect(() => cursorSubscriptionCliAdapter.parseOutput(stdout, usage, "data-agent-decision-v1"))
+      .toThrowError(expect.objectContaining({ code: "RATE_LIMITED" }));
+    expect(() => cursorSubscriptionCliAdapter.parseStreamingOutput?.(stdout, usage, "data-agent-decision-v1"))
+      .toThrowError(expect.objectContaining({ code: "RATE_LIMITED" }));
+  });
+
+  it("preserves auth precedence and does not classify generic action errors or valid quota text", () => {
+    expect(() => cursorSubscriptionCliAdapter.parseOutput("", "Authentication required: quota unavailable.", "connection-test-v1"))
+      .toThrowError(expect.objectContaining({ code: "AUTH_REQUIRED" }));
+    expect(() => cursorSubscriptionCliAdapter.parseOutput("", "ActionRequiredError: Workspace action needed.", "connection-test-v1"))
+      .toThrowError(expect.objectContaining({ code: "BACKEND_PARSE_FAILED" }));
+    const output = { ok: true, note: "The source contains the words quota and out of usage." };
+    const stdout = `${JSON.stringify({ type: "result", subtype: "success", result: JSON.stringify(output) })}\n`;
+    expect(cursorSubscriptionCliAdapter.parseOutput(stdout, "", "connection-test-v1")).toEqual(output);
   });
 
   it("returns streaming output when a Cursor stream already contains parseable assistant JSON", () => {

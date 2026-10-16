@@ -75,6 +75,7 @@ export function ChangeSetPreviewPanel({
   onDiscard
 }: ChangeSetPreviewPanelProps) {
   const isDestructive = changeSet.taskType === "simplify_branch" && changeSet.deletions.length > 0;
+  const isFileHierarchy = changeSet.additions.some((node) => node.tags?.includes("incoming_kpi_breakdown"));
   const title = TASK_TITLES[changeSet.taskType] ?? "Proposed changes";
 
   const groups = [
@@ -169,7 +170,9 @@ export function ChangeSetPreviewPanel({
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-ink">Preview: {title}</h3>
           <p className="mt-1 text-sm leading-5 text-muted">
-            {isDestructive
+            {isFileHierarchy
+              ? "This complete file hierarchy, its formulas, source and mappings apply together. Toggling any change selects or clears the entire group."
+              : isDestructive
               ? "This proposal removes nodes or edges. Review carefully before applying."
               : "Select changes to apply. The model will not change until you confirm."}
           </p>

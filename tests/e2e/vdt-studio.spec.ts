@@ -1527,12 +1527,13 @@ test("opens checked-in examples and syncs the setup brief", async ({ page }, tes
   await expect(reactFlowNode(page, "oee")).toBeVisible();
 });
 
-test("opens settings modal on execution mode with Local CLI and BYOK tabs", async ({ page }, testInfo) => {
+test("opens settings modal with CLI, Local models and API keys tabs", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Settings modal smoke runs on desktop viewport.");
 
   const modal = await openSettingsModal(page);
   await expect(modal.getByRole("heading", { name: "Execution mode" })).toBeVisible();
   await expect(page.getByTestId("execution-mode-tab-local-cli")).toBeVisible();
+  await expect(page.getByTestId("execution-mode-tab-local-models")).toBeVisible();
   await expect(page.getByTestId("execution-mode-tab-byok")).toBeVisible();
   await expect(page.getByTestId("execution-mode-panel-byok")).toBeVisible();
 });
@@ -1590,6 +1591,7 @@ test("setup rail Configure opens settings modal on execution mode", async ({ pag
   await expect(modal).toBeVisible();
   await expect(modal.getByRole("heading", { name: "Execution mode" })).toBeVisible();
   await expect(page.getByTestId("execution-mode-tab-local-cli")).toBeVisible();
+  await expect(page.getByTestId("execution-mode-tab-local-models")).toBeVisible();
   await expect(page.getByTestId("execution-mode-tab-byok")).toBeVisible();
 });
 
@@ -1653,7 +1655,7 @@ test("detects installed CLI and tests it through the application API", async ({ 
   await expect(page.getByTestId("cli-agent-auth-summary-claude")).toContainText("authenticated");
   await page.getByTestId("cli-agent-select-claude").click();
   await page.getByTestId("cli-agent-test-claude").click();
-  await expect(page.getByText("Claude Code connection test passed.")).toBeVisible();
+  await expect(page.getByText("Claude Code: CLI access verified. The provider reports an active session.")).toBeVisible();
   assertExpectedCliTestProviderBody(testProviderRequestBody);
 });
 
@@ -1714,7 +1716,7 @@ test("detects Codex CLI with version badge and passes connection test", async ({
   await expect(page.getByTestId("cli-agent-auth-summary-codex")).toContainText("authenticated");
   await page.getByTestId("cli-agent-select-codex").click();
   await page.getByTestId("cli-agent-test-codex").click();
-  await expect(page.getByText("Codex CLI connection test passed.")).toBeVisible();
+  await expect(page.getByText("Codex CLI: CLI access verified. The provider reports an active session.")).toBeVisible();
   assertExpectedCodexTestProviderBody(testProviderRequestBody);
 });
 
@@ -1777,7 +1779,7 @@ test("detects Cursor CLI with version badge and passes connection test", async (
   await page.getByTestId("cli-agent-select-cursor-agent").click();
   await expect(page.getByText("Live from CLI")).toBeVisible();
   await page.getByTestId("cli-agent-test-cursor-agent").click();
-  await expect(page.getByText("Cursor Agent connection test passed.")).toBeVisible();
+  await expect(page.getByText("Cursor Agent: CLI access verified. The provider reports an active session.")).toBeVisible();
   assertExpectedCursorTestProviderBody(testProviderRequestBody);
 });
 
@@ -1819,7 +1821,7 @@ test("shows unsupported Cursor version and disables misleading test success", as
   await expect(page.getByTestId("cli-agent-auth-summary-cursor-agent")).toContainText("not supported");
 
   await expect(page.getByTestId("cli-agent-test-cursor-agent")).toBeDisabled();
-  await expect(page.getByText("Cursor Agent connection test passed.")).toHaveCount(0);
+  await expect(page.getByText("Cursor Agent: CLI access verified. The provider reports an active session.")).toHaveCount(0);
 });
 
 test("shows a real Local CLI connection error without falling back to mock", async ({ page }, testInfo) => {
@@ -1860,13 +1862,12 @@ test("shows a real Local CLI connection error without falling back to mock", asy
   await expect(page.getByTestId("cli-agent-card-claude")).toBeVisible({ timeout: 10_000 });
 
   await page.getByTestId("cli-agent-select-claude").click();
-  await expect(page.getByText("Catalog suggestions")).toBeVisible();
-  await expect(page.getByTestId("cli-agent-model-claude")).toContainText("claude-opus-4-8");
-  await expect(page.getByTestId("cli-agent-model-claude")).toContainText("claude-sonnet-4-6");
+  await expect(page.getByText("CLI list unavailable")).toBeVisible();
+  await expect(page.getByTestId("cli-agent-model-claude")).toContainText("Enter manually");
 
   await page.getByTestId("cli-agent-test-claude").click();
   await expect(page.getByText("Claude Code authentication failed.")).toBeVisible();
-  await expect(page.getByText("Claude Code connection test passed.")).toHaveCount(0);
+  await expect(page.getByText("Claude Code: CLI access verified. The provider reports an active session.")).toHaveCount(0);
 });
 
 test("configures BYOK Anthropic without persisting API keys", async ({ page }, testInfo) => {
@@ -2504,6 +2505,7 @@ test("keeps execution settings reachable on mobile", async ({ page }, testInfo) 
   const modal = await openSettingsModal(page);
   await expect(modal.getByRole("heading", { name: "Execution mode" })).toBeVisible();
   await expect(page.getByTestId("execution-mode-tab-local-cli")).toBeVisible();
+  await expect(page.getByTestId("execution-mode-tab-local-models")).toBeVisible();
   await expect(page.getByTestId("execution-mode-tab-byok")).toBeVisible();
   await page.getByTestId("execution-mode-tab-local-cli").click();
   await expect(page.getByTestId("local-cli-settings")).toBeVisible();
@@ -3023,21 +3025,21 @@ test("updates execution mode summary when settings change without reload", async
   const setupRail = page.locator("section").filter({ hasText: "New VDT" }).first();
   const summary = setupRail.getByTestId("execution-mode-summary");
 
-  await expect(summary).toContainText("BYOK");
-  await expect(summary).toContainText("Built-in mock");
+  await expect(summary).toContainText("API keys");
+  await expect(summary).toContainText("OpenAI");
 
   await setupRail.getByTestId("execution-mode-configure").click();
   await expect(page.getByTestId("settings-modal")).toBeVisible();
 
-  await page.getByTestId("execution-mode-tab-local-cli").click();
-  await expect(summary).toContainText("Local CLI");
+  await page.getByTestId("execution-mode-tab-local-models").click();
+  await expect(summary).toContainText("Local models");
   await expect(summary).toContainText("Ollama");
   await expect(summary).toContainText("qwen3");
 
   await page.getByTestId("execution-mode-tab-byok").click();
   await page.getByTestId("byok-protocol-openai").click();
   await page.getByTestId("byok-gateway-preset").selectOption("alibaba-coding-plan");
-  await expect(summary).toContainText("BYOK");
+  await expect(summary).toContainText("API keys");
   await expect(summary).toContainText("Alibaba Cloud Coding Plan");
   await expect(summary).toContainText("qwen3-coder-plus");
 });
@@ -3217,9 +3219,10 @@ test("shows usage limits copy on subscription CLI cards", async ({ page }, testI
   await expect(page.getByTestId("cli-agent-card-claude")).toBeVisible({ timeout: 10_000 });
 
   const usageNote = page.getByTestId("provider-usage-note-claude");
+  await page.getByTestId("cli-agent-details-claude").getByText("Provider details", { exact: true }).click();
   await expect(usageNote).toBeVisible();
-  await expect(usageNote).toContainText("Usage and limits are managed by the provider");
-  await expect(usageNote).toContainText("selected model");
+  await expect(usageNote).toContainText("Billing and rate limits follow your Anthropic subscription");
+  await expect(usageNote).toContainText("model Claude Code selects");
 });
 
 test("sends Cursor generation through the server-managed session binding", async ({ page }, testInfo) => {

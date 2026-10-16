@@ -1,10 +1,12 @@
 import {
   applyDiscoveryUserEdits,
+  reanalyzeDiscoveryWithUserEdits,
   type DataDiscoveryUserEdits
 } from "@vdt-studio/data-harness";
 import type { SemanticLogicalType } from "@vdt-studio/vdt-core";
 import { jsonError, readJsonObject } from "../../../../../vdt/storage-response";
-import { readDiscoveryRun, saveDiscoveryRun } from "../../../../store";
+import { DataApiError, readDatasetFile, readDiscoveryRun, requireDataId, saveDiscoveryRun } from "../../../../store";
+import { dataApiErrorResponse, readDataOwner, readIncomingKpiOptions, reviewProject } from "../../../../request-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,28 +26,31 @@ const LOGICAL_TYPES = new Set<SemanticLogicalType>([
 ]);
 
 export async function POST(request: Request, { params }: { params: Promise<{ runId: string }> }) {
-  const { runId } = await params;
-  const snapshot = await readDiscoveryRun(runId);
-  if (!snapshot) {
-    return jsonError("Discovery run was not found.", 404, "DATA_DISCOVERY_RUN_NOT_FOUND");
-  }
-
-  let body: Record<string, unknown>;
   try {
-    body = await readJsonObject(request);
-  } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "User input request could not be parsed.");
-  }
-
-  const edits = readUserEdits(body.edits ?? body);
-  const next = applyDiscoveryUserEdits(snapshot, edits);
-  await saveDiscoveryRun(next);
-  return Response.json({ ok: true, snapshot: next });
+    const { runId } = await params;
+    requireDataId(runId, "runId");
+    const body = await readJsonObject(request);
+    const owner = readDataOwner(body, false);
+    const snapshot = await readDiscoveryRun(runId, owner);
+    if (!snapshot) return jsonError("Discovery run was not found.", 404, "DATA_DISCOVERY_RUN_NOT_FOUND");
+    const edits = readUserEdits(body.edits ?? body);
+    let next;
+    if (snapshot.incomingKpi) {
+      const file = await readDatasetFile(snapshot.datasetId, owner);
+      if (!file || file.metadata.contentHash !== snapshot.file.contentHash) throw new DataApiError("The retained source does not match this discovery run.", 409, "DATA_SOURCE_INTEGRITY_FAILED");
+      const project = await reviewProject(snapshot, owner, body.project);
+      next = await reanalyzeDiscoveryWithUserEdits({ datasetId: snapshot.datasetId, file: file.metadata, bytes: file.bytes, project, entryContext: snapshot.entryContext }, snapshot, edits);
+    } else next = applyDiscoveryUserEdits(snapshot, edits);
+    if (owner) { next.workspaceProjectId = owner.projectId; next.vdtId = owner.vdtId; }
+    await saveDiscoveryRun(next, owner);
+    return Response.json({ ok: true, snapshot: next });
+  } catch (error) { return dataApiErrorResponse(error); }
 }
 
 function readUserEdits(value: unknown): DataDiscoveryUserEdits {
   const input = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
   return {
+    ...(input.incomingKpiOptions === undefined ? {} : { incomingKpiOptions: readIncomingKpiOptions(input.incomingKpiOptions) }),
     disabledColumns: arrayOfRecords(input.disabledColumns).map((entry) => ({
       tableId: readString(entry.tableId),
       columnName: readString(entry.columnName)

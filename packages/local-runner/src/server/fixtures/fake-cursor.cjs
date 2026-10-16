@@ -84,6 +84,10 @@ function main() {
   }
 
   if (process.argv.includes("status") && process.argv.includes("--format")) {
+    if (mode === "status-unverified") {
+      process.stdout.write(`${JSON.stringify({ status: "authenticated", isAuthenticated: true, message: "Logged in (unable to fetch user details)" })}\n`);
+      process.exit(0);
+    }
     process.stdout.write(`${JSON.stringify({ loggedIn: true, status: "ready" })}\n`);
     process.exit(0);
   }
@@ -131,6 +135,12 @@ function main() {
       process.exit(1);
     }
     process.stderr.write("Authentication required. Please sign in to Cursor.");
+    process.exit(1);
+  }
+
+  if (mode === "usage-exhausted") {
+    process.stdout.write(`${JSON.stringify({ type: "system" })}\n${JSON.stringify({ type: "user" })}\n`);
+    process.stderr.write("ActionRequiredError: Increase limits for faster responses You're out of usage. Switch to Auto, or ask your admin to increase your limit to continue.\n");
     process.exit(1);
   }
 

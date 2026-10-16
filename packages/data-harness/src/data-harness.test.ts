@@ -1,9 +1,35 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import { applyChangeSet, calculateGraph, productionVolumeProject } from "@vdt-studio/vdt-core";
-import { applyDiscoveryUserEdits, runRawDataDiscovery } from "./index";
+import { applyDiscoveryUserEdits, runRawDataDiscovery, validateDiscoveryApply, type DataDiscoveryStructuredProvider } from "./index";
 
 describe("raw data discovery harness", () => {
+  it("retains distinct provider warnings with the same long prefix and collapses only exact semantic duplicates", async () => {
+    const prefix = "The reporting extract does not state whether every recorded downtime interval is included in the complete reporting period ";
+    const messages = [`${prefix}for all equipment.`, `${prefix}for the selected equipment only.`];
+    const provider: DataDiscoveryStructuredProvider = {
+      async completeStructured(params) {
+        if (params.taskType === "data_agent_decision") return { type: "final_proposal", rationale: "Review the proposed source semantics." } as never;
+        return {
+          datasetId: "warning_identity", summary: { rowCount: 2, tableCount: 1, likelyDatasetKind: "downtime", confidence: 0.9, description: "Duration by category." },
+          columns: [], metricCandidates: [], assumptions: [], questionsForUser: [], warnings: [messages[0], messages[1], messages[0]]
+        } as never;
+      }
+    };
+    const text = "Reason,Minutes\nRepair,60\nWeather,30";
+    const input = {
+      datasetId: "warning_identity", text, project: productionVolumeProject, provider,
+      file: { fileName: "events.csv", mimeType: "text/csv", sizeBytes: text.length, contentHash: "sha256:warning-identity", storageRef: "warning_identity", uploadedAt: "2026-10-16T00:00:00Z" }
+    };
+    const first = await runRawDataDiscovery(input);
+    const repeated = await runRawDataDiscovery(input);
+    const relevant = (snapshot: typeof first) => snapshot.warnings.filter((item) => item.message.startsWith(prefix));
+    expect(relevant(first).map((item) => item.message)).toEqual(messages);
+    expect(new Set(relevant(first).map((item) => item.id)).size).toBe(2);
+    expect(relevant(repeated)).toEqual(relevant(first));
+    expect(first.auditLog.filter((entry) => entry.taskType === "analyze_raw_dataset" || entry.taskType === "review_dataset_proposal")).toHaveLength(2);
+  });
+
   it("profiles unknown CSV data and builds an evidence-backed VDT proposal", async () => {
     const csv = [
       "Дата,Экскаватор,Причина,Мин.,Комментарий",
@@ -57,6 +83,7 @@ describe("raw data discovery harness", () => {
     target.name = "Downtime";
     target.unit = "minute";
     target.formula = undefined;
+    project.graph = { nodes: [target], edges: [] };
 
     const snapshot = await runRawDataDiscovery({
       datasetId: "downtime_incoming_kpis",
@@ -70,6 +97,7 @@ describe("raw data discovery harness", () => {
       },
       text: csv,
       project,
+      incomingKpiOptions: { confirmed: true, normalization: { mode: "period_total" } },
       entryContext: {
         source: "agent_composer_attachment",
         targetNodeId: target.id,
@@ -119,39 +147,10 @@ describe("raw data discovery harness", () => {
     expect(calculation.errors).toEqual([]);
     expect(calculation.rootValue).toBe(240);
 
-    const taxonomy = snapshot.proposal?.taxonomies.find((candidate) => candidate.sourceColumns.includes("Reason"));
-    const repairCategory = taxonomy?.categories.find((category) => category.name === "Repair");
-    if (!taxonomy || !repairCategory) throw new Error("Downtime taxonomy was not proposed.");
-    const renamed = applyDiscoveryUserEdits(snapshot, {
-      taxonomyEdits: [{
-        taxonomyId: taxonomy.id,
-        categories: taxonomy.categories.map((category) => category.id === repairCategory.id
-          ? { ...category, name: "Maintenance" }
-          : category)
-      }]
-    });
-    const renamedMaintenance = renamed.changeSetPreview?.additions.find((addition) => addition.name === "Maintenance");
-    expect(renamedMaintenance?.dataMapping?.filters?.[0]?.value).toBe("Repair");
-    expect(renamedMaintenance?.baselineValue).toBe(120);
-
-    const edited = applyDiscoveryUserEdits(snapshot, {
-      taxonomyEdits: [{
-        taxonomyId: taxonomy.id,
-        categories: taxonomy.categories.map((category) => category.id === repairCategory.id
-          ? {
-              ...category,
-              name: "Maintenance",
-              matchRules: [{ type: "equals", value: "Maintenance" }]
-            }
-          : category)
-      }]
-    });
-
-    expect(edited.changeSetPreview?.additions).toHaveLength(3);
-    const editedMaintenance = edited.changeSetPreview?.additions.find((addition) => addition.name === "Maintenance");
-    expect(editedMaintenance?.dataMapping?.filters?.[0]?.value).toBe("Maintenance");
-    expect(editedMaintenance?.baselineValue).toBeUndefined();
-    expect(editedMaintenance?.valueStatus).toBe("unknown");
+    const edited = applyDiscoveryUserEdits(snapshot, {});
+    expect(edited.status).toBe("needs_user_input");
+    expect(validateDiscoveryApply(edited).some((result) => result.status === "error")).toBe(true);
+    expect(edited.changeSetPreview?.additions.every((addition) => addition.description?.includes("downtime.csv"))).toBe(true);
   });
 
   it("converts category baselines from source minutes to target hours", async () => {
@@ -168,6 +167,7 @@ describe("raw data discovery harness", () => {
     target.name = "Downtime";
     target.unit = "hour";
     target.formula = undefined;
+    project.graph = { nodes: [target], edges: [] };
 
     const snapshot = await runRawDataDiscovery({
       datasetId: "downtime_hours",
@@ -181,6 +181,7 @@ describe("raw data discovery harness", () => {
       },
       text: csv,
       project,
+      incomingKpiOptions: { confirmed: true, normalization: { mode: "period_total" } },
       entryContext: {
         source: "agent_composer_attachment",
         targetNodeId: target.id,
@@ -196,7 +197,7 @@ describe("raw data discovery harness", () => {
     });
     expect(additions.every((addition) =>
       addition.unit === "hour" &&
-      addition.dataMapping?.transform === "converted minute to hour"
+      addition.dataMapping?.transform?.includes("converted to hour")
     )).toBe(true);
   });
 
@@ -214,6 +215,7 @@ describe("raw data discovery harness", () => {
     target.name = "Downtime";
     target.unit = "minute";
     target.formula = undefined;
+    project.graph = { nodes: [target], edges: [] };
 
     const snapshot = await runRawDataDiscovery({
       datasetId: "downtime_truncated",
@@ -227,6 +229,7 @@ describe("raw data discovery harness", () => {
       },
       text: csv,
       project,
+      incomingKpiOptions: { confirmed: true, normalization: { mode: "period_total" } },
       entryContext: {
         source: "agent_composer_attachment",
         targetNodeId: target.id,
@@ -236,10 +239,9 @@ describe("raw data discovery harness", () => {
     });
 
     expect(snapshot.tables[0]?.truncated).toBe(true);
-    expect(snapshot.changeSetPreview?.additions.every((addition) =>
-      addition.baselineValue === undefined && addition.valueStatus === "unknown"
-    )).toBe(true);
-    expect(snapshot.changeSetPreview?.warnings.some((item) => item.message.includes("were not calculated"))).toBe(true);
+    expect(snapshot.changeSetPreview?.additions).toEqual([]);
+    expect(snapshot.incomingKpi?.blockingReasons.some((message) => message.includes("truncated"))).toBe(true);
+    expect(validateDiscoveryApply(snapshot).some((result) => result.status === "error")).toBe(true);
   });
 
   it("does not invent a target-unit formula from a category-only list", async () => {
@@ -250,6 +252,7 @@ describe("raw data discovery harness", () => {
     target.name = "Downtime";
     target.unit = "hour";
     target.formula = undefined;
+    project.graph = { nodes: [target], edges: [] };
 
     const snapshot = await runRawDataDiscovery({
       datasetId: "downtime_category_list",
@@ -263,6 +266,7 @@ describe("raw data discovery harness", () => {
       },
       text: csv,
       project,
+      incomingKpiOptions: { confirmed: true, normalization: { mode: "period_total" } },
       entryContext: {
         source: "agent_composer_attachment",
         targetNodeId: target.id,
@@ -270,15 +274,10 @@ describe("raw data discovery harness", () => {
       }
     });
 
-    expect(snapshot.changeSetPreview?.additions.map((addition) => addition.name)).toEqual([
-      "Repair",
-      "Waiting",
-      "Weather"
-    ]);
-    expect(snapshot.changeSetPreview?.additions.every((addition) => addition.unit === undefined)).toBe(true);
-    expect(snapshot.changeSetPreview?.additions.every((addition) => addition.baselineValue === undefined)).toBe(true);
+    expect(snapshot.changeSetPreview?.additions).toEqual([]);
     expect(snapshot.changeSetPreview?.updates).toEqual([]);
-    expect(snapshot.changeSetPreview?.warnings.some((item) => item.message.includes("no confirmed numeric measure"))).toBe(true);
+    expect(snapshot.incomingKpi?.questions.some((question) => question.field === "duration")).toBe(true);
+    expect(validateDiscoveryApply(snapshot).some((result) => result.status === "error")).toBe(true);
   });
 
   it("does not require business-specific columns", async () => {

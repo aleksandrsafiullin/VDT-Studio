@@ -1,108 +1,61 @@
-import { runRawDataDiscovery, type DataDiscoveryStructuredProvider } from "@vdt-studio/data-harness";
-import type { VdtProject } from "@vdt-studio/vdt-core";
+import { runRawDataDiscovery, type AnalyzeRawDatasetInput, type DataDiscoveryStructuredProvider } from "@vdt-studio/data-harness";
 import type { AiRouteProviderRequest } from "@/lib/ai-route-provider";
 import { jsonError, readJsonObject } from "../../../vdt/storage-response";
 import { createManagedAwareAiProvider } from "../../../agent/runs/managed-ai-provider";
-import { readDatasetFile, saveDiscoveryRun } from "../../store";
+import { dataApiErrorResponse, readDataOwner, readIncomingKpiOptions, readProject, requireTarget } from "../../request-context";
+import { DataApiError, readDatasetFile, requireDataId, saveDiscoveryRun } from "../../store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  let body: Record<string, unknown>;
   try {
-    body = await readJsonObject(request);
-  } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "Discovery run request could not be parsed.");
-  }
-
-  const datasetId = typeof body.datasetId === "string" ? body.datasetId.trim() : "";
-  if (!datasetId) {
-    return jsonError("datasetId is required.");
-  }
-
-  const project = readProject(body.project);
-  if (!project) {
-    return jsonError("A current VDT project snapshot is required.");
-  }
-
-  const file = await readDatasetFile(datasetId);
-  if (!file) {
-    return jsonError("Dataset file was not found. Upload the file again.", 404, "DATASET_NOT_FOUND");
-  }
-
-  const entryContext = readEntryContext(body.entryContext);
-  let provider: DataDiscoveryStructuredProvider | undefined;
-  if (typeof body.providerId === "string" && body.providerId.trim()) {
-    try {
-      provider = createManagedAwareAiProvider(body as AiRouteProviderRequest, request.url);
-    } catch (error) {
-      const status = typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : 400;
-      return jsonError(
-        error instanceof Error ? error.message : "Data discovery provider could not be created.",
-        status,
-        "DATA_DISCOVERY_PROVIDER_ERROR"
-      );
+    const body = await readJsonObject(request);
+    // Unscoped legacy records remain accessible only in trusted local mode. New uploads are always scoped.
+    const owner = readDataOwner(body, false);
+    const datasetId = requireDataId(body.datasetId, "datasetId");
+    const project = readProject(body.project, owner);
+    const file = await readDatasetFile(datasetId, owner);
+    if (!file) return jsonError("Dataset file was not found. Choose a retained project source or upload the file again.", 404, "DATASET_NOT_FOUND");
+    const entryContext = readEntryContext(body.entryContext);
+    if (entryContext?.purpose === "incoming_kpis") {
+      if (!owner) throw new DataApiError("File-based incoming KPIs require a persisted project and VDT.");
+      entryContext.targetNodeId = requireTarget(project, entryContext.targetNodeId ?? body.targetNodeId);
+    } else if (entryContext?.targetNodeId) requireTarget(project, entryContext.targetNodeId);
+    const incomingKpiOptions = readIncomingKpiOptions(body.incomingKpiOptions);
+    let provider: DataDiscoveryStructuredProvider | undefined;
+    if (typeof body.providerId === "string" && body.providerId.trim()) {
+      try { provider = createManagedAwareAiProvider(body as AiRouteProviderRequest, request.url); }
+      catch (error) {
+        const status = typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : 400;
+        return jsonError(error instanceof Error ? error.message : "Data discovery provider could not be created.", status, "DATA_DISCOVERY_PROVIDER_ERROR");
+      }
     }
-  }
-  const providerModel = readProviderModel(body.providerConfig);
-  const snapshot = await runRawDataDiscovery({
-    datasetId,
-    file: file.metadata,
-    bytes: file.bytes,
-    project,
-    ...(entryContext ? { entryContext } : {}),
-    ...(provider ? { provider } : {}),
-    ...(providerModel ? { providerModel } : {})
-  });
-  await saveDiscoveryRun(snapshot);
-
-  return Response.json({
-    ok: true,
-    runId: snapshot.runId,
-    snapshot
-  });
+    const providerModel = readProviderModel(body.providerConfig);
+    const snapshot = await runRawDataDiscovery({
+      datasetId, file: file.metadata, bytes: file.bytes, project,
+      ...(entryContext ? { entryContext } : {}),
+      ...(incomingKpiOptions ? { incomingKpiOptions } : {}),
+      ...(provider ? { provider } : {}),
+      ...(providerModel ? { providerModel } : {})
+    });
+    if (owner) { snapshot.workspaceProjectId = owner.projectId; snapshot.vdtId = owner.vdtId; }
+    await saveDiscoveryRun(snapshot, owner, project);
+    return Response.json({ ok: true, runId: snapshot.runId, snapshot });
+  } catch (error) { return dataApiErrorResponse(error); }
 }
 
-function readProject(value: unknown): VdtProject | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const candidate = value as Partial<VdtProject>;
-  if (
-    typeof candidate.id !== "string" ||
-    typeof candidate.rootNodeId !== "string" ||
-    !candidate.graph ||
-    !Array.isArray(candidate.graph.nodes) ||
-    !Array.isArray(candidate.graph.edges)
-  ) {
-    return undefined;
-  }
-  return candidate as VdtProject;
-}
-
-function readEntryContext(value: unknown):
-  | {
-      source?: string | undefined;
-      cardName?: string | undefined;
-      targetNodeId?: string | undefined;
-      purpose?: "incoming_kpis" | "data_mapping" | undefined;
-    }
-  | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const source = readOptionalString((value as Record<string, unknown>).source);
-  const cardName = readOptionalString((value as Record<string, unknown>).cardName);
-  const targetNodeId = readOptionalString((value as Record<string, unknown>).targetNodeId);
-  const rawPurpose = readOptionalString((value as Record<string, unknown>).purpose);
-  const purpose = rawPurpose === "incoming_kpis" || rawPurpose === "data_mapping" ? rawPurpose : undefined;
+function readEntryContext(value: unknown): AnalyzeRawDatasetInput["entryContext"] {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new DataApiError("entryContext must be a JSON object.");
+  const input = value as Record<string, unknown>;
+  if (input.purpose !== undefined && input.purpose !== "incoming_kpis" && input.purpose !== "data_mapping") throw new DataApiError("The discovery purpose is invalid.");
   return {
-    ...(source ? { source } : {}),
-    ...(cardName ? { cardName } : {}),
-    ...(targetNodeId ? { targetNodeId } : {}),
-    ...(purpose ? { purpose } : {})
+    ...(typeof input.source === "string" ? { source: input.source.slice(0, 200) } : {}),
+    ...(typeof input.cardName === "string" ? { cardName: input.cardName.slice(0, 200) } : {}),
+    ...(input.targetNodeId === undefined ? {} : { targetNodeId: requireDataId(input.targetNodeId, "targetNodeId") }),
+    ...(input.purpose === "incoming_kpis" || input.purpose === "data_mapping" ? { purpose: input.purpose } : {})
   };
-}
-
-function readOptionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 function readProviderModel(value: unknown): string | undefined {

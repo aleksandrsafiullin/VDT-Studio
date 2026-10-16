@@ -8,13 +8,35 @@ export interface EnrichedSubscriptionCliDetection extends SubscriptionCliDetecti
   diagnostics?: string[];
 }
 
+function publicDetection(agent: SubscriptionCliDetectionResult): SubscriptionCliDetectionResult {
+  // execFile errors can embed full command lines, environment guidance and credential output.
+  return agent.error ? { ...agent, error: "CLI version probe failed." } : agent;
+}
+
+function probeDiagnostics(status: ModelBackendStatus): string[] {
+  switch (status) {
+    case "ready":
+      return [];
+    case "authentication_required":
+      return ["The provider could not verify an active CLI session. Complete provider sign-in, then rescan."];
+    case "rate_limited":
+      return ["The provider reported an account or request limit. Check your plan and try again later."];
+    case "unsupported_version":
+      return ["Update the provider CLI to a supported version, then rescan."];
+    case "unavailable":
+      return ["Provider access is unavailable for the current account, plan or organization policy."];
+    default:
+      return ["CLI access was not verified. Check the provider CLI in a terminal, then rescan."];
+  }
+}
+
 export async function enrichSubscriptionCliDetection(
   agent: SubscriptionCliDetectionResult,
   options: { signal?: AbortSignal } = {}
 ): Promise<EnrichedSubscriptionCliDetection> {
   if (!agent.installed || !agent.executable) {
     return {
-      ...agent,
+      ...publicDetection(agent),
       status: "not_installed",
       diagnostics: []
     };
@@ -25,33 +47,34 @@ export async function enrichSubscriptionCliDetection(
     try {
       const probe = await adapter.probeAuth(agent.executable, options.signal);
       return {
-        ...agent,
+        ...publicDetection(agent),
         status: probe.status,
         ...(probe.authSummary ? { authSummary: probe.authSummary } : {}),
-        diagnostics: probe.diagnostics
+        diagnostics: probeDiagnostics(probe.status)
       };
-    } catch (error) {
+    } catch {
       if (options.signal?.aborted) {
         return {
-          ...agent,
+          ...publicDetection(agent),
           status: "installed",
           authSummary: "Authentication probe timed out.",
           diagnostics: ["CLI enrichment timed out before auth could be verified."]
         };
       }
       return {
-        ...agent,
+        ...publicDetection(agent),
         status: "error",
-        diagnostics: [error instanceof Error ? error.message : "Auth probe failed."]
+        authSummary: "CLI authentication could not be verified. Check the provider CLI, then rescan.",
+        diagnostics: probeDiagnostics("error")
       };
     }
   }
 
   const diagnostics: string[] = [];
-  if (agent.error) diagnostics.push(`Version probe failed: ${agent.error}`);
+  if (agent.error) diagnostics.push("CLI version probe failed.");
 
   return {
-    ...agent,
+    ...publicDetection(agent),
     status: "installed",
     diagnostics
   };

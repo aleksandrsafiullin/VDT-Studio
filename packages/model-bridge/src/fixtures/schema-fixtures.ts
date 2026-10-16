@@ -92,9 +92,7 @@ export const VALID_SCHEMA_FIXTURES: Record<RegisteredOutputSchemaId, unknown> = 
     type: "tool_call",
     toolName: "table.profile",
     rationale: "Column profiles are needed before semantic inference.",
-    input: {
-      tableId: "table_1"
-    }
+    input: {}
   },
   "analyze-raw-dataset-v1": {
     datasetId: "dataset_1",

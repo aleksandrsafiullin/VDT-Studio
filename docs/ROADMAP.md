@@ -14,10 +14,11 @@ Implemented at alpha level:
 - bounded provider contracts, local runner and desktop private-pipe sidecar foundation;
 - provider-owned model discovery for supported subscription CLIs and BYOK OpenAI-compatible, Anthropic and Gemini APIs, with explicit manual fallback and no static availability catalog;
 - managed Cursor CLI authentication through a fixed manifest command, provider browser confirmation, post-login verification and automatic rescan;
+- separate CLI, Local models and API keys settings with saved category choices and inline readiness actions and reversible browser-local subscription removal; Undo/Add back, explicit chat fallback feedback, and memory-override reset survive rescans and reloads;
 - real agent decision/tool/feedback loop with local skill retrieval;
 - guarded one-click incoming-KPI decomposition that stops after the selected node's immediate child layer;
 - 18 registered task schemas, 17 exposed product tasks and phase-gate drift checks;
-- experimental composer-attached tabular discovery, including provider-assisted categories and deterministic initial Baselines for complete single-table incoming-KPI breakdowns;
+- experimental local file-based incoming-KPI discovery, with immutable project source reuse/download, provider-assisted mapping, required decisions, full-byte additive numeric/duration hierarchy calculations (four levels/200 nodes) and Description provenance;
 - alpha packaging, checksum/SBOM and provider-certification metadata.
 
 This foundation is not production-ready. Current blockers are recorded in `PRODUCTION_READINESS.md`.
@@ -62,7 +63,7 @@ Evidence: [W0.1](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md#w0-1-go-2026-07-
   continuation, complete restart/finish recovery, operation-level merge and
   live qualification remain open; this is not a W0.2 `GO`.
 - [ ] W0.3: the 4096-byte preview/source defect is fixed in the working tree and truncated tables cannot materialize category Baselines; separate original/parsed/sample counts across every adapter remain open.
-- [ ] W0.4: remove high-severity upload/image dependencies; add streaming limits, parser isolation, lifecycle and local-only/auth boundaries.
+- [ ] W0.4: scoped discovery now enforces trusted local mode and project/VDT/path/hash ownership; remove high-severity upload/image dependencies and add streaming limits, parser isolation, lifecycle and authenticated hosted boundaries.
 - [ ] W0.5: make SQLite the durable owner, complete dirty-navigation/metadata reconciliation and enforce sticky runtime generation with no mixed V1/V2 writes.
 
 Gate R1 SQL-only code status: **independent code-only `GO` with zero blockers**.
@@ -151,7 +152,7 @@ Exit: accepted factor trees replay from pinned inputs and cannot bypass calculat
 
 Priority: **P1**. Depends on Waves 0, 1A and the Wave 2–4 coordinator/contracts.
 
-- Create immutable dataset versions and isolated parsers.
+- Extend the local immutable project-source foundation into version/lifecycle policy and isolated parsers.
 - Preserve source counts and full-vs-sample evidence.
 - Add locale-aware numbers/dates/units, table/grain/key discovery and DQ rules.
 - Compile typed `MetricBinding` plans.

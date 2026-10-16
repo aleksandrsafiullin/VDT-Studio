@@ -26,7 +26,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function mapCursorError(message: string): string {
   return /auth|login|sign[\s-]?in/i.test(message)
     ? "AUTH_REQUIRED"
-    : /rate.?limit/i.test(message)
+    : /rate.?limit|quota|usage limit|out of usage/i.test(message)
       ? "RATE_LIMITED"
       : "BACKEND_PARSE_FAILED";
 }

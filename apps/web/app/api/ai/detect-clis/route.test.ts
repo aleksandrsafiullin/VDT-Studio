@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,10 +77,11 @@ describe("detect CLIs API route", { timeout: 30_000 }, () => {
   it("scans local CLIs in development web mode", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-web-detect-clis-"));
     try {
-      await symlink(fakeCodex, path.join(tempDir, "codex"));
+      await copyFile(fakeCodex, path.join(tempDir, "codex"));
+      await chmod(path.join(tempDir, "codex"), 0o700);
       await symlink(fakeCursor, path.join(tempDir, "agent"));
       vi.stubEnv("VDT_APP_MODE", "development_web");
-      vi.stubEnv("PATH", `${tempDir}${path.delimiter}${process.env.PATH ?? ""}`);
+      vi.stubEnv("PATH", `${tempDir}${path.delimiter}${path.dirname(process.execPath)}`);
 
       const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis"));
       const body = await readJson(response);
@@ -113,11 +114,12 @@ describe("detect CLIs API route", { timeout: 30_000 }, () => {
   it("keeps localhost detection in development web mode even for production builds", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-web-detect-clis-"));
     try {
-      await symlink(fakeCodex, path.join(tempDir, "codex"));
+      await copyFile(fakeCodex, path.join(tempDir, "codex"));
+      await chmod(path.join(tempDir, "codex"), 0o700);
       vi.stubEnv("VDT_APP_MODE", undefined);
       vi.stubEnv("NEXT_PUBLIC_VDT_APP_MODE", undefined);
       vi.stubEnv("NODE_ENV", "production");
-      vi.stubEnv("PATH", `${tempDir}${path.delimiter}${process.env.PATH ?? ""}`);
+      vi.stubEnv("PATH", `${tempDir}${path.delimiter}${path.dirname(process.execPath)}`);
 
       const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis?id=codex"));
       const body = await readJson(response);
@@ -137,18 +139,24 @@ describe("detect CLIs API route", { timeout: 30_000 }, () => {
     }
   }, 30_000);
 
-  it("reuses one capability probe for repeated requests with the same host identity", async () => {
+  it("deduplicates simultaneous probes but performs a fresh probe on a later rescan", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-web-detect-cache-"));
     try {
-      await symlink(fakeCodex, path.join(tempDir, "codex"));
+      await copyFile(fakeCodex, path.join(tempDir, "codex"));
+      await chmod(path.join(tempDir, "codex"), 0o700);
       vi.stubEnv("VDT_APP_MODE", "development_web");
-      vi.stubEnv("PATH", `${tempDir}${path.delimiter}${process.env.PATH ?? ""}`);
+      vi.stubEnv("PATH", `${tempDir}${path.delimiter}${path.dirname(process.execPath)}`);
 
-      const first = await GET(new Request("http://localhost:3000/api/ai/detect-clis?id=codex"));
+      const [first, concurrent] = await Promise.all([
+        GET(new Request("http://localhost:3000/api/ai/detect-clis?id=codex")),
+        GET(new Request("http://localhost:3000/api/ai/detect-clis?id=codex"))
+      ]);
       const second = await GET(new Request("http://localhost:3000/api/ai/detect-clis?id=codex"));
 
       expect(first.headers.get("x-vdt-cli-probe-cache")).toBe("miss");
-      expect(second.headers.get("x-vdt-cli-probe-cache")).toBe("hit");
+      expect(concurrent.headers.get("x-vdt-cli-probe-cache")).toBe("hit");
+      expect(second.headers.get("x-vdt-cli-probe-cache")).toBe("miss");
+      expect(second.headers.get("cache-control")).toBe("no-store");
       expect(await readJson(second)).toMatchObject({
         appMode: "development_web",
         agents: [expect.objectContaining({ id: "codex", installed: true })]
@@ -157,6 +165,28 @@ describe("detect CLIs API route", { timeout: 30_000 }, () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it("observes a changed Cursor login state immediately after sign-in and skips protected model discovery until ready", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-web-detect-auth-refresh-"));
+    try {
+      await symlink(fakeCursor, path.join(tempDir, "agent"));
+      vi.stubEnv("VDT_APP_MODE", "development_web");
+      vi.stubEnv("PATH", `${tempDir}${path.delimiter}${path.dirname(process.execPath)}`);
+      vi.stubEnv("VDT_FAKE_CURSOR_MODE", "status-unverified");
+
+      const before = await readJson(await GET(new Request("http://localhost:3000/api/ai/detect-clis?id=cursor-agent")));
+      expect(before.agents?.[0]?.status).toBe("authentication_required");
+      expect(before.modelsByAgent?.["cursor-agent"]).toEqual([]);
+      expect(JSON.stringify(before)).not.toContain("isAuthenticated");
+
+      vi.stubEnv("VDT_FAKE_CURSOR_MODE", "stream-json");
+      const after = await readJson(await GET(new Request("http://localhost:3000/api/ai/detect-clis?id=cursor-agent")));
+      expect(after.agents?.[0]?.status).toBe("ready");
+      expect(after.modelsByAgent?.["cursor-agent"]).toEqual(["auto", "gpt-5.5-high"]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 
   it("rejects unknown agent ids", async () => {
     const response = await GET(new Request("http://localhost:3000/api/ai/detect-clis?id=unknown-agent"));

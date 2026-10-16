@@ -13,16 +13,14 @@ type SubscriptionCliAgent = (typeof SUBSCRIPTION_CLI_AGENTS)[number];
 type SubscriptionCliAgentId = SubscriptionCliAgent["id"];
 
 interface CliDetectionCacheEntry {
-  expiresAt: number;
   promise: Promise<unknown>;
 }
 
 const detectionCacheGlobal = globalThis as typeof globalThis & {
-  __vdtCliDetectionCache?: Map<string, CliDetectionCacheEntry>;
+  __vdtCliDetectionInFlight?: Map<string, CliDetectionCacheEntry>;
 };
-const detectionCache = detectionCacheGlobal.__vdtCliDetectionCache ?? new Map<string, CliDetectionCacheEntry>();
-if (process.env.NODE_ENV !== "production") detectionCacheGlobal.__vdtCliDetectionCache = detectionCache;
-const DETECTION_CACHE_TTL_MS = 30_000;
+const detectionCache = detectionCacheGlobal.__vdtCliDetectionInFlight ?? new Map<string, CliDetectionCacheEntry>();
+if (process.env.NODE_ENV !== "production") detectionCacheGlobal.__vdtCliDetectionInFlight = detectionCache;
 
 const agentIds = new Set<string>(SUBSCRIPTION_CLI_AGENTS.map((agent) => agent.id));
 
@@ -61,7 +59,7 @@ async function developmentWebDetectionPayload(agentId?: SubscriptionCliAgentId) 
 
   await Promise.all(
     agents.map(async (agent) => {
-      if (!agent.installed || !agent.executable) {
+      if (!agent.installed || !agent.executable || agent.status !== "ready") {
         modelsByAgent[agent.id] = [];
         return;
       }
@@ -90,22 +88,21 @@ async function developmentWebDetection(agentId?: SubscriptionCliAgentId) {
     platform: process.platform,
     arch: process.arch
   });
-  const now = Date.now();
   const cached = detectionCache.get(key);
-  if (cached && cached.expiresAt > now) {
+  if (cached) {
     return NextResponse.json(await cached.promise, {
-      headers: { "x-vdt-cli-probe-cache": "hit" }
+      headers: { "x-vdt-cli-probe-cache": "hit", "cache-control": "no-store" }
     });
   }
   const promise = developmentWebDetectionPayload(agentId);
-  detectionCache.set(key, { expiresAt: now + DETECTION_CACHE_TTL_MS, promise });
+  detectionCache.set(key, { promise });
   try {
     return NextResponse.json(await promise, {
-      headers: { "x-vdt-cli-probe-cache": "miss" }
+      headers: { "x-vdt-cli-probe-cache": "miss", "cache-control": "no-store" }
     });
-  } catch (error) {
-    detectionCache.delete(key);
-    throw error;
+  } finally {
+    // A rescan after sign-in must not reuse an earlier account/session result.
+    if (detectionCache.get(key)?.promise === promise) detectionCache.delete(key);
   }
 }
 

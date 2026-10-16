@@ -46,6 +46,20 @@ describe("probeClaudeAuth", () => {
     expect(result.authSummary).toMatch(/authenticated/i);
   });
 
+  it.each(["", "{}", '{"status":"unknown"}'])("does not mark unrecognized status output as ready: %s", async (stdout) => {
+    const result = await probeClaudeAuth("/usr/bin/claude", {
+      execFileImpl: async () => ({ stdout, stderr: "" })
+    });
+    expect(result.status).toBe("installed");
+  });
+
+  it("does not mistake an unauthenticated status for an authenticated session", async () => {
+    const result = await probeClaudeAuth("/usr/bin/claude", {
+      execFileImpl: async () => ({ stdout: '{"status":"unauthenticated"}', stderr: "" })
+    });
+    expect(result.status).toBe("authentication_required");
+  });
+
   it("maps Claude Pro sign-in required from status stderr patterns", async () => {
     const execFileImpl: ExecFileProbe = async () => {
       throw Object.assign(new Error("login required"), { stderr: "Please run claude login", code: 1 });

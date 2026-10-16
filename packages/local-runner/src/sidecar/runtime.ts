@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   LocalRuntimeError,
   cancelRuntimeRequest,
+  checkRuntimeBackendReadiness,
   completeRuntime,
   createLocalRuntimeContext,
   detectRuntimeSubscriptionClis,
@@ -10,7 +11,6 @@ import {
   openRuntimeProviderAuth,
   listRuntimeBackends,
   parseCompletionPayload,
-  testRuntimeBackend,
   type LocalRuntimeConfig,
   type LocalRuntimeContext,
   type RuntimeResult
@@ -143,7 +143,7 @@ async function routeSidecarRequest(message: SidecarRequestMessage, context: Loca
     const agentId = typeof message.payload.agentId === "string" ? message.payload.agentId : undefined;
     return detectRuntimeSubscriptionClis(context, agentId);
   }
-  if (message.method === "test_backend") return testRuntimeBackend(requireBackendId(message.payload), context);
+  if (message.method === "test_backend") return checkRuntimeBackendReadiness(requireBackendId(message.payload), context);
   if (message.method === "complete") {
     return completeRuntime(parseCompletionPayload({ ...message.payload, requestId: message.requestId }), context);
   }

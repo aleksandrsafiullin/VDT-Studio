@@ -1,22 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, Loader2, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextInput } from "@/components/ui/field";
 import { createAiExecutionClient } from "@/lib/ai-execution-client";
 import { hasStandaloneRunnerUi, resolveVdtAppMode, type VdtAppMode } from "@/lib/app-mode";
 import { isConfirmedNotInstalled } from "@/lib/cli-readiness";
+import { runCliSignIn } from "@/lib/cli-sign-in";
 import {
   CLI_CATALOG,
-  LOCAL_RUNNER_PRESET_CATALOG,
   getCliCatalogEntry,
   type CliAgentId,
   type CliCatalogEntry,
-  type CliModelSelection,
-  type LocalHttpModelBackendId,
-  type LocalRunnerPresetCatalogEntry
+  type CliModelSelection
 } from "@/lib/execution-mode-catalog";
 import { CliAgentCard, type CliAgentDetectionView } from "./cli-agent-card";
 import { CliInstallGrid } from "./cli-install-grid";
@@ -25,16 +23,19 @@ import { useVdtStudioStore, type ProviderTestStatus } from "./vdt-store";
 
 function AccordionSection({
   title,
-  defaultOpen = true,
+  defaultOpen = false,
   children,
-  testId
+  testId,
+  onOpenChange
 }: {
   title: string;
   defaultOpen?: boolean;
   children: ReactNode;
   testId?: string;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const contentId = useId();
 
   return (
     <section className="rounded-lg border border-line bg-white" data-testid={testId}>
@@ -42,129 +43,14 @@ function AccordionSection({
         type="button"
         className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
         aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
+        aria-controls={contentId}
+        onClick={() => { setOpen(!open); onOpenChange?.(!open); }}
       >
         <span className="text-sm font-semibold text-ink">{title}</span>
         <ChevronDown className={clsx("h-4 w-4 text-muted transition", open && "rotate-180")} aria-hidden="true" />
       </button>
-      {open ? <div className="border-t border-line px-4 py-4">{children}</div> : null}
+      {open ? <div id={contentId} className="border-t border-line px-4 py-4">{children}</div> : null}
     </section>
-  );
-}
-
-function LocalModelCard({
-  preset,
-  selected,
-  selectedModel,
-  discoveredModels,
-  isLoadingModels,
-  modelListError,
-  onSelect,
-  onSelectModel,
-  onRefreshModels
-}: {
-  preset: LocalRunnerPresetCatalogEntry;
-  selected: boolean;
-  selectedModel?: string | undefined;
-  discoveredModels: readonly string[];
-  isLoadingModels: boolean;
-  modelListError?: string | undefined;
-  onSelect: () => void;
-  onSelectModel: (model: string) => void;
-  onRefreshModels: () => void;
-}) {
-  const modelOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const options: string[] = [];
-    const add = (model: string | undefined) => {
-      const trimmed = model?.trim();
-      if (!trimmed || seen.has(trimmed)) return;
-      seen.add(trimmed);
-      options.push(trimmed);
-    };
-    add(selectedModel);
-    for (const model of discoveredModels) add(model);
-    add(preset.model);
-    return options;
-  }, [discoveredModels, preset.model, selectedModel]);
-  const currentModel = selectedModel?.trim() || modelOptions[0] || preset.model || "";
-
-  return (
-    <article
-      data-testid={`local-model-card-${preset.id}`}
-      className={clsx(
-        "flex flex-col gap-3 rounded-lg border bg-white p-3 transition",
-        selected ? "border-accent ring-2 ring-blue-100" : "border-line hover:border-slate-300"
-      )}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <p className="min-w-0 truncate text-sm font-semibold text-ink">{preset.label}</p>
-        <Button
-          size="sm"
-          variant={selected ? "primary" : "secondary"}
-          className="shrink-0"
-          data-testid={`local-model-select-${preset.id}`}
-          onClick={onSelect}
-        >
-          {selected ? "Selected" : "Select"}
-        </Button>
-      </div>
-
-      <div className="space-y-2">
-        <p className="text-xs leading-5 text-muted">{preset.description}</p>
-        <p className="truncate rounded-md bg-slate-50 px-2 py-1.5 font-mono text-[11px] text-slate-600">
-          {preset.baseUrl}
-        </p>
-      </div>
-
-      {selected ? (
-        <div className="space-y-2">
-          <div className="flex items-end gap-2">
-            <div className="min-w-0 flex-1">
-              <Field label="Model">
-                <SelectInput
-                  data-testid={`local-model-model-${preset.id}`}
-                  value={currentModel}
-                  disabled={isLoadingModels || modelOptions.length === 0}
-                  onChange={(event) => onSelectModel(event.target.value)}
-                >
-                  {modelOptions.map((model) => (
-                    <option key={model} value={model}>
-                      {model}
-                    </option>
-                  ))}
-                </SelectInput>
-              </Field>
-            </div>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="shrink-0"
-              aria-label={`Refresh ${preset.label} models`}
-              title={`Refresh ${preset.label} models`}
-              data-testid={`local-model-refresh-${preset.id}`}
-              disabled={isLoadingModels}
-              onClick={onRefreshModels}
-            >
-              <RefreshCw className={clsx("h-3.5 w-3.5", isLoadingModels && "animate-spin")} aria-hidden="true" />
-            </Button>
-          </div>
-          {isLoadingModels ? (
-            <p className="text-xs leading-5 text-muted">Loading available models...</p>
-          ) : modelListError ? (
-            <p className="text-xs leading-5 text-red-700">{modelListError}</p>
-          ) : discoveredModels.length > 0 ? (
-            <p className="text-xs leading-5 text-slate-500">
-              {discoveredModels.length} model{discoveredModels.length === 1 ? "" : "s"} detected.
-            </p>
-          ) : (
-            <p className="text-xs leading-5 text-slate-500">Using preset default until the runtime reports models.</p>
-          )}
-        </div>
-      ) : preset.model ? (
-        <p className="text-xs text-slate-500">Default model: {preset.model}</p>
-      ) : null}
-    </article>
   );
 }
 
@@ -176,17 +62,20 @@ function backendIdForCliAgent(agentId: CliAgentId): string {
 export function resolveCliSettingsDetectionState(
   detections: readonly CliAgentDetectionView[] | undefined,
   isScanning: boolean,
-  detectionError?: string | undefined
+  detectionError?: string | undefined,
+  removedAgentIds: readonly CliAgentId[] = []
 ) {
   const detectionById = new Map((detections ?? []).map((detection) => [detection.id, detection] as const));
   const scanPending = isScanning || detections === undefined;
-  const installedAgents = CLI_CATALOG.filter((entry) => detectionById.get(entry.id)?.installed === true);
-  const notInstalledAgents = CLI_CATALOG.filter((entry) => isConfirmedNotInstalled(detectionById.get(entry.id)));
+  const installedAgents = CLI_CATALOG.filter((entry) => !removedAgentIds.includes(entry.id) && detectionById.get(entry.id)?.installed === true);
+  const removedAgents = CLI_CATALOG.filter((entry) => removedAgentIds.includes(entry.id));
+  const notInstalledAgents = CLI_CATALOG.filter((entry) => !removedAgentIds.includes(entry.id) && isConfirmedNotInstalled(detectionById.get(entry.id)));
 
   return {
     detectionById,
     scanPending,
     installedAgents,
+    removedAgents,
     notInstalledAgents,
     showInstallOptions: !scanPending && !detectionError && notInstalledAgents.length > 0
   };
@@ -212,7 +101,7 @@ export function LocalAiRuntimeErrorBanner({
         <p className="mt-0.5 text-xs leading-5">{message}</p>
         <p className="mt-1 text-xs leading-5 text-amber-800">
           {desktopMode
-            ? "Local AI is temporarily unavailable. API key providers remain available while the desktop runtime recovers."
+            ? "CLI subscriptions are temporarily unavailable. API key providers remain available while the desktop runtime recovers."
             : "You can still configure agents below. Rescan when the detection service is available."}
         </p>
       </div>
@@ -220,54 +109,13 @@ export function LocalAiRuntimeErrorBanner({
   );
 }
 
-export function LocalModelCards({
-  selectedPresetId,
-  selectedModel,
-  modelsByBackend = {},
-  isLoadingModelsByBackend = {},
-  modelListErrorByBackend = {},
-  onSelectPreset,
-  onSelectModel,
-  onRefreshModels
-}: {
-  selectedPresetId?: string | undefined;
-  selectedModel?: string | undefined;
-  modelsByBackend?: Partial<Record<LocalHttpModelBackendId, readonly string[]>>;
-  isLoadingModelsByBackend?: Partial<Record<LocalHttpModelBackendId, boolean>>;
-  modelListErrorByBackend?: Partial<Record<LocalHttpModelBackendId, string | undefined>>;
-  onSelectPreset: (presetId: LocalRunnerPresetCatalogEntry["id"]) => void;
-  onSelectModel?: (model: string) => void;
-  onRefreshModels?: (backendId: LocalHttpModelBackendId) => void;
-}) {
-  const localModelPresets = LOCAL_RUNNER_PRESET_CATALOG.filter((preset) => preset.runnerProviderId === "local_http_stub");
-
-  return (
-    <div className="grid gap-3 sm:grid-cols-3" data-testid="local-model-cards">
-      {localModelPresets.map((preset) => {
-        const backendId = preset.modelBackendId;
-        return (
-          <LocalModelCard
-            key={preset.id}
-            preset={preset}
-            selected={selectedPresetId === preset.id}
-            selectedModel={selectedPresetId === preset.id ? selectedModel : undefined}
-            discoveredModels={backendId ? modelsByBackend[backendId] ?? [] : []}
-            isLoadingModels={backendId ? Boolean(isLoadingModelsByBackend[backendId]) : false}
-            modelListError={backendId ? modelListErrorByBackend[backendId] : undefined}
-            onSelect={() => onSelectPreset(preset.id)}
-            onSelectModel={(model) => onSelectModel?.(model)}
-            onRefreshModels={() => {
-              if (backendId) onRefreshModels?.(backendId);
-            }}
-          />
-        );
-      })}
-    </div>
-  );
-}
+export { LocalModelCards } from "./local-model-settings";
 
 export function LocalCliSettings() {
   const executionSettings = useVdtStudioStore((state) => state.executionSettings);
+  const removedCliAgentIds = useVdtStudioStore((state) => state.removedCliAgentIds);
+  const removeCliAgent = useVdtStudioStore((state) => state.removeCliAgent);
+  const restoreCliAgent = useVdtStudioStore((state) => state.restoreCliAgent);
   const cliDetectionAgents = useVdtStudioStore((state) => state.cliDetectionAgents);
   const cliDetectionError = useVdtStudioStore((state) => state.cliDetectionError);
   const isRescanningClis = useVdtStudioStore((state) => state.isRescanningClis);
@@ -277,77 +125,43 @@ export function LocalCliSettings() {
   const cliTestStatusByAgent = useVdtStudioStore((state) => state.cliTestStatusByAgent);
   const isTestingCliByAgent = useVdtStudioStore((state) => state.isTestingCliByAgent);
   const setSelectedCliAgentId = useVdtStudioStore((state) => state.setSelectedCliAgentId);
-  const setLocalRunnerPreset = useVdtStudioStore((state) => state.setLocalRunnerPreset);
-  const setExecutionSettingsField = useVdtStudioStore((state) => state.setExecutionSettingsField);
   const setCliModelForAgent = useVdtStudioStore((state) => state.setCliModelForAgent);
-  const setMemoryModelMode = useVdtStudioStore((state) => state.setMemoryModelMode);
   const rescanClis = useVdtStudioStore((state) => state.rescanClis);
   const testCli = useVdtStudioStore((state) => state.testCli);
-  const runnerPairingToken = useVdtStudioStore((state) => state.runnerPairingToken);
-  const runnerPairingStatus = useVdtStudioStore((state) => state.runnerPairingStatus);
-  const isPairingRunner = useVdtStudioStore((state) => state.isPairingRunner);
-  const pairRunner = useVdtStudioStore((state) => state.pairRunner);
-  const unpairRunner = useVdtStudioStore((state) => state.unpairRunner);
+  const clearCliTestStatus = useVdtStudioStore((state) => state.clearCliTestStatus);
 
   const [installToast, setInstallToast] = useState<string | undefined>();
-  const [authenticatingCliId, setAuthenticatingCliId] = useState<CliAgentId | undefined>();
+  const [authenticatingByAgent, setAuthenticatingByAgent] = useState<Partial<Record<CliAgentId, boolean>>>({});
+  const authenticatingRef = useRef(new Set<CliAgentId>());
   const [authStatusByAgent, setAuthStatusByAgent] = useState<Partial<Record<CliAgentId, ProviderTestStatus>>>({});
-  const [pairingCode, setPairingCode] = useState("");
-  const [localModelsByBackend, setLocalModelsByBackend] = useState<Partial<Record<LocalHttpModelBackendId, string[]>>>({});
-  const [localModelLoadingByBackend, setLocalModelLoadingByBackend] = useState<Partial<Record<LocalHttpModelBackendId, boolean>>>({});
-  const [localModelErrorByBackend, setLocalModelErrorByBackend] = useState<Partial<Record<LocalHttpModelBackendId, string | undefined>>>({});
+  const [removedNotice, setRemovedNotice] = useState<{ id: CliAgentId; message: string }>();
+  const undoButtonRef = useRef<HTMLButtonElement>(null);
+  const [showAddProviders, setShowAddProviders] = useState(false);
   const hasAttemptedInitialScan = useRef(false);
   const selectedCliAgentId = executionSettings.selectedCliAgentId;
-  const memoryModelMode = executionSettings.memoryModelMode ?? "same_as_chat";
-  const memoryCliAgentId = executionSettings.memoryCliAgentId;
   const appMode = resolveVdtAppMode();
-  const showStandaloneRunner = hasStandaloneRunnerUi(appMode);
 
   const {
     detectionById,
     scanPending: cliScanPending,
     installedAgents,
+    removedAgents,
     notInstalledAgents,
     showInstallOptions
-  } = resolveCliSettingsDetectionState(cliDetectionAgents, isRescanningClis, cliDetectionError);
-  const canUseExplicitMemoryCli = installedAgents.length > 0;
+  } = resolveCliSettingsDetectionState(cliDetectionAgents, isRescanningClis, cliDetectionError, removedCliAgentIds);
 
   const selectedCatalog = selectedCliAgentId ? getCliCatalogEntry(selectedCliAgentId) : undefined;
-  const selectedLocalPreset = LOCAL_RUNNER_PRESET_CATALOG.find((preset) => preset.id === executionSettings.localRunnerPresetId);
-  const selectedLocalBackendId =
-    selectedLocalPreset?.runnerProviderId === "local_http_stub" ? selectedLocalPreset.modelBackendId : undefined;
-  let activeRunnerProviderId = executionSettings.runnerProviderId ?? selectedLocalPreset?.runnerProviderId;
-  if (activeRunnerProviderId === "cli_stub" && selectedLocalPreset?.runnerProviderId === "local_http_stub") {
-    activeRunnerProviderId = "local_http_stub";
-  }
-  const isSubscriptionCliActive =
-    executionSettings.executionMode === "local_cli" && activeRunnerProviderId === "cli_stub";
-  const sameAsChatLabel = isSubscriptionCliActive
-    ? selectedCatalog?.displayName ?? "selected CLI"
-    : selectedLocalPreset?.label ?? "selected local model";
-
-  const refreshLocalModels = useCallback(async (backendId: LocalHttpModelBackendId) => {
-    setLocalModelLoadingByBackend((current) => ({ ...current, [backendId]: true }));
-    setLocalModelErrorByBackend((current) => ({ ...current, [backendId]: undefined }));
-    try {
-      const models = await createAiExecutionClient().listModels(backendId);
-      setLocalModelsByBackend((current) => ({
-        ...current,
-        [backendId]: models.map((model) => model.id)
-      }));
-    } catch (error) {
-      setLocalModelErrorByBackend((current) => ({
-        ...current,
-        [backendId]: error instanceof Error ? error.message : "Model list unavailable."
-      }));
-    } finally {
-      setLocalModelLoadingByBackend((current) => ({ ...current, [backendId]: false }));
-    }
-  }, []);
+  const isSubscriptionCliActive = true;
+  const activeModel = executionSettings.cliModelSelection?.source === "custom"
+    ? executionSettings.cliModelSelection.customModel || "Enter a model" : "Provider default";
 
   const runInitialScan = useCallback(() => {
     void rescanClis();
   }, [rescanClis]);
+
+  useEffect(() => {
+    if (removedNotice) undoButtonRef.current?.focus();
+  }, [removedNotice]);
 
   useEffect(() => {
     if (hasAttemptedInitialScan.current || cliDetectionAgents !== undefined || isRescanningClis) {
@@ -357,46 +171,6 @@ export function LocalCliSettings() {
     hasAttemptedInitialScan.current = true;
     runInitialScan();
   }, [cliDetectionAgents, isRescanningClis, runInitialScan]);
-
-  useEffect(() => {
-    if (!selectedLocalBackendId || selectedLocalPreset?.runnerProviderId !== "local_http_stub") {
-      return;
-    }
-
-    if (
-      localModelsByBackend[selectedLocalBackendId] === undefined &&
-      !localModelLoadingByBackend[selectedLocalBackendId] &&
-      localModelErrorByBackend[selectedLocalBackendId] === undefined
-    ) {
-      void refreshLocalModels(selectedLocalBackendId);
-    }
-
-    const models = localModelsByBackend[selectedLocalBackendId] ?? [];
-    if (models.length === 0) {
-      return;
-    }
-
-    const currentModel = executionSettings.localModel?.trim();
-    const presetModel = selectedLocalPreset.model?.trim();
-    if (!currentModel || (currentModel === presetModel && !models.includes(currentModel))) {
-      setExecutionSettingsField("localModel", models[0]);
-    }
-  }, [
-    executionSettings.localModel,
-    localModelErrorByBackend,
-    localModelLoadingByBackend,
-    localModelsByBackend,
-    refreshLocalModels,
-    selectedLocalBackendId,
-    selectedLocalPreset,
-    setExecutionSettingsField
-  ]);
-
-  useEffect(() => {
-    if (memoryModelMode === "selected_cli" && !canUseExplicitMemoryCli) {
-      setMemoryModelMode("same_as_chat");
-    }
-  }, [memoryModelMode, canUseExplicitMemoryCli, setMemoryModelMode]);
 
   useEffect(() => {
     if (!installToast) {
@@ -427,265 +201,199 @@ export function LocalCliSettings() {
     setInstallToast(`Copied ${entry.primaryCommand}`);
   }
 
-  function handleSelectLocalPreset(presetId: LocalRunnerPresetCatalogEntry["id"]) {
-    const preset = LOCAL_RUNNER_PRESET_CATALOG.find((entry) => entry.id === presetId);
-    setLocalRunnerPreset(presetId);
-    if (preset?.runnerProviderId === "local_http_stub") {
-      const discoveredModel = preset.modelBackendId ? localModelsByBackend[preset.modelBackendId]?.[0] : undefined;
-      const model = discoveredModel ?? preset.model;
-      if (model) setExecutionSettingsField("localModel", model);
+  async function handleAuthenticate(entry: CliCatalogEntry) {
+    const state = useVdtStudioStore.getState();
+    if (authenticatingRef.current.has(entry.id) || state.isTestingCliByAgent[entry.id] || state.removedCliAgentIds.includes(entry.id)) return;
+    clearCliTestStatus(entry.id);
+    authenticatingRef.current.add(entry.id);
+    setAuthenticatingByAgent((current) => ({ ...current, [entry.id]: true }));
+    try {
+      await runCliSignIn({
+        entry,
+        openGuidance: (url) => { window.open(url, "_blank", "noopener,noreferrer"); },
+        authenticate: () => createAiExecutionClient().openProviderAuth(backendIdForCliAgent(entry.id)),
+        rescan: () => rescanClis(entry.id, { fresh: true }),
+        getVerification: () => {
+          const current = useVdtStudioStore.getState();
+          return { agents: current.cliDetectionAgents, error: current.cliDetectionError, scanning: current.isRescanningClis };
+        },
+        onStatus: (status) => {
+          if (!useVdtStudioStore.getState().removedCliAgentIds.includes(entry.id)) {
+            setAuthStatusByAgent((current) => ({ ...current, [entry.id]: status }));
+          }
+        }
+      });
+    } finally {
+      authenticatingRef.current.delete(entry.id);
+      setAuthenticatingByAgent((current) => ({ ...current, [entry.id]: false }));
     }
   }
 
-  async function handleAuthenticate(entry: CliCatalogEntry) {
-    setAuthenticatingCliId(entry.id);
-    setAuthStatusByAgent((current) => ({
-      ...current,
-      [entry.id]: {
-        kind: "info",
-        message: entry.id === "cursor-agent"
-          ? "Cursor CLI sign-in started. Complete the confirmation in your browser."
-          : `Opening ${entry.displayName} sign-in guidance…`
-      }
-    }));
-    try {
-      const action = await createAiExecutionClient().openProviderAuth(backendIdForCliAgent(entry.id));
-      if (action.action === "authenticated") {
-        setAuthStatusByAgent((current) => ({
-          ...current,
-          [entry.id]: { kind: "info", message: "Sign-in completed. Verifying CLI access and loading models…" }
-        }));
-        await rescanClis(entry.id);
-        setAuthStatusByAgent((current) => ({
-          ...current,
-          [entry.id]: { kind: "success", message: `${entry.displayName} is authenticated and ready.` }
-        }));
-        return;
-      }
-
-      window.open(action.docsUrl ?? entry.docsUrl, "_blank", "noopener,noreferrer");
-      setAuthStatusByAgent((current) => ({
-        ...current,
-        [entry.id]: {
-          kind: "info",
-          message: action.instructions ?? `Opened ${entry.displayName} sign-in guidance.`
-        }
-      }));
-    } catch (error) {
-      setAuthStatusByAgent((current) => ({
-        ...current,
-        [entry.id]: {
-          kind: "error",
-          message: error instanceof Error ? error.message : `${entry.displayName} sign-in failed.`
-        }
-      }));
-    } finally {
-      setAuthenticatingCliId(undefined);
-    }
+  function handleRemove(entry: CliCatalogEntry) {
+    const state = useVdtStudioStore.getState();
+    if (state.isTestingCliByAgent[entry.id] || authenticatingRef.current.has(entry.id)) return;
+    const before = state.executionSettings;
+    removeCliAgent(entry.id);
+    const after = useVdtStudioStore.getState().executionSettings;
+    const routing = before.selectedCliAgentId === entry.id
+      ? after.selectedCliAgentId ? ` Chat now uses ${getCliCatalogEntry(after.selectedCliAgentId).displayName}.` : " Choose another provider before sending a request."
+      : "";
+    const memory = before.memoryCliAgentId === entry.id ? " Memory now follows chat." : "";
+    setRemovedNotice({ id: entry.id, message: `${entry.displayName} removed from Your subscriptions.${routing}${memory}` });
+    setAuthStatusByAgent((current) => ({ ...current, [entry.id]: undefined }));
   }
 
   return (
-    <div className="space-y-4" data-testid="local-cli-settings">
-      <section className="rounded-lg border border-line bg-slate-50 px-4 py-3" data-testid="desktop-local-ai-managed">
-        <h3 className="text-sm font-semibold text-ink">Your subscriptions</h3>
-        <p className="mt-1 text-xs leading-5 text-muted">
-          Local AI is managed automatically by VDT Studio Desktop. Provider sign-in remains provider-owned.
-        </p>
-      </section>
-
-      <AccordionSection title="Local model servers" testId="local-model-servers-accordion">
-        <LocalModelCards
-          selectedPresetId={executionSettings.localRunnerPresetId}
-          selectedModel={executionSettings.localModel}
-          modelsByBackend={localModelsByBackend}
-          isLoadingModelsByBackend={localModelLoadingByBackend}
-          modelListErrorByBackend={localModelErrorByBackend}
-          onSelectPreset={handleSelectLocalPreset}
-          onSelectModel={(model) => setExecutionSettingsField("localModel", model)}
-          onRefreshModels={refreshLocalModels}
-        />
-      </AccordionSection>
-
-      {showStandaloneRunner ? (
-        <section className="rounded-lg border border-line bg-white px-4 py-4" data-testid="local-runner-pairing">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h3 className="text-sm font-semibold text-ink">Standalone runner</h3>
-              <p className="mt-1 text-xs leading-5 text-muted">
-                Development fallback for local web testing. Start <code>vdt runner start</code>, then enter its code.
-              </p>
-            </div>
-            {runnerPairingToken ? (
-              <Button size="sm" variant="secondary" data-testid="local-runner-unpair" onClick={() => void unpairRunner()}>
-                Unpair
-              </Button>
-            ) : null}
+    <div className="space-y-5" data-testid="local-cli-settings">
+      <section aria-labelledby="subscriptions-title" className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h3 id="subscriptions-title" className="text-sm font-semibold text-ink">Your subscriptions</h3>
+            <p className="mt-1 max-w-xl text-xs leading-5 text-muted">
+              The provider CLI runs on this computer and uses your provider account and cloud service. Choose one for chat, then verify access.
+            </p>
           </div>
-          {!runnerPairingToken ? (
-            <div className="mt-3 flex items-end gap-2">
-              <Field label="Pairing code">
-                <TextInput
-                  data-testid="local-runner-pairing-code"
-                  value={pairingCode}
-                  inputMode="numeric"
-                  maxLength={6}
-                  placeholder="000000"
-                  onChange={(event) => setPairingCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                />
-              </Field>
-              <Button
-                data-testid="local-runner-pair"
-                disabled={pairingCode.length !== 6 || isPairingRunner}
-                onClick={() => void pairRunner(pairingCode)}
-              >
-                {isPairingRunner ? "Pairing..." : "Pair"}
-              </Button>
-            </div>
-          ) : null}
-          {runnerPairingStatus ? (
-            <ProviderTestStatusBanner
-              className="mt-3"
-              status={runnerPairingStatus}
-              testId="local-runner-pairing-status"
-            />
-          ) : null}
-        </section>
-      ) : null}
-
-      {cliDetectionError ? <LocalAiRuntimeErrorBanner message={cliDetectionError} appMode={appMode} /> : null}
-
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-ink">
-            Your subscriptions{!cliScanPending && !cliDetectionError ? ` (${installedAgents.length})` : ""}
-          </h3>
-          <Button
-            size="sm"
-            variant="secondary"
-            data-testid="local-cli-rescan"
-            disabled={isRescanningClis}
-            icon={
-              isRescanningClis ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-              )
-            }
-            onClick={() => void rescanClis()}
-          >
-            Rescan
-          </Button>
+          <div className="flex items-center gap-2">
+            {removedAgents.length > 0 || showInstallOptions ? (
+              <Button type="button" size="sm" variant="secondary" data-testid="local-cli-add-provider"
+                aria-expanded={showAddProviders} aria-controls="local-cli-add-providers" icon={<Plus className="h-3.5 w-3.5" aria-hidden="true" />}
+                onClick={() => setShowAddProviders((current) => !current)}>Add provider</Button>
+            ) : null}
+            <Button type="button" size="sm" variant="ghost" data-testid="local-cli-rescan" disabled={isRescanningClis}
+              icon={isRescanningClis ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />}
+              onClick={() => void rescanClis()}>{isRescanningClis ? "Scanning…" : "Rescan"}</Button>
+          </div>
         </div>
 
-        {cliScanPending ? (
-          <div
-            role="status"
-            aria-live="polite"
-            data-testid="local-cli-scan-status"
-            className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700"
-          >
-            <Loader2 className="h-4 w-4 animate-spin text-slate-500" aria-hidden="true" />
-            <span>Checking which CLI agents can run requests…</span>
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1 rounded-lg bg-slate-50 px-4 py-3" data-testid="local-cli-active-selection">
+          <div><span className="mr-2 text-[11px] font-medium text-muted">Chat</span><span className="text-xs font-semibold text-ink">{selectedCatalog?.displayName ?? "Choose a provider"}</span></div>
+          <span className="text-xs text-slate-600">{isSubscriptionCliActive && !selectedCliAgentId ? "No provider selected" : activeModel}</span>
+        </div>
+
+        {removedNotice ? (
+          <div role="status" aria-live="polite" data-testid="local-cli-removed-notice" className="flex items-center justify-between gap-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">
+            <span>{removedNotice.message}</span>
+            <Button ref={undoButtonRef} type="button" size="sm" variant="ghost" className="shrink-0 text-blue-700" data-testid="local-cli-undo-remove" onClick={() => {
+              const restoredId = removedNotice.id;
+              restoreCliAgent(restoredId); setRemovedNotice(undefined);
+              requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-testid="cli-agent-select-${restoredId}"]`)?.focus());
+            }}>Undo</Button>
           </div>
-        ) : cliDetectionError ? null : installedAgents.length === 0 ? (
-          <div
-            data-testid="local-cli-empty-installed"
-            className="rounded-md border border-dashed border-line bg-slate-50/80 px-4 py-6 text-center text-sm text-muted"
-          >
-            The completed scan did not find an installed CLI. Use the confirmed install options below or rescan after
-            installing an agent.
+        ) : null}
+        {cliDetectionError ? <LocalAiRuntimeErrorBanner message={cliDetectionError} appMode={appMode} /> : null}
+
+        {cliScanPending ? (
+          <div role="status" aria-live="polite" data-testid="local-cli-scan-status" className="flex items-center gap-2 rounded-lg border border-line px-4 py-4 text-xs text-muted">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Checking installed providers…
+          </div>
+        ) : cliDetectionError && installedAgents.length === 0 ? null : installedAgents.length === 0 ? (
+          <div data-testid="local-cli-empty-installed" className="rounded-xl border border-dashed border-line bg-slate-50/60 px-5 py-8 text-center">
+            <p className="text-sm font-medium text-ink">{removedAgents.length > 0 ? "No subscriptions added" : "No installed providers found"}</p>
+            <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-muted">{removedAgents.length > 0 ? "Add a provider back whenever you need it. Your CLI installations and provider accounts stay on this Mac." : "Install a supported CLI, sign in with your provider, and rescan."}</p>
+            {removedAgents.length > 0 || showInstallOptions ? <Button type="button" size="sm" className="mt-4" onClick={() => setShowAddProviders(true)}>Add provider</Button> : null}
           </div>
         ) : (
           <div className="space-y-3">
-            {installedAgents.map((entry) => {
-              const detection = detectionById.get(entry.id)!;
-              return (
-                <CliAgentCard
-                  key={entry.id}
-                  catalog={entry}
-                  detection={detection}
-                  selected={isSubscriptionCliActive && selectedCliAgentId === entry.id}
-                  modelSelection={resolveModelSelection(entry.id)}
-                  discoveredModels={cliDiscoveredModelsByAgent[entry.id] ?? []}
-                  testStatus={cliTestStatusByAgent[entry.id]}
-                  authActionStatus={authStatusByAgent[entry.id]}
-                  isTesting={Boolean(isTestingCliByAgent[entry.id])}
-                  isAuthenticating={authenticatingCliId === entry.id}
-                  onSelect={() => setSelectedCliAgentId(entry.id)}
-                  onTest={() => void testCli(entry.id)}
-                  onAuthenticate={() => void handleAuthenticate(entry)}
-                  onModelSelectionChange={(selection) => setCliModelForAgent(entry.id, selection)}
-                />
-              );
-            })}
+            {installedAgents.map((entry) => (
+              <CliAgentCard key={entry.id} catalog={entry} detection={detectionById.get(entry.id)!}
+                selected={isSubscriptionCliActive && selectedCliAgentId === entry.id}
+                modelSelection={resolveModelSelection(entry.id)} discoveredModels={cliDiscoveredModelsByAgent[entry.id] ?? []}
+                testStatus={cliTestStatusByAgent[entry.id]} authActionStatus={authStatusByAgent[entry.id]}
+                isTesting={Boolean(isTestingCliByAgent[entry.id])} isAuthenticating={Boolean(authenticatingByAgent[entry.id])}
+                onSelect={() => setSelectedCliAgentId(entry.id)} onTest={() => {
+                  if (authenticatingRef.current.has(entry.id)) return;
+                  setAuthStatusByAgent((current) => ({ ...current, [entry.id]: undefined }));
+                  void testCli(entry.id);
+                }} onAuthenticate={() => void handleAuthenticate(entry)} onRemove={() => handleRemove(entry)}
+                onModelSelectionChange={(selection) => setCliModelForAgent(entry.id, selection)} />
+            ))}
           </div>
         )}
 
-      </div>
+        {showAddProviders ? (
+          <section id="local-cli-add-providers" data-testid="local-cli-add-providers" className="space-y-4 rounded-xl border border-line bg-slate-50/50 p-4">
+            <div className="flex items-center justify-between gap-3"><h4 className="text-xs font-semibold text-ink">Add a provider</h4><Button type="button" size="sm" variant="ghost" onClick={() => setShowAddProviders(false)}>Done</Button></div>
+            {removedAgents.length > 0 ? <div className="space-y-2">
+              <p className="text-xs leading-5 text-muted">Removed from this browser. Add back without changing your provider account.</p>
+              {removedAgents.map((entry) => <div key={entry.id} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-white px-3 py-2">
+                <div><p className="text-xs font-medium text-ink">{entry.displayName}</p><p className="mt-0.5 text-[11px] text-muted">{detectionById.get(entry.id)?.installed ? "Installed on this Mac" : "Rescan to check installation"}</p></div>
+                <Button type="button" size="sm" data-testid={`cli-agent-restore-${entry.id}`} onClick={() => { restoreCliAgent(entry.id); setRemovedNotice(undefined); }}>Add back</Button>
+              </div>)}
+            </div> : null}
+            {showInstallOptions ? <div data-testid="local-cli-install-accordion" className="space-y-3">
+              <p className="text-xs font-medium text-ink">Available to install</p>
+              <CliInstallGrid agents={notInstalledAgents} isRescanningId={rescanningCliId} toastMessage={installToast}
+                onInstall={handleInstall} onCopyCommand={handleCopyCommand} onRescanAgent={(agentId) => void rescanClis(agentId)} />
+            </div> : null}
+          </section>
+        ) : null}
+        <p className="px-1 text-[11px] leading-5 text-muted">Removing a provider only hides it here. It does not uninstall its CLI or sign out of your account.</p>
+      </section>
 
-      {showInstallOptions ? (
-        <AccordionSection
-          title={`Available to install (${notInstalledAgents.length})`}
-          defaultOpen={installedAgents.length === 0}
-          testId="local-cli-install-accordion"
-        >
-          <CliInstallGrid
-            agents={notInstalledAgents}
-            isRescanningId={rescanningCliId}
-            toastMessage={installToast}
-            onInstall={handleInstall}
-            onCopyCommand={handleCopyCommand}
-            onRescanAgent={(agentId) => void rescanClis(agentId)}
-          />
-        </AccordionSection>
-      ) : null}
+    </div>
+  );
+}
 
+export function LocalExecutionOptions() {
+  const executionSettings = useVdtStudioStore((state) => state.executionSettings);
+  const cliDetectionAgents = useVdtStudioStore((state) => state.cliDetectionAgents);
+  const removedCliAgentIds = useVdtStudioStore((state) => state.removedCliAgentIds);
+  const setMemoryModelMode = useVdtStudioStore((state) => state.setMemoryModelMode);
+  const runnerPairingToken = useVdtStudioStore((state) => state.runnerPairingToken);
+  const runnerPairingStatus = useVdtStudioStore((state) => state.runnerPairingStatus);
+  const isPairingRunner = useVdtStudioStore((state) => state.isPairingRunner);
+  const pairRunner = useVdtStudioStore((state) => state.pairRunner);
+  const unpairRunner = useVdtStudioStore((state) => state.unpairRunner);
+  const [pairingCode, setPairingCode] = useState("");
+  const installedAgents = CLI_CATALOG.filter((entry) => !removedCliAgentIds.includes(entry.id) &&
+    cliDetectionAgents?.some((agent) => agent.id === entry.id && agent.installed));
+  const memoryModelMode = executionSettings.memoryModelMode ?? "same_as_chat";
+  const memoryCliAgentId = executionSettings.memoryCliAgentId;
+  const canChooseCli = installedAgents.length > 0;
+  const savedMemoryIsUnavailable = memoryCliAgentId && !installedAgents.some((entry) => entry.id === memoryCliAgentId);
+  const showStandaloneRunner = hasStandaloneRunnerUi(resolveVdtAppMode());
+
+  return (
+    <div className="space-y-2 border-t border-line pt-5" data-testid="local-execution-options">
       <AccordionSection title="Memory model" testId="local-cli-memory-accordion">
         <div className="space-y-3">
+          <p className="text-xs leading-5 text-muted">Memory follows chat by default. A separate CLI override is kept when you switch execution tabs.</p>
           <Field label="Memory source">
-            <SelectInput
-              data-testid="local-cli-memory-mode"
-              value={canUseExplicitMemoryCli ? memoryModelMode : "same_as_chat"}
-              onChange={(event) => {
-                const mode = event.target.value as "same_as_chat" | "selected_cli";
-                if (mode === "same_as_chat") {
-                  setMemoryModelMode("same_as_chat");
-                  return;
-                }
-                if (!canUseExplicitMemoryCli) {
-                  return;
-                }
-                setMemoryModelMode("selected_cli", selectedCliAgentId ?? installedAgents[0]!.id);
-              }}
-            >
-              <option value="same_as_chat">
-                Same as chat ({sameAsChatLabel})
-              </option>
-              <option value="selected_cli" disabled={!canUseExplicitMemoryCli}>
-                Explicit CLI override
-              </option>
+            <SelectInput data-testid="local-cli-memory-mode" value={memoryModelMode} onChange={(event) => {
+              if (event.target.value === "same_as_chat") setMemoryModelMode("same_as_chat");
+              else if (canChooseCli) setMemoryModelMode("selected_cli", installedAgents.find((entry) => entry.id === executionSettings.selectedCliAgentId)?.id ?? installedAgents[0]!.id);
+            }}>
+              <option value="same_as_chat">Same as chat</option>
+              <option value="selected_cli" disabled={!canChooseCli}>Choose a separate CLI</option>
             </SelectInput>
           </Field>
-
-          {memoryModelMode === "selected_cli" && canUseExplicitMemoryCli ? (
-            <Field label="Memory CLI">
-              <SelectInput
-                data-testid="local-cli-memory-agent"
-                value={memoryCliAgentId ?? selectedCliAgentId ?? ""}
-                onChange={(event) =>
-                  setMemoryModelMode("selected_cli", event.target.value as CliAgentId)
-                }
-              >
-                {installedAgents.map((entry) => (
-                  <option key={entry.id} value={entry.id}>
-                    {entry.displayName}
-                  </option>
-                ))}
+          {memoryModelMode === "selected_cli" ? (
+            <Field label="Memory CLI" {...(savedMemoryIsUnavailable ? { hint: "Saved override retained. Open CLI to verify its installation and access." } : {})}>
+              <SelectInput data-testid="local-cli-memory-agent" value={memoryCliAgentId ?? ""} onChange={(event) => setMemoryModelMode("selected_cli", event.target.value as CliAgentId)}>
+                {!memoryCliAgentId ? <option value="" disabled>Choose a CLI in CLI settings</option> : null}
+                {savedMemoryIsUnavailable ? <option value={memoryCliAgentId}>{getCliCatalogEntry(memoryCliAgentId).displayName} (saved override)</option> : null}
+                {installedAgents.map((entry) => <option key={entry.id} value={entry.id}>{entry.displayName}</option>)}
               </SelectInput>
             </Field>
           ) : null}
+          {!canChooseCli ? <p className="text-xs leading-5 text-muted">Open CLI to discover providers for a new override.</p> : null}
         </div>
       </AccordionSection>
+      {showStandaloneRunner ? (
+        <AccordionSection title="Developer runner" testId="local-runner-accordion">
+          <section data-testid="local-runner-pairing">
+            <div className="flex items-start justify-between gap-4">
+              <p className="text-xs leading-5 text-muted">Development fallback for local web testing. Start <code>vdt runner start</code>, then enter its code.</p>
+              {runnerPairingToken ? <Button type="button" size="sm" data-testid="local-runner-unpair" onClick={() => void unpairRunner()}>Unpair</Button> : null}
+            </div>
+            {!runnerPairingToken ? <div className="mt-3 flex items-end gap-2">
+              <Field label="Pairing code"><TextInput data-testid="local-runner-pairing-code" value={pairingCode} inputMode="numeric" maxLength={6} placeholder="000000" onChange={(event) => setPairingCode(event.target.value.replace(/\D/g, "").slice(0, 6))} /></Field>
+              <Button type="button" data-testid="local-runner-pair" disabled={pairingCode.length !== 6 || isPairingRunner} onClick={() => void pairRunner(pairingCode)}>{isPairingRunner ? "Pairing…" : "Pair"}</Button>
+            </div> : null}
+            {runnerPairingStatus ? <ProviderTestStatusBanner className="mt-3" status={runnerPairingStatus} testId="local-runner-pairing-status" /> : null}
+          </section>
+        </AccordionSection>
+      ) : null}
     </div>
   );
 }

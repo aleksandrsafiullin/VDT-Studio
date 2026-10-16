@@ -57,8 +57,22 @@ describe("probeCursorAuth", () => {
     });
 
     expect(result.status).toBe("authentication_required");
-    expect(result.authSummary).toMatch(/sign-in required/i);
+    expect(result.authSummary).toMatch(/stored session.*could not verify/i);
     expect(result.diagnostics.join(" ")).toContain("unable to fetch user details");
+  });
+
+  it.each(["", "unexpected status text", "{}", '{"status":"unknown"}'])("does not mark unrecognized status output as ready: %s", async (stdout) => {
+    const result = await probeCursorAuth("/usr/bin/agent", {
+      execFileImpl: async () => ({ stdout, stderr: "" })
+    });
+    expect(result.status).toBe("installed");
+  });
+
+  it.each(["unauthenticated", "not_authenticated", "authentication_required"])("fails closed for negative status: %s", async (status) => {
+    const result = await probeCursorAuth("/usr/bin/agent", {
+      execFileImpl: async () => ({ stdout: JSON.stringify({ status }), stderr: "" })
+    });
+    expect(result.status).toBe("authentication_required");
   });
 
   it("maps login required from status stderr patterns", async () => {

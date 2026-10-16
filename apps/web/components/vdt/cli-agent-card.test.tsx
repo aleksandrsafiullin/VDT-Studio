@@ -115,6 +115,54 @@ describe("CliAgentCard", () => {
     expect(html).toContain("Billing and rate limits follow your Anthropic subscription");
   });
 
+  it("keeps removal and Test disabled during sign-in and retains a direct help link", () => {
+    const html = renderToStaticMarkup(
+      <CliAgentCard catalog={claudeCatalog}
+        detection={{ id: "claude", installed: true, executable: "/bin/claude", alias: "claude", version: "1", status: "authentication_required" }}
+        selected={false} modelSelection={{ source: "agent_default" }} discoveredModels={[]}
+        isTesting={false} isAuthenticating
+        authActionStatus={{ kind: "info", message: "Follow the provider guide." }}
+        onSelect={() => undefined} onTest={() => undefined} onAuthenticate={() => undefined}
+        onRemove={() => undefined} onModelSelectionChange={() => undefined} />
+    );
+    expect(html).toMatch(/data-testid="cli-agent-test-claude"[^>]*disabled/);
+    expect(html).toMatch(/data-testid="cli-agent-remove-claude"[^>]*disabled/);
+    expect(html).toMatch(/data-testid="cli-agent-authenticate-claude"[^>]*disabled/);
+    expect(html).toContain('data-testid="cli-agent-sign-in-guide-claude"');
+    expect(html).toContain('href="https://docs.anthropic.com/en/docs/claude-code"');
+    expect(html).toMatch(/<details\b[^>]*data-testid="cli-agent-details-claude"[^>]*>/);
+    expect(html).not.toMatch(/<details\b[^>]*\bopen=/);
+  });
+
+  it("labels a failed Test as retryable and keeps raw diagnostics in a disclosure", () => {
+    const html = renderToStaticMarkup(
+      <CliAgentCard catalog={codexCatalog}
+        detection={{ id: "codex", installed: true, executable: "/bin/codex", alias: "codex", version: "1", status: "ready", diagnostics: ["Raw diagnostic detail"] }}
+        selected modelSelection={{ source: "agent_default" }} discoveredModels={[]}
+        isTesting={false} testStatus={{ kind: "error", message: "Provider unavailable. Try again." }}
+        onSelect={() => undefined} onTest={() => undefined} onRemove={() => undefined} onModelSelectionChange={() => undefined} />
+    );
+    expect(html).toContain("Retry test");
+    expect(html).toMatch(/<details[\s\S]*Raw diagnostic detail[\s\S]*<\/details>/);
+    expect(html).not.toMatch(/<details\b[^>]*\bopen=/);
+    expect(hasNestedButtonMarkup(html)).toBe(false);
+  });
+
+  it("offers Sign in after a ready provider's Test fails and hides stale success banners", () => {
+    const html = renderToStaticMarkup(
+      <CliAgentCard catalog={cursorCatalog}
+        detection={{ id: "cursor-agent", installed: true, executable: "/bin/agent", alias: "agent", version: "1", status: "error" }}
+        selected modelSelection={{ source: "agent_default" }} discoveredModels={[]}
+        isTesting={false} testStatus={{ kind: "error", message: "AUTH_REQUIRED" }}
+        authActionStatus={{ kind: "success", message: "Old sign-in success" }}
+        onSelect={() => undefined} onTest={() => undefined} onAuthenticate={() => undefined} onModelSelectionChange={() => undefined} />
+    );
+    expect(html).toContain('data-testid="cli-agent-authenticate-cursor-agent"');
+    expect(html).toContain("Retry test");
+    expect(html).not.toContain("Old sign-in success");
+    expect(html).not.toContain('data-testid="provider-auth-status-cursor-agent"');
+  });
+
   it("exposes async test status to assistive tech with distinct info styling", () => {
     const html = renderToStaticMarkup(
       <CliAgentCard
@@ -205,7 +253,7 @@ describe("CliAgentCard", () => {
     expect(html).toContain('data-testid="cli-agent-authenticate-cursor-agent"');
     expect(html).toContain('data-readiness="warning"');
     expect(html).toContain("Sign in required");
-    expect(html).toContain("Authenticate");
+    expect(html).toContain("Sign in");
     expect(html).toContain("Cursor sign-in required");
     expect(html).toContain("Sign in to load models");
     expect(html).toContain("Compatible");

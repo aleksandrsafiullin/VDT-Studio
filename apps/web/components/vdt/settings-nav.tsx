@@ -35,7 +35,7 @@ export const SETTINGS_SECTION_META: Record<
 > = {
   execution: {
     title: "Execution mode",
-    subtitle: "Choose API keys or desktop local AI."
+    subtitle: "Choose a provider CLI, a local model server, or API keys."
   },
   memory: {
     title: "Memory",

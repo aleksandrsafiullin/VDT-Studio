@@ -46,6 +46,20 @@ describe("probeCodexAuth", () => {
     expect(result.authSummary).toMatch(/authenticated/i);
   });
 
+  it.each(["", "{}", '{"status":"unknown"}', '{"authenticated":"unknown"}'])("does not mark unrecognized status output as ready: %s", async (stdout) => {
+    const result = await probeCodexAuth("/usr/bin/codex", {
+      execFileImpl: async () => ({ stdout, stderr: "" })
+    });
+    expect(result.status).toBe("installed");
+  });
+
+  it.each(['{"status":"unauthenticated"}', "Not logged in", "Not authenticated"])("fails closed for negative status output: %s", async (stdout) => {
+    const result = await probeCodexAuth("/usr/bin/codex", {
+      execFileImpl: async () => ({ stdout, stderr: "" })
+    });
+    expect(result.status).toBe("authentication_required");
+  });
+
   it("falls back to text login status when --json is unsupported", async () => {
     const result = await probeCodexAuth("/usr/bin/codex", {
       execFileImpl: mockExec({

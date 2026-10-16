@@ -21,6 +21,10 @@ The Rust command implementations route through `src-tauri/src/sidecar_host.rs`, 
 
 `open_provider_auth` is a narrow provider-authentication command. For Cursor, the sidecar resolves the executable from reviewed aliases and runs only the manifest-owned `login` argument, with a bounded timeout and output buffer. The provider owns the browser confirmation and credential storage; after the child exits, the runtime verifies the CLI session before reporting success. Executable paths, arguments, environment values and credentials are never accepted from the frontend. Providers without a reviewed managed login command remain instruction-only and return provider-owned guidance/documentation.
 
+Settings `ai_test_backend` checks subscription CLI/session readiness using the reviewed provider probe and succeeds only for an installed backend reporting `ready`. It does not submit an additional VDT completion. Adapters without a usable status command may still use their bounded minimal connection prompt. Local HTTP backends retain the registered schema connection probe. The frontend rejects missing, malformed or unsuccessful Test/Auth responses and preserves native IPC error messages as actionable errors instead of treating an empty response as success.
+
+Codex detection and default execution share the node-only installed-executable selector. It chooses the newest recognizable safe Codex CLI already on the host's `PATH`, using bounded isolated `--version` probes; model discovery and detected session-binding wiring then use that selected executable. Equivalent versions retain `PATH` priority, and a stable version outranks its same-core prereleases. No app-specific executable path, installation/update step, model catalog or frontend executable override is introduced. Native Windows process-tree cleanup and packaged desktop execution of this selection path still need platform evidence.
+
 ## Disabled Surfaces
 
 The desktop scaffold intentionally does not enable generic native plugins or commands for:

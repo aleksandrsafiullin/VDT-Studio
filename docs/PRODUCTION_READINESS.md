@@ -25,6 +25,8 @@ The repository does not contain the previously referenced `Technical Specificati
 
 No credentialed live-provider run passed during this review. Cursor and Codex agent-decision-v2 qualification attempts were executed but failed structured terminal-output validation; browser E2E, native installer and clean-machine desktop tests were not executed. Windows W0.1 storage durability is unverified.
 
+Codex now selects the newest recognizable safe installation already on host `PATH` consistently for detection and default execution. A newer CLI's model-list metadata can expose models absent from an older installation; metadata-only catalog checks do not establish inference, VDT schema quality or execution-profile qualification. Native Windows process-tree cleanup and packaged desktop validation of this selector remain unverified, and provider certification statuses are unchanged.
+
 ## Implemented Alpha Foundations
 
 - Project/VDT workspace, local SQLite metadata and hashed revision files.
@@ -86,6 +88,12 @@ receipt.
 The 2026-08-10 focused data-harness/API checks close the known 4096-byte preview defect in the current working tree: text parsers prefer immutable full bytes, and a 1,000-row CSV regression passes. The incoming-category path also refuses to materialize Baselines from tables marked `truncated`.
 
 This is not release evidence: the checks ran on local Node 26 outside the supported Node 24 range, adapter snapshots do not yet expose separate original/parsed/sample counts everywhere, and the broader upload security and parser-isolation gates remain open.
+
+## Working-Tree File-Based Incoming KPI Workflow
+
+The local experimental file workflow retains immutable project/VDT-owned originals, supports exact-byte download/reanalysis after cache reset, validates strict ownership/path/hash boundaries and rejects hosted data access. It adds complete multi-level additive numeric/duration partitions, explicit compatible-unit, timestamp and per-day decisions, required mapping/provider questions, server-side full-byte review/stage reruns and provenance in every generated KPI Description. Hierarchies are capped at four category levels and 200 nodes; invalid/truncated rows and incomplete coverage block staging rather than producing partial children. Card movement is excluded from semantic stale-target checks.
+
+This is an implementation boundary, not new release certification. Focused API/storage/domain/UI checks are required after independent code review. General executable mappings, automatic refresh/joins, adapter-wide source/sample counts, isolated parsing, ingress budgets, lifecycle/encryption and authenticated hosted authorization remain open. Legacy global discovery data is preserved for trusted-local compatibility.
 
 ## Working-Tree Agent Decision V2 Update
 
@@ -179,7 +187,7 @@ revision CAS.
 
 The current Next.js high findings require at least `next@15.5.21`; the dependency remains at `15.5.19` in this evidence run.
 
-The upload path also lacks pre-buffer streaming limits, archive expansion budgets, parser isolation, a server-issued actor/ownership boundary, retention/delete and encryption policy. Hosted/public uploads must remain disabled until these findings and controls are closed.
+Scoped upload/read/edit/stage/download/list routes now require trusted local app mode and verify SQLite project/VDT ownership plus safe IDs and source hashes. The upload path still lacks pre-buffer streaming limits, archive expansion budgets, parser isolation, authenticated hosted actor authorization, retention/delete and encryption policy. Hosted/public uploads must remain disabled until these findings and controls are closed.
 
 ## P1 Product Blockers
 
@@ -191,7 +199,7 @@ The upload path also lacks pre-buffer streaming limits, archive expansion budget
 - The target single-copy, agent-owned selection repository and CAS/read-ledger contract are documented but not implemented.
 - Recipe completeness does not guarantee formula closure.
 - Web research stops at snippets and has no immutable evidence/benchmark model.
-- Data mappings are not reusable executable bindings. The narrow incoming-category path can materialize an initial filtered aggregate, but refresh, reconciliation, period/grain semantics and general metric execution remain absent.
+- Data mappings are not reusable executable bindings. The bounded incoming additive-sum path materializes a complete hierarchy with explicit period/per-day choices during analysis/review (the period describes the full extract and denominator rather than filtering rows), but refresh, automatic reconciliation, general grain semantics and general metric execution remain absent.
 - The composer file flow can use the configured provider for semantic review and category-to-incoming-KPI proposals, but it remains isolated from the main skills/research loop.
 - Real Excel report layouts, locale numbers, quality rules and lineage are incomplete.
 - SQLite and localStorage remain competing project-state sources.

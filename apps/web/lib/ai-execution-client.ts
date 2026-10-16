@@ -734,15 +734,44 @@ async function readJsonResponse<T>(response: Response, fallbackMessage: string):
   }
 
   if (!response.ok) {
+    const responseError = asRecord(payload)?.error;
     const error =
-      typeof payload.error === "string"
-        ? payload.error
-        : payload.error && typeof payload.error === "object" && "message" in payload.error
-          ? String((payload.error as { message?: unknown }).message)
+      typeof responseError === "string"
+        ? responseError
+        : typeof asRecord(responseError)?.message === "string"
+          ? String(asRecord(responseError)?.message)
           : fallbackMessage;
     throw new Error(error);
   }
   return payload;
+}
+
+function operationError(value: unknown, fallback: string): Error {
+  const error = asRecord(value)?.error;
+  const message = typeof error === "string" ? error : asRecord(error)?.message;
+  return new Error(typeof message === "string" && message.trim() ? message : fallback);
+}
+
+function checkedBackendTestResult(value: unknown): BackendTestResult {
+  if (asRecord(value)?.ok !== true) throw operationError(value, "Backend test did not return a verified result. Try again.");
+  return { ok: true };
+}
+
+function checkedProviderAuthResult(value: unknown, backendId: string): ProviderAuthActionResult {
+  const result = asRecord(value);
+  if (result?.ok !== true) throw operationError(value, "Provider authentication failed.");
+  const hasInstructions = typeof result.instructions === "string" && result.instructions.trim().length > 0;
+  const hasDocs = typeof result.docsUrl === "string" && result.docsUrl.trim().length > 0;
+  if ((result.backendId !== undefined && result.backendId !== backendId) ||
+      (result.action !== "authenticated" && result.action !== "instructions") ||
+      (result.action === "instructions" && !hasInstructions && !hasDocs)) {
+    throw new Error("Provider authentication returned an invalid result. Rescan and try again.");
+  }
+  return result as ProviderAuthActionResult;
+}
+
+function desktopOperationError(error: unknown, fallback: string): Error {
+  return error instanceof Error ? error : new Error(typeof error === "string" && error.trim() ? error : fallback);
 }
 
 abstract class BaseWebAiExecutionClient implements AiExecutionClient {
@@ -775,8 +804,7 @@ abstract class BaseWebAiExecutionClient implements AiExecutionClient {
       })
     });
     const payload = await readJsonResponse<{ ok?: boolean; error?: string }>(response, "Backend test failed.");
-    if (!payload.ok) throw new Error(payload.error ?? "Backend test failed.");
-    return { ok: true };
+    return checkedBackendTestResult(payload);
   }
 
   async listModels(backendId: string): Promise<ModelOption[]> {
@@ -992,6 +1020,11 @@ export class HostedApiExecutionClient extends BaseWebAiExecutionClient {
     return { agents: placeholderAgents(HOSTED_WEB_LOCAL_AI_MESSAGE, agentId), modelsByAgent: {} };
   }
 
+  override async testBackend(backendId: string, request: BackendTestRequest): Promise<BackendTestResult> {
+    if (!isApiBackendId(backendId) || !isApiBackendId(request.providerId)) throw new Error(HOSTED_WEB_LOCAL_AI_MESSAGE);
+    return super.testBackend(backendId, request);
+  }
+
   override async openProviderAuth(backendId: string): Promise<ProviderAuthActionResult> {
     void backendId;
     throw new Error(HOSTED_WEB_LOCAL_AI_MESSAGE);
@@ -1042,7 +1075,7 @@ export class DevelopmentRunnerClient extends BaseWebAiExecutionClient {
   }
 
   override async testBackend(backendId: string, request: BackendTestRequest): Promise<BackendTestResult> {
-    if (isApiBackendId(backendId) || isApiBackendId(request.providerId)) return super.testBackend(backendId, request);
+    if (isApiBackendId(backendId)) return super.testBackend(backendId, request);
     const response = await this.fetcher("/api/ai/dev-runtime", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1052,8 +1085,7 @@ export class DevelopmentRunnerClient extends BaseWebAiExecutionClient {
       response,
       "Backend test failed."
     );
-    if (!payload.ok) throw new Error("Backend test failed.");
-    return { ok: true };
+    return checkedBackendTestResult(payload);
   }
 
   override async complete(request: AiCompletionRequest, options?: AbortSignal | AiExecutionOptions): Promise<RunAiTaskResult> {
@@ -1346,11 +1378,7 @@ export class DevelopmentRunnerClient extends BaseWebAiExecutionClient {
     const payload = await readJsonResponse<ProviderAuthActionResult & {
       error?: string | { message?: string };
     }>(response, "Provider authentication failed.");
-    if (!payload.ok) {
-      const error = typeof payload.error === "object" ? payload.error?.message : payload.error;
-      throw new Error(error ?? "Provider authentication failed.");
-    }
-    return payload;
+    return checkedProviderAuthResult(payload, backendId);
   }
 }
 
@@ -1383,8 +1411,11 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
 
   override async testBackend(backendId: string, request: BackendTestRequest): Promise<BackendTestResult> {
     if (isApiBackendId(backendId)) return super.testBackend(backendId, request);
-    const result = await this.requireInvoke()("ai_test_backend", { backendId }) as BackendTestResult | void;
-    return result && typeof result === "object" && "ok" in result ? { ok: Boolean(result.ok) } : { ok: true };
+    try {
+      return checkedBackendTestResult(await this.requireInvoke()("ai_test_backend", { backendId }));
+    } catch (error) {
+      throw desktopOperationError(error, "Backend test failed.");
+    }
   }
 
   override async listModels(backendId: string): Promise<ModelOption[]> {
@@ -1618,7 +1649,11 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
   }
 
   override async openProviderAuth(backendId: string): Promise<ProviderAuthActionResult> {
-    return await this.requireInvoke()("open_provider_auth", { backendId }) as ProviderAuthActionResult;
+    try {
+      return checkedProviderAuthResult(await this.requireInvoke()("open_provider_auth", { backendId }), backendId);
+    } catch (error) {
+      throw desktopOperationError(error, "Provider authentication failed.");
+    }
   }
 }
 

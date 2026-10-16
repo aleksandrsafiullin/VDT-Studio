@@ -32,6 +32,7 @@ import {
 } from "@vdt-studio/ai-harness";
 import { AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/timeout-limits";
 import { makeId } from "@/lib/id";
+import { fileImportContextError, type FileImportTargetContext } from "@/components/data-import/import-context";
 import {
   buildAgentPublicStartRequest
 } from "@/lib/agent-start-resolver";
@@ -70,9 +71,16 @@ import {
 } from "./ui-preferences";
 import { collectExistingPositions } from "./layout-positions";
 import { scrubPersistedProviderSecrets } from "./provider-persistence";
+import { normalizeRemovedCliAgentIds, reconcileRemovedCliSelections } from "@/lib/cli-subscription-preferences";
+import {
+  resolveExecutionCategory,
+  resolveSavedLocalModelSelection,
+  selectExecutionCategory,
+  selectLocalModelPreset,
+  type ExecutionCategory
+} from "@/lib/execution-category";
 import {
   applyGatewayPreset,
-  applyLocalRunnerPreset,
   DEFAULT_EXECUTION_SETTINGS,
   DEFAULT_PRESET_BY_PROTOCOL,
   GATEWAY_TO_PRESET,
@@ -363,6 +371,7 @@ interface VdtStudioState {
   providerId: ProviderId;
   providerConfig: ProviderConfigState;
   executionSettings: ExecutionSettings;
+  removedCliAgentIds: CliAgentId[];
   cliDetectionAgents?: CliAgentDetectionSnapshot[] | undefined;
   cliDetectionError?: string | undefined;
   isRescanningClis: boolean;
@@ -391,6 +400,7 @@ interface VdtStudioState {
   projectRevision: number;
   aiError?: string | undefined;
   pendingChangeSet?: VdtChangeSet | undefined;
+  pendingFileImport?: { changeSetId: string; context: FileImportTargetContext } | undefined;
   changeSetSelection: Set<string>;
   pendingAdvisoryResult?: AiAdvisoryResult | undefined;
   pendingAdvisoryTaskType?: RunAiActionTaskType | undefined;
@@ -406,11 +416,14 @@ interface VdtStudioState {
     value: ProviderConfigState[K]
   ) => void;
   setExecutionMode: (executionMode: ExecutionMode) => void;
+  setExecutionCategory: (category: ExecutionCategory) => void;
   setExecutionSettingsField: <K extends keyof ExecutionSettings>(
     field: K,
     value: ExecutionSettings[K]
   ) => void;
   setSelectedCliAgentId: (agentId: CliAgentId) => void;
+  removeCliAgent: (agentId: CliAgentId) => void;
+  restoreCliAgent: (agentId: CliAgentId) => void;
   setLocalRunnerPreset: (presetId: LocalRunnerPresetId) => void;
   setByokProtocol: (protocol: ByokProtocol) => void;
   setByokGateway: (gateway: ByokGateway) => void;
@@ -418,7 +431,8 @@ interface VdtStudioState {
   setMemoryModelMode: (mode: MemoryModelMode, cliAgentId?: CliAgentId) => void;
   setCliModelSelection: (selection: CliModelSelection) => void;
   setCliModelForAgent: (agentId: CliAgentId, selection: CliModelSelection) => void;
-  rescanClis: (agentId?: CliAgentId) => Promise<void>;
+  rescanClis: (agentId?: CliAgentId, options?: { fresh?: boolean; testRevision?: number }) => Promise<void>;
+  clearCliTestStatus: (agentId: CliAgentId) => void;
   testCli: (agentId: CliAgentId) => Promise<void>;
   pairRunner: (code: string) => Promise<void>;
   unpairRunner: () => Promise<void>;
@@ -501,7 +515,7 @@ interface VdtStudioState {
   cloneScenario: (scenarioId: string) => void;
   updateScenarioOverride: (scenarioId: string, nodeId: string, value?: number) => void;
   runAiAction: <T extends RunAiActionTaskType>(taskType: T, input: RunAiActionInput<T>) => Promise<void>;
-  stageDataDiscoveryChangeSet: (changeSet: VdtChangeSet) => void;
+  stageDataDiscoveryChangeSet: (changeSet: VdtChangeSet, context?: FileImportTargetContext) => boolean;
   toggleChangeSelection: (changeId: string) => void;
   applyPendingChangeSet: () => void;
   discardPendingChangeSet: () => void;
@@ -822,6 +836,7 @@ function layoutProjectGraph(project: VdtProject, ui: UiPreferences = DEFAULT_UI)
 function clearPendingAiActionState() {
   return {
     pendingChangeSet: undefined,
+    pendingFileImport: undefined,
     changeSetSelection: new Set<string>(),
     pendingAdvisoryResult: undefined,
     pendingAdvisoryTaskType: undefined,
@@ -832,7 +847,21 @@ function clearPendingAiActionState() {
   };
 }
 
+function clearPendingFileImportState(state: Pick<VdtStudioState, "pendingFileImport" | "pendingChangeSet">) {
+  return state.pendingFileImport?.changeSetId === state.pendingChangeSet?.id && state.pendingFileImport
+    ? clearPendingAiActionState()
+    : { pendingFileImport: undefined };
+}
+
 let activeAgentEventUnsubscribe: (() => void) | undefined;
+let cliScanInFlight: { agentId: CliAgentId | undefined; promise: Promise<void> } | undefined;
+const cliVerificationRevisionByAgent: Partial<Record<CliAgentId, number>> = {};
+
+function invalidateCliVerification(agentId: CliAgentId) {
+  const revision = (cliVerificationRevisionByAgent[agentId] ?? 0) + 1;
+  cliVerificationRevisionByAgent[agentId] = revision;
+  return revision;
+}
 
 function generateRunId() {
   return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -850,11 +879,14 @@ function describeBackendLabel(
     ? configuredBackendId.trim()
     : providerId;
 
-  if (executionSettings.executionMode === "local_cli" && executionSettings.selectedCliAgentId) {
+  if (resolveExecutionCategory(executionSettings) === "cli_subscriptions" && executionSettings.selectedCliAgentId) {
     return {
       backendId,
       backendLabel: getCliCatalogEntry(executionSettings.selectedCliAgentId).displayName
     };
+  }
+  if (resolveExecutionCategory(executionSettings) === "local_models") {
+    return { backendId, backendLabel: formatExecutionModeSummary(executionSettings).primary };
   }
 
   return {
@@ -1801,6 +1833,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         timeoutSec: 60
       },
       executionSettings: { ...DEFAULT_EXECUTION_SETTINGS },
+      removedCliAgentIds: [],
       cliDetectionAgents: undefined,
       cliDetectionError: undefined,
       isRescanningClis: false,
@@ -1952,6 +1985,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       },
       clearHomeWorkspaceContext: () =>
         set((state) => ({
+          ...clearPendingFileImportState(state),
           workspace: {
             ...state.workspace,
             activeProjectId: undefined,
@@ -1962,6 +1996,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         })),
       closeWorkspaceVdtEditor: () =>
         set((state) => ({
+          ...clearPendingFileImportState(state),
           workspace: {
             ...state.workspace,
             activeVdtId: undefined,
@@ -1971,6 +2006,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         })),
       setWorkspacePanel: (panel) =>
         set((state) => ({
+          ...(panel === "project" ? clearPendingFileImportState(state) : {}),
           workspace: {
             ...state.workspace,
             activePanel: panel === "vdt" && !hasActiveWorkspaceVdt(state.workspace) ? "project" : panel,
@@ -2277,6 +2313,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           return false;
         }
         set((state) => ({
+          ...clearPendingFileImportState(state),
           workspace: {
             ...state.workspace,
             activePanel: "project",
@@ -2606,12 +2643,22 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           ...withSyncedLegacyProvider({ ...state.executionSettings, executionMode }, state.providerConfig),
           byokFieldErrors: undefined
         })),
+      setExecutionCategory: (category) => set((state) => ({
+        ...withSyncedLegacyProvider(
+          selectExecutionCategory(state.executionSettings, category, state.cliDetectionAgents, state.removedCliAgentIds),
+          state.providerConfig
+        ),
+        byokFieldErrors: undefined
+      })),
       setExecutionSettingsField: (field, value) =>
         set((state) => ({
           ...withSyncedLegacyProvider(
             {
               ...state.executionSettings,
-              [field]: value
+              [field]: value,
+              ...(field === "localModel" && resolveExecutionCategory(state.executionSettings) === "local_models"
+                ? { savedLocalModelSelection: { ...resolveSavedLocalModelSelection(state.executionSettings), model: value as string | undefined } }
+                : {})
             },
             state.providerConfig
           ),
@@ -2619,10 +2666,12 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         })),
       setSelectedCliAgentId: (agentId) =>
         set((state) => {
+          if (state.removedCliAgentIds.includes(agentId)) return {};
           const command = resolveCliCommandForAgent(agentId, state.cliDetectionAgents);
           const cliModelSelection =
             state.cliModelByAgent[agentId] ??
-            state.executionSettings.cliModelSelection ?? { source: "agent_default" };
+            (state.executionSettings.selectedCliAgentId === agentId ? state.executionSettings.cliModelSelection : undefined) ??
+            { source: "agent_default" };
 
           return withSyncedLegacyProvider(
             {
@@ -2632,15 +2681,43 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               localRunnerPresetId: "custom_cli_json",
               runnerProviderId: "cli_stub",
               command,
-              cliModelSelection
+              cliModelSelection,
+              savedLocalModelSelection: resolveSavedLocalModelSelection(state.executionSettings)
             },
             state.providerConfig
           );
         }),
+      removeCliAgent: (agentId) =>
+        set((state) => {
+          if (state.removedCliAgentIds.includes(agentId)) return {};
+          invalidateCliVerification(agentId);
+          const removedCliAgentIds = [...state.removedCliAgentIds, agentId];
+          const executionSettings = reconcileRemovedCliSelections(
+            state.executionSettings, removedCliAgentIds, state.cliDetectionAgents, state.cliModelByAgent
+          );
+          return {
+            ...withSyncedLegacyProvider(executionSettings, state.providerConfig),
+            removedCliAgentIds,
+            cliTestStatusByAgent: { ...state.cliTestStatusByAgent, [agentId]: undefined }
+          };
+        }),
+      restoreCliAgent: (agentId) =>
+        set((state) => {
+          invalidateCliVerification(agentId);
+          return {
+            removedCliAgentIds: state.removedCliAgentIds.filter((id) => id !== agentId),
+            cliDetectionAgents: state.cliDetectionAgents?.map((agent) => agent.id === agentId && agent.installed
+              ? { ...agent, status: "installed" as const, authSummary: "Use Test to verify provider access." }
+              : agent),
+            cliTestStatusByAgent: { ...state.cliTestStatusByAgent, [agentId]: undefined }
+          };
+        }),
       setLocalRunnerPreset: (presetId) =>
         set((state) =>
           withSyncedLegacyProvider(
-            applyLocalRunnerPreset(state.executionSettings, presetId),
+            presetId === "custom_cli_json"
+              ? selectExecutionCategory(state.executionSettings, "cli_subscriptions", state.cliDetectionAgents, state.removedCliAgentIds)
+              : selectLocalModelPreset(state.executionSettings, presetId),
             state.providerConfig
           )
         ),
@@ -2689,8 +2766,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         set((state) => ({
           executionSettings: {
             ...state.executionSettings,
-            memoryModelMode: mode,
-            memoryCliAgentId: mode === "selected_cli" ? cliAgentId : undefined
+            memoryModelMode: cliAgentId && state.removedCliAgentIds.includes(cliAgentId) ? "same_as_chat" : mode,
+            memoryCliAgentId: mode === "selected_cli" && cliAgentId && !state.removedCliAgentIds.includes(cliAgentId) ? cliAgentId : undefined
           }
         })),
       setCliModelSelection: (selection) =>
@@ -2716,10 +2793,24 @@ export const useVdtStudioStore = create<VdtStudioState>()(
 
           return {
             cliModelByAgent,
-            executionSettings
+            executionSettings,
+            cliTestStatusByAgent: { ...state.cliTestStatusByAgent, [agentId]: undefined }
           };
         }),
-      rescanClis: async (agentId) => {
+      clearCliTestStatus: (agentId) => set((state) => ({
+        cliTestStatusByAgent: { ...state.cliTestStatusByAgent, [agentId]: undefined }
+      })),
+      rescanClis: async (agentId, options = {}) => {
+        const pendingScan = cliScanInFlight;
+        if (pendingScan) {
+          await pendingScan.promise;
+          if (!options.fresh && pendingScan.agentId === agentId) return;
+          return get().rescanClis(agentId, { ...options, fresh: false });
+        }
+        let finishScan!: () => void;
+        const scan = { agentId, promise: new Promise<void>((resolve) => { finishScan = resolve; }) };
+        cliScanInFlight = scan;
+        const revisionsAtStart = { ...cliVerificationRevisionByAgent };
         set({
           isRescanningClis: true,
           rescanningCliId: agentId,
@@ -2730,14 +2821,33 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           const payload = await createAiExecutionClient().detectSubscriptionClis(agentId);
 
           set((state) => {
+            const freshAgents = payload.agents.filter((agent) =>
+              (revisionsAtStart[agent.id] ?? 0) === (cliVerificationRevisionByAgent[agent.id] ?? 0)
+            ).map((agent) => {
+              const verifiesCurrentTest = agent.id === agentId && options.testRevision !== undefined &&
+                options.testRevision === cliVerificationRevisionByAgent[agent.id];
+              return state.isTestingCliByAgent[agent.id] && !verifiesCurrentTest && agent.status === "ready"
+                ? { ...agent, status: "installed" as const, authSummary: "Provider access is being verified." }
+                : agent;
+            });
             let cliDetectionAgents: CliAgentDetectionSnapshot[];
 
             if (!agentId) {
-              cliDetectionAgents = payload.agents;
+              const changedDuringScan = state.cliDetectionAgents?.filter((agent) =>
+                (revisionsAtStart[agent.id] ?? 0) !== (cliVerificationRevisionByAgent[agent.id] ?? 0)
+              ) ?? [];
+              cliDetectionAgents = [...freshAgents, ...changedDuringScan];
             } else {
-              const nextAgent = payload.agents[0];
+              const nextAgent = freshAgents.find((agent) => agent.id === agentId);
               if (!nextAgent) {
+                const changedDuringScan = (revisionsAtStart[agentId] ?? 0) !== (cliVerificationRevisionByAgent[agentId] ?? 0);
                 return {
+                  ...(changedDuringScan ? {} : {
+                    cliDetectionAgents: state.cliDetectionAgents?.map((agent) => agent.id === agentId
+                      ? { ...agent, status: "unavailable" as const, authSummary: "The runtime did not return a verification result. Use Test to retry." }
+                      : agent),
+                    cliDetectionError: "The runtime did not return a verification result."
+                  }),
                   isRescanningClis: false,
                   rescanningCliId: undefined
                 };
@@ -2746,11 +2856,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               cliDetectionAgents = mergeCliDetectionAgents(state.cliDetectionAgents, nextAgent, agentId);
             }
 
-            const patchedExecutionSettings = patchSelectedCliCommandAfterRescan(
+            const patchedExecutionSettings = resolveExecutionCategory(state.executionSettings) === "cli_subscriptions" ? patchSelectedCliCommandAfterRescan(
               state.executionSettings,
-              cliDetectionAgents,
+              cliDetectionAgents.filter((agent) => !state.removedCliAgentIds.includes(agent.id) &&
+                (state.executionSettings.selectedCliAgentId || state.removedCliAgentIds.length === 0 ||
+                  (agent.installed && agent.status === "ready"))),
               agentId
-            );
+            ) : state.executionSettings;
 
             const scanUpdate = {
               cliDetectionAgents,
@@ -2775,19 +2887,31 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             };
           });
         } catch (error) {
-          set({
-            cliDetectionAgents: [],
-            cliDetectionError: error instanceof Error ? error.message : "CLI detection failed.",
+          const message = error instanceof Error ? error.message : "CLI detection failed.";
+          set((state) => ({
+            cliDetectionAgents: agentId
+              ? state.cliDetectionAgents?.map((agent) => agent.id === agentId &&
+                  (revisionsAtStart[agentId] ?? 0) === (cliVerificationRevisionByAgent[agentId] ?? 0)
+                ? { ...agent, status: "unavailable" as const, authSummary: "Provider access could not be verified. Use Test to retry.", error: message }
+                : agent)
+              : [],
+            cliDetectionError: message,
             isRescanningClis: false,
             rescanningCliId: undefined
-          });
+          }));
+        } finally {
+          if (cliScanInFlight === scan) cliScanInFlight = undefined;
+          finishScan();
         }
       },
       testCli: async (agentId) => {
         const state = get();
+        if (state.isTestingCliByAgent[agentId] || state.removedCliAgentIds.includes(agentId)) return;
+        let testRevision = invalidateCliVerification(agentId);
         const catalog = getCliCatalogEntry(agentId);
         const timeoutSec = state.executionSettings.timeoutSec ?? 60;
-        const modelSelection = state.cliModelByAgent[agentId];
+        const modelSelection = state.cliModelByAgent[agentId] ??
+          (state.executionSettings.selectedCliAgentId === agentId ? state.executionSettings.cliModelSelection : undefined);
         const model = modelSelection?.source === "custom" ? modelSelection.customModel : undefined;
         const testFingerprint = JSON.stringify({ agentId, model, timeoutSec });
         const resolved = resolveExecutionSettings({
@@ -2801,6 +2925,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         });
 
         set((current) => ({
+          cliDetectionAgents: current.cliDetectionAgents?.map((agent) => agent.id === agentId && agent.installed
+            ? { ...agent, status: "installed" as const, authSummary: "Provider access is being verified.", error: undefined }
+            : agent),
           isTestingCliByAgent: {
             ...current.isTestingCliByAgent,
             [agentId]: true
@@ -2818,27 +2945,42 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           if (needsPairing && !state.runnerPairingToken) {
             throw new Error("Pair the local runner before testing a subscription backend.");
           }
-          await createAiExecutionClient().testBackend(String(resolved.providerConfig?.backendId ?? agentId), {
+          const result = await createAiExecutionClient().testBackend(String(resolved.providerConfig?.backendId ?? agentId), {
             providerId: resolved.providerId,
             providerConfig: {
               ...resolved.providerConfig,
               ...(needsPairing ? { pairingToken: state.runnerPairingToken } : {})
             }
           });
-
-          nextStatus = {
-            kind: "success",
-            message: `${catalog.displayName} connection test passed.`
-          };
+          if (cliVerificationRevisionByAgent[agentId] !== testRevision || get().removedCliAgentIds.includes(agentId)) return;
+          if (!result.ok) throw new Error(`${catalog.displayName} did not confirm CLI access. Try again.`);
+          await get().rescanClis(agentId, { fresh: true, testRevision });
+          if (cliVerificationRevisionByAgent[agentId] !== testRevision || get().removedCliAgentIds.includes(agentId)) return;
+          const verification = get();
+          const detection = verification.cliDetectionAgents?.find((agent) => agent.id === agentId);
+          nextStatus = verification.cliDetectionError
+            ? { kind: "error", message: `CLI access could not be verified. ${verification.cliDetectionError} Retry Test.` }
+            : !verification.isRescanningClis && detection?.installed && detection.status === "ready"
+              ? { kind: "success", message: `${catalog.displayName}: CLI access verified. The provider reports an active session.` }
+              : { kind: "info", message: "CLI access is not confirmed. Use Sign in if needed, then retry Test." };
         } catch (error) {
           const message = error instanceof Error ? error.message : "CLI test failed.";
+          if (cliVerificationRevisionByAgent[agentId] === testRevision && !get().removedCliAgentIds.includes(agentId)) {
+            testRevision = invalidateCliVerification(agentId);
+            set((current) => ({
+              cliDetectionAgents: current.cliDetectionAgents?.map((agent) => agent.id === agentId && agent.installed
+                ? { ...agent, status: "error" as const, authSummary: "Provider access could not be verified. Reconnect with Sign in or retry Test.", error: message }
+                : agent)
+            }));
+          }
           nextStatus = {
             kind: "error",
             message
           };
         } finally {
           const currentState = get();
-          const currentModelSelection = currentState.cliModelByAgent[agentId];
+          const currentModelSelection = currentState.cliModelByAgent[agentId] ??
+            (currentState.executionSettings.selectedCliAgentId === agentId ? currentState.executionSettings.cliModelSelection : undefined);
           const currentFingerprint = JSON.stringify({
             agentId,
             model: currentModelSelection?.source === "custom" ? currentModelSelection.customModel : undefined,
@@ -2851,7 +2993,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               [agentId]: false
             },
             cliTestStatusByAgent:
-              currentFingerprint === testFingerprint
+              currentFingerprint === testFingerprint && cliVerificationRevisionByAgent[agentId] === testRevision &&
+              !currentState.removedCliAgentIds.includes(agentId)
                 ? {
                     ...current.cliTestStatusByAgent,
                     [agentId]: nextStatus
@@ -4052,9 +4195,16 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           });
         }
       },
-      stageDataDiscoveryChangeSet: (changeSet) => {
+      stageDataDiscoveryChangeSet: (changeSet, context) => {
+        const current = get();
+        const contextError = context ? fileImportContextError(context, current.project, current.workspace) : undefined;
+        if (contextError) {
+          set({ aiActionError: contextError });
+          return false;
+        }
         set((state) => ({
           pendingChangeSet: changeSet,
+          pendingFileImport: context ? { changeSetId: changeSet.id, context } : undefined,
           changeSetSelection: collectChangeEntryIds(changeSet),
           highlightedNodeIds: computeHighlightedNodeIds(state.project, changeSet),
           pendingAdvisoryResult: undefined,
@@ -4064,9 +4214,14 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           selectedPanelTab: "ai",
           aiActionError: undefined
         }));
+        return true;
       },
       toggleChangeSelection: (changeId) =>
         set((state) => {
+          // File hierarchies include parent formulas, sources and mappings as one dependent group.
+          if (state.pendingChangeSet?.additions.some((node) => node.tags?.includes("incoming_kpi_breakdown"))) {
+            return { changeSetSelection: state.changeSetSelection.has(changeId) ? new Set<string>() : collectChangeEntryIds(state.pendingChangeSet) };
+          }
           const changeSetSelection = new Set(state.changeSetSelection);
           if (changeSetSelection.has(changeId)) {
             changeSetSelection.delete(changeId);
@@ -4080,6 +4235,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         set((state) => {
           if (!state.pendingChangeSet || state.changeSetSelection.size === 0) {
             return {};
+          }
+          if (state.pendingFileImport?.changeSetId === state.pendingChangeSet.id) {
+            const contextError = fileImportContextError(state.pendingFileImport.context, state.project, state.workspace);
+            if (contextError) return { aiActionError: contextError };
           }
 
           const taskType = state.pendingChangeSet.taskType;
@@ -4204,6 +4363,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         providerId: state.providerId,
         providerConfig: persistedProviderConfig(state.providerConfig),
         executionSettings: persistedExecutionSettings(state.executionSettings),
+        removedCliAgentIds: state.removedCliAgentIds,
         ui: state.ui,
         generateActivity: state.generateActivity,
         agentChatHistory: state.agentChatHistory,
@@ -4217,11 +4377,12 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         const persisted = persistedState as Partial<VdtStudioState> | undefined;
         const providerConfig = persistedProviderConfig(persisted?.providerConfig ?? currentState.providerConfig);
         const ui = mergeUiPreferences(persisted?.ui);
-        const executionSettings = reconcilePersistedExecutionSettings(
+        const removedCliAgentIds = normalizeRemovedCliAgentIds(persisted?.removedCliAgentIds);
+        const executionSettings = reconcileRemovedCliSelections(reconcilePersistedExecutionSettings(
           persisted?.providerId,
           providerConfig,
           persisted?.executionSettings
-        );
+        ), removedCliAgentIds);
         const synced = syncLegacyProviderFromExecutionSettings(executionSettings, providerConfig);
         const project = ensureScenario(persisted?.project ?? currentState.project);
         const mergedWorkspace = {
@@ -4255,6 +4416,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           providerId: synced.providerId,
           providerConfig: persistedProviderConfig(synced.providerConfig as ProviderConfigState),
           executionSettings,
+          removedCliAgentIds,
           ui,
           generateActivity,
           agentChatHistory: persisted?.agentChatHistory ?? [],

@@ -145,6 +145,17 @@ describe("LocalModelCards", () => {
 });
 
 describe("LocalCliSettings detection states", () => {
+  it("separates intentionally removed providers from installed and installable lists", () => {
+    const state = resolveCliSettingsDetectionState([
+      { id: "claude", installed: true, alias: "claude", executable: "/bin/claude", version: "1", status: "authentication_required" },
+      { id: "codex", installed: false, alias: null, executable: null, version: null, status: "not_installed" }
+    ], false, undefined, ["claude", "codex"]);
+    expect(state.installedAgents).toEqual([]);
+    expect(state.notInstalledAgents).toEqual([]);
+    expect(state.removedAgents.map((entry) => entry.id)).toEqual(["claude", "codex"]);
+    expect(state.showInstallOptions).toBe(false);
+  });
+
   it("keeps install options hidden while scanning", () => {
     expect(resolveCliSettingsDetectionState(undefined, true)).toMatchObject({
       scanPending: true,

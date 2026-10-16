@@ -3,7 +3,7 @@ import type { VdtSchemaId } from "../../schema-registry";
 import { assertArgsSafe } from "../security";
 import type { ExecFileProbe, SubscriptionCliAdapter, SubscriptionCliBuildArgsInput, SubscriptionCliModelProbeOptions } from "../types";
 import { probeCodexAuth } from "./auth";
-import { CODEX_BACKEND_ID, CODEX_FAST_SERVICE_TIER_ARGS } from "./constants";
+import { CODEX_BACKEND_ID, CODEX_FAST_SERVICE_TIER_ARGS, CODEX_MODEL_CATALOG_MAX_BYTES } from "./constants";
 import { parseCodexExecJson } from "./parser";
 import { evaluateCodexVersion, parseCodexVersionOutput } from "./version";
 
@@ -97,7 +97,7 @@ export async function listCodexModels(
   const execOptions = {
     encoding: "utf8",
     timeout: 10_000,
-    maxBuffer: 512 * 1024,
+    maxBuffer: CODEX_MODEL_CATALOG_MAX_BYTES,
     windowsHide: true,
     shell: false,
     ...(options.signal ? { signal: options.signal } : {})

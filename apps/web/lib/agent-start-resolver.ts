@@ -4,6 +4,7 @@ import type {
   VdtAgentPublicStartRequest
 } from "@/lib/agent-client";
 import type { ExecutionSettings } from "@/lib/execution-mode-catalog";
+import { resolveExecutionCategory } from "@/lib/execution-category";
 
 export const NO_EXECUTION_BINDING_MESSAGE =
   "No server-managed execution binding is available. Enable Model Agent or select a registered binding.";
@@ -15,6 +16,7 @@ const CLI_AGENT_DISPLAY_NAMES: Record<string, string> = {
   gemini_subscription: "Gemini",
   copilot_subscription: "Copilot"
 };
+const LOCAL_MODEL_BACKEND_IDS = new Set(["ollama", "lm_studio", "vllm"]);
 
 export function formatNoExternalExecutionBindingMessage(backendId?: string): string {
   const label = backendId ? CLI_AGENT_DISPLAY_NAMES[backendId] ?? "CLI" : "CLI";
@@ -22,6 +24,11 @@ export function formatNoExternalExecutionBindingMessage(backendId?: string): str
 }
 
 export const NO_EXTERNAL_EXECUTION_BINDING_MESSAGE = formatNoExternalExecutionBindingMessage();
+
+export function formatNoLocalModelExecutionBindingMessage(backendId?: string): string {
+  const label = ({ ollama: "Ollama", lm_studio: "LM Studio", vllm: "vLLM" } as Record<string, string>)[backendId ?? ""] ?? "the selected local model";
+  return `No compatible server-managed Model Agent binding is available for ${label} and the selected model. This run was not started. Settings and model discovery do not create an agent binding.`;
+}
 
 type CommonAgentStartRequest = Omit<
   VdtAgentPublicStartRequest,
@@ -34,14 +41,16 @@ export function resolveExecutionBindingId(
   providerId: string,
   providerConfig: Record<string, unknown> | undefined
 ): string | null {
-  if (executionSettings.executionMode === "local_cli") {
+  const category = resolveExecutionCategory(executionSettings);
+  if (category !== "byok") {
     const backendId = typeof providerConfig?.backendId === "string" ? providerConfig.backendId.trim() : "";
     const modelId = typeof providerConfig?.model === "string" ? providerConfig.model.trim() : "";
     if (!backendId) return null;
+    if (category === "local_models" && !LOCAL_MODEL_BACKEND_IDS.has(backendId)) return null;
     return (
       bindings.bindings.find(
         (binding) =>
-          binding.executionProfile === "external_cli_agent"
+          binding.executionProfile === (category === "cli_subscriptions" ? "external_cli_agent" : "model_agent")
           && binding.backendId === backendId
           && (!modelId || binding.modelId === modelId)
       )?.bindingId ?? null
@@ -81,11 +90,14 @@ export function buildAgentPublicStartRequest(
     return { ...commonRequest, executionBindingId: bindingId };
   }
 
-  if (executionSettings.executionMode === "local_cli") {
+  const category = resolveExecutionCategory(executionSettings);
+  if (category !== "byok") {
     const backendId = typeof options.providerConfig?.backendId === "string"
       ? options.providerConfig.backendId.trim()
       : undefined;
-    throw new Error(formatNoExternalExecutionBindingMessage(backendId));
+    throw new Error(category === "cli_subscriptions"
+      ? formatNoExternalExecutionBindingMessage(backendId)
+      : formatNoLocalModelExecutionBindingMessage(backendId));
   }
 
   throw new Error(NO_EXECUTION_BINDING_MESSAGE);

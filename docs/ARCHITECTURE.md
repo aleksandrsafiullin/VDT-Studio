@@ -172,9 +172,11 @@ All V2 feature flags are server-owned, fail closed and default to disabled. Proj
 
 ### Data discovery flow
 
-`agent composer paperclip + selected KPI -> POST /api/data/files -> immutable source bytes + UI preview -> POST /api/data/discovery/runs -> full-byte parse/profile -> configured-provider semantic review -> incoming category aggregation -> materialized Baselines -> VDT change-set preview`
+`selected KPI From file / composer paperclip -> scoped POST /api/data/files or retained-source list -> project-owned immutable bytes -> POST /api/data/discovery/runs -> full-byte parse/profile -> configured-provider semantic suggestions -> required structured decisions -> full-byte deterministic hierarchy rerun -> source/target/coverage validation -> normal VDT change-set preview`
 
-This is a separate experimental harness. The general flow can propose metrics; the `incoming_kpis` entry purpose prefers a reviewed taxonomy and creates filtered category nodes under the selected KPI. When the selected table is complete and a numeric measure is confirmed, deterministic harness code aggregates matching rows, converts compatible time units and writes `baselineValue` plus source-hash/row-coverage evidence into the change set. Truncated or invalid data fails closed to `unknown`. The managed local runtime and API/BYOK providers use the same bounded task schemas. The core calculator consumes the materialized value but still does not execute or refresh `dataMapping`. See `DATA_INGESTION.md`.
+This separate experimental local harness accepts provider-assisted table/category/additive-value suggestions through `createManagedAwareAiProvider`. The deterministic incoming compiler supports complete additive hierarchies (up to four category levels and 200 nodes) from numeric values in confirmed target-compatible units, direct durations or explicit start/end timestamps, and confirmed total/per-day normalization. A declared reporting period describes the full source extract/denominator; it is not a row-filter query. All required mapping and provider clarification questions remain apply blockers. Structured edits reload immutable full bytes; final staging reruns against the server-retained initial project basis after validating the client's current semantic target and immediate children. Each generated KPI Description carries source hash/reference, table, columns, filters, calculation, reporting period and row coverage. The core calculator consumes materialized Baselines and parent sum formulas; it does not execute or refresh `dataMapping`.
+
+New upload/list/download/run routes require trusted local app mode and strict project/VDT IDs. SQLite verifies the real workspace project and `vdt.projectId`; `VdtProject.id` is the original graph snapshot identity; it may differ from both the SQLite workspace owner and selected VDT record ID. The selected VDT's stored active revision supplies the expected graph identity for request validation. Imported graph IDs are preserved without rewrites or migrations. Sources are write-once at `projectDir(database.dataDir, projectId)/files/<datasetId>/`, with original name metadata, exact bytes and checked SHA-256/size. Runs retain file ownership plus explicit `workspaceProjectId`/`vdtId` and a separate initial project context. File/run reads use persistent storage instead of trusting an in-memory cache; scope mismatches, unsafe IDs and symlink paths fail closed. Old global `data-discovery` records are retained for trusted-local compatibility and never used as scoped fallbacks. Browser discard leaves source files intact. Hosted multi-user authorization, parser isolation, retention/encryption and general refresh remain open. See `DATA_INGESTION.md`.
 
 ### Model execution flow
 
@@ -188,6 +190,8 @@ The browser-side `apps/web/lib/ai-execution-client.ts` selects one of:
 
 Model discovery follows the same ownership boundary. Subscription model IDs come only from adapter-owned CLI commands. BYOK Settings sends `operation: list_models` plus the resolved session-only provider configuration to `/api/ai/generate-vdt`; the server performs the bounded provider request and returns normalized IDs. The browser never calls provider model endpoints directly, and static preset/CLI catalogs are not treated as availability evidence. Azure uses a manual deployment name because the resource model catalog is not a deployment inventory.
 
+Execution mode UI categories are `cli_subscriptions`, `local_models` and `byok`; the internal execution contract stays `local_cli`/`byok`. The category follows the effective runner/backend rather than a stale selected CLI ID. `executionSettings.savedLocalModelSelection` stores the last local HTTP preset/model across category switches; local-server changes use server-specific defaults. Background CLI scans may refresh detection while another category is active, but cannot normalize its execution selection. Memory overrides are independent and tab switches do not clear them.
+
 ## Data And State Ownership
 
 | State | Current owner | Target rule |
@@ -196,9 +200,11 @@ Model discovery follows the same ownership boundary. Subscription model IDs come
 | Projects and VDT metadata | SQLite | Durable source of truth |
 | VDT graph revisions | Strict canonical revision files + SQLite head/attempt/idempotency state | W0.1 atomic revision-CAS writes implemented; Windows durability unverified |
 | Agent runs | SQLite-backed stores: normalized Sequence 4 primary authority plus secondary V1 projection; non-SQLite test stores remain injected | Complete restart coordinator over the same binding, bounded exchange/tool/checkpoint attempts, Event V2 outbox and recovery |
-| Uploaded datasets | `.vdt/data-discovery` files/snapshots | Project-owned immutable versions with retention/encryption |
+| Uploaded datasets | Project `files/<datasetId>` immutable sources and project-scoped discovery snapshots; legacy global records retained | Authenticated hosted ownership, retention/encryption and reusable execution |
 | Skills | `packages/vdt-agent/skills` for current bundled source | Single-copy repository: reviewed bundled source plus immutable verbatim user versions; ACL references; generated sidecar only |
 | Provider status | `release/provider-certification.json` | Canonical release metadata |
+
+Subscription visibility is a browser-local Zustand preference (`removedCliAgentIds`), persisted separately from runtime detection. Hydration accepts only known provider IDs, clears any removed chat/memory selection, and does not treat legacy command fields as an active provider. Rescans retain removal preferences and exclude removed providers from automatic selection. A removal may use a remaining live `ready` CLI as a deterministic chat fallback, with visible feedback; without one, the selection is cleared and request readiness blocks execution. It never changes vendor credentials or installed software. Test/auth results and busy flags remain session-only; duplicate actions are guarded. Full and targeted scans serialize; callers sharing a scan await its completion. Test and managed sign-in request a fresh post-action scan, and per-provider revisions prevent older scans/tests from restoring readiness after a failed Test or removal/add-back. Test immediately invalidates prior executable readiness, and success requires a fresh ready result.
 
 ### Sequence 3 runtime artifact policy
 
@@ -242,7 +248,7 @@ coordinator and state rehydration described below are not implemented.
   transport only. Shell, filesystem, Git, WebFetch, foreign MCP, project
   instructions and subagents are security-boundary breaches.
 - Web search results and uploaded file contents are untrusted data, not instructions.
-- Current upload ownership, isolation and dependency vulnerabilities block production data use.
+- Local source ownership and strict path checks are implemented for scoped uploads; parser isolation, hosted authorization and dependency vulnerabilities still block production data use.
 
 ## Known Architectural Gaps
 
@@ -260,7 +266,7 @@ coordinator and state rehydration described below are not implemented.
    open.
 2. Visual edges, formula dependencies and units are not yet one validated contract.
 3. Research lacks source opening, immutable evidence and benchmark applicability.
-4. Data mappings remain declarative metadata rather than reusable executable query plans; only the narrow incoming-category discovery path materializes a value during its original run.
+4. Data mappings remain declarative metadata rather than reusable executable query plans; only the bounded incoming additive-sum hierarchy materializes values during full-source analysis and review reruns.
 5. Data-agent and VDT-agent orchestration are separate and inconsistent.
 6. Large `vdt-store.ts` and `data-harness/src/index.ts` modules mix too many responsibilities.
 7. There is no server-issued actor/tenant/workspace authorization context for the data/skill target model.

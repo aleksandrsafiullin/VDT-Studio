@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -65,6 +65,28 @@ describe("local runtime sidecar", { timeout: 45_000 }, () => {
     });
   });
 
+  it("checks subscription session readiness through the sidecar without creating a completion", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-sidecar-readiness-"));
+    try {
+      await copyFile(fakeCodex, path.join(tempDir, "codex"));
+      await chmod(path.join(tempDir, "codex"), 0o700);
+      const context = createLocalRuntimeContext({ auditSink: () => undefined, detection: { path: tempDir } });
+      await expect(handleSidecarRequest({
+        protocolVersion: SIDECAR_PROTOCOL_VERSION,
+        type: "request",
+        requestId: crypto.randomUUID(),
+        method: "test_backend",
+        payload: { backendId: "codex_subscription" }
+      }, context)).resolves.toMatchObject({
+        ok: true,
+        payload: { ok: true, backendId: "codex_subscription", status: "ready" }
+      });
+      expect(context.runs.size).toBe(0);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns provider authentication instructions through the sidecar protocol", async () => {
     const host = createRuntimeHost();
     await expect(host.request("open_provider_auth", { backendId: "claude_subscription" })).resolves.toMatchObject({
@@ -100,7 +122,8 @@ describe("local runtime sidecar", { timeout: 45_000 }, () => {
   it("routes subscription CLI detection through the sidecar protocol", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "vdt-sidecar-detect-"));
     try {
-      await symlink(fakeCodex, path.join(tempDir, "codex"));
+      await copyFile(fakeCodex, path.join(tempDir, "codex"));
+      await chmod(path.join(tempDir, "codex"), 0o700);
       await symlink(fakeCursor, path.join(tempDir, "agent"));
       const context = createLocalRuntimeContext({
         auditSink: () => undefined,
