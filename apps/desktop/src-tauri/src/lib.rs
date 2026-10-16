@@ -89,6 +89,13 @@ fn open_provider_auth(backend_id: String, runtime: State<'_, DesktopRuntime>) ->
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+async fn speech_request(request: serde_json::Value, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<DesktopRuntime>().speech(request).map_err(|error| error.to_string())
+    }).await.map_err(|error| error.to_string())?
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(DesktopRuntime::default())
@@ -118,6 +125,7 @@ pub fn run() {
             ai_cancel,
             ai_get_run,
             open_provider_auth,
+            speech_request,
             get_app_mode
         ])
         .run(tauri::generate_context!())

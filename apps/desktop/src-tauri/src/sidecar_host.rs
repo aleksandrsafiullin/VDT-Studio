@@ -166,6 +166,10 @@ impl DesktopRuntime {
         self.request("open_provider_auth", json!({ "backendId": backend_id }), None)
     }
 
+    pub fn speech(&self, request: Value) -> Result<Value, RuntimeError> {
+        self.request("speech", request, None)
+    }
+
     pub fn state(&self) -> RuntimeState {
         let ready = self
             .sidecar

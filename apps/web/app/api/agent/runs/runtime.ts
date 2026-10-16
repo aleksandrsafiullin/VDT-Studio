@@ -46,6 +46,7 @@ import {
   type LegacyModelAgentExecutionBindingDefinition
 } from "./execution-bindings";
 import { TARGET_MODEL_AGENT_TOOLS, modelAgentToolCatalogHash } from "./model-agent-tool-catalog";
+import { cliSessionModelBindingId } from "./cli-session-model-binding";
 
 const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtAgentRuntime?: ReturnType<typeof createVdtAgentRuntime>;
@@ -443,8 +444,30 @@ async function registerCodexSessionCanary(bridge: ModelBridgeNode): Promise<CliS
   registerCliSessionBinding({
     bindingId: CODEX_SESSION_EXECUTION_BINDING_ID,
     engine,
-    modelId: process.env.VDT_CODEX_SESSION_MODEL?.trim() || "gpt-5.4"
+    modelId: process.env.VDT_CODEX_SESSION_MODEL?.trim() || "auto"
   });
+  // A browser selects an existing immutable binding; only the host CLI can
+  // supply additional models. Discovery failure retains the host default.
+  try {
+    const { getSubscriptionCliAdapter } = await import("@vdt-studio/model-bridge");
+    const adapter = getSubscriptionCliAdapter("codex_subscription");
+    const signal = AbortSignal.timeout(10_000);
+    const auth = await adapter?.probeAuth?.(detection.executable, signal);
+    if (auth?.status === "ready") {
+      const models = await adapter?.listModels?.(detection.executable, { signal }) ?? [];
+      for (const modelId of new Set(models.slice(0, 100))) {
+        if (!modelId.trim() || modelId !== modelId.trim() || modelId.length > 160 || modelId.startsWith("-")
+          || Array.from(modelId).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) continue;
+        registerCliSessionBinding({
+          bindingId: cliSessionModelBindingId(CODEX_SESSION_EXECUTION_BINDING_ID, modelId),
+          engine,
+          modelId
+        });
+      }
+    }
+  } catch {
+    // No unrecognized model is admitted and no provider fallback is enabled.
+  }
   return "registered";
 }
 

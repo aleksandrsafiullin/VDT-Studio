@@ -27,6 +27,7 @@ The previously referenced `Technical Specification for Codex.docx` is not presen
 | [`FORMULA_ENGINE.md`](FORMULA_ENGINE.md) | Supported formula/calculation contract and known unit limitations |
 | [`DATA_INGESTION.md`](DATA_INGESTION.md) | Raw-data discovery, supported formats, limitations and target baseline flow |
 | [`DESIGN_SYSTEM.md`](DESIGN_SYSTEM.md) | Analytical workspace and evidence/status UX rules |
+| [`VOICE_INPUT.md`](VOICE_INPUT.md) | Local whisper.cpp dictation, confirmed installation, runtime/storage boundaries and platform limitations |
 | [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md) | Verified gates, open blockers and release rule |
 | [`ROADMAP.md`](ROADMAP.md) | Prioritized implementation sequence |
 | [`LOCAL_RUNNER.md`](LOCAL_RUNNER.md) | Standalone loopback runner and security contract |

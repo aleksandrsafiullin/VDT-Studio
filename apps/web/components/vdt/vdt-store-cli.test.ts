@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi, type MockedFunction } from "vitest";
 import { cloneProject, productionVolumeProject, type VdtChangeSet } from "@vdt-studio/vdt-core";
-import { productionVolumeReviewOutput } from "@vdt-studio/ai-harness";
 import { DEFAULT_EXECUTION_SETTINGS, type ExecutionSettings } from "@/lib/execution-mode-catalog";
 import type { VdtAgentRunSnapshot } from "@/lib/agent-client";
 import { resolveSelectedCliReadiness } from "@/lib/cli-readiness";
@@ -77,43 +76,6 @@ function mockDeepenChangeSet(): VdtChangeSet {
     assumptions: [],
     questions: [],
     warnings: []
-  };
-}
-
-function agentRunFixture(overrides: Record<string, unknown> = {}) {
-  return {
-    runId: "agent-run-store-1",
-    status: "succeeded",
-    phase: "reporting",
-    request: {
-      rootKpi: "Production Volume",
-      industry: "Mining"
-    },
-    selectedSkills: [
-      {
-        id: "mining.production_volume",
-        path: "packages/vdt-agent/skills/mining/production-volume.md",
-        reason: "Matched production volume mining context."
-      }
-    ],
-    events: [
-      {
-        id: "evt-classification",
-        timestamp: "2026-06-24T10:00:01.000Z",
-        type: "classification",
-        title: "Classified request",
-        message: "Classified request as mining / production throughput."
-      },
-      {
-        id: "evt-final-report",
-        timestamp: "2026-06-24T10:00:05.000Z",
-        type: "final_report",
-        title: "Final report",
-        message: "Generated final report."
-      }
-    ],
-    finalReport: "Validation result: Graph validation passed.",
-    ...overrides
   };
 }
 
@@ -375,9 +337,6 @@ describe("vdt-store change-set workflow", () => {
       selectedNodeId: "unplanned_downtime",
       changeSetSelection: new Set<string>(),
       pendingChangeSet: undefined,
-      pendingAdvisoryResult: undefined,
-      pendingExplanation: undefined,
-      isRunningAiAction: false,
       aiActionError: undefined,
       providerId: "mock",
       executionSettings: {
@@ -1053,146 +1012,6 @@ describe("vdt-store change-set workflow", () => {
     expect(useVdtStudioStore.getState().agentRun?.runId).toBe("agent-run-approval");
   });
 
-  it("runAiAction posts deepen_node to /api/ai/run-task and stores pending change set", async () => {
-    const changeSet = mockDeepenChangeSet();
-    const fetchMock = vi.mocked(fetch);
-    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith("/api/ai/run-task")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            ok: true,
-            result: { kind: "change_set", changeSet, agentRun: agentRunFixture() }
-          })
-        } as Response;
-      }
-
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ agents: [] })
-      } as Response;
-    });
-
-    await useVdtStudioStore.getState().runAiAction("deepen_node", { nodeId: "unplanned_downtime" });
-
-    const runTaskCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/ai/run-task"));
-    expect(runTaskCall).toBeDefined();
-
-    const [, requestInit] = runTaskCall!;
-    const body = JSON.parse(String(requestInit?.body)) as {
-      taskType?: string;
-      input?: { nodeId?: string; project?: { id?: string } };
-      providerId?: string;
-    };
-
-    expect(body.taskType).toBe("deepen_node");
-    expect(body.input?.nodeId).toBe("unplanned_downtime");
-    expect(body.input?.project?.id).toBe(productionVolumeProject.id);
-    expect(body.providerId).toBe("mock");
-
-    const state = useVdtStudioStore.getState();
-    expect(state.pendingChangeSet?.id).toBe(changeSet.id);
-    expect(state.changeSetSelection).toEqual(
-      new Set(["add_equipment_failure_downtime", "add_process_interruption_downtime"])
-    );
-    expect(state.isRunningAiAction).toBe(false);
-    expect(state.selectedPanelTab).toBe("ai");
-    expect(state.generateActivity).toMatchObject({
-      status: "ready",
-      schemaId: "deepen-node-v1",
-      agentRun: {
-        runId: "agent-run-store-1",
-        selectedSkills: expect.arrayContaining([expect.objectContaining({ id: "mining.production_volume" })])
-      },
-      finalReport: "Validation result: Graph validation passed."
-    });
-  });
-
-  it("runAiAction reaches managed local CLI runtime without runner pairing", async () => {
-    const changeSet = mockDeepenChangeSet();
-    const fetchMock = vi.mocked(fetch);
-    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.endsWith("/api/ai/dev-runtime")) {
-        const body = JSON.parse(String(init?.body)) as {
-          operation?: string;
-          request?: {
-            backendId?: string;
-            taskType?: string;
-            schemaId?: string;
-            input?: { nodeId?: string; project?: { id?: string } };
-          };
-        };
-        expect(body.operation).toBe("complete");
-        expect(body.request).toMatchObject({
-          backendId: "codex_subscription",
-          taskType: "deepen_node",
-          schemaId: "deepen-node-v1"
-        });
-        expect(body.request?.input?.nodeId).toBe("unplanned_downtime");
-        expect(body.request?.input?.project?.id).toBe(productionVolumeProject.id);
-        expect(String(init?.body)).not.toContain("pairingToken");
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            ok: true,
-            output: { kind: "change_set", changeSet }
-          })
-        } as Response;
-      }
-
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ agents: [] })
-      } as Response;
-    });
-
-    useVdtStudioStore.setState({
-      runnerPairingToken: undefined,
-      cliDetectionAgents: [
-        {
-          id: "codex",
-          installed: true,
-          executable: "/usr/local/bin/codex",
-          alias: "codex",
-          version: "0.128.0",
-          status: "ready",
-          authSummary: "ChatGPT subscription is authenticated and ready."
-        }
-      ],
-      executionSettings: {
-        ...DEFAULT_EXECUTION_SETTINGS,
-        executionMode: "local_cli",
-        selectedCliAgentId: "codex",
-        localRunnerPresetId: "custom_cli_json",
-        runnerProviderId: "cli_stub",
-        command: "/usr/local/bin/codex",
-        cliModelSelection: { source: "agent_default" }
-      },
-      providerId: "local_runner",
-      providerConfig: {
-        localRunnerPresetId: "custom_cli_json",
-        runnerProviderId: "cli_stub"
-      }
-    });
-
-    await useVdtStudioStore.getState().runAiAction("deepen_node", { nodeId: "unplanned_downtime" });
-
-    const devRuntimeCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/ai/dev-runtime"));
-    expect(devRuntimeCall).toBeDefined();
-    const state = useVdtStudioStore.getState();
-    expect(state.aiActionError).toBeUndefined();
-    expect(state.pendingChangeSet?.id).toBe(changeSet.id);
-    expect(state.changeSetSelection).toEqual(
-      new Set(["add_equipment_failure_downtime", "add_process_interruption_downtime"])
-    );
-  });
-
   it("toggleChangeSelection updates selected change entry ids", () => {
     const changeSet = mockDeepenChangeSet();
     useVdtStudioStore.setState({
@@ -1229,7 +1048,7 @@ describe("vdt-store change-set workflow", () => {
     expect(state.pendingChangeSet).toBeUndefined();
     expect(state.changeSetSelection.size).toBe(0);
     expect(state.project.versions.length).toBe(initialVersionCount + 1);
-    expect(state.project.versions.at(-1)?.name).toBe("Before deepen_node apply");
+    expect(state.project.versions.at(-1)?.name).toBe("Перед добавлением показателей");
     expect(state.project.versions.at(-1)?.taskType).toBe("deepen_node");
     expect(state.project.graph.nodes.length).toBe(initialNodeCount + 1);
     expect(state.project.graph.nodes.map((node) => node.id)).toContain("equipment_failure_downtime");
@@ -1420,35 +1239,6 @@ describe("vdt-store change-set workflow", () => {
     expect(state.project.graph.nodes.map((node) => node.id)).not.toContain("equipment_failure_downtime");
   });
 
-  it("runAiAction stores advisory results for review_model", async () => {
-    const fetchMock = vi.mocked(fetch);
-    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith("/api/ai/run-task")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            ok: true,
-            result: { kind: "advisory", result: productionVolumeReviewOutput }
-          })
-        } as Response;
-      }
-
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ agents: [] })
-      } as Response;
-    });
-
-    await useVdtStudioStore.getState().runAiAction("review_model", {});
-
-    const state = useVdtStudioStore.getState();
-    expect(state.pendingAdvisoryResult).toEqual(productionVolumeReviewOutput);
-    expect(state.pendingChangeSet).toBeUndefined();
-    expect(state.aiActionError).toBeUndefined();
-  });
 });
 
 describe("vdt-store cli rescan", () => {
@@ -2842,26 +2632,6 @@ describe("vdt-store setMainScenario", () => {
 });
 
 describe("vdt-store main scenario migration", () => {
-  it("ensures exactly one main scenario when replacing a legacy project without isMain", () => {
-    localStorageMock.clear();
-    const legacyProject = {
-      ...cloneProject(productionVolumeProject),
-      scenarios: productionVolumeProject.scenarios.map((scenario) => {
-        const next = { ...scenario };
-        delete next.isMain;
-        return next;
-      })
-    };
-
-    useVdtStudioStore.getState().replaceProject(legacyProject);
-
-    const state = useVdtStudioStore.getState();
-    const mainScenario = state.project.scenarios.find((scenario) => scenario.isMain === true);
-    expect(state.project.scenarios.filter((scenario) => scenario.isMain).length).toBe(1);
-    expect(mainScenario).toBeDefined();
-    expect(state.activeScenarioId).toBe(mainScenario?.id);
-  });
-
   it("ensures exactly one main scenario on loadExample and selects it", () => {
     localStorageMock.clear();
     useVdtStudioStore.getState().loadExample("production_volume");

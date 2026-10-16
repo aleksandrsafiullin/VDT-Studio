@@ -79,6 +79,8 @@ Then rerun both desktop verification commands.
 
 ## Manual Evidence To Record
 
+Local voice input additionally requires native macOS Apple silicon/Intel and Windows x64 evidence for confirmed engine/model installation, permission denial, incremental drafts, final flush, manual edits/Send, cancellation, offline recognition, child cleanup and distribution license notices. Model download/feature availability is documented in [VOICE_INPUT.md](VOICE_INPUT.md); static configuration and fake tests alone do not satisfy this gate.
+
 For every candidate, retain:
 
 - output for every required gate;

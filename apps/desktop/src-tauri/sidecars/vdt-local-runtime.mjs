@@ -10,6 +10,448 @@ import { fileURLToPath as fileURLToPath3 } from "node:url";
 // ../local-runner/src/sidecar/runtime.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
 
+// ../local-runner/src/speech/runtime.ts
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, rename, rm, statfs, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { inflateRawSync } from "node:zlib";
+
+// ../local-runner/src/speech/catalog.ts
+var SPEECH_MODELS = [
+  { id: "tiny", label: "Tiny", description: "Fastest, lower accuracy", bytes: 77691713 },
+  { id: "base", label: "Base", description: "Balanced speed and accuracy", bytes: 147951465 },
+  { id: "small", label: "Small", description: "Higher accuracy, more processing", bytes: 487601967 }
+];
+var SPEECH_LANGUAGES = [
+  { id: "auto", label: "Detect automatically" },
+  { id: "ru", label: "\u0420\u0443\u0441\u0441\u043A\u0438\u0439" },
+  { id: "en", label: "English" },
+  { id: "kk", label: "\u049A\u0430\u0437\u0430\u049B\u0448\u0430" },
+  { id: "de", label: "Deutsch" },
+  { id: "fr", label: "Fran\xE7ais" },
+  { id: "es", label: "Espa\xF1ol" },
+  { id: "zh", label: "\u4E2D\u6587" }
+];
+var SPEECH_SAMPLE_RATE = 16e3;
+var SPEECH_MAX_SECONDS = 12;
+var SPEECH_MAX_AUDIO_BYTES = 44 + SPEECH_SAMPLE_RATE * SPEECH_MAX_SECONDS * 2;
+function isSpeechModelId(value) {
+  return SPEECH_MODELS.some((model) => model.id === value);
+}
+function isSpeechLanguage(value) {
+  return SPEECH_LANGUAGES.some((language) => language.id === value);
+}
+
+// ../local-runner/src/speech/audio.ts
+function pcmWave(samples) {
+  const bytes = new Uint8Array(44 + samples.length * 2);
+  const view = new DataView(bytes.buffer);
+  const ascii = (offset, text2) => {
+    for (let i = 0; i < text2.length; i++) bytes[offset + i] = text2.charCodeAt(i);
+  };
+  ascii(0, "RIFF");
+  view.setUint32(4, bytes.length - 8, true);
+  ascii(8, "WAVE");
+  ascii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, SPEECH_SAMPLE_RATE, true);
+  view.setUint32(28, SPEECH_SAMPLE_RATE * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  ascii(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const sample = Math.max(-1, Math.min(1, samples[i] ?? 0));
+    view.setInt16(44 + i * 2, Math.round(sample * (sample < 0 ? 32768 : 32767)), true);
+  }
+  return bytes;
+}
+
+// ../local-runner/src/speech/notices.ts
+var SPEECH_LICENSE_NOTICES = `Local voice input: whisper.cpp and Whisper model weights
+
+whisper.cpp: Copyright (c) 2023-2024 The ggml authors
+Whisper model weights: Copyright (c) 2022 OpenAI
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Native build provenance:
+Apple silicon: https://github.com/OpenWhispr/whisper.cpp/releases/tag/0.0.10
+Intel Mac / Windows x64: https://github.com/sjoerdteunisse/whisper.cpp/releases/tag/v1.0.0
+Weights: https://huggingface.co/ggerganov/whisper.cpp/tree/5359861c739e955e79d9a303bcbc70fb988958b1
+`;
+
+// ../local-runner/src/speech/runtime.ts
+var MODEL_REVISION = "5359861c739e955e79d9a303bcbc70fb988958b1";
+var MODEL_HASHES = {
+  tiny: "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+  base: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+  small: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"
+};
+var ENGINE_RELEASE = "https://github.com/sjoerdteunisse/whisper.cpp/releases/download/v1.0.0/";
+var ENGINES = {
+  "darwin-arm64": { file: "whisper-cpp-darwin-arm64", bytes: 1215153, sha256: "7a2f420abef4313f49332f58c2c69bff5f65c37ad932d1fb09f7d95ffec45989", binarySha256: "ebc3c2a1d7d706bd3367c81a2d70ff1d0201576af7ada17516d9398e6e787656", downloadUrl: "https://github.com/OpenWhispr/whisper.cpp/releases/download/0.0.10/whisper-cpp-darwin-arm64.zip" },
+  "darwin-x64": { file: "whisper-cpp-darwin-x64", bytes: 1131934, sha256: "f0f2ab6c2e92b7022ac02f0759a7a38f3ea110764e00b05a6f0d6c1dcadd571c", binarySha256: "4d7ffa39b71ab9847f519f61d1baddfeddd6c83a445ff87add54857cc41fbe18" },
+  "win32-x64": { file: "whisper-cpp-win32-x64-cpu.exe", bytes: 718766, sha256: "80f6b6481794825f65043001e408e70aea4257918b15906b7e070d2c7b205da5", binarySha256: "31ceb2a375f19c993ce52bf29b34c68449adac9b54cf0c840a16ac6fb24df262" }
+};
+var SpeechError = class extends Error {
+  constructor(message, statusCode = 400) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+  statusCode;
+};
+function parseSpeechRequest(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new SpeechError("Invalid voice input request.");
+  const body = value;
+  const keys = {
+    status: ["operation"],
+    install: ["operation", "modelId", "confirmed"],
+    cancel_install: ["operation"],
+    transcribe: ["operation", "modelId", "language", "audioBase64", "jobId"],
+    result: ["operation", "jobId"],
+    cancel: ["operation", "jobId"]
+  };
+  const allowed = typeof body.operation === "string" && Object.hasOwn(keys, body.operation) ? keys[body.operation] : void 0;
+  if (!allowed || Object.keys(body).some((key) => !allowed.includes(key))) throw new SpeechError("Unsupported voice input operation or field.");
+  if (body.operation === "install" || body.operation === "transcribe") {
+    if (!isSpeechModelId(body.modelId)) throw new SpeechError("Choose a supported speech model.");
+  }
+  if (body.operation === "install" && body.confirmed !== true) throw new SpeechError("Confirm the speech model download first.");
+  if (body.operation === "transcribe" || body.operation === "result" || body.operation === "cancel") {
+    if (typeof body.jobId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.jobId)) {
+      throw new SpeechError("Invalid transcription identifier.");
+    }
+  }
+  if (body.operation === "transcribe") {
+    if (!isSpeechLanguage(body.language)) throw new SpeechError("Choose a supported dictation language.");
+    if (typeof body.audioBase64 !== "string" || body.audioBase64.length > Math.ceil(SPEECH_MAX_AUDIO_BYTES / 3) * 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(body.audioBase64)) {
+      throw new SpeechError("The audio fragment is invalid or too large.");
+    }
+  }
+  return body;
+}
+function speechDirectory() {
+  if (process.env.VDT_SPEECH_DATA_DIR) return path.resolve(process.env.VDT_SPEECH_DATA_DIR);
+  const base = process.platform === "darwin" ? path.join(os.homedir(), "Library", "Application Support") : process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
+  return path.join(base, "VDT Studio", "speech");
+}
+var SpeechRuntime = class {
+  directory;
+  #engine;
+  #fetcher;
+  #recognize;
+  #installation = { state: "idle", downloadedBytes: 0, totalBytes: 0 };
+  #installController;
+  #jobs = /* @__PURE__ */ new Map();
+  #recognizing = false;
+  #verified = /* @__PURE__ */ new Map();
+  constructor(options = {}) {
+    this.directory = options.directory ?? speechDirectory();
+    this.#engine = ENGINES[`${options.platform ?? process.platform}-${options.arch ?? process.arch}`];
+    this.#fetcher = options.fetcher ?? fetch;
+    this.#recognize = options.recognize;
+  }
+  async request(input) {
+    const request = parseSpeechRequest(input);
+    if (request.operation === "status") return this.status();
+    if (!this.#engine) throw new SpeechError("Local voice input supports macOS (Apple silicon / Intel) and Windows x64.");
+    if (request.operation === "install") return this.install(request.modelId);
+    if (request.operation === "cancel_install") {
+      this.#installController?.abort();
+      return this.status();
+    }
+    if (request.operation === "transcribe") return this.transcribe(request);
+    const job = this.#jobs.get(request.jobId);
+    if (!job) throw new SpeechError("This transcription has expired. Start dictation again.", 404);
+    job.updated = Date.now();
+    if (request.operation === "cancel") {
+      job.controller.abort();
+      job.result = { state: "cancelled" };
+    }
+    return job.result;
+  }
+  async status() {
+    const engineReady = Boolean(this.#engine && await this.verifiedFile(this.enginePath(), this.#engine.binarySha256));
+    const installed = await Promise.all(SPEECH_MODELS.map(async (model) => await this.verifiedFile(this.modelPath(model.id), MODEL_HASHES[model.id], model.bytes) ? model.id : void 0));
+    return {
+      supported: Boolean(this.#engine),
+      engineReady,
+      installedModels: installed.filter((id2) => Boolean(id2)),
+      installation: { ...this.#installation },
+      ...!this.#engine ? { message: "Local voice input supports macOS (Apple silicon / Intel) and Windows x64." } : {}
+    };
+  }
+  modelPath(id2) {
+    return path.join(this.directory, `ggml-${id2}.bin`);
+  }
+  enginePath() {
+    return path.join(this.directory, this.#engine?.file ?? "unavailable");
+  }
+  async verifiedFile(file, digest, size) {
+    if (!/^[a-f0-9]{64}$/.test(digest)) return false;
+    try {
+      const stat = await lstat(file);
+      if (!stat.isFile() || stat.isSymbolicLink() || size !== void 0 && stat.size !== size) return false;
+      const cached = this.#verified.get(file);
+      if (cached?.size === stat.size && cached.mtime === stat.mtimeMs) return true;
+      const hash = createHash("sha256");
+      for await (const chunk of createReadStream(file)) hash.update(chunk);
+      if (hash.digest("hex") !== digest) return false;
+      this.#verified.set(file, { size: stat.size, mtime: stat.mtimeMs });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async install(modelId) {
+    if (this.#installController) throw new SpeechError("A speech model download is already in progress.", 409);
+    const controller = new AbortController();
+    this.#installController = controller;
+    try {
+      await mkdir(this.directory, { recursive: true, mode: 448 });
+      if ((await lstat(this.directory)).isSymbolicLink()) throw new SpeechError("The voice input directory must not be a symbolic link.");
+      const model = SPEECH_MODELS.find((entry) => entry.id === modelId);
+      const disk = await statfs(this.directory);
+      if (disk.bavail * disk.bsize < model.bytes * 2 + 256 * 1024 * 1024) throw new SpeechError("Free at least 1.5 GB of disk space before installing a speech model.");
+      const status = await this.status();
+      if (status.engineReady && status.installedModels.includes(modelId) && this.#installation.state === "ready") {
+        this.#installController = void 0;
+        return status;
+      }
+      this.#installation = { state: "downloading", phase: "engine", modelId, downloadedBytes: 0, totalBytes: model.bytes + this.#engine.bytes };
+      void this.performInstall(modelId, status, controller).finally(() => {
+        this.#installController = void 0;
+      });
+      return this.status();
+    } catch (error2) {
+      this.#installController = void 0;
+      throw error2;
+    }
+  }
+  async performInstall(modelId, initial, controller) {
+    const engine = this.#engine;
+    let staging;
+    try {
+      staging = await mkdtemp(path.join(this.directory, ".install-"));
+      if (!initial.engineReady) {
+        const archive = path.join(staging, "engine.zip");
+        const asset = engine.file.replace(/\.exe$/, "");
+        await this.download("downloadUrl" in engine ? engine.downloadUrl : `${ENGINE_RELEASE}${asset}.zip`, archive, engine.bytes, engine.sha256, controller.signal);
+        const binary = extractPinnedExecutable(await readFile(archive), engine.file);
+        const target = path.join(staging, engine.file);
+        await writeFile(target, binary, { flag: "wx", mode: 448 });
+        await chmod(target, 448);
+        if (createHash("sha256").update(binary).digest("hex") !== engine.binarySha256) throw new SpeechError("Speech engine verification failed.");
+        controller.signal.throwIfAborted();
+        await rename(target, this.enginePath());
+      }
+      this.#installation.phase = "model";
+      if (!initial.installedModels.includes(modelId)) {
+        const model = SPEECH_MODELS.find((entry) => entry.id === modelId);
+        const target = path.join(staging, "model.bin");
+        await this.download(`https://huggingface.co/ggerganov/whisper.cpp/resolve/${MODEL_REVISION}/ggml-${modelId}.bin`, target, model.bytes, MODEL_HASHES[modelId], controller.signal);
+        controller.signal.throwIfAborted();
+        await rename(target, this.modelPath(modelId));
+      }
+      this.#installation = { ...this.#installation, state: "verifying", downloadedBytes: this.#installation.totalBytes };
+      await this.recognize(this.modelPath(modelId), pcmWave(new Float32Array(SPEECH_SAMPLE_RATE)), "en", controller.signal);
+      await writeFile(path.join(this.directory, "LICENSES.txt"), SPEECH_LICENSE_NOTICES, { mode: 384 });
+      this.#installation = { ...this.#installation, state: "ready" };
+    } catch (error2) {
+      this.#installation = {
+        ...this.#installation,
+        state: controller.signal.aborted ? "cancelled" : "error",
+        ...controller.signal.aborted ? {} : { error: error2 instanceof SpeechError ? error2.message : "The download could not be completed. Check your connection and try again." }
+      };
+    } finally {
+      if (staging) await rm(staging, { recursive: true, force: true }).catch(() => void 0);
+    }
+  }
+  async download(url, file, expectedBytes, digest, signal) {
+    const timeout = AbortSignal.timeout(15 * 6e4);
+    const combined = AbortSignal.any([signal, timeout]);
+    let response;
+    for (let redirects = 0; redirects < 8; redirects++) {
+      const target = new URL(url);
+      if (target.protocol !== "https:" || !allowedDownloadHost(target.hostname)) throw new SpeechError("The model download returned an unsupported destination.");
+      response = await this.#fetcher(target, { signal: combined, redirect: "manual" });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        await response.body?.cancel();
+        if (!location) throw new SpeechError("The model download could not be opened.");
+        url = new URL(location, target).href;
+      } else break;
+    }
+    if (!response?.ok || !response.body) throw new SpeechError("The download is unavailable. Check your connection and try again.");
+    const output = await open(file, "wx", 384);
+    const hash = createHash("sha256");
+    let bytes = 0;
+    try {
+      const reader = response.body.getReader();
+      for (; ; ) {
+        combined.throwIfAborted();
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > expectedBytes) {
+          await reader.cancel();
+          throw new SpeechError("The downloaded file has an unexpected size.");
+        }
+        hash.update(value);
+        await output.writeFile(value);
+        this.#installation.downloadedBytes += value.byteLength;
+      }
+      this.#installation.state = "verifying";
+      if (bytes !== expectedBytes || hash.digest("hex") !== digest) throw new SpeechError("Download verification failed. Please retry.");
+      this.#installation.state = "downloading";
+    } finally {
+      await output.close();
+    }
+  }
+  async transcribe(request) {
+    for (const [id2, job2] of this.#jobs) if (Date.now() - job2.updated > 12e4 && job2.result.state !== "processing") this.#jobs.delete(id2);
+    if (this.#jobs.has(request.jobId)) throw new SpeechError("This transcription identifier is already in use.", 409);
+    if (this.#recognizing) throw new SpeechError("Voice recognition is busy. Try again in a moment.", 409);
+    if (this.#jobs.size >= 100) throw new SpeechError("Too many transcription requests. Try again shortly.", 429);
+    const wav = Buffer.from(request.audioBase64, "base64");
+    validateSpeechWave(wav);
+    const job = { result: { state: "processing" }, controller: new AbortController(), updated: Date.now() };
+    this.#recognizing = true;
+    this.#jobs.set(request.jobId, job);
+    try {
+      const status = await this.status();
+      if (!status.engineReady || !status.installedModels.includes(request.modelId)) throw new SpeechError("Download the selected speech model in Settings \u2192 Voice input first.", 409);
+    } catch (error2) {
+      this.#recognizing = false;
+      this.#jobs.delete(request.jobId);
+      throw error2;
+    }
+    const recognize = this.#recognize ?? this.recognize.bind(this);
+    void Promise.resolve().then(() => recognize(this.modelPath(request.modelId), wav, request.language, job.controller.signal)).then((text2) => {
+      if (!job.controller.signal.aborted) job.result = { state: "complete", text: text2.trim().slice(0, 2e4) };
+    }).catch((error2) => {
+      job.result = job.controller.signal.aborted ? { state: "cancelled" } : { state: "error", error: error2 instanceof SpeechError ? error2.message : "Recognition failed. Try a shorter phrase or a smaller model." };
+    }).finally(() => {
+      this.#recognizing = false;
+      job.updated = Date.now();
+    });
+    return { state: "processing" };
+  }
+  async recognize(model, wav, language, signal) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "vdt-speech-audio-"));
+    try {
+      const input = path.join(directory, "input.wav");
+      await writeFile(input, wav, { flag: "wx", mode: 384 });
+      const output = await runWhisper(this.enginePath(), ["-m", model, "-f", input, "-l", language, "-nt", "-np", "-t", "4", "-bs", "1", "-bo", "1", "-ng"], directory, signal);
+      return output.replace(/\[(?:BLANK_AUDIO|SILENCE|MUSIC|NO_SPEECH)\]/gi, "").trim();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+};
+function allowedDownloadHost(host) {
+  return ["github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com", "huggingface.co"].includes(host) || host.endsWith(".huggingface.co") || host.endsWith(".hf.co");
+}
+function extractPinnedExecutable(zip, expectedName) {
+  let end = -1;
+  for (let i = zip.length - 22; i >= Math.max(0, zip.length - 65557); i--) if (zip.readUInt32LE(i) === 101010256) {
+    end = i;
+    break;
+  }
+  if (end < 0 || zip.readUInt16LE(end + 10) !== 1) throw new SpeechError("The speech engine archive is invalid.");
+  const central = zip.readUInt32LE(end + 16);
+  if (central + 46 > zip.length || zip.readUInt32LE(central) !== 33639248) throw new SpeechError("The speech engine archive is invalid.");
+  const name = zip.subarray(central + 46, central + 46 + zip.readUInt16LE(central + 28)).toString("utf8");
+  const mode = zip.readUInt32LE(central + 38) >>> 16;
+  if (name !== expectedName || (mode & 61440) === 40960) throw new SpeechError("The speech engine archive contains unexpected files.");
+  const length = zip.readUInt32LE(central + 24);
+  const compressed = zip.readUInt32LE(central + 20);
+  const local = zip.readUInt32LE(central + 42);
+  if (length > 32 * 1024 * 1024 || local + 30 > zip.length || zip.readUInt32LE(local) !== 67324752) throw new SpeechError("The speech engine archive exceeds its limits.");
+  const start = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+  if (start + compressed > central) throw new SpeechError("The speech engine archive is truncated.");
+  const data = zip.subarray(start, start + compressed);
+  const method = zip.readUInt16LE(central + 10);
+  const binary = method === 0 ? data : method === 8 ? inflateRawSync(data, { maxOutputLength: length }) : void 0;
+  if (!binary || binary.length !== length) throw new SpeechError("The speech engine archive could not be unpacked.");
+  return binary;
+}
+function validateSpeechWave(wav) {
+  if (wav.length < 44 || wav.length > SPEECH_MAX_AUDIO_BYTES || wav.toString("ascii", 0, 4) !== "RIFF" || wav.toString("ascii", 8, 12) !== "WAVE" || wav.toString("ascii", 12, 16) !== "fmt " || wav.readUInt32LE(16) !== 16 || wav.readUInt16LE(20) !== 1 || wav.readUInt16LE(22) !== 1 || wav.readUInt32LE(24) !== SPEECH_SAMPLE_RATE || wav.readUInt32LE(28) !== SPEECH_SAMPLE_RATE * 2 || wav.readUInt16LE(32) !== 2 || wav.readUInt16LE(34) !== 16 || wav.toString("ascii", 36, 40) !== "data" || wav.readUInt32LE(40) !== wav.length - 44 || wav.readUInt32LE(4) !== wav.length - 8 || wav.length % 2 !== 0) {
+    throw new SpeechError("Voice input requires a bounded 16 kHz mono PCM audio fragment.");
+  }
+}
+function runWhisper(binary, args, cwd, signal) {
+  return new Promise((resolve, reject) => {
+    signal.throwIfAborted();
+    const environment = { ...process.env, GGML_METAL_DEVICES: "0" };
+    delete environment.GGML_BACKEND_PATH;
+    const child = spawn(binary, args, { cwd, env: environment, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, shell: false });
+    let output = "";
+    let size = 0;
+    let failed = false;
+    let killTimer;
+    const stop = () => {
+      failed = true;
+      child.kill();
+      killTimer ??= setTimeout(() => child.kill("SIGKILL"), 2e3);
+    };
+    const timer = setTimeout(stop, 45e3);
+    signal.addEventListener("abort", stop, { once: true });
+    child.stdout.on("data", (data) => {
+      size += data.length;
+      if (size > 128 * 1024) stop();
+      else output += data.toString("utf8");
+    });
+    child.stderr.on("data", (data) => {
+      size += data.length;
+      if (size > 128 * 1024) stop();
+    });
+    child.once("error", () => {
+      failed = true;
+    });
+    child.once("close", (code) => {
+      clearTimeout(timer);
+      clearTimeout(killTimer);
+      signal.removeEventListener("abort", stop);
+      if (failed || code !== 0) reject(new SpeechError("Local recognition failed. Try the Tiny model or restart dictation."));
+      else resolve(output);
+    });
+  });
+}
+var globalSpeech = globalThis;
+function getSpeechRuntime() {
+  if (globalSpeech.__vdtSpeechRuntimeRevision !== 3) {
+    globalSpeech.__vdtSpeechRuntime = new SpeechRuntime();
+    globalSpeech.__vdtSpeechRuntimeRevision = 3;
+  }
+  return globalSpeech.__vdtSpeechRuntime ??= new SpeechRuntime();
+}
+
 // ../local-runner/src/server/runtime.ts
 import { randomUUID } from "node:crypto";
 import { execFile as execFile9 } from "node:child_process";
@@ -301,39 +743,39 @@ function validateDataDiscoveryOutput(schemaId, value) {
   const errors = validate(DATA_DISCOVERY_JSON_SCHEMAS[schemaId], value, "$");
   return { valid: errors.length === 0, errors };
 }
-function validate(schema, value, path7) {
+function validate(schema, value, path8) {
   if (Array.isArray(schema.anyOf)) {
-    const results = schema.anyOf.map((branch) => validate(branch, value, path7));
+    const results = schema.anyOf.map((branch) => validate(branch, value, path8));
     return results.some((errors2) => errors2.length === 0) ? [] : results.flat().slice(0, 16);
   }
   const errors = [];
   if (schema.type === "object") {
-    if (!record(value)) return [`${path7} must be an object.`];
+    if (!record(value)) return [`${path8} must be an object.`];
     const properties = schema.properties;
-    for (const key of schema.required) if (!Object.hasOwn(value, key)) errors.push(`${path7}.${key} is required.`);
+    for (const key of schema.required) if (!Object.hasOwn(value, key)) errors.push(`${path8}.${key} is required.`);
     for (const [key, item] of Object.entries(value)) {
-      if (!Object.hasOwn(properties, key)) errors.push(`${path7}.${key} is not an approved field.`);
-      else errors.push(...validate(properties[key], item, `${path7}.${key}`));
+      if (!Object.hasOwn(properties, key)) errors.push(`${path8}.${key} is not an approved field.`);
+      else errors.push(...validate(properties[key], item, `${path8}.${key}`));
     }
   } else if (schema.type === "array") {
-    if (!Array.isArray(value)) return [`${path7} must be an array.`];
-    if (typeof schema.minItems === "number" && value.length < schema.minItems) errors.push(`${path7} has too few items.`);
-    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) errors.push(`${path7} has too many items.`);
-    value.forEach((item, index) => errors.push(...validate(schema.items, item, `${path7}[${index}]`)));
+    if (!Array.isArray(value)) return [`${path8} must be an array.`];
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) errors.push(`${path8} has too few items.`);
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) errors.push(`${path8} has too many items.`);
+    value.forEach((item, index) => errors.push(...validate(schema.items, item, `${path8}[${index}]`)));
   } else if (schema.type === "string") {
-    if (typeof value !== "string") return [`${path7} must be a string.`];
-    if (typeof schema.minLength === "number" && value.length < schema.minLength) errors.push(`${path7} is too short.`);
-    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) errors.push(`${path7} is too long.`);
-    if (typeof schema.pattern === "string" && !new RegExp(schema.pattern).test(value)) errors.push(`${path7} has an invalid format.`);
+    if (typeof value !== "string") return [`${path8} must be a string.`];
+    if (typeof schema.minLength === "number" && value.length < schema.minLength) errors.push(`${path8} is too short.`);
+    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) errors.push(`${path8} is too long.`);
+    if (typeof schema.pattern === "string" && !new RegExp(schema.pattern).test(value)) errors.push(`${path8} has an invalid format.`);
   } else if (schema.type === "number" || schema.type === "integer") {
-    if (typeof value !== "number" || !Number.isFinite(value)) return [`${path7} must be a finite number.`];
-    if (schema.type === "integer" && !Number.isInteger(value)) errors.push(`${path7} must be an integer.`);
-    if (typeof schema.minimum === "number" && value < schema.minimum) errors.push(`${path7} is below the minimum.`);
-    if (typeof schema.maximum === "number" && value > schema.maximum) errors.push(`${path7} exceeds the maximum.`);
-    if (typeof schema.exclusiveMinimum === "number" && value <= schema.exclusiveMinimum) errors.push(`${path7} must be greater than ${schema.exclusiveMinimum}.`);
+    if (typeof value !== "number" || !Number.isFinite(value)) return [`${path8} must be a finite number.`];
+    if (schema.type === "integer" && !Number.isInteger(value)) errors.push(`${path8} must be an integer.`);
+    if (typeof schema.minimum === "number" && value < schema.minimum) errors.push(`${path8} is below the minimum.`);
+    if (typeof schema.maximum === "number" && value > schema.maximum) errors.push(`${path8} exceeds the maximum.`);
+    if (typeof schema.exclusiveMinimum === "number" && value <= schema.exclusiveMinimum) errors.push(`${path8} must be greater than ${schema.exclusiveMinimum}.`);
   }
-  if ("const" in schema && schema.const !== value) errors.push(`${path7} must equal ${String(schema.const)}.`);
-  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) errors.push(`${path7} is not an allowed value.`);
+  if ("const" in schema && schema.const !== value) errors.push(`${path8} must equal ${String(schema.const)}.`);
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) errors.push(`${path8} is not an allowed value.`);
   return errors;
 }
 
@@ -1438,10 +1880,10 @@ function validateRegisteredSchemaDetailed(schemaId, output) {
   }
   return { valid: true, errors: [] };
 }
-function validateJsonSchemaSubset(schema, value, path7 = "$") {
+function validateJsonSchemaSubset(schema, value, path8 = "$") {
   if (!isRecord(schema)) return { valid: true, errors: [] };
   if (Array.isArray(schema.anyOf)) {
-    const branchResults = schema.anyOf.map((branch) => validateJsonSchemaSubset(branch, value, path7));
+    const branchResults = schema.anyOf.map((branch) => validateJsonSchemaSubset(branch, value, path8));
     if (branchResults.some((result) => result.valid)) {
       return { valid: true, errors: [] };
     }
@@ -1454,57 +1896,57 @@ function validateJsonSchemaSubset(schema, value, path7 = "$") {
   const type = schema.type;
   if (type === "object") {
     if (!isRecord(value)) {
-      return { valid: false, errors: [`${path7} must be an object.`] };
+      return { valid: false, errors: [`${path8} must be an object.`] };
     }
     const properties = isRecord(schema.properties) ? schema.properties : {};
     const required = Array.isArray(schema.required) ? schema.required.filter((key) => typeof key === "string") : [];
     for (const key of required) {
-      if (!(key in value)) errors.push(`${path7}.${key} is required.`);
+      if (!(key in value)) errors.push(`${path8}.${key} is required.`);
     }
     if (schema.additionalProperties === false) {
       for (const key of Object.keys(value)) {
-        if (!(key in properties)) errors.push(`${path7}.${key} is not an approved field.`);
+        if (!(key in properties)) errors.push(`${path8}.${key} is not an approved field.`);
       }
     }
     for (const [key, propertySchema] of Object.entries(properties)) {
-      if (key in value) errors.push(...validateJsonSchemaSubset(propertySchema, value[key], `${path7}.${key}`).errors);
+      if (key in value) errors.push(...validateJsonSchemaSubset(propertySchema, value[key], `${path8}.${key}`).errors);
     }
   } else if (type === "array") {
     if (!Array.isArray(value)) {
-      return { valid: false, errors: [`${path7} must be an array.`] };
+      return { valid: false, errors: [`${path8} must be an array.`] };
     }
     if (typeof schema.minItems === "number" && value.length < schema.minItems) {
-      errors.push(`${path7} must contain at least ${schema.minItems} item(s).`);
+      errors.push(`${path8} must contain at least ${schema.minItems} item(s).`);
     }
     if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
-      errors.push(`${path7} must contain at most ${schema.maxItems} item(s).`);
+      errors.push(`${path8} must contain at most ${schema.maxItems} item(s).`);
     }
     value.forEach((item, index) => {
-      errors.push(...validateJsonSchemaSubset(schema.items, item, `${path7}[${index}]`).errors);
+      errors.push(...validateJsonSchemaSubset(schema.items, item, `${path8}[${index}]`).errors);
     });
   } else if (type === "string") {
     if (typeof value !== "string") {
-      return { valid: false, errors: [`${path7} must be a string.`] };
+      return { valid: false, errors: [`${path8} must be a string.`] };
     }
     if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
-      errors.push(`${path7} must be at most ${schema.maxLength} character(s).`);
+      errors.push(`${path8} must be at most ${schema.maxLength} character(s).`);
     }
   } else if (type === "number") {
     if (typeof value !== "number" || !Number.isFinite(value)) {
-      return { valid: false, errors: [`${path7} must be a finite number.`] };
+      return { valid: false, errors: [`${path8} must be a finite number.`] };
     }
     if (typeof schema.minimum === "number" && value < schema.minimum) {
-      errors.push(`${path7} must be at least ${schema.minimum}.`);
+      errors.push(`${path8} must be at least ${schema.minimum}.`);
     }
     if (typeof schema.maximum === "number" && value > schema.maximum) {
-      errors.push(`${path7} must be at most ${schema.maximum}.`);
+      errors.push(`${path8} must be at most ${schema.maximum}.`);
     }
   } else if (type === "boolean") {
     if (typeof value !== "boolean") {
-      return { valid: false, errors: [`${path7} must be a boolean.`] };
+      return { valid: false, errors: [`${path8} must be a boolean.`] };
     }
   }
-  if ("const" in schema && value !== schema.const) errors.push(`${path7} must equal ${String(schema.const)}.`);
+  if ("const" in schema && value !== schema.const) errors.push(`${path8} must equal ${String(schema.const)}.`);
   return { valid: errors.length === 0, errors };
 }
 
@@ -2430,7 +2872,7 @@ ${result.stderr}`.trim())?.raw ?? null;
 }
 
 // ../model-bridge/src/subscription-cli/cursor/adapter.ts
-import path3 from "node:path";
+import path4 from "node:path";
 
 // ../model-bridge/src/subscription-cli/cursor/auth.ts
 import { execFile as execFile5 } from "node:child_process";
@@ -2529,15 +2971,15 @@ function parseCursorStreamJson(stdout, limits = DEFAULT_CURSOR_STREAM_PARSE_LIMI
 import { execFile as execFile4 } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access as access2 } from "node:fs/promises";
-import path2 from "node:path";
+import path3 from "node:path";
 import { promisify as promisify3 } from "node:util";
 
 // ../model-bridge/src/subscription-cli/codex/executable-selection.ts
-import { execFile as execFile3, spawn } from "node:child_process";
+import { execFile as execFile3, spawn as spawn2 } from "node:child_process";
 import { constants } from "node:fs";
-import { access, lstat, mkdtemp, realpath, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
+import { access, lstat as lstat2, mkdtemp as mkdtemp2, realpath, rm as rm2 } from "node:fs/promises";
+import os2 from "node:os";
+import path2 from "node:path";
 var CODEX_SELECTION_LIMITS = Object.freeze({
   maxDirectories: 128,
   maxCandidates: 8,
@@ -2575,16 +3017,16 @@ function compareVersions(left, right) {
   return 0;
 }
 function inside(root, candidate) {
-  const relative = path.relative(root, candidate);
-  return relative === "" || !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative);
+  const relative = path2.relative(root, candidate);
+  return relative === "" || !relative.startsWith(`..${path2.sep}`) && relative !== ".." && !path2.isAbsolute(relative);
 }
 async function currentWorkspaceRoot() {
   const cwd = await realpath(process.cwd());
   let root = cwd;
   let directory = cwd;
   for (let level = 0; level < 12; level += 1) {
-    if (await lstat(path.join(directory, ".git")).catch(() => void 0) || await lstat(path.join(directory, "pnpm-workspace.yaml")).catch(() => void 0)) root = directory;
-    const parent = path.dirname(directory);
+    if (await lstat2(path2.join(directory, ".git")).catch(() => void 0) || await lstat2(path2.join(directory, "pnpm-workspace.yaml")).catch(() => void 0)) root = directory;
+    const parent = path2.dirname(directory);
     if (parent === directory) break;
     directory = parent;
   }
@@ -2592,7 +3034,7 @@ async function currentWorkspaceRoot() {
 }
 async function candidatesOnPath(options) {
   const platform = options.platform ?? process.platform;
-  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const pathApi = platform === "win32" ? path2.win32 : path2.posix;
   const env = options.env ?? process.env;
   const directories = (options.path ?? env.PATH ?? "").split(platform === "win32" ? ";" : ":").filter((directory) => pathApi.isAbsolute(directory) && !directory.includes("\0")).slice(0, CODEX_SELECTION_LIMITS.maxDirectories);
   const extensions = platform === "win32" ? ["", ...(options.pathExt ?? env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").map((part) => part.trim().toLowerCase())] : [""];
@@ -2604,10 +3046,10 @@ async function candidatesOnPath(options) {
       const candidate = pathApi.join(directory, `codex${extension}`);
       if (inside(workspace, candidate)) continue;
       try {
-        const info = await lstat(candidate);
+        const info = await lstat2(candidate);
         if (!info.isFile() && !info.isSymbolicLink()) continue;
         const resolved = await realpath(candidate);
-        if (!path.isAbsolute(resolved) || inside(workspace, resolved) || !(await lstat(resolved)).isFile()) continue;
+        if (!path2.isAbsolute(resolved) || inside(workspace, resolved) || !(await lstat2(resolved)).isFile()) continue;
         await access(resolved, constants.X_OK);
         if (options.executableCheck && !await options.executableCheck(candidate)) continue;
         seen.add(resolved);
@@ -2627,7 +3069,7 @@ function versionEnvironment(source) {
 }
 async function probeVersion(executable, cwd, env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ["--version"], {
+    const child = spawn2(executable, ["--version"], {
       cwd,
       env,
       shell: false,
@@ -2662,7 +3104,7 @@ async function probeVersion(executable, cwd, env) {
       }, CODEX_SELECTION_LIMITS.terminationGraceMs);
       if (!child.pid) return;
       if (process.platform === "win32") {
-        const taskkill = path.win32.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows", "System32", "taskkill.exe");
+        const taskkill = path2.win32.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows", "System32", "taskkill.exe");
         termination = new Promise((done) => {
           let completed = false;
           let killer;
@@ -2727,7 +3169,7 @@ async function probeVersion(executable, cwd, env) {
 async function selectCodexExecutable(options = {}) {
   const candidates = await candidatesOnPath(options);
   if (!candidates.length) return null;
-  const cwd = await mkdtemp(path.join(os.tmpdir(), "vdt-codex-selection-"));
+  const cwd = await mkdtemp2(path2.join(os2.tmpdir(), "vdt-codex-selection-"));
   try {
     const env = versionEnvironment(options.env ?? process.env);
     const results = [];
@@ -2760,7 +3202,7 @@ ${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim().slice(0, 160) || null;
     }
     return selected;
   } finally {
-    await rm(cwd, { recursive: true, force: true });
+    await rm2(cwd, { recursive: true, force: true });
   }
 }
 
@@ -2801,7 +3243,7 @@ async function findExecutableOnPath(aliases, options = {}) {
   const pathValue = options.path ?? process.env.PATH ?? "";
   const pathExt = options.pathExt ?? process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
   const check = options.executableCheck ?? defaultExecutableCheck;
-  const pathApi = platform === "win32" ? path2.win32 : path2.posix;
+  const pathApi = platform === "win32" ? path3.win32 : path3.posix;
   const directories = pathValue.split(platform === "win32" ? ";" : ":").filter(Boolean);
   for (const alias of aliases) {
     if (pathApi.basename(alias) !== alias || alias === "." || alias === "..") continue;
@@ -3062,7 +3504,7 @@ function buildCursorDynamicArgs(input) {
   const args = [];
   if (input.enableWorkspaceTrust) args.push("--trust");
   if (input.model) args.push("--model", input.model);
-  const workspace = input.cwd ?? (input.promptPath ? path3.dirname(input.promptPath) : void 0);
+  const workspace = input.cwd ?? (input.promptPath ? path4.dirname(input.promptPath) : void 0);
   if (workspace) args.push("--workspace", workspace);
   assertArgsSafe(args, { allowScopedTrust: input.enableWorkspaceTrust === true });
   return Object.freeze(args);
@@ -3204,9 +3646,9 @@ ${result.stderr}`.trim())?.raw ?? null;
 
 // ../model-bridge/src/subscription-cli/gemini/auth.ts
 import { execFile as execFile6 } from "node:child_process";
-import { mkdtemp as mkdtemp2, rm as rm2, writeFile } from "node:fs/promises";
-import os2 from "node:os";
-import path4 from "node:path";
+import { mkdtemp as mkdtemp3, rm as rm3, writeFile as writeFile2 } from "node:fs/promises";
+import os3 from "node:os";
+import path5 from "node:path";
 import { promisify as promisify5 } from "node:util";
 
 // ../model-bridge/src/subscription-cli/gemini/parser.ts
@@ -3267,9 +3709,9 @@ async function probeGeminiAuth(executable, options = {}) {
   if (options.versionStatus?.status === "unsupported_version") {
     return { backendId: GEMINI_BACKEND_ID, status: "unsupported_version", authSummary: summary("unsupported_version"), diagnostics: [...options.versionStatus.diagnostics] };
   }
-  const cwd = await mkdtemp2(path4.join(os2.tmpdir(), "vdt-gemini-probe-"));
-  const policyPath = path4.join(cwd, "deny-all-tools.toml");
-  await writeFile(policyPath, '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n', { encoding: "utf8", mode: 384 });
+  const cwd = await mkdtemp3(path5.join(os3.tmpdir(), "vdt-gemini-probe-"));
+  const policyPath = path5.join(cwd, "deny-all-tools.toml");
+  await writeFile2(policyPath, '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n', { encoding: "utf8", mode: 384 });
   try {
     const probe = options.execFileImpl ?? promisify5(execFile6);
     const execOptions = { encoding: "utf8", cwd, timeout: options.timeoutMs ?? 15e3, maxBuffer: 512 * 1024, windowsHide: true, shell: false, signal: options.signal };
@@ -3289,7 +3731,7 @@ ${execError.message}`.trim();
     const status = classify(message);
     return { backendId: GEMINI_BACKEND_ID, status, authSummary: summary(status), diagnostics: [message] };
   } finally {
-    await rm2(cwd, { recursive: true, force: true });
+    await rm3(cwd, { recursive: true, force: true });
   }
 }
 
@@ -3376,9 +3818,9 @@ ${result.stderr}`)?.raw ?? null;
 
 // ../model-bridge/src/subscription-cli/copilot/auth.ts
 import { execFile as execFile7 } from "node:child_process";
-import { mkdtemp as mkdtemp3, rm as rm3 } from "node:fs/promises";
-import os3 from "node:os";
-import path5 from "node:path";
+import { mkdtemp as mkdtemp4, rm as rm4 } from "node:fs/promises";
+import os4 from "node:os";
+import path6 from "node:path";
 import { promisify as promisify6 } from "node:util";
 
 // ../model-bridge/src/subscription-cli/copilot/parser.ts
@@ -3459,7 +3901,7 @@ async function probeCopilotAuth(executable, options = {}) {
   if (options.versionStatus?.status === "unsupported_version") {
     return { backendId: COPILOT_BACKEND_ID, status: "unsupported_version", authSummary: summary2("unsupported_version"), diagnostics: [...options.versionStatus.diagnostics] };
   }
-  const cwd = await mkdtemp3(path5.join(os3.tmpdir(), "vdt-copilot-probe-"));
+  const cwd = await mkdtemp4(path6.join(os4.tmpdir(), "vdt-copilot-probe-"));
   try {
     const probe = options.execFileImpl ?? promisify6(execFile7);
     const execOptions = { encoding: "utf8", cwd, timeout: options.timeoutMs ?? 15e3, maxBuffer: 512 * 1024, windowsHide: true, shell: false, signal: options.signal };
@@ -3480,7 +3922,7 @@ ${execError.message}`.trim();
     const status = classify2(message);
     return { backendId: COPILOT_BACKEND_ID, status, authSummary: summary2(status), diagnostics: [message] };
   } finally {
-    await rm3(cwd, { recursive: true, force: true });
+    await rm4(cwd, { recursive: true, force: true });
   }
 }
 
@@ -4323,8 +4765,8 @@ function getErrorMap() {
 
 // ../../node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path7, errorMaps, issueData } = params;
-  const fullPath = [...path7, ...issueData.path || []];
+  const { data, path: path8, errorMaps, issueData } = params;
+  const fullPath = [...path8, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -4440,11 +4882,11 @@ var errorUtil;
 
 // ../../node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path7, key) {
+  constructor(parent, value, path8, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path7;
+    this._path = path8;
     this._key = key;
   }
   get path() {
@@ -8447,19 +8889,19 @@ var MODEL_CONTROLLED_AUTHORITY_KEYS = /* @__PURE__ */ new Set([
 function normalizedAuthorityKey(key) {
   return key.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
-function findModelControlledAuthorityKey(value, path7 = [], visited = /* @__PURE__ */ new WeakSet()) {
+function findModelControlledAuthorityKey(value, path8 = [], visited = /* @__PURE__ */ new WeakSet()) {
   if (value === null || typeof value !== "object") return void 0;
   if (visited.has(value)) return void 0;
   visited.add(value);
   if (Array.isArray(value)) {
     for (const [index, entry] of value.entries()) {
-      const found = findModelControlledAuthorityKey(entry, [...path7, index], visited);
+      const found = findModelControlledAuthorityKey(entry, [...path8, index], visited);
       if (found) return found;
     }
     return void 0;
   }
   for (const [key, entry] of Object.entries(value)) {
-    const entryPath = [...path7, key];
+    const entryPath = [...path8, key];
     if (MODEL_CONTROLLED_AUTHORITY_KEYS.has(normalizedAuthorityKey(key))) {
       return entryPath;
     }
@@ -8990,8 +9432,8 @@ var FormulaParser = class {
     throw new FormulaParseError("Expected a number, reference, or parenthesized expression.");
   }
   parseCall(name) {
-    const open = this.advance();
-    if (open.type !== "left_paren") {
+    const open2 = this.advance();
+    if (open2.type !== "left_paren") {
       throw new FormulaParseError("Expected '(' after function name.");
     }
     if (this.peek().type === "right_paren") {
@@ -9144,7 +9586,7 @@ function normalizeUnit(unit) {
 function unitsCompatible(left, right) {
   return normalizeUnit(left) === normalizeUnit(right);
 }
-function collectUnitWarnings(node, expression, nodeById, warnings, path7 = "root") {
+function collectUnitWarnings(node, expression, nodeById, warnings, path8 = "root") {
   if (expression.type === "number") {
     return void 0;
   }
@@ -9152,13 +9594,13 @@ function collectUnitWarnings(node, expression, nodeById, warnings, path7 = "root
     return normalizeUnit(nodeById.get(expression.name)?.unit);
   }
   if (expression.type === "unary") {
-    return collectUnitWarnings(node, expression.expression, nodeById, warnings, `${path7}-unary`);
+    return collectUnitWarnings(node, expression.expression, nodeById, warnings, `${path8}-unary`);
   }
   if (expression.type === "call") {
     const argUnits = [];
     for (const arg of expression.args) {
       argUnits.push(
-        collectUnitWarnings(node, arg, nodeById, warnings, `${path7}-arg-${argUnits.length}`)
+        collectUnitWarnings(node, arg, nodeById, warnings, `${path8}-arg-${argUnits.length}`)
       );
     }
     for (let index = 0; index < argUnits.length; index += 1) {
@@ -9168,7 +9610,7 @@ function collectUnitWarnings(node, expression, nodeById, warnings, path7 = "root
         if (leftUnit2 && rightUnit2 && !unitsCompatible(leftUnit2, rightUnit2)) {
           warnings.push(
             warning(
-              `validation-unit-mismatch-${node.id}-${path7}-${index}-${otherIndex}`,
+              `validation-unit-mismatch-${node.id}-${path8}-${index}-${otherIndex}`,
               "unit_mismatch",
               `Formula for "${node.name}" combines incompatible units in "${expression.name}(...)": "${leftUnit2}" and "${rightUnit2}"`,
               node.id
@@ -9179,12 +9621,12 @@ function collectUnitWarnings(node, expression, nodeById, warnings, path7 = "root
     }
     return argUnits.find((unit) => unit !== void 0);
   }
-  const leftUnit = collectUnitWarnings(node, expression.left, nodeById, warnings, `${path7}-left`);
-  const rightUnit = collectUnitWarnings(node, expression.right, nodeById, warnings, `${path7}-right`);
+  const leftUnit = collectUnitWarnings(node, expression.left, nodeById, warnings, `${path8}-left`);
+  const rightUnit = collectUnitWarnings(node, expression.right, nodeById, warnings, `${path8}-right`);
   if ((expression.operator === "+" || expression.operator === "-") && leftUnit && rightUnit && !unitsCompatible(leftUnit, rightUnit)) {
     warnings.push(
       warning(
-        `validation-unit-mismatch-${node.id}-${path7}`,
+        `validation-unit-mismatch-${node.id}-${path8}`,
         "unit_mismatch",
         `Formula for "${node.name}" combines incompatible units with "${expression.operator}": "${leftUnit}" and "${rightUnit}"`,
         node.id
@@ -10115,9 +10557,9 @@ function orderSiblings(childIds, nodesById, existing) {
   });
   return [...positionedSorted, ...unpositioned.sort(byName)];
 }
-function layoutSubtree(nodeId, depth, childrenBySource, nodesById, options, path7) {
+function layoutSubtree(nodeId, depth, childrenBySource, nodesById, options, path8) {
   const x = options.margin + depth * (options.cardWidth + options.horizontalGap);
-  const nextPath = new Set(path7);
+  const nextPath = new Set(path8);
   nextPath.add(nodeId);
   const childIds = orderSiblings(
     childrenBySource.get(nodeId) ?? [],
@@ -11535,7 +11977,7 @@ function mergeReview(context, result) {
 }
 
 // ../vdt-agent-runtime/src/tools/excavation-tools.ts
-import { readFile } from "node:fs/promises";
+import { readFile as readFile2 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12312,7 +12754,7 @@ async function readReferenceFile(fileName) {
   ];
   for (const candidate of candidates) {
     try {
-      return await readFile(candidate, "utf8");
+      return await readFile2(candidate, "utf8");
     } catch {
     }
   }
@@ -13955,12 +14397,12 @@ function parseFrontmatter(markdown) {
     body: lines.slice(closeIndex + 1).join("\n").trim()
   };
 }
-function parseSkillMarkdown(path7, markdown) {
+function parseSkillMarkdown(path8, markdown) {
   const parsed = parseFrontmatter(markdown);
-  const frontmatter = normalizeSkillFrontmatter(parsed.attributes, path7);
+  const frontmatter = normalizeSkillFrontmatter(parsed.attributes, path8);
   return {
     id: frontmatter.id,
-    path: path7,
+    path: path8,
     title: frontmatter.title,
     domain: frontmatter.domain,
     frontmatter,
@@ -13997,8 +14439,8 @@ function loadSkillLibraryFromMemory(sources) {
     throw new Error("Skill library source map must include registry.md.");
   }
   const registry2 = parseRegistryMarkdown(registrySource);
-  const skillPaths = Object.keys(sources).filter((path7) => path7 !== "registry.md" && path7 !== "skills/registry.md");
-  const skills = skillPaths.sort().map((path7) => parseSkillMarkdown(path7, sources[path7]));
+  const skillPaths = Object.keys(sources).filter((path8) => path8 !== "registry.md" && path8 !== "skills/registry.md");
+  const skills = skillPaths.sort().map((path8) => parseSkillMarkdown(path8, sources[path8]));
   assertRegistryCoversSkills(registry2, skills);
   return {
     registry: registry2,
@@ -14007,14 +14449,14 @@ function loadSkillLibraryFromMemory(sources) {
   };
 }
 async function loadSkillLibraryFromFs(rootDir) {
-  const [{ readdir, readFile: readFile3 }, { join: join3, relative }] = await Promise.all([import("node:fs/promises"), import("node:path")]);
+  const [{ readdir, readFile: readFile4 }, { join: join3, relative }] = await Promise.all([import("node:fs/promises"), import("node:path")]);
   const registryPath = join3(rootDir, "registry.md");
-  const registrySource = await readFile3(registryPath, "utf8");
+  const registrySource = await readFile4(registryPath, "utf8");
   const markdownPaths = await collectMarkdownFiles(rootDir, readdir, join3);
   const sources = { "registry.md": registrySource };
   await Promise.all(
-    markdownPaths.filter((path7) => !path7.endsWith("registry.md")).map(async (path7) => {
-      sources[relative(rootDir, path7).replaceAll("\\", "/")] = await readFile3(path7, "utf8");
+    markdownPaths.filter((path8) => !path8.endsWith("registry.md")).map(async (path8) => {
+      sources[relative(rootDir, path8).replaceAll("\\", "/")] = await readFile4(path8, "utf8");
     })
   );
   return loadSkillLibraryFromMemory(sources);
@@ -14356,11 +14798,11 @@ function parseBlockScalarFrontmatterValue(lines, index, marker) {
 function parseStringValue(value) {
   return value.replace(/^["']|["']$/g, "").trim();
 }
-function normalizeSkillFrontmatter(attributes, path7) {
+function normalizeSkillFrontmatter(attributes, path8) {
   const getString = (key) => {
     const value = attributes[key];
     if (typeof value !== "string" || !value.trim()) {
-      throw new Error(`Skill ${path7} is missing required string frontmatter: ${key}.`);
+      throw new Error(`Skill ${path8} is missing required string frontmatter: ${key}.`);
     }
     return value.trim();
   };
@@ -14371,11 +14813,11 @@ function normalizeSkillFrontmatter(attributes, path7) {
   const getStringArray = (key) => {
     const value = attributes[key];
     if (!Array.isArray(value)) {
-      throw new Error(`Skill ${path7} is missing required list frontmatter: ${key}.`);
+      throw new Error(`Skill ${path8} is missing required list frontmatter: ${key}.`);
     }
     const values = value.map((item) => item.trim()).filter(Boolean);
     if (values.length === 0) {
-      throw new Error(`Skill ${path7} must define at least one value for frontmatter list: ${key}.`);
+      throw new Error(`Skill ${path8} must define at least one value for frontmatter list: ${key}.`);
     }
     return values;
   };
@@ -14383,7 +14825,7 @@ function normalizeSkillFrontmatter(attributes, path7) {
     const value = attributes[key];
     if (value === void 0) return [];
     if (!Array.isArray(value)) {
-      throw new Error(`Skill ${path7} frontmatter must be a list: ${key}.`);
+      throw new Error(`Skill ${path8} frontmatter must be a list: ${key}.`);
     }
     return value.map((item) => item.trim()).filter(Boolean);
   };
@@ -14468,11 +14910,11 @@ async function collectMarkdownFiles(rootDir, readdir, join3) {
   const entries = await readdir(rootDir, { withFileTypes: true });
   const nested = await Promise.all(
     entries.map(async (entry) => {
-      const path7 = join3(rootDir, entry.name);
+      const path8 = join3(rootDir, entry.name);
       if (entry.isDirectory()) {
-        return collectMarkdownFiles(path7, readdir, join3);
+        return collectMarkdownFiles(path8, readdir, join3);
       }
-      return entry.isFile() && entry.name.endsWith(".md") ? [path7] : [];
+      return entry.isFile() && entry.name.endsWith(".md") ? [path8] : [];
     })
   );
   return nested.flat().sort();
@@ -16492,9 +16934,9 @@ var AGENT_DECISION_TIMEOUT_MAX_MS = 3e5;
 
 // ../local-runner/src/server/executor.ts
 import { execFile as execFile8, spawn as nodeSpawn } from "node:child_process";
-import { chmod, copyFile, lstat as lstat2, mkdir, mkdtemp as mkdtemp4, readFile as readFile2, realpath as realpath2, rm as rm4, writeFile as writeFile2 } from "node:fs/promises";
-import os4 from "node:os";
-import path6 from "node:path";
+import { chmod as chmod2, copyFile, lstat as lstat3, mkdir as mkdir2, mkdtemp as mkdtemp5, readFile as readFile3, realpath as realpath2, rm as rm5, writeFile as writeFile3 } from "node:fs/promises";
+import os5 from "node:os";
+import path7 from "node:path";
 import { promisify as promisify7 } from "node:util";
 var advisoryStub = Object.freeze({
   assumptions: [],
@@ -16947,18 +17389,18 @@ async function defaultResolveExecutable(manifest, env) {
     throw Object.assign(new Error("Codex CLI executable was not found on a safe absolute PATH entry."), { code: "BACKEND_NOT_INSTALLED" });
   }
   for (const alias of cli.executableAliases) {
-    if (alias.includes("\0") || path6.basename(alias) !== alias || alias === "." || alias === "..") continue;
-    for (const directory of pathValue.split(path6.delimiter).filter((entry) => path6.isAbsolute(entry))) {
-      const candidate = path6.resolve(directory, alias);
+    if (alias.includes("\0") || path7.basename(alias) !== alias || alias === "." || alias === "..") continue;
+    for (const directory of pathValue.split(path7.delimiter).filter((entry) => path7.isAbsolute(entry))) {
+      const candidate = path7.resolve(directory, alias);
       try {
-        const info = await lstat2(candidate);
+        const info = await lstat3(candidate);
         if (!info.isSymbolicLink() && !info.isFile()) continue;
         const resolved = await realpath2(candidate);
-        if (!path6.isAbsolute(resolved)) continue;
-        const resolvedInfo = await lstat2(resolved);
+        if (!path7.isAbsolute(resolved)) continue;
+        const resolvedInfo = await lstat3(resolved);
         if (!resolvedInfo.isFile()) continue;
-        const projectRoot = path6.resolve(process.cwd());
-        if (resolved === projectRoot || resolved.startsWith(`${projectRoot}${path6.sep}`)) continue;
+        const projectRoot = path7.resolve(process.cwd());
+        if (resolved === projectRoot || resolved.startsWith(`${projectRoot}${path7.sep}`)) continue;
         return resolved;
       } catch {
       }
@@ -16969,7 +17411,7 @@ async function defaultResolveExecutable(manifest, env) {
   });
 }
 async function normalizeResolvedExecutable(executable) {
-  if (!path6.isAbsolute(executable) || executable.includes("\0")) {
+  if (!path7.isAbsolute(executable) || executable.includes("\0")) {
     throw Object.assign(new Error("Resolved executable must be an absolute path without NUL bytes."), { code: "UNSAFE_EXECUTABLE" });
   }
   try {
@@ -16982,8 +17424,8 @@ function isJavaScriptExecutable(executable) {
   return /\.(?:mjs|cjs|js)$/i.test(executable);
 }
 function isPathInside(root, candidate) {
-  const relative = path6.relative(path6.resolve(root), path6.resolve(candidate));
-  return relative === "" || !!relative && !relative.startsWith("..") && !path6.isAbsolute(relative);
+  const relative = path7.relative(path7.resolve(root), path7.resolve(candidate));
+  return relative === "" || !!relative && !relative.startsWith("..") && !path7.isAbsolute(relative);
 }
 function shouldLocalizeJavaScriptExecutable(executable, options) {
   return options.resolveExecutable !== void 0 && isPathInside(process.cwd(), executable);
@@ -16993,20 +17435,20 @@ function errorCode(error2) {
 }
 async function copyCodexHomeFile(sourceDir, targetDir, fileName) {
   try {
-    const targetPath = path6.join(targetDir, fileName);
-    await copyFile(path6.join(sourceDir, fileName), targetPath);
-    await chmod(targetPath, 384);
+    const targetPath = path7.join(targetDir, fileName);
+    await copyFile(path7.join(sourceDir, fileName), targetPath);
+    await chmod2(targetPath, 384);
   } catch (error2) {
     if (errorCode(error2) === "ENOENT") return;
     throw error2;
   }
 }
 async function prepareEphemeralCodexHome(cwd, envSource) {
-  const sourceCodexHome = envSource.CODEX_HOME ?? (envSource.HOME ? path6.join(envSource.HOME, ".codex") : void 0);
+  const sourceCodexHome = envSource.CODEX_HOME ?? (envSource.HOME ? path7.join(envSource.HOME, ".codex") : void 0);
   if (!sourceCodexHome) return void 0;
-  const codexHome = path6.join(cwd, "codex-home");
-  await mkdir(codexHome, { recursive: true, mode: 448 });
-  await chmod(codexHome, 448);
+  const codexHome = path7.join(cwd, "codex-home");
+  await mkdir2(codexHome, { recursive: true, mode: 448 });
+  await chmod2(codexHome, 448);
   for (const fileName of CODEX_HOME_COPY_FILES) {
     await copyCodexHomeFile(sourceCodexHome, codexHome, fileName);
   }
@@ -17164,7 +17606,7 @@ var executableProbeCache = /* @__PURE__ */ new Map();
 var executableHelpCache = /* @__PURE__ */ new Map();
 async function executableProbeCacheKey(executable, operation) {
   try {
-    const metadata = await lstat2(executable);
+    const metadata = await lstat3(executable);
     return `${executable}\0${metadata.size}\0${metadata.mtimeMs}\0${operation}`;
   } catch {
     return `${executable}\0unknown\0${operation}`;
@@ -17229,29 +17671,29 @@ async function executeCli(manifest, request, signal, options) {
     if (byteLength8(prompt) > EXECUTION_LIMITS.maxPromptBytes) {
       throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
     }
-    const tempRoot = options.tempRoot ?? os4.tmpdir();
-    await mkdir(tempRoot, { recursive: true });
-    const cwd = await mkdtemp4(path6.join(tempRoot, "vdt-run-"));
-    await chmod(cwd, 448);
-    const requestPath = path6.join(cwd, "request.json");
-    await writeFile2(requestPath, requestJson, { encoding: "utf8", mode: 384, flag: "wx" });
-    const promptPath = path6.join(cwd, "prompt.txt");
-    await writeFile2(promptPath, prompt, { encoding: "utf8", mode: 384, flag: "wx" });
-    const schemaPath = path6.join(cwd, "schema.json");
-    await writeFile2(schemaPath, `${JSON.stringify(getStrictResponseJsonSchema(request.schemaId), null, 2)}
+    const tempRoot = options.tempRoot ?? os5.tmpdir();
+    await mkdir2(tempRoot, { recursive: true });
+    const cwd = await mkdtemp5(path7.join(tempRoot, "vdt-run-"));
+    await chmod2(cwd, 448);
+    const requestPath = path7.join(cwd, "request.json");
+    await writeFile3(requestPath, requestJson, { encoding: "utf8", mode: 384, flag: "wx" });
+    const promptPath = path7.join(cwd, "prompt.txt");
+    await writeFile3(promptPath, prompt, { encoding: "utf8", mode: 384, flag: "wx" });
+    const schemaPath = path7.join(cwd, "schema.json");
+    await writeFile3(schemaPath, `${JSON.stringify(getStrictResponseJsonSchema(request.schemaId), null, 2)}
 `, {
       encoding: "utf8",
       mode: 384,
       flag: "wx"
     });
-    const outputPath = path6.join(cwd, "last-message.json");
-    const toolPolicyPath = path6.join(cwd, "deny-all-tools.toml");
-    await writeFile2(
+    const outputPath = path7.join(cwd, "last-message.json");
+    const toolPolicyPath = path7.join(cwd, "deny-all-tools.toml");
+    await writeFile3(
       toolPolicyPath,
       '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n',
       { encoding: "utf8", mode: 384, flag: "wx" }
     );
-    const promptText = await readFile2(promptPath, "utf8");
+    const promptText = await readFile3(promptPath, "utf8");
     const staticArgs = manifest.cli?.args ?? [];
     const dynamicArgs = adapter ? adapter.buildArgs({
       ...request.model ? { model: request.model } : {},
@@ -17271,9 +17713,9 @@ async function executeCli(manifest, request, signal, options) {
     if (isJavaScriptExecutable(executable)) {
       let scriptPath = executable;
       if (shouldLocalizeJavaScriptExecutable(executable, options)) {
-        scriptPath = path6.join(cwd, path6.basename(executable));
+        scriptPath = path7.join(cwd, path7.basename(executable));
         await copyFile(executable, scriptPath);
-        await chmod(scriptPath, 448);
+        await chmod2(scriptPath, 448);
       }
       command = process.execPath;
       spawnArgs = [scriptPath, ...spawnArgs];
@@ -17281,7 +17723,7 @@ async function executeCli(manifest, request, signal, options) {
     let finalArgs = spawnArgs;
     const childEnv = safeEnvironment(envSource);
     if (manifest.id === "cursor_subscription") {
-      childEnv.NODE_COMPILE_CACHE = path6.join(cwd, "node-compile-cache");
+      childEnv.NODE_COMPILE_CACHE = path7.join(cwd, "node-compile-cache");
     }
     if (manifest.id === "codex_subscription") {
       const codexHome = await prepareEphemeralCodexHome(cwd, envSource);
@@ -17468,7 +17910,7 @@ async function executeCli(manifest, request, signal, options) {
       signal.removeEventListener("abort", terminate);
       if (timeout) clearTimeout(timeout);
       if (forceKill) clearTimeout(forceKill);
-      await rm4(cwd, { recursive: true, force: true });
+      await rm5(cwd, { recursive: true, force: true });
     }
   }
   const first = await runCliAttempt(buildSubscriptionPrompt(request), request.timeoutMs ?? EXECUTION_LIMITS.timeoutMs).catch(
@@ -18683,6 +19125,7 @@ var SIDECAR_REQUEST_METHODS = [
   "complete",
   "get_run",
   "open_provider_auth",
+  "speech",
   "get_app_mode"
 ];
 var SIDECAR_EVENTS = [
@@ -18766,6 +19209,7 @@ var METHOD_PAYLOAD_KEYS = {
   complete: ["backendId", "taskType", "schemaId", "input", "model", "timeoutMs"],
   get_run: ["runRequestId"],
   open_provider_auth: ["backendId"],
+  speech: ["operation", "modelId", "confirmed", "language", "audioBase64", "jobId"],
   get_app_mode: []
 };
 function parseSidecarFrame(frame, options = {}) {
@@ -19032,6 +19476,7 @@ function runLocalRuntimeSidecar(options = {}) {
   });
 }
 async function routeSidecarRequest(message, context) {
+  if (message.method === "speech") return { statusCode: 200, payload: await getSpeechRuntime().request(message.payload) };
   if (message.method === "list_backends") return listRuntimeBackends(context);
   if (message.method === "detect_clis") {
     const agentId = typeof message.payload.agentId === "string" ? message.payload.agentId : void 0;

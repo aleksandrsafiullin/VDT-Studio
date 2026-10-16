@@ -15,9 +15,10 @@ VDT Studio Desktop is the required host for seamless subscription CLI and local-
 - `ai_cancel`
 - `ai_get_run`
 - `open_provider_auth`
+- `speech_request`
 - `get_app_mode`
 
-The Rust command implementations route through `src-tauri/src/sidecar_host.rs`, which owns sidecar auto-start, shutdown cleanup and framed pipe requests. The desktop app setup starts the managed runtime state on launch, and the frontend desktop execution client calls these reviewed commands instead of web runner routes when the Tauri bridge is present.
+The Rust command implementations route through `src-tauri/src/sidecar_host.rs`, which owns sidecar auto-start, shutdown cleanup and framed pipe requests. The shell explicitly enables `withGlobalTauri` for the frontend's `window.__TAURI__.core.invoke` bridge; no generic native plugin permissions are added. The desktop app setup starts the managed runtime state on launch, and the frontend desktop execution client calls these reviewed commands instead of web runner routes when the Tauri bridge is present.
 
 `open_provider_auth` is a narrow provider-authentication command. For Cursor, the sidecar resolves the executable from reviewed aliases and runs only the manifest-owned `login` argument, with a bounded timeout and output buffer. The provider owns the browser confirmation and credential storage; after the child exits, the runtime verifies the CLI session before reporting success. Executable paths, arguments, environment values and credentials are never accepted from the frontend. Providers without a reviewed managed login command remain instruction-only and return provider-owned guidance/documentation.
 
@@ -26,6 +27,8 @@ Settings `ai_test_backend` checks subscription CLI/session readiness using the r
 Codex detection and default execution share the node-only installed-executable selector. It chooses the newest recognizable safe Codex CLI already on the host's `PATH`, using bounded isolated `--version` probes; model discovery and detected session-binding wiring then use that selected executable. Equivalent versions retain `PATH` priority, and a stable version outranks its same-core prereleases. No app-specific executable path, installation/update step, model catalog or frontend executable override is introduced. Native Windows process-tree cleanup and packaged desktop execution of this selection path still need platform evidence.
 
 ## Disabled Surfaces
+
+`speech_request` delegates the closed local voice-input operations to the private sidecar. It accepts only operation/model/language/job/audio fields, never native paths or executable arguments. The downloader installs pinned whisper.cpp binaries and model weights only after explicit confirmation. macOS microphone purpose text/audio-input entitlement are included in the desktop configuration; native packaged permission prompts and Windows behavior still require qualification. See [Voice input](../VOICE_INPUT.md).
 
 The desktop scaffold intentionally does not enable generic native plugins or commands for:
 

@@ -30,13 +30,17 @@ Codex now selects the newest recognizable safe installation already on host `PAT
 ## Implemented Alpha Foundations
 
 - Project/VDT workspace, local SQLite metadata and hashed revision files.
-- Canvas editing, basic arithmetic formulas, scenarios, trace and JSON/Markdown/editable Excel export with Source inputs, compact selected/scratch scenario analysis and matching VDT Potential. Workbook values retain full precision with a maximum two-decimal display and space-separated thousands (CLI: JSON/Markdown).
+- Direct canvas editing with Properties/Warnings, basic arithmetic formulas, scenarios, trace and editable Excel export with Source inputs, compact selected/scratch scenario analysis and matching VDT Potential. Workbook values retain full precision with a maximum two-decimal display and space-separated thousands (CLI: JSON/Markdown). The legacy AI inspector tab, per-node Accept/Reject, standalone review/explanation and editor JSON import/JSON/Markdown download controls are removed; full project archive import/export with attached sources remains planned.
 - Bounded model-provider contracts and local output validation.
 - Real VDT agent decision/tool/feedback loop, skills and run events.
 - Research policy and search provider adapters.
 - Paired loopback runner and private-pipe desktop sidecar foundation.
 - Provider certification metadata, mock evaluation, package checksums and SBOM tooling.
 - Experimental tabular data parsing, semantic model and data-mapping proposals.
+
+## Local Voice Input Alpha
+
+Local whisper.cpp dictation, incremental draft updates, confirmed model downloads and the desktop private-IPC path are implemented. Targeted automated checks cover the request/download/audio/cancellation boundaries. Windows native execution, packaged WebView microphone permissions, real-user Russian accuracy/latency and abrupt-shutdown cleanup remain unqualified. This capability does not change the production/release decision. See [VOICE_INPUT.md](VOICE_INPUT.md).
 
 ## W0.1 Atomic Revision Closure
 
@@ -120,8 +124,12 @@ security or performance `GO`:
   micro-CLI compatibility runtime only under its separate production opt-in;
   the default Model binding is registered but disabled and undiscoverable until
   `VDT_MODEL_AGENT_ENABLED=true`, and there is no silent fallback;
-- trusted-local development `run.command` enables the explicitly unverified
-  Cursor checkpoint/resume canary and disables legacy fallback. Production
+- trusted-local development `pnpm dev` and `run.command` enable the explicitly
+  unverified CLI checkpoint/resume canary and disable legacy fallback. Codex
+  registers additional immutable bindings from its authenticated host model
+  catalog; the composer requires a compatible selected-model binding before
+  enabling Send. A real `gpt-5.6-luna` connection check returned an assistant
+  message and a clarifying question without modifying the user VDT. Production
   builds still reject the canary; a missing candidate binding fails closed
   instead of reopening the per-decision CLI loop;
 - the legacy orchestrator no longer invokes `orchestrator_first_response`; its
@@ -142,10 +150,10 @@ security or performance `GO`:
   confirmed that the existing Cursor subscription login is unavailable inside
   the required private HOME (`Authentication required`). The checkpoint adapter's fake-runner
   tests do not prove that print mode
-  cannot execute an unreported built-in tool. Codex/Claude have typed,
-  default-unavailable protocol canaries and deterministic negative tests, but
-  no executable External session engine, live qualification or hard-isolation
-  evidence; and
+  cannot execute an unreported built-in tool. Codex has an executable local
+  checkpoint session and connection-check evidence, but no full live VDT,
+  performance or hard-isolation qualification. Claude qualification claims
+  remain unchanged; and
 - no successful post-change External or Model Agent live benchmark was run.
   The historical 903.7-second sample is context only. The release criterion is
   3/3 cold runs at no more than 420 seconds plus at least 20 warm runs with p95

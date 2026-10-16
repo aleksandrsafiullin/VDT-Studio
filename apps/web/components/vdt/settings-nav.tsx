@@ -4,6 +4,7 @@ import {
   Brain,
   Cpu,
   Monitor,
+  Mic,
   Palette,
   type LucideIcon
 } from "lucide-react";
@@ -11,6 +12,7 @@ import { clsx } from "clsx";
 
 export type SettingsSectionId =
   | "execution"
+  | "voice"
   | "memory"
   | "appearance"
   | "display";
@@ -24,6 +26,7 @@ export interface SettingsSectionConfig {
 
 export const SETTINGS_SECTIONS: SettingsSectionConfig[] = [
   { id: "execution", label: "Execution mode", icon: Cpu, enabled: true },
+  { id: "voice", label: "Voice input", icon: Mic, enabled: true },
   { id: "memory", label: "Memory", icon: Brain, enabled: false },
   { id: "appearance", label: "Appearance", icon: Palette, enabled: false },
   { id: "display", label: "Display", icon: Monitor, enabled: true }
@@ -36,6 +39,10 @@ export const SETTINGS_SECTION_META: Record<
   execution: {
     title: "Execution mode",
     subtitle: "Choose a provider CLI, a local model server, or API keys."
+  },
+  voice: {
+    title: "Voice input",
+    subtitle: "Download a speech model and dictate locally into chat."
   },
   memory: {
     title: "Memory",

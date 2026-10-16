@@ -15,7 +15,7 @@ import {
 
 const E2E_PROJECT_ID = "project_e2e_production_volume";
 const E2E_VDT_ID = "vdt_e2e_production_volume";
-const EXCEL_EXPORT_TEST_TITLE = "downloads editable Excel, JSON and Markdown exports without session credentials";
+const EXCEL_EXPORT_TEST_TITLE = "downloads editable Excel without session credentials";
 const productionVolumeExamplePath = path.join(process.cwd(), "examples", "production-volume.json");
 
 function loadProductionVolumeExample() {
@@ -1244,13 +1244,6 @@ async function openKpiSpacingPopover(page: Page) {
 }
 
 test.beforeEach(async ({ page }, testInfo) => {
-  await page.addInitScript(() => {
-    const capturedExports: { filename: string; type: string; text: string }[] = [];
-    Reflect.set(window, "__vdtCapturedExports", capturedExports);
-    Reflect.set(window, "__vdtCaptureDownload", (artifact: { filename: string; type: string; text: string }) => {
-      capturedExports.push(artifact);
-    });
-  });
   await page.goto("/");
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -1293,6 +1286,11 @@ test("renders the workspace without invoking a mock provider", async ({ page }, 
 
   await expect(page.getByRole("heading", { name: "Production Volume Driver Model" })).toBeVisible();
   await expect(page.getByRole("status", { name: "Model graph valid" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review model", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Import", exact: true })).toHaveCount(0);
+  const inspector = page.getByTestId("right-panel");
+  await expect(inspector.getByRole("tab")).toHaveText(["properties", "warnings"]);
+  await expect(inspector.getByRole("button", { name: /^(Accept|Reject|Deepen with AI)$/ })).toHaveCount(0);
   expect(consoleErrors).toEqual([]);
 });
 
@@ -2337,6 +2335,7 @@ test("overrides table fits within the modal middle column", async ({ page }, tes
   }));
 
   expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+  await expect(page.getByRole("button", { name: "Explain scenario", exact: true })).toHaveCount(0);
 });
 
 test(EXCEL_EXPORT_TEST_TITLE, async ({ page }, testInfo) => {
@@ -2357,30 +2356,16 @@ test(EXCEL_EXPORT_TEST_TITLE, async ({ page }, testInfo) => {
   await page.keyboard.press("Escape");
 
   await expect(page.getByTestId("graph-validation-status")).toHaveAttribute("aria-label", "Model graph valid");
-  await expect(page.getByTestId("export-menu-button")).toBeVisible();
-  await page.getByTestId("export-menu-button").click();
-  await expect(page.getByRole("menuitem", { name: "Excel", exact: true })).toBeVisible();
-  await expect(page.getByTestId("export-svg")).toHaveCount(0);
-  await expect(page.getByRole("menuitem", { name: /SVG|PNG|image/i })).toHaveCount(0);
-  await page.getByTestId("export-json").click();
-  await expect
-    .poll(() => page.evaluate(() => Reflect.get(window, "__vdtCapturedExports")?.length ?? 0))
-    .toBeGreaterThanOrEqual(1);
-  const jsonArtifact = await page.evaluate(() => Reflect.get(window, "__vdtCapturedExports")?.[0]);
-  const exportedProject = importProjectJson(jsonArtifact.text);
-  const json = JSON.parse(jsonArtifact.text) as { rootNodeId?: string };
-  expect(jsonArtifact.type).toBe("application/json");
-  expect(json.rootNodeId).toBe("production_volume");
-  expect(jsonArtifact.text).not.toContain("session-only-export-key");
-  for (const field of ["apiKey", "localApiKey", "pairingToken", "runnerPairingToken", "accessToken", "providerToken"]) {
-    expect(jsonArtifact.text).not.toMatch(new RegExp(`"${field}"\\s*:`));
-  }
-
+  await expect(page.getByTestId("export-excel")).toBeVisible();
+  await expect(page.getByTestId("export-json")).toHaveCount(0);
+  await expect(page.getByTestId("export-markdown")).toHaveCount(0);
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("vdt-studio-state") ?? ""))
     .not.toContain("session-only-export-key");
 
-  await page.getByTestId("export-menu-button").click();
+  const persisted = await readPersistedState(page);
+  const exportedProject = importProjectJson(JSON.stringify(persisted!.state!.project));
+
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.getByTestId("export-excel").click()
@@ -2479,15 +2464,6 @@ test(EXCEL_EXPORT_TEST_TITLE, async ({ page }, testInfo) => {
   for (const field of ["apiKey", "localApiKey", "pairingToken", "runnerPairingToken", "accessToken", "providerToken"]) {
     expect(workbookXml).not.toContain(field);
   }
-  await expect(page.getByRole("menu", { name: "Export options" })).toHaveCount(0);
-
-  await page.getByTestId("export-menu-button").click();
-  await page.getByTestId("export-markdown").click();
-  await expect
-    .poll(() => page.evaluate(() => Reflect.get(window, "__vdtCapturedExports")?.length ?? 0))
-    .toBeGreaterThanOrEqual(2);
-  const markdownArtifact = await page.evaluate(() => Reflect.get(window, "__vdtCapturedExports")?.[1]);
-  expect(markdownArtifact.type).toBe("text/markdown");
 });
 
 test("keeps the primary creation flow usable on mobile", async ({ page }, testInfo) => {
@@ -3106,88 +3082,6 @@ test("configures Alibaba Coding Plan BYOK and tests connection via openai_compat
   expect(testProviderRequestBody?.providerConfig?.baseUrl).toBe("https://coding.dashscope.aliyuncs.com/v1");
   expect(testProviderRequestBody?.providerConfig?.apiKey).toBe("sk-sp-e2e-session-key");
   expect(testProviderRequestBody?.providerConfig?.model).toBe("qwen3-coder-plus");
-});
-
-test("deepens a node with mock AI, applies preview, and creates a version snapshot", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "chromium", "AI deepen workflow runs on desktop viewport.");
-
-  await expect(page.getByTestId("vdt-canvas")).toBeVisible();
-  const initialNodeCount = await readCanvasNodeCount(page);
-  await reactFlowNode(page, "unplanned_downtime").click();
-  await page.getByRole("tab", { name: "ai" }).click();
-  await page.getByTestId("deepen-node-button").click();
-
-  const preview = page.getByTestId("change-set-preview");
-  await expect(preview).toBeVisible();
-  await expect(page.getByTestId("change-set-row-add_equipment_failure_downtime")).toBeVisible();
-
-  const equipmentCheckbox = page
-    .getByTestId("change-set-row-add_equipment_failure_downtime")
-    .getByRole("checkbox");
-  await equipmentCheckbox.uncheck();
-  await equipmentCheckbox.check();
-
-  await page.getByTestId("change-set-apply").click();
-  await expect(reactFlowNode(page, "equipment_failure_downtime")).toBeVisible();
-  await expect(reactFlowNode(page, "process_interruption_downtime")).toBeVisible();
-  await expect.poll(async () => readCanvasNodeCount(page)).toBe(initialNodeCount + 2);
-  await expect(page.getByTestId("version-history-count")).toContainText("1");
-  await expect(page.getByTestId("vdt-canvas")).toBeVisible();
-});
-
-test("reviews the model with mock AI without changing the graph", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "chromium", "AI review workflow runs on desktop viewport.");
-
-  const initialNodeCount = await readCanvasNodeCount(page);
-  if ((await page.getByTestId("expand-right-panel").count()) > 0) {
-    await page.getByTestId("expand-right-panel").click();
-  }
-
-  await Promise.all([
-    page.waitForResponse(
-      (response) => response.url().includes("/api/ai/run-task") && response.ok()
-    ),
-    page.getByTestId("review-model-button").click()
-  ]);
-
-  const panel = page.getByTestId("advisory-findings-panel");
-  await expect(panel).toBeVisible();
-  await expect(panel.getByText(/yield_factor uses a % label/i)).toBeVisible();
-  await expect(page.getByTestId("change-set-apply")).toHaveCount(0);
-  await expect.poll(async () => readCanvasNodeCount(page)).toBe(initialNodeCount);
-});
-
-test("explains a node with mock AI without apply controls", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "chromium", "AI explain workflow runs on desktop viewport.");
-
-  const initialNodeCount = await readCanvasNodeCount(page);
-  await reactFlowNode(page, "production_volume").click();
-  await page.getByRole("tab", { name: "ai" }).click();
-  await page.getByTestId("explain-node-button").click();
-
-  const panel = page.getByTestId("explanation-panel");
-  await expect(panel).toBeVisible();
-  await expect(panel.getByRole("heading", { name: "Node explanation" })).toBeVisible();
-  await expect(panel.getByText("Working time", { exact: true })).toBeVisible();
-  await expect(page.getByTestId("change-set-apply")).toHaveCount(0);
-  await expect.poll(async () => readCanvasNodeCount(page)).toBe(initialNodeCount);
-});
-
-test("surfaces AI action errors from run-task", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "chromium", "AI error surfacing runs on desktop viewport.");
-
-  await page.route("**/api/ai/run-task", async (route) => {
-    await route.fulfill({
-      status: 502,
-      contentType: "application/json",
-      body: JSON.stringify({ ok: false, error: "Mock AI task failure for e2e." })
-    });
-  });
-
-  await reactFlowNode(page, "unplanned_downtime").click();
-  await page.getByRole("tab", { name: "ai" }).click();
-  await page.getByTestId("deepen-node-button").click();
-  await expect(page.getByTestId("right-panel").getByText("Mock AI task failure for e2e.")).toBeVisible();
 });
 
 test("shows usage limits copy on subscription CLI cards", async ({ page }, testInfo) => {

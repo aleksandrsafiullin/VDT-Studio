@@ -109,6 +109,23 @@ function expectCodexOmitted(
 }
 
 describe("CodexResumeCheckpointTransport", () => {
+  it("uses the provider default without passing a literal auto model on open and resume", async () => {
+    const env = await environment();
+    const runner = new FakeRunner(() => ({ exitCode: 0, signal: null, stdout: codexStream("default-thread"), stderr: "" }));
+    const transport = new CodexResumeCheckpointTransport({ executable: "/opt/codex/codex", validatedCliVersion: "0.146.0", runner });
+    const opened = await transport.executeSegment({
+      mode: "open", environment: env, model: "auto", prompt: "open", signal: new AbortController().signal
+    }, ["vdt.echo"]);
+    await transport.executeSegment({
+      mode: "resume", environment: env, model: "auto", prompt: "resume", expectedSessionId: opened.sessionId,
+      signal: new AbortController().signal
+    }, ["vdt.echo"]);
+    for (const request of runner.requests) {
+      expect(request.args).not.toContain("--model");
+      expect(request.args).not.toContain("auto");
+    }
+  });
+
   it("opens and resumes with stdin prompt and no MCP configuration", async () => {
     const env = await environment();
     const runner = new FakeRunner(() => ({

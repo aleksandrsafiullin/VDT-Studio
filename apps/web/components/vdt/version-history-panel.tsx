@@ -1,142 +1,180 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { History } from "lucide-react";
-import { listVersions, type VdtAiTaskType, type VdtVersion } from "@vdt-studio/vdt-core";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Check, Clock3, History, Pencil, Plus, RotateCcw, Undo2, X } from "lucide-react";
+import { listVersions, MAX_VERSION_SNAPSHOTS } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
-import { useVdtStudioStore } from "./vdt-store";
-
-const TASK_LABELS: Partial<Record<VdtAiTaskType, string>> = {
-  deepen_node: "Deepen node",
-  simplify_branch: "Simplify branch",
-  suggest_alternative: "Suggest alternative",
-  suggest_formula: "Suggest formula",
-  review_model: "Review model",
-  check_units: "Check units",
-  identify_missing_drivers: "Missing drivers",
-  identify_duplicate_drivers: "Duplicate drivers",
-  explain_node: "Explain node",
-  explain_scenario: "Explain scenario",
-  generate_executive_summary: "Executive summary",
-  generate_tree: "Generate tree"
-};
-
-function formatCreatedAt(createdAt: string) {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short"
-    }).format(new Date(createdAt));
-  } catch {
-    return createdAt;
-  }
-}
-
-function VersionRow({
-  version,
-  onRestore
-}: {
-  version: VdtVersion;
-  onRestore: (versionId: string) => void;
-}) {
-  const taskLabel = version.taskType ? TASK_LABELS[version.taskType] ?? version.taskType : undefined;
-
-  return (
-    <li
-      className="flex items-start justify-between gap-3 rounded-md border border-line bg-white px-3 py-2"
-      data-testid={`version-history-row-${version.id}`}
-    >
-      <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-ink">{version.name}</div>
-        <div className="mt-0.5 text-xs text-muted">{formatCreatedAt(version.createdAt)}</div>
-        {taskLabel ? <div className="mt-1 text-xs text-muted">{taskLabel}</div> : null}
-      </div>
-      <Button
-        size="sm"
-        data-testid={`version-restore-${version.id}`}
-        onClick={() => onRestore(version.id)}
-      >
-        Restore
-      </Button>
-    </li>
-  );
-}
+import { canUndoVersionRestore, useVdtStudioStore } from "./vdt-store";
+import { VdtComparisonPanel } from "./vdt-comparison-panel";
+import { formatVersionDate, versionDisplayName } from "./version-presentation";
 
 export function VersionHistoryPanel() {
   const project = useVdtStudioStore((state) => state.project);
   const restoreVersion = useVdtStudioStore((state) => state.restoreVersionSnapshot);
+  const undoRestore = useVdtStudioStore((state) => state.undoVersionRestore);
+  const saveVersion = useVdtStudioStore((state) => state.saveVersionSnapshot);
+  const renameVersion = useVdtStudioStore((state) => state.renameVersionSnapshot);
+  const selectNode = useVdtStudioStore((state) => state.selectNode);
+  const pendingChangeSet = useVdtStudioStore((state) => state.pendingChangeSet);
+  const undo = useVdtStudioStore((state) => state.versionRestoreUndo);
+  const canUndo = useVdtStudioStore(canUndoVersionRestore);
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [selectedId, setSelectedId] = useState<string>();
+  const [confirmRestore, setConfirmRestore] = useState(false);
+  const [editing, setEditing] = useState<"save" | "rename">();
+  const [name, setName] = useState("");
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const undoRef = useRef<HTMLButtonElement>(null);
   const versions = listVersions(project);
+  const selected = versions.find((version) => version.id === selectedId) ?? versions[0];
 
-  function handleRestore(versionId: string) {
-    const version = versions.find((entry) => entry.id === versionId);
-    if (!version) {
-      return;
-    }
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (open && !dialog.open) dialog.showModal();
+    if (!open && dialog.open) dialog.close();
+  }, [open]);
 
-    const confirmed = window.confirm(
-      `Restore "${version.name}"? Unsaved AI preview changes will be discarded and the graph will revert to that snapshot.`
-    );
-    if (!confirmed) {
-      return;
-    }
+  useEffect(() => {
+    if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [open]);
 
-    restoreVersion(versionId);
+  useEffect(() => { if (editing) nameRef.current?.focus(); }, [editing]);
+
+  function close() {
     setOpen(false);
+    setConfirmRestore(false);
+    setEditing(undefined);
+    requestAnimationFrame(() => triggerRef.current?.focus());
   }
 
-  return (
-    <div ref={containerRef} className="relative">
-      <Button
-        size="sm"
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        data-testid="version-history-button"
-        icon={<History className="h-4 w-4" />}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <span className="hidden sm:inline">History</span>
-        {versions.length > 0 ? (
-          <span
-            className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-slate-900 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
-            data-testid="version-history-count"
-          >
-            {versions.length}
-          </span>
-        ) : null}
-      </Button>
+  function handleUndo() {
+    if (undoRestore()) {
+      setNotice("Восстановление отменено. Предыдущее состояние возвращено.");
+      setError("");
+      requestAnimationFrame(() => {
+        if (open) dialogRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+        else triggerRef.current?.focus();
+      });
+    }
+  }
 
-      {open ? (
-        <div
-          className="absolute right-0 top-full z-30 mt-2 w-[min(22rem,calc(100vw-2rem))] rounded-md border border-line bg-white p-3 shadow-lg"
-          data-testid="version-history-panel"
-          role="dialog"
-          aria-label="Version history"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-ink">Version history</h2>
-            <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
-              Close
-            </Button>
-          </div>
-          <p className="mt-1 text-xs leading-5 text-muted">
-            Snapshots are created when you apply AI change-set previews.
-          </p>
-
-          {versions.length === 0 ? (
-            <p className="mt-3 rounded-md border border-dashed border-line bg-slate-50 px-3 py-4 text-sm text-muted">
-              No snapshots yet. Apply a deepen or other graph change to create one.
-            </p>
-          ) : (
-            <ul className="mt-3 max-h-72 space-y-2 overflow-auto">
-              {versions.map((version) => (
-                <VersionRow key={version.id} version={version} onRestore={handleRestore} />
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : null}
+  const undoFeedback = canUndo && undo ? (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3" role="status" data-testid="version-restore-feedback">
+      <div className="min-w-0 text-xs leading-5 text-blue-900">
+        <p className="font-semibold">Восстановлена версия «{undo.restoredVersionName}»</p>
+        <p>Текущее состояние сохранено отдельной версией.</p>
+      </div>
+      <Button ref={undoRef} size="sm" onClick={handleUndo} icon={<Undo2 className="h-3.5 w-3.5" />} data-testid="undo-version-restore">Отменить восстановление</Button>
     </div>
+  ) : null;
+
+  const content = (
+    <dialog
+      ref={dialogRef}
+      className="fixed inset-y-0 left-auto right-0 m-0 h-dvh max-h-none w-[min(100vw,64rem)] max-w-none overflow-hidden border-0 bg-white p-0 text-ink shadow-2xl backdrop:bg-slate-900/25"
+      aria-labelledby="versions-title"
+      aria-describedby="versions-description"
+      data-testid="version-history-panel"
+      onClose={close}
+      onCancel={(event) => { if (confirmRestore) { event.preventDefault(); setConfirmRestore(false); } }}
+      onClick={(event) => {
+        if (event.target !== event.currentTarget) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) close();
+      }}
+    >
+      <div className="flex h-full flex-col">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-line px-5 py-4">
+          <div>
+            <h2 id="versions-title" className="flex items-center gap-2 text-base font-semibold"><History className="h-4 w-4 text-accent" />Версии</h2>
+            <p id="versions-description" className="mt-1 text-xs leading-5 text-muted">Сохраняйте этапы работы, сравнивайте изменения и возвращайтесь к прошлым версиям.</p>
+          </div>
+          <Button size="icon" variant="ghost" onClick={close} aria-label="Закрыть версии"><X className="h-4 w-4" /></Button>
+        </header>
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          <aside className="max-h-52 w-full shrink-0 overflow-y-auto border-b border-line bg-slate-50/70 p-4 md:max-h-none md:w-64 md:border-b-0 md:border-r" aria-label="Сохранённые версии">
+            <div className="mb-3 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2.5">
+              <div className="flex items-center gap-2 text-xs font-semibold text-blue-900"><span className="h-1.5 w-1.5 rounded-full bg-accent" />Текущее дерево</div>
+              <p className="mt-1 text-[11px] leading-4 text-muted">Рабочее состояние для сравнения</p>
+            </div>
+            <Button className="mb-4 w-full" size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => { setEditing("save"); setName(""); setConfirmRestore(false); }}>Сохранить версию</Button>
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Сохранено: {versions.length}</div>
+            {versions.length ? <ol className="space-y-2">
+              {versions.map((version) => <li key={version.id}>
+                <button
+                  className={`w-full rounded-lg border px-3 py-3 text-left transition focus-visible:outline focus-visible:outline-accent ${selected?.id === version.id ? "border-blue-200 bg-white shadow-sm" : "border-transparent hover:border-line hover:bg-white"}`}
+                  aria-pressed={selected?.id === version.id}
+                  onClick={() => { setSelectedId(version.id); setConfirmRestore(false); setEditing(undefined); setError(""); }}
+                  data-testid={`version-history-row-${version.id}`}
+                >
+                  <div className="flex items-start justify-between gap-2"><span className="break-words text-xs font-medium leading-5">{versionDisplayName(version)}</span>{selected?.id === version.id ? <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" /> : null}</div>
+                  <div className="mt-1 flex items-center gap-1 text-[10px] text-muted"><Clock3 className="h-3 w-3 shrink-0" />{formatVersionDate(version.createdAt)}</div>
+                </button>
+              </li>)}
+            </ol> : <p className="text-xs leading-5 text-muted">Версий пока нет. Сохраните текущее дерево, чтобы сравнивать будущие изменения.</p>}
+            <p className="mt-4 text-[10px] leading-4 text-muted">Хранятся последние {MAX_VERSION_SNAPSHOTS} версий, включая резервные копии. Перед применением подготовленных изменений версия сохраняется автоматически.</p>
+          </aside>
+          <section className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 sm:p-6" aria-label="Сравнение с текущим деревом">
+            <div className="space-y-5">
+              {open ? undoFeedback : null}
+              {notice ? <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-graphite" role="status">{notice}</p> : null}
+              {error ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-800" role="alert">{error}</p> : null}
+              {editing ? <form className="rounded-xl border border-blue-200 bg-blue-50/30 p-4" onSubmit={(event) => {
+                event.preventDefault();
+                if (!name.trim()) return;
+                if (editing === "save") {
+                  const versionId = saveVersion(name);
+                  if (versionId) { setSelectedId(versionId); setNotice("Текущее дерево сохранено как отдельная версия."); }
+                } else if (selected) { renameVersion(selected.id, name); setNotice("Название версии сохранено."); }
+                setEditing(undefined);
+              }}>
+                <label className="block text-xs font-medium" htmlFor="version-name">{editing === "save" ? "Название новой версии" : "Название версии"}</label>
+                <input ref={nameRef} id="version-name" className="mt-2 w-full rounded-md border border-line bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-blue-100" maxLength={160} value={name} onChange={(event) => setName(event.target.value)} placeholder="Например: Модель для согласования" required />
+                <div className="mt-3 flex gap-2"><Button variant="primary" size="sm" type="submit" disabled={!name.trim()}>Сохранить</Button><Button size="sm" type="button" variant="ghost" onClick={() => setEditing(undefined)}>Отмена</Button></div>
+              </form> : null}
+              {selected ? <>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1"><div className="text-[11px] uppercase tracking-wide text-muted">Выбранная версия</div><h3 className="mt-1 break-words text-base font-semibold">{versionDisplayName(selected)}</h3><p className="mt-1 text-xs text-muted">{formatVersionDate(selected.createdAt)}</p></div>
+                  <Button size="icon" variant="ghost" aria-label="Переименовать версию" onClick={() => { setName(versionDisplayName(selected)); setEditing("rename"); setConfirmRestore(false); }}><Pencil className="h-3.5 w-3.5" /></Button>
+                </div>
+                <div className="rounded-xl border border-line bg-slate-50/50 p-3">
+                  {confirmRestore ? <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4" role="group" aria-label="Подтверждение восстановления">
+                    <p className="text-sm font-semibold">Восстановить «{versionDisplayName(selected)}»?</p>
+                    <p className="mt-2 text-xs leading-5 text-graphite">Дерево, сценарии и привязки данных вернутся к этой версии. Текущее состояние сначала сохранится отдельной версией; восстановление можно отменить.</p>
+                    {pendingChangeSet ? <p className="mt-2 text-xs text-muted">Неприменённый предпросмотр изменений будет закрыт.</p> : null}
+                    <div className="mt-4 flex flex-wrap gap-2"><Button variant="primary" size="sm" data-testid="confirm-version-restore" onClick={() => {
+                      if (restoreVersion(selected.id)) { setSelectedId(selected.id); setNotice(""); setError(""); setConfirmRestore(false); requestAnimationFrame(() => undoRef.current?.focus()); }
+                      else setError(useVdtStudioStore.getState().aiActionError ?? "Не удалось восстановить версию.");
+                    }}>Сохранить текущее и восстановить</Button><Button size="sm" onClick={() => setConfirmRestore(false)}>Отмена</Button></div>
+                  </div> : <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="max-w-xs text-xs leading-5 text-muted">Перед восстановлением сохраним текущее состояние. Отмена доступна до следующих изменений модели.</p>
+                    <Button size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => { setConfirmRestore(true); setEditing(undefined); }} data-testid={`version-restore-${selected.id}`}>Восстановить эту версию</Button>
+                  </div>}
+                </div>
+                <VdtComparisonPanel before={selected.projectSnapshot} current={project} onSelectNode={(nodeId) => { selectNode(nodeId); close(); }} />
+              </> : <div className="py-12 text-center"><History className="mx-auto h-8 w-8 text-slate-300" /><h3 className="mt-4 text-sm font-semibold">Сохраните первый этап работы</h3><p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-muted">Создайте версию текущего дерева. После следующих правок здесь появится сравнение «было → стало».</p></div>}
+            </div>
+          </section>
+        </div>
+      </div>
+    </dialog>
   );
+
+  return <>
+    <Button ref={triggerRef} size="sm" aria-haspopup="dialog" aria-expanded={open} aria-label={`Версии: ${versions.length}`} title="Версии: сохранение, сравнение и восстановление" data-testid="version-history-button" icon={<History className="h-4 w-4" />} onClick={() => { setSelectedId(versions[0]?.id); setOpen(true); setNotice(""); setError(""); }}>
+      <span>Версии</span>
+      {versions.length > 0 ? <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] leading-none text-graphite" data-testid="version-history-count">{versions.length}</span> : null}
+    </Button>
+    {typeof document !== "undefined" ? createPortal(content, document.body) : null}
+    {!open && undoFeedback ? <div className="fixed bottom-5 right-5 z-40 max-w-[calc(100vw-2.5rem)] shadow-lg">{undoFeedback}</div> : null}
+  </>;
 }

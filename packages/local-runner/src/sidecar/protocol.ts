@@ -9,6 +9,7 @@ export const SIDECAR_REQUEST_METHODS = [
   "complete",
   "get_run",
   "open_provider_auth",
+  "speech",
   "get_app_mode"
 ] as const;
 
@@ -186,6 +187,7 @@ const METHOD_PAYLOAD_KEYS = {
   complete: ["backendId", "taskType", "schemaId", "input", "model", "timeoutMs"],
   get_run: ["runRequestId"],
   open_provider_auth: ["backendId"],
+  speech: ["operation", "modelId", "confirmed", "language", "audioBase64", "jobId"],
   get_app_mode: []
 } satisfies Record<SidecarRequestMethod, readonly string[]>;
 

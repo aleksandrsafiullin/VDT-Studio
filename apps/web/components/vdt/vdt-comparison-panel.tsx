@@ -1,250 +1,90 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { GitBranch, History } from "lucide-react";
-import {
-  compareVdtProjects,
-  listVersions,
-  type VdtBottleneckCandidate,
-  type VdtComparisonResult,
-  type VdtProject
-} from "@vdt-studio/vdt-core";
-import { Button } from "@/components/ui/button";
-import { formatChange, formatNumber, formatPercent } from "@/lib/format";
+import { useMemo } from "react";
+import { ArrowRight, ArrowUpRight, CircleAlert } from "lucide-react";
+import { calculateGraph, type VdtProject } from "@vdt-studio/vdt-core";
+import { formatChange, formatNumber } from "@/lib/format";
+import { versionNodeChanges } from "./version-presentation";
 
-interface VdtComparisonPanelProps {
-  project: VdtProject;
-  defaultOpen?: boolean | undefined;
-  defaultVersionId?: string | undefined;
+function valueText(value: number | undefined, unit?: string) {
+  return value === undefined || !Number.isFinite(value) ? "Нет значения" : `${formatNumber(value)}${unit ? ` ${unit}` : ""}`;
 }
 
-function formatCreatedAt(createdAt: string) {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short"
-    }).format(new Date(createdAt));
-  } catch {
-    return createdAt;
-  }
-}
-
-function RootDeltaSummary({ result }: { result: VdtComparisonResult }) {
-  const rootDelta = result.rootDelta;
-
-  return (
-    <div className="grid grid-cols-3 gap-2" data-testid="comparison-root-delta">
-      <Metric label="Baseline" value={formatNumber(rootDelta?.leftValue)} />
-      <Metric label="Current" value={formatNumber(rootDelta?.rightValue)} />
-      <Metric
-        label="Delta"
-        value={formatChange(rootDelta?.absoluteDelta)}
-        detail={rootDelta?.percentDelta !== undefined ? formatPercent(rootDelta.percentDelta) : undefined}
-      />
-    </div>
-  );
-}
-
-function Metric({ label, value, detail }: { label: string; value: string; detail?: string | undefined }) {
-  return (
-    <div className="min-w-0 rounded-md border border-line bg-slate-50 px-3 py-2">
-      <div className="truncate text-[11px] font-semibold uppercase tracking-normal text-muted">{label}</div>
-      <div className="mt-1 truncate text-sm font-semibold text-ink">{value}</div>
-      {detail ? <div className="mt-0.5 truncate text-[11px] text-muted">{detail}</div> : null}
-    </div>
-  );
-}
-
-function DiffList({
-  title,
-  items,
-  empty
-}: {
-  title: string;
-  items: string[];
-  empty: string;
+/** Comparison content within Versions; there is no separate toolbar control. */
+export function VdtComparisonPanel({ before, current, onSelectNode }: {
+  before: VdtProject;
+  current: VdtProject;
+  onSelectNode?: (nodeId: string) => void;
 }) {
-  return (
-    <div>
-      <div className="text-xs font-semibold uppercase tracking-normal text-muted">{title}</div>
-      {items.length > 0 ? (
-        <ul className="mt-2 max-h-24 space-y-1 overflow-auto text-sm leading-5 text-ink">
-          {items.map((item) => (
-            <li key={item} className="truncate rounded-md bg-slate-50 px-2 py-1">
-              {item}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-2 rounded-md border border-dashed border-line bg-white px-2 py-2 text-sm text-muted">
-          {empty}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function CandidateRow({ candidate }: { candidate: VdtBottleneckCandidate }) {
-  const tone =
-    candidate.severity === "high"
-      ? "border-orange-200 bg-orange-50 text-orange-900"
-      : candidate.severity === "medium"
-        ? "border-blue-200 bg-blue-50 text-blue-900"
-        : "border-slate-200 bg-slate-50 text-slate-900";
+  const changes = useMemo(() => versionNodeChanges(before, current), [before, current]);
+  const beforeRoot = before.graph.nodes.find((node) => node.id === before.rootNodeId);
+  const afterRoot = current.graph.nodes.find((node) => node.id === current.rootNodeId);
+  const leftValue = calculateGraph(before).rootValue;
+  const rightValue = calculateGraph(current).rootValue;
+  const comparable = beforeRoot?.id === afterRoot?.id && beforeRoot?.name === afterRoot?.name &&
+    beforeRoot?.unit === afterRoot?.unit && beforeRoot?.formula === afterRoot?.formula;
+  const delta = comparable && leftValue !== undefined && rightValue !== undefined ? rightValue - leftValue : undefined;
+  const otherChanges = [
+    JSON.stringify(before.scenarios) !== JSON.stringify(current.scenarios) ? "Изменены сценарии и их настройки." : "",
+    JSON.stringify(before.dataSources) !== JSON.stringify(current.dataSources) ? "Изменены источники данных." : ""
+  ].filter(Boolean);
+  const counts = changes.reduce((total, row) => ({ ...total, [row.kind]: total[row.kind] + 1 }), { added: 0, removed: 0, changed: 0 });
 
   return (
-    <li className={["rounded-md border px-3 py-2", tone].join(" ")}>
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold">{candidate.nodeName}</div>
-          <div className="mt-0.5 text-xs leading-5 opacity-85">{candidate.reason}</div>
-        </div>
-        <span className="shrink-0 rounded bg-white/75 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-normal">
-          {candidate.severity}
-        </span>
+    <div className="space-y-5" data-testid="vdt-comparison-panel">
+      <div>
+        <h3 className="text-sm font-semibold text-ink">Что изменилось</h3>
+        <p className="mt-1 text-xs leading-5 text-muted">Сохранённая версия → текущее дерево. Базовые значения, без сценарных допущений.</p>
       </div>
-    </li>
-  );
-}
-
-export function VdtComparisonPanel({
-  project,
-  defaultOpen = false,
-  defaultVersionId
-}: VdtComparisonPanelProps) {
-  const versions = useMemo(() => listVersions(project), [project]);
-  const initialVersionId = defaultVersionId ?? versions[0]?.id;
-  const [open, setOpen] = useState(defaultOpen);
-  const [selectedVersionId, setSelectedVersionId] = useState<string | undefined>(initialVersionId);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (versions.length === 0) {
-      setSelectedVersionId(undefined);
-      return;
-    }
-    if (!selectedVersionId || !versions.some((version) => version.id === selectedVersionId)) {
-      setSelectedVersionId(versions[0]?.id);
-    }
-  }, [selectedVersionId, versions]);
-
-  useEffect(() => {
-    if (!open) return;
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open]);
-
-  const selectedVersion = versions.find((version) => version.id === selectedVersionId);
-  const comparison = selectedVersion
-    ? compareVdtProjects(selectedVersion.projectSnapshot, project, { maxBottleneckCandidates: 6 })
-    : undefined;
-
-  return (
-    <div ref={containerRef} className="relative" data-testid="vdt-comparison-control">
-      <Button
-        size="sm"
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        data-testid="vdt-comparison-button"
-        icon={<GitBranch className="h-4 w-4" />}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <span className="hidden sm:inline">Compare</span>
-      </Button>
-
-      {open ? (
-        <div
-          className="absolute right-0 top-full z-30 mt-2 w-[min(31rem,calc(100vw-2rem))] rounded-md border border-line bg-white p-3 shadow-lg"
-          data-testid="vdt-comparison-panel"
-          role="dialog"
-          aria-label="VDT comparison"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <h2 className="truncate text-sm font-semibold text-ink">Compare VDT snapshots</h2>
-              <p className="mt-1 truncate text-xs text-muted">Baseline snapshot against current canvas</p>
-            </div>
-            <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
-              Close
-            </Button>
+      <div className="rounded-xl border border-line bg-slate-50 p-4" data-testid="comparison-root-delta">
+        <div className="mb-3 text-xs font-medium text-muted">Корневой KPI</div>
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+          <div className="min-w-0">
+            <div className="text-xs text-muted">Было</div>
+            <div className="mt-1 break-words text-sm font-semibold text-ink">{valueText(leftValue, beforeRoot?.unit)}</div>
+            <div className="mt-1 break-words text-xs text-muted">{beforeRoot?.name}</div>
           </div>
-
-          {versions.length === 0 || !comparison || !selectedVersion ? (
-            <div className="mt-3 rounded-md border border-dashed border-line bg-slate-50 px-3 py-4 text-sm leading-5 text-muted">
-              Apply an agent change-set preview to create a snapshot, then compare that baseline with the active VDT.
-            </div>
-          ) : (
-            <div className="mt-3 space-y-4">
-              <label className="block">
-                <span className="text-xs font-semibold uppercase tracking-normal text-muted">Baseline</span>
-                <select
-                  className="mt-1 w-full rounded-md border border-line bg-white px-2 py-2 text-sm text-ink"
-                  value={selectedVersion.id}
-                  data-testid="vdt-comparison-baseline-select"
-                  onChange={(event) => setSelectedVersionId(event.target.value)}
-                >
-                  {versions.map((version) => (
-                    <option key={version.id} value={version.id}>
-                      {version.name} · {formatCreatedAt(version.createdAt)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <RootDeltaSummary result={comparison} />
-
-              <div className="grid gap-3 md:grid-cols-2">
-                <DiffList
-                  title="Added drivers"
-                  items={comparison.structuralDiff.addedDrivers}
-                  empty="No added drivers"
-                />
-                <DiffList
-                  title="Removed drivers"
-                  items={comparison.structuralDiff.removedDrivers}
-                  empty="No removed drivers"
-                />
-                <DiffList
-                  title="Changed formulas"
-                  items={comparison.structuralDiff.changedFormulas}
-                  empty="No formula changes"
-                />
-                <DiffList
-                  title="Changed values"
-                  items={comparison.structuralDiff.changedValues}
-                  empty="No value changes"
-                />
-              </div>
-
-              <div>
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-normal text-muted">
-                  <History className="h-3.5 w-3.5" aria-hidden="true" />
-                  Bottleneck candidates
-                </div>
-                {comparison.bottleneckCandidates.length > 0 ? (
-                  <ul className="mt-2 max-h-52 space-y-2 overflow-auto" data-testid="vdt-comparison-candidates">
-                    {comparison.bottleneckCandidates.map((candidate) => (
-                      <CandidateRow
-                        key={`${candidate.nodeId}:${candidate.evidence}`}
-                        candidate={candidate}
-                      />
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="mt-2 rounded-md border border-dashed border-line bg-white px-2 py-2 text-sm text-muted">
-                    No deterministic candidates in this comparison.
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
+          <ArrowRight className="h-4 w-4 text-muted" aria-hidden="true" />
+          <div className="min-w-0">
+            <div className="text-xs text-muted">Стало</div>
+            <div className="mt-1 break-words text-sm font-semibold text-ink">{valueText(rightValue, afterRoot?.unit)}</div>
+            <div className="mt-1 break-words text-xs text-muted">{afterRoot?.name}</div>
+          </div>
         </div>
-      ) : null}
+        {delta !== undefined ? <p className="mt-3 border-t border-line pt-3 text-xs text-graphite">Изменение: <strong>{formatChange(delta)} {afterRoot?.unit}</strong></p> : null}
+        {!comparable ? <p className="mt-3 flex items-start gap-2 border-t border-line pt-3 text-xs leading-5 text-amber-800"><CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />Изменились корневой показатель, его формула или единицы. Прямое сравнение результата ограничено.</p> : null}
+      </div>
+      <div className="flex flex-wrap gap-2 text-xs" aria-label="Сводка изменений">
+        <span className="rounded-full bg-blue-50 px-2.5 py-1 text-blue-800">Добавлено: {counts.added}</span>
+        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-graphite">Изменено: {counts.changed}</span>
+        <span className="rounded-full bg-rose-50 px-2.5 py-1 text-rose-800">Удалено: {counts.removed}</span>
+      </div>
+      {changes.length > 0 ? (
+        <div className="overflow-x-auto rounded-xl border border-line">
+          <table className="w-full table-fixed text-left text-xs" data-testid="version-changes-table">
+            <thead className="bg-slate-50 text-muted"><tr><th className="w-[44%] px-3 py-3 font-medium">Показатель</th><th className="w-[28%] px-3 py-3 font-medium">Было</th><th className="w-[28%] px-3 py-3 font-medium">Стало</th></tr></thead>
+            <tbody className="divide-y divide-line">
+              {changes.map((row) => <tr key={row.nodeId} className="align-top">
+                <td className="break-words px-3 py-3">
+                  {row.kind !== "removed" && onSelectNode ? <button className="inline-flex items-start gap-1 text-left font-medium text-accent underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-accent" onClick={() => onSelectNode(row.nodeId)} title="Показать в дереве">{row.name}<ArrowUpRight className="mt-0.5 h-3 w-3 shrink-0" /></button> : <span className="font-medium text-ink">{row.name}</span>}
+                  {row.path ? <div className="mt-1 text-[11px] leading-4 text-muted">{row.path}</div> : null}
+                  <div className="mt-1.5 text-[11px] text-muted">{row.kind === "added" ? "Добавлен" : row.kind === "removed" ? "Удалён" : "Изменён"}</div>
+                  {row.details.map((detail) => <div key={detail} className="mt-1 text-[11px] leading-4 text-muted">{detail}</div>)}
+                </td>
+                <td className="break-words px-3 py-3 text-graphite">
+                  {row.kind === "added" ? "—" : valueText(row.beforeValue, row.beforeUnit)}
+                  {row.formulaChanged ? <div className="mt-2 whitespace-pre-wrap text-[11px] leading-5 text-muted">Формула: {row.beforeFormula}</div> : null}
+                </td>
+                <td className="break-words px-3 py-3 font-medium text-ink">
+                  {row.kind === "removed" ? "—" : valueText(row.afterValue, row.afterUnit)}
+                  {row.formulaChanged ? <div className="mt-2 whitespace-pre-wrap text-[11px] font-normal leading-5 text-muted">Формула: {row.afterFormula}</div> : null}
+                </td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+      ) : <p className="rounded-xl border border-dashed border-line p-5 text-sm text-muted">В показателях нет изменений.</p>}
+      {otherChanges.length > 0 ? <div className="rounded-lg bg-slate-50 p-3 text-xs leading-5 text-graphite">{otherChanges.map((text) => <p key={text}>{text}</p>)}</div> : null}
     </div>
   );
 }

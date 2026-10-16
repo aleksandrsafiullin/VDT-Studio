@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { getSpeechRuntime } from "../speech/runtime";
 import {
   LocalRuntimeError,
   cancelRuntimeRequest,
@@ -138,6 +139,7 @@ export function runLocalRuntimeSidecar(options: SidecarRuntimeOptions = {}): voi
 }
 
 async function routeSidecarRequest(message: SidecarRequestMessage, context: LocalRuntimeContext): Promise<RuntimeResult> {
+  if (message.method === "speech") return { statusCode: 200, payload: await getSpeechRuntime().request(message.payload) };
   if (message.method === "list_backends") return listRuntimeBackends(context);
   if (message.method === "detect_clis") {
     const agentId = typeof message.payload.agentId === "string" ? message.payload.agentId : undefined;

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, GitBranchPlus, Info, Scissors, Sparkles, Trash2, Wand2, X } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { calculateGraph } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextArea, TextInput } from "@/components/ui/field";
@@ -8,11 +8,8 @@ import { Panel, PanelCollapseTab, PanelToggleButton, PanelHeader } from "@/compo
 import { StatusPill } from "@/components/ui/status-pill";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { formatNumber } from "@/lib/format";
-import { AdvisoryFindingsPanel } from "./advisory-findings-panel";
-import { ChangeSetPreviewPanel } from "./change-set-preview-panel";
 import { FormulaEditorField } from "./formula-editor";
-import { ExplanationPanel } from "./explanation-panel";
-import { isAdvisoryAiTaskType, isExplanationAiTaskType, useVdtStudioStore } from "./vdt-store";
+import { useVdtStudioStore } from "./vdt-store";
 
 function parseFiniteInput(value: string) {
   if (value === "") {
@@ -27,26 +24,9 @@ export function NodeInspector() {
   const project = useVdtStudioStore((state) => state.project);
   const selectedNodeId = useVdtStudioStore((state) => state.selectedNodeId);
   const selectedPanelTab = useVdtStudioStore((state) => state.selectedPanelTab);
-  const pendingChangeSet = useVdtStudioStore((state) => state.pendingChangeSet);
-  const changeSetSelection = useVdtStudioStore((state) => state.changeSetSelection);
-  const pendingAdvisoryResult = useVdtStudioStore((state) => state.pendingAdvisoryResult);
-  const pendingAdvisoryTaskType = useVdtStudioStore((state) => state.pendingAdvisoryTaskType);
-  const pendingExplanation = useVdtStudioStore((state) => state.pendingExplanation);
-  const pendingExplanationTaskType = useVdtStudioStore((state) => state.pendingExplanationTaskType);
-  const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
-  const aiActionError = useVdtStudioStore((state) => state.aiActionError);
   const updateNode = useVdtStudioStore((state) => state.updateNode);
   const updateNodeBaselineValue = useVdtStudioStore((state) => state.updateNodeBaselineValue);
-  const acceptNode = useVdtStudioStore((state) => state.acceptNode);
-  const rejectNode = useVdtStudioStore((state) => state.rejectNode);
   const deleteNode = useVdtStudioStore((state) => state.deleteNode);
-  const runAiAction = useVdtStudioStore((state) => state.runAiAction);
-  const selectNode = useVdtStudioStore((state) => state.selectNode);
-  const toggleChangeSelection = useVdtStudioStore((state) => state.toggleChangeSelection);
-  const applyPendingChangeSet = useVdtStudioStore((state) => state.applyPendingChangeSet);
-  const discardPendingChangeSet = useVdtStudioStore((state) => state.discardPendingChangeSet);
-  const saveAdvisoryToProject = useVdtStudioStore((state) => state.saveAdvisoryToProject);
-  const applyAdvisorySuggestedChanges = useVdtStudioStore((state) => state.applyAdvisorySuggestedChanges);
   const rightPanelCollapsed = useVdtStudioStore((state) => state.ui.rightPanelCollapsed);
   const isDesktop = useDesktopLayout();
   const showCollapsed = isDesktop && rightPanelCollapsed;
@@ -61,7 +41,6 @@ export function NodeInspector() {
       error.type === "unknown_reference" ||
       error.type === "circular_dependency"
   );
-  const canDeepen = node && node.id !== project.rootNodeId;
 
   if (showCollapsed) {
     return (
@@ -110,7 +89,7 @@ export function NodeInspector() {
         }
       />
       <div className="flex gap-1 border-b border-line px-4 py-2" role="tablist" aria-label="Node inspector tabs">
-        {["properties", "ai", "warnings"].map((tab) => (
+        {(["properties", "warnings"] as const).map((tab) => (
           <button
             key={tab}
             role="tab"
@@ -119,7 +98,7 @@ export function NodeInspector() {
               "rounded-md px-2.5 py-1.5 text-xs font-semibold capitalize transition",
               selectedPanelTab === tab ? "bg-slate-900 text-white" : "text-muted hover:bg-slate-100"
             ].join(" ")}
-            onClick={() => useVdtStudioStore.setState({ selectedPanelTab: tab as "properties" })}
+            onClick={() => useVdtStudioStore.setState({ selectedPanelTab: tab })}
           >
             {tab}
           </button>
@@ -199,21 +178,7 @@ export function NodeInspector() {
               </div>
             ) : null}
 
-            <div className="grid grid-cols-2 gap-2">
-              <Button icon={<Check className="h-4 w-4" />} onClick={() => acceptNode(node.id)}>
-                Accept
-              </Button>
-              <Button variant="danger" icon={<X className="h-4 w-4" />} onClick={() => rejectNode(node.id)}>
-                Reject
-              </Button>
-              <Button
-                icon={<GitBranchPlus className="h-4 w-4" />}
-                data-testid="deepen-node-button"
-                disabled={isRunningAiAction || !canDeepen}
-                onClick={() => void runAiAction("deepen_node", { nodeId: node.id })}
-              >
-                Deepen with AI
-              </Button>
+            <div>
               <Button
                 variant="ghost"
                 icon={<Trash2 className="h-4 w-4" />}
@@ -223,136 +188,6 @@ export function NodeInspector() {
                 Delete
               </Button>
             </div>
-          </div>
-        ) : null}
-
-        {selectedPanelTab === "ai" ? (
-          <div className="space-y-4">
-            <div className="rounded-md border border-line bg-slate-50 p-3">
-              <div className="flex items-start gap-2">
-                <Info className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
-                <div>
-                  <h3 className="text-sm font-semibold text-ink">AI rationale</h3>
-                  <p className="mt-1 text-sm leading-6 text-muted">{node.aiRationale ?? "No AI rationale is attached."}</p>
-                  <p className="mt-2 text-xs text-muted">Confidence: {formatNumber(node.aiConfidence, { style: "percent" })}</p>
-                </div>
-              </div>
-            </div>
-
-            {project.aiReview ? (
-              <div className="rounded-md border border-line bg-white p-3">
-                <h3 className="text-sm font-semibold text-ink">Saved model review</h3>
-                {project.aiReview.assumptions.length > 0 ? (
-                  <div className="mt-3">
-                    <div className="text-xs font-semibold uppercase tracking-normal text-muted">Assumptions</div>
-                    <ul className="mt-2 space-y-1 text-sm leading-5 text-muted">
-                      {project.aiReview.assumptions.map((assumption) => (
-                        <li key={assumption}>{assumption}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-                {project.aiReview.questionsForUser.length > 0 ? (
-                  <div className="mt-3">
-                    <div className="text-xs font-semibold uppercase tracking-normal text-muted">Questions</div>
-                    <ul className="mt-2 space-y-1 text-sm leading-5 text-muted">
-                      {project.aiReview.questionsForUser.map((question) => (
-                        <li key={question}>{question}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-                {project.aiReview.warnings.length > 0 ? (
-                  <div className="mt-3">
-                    <div className="text-xs font-semibold uppercase tracking-normal text-muted">Warnings</div>
-                    <ul className="mt-2 space-y-1 text-sm leading-5 text-muted">
-                      {project.aiReview.warnings.map((warning) => (
-                        <li key={warning.id}>{warning.message}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {aiActionError ? (
-              <div className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800">
-                {aiActionError}
-              </div>
-            ) : null}
-
-            {pendingChangeSet ? (
-              <ChangeSetPreviewPanel
-                project={project}
-                changeSet={pendingChangeSet}
-                selection={changeSetSelection}
-                isRunning={isRunningAiAction}
-                error={aiActionError}
-                onToggle={toggleChangeSelection}
-                onApply={applyPendingChangeSet}
-                onDiscard={discardPendingChangeSet}
-              />
-            ) : null}
-
-            {pendingAdvisoryResult && pendingAdvisoryTaskType && isAdvisoryAiTaskType(pendingAdvisoryTaskType) ? (
-              <AdvisoryFindingsPanel
-                taskType={pendingAdvisoryTaskType}
-                result={pendingAdvisoryResult}
-                isRunning={isRunningAiAction}
-                onSaveToProject={saveAdvisoryToProject}
-                onApplySuggestedChanges={applyAdvisorySuggestedChanges}
-                onSelectNode={selectNode}
-              />
-            ) : null}
-
-            {pendingExplanation && pendingExplanationTaskType && isExplanationAiTaskType(pendingExplanationTaskType) ? (
-              <ExplanationPanel taskType={pendingExplanationTaskType} result={pendingExplanation} />
-            ) : null}
-
-            {!pendingChangeSet ? (
-              <div className="grid gap-2">
-                <Button
-                  icon={<GitBranchPlus className="h-4 w-4" />}
-                  data-testid="deepen-node-button"
-                  disabled={isRunningAiAction || !canDeepen}
-                  onClick={() => void runAiAction("deepen_node", { nodeId: node.id })}
-                >
-                  Deepen with AI
-                </Button>
-                <Button
-                  variant="ghost"
-                  icon={<Scissors className="h-4 w-4" />}
-                  disabled={isRunningAiAction || !canDeepen}
-                  onClick={() => void runAiAction("simplify_branch", { branchRootNodeId: node.id })}
-                >
-                  Simplify branch
-                </Button>
-                <Button
-                  variant="ghost"
-                  icon={<Sparkles className="h-4 w-4" />}
-                  disabled={isRunningAiAction}
-                  onClick={() => void runAiAction("suggest_alternative", { targetNodeId: node.id })}
-                >
-                  Suggest alternative
-                </Button>
-                <Button
-                  variant="ghost"
-                  icon={<Wand2 className="h-4 w-4" />}
-                  disabled={isRunningAiAction}
-                  onClick={() => void runAiAction("suggest_formula", { nodeId: node.id })}
-                >
-                  Suggest formula
-                </Button>
-                <Button
-                  variant="ghost"
-                  disabled={isRunningAiAction}
-                  data-testid="explain-node-button"
-                  onClick={() => void runAiAction("explain_node", { nodeId: node.id })}
-                >
-                  Explain node
-                </Button>
-              </div>
-            ) : null}
           </div>
         ) : null}
 

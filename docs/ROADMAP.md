@@ -10,9 +10,13 @@ Implemented at alpha level:
 
 - project/VDT workspace and local SQLite revision storage, including a rail Home link, editor back navigation to the project workspace and browser Back/Forward synchronization;
 - editable left-to-right canvas, basic formula engine, scenarios and trace;
-- JSON/Markdown/editable Excel export and product CLI (JSON/Markdown);
+- a unified Versions side panel with readable/named checkpoints, before/after KPI/formula comparison, automatic pre-restore backups and session Undo guarded against later edits; the existing 20-snapshot FIFO and W0.5 persistence limitations remain;
+- direct editable Excel export in the editor and product CLI output (JSON/Markdown);
+- a simplified node inspector with Properties/Warnings and direct edits, with AI work in the chat and node-card incoming-KPI action;
 - bounded provider contracts, local runner and desktop private-pipe sidecar foundation;
+- local whisper.cpp dictation with incremental editable drafts and confirmed model downloads; native Windows and packaged microphone qualification remain open ([voice input](VOICE_INPUT.md));
 - provider-owned model discovery for supported subscription CLIs and BYOK OpenAI-compatible, Anthropic and Gemini APIs, with explicit manual fallback and no static availability catalog;
+- trusted-local development CLI session starts, with immutable Codex model bindings from the authenticated host catalog and composer binding checks before Send; external isolation and production qualification remain open;
 - managed Cursor CLI authentication through a fixed manifest command, provider browser confirmation, post-login verification and automatic rescan;
 - separate CLI, Local models and API keys settings with saved category choices and inline readiness actions and reversible browser-local subscription removal; Undo/Add back, explicit chat fallback feedback, and memory-override reset survive rescans and reloads;
 - real agent decision/tool/feedback loop with local skill retrieval;
@@ -173,6 +177,7 @@ Priority: **P2**. Depends on a certified Wave 5.
 4. Scanned PDF/OCR with confidence and mandatory reconciliation.
 5. Database/API connectors, scheduled refresh and multi-file joins.
 6. PowerPoint summary and PDF report output.
+7. Project-workspace archive export/import containing all project data, VDTs and attached source files; planned replacement for the removed editor JSON import/export.
 
 Editable Excel calculation export is implemented independently of this wave. It replaces image export with a full left-to-right VDT workbook, live Baseline/selected-scenario Potential formulas and native cell-border connectors. The filename follows the VDT display name. Visible sheets are ordered Scenario Mode, VDT, Source, Guide. Numbers display at most two decimals and space-separated thousands while preserving full calculation precision. An editable Source table owns numeric inputs, and compact Scenario Mode mirrors selected-scenario totals, isolated input-driver effects and the interaction residual with live formulas. Unconfigured scenario values link to the same-row Baseline cells; changing scenario values updates VDT Potential, including non-main scenarios and scratch analysis. Workbook import/synchronization and external source refresh remain outside the implemented export scope.
 

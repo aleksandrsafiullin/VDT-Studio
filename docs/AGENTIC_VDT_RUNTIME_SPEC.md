@@ -494,8 +494,11 @@ Current target-path behavior: a registered server-owned structured Model Agent
 binding selects one public-route Supervisor and one engine. An explicitly
 enabled Cursor checkpoint/resume qualification canary can register a candidate
 server-owned External binding from a one-time CLI version probe; the trusted-
-local development launcher enables this explicitly unverified candidate while
-production builds do not. The UI selects an admitted
+local development launchers enable explicitly unverified CLI candidates while
+production builds do not. Codex additionally registers immutable bindings for
+validated models from its authenticated host CLI catalog; its provider-default
+binding omits the native model flag. Composer readiness checks the selected
+backend/model binding before Send. The UI selects an admitted
 exact backend/model binding or fails closed, with no per-decision compatibility
 fallback. Stale model
 mutations are rejected by a server-derived builder-revision fence and returned
@@ -515,16 +518,16 @@ project ID from the run row, projects the effective current epoch and fails
 closed rather than silently falling back. An
 exchange is durably marked `in_flight` before provider execution.
 
-Still unavailable: a hard-qualified External capability, executable
-Codex/Claude session adapters, a restart auto-resume coordinator, builder
+Still unavailable: a hard-qualified External capability, a restart auto-resume
+coordinator, builder
 revision reconstruction, paused question/approval restoration, removal of the
 compatibility loop and a successful terminal post-change live profile benchmark.
 Finish-receipt hydration and exact-successor recovered finalization exist in
 the Supervisor/Sequence 4 authority, but have no public process-loss
-coordinator. Typed
-Codex/Claude checkpoint protocol canaries exist only behind unavailable
-capabilities and injected fake runners; they are not live protocol or isolation
-evidence. The Cursor checkpoint canary is executable but remains explicitly
+coordinator. Codex checkpoint/resume has a development-only executable transport and a
+real selected-model connection check that reached a question. This is not
+full VDT, performance or isolation qualification; Claude qualification claims
+remain unchanged. The Cursor checkpoint canary is executable but remains explicitly
 `unverified` and development-only. Qualification requires 3/3 cold runs at no more than 420 seconds and
 at least 20 warm runs with p95 no more than 420 seconds on the same fixed
 fixture and verified execution identity. The approximately 180-second median

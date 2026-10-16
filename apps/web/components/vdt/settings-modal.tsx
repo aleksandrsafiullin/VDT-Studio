@@ -14,6 +14,7 @@ import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { DisplaySettings } from "./display-settings";
 import { ExecutionModeSettings } from "./execution-mode-settings";
+import { SpeechSettings } from "./speech-settings";
 import {
   SETTINGS_SECTION_META,
   SettingsNav,
@@ -62,6 +63,7 @@ interface SettingsModalProps {
   initialSection?: SettingsSectionId;
   triggerRef?: RefObject<HTMLButtonElement | null>;
   hideTrigger?: boolean;
+  confirmSpeechDownload?: boolean;
 }
 
 export function SettingsModal({
@@ -69,7 +71,8 @@ export function SettingsModal({
   onOpenChange,
   initialSection = "execution",
   triggerRef: externalTriggerRef,
-  hideTrigger = false
+  hideTrigger = false,
+  confirmSpeechDownload = false
 }: SettingsModalProps = {}) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection);
@@ -201,6 +204,7 @@ export function SettingsModal({
 
                   <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5 sm:px-7 sm:py-6">
                     {activeSection === "execution" ? <ExecutionModeSettings /> : null}
+                    {activeSection === "voice" ? <SpeechSettings confirmOnOpen={confirmSpeechDownload} /> : null}
                     {activeSection === "display" ? <DisplaySettings /> : null}
                   </div>
                 </div>

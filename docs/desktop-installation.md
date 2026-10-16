@@ -43,6 +43,8 @@ That mode copies the binary to `apps/desktop/src-tauri/sidecars/vdt-local-runtim
 
 ## Desktop User Experience Target
 
+Local voice input has a confirmed, in-app model/engine installer for macOS Apple silicon/Intel and Windows x64. No user-installed compiler or recognition CLI is required by that installer. The macOS bundle declares microphone purpose text and audio-input entitlement. This does not qualify the desktop installer: native WebView microphone prompts, Windows execution, signing and clean-machine distribution remain open. See [Voice input](VOICE_INPUT.md).
+
 The production desktop user launches only VDT Studio:
 
 1. The desktop host starts the embedded local AI runtime.

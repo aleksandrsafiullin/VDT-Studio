@@ -65,9 +65,17 @@ The implementation still duplicates substantial draft/project state in Zustand p
 
 The workspace rail uses a direct Home link to `/`; the editor header's back link targets `/projects/<projectId>`. Project/editor route synchronization gives changed URL parameters precedence over the workspace snapshot. Store-driven navigation retains its target until Next.js commits the URL, and asynchronous bootstrap/VDT selection blocks reverse URL writes until it settles. An unchanged route can still reflect a newly created local VDT in `?vdt=...`.
 
+### Editor version flow
+
+`Versions -> selected project.versions checkpoint -> deterministic base comparison / checkpointed restore -> existing draft and revision persistence`
+
+`vdt-core` owns snapshot cloning, the 20-entry FIFO and `restoreVersionWithCheckpoint`. The restore helper resolves the original target before adding the backup so the oldest target remains restorable at capacity. Snapshot IDs include a collision-checked sequence for multiple checkpoints in one millisecond. Embedded snapshots omit nested version history before cloning.
+
+The web store owns manual checkpoint naming, automatic readable pre-change names, revision increments, restored selection/brief reconciliation and `project_replaced` notifications to an active agent. UI presentation also translates legacy automatic labels. Restore preserves saved node positions. A non-persisted Undo record identifies the backup and restored graph/scenario/source/review references and active VDT; later model changes, missing backups or a different VDT invalidate one-click Undo. The backup itself stays in `project.versions`, including localStorage recovery and ordinary saved VDT revision payloads. This does not introduce a second revision API or close the existing W0.5 persistence/ownership gaps.
+
 ### Excel export flow
 
-`UI Export -> exportProjectExcel(project, { scenarioId: activeScenarioId }) -> Uint8Array workbook -> browser Blob download (<VDT display name>.xlsx)`
+`UI Export Excel -> exportProjectExcel(project, { scenarioId: activeScenarioId }) -> Uint8Array workbook -> browser Blob download (<VDT display name>.xlsx)`
 
 The browser calls the deterministic `vdt-core` exporter with the complete current project and selected scenario ID. The exporter creates Office Open XML sheets, styles, native border connectors, a native Source table and live formulas in memory, then packages them with `fflate`; it does not call a provider or upload the workbook. `getExcelNodeCells(project)` exposes the VDT stable node-ID-to-cell mapping, and `getExcelWorkbookCells(project, options)` exposes Source/scenario references used by formulas and tests.
 
@@ -77,7 +85,7 @@ Visible sheets are ordered `Scenario Mode`, `VDT`, `Source`, `Guide`, followed b
 
 Native conditional formats select literal-space thousands grouping by displayed magnitude without changing Excel's global separators or rounding stored values/formulas. Numeric displays use two decimals; magnitudes at least `1e48` use scientific notation. Base/Potential prefixes keep negative signs with their numbers. Percentage caches use the application's 0–100 scale with a literal percent-sign format. Source/Comment metadata does not establish external refresh connections.
 
-Cached values come from core calculations, and workbook settings request recalculation in Excel. Collapsed/filtered canvas state does not limit export. A filename helper preserves the VDT display name except for filesystem-unsafe characters, trailing Windows dots/spaces and reserved names. A binary download helper preserves workbook bytes and revokes its Blob URL after the download click. JSON/Markdown naming and CLI output remain unchanged.
+Cached values come from core calculations, and workbook settings request recalculation in Excel. Collapsed/filtered canvas state does not limit export. A filename helper preserves the VDT display name except for filesystem-unsafe characters, trailing Windows dots/spaces and reserved names. A binary download helper preserves workbook bytes and revokes its Blob URL after the download click. The editor has one direct Export Excel action; editor-level JSON import and JSON/Markdown downloads have been removed. Core JSON serialization remains in use by storage and examples, and the CLI retains JSON/Markdown output. Full project archive import/export with source attachments is planned at the project-workspace level.
 
 ### Agent flow
 
@@ -131,6 +139,12 @@ registered but disabled and omitted from discovery unless
 `VDT_MODEL_AGENT_ENABLED=true`; the legacy provider-ID loop requires its own
 explicit production compatibility flag, and there is no automatic
 profile/backend fallback. Cursor has no accepted hard-isolation qualification.
+The trusted-local development launchers explicitly enable unverified CLI
+checkpoint sessions. Codex adds immutable model-specific binding IDs, derived
+from a SHA-256 model identity, only for validated IDs returned by its
+authenticated host CLI catalog. The browser selects an existing binding and
+checks its backend/model before enabling Send. Production still rejects the
+canary; failed catalog discovery retains only the host default until restart.
 When the AgentRunStore is SQLite-backed, the route uses the
 normalized Sequence 4 tables as primary Supervisor authority and the V1 run row
 as a secondary projection; an Event V2 commit remains authoritative if that V1
@@ -193,6 +207,8 @@ Model discovery follows the same ownership boundary. Subscription model IDs come
 Execution mode UI categories are `cli_subscriptions`, `local_models` and `byok`; the internal execution contract stays `local_cli`/`byok`. The category follows the effective runner/backend rather than a stale selected CLI ID. `executionSettings.savedLocalModelSelection` stores the last local HTTP preset/model across category switches; local-server changes use server-specific defaults. Background CLI scans may refresh detection while another category is active, but cannot normalize its execution selection. Memory overrides are independent and tab switches do not clear them.
 
 ## Data And State Ownership
+
+Local voice input is independent from chat model execution. An AudioWorklet sends bounded PCM snapshots through same-origin localhost development routes or the reviewed desktop `speech_request` → `speech` private-pipe method. The local speech runtime owns the fixed download catalog, integrity checks, model directory and short inference jobs; the UI owns provisional text and preserves manual Send. Persistent model weights are application-local, preferences browser-local and temporary WAVs job-owned. Details and remaining qualification limits are in [VOICE_INPUT.md](VOICE_INPUT.md).
 
 | State | Current owner | Target rule |
 |---|---|---|
@@ -272,8 +288,9 @@ coordinator and state rehydration described below are not implemented.
 7. There is no server-issued actor/tenant/workspace authorization context for the data/skill target model.
 8. Sequence 3 is production-wired locally, but Windows durability, native crash evidence and package transport remain unverified release gates.
 9. Real Windows Node 24 capability, concurrency and crash-recovery evidence is absent for the W0.1 durability claim.
-10. Cursor ACP remains default-off and unverified; checkpoint-resume fallback,
-    Codex/Claude session adapters, adversarial isolation evidence and the fixed
-    fixture cold/warm benchmark are incomplete.
+10. Cursor ACP remains default-off and unverified. Codex checkpoint/resume has
+    executable trusted-local wiring and a selected-model connection check;
+    full VDT, adversarial isolation and cold/warm benchmark qualification remain
+    incomplete. Claude qualification claims are unchanged.
 
 The active remediation sequence is maintained in `VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`; evidence is appended to `implementation/VDT_CORRECTIVE_EXECUTION_LOG.md`. Architectural decisions are recorded under `docs/adr/`.

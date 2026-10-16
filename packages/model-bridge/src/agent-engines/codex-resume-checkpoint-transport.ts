@@ -306,6 +306,7 @@ export class CodexResumeCheckpointTransport {
     const resolved = await assertPrivateCheckpointEnvironment(input.environment, input.mode === "open", ERROR_PREFIX, CLI_LABEL);
     const credentials = input.environment.credentialEnvironment ?? [];
     const environment = buildCodexEnvironment(resolved.state, resolved.authHome, credentials);
+    const modelArgs = input.model === "auto" ? [] : ["--model", input.model];
     const args = withForcedCodexSearchFlag(input.mode === "open"
       ? [
         "exec",
@@ -316,8 +317,7 @@ export class CodexResumeCheckpointTransport {
         "--ignore-user-config",
         "--sandbox",
         "read-only",
-        "--model",
-        input.model,
+        ...modelArgs,
         "-C",
         resolved.workspace,
         "-"
@@ -330,8 +330,7 @@ export class CodexResumeCheckpointTransport {
         "--ignore-user-config",
         "-c",
         'sandbox_mode="read-only"',
-        "--model",
-        input.model,
+        ...modelArgs,
         input.expectedSessionId!,
         "-"
       ], input.forceNativeWebSearch === true);

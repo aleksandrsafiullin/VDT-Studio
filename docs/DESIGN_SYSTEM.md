@@ -22,3 +22,7 @@ VDT Studio uses a calm analytical-workspace style:
 - A mapping preview must show source columns, aggregation/formula, unit, period, filters, coverage, resulting value and target KPI before apply.
 - Destructive or stale agent changes require explicit conflict/approval UI.
 - Execution mode settings separate CLI, Local models and API keys into top-level tabs. The CLI panel leads with the active chat provider/model and a single subscription list. Keep Test, Sign in and reversible removal beside each provider; keep provider diagnostics, memory overrides and developer runner pairing in secondary disclosures; local model servers have their own full panel. Removal feedback must identify any chat fallback and memory reset, and move keyboard focus to Undo.
+
+## Versions
+
+The editor exposes one **Версии** control. Use a modal side panel with a dated version list and a before/after comparison, stacking the list above the detail on narrow screens. Use KPI names and paths in place of technical node IDs, retain units and distinguish unavailable values from zero. Show formula changes as readable old/new expressions. Keep restore confirmation beside the selected version, make automatic backup explicit and expose Undo after restoration, including when the panel closes. The native dialog provides modal focus containment, Escape dismissal and focus return to the trigger. Legacy automatic task labels are presented in plain language; user-authored names remain editable.

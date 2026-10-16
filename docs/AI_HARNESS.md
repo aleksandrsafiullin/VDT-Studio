@@ -28,6 +28,8 @@ The schema registry contains 18 task contracts. Seventeen are exposed product ta
 
 `pnpm phase7:verify` checks task/schema/manifest alignment, route ownership, README exposure and mock coverage.
 
+Registered task contracts describe the compatibility harness and are not a list of editor buttons. The editor no longer exposes the AI inspector tab, standalone review/explanation actions or the legacy client-side action/result store. AI interaction uses the chat and the node-card incoming-KPI runtime action. Agent mutation-policy approvals and file-discovery staging remain separate from the removed per-node Accept/Reject controls.
+
 The agent-composer file attachment passes the configured provider into the data-discovery prototype. In development/desktop, unpaired `local_runner` requests use the managed local runtime; paired runner and API/BYOK requests retain their existing provider boundary. This does not merge the data loop with the main VDT agent skills or research loop.
 
 ## Agent Runtime
@@ -145,7 +147,9 @@ commas without globally replacing commas or changing `min(a,b)` semantics.
   `hard_verified` isolation evidence, and no adapter is publicly available.
 - Cursor checkpoint/resume is an unverified trusted-local qualification
   canary behind `VDT_CURSOR_SESSION_CANARY_ENABLED=true`; the trusted-local
-  development `run.command` enables it while production builds still reject it.
+  development launchers (`pnpm dev` and `run.command`) enable the CLI session
+  canary while production builds still reject it.
+  `VDT_CLI_SESSION_CANARY_ENABLED=false` opts out.
   The candidate binding pins the probed CLI version, model and
   tool-catalog hash. Normal Cursor UI starts fail closed when no qualified
   binding exists and never falls back to the per-decision loop. Deterministic
@@ -154,9 +158,14 @@ commas without globally replacing commas or changing `min(a,b)` semantics.
   provider isolation. Subscription authentication uses the trusted user's
   Cursor home while execution remains in an empty private workspace; the
   canary acknowledges trust only for that verified empty workspace and never
-  enables force/yolo. Codex and Claude now have typed, default-unavailable
-  checkpoint protocol canaries with injected fake-runner tests; executable
-  session engines, live protocol evidence and hard isolation remain incomplete.
+  enables force/yolo. Codex checkpoint/resume is also executable in this
+  unverified development path. Its default binding uses the provider default
+  unless the host pins a model; additional immutable model bindings come only
+  from the authenticated host CLI catalog. The composer checks backend/model
+  binding availability before enabling Send. A local `gpt-5.6-luna` connection
+  check reached a real assistant response and `user.ask`; this is not a full
+  VDT build, performance or hard-isolation qualification. Claude protocol
+  and security qualification claims remain unchanged.
 - A manual node update during structured inference fences the next stale
   mutation/finish call and produces a `manual_reconciliation` delta; approved
   proposals also enforce base revision. Other manual-change kinds and durable

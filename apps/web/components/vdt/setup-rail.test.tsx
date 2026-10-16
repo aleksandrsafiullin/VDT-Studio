@@ -29,9 +29,9 @@ describe("SetupRail agent composer", () => {
     localStorageMock.clear();
     useVdtStudioStore.setState({
       isGenerating: false,
-      isRunningAiAction: false,
       generateActivity: undefined,
       aiError: undefined,
+      aiActionError: undefined,
       executionSettings: {
         ...DEFAULT_EXECUTION_SETTINGS,
         executionMode: "byok",

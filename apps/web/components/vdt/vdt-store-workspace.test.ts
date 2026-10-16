@@ -286,7 +286,7 @@ describe("refreshWorkspace scoping", () => {
     }));
 
     const savePromise = useVdtStudioStore.getState().saveActiveWorkspaceVdt();
-    useVdtStudioStore.getState().acceptNode(useVdtStudioStore.getState().project.rootNodeId);
+    useVdtStudioStore.setState((state) => ({ project: { ...state.project, name: "Edited during commit" } }));
     resolveCommit?.(committedPayload(sampleSummary("project_a", "Project A", "vdt_a"), "vdt_a", 2));
 
     await expect(savePromise).resolves.toBe(false);
@@ -301,7 +301,7 @@ describe("refreshWorkspace scoping", () => {
     }));
 
     const navigationPromise = useVdtStudioStore.getState().selectWorkspaceProject("project_b");
-    useVdtStudioStore.getState().acceptNode(useVdtStudioStore.getState().project.rootNodeId);
+    useVdtStudioStore.setState((state) => ({ project: { ...state.project, name: "Edited during commit" } }));
     resolveCommit?.(committedPayload(sampleSummary("project_a", "Project A", "vdt_a"), "vdt_a", 2));
 
     await expect(navigationPromise).resolves.toBe(false);
@@ -396,7 +396,7 @@ describe("refreshWorkspace scoping", () => {
       name: "Created VDT",
       rootKpi: "Revenue"
     });
-    useVdtStudioStore.getState().acceptNode(useVdtStudioStore.getState().project.rootNodeId);
+    useVdtStudioStore.setState((state) => ({ project: { ...state.project, name: "Edited during commit" } }));
     const editedProject = structuredClone(useVdtStudioStore.getState().project);
     expect(editedProject).not.toEqual(projectBefore);
     resolveCreate?.(

@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TARGET_MODEL_AGENT_TOOLS } from "./model-agent-tool-catalog";
+import { cliSessionModelBindingId } from "./cli-session-model-binding";
 
 const detectSubscriptionCli = vi.fn();
+const getSubscriptionCliAdapter = vi.fn();
+
+vi.mock("@vdt-studio/model-bridge", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@vdt-studio/model-bridge")>(),
+  getSubscriptionCliAdapter
+}));
 
 vi.mock("@vdt-studio/model-bridge/node", async (importOriginal) => {
   const original = await importOriginal<typeof import("@vdt-studio/model-bridge/node")>();
@@ -23,6 +30,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.resetModules();
   detectSubscriptionCli.mockReset();
+  getSubscriptionCliAdapter.mockReset();
   delete runtimeGlobal.__vdtAgentRuntime;
   delete runtimeGlobal.__vdtAgentExecutionBindingRegistry;
   delete runtimeGlobal.__vdtExternalAgentEngines;
@@ -45,6 +53,59 @@ function mockAllClisInstalled() {
 }
 
 describe("trusted-local CLI session wiring", { timeout: 45_000 }, () => {
+  it("admits the selected Codex model from the authenticated host catalog without changing the default binding", async () => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");
+    mockAllClisInstalled();
+    getSubscriptionCliAdapter.mockReturnValue({
+      probeAuth: async () => ({ status: "ready" }),
+      listModels: async () => ["gpt-selected", "gpt-other", "gpt-selected", "--unsafe", "bad\nmodel"]
+    });
+
+    const runtime = await import("./runtime");
+    await runtime.ensureServerManagedExecutionBindings();
+    await runtime.ensureServerManagedExecutionBindings();
+    const bindings = runtime.agentExecutionBindingRegistry.summaries()
+      .filter((binding) => binding.backendId === "codex_subscription");
+    expect(bindings.map((binding) => binding.modelId)).toEqual(["auto", "gpt-selected", "gpt-other"]);
+    const selectedId = cliSessionModelBindingId(runtime.CODEX_SESSION_EXECUTION_BINDING_ID, "gpt-selected");
+    expect(runtime.agentExecutionBindingRegistry.resolve(selectedId).modelId).toBe("gpt-selected");
+    expect(runtime.externalAgentEngineForBinding(selectedId)).toBeDefined();
+    const { isAdmittedCliSessionCanary } = await import("./supervisor-runtime");
+    const identity = { bindingId: selectedId, engineAdapterId: "codex-resume-checkpoint-v1", modelId: "gpt-selected" };
+    expect(isAdmittedCliSessionCanary({ ...identity, allowUnqualifiedExternalCanary: true })).toBe(true);
+    expect(isAdmittedCliSessionCanary({ ...identity, modelId: "gpt-other", allowUnqualifiedExternalCanary: true })).toBe(false);
+    expect(isAdmittedCliSessionCanary({ ...identity, engineAdapterId: "claude-resume-checkpoint-v1", allowUnqualifiedExternalCanary: true })).toBe(false);
+    expect(isAdmittedCliSessionCanary({ ...identity, allowUnqualifiedExternalCanary: false })).toBe(false);
+  });
+
+  it.each(["authentication_required", "error"])("does not admit catalog models after a %s auth probe", async (status) => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");
+    vi.stubEnv("VDT_CODEX_SESSION_MODEL", "host-pinned");
+    mockAllClisInstalled();
+    const listModels = vi.fn();
+    getSubscriptionCliAdapter.mockReturnValue({ probeAuth: async () => ({ status }), listModels });
+    const runtime = await import("./runtime");
+    await runtime.ensureServerManagedExecutionBindings();
+    expect(listModels).not.toHaveBeenCalled();
+    expect(runtime.agentExecutionBindingRegistry.summaries().filter((binding) => binding.backendId === "codex_subscription")
+      .map((binding) => binding.modelId)).toEqual(["host-pinned"]);
+  });
+
+  it("keeps provider-default chat available when catalog discovery fails", async () => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");
+    mockAllClisInstalled();
+    getSubscriptionCliAdapter.mockReturnValue({
+      probeAuth: async () => ({ status: "ready" }),
+      listModels: async () => { throw new Error("catalog unavailable"); }
+    });
+    const runtime = await import("./runtime");
+    await runtime.ensureServerManagedExecutionBindings();
+    expect(runtime.agentExecutionBindingRegistry.resolve(runtime.CODEX_SESSION_EXECUTION_BINDING_ID).modelId).toBe("auto");
+  });
+
   it("registers cursor, codex, and claude bindings when each CLI is detected", async () => {
     vi.stubEnv("VDT_APP_MODE", "development_web");
     vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");

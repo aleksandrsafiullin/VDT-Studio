@@ -11,6 +11,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./server-runtime": "./src/server/runtime.ts",
+    "./speech": "./src/speech/runtime.ts",
+    "./speech-catalog": "./src/speech/catalog.ts",
+    "./speech-audio": "./src/speech/audio.ts",
     "./timeout-limits": "./src/timeout-limits.ts"
   },
   "scripts": {

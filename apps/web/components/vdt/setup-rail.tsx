@@ -1,23 +1,24 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, CircleAlert, History, MessageSquarePlus, Search, Send, Settings2, X } from "lucide-react";
+import { Check, CircleAlert, Globe, History, LoaderCircle, MessageSquarePlus, Mic, Send, Settings2, Square, X } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { DataImportAttachmentButton } from "@/components/data-import/data-import-attachment-button";
 import { Field, TextArea, TextInput } from "@/components/ui/field";
 import { Panel, PanelCollapseTab, PanelToggleButton, PanelHeader } from "@/components/ui/panel";
 import { hasByokFieldErrors, validateByokSettings } from "@/lib/byok-validation";
-import {
-  resolveSelectedCliReadiness,
-  type CliRequestReadinessState
-} from "@/lib/cli-readiness";
+import type { CliRequestReadinessState } from "@/lib/cli-readiness";
 import { formatExecutionModeSummary } from "@/lib/format-execution-summary";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { filterAgentChatHistoryForVdt, shouldContinueOpenVdt, useVdtStudioStore } from "./vdt-store";
 import { GenerateActivityPanel } from "./generate-activity-panel";
 import { SettingsModal } from "./settings-modal";
+import type { SettingsSectionId } from "./settings-nav";
+import { useSpeechSettings } from "./speech-store";
+import { useVoiceDictation } from "./use-voice-dictation";
+import { useCliChatReadiness } from "./use-cli-chat-readiness";
 import type { AgentChatHistoryEntry } from "./vdt-store";
 import type { ResearchMode } from "@/lib/agent-client";
 
@@ -113,6 +114,8 @@ export function ExecutionReadinessDot({ state }: { state: CliRequestReadinessSta
 export function SetupRail() {
   const hasRequestedCliScan = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>("execution");
+  const [confirmSpeechDownload, setConfirmSpeechDownload] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [instructionText, setInstructionText] = useState("");
   const instructionInputRef = useRef<HTMLTextAreaElement>(null);
@@ -124,10 +127,11 @@ export function SetupRail() {
   const cliDetectionError = useVdtStudioStore((state) => state.cliDetectionError);
   const isRescanningClis = useVdtStudioStore((state) => state.isRescanningClis);
   const isGenerating = useVdtStudioStore((state) => state.isGenerating);
-  const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
   const generateActivity = useVdtStudioStore((state) => state.generateActivity);
   const agentChatHistory = useVdtStudioStore((state) => state.agentChatHistory);
   const activeVdtId = useVdtStudioStore((state) => state.workspace.activeVdtId);
+  const speech = useSpeechSettings();
+  const voice = useVoiceDictation(setInstructionText, activeVdtId);
   const scopedAgentChatHistory = useMemo(
     () => filterAgentChatHistoryForVdt(agentChatHistory, activeVdtId),
     [agentChatHistory, activeVdtId]
@@ -135,6 +139,7 @@ export function SetupRail() {
   const pendingChangeSet = useVdtStudioStore((state) => state.pendingChangeSet);
   const changeSetSelection = useVdtStudioStore((state) => state.changeSetSelection);
   const aiError = useVdtStudioStore((state) => state.aiError);
+  const aiActionError = useVdtStudioStore((state) => state.aiActionError);
   const leftPanelCollapsed = useVdtStudioStore((state) => state.ui.leftPanelCollapsed);
   const isDesktop = useDesktopLayout();
   const showCollapsed = isDesktop && leftPanelCollapsed;
@@ -157,7 +162,7 @@ export function SetupRail() {
   const canRunDeepenAction = resolvedExecution.providerId !== "mock";
   const byokValidationBlocked = executionSettings.executionMode === "byok" &&
     hasByokFieldErrors(validateByokSettings(executionSettings));
-  const cliReadiness = resolveSelectedCliReadiness(executionSettings, cliDetectionAgents, {
+  const cliReadiness = useCliChatReadiness(executionSettings, cliDetectionAgents, {
     isScanning: isRescanningClis,
     detectionError: cliDetectionError
   });
@@ -183,8 +188,8 @@ export function SetupRail() {
   const canContinueCurrentAgentRun = generateActivity?.status === "running" ||
     generateActivity?.status === "needs_user_input";
   const canSendInstruction =
+    !voice.active &&
     instructionText.trim().length > 0 &&
-    !isRunningAiAction &&
     canUseConfiguredRuntime &&
     (!isGenerating || Boolean(generateActivity));
   const canStartNewChat = Boolean(generateActivity);
@@ -232,7 +237,7 @@ export function SetupRail() {
 
   async function submitAgentInstruction() {
     const text = instructionText.trim();
-    if (!text || isRunningAiAction) return;
+    if (!text || voice.active) return;
     if (!canUseConfiguredRuntime) return;
     if (!canContinueCurrentAgentRun) {
       const shouldContinue = shouldContinueOpenVdt(useVdtStudioStore.getState());
@@ -273,6 +278,7 @@ export function SetupRail() {
               icon={<MessageSquarePlus className="h-3.5 w-3.5" />}
               disabled={!canStartNewChat}
               onClick={() => {
+                voice.onManualEdit();
                 const accepted = startNewAgentChat();
                 if (accepted) setHistoryOpen(false);
               }}
@@ -404,7 +410,7 @@ export function SetupRail() {
                     size="sm"
                     variant="primary"
                     icon={<Check className="h-4 w-4" />}
-                    disabled={isRunningAiAction || changeSetSelection.size === 0}
+                    disabled={changeSetSelection.size === 0}
                     onClick={applyPendingChangeSet}
                   >
                     Apply
@@ -412,7 +418,6 @@ export function SetupRail() {
                   <Button
                     size="sm"
                     icon={<X className="h-4 w-4" />}
-                    disabled={isRunningAiAction}
                     onClick={discardPendingChangeSet}
                   >
                     Discard
@@ -427,6 +432,12 @@ export function SetupRail() {
                 <span>{aiError}</span>
               </div>
             ) : null}
+            {aiActionError ? (
+              <div role="alert" className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-5 text-red-700">
+                <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{aiActionError}</span>
+              </div>
+            ) : null}
           </div>
         </section>
 
@@ -438,24 +449,31 @@ export function SetupRail() {
             void submitAgentInstruction();
           }}
         >
+          {voice.active || voice.error ? (
+            <div className="mb-2 flex items-center justify-between gap-2 text-xs leading-5" data-testid="voice-input-status">
+              <span role={voice.error ? "alert" : "status"} className={voice.error ? "text-red-700" : "text-emerald-700"}>
+                {voice.error ?? (voice.state === "starting" ? "Opening microphone…" : voice.state === "finishing" ? "Finishing transcription…" : "Listening… Text appears as you speak.")}
+              </span>
+              <Button type="button" size="icon" variant="ghost" aria-label={voice.active ? "Cancel dictation" : "Dismiss voice input error"} onClick={voice.active ? voice.cancel : voice.clearError} icon={<X className="h-3.5 w-3.5" />} />
+            </div>
+          ) : null}
           <TextArea
             ref={instructionInputRef}
             rows={3}
             className="max-h-[min(40vh,20rem)] min-h-24 overflow-y-auto rounded-md border-line bg-white p-3 text-sm leading-6 shadow-none focus:bg-white"
             value={instructionText}
-            onChange={(event) => setInstructionText(event.target.value)}
+            onChange={(event) => { voice.onManualEdit(); setInstructionText(event.target.value); }}
             placeholder="Describe the situation, data, constraints, and what to do next..."
             data-testid="agent-instruction-input"
           />
           <div className="mt-2 flex items-center gap-2">
-            <DataImportAttachmentButton />
             <button
               type="button"
               className={[
                 "flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-line bg-slate-50 px-2.5 text-left transition",
                 "hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               ].join(" ")}
-              onClick={() => setSettingsOpen(true)}
+              onClick={() => { setSettingsSection("execution"); setConfirmSpeechDownload(false); setSettingsOpen(true); }}
               data-testid="execution-mode-configure"
               aria-label={`Configure execution mode. ${executionSummary.primary}: ${executionReadinessLabel}`}
               title={executionReadinessMessage}
@@ -471,10 +489,35 @@ export function SetupRail() {
             </button>
             <Button
               type="button"
+              size="icon"
+              variant="secondary"
+              className={clsx("h-9 w-9 shrink-0", voice.state === "listening" ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100" : speech.ready ? "text-emerald-700" : "text-slate-400")}
+              disabled={voice.state === "starting" || voice.state === "finishing" || (!voice.active && (speech.installing || speech.status?.supported === false))}
+              aria-label={voice.active ? "Stop dictation" : speech.ready ? "Start local dictation" : "Set up voice input"}
+              aria-pressed={voice.active}
+              title={speech.installing ? "Downloading the speech model…" : voice.active ? "Stop dictation and review the text" : speech.ready ? "Dictate locally into the chat draft" : "Download a model to enable local voice input"}
+              data-testid="agent-voice-input"
+              data-voice-ready={speech.ready}
+              data-voice-state={voice.state}
+              onClick={() => {
+                if (voice.active) { void voice.stop(); return; }
+                if (!speech.ready) {
+                  setSettingsSection("voice"); setConfirmSpeechDownload(true); setSettingsOpen(true); return;
+                }
+                const input = instructionInputRef.current;
+                void voice.start(instructionText, input?.selectionStart ?? instructionText.length, input?.selectionEnd ?? instructionText.length, speech.modelId, speech.language);
+              }}
+              icon={voice.state === "starting" || voice.state === "finishing" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : voice.state === "listening" ? <Square className="h-3.5 w-3.5 fill-current" /> : <Mic className="h-4 w-4" />}
+            />
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <DataImportAttachmentButton />
+            <Button
+              type="button"
               className={researchToggleClassName(researchMode, researchUnavailable)}
               size="icon"
               variant="secondary"
-              icon={<Search className="h-4 w-4" />}
+              icon={<Globe className="h-4 w-4" />}
               onClick={() => setResearchMode((mode) => nextResearchMode(mode))}
               title={researchTooltip}
               aria-label={`Search ${researchMode}`}
@@ -482,6 +525,7 @@ export function SetupRail() {
               data-research-mode={researchMode}
               data-provider-configured={researchStatus?.providerConfigured ?? "unknown"}
             />
+            <div className="flex-1" />
             <Button
               type="submit"
               className="h-9 shrink-0 px-3"
@@ -499,7 +543,8 @@ export function SetupRail() {
       <SettingsModal
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-        initialSection="execution"
+        initialSection={settingsSection}
+        confirmSpeechDownload={confirmSpeechDownload}
         hideTrigger
       />
     </Panel>

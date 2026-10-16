@@ -10,6 +10,7 @@
     "frontendDist": "../web/.next"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "VDT Studio",
@@ -36,6 +37,8 @@
       "sidecars/vdt-agent-skills"
     ],
     "macOS": {
+      "infoPlist": "Info.plist",
+      "entitlements": "Entitlements.plist",
       "signingIdentity": "-"
     }
   }

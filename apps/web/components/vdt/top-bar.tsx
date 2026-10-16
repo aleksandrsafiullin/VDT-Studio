@@ -1,29 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { ArrowLeft, Download, FileJson, FileSpreadsheet, Folder, GitBranch, Route, ShieldCheck, Sparkles, Upload } from "lucide-react";
+import { useRef, useState } from "react";
+import { ArrowLeft, FileSpreadsheet, Folder, GitBranch, Route, ShieldCheck } from "lucide-react";
 import {
   calculateGraph,
   EXCEL_MIME_TYPE,
   exportProjectExcel,
-  exportProjectJson,
-  exportProjectMarkdown,
-  importProjectJson,
   validateGraph
 } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
-import { downloadBinaryFile, downloadTextFile, getExcelDownloadFilename } from "@/lib/download";
+import { downloadBinaryFile, getExcelDownloadFilename } from "@/lib/download";
 import { formatNumber } from "@/lib/format";
 import { ScenarioModal } from "./scenario-modal";
 import { SettingsModal } from "./settings-modal";
 import { VersionHistoryPanel } from "./version-history-panel";
-import { VdtComparisonPanel } from "./vdt-comparison-panel";
 import { hasActiveWorkspaceVdt, useVdtStudioStore } from "./vdt-store";
-
-const exportMenuItemClass =
-  "flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-graphite hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 interface TopBarProps {
   projectId: string;
@@ -32,31 +25,11 @@ interface TopBarProps {
 export function TopBar({ projectId }: TopBarProps) {
   const project = useVdtStudioStore((state) => state.project);
   const workspace = useVdtStudioStore((state) => state.workspace);
-  const replaceProject = useVdtStudioStore((state) => state.replaceProject);
-  const runAiAction = useVdtStudioStore((state) => state.runAiAction);
-  const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
   const activeScenarioId = useVdtStudioStore((state) => state.activeScenarioId);
   const scenarioModalOpen = useVdtStudioStore((state) => state.scenarioModalOpen);
   const openScenarioModal = useVdtStudioStore((state) => state.openScenarioModal);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const scenarioModalTriggerRef = useRef<HTMLButtonElement>(null);
-  const [fileError, setFileError] = useState<string>();
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
-
-  useEffect(() => {
-    if (!exportMenuOpen) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setExportMenuOpen(false);
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [exportMenuOpen]);
+  const [exportError, setExportError] = useState<string>();
 
   const activeProjectSummary =
     workspace.projectSummaries.find((entry) => entry.project.id === projectId) ??
@@ -103,22 +76,6 @@ export function TopBar({ projectId }: TopBarProps) {
   const activeScenarioTitle = activeScenario?.name
     ? `Scenario: ${activeScenario.name}`
     : "Open scenario mode";
-
-  async function handleProjectImport(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) {
-      return;
-    }
-
-    try {
-      const importedProject = importProjectJson(await file.text());
-      replaceProject(importedProject);
-      setFileError(undefined);
-    } catch (error) {
-      setFileError(error instanceof Error ? error.message : "Project JSON could not be imported.");
-    }
-  }
 
   return (
     <header className="relative flex h-14 shrink-0 items-center justify-between gap-4 border-b border-line bg-white px-4">
@@ -169,111 +126,34 @@ export function TopBar({ projectId }: TopBarProps) {
         </Button>
         <Button
           size="sm"
-          data-testid="review-model-button"
-          icon={<Sparkles className="h-4 w-4" />}
-          disabled={isRunningAiAction}
-          onClick={() => void runAiAction("review_model", {})}
+          aria-label="Export Excel"
+          data-testid="export-excel"
+          icon={<FileSpreadsheet className="h-4 w-4" />}
+          onClick={() => {
+            try {
+              downloadBinaryFile(
+                getExcelDownloadFilename(project.name),
+                exportProjectExcel(project, { scenarioId: activeScenarioId }),
+                EXCEL_MIME_TYPE
+              );
+              setExportError(undefined);
+            } catch (error) {
+              setExportError(error instanceof Error ? error.message : "Excel workbook could not be exported.");
+            }
+          }}
         >
-          <span className="hidden sm:inline">Review model</span>
+          <span className="hidden sm:inline">Export Excel</span>
         </Button>
-        <input
-          ref={fileInputRef}
-          className="hidden"
-          type="file"
-          accept=".json,application/json"
-          onChange={(event) => void handleProjectImport(event)}
-        />
-        <Button
-          size="sm"
-          aria-label="Import"
-          icon={<Download className="h-4 w-4" />}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <span className="hidden sm:inline">Import</span>
-        </Button>
-        <div className="relative">
-          <Button
-            size="sm"
-            aria-label="Export"
-            aria-controls="export-menu"
-            aria-expanded={exportMenuOpen}
-            aria-haspopup="menu"
-            data-testid="export-menu-button"
-            icon={<Upload className="h-4 w-4" />}
-            onClick={() => setExportMenuOpen((current) => !current)}
-          >
-            <span className="hidden sm:inline">Export</span>
-          </Button>
-
-          {exportMenuOpen ? (
-            <div
-              id="export-menu"
-              role="menu"
-              aria-label="Export options"
-              className="absolute right-0 top-full z-30 mt-2 min-w-[10rem] rounded-md border border-line bg-white py-1 shadow-lg"
-            >
-              <button
-                type="button"
-                role="menuitem"
-                data-testid="export-json"
-                className={exportMenuItemClass}
-                onClick={() => {
-                  downloadTextFile(`${project.id}.json`, exportProjectJson(project), "application/json");
-                  setExportMenuOpen(false);
-                }}
-              >
-                <FileJson className="h-4 w-4" />
-                JSON
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                data-testid="export-excel"
-                className={exportMenuItemClass}
-                onClick={() => {
-                  try {
-                    downloadBinaryFile(
-                      getExcelDownloadFilename(project.name),
-                      exportProjectExcel(project, { scenarioId: activeScenarioId }),
-                      EXCEL_MIME_TYPE
-                    );
-                    setFileError(undefined);
-                  } catch (error) {
-                    setFileError(error instanceof Error ? error.message : "Excel workbook could not be exported.");
-                  }
-                  setExportMenuOpen(false);
-                }}
-              >
-                <FileSpreadsheet className="h-4 w-4" />
-                Excel
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                data-testid="export-markdown"
-                className={exportMenuItemClass}
-                onClick={() => {
-                  downloadTextFile(`${project.id}.md`, exportProjectMarkdown(project), "text/markdown");
-                  setExportMenuOpen(false);
-                }}
-              >
-                <Download className="h-4 w-4" />
-                Markdown
-              </button>
-            </div>
-          ) : null}
-        </div>
-        <VdtComparisonPanel project={project} />
         <VersionHistoryPanel />
         <SettingsModal />
         <ScenarioModal triggerRef={scenarioModalTriggerRef} />
       </div>
-      {fileError ? (
+      {exportError ? (
         <div
           className="absolute right-4 top-12 z-20 max-w-[420px] rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700 shadow-sm"
           role="alert"
         >
-          {fileError}
+          {exportError}
         </div>
       ) : null}
     </header>

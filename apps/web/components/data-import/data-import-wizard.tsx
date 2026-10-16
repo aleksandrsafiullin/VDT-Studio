@@ -241,7 +241,7 @@ export function DataImportWizard() {
       validateSnapshotTarget(payload.snapshot, context);
       const current = assertCurrent(context, operation);
       if (!current.stageDataDiscoveryChangeSet(payload.changeSet, context)) throw new Error("The import target changed. Reopen and analyze the file again.");
-      current.setUiPreference("rightPanelCollapsed", false);
+      current.setUiPreference("leftPanelCollapsed", false);
       close();
     } catch (caught) { finishOperation(operation, caught); }
   }

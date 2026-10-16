@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
+import { developmentWebEnvironment } from "./development-web-environment.mjs";
 
-const DEVELOPMENT_WEB_MODE = "development_web";
 const corepackCommand = process.platform === "win32" ? "corepack.cmd" : "corepack";
 const child = spawn(
   corepackCommand,
@@ -8,11 +8,7 @@ const child = spawn(
   {
     stdio: "inherit",
     shell: process.platform === "win32",
-    env: {
-      ...process.env,
-      VDT_APP_MODE: DEVELOPMENT_WEB_MODE,
-      NEXT_PUBLIC_VDT_APP_MODE: DEVELOPMENT_WEB_MODE
-    }
+    env: developmentWebEnvironment()
   }
 );
 

@@ -43,6 +43,8 @@ The clean-install verifier checks CLI help/doctor, project validation, public ex
 
 ## Support Boundary
 
+Local voice input is an alpha capability with opt-in, SHA-256 pinned model/engine downloads. The community-built whisper.cpp executables and MIT model/engine license notices must be included in release provenance; they are not bundled into the source CLI tarball. Native microphone/Windows/clean-machine qualification remains open. See [VOICE_INPUT.md](VOICE_INPUT.md).
+
 - Mock is the deterministic offline reference backend.
 - API/local HTTP/provider adapters have different certification levels; use `release/provider-certification.json`.
 - Fake executable tests are not live subscription-provider evidence.

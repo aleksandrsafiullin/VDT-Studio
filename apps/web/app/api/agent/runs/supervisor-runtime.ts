@@ -50,6 +50,7 @@ import {
 } from "./model-agent-tool-catalog";
 import { writeCanaryMetricsSidecarAtTerminal } from "./canary-metrics-sidecar";
 import { authoritativeAgentRunProjectId } from "./persistence";
+import { matchesCliSessionBinding } from "./cli-session-model-binding";
 import {
   agentRuntime,
   createAgentSupervisorPersistence,
@@ -97,11 +98,13 @@ function externalCliDisplayName(backendId: string): string {
 export function isAdmittedCliSessionCanary(input: {
   bindingId: string;
   engineAdapterId: string;
+  modelId?: string | undefined;
   allowUnqualifiedExternalCanary?: boolean | undefined;
 }): boolean {
   return input.allowUnqualifiedExternalCanary === true
     && ADMITTED_CLI_SESSION_CANARIES.some(
-      (entry) => entry.bindingId === input.bindingId && entry.engineAdapterId === input.engineAdapterId
+      (entry) => matchesCliSessionBinding(input.bindingId, entry.bindingId, input.modelId)
+        && entry.engineAdapterId === input.engineAdapterId
     );
 }
 
@@ -179,6 +182,7 @@ export async function startExternalCliAgentRun(input: {
   const admittedCliCanary = isAdmittedCliSessionCanary({
     bindingId: input.bindingDefinition.bindingId,
     engineAdapterId: capability.engineAdapterId,
+    modelId: input.bindingDefinition.modelId,
     allowUnqualifiedExternalCanary: input.allowUnqualifiedExternalCanary
   });
   if (!hardQualified && !admittedCliCanary) {

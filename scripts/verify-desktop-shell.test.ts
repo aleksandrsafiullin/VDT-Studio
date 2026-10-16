@@ -15,6 +15,7 @@ const commands = [
   "ai_cancel",
   "ai_get_run",
   "open_provider_auth",
+  "speech_request",
   "get_app_mode"
 ];
 
@@ -45,6 +46,7 @@ async function writeFixture(options: {
     path.join(root, "apps/desktop/src-tauri/tauri.conf.json"),
     JSON.stringify({
       identifier: "com.vdtstudio.desktop",
+      app: { withGlobalTauri: true },
       build: {
         beforeDevCommand: "NEXT_PUBLIC_VDT_APP_MODE=desktop pnpm --filter @vdt-studio/web dev",
         beforeBuildCommand: "NEXT_PUBLIC_VDT_APP_MODE=desktop pnpm --filter @vdt-studio/web build"
@@ -120,7 +122,7 @@ afterEach(async () => {
 
 describe("verify-desktop-shell", () => {
   it("passes the current desktop scaffold", () => {
-    expect(verifyDesktopShell()).toMatchObject({ commandCount: 9 });
+    expect(verifyDesktopShell()).toMatchObject({ commandCount: 10 });
   });
 
   it("fails if a generic native permission is enabled", async () => {

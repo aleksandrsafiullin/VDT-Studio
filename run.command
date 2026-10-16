@@ -199,7 +199,7 @@ start_app() {
 
   # The trusted-local launcher enables the explicit development canary. It
   # remains unavailable in production builds and never enables legacy CLI.
-  export VDT_CURSOR_SESSION_CANARY_ENABLED="${VDT_CURSOR_SESSION_CANARY_ENABLED:-true}"
+  export VDT_CLI_SESSION_CANARY_ENABLED="${VDT_CLI_SESSION_CANARY_ENABLED:-${VDT_CURSOR_SESSION_CANARY_ENABLED:-true}}"
   export VDT_CURSOR_SESSION_MODEL="${VDT_CURSOR_SESSION_MODEL:-cursor-grok-4.6-medium}"
   export VDT_AGENT_LEGACY_COMPATIBILITY_ENABLED="${VDT_AGENT_LEGACY_COMPATIBILITY_ENABLED:-false}"
 

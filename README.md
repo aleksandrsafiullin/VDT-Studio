@@ -7,17 +7,21 @@ VDT Studio is an AI-first, local-first workspace for building editable Value Dri
 ## Current Product Surface
 
 - Project and VDT workspace backed by local SQLite metadata and revision files. The workspace rail's Home link opens the home page; the editor header's back link opens the project workspace. Navigation respects browser Back/Forward.
-- Left-to-right editable factor-tree canvas with node review and change-set previews.
+- Left-to-right editable factor-tree canvas with direct node editing, properties and formula warnings.
 - Deterministic formula evaluation, scenario calculation and calculation trace.
+- One **Версии** (Versions) panel for named checkpoints, before/after KPI and formula comparison, restoration with an automatic backup, and Undo before further model edits.
 - In-product agent runtime with bounded tools, skills, structured events and a calculation-aware finish gate.
 - BYOK API providers, fixed local HTTP backends and reviewed subscription-CLI adapters.
 - Standalone paired local runner for development and a private-pipe desktop sidecar foundation.
-- JSON, Markdown and editable Excel (`.xlsx`) export.
+- Local whisper.cpp dictation into an editable chat draft, with incremental text, model selection and confirmed downloads in Settings → Voice input. See [Voice input](docs/VOICE_INPUT.md) for platform and verification limits.
+- Editable Excel (`.xlsx`) export directly from the VDT editor; JSON/Markdown output remains available through the CLI.
 - Experimental raw-data discovery for CSV/TSV, XLS/XLSX, JSON/NDJSON and Parquet.
+
+The inspector contains **Properties** and **Warnings**. Node edits apply directly without per-node Accept/Reject. AI requests use the chat or the node-card incoming-KPI action; the separate AI inspector tab, Review model and Explain scenario controls have been removed. Editor-level JSON import and JSON/Markdown export have also been removed. Full project archive import/export, including attached source files, is planned at the project-workspace level.
 
 Raw-data discovery currently proposes semantic models and metadata mappings. Its local incoming-KPI path also retains the original project source and calculates a complete category hierarchy from confirmed additive numeric values in the KPI unit, duration columns or start/end timestamps, with explicit per-day decisions and provenance in each generated KPI Description. General mapping execution, refresh, reconciliation and production-trusted KPI baselines are not implemented. Web research currently returns search results but does not yet provide an auditable benchmark evidence pipeline. These limitations are tracked in [Data ingestion](docs/DATA_INGESTION.md) and the [roadmap](docs/ROADMAP.md).
 
-`Export -> Excel` downloads `<VDT display name>.xlsx`, preserving spaces and Unicode while replacing unsafe filename characters. The visible sheets are ordered `Scenario Mode`, `VDT`, `Source`, `Guide`. Numbers display at most two decimal places with spaces between thousands; their full precision remains available to formulas. The full VDT uses native spreadsheet cells and formulas. Each KPI is a vertical block containing its name and unit, Baseline and Potential. Parents sit to the left of their children; two narrow blank columns between levels contain cell-border connectors.
+`Export Excel` downloads `<VDT display name>.xlsx`, preserving spaces and Unicode while replacing unsafe filename characters. The visible sheets are ordered `Scenario Mode`, `VDT`, `Source`, `Guide`. Numbers display at most two decimal places with spaces between thousands; their full precision remains available to formulas. The full VDT uses native spreadsheet cells and formulas. Each KPI is a vertical block containing its name and unit, Baseline and Potential. Parents sit to the left of their children; two narrow blank columns between levels contain cell-border connectors.
 
 `Scenario Mode` mirrors the selected application scenario (or the first scenario if none is selected) in a compact view of baseline/scenario totals, absolute/percentage change, input-driver effects and the multiplicative effect. Unconfigured scenario values initially link to the Baseline cell in the same row; enter a number to override them. Scenario edits recalculate the totals, effects and every VDT Potential value, including for a non-main scenario. Without configured scenarios, the same controls provide scratch analysis and update Potential.
 
@@ -81,7 +85,12 @@ On macOS you can double-click `run.command` to start, stop or restart the local 
 Open the URL printed by Next.js. For standalone local-runner development:
 
 `pnpm dev` explicitly starts the web app in trusted `development_web` mode so
-local project and VDT revision writes are enabled. A production-style
+local project and VDT revision writes are enabled. Both `pnpm dev` and `run.command`
+enable the unverified local CLI session canary by default; set
+`VDT_CLI_SESSION_CANARY_ENABLED=false` to opt out. Legacy per-decision fallback
+remains disabled. Codex chat models are registered from its authenticated CLI
+catalog, so a model selected in Settings can resolve to its own immutable
+server binding. Production builds still reject the canary. A production-style
 `pnpm start` remains fail-closed unless the server owner explicitly configures a
 trusted application mode; a localhost URL alone never grants write authority.
 
@@ -91,7 +100,7 @@ pnpm local-runner:start
 
 Desktop CLI subscriptions and local model servers use reviewed Tauri commands and the managed sidecar; it does not ask production users to start or pair a runner manually.
 
-For subscription CLIs, the agent-composer indicator reports live request readiness rather than the saved selection. Gray means the CLI check is still running, green means the selected CLI is installed and reports `ready`, amber means it is installed but needs authentication, an update, or another recovery action, and red means the completed scan confirmed that it is not installed. The composer remains blocked until the selected CLI reaches `ready`; Settings does not show install options while detection is still unknown. Cursor's **Sign in** action runs the fixed provider-owned `agent login` flow, waits for browser confirmation, verifies CLI access and rescans models; instruction-only providers use the distinct **Sign-in help** label.
+For subscription CLIs, the agent-composer indicator reports live request readiness rather than the saved selection. Gray means the CLI check is still running, green **Chat ready** means the selected CLI reports `ready` and the server has a compatible chat binding for the selected model, amber means it is installed but needs authentication, an update, or another recovery action, and red means the completed scan confirmed that it is not installed. The composer remains blocked until the selected CLI reaches `ready`; Settings does not show install options while detection is still unknown. Cursor's **Sign in** action runs the fixed provider-owned `agent login` flow, waits for browser confirmation, verifies CLI access and rescans models; instruction-only providers use the distinct **Sign-in help** label.
 
 **Settings → Execution mode** has three separate tabs: **CLI**, **Local models**, and **API keys**. A provider CLI runs on this computer and uses the provider account/cloud service; local inference through Ollama, LM Studio or vLLM belongs to Local models. The active backend determines the selected tab when settings reopen, and switching categories preserves saved CLI and local-server/model choices. Each provider has Test, sign-in and reversible Remove actions; provider details, memory and developer runner pairing are collapsed; local model servers have their own panel. Remove hides a subscription in this browser across reloads and rescans without uninstalling its CLI or signing out. Undo or **Add provider → Add back** restores it. Removing the active provider switches to a remaining verified-ready CLI with explicit feedback, or clears selection until you choose another; a removed memory override returns to Same as chat. Managed sign-in succeeds only after a ready rescan. Settings Test verifies CLI/session readiness and does not certify the selected model or response quality.
 

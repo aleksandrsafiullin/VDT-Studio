@@ -14,6 +14,7 @@ const REQUIRED_COMMANDS = [
   "ai_cancel",
   "ai_get_run",
   "open_provider_auth",
+  "speech_request",
   "get_app_mode"
 ];
 
@@ -44,6 +45,7 @@ export function verifyDesktopShell(root = DEFAULT_ROOT) {
   if (packageJson.name !== "@vdt-studio/desktop") fail("apps/desktop/package.json has the wrong package name.");
 
   const tauriConfig = JSON.parse(read(root, "apps/desktop/src-tauri/tauri.conf.json"));
+  if (tauriConfig.app?.withGlobalTauri !== true) fail("desktop frontend requires the reviewed global Tauri command bridge.");
   if (tauriConfig.identifier !== "com.vdtstudio.desktop") fail("tauri identifier is not set.");
   if (!String(tauriConfig.build?.beforeDevCommand ?? "").includes("NEXT_PUBLIC_VDT_APP_MODE=desktop")) {
     fail("beforeDevCommand must force desktop app mode.");

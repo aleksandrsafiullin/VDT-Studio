@@ -30,6 +30,22 @@ afterEach(async () => {
 });
 
 describe("local runtime sidecar", { timeout: 45_000 }, () => {
+  it("routes local speech status and enforces download confirmation over private pipes", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "vdt-sidecar-speech-"));
+    const host = new SidecarProcessHost({
+      command: process.execPath, args: ["--import", "tsx", sidecarEntrypoint],
+      env: { ...process.env, VDT_SPEECH_DATA_DIR: directory }, handshakeTimeoutMs: TEST_HANDSHAKE_TIMEOUT_MS
+    });
+    hosts.push(host);
+    try {
+      expect(await host.request("speech", { operation: "status" })).toMatchObject({ engineReady: false, installedModels: [] });
+      await expect(host.request("speech", { operation: "install", modelId: "base", confirmed: false })).rejects.toThrow(/Confirm/);
+    } finally {
+      await host.stop();
+      hosts.splice(hosts.indexOf(host), 1);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it("starts, handshakes, and lists runtime backends without HTTP pairing", async () => {
     const host = createRuntimeHost();
     await host.start();

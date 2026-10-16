@@ -15,6 +15,8 @@ This threat model covers API/BYOK providers, subscription CLIs, local-model exec
 
 ## Protected Assets
 
+Local voice input adds microphone audio and downloaded recognition assets to this boundary. Audio remains on the same machine and is temporary; recognized text stays a draft until Send. The localhost route enforces mode, local hostname, same origin, JSON and streaming body limits. The native command accepts a closed operation/model/language catalog and bounded PCM, never download URLs or executable fields. Downloads enforce exact size and pinned ZIP/executable/model SHA-256 before use; incomplete files fail readiness. Inference is single-flight with bounded time/output and job-owned temporary cleanup. The community-built native engine's provenance and remaining native/crash qualification limits are explicit in [VOICE_INPUT.md](../VOICE_INPUT.md).
+
 - Provider subscription sessions and API/BYOK credentials.
 - Desktop IPC, sidecar handshake and request IDs.
 - Project metadata, graph revisions, conversations and generated VDT content.
@@ -75,13 +77,17 @@ This threat model covers API/BYOK providers, subscription CLIs, local-model exec
   print mode still contains built-in tools and no credentialed adversarial
   sandbox evidence exists, this is an unverified default-off canary, not a
   hard-isolation or public-capability claim.
-- Codex and Claude checkpoint candidates are narrower typed protocol canaries,
-  not executable engines. Injected fake runners verify sanitized environments,
-  one server-owned VDT MCP configuration, exact opaque session resume and
-  fail-closed handling of reported shell/built-in/foreign-tool activity. Their
-  capability remains `unverified`, public engine methods reject, and neither
-  provider's event stream proves absence of unreported effects. Codex
-  subscription-auth isolation and the Claude CLI protocol were not live-tested.
+- Codex checkpoint/resume is executable only through the explicitly unverified
+  trusted-local canary. Development launchers enable it by default; production
+  still rejects it. Model-specific bindings come from the authenticated host
+  CLI catalog, never arbitrary browser models or commands. Model identity is
+  part of the immutable binding and canary admission check. The transport uses
+  a private empty workspace, bounded ActionBatch output and read-only sandbox
+  arguments; reported shell, filesystem or foreign-tool activity fails closed.
+  A real selected-model connection check reached an assistant response and
+  question, but neither an event stream nor that happy path proves absence of
+  unreported effects or credential isolation. Hard-isolation and production
+  qualification remain open. Claude qualification claims are unchanged.
 - Other reviewed subscription manifests deny tools through provider-owned flags/policies and validate output locally.
 - An unavailable required sandbox produces `UNSAFE_CONFIGURATION`.
 

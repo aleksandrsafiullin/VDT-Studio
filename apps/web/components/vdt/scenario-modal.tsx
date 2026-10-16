@@ -12,7 +12,7 @@ import {
   type RefObject
 } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { Plus, Pencil, Copy, Route, Sigma, Sparkles, Trash2, X } from "lucide-react";
+import { Plus, Pencil, Copy, Route, Sigma, Trash2, X } from "lucide-react";
 import { clsx } from "clsx";
 import {
   calculateGraph,
@@ -27,7 +27,6 @@ import { Metric } from "@/components/ui/metric";
 import { SelectInput, TextInput } from "@/components/ui/field";
 import { Tooltip } from "@/components/ui/tooltip";
 import { formatChange, formatNumber, formatPercent, getStepFromDecimalPlaces, countDecimalPlacesFromNumber, countDecimalPlacesFromString } from "@/lib/format";
-import { ExplanationPanel } from "./explanation-panel";
 import { useVdtStudioStore } from "./vdt-store";
 
 const FOCUSABLE_SELECTOR =
@@ -261,10 +260,6 @@ function ScenarioModalContent() {
   const project = useVdtStudioStore((state) => state.project);
   const activeScenarioId = useVdtStudioStore((state) => state.activeScenarioId);
   const updateScenarioOverride = useVdtStudioStore((state) => state.updateScenarioOverride);
-  const runAiAction = useVdtStudioStore((state) => state.runAiAction);
-  const isRunningAiAction = useVdtStudioStore((state) => state.isRunningAiAction);
-  const pendingExplanation = useVdtStudioStore((state) => state.pendingExplanation);
-  const pendingExplanationTaskType = useVdtStudioStore((state) => state.pendingExplanationTaskType);
 
   const baseline = calculateGraph(project);
   const activeScenario = project.scenarios.find((scenario) => scenario.id === activeScenarioId) ?? project.scenarios[0];
@@ -289,29 +284,6 @@ function ScenarioModalContent() {
     [project, activeScenario]
   );
   const hasScenarioOverrides = (activeScenario?.overrides.length ?? 0) > 0;
-  const showScenarioExplanation =
-    pendingExplanation && pendingExplanationTaskType === "explain_scenario";
-
-  function explainScenario() {
-    if (!activeScenario) {
-      return;
-    }
-
-    void runAiAction("explain_scenario", {
-      scenarioId: activeScenario.id,
-      calculationSummary: {
-        rootNodeId: project.rootNodeId,
-        baselineRootValue: baseline.rootValue,
-        scenarioRootValue: scenarioResult?.scenarioValue,
-        rootDelta: scenarioResult?.absoluteChange,
-        nodeValues: (scenarioResult?.impactedNodes ?? []).slice(0, 20).map((impact) => ({
-          nodeId: impact.nodeId,
-          baselineValue: impact.baselineValue,
-          scenarioValue: impact.scenarioValue
-        }))
-      }
-    });
-  }
 
   return (
     <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(320px,1fr)_minmax(260px,320px)]">
@@ -329,21 +301,7 @@ function ScenarioModalContent() {
             <Metric label="Absolute" value={formatChange(scenarioResult?.absoluteChange)} tone="positive" />
             <Metric label="Percent" value={formatPercent(scenarioResult?.percentageChange)} tone="positive" />
           </div>
-          <Button
-            size="sm"
-            className="shrink-0"
-            icon={<Sparkles className="h-4 w-4" />}
-            disabled={isRunningAiAction || !activeScenario}
-            onClick={explainScenario}
-          >
-            Explain scenario
-          </Button>
         </div>
-        {showScenarioExplanation && pendingExplanationTaskType ? (
-          <div className="mb-4">
-            <ExplanationPanel taskType={pendingExplanationTaskType} result={pendingExplanation} />
-          </div>
-        ) : null}
         <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-normal text-muted">
           <Sigma className="h-4 w-4" />
           Overrides

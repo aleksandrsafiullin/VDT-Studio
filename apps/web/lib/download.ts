@@ -9,16 +9,6 @@ export function getExcelDownloadFilename(displayName: string) {
   return `${basename}.xlsx`;
 }
 
-export function downloadTextFile(filename: string, text: string, type: string) {
-  const testWindow = window as Window & {
-    __vdtCaptureDownload?: (artifact: { filename: string; text: string; type: string }) => void;
-  };
-
-  testWindow.__vdtCaptureDownload?.({ filename, text, type });
-
-  downloadBlob(filename, new Blob([text], { type }));
-}
-
 export function downloadBinaryFile(filename: string, bytes: Uint8Array, type: string) {
   // Copy the view so only the workbook bytes are downloaded, including when the
   // exporter returns a slice of a larger buffer.
