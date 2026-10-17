@@ -17,6 +17,8 @@ Implemented at alpha level:
 - local whisper.cpp dictation with incremental editable drafts and confirmed model downloads; native Windows and packaged microphone qualification remain open ([voice input](VOICE_INPUT.md));
 - provider-owned model discovery for supported subscription CLIs and BYOK OpenAI-compatible, Anthropic and Gemini APIs, with explicit manual fallback and no static availability catalog;
 - trusted-local development CLI session starts, with immutable Codex model bindings from the authenticated host catalog and composer binding checks before Send; external isolation and production qualification remain open;
+- trusted-local Ollama/LM Studio/vLLM Model Agent starts with server-owned installed-model bindings and schema-constrained local turns; native packaging, quality and performance remain unqualified;
+- structured Model Agent limits repeated tool/schema failures to three attempts and identical successful operations without graph progress to four; counters survive supported checkpoints. Local steps receive a bounded current graph, Ollama uses bounded streaming, a skill-read prerequisite and schema-constrained sibling batches for new trees; assumption-enabled runs are instructed to fill estimates directly. Explicit same-session turn-budget continuation, backoff and other profiles' retry limits remain unfinished;
 - managed Cursor CLI authentication through a fixed manifest command, provider browser confirmation, post-login verification and automatic rescan;
 - separate CLI, Local models and API keys settings with saved category choices and inline readiness actions and reversible browser-local subscription removal; Undo/Add back, explicit chat fallback feedback, and memory-override reset survive rescans and reloads;
 - real agent decision/tool/feedback loop with local skill retrieval;
@@ -121,7 +123,7 @@ Priority: **P1**. Depends on Waves 0, 1A and the Wave 1B repository contracts.
 - Record an explicit no-applicable-skill gap; do not select a generic skill automatically.
 - Generate complete JSON Schemas and examples for every tool.
 - Use one strict decision protocol for BYOK and local-runner providers.
-- Add per-error retry budgets, backoff, run leases and restart recovery.
+- Extend Model Agent per-error retry budgets to legacy/external loops; add backoff, same-session Model Agent budget continuation, run leases and restart recovery.
 - Apply risk-based approval to existing-project formula/root/delete changes.
 - Show compact skills, sources, assumptions and unresolved gaps in the normal UI.
 
@@ -209,3 +211,7 @@ Track at each release candidate:
 - run latency, calls and cost;
 - revision conflicts, recovery success and lost-update count;
 - manual correction rate and questions per accepted tree.
+
+Local structured-turn reliability now includes a bounded current-graph/input backlog, existing-ID grammar grounding, one-shot filling of missing numeric leaves, normalized-ID collision rejection and a derived-root gate for new trees. These are implemented safeguards; autonomous model quality and resource/performance qualification still require live evidence and the unchanged certification program.
+
+Experimental complete library topologies: a local Model Agent may explicitly select `mining.load_and_haul` through `skill.seed_topology`, accept individually named illustrative defaults, fill supplied facts, and use the normal calculation/finish gates. The single canonical skill artifact contains the annual joint excavation/haulage formulas; defaults are editable assumptions, not site facts or verified benchmarks. Seeding preserves the existing root and cannot replace existing drivers. A fresh local `qwen3.5:4b-q4_K_M` run on 2026-10-17 completed this library workflow with 35 calculable nodes in 10 turns, without operator formula/value edits. See [the live evidence and its limits](AI_HARNESS.md#local-library-completion-evidence-2026-10-17); production/provider qualification is unchanged.

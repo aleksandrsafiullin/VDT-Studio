@@ -7,7 +7,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@vdt-studio/vdt-core": "workspace:*"
+    "@vdt-studio/vdt-core": "workspace:*",
+    "zod": "^3.25.64"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

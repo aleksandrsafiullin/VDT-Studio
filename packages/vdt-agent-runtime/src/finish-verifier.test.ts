@@ -8,6 +8,15 @@ const HASH_A = `sha256:${"a".repeat(64)}`;
 const HASH_B = `sha256:${"b".repeat(64)}`;
 
 describe("verifyDeterministicRunFinish", () => {
+  it("refuses a constant placeholder as a new completed tree while preserving legitimate numeric review", () => {
+    const project = structuredClone(productionVolumeProject);
+    const root = project.graph.nodes.find((node) => node.id === project.rootNodeId)!;
+    project.graph = { nodes: [{ ...root, formula: "0" }], edges: [] };
+    expect(verifyDeterministicRunFinish({ ...readyInput(), project, requireDerivedRoot: true })).toMatchObject({ accepted: false, code: "ROOT_NOT_DERIVED" });
+    expect(verifyDeterministicRunFinish({ ...readyInput(), project, requireDerivedRoot: false })).toMatchObject({ accepted: true, payload: { rootValue: 0 } });
+    expect(verifyDeterministicRunFinish({ ...readyInput(), requireDerivedRoot: true }).accepted).toBe(true);
+  });
+
   it("creates an idempotent FinishReceiptV2 only for a valid calculable head", () => {
     const first = verifyDeterministicRunFinish({
       ...readyInput(),

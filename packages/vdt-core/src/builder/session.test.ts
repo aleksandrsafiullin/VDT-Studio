@@ -46,6 +46,17 @@ describe("VdtBuilderSession", () => {
     expect(builder.getProject().graph.nodes.find((node) => node.id === "revenue")?.formula).toBeUndefined();
   });
 
+  it("preserves the root KPI type when assigning a formula", () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Output", rootKpi: "Output" });
+    builder.addDriver({ parentNodeId: "output", nodeId: "rate", name: "Rate" });
+    builder.setFormula({ nodeId: "rate", formula: "2" });
+    builder.setFormula({ nodeId: "output", formula: "rate * 3" });
+    expect(builder.getProject().graph.nodes.find((node) => node.id === "output")?.type).toBe("root_kpi");
+    expect(builder.getProject().graph.nodes.find((node) => node.id === "rate")?.type).toBe("calculated");
+    expect(builder.calculate().calculation?.rootValue).toBe(6);
+  });
+
   it("rejects missing edge endpoints and root deletion", () => {
     const builder = new VdtBuilderSession({ now: () => "2026-06-26T00:00:00.000Z" });
     builder.createDraft({ projectTitle: "Production", rootKpi: "Production Volume" });

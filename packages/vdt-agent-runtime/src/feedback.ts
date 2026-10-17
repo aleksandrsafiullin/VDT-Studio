@@ -98,13 +98,24 @@ export function feedbackFromToolEnvelope(
   if (envelope.ok) return undefined;
   const code = envelope.error?.code ?? "TOOL_FAILED";
   const message = envelope.error?.message ?? "Tool failed.";
+  const driverBatchTooSmall = code === "INVALID_TOOL_ARGS"
+    && envelope.toolName === "vdt.add_drivers_batch"
+    && Array.isArray(envelope.error?.details)
+    && envelope.error.details.some((issue) => issue?.code === "too_small"
+      && issue.type === "array" && issue.minimum === 2
+      && Array.isArray(issue.path) && issue.path.length === 1 && issue.path[0] === "drivers");
+  const missingFormulaReferences = /^MISSING_FORMULA_REFERENCES?$/.test(code);
   return createStructuredFeedback({
     kind: feedbackKindForToolError(code),
     severity: "error",
-    message,
+    message: driverBatchTooSmall
+      ? `${message}. A batch requires at least 2 sibling drivers. For exactly one driver, use vdt.add_driver with that driver's fields directly. Do not repeat a one-item batch or add dummy siblings.`
+      : missingFormulaReferences
+        ? `${message} If a referenced quantity is genuinely missing, create its driver first with vdt.add_driver or vdt.add_drivers_batch, then fill its value or formula. Skill/template identifiers are not existing nodes. If this is a typo, use the correct existing ID. Do not resend the unchanged formula or replace a missing quantity with an unrelated similar name.`
+        : message,
     target: { toolName: envelope.toolName },
     actual: envelope.error?.details ?? envelope.error,
-    suggestedNextTools: suggestedToolsForToolError(code, context),
+    suggestedNextTools: driverBatchTooSmall ? ["vdt.add_driver"] : suggestedToolsForToolError(code, context),
     retryable: isRetryableToolFeedback(code)
   });
 }
@@ -214,10 +225,12 @@ const NON_RETRYABLE_TOOL_FEEDBACK_CODES = new Set([
 ]);
 
 function suggestedToolsForToolError(code: string, context?: AgentFeedbackContext): string[] | undefined {
+  if (code === "NODE_ID_EXISTS") return ["vdt.update_node", "vdt.set_formula", "project.get_node"];
+  if (code === "INPUT_ALREADY_POPULATED") return ["vdt.fill_input_values_batch", "vdt.update_node"];
   if (code === "UNKNOWN_TOOL") return ["skill.list"];
   if (code === "INVALID_TOOL_ARGS") return undefined;
   if (/MISSING_FORMULA_REFERENCE|MISSING_FORMULA_REFERENCES/i.test(code)) {
-    return ["formula.suggest_reference_repair", "vdt.set_formula"];
+    return ["vdt.add_driver", "vdt.add_drivers_batch", "formula.suggest_reference_repair", "vdt.set_formula"];
   }
   if (/NO_DRAFT_PROJECT/i.test(code)) {
     return context?.hasNonemptyGraph

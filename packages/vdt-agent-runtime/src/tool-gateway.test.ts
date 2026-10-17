@@ -52,7 +52,12 @@ describe("VdtToolGateway", () => {
     });
 
     expect(result).toMatchObject({ status: "failed", resultCode: "CALL_ID_REUSE" });
+    expect(result.payload).toMatchObject({ message: expect.stringContaining("Use a new externalCallId when correcting") });
     expect(fixture.getExecutions()).toBe(1);
+
+    const corrected = await fixture.gateway.execute({ externalCallId: "corrected", toolName: "vdt.echo", args: { value: "b" } });
+    expect(corrected).toMatchObject({ status: "succeeded", resultCode: "OK" });
+    expect(fixture.getExecutions()).toBe(2);
   });
 
   it("preserves a failed terminal status on replay so a batch cannot continue", async () => {

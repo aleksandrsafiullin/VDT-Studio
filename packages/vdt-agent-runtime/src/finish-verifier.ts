@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   calculateGraph,
+  extractFormulaReferences,
   validateGraph,
   type VdtProject
 } from "@vdt-studio/vdt-core";
@@ -18,6 +19,8 @@ export interface DeterministicFinishVerificationInput {
   currentRevision: number;
   expectedHeadRevision: number;
   mode: VdtAgentMode;
+  /** Server-derived for a run that started from an empty placeholder KPI. */
+  requireDerivedRoot?: boolean | undefined;
   pendingQuestion: boolean;
   pendingApproval: boolean;
   pendingProposal: boolean;
@@ -83,6 +86,16 @@ export function verifyDeterministicRunFinish(
       code: "GRAPH_INVALID",
       detail: validation.errors.slice(0, 8).map((error) => error.message).join("; ") || "Graph validation failed."
     }], { validation: validationSummary });
+  }
+
+  if (input.requireDerivedRoot) {
+    const root = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+    if (project.graph.nodes.length < 2 || !root?.formula?.trim() || extractFormulaReferences(root.formula).length === 0) {
+      return rejected([{
+        code: "ROOT_NOT_DERIVED",
+        detail: "A new tree must contain real driver nodes and a root formula referencing them. A standalone number or constant formula is not a completed VDT. Build the requested dependencies before requesting finish."
+      }]);
+    }
   }
 
   const calculation = calculateGraph(project);

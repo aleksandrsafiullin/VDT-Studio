@@ -3829,9 +3829,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         set((state) => {
           try {
             const version = state.project.versions.find((entry) => entry.id === versionId);
-            if (!version) throw new Error("Эта версия больше недоступна. Выберите другую версию.");
+            if (!version) throw new Error("This version is no longer available. Select another version.");
             const restoredVersionName = versionDisplayName(version);
-            const result = restoreVersionWithCheckpoint(state.project, versionId, `Перед восстановлением «${restoredVersionName}»`);
+            const result = restoreVersionWithCheckpoint(state.project, versionId, `Before restoring “${restoredVersionName}”`);
             const laidOut = ensureScenario(result.project);
             calculateGraph(laidOut);
             success = true;

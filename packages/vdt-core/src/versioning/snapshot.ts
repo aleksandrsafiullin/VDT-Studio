@@ -94,7 +94,7 @@ export function restoreVersionWithCheckpoint(project: VdtProject, versionId: str
   const restored = restoreVersionSnapshot(project, versionId);
   const checkpointed = createVersionSnapshot(project, {
     name: checkpointName,
-    description: "Состояние до восстановления. Выберите эту версию, чтобы вернуться к нему."
+    description: "State before restoration. Select this version to return to it."
   });
   return {
     project: { ...restored, versions: checkpointed.versions },

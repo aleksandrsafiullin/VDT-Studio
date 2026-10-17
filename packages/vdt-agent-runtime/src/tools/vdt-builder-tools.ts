@@ -156,6 +156,7 @@ export function createVdtBuilderTools(): AgentTool[] {
     instantiateSubtreeTool,
     addEdgeTool,
     updateNodeTool,
+    setInputValuesBatchTool,
     deleteNodeTool,
     setFormulaTool,
     validateTool,
@@ -179,6 +180,20 @@ const addDriverInputSchema = z.object({
 });
 
 type AddDriverToolInput = z.infer<typeof addDriverInputSchema>;
+
+function assertNewDriverId(input: AddDriverToolInput, nodeIds: ReadonlySet<string>): void {
+  // Non-Latin names share the builder's fallback base ("driver"). They are
+  // distinct names, not attempts to write an existing ID; retain automatic
+  // unique IDs for callers that did not supply an identifier.
+  if (input.nodeId === undefined && !/[a-z0-9]/i.test(input.name)) return;
+  const candidate = stableSnakeId(input.nodeId ?? input.name, "driver");
+  if (!nodeIds.has(candidate)) return;
+  throw new AgentToolError(
+    "NODE_ID_EXISTS",
+    `Node id "${candidate}" already exists. To fill its value or formula, use vdt.update_node or vdt.set_formula on that exact nodeId; adding another driver does not update it. Use a distinct explicit nodeId only for a genuinely separate quantity.`,
+    { nodeId: candidate }
+  );
+}
 
 const createDraftTool: AgentTool = {
   name: "vdt.create_draft",
@@ -246,9 +261,7 @@ const addDriverTool: AgentTool = {
     if (!nodeIds.has(input.parentNodeId)) {
       throw new AgentToolError("PARENT_NOT_FOUND", `Parent node "${input.parentNodeId}" was not found.`);
     }
-    if (input.nodeId && nodeIds.has(input.nodeId)) {
-      throw new AgentToolError("NODE_ID_EXISTS", `Node id "${input.nodeId}" already exists.`);
-    }
+    assertNewDriverId(input, nodeIds);
     const previewBuilder = cloneBuilder(context);
     const result = previewBuilder.addDriver(input);
     const changeSet = requireChangeSet(result.changeSet);
@@ -274,7 +287,7 @@ const addDriverTool: AgentTool = {
 
 const addDriversBatchTool: AgentTool = {
   name: "vdt.add_drivers_batch",
-  description: `Add 2 to ${defaultProgressiveBuildPolicy.maxNodesPerLayer} sibling driver nodes under one parent in one visible layer, optionally setting that parent's explicit formula atomically.`,
+  description: `Add 2 to ${defaultProgressiveBuildPolicy.maxNodesPerLayer} sibling driver nodes under one parent in one visible layer, optionally setting that parent's explicit formula atomically. For exactly one driver, use vdt.add_driver with the driver's fields directly; do not wrap one driver in a batch.`,
   inputSchema: z.object({
     drivers: z.array(addDriverInputSchema).min(2).max(defaultProgressiveBuildPolicy.maxNodesPerLayer),
     parentFormula: optionalInput(z.string().min(1).max(500))
@@ -302,9 +315,7 @@ const addDriversBatchTool: AgentTool = {
       if (!nodeIds.has(driver.parentNodeId)) {
         throw new AgentToolError("PARENT_NOT_FOUND", `Parent node "${driver.parentNodeId}" was not found.`);
       }
-      if (driver.nodeId && nodeIds.has(driver.nodeId)) {
-        throw new AgentToolError("NODE_ID_EXISTS", `Node id "${driver.nodeId}" already exists.`);
-      }
+      assertNewDriverId(driver, nodeIds);
       const result = previewBuilder.addDriver(driver);
       changeSets.push(requireChangeSet(result.changeSet));
       const nodeId = result.changeSet?.additions[0]?.nodeId ?? driver.nodeId ?? driver.name;
@@ -536,7 +547,10 @@ const updateNodeTool: AgentTool = {
     }
     assertFormulaReferencesIfPresent(project, input.patch.formula, input.nodeId);
     if (input.patch.valueStatus === "user_provided_value") {
-      assertUserProvidedValueGrounded(context, input.nodeId);
+      assertUserProvidedValueGrounded(context, input.nodeId, {
+        value: input.patch.value ?? input.patch.baselineValue,
+        quote: input.patch.valueSource?.note
+      });
     }
     const previewBuilder = cloneBuilder(context);
     const result = previewBuilder.updateNode({ nodeId: input.nodeId, patch: input.patch as VdtNodePatch });
@@ -551,6 +565,88 @@ const updateNodeTool: AgentTool = {
       revision: mutation.revision,
       validation: mutation.validation,
       mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
+    };
+  }
+};
+
+interface InputValueWrite {
+  nodeId: string;
+  value: number;
+  provenance: "user_provided_value" | "default_assumption";
+  note: string;
+}
+
+const setInputValuesBatchTool: AgentTool = {
+  name: "vdt.fill_input_values_batch",
+  description: "Fill 1-8 UNPOPULATED existing numeric input leaves atomically. Never creates nodes, changes formulas or overwrites known inputs (use vdt.update_node for edits). Copy nodeId from unresolvedInputs. A user-provided note must quote that quantity verbatim; otherwise label a draft assumption.",
+  inputSchema: z.object({ values: z.array(z.object({
+    nodeId: vdtNodeIdSchema,
+    value: z.number().finite(),
+    provenance: z.enum(["user_provided_value", "default_assumption"]),
+    note: z.string().trim().min(4).max(160)
+  }).strict()).min(1).max(8) }).strict(),
+  outputSchema: z.record(z.unknown()),
+  mutatesProject: true,
+  requiresDraftProject: true,
+  phase: "building_graph",
+  run(context, input) {
+    const builder = requireBuilder(context.builder);
+    const project = builder.getProject();
+    const nodes = new Map(project.graph.nodes.map((node) => [node.id, node]));
+    const seen = new Set<string>();
+    const groundingErrors: Array<{ nodeId: string; error: AgentToolError }> = [];
+    // Validate the entire batch before previewing or committing any write.
+    for (const item of input.values) {
+      const node = nodes.get(item.nodeId);
+      if (!node) throw new AgentToolError("NODE_NOT_FOUND", `Node "${item.nodeId}" was not found. Use an existing input ID from the working graph.`);
+      if (seen.has(item.nodeId)) throw new AgentToolError("DUPLICATE_INPUT_WRITE", `Input "${item.nodeId}" occurs more than once in the batch.`);
+      seen.add(item.nodeId);
+      if (node.id === project.rootNodeId || ["root_kpi", "calculated"].includes(node.type) || node.formula?.trim()) {
+        throw new AgentToolError("INPUT_LEAF_REQUIRED", `Node "${item.nodeId}" is calculated or is the root. This tool only fills numeric input leaves; use vdt.set_formula for calculations.`);
+      }
+      if (project.graph.edges.some((edge) => edge.sourceNodeId === item.nodeId)) {
+        throw new AgentToolError("INPUT_LEAF_REQUIRED", `Node "${item.nodeId}" has children and is not an input leaf.`);
+      }
+      if (Number.isFinite(node.baselineValue ?? node.value)) {
+        throw new AgentToolError("INPUT_ALREADY_POPULATED", `Input "${item.nodeId}" already has a value. Fill remaining unresolved inputs; use vdt.update_node for an intentional edit.`);
+      }
+      if (item.provenance === "user_provided_value") {
+        try { assertUserProvidedValueGrounded(context, item.nodeId, { value: item.value, quote: item.note }); }
+        catch (error) {
+          if (!(error instanceof AgentToolError)) throw error;
+          groundingErrors.push({ nodeId: item.nodeId, error });
+        }
+      }
+    }
+    if (groundingErrors.length === 1) throw groundingErrors[0]!.error;
+    if (groundingErrors.length > 1) throw new AgentToolError("USER_PROVIDED_VALUE_UNGROUNDED",
+      `No values were applied. Correct all ${groundingErrors.length} ungrounded entries: ${groundingErrors.map(({ nodeId, error }) => `${nodeId}: ${error.message}`).join("\n")}`,
+      { issues: groundingErrors.map(({ nodeId, error }) => ({ nodeId, code: error.code, message: error.message })) });
+    const preview = cloneBuilder(context);
+    const changes = input.values.map((item: InputValueWrite) => requireChangeSet(preview.updateNode({
+      nodeId: item.nodeId,
+      patch: {
+        value: item.value, baselineValue: item.value, valueStatus: item.provenance,
+        status: item.provenance === "default_assumption" ? "assumption" : "accepted",
+        valueSource: {
+          sourceTier: item.provenance === "default_assumption" ? "default_assumption" : "user_input",
+          note: item.provenance === "default_assumption" ? `Editable draft assumption: ${item.note}` : item.note,
+          editableInDialog: true,
+          acceptedByUserInDialog: item.provenance === "user_provided_value"
+        },
+        ...(item.provenance === "default_assumption" ? {
+          assumptions: [...new Set([...(nodes.get(item.nodeId)?.assumptions ?? []), item.note])].slice(-20)
+        } : {})
+      }
+    }).changeSet));
+    const mutation = proposeAndMaybeApplyMutation(context, {
+      title: "Input values captured", summary: `Filled ${input.values.length} existing numeric inputs with explicit provenance.`,
+      changeSet: combineChangeSets(changes, context), targetNodeId: context.store.getState(context.runId).request.mode === "deepen_node"
+        ? context.store.getState(context.runId).request.input.selectedNodeId ?? project.rootNodeId : project.rootNodeId
+    });
+    return {
+      nodeIds: input.values.map((item: InputValueWrite) => item.nodeId), revision: mutation.revision,
+      validation: mutation.validation, mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
     };
   }
 };

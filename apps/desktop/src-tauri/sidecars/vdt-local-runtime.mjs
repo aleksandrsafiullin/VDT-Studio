@@ -200,13 +200,13 @@ var SpeechRuntime = class {
     return {
       supported: Boolean(this.#engine),
       engineReady,
-      installedModels: installed.filter((id2) => Boolean(id2)),
+      installedModels: installed.filter((id3) => Boolean(id3)),
       installation: { ...this.#installation },
       ...!this.#engine ? { message: "Local voice input supports macOS (Apple silicon / Intel) and Windows x64." } : {}
     };
   }
-  modelPath(id2) {
-    return path.join(this.directory, `ggml-${id2}.bin`);
+  modelPath(id3) {
+    return path.join(this.directory, `ggml-${id3}.bin`);
   }
   enginePath() {
     return path.join(this.directory, this.#engine?.file ?? "unavailable");
@@ -333,7 +333,7 @@ var SpeechRuntime = class {
     }
   }
   async transcribe(request) {
-    for (const [id2, job2] of this.#jobs) if (Date.now() - job2.updated > 12e4 && job2.result.state !== "processing") this.#jobs.delete(id2);
+    for (const [id3, job2] of this.#jobs) if (Date.now() - job2.updated > 12e4 && job2.result.state !== "processing") this.#jobs.delete(id3);
     if (this.#jobs.has(request.jobId)) throw new SpeechError("This transcription identifier is already in use.", 409);
     if (this.#recognizing) throw new SpeechError("Voice recognition is busy. Try again in a moment.", 409);
     if (this.#jobs.size >= 100) throw new SpeechError("Too many transcription requests. Try again shortly.", 429);
@@ -1369,16 +1369,16 @@ function validateGenerateTreeGraph(output) {
   const edges = isObjectArray(output.edges) ? output.edges : [];
   const nodeIds = /* @__PURE__ */ new Set();
   const nodeTypes = /* @__PURE__ */ new Map();
-  for (const [index, node] of nodes.entries()) {
-    if (typeof node.id !== "string" || node.id.length === 0) {
+  for (const [index, node2] of nodes.entries()) {
+    if (typeof node2.id !== "string" || node2.id.length === 0) {
       errors.push(`$.nodes[${index}].id must be a non-empty string.`);
       continue;
     }
-    if (nodeIds.has(node.id)) {
-      errors.push(`Duplicate node id "${node.id}".`);
+    if (nodeIds.has(node2.id)) {
+      errors.push(`Duplicate node id "${node2.id}".`);
     }
-    nodeIds.add(node.id);
-    nodeTypes.set(node.id, node.type);
+    nodeIds.add(node2.id);
+    nodeTypes.set(node2.id, node2.type);
   }
   if (!rootId) {
     errors.push("$.rootNodeId must be a non-empty string.");
@@ -1459,10 +1459,10 @@ function orientGenerateTreeEdgesFromRoot(output) {
   const edges = isObjectArray(output.edges) ? output.edges : [];
   const nodeTypes = /* @__PURE__ */ new Map();
   const nodeIds = /* @__PURE__ */ new Set();
-  for (const node of nodes) {
-    if (typeof node.id !== "string" || node.id.length === 0) continue;
-    nodeIds.add(node.id);
-    nodeTypes.set(node.id, node.type);
+  for (const node2 of nodes) {
+    if (typeof node2.id !== "string" || node2.id.length === 0) continue;
+    nodeIds.add(node2.id);
+    nodeTypes.set(node2.id, node2.type);
   }
   if (!rootId || !nodeIds.has(rootId) || edges.length === 0) return output;
   const neighbors = /* @__PURE__ */ new Map();
@@ -3257,23 +3257,23 @@ async function findExecutableOnPath(aliases, options = {}) {
   }
   return null;
 }
-async function detectSubscriptionCli(id2, options = {}) {
-  const definition = definitions.get(id2);
-  if (!definition) throw new Error(`Unknown subscription CLI: ${id2}`);
-  if (id2 === "codex") {
+async function detectSubscriptionCli(id3, options = {}) {
+  const definition = definitions.get(id3);
+  if (!definition) throw new Error(`Unknown subscription CLI: ${id3}`);
+  if (id3 === "codex") {
     const selected = await selectCodexExecutable(options);
-    return selected ? { id: id2, backendId: definition.backendId, installed: true, ...selected } : { id: id2, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
+    return selected ? { id: id3, backendId: definition.backendId, installed: true, ...selected } : { id: id3, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
   }
   const match = await findExecutableOnPath(definition.aliases, options);
-  if (!match) return { id: id2, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
+  if (!match) return { id: id3, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
   try {
     const result = await (options.versionProbe ?? defaultVersionProbe)(match.executable, definition.versionArgs);
     const version = `${result.stdout}
 ${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim() || null;
-    return { id: id2, backendId: definition.backendId, installed: true, executable: match.executable, alias: match.alias, version };
+    return { id: id3, backendId: definition.backendId, installed: true, executable: match.executable, alias: match.alias, version };
   } catch (error2) {
     return {
-      id: id2,
+      id: id3,
       backendId: definition.backendId,
       installed: true,
       executable: match.executable,
@@ -3284,7 +3284,7 @@ ${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim() || null;
   }
 }
 async function detectSubscriptionClis(options = {}) {
-  return Promise.all(SUBSCRIPTION_CLI_IDS.map((id2) => detectSubscriptionCli(id2, options)));
+  return Promise.all(SUBSCRIPTION_CLI_IDS.map((id3) => detectSubscriptionCli(id3, options)));
 }
 
 // ../model-bridge/src/subscription-cli/cursor/version.ts
@@ -8858,6 +8858,22 @@ var agentEngineCheckpointSchema = external_exports.object({
    * exchange. Optional keeps previously persisted Sequence 4 checkpoints
    * readable while making new acknowledgements crash-safe. */
   pendingHumanInputs: external_exports.array(agentHumanInputSchema).max(20).optional(),
+  /** Server-owned Model Agent safety counters survive question/resume and
+   * fencing epochs. Optional keeps older and external-engine checkpoints
+   * readable. Fingerprints contain hashes, never raw tool arguments. */
+  modelAgentLoopState: external_exports.object({
+    turnCount: external_exports.number().int().min(0).max(500),
+    toolFailures: external_exports.array(external_exports.object({
+      toolName: nonEmptyString2(160),
+      fingerprint: sha256Schema2,
+      attempts: external_exports.number().int().min(1).max(3)
+    }).strict()).max(500),
+    repeatedReads: external_exports.array(external_exports.object({
+      toolName: nonEmptyString2(160),
+      fingerprint: sha256Schema2,
+      attempts: external_exports.number().int().min(1).max(4)
+    }).strict()).max(500).optional()
+  }).strict().optional(),
   createdAt: timestampSchema
 }).strict();
 var MODEL_CONTROLLED_AUTHORITY_KEYS = /* @__PURE__ */ new Set([
@@ -9557,9 +9573,9 @@ function resolveFormulaText(formula, values) {
 function isProject(input) {
   return "graph" in input && "rootNodeId" in input;
 }
-function issue(id2, severity, type, message, nodeId, edgeId) {
+function issue(id3, severity, type, message, nodeId, edgeId) {
   return {
-    id: id2,
+    id: id3,
     severity,
     type,
     message,
@@ -9567,16 +9583,16 @@ function issue(id2, severity, type, message, nodeId, edgeId) {
     ...edgeId ? { edgeId } : {}
   };
 }
-function error(id2, type, message, nodeId, edgeId) {
-  return issue(id2, "error", type, message, nodeId, edgeId);
+function error(id3, type, message, nodeId, edgeId) {
+  return issue(id3, "error", type, message, nodeId, edgeId);
 }
-function warning(id2, type, message, nodeId, edgeId) {
-  return issue(id2, "warning", type, message, nodeId, edgeId);
+function warning(id3, type, message, nodeId, edgeId) {
+  return issue(id3, "warning", type, message, nodeId, edgeId);
 }
 function getRootNodeId(input, rootNodeId) {
   if (rootNodeId) return rootNodeId;
   if (isProject(input)) return input.rootNodeId;
-  const roots = input.nodes.filter((node) => node.type === "root_kpi");
+  const roots = input.nodes.filter((node2) => node2.type === "root_kpi");
   return roots.length === 1 ? roots[0]?.id : void 0;
 }
 function normalizeUnit(unit) {
@@ -9586,7 +9602,7 @@ function normalizeUnit(unit) {
 function unitsCompatible(left, right) {
   return normalizeUnit(left) === normalizeUnit(right);
 }
-function collectUnitWarnings(node, expression, nodeById, warnings, path8 = "root") {
+function collectUnitWarnings(node2, expression, nodeById, warnings, path8 = "root") {
   if (expression.type === "number") {
     return void 0;
   }
@@ -9594,13 +9610,13 @@ function collectUnitWarnings(node, expression, nodeById, warnings, path8 = "root
     return normalizeUnit(nodeById.get(expression.name)?.unit);
   }
   if (expression.type === "unary") {
-    return collectUnitWarnings(node, expression.expression, nodeById, warnings, `${path8}-unary`);
+    return collectUnitWarnings(node2, expression.expression, nodeById, warnings, `${path8}-unary`);
   }
   if (expression.type === "call") {
     const argUnits = [];
     for (const arg of expression.args) {
       argUnits.push(
-        collectUnitWarnings(node, arg, nodeById, warnings, `${path8}-arg-${argUnits.length}`)
+        collectUnitWarnings(node2, arg, nodeById, warnings, `${path8}-arg-${argUnits.length}`)
       );
     }
     for (let index = 0; index < argUnits.length; index += 1) {
@@ -9610,10 +9626,10 @@ function collectUnitWarnings(node, expression, nodeById, warnings, path8 = "root
         if (leftUnit2 && rightUnit2 && !unitsCompatible(leftUnit2, rightUnit2)) {
           warnings.push(
             warning(
-              `validation-unit-mismatch-${node.id}-${path8}-${index}-${otherIndex}`,
+              `validation-unit-mismatch-${node2.id}-${path8}-${index}-${otherIndex}`,
               "unit_mismatch",
-              `Formula for "${node.name}" combines incompatible units in "${expression.name}(...)": "${leftUnit2}" and "${rightUnit2}"`,
-              node.id
+              `Formula for "${node2.name}" combines incompatible units in "${expression.name}(...)": "${leftUnit2}" and "${rightUnit2}"`,
+              node2.id
             )
           );
         }
@@ -9621,15 +9637,15 @@ function collectUnitWarnings(node, expression, nodeById, warnings, path8 = "root
     }
     return argUnits.find((unit) => unit !== void 0);
   }
-  const leftUnit = collectUnitWarnings(node, expression.left, nodeById, warnings, `${path8}-left`);
-  const rightUnit = collectUnitWarnings(node, expression.right, nodeById, warnings, `${path8}-right`);
+  const leftUnit = collectUnitWarnings(node2, expression.left, nodeById, warnings, `${path8}-left`);
+  const rightUnit = collectUnitWarnings(node2, expression.right, nodeById, warnings, `${path8}-right`);
   if ((expression.operator === "+" || expression.operator === "-") && leftUnit && rightUnit && !unitsCompatible(leftUnit, rightUnit)) {
     warnings.push(
       warning(
-        `validation-unit-mismatch-${node.id}-${path8}`,
+        `validation-unit-mismatch-${node2.id}-${path8}`,
         "unit_mismatch",
-        `Formula for "${node.name}" combines incompatible units with "${expression.operator}": "${leftUnit}" and "${rightUnit}"`,
-        node.id
+        `Formula for "${node2.name}" combines incompatible units with "${expression.operator}": "${leftUnit}" and "${rightUnit}"`,
+        node2.id
       )
     );
   }
@@ -9645,19 +9661,19 @@ function validateGraph(input, rootNodeId) {
   const warnings = [];
   const nodeIds = /* @__PURE__ */ new Set();
   const nodeById = /* @__PURE__ */ new Map();
-  for (const node of graph.nodes) {
-    if (nodeIds.has(node.id)) {
+  for (const node2 of graph.nodes) {
+    if (nodeIds.has(node2.id)) {
       errors.push(
         error(
-          `validation-duplicate-node-${node.id}`,
+          `validation-duplicate-node-${node2.id}`,
           "invalid_graph",
-          `Duplicate node id "${node.id}"`,
-          node.id
+          `Duplicate node id "${node2.id}"`,
+          node2.id
         )
       );
     }
-    nodeIds.add(node.id);
-    nodeById.set(node.id, node);
+    nodeIds.add(node2.id);
+    nodeById.set(node2.id, node2);
   }
   const edgeIds = /* @__PURE__ */ new Set();
   const edgePairs = /* @__PURE__ */ new Set();
@@ -9729,35 +9745,35 @@ function validateGraph(input, rootNodeId) {
     );
   }
   const formulaReferencesByNode = /* @__PURE__ */ new Map();
-  for (const node of graph.nodes) {
-    if (!node.formula?.trim()) continue;
+  for (const node2 of graph.nodes) {
+    if (!node2.formula?.trim()) continue;
     try {
-      const expression = parseFormula(node.formula);
+      const expression = parseFormula(node2.formula);
       const references = extractReferencesFromAst(expression);
-      formulaReferencesByNode.set(node.id, references);
+      formulaReferencesByNode.set(node2.id, references);
       for (const reference of references) {
         if (!nodeIds.has(reference)) {
           errors.push(
             error(
-              `validation-formula-reference-${node.id}-${reference}`,
+              `validation-formula-reference-${node2.id}-${reference}`,
               "unknown_reference",
-              `The formula for "${node.name}" references missing node "${reference}"`,
-              node.id
+              `The formula for "${node2.name}" references missing node "${reference}"`,
+              node2.id
             )
           );
         }
       }
-      collectUnitWarnings(node, expression, nodeById, warnings);
+      collectUnitWarnings(node2, expression, nodeById, warnings);
     } catch (caught) {
       if (!(caught instanceof FormulaParseError)) {
         throw caught;
       }
       errors.push(
         error(
-          `validation-formula-parse-${node.id}`,
+          `validation-formula-parse-${node2.id}`,
           "formula_parse_error",
-          `The formula for "${node.name}" cannot be parsed: ${caught.message}`,
-          node.id
+          `The formula for "${node2.name}" cannot be parsed: ${caught.message}`,
+          node2.id
         )
       );
     }
@@ -9794,8 +9810,8 @@ function validateGraph(input, rootNodeId) {
     formulaStack.pop();
     formulaVisitState.set(nodeId, "visited");
   };
-  for (const node of graph.nodes) {
-    validateFormulaNode(node.id);
+  for (const node2 of graph.nodes) {
+    validateFormulaNode(node2.id);
   }
   if (rootId && nodeIds.has(rootId)) {
     const childrenBySource = /* @__PURE__ */ new Map();
@@ -9822,25 +9838,25 @@ function validateGraph(input, rootNodeId) {
       reachable.add(nodeId);
       for (const child of childrenBySource.get(nodeId) ?? []) queue.push(child);
     }
-    for (const node of graph.nodes) {
-      if (reachable.has(node.id) && node.status === "rejected") {
+    for (const node2 of graph.nodes) {
+      if (reachable.has(node2.id) && node2.status === "rejected") {
         errors.push(
           error(
-            `validation-rejected-active-node-${node.id}`,
+            `validation-rejected-active-node-${node2.id}`,
             "invalid_graph",
-            `Active model depends on rejected node "${node.name}"`,
-            node.id
+            `Active model depends on rejected node "${node2.name}"`,
+            node2.id
           )
         );
       }
-      if (node.id === rootId || node.type === "external_factor") continue;
-      if (!reachable.has(node.id)) {
+      if (node2.id === rootId || node2.type === "external_factor") continue;
+      if (!reachable.has(node2.id)) {
         errors.push(
           error(
-            `validation-unreachable-${node.id}`,
+            `validation-unreachable-${node2.id}`,
             "invalid_graph",
-            `Node "${node.id}" is not reachable from root "${rootId}" through visual or formula dependency edges`,
-            node.id
+            `Node "${node2.id}" is not reachable from root "${rootId}" through visual or formula dependency edges`,
+            node2.id
           )
         );
       }
@@ -9879,7 +9895,7 @@ function cloneProject(value) {
 
 // ../vdt-core/src/changeset/mutate.ts
 function filterChangeSet(changeSet2, selection) {
-  const isSelected = (id2) => !selection || selection.has(id2);
+  const isSelected = (id3) => !selection || selection.has(id3);
   return {
     additions: changeSet2.additions.filter((entry) => isSelected(entry.id)),
     updates: changeSet2.updates.filter((entry) => isSelected(entry.id)),
@@ -9986,7 +10002,7 @@ function collectChangeSetStructureWarnings(changeSet2, project, filtered) {
     }
     seenEntryIds.add(entry.id);
   }
-  const existingNodeIds = new Set(project.graph.nodes.map((node) => node.id));
+  const existingNodeIds = new Set(project.graph.nodes.map((node2) => node2.id));
   const dataSourcesById = new Map(project.dataSources.map((source) => [source.id, source]));
   const existingDataSourceIds = new Set(dataSourcesById.keys());
   const proposedNodeIds = /* @__PURE__ */ new Set();
@@ -10205,32 +10221,32 @@ function mutateProjectGraph(project, filtered, options) {
     }
   }
   for (const update of filtered.updates) {
-    nodes = nodes.map((node) => {
-      if (node.id !== update.nodeId) {
-        return node;
+    nodes = nodes.map((node2) => {
+      if (node2.id !== update.nodeId) {
+        return node2;
       }
       const patch = update.patch;
       return {
-        ...node,
+        ...node2,
         ...definedProperties(patch),
         updatedAt: timestamp
       };
     });
   }
   for (const change of filtered.dataMappingChanges) {
-    nodes = nodes.map((node) => {
-      if (node.id !== change.nodeId) {
-        return node;
+    nodes = nodes.map((node2) => {
+      if (node2.id !== change.nodeId) {
+        return node2;
       }
       return {
-        ...node,
-        type: node.type === "root_kpi" ? node.type : "data_mapped",
+        ...node2,
+        type: node2.type === "root_kpi" ? node2.type : "data_mapped",
         dataMapping: change.mapping,
         valueSource: {
-          ...node.valueSource,
-          sourceTier: node.valueSource?.sourceTier ?? "file",
-          confidence: node.valueSource?.confidence ?? confidenceLabel(change.mapping.confidence),
-          note: node.valueSource?.note ?? "Derived from imported dataset analysis"
+          ...node2.valueSource,
+          sourceTier: node2.valueSource?.sourceTier ?? "file",
+          confidence: node2.valueSource?.confidence ?? confidenceLabel(change.mapping.confidence),
+          note: node2.valueSource?.note ?? "Derived from imported dataset analysis"
         },
         updatedAt: timestamp
       };
@@ -10289,7 +10305,7 @@ function mutateProjectGraph(project, filtered, options) {
         (edge) => edge.sourceNodeId !== deletion.nodeId && edge.targetNodeId !== deletion.nodeId
       );
     }
-    nodes = nodes.filter((node) => node.id !== deletion.nodeId);
+    nodes = nodes.filter((node2) => node2.id !== deletion.nodeId);
   }
   if (options?.touchUpdatedAt) {
     next.updatedAt = timestamp;
@@ -10355,7 +10371,7 @@ function normalizeOverrides(overrides) {
 function calculateGraph(input, options = {}) {
   const graph = isProject2(input) ? input.graph : input;
   const rootNodeId = options.rootNodeId ?? (isProject2(input) ? input.rootNodeId : graph.nodes[0]?.id ?? "");
-  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const nodeById = new Map(graph.nodes.map((node2) => [node2.id, node2]));
   const overrides = normalizeOverrides(options.overrides);
   const values = {};
   const traceByNode = /* @__PURE__ */ new Map();
@@ -10370,13 +10386,13 @@ function calculateGraph(input, options = {}) {
     if (visited.has(nodeId)) {
       return values[nodeId];
     }
-    const node = nodeById.get(nodeId);
-    if (!node) {
+    const node2 = nodeById.get(nodeId);
+    if (!node2) {
       addError(nodeId, "unknown_reference", `Formula references a missing node: ${nodeId}`);
       return void 0;
     }
-    if (node.status === "rejected") {
-      addError(nodeId, "invalid_graph", `Rejected node ${node.name} is excluded from calculation.`);
+    if (node2.status === "rejected") {
+      addError(nodeId, "invalid_graph", `Rejected node ${node2.name} is excluded from calculation.`);
       visited.add(nodeId);
       return void 0;
     }
@@ -10391,7 +10407,7 @@ function calculateGraph(input, options = {}) {
       const overrideValue = overrides.get(nodeId);
       if (overrideValue !== void 0) {
         if (!Number.isFinite(overrideValue)) {
-          addError(nodeId, "invalid_value", `Scenario override for ${node.name} must be a finite number.`);
+          addError(nodeId, "invalid_value", `Scenario override for ${node2.name} must be a finite number.`);
           visiting.pop();
           visited.add(nodeId);
           return void 0;
@@ -10399,9 +10415,9 @@ function calculateGraph(input, options = {}) {
         values[nodeId] = overrideValue;
         traceByNode.set(nodeId, {
           nodeId,
-          nodeName: node.name,
+          nodeName: node2.name,
           value: overrideValue,
-          unit: node.unit,
+          unit: node2.unit,
           inputs: []
         });
         visiting.pop();
@@ -10409,16 +10425,16 @@ function calculateGraph(input, options = {}) {
         return overrideValue;
       }
     }
-    if (!node.formula?.trim()) {
-      const value = node.baselineValue ?? node.value;
+    if (!node2.formula?.trim()) {
+      const value = node2.baselineValue ?? node2.value;
       if (value === void 0) {
-        addError(nodeId, "missing_value", `Missing value for ${node.name}.`);
+        addError(nodeId, "missing_value", `Missing value for ${node2.name}.`);
         visiting.pop();
         visited.add(nodeId);
         return void 0;
       }
       if (!Number.isFinite(value)) {
-        addError(nodeId, "invalid_value", `Value for ${node.name} must be a finite number.`);
+        addError(nodeId, "invalid_value", `Value for ${node2.name} must be a finite number.`);
         visiting.pop();
         visited.add(nodeId);
         return void 0;
@@ -10426,9 +10442,9 @@ function calculateGraph(input, options = {}) {
       values[nodeId] = value;
       traceByNode.set(nodeId, {
         nodeId,
-        nodeName: node.name,
+        nodeName: node2.name,
         value,
-        unit: node.unit,
+        unit: node2.unit,
         inputs: []
       });
       visiting.pop();
@@ -10436,11 +10452,11 @@ function calculateGraph(input, options = {}) {
       return value;
     }
     try {
-      const expression = parseFormula(node.formula);
+      const expression = parseFormula(node2.formula);
       const references = extractReferencesFromAst(expression);
       for (const reference of references) {
         if (!nodeById.has(reference)) {
-          addError(nodeId, "unknown_reference", `The formula for ${node.name} references a missing node: ${reference}`);
+          addError(nodeId, "unknown_reference", `The formula for ${node2.name} references a missing node: ${reference}`);
         }
       }
       for (const reference of references) {
@@ -10448,7 +10464,7 @@ function calculateGraph(input, options = {}) {
       }
       const value = evaluateAst(expression, (reference) => values[reference]);
       if (!Number.isFinite(value)) {
-        addError(nodeId, "invalid_value", `Calculated value for ${node.name} must be a finite number.`);
+        addError(nodeId, "invalid_value", `Calculated value for ${node2.name} must be a finite number.`);
         visiting.pop();
         visited.add(nodeId);
         return void 0;
@@ -10456,11 +10472,11 @@ function calculateGraph(input, options = {}) {
       values[nodeId] = value;
       traceByNode.set(nodeId, {
         nodeId,
-        nodeName: node.name,
-        formula: node.formula,
-        resolvedFormula: resolveFormulaText(node.formula, values),
+        nodeName: node2.name,
+        formula: node2.formula,
+        resolvedFormula: resolveFormulaText(node2.formula, values),
         value,
-        unit: node.unit,
+        unit: node2.unit,
         inputs: references.map((reference) => {
           const inputNode2 = nodeById.get(reference);
           return {
@@ -10476,7 +10492,7 @@ function calculateGraph(input, options = {}) {
       return value;
     } catch (error2) {
       if (error2 instanceof FormulaParseError) {
-        addError(nodeId, "formula_parse_error", `The formula for ${node.name} cannot be parsed: ${error2.message}`);
+        addError(nodeId, "formula_parse_error", `The formula for ${node2.name} cannot be parsed: ${error2.message}`);
       } else if (error2 instanceof FormulaEvaluationError) {
         addError(nodeId, error2.code, error2.message);
       } else {
@@ -10487,15 +10503,15 @@ function calculateGraph(input, options = {}) {
       return void 0;
     }
   };
-  for (const node of graph.nodes) {
-    evaluateNode(node.id);
+  for (const node2 of graph.nodes) {
+    evaluateNode(node2.id);
   }
   return {
     rootNodeId,
     rootValue: values[rootNodeId],
     values,
-    trace: graph.nodes.flatMap((node) => {
-      const item = traceByNode.get(node.id);
+    trace: graph.nodes.flatMap((node2) => {
+      const item = traceByNode.get(node2.id);
       return item ? [item] : [];
     }),
     errors,
@@ -10580,8 +10596,8 @@ function layoutSubtree(nodeId, depth, childrenBySource, nodesById, options, path
   for (const childId of childIds) {
     const childLayout = layoutSubtree(childId, depth + 1, childrenBySource, nodesById, options, nextPath);
     const yOffset = cursor - childLayout.top;
-    for (const [id2, position] of childLayout.positions) {
-      positions.set(id2, { x: position.x, y: position.y + yOffset });
+    for (const [id3, position] of childLayout.positions) {
+      positions.set(id3, { x: position.x, y: position.y + yOffset });
     }
     const shiftedTop = childLayout.top + yOffset;
     const shiftedBottom = childLayout.bottom + yOffset;
@@ -10616,7 +10632,7 @@ function resolveLayoutOptions(options = {}) {
 }
 function layoutGraph(graph, rootNodeId, options = DEFAULT_CANVAS_LAYOUT) {
   const resolvedOptions = resolveLayoutOptions(options);
-  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const nodesById = new Map(graph.nodes.map((node2) => [node2.id, node2]));
   const childrenBySource = /* @__PURE__ */ new Map();
   for (const edge of graph.edges) {
     if (!nodesById.has(edge.sourceNodeId) || !nodesById.has(edge.targetNodeId)) continue;
@@ -10627,10 +10643,10 @@ function layoutGraph(graph, rootNodeId, options = DEFAULT_CANVAS_LAYOUT) {
   const rootLayout = nodesById.has(rootNodeId) ? layoutSubtree(rootNodeId, 0, childrenBySource, nodesById, resolvedOptions, /* @__PURE__ */ new Set()) : { positions: /* @__PURE__ */ new Map(), top: 0, bottom: 0 };
   const positions = new Map(rootLayout.positions);
   const sorter = byStableNodeOrder(nodesById, resolvedOptions.existingPositions);
-  const unvisited = graph.nodes.filter((node) => !positions.has(node.id)).sort((a, b) => sorter(a.id, b.id));
+  const unvisited = graph.nodes.filter((node2) => !positions.has(node2.id)).sort((a, b) => sorter(a.id, b.id));
   let cursor = positions.size > 0 ? rootLayout.bottom + resolvedOptions.verticalGap : 0;
-  for (const node of unvisited) {
-    positions.set(node.id, { x: resolvedOptions.margin, y: cursor });
+  for (const node2 of unvisited) {
+    positions.set(node2.id, { x: resolvedOptions.margin, y: cursor });
     cursor += resolvedOptions.cardHeight + resolvedOptions.verticalGap;
   }
   let minY = Infinity;
@@ -10723,11 +10739,11 @@ var VdtBuilderSession = class {
     this.requireNode(input.parentNodeId);
     if (input.formula?.trim()) parseFormula(input.formula);
     const timestamp = this.now();
-    const nodeIds = new Set(this.project.graph.nodes.map((node2) => node2.id));
+    const nodeIds = new Set(this.project.graph.nodes.map((node3) => node3.id));
     const nodeId = uniqueId(stableSnakeId(input.nodeId ?? input.name, "driver"), nodeIds);
     const edgeIds = new Set(this.project.graph.edges.map((edge2) => edge2.id));
     const edgeId = uniqueId(`edge_${input.parentNodeId}_${nodeId}`, edgeIds);
-    const node = {
+    const node2 = {
       id: nodeId,
       name: input.name.trim(),
       description: input.description?.trim() || void 0,
@@ -10762,15 +10778,15 @@ var VdtBuilderSession = class {
           nodeId,
           parentNodeId: input.parentNodeId,
           relation: edge.relation,
-          name: node.name,
-          description: node.description,
-          type: node.type,
-          unit: node.unit,
-          formula: node.formula,
-          baselineValue: node.baselineValue,
-          aiConfidence: node.aiConfidence,
-          aiRationale: node.aiRationale,
-          assumptions: node.assumptions
+          name: node2.name,
+          description: node2.description,
+          type: node2.type,
+          unit: node2.unit,
+          formula: node2.formula,
+          baselineValue: node2.baselineValue,
+          aiConfidence: node2.aiConfidence,
+          aiRationale: node2.aiRationale,
+          assumptions: node2.assumptions
         }
       ],
       updates: [],
@@ -10790,14 +10806,14 @@ var VdtBuilderSession = class {
       ...this.project,
       updatedAt: timestamp,
       graph: {
-        nodes: [...this.project.graph.nodes, node],
+        nodes: [...this.project.graph.nodes, node2],
         edges: [...this.project.graph.edges, edge]
       }
     };
     return this.commit(
       "add_driver",
       "Driver added",
-      `Added "${node.name}" under "${this.requireNode(input.parentNodeId).name}".`,
+      `Added "${node2.name}" under "${this.requireNode(input.parentNodeId).name}".`,
       { changeSet: changeSet2, metadata: { nodeId, parentNodeId: input.parentNodeId } }
     );
   }
@@ -10811,7 +10827,7 @@ var VdtBuilderSession = class {
       graph: {
         ...this.project.graph,
         nodes: this.project.graph.nodes.map(
-          (node) => node.id === input.nodeId ? { ...node, ...cleanNodePatch(input.patch), updatedAt: timestamp } : node
+          (node2) => node2.id === input.nodeId ? { ...node2, ...cleanNodePatch(input.patch), updatedAt: timestamp } : node2
         )
       }
     };
@@ -10839,7 +10855,7 @@ var VdtBuilderSession = class {
       ...this.project,
       updatedAt: timestamp,
       graph: {
-        nodes: this.project.graph.nodes.filter((node) => node.id !== input.nodeId),
+        nodes: this.project.graph.nodes.filter((node2) => node2.id !== input.nodeId),
         edges: this.project.graph.edges.filter((edge) => !touchingEdges.includes(edge))
       }
     };
@@ -10888,7 +10904,7 @@ var VdtBuilderSession = class {
       nodeId: input.nodeId,
       patch: {
         formula: input.formula.trim(),
-        type: "calculated",
+        type: input.nodeId === this.project.rootNodeId ? "root_kpi" : "calculated",
         status: "ai_suggested"
       }
     });
@@ -10933,9 +10949,9 @@ var VdtBuilderSession = class {
       updatedAt: timestamp,
       graph: {
         ...this.project.graph,
-        nodes: this.project.graph.nodes.map((node) => ({
-          ...node,
-          position: layout.positions.get(node.id) ?? node.position ?? { x: 0, y: 0 },
+        nodes: this.project.graph.nodes.map((node2) => ({
+          ...node2,
+          position: layout.positions.get(node2.id) ?? node2.position ?? { x: 0, y: 0 },
           updatedAt: timestamp
         }))
       }
@@ -10977,9 +10993,9 @@ var VdtBuilderSession = class {
     return { project, revision: this.revision, event };
   }
   requireNode(nodeId) {
-    const node = this.project.graph.nodes.find((candidate) => candidate.id === nodeId);
-    if (!node) throw new Error(`Node "${nodeId}" does not exist.`);
-    return node;
+    const node2 = this.project.graph.nodes.find((candidate) => candidate.id === nodeId);
+    if (!node2) throw new Error(`Node "${nodeId}" does not exist.`);
+    return node2;
   }
   commit(type, title, message, options = {}) {
     this.revision += 1;
@@ -11181,23 +11197,23 @@ function summarizeProject(project, maxNodes = MAX_CONTEXT_NODES) {
   for (const edge of project.graph.edges) {
     childIdsByNode.set(edge.sourceNodeId, [...childIdsByNode.get(edge.sourceNodeId) ?? [], edge.targetNodeId]);
   }
-  const includedNodeIds = new Set(project.graph.nodes.slice(0, maxNodes).map((node) => node.id));
+  const includedNodeIds = new Set(project.graph.nodes.slice(0, maxNodes).map((node2) => node2.id));
   return {
     id: project.id,
     name: project.name,
     rootNodeId: project.rootNodeId,
     nodeCount: project.graph.nodes.length,
     edgeCount: project.graph.edges.length,
-    nodes: project.graph.nodes.slice(0, maxNodes).map((node) => ({
-      id: node.id,
-      name: node.name,
-      type: node.type,
-      unit: node.unit,
-      formula: node.formula,
-      baselineValue: node.baselineValue,
-      value: node.value,
-      status: node.status,
-      childIds: childIdsByNode.get(node.id) ?? []
+    nodes: project.graph.nodes.slice(0, maxNodes).map((node2) => ({
+      id: node2.id,
+      name: node2.name,
+      type: node2.type,
+      unit: node2.unit,
+      formula: node2.formula,
+      baselineValue: node2.baselineValue,
+      value: node2.value,
+      status: node2.status,
+      childIds: childIdsByNode.get(node2.id) ?? []
     })),
     edges: project.graph.edges.filter((edge) => includedNodeIds.has(edge.sourceNodeId) && includedNodeIds.has(edge.targetNodeId)).map((edge) => ({
       id: edge.id,
@@ -11209,7 +11225,7 @@ function summarizeProject(project, maxNodes = MAX_CONTEXT_NODES) {
   };
 }
 function summarizeNode(project, nodeId) {
-  return summarizeProject(project, project.graph.nodes.length).nodes.find((node) => node.id === nodeId);
+  return summarizeProject(project, project.graph.nodes.length).nodes.find((node2) => node2.id === nodeId);
 }
 function summarizeValidation(validation) {
   return {
@@ -11710,7 +11726,7 @@ function validateProgressiveMutationScope(project, changeSet2, scope) {
   if (![...parentIds].every((parentId) => parentId === scope.targetNodeId)) {
     return `Mutation target must be "${scope.targetNodeId}".`;
   }
-  const existingNodeIds = new Set(project.graph.nodes.map((node) => node.id));
+  const existingNodeIds = new Set(project.graph.nodes.map((node2) => node2.id));
   if (!existingNodeIds.has(scope.targetNodeId)) {
     return `Mutation target "${scope.targetNodeId}" does not exist.`;
   }
@@ -11732,7 +11748,7 @@ function updateProgressiveBuild(current, project, proposal, requestedMaxAutoDept
   }
   const depths = collectDepths(project, childrenByParent);
   const maxAutoDepth = current?.maxAutoDepth ?? requestedMaxAutoDepth ?? defaultProgressiveBuildPolicy.maxAutoDepth;
-  const frontierNodeIds = project.graph.nodes.map((node) => node.id).filter((nodeId) => (childrenByParent.get(nodeId)?.length ?? 0) === 0);
+  const frontierNodeIds = project.graph.nodes.map((node2) => node2.id).filter((nodeId) => (childrenByParent.get(nodeId)?.length ?? 0) === 0);
   const completedLayerNodeIds = new Set(current?.completedLayerNodeIds ?? []);
   if (proposal.progressiveScope?.targetNodeId) completedLayerNodeIds.add(proposal.progressiveScope.targetNodeId);
   const currentDepth = Math.max(0, ...depths.values());
@@ -11891,10 +11907,10 @@ var identifyMissingDriversTool = {
     for (const edge of project.graph.edges) {
       childCounts.set(edge.sourceNodeId, (childCounts.get(edge.sourceNodeId) ?? 0) + 1);
     }
-    const warnings = project.graph.nodes.filter((node) => node.type === "calculated" && node.id !== project.rootNodeId && (childCounts.get(node.id) ?? 0) === 0).slice(0, 10).map((node) => ({
+    const warnings = project.graph.nodes.filter((node2) => node2.type === "calculated" && node2.id !== project.rootNodeId && (childCounts.get(node2.id) ?? 0) === 0).slice(0, 10).map((node2) => ({
       severity: "warning",
-      message: `"${node.name}" is calculated but has no visible child drivers yet.`,
-      ...node.id ? { nodeId: node.id } : {}
+      message: `"${node2.name}" is calculated but has no visible child drivers yet.`,
+      ...node2.id ? { nodeId: node2.id } : {}
     }));
     const questionsForUser = warnings.length > 0 ? ["Which calculated branch should the agent deepen next?"] : [];
     mergeReview(context, { assumptions: [], questionsForUser, warnings });
@@ -11910,9 +11926,9 @@ var identifyDuplicateDriversTool = {
     const project = context.store.getSnapshot(context.runId).draftProject;
     if (!project) throw new Error("No draft project is available.");
     const byName = /* @__PURE__ */ new Map();
-    for (const node of project.graph.nodes) {
-      const key = node.name.trim().toLowerCase();
-      byName.set(key, [...byName.get(key) ?? [], node.id]);
+    for (const node2 of project.graph.nodes) {
+      const key = node2.name.trim().toLowerCase();
+      byName.set(key, [...byName.get(key) ?? [], node2.id]);
     }
     const warnings = [...byName].filter(([, ids]) => ids.length > 1).map(([name, ids]) => ({
       severity: "warning",
@@ -12045,12 +12061,57 @@ function runHasUserAnswerForNode(context, nodeId) {
   }
   return false;
 }
-function assertUserProvidedValueGrounded(context, nodeId) {
+function assertUserProvidedValueGrounded(context, nodeId, evidence2) {
   if (runHasUserAnswerForNode(context, nodeId)) return;
+  if (evidence2 && quoteGroundsValue(context, evidence2)) return;
+  const hints = evidence2 && Number.isFinite(evidence2.value) ? sourceQuoteHints(context, evidence2.value) : [];
   throw new AgentToolError(
     "USER_PROVIDED_VALUE_UNGROUNDED",
-    `valueStatus user_provided_value requires a user answer in this run for node "${nodeId}". Write assumed numbers with valueStatus default_assumption and an explicit assumption note.`
+    `valueStatus user_provided_value requires a user answer for node "${nodeId}" or a short VERBATIM single-quantity quote from the original user request in note (valueSource.note for update_node; source.note for excavation.write_input_value). Do not paraphrase or add an unquoted prefix.${hints.length ? ` Exact source excerpts for this number: ${JSON.stringify(hints)}. Choose the excerpt that matches this metric.` : ""} Use default_assumption only for an actual estimate, with an explicit assumption note.`
   );
+}
+function quoteGroundsValue(context, evidence2) {
+  const quote = evidence2.quote?.trim();
+  if (!quote || quote.length < 4 || quote.length > 300 || !new RegExp("\\p{L}", "u").test(quote) || !Number.isFinite(evidence2.value)) return false;
+  const texts = userSourceTexts(context);
+  const excerpts = [quote, ...[...quote.matchAll(/["«“]([^"»”\n]+)["»”]/g)].map((match) => match[1])];
+  return excerpts.some((excerpt) => {
+    if (excerpt.length < 4 || !new RegExp("\\p{L}", "u").test(excerpt)) return false;
+    const numbers = [...excerpt.matchAll(numberPattern())].map((match) => numericValue(match[0]));
+    if (numbers.length === 0 || numbers.some((value) => value !== evidence2.value)) return false;
+    return texts.some((text2) => text2.includes(excerpt));
+  });
+}
+function numberPattern() {
+  return /[-+]?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?/g;
+}
+function numericValue(value) {
+  return Number(value.replace(",", "."));
+}
+function userSourceTexts(context) {
+  const state = context.store.getState(context.runId);
+  return [
+    state.request.input.prompt,
+    state.request.input.businessContext,
+    ...state.chatMessages.filter((message) => message.role === "user").map((message) => message.text)
+  ].filter((text2) => typeof text2 === "string");
+}
+function sourceQuoteHints(context, value) {
+  const hints = /* @__PURE__ */ new Set();
+  for (const text2 of userSourceTexts(context)) {
+    const matches = [...text2.matchAll(numberPattern())];
+    for (const [index, match] of matches.entries()) {
+      if (numericValue(match[0]) !== value) continue;
+      const start = match.index;
+      const after = start + match[0].length;
+      const next = Math.min(matches[index + 1]?.index ?? text2.length, after + 100);
+      const right = text2.slice(after, next).split(/[,;.!?\n]/u)[0];
+      const excerpt = text2.slice(start, after + right.length).trim();
+      if (excerpt.length >= 4 && new RegExp("\\p{L}", "u").test(excerpt)) hints.add(excerpt);
+      if (hints.size === 4) return [...hints];
+    }
+  }
+  return [...hints];
 }
 function fieldAnswerMentionsNode(value, nodeId) {
   return value.split(";").some((part) => part.trim().startsWith(`${nodeId}:`));
@@ -12182,11 +12243,11 @@ var excavationWriteInputValueTool = {
   run(context, input) {
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
-    if (!project.graph.nodes.some((node) => node.id === input.nodeId)) {
+    if (!project.graph.nodes.some((node2) => node2.id === input.nodeId)) {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
     }
     if (input.valueStatus === "user_provided_value") {
-      assertUserProvidedValueGrounded(context, input.nodeId);
+      assertUserProvidedValueGrounded(context, input.nodeId, { value: input.value, quote: input.source?.note });
     }
     const patch = {
       status: input.valueStatus === "unknown" ? "needs_data" : input.valueStatus === "default_assumption" ? "assumption" : "accepted",
@@ -12313,7 +12374,7 @@ function seedOutputTopology(context, rootNodeId, materialMode, downtimeBasis, in
       {
         nodeId: "downtime_per_excavator_h",
         patch: {
-          formula: downtimeCategoryFormula(downtimeNodes.map((node) => node.id)),
+          formula: downtimeCategoryFormula(downtimeNodes.map((node2) => node2.id)),
           valueStatus: "calculated"
         }
       }
@@ -12535,8 +12596,8 @@ function seedEquipmentSplit(context, rootNodeId) {
 }
 function applyLayer(context, parentNodeId, nodeSpecs, updates = [], options) {
   const project = requireBuilder(context.builder).getProject();
-  const existing = new Set(project.graph.nodes.map((node) => node.id));
-  const additions = nodeSpecs.filter((node) => !existing.has(node.id)).map((node) => addition(parentNodeId, node));
+  const existing = new Set(project.graph.nodes.map((node2) => node2.id));
+  const additions = nodeSpecs.filter((node2) => !existing.has(node2.id)).map((node2) => addition(parentNodeId, node2));
   return applyChangeSet2(context, additions, updates, parentNodeId, options);
 }
 function applyUpdates(context, updates, options) {
@@ -12583,27 +12644,27 @@ function changeSet(context, input) {
     warnings: input.warnings ?? []
   };
 }
-function addition(parentNodeId, node) {
+function addition(parentNodeId, node2) {
   return {
-    id: `add_${node.id}`,
-    nodeId: node.id,
+    id: `add_${node2.id}`,
+    nodeId: node2.id,
     parentNodeId,
-    relation: node.relation ?? (node.formula || node.type === "calculated" ? "formula_dependency" : "positive_driver"),
-    name: node.name,
+    relation: node2.relation ?? (node2.formula || node2.type === "calculated" ? "formula_dependency" : "positive_driver"),
+    name: node2.name,
     description: void 0,
-    type: node.type,
-    unit: node.unit,
-    formula: node.formula,
-    baselineValue: node.baselineValue,
-    valueStatus: node.valueStatus,
-    valueSource: node.valueSource,
-    assumptions: node.assumptions,
-    tags: node.tags
+    type: node2.type,
+    unit: node2.unit,
+    formula: node2.formula,
+    baselineValue: node2.baselineValue,
+    valueStatus: node2.valueStatus,
+    valueSource: node2.valueSource,
+    assumptions: node2.assumptions,
+    tags: node2.tags
   };
 }
-function inputNode(id2, name, unit) {
+function inputNode(id3, name, unit) {
   return {
-    id: id2,
+    id: id3,
     name,
     type: "input",
     unit,
@@ -12612,12 +12673,12 @@ function inputNode(id2, name, unit) {
     assumptions: ["Collect value through dialog; do not silently default."]
   };
 }
-function calculatedNode(id2, name, unit) {
-  return { id: id2, name, type: "calculated", unit, valueStatus: "calculated", relation: "formula_dependency" };
+function calculatedNode(id3, name, unit) {
+  return { id: id3, name, type: "calculated", unit, valueStatus: "calculated", relation: "formula_dependency" };
 }
-function constantNode(id2, name, unit, value) {
+function constantNode(id3, name, unit, value) {
   return {
-    id: id2,
+    id: id3,
     name,
     type: "assumption",
     unit,
@@ -12852,8 +12913,8 @@ function leadingSpaces(value) {
 function validateExcavationProject(project, options = {}) {
   const errors = [];
   const warnings = [];
-  const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
-  const normalizedNodes = new Map(project.graph.nodes.map((node) => [normalizeKey(node.id), node]));
+  const nodeIds = new Set(project.graph.nodes.map((node2) => node2.id));
+  const normalizedNodes = new Map(project.graph.nodes.map((node2) => [normalizeKey(node2.id), node2]));
   const childrenByParent = /* @__PURE__ */ new Map();
   for (const edge of project.graph.edges) {
     childrenByParent.set(edge.sourceNodeId, [...childrenByParent.get(edge.sourceNodeId) ?? [], edge.targetNodeId]);
@@ -12863,24 +12924,24 @@ function validateExcavationProject(project, options = {}) {
       errors.push(excavationWarning(`forbidden_${forbidden}`, `Forbidden excavation skill node present: ${forbidden}.`, forbidden));
     }
   }
-  for (const node of project.graph.nodes) {
-    const normalizedId = normalizeKey(node.id);
-    const normalizedName = normalizeKey(node.name);
-    const formula = normalizeFormula(node.formula ?? "");
+  for (const node2 of project.graph.nodes) {
+    const normalizedId = normalizeKey(node2.id);
+    const normalizedName = normalizeKey(node2.name);
+    const formula = normalizeFormula(node2.formula ?? "");
     if ((normalizedId.includes("cap") || normalizedName.includes("cap")) && READINESS_ACCESS_TERMS.some((term) => normalizedId.includes(term) || normalizedName.includes(term))) {
-      errors.push(excavationWarning(`readiness_cap_${node.id}`, "Readiness and access restrictions must be downtime categories, not cap nodes.", node.id));
+      errors.push(excavationWarning(`readiness_cap_${node2.id}`, "Readiness and access restrictions must be downtime categories, not cap nodes.", node2.id));
     }
     if (formula.includes("min(") || /material.*readiness.*factor/.test(formula)) {
-      errors.push(excavationWarning(`readiness_formula_${node.id}`, "Readiness and access restrictions must not be modeled as min caps or output multipliers.", node.id));
+      errors.push(excavationWarning(`readiness_formula_${node2.id}`, "Readiness and access restrictions must not be modeled as min caps or output multipliers.", node2.id));
     }
     if (/(ktg|kio|availability|utilization).*coefficient/.test(normalizedId) || /(ktg|kio|availability|utilization).*coefficient/.test(formula)) {
-      errors.push(excavationWarning(`coefficient_substitute_${node.id}`, "Do not substitute KTG/KIO/availability/utilization coefficients for explicit excavation time and downtime structure.", node.id));
+      errors.push(excavationWarning(`coefficient_substitute_${node2.id}`, "Do not substitute KTG/KIO/availability/utilization coefficients for explicit excavation time and downtime structure.", node2.id));
     }
     if (/activexcavatorcount\*\(activexcavatorcount\*perioddays\*24-fleetdowntimeh\)\*excavatorproductivity/.test(formula)) {
-      errors.push(excavationWarning(`double_count_${node.id}`, "Fleet downtime is multiplied by active excavator count twice.", node.id));
+      errors.push(excavationWarning(`double_count_${node2.id}`, "Fleet downtime is multiplied by active excavator count twice.", node2.id));
     }
     if (/oreexcavationoutputt\+rockexcavationoutputsolidm3|rockexcavationoutputsolidm3\+oreexcavationoutputt/.test(formula)) {
-      errors.push(excavationWarning(`mixed_unit_sum_${node.id}`, "Ore tonnes and rock cubic meters cannot be summed without an explicit reporting convention.", node.id));
+      errors.push(excavationWarning(`mixed_unit_sum_${node2.id}`, "Ore tonnes and rock cubic meters cannot be summed without an explicit reporting convention.", node2.id));
     }
   }
   for (const readinessNodeId of READINESS_DOWNTIME_NODE_IDS) {
@@ -12891,15 +12952,15 @@ function validateExcavationProject(project, options = {}) {
     }
   }
   const hasFleetDowntime = nodeIds.has("fleet_downtime_h");
-  const downtimeFormula = project.graph.nodes.find((node) => node.id === "downtime_per_excavator_h")?.formula;
+  const downtimeFormula = project.graph.nodes.find((node2) => node2.id === "downtime_per_excavator_h")?.formula;
   if (hasFleetDowntime && downtimeFormula !== "fleet_downtime_h / active_excavator_count") {
     warnings.push(excavationWarning("fleet_downtime_basis", "downtime basis is fleet total and must be converted or modeled as fleet net time", "downtime_per_excavator_h"));
   }
   const missingVisibleStatus = project.graph.nodes.filter(
-    (node) => node.type === "input" && node.baselineValue === void 0 && node.valueStatus !== "unknown"
+    (node2) => node2.type === "input" && node2.baselineValue === void 0 && node2.valueStatus !== "unknown"
   );
-  for (const node of missingVisibleStatus) {
-    warnings.push(excavationWarning(`unknown_status_${node.id}`, "Missing numeric values should be visibly marked unknown.", node.id));
+  for (const node2 of missingVisibleStatus) {
+    warnings.push(excavationWarning(`unknown_status_${node2.id}`, "Missing numeric values should be visibly marked unknown.", node2.id));
   }
   const requireCanonicalOutput = options.requireCanonicalOutputTopology === true || hasCanonicalExcavationOutputSignal(project, nodeIds);
   if (requireCanonicalOutput) {
@@ -12954,7 +13015,7 @@ function validateExcavationProject(project, options = {}) {
   return { valid: errors.length === 0, errors, warnings };
 }
 function hasCanonicalExcavationOutputSignal(project, nodeIds) {
-  const root = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+  const root = project.graph.nodes.find((node2) => node2.id === project.rootNodeId);
   const rootKey = normalizeKey(`${root?.id ?? ""} ${root?.name ?? ""}`);
   const rootFormula = normalizeFormula(root?.formula ?? "");
   return rootKey.includes("excavation") || nodeIds.has("active_excavator_count") || nodeIds.has("net_excavation_time_per_excavator_h") || nodeIds.has("hydraulic_shovel_excavation_output") || rootFormula === normalizeFormula("active_excavator_count * net_excavation_time_per_excavator_h * excavator_productivity");
@@ -12985,9 +13046,9 @@ function requireChildren(parentNodeId, requiredChildIds, childrenByParent, error
   }
 }
 function requireFormula(project, nodeId, expectedFormula, errors) {
-  const node = project.graph.nodes.find((candidate) => candidate.id === nodeId);
-  if (!node) return;
-  if (normalizeFormula(node.formula ?? "") !== normalizeFormula(expectedFormula)) {
+  const node2 = project.graph.nodes.find((candidate) => candidate.id === nodeId);
+  if (!node2) return;
+  if (normalizeFormula(node2.formula ?? "") !== normalizeFormula(expectedFormula)) {
     errors.push(excavationWarning(
       `formula_${nodeId}`,
       `${nodeId} must use the excavation skill formula: ${expectedFormula}.`,
@@ -12995,10 +13056,10 @@ function requireFormula(project, nodeId, expectedFormula, errors) {
     ));
   }
 }
-function excavationWarning(id2, message, nodeId) {
+function excavationWarning(id3, message, nodeId) {
   return warning2({
-    id: `excavation_${id2}`,
-    severity: id2.startsWith("fleet_") || id2.startsWith("unknown_") || id2.startsWith("mixed_units") ? "warning" : "error",
+    id: `excavation_${id3}`,
+    severity: id3.startsWith("fleet_") || id3.startsWith("unknown_") || id3.startsWith("mixed_units") ? "warning" : "error",
     type: "invalid_graph",
     message,
     nodeId
@@ -13115,7 +13176,7 @@ var formulaCheckReferencesTool = {
   phase: "validating_graph",
   run(context, input) {
     const project = context.builder?.getProject() ?? context.store.getSnapshot(context.runId).draftProject;
-    const availableNodeIds = project?.graph.nodes.map((node) => node.id) ?? [];
+    const availableNodeIds = project?.graph.nodes.map((node2) => node2.id) ?? [];
     let references = [];
     let parseError;
     try {
@@ -13163,7 +13224,7 @@ var formulaSuggestReferenceRepairTool = {
   phase: "repairing_graph",
   run(context, input) {
     const project = context.builder?.getProject() ?? context.store.getSnapshot(context.runId).draftProject;
-    const availableNodeIds = input.availableNodeIds ?? project?.graph.nodes.map((node) => node.id) ?? [];
+    const availableNodeIds = input.availableNodeIds ?? project?.graph.nodes.map((node2) => node2.id) ?? [];
     return {
       suggestions: similarNodeIds(input.missingReference, availableNodeIds).map((nodeId) => ({
         nodeId,
@@ -13323,7 +13384,7 @@ var getSubtreeTool = {
     const filtered = {
       ...project,
       graph: {
-        nodes: project.graph.nodes.filter((node) => included.has(node.id)),
+        nodes: project.graph.nodes.filter((node2) => included.has(node2.id)),
         edges: project.graph.edges.filter((edge) => included.has(edge.sourceNodeId) && included.has(edge.targetNodeId))
       }
     };
@@ -13375,8 +13436,8 @@ function requireProject(context) {
   return project;
 }
 function nodeNeighborhood(project, nodeId) {
-  const node = summarizeNode(project, nodeId);
-  if (!node) throw new AgentToolError("NODE_NOT_FOUND", `Node "${nodeId}" was not found.`);
+  const node2 = summarizeNode(project, nodeId);
+  if (!node2) throw new AgentToolError("NODE_NOT_FOUND", `Node "${nodeId}" was not found.`);
   const children = project.graph.edges.filter((edge) => edge.sourceNodeId === nodeId).map((edge) => summarizeNode(project, edge.targetNodeId)).filter((summary3) => Boolean(summary3));
   const parents = project.graph.edges.filter((edge) => edge.targetNodeId === nodeId).map((edge) => summarizeNode(project, edge.sourceNodeId)).filter((summary3) => Boolean(summary3));
   const formulasReferencingNode = project.graph.nodes.filter((candidate) => {
@@ -13387,7 +13448,7 @@ function nodeNeighborhood(project, nodeId) {
       return false;
     }
   }).map((candidate) => candidate.id);
-  return { node, children, parents, formulasReferencingNode };
+  return { node: node2, children, parents, formulasReferencingNode };
 }
 
 // ../vdt-agent-runtime/src/tools/repair-tools.ts
@@ -13425,10 +13486,10 @@ var repairMissingFormulaReferenceTool = {
     const builder = context.builder;
     if (!builder) throw new AgentToolError("NO_DRAFT_PROJECT", "VDT builder session is not available for this run.");
     let project = builder.getProject();
-    const node = project.graph.nodes.find((candidate) => candidate.id === input.nodeId);
-    if (!node) throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
-    if (!node.formula) throw new AgentToolError("FORMULA_NOT_FOUND", `Node "${input.nodeId}" does not have a formula.`);
-    let formula = node.formula;
+    const node2 = project.graph.nodes.find((candidate) => candidate.id === input.nodeId);
+    if (!node2) throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
+    if (!node2.formula) throw new AgentToolError("FORMULA_NOT_FOUND", `Node "${input.nodeId}" does not have a formula.`);
+    let formula = node2.formula;
     let addedNodeId;
     const previewBuilder = cloneBuilder(context);
     const changeSets = [];
@@ -13550,13 +13611,13 @@ var repairDuplicateNodeIdTool = {
     const builder = context.builder;
     if (!builder) throw new AgentToolError("NO_DRAFT_PROJECT", "VDT builder session is not available for this run.");
     const project = builder.getProject();
-    if (!project.graph.nodes.some((node) => node.id === input.nodeId)) {
+    if (!project.graph.nodes.some((node2) => node2.id === input.nodeId)) {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
     }
-    if (project.graph.nodes.some((node) => node.id === input.newNodeId)) {
+    if (project.graph.nodes.some((node2) => node2.id === input.newNodeId)) {
       throw new AgentToolError("NODE_ID_EXISTS", `Node "${input.newNodeId}" already exists.`);
     }
-    const target = project.graph.nodes.find((node) => node.id === input.nodeId);
+    const target = project.graph.nodes.find((node2) => node2.id === input.nodeId);
     const previewBuilder = cloneBuilder(context);
     const changeSets = [];
     const deleted = previewBuilder.deleteNode({ nodeId: input.nodeId, cascadeEdges: true });
@@ -13577,11 +13638,11 @@ var repairDuplicateNodeIdTool = {
     });
     changeSets.push(requireChangeSet(added.changeSet));
     if (input.updateFormulaReferences === true) {
-      for (const node of previewBuilder.getProject().graph.nodes) {
-        if (!node.formula?.includes(input.nodeId)) continue;
+      for (const node2 of previewBuilder.getProject().graph.nodes) {
+        if (!node2.formula?.includes(input.nodeId)) continue;
         const updated = previewBuilder.updateNode({
-          nodeId: node.id,
-          patch: { formula: renameReference(node.formula, input.nodeId, input.newNodeId) }
+          nodeId: node2.id,
+          patch: { formula: renameReference(node2.formula, input.nodeId, input.newNodeId) }
         });
         changeSets.push(requireChangeSet(updated.changeSet));
       }
@@ -13822,6 +13883,78 @@ function buildCriticalQuestions(request, selectedSkills = []) {
     });
   }
   return questions.slice(0, 5);
+}
+
+// ../vdt-agent/src/skill-topology.ts
+var id2 = external_exports.string().regex(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/).max(80);
+var node = external_exports.object({
+  id: id2,
+  parentId: external_exports.union([id2, external_exports.literal("$root")]),
+  name: external_exports.string().min(1).max(160),
+  type: external_exports.enum(["input", "calculated"]),
+  unit: external_exports.string().min(1).max(80),
+  formula: external_exports.string().min(1).max(500).optional(),
+  illustrativeDefault: external_exports.object({ value: external_exports.number().finite(), note: external_exports.string().min(1).max(300) }).strict().optional()
+}).strict().superRefine((value, context) => {
+  if (value.type === "calculated" && (!value.formula || value.illustrativeDefault))
+    context.addIssue({ code: "custom", message: "Calculated nodes require a formula and cannot contain numeric defaults." });
+  if (value.type === "input" && value.formula)
+    context.addIssue({ code: "custom", message: "Input nodes cannot contain formulas." });
+});
+var executableSkillTopologySchema = external_exports.object({
+  schemaVersion: external_exports.literal("vdt_skill_topology.v1"),
+  rootUnit: external_exports.string().min(1).max(80),
+  timePeriod: external_exports.string().min(1).max(80),
+  rootFormula: external_exports.string().min(1).max(500),
+  nodes: external_exports.array(node).min(1).max(79),
+  notes: external_exports.array(external_exports.string().max(500)).max(12)
+}).strict();
+function readExecutableSkillTopology(skill) {
+  const blocks = [...(skill.body ?? skill.excerpt ?? "").matchAll(/^```vdt-topology\s*\n([\s\S]*?)^```\s*$/gm)];
+  if (!blocks.length) return void 0;
+  if (blocks.length !== 1) throw new Error("A skill must have exactly one executable topology block.");
+  const topology = executableSkillTopologySchema.parse(JSON.parse(blocks[0][1]));
+  const byId = new Map(topology.nodes.map((entry) => [entry.id, entry]));
+  if (byId.size !== topology.nodes.length) throw new Error("Duplicate executable topology node ID.");
+  for (const entry of topology.nodes) {
+    if (entry.parentId !== "$root" && !byId.has(entry.parentId)) throw new Error(`Unknown topology parent: ${entry.parentId}.`);
+  }
+  const checkCycles = (dependencies) => {
+    const visited = /* @__PURE__ */ new Set();
+    const active = /* @__PURE__ */ new Set();
+    const visit2 = (nodeId) => {
+      if (active.has(nodeId)) throw new Error(`Executable topology cycle: ${nodeId}.`);
+      if (visited.has(nodeId)) return;
+      active.add(nodeId);
+      for (const dependency of dependencies(nodeId)) {
+        if (!byId.has(dependency)) throw new Error(`Unknown topology formula reference: ${dependency}.`);
+        visit2(dependency);
+      }
+      active.delete(nodeId);
+      visited.add(nodeId);
+    };
+    for (const entry of topology.nodes) visit2(entry.id);
+  };
+  checkCycles((nodeId) => {
+    const parent = byId.get(nodeId).parentId;
+    return parent === "$root" ? [] : [parent];
+  });
+  checkCycles((nodeId) => {
+    const formula = byId.get(nodeId).formula;
+    return formula ? extractFormulaReferences(formula) : [];
+  });
+  const rootReferences = extractFormulaReferences(topology.rootFormula);
+  if (!rootReferences.length || rootReferences.some((reference) => !byId.has(reference))) throw new Error("Invalid executable topology root references.");
+  const reachable = /* @__PURE__ */ new Set();
+  const visit = (nodeId) => {
+    if (reachable.has(nodeId)) return;
+    reachable.add(nodeId);
+    const formula = byId.get(nodeId).formula;
+    if (formula) for (const reference of extractFormulaReferences(formula)) visit(reference);
+  };
+  rootReferences.forEach(visit);
+  if (reachable.size !== topology.nodes.length) throw new Error("Executable topology contains nodes outside the root's calculation dependencies.");
+  return topology;
 }
 
 // ../vdt-agent/src/skill-recipe.ts
@@ -14149,6 +14282,21 @@ function compileSkillRecipe(skill) {
   const template = RECIPE_TEMPLATES[skill.id];
   const questions = buildCriticalQuestions({ rootKpi: skill.title, industry: skill.domain }, [{ id: skill.id }]);
   const markdown = "raw" in skill ? skill.body : skill.excerpt;
+  const topology = readExecutableSkillTopology({ body: markdown });
+  if (topology) return {
+    skillId: skill.id,
+    recipeQuality: "complete",
+    recipeSource: "markdown_extracted",
+    questions,
+    requiredInputs: topology.nodes.filter((node2) => node2.type === "input").map((node2) => node2.id),
+    initialDrivers: topology.nodes.filter((node2) => node2.parentId === "$root").map(({ id: id3, name, type, unit, formula }) => ({ id: id3, name, type, unit, formula })),
+    formulaTemplates: [
+      { targetNodeId: "root", formula: topology.rootFormula },
+      ...topology.nodes.flatMap((node2) => node2.formula ? [{ targetNodeId: node2.id, formula: node2.formula }] : [])
+    ],
+    deepenRules: [],
+    warnings: [...topology.notes]
+  };
   if (!template) {
     return compileRecipeFromMarkdown(skill, markdown, questions);
   }
@@ -14220,10 +14368,10 @@ function extractDriverTemplates(text2) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.includes("=") || /^[-*]/.test(trimmed)) continue;
       if (!/^[a-zA-Z][a-zA-Z0-9_\s/()-]+$/.test(trimmed)) continue;
-      const id2 = stableRecipeId(trimmed);
-      if (!drivers.has(id2)) {
-        drivers.set(id2, {
-          id: id2,
+      const id3 = stableRecipeId(trimmed);
+      if (!drivers.has(id3)) {
+        drivers.set(id3, {
+          id: id3,
           name: titleFromId(trimmed),
           type: "calculated",
           relation: "positive_driver"
@@ -15048,6 +15196,106 @@ function stableHash(value) {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
+// ../vdt-agent-runtime/src/tools/skill-topology-tool.ts
+var skillSeedTopologyTool = {
+  name: "skill.seed_topology",
+  description: "Instantiate a complete executable topology from an explicitly selected/read skill on a blank root. Select illustrative reference defaults with defaults:{inputId:true}; all other numeric inputs remain unknown.",
+  inputSchema: external_exports.object({
+    skillId: external_exports.string().min(1).max(160),
+    defaults: external_exports.record(external_exports.literal(true)).refine((value) => Object.keys(value).length <= 24, "Select at most 24 illustrative defaults.")
+  }).strict(),
+  outputSchema: external_exports.record(external_exports.unknown()),
+  mutatesProject: true,
+  requiresDraftProject: true,
+  phase: "building_graph",
+  async run(context, input) {
+    const library = await loadDefaultSkillLibrary();
+    const skill = library.byId.get(input.skillId);
+    if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", `Skill "${input.skillId}" was not found.`);
+    const topology = readExecutableSkillTopology(skill);
+    if (!topology) throw new AgentToolError("EXECUTABLE_TOPOLOGY_NOT_FOUND", "The selected skill has no complete executable topology. Read its guidance and choose another public builder tool.");
+    const builder = requireBuilder(context.builder);
+    const project = builder.getProject();
+    const root = project.graph.nodes.find((node2) => node2.id === project.rootNodeId);
+    if (!root || project.graph.nodes.length !== 1 || root.formula?.trim() || Number.isFinite(root.baselineValue ?? root.value))
+      throw new AgentToolError("TOPOLOGY_REQUIRES_BLANK_ROOT", "Executable topology seeding requires a blank root; existing work must be edited with builder tools.");
+    const period = context.getRun().request.input.timePeriod;
+    if (root.unit && root.unit !== topology.rootUnit || period && period.toLowerCase() !== topology.timePeriod.toLowerCase())
+      throw new AgentToolError("TOPOLOGY_SCOPE_MISMATCH", `This topology calculates ${topology.rootUnit} over ${topology.timePeriod}; preserve the user's requested unit and period and choose a matching model.`);
+    if (topology.nodes.some((node2) => node2.id === root.id)) throw new AgentToolError("TOPOLOGY_ID_COLLISION", "A topology node ID collides with the existing root.");
+    const selectedDefaults = Object.keys(input.defaults);
+    if (selectedDefaults.length && context.getRun().request.options?.continueWithAssumptions !== true)
+      throw new AgentToolError("ASSUMPTIONS_NOT_AUTHORIZED", "Illustrative reference defaults require permission to continue with explicit assumptions.");
+    const byId = new Map(topology.nodes.map((node2) => [node2.id, node2]));
+    for (const nodeId of selectedDefaults) if (!byId.get(nodeId)?.illustrativeDefault)
+      throw new AgentToolError("UNKNOWN_REFERENCE_DEFAULT", `No illustrative reference default exists for "${nodeId}".`);
+    const preview = cloneBuilder(context);
+    const changes = [];
+    const remaining = [...topology.nodes];
+    const added = /* @__PURE__ */ new Set();
+    while (remaining.length) {
+      const index = remaining.findIndex((node3) => node3.parentId === "$root" || added.has(node3.parentId));
+      if (index < 0) throw new AgentToolError("INVALID_EXECUTABLE_TOPOLOGY", "Topology parents cannot be ordered.");
+      const node2 = remaining.splice(index, 1)[0];
+      const estimate = input.defaults[node2.id] ? node2.illustrativeDefault : void 0;
+      const result = preview.addDriver({
+        parentNodeId: node2.parentId === "$root" ? root.id : node2.parentId,
+        nodeId: node2.id,
+        name: node2.name,
+        unit: node2.unit,
+        type: node2.type,
+        ...estimate ? { baselineValue: estimate.value, assumptions: [estimate.note] } : {}
+      });
+      changes.push(requireChangeSet(result.changeSet));
+      added.add(node2.id);
+      if (node2.type === "input") changes.push(requireChangeSet(preview.updateNode({ nodeId: node2.id, patch: estimate ? {
+        valueStatus: "default_assumption",
+        valueSource: {
+          sourceTier: "illustrative_skill_reference",
+          confidence: "draft",
+          catalogRef: `${skill.id}@${skill.frontmatter.version ?? 1}:${node2.id}`,
+          editableInDialog: true,
+          acceptedByUserInDialog: false,
+          note: estimate.note
+        }
+      } : { valueStatus: "unknown" } }).changeSet));
+    }
+    for (const node2 of topology.nodes) if (node2.formula)
+      changes.push(requireChangeSet(preview.setFormula({ nodeId: node2.id, formula: node2.formula }).changeSet));
+    changes.push(requireChangeSet(preview.setFormula({ nodeId: root.id, formula: topology.rootFormula }).changeSet));
+    const mutation = proposeAndMaybeApplyMutation(context, {
+      title: "Executable skill topology selected",
+      summary: `Instantiated ${topology.nodes.length} drivers from ${skill.id}; explicitly selected ${selectedDefaults.length} illustrative defaults.`,
+      changeSet: combineChangeSets(changes, context),
+      targetNodeId: root.id,
+      allowSkillDefinedDepth: true
+    });
+    if (mutation.applied) {
+      const state = context.store.getState(context.runId);
+      if (!state.selectedSkills.some((entry) => entry.id === skill.id)) context.store.updateRun(context.runId, {
+        selectedSkills: [...state.selectedSkills, {
+          id: skill.id,
+          path: skill.path,
+          title: skill.title,
+          score: 100,
+          reason: "Executable topology explicitly selected by the agent.",
+          matchedTerms: []
+        }]
+      });
+    }
+    return {
+      skillId: skill.id,
+      rootNodeId: root.id,
+      addedNodeIds: [...added],
+      selectedDefaultInputIds: selectedDefaults,
+      remainingInputIds: topology.nodes.filter((node2) => node2.type === "input" && !input.defaults[node2.id]).map((node2) => node2.id),
+      revision: mutation.revision,
+      validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
+    };
+  }
+};
+
 // ../vdt-agent-runtime/src/tools/skill-tools.ts
 var skillListTool = {
   name: "skill.list",
@@ -15129,6 +15377,7 @@ var skillReadTool = {
     const [excerpt] = readSkillExcerpts([skill], input.maxChars);
     if (!excerpt) throw new AgentToolError("SKILL_READ_FAILED", `Skill "${input.skillId}" could not be read.`);
     const recipe = compileSkillRecipe(skill);
+    const topology = readExecutableSkillTopology(skill);
     context.emit({
       type: "skill_read",
       phase: "reading_skills",
@@ -15150,6 +15399,13 @@ var skillReadTool = {
       runtimePolicy: skill.frontmatter.runtimePolicy ?? {},
       recipeQuality: recipe.recipeQuality,
       recipeSource: recipe.recipeSource,
+      ...topology ? { recommendedTools: ["skill.seed_topology"], executableTopology: {
+        schemaVersion: topology.schemaVersion,
+        nodeCount: topology.nodes.length,
+        rootUnit: topology.rootUnit,
+        timePeriod: topology.timePeriod,
+        defaultInputs: topology.nodes.flatMap((node2) => node2.illustrativeDefault ? [{ nodeId: node2.id, unit: node2.unit, ...node2.illustrativeDefault }] : [])
+      } } : {},
       formulaTemplates: recipe.formulaTemplates.map((formula) => `${formula.targetNodeId} = ${formula.formula}`)
     };
   }
@@ -15256,7 +15512,7 @@ var skillSeedDraftFromRecipeTool = {
     const knownInputs = input.knownInputs ?? {};
     for (const driver of recipe.initialDrivers.slice(0, input.maxInitialDrivers ?? 6)) {
       const current = previewBuilder.getProject();
-      if (current.graph.nodes.some((node) => node.id === driver.id)) continue;
+      if (current.graph.nodes.some((node2) => node2.id === driver.id)) continue;
       const formula = driver.formula && referencesExist(current, driver.formula) ? driver.formula : void 0;
       const baselineValue = parseKnownNumber(knownInputs[driver.id]);
       const result = previewBuilder.addDriver({
@@ -15277,13 +15533,13 @@ var skillSeedDraftFromRecipeTool = {
     for (const formula of recipe.formulaTemplates) {
       const current = previewBuilder.getProject();
       const targetNodeId = formula.targetNodeId === "root" || formula.targetNodeId === input.rootKpi ? current.rootNodeId : formula.targetNodeId;
-      if (!current.graph.nodes.some((node) => node.id === targetNodeId)) continue;
+      if (!current.graph.nodes.some((node2) => node2.id === targetNodeId)) continue;
       if (!referencesExist(current, formula.formula)) continue;
       const result = previewBuilder.setFormula({ nodeId: targetNodeId, formula: formula.formula });
       changeSets.push(requireChangeSet(result.changeSet));
       appliedFormulaNodeIds.push(targetNodeId);
     }
-    const missingInputs = recipe.requiredInputs.filter((id2) => knownInputs[id2] === void 0);
+    const missingInputs = recipe.requiredInputs.filter((id3) => knownInputs[id3] === void 0);
     if (changeSets.length === 0) {
       const latest2 = builder.getProject();
       const validation = summarizeValidation(builder.validate().validation);
@@ -15322,7 +15578,7 @@ var skillSeedDraftFromRecipeTool = {
   }
 };
 function referencesExist(project, formula) {
-  const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
+  const nodeIds = new Set(project.graph.nodes.map((node2) => node2.id));
   try {
     return extractFormulaReferences(formula).every((reference) => nodeIds.has(reference));
   } catch {
@@ -15454,7 +15710,7 @@ function runBoundedSubagent(state, input) {
 }
 function briefAlignmentReport(state, task, project, objective) {
   const briefRoot = state.visibleContext.brief.rootKpi;
-  const rootNode = project?.graph.nodes.find((node) => node.id === project.rootNodeId);
+  const rootNode = project?.graph.nodes.find((node2) => node2.id === project.rootNodeId);
   const risks = [];
   if (rootNode && rootNode.name.toLowerCase() !== briefRoot.toLowerCase()) {
     risks.push(`Draft root "${rootNode.name}" differs from visible brief "${briefRoot}".`);
@@ -15483,7 +15739,7 @@ function levelDecompositionReport(state, task, project, targetNodeId, objective)
     return noProjectReport(task, "Level decomposition cannot run before a draft VDT exists.");
   }
   const childrenByParent = childrenByParentMap(project);
-  const target = targetNodeId ? project.graph.nodes.find((node) => node.id === targetNodeId) : project.graph.nodes.find((node) => node.id === project.rootNodeId);
+  const target = targetNodeId ? project.graph.nodes.find((node2) => node2.id === targetNodeId) : project.graph.nodes.find((node2) => node2.id === project.rootNodeId);
   if (!target) {
     return {
       taskId: task.id,
@@ -15494,7 +15750,7 @@ function levelDecompositionReport(state, task, project, targetNodeId, objective)
     };
   }
   const childIds = childrenByParent.get(target.id) ?? [];
-  const leafCandidates = project.graph.nodes.filter((node) => (childrenByParent.get(node.id)?.length ?? 0) === 0).slice(0, 8).map((node) => node.id);
+  const leafCandidates = project.graph.nodes.filter((node2) => (childrenByParent.get(node2.id)?.length ?? 0) === 0).slice(0, 8).map((node2) => node2.id);
   return {
     taskId: task.id,
     status: "succeeded",
@@ -15511,7 +15767,7 @@ function levelDecompositionReport(state, task, project, targetNodeId, objective)
 }
 function formulaBuilderReport(task, project, targetNodeId) {
   if (!project) return noProjectReport(task, "Formula builder cannot run before a draft VDT exists.");
-  const nodes = targetNodeId ? project.graph.nodes.filter((node) => node.id === targetNodeId) : project.graph.nodes;
+  const nodes = targetNodeId ? project.graph.nodes.filter((node2) => node2.id === targetNodeId) : project.graph.nodes;
   if (targetNodeId && nodes.length === 0) {
     return {
       taskId: task.id,
@@ -15520,8 +15776,8 @@ function formulaBuilderReport(task, project, targetNodeId) {
       confidence: 0.35
     };
   }
-  const missingFormula = nodes.filter((node) => node.type === "calculated" && !node.formula?.trim()).map((node) => node.id).slice(0, 10);
-  const missingValues = nodes.filter((node) => node.type === "input" && node.baselineValue === void 0 && node.value === void 0).map((node) => node.id).slice(0, 10);
+  const missingFormula = nodes.filter((node2) => node2.type === "calculated" && !node2.formula?.trim()).map((node2) => node2.id).slice(0, 10);
+  const missingValues = nodes.filter((node2) => node2.type === "input" && node2.baselineValue === void 0 && node2.value === void 0).map((node2) => node2.id).slice(0, 10);
   return {
     taskId: task.id,
     status: missingValues.length > 0 ? "needs_user_input" : "succeeded",
@@ -15830,6 +16086,16 @@ var addDriverInputSchema = external_exports.object({
   aiRationale: optionalInput(external_exports.string().max(800)),
   assumptions: optionalInput(external_exports.array(external_exports.string().max(300)).max(20))
 });
+function assertNewDriverId(input, nodeIds) {
+  if (input.nodeId === void 0 && !/[a-z0-9]/i.test(input.name)) return;
+  const candidate = stableSnakeId(input.nodeId ?? input.name, "driver");
+  if (!nodeIds.has(candidate)) return;
+  throw new AgentToolError(
+    "NODE_ID_EXISTS",
+    `Node id "${candidate}" already exists. To fill its value or formula, use vdt.update_node or vdt.set_formula on that exact nodeId; adding another driver does not update it. Use a distinct explicit nodeId only for a genuinely separate quantity.`,
+    { nodeId: candidate }
+  );
+}
 var createDraftTool = {
   name: "vdt.create_draft",
   description: "Create a draft VDT project and root KPI node.",
@@ -15891,13 +16157,11 @@ var addDriverTool = {
   run(context, input) {
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
-    const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
+    const nodeIds = new Set(project.graph.nodes.map((node2) => node2.id));
     if (!nodeIds.has(input.parentNodeId)) {
       throw new AgentToolError("PARENT_NOT_FOUND", `Parent node "${input.parentNodeId}" was not found.`);
     }
-    if (input.nodeId && nodeIds.has(input.nodeId)) {
-      throw new AgentToolError("NODE_ID_EXISTS", `Node id "${input.nodeId}" already exists.`);
-    }
+    assertNewDriverId(input, nodeIds);
     const previewBuilder = cloneBuilder(context);
     const result = previewBuilder.addDriver(input);
     const changeSet2 = requireChangeSet(result.changeSet);
@@ -15920,7 +16184,7 @@ var addDriverTool = {
 };
 var addDriversBatchTool = {
   name: "vdt.add_drivers_batch",
-  description: `Add 2 to ${defaultProgressiveBuildPolicy.maxNodesPerLayer} sibling driver nodes under one parent in one visible layer, optionally setting that parent's explicit formula atomically.`,
+  description: `Add 2 to ${defaultProgressiveBuildPolicy.maxNodesPerLayer} sibling driver nodes under one parent in one visible layer, optionally setting that parent's explicit formula atomically. For exactly one driver, use vdt.add_driver with the driver's fields directly; do not wrap one driver in a batch.`,
   inputSchema: external_exports.object({
     drivers: external_exports.array(addDriverInputSchema).min(2).max(defaultProgressiveBuildPolicy.maxNodesPerLayer),
     parentFormula: optionalInput(external_exports.string().min(1).max(500))
@@ -15943,13 +16207,11 @@ var addDriversBatchTool = {
     const changeSets = [];
     for (const driver of drivers) {
       const project = previewBuilder.getProject();
-      const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
+      const nodeIds = new Set(project.graph.nodes.map((node2) => node2.id));
       if (!nodeIds.has(driver.parentNodeId)) {
         throw new AgentToolError("PARENT_NOT_FOUND", `Parent node "${driver.parentNodeId}" was not found.`);
       }
-      if (driver.nodeId && nodeIds.has(driver.nodeId)) {
-        throw new AgentToolError("NODE_ID_EXISTS", `Node id "${driver.nodeId}" already exists.`);
-      }
+      assertNewDriverId(driver, nodeIds);
       const result = previewBuilder.addDriver(driver);
       changeSets.push(requireChangeSet(result.changeSet));
       const nodeId = result.changeSet?.additions[0]?.nodeId ?? driver.nodeId ?? driver.name;
@@ -15995,7 +16257,7 @@ var instantiateSubtreeTool = {
   run(context, input) {
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
-    const nodesById = new Map(project.graph.nodes.map((node) => [node.id, node]));
+    const nodesById = new Map(project.graph.nodes.map((node2) => [node2.id, node2]));
     const sourceRoot = nodesById.get(input.sourceRootNodeId);
     if (!sourceRoot) {
       throw new AgentToolError("SOURCE_NOT_FOUND", `Source subtree root "${input.sourceRootNodeId}" was not found.`);
@@ -16118,7 +16380,7 @@ var addEdgeTool = {
   run(context, input) {
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
-    const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
+    const nodeIds = new Set(project.graph.nodes.map((node2) => node2.id));
     if (!nodeIds.has(input.sourceNodeId)) throw new AgentToolError("SOURCE_NOT_FOUND", `Source node "${input.sourceNodeId}" was not found.`);
     if (!nodeIds.has(input.targetNodeId)) throw new AgentToolError("TARGET_NOT_FOUND", `Target node "${input.targetNodeId}" was not found.`);
     const previewBuilder = cloneBuilder(context);
@@ -16150,7 +16412,7 @@ var updateNodeTool = {
   run(context, input) {
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
-    if (!project.graph.nodes.some((node) => node.id === input.nodeId)) {
+    if (!project.graph.nodes.some((node2) => node2.id === input.nodeId)) {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
     }
     if (input.nodeId === project.rootNodeId) {
@@ -16167,7 +16429,10 @@ var updateNodeTool = {
     }
     assertFormulaReferencesIfPresent(project, input.patch.formula, input.nodeId);
     if (input.patch.valueStatus === "user_provided_value") {
-      assertUserProvidedValueGrounded(context, input.nodeId);
+      assertUserProvidedValueGrounded(context, input.nodeId, {
+        value: input.patch.value ?? input.patch.baselineValue,
+        quote: input.patch.valueSource?.note
+      });
     }
     const previewBuilder = cloneBuilder(context);
     const result = previewBuilder.updateNode({ nodeId: input.nodeId, patch: input.patch });
@@ -16179,6 +16444,87 @@ var updateNodeTool = {
     });
     return {
       nodeId: input.nodeId,
+      revision: mutation.revision,
+      validation: mutation.validation,
+      mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
+    };
+  }
+};
+var setInputValuesBatchTool = {
+  name: "vdt.fill_input_values_batch",
+  description: "Fill 1-8 UNPOPULATED existing numeric input leaves atomically. Never creates nodes, changes formulas or overwrites known inputs (use vdt.update_node for edits). Copy nodeId from unresolvedInputs. A user-provided note must quote that quantity verbatim; otherwise label a draft assumption.",
+  inputSchema: external_exports.object({ values: external_exports.array(external_exports.object({
+    nodeId: vdtNodeIdSchema,
+    value: external_exports.number().finite(),
+    provenance: external_exports.enum(["user_provided_value", "default_assumption"]),
+    note: external_exports.string().trim().min(4).max(160)
+  }).strict()).min(1).max(8) }).strict(),
+  outputSchema: external_exports.record(external_exports.unknown()),
+  mutatesProject: true,
+  requiresDraftProject: true,
+  phase: "building_graph",
+  run(context, input) {
+    const builder = requireBuilder(context.builder);
+    const project = builder.getProject();
+    const nodes = new Map(project.graph.nodes.map((node2) => [node2.id, node2]));
+    const seen = /* @__PURE__ */ new Set();
+    const groundingErrors = [];
+    for (const item of input.values) {
+      const node2 = nodes.get(item.nodeId);
+      if (!node2) throw new AgentToolError("NODE_NOT_FOUND", `Node "${item.nodeId}" was not found. Use an existing input ID from the working graph.`);
+      if (seen.has(item.nodeId)) throw new AgentToolError("DUPLICATE_INPUT_WRITE", `Input "${item.nodeId}" occurs more than once in the batch.`);
+      seen.add(item.nodeId);
+      if (node2.id === project.rootNodeId || ["root_kpi", "calculated"].includes(node2.type) || node2.formula?.trim()) {
+        throw new AgentToolError("INPUT_LEAF_REQUIRED", `Node "${item.nodeId}" is calculated or is the root. This tool only fills numeric input leaves; use vdt.set_formula for calculations.`);
+      }
+      if (project.graph.edges.some((edge) => edge.sourceNodeId === item.nodeId)) {
+        throw new AgentToolError("INPUT_LEAF_REQUIRED", `Node "${item.nodeId}" has children and is not an input leaf.`);
+      }
+      if (Number.isFinite(node2.baselineValue ?? node2.value)) {
+        throw new AgentToolError("INPUT_ALREADY_POPULATED", `Input "${item.nodeId}" already has a value. Fill remaining unresolved inputs; use vdt.update_node for an intentional edit.`);
+      }
+      if (item.provenance === "user_provided_value") {
+        try {
+          assertUserProvidedValueGrounded(context, item.nodeId, { value: item.value, quote: item.note });
+        } catch (error2) {
+          if (!(error2 instanceof AgentToolError)) throw error2;
+          groundingErrors.push({ nodeId: item.nodeId, error: error2 });
+        }
+      }
+    }
+    if (groundingErrors.length === 1) throw groundingErrors[0].error;
+    if (groundingErrors.length > 1) throw new AgentToolError(
+      "USER_PROVIDED_VALUE_UNGROUNDED",
+      `No values were applied. Correct all ${groundingErrors.length} ungrounded entries: ${groundingErrors.map(({ nodeId, error: error2 }) => `${nodeId}: ${error2.message}`).join("\n")}`,
+      { issues: groundingErrors.map(({ nodeId, error: error2 }) => ({ nodeId, code: error2.code, message: error2.message })) }
+    );
+    const preview = cloneBuilder(context);
+    const changes = input.values.map((item) => requireChangeSet(preview.updateNode({
+      nodeId: item.nodeId,
+      patch: {
+        value: item.value,
+        baselineValue: item.value,
+        valueStatus: item.provenance,
+        status: item.provenance === "default_assumption" ? "assumption" : "accepted",
+        valueSource: {
+          sourceTier: item.provenance === "default_assumption" ? "default_assumption" : "user_input",
+          note: item.provenance === "default_assumption" ? `Editable draft assumption: ${item.note}` : item.note,
+          editableInDialog: true,
+          acceptedByUserInDialog: item.provenance === "user_provided_value"
+        },
+        ...item.provenance === "default_assumption" ? {
+          assumptions: [.../* @__PURE__ */ new Set([...nodes.get(item.nodeId)?.assumptions ?? [], item.note])].slice(-20)
+        } : {}
+      }
+    }).changeSet));
+    const mutation = proposeAndMaybeApplyMutation(context, {
+      title: "Input values captured",
+      summary: `Filled ${input.values.length} existing numeric inputs with explicit provenance.`,
+      changeSet: combineChangeSets(changes, context),
+      targetNodeId: context.store.getState(context.runId).request.mode === "deepen_node" ? context.store.getState(context.runId).request.input.selectedNodeId ?? project.rootNodeId : project.rootNodeId
+    });
+    return {
+      nodeIds: input.values.map((item) => item.nodeId),
       revision: mutation.revision,
       validation: mutation.validation,
       mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
@@ -16199,7 +16545,7 @@ var deleteNodeTool = {
   run(context, input) {
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
-    if (!project.graph.nodes.some((node) => node.id === input.nodeId)) {
+    if (!project.graph.nodes.some((node2) => node2.id === input.nodeId)) {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
     }
     if (input.nodeId === project.rootNodeId) {
@@ -16242,7 +16588,7 @@ var setFormulaTool = {
   run(context, input) {
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
-    if (!project.graph.nodes.some((node) => node.id === input.nodeId)) {
+    if (!project.graph.nodes.some((node2) => node2.id === input.nodeId)) {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
     }
     assertFormulaReferencesIfPresent(project, input.formula, input.nodeId);
@@ -16317,7 +16663,7 @@ var calculateTool = {
   }
 };
 function discoverDeterministicSubtree(project, sourceRootNodeId) {
-  const nodesById = new Map(project.graph.nodes.map((node) => [node.id, node]));
+  const nodesById = new Map(project.graph.nodes.map((node2) => [node2.id, node2]));
   const outgoingBySource = /* @__PURE__ */ new Map();
   const incomingByTarget = /* @__PURE__ */ new Map();
   for (const edge of project.graph.edges) {
@@ -16507,7 +16853,7 @@ function assertFormulaReferencesIfPresent(project, formula, nodeId) {
       error2 instanceof Error ? error2.message : "Formula could not be parsed."
     );
   }
-  const availableNodeIds = project.graph.nodes.map((node) => node.id);
+  const availableNodeIds = project.graph.nodes.map((node2) => node2.id);
   const available = new Set(availableNodeIds);
   const missingReferences = references.filter((reference) => !available.has(reference));
   if (missingReferences.length === 0) return;
@@ -17204,7 +17550,7 @@ function mockAgentDecision(input, schemaId) {
   const record2 = isRecord9(context) ? context : {};
   const project = isRecord9(record2.currentProject) ? record2.currentProject : void 0;
   const nodes = Array.isArray(project?.nodes) ? project.nodes : [];
-  const nodeIds = new Set(nodes.flatMap((node) => isRecord9(node) && typeof node.id === "string" ? [node.id] : []));
+  const nodeIds = new Set(nodes.flatMap((node2) => isRecord9(node2) && typeof node2.id === "string" ? [node2.id] : []));
   const answers = isRecord9(record2.userAnswers) ? record2.userAnswers : {};
   const recentEvents = Array.isArray(record2.recentEvents) ? record2.recentEvents : [];
   const hasTool = (toolName) => recentEvents.some((event) => {
@@ -17317,7 +17663,7 @@ function mockAgentDecision(input, schemaId) {
   if (!nodeIds.has("haul_distance_km")) return add("haul_distance_km", "Average haul distance", "loaded_travel_time_h", { type: "input", unit: "km", relation: "formula_dependency", baselineValue: 2.7 });
   if (!nodeIds.has("loaded_speed_kmh")) return add("loaded_speed_kmh", "Average loaded speed", "loaded_travel_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 7 });
   if (!nodeIds.has("empty_speed_kmh")) return add("empty_speed_kmh", "Average empty speed", "empty_return_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 11 });
-  const root = nodes.find((node) => isRecord9(node) && node.id === "ore_haulage");
+  const root = nodes.find((node2) => isRecord9(node2) && node2.id === "ore_haulage");
   if (!isRecord9(root) || typeof root.formula !== "string" || !root.formula) return { type: "call_tool", toolName: "vdt.set_formula", args: { nodeId: "ore_haulage", formula: "number_of_trucks * trips_per_truck * payload_per_trip_t" }, statusMessage: "Setting the hauled-tonnes formula." };
   if (!hasTool("vdt.calculate")) return { type: "call_tool", toolName: "vdt.calculate", args: {}, statusMessage: "Calculating the graph." };
   return { type: "finish", summary: "Built a valid truck haulage VDT.", nextSuggestedActions: ["Review payload and operating-hours assumptions."] };
@@ -18818,7 +19164,7 @@ function targetNameFromDeepenInput(data) {
   const project = projectFromDeepenInput(data);
   const graph = isRecord10(project?.graph) ? project.graph : void 0;
   const nodes = Array.isArray(excerpt?.nodes) ? excerpt.nodes : Array.isArray(graph?.nodes) ? graph.nodes : [];
-  const target = nodes.find((node) => isRecord10(node) && node.id === targetNodeId);
+  const target = nodes.find((node2) => isRecord10(node2) && node2.id === targetNodeId);
   return boundedString3(target?.name);
 }
 function targetUnitFromDeepenInput(data) {
@@ -18827,7 +19173,7 @@ function targetUnitFromDeepenInput(data) {
   const project = projectFromDeepenInput(data);
   const graph = isRecord10(project?.graph) ? project.graph : void 0;
   const nodes = Array.isArray(excerpt?.nodes) ? excerpt.nodes : Array.isArray(graph?.nodes) ? graph.nodes : [];
-  const target = nodes.find((node) => isRecord10(node) && node.id === targetNodeId);
+  const target = nodes.find((node2) => isRecord10(node2) && node2.id === targetNodeId);
   return boundedString3(target?.unit, 80);
 }
 function projectFromDeepenInput(data) {

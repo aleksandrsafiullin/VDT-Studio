@@ -182,6 +182,179 @@ describe("StructuredInProductModelAgentEngine", () => {
     });
   });
 
+  it.each([false, true])("bounds repeated tool failures independently of call IDs and invalid value changes (%s)", async (changeArgs) => {
+    const transport = new QueueTransport(Array.from({ length: 4 }, (_, index) =>
+      driverBatchTurn(index, changeArgs ? `driver-${index}` : "driver")
+    ));
+    const calls: string[] = [];
+    const session = await makeEngine(transport).openSession({
+      binding, initialContext: {}, initialContextHash: HASH_A
+    }, host(async (call) => {
+      calls.push(call.externalCallId);
+      return invalidDriverBatch(call);
+    }));
+
+    const events = await collect(session.events());
+
+    expect(calls).toEqual(["driver-call-0", "driver-call-1", "driver-call-2"]);
+    expect(transport.requests).toHaveLength(3);
+    expect(events.at(-1)).toMatchObject({
+      type: "transport_error", code: "MODEL_TOOL_RETRY_LIMIT_EXCEEDED", retryable: false
+    });
+    expect(events.some((event) => event.type === "final")).toBe(false);
+    expect((await session.checkpoint()).modelAgentLoopState).toMatchObject({
+      turnCount: 3,
+      toolFailures: [{ toolName: "vdt.add_drivers_batch", attempts: 3 }]
+    });
+  });
+
+  it("keeps failure counts across unrelated successful reads and question resume", async () => {
+    const question = turn("question-turn", {
+      type: "question", messageId: "question-message", questionSetId: "questions-repair",
+      questions: [{ id: "repair", question: "How should I repair the drivers?", reason: "The batch was rejected.", required: true, expectedAnswerType: "text" }]
+    });
+    const transport = new QueueTransport([
+      driverBatchTurn(0),
+      turn("read-turn", { type: "action_batch", batch: { calls: [{ externalCallId: "read-1", toolName: "project.get_current", args: {} }] } }),
+      driverBatchTurn(1), question, driverBatchTurn(2), driverBatchTurn(3)
+    ]);
+    const execute = host(async (call) => call.toolName === "user.ask"
+      ? result(call, "waiting_user", "USER_INPUT_REQUIRED", {})
+      : call.toolName === "project.get_current"
+        ? result(call, "succeeded", "OK", {})
+        : invalidDriverBatch(call));
+    const engine = makeEngine(transport);
+    const session = await engine.openSession({ binding, initialContext: {}, initialContextHash: HASH_A }, execute);
+    expect((await collect(session.events())).at(-1)?.type).toBe("question");
+    const checkpoint = await session.checkpoint();
+    expect(checkpoint.modelAgentLoopState?.turnCount).toBe(4);
+
+    const nextBinding = { ...binding, sessionEpoch: 2 };
+    const resumed = await engine.resumeBoundSession(nextBinding, { ...checkpoint, sessionEpoch: 2 }, execute);
+    const events = await collect(resumed.events());
+    expect(events.at(-1)).toMatchObject({ type: "transport_error", code: "MODEL_TOOL_RETRY_LIMIT_EXCEEDED" });
+    expect(transport.requests).toHaveLength(5);
+    expect(transport.requests.at(-1)?.stableCallKey).toBe("turn-2-5");
+
+    const stopped = await engine.resumeBoundSession(nextBinding, await resumed.checkpoint(), execute);
+    expect((await collect(stopped.events())).at(-1)).toMatchObject({ code: "MODEL_TOOL_RETRY_LIMIT_EXCEEDED" });
+    expect(transport.requests).toHaveLength(5);
+  });
+
+  it("bounds provenance failures even when the model changes notes, values and target IDs", async () => {
+    const transport = new QueueTransport(Array.from({ length: 4 }, (_, index) => turn(`source-${index}`, {
+      type: "action_batch", batch: { calls: [{ externalCallId: `source-${index}`, toolName: "vdt.fill_input_values_batch", args: {
+        values: [{ nodeId: `input_${index}`, value: 365 + index, provenance: "user_provided_value", note: `Changed attribution ${index}` }]
+      } }] }
+    }, index === 0 ? { messageId: "source-opening", text: "I will build and check the tree." } : null)));
+    const session = await makeEngine(transport).openSession({ binding, initialContext: {}, initialContextHash: HASH_A },
+      host(async (call) => result(call, "failed", "USER_PROVIDED_VALUE_UNGROUNDED", { error: { message: "No literal source" } })));
+    expect((await collect(session.events())).at(-1)).toMatchObject({ type: "transport_error", code: "MODEL_TOOL_RETRY_LIMIT_EXCEEDED" });
+    expect(transport.requests).toHaveLength(3);
+    expect((await session.checkpoint()).modelAgentLoopState?.toolFailures).toMatchObject([{ toolName: "vdt.fill_input_values_batch", attempts: 3 }]);
+  });
+
+  it("allows corrected tool arguments to succeed and reset that tool's failure budget", async () => {
+    const corrected = driverBatchTurn(1);
+    corrected.action.batch.calls[0]!.args.drivers.push({ parentNodeId: "root", name: "Second driver" });
+    const transport = new QueueTransport([
+      driverBatchTurn(0), corrected, driverBatchTurn(2), driverBatchTurn(3),
+      turn("question-turn", {
+        type: "question", messageId: "question-message", questionSetId: "questions-repair",
+        questions: [{ id: "repair", question: "Continue with the saved drivers?", reason: "One batch was added.", required: true, expectedAnswerType: "text" }]
+      })
+    ]);
+    const session = await makeEngine(transport).openSession({
+      binding, initialContext: {}, initialContextHash: HASH_A
+    }, host(async (call) => call.toolName === "user.ask"
+      ? result(call, "waiting_user", "USER_INPUT_REQUIRED", {})
+      : call.externalCallId === "driver-call-1"
+        ? result(call, "succeeded", "OK", { added: 2 })
+        : invalidDriverBatch(call)));
+    const events = await collect(session.events());
+    expect(events.at(-1)?.type).toBe("question");
+    expect(events.some((event) => event.type === "transport_error")).toBe(false);
+    expect((await session.checkpoint()).modelAgentLoopState?.toolFailures[0]?.attempts).toBe(2);
+  });
+
+  it("also bounds repeated rejected questions", async () => {
+    const transport = new QueueTransport(Array.from({ length: 4 }, (_, index) => turn(`question-turn-${index}`, {
+      type: "question", messageId: `message-${index}`, questionSetId: `question-set-${index}`,
+      questions: [{ id: "repair", question: "Continue?", reason: "Need a decision.", required: true, expectedAnswerType: "text" }]
+    })));
+    const session = await makeEngine(transport).openSession({ binding, initialContext: {}, initialContextHash: HASH_A },
+      host(async (call) => result(call, "failed", "QUESTION_REJECTED", {})));
+    const events = await collect(session.events());
+    expect(transport.requests).toHaveLength(3);
+    expect(events.at(-1)).toMatchObject({ code: "MODEL_TOOL_RETRY_LIMIT_EXCEEDED", retryable: false });
+    expect(events.some((event) => event.type === "question")).toBe(false);
+  });
+
+  it("stops identical successful reads without graph progress, including after checkpoint resume", async () => {
+    const transport = new QueueTransport(Array.from({ length: 5 }, (_, index) => turn(`read-turn-${index}`, {
+      type: "action_batch", batch: { calls: [{ externalCallId: `read-${index}`, toolName: "project.get_current", args: {} }] }
+    }, index === 0 ? { messageId: "opening", text: "I will build the model." } : undefined)));
+    const engine = makeEngine(transport);
+    const execute = host(async (call) => result(call, "succeeded", "OK", { projectChanged: false }));
+    const session = await engine.openSession({ binding, initialContext: {}, initialContextHash: HASH_A }, execute);
+    expect((await collect(session.events())).at(-1)).toMatchObject({ type: "transport_error", code: "MODEL_NO_PROGRESS", retryable: false });
+    expect(transport.requests).toHaveLength(4);
+    const checkpoint = await session.checkpoint();
+    expect(checkpoint.modelAgentLoopState?.repeatedReads?.[0]?.attempts).toBe(4);
+    const resumed = await engine.resumeBoundSession(binding, checkpoint, execute);
+    expect((await collect(resumed.events())).at(-1)).toMatchObject({ code: "MODEL_NO_PROGRESS" });
+    expect(transport.requests).toHaveLength(4);
+  });
+
+  it("permits fresh validation/read cycles after a committed mutation", async () => {
+    const transport = new QueueTransport([
+      ...Array.from({ length: 7 }, (_, index) => turn(`progress-turn-${index}`, {
+        type: "action_batch", batch: { calls: [{ externalCallId: `progress-${index}`, toolName: index === 3 ? "vdt.set_formula" : "vdt.calculate", args: {} }] }
+      }, index === 0 ? { messageId: "opening", text: "I will build the model." } : undefined)),
+      turn("question-turn", { type: "question", messageId: "question", questionSetId: "questions", questions: [{
+        id: "confirm", question: "Continue?", reason: "Review the computed result.", required: true, expectedAnswerType: "text"
+      }] })
+    ]);
+    const session = await makeEngine(transport).openSession({ binding, initialContext: {}, initialContextHash: HASH_A }, host(async (call) =>
+      call.toolName === "user.ask" ? result(call, "waiting_user", "USER_INPUT_REQUIRED", {})
+        : result(call, "succeeded", "OK", { projectChanged: call.toolName === "vdt.set_formula" })
+    ));
+    expect((await collect(session.events())).at(-1)?.type).toBe("question");
+    expect(transport.requests).toHaveLength(8);
+  });
+
+  it("recognizes a committed graph repair as progress without counting unrelated reads", async () => {
+    const transport = new QueueTransport([
+      driverBatchTurn(0), driverBatchTurn(1),
+      turn("repair-turn", { type: "action_batch", batch: { calls: [{
+        externalCallId: "single-driver-repair", toolName: "vdt.add_driver", args: { parentNodeId: "root", name: "Driver" }
+      }] } }),
+      driverBatchTurn(2), driverBatchTurn(3),
+      turn("question-turn", { type: "question", messageId: "question-message", questionSetId: "questions-repair", questions: [{
+        id: "next", question: "Continue?", reason: "The graph changed.", required: true, expectedAnswerType: "text"
+      }] })
+    ]);
+    const session = await makeEngine(transport).openSession({ binding, initialContext: {}, initialContextHash: HASH_A },
+      host(async (call) => call.toolName === "user.ask"
+        ? result(call, "waiting_user", "USER_INPUT_REQUIRED", {})
+        : call.toolName === "vdt.add_driver"
+          ? result(call, "succeeded", "OK", { projectChanged: true })
+          : invalidDriverBatch(call)));
+    expect((await collect(session.events())).at(-1)?.type).toBe("question");
+    expect((await session.checkpoint()).modelAgentLoopState?.toolFailures[0]?.attempts).toBe(2);
+  });
+
+  it("does not reset the configured turn limit when resuming a checkpoint", async () => {
+    const transport = new QueueTransport([driverBatchTurn(0), driverBatchTurn(1), driverBatchTurn(2)]);
+    const engine = makeEngine(transport, { maxTurns: 2 });
+    const execute = host(async (call) => invalidDriverBatch(call));
+    const session = await engine.openSession({ binding, initialContext: {}, initialContextHash: HASH_A }, execute);
+    expect((await collect(session.events())).at(-1)).toMatchObject({ code: "MAX_MODEL_TURNS_EXCEEDED" });
+    const resumed = await engine.resumeBoundSession(binding, await session.checkpoint(), execute);
+    expect((await collect(resumed.events())).at(-1)).toMatchObject({ code: "MAX_MODEL_TURNS_EXCEEDED" });
+    expect(transport.requests).toHaveLength(2);
+  });
+
   it("resumes a paused question with a human delta without opening another engine", async () => {
     const transport = new QueueTransport([
       turn("turn-1", {
@@ -476,6 +649,30 @@ function turn(
     assistantMessage,
     action
   };
+}
+
+function driverBatchTurn(index: number, name = "driver") {
+  const action = {
+    type: "action_batch",
+    batch: { calls: [{
+      externalCallId: `driver-call-${index}`,
+      toolName: "vdt.add_drivers_batch",
+      args: { drivers: [{ parentNodeId: "root", name }] }
+    }] }
+  };
+  return {
+    ...turn(`driver-turn-${index}`, action, { messageId: `driver-message-${index}`, text: "I will add the driver." }),
+    action
+  };
+}
+
+function invalidDriverBatch(call: VdtGatewayToolCall): VdtGatewayToolResult {
+  return result(call, "failed", "INVALID_TOOL_ARGS", {
+    error: {
+      code: "INVALID_TOOL_ARGS",
+      details: [{ code: "too_small", minimum: 2, type: "array", inclusive: true, path: ["drivers"] }]
+    }
+  });
 }
 
 function makeEngine(

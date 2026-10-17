@@ -72,6 +72,13 @@ export function NodeInspector() {
     );
   }
 
+  const sourceNote = node.valueSource?.note?.trim();
+  const assumptionNotes = [...new Set((node.assumptions ?? [])
+    .map((note) => note.trim())
+    .filter((note) => note && !sourceNote?.includes(note)))];
+  const reference = node.valueSource?.catalogRef;
+  const sourceUrl = reference && /^https?:\/\/\S+$/.test(reference) ? reference : undefined;
+
   return (
     <Panel className="flex h-full min-h-0 flex-col border-l" data-testid="right-panel">
       <PanelHeader
@@ -117,6 +124,17 @@ export function NodeInspector() {
                 <div className="mt-1 truncate text-lg font-semibold text-ink">{node.unit ?? "n/a"}</div>
               </div>
             </div>
+
+            {(sourceNote || assumptionNotes.length > 0 || reference) && (
+              <section className="space-y-2 rounded-md border border-line bg-slate-50 p-3 text-sm leading-5" aria-label="Value notes">
+                <div className="text-xs font-medium uppercase tracking-normal text-muted">Value notes</div>
+                {sourceNote && <p>{sourceNote}</p>}
+                {assumptionNotes.map((note) => <p key={note}>{note}</p>)}
+                {sourceUrl ? (
+                  <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="text-accent underline underline-offset-2">Source reference</a>
+                ) : reference ? <p className="break-words text-xs text-muted">{reference}</p> : null}
+              </section>
+            )}
 
             <Field label="Name">
               <TextInput value={node.name} onChange={(event) => updateNode(node.id, { name: event.target.value })} />

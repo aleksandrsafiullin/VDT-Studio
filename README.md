@@ -9,7 +9,7 @@ VDT Studio is an AI-first, local-first workspace for building editable Value Dri
 - Project and VDT workspace backed by local SQLite metadata and revision files. The workspace rail's Home link opens the home page; the editor header's back link opens the project workspace. Navigation respects browser Back/Forward.
 - Left-to-right editable factor-tree canvas with direct node editing, properties and formula warnings.
 - Deterministic formula evaluation, scenario calculation and calculation trace.
-- One **Версии** (Versions) panel for named checkpoints, before/after KPI and formula comparison, restoration with an automatic backup, and Undo before further model edits.
+- One **Versions** panel for named checkpoints, before/after KPI and formula comparison, restoration with an automatic backup, and Undo before further model edits.
 - In-product agent runtime with bounded tools, skills, structured events and a calculation-aware finish gate.
 - BYOK API providers, fixed local HTTP backends and reviewed subscription-CLI adapters.
 - Standalone paired local runner for development and a private-pipe desktop sidecar foundation.
@@ -103,6 +103,10 @@ Desktop CLI subscriptions and local model servers use reviewed Tauri commands an
 For subscription CLIs, the agent-composer indicator reports live request readiness rather than the saved selection. Gray means the CLI check is still running, green **Chat ready** means the selected CLI reports `ready` and the server has a compatible chat binding for the selected model, amber means it is installed but needs authentication, an update, or another recovery action, and red means the completed scan confirmed that it is not installed. The composer remains blocked until the selected CLI reaches `ready`; Settings does not show install options while detection is still unknown. Cursor's **Sign in** action runs the fixed provider-owned `agent login` flow, waits for browser confirmation, verifies CLI access and rescans models; instruction-only providers use the distinct **Sign-in help** label.
 
 **Settings → Execution mode** has three separate tabs: **CLI**, **Local models**, and **API keys**. A provider CLI runs on this computer and uses the provider account/cloud service; local inference through Ollama, LM Studio or vLLM belongs to Local models. The active backend determines the selected tab when settings reopen, and switching categories preserves saved CLI and local-server/model choices. Each provider has Test, sign-in and reversible Remove actions; provider details, memory and developer runner pairing are collapsed; local model servers have their own panel. Remove hides a subscription in this browser across reloads and rescans without uninstalling its CLI or signing out. Undo or **Add provider → Add back** restores it. Removing the active provider switches to a remaining verified-ready CLI with explicit feedback, or clears selection until you choose another; a removed memory override returns to Same as chat. Managed sign-in succeeds only after a ready rescan. Settings Test verifies CLI/session readiness and does not certify the selected model or response quality.
+
+Local model chat uses the in-product Model Agent. Start Ollama, LM Studio or vLLM, install or load a model, then refresh models in Settings. The trusted local server admits installed models for chat; hosted web stays disabled. VDT_LOCAL_MODEL_AGENT_ENABLED=false opts out. This alpha path requires no cloud API key and is not qualified for model quality, native packaging or performance. Local runs receive a current graph view at each step. Ollama streams within bounded cold-start, idle and total limits; repeated rejected calls and repeated reads without graph progress stop with the draft preserved. When you allow draft assumptions, the agent is instructed to choose and label estimates instead of requesting the same permission again.
+
+Model Agent runs preserve their draft and stop after three repeats of the same tool error. A single driver uses `vdt.add_driver`; `vdt.add_drivers_batch` requires at least two siblings. The configured turn budget also applies (40 by default). A stopped run needs an explicit new start; same-session budget continuation remains unfinished.
 
 ## Product Workflows
 
@@ -218,3 +222,5 @@ Contributors and coding agents must update documentation with behavior changes; 
 ## License
 
 MIT
+
+Experimental complete library topologies: a local Model Agent may explicitly select `mining.load_and_haul` through `skill.seed_topology`, accept individually named illustrative defaults, fill supplied facts, and use the normal calculation/finish gates. The single canonical skill artifact contains the annual joint excavation/haulage formulas; defaults are editable assumptions, not site facts or verified benchmarks. Seeding preserves the existing root and cannot replace existing drivers. A fresh local `qwen3.5:4b-q4_K_M` run on 2026-10-17 completed this library workflow with 35 calculable nodes in 10 turns, without operator formula/value edits. See [the live evidence and its limits](docs/AI_HARNESS.md#local-library-completion-evidence-2026-10-17); production/provider qualification is unchanged.

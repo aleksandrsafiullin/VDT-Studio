@@ -4,6 +4,30 @@ import type { AiProviderFetch } from "../types";
 export const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
 export const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000;
 
+/** Raw local APIs have no continuation cursor. Keep the immutable initial
+ * brief/catalog plus the last confirmed response; the caller's bounded semantic
+ * checkpoint supplies the remaining progress. Never accumulate a full history. */
+export class LocalModelConversationContext {
+  private initialPrompt: string | undefined;
+  private lastOutput: string | undefined;
+
+  messages(systemPrompt: string, userPrompt: string): Array<{ role: "system" | "user" | "assistant"; content: string }> {
+    return [
+      { role: "system", content: systemPrompt },
+      ...(this.initialPrompt && this.lastOutput && this.initialPrompt !== userPrompt ? [
+        { role: "user" as const, content: this.initialPrompt },
+        { role: "assistant" as const, content: this.lastOutput }
+      ] : []),
+      { role: "user", content: userPrompt }
+    ];
+  }
+
+  confirm(userPrompt: string, output: string): void {
+    this.initialPrompt ??= userPrompt;
+    this.lastOutput = output;
+  }
+}
+
 interface ProviderRequestOptions {
   providerName: string;
   fetch: AiProviderFetch;
@@ -108,6 +132,71 @@ export async function requestProviderJson(options: ProviderRequestOptions): Prom
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
+/** A live local generation can outlast a fixed wall-clock deadline while
+ * continuing to make progress. Bound cold prefill, idle time, total time and
+ * bytes independently; caller cancellation still closes the same request. */
+export async function requestProviderNdjson(options: ProviderRequestOptions & {
+  firstChunkTimeoutMs?: number;
+  idleTimeoutMs?: number;
+  onChunk: (chunk: Record<string, unknown>) => void;
+}): Promise<void> {
+  const hardMs = positiveInteger(options.timeoutMs, 480_000, "timeoutMs");
+  const firstMs = positiveInteger(options.firstChunkTimeoutMs, 300_000, "firstChunkTimeoutMs");
+  const idleMs = positiveInteger(options.idleTimeoutMs, 60_000, "idleTimeoutMs");
+  const limit = positiveInteger(options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES, "maxResponseBytes");
+  const controller = new AbortController();
+  let timeoutReason: string | undefined;
+  const abort = () => controller.abort(options.signal?.reason);
+  if (options.signal?.aborted) abort();
+  else options.signal?.addEventListener("abort", abort, { once: true });
+  const expire = (reason: string) => { timeoutReason = reason; controller.abort(); };
+  const hard = setTimeout(() => expire(`exceeded the ${hardMs}ms turn limit`), hardMs);
+  let idle = setTimeout(() => expire(`produced no response within ${firstMs}ms`), firstMs);
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  try {
+    const response = await options.fetch(options.url, { ...options.init, signal: controller.signal });
+    if (!response.ok) throw new Error(`${options.providerName} request failed with status ${response.status}.`);
+    if (!response.body) throw new Error(`${options.providerName} returned no response stream.`);
+    reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let bytes = 0;
+    let pending = "";
+    const parse = (line: string) => {
+      if (!line.trim()) return;
+      let chunk: unknown;
+      try { chunk = JSON.parse(line); } catch { throw new Error(`${options.providerName} returned an invalid JSON stream frame.`); }
+      if (!chunk || typeof chunk !== "object" || Array.isArray(chunk)) throw new Error(`${options.providerName} returned an invalid stream envelope.`);
+      options.onChunk(chunk as Record<string, unknown>);
+      clearTimeout(idle);
+      idle = setTimeout(() => expire(`stalled for ${idleMs}ms`), idleMs);
+    };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > limit) throw new Error(`${options.providerName} response exceeded the maximum allowed size.`);
+      pending += decoder.decode(value, { stream: true });
+      let end: number;
+      while ((end = pending.indexOf("\n")) >= 0) {
+        parse(pending.slice(0, end));
+        pending = pending.slice(end + 1);
+      }
+    }
+    parse(pending + decoder.decode());
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(timeoutReason ? `${options.providerName} ${timeoutReason}.` : `${options.providerName} request was aborted.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(hard);
+    clearTimeout(idle);
+    options.signal?.removeEventListener("abort", abort);
+    await reader?.cancel().catch(() => undefined);
+    reader?.releaseLock();
   }
 }
 

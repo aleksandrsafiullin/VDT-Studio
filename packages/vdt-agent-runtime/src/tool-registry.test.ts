@@ -371,6 +371,109 @@ describe("ToolRegistry", () => {
     expect(store.getSnapshot(run.runId).pendingMutationProposal).toBeUndefined();
   });
 
+  it("keeps distinct non-Latin driver names usable without explicit IDs", async () => {
+    const { registry, context, builder } = inputBatchContext();
+    const before = builder.getProject().graph.nodes.length;
+    const result = await registry.run("vdt.add_drivers_batch", { drivers: [
+      { parentNodeId: builder.getProject().rootNodeId, name: "Добыча" },
+      { parentNodeId: builder.getProject().rootNodeId, name: "Транспорт" }
+    ] }, context);
+    expect(result.ok).toBe(true);
+    const added = builder.getProject().graph.nodes.slice(before);
+    expect(added.map((node) => node.name)).toEqual(["Добыча", "Транспорт"]);
+    expect(new Set(added.map((node) => node.id)).size).toBe(2);
+  });
+
+  it.each([false, true])("rejects normalized driver ID collisions before automatic suffixing, atomically (%s)", async (batch) => {
+    const store = new AgentRunStore();
+    const run = store.createRun({ mode: "continue_project", input: { rootKpi: "Ore hauled" }, providerId: "mock", options: { autoApplyPatches: true } });
+    const builder = haulageBuilder();
+    store.updateRun(run.runId, { builder, draftProject: builder.getProject() });
+    const context: AgentToolContext = {
+      runId: run.runId, store, builder, signal: run.abortController.signal,
+      emit: (event) => store.appendEvent(run.runId, event), getRun: () => store.getSnapshot(run.runId),
+      updateRun: (patch) => { store.updateRun(run.runId, patch); }
+    };
+    const registry = createDefaultToolRegistry();
+    const before = JSON.stringify(builder.getProject());
+    const duplicate = { parentNodeId: builder.getProject().rootNodeId, name: "truck_count", baselineValue: 10 };
+    const result = await registry.run(batch ? "vdt.add_drivers_batch" : "vdt.add_driver", batch ? {
+      drivers: [{ parentNodeId: duplicate.parentNodeId, nodeId: "new_input", name: "New input" }, duplicate]
+    } : duplicate, context);
+    expect(result).toMatchObject({ ok: false, error: { code: "NODE_ID_EXISTS" } });
+    expect(result.error?.message).toContain('"truck_count"');
+    expect(result.error?.message).toContain("vdt.update_node");
+    expect(JSON.stringify(builder.getProject())).toBe(before);
+    const distinct = await registry.run("vdt.add_driver", { ...duplicate, nodeId: "other_truck_count" }, context);
+    expect(distinct.ok).toBe(true);
+    expect(builder.getProject().graph.nodes.some((node) => node.id === "other_truck_count")).toBe(true);
+  });
+
+  it("fills existing inputs in one atomic revision with quoted facts and explicit assumptions", async () => {
+    const { registry, context, builder } = inputBatchContext();
+    const before = builder.getRevision();
+    const result = await registry.run("vdt.fill_input_values_batch", { values: [
+      { nodeId: "truck_count", value: 2, provenance: "user_provided_value", note: "2 trucks" },
+      { nodeId: "truck_working_time", value: 12, provenance: "default_assumption", note: "Editable draft assumption: twelve productive hours." }
+    ] }, context);
+    expect(result.ok).toBe(true);
+    expect(builder.getRevision()).toBe(before + 1);
+    expect(builder.getProject().graph.nodes.find((node) => node.id === "truck_count")).toMatchObject({
+      baselineValue: 2, value: 2, valueStatus: "user_provided_value", valueSource: { note: "2 trucks" }
+    });
+    expect(builder.getProject().graph.nodes.find((node) => node.id === "truck_working_time")).toMatchObject({
+      baselineValue: 12, valueStatus: "default_assumption", status: "assumption", assumptions: ["Editable draft assumption: twelve productive hours."]
+    });
+    expect(builder.calculate().calculation?.rootValue).toBe(24);
+  });
+
+  it.each([
+    [{ nodeId: "missing", value: 5, provenance: "default_assumption", note: "Draft estimate" }, "NODE_NOT_FOUND"],
+    [{ nodeId: "ore_hauled", value: 5, provenance: "default_assumption", note: "Draft estimate" }, "INPUT_LEAF_REQUIRED"],
+    [{ nodeId: "truck_count", value: 5, provenance: "user_provided_value", note: "5 trucks" }, "USER_PROVIDED_VALUE_UNGROUNDED"],
+    [{ nodeId: "truck_working_time", value: 5, provenance: "default_assumption", note: "Draft estimate" }, "DUPLICATE_INPUT_WRITE"],
+    [{ nodeId: "truck_count", value: 2, provenance: "default_assumption", note: "Draft estimate", formula: "1" }, "INVALID_TOOL_ARGS"]
+  ] as const)("rejects the whole input batch for %s", async (invalid, code) => {
+    const { registry, context, builder } = inputBatchContext();
+    const before = JSON.stringify(builder.getProject());
+    const result = await registry.run("vdt.fill_input_values_batch", { values: [
+      { nodeId: "truck_working_time", value: 12, provenance: "default_assumption", note: "Editable draft estimate" }, invalid
+    ] }, context);
+    expect(result).toMatchObject({ ok: false, error: { code } });
+    expect(JSON.stringify(builder.getProject())).toBe(before);
+  });
+
+  it("cannot repeatedly refill a known input or bypass a selected-node scope", async () => {
+    const { registry, context, builder, store } = inputBatchContext();
+    builder.updateNode({ nodeId: "truck_count", patch: { baselineValue: 2 } });
+    const before = JSON.stringify(builder.getProject());
+    const input = { values: [{ nodeId: "truck_count", value: 3, provenance: "default_assumption", note: "Editable draft estimate" }] };
+    expect(await registry.run("vdt.fill_input_values_batch", input, context)).toMatchObject({ ok: false, error: { code: "INPUT_ALREADY_POPULATED" } });
+    store.getState(context.runId).request.mode = "deepen_node";
+    store.getState(context.runId).request.input.selectedNodeId = "truck_count";
+    expect(await registry.run("vdt.fill_input_values_batch", { values: [{ ...input.values[0], nodeId: "truck_working_time" }] }, context)).toMatchObject({ ok: false, error: { code: "MUTATION_SCOPE_VIOLATION" } });
+    expect(JSON.stringify(builder.getProject())).toBe(before);
+  });
+
+  it("reports all ungrounded batch values together and allows a valid selected-node-only fill", async () => {
+    const { registry, context, builder, store } = inputBatchContext();
+    const before = JSON.stringify(builder.getProject());
+    const rejected = await registry.run("vdt.fill_input_values_batch", { values: [
+      { nodeId: "truck_count", value: 5, provenance: "user_provided_value", note: "5 trucks" },
+      { nodeId: "truck_working_time", value: 12, provenance: "user_provided_value", note: "12 hours" }
+    ] }, context);
+    expect(rejected).toMatchObject({ ok: false, error: { code: "USER_PROVIDED_VALUE_UNGROUNDED", details: { issues: [
+      { nodeId: "truck_count" }, { nodeId: "truck_working_time" }
+    ] } } });
+    expect(JSON.stringify(builder.getProject())).toBe(before);
+    store.getState(context.runId).request.mode = "deepen_node";
+    store.getState(context.runId).request.input.selectedNodeId = "truck_count";
+    expect(await registry.run("vdt.fill_input_values_batch", { values: [
+      { nodeId: "truck_count", value: 2, provenance: "user_provided_value", note: "2 trucks" }
+    ] }, context)).toMatchObject({ ok: true, projectChanged: true });
+    expect(builder.getProject().graph.nodes.find((node) => node.id === "truck_count")?.baselineValue).toBe(2);
+  });
+
   it("creates a pending mutation proposal instead of directly mutating when auto-apply is off", async () => {
     const store = new AgentRunStore({ now: () => "2026-06-26T00:00:00.000Z" });
     const run = store.createRun({
@@ -528,6 +631,25 @@ function vdtStorageError(code: string, message: string): Error {
   error.name = "VdtStorageError";
   (error as Error & { code: string }).code = code;
   return error;
+}
+
+function inputBatchContext() {
+  const store = new AgentRunStore();
+  const run = store.createRun({ mode: "continue_project", input: { rootKpi: "Ore hauled", prompt: "The fleet has 2 trucks." }, providerId: "mock", options: { autoApplyPatches: true } });
+  const project = haulageBuilder().getProject();
+  for (const node of project.graph.nodes) {
+    if (node.id === project.rootNodeId) continue;
+    delete node.baselineValue;
+    delete node.value;
+  }
+  const builder = new VdtBuilderSession({ project });
+  store.updateRun(run.runId, { builder, draftProject: builder.getProject() });
+  const context: AgentToolContext = {
+    runId: run.runId, store, builder, signal: run.abortController.signal,
+    emit: (event) => store.appendEvent(run.runId, event), getRun: () => store.getSnapshot(run.runId),
+    updateRun: (patch) => { store.updateRun(run.runId, patch); }
+  };
+  return { context, builder, store, registry: createDefaultToolRegistry() };
 }
 
 function haulageBuilder(): VdtBuilderSession {

@@ -258,6 +258,22 @@ export const agentEngineCheckpointSchema = z.object({
    * exchange. Optional keeps previously persisted Sequence 4 checkpoints
    * readable while making new acknowledgements crash-safe. */
   pendingHumanInputs: z.array(agentHumanInputSchema).max(20).optional(),
+  /** Server-owned Model Agent safety counters survive question/resume and
+   * fencing epochs. Optional keeps older and external-engine checkpoints
+   * readable. Fingerprints contain hashes, never raw tool arguments. */
+  modelAgentLoopState: z.object({
+    turnCount: z.number().int().min(0).max(500),
+    toolFailures: z.array(z.object({
+      toolName: nonEmptyString(160),
+      fingerprint: sha256Schema,
+      attempts: z.number().int().min(1).max(3)
+    }).strict()).max(500),
+    repeatedReads: z.array(z.object({
+      toolName: nonEmptyString(160),
+      fingerprint: sha256Schema,
+      attempts: z.number().int().min(1).max(4)
+    }).strict()).max(500).optional()
+  }).strict().optional(),
   createdAt: timestampSchema
 }).strict();
 

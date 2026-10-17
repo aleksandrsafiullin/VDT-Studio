@@ -42,6 +42,7 @@ describe("VDT agent skill library", () => {
       "mining/drill-and-blast.md",
       "mining/excavation.md",
       "mining/haulage-truck-cycle.md",
+      "mining/load-and-haul.md",
       "mining/material-allocation-ore-waste.md",
       "mining/mine-production-system.md",
       "mining/production-volume.md",

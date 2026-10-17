@@ -27,7 +27,7 @@ export const NO_EXTERNAL_EXECUTION_BINDING_MESSAGE = formatNoExternalExecutionBi
 
 export function formatNoLocalModelExecutionBindingMessage(backendId?: string): string {
   const label = ({ ollama: "Ollama", lm_studio: "LM Studio", vllm: "vLLM" } as Record<string, string>)[backendId ?? ""] ?? "the selected local model";
-  return `No compatible server-managed Model Agent binding is available for ${label} and the selected model. This run was not started. Settings and model discovery do not create an agent binding.`;
+  return `${label} chat is unavailable for the selected model. Start the local model server, install or load the model, and refresh models in Settings. Local model chat must be enabled on this host. This run was not started.`;
 }
 
 type CommonAgentStartRequest = Omit<

@@ -53,9 +53,9 @@ New runs use `agent-decision-v2`; `agent-decision-v1` remains registered for com
 
 The node-card **Add incoming KPIs with AI** control uses the runtime's structured `deepen_node` action rather than a `user_instruction`. The action adds new nodes only as immediate children of the selected KPI, restricts formula/node updates to that selected KPI, rejects deletions and deeper mutations, and may finish with unknown values because this semi-manual structural step is intentionally narrower than full calculable-VDT generation.
 
-The default is `maxSteps=40` with an input cap of 60. Reaching it saves the current draft and exposes a structured `continue_run` action instead of failing the run. Provider errors can also pause a run. `researchMode` is `auto`, `on` or `off`. `off` rejects `research.search_web` at the tool boundary before any provider call.
+The compatibility loop defaults to `maxSteps=40` with an input cap of 60. Reaching it saves the current draft and exposes a structured `continue_run` action instead of failing the run. The structured Model Agent now observes the same configured turn bound, but currently terminates with `MAX_MODEL_TURNS_EXCEEDED`; a same-session budget-extension action is still missing there. Provider errors can also pause a run. `researchMode` is `auto`, `on` or `off`. `off` rejects `research.search_web` at the tool boundary before any provider call.
 
-### Session-oriented dual-profile foundation (partial, binding-registry default-off)
+### Session-oriented dual-profile foundation (partial, cloud default-off)
 
 [`ADR-006`](adr/ADR-006-bounded-dual-profile-agent-execution.md) defines the
 new boundary:
@@ -69,33 +69,46 @@ API / UI
 ```
 
 `model_agent` uses `InProductModelAgentEngine` and structured HTTP/local turns.
-The frontend distinguishes Local models from subscription CLIs despite their shared internal `local_cli` execution mode. Local model starts select only an existing `model_agent` binding with the exact resolved backend ID and, when supplied, selected model; CLI starts retain exact `external_cli_agent` matching. Settings and model discovery do not provision bindings. Without a compatible server-owned local-model binding the start remains unavailable; there is no generic runner/default/API fallback, and the server's adapter capability checks and existing release limitations still apply.
-`external_cli_agent` uses a qualified native or checkpoint-resume session whose
-only application capability is the VDT Gateway. Profile, adapter, backend,
-model, settings hash, capability hash, tool-catalog hash and session epoch are
-immutable for the run. The legacy micro-CLI loop is a compatibility adapter,
-not a third public profile or an automatic fallback.
+The frontend distinguishes Local models from subscription CLIs despite their shared internal local_cli mode. Trusted-local web/desktop hosts admit immutable Ollama/LM Studio/vLLM Model Agent bindings from their fixed-endpoint server catalogs (up to 100 valid model IDs per backend, plus the equivalent untagged alias for an installed Ollama :latest model). Catalogs refresh at most once per ten seconds on binding requests, including after an empty catalog or installation. Hosted mode, production-build evaluation and VDT_LOCAL_MODEL_AGENT_ENABLED=false disable this admission. Browser Settings cannot provision bindings. Starts require an exact backend/model match and use the existing Supervisor/Gateway without a runner/API/default fallback. Native packaging, model quality and performance remain unqualified; provider certification is unchanged.
+
+The model-facing catalog preserves Zod types, enums and required fields (nested cards bounded to three object levels, catalog below 35,000 characters). Local transports retain the immutable brief/catalog, the last confirmed reply and the new semantic-checkpoint delta, without sharing history across runs. Ollama uses native `/api/chat`, direct structured actions (`think=false`), model sampling defaults unless the binding overrides temperature, a 16,384-token context and native JSON-schema format. The Model Agent allows up to 4,096 predicted tokens for the compact JSON action, three tool calls and 512 characters of semantic state. Private thinking frames maintain stream liveness but are never parsed or executed as actions. Native decoding requires a non-null opening assistant message capped at 500 characters; subsequent turns omit that duplicate prose, while questions and the verified final retain their dedicated actions. All tool cards are visible; read-only `tools.describe` retrieves full schemas for 1–6 selected public names. Native decoding includes introspection, finish and core structural/value/formula schemas upfront, then unlocks other tools after successful schema discovery; `vdt.create_draft` stays unavailable in continuation mode. Control calls, numeric-input batches and draft/topology/recipe seeding use singleton native batches, so returned IDs are observed before further mutations. Hidden tools cannot be admitted. The Gateway still checks arguments, provenance, scope and mutations.
+
+Ollama responses stream with independent bounds: 300 seconds to the first valid frame, 60 seconds of stream inactivity, 480 seconds total and 1 MB of response bytes. Healthy generation may pass five minutes; missing completion, truncated output, malformed frames, inactivity and caller cancellation fail closed. Other local HTTP exchanges keep their 180-second limit. Endpoints remain manifest-owned loopback URLs with redirects disabled and no inherited cloud credentials. Every local turn receives `hostObservation`, a read-only current-revision view of up to 80 node rows and bounded calculation errors. It supplies confirmed IDs, formulas, zero values, a bounded explicit list of unpopulated inputs and a formula backlog, without authoring changes or replacing finish verification. Larger graphs are explicitly marked truncated. Project-tool results retain the lossless `project-tables-v1` transport projection; canonical Gateway payloads, hashes and receipts are unchanged. Models are installed only by an explicit user-authorized operation, never by the application automatically.
 
 The implemented engine/Gateway contracts have these properties:
 
 - the engine receives one initial brief, compact project context and fixed tool
   catalog; later engine turns are tool, human-input, checkpoint or recovery
   deltas. Persistent transports send the initial context once. The generic
-  stateless HTTP adapter instead replays the exact confirmed transcript (up to
-  4 MiB) so a fresh Chat Completions request cannot forget the task; this
-  correctness fallback grows prompt bytes across turns and is not qualified as
-  the release-speed transport;
+  stateless HTTP adapter instead carries the bounded semantic checkpoint and
+  confirmed cursor/hashes. Local HTTP providers additionally retain the initial
+  brief/catalog and last confirmed reply, without accumulating the transcript;
 - a model-facing tool call contains only `externalCallId`, `toolName` and
   `args`; actor, project, revision, permissions and idempotency authority are
   derived from the server binding;
 - Gateway receipts are reserved before execution, mutations are serialized and
   a terminal result is replayed for the same call ID; command, filesystem, Git,
   web, foreign MCP and subagent calls fail as security-boundary breaches;
+- corrected calls with different tools/arguments require a new external call
+  ID; both the Model Agent prompt and `CALL_ID_REUSE` refusal explain that an
+  old ID is reserved for exact replay, not for a different corrected operation;
 - each provider exchange is durably checkpointed as `in_flight` before provider
   execution, then completed, failed or left ambiguous under the same exchange
   identity;
 - questions checkpoint the same logical session, and `run.request_finish`
   succeeds only after deterministic formula/graph/calculation/ledger checks;
+- structured Model Agent sessions stop with `MODEL_TOOL_RETRY_LIMIT_EXCEEDED`
+  after three occurrences of the same tool failure. Schema failures are grouped
+  by tool, result code, field paths and schema constraints; other failures use
+  the operation's argument hash. New call IDs, changed invalid values and
+  unrelated successful reads do not reset a failure count. A successful call to
+  that tool resets its failures; a confirmed project mutation clears failures
+  across tools so committed repairs can unblock finish. `STALE_REVISION` uses reconciliation instead; four identical successful operations without a committed change also stop with `MODEL_NO_PROGRESS`. Human input at a paused checkpoint and stale-revision reconciliation reset read counters;
+- `modelAgentLoopState` stores bounded turn/failure counters in the engine
+  checkpoint, preserving limits across question/resume and fencing epochs.
+  Older checkpoints remain readable and initialize absent counters to zero.
+  Failure-limit termination preserves the draft, publishes a runtime error and
+  releases the controller; it does not auto-retry or switch providers;
 - only completed agent messages are durable. `runtime_status` is authored by
   the Supervisor and `tool_call`/`tool_result` by the Gateway under the strict
   Event V2 source matrix; transient stream deltas are UI-only; and
@@ -115,7 +128,7 @@ commas without globally replacing commas or changing `min(a,b)` semantics.
 
 - A registered server-owned `modelEngineAdapter` binding now routes public
   start/message/cancel/SSE through one `VdtRunSupervisor` and one
-  `StructuredInProductModelAgentEngine`. The binding registry is empty by
+  `StructuredInProductModelAgentEngine`. The cloud default stays disabled by
   default; provider-ID requests deliberately remain on the separate legacy
   compatibility loop and never silently fall back into the target path.
 - With a SQLite-backed AgentRunStore, public structured runs write the seven
@@ -170,8 +183,8 @@ commas without globally replacing commas or changing `min(a,b)` semantics.
   mutation/finish call and produces a `manual_reconciliation` delta; approved
   proposals also enforce base revision. Other manual-change kinds and durable
   operation-level merge are not fully implemented.
-- Most tool descriptions expose property names but omit JSON Schema types, required fields, enums and constraints.
-- Repeated errors lack per-fingerprint retry budgets and backoff.
+- The Model Agent catalog retains compact parameter types, required fields, enums and bounds; complete nested schemas/examples for every legacy tool remain unfinished. Batch-cardinality feedback explicitly suggests `vdt.add_driver` for a single driver without weakening the batch minimum of two or inventing filler siblings.
+- Per-fingerprint retry limits are implemented for structured Model Agent sessions; equivalent legacy/external-loop protection, backoff and a structured Model Agent turn-budget continuation action remain missing.
 - Legacy persisted `running` runs are not re-enqueued or marked interrupted after process restart.
 - Existing-project formula/delete/root changes can be auto-applied too broadly.
 
@@ -312,3 +325,53 @@ Neither this harness nor the deterministic mock suite is a live-provider,
 multilingual, benchmark or data-mapping certification. No qualifying live
 session sample was produced during this implementation review. Required future
 agent evaluations are listed in `ROADMAP.md` and `PRODUCTION_READINESS.md`.
+
+For the structured Model Agent, `brief.options.continueWithAssumptions=true` directs the model to select missing numeric estimates, record explicit editable `default_assumption` provenance and continue to calculation. Questions are reserved for unresolved goals or scope changes, rather than repeating permission for already authorized estimates. This is a prompt rule; the model remains responsible for obeying it and choosing defensible values.
+
+The generic `vdt.fill_input_values_batch` fills 1–8 existing unpopulated non-calculated input leaves in one atomic mutation with a finite number, explicit user/default provenance and a source note. User values require the same trusted quote/answer grounding as single writes. Unknown IDs, duplicate writes, computed/root nodes, non-leaf nodes, ungrounded user values and invalid arguments reject the whole batch. It cannot add nodes, change formulas or bypass mutation approval, scoped `deepen_node` checks, revision fencing or finish verification. Single/batch driver additions reject collisions in their normalized IDs instead of silently suffixing a copied input ID; distinct quantities require explicit unique IDs.
+
+Input-batch provenance feedback reports all ungrounded entries together before any write. A selected-node deepen scope can fill that selected input but cannot use the batch to write outside its allowed subtree. Non-schema failures share a three-attempt budget by tool and result code, including when a model changes the rejected values, notes or targets; unrelated successful reads do not clear it.
+
+During native new-tree construction, literal numeric excerpts from both the original prompt and business context constrain `user_provided_value` claims to actual finite numbers and exact source quotes. This is lexical grounding: the model still chooses the metric, target, units and all estimates, and the canonical provenance/mutation checks remain authoritative. Native literal constraints relax after a later human answer or instruction. The original prompt is retained alongside business context. Once calculation succeeds, a fresh brief review includes actual root-dependent inputs, unused inputs and unmatched literal excerpts; it asks the model to review missing constraints before finish. This diagnostic neither maps business facts nor certifies business completeness.
+
+Local native tool availability is grounded in the current server observation: value/formula writes are withheld while a new placeholder still needs real structure. Existing-target arguments use current node-ID enums only when the graph view is complete; truncated views are not treated as exhaustive. `vdt.fill_input_values_batch` is restricted to currently unpopulated leaves and becomes unavailable when none remain, preventing repeated successful refill operations. Intentional corrections use `vdt.update_node`. The Gateway continues to validate every call against the actual fenced revision. A server-derived finish requirement rejects `ROOT_NOT_DERIVED` for a new tree represented by a standalone constant or root without driver references.
+
+The numeric batch completes unpopulated input leaves only; already populated targets reject with `INPUT_ALREADY_POPULATED`, and intentional edits use `vdt.update_node`. Native ID enums restrict that fill surface to the current unresolved leaves when the view is exhaustive.
+
+For new-tree construction, native eligibility follows read-only server diagnostics: the placeholder requires structure before value/formula updates; bootstrap tools are withheld after structure exists; standalone validation/calculation and finish are withheld until validation succeeds and the root has a finite result derived from real drivers. Every mutation still validates normally and diagnostics remain in `hostObservation` throughout construction. Existing-tree review is not forced through this construction sequence. This limits empty-root checking loops without choosing a domain, recipe, formula or estimate for the model. The native system prompt is compact; non-core catalog cards preserve names/purposes with full schemas available through introspection.
+
+Provenance accepts a verbatim single-quantity excerpt enclosed in quotation marks inside an attributed note, as well as a bare exact quote. Rejection diagnostics may suggest up to four literal source excerpts for the rejected number, drawn only from the original request/business context and retained user messages. These hints do not interpret the metric, assign a node, write a value or promote assistant/tool output to user evidence.
+
+The native local transport retains bounded read evidence across semantic deltas: confirmed tool argument schemas, discovered skill IDs/titles and the latest bounded skill excerpt. Rendered `confirmedKnowledge` is capped at 10,000 characters with omissions/truncation explicit; it is isolated per provider/run and does not write graph state, select skills or alter canonical receipts. Only successful/replayed, admitted Gateway results can populate it. Skill discovery/read/compile and schema introspection run in singleton native batches so dependent IDs can be observed before use. This prevents forgetting exact schemas and skill IDs after an unrelated tool result; restart auto-resume and cross-process hydration remain unqualified.
+
+Native local response schemas namespace opaque turn/message/batch IDs by the server exchange ID. Call arrays use positional tuple schemas with a distinct stable externalCallId per exchange/position, preventing a small model from reusing a prior call ID for changed arguments. Exact-exchange retry IDs remain stable. Tool names, graph IDs, formulas, estimates and other business arguments remain model-authored and pass the unchanged Gateway authority/revision/idempotency checks. A live native format probe confirmed tuple-position ID constraints on Ollama.
+
+New-tree native construction also exposes generic single/batch driver creation schemas upfront. Once a skill has actually been read and the root still has no structure, repeated listing/searching and rereading are withheld; additional unread discovered skills remain available so the actor can cover the full process scope. Compilation, schema discovery and model-chosen structural tools remain available. Review/deepen runs retain their ordinary discovery access. This generic progress gate selects no domain, recipe, business parameter or formula.
+
+Native new-tree driver batches run alone, contain at most four nodes and require short model-authored lowercase formula identifiers, with bounded optional metadata. Native structural additions omit formulas and numeric baselines; the model fills inputs and assigns formulas in subsequent calls against observed IDs. Canonical driver tools retain their full schemas. Collision protection preserves automatic unique fallback IDs for distinct non-Latin names when no ID was supplied; an explicit normalized ID collision still rejects the mutation. These bounds reduce oversized local responses without writing or selecting business formulas.
+
+Native Ollama construction of a new blank tree now requires a successful model-selected skill read before structural tools unlock. Confirmed failure output cannot satisfy that gate. List/search/read schemas are upfront; the initial native phase offers discovery, then a read constrained to actual returned skill IDs, before introspection/construction unlocks. The model still chooses the search and skill. A sibling batch uses per-parent schema alternatives when the working graph view is complete: the model chooses the parent, but every item must use that same ID. Truncated graph views retain canonical scope checks without claiming an exhaustive parent list. A bounded read-only calculationAssumptions projection retains up to eight calculated/root nodes, two notes of 160 characters each, with explicit truncation; it neither supplies new facts nor chooses formulas.
+
+Initial goal clarification remains available. After discovery begins in a new blank tree, native questions wait until the chosen skill is actually read; planning the decomposition stays the model's responsibility. A final action is available only after an admitted successful/replayed finish receipt with a valid hash. That receipt fixes the native final ID and closes tool choices; new human work, stale-revision feedback or a committed graph mutation invalidates the native receipt projection. Canonical Supervisor verification remains authoritative.
+
+For a fully visible new-tree input set, native Ollama numeric batches use a values object keyed by model-selected input IDs from one bounded page (up to eight keys). This prevents repeated targets in a generated batch. A pure wire decoder restores the canonical values array in stable ID order before engine/Gateway validation; it preserves every selected target, value, provenance and note, performs no arithmetic and changes no formulas. Other tools, existing-tree/partial-view fallbacks, canonical API arguments, receipts and approval/scope/revision checks retain their contracts.
+
+Missing-formula-reference feedback explicitly distinguishes a genuinely absent quantity from a misspelled existing ID: the model must create the missing driver and its value/formula first, or correct the typo. It is told not to retry an unchanged formula or substitute an unrelated fuzzy match. The host does not create those dependencies or author their calculations.
+
+The experimental local Model Agent can explicitly select `skill.seed_topology` after reading a skill with a complete `vdt-topology` block. The canonical English artifact owns the declarative formulas; the host does not select a domain or skill from keywords. The actor selects the skill and each illustrative reference estimate with `defaults:{inputId:true}`. Defaults require `continueWithAssumptions=true`, remain editable `default_assumption` values, and are never user facts or verified benchmarks. Unselected inputs stay unknown. The tool accepts only a blank root with a matching unit/period, validates bounded IDs, parents, formula references/cycles and root dependency coverage, and proposes one atomic mutation through the existing approval/CAS pipeline. Its skill-defined depth exception never bypasses selected-node decomposition scope. Existing work cannot be overwritten.
+
+`mining.load_and_haul` supplies an annual joint excavation/truck-haulage topology: both fleet counts, separate annual repair/shift/unplanned losses, bucket loading productivity, payload-dependent loading time, loaded and empty travel over one route, dumping/positioning/queue time, and the minimum of both capacities. It is a steady-state draft model with continuous equivalent bucket loading, not dispatch simulation. Its numeric reference values are illustrative estimates accepted explicitly by the actor. Site fleet counts, distance, both speeds and truck planned repair have no reference defaults. Formula and sensitivity unit tests do not certify arbitrary model-authored trees or production readiness.
+
+Native transport retains all tool names/purposes and the immutable catalog hash while avoiding a second textual copy of schemas already enforced by `format`. Original literal quantities are sent once in the current observation. The semantic checkpoint allows 512 characters. Construction search asks for 3–6 candidates; additional unread discovered skills can be read before building so the actor can cover a broader process scope. Complete topology/default choices are constrained to successful public skill-read evidence; generic builder tools remain available. Canonical tool arguments, provenance, receipts, approval and scope authority are unchanged.
+
+When the original structured brief already specifies KPI, unit and period, new-tree library discovery/read precedes questions, including the initial turn. Missing core metric definitions can still be clarified immediately. This prevents delegating internal library/tool selection to the user; essential clarification remains available after reading relevant guidance. Final source-quote diagnostics expose equal-value candidates with units as hints, and explicitly preserve the assumption status of numbers labelled as estimates in the brief.
+
+## Local Library Completion Evidence (2026-10-17)
+
+One fresh local Model Agent run with Ollama `qwen3.5:4b-q4_K_M` completed from a blank root using the Russian excavation/haulage brief and prior permission for editable assumptions. Run `e36dee13-fe78-424e-8733-847ca241c04d` built VDT `vdt_57d81e57-949f-4b68-95e4-c0c316824a10`, finished with a verified persisted receipt, and saved 35 calculable nodes at generation 7. It took 10 model turns and 950.837 seconds, with no timeout, no human replies during execution and no operator formula/value edits. The actor selected and read `mining.load_and_haul`, chose 11 reference estimates explicitly, filled the remaining inputs, and refined three formulas through public tools. Two rejected provenance/status updates were recoverable; this was not an error-free run.
+
+The saved formula engine audit returned a valid graph, zero calculation errors and no missing numeric inputs. The root is `min(excavation_capacity_t, haulage_capacity_t)` and evaluates to **12,463,829.596412554 t/year**: excavation capacity 26,127,144 t/year, haulage capacity 12,463,829.596412554 t/year. Six supplied site quantities retain user-source provenance; 16 inputs are explicit editable assumptions. These include 300 scheduled working days/year, payload 150 t, two 12-hour shifts, a 15-minute handover and one-hour meal per shift. The result is a draft estimate, not a measured mine baseline. Read-only perturbations checked all 22 input dependencies; bottleneck behavior can leave the root unchanged while an intermediate capacity changes.
+
+Evidence is retained locally under `/Users/aks/.codex/visualizations/2026/10/16/01a1463f-0933-7763-9ab0-6ed5493391e8/ollama-autonomous-2026-10-17/`: `library-v2-execution-evidence.json`, `library-v2-final-audit.json`, `library-v2-final-saved-project.json` and `verification-summary.json`. Subsequent UI auto-layout/view operations changed no saved project fields. A separate cancelled composer smoke confirmed the selected model resolved a compatible server-managed binding before any graph mutation.
+
+This verifies one library-backed local construction on this Mac. Earlier freeform construction attempts with other models failed or timed out. Arbitrary tree synthesis, repeated cold/warm performance qualification, restart recovery and production/provider certification remain unverified; no release status is promoted by this run.

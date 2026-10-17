@@ -1,5 +1,5 @@
 /** Shared Zod-issue diagnostic for questions and tool arguments.
- * Paths, codes, and expected types only — never model-supplied values. */
+ * Paths, codes, expected types and schema bounds — never supplied values. */
 
 const SAFE_SCHEMA_ISSUE_LABEL = /^[A-Za-z0-9_.-]{1,64}$/;
 const ZOD_PARSED_TYPES = new Set([
@@ -34,6 +34,10 @@ export interface SchemaIssueSummaryInput {
   readonly keys?: readonly string[];
   readonly expected?: unknown;
   readonly received?: unknown;
+  readonly minimum?: unknown;
+  readonly maximum?: unknown;
+  readonly inclusive?: unknown;
+  readonly exact?: unknown;
 }
 
 function safeLabel(value: unknown): string | undefined {
@@ -60,6 +64,14 @@ function extra(issue: SchemaIssueSummaryInput): string {
     .slice(0, 8)
     .join("|");
   if (keys) return `: ${keys}`;
+  if (issue.code === "too_small" || issue.code === "too_big") {
+    const bound = issue.code === "too_small" ? issue.minimum : issue.maximum;
+    if (typeof bound !== "number" || !Number.isFinite(bound)) return "";
+    const comparison = issue.exact === true ? "="
+      : issue.code === "too_small" ? issue.inclusive === false ? ">" : ">="
+      : issue.inclusive === false ? "<" : "<=";
+    return `: expected${comparison}${bound}`;
+  }
   if (issue.code !== "invalid_type") return "";
   const expected = parsedTypeLabel(issue.expected);
   const received = parsedTypeLabel(issue.received);

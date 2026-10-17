@@ -1,12 +1,16 @@
 import { createHash } from "node:crypto";
-import type { ToolRegistry } from "@vdt-studio/vdt-agent-runtime";
+import { AgentToolError, type ToolRegistry } from "@vdt-studio/vdt-agent-runtime";
+import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 export const TARGET_MODEL_AGENT_TOOLS = [
+  "tools.describe",
   "skill.list",
   "skill.search",
   "skill.read",
   "skill.compile_recipe",
   "skill.seed_draft_from_recipe",
+  "skill.seed_topology",
   "excavation.dialogue_policy",
   "excavation.seed_topology",
   "excavation.suggest_reference_value",
@@ -21,6 +25,7 @@ export const TARGET_MODEL_AGENT_TOOLS = [
   "vdt.instantiate_subtree",
   "vdt.add_edge",
   "vdt.update_node",
+  "vdt.fill_input_values_batch",
   "vdt.delete_node",
   "vdt.set_formula",
   "vdt.validate",
@@ -51,9 +56,51 @@ export const TARGET_MODEL_AGENT_TOOLS = [
   "run.request_finish"
 ] as const;
 
+const describeInput = z.object({ toolNames: z.array(z.string().min(1).max(160)).min(1).max(6) }).strict();
+const describeSpec = {
+  name: "tools.describe",
+  description: "Read exact argument schemas for 1-6 tools from this catalog before using a tool whose schema is not in context.",
+  inputJsonSchema: { type: "object", properties: { toolNames: { type: "array", minItems: 1, maxItems: 6, items: { type: "string" } } }, required: ["toolNames"], additionalProperties: false },
+  mutatesProject: false,
+  phase: "planning_decomposition" as const
+};
+
+/** Read-only introspection is restricted to the same immutable public catalog;
+ * it cannot expose hidden registry tools or extend a run's allowlist. */
+export function registerModelAgentSchemaTool(tools: ToolRegistry): void {
+  if (tools.has(describeSpec.name)) return;
+  tools.register({
+    ...describeSpec, inputSchema: describeInput, outputSchema: z.record(z.unknown()),
+    run(_context, input) {
+      const catalog = new Map(modelAgentToolCatalog(tools).map((tool) => [tool.name, tool]));
+      const definitions = new Map(tools.list().map((tool) => [tool.name, tool]));
+      return { tools: input.toolNames.map((name) => {
+        const tool = catalog.get(name);
+        if (!tool) throw new AgentToolError("UNKNOWN_TOOL", "Schema is available only for tools in this run's public catalog.");
+        const definition = definitions.get(name === "approval.request" ? "user.request_approval" : name);
+        return definition ? {
+          ...tool,
+          inputJsonSchema: definition.inputJsonSchema ?? zodToJsonSchema(definition.inputSchema, { $refStrategy: "none" })
+        } : tool;
+      }) };
+    }
+  });
+}
+
 export function modelAgentToolCatalog(tools: ToolRegistry) {
   const specs = new Map(tools.listSpecs().map((spec) => [spec.name, spec]));
+  const definitions = new Map(tools.list().map((tool) => [tool.name, tool]));
+  const describe = (name: string) => {
+    const spec = specs.get(name);
+    const definition = definitions.get(name);
+    if (!spec || !definition) throw new Error(`Required target Model Agent tool "${name}" is unavailable.`);
+    return {
+      ...spec,
+      inputJsonSchema: definition.inputJsonSchema ?? compactInputSchema(zodToJsonSchema(definition.inputSchema, { $refStrategy: "none" }))
+    };
+  };
   return TARGET_MODEL_AGENT_TOOLS.map((name) => {
+    if (name === "tools.describe") return describeSpec;
     if (name === "run.request_finish") {
       return {
         name,
@@ -64,14 +111,32 @@ export function modelAgentToolCatalog(tools: ToolRegistry) {
       };
     }
     if (name === "approval.request") {
-      const canonical = specs.get("user.request_approval");
-      if (!canonical) throw new Error("The canonical approval tool is unavailable.");
+      const canonical = describe("user.request_approval");
       return { ...canonical, name };
     }
-    const spec = specs.get(name);
-    if (!spec) throw new Error(`Required target Model Agent tool "${name}" is unavailable.`);
-    return spec;
+    return describe(name);
   });
+}
+
+/** Keep actionable types, enums and required fields. Bound nested object
+ * detail so a local model receives a usable catalog within its context budget. */
+function compactInputSchema(value: unknown, objectDepth = 0): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const schema = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const key of ["type", "enum", "const", "default", "minLength", "maxLength", "minimum", "maximum", "minItems", "maxItems", "pattern"]) {
+    if (key in schema) result[key] = schema[key];
+  }
+  if (schema.properties && objectDepth < 3) {
+    result.properties = Object.fromEntries(Object.entries(schema.properties).map(([key, field]) => [key, compactInputSchema(field, objectDepth + 1)]));
+    if (schema.required) result.required = schema.required;
+    if (typeof schema.additionalProperties === "boolean") result.additionalProperties = schema.additionalProperties;
+  }
+  if (schema.items) result.items = compactInputSchema(schema.items, objectDepth);
+  for (const key of ["anyOf", "oneOf", "allOf"] as const) {
+    if (Array.isArray(schema[key])) result[key] = schema[key].map((entry) => compactInputSchema(entry, objectDepth));
+  }
+  return result;
 }
 
 export function modelAgentToolCatalogHash(tools: ToolRegistry): string {

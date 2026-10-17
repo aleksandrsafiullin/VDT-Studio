@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AiCompletionParams, AiProvider, OpenAiCompatibleProviderConfig } from "../types";
-import { asJsonSchema, requestProviderJson } from "./provider-utils";
+import { LocalModelConversationContext, asJsonSchema, requestProviderJson } from "./provider-utils";
 
 function parseJsonResponse(raw: string) {
   const trimmed = raw.trim();
@@ -12,6 +12,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
   id = "openai_compatible";
   name = "OpenAI-compatible Provider";
   type = "openai_compatible" as const;
+  private readonly conversation = new LocalModelConversationContext();
 
   constructor(private readonly config: OpenAiCompatibleProviderConfig) {}
 
@@ -26,7 +27,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const request = (responseFormat: Record<string, unknown>) => requestProviderJson({
         providerName: "OpenAI-compatible provider",
-        fetch: globalThis.fetch,
+        fetch: this.config.fetch ?? globalThis.fetch,
         url: `${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`,
         signal: params.signal,
         timeoutMs: this.config.timeoutMs,
@@ -41,7 +42,9 @@ export class OpenAiCompatibleProvider implements AiProvider {
             temperature: params.temperature ?? 0.2,
             max_tokens: params.maxTokens ?? 2200,
             response_format: responseFormat,
-            messages: [
+            messages: this.config.retainInitialContext
+              ? this.conversation.messages(params.systemPrompt, params.userPrompt)
+              : [
               { role: "system", content: params.systemPrompt },
               {
                 role: "user",
@@ -73,7 +76,9 @@ export class OpenAiCompatibleProvider implements AiProvider {
 
       try {
         const json = parseJsonResponse(content);
-        return (schema ? schema.parse(json) : json) as TOutput;
+        const result = (schema ? schema.parse(json) : json) as TOutput;
+        if (this.config.retainInitialContext) this.conversation.confirm(params.userPrompt, content);
+        return result;
       } catch (error) {
         lastError = error;
       }

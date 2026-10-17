@@ -68,6 +68,8 @@ export interface OpenAiCompatibleProviderConfig {
   apiKey?: string | undefined;
   model: string;
   timeoutMs?: number | undefined;
+  fetch?: AiProviderFetch | undefined;
+  retainInitialContext?: boolean | undefined;
 }
 
 export type AiProviderFetch = typeof globalThis.fetch;

@@ -51,6 +51,9 @@ import {
 import { writeCanaryMetricsSidecarAtTerminal } from "./canary-metrics-sidecar";
 import { authoritativeAgentRunProjectId } from "./persistence";
 import { matchesCliSessionBinding } from "./cli-session-model-binding";
+import { isLocalModelAgentBackend } from "./local-model-bindings";
+import { createLocalModelAgentProvider } from "./local-model-provider";
+import { localModelWorkingContext } from "./local-model-context";
 import {
   agentRuntime,
   createAgentSupervisorPersistence,
@@ -65,11 +68,15 @@ ${CHECKPOINT_RESPONSE_ENVELOPE_PROMPT_RULE} Return exactly one object matching t
 
 Opening summary: the first user-facing assistant message must restate the accepted task in the user's language and outline the intended plan in 3-6 short steps before or alongside the first tool batch.
 
+Preserve the brief's KPI, unit, time period and original language throughout the session. Inspect brief.mode and projectSummary before mutation. vdt.create_draft is allowed only in generate_vdt mode; for an existing project, use project.get_current and add or edit its drivers. Discover relevant skills with skill.list or skill.search and read the selected skill before building. Ask about missing essential inputs in the user's language unless brief.options.continueWithAssumptions is true. In that mode the user has authorized editable draft estimates: choose reasonable missing numeric inputs yourself, mark them default_assumption with an explicit note and continue building and calculating. Do not ask permission again for those estimates or re-ask facts already present in the brief. Questions remain appropriate for an ambiguous goal or a requested change of scope. Do not replace the requested production/capacity KPI with a cost or site-volume calculation.
+
+Tool corrections: vdt.add_driver adds one driver with its fields directly in args. vdt.add_drivers_batch requires 2 or more sibling drivers in args.drivers; use vdt.add_driver for a single driver and never invent filler siblings. After a rejected call, correct the reported fields or ask the user; repeating the same error three times stops the run and preserves its draft. Every corrected call with a different toolName or args needs a NEW externalCallId; reuse an ID only for exact replay of the same operation. Changing externalCallId alone is not a correction.
+
 Research: when the domain, KPI, or decomposition boundary is unfamiliar, or the user asks for standards/best practice, use research.search_web (purpose standards, best_practices, process_components, benchmarks, or regulations) to ground the decomposition before building. Respect options.researchMode from the brief: never call research.search_web when it is off. Surface sources used; never fabricate citations. ${AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE} ${AGENT_RESEARCH_PROVIDER_FAILED_PROMPT_RULE}
 
 Questions: ${AGENT_QUESTION_PROMPT_RULE}
 
-Finish: ${AGENT_FINISH_MISSING_VALUE_PROMPT_RULE} ${CHECKPOINT_FINISH_ORDER_PROMPT_RULE}
+Finish: Compare the original brief against the actual dependency formulas. Include every material business constraint and bottleneck before finishing; a finite root alone does not establish scope completion. A new placeholder KPI must become a derived driver tree, never a standalone constant used to hide missing calculations. ${AGENT_FINISH_MISSING_VALUE_PROMPT_RULE} ${CHECKPOINT_FINISH_ORDER_PROMPT_RULE}
 
 Full catalog: use skills, excavation, research, validation, calculation, layout, repair, and memory tools — not only vdt.* mutations.
 
@@ -153,10 +160,11 @@ export async function startStructuredModelAgentRun(input: {
   return startSupervisorAgentRun({
     request,
     bindingDefinition,
-    engineFactory: (initialContextDelta) => {
-      const provider = createStructuredModelProvider(bindingDefinition, requestUrl);
+    engineFactory: (initialContextDelta, runId) => {
+      const provider = createStructuredModelProvider(bindingDefinition, requestUrl, runId);
       return new StructuredInProductModelAgentEngine({
         capability: bindingDefinition.capability,
+        maxTurns: request.options?.maxSteps ?? 40,
         transport: new AiProviderStructuredTurnTransport(
           provider,
           bindingDefinition,
@@ -203,7 +211,7 @@ async function startSupervisorAgentRun(input: {
   request: VdtAgentStartRequest;
   bindingDefinition: AgentExecutionBindingDefinition;
   engine?: AgentExecutionEngine | undefined;
-  engineFactory?: ((initialContext: Extract<ModelAgentTurnDelta, { type: "initial_context" }>) => AgentExecutionEngine) | undefined;
+  engineFactory?: ((initialContext: Extract<ModelAgentTurnDelta, { type: "initial_context" }>, runId: string) => AgentExecutionEngine) | undefined;
   allowUnqualifiedExternalCanary?: boolean | undefined;
 }): Promise<PublicAgentRunSnapshot> {
   const { request, bindingDefinition } = input;
@@ -233,7 +241,7 @@ async function startSupervisorAgentRun(input: {
     context: initialContext,
     contextHash: hashJson(initialContext)
   };
-  const engine = input.engine ?? input.engineFactory?.(initialContextDelta);
+  const engine = input.engine ?? input.engineFactory?.(initialContextDelta, runId);
   if (!engine) {
     throw new PublicSupervisorRunError("AGENT_ENGINE_NOT_WIRED", "The selected execution engine is not wired on this host.", 409);
   }
@@ -341,6 +349,7 @@ async function startSupervisorAgentRun(input: {
         currentRevision: revisionAfterSnapshot,
         expectedHeadRevision: expectedProjectRevision ?? revisionBeforeSnapshot,
         mode: request.mode,
+        requireDerivedRoot: requiresDerivedRootForRun(request),
         pendingQuestion: current.status === "needs_user_input" || Boolean(current.pendingQuestions?.length),
         pendingApproval: current.status === "waiting_approval",
         pendingProposal: Boolean(current.pendingMutationProposal),
@@ -1053,8 +1062,16 @@ export function buildModelProviderTurnPayload(
 
 function createStructuredModelProvider(
   definition: StructuredModelAgentExecutionBindingDefinition,
-  requestUrl: string
+  requestUrl: string,
+  runId: string
 ): AiProvider {
+  if (isLocalModelAgentBackend(definition.modelEngineAdapter.providerId)) {
+    return createLocalModelAgentProvider(definition, () => {
+      const builder = agentRuntime.store.getState(runId).builder;
+      if (!builder) throw new Error("The local Model Agent working draft is unavailable.");
+      return localModelWorkingContext(builder.getProject(), builder.getRevision(), requiresDerivedRootForRun(agentRuntime.store.getState(runId).request));
+    });
+  }
   const providerConfig = {
     ...(definition.modelEngineAdapter.providerConfig ?? {}),
     model: definition.modelId,
@@ -1066,6 +1083,15 @@ function createStructuredModelProvider(
     providerId: definition.modelEngineAdapter.providerId,
     providerConfig
   }, requestUrl);
+}
+
+export function requiresDerivedRootForRun(request: VdtAgentStartRequest): boolean {
+  if (request.mode === "review_project" || request.mode === "deepen_node") return false;
+  if (request.mode === "generate_vdt") return true;
+  const project = request.input.project;
+  const root = project?.graph.nodes.find((node) => node.id === project.rootNodeId);
+  return !project || (project.graph.nodes.length <= 1 && !root?.formula?.trim()
+    && !Number.isFinite(root?.baselineValue ?? root?.value));
 }
 
 function createSessionBinding(
@@ -1124,6 +1150,7 @@ function createInitialContext(
       mode: request.mode,
       rootKpi: request.input.rootKpi,
       industry: request.input.industry,
+      prompt: request.input.prompt,
       businessContext: request.input.businessContext ?? request.input.prompt,
       unit: request.input.unit,
       timePeriod: request.input.timePeriod,

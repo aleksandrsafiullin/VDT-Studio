@@ -56,6 +56,20 @@ describe("schemaIssueSummary", () => {
     expect(summary).not.toContain("secret-value");
   });
 
+  it("includes actionable schema bounds without echoing invalid driver data", () => {
+    const parsed = z.object({
+      drivers: z.array(z.object({ name: z.string() })).min(2),
+      note: z.string().max(4),
+      count: z.number().gt(0)
+    }).safeParse({ drivers: [{ name: "private-mine-name" }], note: "private-note", count: -9721 });
+    if (parsed.success) throw new Error("Expected cardinality/length/range failures.");
+    const summary = schemaIssueSummary(parsed.error.issues);
+    expect(summary).toContain("drivers (too_small: expected>=2)");
+    expect(summary).toContain("note (too_big: expected<=4)");
+    expect(summary).toContain("count (too_small: expected>0)");
+    expect(summary).not.toMatch(/private|9721/);
+  });
+
   it("keeps the question unrecognized-keys format", () => {
     const parsed = agentQuestionSchema.strict().array().safeParse([
       {

@@ -93,6 +93,43 @@ describe("structured feedback", () => {
     expect(forbidden?.suggestedNextTools).toEqual(expect.arrayContaining(["vdt.add_driver", "vdt.update_node"]));
   });
 
+  it("gives the single-driver alternative only for the batch's sibling cardinality error", () => {
+    const envelope = {
+      toolName: "vdt.add_drivers_batch", ok: false as const,
+      error: {
+        code: "INVALID_TOOL_ARGS", message: "drivers (too_small: expected>=2)",
+        details: [{ code: "too_small", type: "array", minimum: 2, path: ["drivers"] }]
+      },
+      projectChanged: false, emittedEventIds: []
+    };
+    const compact = compactGatewayFeedback(envelope);
+    expect(compact).toMatchObject({
+      kind: "invalid_tool_args", retryable: true, suggestedNextTools: ["vdt.add_driver"]
+    });
+    expect(compact?.message).toContain("driver's fields directly");
+    expect(compact?.message).toContain("Do not repeat a one-item batch or add dummy siblings");
+    expect(compactGatewayFeedback({ ...envelope, error: {
+      ...envelope.error, details: [{ ...envelope.error.details[0]!, path: ["drivers", "0", "assumptions"] }]
+    } })?.suggestedNextTools).toBeUndefined();
+  });
+
+  it("distinguishes creating a missing formula dependency from repairing a misspelled ID", () => {
+    const envelope = {
+      toolName: "vdt.set_formula", ok: false as const,
+      error: { code: "MISSING_FORMULA_REFERENCES", message: 'Formula for "capacity" references missing node ids: repair_days.',
+        details: { missingReferences: ["repair_days"], availableNodeIds: ["capacity", "calendar_days"] } },
+      projectChanged: false, emittedEventIds: []
+    };
+    const feedback = feedbackFromToolEnvelope(envelope);
+    expect(feedback?.actual).toEqual(envelope.error.details);
+    expect(feedback?.suggestedNextTools?.slice(0, 2)).toEqual(["vdt.add_driver", "vdt.add_drivers_batch"]);
+    expect(feedback?.message).toContain("create its driver first");
+    expect(feedback?.message).toContain("Do not resend the unchanged formula");
+    expect(feedback?.message).toContain("unrelated similar name");
+    expect(compactGatewayFeedback({ ...envelope, error: { ...envelope.error, code: "NODE_ID_EXISTS" } })?.message)
+      .toBe(envelope.error.message);
+  });
+
   it("maps a missing research provider to research_required and suggests user.ask", () => {
     const envelope = {
       toolName: "research.search_web",

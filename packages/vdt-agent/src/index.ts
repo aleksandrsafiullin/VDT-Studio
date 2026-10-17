@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 export * from "./skill-questions";
 export * from "./skill-recipe";
+export * from "./skill-topology";
 
 export type VdtAgentStatus = "running" | "needs_user_input" | "waiting_approval" | "recovery_required" | "succeeded" | "failed" | "cancelled";
 

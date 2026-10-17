@@ -48,7 +48,7 @@ describe("Versions restore and undo", () => {
     expect(restored.projectRevision).toBe(11);
     expect(restored.project.graph).toEqual(productionVolumeProject.graph);
     expect(restored.project.versions.at(-1)?.projectSnapshot.graph).toEqual(current.graph);
-    expect(restored.project.versions.at(-1)?.name).toBe("Перед восстановлением «Перед импортом данных»");
+    expect(restored.project.versions.at(-1)?.name).toBe("Before restoring “Before data import”");
     expect(canUndoVersionRestore(restored)).toBe(true);
     expect(notifyAgent).toHaveBeenCalledWith(expect.objectContaining({ kind: "project_replaced" }));
     expect(restored.undoVersionRestore()).toBe(true);

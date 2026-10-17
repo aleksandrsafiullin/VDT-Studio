@@ -1048,7 +1048,7 @@ describe("vdt-store change-set workflow", () => {
     expect(state.pendingChangeSet).toBeUndefined();
     expect(state.changeSetSelection.size).toBe(0);
     expect(state.project.versions.length).toBe(initialVersionCount + 1);
-    expect(state.project.versions.at(-1)?.name).toBe("Перед добавлением показателей");
+    expect(state.project.versions.at(-1)?.name).toBe("Before adding drivers");
     expect(state.project.versions.at(-1)?.taskType).toBe("deepen_node");
     expect(state.project.graph.nodes.length).toBe(initialNodeCount + 1);
     expect(state.project.graph.nodes.map((node) => node.id)).toContain("equipment_failure_downtime");

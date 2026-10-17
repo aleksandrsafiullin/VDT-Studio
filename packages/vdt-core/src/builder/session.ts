@@ -275,7 +275,7 @@ export class VdtBuilderSession {
       nodeId: input.nodeId,
       patch: {
         formula: input.formula.trim(),
-        type: "calculated",
+        type: input.nodeId === this.project.rootNodeId ? "root_kpi" : "calculated",
         status: "ai_suggested"
       }
     });

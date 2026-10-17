@@ -63,6 +63,43 @@ describe("value provenance", () => {
       });
     }
   });
+
+  it("accepts a single numeric quantity quoted verbatim from the original user request", () => {
+    const { context, store, runId } = provenanceContext();
+    store.getState(runId).request.input.prompt = "У нас 10 самосвалов; откатка 2,5 км.";
+    expect(() => assertUserProvidedValueGrounded(context, "trucks", { value: 10, quote: "10 самосвалов" })).not.toThrow();
+    expect(() => assertUserProvidedValueGrounded(context, "distance", { value: 2.5, quote: "откатка 2,5 км" })).not.toThrow();
+    expect(() => assertUserProvidedValueGrounded(context, "trucks", { value: 10, quote: 'Из запроса: «10 самосвалов»' })).not.toThrow();
+    for (const evidence of [
+      { value: 11, quote: "10 самосвалов" },
+      { value: 10, quote: "10 trucks" },
+      { value: 10, quote: "У нас 10 самосвалов; откатка 2,5 км." },
+      { value: 10, quote: "10" },
+      { value: 10, quote: "15 экскаваторов" }
+    ]) expect(() => assertUserProvidedValueGrounded(context, "trucks", evidence)).toThrow(AgentToolError);
+  });
+
+  it("suggests only literal excerpts for the rejected number without interpreting its target", () => {
+    const { context, store, runId } = provenanceContext();
+    store.getState(runId).request.input.prompt = "Дано: 4 экскаватора, 10 самосвалов; откатка 2,5 км.";
+    store.appendChatMessage(runId, { role: "assistant", kind: "assistant_message", text: "4 trucks" });
+    try {
+      assertUserProvidedValueGrounded(context, "uninterpreted_target", { value: 4, quote: "Number of excavators: 4" });
+      throw new Error("Expected provenance rejection");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AgentToolError);
+      expect((error as Error).message).toContain('"4 экскаватора"');
+      expect((error as Error).message).not.toContain("4 trucks");
+      expect((error as Error).message).not.toContain("10 самосвалов");
+    }
+    expect(() => assertUserProvidedValueGrounded(context, "target", { value: 4, quote: 'Источник: "10 самосвалов"' })).toThrow(AgentToolError);
+  });
+
+  it("never treats an assistant message or a tool output as quoted user evidence", () => {
+    const { context, store, runId } = provenanceContext();
+    store.appendChatMessage(runId, { role: "assistant", kind: "assistant_message", text: "25 trucks" });
+    expect(() => assertUserProvidedValueGrounded(context, "trucks", { value: 25, quote: "25 trucks" })).toThrow(AgentToolError);
+  });
 });
 
 function provenanceContext(): { context: AgentToolContext; store: AgentRunStore; runId: string } {

@@ -16,10 +16,13 @@ import {
   type InProductModelAgentEngine
 } from "./agent-execution-contracts";
 import { agentQuestionSchema } from "./schemas/agent-event";
+import { schemaIssueSummary, type SchemaIssueSummaryInput } from "./schema-issue-summary";
 
 const safeId = z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const sha256 = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 export const MAX_MODEL_AGENT_SESSION_STATE_BYTES = 16 * 1024;
+export const MAX_MODEL_AGENT_REPEATED_TOOL_FAILURES = 3;
+const MAX_MODEL_AGENT_REPEATED_READS = 4;
 
 const assistantMessageSchema = z.object({
   messageId: safeId,
@@ -151,7 +154,7 @@ export class StructuredInProductModelAgentEngine implements InProductModelAgentE
       );
     }
     this.transport = options.transport;
-    this.maxTurns = options.maxTurns ?? 120;
+    this.maxTurns = options.maxTurns ?? 40;
     if (!Number.isSafeInteger(this.maxTurns) || this.maxTurns < 1 || this.maxTurns > 500) {
       throw new ModelAgentEngineError("MODEL_MAX_TURNS_INVALID", "maxTurns must be between 1 and 500.");
     }
@@ -281,6 +284,13 @@ class StructuredModelAgentSession implements AgentRunSession {
   private activeToolCall: AgentEngineCheckpoint["activeToolCall"] = null;
   private finishReceipt: AgentEngineCheckpoint["finishReceipt"] = null;
   private turnCount = 0;
+  private readonly toolFailures = new Map<string, {
+    toolName: string;
+    fingerprint: string;
+    attempts: number;
+  }>();
+  private toolRetryLimitError: Extract<AgentEngineEvent, { type: "transport_error" }> | null = null;
+  private readonly repeatedReads = new Map<string, { toolName: string; fingerprint: string; attempts: number }>();
   private firstUserFacingEvent = false;
   private paused = false;
   private terminal = false;
@@ -300,12 +310,28 @@ class StructuredModelAgentSession implements AgentRunSession {
     this.activeExchange = options.checkpoint?.activeExchange ?? null;
     this.activeToolCall = options.checkpoint?.activeToolCall ?? null;
     this.finishReceipt = options.checkpoint?.finishReceipt ?? null;
+    this.turnCount = options.checkpoint?.modelAgentLoopState?.turnCount ?? 0;
+    for (const failure of options.checkpoint?.modelAgentLoopState?.toolFailures ?? []) {
+      this.toolFailures.set(failure.fingerprint, { ...failure });
+      if (failure.attempts >= MAX_MODEL_AGENT_REPEATED_TOOL_FAILURES) {
+        this.toolRetryLimitError = repeatedToolFailureError(failure.toolName);
+      }
+    }
+    for (const read of options.checkpoint?.modelAgentLoopState?.repeatedReads ?? []) {
+      this.repeatedReads.set(read.fingerprint, { ...read });
+      if (read.attempts >= MAX_MODEL_AGENT_REPEATED_READS) this.toolRetryLimitError = repeatedReadError(read.toolName);
+    }
     this.queuedInputs.push(...structuredClone(options.checkpoint?.pendingHumanInputs ?? []));
   }
 
   async *events(): AsyncIterable<AgentEngineEvent> {
     while (!this.closed && !this.terminal && !this.paused) {
       if (this.host.signal.aborted) return;
+      if (this.toolRetryLimitError) {
+        this.terminal = true;
+        yield this.toolRetryLimitError;
+        return;
+      }
       const pendingDelta = this.pendingDelta;
       if (!pendingDelta) return;
       const queuedInputs = this.queuedInputs.splice(0);
@@ -409,6 +435,11 @@ class StructuredModelAgentSession implements AgentRunSession {
           results: execution.results
         };
         yield { type: "checkpoint_requested", reason: "question_tool_result" };
+        if (this.toolRetryLimitError) {
+          this.terminal = true;
+          yield this.toolRetryLimitError;
+          return;
+        }
         if (execution.pause === "waiting_user") {
           this.paused = true;
           yield {
@@ -472,6 +503,11 @@ class StructuredModelAgentSession implements AgentRunSession {
         type: "checkpoint_requested",
         reason: execution.reconciliation ? "manual_reconciliation" : "tool_result"
       };
+      if (this.toolRetryLimitError) {
+        this.terminal = true;
+        yield this.toolRetryLimitError;
+        return;
+      }
       if (execution.pause === "waiting_user") {
         const call = execution.pausedCall!;
         const questions = z.array(agentQuestionSchema.strict()).min(1).max(5).safeParse(call.args.questions);
@@ -522,6 +558,7 @@ class StructuredModelAgentSession implements AgentRunSession {
       return;
     }
     this.pendingDelta = { type: "human_input", input: structuredClone(input) };
+    this.repeatedReads.clear();
     this.paused = false;
   }
 
@@ -543,6 +580,11 @@ class StructuredModelAgentSession implements AgentRunSession {
       activeExchange: this.activeExchange,
       activeToolCall: this.activeToolCall,
       finishReceipt: this.finishReceipt,
+      modelAgentLoopState: {
+        turnCount: this.turnCount,
+        toolFailures: [...this.toolFailures.values()],
+        ...(this.repeatedReads.size ? { repeatedReads: [...this.repeatedReads.values()] } : {})
+      },
       ...(pendingHumanInputs.length > 0
         ? { pendingHumanInputs: structuredClone(pendingHumanInputs) }
         : {}),
@@ -583,6 +625,7 @@ class StructuredModelAgentSession implements AgentRunSession {
         state: result.status === "failed" ? "failed" : "completed"
       };
       results.push(result as unknown as Readonly<Record<string, unknown>>);
+      this.trackToolFailure(call, result);
       if (result.resultCode === "STALE_REVISION") {
         const payload = result.payload && typeof result.payload === "object"
           ? result.payload as Record<string, unknown>
@@ -617,6 +660,75 @@ class StructuredModelAgentSession implements AgentRunSession {
     this.activeToolCall = null;
     return { batchId, results, pause, pausedCall, reconciliation };
   }
+
+  private trackToolFailure(
+    call: AgentActionBatch["calls"][number],
+    result: Awaited<ReturnType<AgentEngineHost["executeTool"]>>
+  ): void {
+    if (result.status === "succeeded" || result.status === "replayed") {
+      if (result.status === "succeeded" && result.payload
+        && typeof result.payload === "object" && "projectChanged" in result.payload
+        && result.payload.projectChanged === true) {
+        // A committed repair can resolve a failure in a different tool (for
+        // example set_formula after a rejected finish). Read-only successes
+        // cannot manufacture this progress signal.
+        this.toolFailures.clear();
+        this.repeatedReads.clear();
+        return;
+      }
+      if (call.toolName !== "run.request_finish") {
+        const fingerprint = hashJson({ toolName: call.toolName, args: call.args });
+        const attempts = (this.repeatedReads.get(fingerprint)?.attempts ?? 0) + 1;
+        this.repeatedReads.set(fingerprint, { toolName: call.toolName, fingerprint, attempts });
+        if (attempts >= MAX_MODEL_AGENT_REPEATED_READS) this.toolRetryLimitError = repeatedReadError(call.toolName);
+      }
+      // A corrected call to this tool is progress. Unrelated reads, prose,
+      // changing call IDs, or new invalid values cannot reset its budget.
+      for (const [key, failure] of this.toolFailures) {
+        if (failure.toolName === call.toolName) this.toolFailures.delete(key);
+      }
+      return;
+    }
+    // Revision reconciliation can be caused by real concurrent user edits;
+    // the model's ordinary turn budget still bounds it.
+    if (result.resultCode === "STALE_REVISION") { this.repeatedReads.clear(); return; }
+    if (result.status !== "failed") return;
+    const payload = result.payload as { error?: { details?: unknown } } | null;
+    const issues = result.resultCode === "INVALID_TOOL_ARGS" ? payload?.error?.details : undefined;
+    const schemaIssues = Array.isArray(issues)
+      ? issues.filter((issue): issue is SchemaIssueSummaryInput =>
+          issue !== null && typeof issue === "object"
+          && Array.isArray(issue.path) && typeof issue.code === "string")
+      : [];
+    const fingerprint = hashJson({
+      toolName: call.toolName,
+      resultCode: result.resultCode,
+      // Changing notes, values or target IDs cannot renew the budget for the
+      // same rejected tool condition. A committed repair still clears it.
+      diagnostic: schemaIssues.length > 0 ? schemaIssueSummary(schemaIssues) : result.resultCode
+    });
+    const attempts = (this.toolFailures.get(fingerprint)?.attempts ?? 0) + 1;
+    this.toolFailures.set(fingerprint, { toolName: call.toolName, fingerprint, attempts });
+    if (attempts >= MAX_MODEL_AGENT_REPEATED_TOOL_FAILURES) {
+      this.toolRetryLimitError = repeatedToolFailureError(call.toolName);
+    }
+  }
+}
+
+function repeatedReadError(toolName: string): Extract<AgentEngineEvent, { type: "transport_error" }> {
+  return {
+    type: "transport_error", code: "MODEL_NO_PROGRESS", retryable: false,
+    message: `Stopped after ${MAX_MODEL_AGENT_REPEATED_READS} identical ${toolName} operations without a committed project change. The draft is saved.`
+  };
+}
+
+function repeatedToolFailureError(toolName: string): Extract<AgentEngineEvent, { type: "transport_error" }> {
+  return {
+    type: "transport_error",
+    code: "MODEL_TOOL_RETRY_LIMIT_EXCEEDED",
+    message: `Stopped after ${MAX_MODEL_AGENT_REPEATED_TOOL_FAILURES} rejected attempts for ${toolName}. The draft is saved. Correct the inputs and start a new run.`,
+    retryable: false
+  };
 }
 
 export class ModelAgentEngineError extends Error {

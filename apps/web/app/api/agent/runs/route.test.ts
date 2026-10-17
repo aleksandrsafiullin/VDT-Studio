@@ -333,14 +333,14 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     }
   });
 
-  it("runs a binding-only Model Agent through one Supervisor session and resumes it with deltas", async () => {
+  it.each(["openai_compatible", "ollama"] as const)("runs a binding-only %s Model Agent through one Supervisor session and resumes it with deltas", async (providerId) => {
     const toolCatalogHash = currentModelAgentToolCatalogHash();
     const capability: Extract<AgentCapabilityProfile, { executionProfile: "model_agent" }> = {
       schemaVersion: 1,
       executionProfile: "model_agent",
       engineId: "in-product-model-agent",
       engineAdapterId: "http-structured-turn-test-v1",
-      backendId: "openai_compatible",
+      backendId: providerId,
       protocolVersion: "structured-turn-v1",
       sessionStrategy: "structured_turn",
       toolCatalogHash,
@@ -400,25 +400,28 @@ describe("agent runs API", { timeout: 30_000 }, () => {
         }]
       }
     };
+    const turnResponse = (output: unknown) => providerId === "ollama"
+      ? Response.json({ done: true, message: { content: JSON.stringify(output) } })
+      : openAiStructuredResponse(output);
     const providerFetch = vi.fn()
-      .mockResolvedValueOnce(openAiStructuredResponse(firstTurn))
-      .mockResolvedValueOnce(openAiStructuredResponse(secondTurn))
-      .mockResolvedValueOnce(openAiStructuredResponse(firstTurn));
+      .mockResolvedValueOnce(turnResponse(firstTurn))
+      .mockResolvedValueOnce(turnResponse(secondTurn))
+      .mockResolvedValueOnce(turnResponse(firstTurn));
     vi.stubGlobal("fetch", providerFetch);
 
-    const bindingId = `structured_model_route_${Date.now()}`;
+    const bindingId = `structured_model_route_${providerId}_${Date.now()}`;
     const dispose = agentExecutionBindingRegistry.register({
       bindingId,
       enabled: true,
       modelId: "server-owned-model",
       capability,
       modelEngineAdapter: {
-        providerId: "openai_compatible",
-        providerConfig: {
+        providerId,
+        ...(providerId === "openai_compatible" ? { providerConfig: {
           baseUrl: "https://models.example.test/v1",
           apiKey: "server-secret-must-not-echo",
           model: "server-owned-model"
-        },
+        } } : {}),
         maxTokens: 4_000
       }
     });
@@ -439,7 +442,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       expect(waiting.executionSummary).toMatchObject({
         executionProfile: "model_agent",
         engineAdapterId: "http-structured-turn-test-v1",
-        backendId: "openai_compatible",
+        backendId: providerId,
         modelId: "server-owned-model",
         sessionEpoch: 1
       });
@@ -456,12 +459,26 @@ describe("agent runs API", { timeout: 30_000 }, () => {
 
       const firstProviderBody = JSON.parse(String((providerFetch.mock.calls[0]?.[1] as RequestInit).body)) as {
         messages: Array<{ role: string; content: string }>;
+        format?: unknown;
       };
       const firstPrompt = JSON.parse(firstProviderBody.messages.find((message) => message.role === "user")!.content) as {
         delta: { type: string; context?: { tools?: unknown[] } };
       };
       expect(firstPrompt.delta.type).toBe("initial_context");
       expect(firstPrompt.delta.context?.tools?.length).toBeGreaterThan(10);
+      if (providerId === "ollama") {
+        expect(firstPrompt.delta.context?.tools?.find((tool) => (tool as { name?: string }).name === "vdt.add_driver"))
+          .toMatchObject({ inputSchemaEnforcedBy: "native format" });
+        expect(firstPrompt.delta.context?.tools?.find((tool) => (tool as { name?: string }).name === "skill.read"))
+          .toMatchObject({ inputSchemaEnforcedBy: "native format" });
+        expect(firstPrompt.delta.context?.tools?.find((tool) => (tool as { name?: string }).name === "skill.compile_recipe"))
+          .toMatchObject({ inputSchemaEnforcedBy: "native format" });
+        expect(JSON.stringify(firstProviderBody.format)).toContain('"toolName":{"type":"string","const":"skill.search"}');
+        expect(JSON.stringify(firstProviderBody.format)).toContain('"maxSkills":{"type":"integer","minimum":3,"maximum":6}');
+        expect(JSON.stringify(firstProviderBody.format)).not.toContain('"toolName":{"type":"string","const":"vdt.add_driver"}');
+        expect(firstPrompt.delta.context?.tools?.find((tool) => (tool as { name?: string }).name === "vdt.layout"))
+          .toMatchObject({ inputSchemaAvailableVia: "tools.describe" });
+      }
 
       const answerResponse = await postMessage(jsonRequest(
         `http://localhost:3000/api/agent/runs/${body.runId}/messages`,
@@ -476,7 +493,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       const secondProviderBody = JSON.parse(String((providerFetch.mock.calls[1]?.[1] as RequestInit).body)) as {
         messages: Array<{ role: string; content: string }>;
       };
-      const secondPrompt = JSON.parse(secondProviderBody.messages.find((message) => message.role === "user")!.content) as {
+      const secondPrompt = JSON.parse(secondProviderBody.messages.filter((message) => message.role === "user").at(-1)!.content) as {
         delta: { type: string; context?: unknown };
         sessionContinuation: {
           schemaVersion: number;
@@ -559,6 +576,90 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       await waitForSupervisorReleased(body.runId!);
       expect(isStructuredModelAgentRunActive(body.runId!)).toBe(false);
       expect(providerFetch).toHaveBeenCalledTimes(3);
+    } finally {
+      dispose();
+    }
+  });
+
+  it.each(["repeated_failure", "correct_single_driver", "turn_budget"] as const)("bounds an Ollama session and preserves its draft: %s", async (scenario) => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Ore hauled", rootKpi: "Ore hauled", unit: "t" });
+    const rootNodeId = builder.getProject().rootNodeId;
+    builder.addDriver({ parentNodeId: rootNodeId, nodeId: "retained_input", name: "Retained input", type: "input", baselineValue: 42, unit: "t" });
+    const initialProject = builder.getProject();
+    const toolCatalogHash = currentModelAgentToolCatalogHash();
+    const capability: Extract<AgentCapabilityProfile, { executionProfile: "model_agent" }> = {
+      schemaVersion: 1, executionProfile: "model_agent", engineId: "in-product-model-agent",
+      engineAdapterId: "http-structured-loop-test-v1", backendId: "ollama",
+      protocolVersion: "structured-turn-v1", sessionStrategy: "structured_turn", toolCatalogHash,
+      toolIsolation: "permission_only",
+      qualification: { status: "unverified", platform: { os: "test", arch: "test", runtimeVersion: "node-test" }, testedAt: null, evidenceHash: null },
+      supportsNativeSession: false, supportsResume: false, supportsStructuredEvents: true,
+      supportsToolBridge: true, supportsQuestions: true, supportsCancellation: true,
+      supportsUsageMetrics: false, cli: null
+    };
+    let turnNumber = 0;
+    const providerFetch = vi.fn(async (_url: unknown, init: RequestInit) => {
+      const index = turnNumber++;
+      const driver = { parentNodeId: rootNodeId, nodeId: "payload", name: "Payload", type: "input", unit: "t", baselineValue: 50 };
+      const shouldRepair = scenario === "correct_single_driver" && index === 1;
+      if (shouldRepair) {
+        const requestBody = JSON.parse(String(init.body));
+        const delta = JSON.parse(requestBody.messages.filter((message: { role: string }) => message.role === "user").at(-1).content).delta;
+        expect(delta.results[0].toolName).toBe("tools.describe");
+        expect(delta.results[0].status).toBe("succeeded");
+        expect(delta.results[0].payload.output.tools[1].inputJsonSchema.properties.drivers.minItems).toBe(2);
+        expect(delta.results.at(-1).payload.feedback.suggestedNextTools).toEqual(["vdt.add_driver"]);
+        expect(delta.results.at(-1).payload.error.message).toContain("expected>=2");
+      }
+      const action = scenario === "correct_single_driver" && index === 2
+        ? { type: "question", messageId: "question-loop", questionSetId: "questions-loop", questions: [{
+            id: "next", question: "Continue with the next layer?", reason: "The single driver was added.", required: true, expectedAnswerType: "text"
+          }] }
+        : { type: "action_batch", batch: { calls: [
+          ...(index === 0 ? [{ externalCallId: "describe-loop-tools", toolName: "tools.describe", args: { toolNames: ["vdt.add_driver", "vdt.add_drivers_batch"] } }] : []),
+          {
+            externalCallId: `loop-call-${index}`,
+            toolName: shouldRepair ? "vdt.add_driver" : "vdt.add_drivers_batch",
+            args: shouldRepair ? driver : { drivers: [{ ...driver, name: `Payload attempt ${index}` }] }
+          }] } };
+      return Response.json({ done: true, message: { content: JSON.stringify({
+        turnId: `loop-turn-${index}`, sessionState: "Goal: add the payload driver. Correct the rejected batch before continuing.",
+        assistantMessage: { messageId: `loop-message-${index}`, text: "I will add the payload driver." }, action
+      }) } });
+    });
+    vi.stubGlobal("fetch", providerFetch);
+    const bindingId = `structured_loop_${scenario}_${Date.now()}`;
+    const dispose = agentExecutionBindingRegistry.register({
+      bindingId, enabled: true, modelId: "server-owned-model", capability,
+      modelEngineAdapter: { providerId: "ollama" }
+    });
+    try {
+      const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+        mode: "continue_project",
+        input: { rootKpi: "Ore hauled", unit: "t", prompt: "Add a Payload input driver of 50 t.", project: initialProject },
+        options: { autoApplyPatches: true, ...(scenario === "turn_budget" ? { maxSteps: 2 } : {}) },
+        executionBindingId: bindingId
+      }));
+      const body = await readJson(response);
+      expect(response.status).toBe(200);
+      const snapshot = await waitForRunSnapshot(body.runId!, (snapshot) => scenario === "correct_single_driver"
+        ? snapshot.status === "needs_user_input" && snapshot.pendingQuestions?.[0]?.id === "next"
+        : snapshot.status === "failed");
+      const state = agentRuntime.store.getState(body.runId!);
+      expect(snapshot.draftProject?.graph.nodes.find((node) => node.id === "retained_input")?.baselineValue).toBe(42);
+      expect(providerFetch).toHaveBeenCalledTimes(scenario === "turn_budget" ? 2 : 3);
+      expect(state.supervisorPersistenceV2?.finishReceipt).toBeNull();
+      if (scenario === "correct_single_driver") {
+        expect(snapshot.draftProject?.graph.nodes.find((node) => node.id === "payload")?.baselineValue).toBe(50);
+        await cancelRun(new Request(`http://localhost:3000/api/agent/runs/${body.runId}/cancel`, { method: "POST" }), {
+          params: Promise.resolve({ runId: body.runId! })
+        });
+      } else {
+        expect(state.error?.code).toBe(scenario === "turn_budget" ? "MAX_MODEL_TURNS_EXCEEDED" : "MODEL_TOOL_RETRY_LIMIT_EXCEEDED");
+        expect(snapshot.draftProject?.graph.nodes).toHaveLength(initialProject.graph.nodes.length);
+      }
+      await waitForSupervisorReleased(body.runId!);
     } finally {
       dispose();
     }

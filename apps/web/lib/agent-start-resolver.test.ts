@@ -118,7 +118,7 @@ describe("agent-start-resolver", () => {
     const resolved = resolveExecutionSettings(localSettings);
     const bindings = bindingsFixture({ bindings: [], defaultBindingId: null });
     expect(buildAgentPublicStartRequest(commonRequest, localSettings, bindings, { ...resolved, explicitBindingId: "explicit-server-binding" })).toEqual({ ...commonRequest, executionBindingId: "explicit-server-binding" });
-    expect(() => buildAgentPublicStartRequest(commonRequest, localSettings, bindings, resolved)).toThrow("Settings and model discovery do not create an agent binding");
+    expect(() => buildAgentPublicStartRequest(commonRequest, localSettings, bindings, resolved)).toThrow("install or load the model");
     expect(() => buildAgentPublicStartRequest(commonRequest, localSettings, bindings, resolved)).not.toThrow("CLI is installed");
   });
 

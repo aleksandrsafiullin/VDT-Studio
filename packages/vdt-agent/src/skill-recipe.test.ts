@@ -17,6 +17,7 @@ describe("skill recipes", () => {
       "mining.drill_and_blast",
       "mining.excavation",
       "mining.haulage_truck_cycle",
+      "mining.load_and_haul",
       "mining.material_allocation_ore_waste",
       "mining.mine_production_system",
       "mining.production_volume",
@@ -26,7 +27,8 @@ describe("skill recipes", () => {
     expect(recipes.every((recipe) => recipe.requiredInputs.length > 0)).toBe(true);
     expect(recipes.every((recipe) => recipe.initialDrivers.length > 0)).toBe(true);
     expect(recipes.every((recipe) => recipe.recipeQuality !== "missing")).toBe(true);
-    expect(recipes.every((recipe) => recipe.recipeSource === "template")).toBe(true);
+    expect(recipes.filter((recipe) => recipe.skillId !== "mining.load_and_haul").every((recipe) => recipe.recipeSource === "template")).toBe(true);
+    expect(recipes.find((recipe) => recipe.skillId === "mining.load_and_haul")?.recipeSource).toBe("markdown_extracted");
     expect(recipes.find((recipe) => recipe.skillId === "mining.mine_production_system")?.formulaTemplates).toEqual([]);
     expect(recipes.find((recipe) => recipe.skillId === "mining.mine_production_system")?.warnings.join(" ")).toContain("min(stage_readiness_tonnes, downstream_capacity_tonnes)");
   });

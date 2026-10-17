@@ -207,7 +207,7 @@ const excavationWriteInputValueTool: AgentTool = {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
     }
     if (input.valueStatus === "user_provided_value") {
-      assertUserProvidedValueGrounded(context, input.nodeId);
+      assertUserProvidedValueGrounded(context, input.nodeId, { value: input.value, quote: input.source?.note });
     }
     const patch: VdtNodePatch = {
       status: input.valueStatus === "unknown" ? "needs_data" : input.valueStatus === "default_assumption" ? "assumption" : "accepted",

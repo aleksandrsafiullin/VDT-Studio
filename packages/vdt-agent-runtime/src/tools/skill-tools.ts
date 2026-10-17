@@ -4,6 +4,7 @@ import {
   compileSkillRecipe,
   loadDefaultSkillLibrary,
   readSkillExcerpts,
+  readExecutableSkillTopology,
   retrieveSkills
 } from "@vdt-studio/vdt-agent";
 import { extractFormulaReferences, stableSnakeId, type VdtChangeSet, type VdtProject } from "@vdt-studio/vdt-core";
@@ -12,9 +13,10 @@ import { proposeAndMaybeApplyMutation } from "../mutation-pipeline";
 import { AgentToolError, type AgentTool } from "../tool-registry";
 import { summarizeValidation } from "../summaries";
 import { cloneBuilder, combineChangeSets, requireChangeSet } from "./builder-mutation-utils";
+import { skillSeedTopologyTool } from "./skill-topology-tool";
 
 export function createSkillTools(): AgentTool[] {
-  return [skillListTool, skillSearchTool, skillReadTool, skillCompileRecipeTool, skillSeedDraftFromRecipeTool];
+  return [skillListTool, skillSearchTool, skillReadTool, skillCompileRecipeTool, skillSeedDraftFromRecipeTool, skillSeedTopologyTool];
 }
 
 const skillListTool: AgentTool = {
@@ -99,6 +101,7 @@ const skillReadTool: AgentTool = {
     const [excerpt] = readSkillExcerpts([skill], input.maxChars);
     if (!excerpt) throw new AgentToolError("SKILL_READ_FAILED", `Skill "${input.skillId}" could not be read.`);
     const recipe = compileSkillRecipe(skill);
+    const topology = readExecutableSkillTopology(skill);
     context.emit({
       type: "skill_read",
       phase: "reading_skills",
@@ -120,6 +123,10 @@ const skillReadTool: AgentTool = {
       runtimePolicy: skill.frontmatter.runtimePolicy ?? {},
       recipeQuality: recipe.recipeQuality,
       recipeSource: recipe.recipeSource,
+      ...(topology ? { recommendedTools: ["skill.seed_topology"], executableTopology: {
+        schemaVersion: topology.schemaVersion, nodeCount: topology.nodes.length, rootUnit: topology.rootUnit, timePeriod: topology.timePeriod,
+        defaultInputs: topology.nodes.flatMap((node) => node.illustrativeDefault ? [{ nodeId: node.id, unit: node.unit, ...node.illustrativeDefault }] : [])
+      } } : {}),
       formulaTemplates: recipe.formulaTemplates.map((formula) => `${formula.targetNodeId} = ${formula.formula}`)
     };
   }

@@ -45,8 +45,9 @@ import {
   type AgentExecutionBindingDefinition,
   type LegacyModelAgentExecutionBindingDefinition
 } from "./execution-bindings";
-import { TARGET_MODEL_AGENT_TOOLS, modelAgentToolCatalogHash } from "./model-agent-tool-catalog";
+import { TARGET_MODEL_AGENT_TOOLS, modelAgentToolCatalogHash, registerModelAgentSchemaTool } from "./model-agent-tool-catalog";
 import { cliSessionModelBindingId } from "./cli-session-model-binding";
+import { LocalModelAgentBindingRegistrar, localModelAgentBindingsEnabled } from "./local-model-bindings";
 
 const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtAgentRuntime?: ReturnType<typeof createVdtAgentRuntime>;
@@ -89,6 +90,8 @@ export const agentRuntime =
     tools: createAgentToolRegistryFromEnv()
   });
 
+registerModelAgentSchemaTool(agentRuntime.tools);
+
 const cliSessionCanaryEnabled = isCliSessionCanaryEnabled();
 
 export const agentExecutionBindingRegistry =
@@ -99,6 +102,10 @@ export const agentExecutionBindingRegistry =
   });
 
 const externalAgentEngines = runtimeGlobal.__vdtExternalAgentEngines ?? new Map<string, AgentExecutionEngine>();
+const localModelBindingRegistrar = new LocalModelAgentBindingRegistrar(
+  agentExecutionBindingRegistry,
+  modelAgentToolCatalogHash(agentRuntime.tools)
+);
 
 ensureDefaultModelAgentBinding(agentExecutionBindingRegistry);
 
@@ -115,6 +122,7 @@ export const CODEX_SESSION_EXECUTION_BINDING_ID = "codex_session_canary";
 export const CLAUDE_SESSION_EXECUTION_BINDING_ID = "claude_session_canary";
 
 export async function ensureServerManagedExecutionBindings(): Promise<void> {
+  if (localModelAgentBindingsEnabled()) await localModelBindingRegistrar.refresh();
   if (!cliSessionCanaryEnabled) return;
   if (!cliSessionRegistrationProbeNeeded()) return;
   const existing = runtimeGlobal.__vdtCursorSessionBindingProbe;

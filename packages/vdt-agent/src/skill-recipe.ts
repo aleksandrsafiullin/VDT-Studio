@@ -1,6 +1,7 @@
 import type { VdtEdgeRelation, VdtNodeType } from "@vdt-studio/vdt-core";
 import type { SkillExcerpt, VdtSkill } from "./index";
 import { buildCriticalQuestions, type VdtAgentQuestion } from "./skill-questions";
+import { readExecutableSkillTopology } from "./skill-topology";
 
 export interface DriverTemplate {
   id: string;
@@ -370,6 +371,15 @@ export function compileSkillRecipe(skill: VdtSkill | SkillExcerpt): VdtSkillReci
   const template = RECIPE_TEMPLATES[skill.id];
   const questions = buildCriticalQuestions({ rootKpi: skill.title, industry: skill.domain }, [{ id: skill.id }]);
   const markdown = "raw" in skill ? skill.body : skill.excerpt;
+  const topology = readExecutableSkillTopology({ body: markdown });
+  if (topology) return {
+    skillId: skill.id, recipeQuality: "complete", recipeSource: "markdown_extracted", questions,
+    requiredInputs: topology.nodes.filter((node) => node.type === "input").map((node) => node.id),
+    initialDrivers: topology.nodes.filter((node) => node.parentId === "$root").map(({ id, name, type, unit, formula }) => ({ id, name, type, unit, formula })),
+    formulaTemplates: [{ targetNodeId: "root", formula: topology.rootFormula },
+      ...topology.nodes.flatMap((node) => node.formula ? [{ targetNodeId: node.id, formula: node.formula }] : [])],
+    deepenRules: [], warnings: [...topology.notes]
+  };
   if (!template) {
     return compileRecipeFromMarkdown(skill, markdown, questions);
   }

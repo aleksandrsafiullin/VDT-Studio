@@ -46,6 +46,7 @@ export * from "./prompts/executive-summary";
 export * from "./fixtures/mock";
 export * from "./providers/mock-provider";
 export * from "./providers/openai-compatible-provider";
+export * from "./providers/ollama-provider";
 export * from "./providers/anthropic-provider";
 export * from "./providers/azure-openai-provider";
 export * from "./providers/gemini-provider";

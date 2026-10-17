@@ -52,7 +52,7 @@ interface ModelAgentExecutionBindingDefinitionBase {
  * CLI runner are deliberately excluded from this adapter: they belong to the
  * external profile or to the explicit legacy compatibility route. */
 export interface StructuredModelAgentEngineAdapterDefinition {
-    readonly providerId: "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "mock";
+    readonly providerId: "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "mock" | "ollama" | "lm_studio" | "vllm";
     readonly providerConfig?: Readonly<Record<string, unknown>> | undefined;
     readonly maxTokens?: number | undefined;
     readonly temperature?: number | undefined;
@@ -393,6 +393,12 @@ function normalizeDefinition(
       );
     }
     const { maxTokens, temperature, providerConfig } = definition.modelEngineAdapter;
+    if (["ollama", "lm_studio", "vllm"].includes(definition.modelEngineAdapter.providerId) && providerConfig) {
+      throw new AgentExecutionBindingError(
+        "BINDING_INVALID",
+        "Local model endpoints are owned by the server manifest and cannot be overridden."
+      );
+    }
     if (
       maxTokens !== undefined
       && (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 1_000_000)
@@ -455,7 +461,7 @@ function resolveDefaultModelProvider(
 ): StructuredModelProviderId {
   if (testRuntime && !env.VDT_MODEL_AGENT_PROVIDER) return "mock";
   const providerId = env.VDT_MODEL_AGENT_PROVIDER?.trim() || "openai_compatible";
-  if (["openai_compatible", "anthropic", "azure_openai", "gemini"].includes(providerId)) {
+  if (["openai_compatible", "anthropic", "azure_openai", "gemini", "ollama", "lm_studio", "vllm"].includes(providerId)) {
     return providerId as StructuredModelProviderId;
   }
   if (providerId === "mock" && testRuntime) return providerId;
@@ -490,6 +496,8 @@ function resolveDefaultModel(
     return deployment;
   }
   if (providerId === "gemini") return env.GEMINI_MODEL?.trim() || "gemini-2.5-pro";
+  if (providerId === "ollama") return "qwen3";
+  if (providerId === "lm_studio" || providerId === "vllm") return "local-model";
   return env.OPENAI_COMPATIBLE_MODEL?.trim() || "gpt-4.1-mini";
 }
 

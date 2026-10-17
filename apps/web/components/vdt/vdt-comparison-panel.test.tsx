@@ -11,8 +11,8 @@ describe("Versions comparison", () => {
     current.graph.nodes.find((node) => node.id === "unplanned_downtime")!.baselineValue = 60;
     const html = renderToStaticMarkup(<VdtComparisonPanel before={before} current={current} />);
     expect(html).toContain('data-testid="version-changes-table"');
-    expect(html).toContain("Было");
-    expect(html).toContain("Стало");
+    expect(html).toContain("Before");
+    expect(html).toContain("After");
     expect(html).toContain("Unplanned Downtime");
     expect(html).toContain("60 hours/month");
     expect(html).not.toContain("unplanned_downtime");
@@ -23,8 +23,8 @@ describe("Versions comparison", () => {
     const before = cloneProject(productionVolumeProject);
     const current = { ...before, scenarios: [] };
     const html = renderToStaticMarkup(<VdtComparisonPanel before={before} current={current} />);
-    expect(html).toContain("В показателях нет изменений.");
-    expect(html).toContain("Изменены сценарии");
+    expect(html).toContain("No KPI changes.");
+    expect(html).toContain("Scenarios and their settings");
   });
 
   it("shows both formula versions using KPI names and flags incomparable roots", () => {
@@ -32,8 +32,8 @@ describe("Versions comparison", () => {
     const current = cloneProject(before);
     current.graph.nodes.find((node) => node.id === current.rootNodeId)!.formula = "effective_working_time + average_productivity";
     const html = renderToStaticMarkup(<VdtComparisonPanel before={before} current={current} />);
-    expect(html).toContain("Формула:");
-    expect(html).toContain("Прямое сравнение результата ограничено");
+    expect(html).toContain("Formula:");
+    expect(html).toContain("Results may not be directly comparable");
     expect(html).not.toContain("effective_working_time");
     expect(readableFormula(before, before.rootNodeId)).toContain("Working time");
   });
@@ -47,13 +47,20 @@ describe("Versions comparison", () => {
     const changes = versionNodeChanges(before, current);
     expect(changes.find((row) => row.nodeId === "new_node")?.kind).toBe("added");
     expect(changes.find((row) => row.nodeId === "unplanned_downtime")?.kind).toBe("removed");
-    expect(changes.find((row) => row.nodeId === "planned_downtime")?.details).toContain('Название: «Planned Downtime» → «Planned stops»');
+    expect(changes.find((row) => row.nodeId === "planned_downtime")?.details).toContain('Name: “Planned Downtime” → “Planned stops”');
   });
 
   it("translates legacy automatic labels and preserves custom names", () => {
     const saved = createVersionSnapshot(cloneProject(productionVolumeProject), { name: "Before analyze_raw_dataset apply" });
     const version = saved.versions[0]!;
-    expect(versionDisplayName(version)).toBe("Перед импортом данных");
+    expect(versionDisplayName(version)).toBe("Before data import");
+    expect(versionDisplayName({ ...version, name: "Перед импортом данных", taskType: "analyze_raw_dataset" })).toBe("Before data import");
+    expect(versionDisplayName({
+      ...version,
+      name: "Перед восстановлением «Перед импортом данных»",
+      description: "Состояние до восстановления. Выберите эту версию, чтобы вернуться к нему."
+    })).toBe("Before restoring “Before data import”");
     expect(versionDisplayName({ ...version, name: "Моя модель" })).toBe("Моя модель");
+    expect(versionDisplayName({ ...version, name: "Перед импортом данных" })).toBe("Перед импортом данных");
   });
 });

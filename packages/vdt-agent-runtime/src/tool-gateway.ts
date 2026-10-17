@@ -570,7 +570,7 @@ export class VdtToolGateway {
   ): Promise<VdtGatewayToolResult> {
     if (existing.callHash !== callHash || existing.toolName !== call.toolName) {
       return failedResult(call.externalCallId, call.toolName, "CALL_ID_REUSE", {
-        message: "externalCallId was already reserved for a different canonical tool call."
+        message: "externalCallId was already reserved for a different canonical tool call. Use a new externalCallId when correcting toolName or args; reuse an ID only for exact replay of the same operation."
       });
     }
     if (existing.result) {
