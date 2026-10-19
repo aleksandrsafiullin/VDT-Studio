@@ -21,6 +21,39 @@ function names(schema: unknown) {
 }
 
 describe("native local tool argument constraints", () => {
+  it("grounds dataset, table and column identities only in successful source observations", () => {
+    const context = new LocalModelOutputSchema();
+    const query = { type: "object", properties: {
+      datasetId: { type: "string" }, tableId: { type: "string" },
+      groupBy: { type: "array", items: { type: "string" } },
+      metrics: { type: "array", items: { type: "object", properties: { column: { type: "string" }, denominatorColumn: { type: "string" } } } },
+      filters: { type: "array", items: { type: "object", properties: { column: { type: "string" } } } }
+    } };
+    const prompt = JSON.stringify({ delta: { type: "initial_context", context: { tools:
+      ["data.list_sources", "data.inspect", "data.read_rows", "data.aggregate", "data.write_inputs"].map((name) => ({ name, inputJsonSchema: query }))
+    } } });
+    const delta = (toolName: string, output: unknown, status = "succeeded") => JSON.stringify({ delta: { type: "tool_results", results: [{ toolName, status, payload: { output } }] } });
+    expect(names(context.forPrompt(envelope, prompt))).toEqual(["data.list_sources"]);
+    const listed = { sources: [{ datasetId: "dataset_real" }] };
+    expect(names(context.forPrompt(envelope, delta("data.list_sources", listed, "failed")))).toEqual(["data.list_sources"]);
+    const schema = context.forPrompt(envelope, delta("data.list_sources", listed));
+    const args = (value: unknown, name: string) => allCalls(value).flatMap((batch) => batch.items.anyOf).find((tool) => tool.properties.toolName.const === name)!.properties.args;
+    expect(names(schema)).toEqual(["data.inspect"]);
+    expect(args(schema, "data.inspect")).toMatchObject({ properties: { datasetId: { const: "dataset_real" } } });
+    const inspected = { datasetId: "dataset_real", tables: [{ tableId: "table_real", columns: ["Distance", "Minutes"] }] };
+    expect(names(context.forPrompt(envelope, delta("data.inspect", inspected, "failed")))).not.toContain("data.aggregate");
+    const grounded = context.forPrompt(envelope, delta("data.inspect", inspected));
+    expect(args(grounded, "data.aggregate")).toMatchObject({ properties: {
+      datasetId: { const: "dataset_real" }, tableId: { const: "table_real" },
+      groupBy: { items: { enum: ["Distance", "Minutes"] } },
+      metrics: { items: { properties: { column: { enum: ["Distance", "Minutes"] }, denominatorColumn: { enum: ["Distance", "Minutes"] } } } },
+      filters: { items: { properties: { column: { enum: ["Distance", "Minutes"] } } } }
+    } });
+    expect(names(context.forPrompt(envelope, delta("data.inspect", inspected), { unfilledInputCount: 0 }))).not.toContain("data.write_inputs");
+    const other = new LocalModelOutputSchema();
+    expect(names(other.forPrompt(envelope, prompt))).toEqual(["data.list_sources"]);
+  });
+
   it("offers complete topology seeding only after a confirmed read and lets the model select offered defaults", () => {
     const context = new LocalModelOutputSchema();
     const prompt = JSON.stringify({ delta: { type: "initial_context", context: { tools: [{ name: "skill.seed_topology", inputJsonSchema: {

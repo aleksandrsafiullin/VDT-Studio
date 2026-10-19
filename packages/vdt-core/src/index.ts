@@ -11,6 +11,7 @@ export * from "./formula/evaluator";
 export * from "./formula/edge-relation";
 export * from "./formula/calculate";
 export * from "./graph/validation";
+export * from "./graph/decomposition";
 export * from "./graph/layout";
 export * from "./scenario/scenario";
 export * from "./scenario/sensitivity";

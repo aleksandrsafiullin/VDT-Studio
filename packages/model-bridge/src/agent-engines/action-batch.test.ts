@@ -22,6 +22,13 @@ const call = (externalCallId: string, toolName = "vdt.add_driver", args: Record<
 });
 
 describe("parseCheckpointActionBatch", () => {
+  it("admits only the exact registered tools.describe introspection without opening the tools namespace",()=>{
+    expect(parseCheckpointActionBatch({calls:[call("describe-1","tools.describe",{toolNames:["data.inspect"]})]},{allowedToolNames:["tools.describe"]}).calls[0]!.toolName).toBe("tools.describe");
+    for(const name of ["tools.describe","tools.exec","tools.describe.extra"]){
+      const allowed=name==="tools.describe"?[]:[name];
+      expect(()=>parseCheckpointActionBatch({calls:[call("forbidden",name)]},{allowedToolNames:allowed})).toThrow();
+    }
+  });
   it("accepts and deeply freezes one to six allowlisted calls", () => {
     const parsed = parseCheckpointActionBatch({
       calls: Array.from({ length: ACTION_BATCH_MAX_CALLS }, (_, index) =>

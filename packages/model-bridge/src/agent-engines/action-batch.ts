@@ -282,7 +282,8 @@ export function parseCheckpointActionBatch(
     if (typeof candidate.toolName !== "string") {
       throw new ActionBatchContractError("ACTION_BATCH_INVALID", `${path}.toolName is invalid.`, `${path}.toolName`);
     }
-    if (isSecurityBoundaryToolName(candidate.toolName)) {
+    if (isSecurityBoundaryToolName(candidate.toolName)
+      && !(candidate.toolName === "tools.describe" && allowedToolNames.has("tools.describe"))) {
       throw new ActionBatchContractError(
         "SECURITY_BOUNDARY_BREACH",
         `Tool ${candidate.toolName} attempted a forbidden execution or foreign-tool capability.`,

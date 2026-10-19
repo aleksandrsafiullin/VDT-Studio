@@ -8,7 +8,6 @@ import {
   createDefaultToolRegistry,
   createVdtAgentRuntime,
   researchProviderStatus,
-  resolveResearchProviderFromEnv,
   type AgentDecisionProvider,
   type AgentExecutionEngine,
   type AgentExecutionSummaryV2,
@@ -48,6 +47,8 @@ import {
 import { TARGET_MODEL_AGENT_TOOLS, modelAgentToolCatalogHash, registerModelAgentSchemaTool } from "./model-agent-tool-catalog";
 import { cliSessionModelBindingId } from "./cli-session-model-binding";
 import { LocalModelAgentBindingRegistrar, localModelAgentBindingsEnabled } from "./local-model-bindings";
+import { retainedDatasetProvider } from "./dataset-provider";
+import { resolveSessionAwareResearch } from "./session-research";
 
 const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtAgentRuntime?: ReturnType<typeof createVdtAgentRuntime>;
@@ -261,15 +262,15 @@ export function createAgentToolRegistryFromEnv(
   env: ResearchProviderEnv = process.env,
   options: ResearchProviderResolverOptions = {}
 ): ToolRegistry {
-  const researchProvider = resolveResearchProviderFromEnv(env, options);
-  return createDefaultToolRegistry({ researchProvider });
+  const researchProvider = resolveSessionAwareResearch(env, options);
+  return createDefaultToolRegistry({ researchProvider, datasetProvider:retainedDatasetProvider });
 }
 
 export function resolveAgentResearchStatusFromEnv(
   env: ResearchProviderEnv = process.env,
   options: ResearchProviderResolverOptions = {}
 ): ResearchProviderStatus {
-  return researchProviderStatus(resolveResearchProviderFromEnv(env, options));
+  return researchProviderStatus(resolveSessionAwareResearch(env, options));
 }
 
 export function createAgentRunStore(env?: StorageWriteEnvironment): AgentRunStore {

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { VdtBuilderSession } from "@vdt-studio/vdt-core";
+import {plannedAdditionErrors,type VdtBuilderSession} from "@vdt-studio/vdt-core";
 import { persistFailureFields } from "./persist-failure-log";
 import { schemaIssueSummary } from "./schema-issue-summary";
 import type { AgentRunStore } from "./run-store";
@@ -22,6 +22,8 @@ export interface AgentToolContext {
   getRun: () => VdtAgentRunSnapshot;
   updateRun: (patch: Partial<Omit<VdtAgentRunState, "runId" | "events" | "createdAt" | "seq" | "abortController">>) => void;
   builder?: VdtBuilderSession | undefined;
+  /** Trusted Supervisor policy; never accepted from browser tool arguments. */
+  requireDecompositionPlan?: boolean | undefined;
   signal: AbortSignal;
 }
 
@@ -145,6 +147,10 @@ export class ToolRegistry {
 
     try {
       const input = tool.inputSchema.parse(args);
+      if(context.requireDecompositionPlan&&["skill.seed_topology","skill.seed_draft_from_recipe","excavation.seed_topology","vdt.instantiate_subtree"].includes(name)){
+        const errors=context.builder?plannedAdditionErrors(context.builder.getProject(),[]):["No working project."];
+        if(errors.length)throw new AgentToolError("DECOMPOSITION_PLAN_REQUIRED",errors.slice(0,8).join(" "));
+      }
       const output = await tool.run(context, input);
       const parsedOutput = tool.outputSchema.parse(output);
       const afterRevision = context.builder?.getRevision();

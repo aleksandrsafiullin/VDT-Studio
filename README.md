@@ -1,5 +1,14 @@
 # VDT Studio
 
+### Planned factor hierarchy (experimental)
+
+New full-tree Supervisor runs record an agent-authored decomposition plan before adding factors, build complete factor layers in order, and verify the plan against visual parents and formula dependencies before finishing. Agents can atomically reparent an existing branch while preserving its values and source lineage. Context metrics and cross-branch shared inputs must be declared explicitly. This structural check does not certify business correctness; see [readiness](docs/PRODUCTION_READINESS.md).
+
+### Retained files in session agents (experimental)
+
+Session agents now have project-scoped `data.*` tools to discover retained uploads, inspect schemas, page definitions and deterministically aggregate complete tables. Agents can bind query results to existing empty inputs through the ordinary mutation Gateway; formulas remain agent-authored. This is a local experiment, not general production-qualified data ingestion. Search can use Brave/Tavily or an explicitly enabled, one-hour in-memory OpenAI research session using the existing configured key. Live task outcomes and limitations must be assessed per model.
+
+
 VDT Studio is an AI-first, local-first workspace for building editable Value Driver Trees and calculable KPI models. AI proposes structure, users own business logic and approval, and deterministic code owns calculation and validation.
 
 > Current release: `0.1.0-alpha.0`. The repository is suitable for development and controlled alpha evaluation, not production KPI decisions. See [Production readiness](docs/PRODUCTION_READINESS.md).
@@ -145,9 +154,9 @@ The legacy build runtime no longer invokes a separate `orchestrator_first_respon
 
 ## Model Configuration
 
-The deterministic mock provider is the offline reference for tests. API/BYOK providers are configured in `Settings -> AI`. Session API keys are excluded from persisted Zustand state and project exports.
+The deterministic mock provider is the offline reference for tests. API/BYOK providers are configured in `Settings -> AI`. API keys are saved encrypted on this device across sessions until replaced or removed; plaintext keys remain excluded from Zustand preferences and project exports. See [the storage and security boundary](docs/adr/ADR-007-encrypted-browser-api-keys.md).
 
-Model availability is not maintained as a static product catalog. Subscription pickers use the installed CLI's model-list response when the adapter supports one. API-key pickers load the current OpenAI-compatible, Anthropic or Gemini response through the server using the session-only key. Failed or unsupported discovery is labeled explicitly and falls back to manual model entry. Azure OpenAI continues to require the deployed name because a base-model catalog does not prove that a deployment exists.
+Model availability is not maintained as a static product catalog. Subscription pickers use the installed CLI's model-list response when the adapter supports one. API-key pickers load the current OpenAI-compatible, Anthropic or Gemini response through the server using the current in-memory key, restored from encrypted local storage when available. Failed or unsupported discovery is labeled explicitly and falls back to manual model entry. Azure OpenAI continues to require the deployed name because a base-model catalog does not prove that a deployment exists.
 
 The local execution boundary supports:
 
@@ -224,3 +233,5 @@ Contributors and coding agents must update documentation with behavior changes; 
 MIT
 
 Experimental complete library topologies: a local Model Agent may explicitly select `mining.load_and_haul` through `skill.seed_topology`, accept individually named illustrative defaults, fill supplied facts, and use the normal calculation/finish gates. The single canonical skill artifact contains the annual joint excavation/haulage formulas; defaults are editable assumptions, not site facts or verified benchmarks. Seeding preserves the existing root and cannot replace existing drivers. A fresh local `qwen3.5:4b-q4_K_M` run on 2026-10-17 completed this library workflow with 35 calculable nodes in 10 turns, without operator formula/value edits. See [the live evidence and its limits](docs/AI_HARNESS.md#local-library-completion-evidence-2026-10-17); production/provider qualification is unchanged.
+
+Direct OpenAI API Model Agent execution is experimental in the trusted local app. Send admits the selected model and current in-memory key through a separate bounded endpoint, then starts with an opaque one-use binding ID; credentials never enter the saved run request. The binding expires after one minute if unused. GPT-5/GPT-6 and o-series requests use `max_completion_tokens` without an unsupported temperature override. One fresh `gpt-6-luna` excavation/haulage run on 2026-10-17 completed 35 calculable nodes in 10 turns (145.436 seconds), with no operator formula/value edits. See [OpenAI execution evidence](docs/AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17); this is not general provider or performance qualification.

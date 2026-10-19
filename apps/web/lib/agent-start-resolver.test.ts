@@ -196,6 +196,10 @@ describe("agent-start-resolver", () => {
     ).toThrow(NO_EXECUTION_BINDING_MESSAGE);
   });
 
+  it("does not silently substitute another API model on the same backend", () => {
+    expect(resolveExecutionBindingId(bindingsFixture(), byokSettings, "openai_compatible", { model: "gpt-6-luna" })).toBeNull();
+  });
+
   it("does not fall back to defaultBindingId when BYOK backendId does not match", () => {
     const bindings = bindingsFixture({
       defaultBindingId: "model_agent_default",

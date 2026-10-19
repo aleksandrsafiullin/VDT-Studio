@@ -536,7 +536,7 @@ export async function POST(request: Request) {
           systemPrompt: "Return only structured JSON. Do not add commentary.",
           userPrompt: 'Connection test. Return exactly {"ok":true}.',
           temperature: 0,
-          maxTokens: 32
+          maxTokens: 1024
       }) as { ok?: unknown };
       if (output?.ok !== true) {
         throw new Error("Provider responded, but did not return the expected connection-test JSON.");

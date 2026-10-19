@@ -11,6 +11,7 @@ import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { hasByokFieldErrors, validateByokSettings } from "@/lib/byok-validation";
 import { SettingsChipRow } from "./settings-chips";
 import { ByokPresetForm } from "./byok-preset-form";
+import { useApiKeyStorage } from "./api-key-storage";
 import { useVdtStudioStore, type ProviderTestStatus } from "./vdt-store";
 
 const PROTOCOL_CHIPS: { id: ByokProtocol; label: string }[] = [
@@ -28,6 +29,7 @@ const GATEWAY_CHIPS: { id: ByokGateway; label: string }[] = [
 ];
 
 export function ByokSettings() {
+  const keyStorage = useApiKeyStorage();
   const executionSettings = useVdtStudioStore((state) => state.executionSettings);
   const isTestingProvider = useVdtStudioStore((state) => state.isTestingProvider);
   const providerTestStatus = useVdtStudioStore((state) => state.providerTestStatus);
@@ -186,6 +188,9 @@ export function ByokSettings() {
       </section>
 
       <ByokPresetForm
+        keyStorageStatus={keyStorage.status}
+        onRemoveApiKey={keyStorage.remove}
+        onRetryKeyStorage={keyStorage.retry}
         executionSettings={executionSettings}
         preset={preset}
         protocol={protocol}

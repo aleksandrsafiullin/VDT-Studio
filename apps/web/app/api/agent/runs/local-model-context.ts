@@ -1,4 +1,4 @@
-import { calculateGraph, extractFormulaReferences, validateGraph, type VdtProject } from "@vdt-studio/vdt-core";
+import { calculateGraph, extractFormulaReferences, validateGraph, inspectDecompositionHierarchy,getDecompositionContextGroupIds,type VdtProject } from "@vdt-studio/vdt-core";
 import { LOCAL_MODEL_UPFRONT_TOOLS } from "./local-model-output-schema";
 
 /** A transport-only table view of project inspection results. Receipts and
@@ -62,16 +62,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Server-read working state, never an instruction or a mutation. Sending a
  * fresh bounded view avoids relying on a small model to remember generated IDs
  * in its semantic checkpoint. The Gateway still fences every actual write. */
-export function localModelWorkingContext(project: VdtProject, revision: number, requireDerivedRoot = false) {
+export function localModelWorkingContext(project: VdtProject, revision: number, requireDerivedRoot = false, requireHierarchy = false) {
   const calculation = calculateGraph(project.graph, { rootNodeId: project.rootNodeId });
   const validation = validateGraph(project);
   const root = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+  const hierarchy=inspectDecompositionHierarchy(project);
+  const contextGroups=getDecompositionContextGroupIds(project.graph,project.rootNodeId);
   let derivedRoot = false;
   try { derivedRoot = !!root?.formula?.trim() && extractFormulaReferences(root.formula).length > 0; } catch { /* Validation below reports the parser error. */ }
-  const missing = project.graph.nodes.filter((node) => node.id !== project.rootNodeId
+  const missing = project.graph.nodes.filter((node) => node.id !== project.rootNodeId && !contextGroups.has(node.id)
     && !["root_kpi", "calculated"].includes(node.type) && !node.formula?.trim()
     && !Number.isFinite(node.baselineValue ?? node.value));
-  const formulaBacklog = project.graph.nodes.filter((node) => ["root_kpi", "calculated"].includes(node.type)
+  const formulaBacklog = project.graph.nodes.filter((node) => !contextGroups.has(node.id) && ["root_kpi", "calculated"].includes(node.type)
     && !node.formula?.trim() && (node.id !== project.rootNodeId || project.graph.nodes.length > 1));
   const assumptions = project.graph.nodes.filter((node) => ["root_kpi", "calculated"].includes(node.type) && node.assumptions?.length);
   const columns = ["id", "name", "type", "unit", "formula", "baselineValue", "value", "valueStatus"] as const;
@@ -81,7 +83,7 @@ export function localModelWorkingContext(project: VdtProject, revision: number, 
     && !["root_kpi", "calculated"].includes(node.type) && !node.formula?.trim() && !parents.has(node.id)).map((node) => node.id);
   const unfilledInputLeafIds = missing.filter((node) => !parents.has(node.id)).map((node) => node.id);
   const projectReadyForFinish = validation.valid && calculation.errors.length === 0 && Number.isFinite(calculation.rootValue)
-    && (!requireDerivedRoot || (project.graph.nodes.length > 1 && derivedRoot));
+    && (!requireDerivedRoot || (project.graph.nodes.length > 1 && derivedRoot)) && (!requireHierarchy || hierarchy.valid);
   const dependencies = new Set<string>();
   if (projectReadyForFinish) {
     const byId = new Map(project.graph.nodes.map((node) => [node.id, node]));
@@ -98,6 +100,11 @@ export function localModelWorkingContext(project: VdtProject, revision: number, 
     schemaVersion: "local-model-working-context.v1",
     revision,
     rootNodeId: project.rootNodeId,
+    hierarchyRequired:requireHierarchy,
+    hasDecompositionPlan:!!root?.decompositionPlan,
+    referenceGroupIds:[...contextGroups],
+    decompositionPlan:root?.decompositionPlan,
+    hierarchy:{valid:hierarchy.valid,errors:hierarchy.errors.slice(0,12),errorCount:hierarchy.errors.length,maxDepth:hierarchy.maxDepth},
     nodeCount: project.graph.nodes.length,
     constructingTree: requireDerivedRoot,
     needsStructure: requireDerivedRoot && project.graph.nodes.length <= 1,

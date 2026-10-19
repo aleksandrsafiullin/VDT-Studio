@@ -143,6 +143,20 @@ describe("store persist round-trip", () => {
   }, 30_000);
 });
 
+describe("legacy key removal", () => {
+  it.each(["byok", "local_cli"] as const)("clearing a key also clears legacy request configuration in %s mode", async (executionMode) => {
+    const { useVdtStudioStore } = await import("./vdt-store");
+    useVdtStudioStore.setState({
+      executionSettings: { ...DEFAULT_EXECUTION_SETTINGS, executionMode, apiKey: "synthetic-old-key", useMockProvider: false },
+      providerConfig: { apiKey: "synthetic-old-key" }
+    });
+    useVdtStudioStore.getState().setExecutionSettingsField("apiKey", undefined);
+    expect(useVdtStudioStore.getState().executionSettings.apiKey).toBeUndefined();
+    expect(useVdtStudioStore.getState().providerConfig.apiKey).toBeUndefined();
+  });
+
+});
+
 describe("scenario modal ui state", () => {
   it("openScenarioModal sets scenarioModalOpen to true", async () => {
     const { useVdtStudioStore } = await import("./vdt-store");

@@ -2,6 +2,8 @@
 
 Last reviewed: **2026-07-23**.
 
+- [ ] Qualify [encrypted BYOK retention](adr/ADR-007-encrypted-browser-api-keys.md) in packaged native WebViews and Windows: reload/reopen, replacement/deletion, storage denial/corruption and plaintext exclusion from ordinary preferences/exports. Web-client checks do not establish native Keychain or compromised-profile protection.
+
 This checklist separates CLI/web alpha gates, data-upload blockers and native desktop gates. A release candidate is not ready if any required command fails.
 
 ## CLI/Web Alpha Gates

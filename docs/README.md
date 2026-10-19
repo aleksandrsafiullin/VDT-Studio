@@ -79,6 +79,7 @@ Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md`, the
 | [`ADR-004`](adr/ADR-004-atomic-revision-commit-and-legacy-migration-adoption.md) | Accepted and implemented for W0.1; independent implementation/test `GO` |
 | [`ADR-005`](adr/ADR-005-durable-run-coordination-and-manual-reconciliation.md) | Accepted W0.2 durable authority; ADR-006 amends bounded attempts without weakening SQLite, fence or receipt requirements |
 | [`ADR-006`](adr/ADR-006-bounded-dual-profile-agent-execution.md) | Accepted dual-profile target architecture; tested foundations are implemented, public Supervisor/storage wiring is partial, external execution remains default-off and unqualified |
+| [`ADR-007`](adr/ADR-007-encrypted-browser-api-keys.md) | Implemented encrypted origin-local BYOK key retention and deletion; browser-profile security boundary; native qualification open |
 
 ## Historical And Reference-Only Documents
 

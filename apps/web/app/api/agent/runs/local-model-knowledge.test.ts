@@ -12,6 +12,18 @@ function observe(knowledge: LocalModelKnowledge, results: unknown[]) {
 }
 
 describe("confirmed local model read knowledge", () => {
+  it("retains admitted full-source results and cited web observations across graph/schema reads, isolated per run",()=>{
+    const k=new LocalModelKnowledge();
+    k.observePrompt(JSON.stringify({delta:{type:"initial_context",context:{tools:["data.list_sources","data.aggregate","data.inspect","research.search_web","project.get_current","tools.describe"].map(name=>({name}))}}}));
+    observe(k,[result("data.list_sources",{sources:[{datasetId:"dataset_real",fileName:"report.xlsx",contentHash:"sha256:real"}]}),
+      result("data.aggregate",{datasetId:"dataset_real",tableId:"sheet_2",queryHash:"sha256:query",query:{metrics:[{name:"tonnes",operation:"sum",column:"PayloadTonnes"}]},totalRows:140,matchedRows:140,complete:true,rows:[{group:[],values:{tonnes:138600}}]}),
+      result("research.search_web",{results:[{url:"https://www.cat.com/777",title:"777",snippet:"Target payload 91.7 t",retrievedAt:"2026-10-17"}]})]);
+    observe(k,[result("project.get_current",{project:{nodeCount:1}}),result("tools.describe",{tools:[]}),result("data.inspect",{datasetId:"fabricated"},"failed")]);
+    const text=JSON.stringify(k.context());
+    expect(text).toContain("dataset_real");expect(text).toContain("138600");expect(text).toContain("PayloadTonnes");expect(text).toContain("https://www.cat.com/777");expect(text).not.toContain("fabricated");
+    expect(k.context().confirmedSourceObservations).toMatchObject({untrustedData:true});
+    expect(k.literalUserQuantities()).toEqual([]);expect(new LocalModelKnowledge().context()).toEqual({});expect(text.length).toBeLessThan(18_100);
+  });
   it("retains offered reference defaults only from a successful admitted skill read", () => {
     const knowledge = new LocalModelKnowledge(); knowledge.observePrompt(initial);
     const output = { id: "actual.recipe", title: "Combined scope", executableTopology: {

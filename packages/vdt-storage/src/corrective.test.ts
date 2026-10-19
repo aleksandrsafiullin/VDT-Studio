@@ -105,6 +105,21 @@ describe("StrictVdtProjectCommitV1 and canonical framing", () => {
 });
 
 describe("atomic revision boundary", { timeout: 60_000 }, () => {
+  it("commits and reads an unfinished decomposition plan without importer loss", () => {
+    const { db, input } = setupCommit();
+    const plan = {
+      version: 1 as const,
+      goal: "Production by time and rate",
+      nodes: [{ nodeId: "future_factor", parentNodeId: input.project.rootNodeId, kind: "input" as const }]
+    };
+    input.project.graph.nodes.find(node => node.id === input.project.rootNodeId)!.decompositionPlan = plan;
+    const result = db.commitVdtRevision(input);
+    expect(result.status).toBe("committed");
+    const saved = db.readVdtRevision(db.listVdtRevisions("vdt_atomic")[0]!);
+    expect(saved.graph.nodes.find(node => node.id === saved.rootNodeId)!.decompositionPlan).toEqual(plan);
+    db.close();
+  });
+
   it("returns the exact terminal idempotency result without rechecking the changed head", () => {
     const { db, input } = setupCommit();
     const first = db.commitVdtRevision(input);

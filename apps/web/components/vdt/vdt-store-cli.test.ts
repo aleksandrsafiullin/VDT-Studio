@@ -147,6 +147,13 @@ function respondAgentRunsEndpoint(
     onPost: (init?: RequestInit) => Response | Promise<Response>;
   }
 ): Response | Promise<Response> | null {
+  if (url.endsWith("/api/agent/bindings/openai") && init?.method === "POST") {
+    const body = JSON.parse(String(init.body));
+    return jsonResponse({ ok: true, binding: {
+      bindingId: "openai_byok_session_test", executionProfile: "model_agent",
+      backendId: "openai_compatible", modelId: body.model
+    } });
+  }
   if (!url.endsWith("/api/agent/runs")) return null;
   if (init?.method === "POST") {
     return options.onPost(init);
@@ -409,7 +416,7 @@ describe("vdt-store change-set workflow", () => {
     await useVdtStudioStore.getState().startAgentRun(prompt, { researchMode: "on" });
 
     const body = parseAgentStartBody(fetchMock);
-    expect(body.executionBindingId).toBe("model_agent_default");
+    expect(body.executionBindingId).toBe("openai_byok_session_test");
     expect(body).not.toHaveProperty("providerId");
     expect(body).not.toHaveProperty("providerConfig");
     expect((body as { options?: { researchMode?: string } }).options?.researchMode).toBe("on");
@@ -420,10 +427,10 @@ describe("vdt-store change-set workflow", () => {
     ]);
   });
 
-  it("startAgentRun fails locally for BYOK when no server binding is available", async () => {
+  it("startAgentRun fails locally for a custom BYOK gateway when no server binding is available", async () => {
     const fetchMock = mockAgentStartFetch("agent-run-unbound", agentExecutionBindingsGetResponse({ empty: true }));
     useVdtStudioStore.setState({
-      executionSettings: byokExecutionSettings(),
+      executionSettings: { ...byokExecutionSettings(), gatewayPresetId: "custom", customizeBaseUrl: true, baseUrl: "https://gateway.example/v1" },
       brief: {
         rootKpi: "Ore haulage",
         industry: "Mining",
@@ -447,13 +454,13 @@ describe("vdt-store change-set workflow", () => {
     expect(useVdtStudioStore.getState().isGenerating).toBe(false);
   });
 
-  it("startAgentRun fails locally for BYOK when bindings backendId does not match providerId", async () => {
+  it("startAgentRun fails locally for a custom BYOK gateway when the binding backend does not match", async () => {
     const fetchMock = mockAgentStartFetch(
       "agent-run-mismatch",
       agentExecutionBindingsGetResponse({ backendId: "mock" })
     );
     useVdtStudioStore.setState({
-      executionSettings: byokExecutionSettings(),
+      executionSettings: { ...byokExecutionSettings(), gatewayPresetId: "custom", customizeBaseUrl: true, baseUrl: "https://gateway.example/v1" },
       brief: {
         rootKpi: "Ore haulage",
         industry: "Mining",
@@ -475,6 +482,18 @@ describe("vdt-store change-set workflow", () => {
     ).toBe(false);
     expect(useVdtStudioStore.getState().agentError).toMatch(/server-managed execution binding/i);
     expect(useVdtStudioStore.getState().isGenerating).toBe(false);
+  });
+
+  it("direct OpenAI admits a session even when discovery has no API binding and keeps the key out of the run", async () => {
+    const fetchMock = mockAgentStartFetch("agent-run-admitted", agentExecutionBindingsGetResponse({ empty: true }));
+    useVdtStudioStore.setState({ executionSettings: byokExecutionSettings(), brief: { rootKpi: "Excavation", unit: "t", timePeriod: "Year" } });
+    await expect(useVdtStudioStore.getState().startAgentRun("Build the draft")).resolves.toBe(true);
+    const body = parseAgentStartBody(fetchMock);
+    expect(body.executionBindingId).toBe("openai_byok_session_test");
+    expect(body).not.toHaveProperty("providerConfig");
+    expect(JSON.stringify(body)).not.toContain("test-key");
+    const admission = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/agent/bindings/openai"));
+    expect(JSON.parse(String(admission?.[1]?.body))).toMatchObject({ apiKey: "test-key", model: "gpt-test" });
   });
 
   it("startAgentRun can select a discovered server binding without sending provider authority", async () => {

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   extractFormulaReferences,
+  inspectDecompositionHierarchy,
   serializeFormulaTokens,
   stableSnakeId,
   tokenizeFormula,
@@ -19,6 +20,7 @@ import { AgentToolError, type AgentTool, type AgentToolContext } from "../tool-r
 import { summarizeCalculation, summarizeValidation } from "../summaries";
 import { cloneBuilder, combineChangeSets, requireBuilder, requireChangeSet, wrapBuilderError } from "./builder-mutation-utils";
 import { assertUserProvidedValueGrounded, runHasUserAnswerForNode } from "./value-provenance";
+import { requirePlannedAdditions } from "./hierarchy-tools";
 
 const nodeTypeSchema = z.enum(["root_kpi", "calculated", "input", "assumption", "external_factor", "data_mapped"]);
 const nodeStatusSchema = z.enum([
@@ -255,6 +257,7 @@ const addDriverTool: AgentTool = {
   requiresDraftProject: true,
   phase: "building_graph",
   run(context, input) {
+    requirePlannedAdditions(context, [input]);
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
     const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
@@ -297,6 +300,7 @@ const addDriversBatchTool: AgentTool = {
   requiresDraftProject: true,
   phase: "building_graph",
   run(context, input) {
+    requirePlannedAdditions(context, input.drivers);
     const builder = requireBuilder(context.builder);
     const drivers = input.drivers as AddDriverToolInput[];
     const parentNodeIds = new Set(drivers.map((driver) => driver.parentNodeId));
@@ -740,7 +744,10 @@ const validateTool: AgentTool = {
   requiresDraftProject: true,
   phase: "validating_graph",
   run(context) {
-    const validation = summarizeValidation(requireBuilder(context.builder).validate().validation);
+    const builder=requireBuilder(context.builder);
+    const graphValidation=summarizeValidation(builder.validate().validation);
+    const hierarchy=inspectDecompositionHierarchy(builder.getProject());
+    const validation=context.requireDecompositionPlan?{...graphValidation,valid:graphValidation.valid&&hierarchy.valid,errors:[...graphValidation.errors,...hierarchy.errors.slice(0,20).map(message=>({type:"invalid_graph" as const,severity:"error" as const,message}))]}:graphValidation;
     context.store.updateRun(context.runId, { validationState: validation });
     context.emit({
       type: "graph_validation",
@@ -751,7 +758,7 @@ const validateTool: AgentTool = {
         : `Graph validation found ${validation.errors.length} error${validation.errors.length === 1 ? "" : "s"}.`,
       metadata: { errors: validation.errors.length, warnings: validation.warnings.length }
     });
-    return validation;
+    return {...validation,...(context.requireDecompositionPlan?{hierarchy:{...hierarchy,errors:hierarchy.errors.slice(0,20),errorCount:hierarchy.errors.length}}:{})};
   }
 };
 

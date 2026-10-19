@@ -76,11 +76,12 @@ describe("native web search helpers", () => {
       brief: { options: { researchMode: "off" } }
     })).toBe(false);
     expect(withForcedCodexSearchFlag(["exec", "--json", "-"], true)).toEqual([
+      "--search",
       "exec",
       "--json",
-      "--search",
       "-"
     ]);
+    expect(withForcedCodexSearchFlag(["exec", "resume", "--json", "session", "-"], true)).toEqual(["--search", "exec", "resume", "--json", "session", "-"]);
     expect(withForcedCodexSearchFlag(["exec", "--json", "-"], false)).toEqual([
       "exec",
       "--json",

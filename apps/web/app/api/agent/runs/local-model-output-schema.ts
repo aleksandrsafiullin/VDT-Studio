@@ -1,14 +1,16 @@
 type JsonObject = Record<string, unknown>;
 const isObject = (value: unknown): value is JsonObject => !!value && typeof value === "object" && !Array.isArray(value);
 export const LOCAL_MODEL_UPFRONT_TOOLS = new Set([
-  "tools.describe", "run.request_finish", "vdt.update_node", "vdt.set_formula",
+  "tools.describe", "data.list_sources", "data.inspect", "data.read_rows", "data.aggregate", "data.write_inputs", "run.request_finish", "vdt.update_node", "vdt.set_formula",
   "vdt.fill_input_values_batch", "vdt.add_driver", "vdt.add_drivers_batch",
   "skill.list", "skill.search", "skill.read", "skill.compile_recipe", "skill.seed_draft_from_recipe", "skill.seed_topology", "excavation.seed_topology"
+  ,"vdt.set_decomposition_plan", "vdt.inspect_hierarchy", "vdt.reparent_branch"
 ]);
 const singletonTools = new Set([
   "run.request_finish", "user.ask", "user.request_approval", "approval.request",
   "tools.describe", "skill.search", "skill.list", "skill.read", "skill.compile_recipe", "skill.seed_topology",
-  "vdt.create_draft", "skill.seed_draft_from_recipe", "excavation.seed_topology", "vdt.fill_input_values_batch", "vdt.add_drivers_batch"
+  "vdt.create_draft", "skill.seed_draft_from_recipe", "excavation.seed_topology", "vdt.fill_input_values_batch", "vdt.add_drivers_batch", "data.list_sources", "data.inspect", "data.read_rows", "data.aggregate", "data.write_inputs"
+  ,"vdt.set_decomposition_plan", "vdt.reparent_branch"
 ]);
 
 /** Native constrained decoding must know each tool's argument shape, not just
@@ -20,6 +22,8 @@ export class LocalModelOutputSchema {
   private initialized = false;
   private finishReceiptId: string | undefined;
   private callableNames: string[] | undefined;
+  private readonly datasets = new Map<string, Map<string,string[]>>();
+  private sourcesListed = false;
 
   availableToolNames(): string[] { return this.callableNames ?? [...this.tools.keys()]; }
 
@@ -29,6 +33,12 @@ export class LocalModelOutputSchema {
     if (isObject(input) && isObject(input.delta)) this.observe(input.delta);
     const observation = isObject(workingContext) ? workingContext : undefined;
     const eligible = [...this.tools].filter(([name]) => {
+      if(observation?.hierarchyRequired===true&&observation.hasDecompositionPlan===false&&["vdt.add_driver","vdt.add_drivers_batch","skill.seed_topology","skill.seed_draft_from_recipe","excavation.seed_topology","vdt.instantiate_subtree"].includes(name))return false;
+      if(name==="data.list_sources"&&this.sourcesListed)return false;
+      if(name==="data.inspect"&&this.datasets.size&&[...this.datasets.values()].every(t=>t.size))return false;
+      if(name.startsWith("data.")&&name!=="data.list_sources"&&!this.datasets.size)return false;
+      if(["data.read_rows","data.aggregate","data.write_inputs"].includes(name)&&![...this.datasets.values()].some(t=>t.size))return false;
+      if(name==="data.write_inputs"&&observation?.unfilledInputCount===0)return false;
       if (this.finishReceiptId) return false;
       if (name === "skill.seed_topology" && (!Array.isArray(observation?.readTopologyDefinitions) || !observation.readTopologyDefinitions.length)) return false;
       if (observation?.constructingTree === true && observation.needsStructure === true && observation.hasReadSkill === false) {
@@ -102,7 +112,7 @@ export class LocalModelOutputSchema {
         const optionBatch = (option.properties as JsonObject).batch as JsonObject;
         if (exchangeId && isObject((optionBatch.properties as JsonObject).batchId)) ((optionBatch.properties as JsonObject).batchId as JsonObject).const = `${exchangeId}:batch`;
         const choices = selected.map(([name, args]) => ({
-          ...call, properties: { ...properties, toolName: { type: "string", const: name }, args: projectNativeInputBatchSchema(name, groundLiteralValues(name, boundConstructionArguments(name, groundExistingIds(name, args, observation), observation), observation), observation) }
+          ...call, properties: { ...properties, toolName: { type: "string", const: name }, args: this.groundDataArguments(name,projectNativeInputBatchSchema(name, groundLiteralValues(name, boundConstructionArguments(name, groundExistingIds(name, args, observation), observation), observation), observation)) }
         }));
         // Tuple positions give every call a stable unique ID in this exchange.
         // Only transport identifiers are host-namespaced; the model still
@@ -139,11 +149,23 @@ export class LocalModelOutputSchema {
       }
     } else if (delta.type === "checkpoint_inputs" && isObject(delta.checkpointDelta)) {
       this.observe(delta.checkpointDelta);
-      if (Array.isArray(delta.inputs) && delta.inputs.some((input) => isObject(input) && ["user_answer", "user_instruction"].includes(String(input.type)))) this.finishReceiptId = undefined;
+      if (Array.isArray(delta.inputs) && delta.inputs.some((input) => isObject(input) && ["user_answer", "user_instruction"].includes(String(input.type)))) { this.finishReceiptId = undefined; this.sourcesListed=false; this.datasets.clear(); }
     } else if (delta.type === "human_inputs") {
       this.finishReceiptId = undefined;
+      this.sourcesListed=false; this.datasets.clear();
     } else if ((delta.type === "tool_results" || delta.type === "manual_reconciliation") && Array.isArray(delta.results)) {
       for (const result of delta.results) {
+        if(isObject(result)&&this.admittedNames.has(String(result.toolName))&&["succeeded","replayed"].includes(String(result.status))&&isObject(result.payload)&&isObject(result.payload.output)){
+          const output=result.payload.output;
+          if(result.toolName==="data.list_sources"&&Array.isArray(output.sources)){
+            this.sourcesListed=true;
+            for(const source of output.sources.slice(0,20))if(isObject(source)&&typeof source.datasetId==="string"&&/^[A-Za-z0-9_-]{1,128}$/.test(source.datasetId)&&!this.datasets.has(source.datasetId))this.datasets.set(source.datasetId,new Map());
+          }
+          if(result.toolName==="data.inspect"&&typeof output.datasetId==="string"&&this.datasets.has(output.datasetId)&&Array.isArray(output.tables)){
+            const tables=this.datasets.get(output.datasetId)!;
+            for(const table of output.tables.slice(0,25))if(isObject(table)&&typeof table.tableId==="string"&&Array.isArray(table.columns))tables.set(table.tableId,table.columns.filter((c):c is string=>typeof c==="string").slice(0,80));
+          }
+        }
         if (isObject(result) && result.resultCode === "STALE_REVISION") this.finishReceiptId = undefined;
         if (isObject(result) && ["succeeded", "replayed"].includes(String(result.status)) && isObject(result.payload)) {
           if (result.payload.projectChanged === true) this.finishReceiptId = undefined;
@@ -160,6 +182,28 @@ export class LocalModelOutputSchema {
         }
       }
     }
+  }
+
+  /** Constrain only identities/columns actually returned by this run's Gateway.
+   * Selecting a source/table/metric remains the actor's choice; ownership and
+   * complete-data validation remain canonical tool checks. */
+  private groundDataArguments(name:string,schema:JsonObject):JsonObject {
+    if(!name.startsWith("data.")||name==="data.list_sources"||!this.datasets.size)return schema;
+    const variants:JsonObject[]=[];
+    for(const [datasetId,tables]of this.datasets){
+      for(const [tableId,columns]of name==="data.inspect"?[[undefined,[]]as const]:tables){
+        const copy=structuredClone(schema);if(!isObject(copy.properties))continue;
+        copy.properties.datasetId={type:"string",const:datasetId};
+        if(tableId!==undefined)copy.properties.tableId={type:"string",const:tableId};
+        const restrict=(p:unknown,key:string)=>{if(isObject(p)&&isObject(p[key]))p[key]={...p[key]as JsonObject,enum:columns};};
+        const metrics=copy.properties.metrics;
+        if(isObject(metrics)&&isObject(metrics.items)&&isObject(metrics.items.properties)){restrict(metrics.items.properties,"column");restrict(metrics.items.properties,"denominatorColumn");}
+        const groups=copy.properties.groupBy;if(isObject(groups)&&isObject(groups.items))groups.items={...groups.items,enum:columns};
+        const filters=copy.properties.filters;if(isObject(filters)&&isObject(filters.items)&&isObject(filters.items.properties))restrict(filters.items.properties,"column");
+        variants.push(copy);
+      }
+    }
+    return variants.length===1?variants[0]!:variants.length?{anyOf:variants}:schema;
   }
 }
 
@@ -279,6 +323,7 @@ function groundExistingIds(name: string, schema: JsonObject, observation?: JsonO
   const leaves = Array.isArray(observation.inputLeafIds) ? observation.inputLeafIds.filter((id): id is string => typeof id === "string") : ids;
   const unfilled = Array.isArray(observation.unfilledInputLeafIds) ? observation.unfilledInputLeafIds.filter((id): id is string => typeof id === "string") : leaves;
   if (["vdt.update_node", "vdt.set_formula", "project.get_node"].includes(name)) restrict(properties, "nodeId", ids);
+  if(name==="vdt.reparent_branch")for(const field of ["nodeId","parentNodeId","fromParentNodeId"])restrict(properties,field,ids);
   if (name === "vdt.add_driver") restrict(properties, "parentNodeId", ids);
   if (name === "project.get_subtree") restrict(properties, "rootNodeId", ids);
   if (name === "excavation.write_input_value") restrict(properties, "nodeId", leaves);
@@ -287,6 +332,8 @@ function groundExistingIds(name: string, schema: JsonObject, observation?: JsonO
     && isObject(array) && isObject(array.items) && isObject(array.items.properties)) {
     restrict(array.items.properties, name === "vdt.fill_input_values_batch" ? "nodeId" : "parentNodeId", name === "vdt.fill_input_values_batch" ? unfilled : ids);
   }
+  const bindings=properties.bindings;
+  if(name==="data.write_inputs"&&isObject(bindings)&&isObject(bindings.items)&&isObject(bindings.items.properties))restrict(bindings.items.properties,"nodeId",unfilled);
   return copy;
 }
 import { projectNativeInputBatchSchema } from "./local-model-output-projection";

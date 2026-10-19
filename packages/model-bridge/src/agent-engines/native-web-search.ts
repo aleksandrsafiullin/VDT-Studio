@@ -110,13 +110,10 @@ export function researchModeForcesNativeWebSearch(context: unknown): boolean {
 
 export function withForcedCodexSearchFlag(args: readonly string[], force: boolean): string[] {
   if (!force || args.includes("--search")) return [...args];
-  const jsonIndex = args.indexOf("--json");
-  if (jsonIndex >= 0) {
-    return [...args.slice(0, jsonIndex + 1), "--search", ...args.slice(jsonIndex + 1)];
-  }
   const execIndex = args.indexOf("exec");
   if (execIndex >= 0) {
-    return [...args.slice(0, execIndex + 1), "--search", ...args.slice(execIndex + 1)];
+    // --search belongs to the root Codex parser, not exec or exec resume.
+    return [...args.slice(0, execIndex), "--search", ...args.slice(execIndex)];
   }
   return ["--search", ...args];
 }

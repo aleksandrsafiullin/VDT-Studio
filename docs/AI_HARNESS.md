@@ -1,5 +1,30 @@
 # AI And Agent Harness
 
+## Agent-authored hierarchy contract (experimental)
+
+The common instruction contract for CLI, API and native local agents requires level-by-level decomposition in `generate_vdt` and `continue_project`. The actor first calls `vdt.set_decomposition_plan`, choosing every future node ID, primary parent and `calculated`/`input`/`context` kind. The version-1 plan is stored on the root node through ordinary revision/approval mutations. Factor additions must match the plan and complete shallower planned factor levels first. Context observations need a rationale; actual root dependencies cannot be hidden as context. `sharedWith` names additional real formula users of an existing factor without duplicate source nodes or visual shortcuts.
+
+JSON import/export and strict storage commits preserve the plan even before its future nodes are built. Malformed plans and plan metadata on non-root nodes are rejected. This optional node field requires no database schema migration. Every calculated/input factor must feed the root; an independent context branch must classify all its descendants as context rather than relabel unused factors as calculations.
+
+A declared context container with context children may remain non-numerical: no value or formula is required, and the canvas/inspector shows `Reference group`. It is excluded from numerical-input and formula backlogs; its actual numerical leaves remain required. New plans and protected finish reject multiple direct root context leaves, directing the actor to group related reference columns. This construction policy is separate from import shape validation, so older flat snapshots remain readable for repair. Agents must retain reference groups rather than delete them or invent summary numbers to clear a numerical backlog.
+
+The shared file instruction requires `data.write_inputs` for retained-file numerical inputs, executable query lineage and preserved class/segment/material/period scope. When a grouping limit is reached, the actor must split scoped queries rather than silently dropping a necessary dimension or labeling an unfiltered total as one class. This is model guidance; independent source/scope audits remain required.
+
+`vdt.reparent_branch` changes only an existing parent edge (or removes an obsolete shortcut when the intended edge already exists). It preserves node IDs, descendants, formulas, values and provenance, rejects root moves/cycles/ambiguous source parents, and uses normal Gateway revision and approval controls. `vdt.inspect_hierarchy` returns a bounded diagnostic list; protected `vdt.validate` also includes hierarchy errors. Full-tree finish rejects missing plans, incomplete or unplanned nodes, wrong visual parents, unused factors, wrong kinds and undeclared formula reuse. The `deepen_node` single-layer and read-only review contracts remain separate. Existing files remain readable; no automatic tree rewrite or provider qualification is implied.
+
+Hierarchy inspection folds literal constants when finding effective dependencies. A reference used only under a zero multiplier (including a folded constant such as `2 - 2`) cannot satisfy parent/child or root-closure checks and blocks protected finish. Input baseline values and active min/max bottlenecks are not folded, so legitimate zero-valued inputs remain factors. Shared instructions prohibit dummy zero terms and averaging measured totals with their own reconstructions. This bounded structural rule does not certify arbitrary algebraic identities or business causality.
+
+Initial catalog descriptions are bounded to 128 characters to keep the full typed catalog below 35,000 characters. `tools.describe` returns the complete description and argument schema.
+
+## Source-aware session experiments (2026-10-17)
+
+The shared Supervisor catalog exposes five retained-file `data.*` tools; see `DATA_INGESTION.md` for complete-data aggregation and guarded input materialization. Local/API working context retains bounded successful source/query results and citation observations across intervening schema/graph reads. Source evidence is explicitly untrusted and separate from literal user quantities. Native local output schemas constrain dataset/table/column and empty-input IDs to successful Gateway observations; they do not choose metrics, formulas or values. An empty-tree progress hint encourages construction after skill discovery while existing failure/no-progress limits remain active. OpenAI-compatible agent turns retain the immutable opening plus three recent confirmed request/response pairs; older pairs are evicted. Ollama retains its smaller initial/last-response context. Neither path accumulates unbounded history.
+
+An explicitly enabled OpenAI binding admission may establish a one-hour process-memory research session with the already supplied key. Configured Brave/Tavily or an explicit research provider setting takes precedence. OpenAI research uses fixed Responses API HTTPS, `store:false`, required `web_search` and actual completed search/citation evidence. Uncited prose is rejected. Keys are never included in public summaries, environment writes or persisted run evidence. Research mode `off` still blocks at the Gateway. This is local-only and not a new hosted credential service.
+
+Codex checkpoint execution pins `--search` before `exec`, disables the native shell feature, and uses a private temporary strict `--output-schema` on open/resume. Its wire calls serialize model-authored arguments as `argsJson`; transport decoding precedes the unchanged canonical checkpoint/Gateway validators. Calls are bounded to three on this wire. One same-session envelope repair is allowed only after an otherwise complete valid stream; native tool violations, ambiguity, process/stream failures and authority checks remain fail-closed. Temporary schema files are removed after the child exits. These controls do not upgrade unverified CLI isolation or certification.
+
+
 Last reviewed against the working tree: **2026-09-13**.
 
 ## Scope
@@ -296,7 +321,7 @@ Normal desktop UI hides pairing/startup controls. Provider authentication is pro
 - Structured output is validated locally before graph conversion.
 - Registered schemas close unapproved top-level fields and bound strings/arrays.
 - One-attempt repair records attempt/success metadata.
-- API keys, pairing tokens and provider tokens are scrubbed from persisted browser state.
+- Plaintext API keys, pairing tokens and provider tokens are scrubbed from ordinary persisted browser state. BYOK API keys alone have separate encrypted local retention under [ADR-007](adr/ADR-007-encrypted-browser-api-keys.md).
 - Request-supplied provider URLs are disabled in production unless explicitly enabled.
 - Private/localhost production targets require an additional explicit opt-in.
 - BYOK proxy targets are DNS-validated and pinned; redirects and private/link-local/CGNAT targets are rejected.
@@ -375,3 +400,33 @@ The saved formula engine audit returned a valid graph, zero calculation errors a
 Evidence is retained locally under `/Users/aks/.codex/visualizations/2026/10/16/01a1463f-0933-7763-9ab0-6ed5493391e8/ollama-autonomous-2026-10-17/`: `library-v2-execution-evidence.json`, `library-v2-final-audit.json`, `library-v2-final-saved-project.json` and `verification-summary.json`. Subsequent UI auto-layout/view operations changed no saved project fields. A separate cancelled composer smoke confirmed the selected model resolved a compatible server-managed binding before any graph mutation.
 
 This verifies one library-backed local construction on this Mac. Earlier freeform construction attempts with other models failed or timed out. Arbitrary tree synthesis, repeated cold/warm performance qualification, restart recovery and production/provider certification remain unverified; no release status is promoted by this run.
+
+## OpenAI API Model Agent Evidence (2026-10-17)
+
+The direct OpenAI composer path now explicitly admits the current in-memory API key and the selected model through `POST /api/agent/bindings/openai` before starting the normal Supervisor. Admission is trusted-local and same-origin only, accepts at most 8 KiB of strict JSON, pins `https://api.openai.com/v1`, and rejects endpoint/command overrides. A pending binding is immutable, unlisted, limited to 16 pending admissions and expires after 60 seconds. Start consumes it once; active execution holds its copied configuration in process memory. The public start request, SQLite records and discovery summaries contain no credentials. Production requires `VDT_MODEL_AGENT_ENABLED=true`; production builds and hosted mode cannot admit these sessions. Test connection remains a small JSON probe and does not persist a server-side key or select a different model. Browser-side key entry/restoration is managed by the separate encrypted vault in ADR-007.
+
+OpenAI-compatible requests recognize GPT-5/GPT-6 and o1/o3/o4 model families, use `max_completion_tokens` and preserve the provider's default reasoning/sampling choices instead of forcing temperature. Agent exchanges have a 180-second deadline; the connection probe permits 1,024 output tokens. Runtime Zod validation remains authoritative. Its JSON Schema is supplied to the HTTP adapter; when strict formatting is unsupported, JSON mode includes that exact schema in the prompt. The adapter remembers that formatting limitation for the session and allows one validation repair. Only known error codes/parameter identifiers can appear in HTTP diagnostics, never upstream free-form error messages.
+
+The OpenAI agent transport replays the immutable initial brief/catalog and last confirmed assistant action with the new bounded delta. It also supplies the same read-only current graph and admitted tool/skill knowledge used by the local HTTP transport. This prevents losing original source quotes or exact tool fields after an unrelated result. These observations cannot select business inputs, write formulas, grant mutation authority or replace finish verification. Native restart/resume remains unqualified.
+
+Fresh run `c0457075-190e-4650-99fc-1377a76357cd` built `vdt_cbebf7af-9643-4c85-bc0c-4655de2a159b` from one blank root using the same Russian excavation/haulage prompt as the successful Ollama case. It completed in **145.436 seconds**, 10 model turns and 31 successful public tool operations, with a verified persisted finish receipt, no human replies during execution and no operator formula/value edits. The saved generation 8 has 35 finite node values, zero calculation errors and no missing inputs. The root is **10,804,588.164734107 t/year**. All six supplied mine facts and the agreed shift/repair assumptions were independently checked. The remaining values are editable assumptions; this run chose 365 scheduled days and a 100 t payload, so its result differs from the earlier Ollama run's 300 days and 150 t. Both use the canonical library's joint capacity/bottleneck formulas.
+
+Two earlier API integration attempts are retained as failures: the first could not validate its response envelope, and the second was stopped after four unchanged project reads. They are not completion timings. Evidence, saved-graph audits and a separate successful/incomplete timing inventory are under `/Users/aks/.codex/visualizations/2026/10/16/01a1463f-0933-7763-9ab0-6ed5493391e8/api-cli-comparison-2026-10-17/`. A single successful run does not satisfy the cold/warm benchmark sample requirements, certify arbitrary model-generated trees or change canonical provider/release status. See [official OpenAI model parameter guidance](https://developers.openai.com/api/docs/guides/latest-model#gpt-6-astra-update-api-and-model-parameters).
+
+Codex private `argsJson` decoding covers both wrapped `action.batch.calls` and direct `action.calls` carriers, including the action type aliases already accepted by the canonical parser. Unknown/duplicate fields and authority arguments still fail canonical validation. One same-session envelope correction receives a bounded validation diagnostic; failed correction stops rather than retrying indefinitely.
+
+
+## Fresh hierarchy evaluation (2026-10-18, experimental)
+
+Two new drafts used the same retained dispatch workbook and original request, with no operator plan/formula/value edits and one inference run at a time. Exact model: `gpt-6-luna`.
+
+| Path | Terminal result | Time from server start | Nodes | Levels including root | Root | Replayed file inputs |
+|---|---|---:|---:|---:|---:|---:|
+| Codex CLI, run `1cfa0275-53a5-482e-9cb6-15c6c8d0037b` | succeeded | 1828.788 s | 50 | 5 | 138600 t | 30/30 |
+| OpenAI API, run `026f667f-e8a7-4132-96ae-727b16709bdc` | succeeded | 932.305 s | 35 | 5 | 138600 t | 23/23 |
+
+Both saved plans pass current hierarchy inspection and arithmetic validation. Immutable adjacent revisions confirm all node fields are identical across 24 CLI and 2 API edge changes (branch moves or relation corrections). API made two completed shared research calls. The actor retained official OEM citations in history; these specifications are not additional numeric nodes in its factor tree.
+
+These are structural and baseline acceptance results, not full business-model certification. CLI leaves cycle/speed branches contextual and labels some minute-valued leaves as hours. API connects cycle, distance and speed to output and reconciles the baseline truck time balance, but calendar/downtime changes cancel through its calculated ore time share; a 10% change to those inputs leaves tonnage unchanged. Both independent semantic audits therefore remain partial. Earlier timeouts, importer loss, reference-group flattening and literal-zero counterexamples remain separate attempts in the evidence bundle.
+
+CLI used maxSteps 60 with assumptions enabled; API used the ordinary UI defaults maxSteps 40 with the assumptions flag disabled. The common task allowed explicit missing-data assumptions. This is not a controlled provider performance benchmark. Sampled ChatGPT physical footprint during these final cases peaked around 5.13 GiB; a 45-second monitor guarded at 8 GiB or 1.5 GiB swap growth. This does not establish that an earlier application-memory leak is fixed. Local evidence: `hierarchy-contract-2026-10-18-16_jk2fi/hierarchy-verification.html`, saved graph/source audits and resource samples. No production build, full browser E2E or packaged qualification was performed.

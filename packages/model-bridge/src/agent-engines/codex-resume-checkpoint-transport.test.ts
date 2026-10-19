@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -109,6 +109,75 @@ function expectCodexOmitted(
 }
 
 describe("CodexResumeCheckpointTransport", () => {
+  it("decodes serialized arguments in the already accepted direct-calls envelope without repair", async () => {
+    const env = await environment();
+    const turn = JSON.parse(checkpointTurn());
+    const calls = turn.action.batch.calls;
+    for (const call of calls) { call.argsJson = JSON.stringify(call.args); delete call.args; }
+    turn.action = { type: "tool_calls", calls };
+    const runner = new FakeRunner(() => ({ exitCode: 0, signal: null, stderr: "", stdout: codexStream("direct-wire", JSON.stringify(turn)) }));
+    const transport = new CodexResumeCheckpointTransport({ executable: "/opt/codex/codex", validatedCliVersion: "0.162.0", runner });
+    const result = await transport.executeSegment({ mode: "open", environment: env, model: "gpt-6-luna", prompt: "task", signal: new AbortController().signal }, ["vdt.echo"]);
+    expect(result.turn.action).toMatchObject({ type: "action_batch", batch: { calls: [{ args: { value: 1 } }] } });
+    expect(runner.requests).toHaveLength(1);
+  });
+  it("supplies a private strict output schema and decodes serialized arguments before canonical validation", async () => {
+    const env = await environment();
+    const runner = new FakeRunner(async (request) => {
+      const schemaPath = request.args[request.args.indexOf("--output-schema") + 1]!;
+      expect(path.dirname(schemaPath)).toBe(await realpath(env.privateStatePath));
+      const schema = JSON.parse(await readFile(schemaPath, "utf8"));
+      expect(schema.properties.action.anyOf[0].properties.batch.properties.calls.maxItems).toBe(3);
+      const turn = JSON.parse(checkpointTurn());
+      const call = turn.action.batch.calls[0];
+      call.argsJson = JSON.stringify(call.args); delete call.args;
+      return { exitCode: 0, signal: null, stderr: "", stdout: codexStream("schema-thread", JSON.stringify(turn)) };
+    });
+    const transport = new CodexResumeCheckpointTransport({ executable: "/opt/codex/codex", validatedCliVersion: "0.162.0", runner });
+    const result = await transport.executeSegment({ mode: "open", environment: env, model: "gpt-6-luna", prompt: "task", signal: new AbortController().signal }, ["vdt.echo"]);
+    expect(result.turn.action).toMatchObject({ type: "action_batch", batch: { calls: [{ toolName: "vdt.echo", args: { value: 1 } }] } });
+    expect(await readdir(env.privateStatePath)).toEqual([]);
+  });
+
+  it("repairs the observed actionType/missing-call-id envelope once in the same session before admitting calls", async () => {
+    const env = await environment();
+    const malformed = JSON.stringify({ protocolVersion: VDT_CHECKPOINT_TURN_PROTOCOL_VERSION,
+      assistantMessage: null, action: { actionType: "action_batch", calls: [{ toolName: "vdt.echo", args: { value: 1 } }] } });
+    const runner = new FakeRunner((_request, index) => ({ exitCode: 0, signal: null, stderr: "",
+      stdout: index === 0 ? codexAgentMessageStream("repair-thread", ["I will build the tree.", malformed]) : codexStream("repair-thread") }));
+    const transport = new CodexResumeCheckpointTransport({ executable: "/opt/codex/codex", validatedCliVersion: "0.162.0", runner });
+    const result = await transport.executeSegment({ mode: "open", environment: env, model: "gpt-6-luna", prompt: "original task", signal: new AbortController().signal }, ["vdt.echo"]);
+    expect(result.sessionId).toBe("repair-thread");
+    expect(result.turn.action.type).toBe("action_batch");
+    expect(result.processSpawnCount).toBe(2);
+    expect(runner.requests).toHaveLength(2);
+    expect(runner.requests[1]!.args).toContain("resume");
+    expect(runner.requests[1]!.args).toContain("repair-thread");
+    expect(runner.requests[1]!.args).toContain("gpt-6-luna");
+    expect(runner.requests[1]!.stdin).toContain("NO proposed VDT calls were executed");
+    expect(runner.requests[1]!.stdin).toContain("externalCallId");
+  });
+
+  it("stops after one invalid-envelope repair rather than looping", async () => {
+    const env = await environment();
+    const runner = new FakeRunner(() => ({ exitCode: 0, signal: null, stderr: "", stdout: codexStream("repair-limit", "prose only") }));
+    const transport = new CodexResumeCheckpointTransport({ executable: "/opt/codex/codex", validatedCliVersion: "0.162.0", runner });
+    await expect(transport.executeSegment({ mode: "open", environment: env, model: "gpt-6-luna", prompt: "task", signal: new AbortController().signal }, ["vdt.echo"]))
+      .rejects.toMatchObject({ code: "CODEX_CHECKPOINT_PROTOCOL_INVALID", sessionId: "repair-limit" });
+    expect(runner.requests).toHaveLength(2);
+  });
+
+  it("never repairs ambiguous envelopes or forbidden native tool streams", async () => {
+    for (const stdout of [codexAgentMessageStream("ambiguous-thread", [checkpointTurn(), checkpointTurn()]),
+      codexStream("unsafe-thread", checkpointTurn(), [{ type: "item.completed", item: { type: "command_execution", command: "pwd" } }])]) {
+      const env = await environment();
+      const runner = new FakeRunner(() => ({ exitCode: 0, signal: null, stderr: "", stdout }));
+      const transport = new CodexResumeCheckpointTransport({ executable: "/opt/codex/codex", validatedCliVersion: "0.162.0", runner });
+      await expect(transport.executeSegment({ mode: "open", environment: env, model: "gpt-6-luna", prompt: "task", signal: new AbortController().signal }, ["vdt.echo"])).rejects.toBeInstanceOf(Error);
+      expect(runner.requests).toHaveLength(1);
+    }
+  });
+
   it("uses the provider default without passing a literal auto model on open and resume", async () => {
     const env = await environment();
     const runner = new FakeRunner(() => ({ exitCode: 0, signal: null, stdout: codexStream("default-thread"), stderr: "" }));
@@ -170,8 +239,12 @@ describe("CodexResumeCheckpointTransport", () => {
       "never",
       "--skip-git-repo-check",
       "--ignore-user-config",
+      "--output-schema", expect.stringContaining("checkpoint-response-"),
       "--sandbox",
       "read-only",
+      "-c", "features.shell_tool=false",
+      "-c", "features.apply_patch_freeform=false",
+      "-c", expect.stringContaining("developer_instructions="),
       "--model",
       "gpt-5.4",
       "-C",
@@ -184,8 +257,12 @@ describe("CodexResumeCheckpointTransport", () => {
       "--json",
       "--skip-git-repo-check",
       "--ignore-user-config",
+      "--output-schema", expect.stringContaining("checkpoint-response-"),
       "-c",
       'sandbox_mode="read-only"',
+      "-c", "features.shell_tool=false",
+      "-c", "features.apply_patch_freeform=false",
+      "-c", expect.stringContaining("developer_instructions="),
       "--model",
       "gpt-5.4",
       "codex-thread-1",
@@ -650,7 +727,7 @@ describe("CodexResumeCheckpointTransport", () => {
       forceNativeWebSearch: true
     }, ["vdt.echo"]);
     expect(runner.requests[0]?.args).toEqual(expect.arrayContaining(["--search"]));
-    expect(runner.requests[0]?.args.indexOf("--search")).toBeGreaterThan(runner.requests[0]!.args.indexOf("--json"));
+    expect(runner.requests[0]?.args.indexOf("--search")).toBeLessThan(runner.requests[0]!.args.indexOf("exec"));
   });
 
   it("uses an explicit trusted subscription auth home for credentials without exposing private state", async () => {

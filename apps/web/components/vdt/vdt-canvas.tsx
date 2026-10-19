@@ -17,6 +17,7 @@ import {
   calculateScenarioGraph,
   DEFAULT_CANVAS_LAYOUT,
   getFormulaReferenceOrder,
+  getDecompositionContextGroupIds,
   layoutGraph,
   percentageChange,
   resolveFormulaEdgeRelation
@@ -85,6 +86,7 @@ export function VdtCanvas() {
   }, [kpiHorizontalGap, kpiVerticalGap, project.graph, project.rootNodeId]);
 
   const highlightedSet = useMemo(() => new Set(highlightedNodeIds), [highlightedNodeIds]);
+  const referenceGroups = useMemo(() => getDecompositionContextGroupIds(project.graph, project.rootNodeId), [project.graph, project.rootNodeId]);
 
   const storeNodes: Node<VdtNodeCardData, "vdtNode">[] = useMemo(
     () =>
@@ -94,6 +96,7 @@ export function VdtCanvas() {
         position: node.position ?? fallbackPositions.get(node.id) ?? { x: 0, y: 0 },
         data: {
           node,
+          referenceGroup: referenceGroups.has(node.id),
           value: calculation.values[node.id],
           mainScenarioValue: mainScenarioContext?.values[node.id],
           rootScenarioEffect:
@@ -115,6 +118,7 @@ export function VdtCanvas() {
       mainScenarioContext,
       project.graph.nodes,
       project.rootNodeId,
+      referenceGroups,
       requestIncomingKpisWithAi,
       selectNode
     ]

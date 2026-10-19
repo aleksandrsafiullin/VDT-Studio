@@ -29,6 +29,8 @@ export interface AiCompletionParams<TInput> {
   taskType: AiTaskType;
   input: TInput;
   schema: unknown;
+  /** Wire representation of a runtime validator; does not replace validation. */
+  outputJsonSchema?: Record<string, unknown> | undefined;
   systemPrompt: string;
   userPrompt: string;
   model?: string | undefined;

@@ -10,10 +10,15 @@ import { createSkillTools } from "./skill-tools";
 import { createSubagentTools } from "./subagent-tools";
 import { createUserTools } from "./user-tools";
 import { createVdtBuilderTools } from "./vdt-builder-tools";
+import { createDataTools, type AgentDatasetProvider } from "./data-tools";
+import { createHierarchyTools } from "./hierarchy-tools";
+export { createDataTools, aggregateAgentData, agentDataQuerySchema } from "./data-tools";
+export type { AgentDatasetProvider, AgentDataset, AgentDataTable } from "./data-tools";
 import type { ResearchProvider } from "./research-tools";
 export {
   BraveSearchProvider,
   TavilySearchProvider,
+  OpenAiWebResearchProvider,
   resolveResearchProviderFromEnv,
   type ResearchProviderEnv,
   type ResearchProviderResolverOptions
@@ -23,6 +28,7 @@ export type { ResearchProvider, ResearchPurpose, ResearchSearchResult, ResearchS
 
 export interface DefaultToolRegistryOptions {
   researchProvider?: ResearchProvider | undefined;
+  datasetProvider?: AgentDatasetProvider | undefined;
 }
 
 export function createDefaultToolRegistry(options: DefaultToolRegistryOptions = {}): ToolRegistry {
@@ -34,7 +40,9 @@ export function createDefaultToolRegistry(options: DefaultToolRegistryOptions = 
     ...createSkillTools(),
     ...createExcavationTools(),
     ...createVdtBuilderTools(),
+    ...createHierarchyTools(),
     ...createProjectTools(),
+    ...createDataTools(options.datasetProvider),
     ...createFormulaTools(),
     ...createResearchTools(researchProvider),
     ...createRepairTools(),

@@ -910,6 +910,11 @@ const duplicateInputSchema = z.object({
   columns: z.array(z.string().min(1)).max(DEFAULT_DATA_DISCOVERY_LIMITS.maxColumns).optional()
 });
 
+/** Parse retained full bytes without invoking a model or calculating a mapping. */
+export async function parseRetainedDataset(input: AnalyzeRawDatasetInput): Promise<ParsedDataset> {
+  return parseDataset(input, { ...DEFAULT_DATA_DISCOVERY_LIMITS, ...input.limits });
+}
+
 async function parseDataset(input: AnalyzeRawDatasetInput, limits: DataDiscoveryLimits): Promise<ParsedDataset> {
   if (input.file.sizeBytes > limits.maxFileBytes) {
     return {

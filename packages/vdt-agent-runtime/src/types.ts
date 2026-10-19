@@ -338,6 +338,7 @@ export interface NodeSummary {
 }
 
 export interface ProjectSummary {
+  decompositionPlan?: VdtProject["graph"]["nodes"][number]["decompositionPlan"];
   id: string;
   name: string;
   rootNodeId: string;

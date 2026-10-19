@@ -20,6 +20,7 @@ export type VdtNodePatch = Partial<
     | "type"
     | "unit"
     | "formula"
+    | "decompositionPlan"
     | "value"
     | "baselineValue"
     | "valueStatus"

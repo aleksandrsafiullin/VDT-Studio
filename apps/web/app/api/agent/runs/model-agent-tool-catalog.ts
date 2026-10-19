@@ -19,7 +19,15 @@ export const TARGET_MODEL_AGENT_TOOLS = [
   "research.search_web",
   "research.extract_process_drivers",
   "research.propose_decomposition",
+  "data.list_sources",
+  "data.inspect",
+  "data.aggregate",
+  "data.read_rows",
+  "data.write_inputs",
   "vdt.create_draft",
+  "vdt.set_decomposition_plan",
+  "vdt.inspect_hierarchy",
+  "vdt.reparent_branch",
   "vdt.add_driver",
   "vdt.add_drivers_batch",
   "vdt.instantiate_subtree",
@@ -80,6 +88,7 @@ export function registerModelAgentSchemaTool(tools: ToolRegistry): void {
         const definition = definitions.get(name === "approval.request" ? "user.request_approval" : name);
         return definition ? {
           ...tool,
+          description: definition.description,
           inputJsonSchema: definition.inputJsonSchema ?? zodToJsonSchema(definition.inputSchema, { $refStrategy: "none" })
         } : tool;
       }) };
@@ -96,6 +105,7 @@ export function modelAgentToolCatalog(tools: ToolRegistry) {
     if (!spec || !definition) throw new Error(`Required target Model Agent tool "${name}" is unavailable.`);
     return {
       ...spec,
+      description: spec.description.length>128?`${spec.description.slice(0,125)}...`:spec.description,
       inputJsonSchema: definition.inputJsonSchema ?? compactInputSchema(zodToJsonSchema(definition.inputSchema, { $refStrategy: "none" }))
     };
   };

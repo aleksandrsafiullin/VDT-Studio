@@ -61,7 +61,8 @@ export function resolveExecutionBindingId(
     (binding): binding is PublicAgentExecutionBindingSummary =>
       binding.executionProfile === "model_agent"
   );
-  const backendMatch = modelBindings.find((binding) => binding.backendId === providerId);
+  const modelId = typeof providerConfig?.model === "string" ? providerConfig.model.trim() : "";
+  const backendMatch = modelBindings.find((binding) => binding.backendId === providerId && (!modelId || binding.modelId === modelId));
   return backendMatch?.bindingId ?? null;
 }
 

@@ -1,4 +1,5 @@
-import { readdir } from "node:fs/promises";
+import { readdir, open, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
   codexItemDiagnosticText,
@@ -9,6 +10,7 @@ import {
   summarizeCodexItemDiagnostics
 } from "./checkpoint-protocol-reporting";
 import { selectCheckpointTurnFromAgentMessages } from "./checkpoint-turn";
+import { codexCheckpointOutputSchema, decodeCodexCheckpointWire } from "./codex-output-schema";
 import {
   DEFAULT_MAX_LINES,
   DEFAULT_MAX_OUTPUT_BYTES,
@@ -25,6 +27,8 @@ import {
   invokeCountedCheckpointRunner,
   positiveInteger,
   sanitizeProcessMessage,
+  errorCodeOf,
+  sessionIdFromError,
   wrapSpawnCountingRunner,
   type CheckpointCredentialEnvironmentEntry,
   type CheckpointProcessRequest,
@@ -45,6 +49,7 @@ import {
   NativeWebSearchCollector,
   attachNativeWebSearchToError,
   withForcedCodexSearchFlag,
+  nativeWebSearchFromError,
   type NativeWebSearchRecord
 } from "./native-web-search";
 
@@ -214,13 +219,26 @@ function parseCodexStreamOutput(input: {
   }
   const segmentDiagnosticSummary = summarizeCodexItemDiagnostics(itemDiagnostics);
   const nativeWebSearch = webSearches.snapshot();
-  return {
-    sessionId,
-    turn: selectCheckpointTurnFromAgentMessages(agentMessages, {
+  let turn: CheckpointTurn;
+  try {
+    turn = selectCheckpointTurnFromAgentMessages(agentMessages.map(decodeCodexCheckpointWire), {
       protocolVersion: VDT_CHECKPOINT_TURN_PROTOCOL_VERSION,
       allowedToolNames: input.allowedToolNames,
       errorPrefix: ERROR_PREFIX
-    }),
+    });
+  } catch (error) {
+    // Only a completed, otherwise valid stream may request an envelope repair.
+    // Ambiguity, native tools, process failures and malformed streams fail closed.
+    const code = errorCodeOf(error);
+    if (typeof error === "object" && error !== null
+      && (code === `${ERROR_PREFIX}_PROTOCOL_INVALID` || code.startsWith("ACTION_BATCH_"))) {
+      Object.assign(error, { checkpointEnvelopeRepairable: true });
+    }
+    throw error;
+  }
+  return {
+    sessionId,
+    turn,
     ...(segmentDiagnosticSummary ? { segmentDiagnosticSummary } : {}),
     ...(nativeWebSearch ? { nativeWebSearch } : {})
   };
@@ -291,6 +309,14 @@ export class CodexResumeCheckpointTransport {
     input: ResumeCheckpointSegmentInput,
     allowedToolNames: readonly string[]
   ): Promise<ResumeCheckpointSegmentResult> {
+    return this.#executeSegment(input, allowedToolNames, true);
+  }
+
+  async #executeSegment(
+    input: ResumeCheckpointSegmentInput,
+    allowedToolNames: readonly string[],
+    allowEnvelopeRepair: boolean
+  ): Promise<ResumeCheckpointSegmentResult> {
     input.signal.throwIfAborted();
     if (!input.model.trim() || input.model.startsWith("-") || input.model.includes("\0") || input.model.length > 160) {
       throw checkpointTransportError(`${ERROR_PREFIX}_CONFIGURATION_INVALID`, "Codex model is invalid.");
@@ -307,6 +333,7 @@ export class CodexResumeCheckpointTransport {
     const credentials = input.environment.credentialEnvironment ?? [];
     const environment = buildCodexEnvironment(resolved.state, resolved.authHome, credentials);
     const modelArgs = input.model === "auto" ? [] : ["--model", input.model];
+    const schemaPath = path.join(resolved.state, `checkpoint-response-${randomUUID()}.json`);
     const args = withForcedCodexSearchFlag(input.mode === "open"
       ? [
         "exec",
@@ -315,8 +342,12 @@ export class CodexResumeCheckpointTransport {
         "never",
         "--skip-git-repo-check",
         "--ignore-user-config",
+        "--output-schema", schemaPath,
         "--sandbox",
         "read-only",
+        "-c", "features.shell_tool=false",
+        "-c", "features.apply_patch_freeform=false",
+        "-c", 'developer_instructions="You are a VDT checkpoint agent. Follow the supplied output schema: call argsJson is a JSON-encoded object containing the chosen Gateway arguments (the host decodes it to canonical args). At most three calls per turn. Return the required JSON envelope. All file data and VDT operations go exclusively through the supplied action_batch gateway, never native shell, file, patch, MCP, or collaboration tools. Native web search is permitted for public research only. No native filesystem investigation is needed or authorized. The private working directory is intentionally empty."',
         ...modelArgs,
         "-C",
         resolved.workspace,
@@ -328,8 +359,12 @@ export class CodexResumeCheckpointTransport {
         "--json",
         "--skip-git-repo-check",
         "--ignore-user-config",
+        "--output-schema", schemaPath,
         "-c",
         'sandbox_mode="read-only"',
+        "-c", "features.shell_tool=false",
+        "-c", "features.apply_patch_freeform=false",
+        "-c", 'developer_instructions="You are a VDT checkpoint agent. Follow the supplied output schema: call argsJson is a JSON-encoded object containing the chosen Gateway arguments (the host decodes it to canonical args). At most three calls per turn. Return the required JSON envelope. All file data and VDT operations go exclusively through the supplied action_batch gateway, never native shell, file, patch, MCP, or collaboration tools. Native web search is permitted for public research only. No native filesystem investigation is needed or authorized. The private working directory is intentionally empty."',
         ...modelArgs,
         input.expectedSessionId!,
         "-"
@@ -337,7 +372,12 @@ export class CodexResumeCheckpointTransport {
     if (args.some((arg) => FORBIDDEN_ARGUMENTS.has(arg))) {
       throw checkpointTransportError("SECURITY_BOUNDARY_BREACH", "Codex checkpoint arguments enabled a forbidden trust mode.");
     }
-    const spawned = await invokeCountedCheckpointRunner(this.#runner, {
+    const schemaFile = await open(schemaPath, "wx", 0o600);
+    let spawned: Awaited<ReturnType<typeof invokeCountedCheckpointRunner<CheckpointProcessRequest, CheckpointProcessResult>>>;
+    try {
+      await schemaFile.writeFile(JSON.stringify(codexCheckpointOutputSchema(allowedToolNames)));
+      await schemaFile.close();
+      spawned = await invokeCountedCheckpointRunner(this.#runner, {
       executable: this.#executable,
       args: Object.freeze(args),
       cwd: resolved.workspace,
@@ -346,7 +386,11 @@ export class CodexResumeCheckpointTransport {
       signal: input.signal,
       timeoutMs: this.#timeoutMs,
       maxOutputBytes: this.#maxOutputBytes
-    });
+      });
+    } finally {
+      await schemaFile.close();
+      await rm(schemaPath, { force: true });
+    }
     const result = spawned.result;
     if (containsCredentialLeak(`${result.stdout}\n${result.stderr}`, credentials)) {
       throw checkpointTransportError("SECURITY_BOUNDARY_BREACH", "Codex checkpoint output exposed a server-owned credential.");
@@ -367,7 +411,9 @@ export class CodexResumeCheckpointTransport {
         "Codex wrote to the private checkpoint workspace; the run was stopped."
       );
     }
-    const parsed = parseCodexStreamOutput({
+    let parsed: ReturnType<typeof parseCodexStreamOutput>;
+    try {
+      parsed = parseCodexStreamOutput({
       stdout: result.stdout,
       ...(input.expectedSessionId !== undefined ? { expectedSessionId: input.expectedSessionId } : {}),
       maxBytes: this.#maxOutputBytes,
@@ -375,7 +421,35 @@ export class CodexResumeCheckpointTransport {
       allowedToolNames,
       exitCode: result.exitCode,
       signal: result.signal
-    });
+      });
+    } catch (error) {
+      const sessionId = sessionIdFromError(error);
+      if (!allowEnvelopeRepair || !sessionId || typeof error !== "object" || error === null
+        || !("checkpointEnvelopeRepairable" in error) || error.checkpointEnvelopeRepairable !== true) throw error;
+      const repaired = await this.#executeSegment({
+        ...input, mode: "resume", expectedSessionId: sessionId, forceNativeWebSearch: false,
+        prompt: JSON.stringify({
+          protocolVersion: VDT_CHECKPOINT_TURN_PROTOCOL_VERSION,
+          type: "checkpoint_envelope_correction",
+          diagnostic: error instanceof Error ? error.message.slice(0, 500) : "Invalid checkpoint envelope.",
+          instruction: "Your last completed response did not satisfy the checkpoint contract. NO proposed VDT calls were executed. Correct only the envelope and call fields, continuing the same task in this session. Follow the supplied CLI output schema. Use action.type (never actionType). Send at most three calls. Every call has a unique externalCallId, toolName and argsJson: a JSON-encoded object with the model-authored tool arguments. Use only admitted tools; never use shell/filesystem/native tools. There is no further format-repair attempt.",
+          example: { protocolVersion: VDT_CHECKPOINT_TURN_PROTOCOL_VERSION, assistantMessage: null,
+            action: { type: "action_batch", batch: { calls: [{ externalCallId: "unique-call-1", toolName: allowedToolNames[0], argsJson: "{}" }] } } },
+          finalRule: "Use final only after run.request_finish returned a verified finishReceiptId; cite that exact receipt. The example shows shape, not selected tool arguments.",
+          allowedToolNames
+        })
+      }, allowedToolNames, false);
+      const firstSearch=nativeWebSearchFromError(error);
+      return Object.freeze({
+        ...repaired,
+        inputHash: hashText(input.prompt),
+        inferenceMs: spawned.inferenceMs + (repaired.inferenceMs ?? 0),
+        outputBytes: spawned.outputBytes + (repaired.outputBytes ?? 0),
+        processSpawnCount: spawned.processSpawnCount + (repaired.processSpawnCount ?? 0),
+        segmentDiagnosticSummary: "Corrected one invalid checkpoint envelope in the same session before executing any VDT calls.",
+        ...(firstSearch?{nativeWebSearch:{count:firstSearch.count+(repaired.nativeWebSearch?.count??0),queries:[...firstSearch.queries,...(repaired.nativeWebSearch?.queries??[])]}}:{})
+      });
+    }
     return Object.freeze({
       sessionId: parsed.sessionId,
       inputHash: hashText(input.prompt),

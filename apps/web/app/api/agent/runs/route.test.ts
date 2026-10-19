@@ -586,6 +586,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     builder.createDraft({ projectTitle: "Ore hauled", rootKpi: "Ore hauled", unit: "t" });
     const rootNodeId = builder.getProject().rootNodeId;
     builder.addDriver({ parentNodeId: rootNodeId, nodeId: "retained_input", name: "Retained input", type: "input", baselineValue: 42, unit: "t" });
+    builder.updateNode({nodeId:rootNodeId,patch:{decompositionPlan:{version:1,goal:"Add a payload while preserving existing context",nodes:[{nodeId:"retained_input",parentNodeId:rootNodeId,kind:"context",rationale:"Existing retained observation"},{nodeId:"payload",parentNodeId:rootNodeId,kind:"input"}]}}});
     const initialProject = builder.getProject();
     const toolCatalogHash = currentModelAgentToolCatalogHash();
     const capability: Extract<AgentCapabilityProfile, { executionProfile: "model_agent" }> = {
@@ -810,7 +811,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       const secondProviderBody = JSON.parse(String((providerFetch.mock.calls[1]?.[1] as RequestInit).body)) as {
         messages: Array<{ role: string; content: string }>;
       };
-      const secondPrompt = JSON.parse(secondProviderBody.messages.find((message) => message.role === "user")!.content) as {
+      const secondPrompt = JSON.parse(secondProviderBody.messages.filter((message) => message.role === "user").at(-1)!.content) as {
         delta: {
           type: string;
           checkpointDelta?: {
@@ -884,6 +885,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     initialBuilder.createDraft({ projectTitle: "Ore hauled", rootKpi: "Ore hauled" });
     const initialProject = initialBuilder.getProject();
     const rootNodeId = initialProject.rootNodeId;
+    initialProject.graph.nodes[0]!.decompositionPlan={version:1,goal:"Add the first driver with explicit approval",nodes:[{nodeId:"approved_driver",parentNodeId:rootNodeId,kind:"input"}]};
     const providerFetch = vi.fn()
       .mockResolvedValueOnce(openAiStructuredResponse({
         turnId: "proposal-turn",

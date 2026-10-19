@@ -1,5 +1,10 @@
 # Provider Compatibility
 
+## Experimental source-aware checks (2026-10-17)
+
+The local session catalog now shares retained-file aggregation/input tools and may use explicitly enabled ephemeral OpenAI web research. Codex checkpoint framing now uses a private strict output schema and bounded correction. These code changes and task-specific live checks are not provider certification. Canonical `release/provider-certification.json` statuses and existing native isolation limitations remain authoritative. Record exact model, transport, source hash, task, completion state and timing for each live result; do not equate cancelled/failed attempts with successful runs.
+
+
 Last reviewed against canonical metadata and the current working tree: **2026-09-14**. The certification file itself is dated **2026-06-22**. The 2026-08-26 agent-decision-v2 qualification attempts below did not pass and therefore do not promote provider certification.
 
 Checkpoint-session live status last reviewed **2026-09-13**: Codex and Cursor opt-in harnesses reached `full_success` with a calculable tree; Claude checkpoint session remains **unverified** (`claude` CLI not installed on the maintainer machine). That asymmetry is not a qualification promotion — see [CLI checkpoint session canaries](#cli-checkpoint-session-canaries).
@@ -15,7 +20,7 @@ See also [Local Runner](LOCAL_RUNNER.md) for pairing and API details.
 - **Cross-platform CLI execution:** Subscription CLIs run from reviewed manifests with provider-owned auth, fixed args, fresh temp workspaces, filtered env and local schema validation. VDT does not depend on OS-specific sandbox wrappers for supported Local AI execution.
 - **Maintainer live gate:** Optional real CLI probes behind `VDT_LIVE_*=1` env vars (never run in default CI).
 - **Subscription model discovery:** Subscription adapters own provider-specific model-list commands. Codex uses `codex debug models`; Cursor Agent uses `cursor-agent models`. Settings displays only model IDs returned by the installed CLI. A missing command, missing auth, unsupported list operation, or timeout leaves only `auto` plus manual entry; VDT does not substitute a bundled suggestion catalog.
-- **API-key model discovery:** Settings sends the session-only key and resolved provider configuration to the local server and requests `list_models`. OpenAI/OpenAI-compatible providers use `GET <baseUrl>/models`, Anthropic uses `GET <baseUrl>/v1/models` (or `<baseUrl>/models` when the base already ends in `/v1`), and Gemini uses `GET <baseUrl>/v1beta/models`. Responses are size/item bounded, redirects are disabled, keys are not returned to the browser, and only the current response populates the picker. An unsupported or failed list operation leaves manual entry available.
+- **API-key model discovery:** Settings sends the current in-memory key and resolved provider configuration to the local server and requests `list_models`. OpenAI/OpenAI-compatible providers use `GET <baseUrl>/models`, Anthropic uses `GET <baseUrl>/v1/models` (or `<baseUrl>/models` when the base already ends in `/v1`), and Gemini uses `GET <baseUrl>/v1beta/models`. Responses are size/item bounded, redirects are disabled, keys are not returned to the browser, and only the current response populates the picker. An unsupported or failed list operation leaves manual entry available.
 - **Codex service tier:** Codex CLI 0.128.0 rejects legacy `service_tier = "default"` config values. VDT-owned Codex runtime calls set `service_tier="fast"` through reviewed `-c` args so a stale user config does not block local AI execution.
 
 Certification labels in manifests/registry reflect fake-backend + schema validation gates. Maintainer live verification dates are recorded per backend when run.
@@ -434,14 +439,14 @@ Google's 2026 transition means the original Phase 5 personal-allowance criterion
 | Protocol | OpenAI-compatible (`openai_compatible` provider) |
 | Base URL | `https://coding.dashscope.aliyuncs.com/v1` |
 | Default model | `qwen3-coder-plus` |
-| Credential mode | Session-only API key (never persisted to localStorage or export) |
+| Credential mode | Encrypted local API key, restored across sessions (plaintext excluded from localStorage and export; see ADR-007) |
 | Release status | **Beta** |
 | Tested in CI | Catalog/resolver unit tests; mocked BYOK connection e2e |
 | Maintainer live verification | Pending — optional maintainer gate with a real Coding Plan key |
 
 ### Configuration
 
-Select **BYOK → OpenAI → Gateway preset: Alibaba Cloud Coding Plan (Beta)** in Settings. Enter a Coding Plan API key for the browser session only. Connection tests and model discovery route through `/api/ai/generate-vdt` with `providerId: openai_compatible` and the DashScope coding base URL.
+Select **BYOK → OpenAI → Gateway preset: Alibaba Cloud Coding Plan (Beta)** in Settings. Enter a Coding Plan API key; it is retained encrypted on this device until replaced or removed in Settings. Connection tests and model discovery route through `/api/ai/generate-vdt` with `providerId: openai_compatible` and the DashScope coding base URL.
 
 `inferGatewayPresetId` recognizes `coding.dashscope` and `coding-intl.dashscope` URLs and maps them to `alibaba-coding-plan`.
 
@@ -454,7 +459,7 @@ Select **BYOK → OpenAI → Gateway preset: Alibaba Cloud Coding Plan (Beta)** 
 
 ### Not supported
 
-- Persisting Coding Plan API keys across reloads or including them in project JSON/SVG export
+- Including API keys in ordinary preferences or project exports; encrypted local retention is described in [ADR-007](adr/ADR-007-encrypted-browser-api-keys.md)
 - Silent fallback to mock or another provider when the DashScope endpoint fails
 - Arbitrary base URL overrides without explicit user customization in BYOK settings
 
@@ -499,3 +504,5 @@ Native transport retains all tool names/purposes and the immutable catalog hash 
 When the original structured brief already specifies KPI, unit and period, new-tree library discovery/read precedes questions, including the initial turn. Missing core metric definitions can still be clarified immediately. This prevents delegating internal library/tool selection to the user; essential clarification remains available after reading relevant guidance. Final source-quote diagnostics expose equal-value candidates with units as hints, and explicitly preserve the assumption status of numbers labelled as estimates in the brief.
 
 A 2026-10-17 local `qwen3.5:4b-q4_K_M` run completed one fresh 35-node library-backed excavation/haulage tree with a verified finish receipt and no operator formula/value edits. A separate composer smoke resolved the same model's server-managed binding and was cancelled before mutation. This is narrow live evidence, not a provider status promotion or a performance qualification; see [the complete evidence boundary](AI_HARNESS.md#local-library-completion-evidence-2026-10-17).
+
+The direct OpenAI Model Agent has one successful fresh `gpt-6-luna` library-backed excavation/haulage construction on 2026-10-17: 35 finite nodes, 10 model turns, 31 successful tool operations and 145.436 seconds, with a verified finish receipt and no operator formula/value edits. The session uses explicit short-lived key/model admission and corrected reasoning-model parameters/schema/context transport. Earlier failed API attempts are retained separately. This does not promote the canonical provider status, qualify other API gateways, establish a cross-model speed ranking or certify CLI support for a same-named model; see [evidence](AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17).

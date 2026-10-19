@@ -3,6 +3,7 @@ import {
   calculateGraph,
   extractFormulaReferences,
   validateGraph,
+  inspectDecompositionHierarchy,
   type VdtProject
 } from "@vdt-studio/vdt-core";
 import type { AgentSessionBinding } from "./agent-execution-contracts";
@@ -21,6 +22,7 @@ export interface DeterministicFinishVerificationInput {
   mode: VdtAgentMode;
   /** Server-derived for a run that started from an empty placeholder KPI. */
   requireDerivedRoot?: boolean | undefined;
+  requireHierarchy?: boolean | undefined;
   pendingQuestion: boolean;
   pendingApproval: boolean;
   pendingProposal: boolean;
@@ -71,6 +73,10 @@ export function verifyDeterministicRunFinish(
   if (blockers.length > 0 || !input.project) return rejected(blockers);
 
   const project = input.project;
+  if (input.requireHierarchy) {
+    const hierarchy = inspectDecompositionHierarchy(project);
+    if (!hierarchy.valid) return rejected([{code:"HIERARCHY_INCOMPLETE",detail:hierarchy.errors.slice(0,12).join(" ")}],{hierarchy:{...hierarchy,errors:hierarchy.errors.slice(0,20),errorCount:hierarchy.errors.length}});
+  }
   const backlog = buildFormulaBacklog(project);
   if (backlog.length > 0) {
     return rejected([{

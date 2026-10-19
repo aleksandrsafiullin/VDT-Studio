@@ -1,6 +1,7 @@
 import { FormulaEvaluationError, FormulaParseError } from "./ast";
 import { evaluateAst, extractReferencesFromAst, resolveFormulaText } from "./evaluator";
 import { parseFormula } from "./parser";
+import { getDecompositionContextGroupIds } from "../graph/decomposition";
 import type {
   CalculationTraceItem,
   GraphCalculationResult,
@@ -36,6 +37,7 @@ export function calculateGraph(input: VdtProject | VdtGraph, options: CalculateG
   const graph = isProject(input) ? input.graph : input;
   const rootNodeId = options.rootNodeId ?? (isProject(input) ? input.rootNodeId : graph.nodes[0]?.id ?? "");
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const contextGroups = getDecompositionContextGroupIds(graph, rootNodeId);
   const overrides = normalizeOverrides(options.overrides);
   const values: Record<string, number> = {};
   const traceByNode = new Map<string, CalculationTraceItem>();
@@ -101,7 +103,7 @@ export function calculateGraph(input: VdtProject | VdtGraph, options: CalculateG
     if (!node.formula?.trim()) {
       const value = node.baselineValue ?? node.value;
       if (value === undefined) {
-        addError(nodeId, "missing_value", `Missing value for ${node.name}.`);
+        if (!contextGroups.has(nodeId)) addError(nodeId, "missing_value", `Missing value for ${node.name}.`);
         visiting.pop();
         visited.add(nodeId);
         return undefined;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { productionVolumeProject } from "@vdt-studio/vdt-core";
+import { productionVolumeProject,VdtBuilderSession } from "@vdt-studio/vdt-core";
 import type { AgentSessionBinding } from "./agent-execution-contracts";
 import type { AgentSupervisorPersistenceStateV2 } from "./agent-supervisor-persistence";
 import { verifyDeterministicRunFinish } from "./finish-verifier";
@@ -7,7 +7,35 @@ import { verifyDeterministicRunFinish } from "./finish-verifier";
 const HASH_A = `sha256:${"a".repeat(64)}`;
 const HASH_B = `sha256:${"b".repeat(64)}`;
 
+it("requires the recorded hierarchy on protected runs even when the flat graph calculates",()=>{
+ const b=new VdtBuilderSession();b.createDraft({rootKpi:"Output",projectTitle:"Output",unit:"t"});
+ b.addDriver({nodeId:"rate",parentNodeId:"output",name:"Rate",baselineValue:2});
+ b.addDriver({nodeId:"hours",parentNodeId:"output",name:"Hours",baselineValue:3});
+ b.addDriver({nodeId:"production",parentNodeId:"output",name:"Production",type:"calculated",formula:"rate * hours"});b.setFormula({nodeId:"output",formula:"production"});
+ expect(verifyDeterministicRunFinish({...readyInput(),project:b.getProject(),requireHierarchy:true}).code).toBe("HIERARCHY_INCOMPLETE");
+ b.updateNode({nodeId:"output",patch:{decompositionPlan:{version:1,goal:"Output by time and productivity",nodes:[{nodeId:"production",parentNodeId:"output",kind:"calculated"},{nodeId:"rate",parentNodeId:"production",kind:"input"},{nodeId:"hours",parentNodeId:"production",kind:"input"}]}}});
+ const flat=b.getProject();expect(verifyDeterministicRunFinish({...readyInput(),project:flat,requireHierarchy:true})).toMatchObject({accepted:false,code:"HIERARCHY_INCOMPLETE"});
+ for(const edge of flat.graph.edges)if(["rate","hours"].includes(edge.targetNodeId))edge.sourceNodeId="production";
+ expect(verifyDeterministicRunFinish({...readyInput(),project:flat,requireHierarchy:true})).toMatchObject({accepted:true,code:"FINISH_VERIFIED"});
+ flat.graph.nodes.find(n=>n.id==="production")!.formula="rate + 0 * hours";
+ expect(verifyDeterministicRunFinish({...readyInput(),project:flat,requireHierarchy:true})).toMatchObject({accepted:false,code:"HIERARCHY_INCOMPLETE"});
+});
+
 describe("verifyDeterministicRunFinish", () => {
+  it("accepts empty reference containers but never empty numerical reference leaves", () => {
+    const b = new VdtBuilderSession(); b.createDraft({ rootKpi: "Output", projectTitle: "References", unit: "t" });
+    b.addDriver({ nodeId: "rate", parentNodeId: "output", name: "Rate", baselineValue: 2 }); b.setFormula({ nodeId: "output", formula: "rate * 3" });
+    b.addDriver({ nodeId: "refs", parentNodeId: "output", name: "References", type: "external_factor", relation: "contextual_influence" });
+    b.addDriver({ nodeId: "spec", parentNodeId: "refs", name: "Specification", baselineValue: 10, relation: "contextual_influence" });
+    b.updateNode({ nodeId: "output", patch: { decompositionPlan: { version: 1, goal: "Output and references", nodes: [
+      { nodeId: "rate", parentNodeId: "output", kind: "input" },
+      { nodeId: "refs", parentNodeId: "output", kind: "context", rationale: "Group" },
+      { nodeId: "spec", parentNodeId: "refs", kind: "context", rationale: "Reference" }
+    ] } } });
+    expect(verifyDeterministicRunFinish({ ...readyInput(), project: b.getProject(), requireHierarchy: true })).toMatchObject({ accepted: true, code: "FINISH_VERIFIED" });
+    const missing = b.getProject(); delete missing.graph.nodes.find(n => n.id === "spec")!.baselineValue;
+    expect(verifyDeterministicRunFinish({ ...readyInput(), project: missing, requireHierarchy: true }).code).toBe("CALCULATION_ERRORS");
+  });
   it("refuses a constant placeholder as a new completed tree while preserving legitimate numeric review", () => {
     const project = structuredClone(productionVolumeProject);
     const root = project.graph.nodes.find((node) => node.id === project.rootNodeId)!;

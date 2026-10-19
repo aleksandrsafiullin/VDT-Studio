@@ -1,5 +1,14 @@
 # Roadmap
 
+## Hierarchy consistency correction (experimental)
+
+Implemented locally: explicit agent-authored plans, factor-layer frontier enforcement, atomic branch reparenting, bounded hierarchy diagnostics and a full-tree Supervisor finish gate shared by CLI and API execution. Remaining: scenario-specific autonomous acceptance and business-scope/semantic correctness, including reliable use of source-derived factors. Structural validity must not be presented as business certification or promotion of a provider. Fresh model-run evidence must identify model, initial state, errors, timing and operator involvement separately.
+
+## Source-aware agent follow-up (2026-10-17)
+
+Implemented experimentally: shared retained-file tools, deterministic full-data aggregates, guarded query-to-input writes, bounded source/citation context, explicit ephemeral OpenAI research and stricter Codex response framing. Still required: model-specific autonomous task evaluation, reliable semantic source use and weighted rates, refresh, general joins/layout handling, authenticated hosted boundaries, parser hardening and production qualification. Retain failed/cancelled runs separately from successful completion timings.
+
+
 Last reviewed against the working tree: **2026-08-10**.
 
 This roadmap is the operational summary of the authoritative [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md). It is ordered by dependency and risk and replaces the older phase list that treated SQLite and data mapping as entirely future work. Both now exist as partial implementations and must be corrected before expansion. [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) freezes the Gate A skill/actor/migration/flag target; [`VDT_CORRECTIVE_EXECUTION_LOG.md`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md) records actual progress and evidence.
@@ -20,6 +29,7 @@ Implemented at alpha level:
 - trusted-local Ollama/LM Studio/vLLM Model Agent starts with server-owned installed-model bindings and schema-constrained local turns; native packaging, quality and performance remain unqualified;
 - structured Model Agent limits repeated tool/schema failures to three attempts and identical successful operations without graph progress to four; counters survive supported checkpoints. Local steps receive a bounded current graph, Ollama uses bounded streaming, a skill-read prerequisite and schema-constrained sibling batches for new trees; assumption-enabled runs are instructed to fill estimates directly. Explicit same-session turn-budget continuation, backoff and other profiles' retry limits remain unfinished;
 - managed Cursor CLI authentication through a fixed manifest command, provider browser confirmation, post-login verification and automatic rescan;
+- encrypted origin-local BYOK key retention across reload/reopen, provider/endpoint isolation, replacement/deletion and storage failure/retry status; browser-profile limits and native qualification remain explicit in [ADR-007](adr/ADR-007-encrypted-browser-api-keys.md);
 - separate CLI, Local models and API keys settings with saved category choices and inline readiness actions and reversible browser-local subscription removal; Undo/Add back, explicit chat fallback feedback, and memory-override reset survive rescans and reloads;
 - real agent decision/tool/feedback loop with local skill retrieval;
 - guarded one-click incoming-KPI decomposition that stops after the selected node's immediate child layer;
@@ -215,3 +225,5 @@ Track at each release candidate:
 Local structured-turn reliability now includes a bounded current-graph/input backlog, existing-ID grammar grounding, one-shot filling of missing numeric leaves, normalized-ID collision rejection and a derived-root gate for new trees. These are implemented safeguards; autonomous model quality and resource/performance qualification still require live evidence and the unchanged certification program.
 
 Experimental complete library topologies: a local Model Agent may explicitly select `mining.load_and_haul` through `skill.seed_topology`, accept individually named illustrative defaults, fill supplied facts, and use the normal calculation/finish gates. The single canonical skill artifact contains the annual joint excavation/haulage formulas; defaults are editable assumptions, not site facts or verified benchmarks. Seeding preserves the existing root and cannot replace existing drivers. A fresh local `qwen3.5:4b-q4_K_M` run on 2026-10-17 completed this library workflow with 35 calculable nodes in 10 turns, without operator formula/value edits. See [the live evidence and its limits](AI_HARNESS.md#local-library-completion-evidence-2026-10-17); production/provider qualification is unchanged.
+
+Implemented experimentally for direct OpenAI: explicit session-key/model admission, modern reasoning-model completion parameters, exact response-schema guidance in JSON fallback, and original-brief/admitted-read/current-graph retention. A fresh `gpt-6-luna` library-backed tree completed in 145.436 seconds (35 nodes, 10 turns), without manual formula/value edits. Earlier integration failures remain in the timing inventory. Repeated cold/warm samples, arbitrary tree quality, restart recovery, other API gateways and production certification remain separate work; see [evidence](AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17).

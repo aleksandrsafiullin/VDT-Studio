@@ -1,7 +1,7 @@
 "use client";
 
 import { Trash2 } from "lucide-react";
-import { calculateGraph } from "@vdt-studio/vdt-core";
+import { calculateGraph, getDecompositionContextGroupIds } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextArea, TextInput } from "@/components/ui/field";
 import { Panel, PanelCollapseTab, PanelToggleButton, PanelHeader } from "@/components/ui/panel";
@@ -73,6 +73,7 @@ export function NodeInspector() {
   }
 
   const sourceNote = node.valueSource?.note?.trim();
+  const referenceGroup = getDecompositionContextGroupIds(project.graph, project.rootNodeId).has(node.id);
   const assumptionNotes = [...new Set((node.assumptions ?? [])
     .map((note) => note.trim())
     .filter((note) => note && !sourceNote?.includes(note)))];
@@ -117,7 +118,7 @@ export function NodeInspector() {
             <div className="grid grid-cols-2 gap-3 rounded-md border border-line bg-slate-50 p-3">
               <div>
                 <div className="text-xs font-medium uppercase tracking-normal text-muted">Value</div>
-                <div className="mt-1 text-lg font-semibold text-ink">{formatNumber(calculation.values[node.id])}</div>
+                <div className="mt-1 text-lg font-semibold text-ink">{referenceGroup ? "Reference group" : formatNumber(calculation.values[node.id])}</div>
               </div>
               <div>
                 <div className="text-xs font-medium uppercase tracking-normal text-muted">Unit</div>
@@ -163,13 +164,13 @@ export function NodeInspector() {
                 errors={formulaInlineErrors}
               />
             )}
-            <Field label="Baseline value">
+            {!referenceGroup && <Field label="Baseline value">
               <TextInput
                 type="number"
                 value={node.baselineValue ?? node.value ?? ""}
                 onChange={(event) => updateNodeBaselineValue(node.id, parseFiniteInput(event.target.value))}
               />
-            </Field>
+            </Field>}
             <Field label="Description">
               <TextArea
                 value={node.description ?? ""}

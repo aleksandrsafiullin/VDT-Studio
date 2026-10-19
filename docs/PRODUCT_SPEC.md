@@ -1,5 +1,16 @@
 # Product Specification
 
+Agent-authored reference groups preserve a readable hierarchy of supporting parameters. An empty planned context container displays `Reference group`, without a numeric baseline control or `n/a` value. Its numerical children still need real values. Agents must group multiple reference inputs instead of placing their source columns as direct root siblings; ordinary numeric KPI values and formulas are unchanged.
+
+## Agent hierarchy acceptance (experimental)
+
+Full-tree CLI/API/local Supervisor construction now requires an explicit decomposition plan, ordered factor layers and matching visual parents/formula dependencies before successful completion. Agents can move a branch without recreating its inputs or losing source lineage. Reference-only metrics need an explicit context rationale. Shared numerical factors retain one source node and declared cross-branch formula users. This accepts structural consistency, not a universally correct business decomposition; live model quality still needs scenario-specific evaluation. Bounded selected-node deepening remains a single-layer operation.
+
+## Autonomous file and equipment-research experiment (2026-10-17)
+
+Trusted-local session agents can discover retained VDT files, inspect definitions, aggregate full tables and bind results to empty numerical inputs. The actor authors the factor structure and formulas, selects the metric semantics and checks units/periods. File-based actuals and manufacturer nominal parameters must stay distinguishable; successful calculation alone does not verify the decomposition. OpenAI research can be explicitly enabled using the existing configured key for a one-hour in-memory session. This remains experimental and model-dependent, with no production-readiness claim.
+
+
 Last reviewed against the working tree: **2026-08-10**.
 
 ## Product Definition
@@ -164,7 +175,7 @@ Known Scenario Mode parity boundary: duplicate imported overrides use the last v
 - Hosted web is API/BYOK only; local subscription execution belongs to Desktop or the explicit development runner.
 - Hosted/public upload remains disabled. Local-only access uses a stable application-owned principal; hosted access requires a server-issued authenticated actor context.
 - Request bodies, model output, skills and uploaded files cannot choose or override principal, tenant, workspace, project, role or approval authority.
-- API keys remain session-only and are excluded from project data.
+- BYOK API keys persist in an encrypted device/origin-local vault until replaced or removed in Settings. Startup restores the matching provider/endpoint key. Status and Retry expose storage errors; plaintext credentials stay excluded from ordinary preferences and project data. See [ADR-007](adr/ADR-007-encrypted-browser-api-keys.md) for retention/security limits.
 - Provider endpoints, executable aliases and CLI flags are reviewed server-side.
 - Uploaded data requires ownership, resource limits, retention/delete controls and explicit outbound-provider consent before production use.
 - Production claims require a passing dependency audit and native/release gates.
@@ -193,3 +204,5 @@ The application must not be described as production-ready until the blockers in 
 For a new blank VDT, native Ollama construction first discovers and reads a model-selected library skill, then builds in bounded steps. For a newly built VDT, completion requires actual drivers and a root formula that references them. Replacing an empty root with a number cannot mark the build complete. Existing inputs are filled in bounded atomic batches with provenance; already populated values use explicit updates. Formula assignment preserves the root KPI role. These checks do not certify the business assumptions.
 
 Experimental complete library topologies: a local Model Agent may explicitly select `mining.load_and_haul` through `skill.seed_topology`, accept individually named illustrative defaults, fill supplied facts, and use the normal calculation/finish gates. The single canonical skill artifact contains the annual joint excavation/haulage formulas; defaults are editable assumptions, not site facts or verified benchmarks. Seeding preserves the existing root and cannot replace existing drivers. A fresh local `qwen3.5:4b-q4_K_M` run on 2026-10-17 completed this library workflow with 35 calculable nodes in 10 turns, without operator formula/value edits. See [the live evidence and its limits](AI_HARNESS.md#local-library-completion-evidence-2026-10-17); production/provider qualification is unchanged.
+
+Direct OpenAI API Model Agent execution is experimental in the trusted local app: Send uses the exact selected model and current in-memory key, admits a short-lived server binding and starts the same bounded agent workflow. No manual environment-file copy is required. Reload restores the key from the separate encrypted local vault; backend admissions and active execution copies remain memory-only. Unsupported gateways do not silently route through OpenAI. One fresh `gpt-6-luna` excavation/haulage tree completed with 35 finite nodes in 145.436 seconds and no operator formula/value edits; its assumptions differ from the Ollama example. See [the case evidence and limits](AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17).

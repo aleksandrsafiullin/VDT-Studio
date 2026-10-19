@@ -1,5 +1,14 @@
 # Data Ingestion And KPI Baselines
 
+## Session-agent source tools (experimental, 2026-10-17)
+
+The main Supervisor catalog now includes `data.list_sources`, `data.inspect`, `data.read_rows`, `data.aggregate` and `data.write_inputs`. This is separate from the incoming-KPI review workflow. The host derives the SQLite project/VDT owner from the run, verifies retained immutable bytes/hash and parses the complete source. Models cannot select paths or an alternate workspace. File cells, headers and research observations remain untrusted data.
+
+Aggregation supports exact filters, up to three grouping columns and twelve named sum/average/min/max/count/distinct-count/ratio-of-sums metrics, optionally scaled. It fails on truncated/invalid tables, ambiguous numeric strings, missing required values, non-finite results, zero denominators and empty coverage. It does not execute SQL, joins or arbitrary code. The actor remains responsible for units, grain, period, denominator and metric semantics; full coverage alone does not establish correctness.
+
+`data.write_inputs` accepts the query and at most eight node/metric/group bindings, never model-supplied numeric results. It re-reads and aggregates the source, then uses the normal revision/approval/mutation pipeline to fill existing empty input leaves. Root, computed, populated and non-leaf targets are rejected. Values carry uploaded-data provenance with dataset/file hash, table, full query/hash, metric, group and full/matched row counts. These are materialized observations; refresh and executable `dataMapping` remain unimplemented. The parser's existing dependency, layout, privacy and resource-isolation limitations still apply.
+
+
 Last reviewed against the working tree: **2026-08-10**.
 
 ## Status

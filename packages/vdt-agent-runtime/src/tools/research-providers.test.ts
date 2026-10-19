@@ -1,7 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
-import { resolveResearchProviderFromEnv } from "./research-providers";
+import { resolveResearchProviderFromEnv,OpenAiWebResearchProvider } from "./research-providers";
 
 describe("research providers", () => {
+  it("uses an explicit OpenAI web tool and exposes only cited sources after completed search",async()=>{
+    const fetcher=vi.fn<typeof fetch>(async()=>jsonResponse({output:[{type:"web_search_call",status:"completed"},{type:"message",content:[{type:"output_text",text:"Manufacturer specifies a 5.2 m3 SD bucket.",annotations:[{type:"url_citation",url:"https://www.cat.com/395",title:"Cat 395",start_index:40}]}]}]}));
+    const provider=new OpenAiWebResearchProvider({apiKey:"session-test-secret",model:"gpt-6-luna",fetch:fetcher});
+    const results=await provider.search("Cat 395 SD bucket",{purpose:"benchmarks",maxResults:3});
+    expect(results[0]).toMatchObject({url:"https://www.cat.com/395",sourceName:"www.cat.com"});
+    const [url,init]=fetcher.mock.calls[0]!;expect(String(url)).toBe("https://api.openai.com/v1/responses");
+    const body=JSON.parse(String(init!.body));expect(body).toMatchObject({model:"gpt-6-luna",store:false,tools:[{type:"web_search"}],tool_choice:"required"});
+    expect(JSON.stringify(body)).not.toContain("session-test-secret");expect(JSON.stringify(results)).not.toContain("session-test-secret");
+  });
+  it("rejects uncited memory and citations without an executed search",async()=>{
+    for(const output of [[{type:"message",content:[{type:"output_text",text:"5.2 m3",annotations:[{type:"url_citation",url:"https://www.cat.com/395"}]}]}],[{type:"web_search_call",status:"completed"},{type:"message",content:[{type:"output_text",text:"5.2 m3",annotations:[]}]}]]){
+      const provider=new OpenAiWebResearchProvider({apiKey:"secret",model:"gpt-6-luna",fetch:async()=>jsonResponse({output})});
+      await expect(provider.search("bucket capacity",{purpose:"benchmarks",maxResults:3})).rejects.toMatchObject({code:"RESEARCH_PROVIDER_BAD_RESPONSE"});
+    }
+  });
   it("resolves to a controlled Noop provider when server-side research is not configured", async () => {
     const provider = resolveResearchProviderFromEnv({});
 

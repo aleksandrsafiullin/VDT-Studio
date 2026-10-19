@@ -1,6 +1,7 @@
 import { calculateGraph } from "../formula/calculate";
 import { DEFAULT_SVG_LAYOUT, layoutGraph } from "../graph/layout";
 import { validateGraph } from "../graph/validation";
+import { decompositionPlanErrors } from "../graph/decomposition";
 import type {
   VdtDataSource,
   VdtAiReviewArtifacts,
@@ -280,15 +281,21 @@ function readRecordArray(source: Record<string, unknown>, key: string, label: st
 
 function readNode(value: Record<string, unknown>, fallbackDate: string): VdtNode {
   const position = readOptionalPosition(value);
+  const nodeId = readString(value, "id", "node id");
+  if (value.decompositionPlan !== undefined) {
+    const errors = decompositionPlanErrors(value.decompositionPlan, nodeId);
+    if (errors.length) throw new Error(`Imported decomposition plan is invalid: ${errors[0]}`);
+  }
 
   return {
-    id: readString(value, "id", "node id"),
+    id: nodeId,
     name: readString(value, "name", "node name"),
     description: readOptionalString(value, "description"),
     type: readEnum(value, "type", nodeTypes, "node type"),
     status: readEnum(value, "status", nodeStatuses, "node status"),
     unit: readOptionalString(value, "unit"),
     formula: readOptionalString(value, "formula"),
+    decompositionPlan: value.decompositionPlan as VdtNode["decompositionPlan"],
     value: readOptionalNumber(value, "value"),
     baselineValue: readOptionalNumber(value, "baselineValue"),
     valueStatus: readOptionalEnum(value, "valueStatus", nodeValueStatuses, "node valueStatus"),
@@ -490,6 +497,9 @@ export function importProjectJson(json: string): VdtProject {
   };
 
   const validation = validateGraph(project.graph, project.rootNodeId);
+  if (project.graph.nodes.some(node => node.id !== project.rootNodeId && node.decompositionPlan !== undefined)) {
+    throw new Error("Imported decomposition plan must belong to the root KPI.");
+  }
   if (validation.errors.length > 0) {
     throw new Error(validation.errors[0]?.message ?? "Imported project graph is invalid.");
   }

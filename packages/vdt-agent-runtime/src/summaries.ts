@@ -1,3 +1,4 @@
+import { getDecompositionContextGroupIds } from "@vdt-studio/vdt-core";
 import type {
   CalculationTraceItem,
   GraphCalculationResult,
@@ -35,6 +36,7 @@ export function summarizeProject(project: VdtProject, maxNodes = MAX_CONTEXT_NOD
     rootNodeId: project.rootNodeId,
     nodeCount: project.graph.nodes.length,
     edgeCount: project.graph.edges.length,
+    decompositionPlan: project.graph.nodes.find(n=>n.id===project.rootNodeId)?.decompositionPlan,
     nodes: project.graph.nodes.slice(0, maxNodes).map((node): NodeSummary => ({
       id: node.id,
       name: node.name,
@@ -111,6 +113,7 @@ export function summarizeProjectForDecision(
 }
 
 export function buildFormulaBacklog(project: VdtProject): FormulaBacklogItem[] {
+  const contextGroups = getDecompositionContextGroupIds(project.graph, project.rootNodeId);
   const childIdsByNode = new Map<string, string[]>();
   const parentByNodeId = new Map<string, string>();
   for (const edge of project.graph.edges) {
@@ -132,7 +135,7 @@ export function buildFormulaBacklog(project: VdtProject): FormulaBacklogItem[] {
   return project.graph.nodes
     .filter((node) => {
       const childIds = childIdsByNode.get(node.id) ?? [];
-      return childIds.length > 0 &&
+      return !contextGroups.has(node.id) && childIds.length > 0 &&
         (node.type === "root_kpi" || node.type === "calculated") &&
         !node.formula?.trim();
     })

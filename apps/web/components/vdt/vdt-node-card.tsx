@@ -24,6 +24,7 @@ function valuesDiffer(base: number | undefined, candidate: number | undefined) {
 
 export interface VdtNodeCardData extends Record<string, unknown> {
   node: VdtNode;
+  referenceGroup?: boolean | undefined;
   value?: number | undefined;
   mainScenarioValue?: number | undefined;
   rootScenarioEffect?: { absoluteChange?: number | undefined; percentageChange?: number | undefined } | undefined;
@@ -115,8 +116,8 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
           </div>
           <StatusPill status={node.status} className="shrink-0" />
         </div>
-        <ValueRow label="Base" amount={value} unit={node.unit} />
-        {mainScenarioValue !== undefined ? (
+        {nodeData.referenceGroup ? <p className="mt-2 border-t border-slate-100 pt-2 text-xs text-muted">Reference group</p> : <ValueRow label="Base" amount={value} unit={node.unit} />}
+        {!nodeData.referenceGroup && mainScenarioValue !== undefined ? (
           <ValueRow
             label="Potential"
             amount={mainScenarioValue}

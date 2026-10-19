@@ -6,12 +6,27 @@ export const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000;
 
 /** Raw local APIs have no continuation cursor. Keep the immutable initial
  * brief/catalog plus the last confirmed response; the caller's bounded semantic
- * checkpoint supplies the remaining progress. Never accumulate a full history. */
+ * checkpoint supplies the remaining progress. Cloud adapters may opt into up to
+ * three recent confirmed exchanges; local adapters keep the smaller default. */
 export class LocalModelConversationContext {
   private initialPrompt: string | undefined;
   private lastOutput: string | undefined;
+  private initialOutput: string | undefined;
+  private readonly recent: Array<{ prompt: string; output: string }> = [];
+
+  constructor(private readonly recentExchangeLimit = 0) {
+    if (!Number.isInteger(recentExchangeLimit) || recentExchangeLimit < 0 || recentExchangeLimit > 3) throw new Error("Recent exchange limit must be 0–3.");
+  }
 
   messages(systemPrompt: string, userPrompt: string): Array<{ role: "system" | "user" | "assistant"; content: string }> {
+    if (this.recentExchangeLimit > 0) return [
+      { role: "system", content: systemPrompt },
+      ...(this.initialPrompt && this.initialOutput && this.initialPrompt !== userPrompt ? [
+        { role: "user" as const, content: this.initialPrompt }, { role: "assistant" as const, content: this.initialOutput },
+        ...this.recent.flatMap((entry) => [{ role: "user" as const, content: entry.prompt }, { role: "assistant" as const, content: entry.output }])
+      ] : []),
+      { role: "user", content: userPrompt }
+    ];
     return [
       { role: "system", content: systemPrompt },
       ...(this.initialPrompt && this.lastOutput && this.initialPrompt !== userPrompt ? [
@@ -23,7 +38,12 @@ export class LocalModelConversationContext {
   }
 
   confirm(userPrompt: string, output: string): void {
+    if (this.initialPrompt && this.recentExchangeLimit > 0 && userPrompt !== this.initialPrompt) {
+      this.recent.push({ prompt: userPrompt, output });
+      while (this.recent.length > this.recentExchangeLimit) this.recent.shift();
+    }
     this.initialPrompt ??= userPrompt;
+    this.initialOutput ??= output;
     this.lastOutput = output;
   }
 }
@@ -36,6 +56,34 @@ interface ProviderRequestOptions {
   signal?: AbortSignal | undefined;
   timeoutMs?: number | undefined;
   maxResponseBytes?: number | undefined;
+}
+
+/** Keep actionable protocol identifiers, never the upstream message, request
+ * body or credentials. Providers can echo secrets in free-form error text. */
+export class ProviderHttpError extends Error {
+  constructor(
+    providerName: string,
+    readonly status: number,
+    readonly code?: string,
+    readonly param?: string
+  ) {
+    const details = [code && `code=${code}`, param && `param=${param}`].filter(Boolean);
+    super(`${providerName} request failed with status ${status}.${details.length ? ` (${details.join(", ")})` : ""}`);
+    this.name = "ProviderHttpError";
+  }
+}
+
+async function providerHttpError(response: Response, limit: number, providerName: string) {
+  const codes = new Set(["unsupported_parameter", "unsupported_value", "invalid_parameter", "invalid_value", "invalid_json_schema", "invalid_api_key", "insufficient_quota", "rate_limit_exceeded", "model_not_found"]);
+  const params = new Set(["model", "max_tokens", "max_completion_tokens", "temperature", "top_p", "response_format", "reasoning_effort", "messages", "tools"]);
+  let code: string | undefined;
+  let param: string | undefined;
+  try {
+    const payload = JSON.parse(await readBoundedText(response, limit, providerName));
+    if (typeof payload?.error?.code === "string" && codes.has(payload.error.code)) code = payload.error.code;
+    if (typeof payload?.error?.param === "string" && params.has(payload.error.param)) param = payload.error.param;
+  } catch { /* Preserve a safe status-only error for unrecognized envelopes. */ }
+  return new ProviderHttpError(providerName, response.status, code, param);
 }
 
 function positiveInteger(value: number | undefined, fallback: number, name: string) {
@@ -111,7 +159,7 @@ export async function requestProviderJson(options: ProviderRequestOptions): Prom
     });
 
     if (!response.ok) {
-      throw new Error(`${options.providerName} request failed with status ${response.status}.`);
+      throw await providerHttpError(response, maxResponseBytes, options.providerName);
     }
 
     const raw = await readBoundedText(response, maxResponseBytes, options.providerName);

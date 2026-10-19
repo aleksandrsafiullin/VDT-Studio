@@ -88,6 +88,8 @@ export interface VdtNode {
   status: VdtNodeStatus;
   unit?: string | undefined;
   formula?: string | undefined;
+  /** Agent-authored construction contract, persisted only on the root KPI. */
+  decompositionPlan?: VdtDecompositionPlan | undefined;
   value?: number | undefined;
   baselineValue?: number | undefined;
   valueStatus?: VdtNodeValueStatus | undefined;
@@ -110,6 +112,20 @@ export interface VdtNode {
   };
   createdAt: string;
   updatedAt: string;
+}
+
+export interface VdtDecompositionPlan {
+  version: 1;
+  goal: string;
+  nodes: Array<{
+    nodeId: string;
+    parentNodeId: string;
+    kind: "calculated" | "input" | "context";
+    /** Required for context: explain why it is shown outside the root calculation. */
+    rationale?: string | undefined;
+    /** Explicit formula users in other branches; these are not visual parents. */
+    sharedWith?: string[] | undefined;
+  }>;
 }
 
 export interface VdtEdge {

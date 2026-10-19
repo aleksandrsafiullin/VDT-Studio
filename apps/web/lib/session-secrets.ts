@@ -1,4 +1,6 @@
-/** Session-only credential fields — never persisted, exported, or rehydrated from localStorage. */
+/** Plaintext credentials excluded from ordinary persistence/export/localStorage.
+ * BYOK apiKey has separate encrypted storage; other credentials remain session-only.
+ * The legacy helper names are retained for existing callers. */
 export const SESSION_ONLY_SECRET_FIELDS = [
   "apiKey",
   "localApiKey",

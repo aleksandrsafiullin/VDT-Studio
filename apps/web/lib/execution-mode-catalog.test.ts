@@ -69,7 +69,7 @@ describe("execution-mode-catalog", () => {
     const alibaba = getGatewayPreset("alibaba-coding-plan");
     expect(alibaba.protocol).toBe("openai");
     expect(alibaba.baseUrl).toBe("https://coding.dashscope.aliyuncs.com/v1");
-    expect(alibaba.credentialMode).toBe("session_only");
+    expect(alibaba.credentialMode).toBe("encrypted_local");
     expect(alibaba.releaseStatus).toBe("beta");
     expect(alibaba.model).toBe("qwen3-coder-plus");
     expect(alibaba).not.toHaveProperty("models");
@@ -271,13 +271,13 @@ describe("execution-mode-catalog", () => {
     expect(openAiPresetIds).toContain("alibaba-coding-plan");
   });
 
-  it("defaults BYOK API-key presets to session-only credential mode", () => {
+  it("defaults BYOK API-key presets to encrypted local credential mode", () => {
     for (const preset of BYOK_GATEWAY_PRESETS) {
       if (preset.id === "mock") {
         expect(preset.credentialMode).toBeUndefined();
         continue;
       }
-      expect(preset.credentialMode).toBe("session_only");
+      expect(preset.credentialMode).toBe("encrypted_local");
     }
   });
 });

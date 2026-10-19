@@ -17,6 +17,8 @@ export class LocalModelKnowledge {
   private receivedHumanInput = false;
   private readonly topologies = new Map<string, { skillId: string; defaultInputIds: string[] }>();
   private readonly readIds = new Set<string>();
+  private readonly dataEvidence = new Map<string, RecordValue>();
+  private readonly researchEvidence = new Map<string, RecordValue>();
 
   hasReadSkill(): boolean { return this.excerpts.size > 0; }
   discoveredSkillIds(): string[] { return [...this.skills.keys()]; }
@@ -52,6 +54,18 @@ export class LocalModelKnowledge {
     const skills = result.discoveredSkills as { entries: RecordValue[]; truncated: boolean } | undefined;
     while (JSON.stringify(result).length > 10_000 && skills && skills.entries.length > 2) { skills.entries.shift(); skills.truncated = true; }
     while (JSON.stringify(result).length > 10_000 && entries.length) omittedToolNames.push(String(entries.pop()!.name));
+    // Exact retained-source IDs, query definitions/results and cited URLs must
+    // survive an intervening schema lookup or graph read. They are untrusted
+    // observations, not executable instructions or new mutation authority.
+    const evidence = [...this.dataEvidence.values(), ...this.researchEvidence.values()];
+    const retained: RecordValue[] = [];
+    let evidenceChars = 0;
+    for (const item of evidence.reverse()) {
+      const chars=JSON.stringify(item).length;
+      if(evidenceChars+chars>8_000)continue;
+      retained.unshift(item);evidenceChars+=chars;
+    }
+    if(retained.length)result.confirmedSourceObservations={untrustedData:true,entries:retained,truncated:retained.length<evidence.length};
     return result;
   }
 
@@ -93,6 +107,21 @@ export class LocalModelKnowledge {
         if (!record(result) || !this.admitted.has(String(result.toolName)) || !["succeeded", "replayed"].includes(String(result.status))
           || !record(result.payload) || !record(result.payload.output)) continue;
         const output = result.payload.output;
+        if (String(result.toolName).startsWith("data.")) {
+          const key=String(result.toolName)+":"+String(output.datasetId??"sources")+":"+String(output.queryHash??output.tableId??"")+":"+String(output.offset??"");
+          const retainedOutput=result.toolName==="data.inspect"&&Array.isArray(output.tables)
+            ? {...output,tables:output.tables.filter(record).map((table)=>({tableId:table.tableId,name:table.name,columns:table.columns,rowCount:table.rowCount,truncated:table.truncated,layoutIssue:table.layoutIssue}))}:output;
+          const item={toolName:result.toolName,output:structuredClone(retainedOutput)};
+          if(JSON.stringify(item).length<=8_000){this.dataEvidence.delete(key);this.dataEvidence.set(key,item);}
+          while(this.dataEvidence.size>12)this.dataEvidence.delete(this.dataEvidence.keys().next().value!);
+        }
+        if (result.toolName === "research.search_web" && Array.isArray(output.results)) {
+          for(const source of output.results){
+            if(!record(source)||typeof source.url!=="string"||typeof source.snippet!=="string")continue;
+            this.researchEvidence.set(source.url,{toolName:result.toolName,source:{url:source.url,title:source.title,snippet:source.snippet.slice(0,1200),retrievedAt:source.retrievedAt}});
+          }
+          while(this.researchEvidence.size>6)this.researchEvidence.delete(this.researchEvidence.keys().next().value!);
+        }
         if (result.toolName === "tools.describe" && Array.isArray(output.tools)) {
           for (const tool of output.tools) {
             if (!record(tool) || typeof tool.name !== "string" || !this.admitted.has(tool.name) || !record(tool.inputJsonSchema)) continue;

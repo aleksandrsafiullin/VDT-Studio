@@ -1,5 +1,10 @@
 # Local Runner
 
+## Codex checkpoint wire amendment (2026-10-17)
+
+The web-hosted Codex session transport places `--search` before `exec`/`exec resume`, pins the native shell feature off and supplies a private per-segment `--output-schema`. The strict wire uses `argsJson` for model-authored Gateway argument objects and at most three calls; decoding is followed by canonical argument, scope, mutation and finish validation. One envelope-only same-session correction is bounded and never retries native tool violations or ambiguous output. Each temporary schema file is removed after the child exits. These changes do not certify CLI hard isolation, native packaging or the standalone runner's separate execution path.
+
+
 Last reviewed against the working tree: **2026-07-23**.
 
 The local runner is a loopback-only execution boundary for approved local HTTP and subscription-CLI model backends. It is used for repository development, headless CLI workflows and the alpha CLI package. Normal production desktop UX uses the managed sidecar over private IPC instead of browser pairing.
@@ -124,3 +129,7 @@ Native transport retains all tool names/purposes and the immutable catalog hash 
 When the original structured brief already specifies KPI, unit and period, new-tree library discovery/read precedes questions, including the initial turn. Missing core metric definitions can still be clarified immediately. This prevents delegating internal library/tool selection to the user; essential clarification remains available after reading relevant guidance. Final source-quote diagnostics expose equal-value candidates with units as hints, and explicitly preserve the assumption status of numbers labelled as estimates in the brief.
 
 The later successful local test used the smaller `qwen3.5:4b-q4_K_M` model (3,324,173,934 bytes on disk), the direct Ollama Model Agent profile and the complete library workflow. It completed 35 nodes in 10 turns without a timeout, while the earlier qwen3:8b construction had not completed reliably on this Mac. The requested qwen3:8b/qwen3:4b/qwen3:4b-instruct models and task-owned diagnostic alternatives were removed; qwen3.5:4b-q4_K_M remains selected. This is one case, not a universal model recommendation or release qualification; see [live evidence](AI_HARNESS.md#local-library-completion-evidence-2026-10-17).
+
+Direct OpenAI API execution uses a separate experimental trusted-local admission path, not the local CLI runner. It fixes the official endpoint, keeps the supplied key in process memory for the admitted execution, and starts with an opaque one-use ID. GPT-5/GPT-6 and o1/o3/o4 requests use `max_completion_tokens` with provider-default reasoning/sampling; agent exchanges allow 180 seconds and connection probes 1,024 output tokens. The HTTP adapter retains the initial brief/catalog and last confirmed action; runtime validation and bounded repair still apply. Hosted mode/build evaluation are excluded and production needs the host Model Agent flag. See [the 145.436-second gpt-6-luna completion and limitations](AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17).
+
+Codex private `argsJson` decoding covers both wrapped `action.batch.calls` and direct `action.calls` carriers, including the action type aliases already accepted by the canonical parser. Unknown/duplicate fields and authority arguments still fail canonical validation. One same-session envelope correction receives a bounded validation diagnostic; failed correction stops rather than retrying indefinitely.

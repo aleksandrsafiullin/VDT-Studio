@@ -32,6 +32,7 @@ import { fileImportContextError, type FileImportTargetContext } from "@/componen
 import {
   buildAgentPublicStartRequest
 } from "@/lib/agent-start-resolver";
+import { prepareOpenAiAgentBinding } from "@/lib/openai-agent-binding";
 import {
   createAgentClient,
   type AgentAnswerPayload as RuntimeAgentAnswerPayload,
@@ -1500,7 +1501,9 @@ function withSyncedLegacyProvider(
   return {
     executionSettings,
     providerId: synced.providerId,
-    providerConfig: synced.providerConfig as ProviderConfigState,
+    // executionSettings owns the current key, including an explicit removal.
+    // A legacy provider config must never resurrect a cleared credential.
+    providerConfig: { ...synced.providerConfig, apiKey: executionSettings.apiKey } as ProviderConfigState,
     providerTestStatus: undefined
   };
 }
@@ -2968,13 +2971,14 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               researchMode: options?.researchMode ?? "auto"
             }
           };
+          const explicitBindingId = requestedExecutionBindingId ?? await prepareOpenAiAgentBinding(state.executionSettings, providerId, {...providerConfig,enableResearch:options?.researchMode==="on"});
           const bindings = await createAgentClient().getExecutionBindings();
           const startRequest = buildAgentPublicStartRequest(
             commonRequest,
             state.executionSettings,
             bindings,
             {
-              explicitBindingId: requestedExecutionBindingId,
+              explicitBindingId,
               providerId,
               providerConfig
             }
@@ -3459,6 +3463,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         });
 
         try {
+          const explicitBindingId = await prepareOpenAiAgentBinding(executionSettings, providerId, resolvedProviderConfig);
           const bindings = await createAgentClient().getExecutionBindings();
           const startRequest = buildAgentPublicStartRequest(
             {
@@ -3474,6 +3479,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             executionSettings,
             bindings,
             {
+              explicitBindingId,
               providerId,
               providerConfig: resolvedProviderConfig
             }

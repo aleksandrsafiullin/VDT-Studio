@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, Eye, EyeOff, Info, Loader2, PlugZap, RefreshCw } from "lucide-react";
+import { ExternalLink, Eye, EyeOff, Info, Loader2, PlugZap, RefreshCw, Trash2 } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextInput } from "@/components/ui/field";
@@ -23,6 +23,7 @@ import {
 } from "@/lib/execution-mode-catalog";
 import { ProviderTestStatusBanner, ProviderUsageNote } from "./provider-diagnostics";
 import type { ProviderTestStatus } from "./vdt-store";
+import type { ApiKeyStorageStatus } from "@/lib/api-key-persistence";
 
 export function ByokReleaseStatusBadge({ status }: { status?: ByokReleaseStatus | undefined }) {
   if (status !== "beta") {
@@ -57,6 +58,9 @@ interface ByokPresetFormProps {
   onFieldErrorsChange?: (errors: ByokFieldErrors | undefined) => void;
   onLoadModels?: (() => void) | undefined;
   onTest: () => void;
+  keyStorageStatus?: ApiKeyStorageStatus | undefined;
+  onRemoveApiKey?: (() => void) | undefined;
+  onRetryKeyStorage?: (() => void) | undefined;
 }
 
 function SectionTitle({ protocol }: { protocol: ByokProtocol }) {
@@ -218,6 +222,9 @@ export function ByokPresetForm({
   onFieldErrorsChange,
   onLoadModels,
   onTest,
+  keyStorageStatus,
+  onRemoveApiKey,
+  onRetryKeyStorage,
   fieldErrors = {}
 }: ByokPresetFormProps) {
   const [showApiKey, setShowApiKey] = useState(false);
@@ -297,10 +304,7 @@ export function ByokPresetForm({
                 {...(fieldErrors.apiKey
                   ? { hint: fieldErrors.apiKey }
                   : {
-                      hint:
-                        preset.credentialMode === "session_only"
-                          ? "Session only - cleared on reload and never saved to localStorage."
-                          : "Session only - not included in project export."
+                      hint: "Keys are encrypted on this device and kept until replaced or removed. Excluded from project exports."
                     })}
               >
                 <div className="flex gap-2">
@@ -324,7 +328,37 @@ export function ByokPresetForm({
                     icon={showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     onClick={() => setShowApiKey((current) => !current)}
                   />
+                  <Button
+                    size="icon"
+                    variant="secondary"
+                    type="button"
+                    aria-label="Remove saved API key"
+                    title="Remove saved API key"
+                    data-testid="byok-api-key-remove"
+                    disabled={keyStorageStatus === "empty" && !executionSettings.apiKey}
+                    icon={<Trash2 className="h-4 w-4" />}
+                    onClick={() => {
+                      setShowApiKey(false);
+                      clearExecutionFieldError("apiKey");
+                      if (onRemoveApiKey) onRemoveApiKey();
+                      else onFieldChange("apiKey", "");
+                    }}
+                  />
                 </div>
+                {keyStorageStatus ? (
+                  <div className={clsx("flex items-center gap-2 text-xs", keyStorageStatus === "error" ? "text-red-700" : "text-slate-500")}>
+                    <p role="status" aria-live="polite" data-testid="byok-api-key-storage-status" data-status={keyStorageStatus}>
+                      {keyStorageStatus === "loading" ? "Restoring saved key…"
+                        : keyStorageStatus === "saving" ? "Saving changes…"
+                          : keyStorageStatus === "saved" ? "Key saved encrypted on this device."
+                            : keyStorageStatus === "empty" ? "No key saved for this provider."
+                              : "Could not access encrypted storage. Changes may not survive a restart."}
+                    </p>
+                    {keyStorageStatus === "error" && onRetryKeyStorage ? (
+                      <button type="button" data-testid="byok-api-key-storage-retry" className="font-medium underline" onClick={onRetryKeyStorage}>Retry</button>
+                    ) : null}
+                  </div>
+                ) : null}
                 {preset.apiKeyUrl ? (
                   <a
                     href={preset.apiKeyUrl}

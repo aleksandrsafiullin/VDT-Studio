@@ -27,6 +27,7 @@ import {
   isStructuredModelExecutionBinding
 } from "./execution-bindings";
 import { compactPublicAgentSnapshot } from "./public-snapshot";
+import { isOpenAiSessionBinding, openAiSessionBindings } from "./byok-bindings";
 import {
   PublicSupervisorRunError,
   externalCliDisplayName,
@@ -36,7 +37,7 @@ import {
 
 export async function GET() {
   await ensureServerManagedExecutionBindings();
-  const bindings = agentExecutionBindingRegistry.summaries();
+  const bindings = agentExecutionBindingRegistry.summaries().filter((binding) => !isOpenAiSessionBinding(binding.bindingId));
   const defaultBindingId = bindings.some((binding) =>
     binding.bindingId === DEFAULT_MODEL_AGENT_EXECUTION_BINDING_ID
   )
@@ -98,6 +99,7 @@ export async function POST(request: Request) {
   }
 
   if (resolved.binding && isStructuredModelExecutionBinding(resolved.binding)) {
+    if (isOpenAiSessionBinding(resolved.binding.bindingId)) openAiSessionBindings(agentExecutionBindingRegistry).consume(resolved.binding.bindingId);
     try {
       const snapshot = await startStructuredModelAgentRun({
         request: resolved.request,
