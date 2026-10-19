@@ -35,6 +35,18 @@ describe("OpenAI binding admission HTTP boundary", () => {
     vi.stubEnv("VDT_APP_MODE", "development_web"); expect((await POST(request(undefined, { origin: "https://foreign.example" }))).status).toBe(403);
     expect((await POST(request(undefined, { origin: "" }))).status).toBe(403);
   });
+  it.each(["localhost:3000", "127.0.0.1:3000", "[::1]:3000"])("admits the browser's direct local Host %s when Next reconstructs localhost", async (host) => {
+    expect((await POST(request(undefined, { host, origin: `http://${host}` }))).status).toBe(200);
+  });
+  it.each([
+    { host: "127.0.0.1:3000", origin: "http://localhost:3000" },
+    { host: "127.0.0.1:4000", origin: "http://127.0.0.1:4000" },
+    { host: "foreign.example:3000", origin: "http://foreign.example:3000" },
+    { host: "127.0.0.1:3000", origin: "http://127.0.0.1:3000", "sec-fetch-site": "cross-site" },
+    { host: "localhost:3000", origin: "http://127.0.0.1:3000", "x-forwarded-host": "127.0.0.1:3000" }
+  ])("rejects mismatched or forwarded authorities %j", async (headers) => {
+    expect((await POST(request(undefined, headers))).status).toBe(403);
+  });
   it("requires explicit Model Agent opt-in in production and never admits during builds", async () => {
     vi.stubEnv("NODE_ENV", "production"); vi.stubEnv("VDT_MODEL_AGENT_ENABLED", "false");
     expect((await POST(request())).status).toBe(403);

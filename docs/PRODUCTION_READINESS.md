@@ -1,5 +1,27 @@
 # Production Readiness
 
+## Local alpha browser verification (2026-10-19)
+
+The source-deployed local web browser gate passed on macOS with Node 24 and pnpm 10.33.2: **122 passed, zero failed, zero skipped, zero flaky** in one complete Playwright run (84 Chromium, 20 mobile Chrome emulation, 18 WebKit). Collection tags retain the existing engine/viewport coverage without preparing fixtures for tests restricted to another project. This is local web evidence; production/release `NO-GO`, V2 flags and provider certification levels are unchanged.
+
+Two application blockers were corrected. The editor's Home/back links now await the existing revision commit; a save conflict/failure preserves visible edits and cancels navigation. Successful Back navigation explicitly supersedes a pending newly created VDT route. Direct OpenAI admission now matches the browser's exact local Host/Origin even when Next reconstructs the internal URL as localhost, while foreign origins, different ports and forwarded overrides remain rejected. The development launcher defaults to loopback.
+
+The complete matrix covers project/VDT navigation and creation; formula editing/calculation; scenario rename/clone/delete and persistence; layout/preferences; real Excel parsing, category review, retained-source replay and editable XLSX export; encrypted IndexedDB key restoration/removal and plaintext exclusion; mocked agent progress/questions/retry/bindings; version comparison, guarded restoration, Undo and reopening saved checkpoints; and successful/failed navigation saves, including a read back from SQLite. API admission uses a synthetic key without executing a provider request. CLI/provider UI responses are mocked. WebKit uploads forward the browser's original multipart bytes; the tests verify uploaded size/hash and downloaded original bytes.
+
+| Check | Result |
+|---|---|
+| `pnpm test:e2e` | 122 passed in 5.5 minutes; no test retries, failures or skips |
+| Targeted Vitest regressions | 59 passed in 6 files: launch settings, Origin admission, workspace save and route synchronization |
+| `pnpm typecheck` + separate E2E TypeScript check | Pass |
+| `pnpm lint` | Zero errors; the same 15 existing warnings |
+| `pnpm --filter @vdt-studio/web build` | Pass in the owned source snapshot; build children finished |
+| `pnpm security:audit` | Pass; no known production vulnerabilities reported |
+| `pnpm docs:verify` / `pnpm ci:verify` / `git diff --check` | Pass; 30 documents and 7 workflow contracts |
+
+Local report: `output/playwright/local-alpha-2026-10-19-_1z3g4zl/report/index.html`, with JSON results, source-review screenshots and per-server cleanup records alongside it. Detailed earlier failures and build logs are retained in local evidence `browser-alpha-_1z3g4zl`. Test stores are unique and cleaned after their owned Next processes close. E2E and production build use a separate source snapshot so the running app's data and Next cache are preserved. CI retains HTML/JSON reports and failure traces for seven days.
+
+This follow-up does not rerun the full unit suite or CLI packaging sequence, and does not qualify real provider generation, autonomous business-scenario correctness, physical microphones/devices, browser-history/crash recovery, native installers or Windows/Linux execution. Those gates and the broader W0.5 draft/durable-ownership work remain open; a fresh aggregate release gate is still required before publishing a candidate.
+
 ## Dependency and release-chain remediation (2026-10-19)
 
 ### Dependency audit evidence
@@ -22,7 +44,7 @@ Verified locally on Node **24.15.0**, pnpm **10.33.2**:
 | `pnpm security:audit` / full `pnpm audit` | Production: zero vulnerabilities; full audit: one unpatched high dev-tool advisory described above |
 | `pnpm package:alpha` / `pnpm release:bundle:verify` / `pnpm package:verify` | Pass for a new candidate directory; checksums/SBOM, installed CLI commands, runner startup and `/v1/health` verified |
 
-The aggregate `release:verify` command was not rerun against the live checkout because it shares the running app's `.next` directory; its constituent non-browser checks passed as described above. Local evidence: `alpha-fixes-NvXxlV`; candidate: `output/release/candidates/2026-10-19-NvXxlV/`. The prior `output/release/v0.1.0-alpha.0/` artifacts were preserved. Windows/Linux execution of the changed code, full browser E2E, native installers, restart recovery and business-scenario acceptance remain separate gates; no support level is raised by this maintenance work.
+The aggregate `release:verify` command was not rerun against the live checkout because it shares the running app's `.next` directory; its constituent non-browser checks passed as described above. Local evidence: `alpha-fixes-NvXxlV`; candidate: `output/release/candidates/2026-10-19-NvXxlV/`. The prior `output/release/v0.1.0-alpha.0/` artifacts were preserved. The subsequent local browser gate is recorded above. Windows/Linux execution of the changed code, native installers, restart recovery and business-scenario acceptance remain separate gates; no support level is raised by this maintenance work.
 
 ## Encrypted local API-key persistence (2026-10-18)
 

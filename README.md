@@ -125,7 +125,11 @@ Model Agent runs preserve their draft and stop after three repeats of the same t
 2. Enter the root KPI, business context, unit and period.
 3. Start an agent run or edit the tree manually.
 4. Review formulas, assumptions, warnings and proposed changes.
-5. Apply accepted changes, calculate scenarios and save a revision.
+5. Apply accepted changes, calculate scenarios and save named milestones in Versions.
+
+The editor's Home and Back to project links save the current model as a revision before navigating. A failed save keeps the editor and local changes open with an error, so reopening the VDT cannot silently discard those edits. Versions provides checkpoint comparison, restoration and session Undo; broader draft/revision recovery remains an alpha limitation.
+
+`pnpm dev` and the macOS launcher bind the development app to `127.0.0.1` by default. The normal browser address remains `http://localhost:3000`.
 
 The node-card **Add incoming KPIs with AI** action is a semi-manual decomposition step: one click creates only the selected KPI's immediate incoming layer. It starts or resumes the agent with a structured `deepen_node` action, does not insert a synthetic user instruction into the chat, and does not continue into the newly created children. Click the action on a child separately when another level is wanted.
 

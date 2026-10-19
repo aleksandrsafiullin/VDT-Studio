@@ -52,6 +52,7 @@ const localStorageMock = (() => {
 vi.stubGlobal("localStorage", localStorageMock);
 
 const { useVdtStudioStore } = await import("./vdt-store");
+const { navigateAfterWorkspaceSave } = await import("./workspace-navigation");
 const initialProject = structuredClone(useVdtStudioStore.getState().project);
 
 function sampleSummary(
@@ -201,6 +202,17 @@ describe("refreshWorkspace scoping", () => {
     expect(useVdtStudioStore.getState().workspace.pendingRevisionCommit).toBeUndefined();
     expect(useVdtStudioStore.getState().workspace.lastSavedAt).toEqual(expect.any(String));
     expect(mockUpdateVdt).not.toHaveBeenCalled();
+  });
+
+  it("waits for a committed revision before following an editor exit link", async () => {
+    const navigate = vi.fn();
+    let finishSave!: (value: ReturnType<typeof committedPayload>) => void;
+    mockSaveRevision.mockImplementationOnce(() => new Promise((resolve) => { finishSave = resolve; }));
+    const leaving = navigateAfterWorkspaceSave("/projects/project_a", useVdtStudioStore.getState(), navigate);
+    expect(navigate).not.toHaveBeenCalled();
+    finishSave(committedPayload(sampleSummary("project_a", "Project A", "vdt_a"), "vdt_a", 2));
+    await expect(leaving).resolves.toBe(true);
+    expect(navigate).toHaveBeenCalledExactlyOnceWith("/projects/project_a");
   });
 
   it("rehydrates and replays the exact pending manual-save operation", async () => {
@@ -470,7 +482,9 @@ describe("refreshWorkspace scoping", () => {
     ["create project", () => useVdtStudioStore.getState().createWorkspaceProject("Blocked project")],
     ["create VDT", () => useVdtStudioStore.getState().createWorkspaceVdt({ name: "Blocked VDT" })],
     ["select project", () => useVdtStudioStore.getState().selectWorkspaceProject("project_b")],
-    ["select VDT", () => useVdtStudioStore.getState().selectWorkspaceVdt("vdt_other")]
+    ["select VDT", () => useVdtStudioStore.getState().selectWorkspaceVdt("vdt_other")],
+    ["return to project", () => navigateAfterWorkspaceSave("/projects/project_a", useVdtStudioStore.getState(), vi.fn())],
+    ["return home", () => navigateAfterWorkspaceSave("/", useVdtStudioStore.getState(), vi.fn())]
   ])("blocks %s when automatic save conflicts", async (_label, navigate) => {
     mockSaveRevision.mockRejectedValueOnce(
       new VdtStorageRequestError("stale head", 409, "REVISION_CONFLICT", false)

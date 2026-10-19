@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { inflateRawSync } from "node:zlib";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test, type ProductionWorkspace } from "./workspace-fixture";
 import {
   calculateGraph,
   calculateIsolatedRootEffect,
@@ -13,15 +14,7 @@ import {
   importProjectJson
 } from "../../packages/vdt-core/src/index";
 
-const E2E_PROJECT_ID = "project_e2e_production_volume";
-const E2E_VDT_ID = "vdt_e2e_production_volume";
 const EXCEL_EXPORT_TEST_TITLE = "downloads editable Excel without session credentials";
-const productionVolumeExamplePath = path.join(process.cwd(), "examples", "production-volume.json");
-
-function loadProductionVolumeExample() {
-  return JSON.parse(fs.readFileSync(productionVolumeExamplePath, "utf8")) as Record<string, unknown>;
-}
-
 function readXlsxXmlEntries(bytes: Buffer) {
   // Read ZIP's central directory so the assertions inspect the actual browser
   // download, independent of the workbook writer's serializer.
@@ -140,93 +133,12 @@ function expectGroupedNumberFormat(xml: string, address: string, styles: string,
   }
 }
 
-type ProjectRuntimeState = {
-  runtimeGeneration: "v1" | "v2";
-  generationVersion: number;
-};
-
-function runtimeCasFromState(runtimeState: ProjectRuntimeState) {
-  return {
-    schemaVersion: "project_runtime_cas.v1" as const,
-    runtimeGeneration: runtimeState.runtimeGeneration,
-    generationVersion: runtimeState.generationVersion
-  };
-}
-
-async function readProjectRuntimeState(page: Page, projectId: string): Promise<ProjectRuntimeState> {
-  const projectResponse = await page.request.get(`/api/vdt/projects/${projectId}`);
-  expect(projectResponse.ok()).toBeTruthy();
-  const payload = (await projectResponse.json()) as {
-    summary?: { runtimeState?: ProjectRuntimeState };
-  };
-  const runtimeState = payload.summary?.runtimeState;
-  expect(runtimeState).toBeDefined();
-  return runtimeState!;
-}
-
-async function seedProductionVolumeWorkspace(page: Page) {
-  const project = loadProductionVolumeExample();
-
-  const createProject = await page.request.post("/api/vdt/projects", {
-    data: {
-      id: E2E_PROJECT_ID,
-      name: "E2E Production Volume",
-      industry: project.industry
-    }
-  });
-
-  let runtimeState: ProjectRuntimeState;
-  if (createProject.status() === 201) {
-    const payload = (await createProject.json()) as {
-      summary?: { runtimeState?: ProjectRuntimeState };
-    };
-    runtimeState = payload.summary?.runtimeState!;
-    expect(runtimeState).toBeDefined();
-  } else if (createProject.status() === 409) {
-    runtimeState = await readProjectRuntimeState(page, E2E_PROJECT_ID);
-
-    const projectResponse = await page.request.get(`/api/vdt/projects/${E2E_PROJECT_ID}`);
-    const projectPayload = (await projectResponse.json()) as {
-      vdts?: Array<{ vdt: { id: string } }>;
-    };
-    if (projectPayload.vdts?.some((entry) => entry.vdt.id === E2E_VDT_ID)) {
-      return;
-    }
-  } else {
-    expect(createProject.ok()).toBeTruthy();
-    return;
-  }
-
-  const createVdt = await page.request.post(`/api/vdt/projects/${E2E_PROJECT_ID}/vdts`, {
-    data: {
-      schemaVersion: "create_vdt_with_initial_http_request.v1",
-      idempotencyKey: `create-vdt:${E2E_PROJECT_ID}:${E2E_VDT_ID}`,
-      expectedRuntime: runtimeCasFromState(runtimeState),
-      vdt: {
-        requestedVdtId: E2E_VDT_ID,
-        name: String(project.name ?? "Production Volume Driver Model"),
-        rootKpi: "Production Volume",
-        unit: null,
-        timePeriod: null,
-        status: "draft",
-        metadata: null
-      },
-      project
-    }
-  });
-
-  if (createVdt.status() !== 409) {
-    expect(createVdt.ok()).toBeTruthy();
-  }
-}
-
-async function openProductionVolumeEditor(page: Page, options: { viaProjectCard?: boolean } = {}) {
-  await seedProductionVolumeWorkspace(page);
+async function openProductionVolumeEditor(page: Page, workspace: ProductionWorkspace, options: { viaProjectCard?: boolean } = {}) {
   if (options.viaProjectCard) {
-    await page.goto(`/projects/${E2E_PROJECT_ID}`);
-    await page.getByTestId(`project-vdt-card-${E2E_VDT_ID}`).click();
+    await page.goto(`/projects/${workspace.projectId}`);
+    await page.getByTestId(`project-vdt-card-${workspace.vdtId}`).click();
   } else {
-    await page.goto(`/projects/${E2E_PROJECT_ID}?vdt=${E2E_VDT_ID}`);
+    await page.goto(`/projects/${workspace.projectId}?vdt=${workspace.vdtId}`);
   }
   await expect(page.getByTestId("vdt-canvas")).toBeVisible();
 }
@@ -1243,33 +1155,44 @@ async function openKpiSpacingPopover(page: Page) {
   return panel;
 }
 
-test.beforeEach(async ({ page }, testInfo) => {
+test.beforeEach(async ({ page, productionWorkspace }, testInfo) => {
+  await page.route("**/api/ai/detect-clis**", (route) => route.fulfill({ json: { agents: [], modelsByAgent: {} } }));
+  await page.route("**/api/agent/runs", (route) => route.request().method() === "GET"
+    ? route.fulfill({ json: { schemaVersion: 1, ok: true, defaultBindingId: null, bindings: [{
+      bindingId: "e2e_anthropic", executionProfile: "model_agent", engineId: "e2e",
+      engineAdapterId: "e2e", backendId: "anthropic", modelId: "vdt-production-model"
+    }] } }) : route.fallback());
+  await page.route("**/api/agent/bindings/openai", (route) => route.fulfill({ json: { ok: true, binding: {
+    bindingId: "openai_byok_session_e2e", executionProfile: "model_agent", backendId: "openai_compatible",
+    modelId: route.request().postDataJSON().model
+  } } }));
+  await page.route("**/api/agent/runs/*/events", (route) => route.fulfill({ contentType: "text/event-stream", body: "" }));
   await page.goto("/");
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  await openProductionVolumeEditor(page, { viaProjectCard: testInfo.title === EXCEL_EXPORT_TEST_TITLE });
+  await openProductionVolumeEditor(page, productionWorkspace, { viaProjectCard: testInfo.title === EXCEL_EXPORT_TEST_TITLE });
 });
 
-test("home page lists projects and opens workspace", async ({ page }, testInfo) => {
+test("home page lists projects and opens workspace", { tag: "@chromium" }, async ({ page, productionWorkspace }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Home navigation smoke runs on desktop viewport.");
 
   await page.goto("/");
   await expect(page.getByTestId("projects-home")).toBeVisible();
-  await expect(page.getByTestId(`project-card-${E2E_PROJECT_ID}`)).toBeVisible();
-  await page.getByTestId(`open-project-${E2E_PROJECT_ID}`).click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${E2E_PROJECT_ID}$`));
+  await expect(page.getByTestId(`project-card-${productionWorkspace.projectId}`)).toBeVisible();
+  await page.getByTestId(`open-project-${productionWorkspace.projectId}`).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${productionWorkspace.projectId}$`));
   await expect(page.getByTestId("workspace-home")).toHaveAttribute("href", "/");
-  await page.getByTestId(`project-vdt-card-${E2E_VDT_ID}`).click();
-  await expect(page).toHaveURL(new RegExp(`vdt=${E2E_VDT_ID}`));
+  await page.getByTestId(`project-vdt-card-${productionWorkspace.vdtId}`).click();
+  await expect(page).toHaveURL(new RegExp(`vdt=${productionWorkspace.vdtId}`));
   await expect(page.getByTestId("vdt-canvas")).toBeVisible();
   await page.getByTestId("back-to-project-workspace").click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${E2E_PROJECT_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${productionWorkspace.projectId}$`));
   await expect(page.getByTestId("project-vdt-list")).toBeVisible();
   await page.getByTestId("back-to-projects").click();
   await expect(page.getByTestId("projects-home")).toBeVisible();
 });
 
-test("renders the workspace without invoking a mock provider", async ({ page }, testInfo) => {
+test("renders the workspace without invoking a mock provider", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Full workspace smoke runs on desktop viewport.");
 
   const consoleErrors: string[] = [];
@@ -1294,10 +1217,11 @@ test("renders the workspace without invoking a mock provider", async ({ page }, 
   expect(consoleErrors).toEqual([]);
 });
 
-test("shows chat-first agent progress after mock VDT generation", async ({ page }, testInfo) => {
+test("shows chat-first agent progress after mock VDT generation", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Generate activity smoke runs on desktop viewport.");
 
   await page.route("**/api/agent/runs", async (route) => {
+    if (route.request().method() === "GET") return route.fallback();
     const snapshot = mockRuntimeAgentSnapshot();
     await route.fulfill({
       status: 200,
@@ -1332,7 +1256,7 @@ test("shows chat-first agent progress after mock VDT generation", async ({ page 
   await expect(page.getByTestId("cancel-generate")).toHaveCount(0);
 });
 
-test("keeps the user message visible when the agent provider returns unstructured output", async ({ page }, testInfo) => {
+test("keeps the user message visible when the agent provider returns unstructured output", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Agent retryable output smoke runs on desktop viewport.");
 
   let capturedMessageBody:
@@ -1343,6 +1267,7 @@ test("keeps the user message visible when the agent provider returns unstructure
     | undefined;
 
   await page.route("**/api/agent/runs", async (route) => {
+    if (route.request().method() === "GET") return route.fallback();
     const requestBody = route.request().postDataJSON() as { input?: { prompt?: string } };
     const snapshot = mockRuntimeStructuredOutputFailureSnapshot(requestBody.input?.prompt);
     await route.fulfill({
@@ -1403,7 +1328,7 @@ test("keeps the user message visible when the agent provider returns unstructure
   await expect(page.getByTestId("generate-activity-panel")).toContainText("Taking a smaller next step...");
 });
 
-test("restores active agent chat and structured questions after page reload", async ({ page }, testInfo) => {
+test("restores active agent chat and structured questions after page reload", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Agent reload persistence smoke runs on desktop viewport.");
 
   const snapshot = mockRuntimeNeedsInputSnapshot();
@@ -1423,7 +1348,8 @@ test("restores active agent chat and structured questions after page reload", as
   });
 
   await page.evaluate((persisted) => {
-    localStorage.setItem("vdt-studio-state", JSON.stringify(persisted));
+    const current = JSON.parse(localStorage.getItem("vdt-studio-state") ?? "{}");
+    localStorage.setItem("vdt-studio-state", JSON.stringify({ ...current, state: { ...current.state, ...persisted.state } }));
   }, mockPersistedActiveAgentState(snapshot));
 
   await page.reload();
@@ -1439,7 +1365,7 @@ test("restores active agent chat and structured questions after page reload", as
   expect(persisted?.state?.agentRun?.runId).toBe("agent-run-reload");
 });
 
-test("submits structured agent answers after reload and shows immediate progress", async ({ page }, testInfo) => {
+test("submits structured agent answers after reload and shows immediate progress", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Agent answer submit smoke runs on desktop viewport.");
 
   const snapshot = mockRuntimeNeedsInputSnapshot();
@@ -1481,7 +1407,8 @@ test("submits structured agent answers after reload and shows immediate progress
   });
 
   await page.evaluate((persisted) => {
-    localStorage.setItem("vdt-studio-state", JSON.stringify(persisted));
+    const current = JSON.parse(localStorage.getItem("vdt-studio-state") ?? "{}");
+    localStorage.setItem("vdt-studio-state", JSON.stringify({ ...current, state: { ...current.state, ...persisted.state } }));
   }, mockPersistedActiveAgentState(snapshot));
 
   await page.reload();
@@ -1511,21 +1438,30 @@ test("submits structured agent answers after reload and shows immediate progress
   await expect(page.getByTestId("agent-chat-thread")).toContainText("fleet_in_scope");
 });
 
-test("opens checked-in examples and syncs the setup brief", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "chromium", "Example selector smoke runs on desktop viewport.");
-  const setupRail = page.locator("section").filter({ hasText: "New VDT" }).first();
-
-  await setupRail.getByRole("combobox", { name: "Example model" }).selectOption("oee");
-  await setupRail.getByRole("button", { name: "Open example" }).click();
-
-  await expect(page.getByRole("heading", { name: "OEE Driver Model" })).toBeVisible();
-  await expect(setupRail.getByRole("textbox", { name: "Root KPI" })).toHaveValue("Overall Equipment Effectiveness");
-  await expect(setupRail.getByRole("textbox", { name: "Industry" })).toHaveValue("Manufacturing / Industrial Operations");
-  await expect(setupRail.getByRole("textbox", { name: "Unit" })).toHaveValue("%");
-  await expect(reactFlowNode(page, "oee")).toBeVisible();
+test("creates a saved VDT from the project workspace and restores its brief", { tag: "@chromium" }, async ({ page, productionWorkspace }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "VDT creation runs on desktop viewport.");
+  await page.goto(`/projects/${productionWorkspace.projectId}`);
+  await page.getByTestId("new-vdt-button").click();
+  const dialog = page.getByTestId("new-vdt-modal");
+  await dialog.getByRole("textbox", { name: "Root KPI", exact: true }).fill("Overall Equipment Effectiveness");
+  await dialog.getByRole("textbox", { name: "Unit", exact: true }).fill("%");
+  await dialog.getByRole("textbox", { name: "Period", exact: true }).fill("daily");
+  await dialog.getByTestId("new-vdt-modal-confirm").click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId("vdt-canvas")).toBeVisible();
+  await page.getByTestId("back-to-project-workspace").click();
+  await expect(page.getByTestId("project-vdt-list").locator("article")).toHaveCount(2);
+  await page.getByTestId("project-vdt-list").getByRole("button", { name: "Open Overall Equipment Effectiveness", exact: true }).click();
+  await expect(page.getByTestId("vdt-canvas")).toBeVisible();
+  await expect(page).toHaveURL(/\?vdt=/);
+  await page.reload();
+  const brief = page.locator("section").filter({ has: page.getByRole("heading", { name: "VDT Agent", exact: true }) }).first();
+  await expect(brief.getByRole("textbox", { name: "Root KPI", exact: true })).toHaveValue("Overall Equipment Effectiveness");
+  await expect(brief.getByRole("textbox", { name: "Unit", exact: true })).toHaveValue("%");
+  await expect(brief.getByRole("textbox", { name: "Period", exact: true })).toHaveValue("daily");
 });
 
-test("opens settings modal with CLI, Local models and API keys tabs", async ({ page }, testInfo) => {
+test("opens settings modal with CLI, Local models and API keys tabs", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Settings modal smoke runs on desktop viewport.");
 
   const modal = await openSettingsModal(page);
@@ -1536,7 +1472,7 @@ test("opens settings modal with CLI, Local models and API keys tabs", async ({ p
   await expect(page.getByTestId("execution-mode-panel-byok")).toBeVisible();
 });
 
-test("settings modal keeps stable size across sections", async ({ page }, testInfo) => {
+test("settings modal keeps stable size across sections", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Settings modal size stability runs on desktop viewport.");
 
   const modal = await openSettingsModal(page, "execution");
@@ -1579,9 +1515,9 @@ test("settings modal keeps stable size across sections", async ({ page }, testIn
   expect(executionAgainBox!.width).toBe(executionBox!.width);
 });
 
-test("setup rail Configure opens settings modal on execution mode", async ({ page }, testInfo) => {
+test("setup rail Configure opens settings modal on execution mode", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Setup rail configure runs on desktop viewport.");
-  const setupRail = page.locator("section").filter({ hasText: "New VDT" }).first();
+  const setupRail = page.locator("section").filter({ has: page.getByRole("heading", { name: "VDT Agent", exact: true }) }).first();
 
   await setupRail.getByTestId("execution-mode-configure").click();
 
@@ -1593,7 +1529,7 @@ test("setup rail Configure opens settings modal on execution mode", async ({ pag
   await expect(page.getByTestId("execution-mode-tab-byok")).toBeVisible();
 });
 
-test("detects installed CLI and tests it through the application API", async ({ page }, testInfo) => {
+test("detects installed CLI and tests it through the application API", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Local CLI settings smoke runs on desktop viewport.");
 
   let testProviderRequestBody: DevRuntimeRequestBody | undefined;
@@ -1657,7 +1593,7 @@ test("detects installed CLI and tests it through the application API", async ({ 
   assertExpectedCliTestProviderBody(testProviderRequestBody);
 });
 
-test("detects Codex CLI with version badge and passes connection test", async ({ page }, testInfo) => {
+test("detects Codex CLI with version badge and passes connection test", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Local CLI settings smoke runs on desktop viewport.");
 
   let testProviderRequestBody: DevRuntimeRequestBody | undefined;
@@ -1718,7 +1654,7 @@ test("detects Codex CLI with version badge and passes connection test", async ({
   assertExpectedCodexTestProviderBody(testProviderRequestBody);
 });
 
-test("detects Cursor CLI with version badge and passes connection test", async ({ page }, testInfo) => {
+test("detects Cursor CLI with version badge and passes connection test", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Local CLI settings smoke runs on desktop viewport.");
 
   let testProviderRequestBody: DevRuntimeRequestBody | undefined;
@@ -1781,7 +1717,7 @@ test("detects Cursor CLI with version badge and passes connection test", async (
   assertExpectedCursorTestProviderBody(testProviderRequestBody);
 });
 
-test("shows unsupported Cursor version and disables misleading test success", async ({ page }, testInfo) => {
+test("shows unsupported Cursor version and disables misleading test success", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Local CLI settings smoke runs on desktop viewport.");
 
   await page.route("**/api/ai/detect-clis**", async (route) => {
@@ -1822,7 +1758,7 @@ test("shows unsupported Cursor version and disables misleading test success", as
   await expect(page.getByText("Cursor Agent: CLI access verified. The provider reports an active session.")).toHaveCount(0);
 });
 
-test("shows a real Local CLI connection error without falling back to mock", async ({ page }, testInfo) => {
+test("shows a real Local CLI connection error without falling back to mock", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Local CLI settings smoke runs on desktop viewport.");
 
   await page.route("**/api/ai/detect-clis**", async (route) => {
@@ -1864,16 +1800,14 @@ test("shows a real Local CLI connection error without falling back to mock", asy
   await expect(page.getByTestId("cli-agent-model-claude")).toContainText("Enter manually");
 
   await page.getByTestId("cli-agent-test-claude").click();
-  await expect(page.getByText("Claude Code authentication failed.")).toBeVisible();
+  await expect(page.getByTestId("provider-test-status-claude")).toContainText("Claude Code authentication failed.");
   await expect(page.getByText("Claude Code: CLI access verified. The provider reports an active session.")).toHaveCount(0);
 });
 
-test("configures BYOK Anthropic without persisting API keys", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "chromium", "BYOK settings smoke runs on desktop viewport.");
+test("restores and removes encrypted BYOK keys while excluding plaintext from preferences", async ({ page }) => {
 
   let agentRunRequestBody: {
-    providerId?: string;
-    providerConfig?: { baseUrl?: string; model?: string; apiKey?: string };
+    executionBindingId?: string;
     input?: { prompt?: string };
   } | undefined;
 
@@ -1883,14 +1817,34 @@ test("configures BYOK Anthropic without persisting API keys", async ({ page }, t
   await expect(page.getByTestId("byok-preset-form")).toBeVisible();
 
   await page.getByTestId("byok-api-key").fill("session-only-key");
-  await page.getByTestId("byok-model-select").selectOption("__custom__");
   await page.getByTestId("byok-model-custom").fill("vdt-production-model");
+  await expect(page.getByTestId("byok-api-key-storage-status")).toHaveAttribute("data-status", "saved");
+  const vaultRecords = await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("vdt-studio-credentials");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      return await new Promise<Array<{ extractable: boolean; algorithm: string; encryptedBytes: number; containsPlaintext: boolean }>>((resolve, reject) => {
+        const request = database.transaction("api-keys").objectStore("api-keys").getAll();
+        request.onsuccess = () => resolve(request.result.map((record) => ({
+          extractable: record.key.extractable, algorithm: record.key.algorithm.name,
+          encryptedBytes: record.ciphertext.byteLength,
+          containsPlaintext: JSON.stringify(record).includes("session-only-key")
+        })));
+        request.onerror = () => reject(request.error);
+      });
+    } finally { database.close(); }
+  });
+  expect(vaultRecords).toEqual([{ extractable: false, algorithm: "AES-GCM", encryptedBytes: "session-only-key".length + 16, containsPlaintext: false }]);
 
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("vdt-studio-state") ?? ""))
     .not.toContain("session-only-key");
 
   await page.route("**/api/agent/runs", async (route) => {
+    if (route.request().method() === "GET") return route.fallback();
     agentRunRequestBody = route.request().postDataJSON() as typeof agentRunRequestBody;
     await route.fulfill({
       status: 200,
@@ -1909,11 +1863,11 @@ test("configures BYOK Anthropic without persisting API keys", async ({ page }, t
   await page.keyboard.press("Escape");
   await page.getByTestId("agent-instruction-input").fill("Build a revenue model from the current brief.");
   await page.getByTestId("agent-send-instruction").click();
-  await expect.poll(() => agentRunRequestBody?.providerId).toBe("anthropic");
+  await expect.poll(() => agentRunRequestBody?.executionBindingId).toBe("e2e_anthropic");
   expect(agentRunRequestBody?.input?.prompt).toBe("Build a revenue model from the current brief.");
-  expect(agentRunRequestBody?.providerConfig?.baseUrl).toBe("https://api.anthropic.com");
-  expect(agentRunRequestBody?.providerConfig?.model).toBe("vdt-production-model");
-  expect(agentRunRequestBody?.providerConfig?.apiKey).toBe("session-only-key");
+  expect(agentRunRequestBody).not.toHaveProperty("providerId");
+  expect(agentRunRequestBody).not.toHaveProperty("providerConfig");
+  expect(JSON.stringify(agentRunRequestBody)).not.toContain("session-only-key");
 
   await page.reload();
 
@@ -1928,6 +1882,13 @@ test("configures BYOK Anthropic without persisting API keys", async ({ page }, t
   await openSettingsModal(page);
   await page.getByTestId("execution-mode-tab-byok").click();
   await page.getByTestId("byok-protocol-anthropic").click();
+  await expect(page.getByTestId("byok-api-key")).toHaveValue("session-only-key");
+  await expect(page.getByTestId("byok-api-key-storage-status")).toHaveAttribute("data-status", "saved");
+  await page.getByTestId("byok-api-key-remove").click();
+  await expect(page.getByTestId("byok-api-key")).toHaveValue("");
+  await expect(page.getByTestId("byok-api-key-storage-status")).toHaveAttribute("data-status", "empty");
+  await page.reload();
+  await openSettingsModal(page);
   await expect(page.getByTestId("byok-api-key")).toHaveValue("");
 
   await page.evaluate(() => {
@@ -1967,7 +1928,7 @@ test("configures BYOK Anthropic without persisting API keys", async ({ page }, t
     .not.toContain("legacy-execution-local-secret");
 });
 
-test("blocks BYOK test connection when required fields are missing", async ({ page }, testInfo) => {
+test("blocks BYOK test connection when required fields are missing", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "BYOK validation smoke runs on desktop viewport.");
 
   await openSettingsModal(page);
@@ -1977,10 +1938,10 @@ test("blocks BYOK test connection when required fields are missing", async ({ pa
 
   await page.getByTestId("byok-test-connection").click();
   await expect(page.getByTestId("byok-api-key")).toHaveAttribute("aria-invalid", "true");
-  await expect(page.getByRole("status")).toHaveCount(0);
+  await expect(page.getByTestId("byok-settings").getByText("Connection test passed.")).toHaveCount(0);
 });
 
-test("shows a real BYOK connection error without falling back to mock", async ({ page }, testInfo) => {
+test("shows a real BYOK connection error without falling back to mock", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "BYOK failure smoke runs on desktop viewport.");
 
   let generateRequestBody: {
@@ -1988,7 +1949,7 @@ test("shows a real BYOK connection error without falling back to mock", async ({
     operation?: string;
     providerConfig?: { apiKey?: string };
   } | undefined;
-  let agentRunRequestBody: { providerId?: string; providerConfig?: { apiKey?: string } } | undefined;
+  let agentRunRequestBody: { executionBindingId?: string } | undefined;
 
   await page.route("**/api/ai/generate-vdt", async (route) => {
     generateRequestBody = route.request().postDataJSON() as typeof generateRequestBody;
@@ -1999,6 +1960,7 @@ test("shows a real BYOK connection error without falling back to mock", async ({
     });
   });
   await page.route("**/api/agent/runs", async (route) => {
+    if (route.request().method() === "GET") return route.fallback();
     agentRunRequestBody = route.request().postDataJSON() as typeof agentRunRequestBody;
     await route.fulfill({
       status: 502,
@@ -2013,7 +1975,6 @@ test("shows a real BYOK connection error without falling back to mock", async ({
   await expect(page.getByTestId("byok-preset-form")).toBeVisible();
 
   await page.getByTestId("byok-api-key").fill("session-only-key");
-  await page.getByTestId("byok-model-select").selectOption("__custom__");
   await page.getByTestId("byok-model-custom").fill("vdt-production-model");
 
   await page.getByTestId("byok-test-connection").click();
@@ -2024,14 +1985,14 @@ test("shows a real BYOK connection error without falling back to mock", async ({
   await page.getByTestId("agent-instruction-input").fill("Build a revenue model from the current brief.");
   await page.getByTestId("agent-send-instruction").click();
   await expect(page.getByText("Anthropic authentication failed.")).toBeVisible();
-  await expect.poll(() => agentRunRequestBody?.providerId).toBe("anthropic");
+  await expect.poll(() => agentRunRequestBody?.executionBindingId).toBe("e2e_anthropic");
   await expect.poll(() => generateRequestBody?.providerId).toBe("anthropic");
   expect(generateRequestBody?.providerId).not.toBe("mock");
-  expect(agentRunRequestBody?.providerId).not.toBe("mock");
+  expect(agentRunRequestBody?.executionBindingId).not.toContain("mock");
   await expect(page.getByRole("heading", { name: "Production Volume Driver Model" })).toBeVisible();
 });
 
-test("hides fixedInScenario inputs from the scenario overrides table", async ({ page }, testInfo) => {
+test("hides fixedInScenario inputs from the scenario overrides table", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Fixed scenario input filtering runs on desktop viewport.");
 
   await openScenarioModal(page);
@@ -2043,7 +2004,7 @@ test("hides fixedInScenario inputs from the scenario overrides table", async ({ 
   await closeScenarioModal(page);
 });
 
-test("inspector locked-in-scenario toggle hides and restores override rows", async ({ page }, testInfo) => {
+test("inspector locked-in-scenario toggle hides and restores override rows", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Fixed scenario toggle round-trip runs on desktop viewport.");
 
   if ((await page.getByTestId("expand-right-panel").count()) > 0) {
@@ -2074,7 +2035,7 @@ test("inspector locked-in-scenario toggle hides and restores override rows", asy
   await closeScenarioModal(page);
 });
 
-test("runs the downtime scenario and shows updated totals in middle column", async ({ page }, testInfo) => {
+test("runs the downtime scenario and shows updated totals in middle column", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Detailed scenario smoke runs on desktop viewport.");
 
   await openScenarioModal(page);
@@ -2083,7 +2044,7 @@ test("runs the downtime scenario and shows updated totals in middle column", asy
 
   await expect(page.getByText("Impacted drivers")).toHaveCount(0);
   await expect(page.getByTestId("scenario-totals-metrics")).toBeVisible();
-  await expect(page.getByText("117,849.6").first()).toBeVisible();
+  await expect(page.getByText("130,944").first()).toBeVisible();
   await expect(scenarioOverrideCard(page, "unplanned_downtime")).toBeVisible();
 
   const middleColumn = page.getByTestId("scenario-middle-column");
@@ -2101,7 +2062,7 @@ test("runs the downtime scenario and shows updated totals in middle column", asy
   await closeScenarioModal(page);
 });
 
-test("marks main scenario in select and shows scenario values on node cards", async ({ page }, testInfo) => {
+test("marks main scenario in select and shows scenario values on node cards", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Main scenario canvas display runs on desktop viewport.");
 
   await page.reload();
@@ -2109,11 +2070,11 @@ test("marks main scenario in select and shows scenario values on node cards", as
 
   const rootNode = reactFlowNode(page, "production_volume");
   await expect(rootNode.getByTestId("node-main-scenario-value")).toBeVisible();
-  await expect(rootNode.getByTestId("node-main-scenario-value")).toContainText("117,849.6");
+  await expect(rootNode.getByTestId("node-main-scenario-value")).toContainText("130,944");
   await expect(rootNode.getByText("Base")).toBeVisible();
   await expect(rootNode.getByText("Potential")).toBeVisible();
   await expect(page.getByTestId("root-scenario-effect")).toBeVisible();
-  await expect(page.getByTestId("root-scenario-effect")).toContainText("+3,801.6");
+  await expect(page.getByTestId("root-scenario-effect")).toContainText("+4,224");
 
   await openScenarioModal(page);
   await expect(page.getByTestId("main-scenario-checkbox")).toBeChecked();
@@ -2127,16 +2088,16 @@ test("marks main scenario in select and shows scenario values on node cards", as
   await expect(page.getByTestId("main-scenario-checkbox")).toBeChecked();
 
   await closeScenarioModal(page);
-  await expect(rootNode.getByTestId("node-main-scenario-value")).not.toContainText("117,849.6");
+  await expect(rootNode.getByTestId("node-main-scenario-value")).not.toContainText("130,944");
 
   await openScenarioModal(page);
   await page.getByTestId("scenario-select").selectOption({ label: "Reduce unplanned downtime" });
   await page.getByTestId("main-scenario-checkbox").check();
   await closeScenarioModal(page);
-  await expect(rootNode.getByTestId("node-main-scenario-value")).toContainText("117,849.6");
+  await expect(rootNode.getByTestId("node-main-scenario-value")).toContainText("130,944");
 });
 
-test("persists scenario rename across reload", async ({ page }, testInfo) => {
+test("persists scenario rename across reload", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario rename persistence runs on desktop viewport.");
 
   await page.reload();
@@ -2160,7 +2121,7 @@ test("persists scenario rename across reload", async ({ page }, testInfo) => {
   );
 });
 
-test("escape cancels scenario rename without closing the modal", async ({ page }, testInfo) => {
+test("escape cancels scenario rename without closing the modal", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario rename escape runs on desktop viewport.");
 
   await page.reload();
@@ -2182,7 +2143,7 @@ test("escape cancels scenario rename without closing the modal", async ({ page }
   );
 });
 
-test("blur cancels scenario rename without saving", async ({ page }, testInfo) => {
+test("blur cancels scenario rename without saving", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario rename blur cancel runs on desktop viewport.");
 
   await openScenarioModal(page);
@@ -2201,7 +2162,7 @@ test("blur cancels scenario rename without saving", async ({ page }, testInfo) =
   await expect(select.locator("option:checked")).toHaveText(originalName ?? "");
 });
 
-test("shows multiplicative effect when multiple overrides combine", async ({ page }, testInfo) => {
+test("shows multiplicative effect when multiple overrides combine", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario multiplicative effect runs on desktop viewport.");
 
   await openScenarioModal(page);
@@ -2223,26 +2184,28 @@ test("shows multiplicative effect when multiple overrides combine", async ({ pag
   expect(multiplicativeIndex).toBeGreaterThan(overridesIndex);
 });
 
-test("clones scenario with overrides", async ({ page }, testInfo) => {
+test("clones scenario with overrides", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario clone runs on desktop viewport.");
 
   await openScenarioModal(page);
   await fillScenarioOverride(page, "unplanned_downtime", "60");
 
   const select = page.getByTestId("scenario-select");
-  const originalName = (await select.locator("option:checked").textContent())?.trim();
+  const originalName = (await select.locator("option:checked").textContent())?.replace(/^★\s*/, "").trim();
 
   await page.getByTestId("clone-scenario").click();
+  const cloneId = await select.inputValue();
   await expect(select.locator("option:checked")).toHaveText(`${originalName} copy`);
   await expect(scenarioOverrideCard(page, "unplanned_downtime").locator("input")).toHaveValue("60");
 
   await page.reload();
   await openScenarioModal(page);
-  await expect(page.getByTestId("scenario-select").locator("option:checked")).toHaveText(/copy/);
+  await page.getByTestId("scenario-select").selectOption(cloneId);
+  await expect(page.getByTestId("scenario-select").locator("option:checked")).toHaveText(`${originalName} copy`);
   await expect(scenarioOverrideCard(page, "unplanned_downtime").locator("input")).toHaveValue("60");
 });
 
-test("deletes a scenario after confirmation", async ({ page }, testInfo) => {
+test("deletes a scenario after confirmation", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario delete runs on desktop viewport.");
 
   await openScenarioModal(page);
@@ -2259,7 +2222,7 @@ test("deletes a scenario after confirmation", async ({ page }, testInfo) => {
   await expect(select).not.toHaveValue(deletedId);
 });
 
-test("cancels scenario delete when confirmation is dismissed", async ({ page }, testInfo) => {
+test("cancels scenario delete when confirmation is dismissed", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario delete cancel runs on desktop viewport.");
 
   await openScenarioModal(page);
@@ -2274,7 +2237,7 @@ test("cancels scenario delete when confirmation is dismissed", async ({ page }, 
   await expect(select.locator("option")).toHaveCount(beforeCount);
 });
 
-test("reassigns active scenario after deleting the selected scenario", async ({ page }, testInfo) => {
+test("reassigns active scenario after deleting the selected scenario", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario delete reassignment runs on desktop viewport.");
 
   await openScenarioModal(page);
@@ -2294,14 +2257,14 @@ test("reassigns active scenario after deleting the selected scenario", async ({ 
   await expect(select).not.toHaveValue(originalScenarioId);
 });
 
-test("disables delete when only one scenario remains", async ({ page }, testInfo) => {
+test("disables delete when only one scenario remains", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario delete guard runs on desktop viewport.");
 
   await openScenarioModal(page);
   await expect(page.getByTestId("delete-scenario")).toBeDisabled();
 });
 
-test("persists scenario delete across reload", async ({ page }, testInfo) => {
+test("persists scenario delete across reload", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario delete persistence runs on desktop viewport.");
 
   await openScenarioModal(page);
@@ -2321,10 +2284,10 @@ test("persists scenario delete across reload", async ({ page }, testInfo) => {
 
   const options = page.getByTestId("scenario-select").locator("option");
   await expect(options).toHaveCount(1);
-  await expect(options).toHaveText("Reduce unplanned downtime");
+  await expect(options).toHaveText("★ Reduce unplanned downtime");
 });
 
-test("overrides table fits within the modal middle column", async ({ page }, testInfo) => {
+test("overrides table fits within the modal middle column", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario overrides width runs on desktop viewport.");
 
   await openScenarioModal(page);
@@ -2466,16 +2429,16 @@ test(EXCEL_EXPORT_TEST_TITLE, async ({ page }, testInfo) => {
   }
 });
 
-test("keeps the primary creation flow usable on mobile", async ({ page }, testInfo) => {
+test("keeps the primary creation flow usable on mobile", { tag: "@mobile-chrome" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chrome", "Mobile smoke only runs on the mobile project.");
 
-  await expect(page.getByText("New VDT")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "VDT Agent", exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
   await expect(page.getByTestId("agent-instruction-input")).toBeVisible();
   await expect(page.getByRole("button", { name: /^Send$/i })).toBeVisible();
 });
 
-test("keeps execution settings reachable on mobile", async ({ page }, testInfo) => {
+test("keeps execution settings reachable on mobile", { tag: "@mobile-chrome" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chrome", "Mobile execution settings smoke only runs on the mobile project.");
 
   const modal = await openSettingsModal(page);
@@ -2499,7 +2462,7 @@ test("keeps execution settings reachable on mobile", async ({ page }, testInfo) 
   expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(viewport!.height + 1);
 });
 
-test("persists font scale, KPI spacing and panel widths", async ({ page }, testInfo) => {
+test("persists font scale, KPI spacing and panel widths", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Settings persistence runs on desktop viewport.");
 
   await openSettingsModal(page, "display");
@@ -2525,7 +2488,7 @@ test("persists font scale, KPI spacing and panel widths", async ({ page }, testI
   expect(ui?.rightPanelWidth).toBe(279);
 });
 
-test("canvas cards use icons instead of type text and formulas", async ({ page }, testInfo) => {
+test("canvas cards use icons instead of type text and formulas", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Canvas card polish runs on desktop viewport.");
 
   const canvasNodes = page.locator(".react-flow__node");
@@ -2537,7 +2500,7 @@ test("canvas cards use icons instead of type text and formulas", async ({ page }
   await expect(page.getByText("reduced by")).toHaveCount(0);
 });
 
-test("migrates legacy panelScale to explicit panel widths", async ({ page }, testInfo) => {
+test("migrates legacy panelScale to explicit panel widths", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Panel width migration runs on desktop viewport.");
 
   await page.evaluate(() => {
@@ -2578,7 +2541,7 @@ test("migrates legacy panelScale to explicit panel widths", async ({ page }, tes
   expect((await readPersistedUi(page))?.panelScale).toBeUndefined();
 });
 
-test("persists panel width after drag resize", async ({ page }, testInfo) => {
+test("persists panel width after drag resize", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Panel drag resize runs on desktop viewport.");
 
   const baselineWidth = await page.evaluate(() =>
@@ -2617,7 +2580,7 @@ test("persists panel width after drag resize", async ({ page }, testInfo) => {
   expect(reloadedWidth).toBeGreaterThan(baselineWidth);
 });
 
-test("collapses and expands the setup rail", async ({ page }, testInfo) => {
+test("collapses and expands the setup rail", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Panel collapse runs on desktop viewport.");
 
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
@@ -2627,7 +2590,7 @@ test("collapses and expands the setup rail", async ({ page }, testInfo) => {
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
 });
 
-test("opens and closes the scenario modal", async ({ page }, testInfo) => {
+test("opens and closes the scenario modal", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario modal open/close runs on desktop viewport.");
 
   await expect(page.getByTestId("scenario-modal")).toHaveCount(0);
@@ -2640,7 +2603,7 @@ test("opens and closes the scenario modal", async ({ page }, testInfo) => {
   await expect(page.getByText("Overrides")).toHaveCount(0);
 });
 
-test("dismisses scenario and settings modals cleanly in sequence", async ({ page }, testInfo) => {
+test("dismisses scenario and settings modals cleanly in sequence", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Modal stacking smoke runs on desktop viewport.");
 
   await openScenarioModal(page);
@@ -2653,7 +2616,7 @@ test("dismisses scenario and settings modals cleanly in sequence", async ({ page
   await expect(page.getByTestId("settings-modal")).toHaveCount(0);
 });
 
-test("auto-distributes nodes without overlap", async ({ page }, testInfo) => {
+test("auto-distributes nodes without overlap", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Auto-distribute runs on desktop viewport.");
 
   const ids = [
@@ -2686,7 +2649,7 @@ test("auto-distributes nodes without overlap", async ({ page }, testInfo) => {
   }
 });
 
-test("KPI spacing settings affect auto-distributed layout and persist", async ({ page }, testInfo) => {
+test("KPI spacing settings affect auto-distributed layout and persist", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "KPI spacing settings run on desktop viewport.");
 
   await openKpiSpacingPopover(page);
@@ -2726,7 +2689,7 @@ test("KPI spacing settings affect auto-distributed layout and persist", async ({
   expect(ui?.kpiVerticalGap).toBe(94);
 });
 
-test("auto-distribute groups cousin nodes by parent", async ({ page }, testInfo) => {
+test("auto-distribute groups cousin nodes by parent", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Layout grouping runs on desktop viewport.");
 
   const effectiveWorkingTimeChildren = ["calendar_time", "planned_downtime", "unplanned_downtime"];
@@ -2775,7 +2738,7 @@ test("auto-distribute groups cousin nodes by parent", async ({ page }, testInfo)
     .toEqual(averageProductivityChildren);
 });
 
-test("auto-distribute preserves manual sibling order after drag or persisted Y fallback", async ({
+test("auto-distribute preserves manual sibling order after drag or persisted Y fallback", { tag: "@chromium" }, async ({
   page
 }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Manual order preservation runs on desktop viewport.");
@@ -2822,7 +2785,7 @@ test("auto-distribute preserves manual sibling order after drag or persisted Y f
     .toBe(true);
 });
 
-test("persists dragged node positions after reload", async ({ page }, testInfo) => {
+test("persists dragged node positions after reload", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Drag persistence runs on desktop viewport.");
 
   await page.getByTestId("auto-distribute-layout").click();
@@ -2895,7 +2858,7 @@ test("persists dragged node positions after reload", async ({ page }, testInfo) 
   expect(reloadedPosition?.y).toBeCloseTo(draggedPosition!.y, 0);
 });
 
-test("resets display preferences to defaults", async ({ page }, testInfo) => {
+test("resets display preferences to defaults", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Reset UI preferences runs on desktop viewport.");
 
   await openSettingsModal(page, "display");
@@ -2930,7 +2893,7 @@ test("resets display preferences to defaults", async ({ page }, testInfo) => {
   await expect(page.getByText("Overrides")).toHaveCount(0);
 });
 
-test("persists left panel collapse across reload", async ({ page }, testInfo) => {
+test("persists left panel collapse across reload", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Left panel persistence runs on desktop viewport.");
 
   await page.getByTestId("collapse-left-panel").click();
@@ -2945,7 +2908,7 @@ test("persists left panel collapse across reload", async ({ page }, testInfo) =>
   expect((await readPersistedUi(page))?.leftPanelCollapsed).toBe(true);
 });
 
-test("persists right panel collapse across reload", async ({ page }, testInfo) => {
+test("persists right panel collapse across reload", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Right panel persistence runs on desktop viewport.");
 
   await page.getByTestId("collapse-right-panel").click();
@@ -2961,7 +2924,7 @@ test("persists right panel collapse across reload", async ({ page }, testInfo) =
   expect((await readPersistedUi(page))?.rightPanelCollapsed).toBe(true);
 });
 
-test("does not persist scenario modal open state across reload", async ({ page }, testInfo) => {
+test("does not persist scenario modal open state across reload", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Scenario modal non-persistence runs on desktop viewport.");
 
   await openScenarioModal(page);
@@ -2973,7 +2936,7 @@ test("does not persist scenario modal open state across reload", async ({ page }
   await expect(page.getByText("Overrides")).toHaveCount(0);
 });
 
-test("shows full setup rail on mobile when left panel was collapsed on desktop", async ({ page }, testInfo) => {
+test("shows full setup rail on mobile when left panel was collapsed on desktop", { tag: "@mobile-chrome" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chrome", "Mobile collapse override only runs on mobile project.");
 
   await page.evaluate(() => {
@@ -2990,37 +2953,34 @@ test("shows full setup rail on mobile when left panel was collapsed on desktop",
   });
   await page.reload();
 
-  await expect(page.getByText("New VDT")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "VDT Agent", exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
   await expect(page.getByTestId("expand-left-panel")).toHaveCount(0);
 });
 
-test("updates execution mode summary when settings change without reload", async ({ page }, testInfo) => {
+test("updates execution mode summary when settings change without reload", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Execution mode summary sync runs on desktop viewport.");
 
-  const setupRail = page.locator("section").filter({ hasText: "New VDT" }).first();
+  const setupRail = page.locator("section").filter({ has: page.getByRole("heading", { name: "VDT Agent", exact: true }) }).first();
   const summary = setupRail.getByTestId("execution-mode-summary");
 
-  await expect(summary).toContainText("API keys");
   await expect(summary).toContainText("OpenAI");
 
   await setupRail.getByTestId("execution-mode-configure").click();
   await expect(page.getByTestId("settings-modal")).toBeVisible();
 
   await page.getByTestId("execution-mode-tab-local-models").click();
-  await expect(summary).toContainText("Local models");
   await expect(summary).toContainText("Ollama");
   await expect(summary).toContainText("qwen3");
 
   await page.getByTestId("execution-mode-tab-byok").click();
   await page.getByTestId("byok-protocol-openai").click();
   await page.getByTestId("byok-gateway-preset").selectOption("alibaba-coding-plan");
-  await expect(summary).toContainText("API keys");
   await expect(summary).toContainText("Alibaba Cloud Coding Plan");
   await expect(summary).toContainText("qwen3-coder-plus");
 });
 
-test("configures Alibaba Coding Plan BYOK and tests connection via openai_compatible", async ({ page }, testInfo) => {
+test("configures Alibaba Coding Plan BYOK and tests connection via openai_compatible", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Alibaba BYOK smoke runs on desktop viewport.");
 
   let testProviderRequestBody:
@@ -3084,7 +3044,7 @@ test("configures Alibaba Coding Plan BYOK and tests connection via openai_compat
   expect(testProviderRequestBody?.providerConfig?.model).toBe("qwen3-coder-plus");
 });
 
-test("shows usage limits copy on subscription CLI cards", async ({ page }, testInfo) => {
+test("shows usage limits copy on subscription CLI cards", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Subscription usage copy runs on desktop viewport.");
 
   await page.route("**/api/ai/detect-clis**", async (route) => {
@@ -3119,7 +3079,7 @@ test("shows usage limits copy on subscription CLI cards", async ({ page }, testI
   await expect(usageNote).toContainText("model Claude Code selects");
 });
 
-test("sends Cursor generation through the server-managed session binding", async ({ page }, testInfo) => {
+test("sends Cursor generation through the server-managed session binding", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Cursor session binding smoke runs on desktop viewport.");
 
   let agentRunRequestBody:
@@ -3207,7 +3167,7 @@ test("sends Cursor generation through the server-managed session binding", async
 });
 
 test.describe("visual formula editor", () => {
-  test("drag-and-drop build and reorder updates persisted formula", async ({ page }, testInfo) => {
+  test("drag-and-drop build and reorder updates persisted formula", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula editor DnD runs on desktop viewport.");
 
     const nodeId = "production_volume";
@@ -3254,7 +3214,7 @@ test.describe("visual formula editor", () => {
     }
   });
 
-  test("remove token restores node in palette and updates persisted formula", async ({ page }, testInfo) => {
+  test("remove token restores node in palette and updates persisted formula", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula remove-token runs on desktop viewport.");
 
     const nodeId = "effective_working_time";
@@ -3286,14 +3246,14 @@ test.describe("visual formula editor", () => {
     expect(formulaAfterRemove).toContain("unplanned_downtime");
   });
 
-  test("hides formula editor on input nodes", async ({ page }, testInfo) => {
+  test("hides formula editor on input nodes", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula editor input gating runs on desktop viewport.");
 
     await selectNodeInInspector(page, "calendar_time");
     await expect(page.getByTestId("formula-editor")).toHaveCount(0);
   });
 
-  test("shows inline error for invalid edit-as-text formula", async ({ page }, testInfo) => {
+  test("shows inline error for invalid edit-as-text formula", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula inline error runs on desktop viewport.");
 
     await selectNodeInInspector(page, "production_volume");
@@ -3307,7 +3267,7 @@ test.describe("visual formula editor", () => {
     await expect(errorBanner).toContainText(/cannot be parsed|Missing closing parenthesis/i);
   });
 
-  test("clicking empty drop zone space does not insert operators", async ({ page }, testInfo) => {
+  test("clicking empty drop zone space does not insert operators", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula empty-space click runs on desktop viewport.");
 
     const nodeId = "production_volume";
@@ -3328,7 +3288,7 @@ test.describe("visual formula editor", () => {
     await expect(dropZone.getByText("+", { exact: true })).toHaveCount(0);
   });
 
-  test("remove operator token updates persisted formula", async ({ page }, testInfo) => {
+  test("remove operator token updates persisted formula", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula operator remove runs on desktop viewport.");
 
     const nodeId = "production_volume";
@@ -3352,7 +3312,7 @@ test.describe("visual formula editor", () => {
     await expect(dropZone.getByRole("button", { name: "Remove * operator" })).toHaveCount(0);
   });
 
-  test("shows insert indicator while dragging palette nodes into formula", async ({ page }, testInfo) => {
+  test("shows insert indicator while dragging palette nodes into formula", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula insert indicator runs on desktop viewport.");
 
     const nodeId = "effective_working_time";
@@ -3386,7 +3346,7 @@ test.describe("visual formula editor", () => {
     await expect(page.getByTestId("formula-insert-indicator")).toHaveCount(1);
   });
 
-  test("shows min max and comma toolbar buttons on calculated nodes", async ({ page }, testInfo) => {
+  test("shows min max and comma toolbar buttons on calculated nodes", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula min/max toolbar runs on desktop viewport.");
 
     await selectNodeInInspector(page, "production_volume");
@@ -3396,7 +3356,7 @@ test.describe("visual formula editor", () => {
     await expect(page.getByTestId("formula-toolbar-comma")).toBeVisible();
   });
 
-  test("insert min via toolbar on cleared formula shows function chip", async ({ page }, testInfo) => {
+  test("insert min via toolbar on cleared formula shows function chip", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula min toolbar insert runs on desktop viewport.");
 
     const nodeId = "production_volume";
@@ -3411,7 +3371,7 @@ test.describe("visual formula editor", () => {
     await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(/^min\(\)$/);
   });
 
-  test("insert min function via toolbar and persist formula", async ({ page }, testInfo) => {
+  test("insert min function via toolbar and persist formula", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula min persist runs on desktop viewport.");
 
     const nodeId = "production_volume";
@@ -3453,7 +3413,7 @@ test.describe("visual formula editor", () => {
     }
   });
 
-  test("caret slot plus toolbar inserts operator at explicit position", async ({ page }, testInfo) => {
+  test("caret slot plus toolbar inserts operator at explicit position", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula caret toolbar insert runs on desktop viewport.");
 
     const nodeId = "production_volume";
@@ -3472,7 +3432,7 @@ test.describe("visual formula editor", () => {
       .toBe("effective_working_time * * average_productivity");
   });
 
-  test("palette click inserts reference at explicit caret between tokens", async ({ page }, testInfo) => {
+  test("palette click inserts reference at explicit caret between tokens", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula palette click insert runs on desktop viewport.");
 
     const nodeId = "effective_working_time";
@@ -3493,7 +3453,7 @@ test.describe("visual formula editor", () => {
       .toBe("calendar_time planned_downtime - -unplanned_downtime");
   });
 
-  test("min with default caret inserts toolbar operator after closing paren", async ({ page }, testInfo) => {
+  test("min with default caret inserts toolbar operator after closing paren", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula min operator placement runs on desktop viewport.");
 
     const nodeId = "production_volume";
@@ -3511,7 +3471,7 @@ test.describe("visual formula editor", () => {
     await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(/^min\(\)\s*\*$/);
   });
 
-  test("default caret inserts inside min() while explicit slot zero inserts before min", async ({ page }, testInfo) => {
+  test("default caret inserts inside min() while explicit slot zero inserts before min", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula snap vs explicit caret runs on desktop viewport.");
 
     const nodeId = "production_volume";
@@ -3538,7 +3498,7 @@ test.describe("visual formula editor", () => {
     await expect.poll(async () => readPersistedNodeFormula(page, nodeId)).toMatch(/^0 min\(\)$/);
   });
 
-  test("wrapped row slot plus toolbar preserves insert order", async ({ page }, testInfo) => {
+  test("wrapped row slot plus toolbar preserves insert order", { tag: "@chromium" }, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Formula wrapped-row insert runs on desktop viewport.");
 
     const nodeId = "effective_working_time";

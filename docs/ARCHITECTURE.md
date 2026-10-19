@@ -78,6 +78,8 @@ The implementation still duplicates substantial draft/project state in Zustand p
 
 The workspace rail uses a direct Home link to `/`; the editor header's back link targets `/projects/<projectId>`. Project/editor route synchronization gives changed URL parameters precedence over the workspace snapshot. Store-driven navigation retains its target until Next.js commits the URL, and asynchronous bootstrap/VDT selection blocks reverse URL writes until it settles. An unchanged route can still reflect a newly created local VDT in `?vdt=...`.
 
+`WorkspaceNavigationLink` intercepts normal client navigation through those two editor links and awaits the existing `saveActiveWorkspaceVdt` CAS/idempotency operation. A failure preserves the editor and displays a navigation error; a save covering an older in-flight snapshot also blocks leaving. Successful Back navigation uses the route-sync hook's explicit project intent, superseding any pending creation route. This closes the link-driven edit-loss path without adding a new revision API or changing the remaining W0.5 draft/durable-ownership boundary.
+
 ### Editor version flow
 
 `Versions -> selected project.versions checkpoint -> deterministic base comparison / checkpointed restore -> existing draft and revision persistence`

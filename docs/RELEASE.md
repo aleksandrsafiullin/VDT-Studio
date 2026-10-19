@@ -6,7 +6,7 @@ VDT Studio `0.1.0-alpha.0` packages the Node 24 product CLI and paired localhost
 
 ## Current Release Status
 
-The production-dependency blocker is remediated. Local candidate verification is separate from permission to publish: browser E2E, the GUI distribution, recovery, AI/business acceptance and any claimed platform support still need their own evidence. Native installers remain unqualified.
+The production-dependency blocker is remediated. The local web browser gate passed 122 checks on 2026-10-19; the production web build passed in an isolated source snapshot. See [current evidence and limits](PRODUCTION_READINESS.md#local-alpha-browser-verification-2026-10-19). GUI distribution, recovery, AI/business acceptance and any claimed platform support still need their own evidence. Native installers remain unqualified.
 
 ### Dependency audit evidence
 
@@ -29,6 +29,14 @@ pnpm test:e2e
 For PowerShell use `$env:VDT_RELEASE_DIR = Join-Path $PWD 'output/release/candidates/<unique-candidate>'`. Replace `<unique-candidate>` with a fresh directory name. Run scripts through pnpm so Windows uses the package manager's JavaScript entrypoint through Node, without a shell or `.cmd` execution. A direct Node invocation on Windows without that entrypoint fails with instructions to use pnpm.
 
 `release:verify` runs lint, typecheck, tests, build, CI/phase/docs verification, dependency audit, provider certification, deterministic evaluation, alpha packaging, bundle verification and clean-install checks. It must complete in one release run; historical passes do not substitute for a current failing dependency audit. Native preflight and browser E2E remain distinct checks.
+
+### Browser E2E isolation and reports
+
+Install the matching browser engines with `pnpm exec playwright install chromium webkit`, then run `pnpm test:e2e`. Use a separate checkout/source snapshot when the development app is running: Next development servers in one checkout share `apps/web/.next`. Stop the development server before running E2E in that same checkout.
+
+Playwright owns its loopback server on `127.0.0.1:3100` and refuses to reuse a listener. `start-e2e-web.mjs` starts Next directly with a fresh temporary `VDT_DATA_DIR`, ignoring any inherited application-data path. It cleans that store after the owned Next process closes. Tests use unique disposable projects and delete only their own fixtures. CLI/session and local-model discovery are disabled on the E2E host; provider UI tests supply explicit mocked bindings/responses and synthetic keys. Real file parsing, scoped storage, deterministic calculations and workbook export still execute. No live-provider certification follows from these tests.
+
+Existing engine/viewport restrictions are applied through collection tags before fixture creation, so tests for another viewport do not create and delete unused projects. HTML and JSON reports are written to `output/playwright/report/` and `output/playwright/results.json`, with per-server temporary-store cleanup records alongside them; failure screenshots/traces are retained under `test-results/`. CI uploads both output directories even on failure, with seven-day retention. Inspect retained failures before removing their artifacts.
 
 ## Artifacts
 

@@ -9,3 +9,9 @@ export function developmentWebEnvironment(env = process.env) {
     VDT_AGENT_LEGACY_COMPATIBILITY_ENABLED: env.VDT_AGENT_LEGACY_COMPATIBILITY_ENABLED ?? "false"
   };
 }
+
+/** The trusted single-user development app listens only on loopback by default. */
+export function developmentWebArguments(args = []) {
+  const explicitHostname = args.some((arg) => arg === "--hostname" || arg.startsWith("--hostname=") || arg === "-H");
+  return explicitHostname ? [...args] : ["--hostname", "127.0.0.1", ...args];
+}

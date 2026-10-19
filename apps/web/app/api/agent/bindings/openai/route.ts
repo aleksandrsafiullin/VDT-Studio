@@ -4,14 +4,14 @@ import { openAiBindingInputSchema, openAiSessionBindings } from "../../runs/byok
 import { modelAgentToolCatalogHash } from "../../runs/model-agent-tool-catalog";
 import { admitSessionWebResearch } from "../../runs/session-research";
 import { z } from "zod";
+import { hasSameLocalOrigin } from "@/lib/local-request-origin";
 
 export async function POST(request: Request) {
   const headers = { "cache-control": "no-store" };
   if (!resolveTrustedStorageWriteMode()) return Response.json({ ok: false, error: "API agent sessions require a trusted local application." }, { status: 403, headers });
   if (process.env.NEXT_PHASE === "phase-production-build" || (process.env.NODE_ENV === "production" && process.env.VDT_MODEL_AGENT_ENABLED !== "true"))
     return Response.json({ ok: false, error: "API Model Agent sessions are disabled on this host." }, { status: 403, headers });
-  const origin = request.headers.get("origin");
-  if (!origin || origin !== new URL(request.url).origin || request.headers.get("sec-fetch-site") === "cross-site")
+  if (!hasSameLocalOrigin(request))
     return Response.json({ ok: false, error: "API agent admission requires the application origin." }, { status: 403, headers });
   if (!request.headers.get("content-type")?.startsWith("application/json"))
     return Response.json({ ok: false, error: "API agent admission requires JSON." }, { status: 415, headers });

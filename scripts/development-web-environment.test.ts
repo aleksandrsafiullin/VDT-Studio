@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { developmentWebEnvironment } from "./development-web-environment.mjs";
+import { developmentWebArguments, developmentWebEnvironment } from "./development-web-environment.mjs";
 
 describe("local development launch environment", () => {
+  it("binds the local app to loopback without changing other arguments", () => {
+    expect(developmentWebArguments()).toEqual(["--hostname", "127.0.0.1"]);
+    expect(developmentWebArguments(["--port", "3002"])).toEqual(["--hostname", "127.0.0.1", "--port", "3002"]);
+  });
+  it.each([["--hostname", "localhost"], ["--hostname=::1"], ["-H", "127.0.0.1"]])("preserves explicit hostname arguments %j", (...args) => {
+    expect(developmentWebArguments(args)).toEqual(args);
+  });
   it("enables session bindings for pnpm dev while keeping legacy fallback off", () => {
     expect(developmentWebEnvironment({ PATH: "/test/bin" })).toEqual({
       PATH: "/test/bin",

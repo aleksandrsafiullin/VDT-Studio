@@ -1,46 +1,28 @@
-import fs from "node:fs";
-import path from "node:path";
-import { expect, test, type Page } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test } from "./workspace-fixture";
 
-const E2E_PROJECT_ID = "project_e2e_release_smoke";
-const E2E_VDT_ID = "vdt_e2e_release_smoke";
-const productionVolumeExamplePath = path.join(process.cwd(), "examples", "production-volume.json");
-
-async function openReleaseSmokeEditor(page: Page) {
-  const project = JSON.parse(fs.readFileSync(productionVolumeExamplePath, "utf8")) as Record<string, unknown>;
-  const createProject = await page.request.post("/api/vdt/projects", {
-    data: {
-      id: E2E_PROJECT_ID,
-      name: "Release smoke project",
-      industry: project.industry
-    }
+test("local API agent admission accepts the browser origin without exposing its key", async ({ page }) => {
+  await page.goto("/");
+  // Admission is local and does not execute a provider request.
+  const result = await page.evaluate(async () => {
+    const response = await fetch("/api/agent/bindings/openai", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "e2e-synthetic-admission-key", model: "gpt-6-luna", maxTokens: 1024 })
+    });
+    return { status: response.status, body: await response.text() };
   });
-  if (createProject.status() !== 409) {
-    expect(createProject.ok()).toBeTruthy();
-  }
+  expect(result.status, result.body).toBe(200);
+  expect(JSON.parse(result.body)).toMatchObject({ ok: true, binding: { executionProfile: "model_agent", modelId: "gpt-6-luna" } });
+  expect(result.body).not.toContain("e2e-synthetic-admission-key");
+  expect(result.body).not.toContain("apiKey");
+});
 
-  const createVdt = await page.request.post(`/api/vdt/projects/${E2E_PROJECT_ID}/vdts`, {
-    data: {
-      id: E2E_VDT_ID,
-      name: project.name,
-      rootKpi: "Production Volume",
-      project
-    }
-  });
-  if (createVdt.status() !== 409) {
-    expect(createVdt.ok()).toBeTruthy();
-  }
-
-  await page.goto(`/projects/${E2E_PROJECT_ID}?vdt=${E2E_VDT_ID}`);
-  await expect(page.getByTestId("vdt-canvas")).toBeVisible();
-}
-
-test("release smoke renders the workspace and settings in WebKit", async ({ page }, testInfo) => {
+test("release smoke renders the workspace and settings in WebKit", { tag: "@webkit" }, async ({ page, productionWorkspace }, testInfo) => {
   test.skip(testInfo.project.name !== "webkit", "Release WebKit smoke only runs in the WebKit project.");
   await page.goto("/");
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  await openReleaseSmokeEditor(page);
+  await page.goto(`/projects/${productionWorkspace.projectId}?vdt=${productionWorkspace.vdtId}`);
   await expect(page).toHaveTitle(/VDT Studio/);
   await expect(page.getByTestId("vdt-canvas")).toBeVisible();
   await page.getByTestId("settings-button").click();

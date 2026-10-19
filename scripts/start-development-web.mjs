@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
-import { developmentWebEnvironment } from "./development-web-environment.mjs";
+import { developmentWebArguments, developmentWebEnvironment } from "./development-web-environment.mjs";
 
 const corepackCommand = process.platform === "win32" ? "corepack.cmd" : "corepack";
 const child = spawn(
   corepackCommand,
-  ["pnpm", "--filter", "@vdt-studio/web", "dev", ...process.argv.slice(2)],
+  ["pnpm", "--filter", "@vdt-studio/web", "dev", ...developmentWebArguments(process.argv.slice(2))],
   {
     stdio: "inherit",
     shell: process.platform === "win32",

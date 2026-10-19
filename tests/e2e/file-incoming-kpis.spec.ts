@@ -30,7 +30,7 @@ test.afterEach(async ({ page }, testInfo) => {
   cleanup.cleaningUp = true;
   while (cleanup.serverRequests.size) await Promise.allSettled([...cleanup.serverRequests]);
   if (cleanup.fixture) {
-    const deleted = await page.request.delete(`/api/vdt/projects/${cleanup.fixture.projectId}`, { timeout: SERVER_TIMEOUT });
+    const deleted = await page.request.delete(`/api/vdt/projects/${cleanup.fixture.projectId}`, { timeout: SERVER_TIMEOUT, maxRetries: 2 });
     expect([200, 404], "Only this test's disposable project is deleted").toContain(deleted.status());
   }
   cleanupByTestId.delete(testInfo.testId);
@@ -50,7 +50,10 @@ async function requireOk(response: BrowserResponse) {
 async function analyzeAndWait(page: Page) {
   const discovery = waitForDataResponse(page, "/api/data/discovery/runs", "POST");
   await page.getByTestId("data-import-analyze").click();
-  await requireOk(await discovery);
+  const response = await discovery;
+  await requireOk(response);
+  const payload = await response.json() as { snapshot: DataDiscoveryRunSnapshot };
+  expect(payload.snapshot.incomingKpi, JSON.stringify(payload.snapshot.warnings)).toBeDefined();
   await expect(page.getByTestId("data-import-result")).toBeVisible({ timeout: SERVER_TIMEOUT });
 }
 
@@ -159,6 +162,13 @@ test("creates and reviews every Excel category, reloads and reuses its original 
   await page.route("**/api/data/**", (route) => {
     if (cleanup.cleaningUp) return route.abort();
     const request = (async () => {
+      if (!(new URL(route.request().url()).pathname === "/api/data/discovery/runs" && route.request().method() === "POST")) {
+        // WebKit does not expose multipart file bytes to route.fetch(). Forward
+        // the browser's original upload and wait for the server to finish it.
+        await route.continue();
+        await (await route.request().response())?.finished();
+        return;
+      }
       let postData: string | undefined;
       if (new URL(route.request().url()).pathname === "/api/data/discovery/runs" && route.request().method() === "POST") {
         const body = route.request().postDataJSON() as Record<string, unknown> & { entryContext: { targetNodeId: string } };
@@ -186,7 +196,9 @@ test("creates and reviews every Excel category, reloads and reuses its original 
     await page.getByTestId("data-import-file-input").setInputFiles({ name: "downtime-events.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: original });
     const upload = waitForDataResponse(page, "/api/data/files", "POST");
     await analyzeAndWait(page);
-    await requireOk(await upload);
+    const uploaded = await upload;
+    await requireOk(uploaded);
+    expect((await uploaded.json()).file).toMatchObject({ sizeBytes: original.length, contentHash: `sha256:${createHash("sha256").update(original).digest("hex")}` });
     await expect(page.getByTestId("data-import-stage-preview")).toBeDisabled();
     await confirmNestedMapping(page);
     await page.screenshot({ path: path.join(evidenceDir, "review.png") });
@@ -281,6 +293,11 @@ test("keeps colliding legacy warnings and exact duplicates visible without React
     if (cleanup.cleaningUp) return route.abort();
     const pending = (async () => {
       const pathname = new URL(route.request().url()).pathname;
+      if (!(route.request().method() === "POST" && (pathname === "/api/data/discovery/runs" || /\/user-input$/.test(pathname)))) {
+        await route.continue();
+        await (await route.request().response())?.finished();
+        return;
+      }
       let postData: string | undefined;
       if (pathname === "/api/data/discovery/runs" && route.request().method() === "POST") {
         const body = route.request().postDataJSON() as Record<string, unknown>;

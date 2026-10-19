@@ -17,7 +17,7 @@ This roadmap is the operational summary of the authoritative [`VDT_STUDIO_CORREC
 
 Implemented at alpha level:
 
-- project/VDT workspace and local SQLite revision storage, including a rail Home link, editor back navigation to the project workspace and browser Back/Forward synchronization;
+- project/VDT workspace and local SQLite revision storage, including Home/back links that await a successful revision save, preserve edits on save failure, and synchronize browser Back/Forward selection;
 - editable left-to-right canvas, basic formula engine, scenarios and trace;
 - a unified Versions side panel with readable/named checkpoints, before/after KPI/formula comparison, automatic pre-restore backups and session Undo guarded against later edits; the existing 20-snapshot FIFO and W0.5 persistence limitations remain;
 - direct editable Excel export in the editor and product CLI output (JSON/Markdown);

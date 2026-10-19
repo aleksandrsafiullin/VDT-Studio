@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { Home, GitBranch } from "lucide-react";
 import { clsx } from "clsx";
 import type { ReactNode } from "react";
 import { hasActiveWorkspaceVdt, useVdtStudioStore } from "./vdt-store";
+import { WorkspaceNavigationLink } from "./workspace-navigation-link";
 
 const modes: Array<{
   id: "home" | "vdt";
@@ -66,7 +66,7 @@ export function WorkspaceModeRail({
         );
         if (mode.id === "home") {
           return (
-            <Link
+            <WorkspaceNavigationLink
               key={mode.id}
               href="/"
               title={mode.label}
@@ -76,7 +76,7 @@ export function WorkspaceModeRail({
             >
               {mode.icon}
               <span className="sr-only">{mode.label}</span>
-            </Link>
+            </WorkspaceNavigationLink>
           );
         }
         return (

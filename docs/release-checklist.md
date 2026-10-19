@@ -29,6 +29,10 @@ pnpm test:e2e
 
 `pnpm release:verify` covers the non-browser sequence through `package:verify`. Browser E2E remains explicit.
 
+For browser checks, install the matching Chromium/WebKit engines and use the [isolated E2E procedure](RELEASE.md#browser-e2e-isolation-and-reports). A running development app requires a separate source checkout/snapshot to avoid sharing Next build output. Keep the HTML/JSON report and any failure traces with the candidate evidence; mocked provider UI checks do not qualify real AI output.
+
+Current local browser evidence (2026-10-19): 122 passed, zero failed/skipped/flaky across Chromium, mobile Chrome emulation and WebKit; production web build and production dependency audit passed. [Scope and remaining gates](PRODUCTION_READINESS.md#local-alpha-browser-verification-2026-10-19) remain explicit. This is not an installer, live-provider or aggregate release qualification.
+
 ### Dependency audit evidence
 
 `pnpm security:audit` passed on 2026-10-19 with zero reported production vulnerabilities after dependency remediation. Rerun it for the same candidate as the other release checks; a historical pass never substitutes for the current audit. Full development-tool audit findings are recorded separately in `PRODUCTION_READINESS.md`, without ignored advisories.

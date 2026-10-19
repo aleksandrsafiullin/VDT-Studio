@@ -1068,3 +1068,18 @@ Exact local verification used Node 24.15.0 and pnpm 10.33.2:
 Evidence: local `alpha-fixes-NvXxlV` bundle; candidate files retained under `output/release/candidates/2026-10-19-NvXxlV/`. The unique production-build snapshot and package/install/extraction directories were removed after owned children exited. No existing source tree, developer cache, simulator, previous release artifact or active development server was removed.
 
 The aggregate release:verify command was not executed in the live checkout; its constituent non-browser checks passed, with production build isolated to preserve the running app. Windows invocation/permission branches have regression coverage but no new Windows or Linux execution evidence. Browser E2E, GUI delivery, restart recovery, business-scenario correctness, native packaging and the remaining unpatched dev advisory stay open. Production/release remains NO-GO; V2 flags and provider statuses are unchanged.
+
+
+## Local alpha browser verification (2026-10-19)
+
+Scope: repair browser E2E after the dependency/release-chain remediation, restart the trusted local development app, and verify the main local web alpha workflows. No W0.2 runtime work, V2 flag enablement, provider promotion or publication is authorized by this record.
+
+Application fixes: Home/back editor links await the existing W0.1 revision save and block leaving on conflict/failure, preserving edits; explicit Back intent supersedes pending creation navigation. Direct API admission uses exact local Host/Origin matching on the actual server port, preserving cross-site/foreign-host/forwarded-header rejection. Development launch defaults to 127.0.0.1. Storage commit schemas and authority are unchanged.
+
+Harness fixes: fresh per-run test storage and per-test owned projects; no unrelated listener reuse; stale creation/API/binding/UI expectations updated; actual encrypted-key restore/delete checked; engine restrictions applied before fixtures. WebKit multipart uploads bypass the JSON interception proxy so actual bytes reach the parser. Uploaded size/hash and original download bytes are checked. Failed deterministic analysis reports its warnings immediately. HTML/JSON reports, traces and cleanup records are retained by CI.
+
+Verified: complete Playwright matrix 122/122 passed (Chromium 84, mobile Chrome emulation 20, WebKit 18), zero failed/skipped/flaky; targeted Vitest 59/59 in six files; workspace and E2E typechecks; lint with zero errors and 15 existing warnings; production web build in an owned isolated snapshot, with child shutdown; production audit with no known vulnerabilities; docs verification (30), CI verification (7) and diff whitespace checks. Covered real storage/calculation/Excel workflows, versions/restoration/Undo, navigation saves and conflict preservation, encrypted browser storage, synthetic local admission and mocked provider/agent UX.
+
+Local HTML report: output/playwright/local-alpha-2026-10-19-_1z3g4zl/report/index.html. Detailed diagnostics: browser-alpha-_1z3g4zl. Every recorded E2E store was removed after its owned server closed. The source snapshot/build/browser downloads are run-owned and removed after collecting evidence. Original application data, developer caches, previous CLI release artifacts and unrelated processes are preserved.
+
+Not established: full unit-suite rerun or new CLI package qualification in this follow-up; real provider inference and autonomous business correctness; physical audio/devices; browser-history/crash recovery; native installers; Windows/Linux qualification; the aggregate release gate. Existing production/release NO-GO and W0.5 ownership limitations remain.
