@@ -38,15 +38,15 @@ function allIds(changeSet: VdtChangeSet): Set<string> {
   ].map((entry) => entry.id));
 }
 
-function workbookInput(rows: Array<Array<string | number>>, options: IncomingKpiOptions, formats: string[] = []): AnalyzeRawDatasetInput {
+function workbookInput(rows: Array<Array<string | number>>, options: IncomingKpiOptions, formats: string[] = [], bookType: "xlsx" | "xls" = "xlsx"): AnalyzeRawDatasetInput {
   const input = inputFor("", { ...options, tableId: "sheet_1" });
   const workbook = XLSX.utils.book_new();
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   for (const [index, format] of formats.entries()) if (sheet[`B${index + 2}`]) sheet[`B${index + 2}`]!.z = format;
   XLSX.utils.book_append_sheet(workbook, sheet, "Events");
-  input.bytes = new Uint8Array(XLSX.write(workbook, { type: "array", bookType: "xlsx" }) as ArrayBuffer);
+  input.bytes = new Uint8Array(XLSX.write(workbook, { type: "array", bookType }) as ArrayBuffer);
   input.text = undefined;
-  input.file = { ...input.file, fileName: "events.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", sizeBytes: input.bytes.byteLength };
+  input.file = { ...input.file, fileName: `events.${bookType}`, mimeType: bookType === "xls" ? "application/vnd.ms-excel" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", sizeBytes: input.bytes.byteLength };
   return input;
 }
 
@@ -376,8 +376,8 @@ describe("complete incoming KPI file breakdown", () => {
   });
 
   it.each(["[h]:mm:ss", "[mm]:ss", "[ss]", "mm:ss"])("uses authoritative Excel serialized-day duration encoding for %s despite conflicting header/manual units", async (format) => {
-    for (const unit of ["hours", "target"] as const) {
-      const input = workbookInput([["Reason", "Hours"], ["Repair", 0.5], ["Weather", 0.25]], { duration: { mode: "column", column: "Hours", unit } }, [format, format]);
+    for (const [bookType, unit] of (["xlsx", "xls"] as const).flatMap((kind) => (["hours", "target"] as const).map((unit) => [kind, unit] as const))) {
+      const input = workbookInput([["Reason", "Hours"], ["Repair", 0.5], ["Weather", 0.25]], { duration: { mode: "column", column: "Hours", unit } }, [format, format], bookType);
       const snapshot = await runRawDataDiscovery(input);
       expect(snapshot.status).toBe("waiting_review");
       expect(snapshot.incomingKpi?.options.duration).toEqual({ mode: "column", column: "Hours", unit: "days" });

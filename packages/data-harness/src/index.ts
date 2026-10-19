@@ -971,12 +971,24 @@ function parseWorkbookDataset(input: AnalyzeRawDatasetInput, limits: DataDiscove
     const tables = sheetNames.flatMap((sheetName, index) => {
       const sheet = workbook.Sheets[sheetName];
       if (!sheet) return [];
+      const sheetRange = XLSX.utils.decode_range(sheet["!ref"] ?? "A1");
       const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
         header: 1,
         raw: input.entryContext?.purpose === "incoming_kpis",
         defval: "",
         blankrows: true
       });
+      // SheetJS 0.20 converts date-formatted numeric cells to Date objects in
+      // sheet_to_json even with raw:true. Incoming KPI arithmetic must retain
+      // the original serial-day value; the cell format below owns its meaning.
+      if (input.entryContext?.purpose === "incoming_kpis") {
+        for (const [rowIndex, row] of matrix.entries()) {
+          for (const columnIndex of row.keys()) {
+            const cell = sheet[XLSX.utils.encode_cell({ r: sheetRange.s.r + rowIndex, c: sheetRange.s.c + columnIndex })] as XLSX.CellObject | undefined;
+            if (cell?.t === "n" && typeof cell.v === "number") row[columnIndex] = cell.v;
+          }
+        }
+      }
       const sourceRows = matrix.map((row, matrixRowIndex) => ({ matrixRowIndex, cells: row.map((cell) => stringifyCell(cell).trim()) }))
         .filter((row) => row.cells.some((cell) => cell.length > 0));
       const normalized = sourceRows.map((row) => row.cells);
@@ -993,7 +1005,6 @@ function parseWorkbookDataset(input: AnalyzeRawDatasetInput, limits: DataDiscove
         : undefined;
       const columnFormats: Record<string, string> = {};
       const columnEncodings: NonNullable<DataTable["columnEncodings"]> = {};
-      const sheetRange = XLSX.utils.decode_range(sheet["!ref"] ?? "A1");
       const sourceDataRows = sourceRows.slice(hasHeader ? 1 : 0);
       for (const [columnIndex, column] of columns.entries()) {
         let durationCells = 0;

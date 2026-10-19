@@ -1,6 +1,6 @@
 # Release Checklist
 
-Last reviewed: **2026-07-23**.
+Last reviewed: **2026-10-19**.
 
 - [ ] Qualify [encrypted BYOK retention](adr/ADR-007-encrypted-browser-api-keys.md) in packaged native WebViews and Windows: reload/reopen, replacement/deletion, storage denial/corruption and plaintext exclusion from ordinary preferences/exports. Web-client checks do not establish native Keychain or compromised-profile protection.
 
@@ -29,7 +29,11 @@ pnpm test:e2e
 
 `pnpm release:verify` covers the non-browser sequence through `package:verify`. Browser E2E remains explicit.
 
-Current known blocker: `pnpm security:audit` reports 11 vulnerabilities: 6 high and 5 moderate. The high findings affect `xlsx@0.18.5` (two), `sharp@0.34.5` (one) and `next@15.5.19` (three). Do not waive or relabel this failure in documentation.
+### Dependency audit evidence
+
+`pnpm security:audit` passed on 2026-10-19 with zero reported production vulnerabilities after dependency remediation. Rerun it for the same candidate as the other release checks; a historical pass never substitutes for the current audit. Full development-tool audit findings are recorded separately in `PRODUCTION_READINESS.md`, without ignored advisories.
+
+Set `VDT_RELEASE_DIR` to a new empty candidate directory before packaging when a previous artifact already exists. `package:alpha` refuses to replace existing artifacts. The bundle verifier recursively scans directory resources and rejects symbolic links; `package:verify` requires a real loopback runner-health pass and waits for its child before cleaning its owned install directory.
 
 `pnpm docs:verify` also requires the active [`corrective plan`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md), [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) and [`execution log`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md). These are contract/evidence artifacts, not proof that V2 behavior is enabled.
 

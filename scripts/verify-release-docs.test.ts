@@ -110,20 +110,20 @@ const fixtureDocs: Record<string, string> = {
     "Корректирующий контракт Gate A\nidempotent append-only receipt\nexplicit `skill.select`\nавтоматический generic fallback запрещены\n",
   "docs/DATA_INGESTION.md": "metadata only\n4096-byte\nMetricBinding\n",
   "docs/PRODUCTION_READINESS.md":
-    "No-Go for production\n11 vulnerabilities: 6 high, 5 moderate\n`next@15.5.19`\nHosted/public uploads must remain disabled\nP0 Correctness Blockers\nW0.1 Atomic Revision Closure\n120 files passed, 5 skipped\n182/182\nWindows W0.1 storage durability is unverified\n",
+    "No-Go for production\nDependency audit evidence\n`pnpm security:audit`\nHosted/public uploads must remain disabled\nP0 Correctness Blockers\nW0.1 Atomic Revision Closure\n120 files passed, 5 skipped\n182/182\nWindows W0.1 storage durability is unverified\n",
   "docs/RELEASE.md":
-    "Current Release Status\nnot green\n11 production-dependency vulnerabilities: 6 high and 5 moderate\n`next@15.5.19`\n",
+    "Current Release Status\nnot green\nDependency audit evidence\n`pnpm security:audit`\n",
   "docs/ROADMAP.md":
     "Gate A\nWave 0\nWave 1A\nWave 1B\nWave 2\nEvidence And Benchmarks\none immutable canonical artifact\ndo not select a generic skill automatically\nW0.1 is complete with independent implementation/test `GO`\nW0.2 design contract is accepted with independent contract-only\nGate R1 SQL-only code has independent code-only `GO` with zero blockers\nThe three Sequence 3 byte-level contracts are accepted with independent\ncontract-only `GO` and zero blockers\nacceptance boundary all 13\ncanonical future artifact paths were absent\nonly inert artifact generation, which is now in progress\nartifact freeze is not complete and no artifact-freeze `GO` has been recorded\nsequence-3-byte-contracts-go-2026-07-31\nW0.2 runtime and W0.3–W0.5 remain open\nNext and only authorized package: **the exact sequence-3 artifact freeze**\nSQL bytes/checksum/precondition/postcondition hashes\nmodule/contract/golden-vector bytes/checksums\nconstraints/fault vectors\nNo W0.2 runtime task is complete\nSequence 3 is not accepted or wired\nGate R2,\nW0.2 runtime and production remain unauthorized\n",
   "docs/architecture/desktop-local-execution.md": "reviewed commands\ndesktop:verify\nself-contained packaged sidecar binary\n",
   "docs/architecture/runtime-protocol.md": "private pipes\nbounded frame size\nstartup handshake\n",
   "docs/security/local-ai-threat-model.md":
-    "Hosted web is API/BYOK only\nUNSAFE_CONFIGURATION\ndesktop:native:preflight\n11 vulnerabilities: 6 high and 5 moderate\n`next@15.5.19`\nO_CREAT | O_EXCL\nReal Windows Node 24 W0.1 storage capability\n",
+    "Hosted web is API/BYOK only\nUNSAFE_CONFIGURATION\ndesktop:native:preflight\nDependency audit evidence\n`pnpm security:audit`\nO_CREAT | O_EXCL\nReal Windows Node 24 W0.1 storage capability\n",
   "docs/provider-compatibility.md": "Cursor\nCodex\nClaude\nGemini\nCopilot\n",
   "docs/desktop-installation.md": "Do not claim clean-machine desktop installation support\nNode installation\ndesktop:native:preflight\ncross-platform desktop bundle targets\nVDT_DESKTOP_SELF_CONTAINED_SIDECAR\n",
   "docs/development/standalone-runner.md": "not the production desktop Local AI user journey\nloopback\npairing\n",
   "docs/release-checklist.md":
-    "pnpm release:verify\npnpm desktop:native:preflight\n11 vulnerabilities: 6 high and 5 moderate\nHosted/public or trusted report upload remains disabled\nVDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md\nManual Evidence\n"
+    "pnpm release:verify\npnpm desktop:native:preflight\nDependency audit evidence\n`pnpm security:audit`\nHosted/public or trusted report upload remains disabled\nVDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md\nManual Evidence\n"
 };
 
 fixtureDocs["docs/adr/ADR-005-durable-run-coordination-and-manual-reconciliation.md"] +=
@@ -551,13 +551,13 @@ describe("verify-release-docs", { timeout: 60_000 }, () => {
     }
   });
 
-  it("fails when the current dependency-audit count regresses to the stale snapshot", async () => {
+  it("requires dependency audit evidence without freezing a historical vulnerability count", async () => {
     const root = await createFixture({
       "docs/PRODUCTION_READINESS.md":
-        "No-Go for production\n3 high vulnerabilities\n`next@15.5.19`\nHosted/public uploads must remain disabled\nP0 Correctness Blockers\nW0.1 Atomic Revision Closure\n120 files passed, 5 skipped\n182/182\nWindows W0.1 storage durability is unverified\n"
+        fixtureDocs["docs/PRODUCTION_READINESS.md"].replace("Dependency audit evidence\n", "")
     });
 
-    expect(() => verifyReleaseDocs(root)).toThrow(/11 vulnerabilities: 6 high, 5 moderate/);
+    expect(() => verifyReleaseDocs(root)).toThrow(/Dependency audit evidence/);
   });
 
   it("fails when the proposed W0.2 stale-owner fence is removed", async () => {

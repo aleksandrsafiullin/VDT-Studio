@@ -1,5 +1,29 @@
 # Production Readiness
 
+## Dependency and release-chain remediation (2026-10-19)
+
+### Dependency audit evidence
+
+`pnpm security:audit` passed with zero reported production vulnerabilities after upgrading Next.js to `15.5.28`, replacing npm SheetJS with the official `0.20.3` tarball, upgrading sharp to `0.35.5` and fflate to `0.8.3`, and updating PostCSS and its transitive dependencies. Vitest is updated to `4.1.12`; targeted development-only overrides update the affected YAML, glob expansion, selector parsing, browser metadata, quoting and esbuild versions. The SheetJS adapter preserves raw Excel serial durations in XLSX and XLS despite the newer library's date conversion. This dependency pass does not change the existing production `No-Go` or qualify hosted uploads.
+
+The full `pnpm audit` reports **one high development-tool finding**, down from 50 total findings before remediation: [`braces@3.0.3`, GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm), through ESLint's `fast-glob`/`micromatch` dependency. Upstream has no patched release as of this check. It is absent from the production audit, but the full audit still fails and must not be described as clean. No advisory is suppressed and no production security gate is waived.
+
+Release verification now recursively scans directory resources instead of reading a directory as a file. Canonical skill hashes and copies exclude platform metadata, use deterministic ordering and fixed LF checkout bytes, and preserve unexpected files for review. Windows package scripts re-enter pnpm through Node and avoid POSIX execute-bit checks on Windows. Packaging refuses nonempty candidate directories and uses a unique temporary stage; a clean install requires a loopback runner health check and child shutdown before cleanup. `VDT_RELEASE_DIR` selects a separate candidate without replacing previous artifacts.
+
+Verified locally on Node **24.15.0**, pnpm **10.33.2**:
+
+| Check | Result |
+|---|---|
+| `pnpm lint` / `pnpm typecheck` | Pass; lint retains 15 existing warnings, zero errors |
+| `pnpm test --maxWorkers=2` | 228 files passed, 5 skipped; 2,370 tests passed, 4 existing expected failures, 11 live tests skipped |
+| `pnpm install --offline --frozen-lockfile --ignore-scripts` + `pnpm desktop:verify` + `pnpm build` | Pass in a unique source snapshot without ignored local metadata; original dev server/cache preserved; child processes finished and the temporary snapshot was removed |
+| `pnpm ci:verify` / `pnpm phase7:verify` / `pnpm docs:verify` / `pnpm certification:verify` | Pass: 7 workflows, 18 tasks/schemas, 30 documents, 15 provider records; metadata checks do not certify live providers |
+| `pnpm evaluation:verify` | Pass: 20 deterministic mock cases |
+| `pnpm security:audit` / full `pnpm audit` | Production: zero vulnerabilities; full audit: one unpatched high dev-tool advisory described above |
+| `pnpm package:alpha` / `pnpm release:bundle:verify` / `pnpm package:verify` | Pass for a new candidate directory; checksums/SBOM, installed CLI commands, runner startup and `/v1/health` verified |
+
+The aggregate `release:verify` command was not rerun against the live checkout because it shares the running app's `.next` directory; its constituent non-browser checks passed as described above. Local evidence: `alpha-fixes-NvXxlV`; candidate: `output/release/candidates/2026-10-19-NvXxlV/`. The prior `output/release/v0.1.0-alpha.0/` artifacts were preserved. Windows/Linux execution of the changed code, full browser E2E, native installers, restart recovery and business-scenario acceptance remain separate gates; no support level is raised by this maintenance work.
+
 ## Encrypted local API-key persistence (2026-10-18)
 
 BYOK keys now use a separate origin-local IndexedDB vault with AES-256-GCM and non-extractable Web Crypto keys. Startup restoration, endpoint isolation, replacement/deletion, failure/retry status and stale-operation fencing are implemented. Plaintext keys remain excluded from ordinary preferences, VDTs, exports and durable server runs. This is browser-profile protection, not OS Keychain or hosted authorization. Packaged native/WebView, Windows and compromised-profile protection remain unqualified; existing production/release NO-GO is unchanged. See [ADR-007](adr/ADR-007-encrypted-browser-api-keys.md).
@@ -19,7 +43,7 @@ Fresh local evaluation on 2026-10-18: Codex CLI `gpt-6-luna` run `bf4bd79e-e4c9-
 The next API attempt (`36ada87e-6686-4a28-91ff-731e6d6eda16`) exposed a context-container repair loop: numerical missing-value checks encouraged deleting reference groups and moving their children to the root. It was interrupted and retained as a failed attempt, not a completion or performance success. All 22 committed reparent operations preserved the complete node arrays exactly and changed only the intended parent/edge relation. Non-numerical planned context containers and the root reference-grouping policy now address that cause; targeted regressions cover numerical leaf enforcement, active-group rejection, legacy readability and host finish. Fresh final CLI/API evaluation is still required. Cancellation also failed to return before the owned development server was stopped; no manual database status rewrite or recovery-fence bypass was used.
 
 
-Last verified locally: **2026-07-24**, Node `24.14.0`, pnpm `10.33.2`.
+Historical verification baseline: **2026-07-24**, Node `24.14.0`, pnpm `10.33.2`.
 
 ## Decision
 
@@ -29,7 +53,7 @@ The current `0.1.0-alpha.0` checkout is suitable for development and controlled 
 
 The repository does not contain the previously referenced `Technical Specification for Codex.docx`. Current readiness is assessed against executable contracts, current Markdown specs and the [2026-07-23 critical review](CRITICAL_ARCHITECTURE_AND_AGENT_REVIEW_2026-07-23.md).
 
-## Verified In This Checkout
+## Historical Verification (2026-07-24)
 
 | Gate | Result |
 |---|---|
@@ -226,18 +250,9 @@ Required: complete public-route adoption, restart-safe builder/interaction
 rehydration and auto-resume coordination, operation-level merge and
 revision CAS.
 
-## P0 Release And Security Blockers
+## Release Dependency Remediation And Remaining Security Blockers
 
-`pnpm security:audit` currently reports 11 production-dependency vulnerabilities: 6 high and 5 moderate. The six high findings are:
-
-- `xlsx@0.18.5`: high prototype pollution ([GHSA-4r6h-8v6p-xvw6](https://github.com/advisories/GHSA-4r6h-8v6p-xvw6));
-- `xlsx@0.18.5`: high ReDoS ([GHSA-5pgg-2g8v-p4x9](https://github.com/advisories/GHSA-5pgg-2g8v-p4x9));
-- `sharp@0.34.5`: high inherited `libvips` vulnerabilities ([GHSA-f88m-g3jw-g9cj](https://github.com/advisories/GHSA-f88m-g3jw-g9cj));
-- `next@15.5.19`: high App Router Server Actions denial of service ([GHSA-m99w-x7hq-7vfj](https://github.com/advisories/GHSA-m99w-x7hq-7vfj));
-- `next@15.5.19`: high Server Actions SSRF on custom servers ([GHSA-89xv-2m56-2m9x](https://github.com/advisories/GHSA-89xv-2m56-2m9x));
-- `next@15.5.19`: high SSRF in rewrites with an attacker-controlled destination hostname ([GHSA-p9j2-gv94-2wf4](https://github.com/advisories/GHSA-p9j2-gv94-2wf4)).
-
-The current Next.js high findings require at least `next@15.5.21`; the dependency remains at `15.5.19` in this evidence run.
+The previously recorded dependency failures are historical; the 2026-10-19 production audit passed with zero reported vulnerabilities. See the current dependency audit evidence above and the preserved corrective execution log for the earlier counts. Fresh dependency checks are still required for every release candidate.
 
 Scoped upload/read/edit/stage/download/list routes now require trusted local app mode and verify SQLite project/VDT ownership plus safe IDs and source hashes. The upload path still lacks pre-buffer streaming limits, archive expansion budgets, parser isolation, authenticated hosted actor authorization, retention/delete and encryption policy. Hosted/public uploads must remain disabled until these findings and controls are closed.
 
@@ -271,7 +286,7 @@ Scoped upload/read/edit/stage/download/list routes now require trusted local app
 
 ## Release Gate Status
 
-The aggregate `pnpm release:verify` gate is currently expected to fail at `security:audit`. Documentation must not describe the high/critical dependency audit as completed.
+`pnpm release:verify` remains a required fresh candidate gate. Its production dependency audit passed in the 2026-10-19 remediation work; this alone does not establish the remaining browser, recovery, data/business or native release gates.
 
 Gate A and W0.1 status is tracked by the [`corrective plan`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md), [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md), [`ADR-004`](adr/ADR-004-atomic-revision-commit-and-legacy-migration-adoption.md) and [`execution log`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md). W0.1 does not enable V2 behavior: all corrective V2 flags remain server-owned, fail-closed and default OFF.
 

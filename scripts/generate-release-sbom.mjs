@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveReleaseDirectory } from "./release-paths.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_ROOT = resolve(dirname(SCRIPT_PATH), "..");
@@ -40,39 +41,40 @@ function workspacePackage(root, relativePath) {
 }
 
 function localDependencyPackages(root) {
-  const workspacePaths = [
-    ".",
-    "apps/web",
-    "apps/desktop",
-    "packages/ai-harness",
-    "packages/cli",
-    "packages/local-runner",
-    "packages/model-bridge",
-    "packages/ui",
-    "packages/vdt-core"
-  ];
+  const workspacePaths = [".", ...["apps", "packages"].flatMap((parent) =>
+    readdirSync(join(root, parent), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(join(root, parent, entry.name, "package.json")))
+      .map((entry) => `${parent}/${entry.name}`)
+      .sort()
+  )];
   return workspacePaths.map((relativePath) => workspacePackage(root, relativePath));
 }
 
 function lockfilePackageRefs(root) {
   const lockfile = readFileSync(join(root, "pnpm-lock.yaml"), "utf8");
-  const packagesSection = lockfile.split(/\n(?=snapshots:\n)/)[0] ?? lockfile;
+  const packagesSection = lockfile.split(/\npackages:\r?\n/)[1]?.split(/\nsnapshots:\r?\n/)[0];
+  if (!packagesSection) throw new Error("Lockfile packages section is required for the release SBOM.");
   const refs = new Map();
-  const packagePattern = /^  (['"]?)([^'":\n]+@[^'":\n]+)\1:\n/gm;
+  const packagePattern = /^  (?! )(['"]?)([^\n]+?)\1:\r?$/gm;
   let match;
   while ((match = packagePattern.exec(packagesSection)) !== null) {
     const key = match[2];
-    const separator = key.lastIndexOf("@");
+    const separator = key.indexOf("@", key.startsWith("@") ? 1 : 0);
+    if (separator < 1) continue;
     const name = key.slice(0, separator);
     const rawVersion = key.slice(separator + 1);
     if (!name || !rawVersion || rawVersion.startsWith("link:")) continue;
-    const version = rawVersion.split("(")[0];
+    const nextEntry = packagesSection.slice(packagePattern.lastIndex).search(/^  \S/m);
+    const details = packagesSection.slice(packagePattern.lastIndex, nextEntry < 0 ? undefined : packagePattern.lastIndex + nextEntry);
+    const tarballVersion = details.match(/^    version: ['"]?([^'"\s]+)['"]?\r?$/m)?.[1];
+    const version = /^https?:/.test(rawVersion) ? tarballVersion : rawVersion.split("(")[0];
+    if (!version) throw new Error(`Lockfile tarball package is missing its version: ${key}`);
     const refKey = `${name}@${version}`;
     refs.set(refKey, {
       name,
       versionInfo: version,
       SPDXID: `SPDXRef-Package-${sanitizeSpdxId(refKey)}`,
-      downloadLocation: "NOASSERTION",
+      downloadLocation: /^https?:/.test(rawVersion) ? rawVersion : "NOASSERTION",
       filesAnalyzed: false,
       licenseConcluded: "NOASSERTION",
       licenseDeclared: "NOASSERTION",
@@ -118,9 +120,9 @@ function releasePackage(root, releaseDir) {
   };
 }
 
-export function generateReleaseSbom(root = DEFAULT_ROOT) {
+export function generateReleaseSbom(root = DEFAULT_ROOT, { releaseDir: override } = {}) {
   const cliManifest = readJson(join(root, "packages/cli/package.json"));
-  const releaseDir = join(root, "output/release", `v${cliManifest.version}`);
+  const releaseDir = resolveReleaseDirectory(root, cliManifest.version, override);
   const release = releasePackage(root, releaseDir);
   const workspacePackages = localDependencyPackages(root);
   const lockPackages = lockfilePackageRefs(root);
@@ -149,6 +151,6 @@ export function generateReleaseSbom(root = DEFAULT_ROOT) {
 }
 
 if (process.argv[1] === SCRIPT_PATH) {
-  const result = generateReleaseSbom(DEFAULT_ROOT);
+  const result = generateReleaseSbom(DEFAULT_ROOT, { releaseDir: process.env.VDT_RELEASE_DIR });
   process.stdout.write(`Release SBOM generated: ${result.outputPath}; packages=${result.packageCount}\n`);
 }

@@ -31,6 +31,8 @@ pnpm desktop:native:preflight
 
 `pnpm desktop:verify` checks the static desktop shell, host-side sidecar integrity guard and sidecar bundle contracts. It is expected to pass during foundation work.
 
+Run preparation and verification through pnpm, including on Windows, so nested package-manager operations can use its JavaScript entrypoint. Resource generation filters platform metadata and uses LF bytes on every checkout. Unexpected stale product resources block preparation for review instead of triggering recursive removal of an existing directory. Passing these checks does not qualify a Windows native launcher or installer.
+
 `pnpm desktop:native:preflight` is a native release gate. It is expected to fail until the native release blockers above are cleared.
 
 When a reviewed compiler produces a Node-free runtime binary, ingest it with:

@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { directorySha256 } from "./desktop-resources.mjs";
+import { runPnpm } from "./package-manager.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_ROOT = resolve(dirname(SCRIPT_PATH), "..");
@@ -27,10 +28,8 @@ function verifyBundleMatchesSource(root, expectedDigest) {
   const tempDir = mkdtempSync(join(tmpdir(), "vdt-sidecar-build-"));
   const outputPath = join(tempDir, "vdt-local-runtime.mjs");
   try {
-    execFileSync(
-      "corepack",
+    runPnpm(
       [
-        "pnpm",
         "--filter",
         "@vdt-studio/cli",
         "exec",
@@ -53,27 +52,7 @@ function verifyBundleMatchesSource(root, expectedDigest) {
   }
 }
 
-function directorySha256(directory) {
-  const hash = createHash("sha256");
-  const walk = (current) => {
-    for (const entry of readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const path = resolve(current, entry.name);
-      if (entry.isDirectory()) {
-        walk(path);
-      } else if (entry.isFile()) {
-        const rel = relative(directory, path).replaceAll("\\", "/");
-        hash.update(rel);
-        hash.update("\0");
-        hash.update(readFileSync(path));
-        hash.update("\0");
-      }
-    }
-  };
-  walk(directory);
-  return hash.digest("hex");
-}
-
-export function verifyDesktopSidecar(root = DEFAULT_ROOT) {
+export function verifyDesktopSidecar(root = DEFAULT_ROOT, { platform = process.platform } = {}) {
   const tauriConfig = JSON.parse(readFileSync(join(root, "apps/desktop/src-tauri/tauri.conf.json"), "utf8"));
   const manifestPath = join(root, SIDECAR_MANIFEST);
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
@@ -110,7 +89,7 @@ export function verifyDesktopSidecar(root = DEFAULT_ROOT) {
   const bundlePath = join(root, SIDECAR_BUNDLE);
   const stat = statSync(launcherPath);
   if (!stat.isFile()) fail("sidecar launcher is not a file.");
-  if ((stat.mode & 0o111) === 0) fail("sidecar launcher must be executable.");
+  if (platform !== "win32" && (stat.mode & 0o111) === 0) fail("sidecar launcher must be executable.");
 
   const text = readFileSync(launcherPath, "utf8");
   let windowsText = "";

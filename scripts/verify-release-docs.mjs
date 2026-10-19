@@ -729,8 +729,8 @@ const REQUIRED_DOCS = [
     file: "docs/PRODUCTION_READINESS.md",
     snippets: [
       "No-Go for production",
-      "11 vulnerabilities: 6 high, 5 moderate",
-      "`next@15.5.19`",
+      "Dependency audit evidence",
+      "`pnpm security:audit`",
       "Hosted/public uploads must remain disabled",
       "P0 Correctness Blockers",
       "W0.1 Atomic Revision Closure",
@@ -743,9 +743,8 @@ const REQUIRED_DOCS = [
     file: "docs/RELEASE.md",
     snippets: [
       "Current Release Status",
-      "not green",
-      "11 production-dependency vulnerabilities: 6 high and 5 moderate",
-      "`next@15.5.19`"
+      "Dependency audit evidence",
+      "`pnpm security:audit`"
     ]
   },
   {
@@ -791,8 +790,8 @@ const REQUIRED_DOCS = [
       "Hosted web is API/BYOK only",
       "UNSAFE_CONFIGURATION",
       "desktop:native:preflight",
-      "11 vulnerabilities: 6 high and 5 moderate",
-      "`next@15.5.19`",
+      "Dependency audit evidence",
+      "`pnpm security:audit`",
       "O_CREAT | O_EXCL",
       "Real Windows Node 24 W0.1 storage capability"
     ]
@@ -820,7 +819,7 @@ const REQUIRED_DOCS = [
     snippets: [
       "pnpm release:verify",
       "pnpm desktop:native:preflight",
-      "11 vulnerabilities: 6 high and 5 moderate",
+      "Dependency audit evidence",
       "Hosted/public or trusted report upload remains disabled",
       "VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md",
       "Manual Evidence"

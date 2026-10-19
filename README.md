@@ -184,7 +184,7 @@ pnpm package:alpha
 pnpm package:verify
 ```
 
-`pnpm security:audit` currently fails on documented high-severity dependencies in the upload/parsing, image-processing and Next.js web-runtime stacks. Do not claim a passing release gate until those dependencies are remediated.
+`pnpm security:audit` checks production dependencies and must pass for each candidate. The 2026-10-19 dependency remediation passed with zero reported production vulnerabilities. Development-tool advisories and the separate browser, recovery and native release gates remain visible in [Production readiness](docs/PRODUCTION_READINESS.md).
 
 ## Product CLI
 

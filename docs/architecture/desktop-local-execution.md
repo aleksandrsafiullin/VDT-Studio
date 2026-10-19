@@ -39,6 +39,8 @@ The desktop scaffold intentionally does not enable generic native plugins or com
 
 `pnpm desktop:verify` statically checks the Tauri config, default capability file, Rust command surface, reviewed sidecar host boundary, app-setup auto-start, startup-handshake timeout and shutdown cleanup contract.
 
+Desktop resource preparation and verification share a deterministic skill-library hash. Platform metadata (`.DS_Store`, AppleDouble `._*`, `Thumbs.db`, `desktop.ini`) is excluded from copying and hashing; all ordinary product files remain covered. `.gitattributes` fixes LF checkout bytes for the hashed launchers, runtime, manifest and skill trees. Preparation preserves unexpected existing files and fails when they differ from the canonical library. The POSIX execute-bit check applies on POSIX hosts; Windows still requires and hashes the reviewed `.cmd` resource. Nested pnpm operations use its JavaScript entrypoint through Node rather than executing a Windows command shim. These are packaging checks, not native Windows installer evidence, and the private runtime protocol is unchanged.
+
 ## Runtime And Remaining Work
 
 The private runtime protocol is documented in `docs/architecture/runtime-protocol.md` and implemented in `packages/local-runner/src/sidecar/protocol.ts`.

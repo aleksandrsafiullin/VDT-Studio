@@ -307,7 +307,7 @@ describe("raw data discovery harness", () => {
     expect(snapshot.warnings.every((warning) => !warning.message.includes("duration"))).toBe(true);
   });
 
-  it("parses XLSX bytes and exposes sheets as tables", async () => {
+  it.each(["xlsx", "xls"] as const)("parses %s bytes and exposes sheets as tables", async (bookType) => {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(
       workbook,
@@ -327,13 +327,13 @@ describe("raw data discovery harness", () => {
       ]),
       "Production"
     );
-    const bytes = new Uint8Array(XLSX.write(workbook, { type: "array", bookType: "xlsx" }) as ArrayBuffer);
+    const bytes = new Uint8Array(XLSX.write(workbook, { type: "array", bookType }) as ArrayBuffer);
 
     const snapshot = await runRawDataDiscovery({
       datasetId: "xlsx_dataset",
       file: {
-        fileName: "operations.xlsx",
-        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        fileName: `operations.${bookType}`,
+        mimeType: bookType === "xls" ? "application/vnd.ms-excel" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         sizeBytes: bytes.byteLength,
         contentHash: "sha256:xlsx",
         storageRef: "xlsx_dataset",

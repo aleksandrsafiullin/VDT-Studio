@@ -19,7 +19,7 @@
   "devDependencies": {
     "@vdt-studio/local-runner": "workspace:*",
     "@vdt-studio/vdt-core": "workspace:*",
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.2"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",

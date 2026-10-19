@@ -135,7 +135,11 @@ pnpm release:bundle:verify
 pnpm docs:verify
 ```
 
-The current dependency audit fails with 11 vulnerabilities: 6 high and 5 moderate, including high findings in `xlsx`, `sharp` and `next@15.5.19`. Documentation must not claim this gate is complete.
+### Dependency audit evidence
+
+`pnpm security:audit` passed on 2026-10-19 with zero reported production vulnerabilities. Next.js is pinned to `15.5.28`, SheetJS to its official `0.20.3` tarball, and the lockfile selects `sharp@0.35.5`, `fflate@0.8.3` and patched PostCSS dependencies. Full development-tool audit findings remain separate in `PRODUCTION_READINESS.md`; no advisory is suppressed. Rerun both audits for a new candidate. This closes the known production-dependency blocker, not the remaining upload, hosted actor, CLI isolation or native qualification gaps.
+
+Release resources are scanned recursively for secret-like files and values, including nested skill resources; resource symlinks reject instead of following paths outside the bundle. Skill copies and integrity hashes exclude only named platform metadata (`.DS_Store`, AppleDouble `._*`, `Thumbs.db`, `desktop.ini`), retain product-file tamper checks, and use fixed LF checkout bytes plus deterministic filename ordering. Existing unexpected product files block preparation instead of being silently deleted. Artifact packaging refuses nonempty output directories and cleans only its unique temporary stage after synchronous children finish.
 
 Original-request numeric grounding is limited to a short exact quotation in the existing source note, with one numeric quantity equal to the written finite value. Only original request text and retained user messages are trusted sources; assistant text and tool results cannot create user evidence. This is literal-source verification, not semantic verification of a metric/value mapping. Gateway mutation checks, approvals and finish verification still apply. Local `hostObservation` is a read-only builder projection, not extra tool authority.
 

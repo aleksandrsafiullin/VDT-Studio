@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { copySkillLibrary, directorySha256 } from "./desktop-resources.mjs";
+import { runPnpm } from "./package-manager.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcherPath = resolve(root, "apps/desktop/src-tauri/sidecars/vdt-local-runtime");
@@ -47,26 +48,6 @@ exit /b %ERRORLEVEL%
 `;
 
 mkdirSync(dirname(launcherPath), { recursive: true });
-function directorySha256(directory) {
-  const hash = createHash("sha256");
-  const walk = (current) => {
-    for (const entry of readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const path = resolve(current, entry.name);
-      if (entry.isDirectory()) {
-        walk(path);
-      } else if (entry.isFile()) {
-        const rel = relative(directory, path).replaceAll("\\", "/");
-        hash.update(rel);
-        hash.update("\0");
-        hash.update(readFileSync(path));
-        hash.update("\0");
-      }
-    }
-  };
-  walk(directory);
-  return hash.digest("hex");
-}
-
 if (selfContainedSource) {
   const source = resolve(selfContainedSource);
   const sourceStat = statSync(source);
@@ -94,13 +75,10 @@ if (selfContainedSource) {
   process.exit(0);
 }
 
-rmSync(skillResourcePath, { recursive: true, force: true });
-cpSync(skillSourcePath, skillResourcePath, { recursive: true });
+copySkillLibrary(skillSourcePath, skillResourcePath);
 
-execFileSync(
-  "corepack",
+runPnpm(
   [
-    "pnpm",
     "--filter",
     "@vdt-studio/cli",
     "exec",

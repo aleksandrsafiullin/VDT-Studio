@@ -99,7 +99,8 @@ The incoming-KPI workflow uses structured options and full-source deterministic 
 
 ## Security And Privacy Gaps
 
-- `xlsx@0.18.5` has high [prototype-pollution](https://github.com/advisories/GHSA-4r6h-8v6p-xvw6) and [ReDoS](https://github.com/advisories/GHSA-5pgg-2g8v-p4x9) advisories and reads untrusted files.
+- Excel parsing uses the official SheetJS `0.20.3` tarball, pinned by URL and lockfile integrity following [upstream installation guidance](https://docs.sheetjs.com/docs/getting-started/installation/nodejs/). This replaces the unmaintained npm `xlsx@0.18.5` dependency affected by prototype-pollution and ReDoS advisories. Production dependency audit passed on 2026-10-19; this does not provide parser isolation or resource-budget guarantees.
+- Incoming-KPI parsing retains original numeric worksheet serials after SheetJS matrix conversion. Date/time display formats must not convert a duration into a timezone-dependent `Date`; the original cell formats and the confirmed duration/timestamp options still determine units. Regression coverage includes both XLSX and legacy XLS.
 - Request bodies and workbook matrices can be materialized before effective resource limits.
 - Scoped files/runs enforce project/VDT ownership and local app mode; they remain plaintext without a retention/delete or encryption policy.
 - The local ownership check is not authenticated hosted multi-user authorization. Legacy global records remain trusted-local compatibility data.

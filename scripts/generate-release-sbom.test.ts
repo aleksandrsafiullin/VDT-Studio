@@ -49,6 +49,10 @@ async function createFixture() {
       "  '@scope/pkg@1.2.3':",
       "    resolution: {integrity: sha512-test}",
       "",
+      "  xlsx@https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz:",
+      "    resolution: {tarball: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz}",
+      "    version: 0.20.3",
+      "",
       "snapshots:",
       ""
     ].join("\n")
@@ -85,7 +89,8 @@ describe("generate-release-sbom", () => {
           checksums: [{ algorithm: "SHA256", checksumValue: digest }]
         }),
         expect.objectContaining({ name: "react", versionInfo: "19.2.7" }),
-        expect.objectContaining({ name: "@scope/pkg", versionInfo: "1.2.3" })
+        expect.objectContaining({ name: "@scope/pkg", versionInfo: "1.2.3" }),
+        expect.objectContaining({ name: "xlsx", versionInfo: "0.20.3", downloadLocation: "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz" })
       ])
     );
   });

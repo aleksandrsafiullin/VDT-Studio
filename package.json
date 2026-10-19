@@ -11,7 +11,14 @@
   "packageManager": "pnpm@10.33.2",
   "pnpm": {
     "overrides": {
-      "postcss": "8.5.15"
+      "postcss": "8.5.31",
+      "brace-expansion@1": "1.1.21",
+      "js-yaml@4": "4.3.2",
+      "shell-quote": "1.12.0",
+      "browserslist": "4.29.4",
+      "baseline-browser-mapping": "2.11.29",
+      "postcss-selector-parser": "7.1.6",
+      "vite>esbuild": "0.28.2"
     }
   },
   "scripts": {
@@ -66,6 +73,6 @@
     "concurrently": "^9.1.2",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.12"
   }
 }

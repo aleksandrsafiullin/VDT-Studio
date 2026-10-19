@@ -1,0 +1,7 @@
+# Integrity manifests hash bytes, so checkout must preserve LF on every OS.
+packages/vdt-agent/skills/** text eol=lf
+apps/desktop/src-tauri/sidecars/vdt-agent-skills/** text eol=lf
+apps/desktop/src-tauri/sidecars/vdt-local-runtime text eol=lf
+apps/desktop/src-tauri/sidecars/vdt-local-runtime.cmd text eol=lf
+apps/desktop/src-tauri/sidecars/vdt-local-runtime.mjs text eol=lf
+apps/desktop/src-tauri/sidecars/vdt-local-runtime.manifest.json text eol=lf

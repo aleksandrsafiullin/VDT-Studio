@@ -1032,3 +1032,39 @@ does not authorize W0.2 agent runtime. W0.2 runtime remains incomplete and
 unauthorized; all V2 flags remain OFF. Windows durability, native crash
 evidence, package/source equality and large-file transport remain unverified;
 production/release remains `NO-GO`.
+
+
+## Local alpha dependency and release-chain maintenance — 2026-10-19
+
+Scope owner: the current local maintenance run. This slice changes dependency and packaging controls, not corrective runtime authority or provider certification. Reviewer verdict: local self-review and automated verification passed; no independent runtime or production `GO` is claimed.
+
+- Upgraded Next.js to 15.5.28, official SheetJS to its pinned 0.20.3 CDN tarball, sharp to 0.35.5, fflate to 0.8.3, Vitest to 4.1.12, and available affected transitive dependencies. The production audit fell from 23 reported vulnerabilities (2 critical, 12 high, 9 moderate) to zero. The full audit fell from 50 findings to one high development-only braces advisory with no upstream fixed release; no advisory was ignored.
+- Preserved raw numeric Excel serials after SheetJS matrix conversion. The first targeted attempt exposed five duration regressions; these were corrected in the adapter, without weakening expected values. XLSX and legacy XLS now retain 12/6-hour duration calculations and the existing metadata/approval boundaries.
+- Fixed recursive directory-resource secret scanning and rejected symlinks. Made skill-library hashing/copying independent of Finder metadata, fixed checkout line endings, preserved unexpected files for review, and applied POSIX execute-bit checks only on POSIX. Nested pnpm calls now use its Node entrypoint on Windows.
+- Packaging builds in a unique temporary stage, strips development-only workspace metadata from the published package, refuses nonempty release directories, supports VDT_RELEASE_DIR consistently, and generates an SBOM covering all workspace packages plus URL tarballs. Clean-install verification installs offline, checks the installed CLI and actual loopback runner health, and waits for child shutdown before cleanup.
+
+Exact local verification used Node 24.15.0 and pnpm 10.33.2:
+
+| Command | Result |
+|---|---|
+| `pnpm lint` | Pass; 15 existing warnings, zero errors |
+| `pnpm typecheck` | Pass across workspace packages |
+| `pnpm test --maxWorkers=2` | 228 files passed, 5 skipped; 2,370 passed, 4 known expected failures, 11 live tests skipped |
+| `pnpm install --offline --frozen-lockfile --ignore-scripts` | Pass in an owned temporary copy of current tracked/new source files |
+| `pnpm desktop:verify` in that clean snapshot | Pass without ignored local .DS_Store files |
+| `pnpm build` in that snapshot | CLI and Next.js production build pass; original live .next was not replaced |
+| `pnpm ci:verify` | Pass: 7 workflow contracts |
+| `pnpm phase7:verify` | Pass: 18 tasks, 18 schemas, 9 manifests, 12 mock task smokes |
+| `pnpm docs:verify` | Pass: 30 documentation contracts |
+| `pnpm certification:verify` | Pass: 15 metadata records; not live qualification |
+| `pnpm evaluation:verify` | Pass: 20 mock cases |
+| `pnpm security:audit` | Pass: zero reported production vulnerabilities |
+| `pnpm audit` | Fails on one high dev-tool finding, GHSA-vfj7-8cjw-p6xm; upstream lists no patched braces release |
+| `VDT_RELEASE_DIR=.../2026-10-19-NvXxlV pnpm package:alpha` | Pass; prior release directory preserved |
+| `VDT_RELEASE_DIR=.../2026-10-19-NvXxlV pnpm release:bundle:verify` | Pass: checksums, SBOM and recursive resource scan |
+| `VDT_RELEASE_DIR=.../2026-10-19-NvXxlV pnpm package:verify` | Pass: offline install, CLI commands/exports, runner and /v1/health |
+| `git diff --check` | Pass |
+
+Evidence: local `alpha-fixes-NvXxlV` bundle; candidate files retained under `output/release/candidates/2026-10-19-NvXxlV/`. The unique production-build snapshot and package/install/extraction directories were removed after owned children exited. No existing source tree, developer cache, simulator, previous release artifact or active development server was removed.
+
+The aggregate release:verify command was not executed in the live checkout; its constituent non-browser checks passed, with production build isolated to preserve the running app. Windows invocation/permission branches have regression coverage but no new Windows or Linux execution evidence. Browser E2E, GUI delivery, restart recovery, business-scenario correctness, native packaging and the remaining unpatched dev advisory stay open. Production/release remains NO-GO; V2 flags and provider statuses are unchanged.

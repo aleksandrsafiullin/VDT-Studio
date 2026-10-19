@@ -149,7 +149,8 @@ describe("verify-desktop-sidecar", { timeout: 30_000 }, () => {
 
   it("starts the development sidecar launcher and lists backends over pipes", async () => {
     const host = new SidecarProcessHost({
-      command: path.join(process.cwd(), "apps/desktop/src-tauri/sidecars/vdt-local-runtime"),
+      command: process.platform === "win32" ? process.execPath : path.join(process.cwd(), "apps/desktop/src-tauri/sidecars/vdt-local-runtime"),
+      ...(process.platform === "win32" ? { args: [path.join(process.cwd(), "apps/desktop/src-tauri/sidecars/vdt-local-runtime.mjs")] } : {}),
       handshakeTimeoutMs: 5000
     });
     hosts.push(host);
@@ -164,7 +165,8 @@ describe("verify-desktop-sidecar", { timeout: 30_000 }, () => {
 
   it("runs agentic generate_tree through the packaged sidecar launcher", async () => {
     const host = new SidecarProcessHost({
-      command: path.join(process.cwd(), "apps/desktop/src-tauri/sidecars/vdt-local-runtime"),
+      command: process.platform === "win32" ? process.execPath : path.join(process.cwd(), "apps/desktop/src-tauri/sidecars/vdt-local-runtime"),
+      ...(process.platform === "win32" ? { args: [path.join(process.cwd(), "apps/desktop/src-tauri/sidecars/vdt-local-runtime.mjs")] } : {}),
       handshakeTimeoutMs: 5000
     });
     hosts.push(host);
@@ -192,7 +194,12 @@ describe("verify-desktop-sidecar", { timeout: 30_000 }, () => {
 
   it("fails if the launcher is not executable", async () => {
     const root = await writeLauncher("#!/bin/sh\nexec node vdt-local-runtime.mjs\n", 0o644);
-    expect(() => verifyDesktopSidecar(root)).toThrow(/must be executable/);
+    expect(() => verifyDesktopSidecar(root, { platform: "darwin" })).toThrow(/must be executable/);
+  });
+
+  it("does not apply POSIX execute bits to a Windows resource checkout", async () => {
+    const root = await writeLauncher("#!/bin/sh\nexec node vdt-local-runtime.mjs\n", 0o644);
+    expect(() => verifyDesktopSidecar(root, { platform: "win32" })).not.toThrow();
   });
 
   it("fails if the launcher forwards arbitrary arguments", async () => {

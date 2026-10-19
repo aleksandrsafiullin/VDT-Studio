@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -123,5 +123,25 @@ describe("verify-release-bundle", () => {
     const root = await createFixture({ desktopSecret: true });
 
     expect(() => verifyReleaseBundle(root)).toThrow(/OpenAI API key|secret environment assignment/);
+  });
+
+  it("recursively scans a directory resource and rejects a nested secret", async () => {
+    const root = await createFixture();
+    const desktopDir = path.join(root, "apps/desktop/src-tauri");
+    const skills = path.join(desktopDir, "sidecars/skills/mining");
+    await mkdir(skills, { recursive: true });
+    await writeFile(path.join(skills, "skill.md"), "ordinary skill\n");
+    await writeFile(path.join(desktopDir, "tauri.conf.json"), JSON.stringify({ bundle: { resources: ["sidecars/skills"] } }));
+    expect(() => verifyReleaseBundle(root)).not.toThrow();
+    await writeFile(path.join(skills, ".env"), "PRIVATE_CONFIG=fixture\n");
+    expect(() => verifyReleaseBundle(root)).toThrow(/secret-like file/);
+  });
+
+  it.skipIf(process.platform === "win32")("rejects a resource link that could escape the reviewed directory", async () => {
+    const root = await createFixture();
+    const desktopDir = path.join(root, "apps/desktop/src-tauri");
+    await symlink(path.join(root, "packages/cli/package.json"), path.join(desktopDir, "sidecars/linked"));
+    await writeFile(path.join(desktopDir, "tauri.conf.json"), JSON.stringify({ bundle: { resources: ["sidecars/linked"] } }));
+    expect(() => verifyReleaseBundle(root)).toThrow(/symbolic links/);
   });
 });

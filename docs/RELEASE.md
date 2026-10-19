@@ -1,18 +1,18 @@
 # Alpha Release
 
-Last reviewed: **2026-07-23**.
+Last reviewed: **2026-10-19**.
 
 VDT Studio `0.1.0-alpha.0` packages the Node 24 product CLI and paired localhost runner as a tarball. The web workspace remains source-deployed. The repository also contains a Tauri desktop shell and bundled Node sidecar foundation, but not a signed, clean-machine production installer.
 
 ## Current Release Status
 
-The aggregate release gate is **not green**. `pnpm security:audit` reports 11 production-dependency vulnerabilities: 6 high and 5 moderate. The high findings affect `xlsx`, `sharp` and the current `next@15.5.19`. Do not publish a new release or describe the current package as security-gate complete until the audit is remediated and rerun.
+The production-dependency blocker is remediated. Local candidate verification is separate from permission to publish: browser E2E, the GUI distribution, recovery, AI/business acceptance and any claimed platform support still need their own evidence. Native installers remain unqualified.
 
-Other gates verified on 2026-07-23:
+### Dependency audit evidence
 
-- lint, typecheck, 967 unit/integration tests and production build passed;
-- desktop sidecar verification and Phase 7 task/schema gate passed;
-- no credentialed live-provider, browser E2E or native installer gate was executed in that verification run.
+`pnpm security:audit` passed on 2026-10-19 with zero reported production vulnerabilities. The candidate uses Next.js `15.5.28`, official SheetJS `0.20.3`, sharp `0.35.5`, fflate `0.8.3` and patched PostCSS dependencies. Vitest and available development-tool security fixes are updated too; the full audit and its remaining findings are reported separately in `PRODUCTION_READINESS.md`. No advisory is ignored. Run fresh audits for every candidate rather than inheriting these counts.
+
+Historical 2026-07 verification remains in the corrective execution log. Current test/build/package evidence is recorded in `PRODUCTION_READINESS.md` and the 2026-10-19 execution-log entry.
 
 ## Reproducible Candidate Gate
 
@@ -21,15 +21,18 @@ Use Node `>=24 <25` and pnpm `10.33.2`:
 ```bash
 corepack enable
 pnpm install --frozen-lockfile
+export VDT_RELEASE_DIR="$PWD/output/release/candidates/<unique-candidate>"
 pnpm release:verify
 pnpm test:e2e
 ```
 
-`release:verify` runs lint, typecheck, tests, build, CI/phase/docs verification, dependency audit, provider certification, deterministic evaluation, alpha packaging, bundle verification and clean-install checks. It must complete in one release run; historical passes do not substitute for a current failing dependency audit.
+For PowerShell use `$env:VDT_RELEASE_DIR = Join-Path $PWD 'output/release/candidates/<unique-candidate>'`. Replace `<unique-candidate>` with a fresh directory name. Run scripts through pnpm so Windows uses the package manager's JavaScript entrypoint through Node, without a shell or `.cmd` execution. A direct Node invocation on Windows without that entrypoint fails with instructions to use pnpm.
+
+`release:verify` runs lint, typecheck, tests, build, CI/phase/docs verification, dependency audit, provider certification, deterministic evaluation, alpha packaging, bundle verification and clean-install checks. It must complete in one release run; historical passes do not substitute for a current failing dependency audit. Native preflight and browser E2E remain distinct checks.
 
 ## Artifacts
 
-Successful packaging writes:
+By default successful packaging writes the following files. `VDT_RELEASE_DIR` selects an alternative empty directory consistently for packaging, SBOM generation, bundle verification and clean-install verification:
 
 ```text
 output/release/v0.1.0-alpha.0/
@@ -39,7 +42,9 @@ output/release/v0.1.0-alpha.0/
   *.tgz
 ```
 
-The clean-install verifier checks CLI help/doctor, project validation, public exports, runner startup and `/v1/health`. `release:bundle:verify` validates checksum/manifest/SBOM linkage and scans CLI/desktop resources for secret-like material.
+`package:alpha` refuses a nonempty output directory, preserving prior artifacts. It builds in a unique temporary package stage, strips development-only workspace dependencies and scripts from the published manifest, and removes only that owned stage after its synchronous children finish. The checked-out CLI `dist` directory is not cleaned or replaced by packaging. The SBOM includes every workspace package and resolves URL tarballs such as SheetJS to their actual package name/version.
+
+The clean-install verifier installs the dependency-free tarball offline with pnpm into a unique temporary directory and checks the installed `vdt` command, help/doctor, project validation, public exports, runner startup and `/v1/health`. Failure to listen on loopback fails verification. Child shutdown completes before removing that owned directory, including on an error. `release:bundle:verify` validates checksum/manifest/SBOM linkage and recursively scans CLI/desktop resources for secret-like material, rejecting symbolic links.
 
 ## Support Boundary
 

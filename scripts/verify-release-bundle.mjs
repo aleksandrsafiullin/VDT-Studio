@@ -2,14 +2,15 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   mkdtempSync,
+  lstatSync,
   readFileSync,
   readdirSync,
-  rmSync,
-  statSync
+  rmSync
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveReleaseDirectory } from "./release-paths.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_ROOT = resolve(dirname(SCRIPT_PATH), "..");
@@ -66,11 +67,14 @@ function walkFiles(root) {
   while (pending.length > 0) {
     const current = pending.pop();
     if (!current) continue;
-    const stat = statSync(current);
+    const stat = lstatSync(current);
+    if (stat.isSymbolicLink()) fail(`symbolic links are not allowed in release resources: ${current}`);
     if (stat.isDirectory()) {
       for (const name of readdirSync(current)) pending.push(join(current, name));
     } else if (stat.isFile()) {
       files.push(current);
+    } else {
+      fail(`release resources must be regular files or directories: ${current}`);
     }
   }
   return files.sort();
@@ -174,9 +178,9 @@ function desktopResourcePaths(root) {
     });
 }
 
-export function verifyReleaseBundle(root = DEFAULT_ROOT) {
+export function verifyReleaseBundle(root = DEFAULT_ROOT, { releaseDir: override } = {}) {
   const cliManifest = readJson(join(root, "packages/cli/package.json"));
-  const releaseDir = join(root, "output/release", `v${cliManifest.version}`);
+  const releaseDir = resolveReleaseDirectory(root, cliManifest.version, override);
   const tarballs = readdirSync(releaseDir).filter((name) => name.endsWith(".tgz"));
   if (tarballs.length !== 1) fail(`expected exactly one release tarball, found ${tarballs.length}.`);
 
@@ -188,7 +192,9 @@ export function verifyReleaseBundle(root = DEFAULT_ROOT) {
 
   const resources = desktopResourcePaths(root);
   for (const resourcePath of resources) {
-    scanFileForSecrets(resourcePath, resourcePath.slice(root.length + 1));
+    for (const file of walkFiles(resourcePath)) {
+      scanFileForSecrets(file, file.slice(root.length + 1));
+    }
   }
 
   return {
@@ -200,7 +206,7 @@ export function verifyReleaseBundle(root = DEFAULT_ROOT) {
 }
 
 if (process.argv[1] === SCRIPT_PATH) {
-  const result = verifyReleaseBundle(DEFAULT_ROOT);
+  const result = verifyReleaseBundle(DEFAULT_ROOT, { releaseDir: process.env.VDT_RELEASE_DIR });
   process.stdout.write(
     `Release bundle verified: ${result.tarball}; entries=${result.tarballEntries}; sbomPackages=${result.sbomPackages}; desktopResources=${result.desktopResources.length}\n`
   );
