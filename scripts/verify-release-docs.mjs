@@ -681,7 +681,7 @@ const REQUIRED_DOCS = [
   {
     file: "docs/AI_HARNESS.md",
     snippets: [
-      "18 task contracts",
+      "19 task contracts",
       "Current runtime limitations",
       "search-only",
       "one immutable canonical artifact",

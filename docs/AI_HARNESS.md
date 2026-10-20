@@ -1,5 +1,41 @@
 # AI And Agent Harness
 
+## Smart one-completion preparation
+
+`suggest_incoming_kpis` / `suggest-incoming-kpis-v1` is registered through core,
+harness, model bridge, HTTP runner and desktop sidecar completions. It bypasses
+agent bootstrap/deepen, conversations, research/tools, schema fallback and repair.
+Configured API/BYOK adapters and manifest-owned Ollama/LM Studio/vLLM endpoints use
+one request with at most 2048 generation tokens; the selected Codex CLI uses one
+restrictive invocation and a prompt-requested 2048-token budget. CLI does not expose
+a verified hard generation-token ceiling. Input/final output are capped at
+24/16 KiB; HTTP/CLI envelopes at 64 KiB. Deadlines are at most 15 s HTTP or 30 s
+CLI and respect a lower raw user timeout, including version probing. A bounded
+cleanup grace awaits owned transport/process termination and never accepts late
+success. Metadata-only identity admission is separate from preparation, capped at
+5 s or the lower raw timeout, plus bounded cleanup.
+
+API protocols require a completed, untruncated tool-free result; Anthropic permits
+only its single reviewed structured-output channel, which is parsed and never
+executed. Smart Codex uses a private HOME/CODEX_HOME/workspace, ignores config/rules,
+preserves the actual selected/default model, disables reviewed tool features and
+web search, uses read-only sandbox, rejects tool/unknown/multiple-turn stream events
+and strictly decodes UTF-8. The general agent profile is unchanged. Noncore CLI
+adapters return typed unavailable rather than switching provider.
+
+Stable cache identity binds selected model/destination/policy and an opaque
+credential epoch. Passive encrypted-key reload reuses its epoch; replacement,
+removal/restoration or destination changes invalidate it. Codex metadata uses
+nonsecret filesystem/catalog/CLI/policy identity; an unprovable default is labelled
+`host_default`, not an exact-model claim. Alias drift, live latency, private CLI
+cost limits and hard isolation remain unqualified. See [ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
+
+## Incoming formula and legacy deepen version
+
+Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v3` with the unchanged bounded one-call wire. The prompt requests a concise coherent definition and matching-scale unknown inputs; generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no admission or inference.
+
+The registered `deepen_node` task now selects `deepen-node-v2`: `schemaVersion=deepen_node.v2`, required `targetFormula`, exact `retainedNodeIds` and one layer of primitive children. Mapping requires the actual project/root and emits formula, calculated/root type and accepted plan delta together. Historical `deepen-node-v1` output remains a readable compatibility schema but cannot apply a new child-only graph mutation. This does not affect exact replay of an already committing Smart v1 request. Both selected-layer agent finish implementations require the target definition and every new input; unknown measured values may remain unavailable. Default full-tree finish remains strict.
+
 ## Agent-authored hierarchy contract (experimental)
 
 The common instruction contract for CLI, API and native local agents requires level-by-level decomposition in `generate_vdt` and `continue_project`. The actor first calls `vdt.set_decomposition_plan`, choosing every future node ID, primary parent and `calculated`/`input`/`context` kind. The version-1 plan is stored on the root node through ordinary revision/approval mutations. Factor additions must match the plan and complete shallower planned factor levels first. Context observations need a rationale; actual root dependencies cannot be hidden as context. `sharedWith` names additional real formula users of an existing factor without duplicate source nodes or visual shortcuts.
@@ -43,7 +79,7 @@ shell, arbitrary filesystem, database or provider-configuration authority.
 
 ## Registered Tasks
 
-The schema registry contains 18 task contracts. Seventeen are exposed product tasks; `agent_plan` is retained as an internal compatibility contract and must not become the primary VDT build path.
+The schema registry contains 19 task contracts. Eighteen are exposed product tasks; `agent_plan` is retained as an internal compatibility contract and must not become the primary VDT build path.
 
 | Owner | Tasks |
 |---|---|

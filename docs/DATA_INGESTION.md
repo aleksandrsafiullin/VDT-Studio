@@ -1,5 +1,9 @@
 # Data Ingestion And KPI Baselines
 
+## Formula-bearing incoming parent and plan (2026-10-20)
+
+Complete accepted file breakdowns mark the target and sum-bearing intermediate nodes Calculated; the actual root keeps `root_kpi`, primitive source leaves remain `data_mapped`. Source baselines, zero, mappings, retained bytes/hash/storageRef and all-or-nothing coverage are preserved. The host reconciles only the accepted target/new hierarchy and formula-reachable dependencies into the existing root plan in the same changeset. Unrelated entries/primary parents survive; an off-root reference hierarchy remains context and does not change the root result. Mapping metadata reapplication preserves a formula-bearing calculated/root type and does not implement automatic source refresh. Planned active and context targets are verified through actual apply and full hierarchy inspection.
+
 ## Session-agent source tools (experimental, 2026-10-17)
 
 The main Supervisor catalog now includes `data.list_sources`, `data.inspect`, `data.read_rows`, `data.aggregate` and `data.write_inputs`. This is separate from the incoming-KPI review workflow. The host derives the SQLite project/VDT owner from the run, verifies retained immutable bytes/hash and parses the complete source. Models cannot select paths or an alternate workspace. File cells, headers and research observations remain untrusted data.

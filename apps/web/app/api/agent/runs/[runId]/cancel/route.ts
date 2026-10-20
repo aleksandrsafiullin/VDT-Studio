@@ -6,15 +6,17 @@ import {
   isPersistedSupervisorRun
 } from "../../supervisor-runtime";
 
-export async function POST(_request: Request, { params }: { params: Promise<{ runId: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ runId: string }> }) {
   const { runId } = await params;
   if (!agentRuntime.store.has(runId)) {
     return jsonError("Agent run was not found.", 404, "RUN_NOT_FOUND");
   }
   if (await isPersistedSupervisorRun(runId)) {
     try {
-      const snapshot = await cancelStructuredModelAgentRun(runId);
-      return Response.json({ ok: true, status: snapshot.status, snapshot });
+      const options = await request.json().catch(() => ({})) as { awaitTerminal?: unknown };
+      const awaitTerminal = options?.awaitTerminal === true;
+      const snapshot = await cancelStructuredModelAgentRun(runId, awaitTerminal);
+      return Response.json({ ok: true, status: snapshot.status, snapshot, ...(awaitTerminal ? { terminalCleanupConfirmed: true } : {}) });
     } catch (error) {
       if (error instanceof PublicSupervisorRunError) {
         return jsonError(error.message, error.status, error.code);

@@ -16,6 +16,7 @@ const REGISTERED_TASK_TYPES = new Set([
   "review_dataset_proposal",
   "generate_tree",
   "deepen_node",
+  "suggest_incoming_kpis",
   "simplify_branch",
   "suggest_alternative",
   "suggest_formula",

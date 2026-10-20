@@ -1,5 +1,5 @@
 import { DATA_DISCOVERY_JSON_SCHEMAS, isDataDiscoverySchemaId, normalizeDataDiscoveryOutput, strictDataDiscoverySchema, validateDataDiscoveryOutput } from "./data-schema-contracts";
-import type { VdtAiTaskType } from "@vdt-studio/vdt-core";
+import { KPI_SUGGESTION_MODEL_JSON_SCHEMA, validateKpiSuggestionModelOutput, type VdtAiTaskType } from "@vdt-studio/vdt-core";
 
 export const VDT_OUTPUT_SCHEMA_IDS = [
   "orchestrator-first-response-v1",
@@ -9,7 +9,8 @@ export const VDT_OUTPUT_SCHEMA_IDS = [
   "analyze-raw-dataset-v1",
   "review-dataset-proposal-v1",
   "generate-tree-v1",
-  "deepen-node-v1",
+  "deepen-node-v2",
+  "suggest-incoming-kpis-v1",
   "simplify-branch-v1",
   "suggest-alternative-v1",
   "suggest-formula-v1",
@@ -22,7 +23,7 @@ export const VDT_OUTPUT_SCHEMA_IDS = [
   "generate-executive-summary-v1"
 ] as const;
 
-export const VDT_COMPATIBILITY_SCHEMA_IDS = ["agent-decision-v1"] as const;
+export const VDT_COMPATIBILITY_SCHEMA_IDS = ["agent-decision-v1", "deepen-node-v1"] as const;
 export const VDT_SCHEMA_IDS = ["connection-test-v1", ...VDT_COMPATIBILITY_SCHEMA_IDS, ...VDT_OUTPUT_SCHEMA_IDS] as const;
 
 export type VdtOutputSchemaId = (typeof VDT_OUTPUT_SCHEMA_IDS)[number];
@@ -40,6 +41,8 @@ const schemaTask: Record<VdtTaskSchemaId, VdtAiTaskType> = {
   "review-dataset-proposal-v1": "review_dataset_proposal",
   "generate-tree-v1": "generate_tree",
   "deepen-node-v1": "deepen_node",
+  "deepen-node-v2": "deepen_node",
+  "suggest-incoming-kpis-v1": "suggest_incoming_kpis",
   "simplify-branch-v1": "simplify_branch",
   "suggest-alternative-v1": "suggest_alternative",
   "suggest-formula-v1": "suggest_formula",
@@ -993,6 +996,11 @@ const jsonSchemas: Record<VdtSchemaId, Record<string, unknown>> = {
     },
     ["projectTitle", "rootNodeId", "nodes", "edges", ...advisoryRequired]
   ),
+  "suggest-incoming-kpis-v1": KPI_SUGGESTION_MODEL_JSON_SCHEMA,
+  "deepen-node-v2": objectSchema({ schemaVersion: { type: "string", const: "deepen_node.v2" }, targetNodeId: stringProp,
+    targetFormula: { type: "string", minLength: 1, maxLength: 500 }, retainedNodeIds: { type: "array", maxItems: 16, items: stringProp },
+    nodes: { type: "array", minItems: 1, maxItems: 15, items: aiNodeSchema }, edges: arrayProp(aiEdgeSchema), ...advisoryArrays
+  }, ["schemaVersion", "targetNodeId", "targetFormula", "retainedNodeIds", "nodes", "edges", ...advisoryRequired]),
   "deepen-node-v1": objectSchema(
     {
       targetNodeId: stringProp,
@@ -1210,6 +1218,10 @@ const validators: Record<VdtSchemaId, (output: Record<string, unknown>) => boole
     isObjectArray(output.edges) &&
     validateAdvisoryArrays(output) &&
     validateGenerateTreeGraph(output).valid,
+  "suggest-incoming-kpis-v1": (output) => { try { validateKpiSuggestionModelOutput(output); return true; } catch { return false; } },
+  "deepen-node-v2": output => output.schemaVersion === "deepen_node.v2" && typeof output.targetNodeId === "string" && typeof output.targetFormula === "string"
+    && output.targetFormula.length > 0 && output.targetFormula.length <= 500 && isStringArray(output.retainedNodeIds) && (output.retainedNodeIds as string[]).length <= 16
+    && isObjectArray(output.nodes) && (output.nodes as unknown[]).length > 0 && isObjectArray(output.edges) && validateAdvisoryArrays(output),
   "deepen-node-v1": (output) =>
     typeof output.targetNodeId === "string" &&
     isObjectArray(output.nodes) &&

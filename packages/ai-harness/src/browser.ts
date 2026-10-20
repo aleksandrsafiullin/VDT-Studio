@@ -6,3 +6,6 @@ export { validateAndMapDeepenNode } from "./validation/validate-deepen-node";
 export { validateRawDatasetAnalysis } from "./validation/validate-raw-dataset-analysis";
 export type { RunAiTaskResult } from "./tasks/run-ai-task";
 export type { GenerateVdtInput } from "./types";
+
+export * from "./tasks/suggest-incoming-kpis";
+export { readBoundedText, awaitProviderSettlement } from "./providers/provider-utils";

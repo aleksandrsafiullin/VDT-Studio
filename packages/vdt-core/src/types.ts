@@ -7,6 +7,7 @@ export type VdtAiTaskType =
   | "review_dataset_proposal"
   | "generate_tree"
   | "deepen_node"
+  | "suggest_incoming_kpis"
   | "simplify_branch"
   | "suggest_alternative"
   | "suggest_formula"

@@ -1,6 +1,7 @@
 import * as runtime from "@vdt-studio/local-runner/server-runtime";
 import { NextResponse } from "next/server";
 import { resolveVdtAppModeForRequest } from "@/lib/app-mode";
+import { readAiRouteBody, SMART_HTTP_BODY_BYTES, aiRouteGuardStatus } from "@/lib/ai-route-body";
 
 type RuntimeContext = ReturnType<typeof runtime.createLocalRuntimeContext>;
 
@@ -42,10 +43,12 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: unknown;
+  let body: unknown, bodyBytes = 0;
   try {
-    body = await request.json();
-  } catch {
+    const read = await readAiRouteBody(request); bodyBytes = read.bytes; body = JSON.parse(read.text);
+  } catch (error) {
+    const status = aiRouteGuardStatus(error);
+    if (status) return NextResponse.json({ ok: false, error: "AI request admission failed." }, { status });
     return NextResponse.json({ ok: false, error: "Request body must be valid JSON." }, { status: 400 });
   }
 
@@ -66,7 +69,8 @@ export async function POST(request: Request) {
     }
 
     if (operation === "complete") {
-      return jsonRuntimeResult(await runtime.completeRuntime(runtime.parseCompletionPayload(body.request), context));
+      if (isRecord(body.request) && body.request.taskType === "suggest_incoming_kpis" && bodyBytes > SMART_HTTP_BODY_BYTES) return NextResponse.json({ ok: false, error: "Smart request exceeds its bound." }, { status: 413 });
+      return jsonRuntimeResult(await runtime.completeRuntime(runtime.parseCompletionPayload(body.request), context, request.signal));
     }
 
     if (operation === "list_models") {
@@ -87,7 +91,7 @@ export async function POST(request: Request) {
 
     if (operation === "cancel") {
       const requestId = typeof body.requestId === "string" ? body.requestId : "";
-      return jsonRuntimeResult(runtime.cancelRuntimeRequest(requestId, context));
+      return jsonRuntimeResult(await runtime.cancelRuntimeRequestWithAcknowledgement(requestId, context));
     }
 
     if (operation === "run") {

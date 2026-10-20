@@ -73,6 +73,7 @@ export function NodeInspector() {
   }
 
   const sourceNote = node.valueSource?.note?.trim();
+  const derived = Boolean(node.formula?.trim());
   const referenceGroup = getDecompositionContextGroupIds(project.graph, project.rootNodeId).has(node.id);
   const assumptionNotes = [...new Set((node.assumptions ?? [])
     .map((note) => note.trim())
@@ -142,7 +143,7 @@ export function NodeInspector() {
             </Field>
             <Field label="Type">
               <SelectInput value={node.type} onChange={(event) => updateNode(node.id, { type: event.target.value as typeof node.type })}>
-                <option value="root_kpi">Root KPI</option>
+                <option value="root_kpi">{node.id === project.rootNodeId && derived ? "Root KPI · Calculated" : "Root KPI"}</option>
                 <option value="calculated">Calculated</option>
                 <option value="input">Input</option>
                 <option value="assumption">Assumption</option>
@@ -164,11 +165,13 @@ export function NodeInspector() {
                 errors={formulaInlineErrors}
               />
             )}
-            {!referenceGroup && <Field label="Baseline value">
+            {!referenceGroup && <Field label={derived ? "Source value" : "Baseline value"}>
               <TextInput
                 type="number"
                 value={node.baselineValue ?? node.value ?? ""}
-                onChange={(event) => updateNodeBaselineValue(node.id, parseFiniteInput(event.target.value))}
+                data-testid={derived ? "node-source-value" : "node-baseline-value"}
+                readOnly={derived}
+                onChange={(event) => { if (!derived) updateNodeBaselineValue(node.id, parseFiniteInput(event.target.value)); }}
               />
             </Field>}
             <Field label="Description">

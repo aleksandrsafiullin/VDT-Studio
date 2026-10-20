@@ -18,6 +18,29 @@ struct DesktopCompletionRequest {
     timeout_ms: Option<u64>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DesktopSmartExecutionRequest {
+    request_id: String,
+    backend_id: String,
+    model: Option<String>,
+    timeout_ms: Option<u64>,
+}
+
+#[tauri::command]
+async fn ai_smart_execution(request: DesktopSmartExecutionRequest, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    if request.backend_id != "codex_subscription" || request.timeout_ms.map_or(false, |ms| ms == 0 || ms > 5000) {
+        return Err("INVALID_SMART_METADATA: selected Codex metadata requires a deadline of at most 5000ms.".into());
+    }
+    app.state::<DesktopRuntime>().reserve_smart_request(&request.request_id).map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut payload = serde_json::json!({ "requestId": request.request_id, "backendId": request.backend_id });
+        if let Some(model) = request.model { payload["model"] = serde_json::Value::String(model); }
+        if let Some(timeout_ms) = request.timeout_ms { payload["timeoutMs"] = serde_json::Value::Number(timeout_ms.into()); }
+        app.state::<DesktopRuntime>().smart_execution(payload).map_err(|error| error.to_string())
+    }).await.map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 fn get_app_mode() -> &'static str {
     "desktop"
@@ -50,10 +73,14 @@ fn ai_list_models(backend_id: String, runtime: State<'_, DesktopRuntime>) -> Res
 }
 
 #[tauri::command]
-fn ai_complete(
+async fn ai_complete(
     request: DesktopCompletionRequest,
-    runtime: State<'_, DesktopRuntime>,
+    app: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
+    let smart = request.task_type == "suggest_incoming_kpis";
+    if smart {
+        app.state::<DesktopRuntime>().reserve_smart_request(&request.request_id).map_err(|error| error.to_string())?;
+    }
     let mut payload = serde_json::json!({
         "requestId": request.request_id,
         "backendId": request.backend_id,
@@ -67,9 +94,11 @@ fn ai_complete(
     if let Some(timeout_ms) = request.timeout_ms {
         payload["timeoutMs"] = serde_json::Value::Number(timeout_ms.into());
     }
-    runtime
-        .complete(payload)
-        .map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let runtime = app.state::<DesktopRuntime>();
+        if smart { runtime.smart_complete(payload) } else { runtime.complete(payload) }
+            .map_err(|error| error.to_string())
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -122,6 +151,7 @@ pub fn run() {
             ai_test_backend,
             ai_list_models,
             ai_complete,
+            ai_smart_execution,
             ai_cancel,
             ai_get_run,
             open_provider_auth,

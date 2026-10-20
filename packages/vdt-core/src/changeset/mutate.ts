@@ -407,7 +407,7 @@ export function mutateProjectGraph(
 
       return {
         ...node,
-        type: node.type === "root_kpi" ? node.type : "data_mapped",
+        type: node.id === project.rootNodeId ? "root_kpi" : node.formula?.trim() ? "calculated" : "data_mapped",
         dataMapping: change.mapping,
         valueSource: {
           ...node.valueSource,

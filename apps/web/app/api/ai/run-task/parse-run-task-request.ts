@@ -1,4 +1,4 @@
-import { importProjectJson, type VdtAiTaskType, type VdtProject } from "@vdt-studio/vdt-core";
+import { validateKpiSuggestionTaskInput, importProjectJson, type VdtAiTaskType, type VdtProject } from "@vdt-studio/vdt-core";
 import {
   deepenNodeContextSchema,
   executiveSummaryInputSchema,
@@ -15,6 +15,7 @@ import {
 /** Bounded AI tasks served by `/api/ai/run-task`. Tree generation is owned by `/api/agent/runs`. */
 export const RUN_TASK_TYPES = [
   "deepen_node",
+  "suggest_incoming_kpis",
   "simplify_branch",
   "suggest_alternative",
   "suggest_formula",
@@ -141,6 +142,7 @@ export function parseRunTaskRequest(body: RunTaskRequestBody): {
   const taskType = resolveRunTaskType(body.taskType);
   const limits = TASK_LIMITS[taskType];
   const input = readRecord(body.input, "input");
+  if (taskType === "suggest_incoming_kpis") return { taskType, input: validateKpiSuggestionTaskInput(input) };
   const project = readProject(input.project, limits);
 
   switch (taskType) {

@@ -9,6 +9,7 @@ const advisory = {
 };
 
 export const VALID_SCHEMA_FIXTURES: Record<RegisteredOutputSchemaId, unknown> = {
+  "suggest-incoming-kpis-v1": { status: "empty", rationale: "No applicable proposal in this deterministic fixture.", limitations: [], groups: [] },
   "orchestrator-first-response-v1": {
     assistantMessage: "I will use the visible brief as the source of truth and start by checking the requested VDT scope.",
     nextAction: "continue_building",
@@ -185,6 +186,8 @@ export const VALID_SCHEMA_FIXTURES: Record<RegisteredOutputSchemaId, unknown> = 
     edges: [],
     ...advisory
   },
+  "deepen-node-v2": { schemaVersion: "deepen_node.v2", targetNodeId: "unplanned_downtime", targetFormula: "child_a", retainedNodeIds: [],
+    nodes: [{ id: "child_a", name: "Child A", type: "input", unit: "hours/month" }], edges: [], ...advisory },
   "deepen-node-v1": {
     targetNodeId: "unplanned_downtime",
     nodes: [{ id: "child_a", name: "Child A", type: "input" }],
@@ -263,6 +266,7 @@ export const VALID_SCHEMA_FIXTURES: Record<RegisteredOutputSchemaId, unknown> = 
 };
 
 export const INVALID_SCHEMA_FIXTURES: Record<RegisteredOutputSchemaId, unknown> = {
+  "suggest-incoming-kpis-v1": { status: "ready", rationale: "Missing child groups.", groups: [], limitations: [] },
   "orchestrator-first-response-v1": {
     assistantMessage: "",
     nextAction: "replace_scope",
@@ -322,6 +326,7 @@ export const INVALID_SCHEMA_FIXTURES: Record<RegisteredOutputSchemaId, unknown> 
     warnings: []
   },
   "generate-tree-v1": { projectTitle: "x" },
+  "deepen-node-v2": { targetNodeId: "a", nodes: [], edges: [], assumptions: [], questionsForUser: [], warnings: [] },
   "deepen-node-v1": { targetNodeId: "a", nodes: [], edges: [], assumptions: [], questionsForUser: [], warnings: [] },
   "simplify-branch-v1": { branchRootNodeId: "a", nodeRemovals: "bad", edgeChanges: [], rationale: "x", ...advisory },
   "suggest-alternative-v1": { targetNodeId: "a", nodes: "bad", edges: [], rationale: "x", ...advisory },

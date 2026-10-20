@@ -1,5 +1,24 @@
 # Agentic VDT Runtime Implementation Spec
 
+## Incremental incoming formulas (2026-10-20)
+
+Smart is a separately registered read-only one-completion task; the configured API/CLI/local backend, one-call caps and cache/cancellation ownership remain unchanged. New UI/Manual drafts compile selected/own/retained rows and an explicit final formula through one real revision-CAS transaction. Parents become calculated (actual root retains its role); unknown values are allowed and source measurements stay reference/checkpoint evidence. Historical graphs and v1 pending requests are not migrated.
+
+Selected-node AI mutation now validates the raw selected-layer scope before the host derives a root decompositionPlan-only delta plus necessary type/edge classifications from actual accepted formulas. The agent cannot replace the plan, reparent a branch or mutate an unrelated root formula. The derived delta belongs to the same proposal/receipt and approval selection must preserve hierarchy integrity. Both compatibility orchestrator and Supervisor finish require the selected target formula/calculated type and effective use of every newly created immediate child. Only missing input values are permitted at selected-layer completion; default full-tree calculation/hierarchy/finite-root gates are unchanged. The structured legacy task uses required v2 targetFormula/retainedNodeIds; old child-only records remain readable but new application fails.
+
+An already mapped `deepen_node` result is checked again before client completion
+and pending-patch application against the trusted request target and the complete
+host-derived layer. Active compatibility runs keep their supported selected-node
+message. An active structured Model Agent is cancelled and its actual owned
+Supervisor closure acknowledged before a new explicit selected-node run may
+start. A persisted owner/VDT stop marker survives cancelled events and reload;
+missing cleanup proof cannot admit a second mutator. The five-second handoff
+wait is bounded. Every post-await publication checks the captured owner, VDT,
+marker and active request; graph/configuration/head changes require a retry from
+the current graph. The ordinary Cancel action retains its existing behavior.
+
+An internal incremental inspection treats only root-context grouping as a construction warning. Every hard plan/coverage/shared/primary-parent/cycle rule remains blocking; no tool-selectable/persisted bypass exists. Existing old explanatory children may remain context. See [ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
+
 ## Hierarchy implementation amendment (experimental)
 
 Full-tree public Supervisor runs (`generate_vdt`, `continue_project`) require the model to record a version-1 decomposition plan through `vdt.set_decomposition_plan` before adding factors. The plan names future node IDs, one primary visual parent, kind and optional declared shared formula users. `context` entries require a rationale and cannot belong to the root formula closure. Normal incremental factor additions match planned IDs/parents and complete shallower factor layers first; existing explicit skill-topology operations keep their own atomic construction contract but do not bypass final hierarchy verification.

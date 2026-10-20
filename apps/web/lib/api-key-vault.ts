@@ -7,12 +7,28 @@ export interface EncryptedApiKey {
   key: CryptoKey;
   iv: ArrayBuffer;
   ciphertext: ArrayBuffer;
+  /** Opaque public cache invalidation identity, never derived from key bytes. */
+  identityEpoch?: string;
 }
 
 export interface ApiKeyVault {
   read(scope: string): Promise<string | undefined>;
   write(scope: string, value: string): Promise<void>;
   remove(scope: string): Promise<void>;
+  identity?(scope: string, expectedValue?: string): Promise<string>;
+}
+
+/** The production adapter uses one IndexedDB read/write transaction for CAS.
+ * The injectable port permits deterministic reload/race tests without secrets. */
+export interface ApiKeyRecordStorage {
+  read(scope: string): Promise<EncryptedApiKey | undefined>;
+  compareAndSet(scope: string, expected: EncryptedApiKey | undefined, next: EncryptedApiKey | undefined): Promise<boolean>;
+}
+
+function sameEncryptedRecord(a: EncryptedApiKey | undefined, b: EncryptedApiKey | undefined): boolean {
+  if (!a || !b) return a === b;
+  const sameBytes = (x: ArrayBuffer, y: ArrayBuffer) => x.byteLength === y.byteLength && new Uint8Array(x).every((v, i) => v === new Uint8Array(y)[i]);
+  return a.version === b.version && a.identityEpoch === b.identityEpoch && sameBytes(a.iv, b.iv) && sameBytes(a.ciphertext, b.ciphertext);
 }
 
 export async function encryptApiKey(scope: string, value: string): Promise<EncryptedApiKey> {
@@ -26,7 +42,7 @@ export async function encryptApiKey(scope: string, value: string): Promise<Encry
     key,
     new TextEncoder().encode(value)
   );
-  return { version: 1, key, iv: iv.buffer, ciphertext };
+  return { version: 1, key, iv: iv.buffer, ciphertext, identityEpoch: crypto.randomUUID() };
 }
 
 export async function decryptApiKey(scope: string, record: EncryptedApiKey): Promise<string> {
@@ -42,7 +58,7 @@ export async function decryptApiKey(scope: string, record: EncryptedApiKey): Pro
 }
 
 export class IndexedDbApiKeyVault implements ApiKeyVault {
-  constructor(private readonly databaseName = API_KEY_VAULT_DATABASE) {}
+  constructor(private readonly databaseName = API_KEY_VAULT_DATABASE, private readonly storage?: ApiKeyRecordStorage) {}
 
   private open(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
@@ -65,6 +81,28 @@ export class IndexedDbApiKeyVault implements ApiKeyVault {
     });
   }
 
+  private record(scope: string): Promise<EncryptedApiKey | undefined> {
+    return this.storage ? this.storage.read(scope) : this.transact("readonly", store => store.get(scope));
+  }
+
+  private async replace(scope: string, expected: EncryptedApiKey | undefined, next: EncryptedApiKey | undefined): Promise<boolean> {
+    if (this.storage) return this.storage.compareAndSet(scope, expected, next);
+    const database = await this.open();
+    try {
+      return await new Promise<boolean>((resolve, reject) => {
+        const tx = database.transaction(API_KEY_VAULT_STORE, "readwrite"), store = tx.objectStore(API_KEY_VAULT_STORE), request = store.get(scope);
+        let replaced = false;
+        request.onsuccess = () => {
+          if (!sameEncryptedRecord(request.result, expected)) return;
+          if (next) store.put(next, scope); else store.delete(scope);
+          replaced = true;
+        };
+        tx.oncomplete = () => resolve(replaced);
+        tx.onabort = tx.onerror = () => reject(new Error("Encrypted credential storage failed."));
+      });
+    } finally { database.close(); }
+  }
+
   private async transact<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
     const database = await this.open();
     try {
@@ -81,18 +119,38 @@ export class IndexedDbApiKeyVault implements ApiKeyVault {
   }
 
   async read(scope: string): Promise<string | undefined> {
-    const record: EncryptedApiKey | undefined = await this.transact("readonly", (store) => store.get(scope));
+    const record = await this.record(scope);
     return record === undefined ? undefined : decryptApiKey(scope, record);
   }
 
   async write(scope: string, value: string): Promise<void> {
-    const record = await encryptApiKey(scope, value);
-    await this.transact("readwrite", (store) => store.put(record, scope));
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const previous = await this.record(scope);
+      // Passive hydration/hot reattachment of the same retained key preserves
+      // its epoch. Replacement or remove→restore gets a fresh opaque epoch.
+      if (previous && await decryptApiKey(scope, previous) === value) return;
+      const record = await encryptApiKey(scope, value);
+      if (await this.replace(scope, previous, record)) return;
+    }
+    throw new Error("Credential storage changed; retry the selected credential save.");
+  }
+
+  async identity(scope: string, expectedValue?: string): Promise<string> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const record = await this.record(scope);
+      if (!record || (expectedValue !== undefined && await decryptApiKey(scope, record) !== expectedValue)) throw new Error("Credential persistence is not ready for this selection.");
+      if (record.identityEpoch && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(record.identityEpoch)) return record.identityEpoch;
+      // Metadata-only migration cannot resurrect a removed/replaced key.
+      const identityEpoch = crypto.randomUUID();
+      if (await this.replace(scope, record, { ...record, identityEpoch })) return identityEpoch;
+    }
+    throw new Error("Credential persistence changed during identity admission.");
   }
 
   async remove(scope: string): Promise<void> {
     // Deleting the record also deletes its encryption key. Never regenerate or
     // discard unreadable credentials automatically on an error.
-    await this.transact("readwrite", (store) => store.delete(scope));
+    for (let attempt = 0; attempt < 3; attempt++) if (await this.replace(scope, await this.record(scope), undefined)) return;
+    throw new Error("Credential persistence changed during removal.");
   }
 }

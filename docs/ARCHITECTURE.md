@@ -1,5 +1,83 @@
 # Architecture
 
+## Smart KPI preparation and explicit apply boundary
+
+The formula/mixed revision uses strict `incoming_kpi_apply.v2` drafts and
+`smart_kpi_operation.v2` journals. Preparation-free context/preview ports feed the
+pure full-project compiler; one immutable resolved alias/formula/candidate is
+saved through the existing authority. Historical v1 committing receipts replay
+their exact request without new proposal validation or recompilation. See the
+[incoming contract](architecture/SMART_KPI_INCOMING_CONTRACT.md).
+
+`vdt-core/src/suggestions` owns strict contracts, semantic fingerprints, canonical
+recipe provenance and one-layer compilation. `vdt-agent/src/smart-kpi-recipes.ts`
+projects canonical blocks into browser-safe generated data; Node skill loading
+never enters browser imports. The harness task and separate Smart runtime executor
+make one completion. The service owns same-origin JSON/stream admission, explicit
+provider selection, pinned API transport and terminal requestId cancellation.
+Client, HTTP host and common runner/sidecar enforce active workspace ownership;
+unknown cleanup quarantines the execution across component disposal and browser
+reload for the host session. No durable agent lease/CAS authority is introduced.
+
+`smart-kpi-cache.ts` persists only validated proposals and LRU metadata in its own
+origin-local IndexedDB: 256 entries, 2 MiB and 7-day TTL. Corruption/quota errors
+isolate storage and retain a bounded memory fallback; negative results use a 30 s
+memory-only cooldown. Semantic context, preparation-policy version,
+catalog/schema/validator and stable backend,
+model, binding and credential identity key reuse; admission IDs, heads, layouts,
+scenario numeric motion, raw prompts and secrets are excluded.
+
+One workspace scheduler owns one in-flight transport/process job and queue 12,
+with hover/selected/new-child/visible priority, deduplication and at most 8 automatic
+provider attempts per semantic generation. Selected plus at most 6 visible old
+nodes or 6 newly added immediate children can prewarm; there is no recursive tree
+build. Semantic graph hashes are shared/memoized, never recomputed on hover. Frozen
+list/selection and action-time revalidation APIs connect the editor to preparation.
+`smart-kpi-transaction.ts` compiles one immutable candidate and checkpoint, reserves
+before awaiting, reconciles ordinary pending writes, and uses ADR-004's actual
+revision/runtime CAS. Only an acknowledged, still-owning exact candidate can
+publish. A fresh authority read rejects superseded idempotent receipts. Unknown
+outcomes (including retryable409 and uncertain503) replay the original body/key/CAS;
+known policy rejects and conflicts do not become a new-head retry. An owner/VDT
+marker blocks another Smart Add and automatic save of a conflicted draft until an
+actual stored reload; the same-active editor shortcut cannot clear it. Undo requires exact post-apply content and authority,
+then appends a new revision. The checkpoint remains in Versions.
+
+`smart-kpi-scope.ts` derives owner/VDT and period from current root assumptions and
+the stored record; absent/conflicting/custom calendar evidence is retained honestly.
+Compatible per-trip formulas do not require a fabricated monthly grain.
+`smart-kpi-decisions.ts` separately retains explicit canonical role decisions,
+bounded to 128 entries/256 KiB UTF-8/7 days. A validated model decision or accepted
+canonical parent-child role supplies Library applicability; names/tags do not.
+Accepted child roles are ready before new-node publication/prefetch.
+
+Formula-first preparation admits audited recipes or formally checked generic
+definitions. Formula-null starting rows require an explicit edited formula before
+Add. Existing sourced/context graphs stay readable; future accepted parents become
+calculated and new values remain unknown; missing values,
+a custom period or no recipe match alone do not make it terminal. Genuine model
+empty results retain their bounded rationale and limitations through the client,
+memory cooldown and escaped panel text. Provider/validation errors remain failures.
+Changing preparation policy invalidates rebuildable outcomes independently of
+the unchanged proposal wire schema and formula validator.
+
+The exact committing journal is read back before a stored POST. Browser quota
+failure cannot throw after in-memory publication or reclassify an acknowledged
+commit as unknown. Recovered candidate/input/CAS/ownership/checkpoint disagreement
+retains evidence and blocks replay. Pre-Smart historical chats remain readable;
+Continue starts a fresh run with the current graph, while old queued callbacks
+stay fenced. Bounded store/native source and protocol reviews passed, as did
+local Chrome prepared-control, stored Add/reload/Undo and reconciliation fixtures.
+Cache/scheduler have no revision authority. See
+[validation and qualifications](PRODUCTION_READINESS.md#smart-kpi-validation) and
+[ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
+
+Existing plans are extended atomically with the proposed graph. Inputs can own
+context-kind/contextual-edge explanations while remaining factor leaves. Only
+the internal incremental-user inspector purpose reports root grouping as a
+construction warning. Default agent inspection/finish keep it blocking; all
+other hierarchy errors remain blocking in both purposes.
+
 Planned non-numerical reference containers are derived from the root decomposition plan and shared by calculation, runtime backlog summaries and web rendering. They require planned context children and no numeric value/formula; numeric leaves and active factors retain ordinary validation. Root reference-column grouping is an agent construction/finish policy, deliberately separate from JSON import shape validation so historical plans can still be inspected and repaired.
 
 ## Decomposition plan and branch repair

@@ -1,5 +1,29 @@
 # Provider Compatibility
 
+## Smart preparation profile (2026-10-19, deterministic fixtures)
+
+The registered read-only Smart task has real configured OpenAI-compatible,
+Anthropic, Gemini, Azure, trusted-local Codex and manifest Ollama/LM Studio/vLLM
+transport paths. Focused fixtures verify one request/invocation, no retry/fallback/
+repair, protocol completion/tool/truncation rejection, byte/token/deadline caps,
+selected identity and cancellation ownership. This does not qualify a live model,
+packaged platform, cold latency or hard CLI isolation/cost ceiling. Other CLI
+adapters are explicitly unavailable for this profile even though their general
+manifests advertise the common task registry. Existing certification statuses and
+release `NO-GO` remain authoritative.
+
+Installed Codex `0.146.0` help/features inspection (no inference) verified the
+`exec --ignore-user-config`, `--ignore-rules`, `--strict-config`, read-only/schema
+flags and effective disabled shell/unified-exec features. The removed
+`apply_patch_freeform` flag is not evidence of disabled editing by itself; the
+profile also uses the read-only sandbox, private workspace and tool-stream gate.
+The selected top-level model is retained independently of ignored user config.
+CLI's 2048-token prompt request is not a hard generation-token guarantee.
+
+Policy keys were checked against the versioned [Codex schema](https://raw.githubusercontent.com/openai/codex/rust-v0.146.0/codex-rs/core/config.schema.json)
+and [shell feature implementation](https://raw.githubusercontent.com/openai/codex/rust-v0.146.0/codex-rs/tools/src/tool_config.rs).
+Live adversarial policy/performance qualification remains open.
+
 ## Experimental source-aware checks (2026-10-17)
 
 The local session catalog now shares retained-file aggregation/input tools and may use explicitly enabled ephemeral OpenAI web research. Codex checkpoint framing now uses a private strict output schema and bounded correction. These code changes and task-specific live checks are not provider certification. Canonical `release/provider-certification.json` statuses and existing native isolation limitations remain authoritative. Record exact model, transport, source hash, task, completion state and timing for each live result; do not equate cancelled/failed attempts with successful runs.

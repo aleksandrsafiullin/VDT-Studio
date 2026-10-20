@@ -6,8 +6,8 @@
   "entrypoint": "sidecars/vdt-local-runtime.mjs",
   "launcherSha256": "53a53dba0485fecb6509bd859d35c0d7a6357428ef074c36b406d218eb369923",
   "windowsLauncherSha256": "f77472174de2c14660011fc4b0545cd77ba9ad831906098957dacdc35901daa0",
-  "bundleSha256": "98633b49abfe2aff46e946c3797ab5a8e4e2b84ed2705c0e9df1975962ecfad4",
-  "skillLibrarySha256": "817a0ec2274072531f37e5319088dade3b524a4e9c3f36bada7033a5973347c0",
+  "bundleSha256": "40f5ccbd1f2b9574b316bf8e9ba6dda1c22324e41a91532a52d220fe1b8c5a93",
+  "skillLibrarySha256": "6c3b94bf43916a37c54c512b422df65ca827032cb9a9d82415799a62acf12049",
   "selfContained": false,
   "requiresNode": ">=24 <25"
 }

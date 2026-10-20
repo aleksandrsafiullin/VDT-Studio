@@ -8,7 +8,7 @@ import {
 } from "./provider-utils";
 
 interface AzureChatCompletionResponse {
-  choices?: Array<{ message?: { content?: string } }>;
+  choices?: Array<{ finish_reason?: string; message?: { content?: string; tool_calls?: unknown[]; function_call?: unknown; refusal?: unknown } }>;
 }
 
 export class AzureOpenAiProvider implements AiProvider {
@@ -27,8 +27,9 @@ export class AzureOpenAiProvider implements AiProvider {
       fetch: this.config.fetch ?? globalThis.fetch,
       url,
       signal: params.signal,
-      timeoutMs: this.config.timeoutMs,
-      maxResponseBytes: this.config.maxResponseBytes,
+      timeoutMs: params.taskType === "suggest_incoming_kpis" ? Math.min(this.config.timeoutMs ?? 15_000, 15_000) : this.config.timeoutMs,
+      maxResponseBytes: params.taskType === "suggest_incoming_kpis" ? 64 * 1024 : this.config.maxResponseBytes,
+      requireAbortSettlement: params.taskType === "suggest_incoming_kpis",
       init: {
         method: "POST",
         headers: {
@@ -37,7 +38,7 @@ export class AzureOpenAiProvider implements AiProvider {
         },
         body: JSON.stringify({
           temperature: params.temperature ?? 0.2,
-          max_tokens: params.maxTokens ?? 2200,
+          max_tokens: params.taskType === "suggest_incoming_kpis" ? Math.min(params.maxTokens ?? 2048, 2048) : params.maxTokens ?? 2200,
           response_format: responseFormat,
           messages: [
             { role: "system", content: params.systemPrompt },
@@ -55,11 +56,15 @@ export class AzureOpenAiProvider implements AiProvider {
         ? { type: "json_schema", json_schema: { name: "vdt_agent_decision", strict: true, schema: jsonSchema } }
         : { type: "json_object" })) as AzureChatCompletionResponse;
     } catch (error) {
-      if (!jsonSchema || !isStructuredSchemaUnsupported(error)) throw error;
+      if (params.taskType === "suggest_incoming_kpis" || !jsonSchema || !isStructuredSchemaUnsupported(error)) throw error;
       payload = (await request({ type: "json_object" })) as AzureChatCompletionResponse;
     }
 
-    const content = payload.choices?.[0]?.message?.content;
+    const choice = payload.choices?.[0];
+    if (params.taskType === "suggest_incoming_kpis" && (payload.choices?.length !== 1 || choice?.finish_reason !== "stop" || choice.message?.tool_calls?.length || choice.message?.function_call || choice.message?.refusal)) {
+      throw new Error("Smart provider did not return one completed tool-free result.");
+    }
+    const content = choice?.message?.content;
     return parseStructuredOutput<TOutput>(requireNonEmptyText(content, "Azure OpenAI"), params.schema);
   }
 }

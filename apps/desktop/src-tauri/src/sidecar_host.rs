@@ -2,14 +2,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     env,
     fmt,
     fs::File,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
-    sync::{mpsc, Mutex},
+    sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc, Mutex},
     thread,
     time::{Duration, SystemTime},
 };
@@ -84,6 +84,27 @@ pub struct DesktopRuntime {
     sidecar: Mutex<Option<SidecarProcess>>,
     resource_dir: Mutex<Option<PathBuf>>,
     crash_timestamps: Mutex<Vec<SystemTime>>,
+    smart_admissions: Mutex<HashMap<String, Arc<SmartMetadataAdmission>>>,
+}
+
+#[derive(Default)]
+struct SmartMetadataAdmission {
+    cancelled: AtomicBool,
+    writer: Mutex<Option<Arc<Mutex<ChildStdin>>>>,
+}
+
+fn write_sidecar_frame(writer: &Arc<Mutex<ChildStdin>>, value: Value) -> Result<(), RuntimeError> {
+    let frame = serde_json::to_string(&value)
+        .map_err(|error| RuntimeError::new("SIDECAR_SERIALIZE_FAILED", error.to_string()))?;
+    if frame.len() > MAX_FRAME_BYTES {
+        return Err(RuntimeError::new("SIDECAR_FRAME_TOO_LARGE", "Sidecar frame is too large."));
+    }
+    let mut stdin = writer.lock()
+        .map_err(|_| RuntimeError::new("SIDECAR_LOCK_FAILED", "Sidecar writer lock was poisoned."))?;
+    stdin.write_all(frame.as_bytes())
+        .and_then(|_| stdin.write_all(b"\n"))
+        .and_then(|_| stdin.flush())
+        .map_err(|error| RuntimeError::new("SIDECAR_WRITE_FAILED", error.to_string()))
 }
 
 impl DesktopRuntime {
@@ -146,6 +167,18 @@ impl DesktopRuntime {
     }
 
     pub fn cancel(&self, request_id: &str) -> Result<(), RuntimeError> {
+        let admission = self.smart_admissions.lock()
+            .map_err(|_| RuntimeError::new("SIDECAR_LOCK_FAILED", "Metadata admission lock was poisoned."))?
+            .get(request_id).cloned();
+        if let Some(admission) = admission {
+            admission.cancelled.store(true, Ordering::SeqCst);
+            let writer = admission.writer.lock()
+                .map_err(|_| RuntimeError::new("SIDECAR_LOCK_FAILED", "Metadata writer lock was poisoned."))?;
+            if let Some(writer) = writer.as_ref() {
+                return write_sidecar_frame(writer, json!({ "protocolVersion": PROTOCOL_VERSION, "type": "cancel", "requestId": request_id }));
+            }
+            return Ok(());
+        }
         let mut sidecar = self.lock_or_start()?;
         let result = sidecar
             .as_mut()
@@ -153,6 +186,57 @@ impl DesktopRuntime {
             .cancel(request_id);
         if matches!(result.as_ref(), Err(error) if error.is_process_failure()) {
             *sidecar = None;
+            self.record_crash();
+        }
+        result
+    }
+
+    pub fn reserve_smart_request(&self, request_id: &str) -> Result<(), RuntimeError> {
+        let mut admissions = self.smart_admissions.lock()
+            .map_err(|_| RuntimeError::new("SIDECAR_LOCK_FAILED", "Metadata admission lock was poisoned."))?;
+        if admissions.len() >= 16 || admissions.contains_key(request_id) {
+            return Err(RuntimeError::new("PREPARATION_CAPACITY", "Smart metadata admission is active or full."));
+        }
+        admissions.insert(request_id.into(), Arc::new(SmartMetadataAdmission::default()));
+        Ok(())
+    }
+
+    pub fn smart_execution(&self, request: Value) -> Result<Value, RuntimeError> {
+        self.smart_owned_request("smart_execution", request)
+    }
+
+    pub fn smart_complete(&self, request: Value) -> Result<Value, RuntimeError> {
+        self.smart_owned_request("complete", request)
+    }
+
+    fn smart_owned_request(&self, method: &'static str, mut request: Value) -> Result<Value, RuntimeError> {
+        let request_id = string_field(&request, "requestId")?;
+        request.as_object_mut()
+            .ok_or_else(|| RuntimeError::new("INVALID_REQUEST", "Smart metadata must be an object."))?
+            .remove("requestId");
+        let admission = self.smart_admissions.lock()
+            .map_err(|_| RuntimeError::new("SIDECAR_LOCK_FAILED", "Metadata admission lock was poisoned."))?
+            .get(&request_id).cloned()
+            .ok_or_else(|| RuntimeError::new("INVALID_REQUEST", "Smart metadata was not reserved."))?;
+        let result = (|| {
+            let mut guard = self.lock_or_start()?;
+            let sidecar = guard.as_mut().ok_or_else(|| RuntimeError::new("SIDECAR_NOT_STARTED", "Sidecar was not started."))?;
+            {
+                let mut writer = admission.writer.lock()
+                    .map_err(|_| RuntimeError::new("SIDECAR_LOCK_FAILED", "Metadata writer lock was poisoned."))?;
+                if admission.cancelled.load(Ordering::SeqCst) {
+                    return Err(RuntimeError::new("CANCELLED", "Smart metadata admission was cancelled before dispatch."));
+                }
+                // The request frame precedes publication of the cancel writer.
+                // Cancellation never waits on this request's response mutex.
+                sidecar.send_request(method, request, Some(request_id.clone()))?;
+                *writer = Some(Arc::clone(&sidecar.stdin));
+            }
+            sidecar.read_response()
+        })();
+        if let Ok(mut admissions) = self.smart_admissions.lock() { admissions.remove(&request_id); }
+        if matches!(result.as_ref(), Err(error) if error.is_process_failure()) {
+            if let Ok(mut sidecar) = self.sidecar.lock() { *sidecar = None; }
             self.record_crash();
         }
         result
@@ -263,7 +347,7 @@ fn prune_crashes(crashes: &mut Vec<SystemTime>) {
 
 struct SidecarProcess {
     child: Child,
-    stdin: ChildStdin,
+    stdin: Arc<Mutex<ChildStdin>>,
     stdout: BufReader<ChildStdout>,
     seen_request_ids: HashSet<String>,
 }
@@ -314,7 +398,7 @@ impl SidecarProcess {
 
         let mut sidecar = Self {
             child,
-            stdin,
+            stdin: Arc::new(Mutex::new(stdin)),
             stdout,
             seen_request_ids: HashSet::new(),
         };
@@ -332,6 +416,11 @@ impl SidecarProcess {
         payload: Value,
         request_id: Option<String>,
     ) -> Result<Value, RuntimeError> {
+        self.send_request(method, payload, request_id)?;
+        self.read_response()
+    }
+
+    fn send_request(&mut self, method: &'static str, payload: Value, request_id: Option<String>) -> Result<(), RuntimeError> {
         self.ensure_alive()?;
         let request_id = request_id.unwrap_or_else(|| uuid_like_id(method));
         if self.seen_request_ids.contains(&request_id) {
@@ -347,8 +436,10 @@ impl SidecarProcess {
             "requestId": request_id,
             "method": method,
             "payload": payload
-        }))?;
+        }))
+    }
 
+    fn read_response(&mut self) -> Result<Value, RuntimeError> {
         loop {
             let frame = self.read_frame()?;
             if frame.get("type").and_then(Value::as_str) == Some("event") {
@@ -397,16 +488,7 @@ impl SidecarProcess {
     }
 
     fn write_frame(&mut self, value: Value) -> Result<(), RuntimeError> {
-        let frame = serde_json::to_string(&value)
-            .map_err(|error| RuntimeError::new("SIDECAR_SERIALIZE_FAILED", error.to_string()))?;
-        if frame.len() > MAX_FRAME_BYTES {
-            return Err(RuntimeError::new("SIDECAR_FRAME_TOO_LARGE", "Sidecar frame is too large."));
-        }
-        self.stdin
-            .write_all(frame.as_bytes())
-            .and_then(|_| self.stdin.write_all(b"\n"))
-            .and_then(|_| self.stdin.flush())
-            .map_err(|error| RuntimeError::new("SIDECAR_WRITE_FAILED", error.to_string()))
+        write_sidecar_frame(&self.stdin, value)
     }
 
     fn read_frame(&mut self) -> Result<Value, RuntimeError> {

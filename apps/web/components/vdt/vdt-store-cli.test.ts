@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi, type MockedFunction } from "vitest";
-import { cloneProject, productionVolumeProject, type VdtChangeSet } from "@vdt-studio/vdt-core";
+import { cloneProject, productionVolumeProject, reconcileIncomingKpiPlan, type VdtChangeSet } from "@vdt-studio/vdt-core";
 import { DEFAULT_EXECUTION_SETTINGS, type ExecutionSettings } from "@/lib/execution-mode-catalog";
 import type { VdtAgentRunSnapshot } from "@/lib/agent-client";
 import { resolveSelectedCliReadiness } from "@/lib/cli-readiness";
@@ -45,7 +45,7 @@ beforeEach(() => {
 });
 
 function mockDeepenChangeSet(): VdtChangeSet {
-  return {
+  return reconcileIncomingKpiPlan(useVdtStudioStore.getState().project, {
     id: "changeset_deepen_unplanned_downtime",
     taskType: "deepen_node",
     backendId: "mock",
@@ -58,7 +58,7 @@ function mockDeepenChangeSet(): VdtChangeSet {
         relation: "negative_driver",
         name: "Equipment Failure Downtime",
         unit: "hours/month",
-        baselineValue: 12
+        type: "input"
       },
       {
         id: "add_process_interruption_downtime",
@@ -67,16 +67,16 @@ function mockDeepenChangeSet(): VdtChangeSet {
         relation: "negative_driver",
         name: "Process Interruption Downtime",
         unit: "hours/month",
-        baselineValue: 8
+        type: "input"
       }
     ],
-    updates: [],
+    updates: [{ id: "update_incoming_formula", nodeId: "unplanned_downtime", patch: { type: "calculated", formula: "equipment_failure_downtime + process_interruption_downtime" } }],
     deletions: [],
     edgeChanges: [],
     assumptions: [],
     questions: [],
     warnings: []
-  };
+  }, "unplanned_downtime");
 }
 
 function byokExecutionSettings(): ExecutionSettings {
@@ -1051,11 +1051,11 @@ describe("vdt-store change-set workflow", () => {
     );
   });
 
-  it("applyPendingChangeSet appends a version snapshot and applies selected additions", () => {
+  it("applyPendingChangeSet appends a version snapshot and applies the coherent incoming formula layer", () => {
     const changeSet = mockDeepenChangeSet();
     useVdtStudioStore.setState({
       pendingChangeSet: changeSet,
-      changeSetSelection: new Set(["add_equipment_failure_downtime"])
+      changeSetSelection: new Set([...changeSet.additions, ...changeSet.updates, ...changeSet.edgeChanges].map(row => row.id))
     });
 
     const initialVersionCount = useVdtStudioStore.getState().project.versions.length;
@@ -1069,9 +1069,10 @@ describe("vdt-store change-set workflow", () => {
     expect(state.project.versions.length).toBe(initialVersionCount + 1);
     expect(state.project.versions.at(-1)?.name).toBe("Before adding drivers");
     expect(state.project.versions.at(-1)?.taskType).toBe("deepen_node");
-    expect(state.project.graph.nodes.length).toBe(initialNodeCount + 1);
+    expect(state.project.graph.nodes.length).toBe(initialNodeCount + 2);
     expect(state.project.graph.nodes.map((node) => node.id)).toContain("equipment_failure_downtime");
-    expect(state.project.graph.nodes.map((node) => node.id)).not.toContain("process_interruption_downtime");
+    expect(state.project.graph.nodes.map((node) => node.id)).toContain("process_interruption_downtime");
+    expect(state.project.graph.nodes.find(node => node.id === "unplanned_downtime")).toMatchObject({ type: "calculated", formula: "equipment_failure_downtime + process_interruption_downtime" });
   });
 
   it("discardPendingChangeSet clears pending change-set state", () => {
@@ -1232,10 +1233,7 @@ describe("vdt-store change-set workflow", () => {
 
     useVdtStudioStore.setState({
       pendingChangeSet: changeSet,
-      changeSetSelection: new Set([
-        "add_equipment_failure_downtime",
-        "add_process_interruption_downtime"
-      ])
+      changeSetSelection: new Set([...changeSet.additions, ...changeSet.updates, ...changeSet.edgeChanges].map(row => row.id))
     });
     useVdtStudioStore.getState().applyPendingChangeSet();
 

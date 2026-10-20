@@ -312,6 +312,38 @@ describe("AI harness", () => {
     ).toThrow();
   });
 
+  it("reads historical child-only records but rejects new application without a v2 target formula", async () => {
+    const { historicalDeepenNodeOutputSchema } = await import("./schemas/deepen-node");
+    const historical = structuredClone(unplannedDowntimeDeepenOutput) as Record<string, unknown>;
+    delete historical.schemaVersion; delete historical.targetFormula; delete historical.retainedNodeIds;
+    expect(historicalDeepenNodeOutputSchema.safeParse(historical).success).toBe(true);
+    expect(() => validateAndMapDeepenNode(productionVolumeProject, historical, "unplanned_downtime", "mock")).toThrow();
+  });
+
+  it("maps a versioned formula, target type, retained source and plan as one authoritative delta", async () => {
+    const { createSmartKpiMeasuredFixture, inspectDecompositionHierarchy } = await import("@vdt-studio/vdt-core");
+    const project = createSmartKpiMeasuredFixture(14), measured = project.graph.nodes[0]!;
+    project.rootNodeId = "output"; project.scenarios = [];
+    project.graph = { nodes: [
+      { ...measured, id: "output", name: "Loaded moving time", unit: "h/trip", formula: "distance / target", decompositionPlan: { version: 1, goal: "Distance and speed define moving time.", nodes: [
+        { nodeId: "target", parentNodeId: "output", kind: "input" }, { nodeId: "distance", parentNodeId: "output", kind: "input" }] } },
+      { ...measured, id: "target", name: "Loaded speed", type: "input", unit: "km/h", dataMapping: { ...measured.dataMapping!, unit: "km/h" } },
+      { ...measured, id: "distance", name: "Measured distance per trip", type: "input", unit: "km/trip", baselineValue: 4, dataMapping: { ...measured.dataMapping!, unit: "km/trip" } }
+    ], edges: [
+      { id: "edge_output_target", sourceNodeId: "output", targetNodeId: "target", relation: "formula_dependency", aiGenerated: false },
+      { id: "edge_output_distance", sourceNodeId: "output", targetNodeId: "distance", relation: "formula_dependency", aiGenerated: false }
+    ] };
+    const source = structuredClone(project.graph.nodes.find(node => node.id === "distance"));
+    const raw = { schemaVersion: "deepen_node.v2", targetNodeId: "target", targetFormula: "distance / measured_time", retainedNodeIds: ["distance"],
+      nodes: [{ id: "measured_time", name: "Independent measured moving time", type: "input", unit: "h/trip", description: "Measured independently per trip.", aiConfidence: 0.8, aiRationale: "Distance divided by independently measured moving hours." }],
+      edges: [{ id: "edge_target_time", sourceNodeId: "target", targetNodeId: "measured_time", relation: "formula_dependency" }], assumptions: [], questionsForUser: [], warnings: [] };
+    const { changeSet } = validateAndMapDeepenNode(project, raw, "target", "mock"), candidate = previewChangeSet(project, changeSet);
+    expect(candidate.graph.nodes.find(node => node.id === "target")).toMatchObject({ type: "calculated", baselineValue: 14, formula: "distance / measured_time" });
+    expect(candidate.graph.nodes.find(node => node.id === "distance")).toEqual(source); expect(inspectDecompositionHierarchy(candidate, "incremental_user_apply").valid).toBe(true);
+    expect(candidate.graph.nodes[0]!.decompositionPlan!.nodes.find(entry => entry.nodeId === "distance")?.sharedWith).toContain("target");
+    expect(() => validateAndMapDeepenNode(project, { ...raw, retainedNodeIds: [] }, "target", "mock")).toThrow(/retained/i);
+  });
+
   it("validates deepen_node golden output and maps to a previewable change set", () => {
     const output = deepenNodeOutputSchema.parse(unplannedDowntimeDeepenOutput);
     expect(output.targetNodeId).toBe("unplanned_downtime");
@@ -322,7 +354,7 @@ describe("AI harness", () => {
       output,
       "unplanned_downtime"
     );
-    const changeSet = deepenNodeOutputToChangeSet(validated, { backendId: "mock" });
+    const changeSet = deepenNodeOutputToChangeSet(validated, { backendId: "mock", project: productionVolumeProject });
 
     expect(changeSet.taskType).toBe("deepen_node");
     expect(changeSet.additions).toHaveLength(2);
@@ -404,7 +436,7 @@ describe("AI harness", () => {
     ).toThrow(/already exists/);
   });
 
-  it("rejects deepen_node proposals that fail graph validation", () => {
+  it("rejects deepen_node proposals that add a calculated child instead of one primitive layer", () => {
     expect(() =>
       validateAndMapDeepenNode(
         productionVolumeProject,
@@ -435,7 +467,7 @@ describe("AI harness", () => {
         "unplanned_downtime",
         "mock"
       )
-    ).toThrow(/graph validation/);
+    ).toThrow(/primitive measured inputs/);
   });
 
   it("rejects non-root root nodes and malformed formulas during project conversion", () => {

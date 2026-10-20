@@ -1,5 +1,53 @@
 # Local Runner
 
+## Smart suggestion completion profile
+
+`suggest_incoming_kpis` / `suggest-incoming-kpis-v1` is a separate one-completion
+read-only contract through `/v1/completions`, managed development execution and
+the desktop `complete` pipe method. It never boots/resumes an agent, researches,
+retains conversation or repairs output. API/BYOK uses the same compact task via
+the guarded `/api/ai/suggestions` service. Input/final output are 24/16 KiB and
+transport envelopes 64 KiB. API/local generation is capped at 2048 tokens; Codex's
+2048 is prompt-requested only. HTTP/CLI execution is bounded by 15/30 s or the
+lower raw user timeout, including CLI version selection.
+
+Smart Codex uses a private 0700 HOME/CODEX_HOME/workspace, copies only reviewed auth/
+installation/catalog artifacts, ignores config/rules, preserves the selected or
+configured default model explicitly, uses read-only sandbox, disables reviewed tool
+features/web search, and rejects reported tools/unknown events/multiple turns or
+malformed UTF-8. One invocation does not establish an opaque provider hard token
+limit or OS isolation. Other subscription adapters return typed unavailable for
+Smart; their existing general task profiles are unchanged.
+
+`POST /v1/smart-execution` admits Codex metadata only and requires the same pairing/
+Origin/JSON controls as other protected routes. Its closed body is
+`{backendId:"codex_subscription",model?,timeoutMs?}`; executable paths, flags,
+endpoints and credentials stay host-owned. Metadata admission is a separate
+settings-time step, capped at 5 s/lower raw budget plus bounded owned cleanup.
+Shared host admission ownership deduplicates concurrent probes and quarantines
+unknown cleanup before any workspace identity/scheduler exists. Exact defaults
+are used when provable; otherwise `host_default` is an explicitly qualified alias
+bound to nonsecret config/catalog/CLI/policy metadata. Re-admission uses no one-use
+session ID or secret hash.
+
+For Smart, `/v1/completions/:requestId/cancel` waits for actual executor cleanup and
+returns `cleanupConfirmed`; ordinary full-agent cancellation retains its 202
+signal-acknowledgement contract. The common runtime enforces one active Smart job
+per workspace and sticky execution quarantine, covering managed, paired and native
+callers. It retains at most 64 workspace quarantine lanes, up to 32 execution keys
+per lane; completed empty lanes are released. A missing request is never cleanup
+proof. `CLEANUP_UNCONFIRMED` preserves owned private evidence and blocks reuse until
+privileged host confirmation or an actual different execution. HTTP closure means
+our request/reader, not remote GPU termination. These are host-session boundaries,
+not durable crash/reboot coordination. Native metadata admission/revalidation uses
+the new `ai_smart_execution` -> `smart_execution` pipe method; it shares probe
+ownership and accepts only Codex/model/deadline. The original metadata request
+stays pending until cleanup, with a separate framed cancel writer at the Rust
+host. Real pipe/synthetic native invoke/parser checks passed, not a Rust/native
+build. Local Chrome prepared-control and stored editor/recovery evidence passed;
+native-package and live-inference qualification remain separate gates. See
+[validation](PRODUCTION_READINESS.md#smart-kpi-validation).
+
 ## Codex checkpoint wire amendment (2026-10-17)
 
 The web-hosted Codex session transport places `--search` before `exec`/`exec resume`, pins the native shell feature off and supplies a private per-segment `--output-schema`. The strict wire uses `argsJson` for model-authored Gateway argument objects and at most three calls; decoding is followed by canonical argument, scope, mutation and finish validation. One envelope-only same-session correction is bounded and never retries native tool violations or ambiguous output. Each temporary schema file is removed after the child exits. These changes do not certify CLI hard isolation, native packaging or the standalone runner's separate execution path.
@@ -28,6 +76,7 @@ The terminal prints a short-lived pairing code. In explicit standalone-runner De
 | `POST /v1/unpair` | Revoke session |
 | `GET /v1/backends` | Public backend capabilities without executable details |
 | `POST /v1/backends/:id/test` | Fixed reviewed connection probe |
+| `POST /v1/smart-execution` | Paired, bounded Smart Codex metadata admission |
 | `POST /v1/completions` | Execute registered task/schema contract |
 | `POST /v1/completions/:requestId/cancel` | Cancel active request |
 | `GET /v1/runs/:requestId` | Bounded status/result lookup |

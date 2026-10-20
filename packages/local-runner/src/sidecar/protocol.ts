@@ -7,6 +7,7 @@ export const SIDECAR_REQUEST_METHODS = [
   "test_backend",
   "list_models",
   "complete",
+  "smart_execution",
   "get_run",
   "open_provider_auth",
   "speech",
@@ -185,6 +186,7 @@ const METHOD_PAYLOAD_KEYS = {
   test_backend: ["backendId"],
   list_models: ["backendId"],
   complete: ["backendId", "taskType", "schemaId", "input", "model", "timeoutMs"],
+  smart_execution: ["backendId", "model", "timeoutMs"],
   get_run: ["runRequestId"],
   open_provider_auth: ["backendId"],
   speech: ["operation", "modelId", "confirmed", "language", "audioBase64", "jobId"],
@@ -323,6 +325,9 @@ function validateRequestPayload(method: SidecarRequestMethod, payload: JsonObjec
   }
   if ("timeoutMs" in payload && (!Number.isSafeInteger(payload.timeoutMs) || Number(payload.timeoutMs) <= 0)) {
     throw new SidecarProtocolError("INVALID_PAYLOAD", "timeoutMs must be a positive safe integer.");
+  }
+  if (method === "smart_execution" && (payload.backendId !== "codex_subscription" || Number(payload.timeoutMs ?? 5000) > 5000)) {
+    throw new SidecarProtocolError("INVALID_PAYLOAD", "Smart metadata requires the selected Codex backend and at most 5000ms.");
   }
 }
 

@@ -2,7 +2,7 @@
 id: mining.production_volume
 title: Mining production volume decomposition
 domain: mining
-version: 2
+version: 3
 patterns:
   - production volume
   - ore mined
@@ -348,3 +348,57 @@ production_volume
 - Use `mining.haulage_truck_cycle` for truck cycle time, payload, body volume, routes, speeds, queueing, and fleet capacity.
 - Use `mining.underground_production_cycle` for underground development/stoping cycles, ventilation, support, backfill, and hoisting.
 - Use `mining.material_allocation_ore_waste` whenever ore/waste equipment assignment or time split is ambiguous or material-specific productivity matters.
+
+## Audited Smart One-Layer Recipes
+
+These are explicit projections of the formulas above. They apply only after a
+context-bound semantic decision selects this skill and the exact metric role;
+names, aliases and matching terms do not grant applicability. Every immediate
+child starts as an unknown input, even when it may later be decomposed. No
+illustrative baseline is included. Time, tonnes and period must be compatible;
+yield is a decimal fraction, never a percent number without conversion.
+
+```vdt-smart-recipes
+{
+  "schemaVersion": "vdt_smart_recipe_source.v1",
+  "recipes": [
+    {
+      "id": "production.time_rate",
+      "title": "Working time × productivity",
+      "targetRole": "production_volume",
+      "formula": "working_time * productivity",
+      "unitRule": "mass_time_rate",
+      "children": [
+        { "key": "working_time", "conceptKey": "effective_working_time", "name": "Effective working time", "unitRole": "working_time", "relation": "multiplicative_driver" },
+        { "key": "productivity", "conceptKey": "average_productivity", "name": "Average productivity", "unitRole": "mass_rate", "relation": "multiplicative_driver" }
+      ],
+      "limitations": ["Confirm the production boundary and common analysis period.", "Do not count the same downtime in both working time and productivity."]
+    },
+    {
+      "id": "production.time_losses",
+      "title": "Calendar time less downtime",
+      "targetRole": "effective_working_time",
+      "formula": "calendar_time - planned_downtime - unplanned_downtime",
+      "unitRule": "time_losses",
+      "children": [
+        { "key": "calendar_time", "conceptKey": "calendar_time", "name": "Calendar time", "unitRole": "target", "relation": "additive_component" },
+        { "key": "planned_downtime", "conceptKey": "planned_downtime", "name": "Planned downtime", "unitRole": "target", "relation": "subtractive_component" },
+        { "key": "unplanned_downtime", "conceptKey": "unplanned_downtime", "name": "Unplanned downtime", "unitRole": "target", "relation": "subtractive_component" }
+      ],
+      "limitations": ["All time components use the same period and hour basis.", "Downtime categories must be mutually exclusive."]
+    },
+    {
+      "id": "production.rate_yield",
+      "title": "Bottleneck rate × yield",
+      "targetRole": "average_productivity",
+      "formula": "bottleneck_rate * yield_factor",
+      "unitRule": "rate_yield",
+      "children": [
+        { "key": "bottleneck_rate", "conceptKey": "bottleneck_rate", "name": "Bottleneck rate", "unitRole": "mass_rate", "relation": "multiplicative_driver" },
+        { "key": "yield_factor", "conceptKey": "yield_factor", "name": "Yield factor", "unitRole": "fraction", "relation": "multiplicative_driver" }
+      ],
+      "limitations": ["Yield is an unknown decimal fraction, not an assumed 100%.", "Confirm that yield belongs inside this rate and is not already applied upstream."]
+    }
+  ]
+}
+```

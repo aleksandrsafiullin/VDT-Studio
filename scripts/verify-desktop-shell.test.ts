@@ -12,6 +12,7 @@ const commands = [
   "ai_test_backend",
   "ai_list_models",
   "ai_complete",
+  "ai_smart_execution",
   "ai_cancel",
   "ai_get_run",
   "open_provider_auth",
@@ -122,7 +123,7 @@ afterEach(async () => {
 
 describe("verify-desktop-shell", () => {
   it("passes the current desktop scaffold", () => {
-    expect(verifyDesktopShell()).toMatchObject({ commandCount: 10 });
+    expect(verifyDesktopShell()).toMatchObject({ commandCount: 11 });
   });
 
   it("fails if a generic native permission is enabled", async () => {

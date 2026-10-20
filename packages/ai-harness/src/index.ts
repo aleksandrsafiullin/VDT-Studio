@@ -83,3 +83,5 @@ export * from "./fixtures/explain-node";
 export * from "./fixtures/explain-scenario";
 export * from "./fixtures/executive-summary";
 export * from "./generate-vdt";
+
+export * from "./tasks/suggest-incoming-kpis";

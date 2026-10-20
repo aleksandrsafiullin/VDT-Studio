@@ -1,5 +1,122 @@
 # Production Readiness
 
+<a id="smart-kpi-validation"></a>
+
+## Formula and mixed incoming revision (2026-10-20)
+
+FM-01–04 strict draft/formal compiler/one-call preparation/v2 journal have independent acceptance. Current future Add atomically installs selected proposal rows, own rows, retained references, calculated parent/root role and the final formula; source measurements remain reference/checkpoint evidence and unknown inputs may produce n/a. Historical v1 committing requests replay their exact old body/key without new-policy compilation. Manual context/preview/Add tests make zero execution-admission calls. Real SQLite route lost-response/reload/replay and new-revision Undo pass. This does not certify a business decomposition.
+
+Current bounded Chrome verification passed real mixed partial+manual Add, persisted reopen/hydrated Undo, source value4 retained/read-only, baseline n/a and explicit scenario10 preservation. The final three affected functional retakes passed on unchanged source, including visible manual focus, accepted/non-AI/unknown own inputs, no-provider manual Add, input7→computed7, held real Undo and root checkpoint/reopen. The migrated checkpoint assertion and reviewed UI race corrections are included.
+
+The revised prepared-control timing gate passed four cells, 30 activations each:
+
+| Prepared source | Nodes | p50 ms | p95 ms | Worst ms |
+|---|---:|---:|---:|---:|
+| Library | 1 | 65.8 | 66.5 | 70.9 |
+| Persisted cache | 1 | 65.1 | 66.7 | 66.9 |
+| Library | 200 | 212.2 | 279.8 | 283.3 |
+| Persisted cache | 200 | 745.4 | 899.9 | 977.6 |
+
+All four prepared p95 results meet the ≤1 s acceptance threshold. The 200 ms goal
+is not met by the 200-node fixtures. The final isolated Library200 run
+`2026-10-20T06-34-09-969Z` recorded target calls 1→1/all calls 13→13; all 13 valid
+SDK request starts completed before the browser measurement window, with zero
+started/unknown in-window requests. The other three cells use their original
+target-call gate/full tracing and have no explicit all-call recorder. Strict zero
+ALL-request evidence therefore applies only to the final Library200 cell, not
+all 120 activations. Instrumentation and quiescence differ between those runs.
+Source hashes were unchanged and no full reload occurred. The earlier 23-sample
+timeout and 30-sample request-counter failure
+remain retained history, not passing cells. No product performance patch was made.
+
+These are development Chrome prepared-UI measurements with deterministic
+preparation and real recorder/cache/store/SQLite boundaries. They do not measure
+live `gpt-6-luna` inference, native packaging or release quality. See the
+[current browser evidence](../output/smart-kpi-formula-mixed/EVIDENCE.md),
+[main checks](implementation/SMART_KPI_FORMULA_MIXED_EVIDENCE.md) and
+[revision log](implementation/SMART_KPI_FORMULA_MIXED_LOG.md). The earlier240-sample
+table below predates this revision. Release/platform qualification remains open.
+
+## Historical pre-formula Smart browser validation (2026-10-20)
+
+Domain contracts/compiler, configured one-completion transports, cache/scheduler
+and revision-CAS Add/Undo have independent bounded review acceptance. The local
+Chrome editor fixtures passed same-hover interaction, real stored Add/reload/Undo
+and immutable lost-response reconciliation. Native metadata/completion source,
+protocol and cancellation fixtures passed their qualified review; no native
+binary was built. Final integrated acceptance is recorded separately in the
+[execution log](implementation/SMART_KPI_SUGGESTIONS_LOG.md).
+
+Cache bounds are 256 entries/2 MiB/7 days; the queue is 12 with one owned job and
+8 automatic attempts per semantic generation, selected plus at most 6 visible/new
+children. Unknown owned cleanup quarantines the execution rather than permitting
+an overlapping job. Cancellation closes our HTTP request/reader, not a vendor GPU
+receipt. Codex is trusted-local with no verified hard token ceiling or OS isolation.
+
+The bounded store/native suites cover a real SQLite route
+lost-response replay and new-revision Undo, quota isolation, journal inconsistency,
+late/read-only authority, passive credential restoration/revocation and detached
+history continuation. Native evidence is actual TypeScript sidecar pipe plus
+synthetic Tauri invoke and Rust parser checks, not Rust build/package execution.
+
+Prepared controls were measured from pointer entry to visible enabled Add in
+Chrome **155.0.8059.84**, development web mode, with Node 24. Each cell below
+contains 30 activations: **240 total**, with zero target preparation-provider
+calls during the timed samples. Preparation responses
+were synthetic; browser vault/IndexedDB, decision provenance, store and revision
+routes were real. Edge measurements use zoom 1.5 and actual canvas pan.
+
+| Prepared source | Nodes | Position | p50 ms | p95 ms | Worst ms |
+|---|---:|---|---:|---:|---:|
+| Library | 1 | Normal | 15.4 | 16.6 | 16.8 |
+| Cache | 1 | Normal | 16.2 | 16.9 | 17.7 |
+| Library | 200 | Normal | 119.9 | 167.2 | 167.8 |
+| Cache | 200 | Normal | 118.5 | 168.8 | 169.7 |
+| Library | 1 | Edge/zoom/pan | 16.2 | 17.8 | 18.1 |
+| Cache | 1 | Edge/zoom/pan | 16.4 | 17.1 | 17.7 |
+| Library | 200 | Edge/zoom/pan | 119.1 | 172.7 | 193.0 |
+| Cache | 200 | Edge/zoom/pan | 122.0 | 172.9 | 173.5 |
+
+The prepared path met the <=1 s target and 200 ms p95 goal in these fixtures.
+The one-node edge Library fixture required one explicit warmup Refresh when
+startup execution changed from absent to admitted: the checked list stayed
+frozen and Add was disabled. Measurement began after 650 ms of stable admission;
+there was no Refresh during its 30 samples. This preserves stale-list safety and
+does not promise subsecond cold preparation. A held synthetic cold response
+showed loading at 98.3 ms and controls 38.7 ms after release; neither number is
+real inference latency.
+
+Across bounded browser runs, real Add/reload/hydrated Undo, lost-response reload
+and exact replay without duplicate revisions/children, explicit formula choice,
+measured/scenario preservation, keyboard focus, pointer bridge, source handle,
+wheel isolation, edge placement, zoom/touch, private-IndexedDB fallback and manual
+editing passed. Business semantics, live selected-backend quality/speed, native
+packaging and cross-platform/browser qualification remain separate gates.
+Existing release `NO-GO`, W0.2/default-off and provider limitations are unchanged.
+See [plan](implementation/SMART_KPI_SUGGESTIONS_PLAN.md) and
+[ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
+
+The [local evidence index](../output/smart-kpi-suggestions/EVIDENCE.md) links raw
+timings, screenshots, passing results, source hashes and cleanup audit. All 11
+private feature build/data roots were cleaned after owned processes closed; the
+existing user development server was untouched. About 73.6 MiB of diagnostic
+evidence remains, including 25.1 MiB and 14.0 MiB traces. No temporary build or
+VDT storage is retained. The browser route uses stored VDTs; unsaved scratch is
+covered by actual-store unit fixtures.
+
+Measured-input correction (2026-10-20): the user subsequently reported model-empty
+results for three sourced haulage leaves. Stored-context inspection confirmed
+that contextual children were permitted and the excerpt was complete; the client
+had discarded the model's empty rationale/limitations. The instruction now
+distinguishes proposed contextual measurements from audited arithmetic, preserves
+empty details and invalidates prior preparation-policy cache entries. Bounded
+deterministic regressions are separate from live usefulness: the executor could
+not access the user's embedded browser, and no automated real-provider result was obtained. The user later supplied
+screenshots showing nonempty contextual suggestions from the selected `gpt-6-luna`;
+that observation prompted the formula/mixed revision above and does not qualify
+new formula inference or latency. The table above does not establish inference
+quality or speed. See [ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md#measured-input-empty-result-correction-2026-10-20).
+
 ## Local alpha browser verification (2026-10-19)
 
 The source-deployed local web browser gate passed on macOS with Node 24 and pnpm 10.33.2: **122 passed, zero failed, zero skipped, zero flaky** in one complete Playwright run (84 Chromium, 20 mobile Chrome emulation, 18 WebKit). Collection tags retain the existing engine/viewport coverage without preparing fixtures for tests restricted to another project. This is local web evidence; production/release `NO-GO`, V2 flags and provider certification levels are unchanged.

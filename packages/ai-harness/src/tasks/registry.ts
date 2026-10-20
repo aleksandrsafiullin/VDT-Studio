@@ -98,6 +98,7 @@ export const TASK_LIMITS: Record<VdtAiTaskType, VdtAiTaskLimits> = {
     maxNodes: 60,
     maxEdges: 120
   }),
+  suggest_incoming_kpis: withSharedReviewArrays({ maxInputBytes: 24 * 1024, maxOutputBytes: 16 * 1024 }),
   deepen_node: withSharedReviewArrays({
     maxInputBytes: DEFAULT_MAX_INPUT_BYTES,
     maxOutputBytes: DEFAULT_MAX_OUTPUT_BYTES,

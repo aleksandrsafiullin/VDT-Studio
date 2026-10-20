@@ -1,5 +1,29 @@
 # VDT Studio
 
+### Smart KPI suggestions
+
+The [formula/mixed revision](docs/architecture/SMART_KPI_INCOMING_CONTRACT.md)
+adds selected proposals and own KPIs with one explicit editable formula and
+revision-CAS Add. The parent becomes Calculated; its source measurement remains
+reference evidence. Manual-only drafts need no provider. Historical v1 writes
+replay exactly; old graphs are not migrated.
+
+Current local Chrome fixtures passed mixed/manual Add, real stored recovery and
+Undo. Prepared controls met the 1 s p95 target in four 30-sample cells; Library200
+p95 was 279.8 ms. The 200 ms goal is not met on the 200-node fixtures. These UI timings
+use deterministic preparation, not live model inference.
+
+The [Smart KPI plan](docs/implementation/SMART_KPI_SUGGESTIONS_PLAN.md) has versioned
+contracts, four explicitly bound canonical recipes, a validated one-layer compiler,
+one-completion configured API/Codex/local-model transports and a bounded persistent
+cache/workspace scheduler. Same-hover controls, real revision-CAS Add/Undo, exact
+journal recovery and native metadata IPC are implemented. Historical pre-revision local Chrome fixtures
+verified prepared Library/cache controls below 200 ms p95 for 1- and 200-node
+graphs, plus real stored Add/reload/Undo and lost-response reconciliation. Cold
+model speed and native packaging remain unqualified. See
+[validation](docs/PRODUCTION_READINESS.md#smart-kpi-validation) and
+[ADR-008](docs/adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
+
 ### Planned factor hierarchy (experimental)
 
 New full-tree Supervisor runs record an agent-authored decomposition plan before adding factors, build complete factor layers in order, and verify the plan against visual parents and formula dependencies before finishing. Agents can atomically reparent an existing branch while preserving its values and source lineage. Context metrics and cross-branch shared inputs must be declared explicitly. This structural check does not certify business correctness; see [readiness](docs/PRODUCTION_READINESS.md).
@@ -141,18 +165,19 @@ Choose **From file** for the selected KPI, or use the VDT Agent composer papercl
 
 ## AI Task Surface
 
-The schema registry contains 18 task contracts. Seventeen are exposed product tasks; `agent_plan` remains an internal compatibility contract and is not the primary build path.
+The schema registry contains 19 task contracts. Eighteen are exposed product tasks; `agent_plan` remains an internal compatibility contract and is not the primary build path.
 
 | Category | Exposed tasks |
 |---|---|
 | Compatibility agent registry | `orchestrator_first_response` (registered only), `agent_decision` |
 | Data discovery | `data_agent_decision`, `analyze_raw_dataset`, `review_dataset_proposal` |
 | Generate | `generate_tree` |
+| Read-only preparation | `suggest_incoming_kpis` |
 | Graph mutation | `deepen_node`, `simplify_branch`, `suggest_alternative`, `suggest_formula` |
 | Advisory | `review_model`, `check_units`, `identify_missing_drivers`, `identify_duplicate_drivers` |
 | Explanation | `explain_node`, `explain_scenario`, `generate_executive_summary` |
 
-Project creation runs through `/api/agent/runs`. Data discovery runs through `/api/data/discovery/runs`. `/api/ai/generate-vdt` is retained for BYOK connection tests and session-key model discovery; direct generation on that route returns `410`. Other bounded tasks use `/api/ai/run-task`.
+Project creation runs through `/api/agent/runs`. Data discovery runs through `/api/data/discovery/runs`. `/api/ai/generate-vdt` is retained for BYOK connection tests and session-key model discovery; direct generation on that route returns `410`. Smart preparation uses `/api/ai/suggestions` with terminal cancellation; the guarded generic task/native runtime registries also admit its schema. Other bounded tasks use `/api/ai/run-task`.
 
 The legacy build runtime no longer invokes a separate `orchestrator_first_response` inference. Its first user-facing agent message is the `statusMessage` from the first `agent_decision`; the older task contract remains registered only for transport/schema compatibility.
 

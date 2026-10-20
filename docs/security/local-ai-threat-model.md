@@ -1,5 +1,43 @@
 # Local AI And Data Threat Model
 
+## Smart KPI bounded preparation (partial product integration)
+
+Smart proposal data contains no numeric defaults, write/CAS/provider authority or
+commands. Explicit context-bound recipe provenance is required; names/keywords
+cannot grant applicability. Bounded context contains mapping hashes/knownness,
+not raw rows, file bytes or credentials. The validated cache retains no raw prompts,
+keys, partial streams or pending jobs. Stable encrypted credential epochs survive
+passive reload, rotate on real replacement/removal/restoration, and use CAS so an
+identity migration cannot resurrect a removed credential. Codex identity hashes
+only nonsecret filesystem/catalog/CLI/policy metadata, never credential bytes.
+
+All Next web AI Smart entries (`suggestions`, generic `run-task`, development
+runtime, metadata and cancel) enforce same Origin and JSON content type before
+bounded stream reading; their upload stalls are capped at 2 s. The paired runner
+keeps its existing authenticated JSON/body policy (1 MiB limit). Prepared request IDs are random
+capabilities. The host registry keeps at most 32 active/terminal metadata records;
+normal terminal records expire after 5 minutes or LRU capacity pressure. Unknown
+cleanup records are not evicted into success. Cancel404 is not cleanup proof;
+client reconciliation either obtains the same request's terminal acknowledgement
+or reports unconfirmed cleanup. Common runner/sidecar workspace lanes also prevent
+bypass of active/quarantined ownership. Quarantine reconciliation is a privileged
+host hook, absent from model tools/wire input. These lanes are host-session state,
+not W0.2 durable coordination or a reboot/crash guarantee.
+
+Smart API requests use explicit selected destination/model/key and DNS-pinned
+transport, with no env key or hidden API fallback. Local HTTP destinations are
+manifest-owned. Their cancellation proves closure of our HTTP request/reader,
+not remote GPU termination. An abnormal read or malformed UTF-8 before EOF also
+cancels and awaits that reader; unconfirmed cancellation quarantines execution.
+Codex uses one private invocation, read-only sandbox,
+reviewed tool-feature/web-search disables and fail-closed stream gates. Aborted
+owned probes/process trees must close before releasing the lane; bounded unknown
+cleanup retains the private owned directory/evidence and quarantines execution.
+The directory can still contain copied auth artifacts until owned descendants are
+confirmed stopped; it must not be removed early. This is trusted-local policy,
+not hard OS isolation or a provider token/cost guarantee. Full-agent trust controls
+and release `NO-GO` are unchanged. See [ADR-008](../adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
+
 BYOK retention uses the separate encrypted origin-local vault in [ADR-007](../adr/ADR-007-encrypted-browser-api-keys.md): AES-256-GCM with non-extractable Web Crypto keys persisted by IndexedDB. Ordinary state/exports/server records exclude plaintext keys. Destination changes clear inherited credentials; deletion removes ciphertext and its key; unreadable data is retained with a visible error/retry. This does not defend against same-origin script execution, malicious extensions or a compromised browser/profile/OS, and is not OS Keychain or hosted authorization. Profile/site-data clearing and eviction are outside normal session retention; native qualification remains open.
 
 ## Retained-source and ephemeral research amendment (2026-10-17)

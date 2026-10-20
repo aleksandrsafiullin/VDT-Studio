@@ -8,6 +8,7 @@ import {
 } from "./provider-utils";
 
 interface AnthropicMessageResponse {
+  stop_reason?: string;
   content?: Array<
     | { type?: "text"; text?: string }
     | { type?: "tool_use"; name?: string; input?: unknown }
@@ -24,7 +25,7 @@ export class AnthropicProvider implements AiProvider {
   constructor(private readonly config: AnthropicProviderConfig) {}
 
   async completeStructured<TInput, TOutput>(params: AiCompletionParams<TInput>): Promise<TOutput> {
-    const jsonSchema = asJsonSchema(params.schema);
+    const jsonSchema = params.outputJsonSchema ?? asJsonSchema(params.schema);
     const baseUrl = trimTrailingSlash(this.config.baseUrl ?? "https://api.anthropic.com");
     const url = baseUrl.endsWith("/v1") ? `${baseUrl}/messages` : `${baseUrl}/v1/messages`;
     const toolConfig = jsonSchema
@@ -45,8 +46,9 @@ export class AnthropicProvider implements AiProvider {
       fetch: this.config.fetch ?? globalThis.fetch,
       url,
       signal: params.signal,
-      timeoutMs: this.config.timeoutMs,
-      maxResponseBytes: this.config.maxResponseBytes,
+      timeoutMs: params.taskType === "suggest_incoming_kpis" ? Math.min(this.config.timeoutMs ?? 15_000, 15_000) : this.config.timeoutMs,
+      maxResponseBytes: params.taskType === "suggest_incoming_kpis" ? 64 * 1024 : this.config.maxResponseBytes,
+      requireAbortSettlement: params.taskType === "suggest_incoming_kpis",
       init: {
         method: "POST",
         headers: {
@@ -56,7 +58,7 @@ export class AnthropicProvider implements AiProvider {
         },
         body: JSON.stringify({
           model: params.model ?? this.config.model,
-          max_tokens: params.maxTokens ?? 2200,
+          max_tokens: params.taskType === "suggest_incoming_kpis" ? Math.min(params.maxTokens ?? 2048, 2048) : params.maxTokens ?? 2200,
           temperature: params.temperature ?? 0.2,
           system: params.systemPrompt,
           messages: [
@@ -70,6 +72,9 @@ export class AnthropicProvider implements AiProvider {
       }
     })) as AnthropicMessageResponse;
 
+    if (params.taskType === "suggest_incoming_kpis" && (payload.stop_reason !== "tool_use" || !payload.content?.length || payload.content.filter(item => item.type === "tool_use").length !== 1 || payload.content.some(item => item.type !== "text" && (item.type !== "tool_use" || item.name !== STRUCTURED_OUTPUT_TOOL)))) {
+      throw new Error("Smart provider did not return the single reviewed structured-output channel.");
+    }
     const toolOutput = payload.content?.find(
       (item) => item.type === "tool_use" && item.name === STRUCTURED_OUTPUT_TOOL
     );

@@ -239,7 +239,7 @@ export function buildIncomingKpiBreakdown(
     const parentNodeId = idByKey.get(branch.parentKey) ?? targetNodeId;
     result.additions.push({
       id: `add_${nodeId}`, nodeId, parentNodeId, relation: "formula_dependency",
-      name, description, type: "data_mapped", unit: outputUnit.label,
+      name, description, type: childIds.length ? "calculated" : "data_mapped", unit: outputUnit.label,
       baselineValue: round(baselineValue), valueStatus: "calculated",
       ...(childIds.length ? { formula: childIds.join(" + ") } : {}),
       valueSource: { sourceTier: "file", confidence: "high", note: description },
@@ -261,7 +261,7 @@ export function buildIncomingKpiBreakdown(
   const rootChildren = result.additions.filter((addition) => addition.parentNodeId === targetNodeId);
   if (rootChildren.length) result.updates.push({
     id: `update_${targetNodeId}_incoming_formula`, nodeId: targetNodeId,
-    patch: { formula: rootChildren.map((addition) => addition.nodeId).join(" + "), ...(target.unit !== outputUnit.label ? { unit: outputUnit.label } : {}), aiRationale: `Complete file breakdown from ${input.file.fileName}.` }
+    patch: { type: targetNodeId === input.project.rootNodeId ? "root_kpi" : "calculated", formula: rootChildren.map((addition) => addition.nodeId).join(" + "), ...(target.unit !== outputUnit.label ? { unit: outputUnit.label } : {}), aiRationale: `Complete file breakdown from ${input.file.fileName}.` }
   });
   return result;
 }

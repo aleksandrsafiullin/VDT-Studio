@@ -1,5 +1,26 @@
 # Product Specification
 
+## Smart incoming KPI suggestions
+
+Strict one-layer alternatives, unknown-value children, explicit recipe applicability,
+configured one-completion preparation and bounded persistent cache/prewarming APIs
+are present. The same right KPI action area retains Manual/AI/File and exposes
+Smart selection; one-layer Add and guarded new-revision Undo use real revision CAS.
+Unknown write outcomes require reconciliation of the original request. An unsaved
+scratch addition is explicitly a draft. Period comes from current model/record
+evidence, never the historical Brief monthly fallback. Historical pre-revision local Chrome fixtures
+passed 240 prepared activations across 1/200-node graphs and edge/zoom positions:
+maximum p95 172.9 ms and worst 193.0 ms. Startup execution admission can invalidate
+a frozen list and require explicit Refresh before Add; cold preparation shows an
+honest loading/unavailable state. These measurements do not qualify model speed,
+hard CLI token/isolation guarantees or native packaging. See
+[validation](PRODUCTION_READINESS.md#smart-kpi-validation) and
+[ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
+
+Future Smart/Manual incoming additions show a concise editable definition: selected proposal rows, own named/unit rows, retained references and the final formula are one atomic **Add & calculate**. Partial selections are allowed after repairing the formula; invalid raw text remains editable and Add stays disabled. Six new rows are separate from sixteen existing references. Manual-only editing/Add requires no model or key. Each proposal source and its dirty draft remain separate; background replies and explicit preparation refresh cannot silently overwrite user edits.
+
+The parent becomes Calculated, with the actual root retaining its root role. Unknown children can make the computed result unavailable; the old measurement remains read-only Source/reference provenance and in the checkpoint. Full limitations are behind Details, with one missing-input note in the default panel. Existing context-only graphs remain readable and are not migrated. Unselected context children stay explanatory; explicit mathematical reuse preserves source IDs and primary parents. The default full-tree grouping/hierarchy rules remain strict.
+
 Agent-authored reference groups preserve a readable hierarchy of supporting parameters. An empty planned context container displays `Reference group`, without a numeric baseline control or `n/a` value. Its numerical children still need real values. Agents must group multiple reference inputs instead of placing their source columns as direct root siblings; ordinary numeric KPI values and formulas are unchanged.
 
 ## Agent hierarchy acceptance (experimental)

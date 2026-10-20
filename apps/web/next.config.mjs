@@ -5,6 +5,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Feature test harnesses use an owned app view/build directory. Normal local
+  // development keeps its existing cache and generated TypeScript files.
+  distDir: process.env.VDT_NEXT_DIST_DIR?.trim() || ".next",
   devIndicators: false,
   outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: [

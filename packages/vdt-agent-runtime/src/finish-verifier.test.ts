@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { productionVolumeProject,VdtBuilderSession } from "@vdt-studio/vdt-core";
+import { productionVolumeProject,VdtBuilderSession,inspectDecompositionHierarchy } from "@vdt-studio/vdt-core";
 import type { AgentSessionBinding } from "./agent-execution-contracts";
 import type { AgentSupervisorPersistenceStateV2 } from "./agent-supervisor-persistence";
 import { verifyDeterministicRunFinish } from "./finish-verifier";
@@ -22,6 +22,20 @@ it("requires the recorded hierarchy on protected runs even when the flat graph c
 });
 
 describe("verifyDeterministicRunFinish", () => {
+  it("retains full-agent root-group enforcement after an explicit incremental user inspection", () => {
+    const b = new VdtBuilderSession(); b.createDraft({ rootKpi: "Output", projectTitle: "Incremental context boundary", unit: "t" });
+    b.addDriver({ nodeId: "rate", parentNodeId: "output", name: "Measured rate", baselineValue: 2 }); b.setFormula({ nodeId: "output", formula: "rate" });
+    for (const id of ["reference_a", "reference_b"]) b.addDriver({ nodeId: id, parentNodeId: "output", name: id, baselineValue: 1, relation: "contextual_influence" });
+    b.updateNode({ nodeId: "output", patch: { decompositionPlan: { version: 1, goal: "Keep explicit user context one layer", nodes: [
+      { nodeId: "rate", parentNodeId: "output", kind: "input" },
+      { nodeId: "reference_a", parentNodeId: "output", kind: "context", rationale: "Explicit user context" },
+      { nodeId: "reference_b", parentNodeId: "output", kind: "context", rationale: "Explicit user context" }
+    ] } } });
+    const project = b.getProject();
+    expect(inspectDecompositionHierarchy(project, "incremental_user_apply")).toMatchObject({ valid: true, constructionWarnings: [expect.stringContaining("ROOT_CONTEXT_LEAVES_REQUIRE_GROUP")] });
+    expect(inspectDecompositionHierarchy(project).valid).toBe(false);
+    expect(verifyDeterministicRunFinish({ ...readyInput(), project, requireHierarchy: true })).toMatchObject({ accepted: false, code: "HIERARCHY_INCOMPLETE" });
+  });
   it("accepts empty reference containers but never empty numerical reference leaves", () => {
     const b = new VdtBuilderSession(); b.createDraft({ rootKpi: "Output", projectTitle: "References", unit: "t" });
     b.addDriver({ nodeId: "rate", parentNodeId: "output", name: "Rate", baselineValue: 2 }); b.setFormula({ nodeId: "output", formula: "rate * 3" });
@@ -115,7 +129,7 @@ describe("verifyDeterministicRunFinish", () => {
     expect(verifyDeterministicRunFinish({
       ...readyInput(),
       mode: "deepen_node",
-      modeCompletion: { immediateChildCreated: true },
+      modeCompletion: { immediateChildCreated: true, selectedNodeId: "production_volume", createdNodeIds: ["effective_working_time", "average_productivity"] },
       now: () => "2026-08-26T10:00:00.000Z"
     })).toMatchObject({ accepted: true, code: "FINISH_VERIFIED" });
 
@@ -125,8 +139,18 @@ describe("verifyDeterministicRunFinish", () => {
       ...readyInput(),
       project: incomplete,
       mode: "deepen_node",
-      modeCompletion: { immediateChildCreated: true }
+      modeCompletion: { immediateChildCreated: true, selectedNodeId: "production_volume", createdNodeIds: ["effective_working_time", "average_productivity"] }
     })).toMatchObject({ accepted: false, code: "FORMULA_BACKLOG_NOT_EMPTY" });
+  });
+  it("rejects child-only selected completion and accepts a valid formula with unknown inputs", () => {
+    const b = new VdtBuilderSession(); b.createDraft({ rootKpi: "Output", projectTitle: "Selected layer", unit: "t" });
+    b.addDriver({ nodeId: "selected", parentNodeId: "output", name: "Measured source", unit: "t", type: "input", baselineValue: 4 });
+    b.setFormula({ nodeId: "output", formula: "selected" }); b.addDriver({ nodeId: "new_input", parentNodeId: "selected", name: "New measured input", unit: "t", type: "input" });
+    const input = { ...readyInput(), mode: "deepen_node" as const, modeCompletion: { immediateChildCreated: true, selectedNodeId: "selected", createdNodeIds: ["new_input"] } };
+    expect(verifyDeterministicRunFinish({ ...input, project: b.getProject() })).toMatchObject({ accepted: false, code: "TARGET_FORMULA_REQUIRED" });
+    b.setFormula({ nodeId: "selected", formula: "new_input" });
+    expect(verifyDeterministicRunFinish({ ...input, project: b.getProject() })).toMatchObject({ accepted: true, code: "FINISH_VERIFIED" });
+    expect(b.getProject().graph.nodes.find(node => node.id === "selected")?.baselineValue).toBe(4);
   });
 
   it("evaluates only latest ledger states and permits the currently executing finish request", () => {

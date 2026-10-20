@@ -1,4 +1,4 @@
-import type { VdtChangeSet, VdtProject } from "@vdt-studio/vdt-core";
+import { validateKpiSuggestionTaskInput, type KpiSuggestionTaskInput, type KpiSuggestionModelOutput, type VdtChangeSet, type VdtProject } from "@vdt-studio/vdt-core";
 import type { VdtAgentRun } from "@vdt-studio/vdt-agent";
 import { generateVdtProject } from "../generate-vdt";
 import type { DeepenNodeContext } from "../schemas/deepen-node";
@@ -13,6 +13,7 @@ import type { SimplifyBranchContext } from "../schemas/simplify-branch";
 import type { SuggestAlternativeContext } from "../schemas/suggest-alternative";
 import type { SuggestFormulaContext } from "../schemas/suggest-formula";
 import type { AiProvider, GenerateVdtInput } from "../types";
+import { runSuggestIncomingKpis } from "./suggest-incoming-kpis";
 import { runCheckUnits } from "./check-units";
 import { runAgenticDeepenNode } from "./deepen-node";
 import { runExecutiveSummary } from "./executive-summary";
@@ -84,12 +85,14 @@ export type AiAdvisoryResult =
 export type AiExplanationResult = ExplainNodeResult | ExplainScenarioResult | ExecutiveSummaryResult;
 
 export type RunAiTaskResult =
+  | { kind: "suggestions"; result: KpiSuggestionModelOutput }
   | { kind: "project"; project: VdtProject }
   | { kind: "change_set"; changeSet: VdtChangeSet; agentRun?: VdtAgentRun }
   | { kind: "advisory"; result: AiAdvisoryResult }
   | { kind: "explanation"; result: AiExplanationResult };
 
 export type RunAiTaskInputMap = {
+  suggest_incoming_kpis: KpiSuggestionTaskInput & RunAiTaskCommonOptions;
   generate_tree: GenerateVdtInput & RunAiTaskCommonOptions;
   deepen_node: RunAiTaskDeepenNodeInput;
   simplify_branch: RunAiTaskSimplifyBranchInput;
@@ -122,6 +125,11 @@ export async function runAiTask<T extends RunnableAiTaskType>(
   input: RunAiTaskInputMap[T]
 ): Promise<RunAiTaskResult> {
   switch (taskType) {
+    case "suggest_incoming_kpis": {
+      const { maxTokens, signal, ...payload } = input as RunAiTaskInputMap["suggest_incoming_kpis"];
+      const result = await runSuggestIncomingKpis(provider, validateKpiSuggestionTaskInput(payload), pickRunOptions({ maxTokens, signal }));
+      return { kind: "suggestions", result };
+    }
     case "generate_tree": {
       const { maxTokens, ...generateInput } = input as RunAiTaskInputMap["generate_tree"];
       const project = await generateVdtProject(provider, generateInput, {

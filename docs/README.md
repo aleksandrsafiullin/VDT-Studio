@@ -25,6 +25,7 @@ The previously referenced `Technical Specification for Codex.docx` is not presen
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Current package, runtime, persistence and data-flow architecture |
 | [`AI_HARNESS.md`](AI_HARNESS.md) | Model backends, agent runtime, tools, skills and research behavior |
 | [`FORMULA_ENGINE.md`](FORMULA_ENGINE.md) | Supported formula/calculation contract and known unit limitations |
+| [`SMART_KPI_INCOMING_CONTRACT.md`](architecture/SMART_KPI_INCOMING_CONTRACT.md) | Formula/mixed draft, local compiler/unit rules, source lineage, v2 journal and legacy incoming-path boundary |
 | [`DATA_INGESTION.md`](DATA_INGESTION.md) | Raw-data discovery, supported formats, limitations and target baseline flow |
 | [`DESIGN_SYSTEM.md`](DESIGN_SYSTEM.md) | Analytical workspace and evidence/status UX rules |
 | [`VOICE_INPUT.md`](VOICE_INPUT.md) | Local whisper.cpp dictation, confirmed installation, runtime/storage boundaries and platform limitations |
@@ -80,6 +81,12 @@ Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md`, the
 | [`ADR-005`](adr/ADR-005-durable-run-coordination-and-manual-reconciliation.md) | Accepted W0.2 durable authority; ADR-006 amends bounded attempts without weakening SQLite, fence or receipt requirements |
 | [`ADR-006`](adr/ADR-006-bounded-dual-profile-agent-execution.md) | Accepted dual-profile target architecture; tested foundations are implemented, public Supervisor/storage wiring is partial, external execution remains default-off and unqualified |
 | [`ADR-007`](adr/ADR-007-encrypted-browser-api-keys.md) | Implemented encrypted origin-local BYOK key retention and deletion; browser-profile security boundary; native qualification open |
+| [`ADR-008`](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md) | Bounded domain/preparation/state/native-source reviews and local Chrome editor/prepared-latency fixtures passed; live model/native package qualification separate |
+
+Smart suggestions follow the [plan](implementation/SMART_KPI_SUGGESTIONS_PLAN.md),
+[execution log](implementation/SMART_KPI_SUGGESTIONS_LOG.md) and
+[independent review](implementation/SMART_KPI_SUGGESTIONS_REVIEW.md). These do not
+change the corrective program's release or W0.2 authority.
 
 ## Historical And Reference-Only Documents
 

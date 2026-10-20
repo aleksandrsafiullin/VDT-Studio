@@ -2,7 +2,7 @@
 id: finance.revenue_profit
 title: Finance revenue and profit decomposition
 domain: finance
-version: 1
+version: 2
 patterns:
   - revenue
   - profit
@@ -107,4 +107,35 @@ operating_profit
 ## Deepen Node Guidance
 
 Deepen revenue by customer_count, units_per_customer, price, discounts, product mix, channel mix, and returns. Deepen gross_profit by unit variable cost, material cost, labor cost, logistics cost, and mix. Deepen operating_expenses by sales, marketing, support, engineering, G&A, and fixed facility cost.
+
+## Audited Smart One-Layer Recipe
+
+This projection retains all factors in the canonical revenue formula. A semantic
+decision must confirm that selling price is before discounts and refunds are not
+already netted out. It supplies no prices, quantities, discount defaults, refund
+defaults or assumed revenue categories. Product/channel components require a
+separate contextual proposal; selecting arbitrary categories never certifies an
+exhaustive additive revenue breakdown.
+
+```vdt-smart-recipes
+{
+  "schemaVersion": "vdt_smart_recipe_source.v1",
+  "recipes": [
+    {
+      "id": "revenue.quantity_price_net",
+      "title": "Quantity × price, less discounts and refunds",
+      "targetRole": "revenue",
+      "formula": "units_sold * selling_price * (1 - discount_rate) - refunds",
+      "unitRule": "revenue_net",
+      "children": [
+        { "key": "units_sold", "conceptKey": "units_sold", "name": "Units sold", "unitRole": "quantity", "relation": "multiplicative_driver" },
+        { "key": "selling_price", "conceptKey": "average_selling_price", "name": "Average selling price before discounts", "unitRole": "unit_price", "relation": "multiplicative_driver" },
+        { "key": "discount_rate", "conceptKey": "discount_rate", "name": "Discount rate", "unitRole": "fraction", "relation": "formula_dependency" },
+        { "key": "refunds", "conceptKey": "refunds", "name": "Refunds", "unitRole": "target", "relation": "subtractive_component" }
+      ],
+      "limitations": ["Selling price is before discounts and net of tax unless explicitly modeled.", "Refunds must not already be netted out of units or price.", "Discount rate is an unknown decimal fraction; quantity and refunds share the revenue period and currency."]
+    }
+  ]
+}
+```
 

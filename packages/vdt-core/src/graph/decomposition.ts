@@ -48,7 +48,9 @@ export function decompositionPlanErrors(value: unknown, rootId: string): string[
     if (parent !== rootId && !parents.has(parent)) errors.push(`PLAN_PARENT_MISSING: ${id} -> ${parent}`);
     const entry = value.nodes.find(n => record(n) && n.nodeId === id);
     const parentEntry = value.nodes.find(n => record(n) && n.nodeId === parent);
-    if (record(parentEntry) && parentEntry.kind === "input") errors.push(`PLAN_INPUT_HAS_CHILDREN: ${parent}`);
+    // An input remains a mathematical leaf. Explicit explanatory context can
+    // be displayed beneath it without becoming a factor or changing its value.
+    if (record(parentEntry) && parentEntry.kind === "input" && record(entry) && entry.kind !== "context") errors.push(`PLAN_INPUT_HAS_CHILDREN: ${parent}`);
     if (record(entry) && entry.kind !== "context" && parent !== rootId && record(parentEntry) && parentEntry.kind !== "calculated") errors.push(`PLAN_FACTOR_PARENT_NOT_CALCULATED: ${id} -> ${parent}`);
     const seen = new Set([id]); let cursor = parent;
     while (cursor !== rootId && parents.has(cursor)) {
@@ -85,12 +87,17 @@ export function getDecompositionContextGroupIds(graph: VdtGraph, rootId: string)
 /** Structural acceptance is separate from arithmetic and business certification.
  * A tree has one primary visual parent; declared sharedWith keeps cross-branch
  * formula reuse explicit without duplicate source nodes or shortcut edges. */
-export function inspectDecompositionHierarchy(project: VdtProject) {
+export function inspectDecompositionHierarchy(project: VdtProject, purpose: "agent_construction" | "incremental_user_apply" = "agent_construction") {
   const root = project.graph.nodes.find(n => n.id === project.rootNodeId);
   const plan = root?.decompositionPlan;
   const errors = plan ? decompositionPlanErrors(plan, project.rootNodeId) : ["DECOMPOSITION_PLAN_REQUIRED: call vdt.set_decomposition_plan before construction."];
-  if (errors.length || !plan) return { valid: false, errors, plannedNodes: 0, maxDepth: 0 };
-  errors.push(...decompositionPlanGroupingErrors(plan, project.rootNodeId));
+  const constructionWarnings: string[] = [];
+  if (errors.length || !plan) return { valid: false, errors, constructionWarnings, plannedNodes: 0, maxDepth: 0 };
+  const grouping = decompositionPlanGroupingErrors(plan, project.rootNodeId);
+  // Only an explicit user-add caller can request incremental inspection. Agent
+  // tools/finish retain the default and cannot select this mode in tool input.
+  if (purpose === "incremental_user_apply") constructionWarnings.push(...grouping);
+  else errors.push(...grouping);
   const entries = new Map(plan.nodes.map(n => [n.nodeId, n]));
   const nodes = new Map(project.graph.nodes.map(n => [n.id, n]));
   const references = new Map<string, string[]>();
@@ -132,7 +139,7 @@ export function inspectDecompositionHierarchy(project: VdtProject) {
     if (!e || (e.parentNodeId !== id && !e.sharedWith?.includes(id))) errors.push(`UNDECLARED_FORMULA_DEPENDENCY: ${id} -> ${ref}; give the input its actual parent or declare sharedWith.`);
   }
   if (project.graph.edges.some(e => e.targetNodeId === project.rootNodeId)) errors.push("ROOT_HAS_PARENT: the root KPI cannot be a child.");
-  return { valid: errors.length === 0, errors, plannedNodes: plan.nodes.length, maxDepth };
+  return { valid: errors.length === 0, errors, constructionWarnings, plannedNodes: plan.nodes.length, maxDepth };
 }
 
 /** Layer-by-layer construction: all planned factors at shallower depths must

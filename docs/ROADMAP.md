@@ -1,5 +1,32 @@
 # Roadmap
 
+## Formula and mixed incoming revision (2026-10-20)
+
+Contracts/compiler/one-call preparation/v2 journal and selected-entry boundaries
+have independent source approval. UI edits selected+own rows and an explicit
+formula with local no-provider previews; real stored Add/recovery/Undo and affected
+manual/root/focus cases passed. Four prepared 30-sample cells meet p95≤1 s, with
+Library200 at 279.8 ms; the 200 ms goal is not met on the 200-node fixtures. The final
+coordinated record belongs to the [revision log](implementation/SMART_KPI_FORMULA_MIXED_LOG.md).
+Source baselines remain reference/checkpoint evidence, future parents become
+calculated, and old v1 receipts replay exactly. File calculated types/accepted-plan
+delta and mandatory AI target formulas are implemented and reviewed. Full-tree
+agent policy, release NO-GO and native/live-provider qualifications are unchanged.
+
+## Smart incoming KPI suggestions — local browser evidence
+
+SK-01/02 domain contracts, explicit canonical recipes and full-project one-layer
+compiler have independent approval. Real one-completion API/Codex/local transports,
+stable credential identity and bounded persistent cache/workspace scheduling are
+independently approved at the preparation boundary. Revision-CAS apply/Undo,
+same-hover controls, actual scope/recipe provenance and native metadata IPC are
+implemented; bounded state/native review passed. Local Chrome browser fixtures
+passed real persistence/recovery and 240 prepared activations, with maximum
+p95 172.9 ms. Final integrated status belongs to the
+[plan](implementation/SMART_KPI_SUGGESTIONS_PLAN.md) and execution log. Live model
+speed/quality, native builds and wider platform qualification remain open; see
+[measured evidence](PRODUCTION_READINESS.md#smart-kpi-validation). These measurements predate the formula/mixed UI; they do not certify its latency.
+
 ## Hierarchy consistency correction (experimental)
 
 Implemented locally: explicit agent-authored plans, factor-layer frontier enforcement, atomic branch reparenting, bounded hierarchy diagnostics and a full-tree Supervisor finish gate shared by CLI and API execution. Remaining: scenario-specific autonomous acceptance and business-scope/semantic correctness, including reliable use of source-derived factors. Structural validity must not be presented as business certification or promotion of a provider. Fresh model-run evidence must identify model, initial state, errors, timing and operator involvement separately.
@@ -33,7 +60,7 @@ Implemented at alpha level:
 - separate CLI, Local models and API keys settings with saved category choices and inline readiness actions and reversible browser-local subscription removal; Undo/Add back, explicit chat fallback feedback, and memory-override reset survive rescans and reloads;
 - real agent decision/tool/feedback loop with local skill retrieval;
 - guarded one-click incoming-KPI decomposition that stops after the selected node's immediate child layer;
-- 18 registered task schemas, 17 exposed product tasks and phase-gate drift checks;
+- 19 registered task schemas, 18 exposed product tasks and phase-gate drift checks;
 - experimental local file-based incoming-KPI discovery, with immutable project source reuse/download, provider-assisted mapping, required decisions, full-byte additive numeric/duration hierarchy calculations (four levels/200 nodes) and Description provenance;
 - alpha packaging, checksum/SBOM and provider-certification metadata.
 

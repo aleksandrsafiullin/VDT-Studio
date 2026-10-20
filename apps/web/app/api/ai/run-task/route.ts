@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
+import { prepareSmartKpiResponse } from "@/lib/smart-kpi-service";
+import { readAiRouteBody, SMART_HTTP_BODY_BYTES, aiRouteGuardStatus } from "@/lib/ai-route-body";
 import {
   isLocalRunnerConnectionFailure,
   localRunnerOfflineMessage,
   runAiTask,
+  type RunAiTaskInputMap,
   type RunAiTaskResult
 } from "@vdt-studio/ai-harness";
 import {
@@ -16,7 +19,8 @@ import {
   assertRunTaskBodySize,
   parseRunTaskRequest,
   resolveRunTaskType,
-  type RunTaskRequestBody
+  type RunTaskRequestBody,
+  type RunTaskType
 } from "./parse-run-task-request";
 
 /**
@@ -29,8 +33,10 @@ export async function POST(request: Request) {
 
   try {
     try {
-      bodyText = await request.text();
-    } catch {
+      bodyText = (await readAiRouteBody(request)).text;
+    } catch (error) {
+      const status = aiRouteGuardStatus(error);
+      if (status) return NextResponse.json({ ok: false, error: "AI request admission failed." }, { status });
       return NextResponse.json({ ok: false, error: "Request body must be valid JSON." }, { status: 400 });
     }
 
@@ -48,14 +54,19 @@ export async function POST(request: Request) {
     body = parsedBody as RunTaskRequestBody & Record<string, unknown>;
 
     const taskType = resolveRunTaskType(body.taskType);
+    if (taskType === "suggest_incoming_kpis" && new TextEncoder().encode(bodyText).byteLength > SMART_HTTP_BODY_BYTES) return NextResponse.json({ ok: false, error: "Smart request exceeds its bound." }, { status: 413 });
     assertRunTaskBodySize(bodyText, taskType);
 
     const { input } = parseRunTaskRequest(body);
+    if (taskType === "suggest_incoming_kpis") {
+      const result = await prepareSmartKpiResponse({ input, providerId: String(body.providerId ?? ""), ...(body.providerConfig ? { providerConfig: body.providerConfig } : {}) }, request.signal, request.url);
+      return NextResponse.json({ ok: true, result: { kind: "suggestions", result } }, { headers: { "cache-control": "no-store" } });
+    }
     const maxTokens = readMaxTokens(body.providerConfig);
-    const taskInput = maxTokens !== undefined ? { ...input, maxTokens } : input;
+    const taskInput = { ...input, ...(maxTokens !== undefined ? { maxTokens } : {}), signal: request.signal };
 
     const provider = createAiProvider(body as AiRouteProviderRequest, request.url);
-    const result = await runAiTask(taskType, provider, taskInput);
+    const result = await runAiTask(taskType, provider, taskInput as RunAiTaskInputMap[Exclude<RunTaskType, "suggest_incoming_kpis">]);
 
     return NextResponse.json({ ok: true, result });
   } catch (error) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
-import { applyChangeSet, calculateGraph, productionVolumeProject, type VdtChangeSet } from "@vdt-studio/vdt-core";
+import { applyChangeSet, calculateGraph, inspectDecompositionHierarchy, productionVolumeProject, type VdtChangeSet } from "@vdt-studio/vdt-core";
 import {
   applyDiscoveryUserEdits,
   reanalyzeDiscoveryWithUserEdits,
@@ -51,6 +51,27 @@ function workbookInput(rows: Array<Array<string | number>>, options: IncomingKpi
 }
 
 describe("complete incoming KPI file breakdown", () => {
+  it.each([false, true])("reconciles the actual accepted file hierarchy for a planned context=%s target", async contextOnly => {
+    const input = inputFor("Kind,Reason,Minutes\nMechanical,Repair,60\nMechanical,Waiting,120\nOperational,Repair,180", { categoryColumns: ["Kind", "Reason"] });
+    const root = input.project.graph.nodes[0]!, target = { ...structuredClone(root), id: "planned_input", name: "Planned measured downtime", type: "input" as const, baselineValue: 17 };
+    root.formula = contextOnly ? "active" : target.id;
+    input.project.graph.nodes.push(target); input.project.graph.edges.push({ id: "planned_edge", sourceNodeId: root.id, targetNodeId: target.id, relation: contextOnly ? "contextual_influence" : "formula_dependency", aiGenerated: false });
+    root.decompositionPlan = { version: 1, goal: "Retain the existing owner and reconcile only this file delta.", nodes: [{ nodeId: target.id, parentNodeId: root.id, kind: contextOnly ? "context" : "input", ...(contextOnly ? { rationale: "Reference branch." } : {}) }] };
+    if (contextOnly) {
+      input.project.graph.nodes.push({ ...structuredClone(target), id: "active", name: "Unrelated active source", baselineValue: 9 });
+      input.project.graph.edges.push({ id: "active_edge", sourceNodeId: root.id, targetNodeId: "active", relation: "formula_dependency", aiGenerated: false });
+      root.decompositionPlan.nodes.push({ nodeId: "active", parentNodeId: root.id, kind: "input" });
+    }
+    input.entryContext!.targetNodeId = target.id;
+    expect(inspectDecompositionHierarchy(input.project, "incremental_user_apply").valid).toBe(true);
+    const before = structuredClone(input.project), snapshot = await runRawDataDiscovery(input), changes = snapshot.changeSetPreview!;
+    const applied = applyChangeSet(input.project, changes, allIds(changes));
+    expect(applied.success).toBe(true); expect(inspectDecompositionHierarchy(applied.project, "incremental_user_apply")).toMatchObject({ valid: true, errors: [] });
+    expect(applied.project.graph.nodes.find(node => node.id === target.id)).toMatchObject({ type: "calculated", baselineValue: 17 });
+    expect(calculateGraph(applied.project).rootValue).toBe(contextOnly ? 9 : 6);
+    expect(applied.project.graph.nodes[0]!.decompositionPlan!.nodes.find(entry => entry.nodeId === target.id)?.kind).toBe(contextOnly ? "context" : "calculated");
+    expect(input.project).toEqual(before);
+  });
   it("preserves generic additive numeric imports in the target unit, including negative corrections", async () => {
     const input = inputFor("Category,Amount\nFuel,1500\nMaintenance,700\nFuel,-200", {
       categoryColumns: ["Category"], duration: { mode: "column", column: "Amount", unit: "target" }
@@ -109,6 +130,96 @@ describe("complete incoming KPI file breakdown", () => {
       expect(addition.description).toContain("sha256:fixture");
       expect(addition.description).toContain("period:");
     }
+  });
+
+  it.each([
+    { label: "root KPI", targetType: "root_kpi", isRoot: true },
+    { label: "input target", targetType: "input", isRoot: false },
+    { label: "mapped target", targetType: "data_mapped", isRoot: false }
+  ] as const)("keeps derived types and complete source lineage after applying mappings to a $label", async ({ targetType, isRoot }) => {
+    const input = inputFor("Kind,Reason,Minutes\nMechanical,Repair,60\nMechanical,Waiting,120\nOperational,Repair,180\nOperational,Waiting,0", {
+      categoryColumns: ["Kind", "Reason"]
+    });
+    const root = input.project.graph.nodes[0]!;
+    const target = isRoot ? root : { ...structuredClone(root), id: "line_downtime", name: "Line downtime" };
+    target.type = targetType;
+    target.baselineValue = 17;
+    target.valueSource = { sourceTier: "user", confidence: "medium", note: "Original entered baseline retained as reference." };
+    if (!isRoot) {
+      root.formula = target.id;
+      input.project.graph.nodes.push(target);
+      input.project.graph.edges.push({ id: "root_to_line", sourceNodeId: root.id, targetNodeId: target.id, relation: "formula_dependency", aiGenerated: false });
+    }
+    input.entryContext!.targetNodeId = target.id;
+    const before = structuredClone({ project: input.project, file: input.file, text: input.text });
+    const snapshot = await runRawDataDiscovery(input);
+    expect(snapshot.status).toBe("waiting_review");
+    expect(snapshot.incomingKpi?.coverage).toEqual({ totalRows: 4, includedRows: 4, excludedRows: 0, categoryCount: 6, complete: true });
+    expect(validateDiscoveryApply(snapshot).some(item => item.status === "error")).toBe(false);
+    const changeSet = snapshot.changeSetPreview!;
+    // Check the actual generated import, not only its proposed type patches.
+    const applied = applyChangeSet(input.project, changeSet, allIds(changeSet));
+    expect(applied.success).toBe(true);
+    const appliedTarget = applied.project.graph.nodes.find(node => node.id === target.id)!;
+    expect(appliedTarget.type).toBe(isRoot ? "root_kpi" : "calculated");
+    expect(applied.project.graph.nodes.find(node => node.id === input.project.rootNodeId)?.type).toBe("root_kpi");
+    expect(appliedTarget.formula).toBe(changeSet.additions.filter(addition => addition.parentNodeId === target.id).map(addition => addition.nodeId).join(" + "));
+    expect(appliedTarget.baselineValue).toBe(17);
+    expect(appliedTarget.valueSource).toEqual(before.project.graph.nodes.find(node => node.id === target.id)!.valueSource);
+    expect(appliedTarget.dataMapping).toEqual(before.project.graph.nodes.find(node => node.id === target.id)!.dataMapping);
+    const calculation = calculateGraph(applied.project);
+    expect(calculation.values[target.id]).toBe(6);
+    expect(calculation.rootValue).toBe(6);
+    const derived = changeSet.additions.filter(addition => addition.formula);
+    const primitive = changeSet.additions.filter(addition => !addition.formula);
+    expect(derived).toHaveLength(2);
+    expect(primitive).toHaveLength(4);
+    for (const addition of changeSet.additions) {
+      const node = applied.project.graph.nodes.find(candidate => candidate.id === addition.nodeId)!;
+      expect(node.type).toBe(addition.formula ? "calculated" : "data_mapped");
+      expect(node.formula).toBe(addition.formula);
+      expect(node.baselineValue).toBe(addition.baselineValue);
+      expect(node.valueSource).toEqual(addition.valueSource);
+      expect(node.dataMapping).toEqual(addition.dataMapping);
+      expect(calculation.values[node.id]).toBe(addition.baselineValue);
+      expect(node.description).toContain(input.file.contentHash);
+    }
+    expect(primitive.some(addition => addition.baselineValue === 0)).toBe(true);
+    const sourceChange = changeSet.dataSourceChanges!.find(change => change.action === "add")!;
+    expect(sourceChange.action).toBe("add");
+    if (sourceChange.action === "add") {
+      expect(sourceChange.dataSource.file?.contentHash).toBe(input.file.contentHash);
+      expect(sourceChange.dataSource.file?.storageRef).toBe(input.file.storageRef);
+      expect(applied.project.dataSources.find(source => source.id === sourceChange.dataSource.id)).toEqual(sourceChange.dataSource);
+    }
+    // Explicit mapping metadata changes run after ordinary node updates in the
+    // common mutator. Reapplying the same source bindings must not demote a
+    // derived parent; this is metadata admission, not a source-refresh engine.
+    const targetMapping = { ...structuredClone(changeSet.additions[0]!.dataMapping!), filters: [] };
+    const mappingChangeSet: VdtChangeSet = {
+      id: "reapply_file_mappings", taskType: "analyze_raw_dataset", backendId: "data_harness", createdAt: changeSet.createdAt,
+      additions: [], updates: [], deletions: [], edgeChanges: [], assumptions: [], questions: [], warnings: [],
+      dataMappingChanges: [
+        { id: `mapping_${target.id}`, action: "update", nodeId: target.id, mapping: targetMapping },
+        ...changeSet.additions.map(addition => ({ id: `mapping_${addition.nodeId}`, action: "update" as const, nodeId: addition.nodeId!, mapping: structuredClone(addition.dataMapping!) }))
+      ]
+    };
+    const remapped = applyChangeSet(applied.project, mappingChangeSet, allIds(mappingChangeSet));
+    expect(remapped.success).toBe(true);
+    expect(remapped.project.graph.nodes.find(node => node.id === target.id)?.type).toBe(isRoot ? "root_kpi" : "calculated");
+    expect(remapped.project.graph.nodes.find(node => node.id === target.id)?.dataMapping).toEqual(targetMapping);
+    expect(remapped.project.graph.nodes.find(node => node.id === target.id)?.valueSource).toEqual(appliedTarget.valueSource);
+    for (const addition of changeSet.additions) {
+      const node = remapped.project.graph.nodes.find(candidate => candidate.id === addition.nodeId)!;
+      expect(node.type).toBe(addition.formula ? "calculated" : "data_mapped");
+      expect(node.formula).toBe(addition.formula);
+      expect(node.dataMapping).toEqual(addition.dataMapping);
+      expect(node.baselineValue).toBe(addition.baselineValue);
+      expect(node.valueSource).toEqual(addition.valueSource);
+    }
+    expect(calculateGraph(remapped.project).rootValue).toBe(6);
+    expect(remapped.project.dataSources).toEqual(applied.project.dataSources);
+    expect({ project: input.project, file: input.file, text: input.text }).toEqual(before);
   });
 
   it("includes every category beyond both old top-six and top-twelve limits", async () => {

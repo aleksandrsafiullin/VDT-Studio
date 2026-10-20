@@ -6,6 +6,7 @@ import {
   applyChangeSet,
   calculateGraph,
   cloneProject,
+  kpiCanonicalJson,
   createVersionSnapshot,
   DEFAULT_CANVAS_LAYOUT,
   diffChangeSet,
@@ -17,6 +18,7 @@ import {
   stableSnakeId,
   uniqueId,
   VdtBuilderSession,
+  validateIncomingKpiChangeSet,
   type VdtChangeSet,
   type VdtNode,
   type VdtProject,
@@ -28,6 +30,11 @@ import {
 } from "@vdt-studio/ai-harness";
 import { AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/timeout-limits";
 import { makeId } from "@/lib/id";
+import { studioStateStorage } from "@/lib/smart-kpi-journal";
+import { apiKeyScope } from "@/lib/api-key-persistence";
+import type { SmartKpiIncomingActions } from "@/lib/smart-kpi-incoming-contract";
+import { canUndoSmartKpi, createSmartKpiActions, guardSmartKpiActions, hasSmartKpiRebase, smartKpiBlockedReason,
+  type SmartKpiApplyInput, type SmartKpiApplyResult, type SmartKpiMutationView, type SmartKpiOperation, type SmartKpiRebase, type SmartKpiUndo } from "@/lib/smart-kpi-transaction";
 import { fileImportContextError, type FileImportTargetContext } from "@/components/data-import/import-context";
 import {
   buildAgentPublicStartRequest
@@ -324,7 +331,7 @@ interface PendingWorkspaceVdtCreate {
   localProjectAtStart: VdtProject;
 }
 
-interface VdtStudioState {
+export interface VdtStudioState {
   project: VdtProject;
   workspace: VdtWorkspaceState;
   selectedNodeId: string;
@@ -362,6 +369,19 @@ interface VdtStudioState {
   agentPendingQuestions?: RuntimeAgentQuestion[] | undefined;
   agentError?: string | undefined;
   projectRevision: number;
+  smartKpiMutation: SmartKpiMutationView;
+  smartKpiBlockedReason?: string | undefined;
+  smartKpiOperation?: SmartKpiOperation | undefined;
+  smartKpiUndo?: SmartKpiUndo | undefined;
+  smartKpiRebaseRequired?: SmartKpiRebase | undefined;
+  smartKpiConflictOperation?: SmartKpiOperation | undefined;
+  smartKpiFencedRunIds: string[];
+  pendingIncomingKpiRestart?: { runId: string; workspaceId: string; vdtId: string | null; terminalCleanupConfirmed?: true } | undefined;
+  buildIncomingKpiContext: SmartKpiIncomingActions["buildIncomingKpiContext"];
+  previewIncomingKpiBatch: SmartKpiIncomingActions["previewIncomingKpiBatch"];
+  applySmartKpiSuggestion: (input: SmartKpiApplyInput) => Promise<SmartKpiApplyResult>;
+  undoSmartKpiSuggestion: () => Promise<boolean>;
+  reconcilePendingSmartKpiCommit: () => Promise<boolean>;
   aiError?: string | undefined;
   pendingChangeSet?: VdtChangeSet | undefined;
   pendingFileImport?: { changeSetId: string; context: FileImportTargetContext } | undefined;
@@ -388,6 +408,7 @@ interface VdtStudioState {
     field: K,
     value: ExecutionSettings[K]
   ) => void;
+  restoreApiKeyFromVault: (scope: string, value: string) => void;
   setSelectedCliAgentId: (agentId: CliAgentId) => void;
   removeCliAgent: (agentId: CliAgentId) => void;
   restoreCliAgent: (agentId: CliAgentId) => void;
@@ -782,6 +803,27 @@ function clearPendingFileImportState(state: Pick<VdtStudioState, "pendingFileImp
 }
 
 let activeAgentEventUnsubscribe: (() => void) | undefined;
+const incomingKpiRestarts = new Set<string>();
+function incomingRestartScope(state: VdtStudioState) {
+  return { workspaceId: state.workspace.activeProjectId ?? state.project.id, vdtId: state.workspace.activeVdtId ?? null };
+}
+function pendingIncomingRestartHere(state: VdtStudioState): boolean {
+  const scope = incomingRestartScope(state), pending = state.pendingIncomingKpiRestart;
+  return Boolean(pending && pending.workspaceId === scope.workspaceId && pending.vdtId === scope.vdtId);
+}
+function incomingRestartStamp(state: VdtStudioState): string {
+  const scope = incomingRestartScope(state), owner = state.workspace.projectSummaries.find(row => row.project.id === scope.workspaceId);
+  const entry = owner?.vdts.find(row => row.vdt.id === scope.vdtId);
+  if (scope.vdtId && (!owner || !entry)) throw new Error("Reload this VDT before starting its incoming layer.");
+  return kpiCanonicalJson({ ...scope, project: state.project,
+    configuration: persistedExecutionSettings(state.executionSettings), head: entry ? revisionCasFromHead(entry.head) : null,
+    runtime: owner ? runtimeCasFromState(owner.runtimeState) : null });
+}
+function incomingStopPersisted(marker: NonNullable<VdtStudioState["pendingIncomingKpiRestart"]>): boolean {
+  try { return kpiCanonicalJson(JSON.parse(globalThis.localStorage.getItem("vdt-studio-state") ?? "null")?.state?.pendingIncomingKpiRestart) === kpiCanonicalJson(marker); }
+  catch { return false; }
+}
+
 let cliScanInFlight: { agentId: CliAgentId | undefined; promise: Promise<void> } | undefined;
 const cliVerificationRevisionByAgent: Partial<Record<CliAgentId, number>> = {};
 
@@ -1180,13 +1222,17 @@ function clearPersistedAgentRunState(
 
 function applyAgentSnapshot(
   set: (partial: Partial<VdtStudioState> | ((state: VdtStudioState) => Partial<VdtStudioState>)) => void,
-  snapshot: RuntimeAgentRunSnapshot
+  snapshot: RuntimeAgentRunSnapshot,
+  preserveCurrentProject = false,
+  allowIncomingStopSnapshot = false
 ) {
   set((state) => {
+    if (state.smartKpiOperation || state.smartKpiFencedRunIds.includes(snapshot.runId)) return {};
+    if (!allowIncomingStopSnapshot && state.pendingIncomingKpiRestart?.runId === snapshot.runId) return {};
     if (state.activeAgentRunId && state.activeAgentRunId !== snapshot.runId) {
       return {};
     }
-    const rawProject = snapshot.project ?? snapshot.draftProject;
+    const rawProject = preserveCurrentProject ? undefined : snapshot.project ?? snapshot.draftProject;
     const shouldPreserveProjectId = Boolean(
       state.project?.id &&
       state.workspace.activeVdtId &&
@@ -1510,7 +1556,7 @@ function withSyncedLegacyProvider(
 
 export const useVdtStudioStore = create<VdtStudioState>()(
   persist(
-    (set, get) => ({
+    (set, get) => guardSmartKpiActions({
       project: buildInitialProject(),
       workspace: { ...EMPTY_WORKSPACE },
       selectedNodeId: productionVolumeProject.rootNodeId,
@@ -1567,6 +1613,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       agentPendingQuestions: undefined,
       agentError: undefined,
       projectRevision: 0,
+      smartKpiMutation: { status: "idle", canUndo: false },
+      smartKpiFencedRunIds: [],
+      ...createSmartKpiActions(set, get, layoutProjectGraph),
       changeSetSelection: new Set<string>(),
       highlightedNodeIds: [],
       setUiPreference: (field, value) =>
@@ -2034,7 +2083,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         return true;
       },
       selectWorkspaceVdt: async (vdtId, options) => {
-        if (get().workspace.activeVdtId === vdtId) {
+        const rebaseRequired = hasSmartKpiRebase(get());
+        if (get().workspace.activeVdtId === vdtId && !rebaseRequired) {
           if (options?.expectedProjectId && get().workspace.activeProjectId !== options.expectedProjectId) {
             set((state) => ({
               workspace: {
@@ -2062,7 +2112,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
         }));
         try {
-          if (hasActiveWorkspaceVdt(get().workspace) && !(await get().saveActiveWorkspaceVdt())) {
+          if (!rebaseRequired && hasActiveWorkspaceVdt(get().workspace) && !(await get().saveActiveWorkspaceVdt())) {
             set((state) => ({
               workspace: {
                 ...state.workspace,
@@ -2081,6 +2131,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           const project = ensureScenario(loaded.activeProject);
           set((state) => ({
             project,
+            ...(state.smartKpiRebaseRequired?.workspaceId === loaded.summary.project.id && state.smartKpiRebaseRequired.vdtId === loaded.vdt.id
+              ? { smartKpiRebaseRequired: undefined, smartKpiOperation: undefined, smartKpiMutation: { status: "idle" as const, canUndo: false } } : {}),
             selectedNodeId: project.rootNodeId,
             activeScenarioId: resolveMainScenarioId(project),
             brief: briefFromProject(project),
@@ -2223,6 +2275,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       },
       saveActiveWorkspaceVdt: async () => {
         const state = get();
+        if (hasSmartKpiRebase(state)) {
+          set(current => ({ workspace: { ...current.workspace, error: "The draft predates a storage conflict. Reload the stored VDT before saving; automatic overwrite is blocked." } }));
+          return false;
+        }
         const activeVdtId = state.workspace.activeVdtId;
         if (!activeVdtId) return false;
         const owningSummary = summaryContainingVdt(state.workspace.projectSummaries, activeVdtId);
@@ -2371,6 +2427,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           ),
           byokFieldErrors: clearByokFieldError(state.byokFieldErrors, field)
         })),
+      restoreApiKeyFromVault: (scope, value) => set(state => {
+        // The mounted vault manager owns generation/deletion races. This narrow
+        // hydration hook cannot change provider/destination or grant admission.
+        if (apiKeyScope(state.executionSettings) !== scope) return {};
+        return { ...withSyncedLegacyProvider({ ...state.executionSettings, apiKey: value }, state.providerConfig),
+          byokFieldErrors: clearByokFieldError(state.byokFieldErrors, "apiKey") };
+      }),
       setSelectedCliAgentId: (agentId) =>
         set((state) => {
           if (state.removedCliAgentIds.includes(agentId)) return {};
@@ -2743,12 +2806,14 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         set({ isTestingProvider, providerTestStatus }),
       setByokFieldErrors: (byokFieldErrors) => set({ byokFieldErrors }),
       connectAgentEvents: (runId) => {
+        if (get().smartKpiFencedRunIds.includes(runId)) return;
         activeAgentEventUnsubscribe?.();
         set({ agentConnectionStatus: "connecting" });
         activeAgentEventUnsubscribe = createAgentClient().subscribe(runId, {
           onOpen: () => set({ agentConnectionStatus: "connected" }),
           onEvent: (event) => {
             set((state) => {
+              if (state.smartKpiOperation || state.smartKpiFencedRunIds.includes(runId)) return {};
               if (state.agentRun?.runId !== runId && state.activeAgentRunId !== runId) return {};
               const byId = new Map(state.agentEvents.map((entry) => [entry.id, entry]));
               byId.set(event.id, event);
@@ -2792,6 +2857,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         const state = get();
         const runId = resumableAgentRunId(state);
         if (!runId) return;
+        if (state.smartKpiFencedRunIds.includes(runId)) return;
         if (!isActiveActivity(state.generateActivity) && !isActiveRuntimeRun(state.agentRun)) return;
         if (state.agentConnectionStatus === "connecting" || state.agentConnectionStatus === "connected") return;
 
@@ -2859,7 +2925,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           return false;
         }
         const snapshot = entry.activity.runtimeAgentRun;
-        const active = isActiveRuntimeRun(snapshot);
+        const detached = state.smartKpiFencedRunIds.includes(runId);
+        const active = !detached && isActiveRuntimeRun(snapshot);
         activeAgentEventUnsubscribe?.();
         activeAgentEventUnsubscribe = undefined;
         set((current) => ({
@@ -2898,6 +2965,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       },
       startAgentRun: async (initialInstruction, options) => {
         if (get().isGenerating) return false;
+        if (pendingIncomingRestartHere(get())) { set({ aiError: "Confirm the previous agent cleanup before starting another run." }); return false; }
         const state = get();
         const requestedExecutionBindingId = options?.executionBindingId?.trim();
         const { executionSettings, cliDetectionAgents, cliDetectionError, isRescanningClis } = state;
@@ -3064,6 +3132,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       },
       continueAgentRun: async () => {
         const runId = get().agentRun?.runId ?? get().activeAgentRunId ?? get().generateActivity?.runId;
+        if (runId && get().smartKpiFencedRunIds.includes(runId)) {
+          await get().startAgentRun(undefined, { mode: "continue_project", includeCurrentProject: true });
+          return;
+        }
         if (!runId) {
           const message = "Agent run was not found. Reload the page or start a new run.";
           set({ agentError: message, aiError: message });
@@ -3182,6 +3254,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       sendAgentInstruction: async (text, selectedNodeId, researchMode) => {
         const trimmed = text.trim();
         if (!trimmed) return false;
+        const previousRun = get().agentRun?.runId ?? get().generateActivity?.runId;
+        if (previousRun && get().smartKpiFencedRunIds.includes(previousRun)) return get().startAgentRun(trimmed, {
+          mode: "continue_project", includeCurrentProject: true, ...(selectedNodeId ? { selectedNodeId } : {}), ...(researchMode ? { researchMode } : {})
+        });
         const currentRun = get().agentRun;
         const activity = get().generateActivity;
         if (
@@ -3300,6 +3376,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       },
       requestIncomingKpisWithAi: async (nodeId) => {
         const state = get();
+        const previousRun = state.agentRun?.runId ?? state.generateActivity?.runId;
+        if (!pendingIncomingRestartHere(state) && previousRun && state.smartKpiFencedRunIds.includes(previousRun)) return get().startAgentRun(undefined, { mode: "deepen_node", selectedNodeId: nodeId, includeCurrentProject: true });
         const node = state.project.graph.nodes.find((candidate) => candidate.id === nodeId);
         if (!node) {
           const message = "Select an existing KPI before asking the agent to add incoming KPIs.";
@@ -3309,6 +3387,66 @@ export const useVdtStudioStore = create<VdtStudioState>()(
 
         set({ selectedNodeId: nodeId, aiError: undefined, agentError: undefined });
         const canContinueCurrentRun = isActiveRuntimeRun(state.agentRun) || isActiveActivity(state.generateActivity);
+        if (pendingIncomingRestartHere(state) || canContinueCurrentRun && state.agentRun?.executionSummary?.executionProfile === "model_agent") {
+          const scope = incomingRestartScope(state), previous = pendingIncomingRestartHere(state) ? state.pendingIncomingKpiRestart : undefined;
+          const runId = previous?.runId ?? state.agentRun?.runId;
+          if (!runId || incomingKpiRestarts.has(runId)) return false;
+          const foreignStop = !previous ? state.pendingIncomingKpiRestart : undefined;
+          if (foreignStop && !foreignStop.terminalCleanupConfirmed) {
+            set({ aiError: "Finish stopping the previous agent in its original VDT, then retry.", agentError: "Finish stopping the previous agent in its original VDT, then retry." });
+            return false;
+          }
+          if (state.activeAgentRunId && state.activeAgentRunId !== runId) return false;
+          const ownsRestart = () => {
+            const current = get(), currentScope = incomingRestartScope(current), marker = current.pendingIncomingKpiRestart;
+            return currentScope.workspaceId === scope.workspaceId && currentScope.vdtId === scope.vdtId
+              && marker?.runId === runId && marker.workspaceId === scope.workspaceId && marker.vdtId === scope.vdtId
+              && (!current.activeAgentRunId || current.activeAgentRunId === runId);
+          };
+          incomingKpiRestarts.add(runId);
+          try {
+            const stamp = incomingRestartStamp(state), credential = state.executionSettings.apiKey;
+            let marker = previous ?? { runId, ...scope };
+            set(current => ({ pendingIncomingKpiRestart: marker, isGenerating: true,
+              ...(foreignStop ? { smartKpiFencedRunIds: [...new Set([...current.smartKpiFencedRunIds, foreignStop.runId])].slice(-64) } : {}) }));
+            if (!incomingStopPersisted(marker)) throw new Error("Browser storage could not retain the agent stop request. Nothing new was started.");
+            const client = createAgentClient();
+            if (!marker.terminalCleanupConfirmed) {
+              await client.cancel(runId, { awaitTerminal: true });
+              if (!ownsRestart()) return false;
+              marker = { ...marker, terminalCleanupConfirmed: true };
+              set({ pendingIncomingKpiRestart: marker });
+              if (!incomingStopPersisted(marker)) throw new Error("Browser storage could not retain confirmed agent cleanup. Retry before starting another run.");
+            }
+            const snapshot = await client.getRun(runId);
+            if (!ownsRestart()) return false;
+            if (!["succeeded", "failed", "cancelled"].includes(snapshot.status)) throw new Error("Agent cleanup is not terminal. Finish the current run and retry.");
+            if (snapshot.request.workspace && (snapshot.request.workspace.projectId !== scope.workspaceId || (snapshot.request.workspace.vdtId ?? null) !== scope.vdtId)) throw new Error("The stopped run belongs to another VDT. Reload this VDT before retrying.");
+            if (incomingRestartStamp(get()) !== stamp || get().executionSettings.apiKey !== credential) throw new Error("The open graph or execution changed while stopping the agent. Retry from the current graph.");
+            if (scope.vdtId) {
+              const authority = await fetchStoredVdtRevisionState(scope.vdtId);
+              if (!ownsRestart()) return false;
+              const owner = get().workspace.projectSummaries.find(row => row.project.id === scope.workspaceId)!;
+              const entry = owner.vdts.find(row => row.vdt.id === scope.vdtId)!;
+              if (authority.vdt.projectId !== scope.workspaceId || kpiCanonicalJson(revisionCasFromHead(authority.head)) !== kpiCanonicalJson(revisionCasFromHead(entry.head))
+                || kpiCanonicalJson(runtimeCasFromState(authority.runtimeState)) !== kpiCanonicalJson(runtimeCasFromState(owner.runtimeState))) throw new Error("The stored VDT changed. Reload it before starting the incoming layer.");
+            }
+            if (incomingRestartStamp(get()) !== stamp || get().executionSettings.apiKey !== credential) throw new Error("The open graph changed. Retry from the current graph.");
+            const nextProject = previous?.terminalCleanupConfirmed ? get().project : snapshot.project ?? snapshot.draftProject ?? get().project;
+            if (!nextProject.graph.nodes.some(candidate => candidate.id === nodeId)) throw new Error("The selected KPI changed. Select an existing KPI and retry.");
+            // A confirmed stop can be retried after an intervening user edit;
+            // its old snapshot is history, never a replacement for that edit.
+            applyAgentSnapshot(set, snapshot, previous?.terminalCleanupConfirmed === true, true);
+            activeAgentEventUnsubscribe?.(); activeAgentEventUnsubscribe = undefined;
+            set(current => ({ pendingIncomingKpiRestart: undefined, isGenerating: false, agentPendingQuestions: undefined, activeAgentRunId: undefined,
+              smartKpiFencedRunIds: [...new Set([...current.smartKpiFencedRunIds, runId])].slice(-64) }));
+            return await get().startAgentRun(undefined, { mode: "deepen_node", selectedNodeId: nodeId, includeCurrentProject: true });
+          } catch (error) {
+            if (!ownsRestart()) return false;
+            const message = error instanceof Error ? error.message : "Finish the current agent and retry.";
+            set({ isGenerating: false, aiError: message, agentError: message }); return false;
+          } finally { incomingKpiRestarts.delete(runId); }
+        }
         if (canContinueCurrentRun) {
           const runId = state.agentRun?.runId ?? state.activeAgentRunId ?? state.generateActivity?.runId;
           if (!runId) return false;
@@ -3779,6 +3917,12 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
 
           const taskType = state.pendingChangeSet.taskType;
+          if (taskType === "deepen_node") {
+            const request = state.agentRun?.request ?? state.generateActivity?.runtimeAgentRun?.request;
+            try { validateIncomingKpiChangeSet(state.project, state.pendingChangeSet, state.changeSetSelection,
+              request?.mode === "deepen_node" ? request.input.selectedNodeId : undefined); }
+            catch (error) { return { aiActionError: error instanceof Error ? error.message : "Regenerate this incoming layer with its parent formula." }; }
+          }
           const snapshotted = createVersionSnapshot(state.project, {
             name: changeSnapshotName(taskType),
             taskType
@@ -3886,11 +4030,11 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         void get().sendManualProjectChange({ kind: "project_replaced", summary: "User undid model version restoration." });
         return true;
       }
-    }),
+    }, get),
     {
       name: "vdt-studio-state",
       version: 2,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => studioStateStorage),
       migrate: (persistedState, version) => {
         // v2: legacy providerId/providerConfig hydrate into executionSettings via migratePersistedStateToV2.
         let state = scrubPersistedProviderSecrets(persistedState);
@@ -3904,6 +4048,12 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       partialize: (state) => ({
         project: state.project,
         projectRevision: state.projectRevision,
+        smartKpiOperation: state.smartKpiOperation,
+        smartKpiUndo: state.smartKpiUndo,
+        smartKpiRebaseRequired: state.smartKpiRebaseRequired,
+        smartKpiConflictOperation: state.smartKpiConflictOperation,
+        smartKpiFencedRunIds: state.smartKpiFencedRunIds,
+        pendingIncomingKpiRestart: state.pendingIncomingKpiRestart,
         workspace: {
           activePanel: state.workspace.activePanel,
           projectSummaries: state.workspace.projectSummaries,
@@ -3942,7 +4092,11 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           persisted?.executionSettings
         ), removedCliAgentIds);
         const synced = syncLegacyProviderFromExecutionSettings(executionSettings, providerConfig);
-        const project = ensureScenario(persisted?.project ?? currentState.project);
+        // An ambiguous immutable Smart request must reconcile against exactly
+        // the submitted local base; normalization here would fabricate an edit.
+        const project = persisted?.smartKpiOperation?.phase === "committing"
+          ? persisted.project ?? currentState.project
+          : ensureScenario(persisted?.project ?? currentState.project);
         const mergedWorkspace = {
           ...EMPTY_WORKSPACE,
           ...(persisted?.workspace ?? currentState.workspace),
@@ -3955,7 +4109,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           persistedActiveVdtExists && mergedWorkspace.activePanel === "vdt" ? "vdt" : "project";
         const workspace: VdtWorkspaceState = {
           ...mergedWorkspace,
-          activeVdtId: persistedActiveVdtExists ? mergedWorkspace.activeVdtId : undefined,
+          activeVdtId: persistedActiveVdtExists || persisted?.smartKpiOperation?.vdtId === mergedWorkspace.activeVdtId ? mergedWorkspace.activeVdtId : undefined,
           activePanel: activeWorkspacePanel
         };
         const generateActivity = persisted?.generateActivity;
@@ -3970,6 +4124,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           ...persisted,
           project,
           workspace,
+          smartKpiOperation: persisted?.smartKpiOperation?.phase === "committing" ? persisted.smartKpiOperation : undefined,
+          smartKpiUndo: persisted?.smartKpiUndo,
+          smartKpiFencedRunIds: persisted?.smartKpiFencedRunIds ?? [],
+          smartKpiMutation: persisted?.smartKpiOperation?.phase === "committing"
+            ? { status: "reconciling", targetNodeId: persisted.smartKpiOperation.context?.targetNodeId, canUndo: false,
+              message: "Reconcile the pending immutable Smart save before editing." }
+            : { status: "idle", canUndo: false },
           activeScenarioId: resolveMainScenarioId(project),
           providerId: synced.providerId,
           providerConfig: persistedProviderConfig(synced.providerConfig as ProviderConfigState),
@@ -3989,6 +4150,16 @@ export const useVdtStudioStore = create<VdtStudioState>()(
     }
   )
 );
+
+useVdtStudioStore.subscribe((state, previous) => {
+  if (state === previous) return;
+  const blockedReason = smartKpiBlockedReason(state), canUndo = canUndoSmartKpi(state);
+  const undoBlockedReason = state.smartKpiUndo && !canUndo ? "Undo is unavailable after an edit, another revision, or a change of VDT. The checkpoint remains in Versions." : undefined;
+  if (state.smartKpiBlockedReason !== blockedReason || state.smartKpiMutation.canUndo !== canUndo || state.smartKpiMutation.undoBlockedReason !== undoBlockedReason) {
+    useVdtStudioStore.setState({ smartKpiBlockedReason: blockedReason,
+      smartKpiMutation: { ...state.smartKpiMutation, canUndo, ...(undoBlockedReason ? { undoBlockedReason } : { undoBlockedReason: undefined }) } });
+  }
+});
 
 export function useCurrentCalculation() {
   return useVdtStudioStore((state) => calculateGraph(state.project));

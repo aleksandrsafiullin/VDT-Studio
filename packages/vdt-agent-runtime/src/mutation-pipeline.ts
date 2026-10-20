@@ -1,5 +1,7 @@
 import {
   calculateGraph,
+  inspectDecompositionHierarchy,
+  reconcileIncomingKpiPlan,
   previewChangeSet,
   validateGraph,
   type VdtChangeSet,
@@ -61,11 +63,18 @@ export function proposeAndMaybeApplyMutation(
   if (!builder) throw new AgentToolError("NO_DRAFT_PROJECT", "VDT builder session is not available for this run.");
 
   const state = context.store.getState(context.runId);
-  const changeSet = normalizeChangeSetForApply(input.changeSet);
-  const normalizedInput = { ...input, changeSet };
   const baseProject = builder.getProject();
+  const rawChangeSet = normalizeChangeSetForApply(input.changeSet);
+  const rawScopeError = validateSingleLayerRunScope(state, rawChangeSet, input.targetNodeId);
+  // The agent cannot submit a whole-plan edit. Only the host derives this
+  // selected-layer plan/type/edge delta before the authoritative receipt.
+  const changeSet = state.request.mode === "deepen_node" && !rawScopeError
+    ? reconcileIncomingKpiPlan(baseProject, rawChangeSet, state.request.input.selectedNodeId!) : rawChangeSet;
+  const normalizedInput = { ...input, changeSet };
   const baseRevision = builder.getRevision();
-  const selectedChangeIds = normalizedInput.selectedChangeIds ?? collectChangeIds(changeSet);
+  const selectedChangeIds = normalizedInput.selectedChangeIds
+    ? [...new Set([...normalizedInput.selectedChangeIds, ...collectChangeIds(changeSet).filter(id => !collectChangeIds(rawChangeSet).includes(id))])]
+    : collectChangeIds(changeSet);
   const previewProject = previewChangeSet(baseProject, changeSet, new Set(selectedChangeIds));
   const validation = summarizeValidation(validateGraph(previewProject));
   const calculation = validation.valid ? summarizeCalculation(calculateGraph(previewProject)) : undefined;
@@ -74,11 +83,7 @@ export function proposeAndMaybeApplyMutation(
   const boundedScopeError = validateProgressiveMutationScope(baseProject, changeSet, boundedScope);
   const bypassBoundedScope = normalizedInput.allowSkillDefinedDepth === true && boundedScopeError !== undefined;
   const scope = bypassBoundedScope ? undefined : boundedScope;
-  const scopeError = validateSingleLayerRunScope(
-    state,
-    changeSet,
-    normalizedInput.targetNodeId
-  ) ?? (bypassBoundedScope ? undefined : boundedScopeError);
+  const scopeError = rawScopeError ?? (bypassBoundedScope ? undefined : boundedScopeError);
   const approvalRequired = !scopeError
     && validation.valid
     && requiresApproval(policy, changeSet, state.mutationProposals ?? []);
@@ -185,6 +190,7 @@ function validateSingleLayerRunScope(
   if (changeSet.updates.some((update) => update.nodeId !== selectedNodeId)) {
     return `Single-level decomposition can update only the selected KPI "${selectedNodeId}".`;
   }
+  if (changeSet.updates.some(update => update.patch.decompositionPlan !== undefined)) return "The agent cannot replace a decomposition plan during a selected-node incoming step.";
   if (changeSet.deletions.length > 0) {
     return "Single-level decomposition cannot delete KPI nodes.";
   }
@@ -298,7 +304,15 @@ function applyProposalToBuilder(
       currentRevision: beforeRevision
     });
   }
-  const result = builder.applyChangeSet(proposal.changeSet, new Set(selectedChangeIds));
+  const selected = new Set(selectedChangeIds);
+  if (context.store.getState(context.runId).request.mode === "deepen_node") {
+    const candidate = previewChangeSet(builder.getProject(), proposal.changeSet, selected);
+    if (candidate.graph.nodes.find(node => node.id === candidate.rootNodeId)?.decompositionPlan) {
+      const hierarchy = inspectDecompositionHierarchy(candidate, "incremental_user_apply");
+      if (!hierarchy.valid) throw new AgentToolError("MUTATION_VALIDATION_FAILED", hierarchy.errors[0] ?? "Keep the incoming layer and its plan in one selection.");
+    }
+  }
+  const result = builder.applyChangeSet(proposal.changeSet, selected);
   const afterRevision = builder.getRevision();
 
   if (afterRevision === beforeRevision) {

@@ -101,7 +101,7 @@ const fixtureDocs: Record<string, string> = {
   "docs/ARCHITECTURE.md":
     "packages/vdt-storage\npackages/data-harness\nCorrective V2 boundary (target, default-off)\nserver-issued actor context\nSingle-copy repository\nKnown Architectural Gaps\ncommitVdtRevision()\nO_CREAT | O_EXCL\nWindows storage durability is not verified\n",
   "docs/AI_HARNESS.md":
-    "18 task contracts\nCurrent runtime limitations\nsearch-only\none immutable canonical artifact\n`skill.read` is selection-neutral\nCorrective feature flags remain server-owned, fail-closed and default OFF\n",
+    "19 task contracts\nCurrent runtime limitations\nsearch-only\none immutable canonical artifact\n`skill.read` is selection-neutral\nCorrective feature flags remain server-owned, fail-closed and default OFF\n",
   "docs/AGENTIC_VDT_RUNTIME_SPEC.md":
     "Corrective contract freeze\nselection-neutral\nidempotent read receipt\nRecord `no_applicable_skill`\nskill.catalog_overview\n",
   "docs/VDT_Agent_Harness_TZ.md":

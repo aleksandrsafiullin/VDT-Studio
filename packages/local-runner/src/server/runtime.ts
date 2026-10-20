@@ -11,10 +11,11 @@ import {
   detectSubscriptionClis,
   enrichSubscriptionCliDetections,
   isSubscriptionCliId,
+  selectSmartCodexExecutable, readCodexSmartDefaultModel, codexSmartMetadataIdentity,
   type DetectionOptions,
   type SubscriptionCliId
 } from "@vdt-studio/model-bridge/node";
-import { validateGraph, type VdtGraph, type VdtProject, type VdtWarning } from "@vdt-studio/vdt-core";
+import { validateGraph, validateKpiSuggestionTaskInput, type VdtGraph, type VdtProject, type VdtWarning } from "@vdt-studio/vdt-core";
 import {
   appendAgenticVdtRunEvent,
   finalizeAgenticVdtRun,
@@ -69,6 +70,8 @@ export interface LocalRuntimeConfig {
 
 interface ActiveRun extends RunSnapshot {
   controller: AbortController;
+  settled: Promise<void>;
+  resolveSettled: () => void;
 }
 
 const PROGRESS_LABELS: Record<RunProgressPhase, string> = {
@@ -90,6 +93,7 @@ export interface LocalRuntimeContext {
   authInProgress: Set<string>;
   auditSink: (event: AuditEvent) => void;
   adapterVersion: string;
+  smartLanes: Map<string, { activeRequestId?: string; quarantines: Set<string> }>;
 }
 
 export interface RuntimeResult {
@@ -118,6 +122,7 @@ export function createLocalRuntimeContext(config: LocalRuntimeConfig = {}): Loca
     config,
     manifests: createManifestRegistry(config.manifests),
     runs: new Map(),
+    smartLanes: new Map(),
     authInProgress: new Set(),
     auditSink: config.auditSink ?? ((event) => process.stdout.write(`${JSON.stringify({ event: "vdt_runner_audit", ...event })}\n`)),
     adapterVersion: config.adapterVersion ?? LOCAL_RUNTIME_VERSION
@@ -243,7 +248,8 @@ export async function checkRuntimeBackendReadiness(backendId: string, context: L
   throw new LocalRuntimeError(status === "authentication_required" ? 401 : 502, code, message);
 }
 
-export async function completeRuntime(request: CompletionRequest, context: LocalRuntimeContext): Promise<RuntimeResult> {
+export async function completeRuntime(request: CompletionRequest, context: LocalRuntimeContext, callerSignal?: AbortSignal): Promise<RuntimeResult> {
+  callerSignal?.throwIfAborted();
   if (context.runs.has(request.requestId)) throw new LocalRuntimeError(409, "DUPLICATE_REQUEST_ID", "requestId already exists.");
   if (context.runs.size >= MAX_RETAINED_RUNS) {
     const completedId = [...context.runs].find(([, run]) => run.status !== "running")?.[0];
@@ -253,8 +259,28 @@ export async function completeRuntime(request: CompletionRequest, context: Local
   const manifest = context.manifests.get(request.backendId);
   if (!manifest) throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
   assertManifestSupportsContract(manifest, request);
+  let smartLane: { activeRequestId?: string; quarantines: Set<string> } | undefined, smartWorkspaceId: string | undefined;
+  const executionKey = JSON.stringify([request.backendId, request.model ?? null]);
+  if (request.taskType === "suggest_incoming_kpis") {
+    let input;
+    try { input = validateKpiSuggestionTaskInput(request.input && typeof request.input === "object" && "data" in request.input ? (request.input as { data: unknown }).data : request.input); }
+    catch { throw new LocalRuntimeError(400, "INVALID_SMART_INPUT", "Invalid compact Smart context."); }
+    smartWorkspaceId = input.context.workspaceId;
+    context.smartLanes ??= new Map();
+    smartLane = context.smartLanes.get(input.context.workspaceId);
+    if (smartLane?.activeRequestId) throw new LocalRuntimeError(409, "PREPARATION_IN_PROGRESS", "Workspace preparation is still active.");
+    if (smartLane?.quarantines.has(executionKey)) throw new LocalRuntimeError(409, "CLEANUP_UNCONFIRMED", "Workspace execution remains quarantined.");
+    if (smartLane && smartLane.quarantines.size >= 32) throw new LocalRuntimeError(503, "PREPARATION_CAPACITY", "Smart execution quarantine capacity reached.");
+    if (!smartLane) {
+      if (context.smartLanes.size >= 64) throw new LocalRuntimeError(503, "PREPARATION_CAPACITY", "Smart workspace lane capacity reached.");
+      smartLane = { quarantines: new Set() }; context.smartLanes.set(input.context.workspaceId, smartLane);
+    }
+    smartLane.activeRequestId = request.requestId;
+  }
   const createdAt = new Date().toISOString();
   const controller = new AbortController();
+  let resolveSettled = () => {};
+  const settled = new Promise<void>(resolve => { resolveSettled = resolve; });
   const run: ActiveRun = {
     requestId: request.requestId,
     backendId: request.backendId,
@@ -264,9 +290,12 @@ export async function completeRuntime(request: CompletionRequest, context: Local
     createdAt,
     startedAt: createdAt,
     progress: { phase: "starting_backend", label: PROGRESS_LABELS.starting_backend, updatedAt: createdAt },
-    controller
+    controller, settled, resolveSettled
   };
   context.runs.set(request.requestId, run);
+  const callerAbort = () => controller.abort();
+  callerSignal?.addEventListener("abort", callerAbort, { once: true });
+  if (callerSignal?.aborted) callerAbort();
   const started = Date.now();
   let executionRequest = request;
   try {
@@ -335,6 +364,14 @@ export async function completeRuntime(request: CompletionRequest, context: Local
       errorCode: normalized.code
     });
     return { statusCode: normalized.code === "CANCELLED" ? 409 : 502, payload: { ok: false, run: publicRun(run), error: normalized } };
+  } finally {
+    callerSignal?.removeEventListener("abort", callerAbort);
+    if (smartLane) {
+      if (run.error?.code === "CLEANUP_UNCONFIRMED") smartLane.quarantines.add(executionKey);
+      if (smartLane.activeRequestId === request.requestId) delete smartLane.activeRequestId;
+      if (!smartLane.quarantines.size && smartWorkspaceId) context.smartLanes.delete(smartWorkspaceId);
+    }
+    run.resolveSettled();
   }
 }
 
@@ -635,6 +672,48 @@ export function cancelRuntimeRequest(requestId: string, context: LocalRuntimeCon
   return { statusCode: 202, payload: { ok: true, requestId, status: "cancelling" } };
 }
 
+/** Smart HTTP cancellation acknowledges executor close/cleanup, not merely the
+ * abort signal. Ordinary agent/IPC cancellation retains its existing contract. */
+export async function cancelRuntimeRequestWithAcknowledgement(requestId: string, context: LocalRuntimeContext): Promise<RuntimeResult> {
+  const run = context.runs.get(requestId);
+  if (!run) throw new LocalRuntimeError(404, "RUN_NOT_FOUND", "Run was not found.");
+  if (run.taskType !== "suggest_incoming_kpis") return cancelRuntimeRequest(requestId, context);
+  if (run.status === "running") { run.controller.abort(); setRunProgress(run, "cancelled"); }
+  await run.settled;
+  if (run.error?.code === "CLEANUP_UNCONFIRMED") return { statusCode: 409, payload: { ok: false, requestId, error: run.error, cleanupConfirmed: false } };
+  return { statusCode: 200, payload: { ok: true, requestId, status: run.status, cleanupConfirmed: true } };
+}
+
+export async function resolveSmartRuntimeExecution(model: string | undefined, context: LocalRuntimeContext, caller: AbortSignal, timeoutMs = 5_000): Promise<RuntimeResult> {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new LocalRuntimeError(400, "INVALID_TIMEOUT", "Invalid metadata deadline.");
+  const controller = new AbortController(), abort = () => controller.abort(); caller.addEventListener("abort", abort, { once: true }); if (caller.aborted) abort();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; abort(); }, Math.min(timeoutMs, 5_000));
+  try {
+    const env = context.config.executor?.env ?? process.env;
+    const selection = await selectSmartCodexExecutable(env, controller.signal);
+    if (!selection?.version) throw new LocalRuntimeError(503, "SUGGESTIONS_UNAVAILABLE", "A recognized selected Codex CLI is required.");
+    const configured = model && model !== "auto" ? model : await readCodexSmartDefaultModel(env);
+    if (configured && (configured.length > 160 || configured.startsWith("-") || /[\x00-\x20]/.test(configured))) throw new LocalRuntimeError(400, "INVALID_MODEL", "Invalid selected model.");
+    const identity = { backendId: "codex_subscription", modelId: configured ?? "host_default", requestModel: configured ?? "auto", modelResolution: configured ? "exact" : "host_default_alias",
+      ...await codexSmartMetadataIdentity(env, selection.executable, selection.version) };
+    controller.signal.throwIfAborted();
+    return { statusCode: 200, payload: { ok: true, identity } };
+  } catch (error) {
+    if ((error as { code?: string })?.code === "CLEANUP_UNCONFIRMED") throw error;
+    if (controller.signal.aborted) throw new LocalRuntimeError(timedOut ? 504 : 409, timedOut ? "TIMEOUT" : "CANCELLED", "Smart metadata admission did not complete within its active request.");
+    throw error;
+  } finally { clearTimeout(timer); caller.removeEventListener("abort", abort); }
+}
+
+/** Privileged host reconciliation hook; absent from model tools and wire input. */
+export function confirmSmartRuntimeCleanup(input: { workspaceId: string; backendId: string; model?: string; terminalCleanupConfirmedByHost: true }, context: LocalRuntimeContext): void {
+  if (input.terminalCleanupConfirmedByHost !== true) return;
+  const lane = context.smartLanes.get(input.workspaceId);
+  lane?.quarantines.delete(JSON.stringify([input.backendId, input.model ?? null]));
+  if (lane && !lane.activeRequestId && !lane.quarantines.size) context.smartLanes.delete(input.workspaceId);
+}
+
 export function getRuntimeRun(requestId: string, context: LocalRuntimeContext): RuntimeResult {
   const run = context.runs.get(requestId);
   if (!run) throw new LocalRuntimeError(404, "RUN_NOT_FOUND", "Run was not found.");
@@ -767,7 +846,7 @@ export function parseCompletionPayload(value: unknown): CompletionRequest {
 }
 
 function publicRun(run: ActiveRun): RunSnapshot {
-  const { controller: _controller, ...snapshot } = run;
+  const { controller: _controller, settled: _settled, resolveSettled: _resolve, ...snapshot } = run;
   return snapshot;
 }
 
@@ -776,6 +855,7 @@ function publicRuntimeError(error: unknown): { code: string; message: string } {
   const messages: Record<string, string> = {
     CANCELLED: "Completion was cancelled.",
     TIMEOUT: "Backend execution timed out.",
+    CLEANUP_UNCONFIRMED: "Backend cleanup could not be confirmed; Smart execution is quarantined.",
     OUTPUT_TOO_LARGE: "Backend output exceeded the configured limit.",
     OUTPUT_LINE_TOO_LARGE: "Backend output line exceeded the configured limit.",
     SCHEMA_INVALID: "Backend output failed schema validation.",

@@ -1,5 +1,34 @@
 # Runtime Protocol
 
+## Smart completion registration (partial product integration)
+
+The existing `complete` method now admits the registered
+`suggest_incoming_kpis` / `suggest-incoming-kpis-v1` compact input/output contract.
+The separate metadata-only native command `ai_smart_execution` maps to the strict
+`smart_execution` pipe method with `{backendId:"codex_subscription",model?,timeoutMs?}`
+and a host UUID request ID. Deadline is at most 5 s/lower raw budget. Endpoint,
+executable, flags, environment, credentials and model-facing writes remain excluded.
+It dispatches the same separate one-completion executor as paired/managed paths,
+without agent bootstrap, tools/research/repair or conversations. Task-fixed caps
+are enforced in the runtime rather than silently dropped provider wire options.
+
+Native Smart `ai_cancel` delivery alone is not terminal proof. The webview keeps
+`ai_complete` pending until the same owned invocation returns; bounded unknown
+cleanup is a sticky quarantine, and a valid late result after deadline is rejected.
+The common runtime workspace lane also covers clients recreated after reload.
+Transport/process ownership is host-session state and does not implement W0.2
+coordination. Existing broad pipe/frame bounds still apply, while Smart enforces
+24 KiB input/16 KiB final/64 KiB stream locally. Native settings admission and
+revalidation now use their actual host descriptor over IPC, with no relative HTTP
+fallback in static Tauri. The metadata admission reserves cancellation before
+dispatch; its framed writer can signal cancellation while the response mutex is
+occupied. The same reserved writer handles only Smart completions, so native
+`ai_cancel` can reach their controller during the blocking response read; ordinary
+full-agent request/cancel semantics remain unchanged. The webview awaits that same request's terminal outcome. Shared
+probe deduplication/quarantine applies before scheduler identity exists. Real pipe
+fixtures and synthetic native invoke checks passed; Rust build, packaged native
+UI, live execution and performance remain unqualified.
+
 Last reviewed: **2026-07-23**.
 
 VDT Studio Desktop will communicate with the embedded local AI runtime through private pipes, not through a browser-accessible localhost HTTP service.

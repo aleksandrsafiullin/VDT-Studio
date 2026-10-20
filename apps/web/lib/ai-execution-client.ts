@@ -5,7 +5,7 @@ import {
   type GenerateVdtInput,
   type RunAiTaskResult
 } from "@vdt-studio/ai-harness/browser";
-import type { VdtAiTaskType, VdtProject } from "@vdt-studio/vdt-core";
+import { validateIncomingKpiChangeSet, validateKpiSuggestionModelOutput, type VdtAiTaskType, type VdtProject } from "@vdt-studio/vdt-core";
 import { AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/timeout-limits";
 import { resolveVdtAppMode, type VdtAppMode } from "./app-mode";
 import { CLI_CATALOG, type CliAgentId } from "./execution-mode-catalog";
@@ -291,7 +291,8 @@ const TASK_SCHEMA_IDS = {
   analyze_raw_dataset: "analyze-raw-dataset-v1",
   review_dataset_proposal: "review-dataset-proposal-v1",
   generate_tree: "generate-tree-v1",
-  deepen_node: "deepen-node-v1",
+  deepen_node: "deepen-node-v2",
+  suggest_incoming_kpis: "suggest-incoming-kpis-v1",
   simplify_branch: "simplify-branch-v1",
   suggest_alternative: "suggest-alternative-v1",
   suggest_formula: "suggest-formula-v1",
@@ -657,6 +658,13 @@ function isRunAiTaskResult(value: unknown): value is RunAiTaskResult {
   return typeof value === "object" && value !== null && "kind" in value;
 }
 
+function validateMappedDeepenResult(value: RunAiTaskResult, inputValue: unknown): void {
+  const input = asRecord(inputValue);
+  if (value.kind !== "change_set" || !isVdtProject(input?.project) || typeof input?.nodeId !== "string") throw new Error("Regenerate incoming KPIs for the intended target.");
+  const changeSet = value.changeSet;
+  validateIncomingKpiChangeSet(input.project, changeSet, new Set([...changeSet.additions, ...changeSet.updates, ...changeSet.edgeChanges, ...changeSet.deletions].map(row => row.id)), input.nodeId);
+}
+
 function unwrapDesktopProject(value: unknown, input: GenerateVdtInput, providerId: string): VdtProject {
   if (isVdtProject(value)) return value;
   if (isRunAiTaskResult(value) && value.kind === "project") return value.project;
@@ -674,9 +682,10 @@ function unwrapDesktopProject(value: unknown, input: GenerateVdtInput, providerI
 }
 
 function unwrapDesktopRunResult(value: unknown, request?: RuntimeCompletionPayload): RunAiTaskResult {
-  if (isRunAiTaskResult(value)) return value;
+  if (isRunAiTaskResult(value)) return request ? runResultFromRuntimeOutput(value, request)! : value;
   if (typeof value === "object" && value !== null && "result" in value && isRunAiTaskResult((value as { result?: unknown }).result)) {
-    return (value as { result: RunAiTaskResult }).result;
+    const result = (value as { result: RunAiTaskResult }).result;
+    return request ? runResultFromRuntimeOutput(result, request)! : result;
   }
   const agentRun = agentRunFromCompletionResult(value);
   const record = asRecord(value);
@@ -694,7 +703,13 @@ function runResultFromRuntimeOutput(
   request: RuntimeCompletionPayload,
   agentRun?: VdtAgentRun
 ): RunAiTaskResult | undefined {
-  if (isRunAiTaskResult(value)) return value;
+  if (isRunAiTaskResult(value)) {
+    if (request.taskType === "deepen_node") {
+      validateMappedDeepenResult(value, request.input);
+    }
+    return value;
+  }
+  if (request.taskType === "suggest_incoming_kpis") return { kind: "suggestions", result: validateKpiSuggestionModelOutput(value) };
   if (request.taskType !== "deepen_node") return undefined;
   const input = asRecord(request.input);
   const project = input?.project;
@@ -814,6 +829,13 @@ abstract class BaseWebAiExecutionClient implements AiExecutionClient {
 
   async complete(request: AiCompletionRequest, options?: AbortSignal | AiExecutionOptions): Promise<RunAiTaskResult> {
     const execution = normalizeExecutionOptions(options);
+    if (request.taskType === "suggest_incoming_kpis") {
+      const { prepareSmartThroughHttp } = await import("./smart-kpi-client");
+      const cli = request.providerConfig?.backendId === "codex_subscription";
+      const timeoutMs = Math.min(typeof request.providerConfig?.timeoutMs === "number" ? request.providerConfig.timeoutMs : (cli ? 30_000 : 15_000), cli ? 30_000 : 15_000);
+      const output = await prepareSmartThroughHttp(this.fetcher, { input: request.input, providerId: request.providerId, providerConfig: request.providerConfig, timeoutMs }, execution.signal ?? new AbortController().signal);
+      return { kind: "suggestions", result: validateKpiSuggestionModelOutput(output) };
+    }
     const requestId = crypto.randomUUID();
     emitProgress(execution, {
       requestId,
@@ -856,6 +878,7 @@ abstract class BaseWebAiExecutionClient implements AiExecutionClient {
         "AI task failed."
       );
       if (!payload.ok || !payload.result) throw new Error(payload.error ?? "AI task response could not be parsed.");
+      if (request.taskType === "deepen_node") validateMappedDeepenResult(payload.result, request.input);
       const agentRun = agentRunFromCompletionResult(payload.result);
       emitProgress(execution, {
         requestId,
@@ -1089,7 +1112,7 @@ export class DevelopmentRunnerClient extends BaseWebAiExecutionClient {
   }
 
   override async complete(request: AiCompletionRequest, options?: AbortSignal | AiExecutionOptions): Promise<RunAiTaskResult> {
-    if (isApiBackendId(request.providerId)) return super.complete(request, options);
+    if (isApiBackendId(request.providerId) || request.taskType === "suggest_incoming_kpis") return super.complete(request, options);
     const execution = normalizeExecutionOptions(options);
     const completion = buildRuntimeCompletionRequest(request.taskType, request.input, request.providerId, request.providerConfig);
     const result = await this.invokeDevelopmentRuntimeCompletion(
@@ -1556,12 +1579,26 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
         requestInput: request.input
       })
     });
+    let smartCleanupTimer: ReturnType<typeof setTimeout> | undefined, smartDeadline: ReturnType<typeof setTimeout> | undefined, smartTimedOut = false;
+    let rejectSmartCleanup = (_error: Error) => {};
+    const smartUnconfirmed = request.taskType === "suggest_incoming_kpis" ? new Promise<never>((_, reject) => { rejectSmartCleanup = reject; }) : undefined;
+    const smartUnconfirmedError = () => Object.assign(new Error("Desktop Smart cleanup could not be confirmed."), { code: "CLEANUP_UNCONFIRMED" });
     const abort = () => {
       void invoke("ai_cancel", { requestId: request.requestId }).catch(() => undefined);
+      if (smartUnconfirmed) smartCleanupTimer ??= setTimeout(() => rejectSmartCleanup(smartUnconfirmedError()), 2_500);
     };
     options.signal?.addEventListener("abort", abort, { once: true });
+    if (smartUnconfirmed) smartDeadline = setTimeout(() => { smartTimedOut = true; abort(); }, Math.min(request.timeoutMs ?? 30_000, request.backendId === "codex_subscription" ? 30_000 : 15_000));
     try {
-      const result = await invoke("ai_complete", { request });
+      const completion = invoke("ai_complete", { request });
+      const result = await (smartUnconfirmed ? Promise.race([completion, smartUnconfirmed]) : completion);
+      if (smartUnconfirmed) {
+        const payload = asRecord(result), failure = asRecord(payload?.error);
+        if (failure?.code === "CLEANUP_UNCONFIRMED") throw smartUnconfirmedError();
+        if (smartTimedOut) throw Object.assign(new Error("Smart preparation timed out."), { code: "TIMEOUT" });
+        if (payload?.ok === false) throw Object.assign(new Error("Desktop Smart preparation failed."), { code: failure?.code ?? "PREPARATION_FAILED" });
+        if (options.signal?.aborted) throw Object.assign(new DOMException("Smart preparation cancelled.", "AbortError"), { code: "CANCELLED" });
+      }
       emitProgress(options, {
         requestId: request.requestId,
         phase: "validating_schema",
@@ -1583,6 +1620,14 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
       });
       return result;
     } catch (error) {
+      if (request.taskType === "suggest_incoming_kpis") {
+        const text = String(error);
+        if (text.includes("CLEANUP_UNCONFIRMED") || /SIDECAR_(?:EXITED|READ_FAILED|WRITE_FAILED|STATUS_FAILED|TIMEOUT)/.test(text)) throw smartUnconfirmedError();
+        if (/\bCANCELLED:/.test(text)) throw Object.assign(new DOMException("Smart preparation cancelled.", "AbortError"), { code: "CANCELLED" });
+        if (/\bTIMEOUT:/.test(text)) throw Object.assign(new Error("Smart preparation timed out."), { code: "TIMEOUT" });
+        const admissionCode = text.match(/\b(SUGGESTIONS_UNAVAILABLE|PREPARATION_IN_PROGRESS|PREPARATION_CAPACITY|INVALID_SMART_INPUT):/)?.[1];
+        if (admissionCode) throw Object.assign(new Error("Smart execution is unavailable."), { code: admissionCode });
+      }
       const phase = abortProgressPhase(error);
       emitProgress(options, {
         requestId: request.requestId,
@@ -1606,6 +1651,7 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
       });
       throw error;
     } finally {
+      if (smartCleanupTimer) clearTimeout(smartCleanupTimer); if (smartDeadline) clearTimeout(smartDeadline);
       options.signal?.removeEventListener("abort", abort);
     }
   }
@@ -1664,4 +1710,33 @@ export function createAiExecutionClient(
   if (appMode === "hosted_web") return new HostedApiExecutionClient(fetcher);
   if (appMode === "desktop") return new DesktopAiExecutionClient(fetcher);
   return new DevelopmentRunnerClient(fetcher);
+}
+
+/** Metadata IPC is also an owned operation: ai_cancel only writes a signal;
+ * the same request must settle before a later admission may reuse its slot. */
+export async function resolveDesktopSmartExecution(request: { backendId: "codex_subscription"; model?: string; timeoutMs: number },
+  options: { signal?: AbortSignal; invoke?: DesktopInvoke } = {}): Promise<import("./smart-kpi-host-identity").SmartCodexHostIdentity> {
+  if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0 || request.timeoutMs > 5000) throw Object.assign(new Error("Invalid Smart metadata deadline."), { code: "INVALID_TIMEOUT" });
+  const invoke = options.invoke ?? resolveDesktopInvoke();
+  if (!invoke) throw Object.assign(new Error("Desktop Smart metadata bridge is unavailable."), { code: "SUGGESTIONS_UNAVAILABLE" });
+  options.signal?.throwIfAborted(); const requestId = crypto.randomUUID();
+  let timedOut = false, aborted = false, cleanup: ReturnType<typeof setTimeout> | undefined, rejectCleanup: (error: Error) => void = () => {};
+  const unknown = new Promise<never>((_, reject) => { rejectCleanup = reject; });
+  const abort = () => {
+    aborted = true; void invoke("ai_cancel", { requestId }).catch(() => {});
+    cleanup ??= setTimeout(() => rejectCleanup(Object.assign(new Error("Native metadata cleanup is unconfirmed."), { code: "CLEANUP_UNCONFIRMED" })), 2500);
+  };
+  options.signal?.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(() => { timedOut = true; abort(); }, request.timeoutMs);
+  try {
+    const payload = await Promise.race([invoke("ai_smart_execution", { request: { ...request, requestId } }), unknown]) as { ok?: boolean; identity?: import("./smart-kpi-host-identity").SmartCodexHostIdentity; error?: { code?: string } };
+    if (payload?.error?.code === "CLEANUP_UNCONFIRMED") throw Object.assign(new Error("Native metadata cleanup is unconfirmed."), { code: "CLEANUP_UNCONFIRMED" });
+    if (aborted || options.signal?.aborted) throw Object.assign(new Error("Native metadata admission did not complete in time."), { code: timedOut ? "TIMEOUT" : "CANCELLED" });
+    if (!payload?.ok || !payload.identity || new TextEncoder().encode(JSON.stringify(payload)).byteLength > 8192) throw Object.assign(new Error("Native metadata response is invalid."), { code: "SUGGESTIONS_UNAVAILABLE" });
+    return payload.identity;
+  } catch (error) {
+    if ((error as { code?: string })?.code === "CLEANUP_UNCONFIRMED" || String(error).includes("CLEANUP_UNCONFIRMED") || /SIDECAR_(?:EXITED|READ_FAILED|WRITE_FAILED|STATUS_FAILED)/.test(String(error))) throw Object.assign(new Error("Native metadata cleanup is unconfirmed."), { code: "CLEANUP_UNCONFIRMED" });
+    if (aborted || options.signal?.aborted) throw Object.assign(new Error("Native metadata admission did not complete in time."), { code: timedOut ? "TIMEOUT" : "CANCELLED" });
+    throw error;
+  } finally { clearTimeout(timer); if (cleanup) clearTimeout(cleanup); options.signal?.removeEventListener("abort", abort); }
 }

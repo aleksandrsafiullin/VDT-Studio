@@ -1,5 +1,26 @@
 # Desktop Local Execution
 
+## Smart preparation and metadata boundary
+
+The existing `ai_complete` command/task registry carries the compact read-only
+Smart task to the common one-completion runtime. Selected model and manifest
+endpoint authority remain host-owned; there is no full-agent/deepen session per
+preparation. The Smart-only client waits for the same completion after cancellation,
+rejects late success and quarantines unconfirmed owned cleanup. General agent
+cancellation/profile behavior is unchanged.
+
+`ai_smart_execution` now supplies actual settings-time/revalidation metadata over
+the strict `smart_execution` sidecar method. It admits Codex only, with a 5 s/lower
+budget and no frontend executable/endpoint authority. Metadata cancellation has
+an owned framed writer shared by Smart completions, and waits for the original
+request to close without waiting behind its Rust response mutex. Strict real
+pipe and synthetic Tauri fixtures cover stable identity, selected model, closed
+fields, cancellation and cleanup uncertainty. Rust sources passed parser checks;
+no actual Rust build, native package or live model qualification is claimed.
+Local Chrome editor integration/prepared latency fixtures passed; these do not
+qualify native execution. See
+[validation](../PRODUCTION_READINESS.md#smart-kpi-validation).
+
 Last reviewed: **2026-07-23**.
 
 VDT Studio Desktop is the required host for seamless subscription CLI and local-model execution. Hosted web mode remains API/BYOK only.
@@ -9,9 +30,11 @@ VDT Studio Desktop is the required host for seamless subscription CLI and local-
 `apps/desktop` contains the Tauri shell foundation. The shell loads the existing web frontend with `NEXT_PUBLIC_VDT_APP_MODE=desktop` and exposes only these reviewed commands:
 
 - `ai_list_backends`
+- `ai_detect_subscription_clis`
 - `ai_test_backend`
 - `ai_list_models`
 - `ai_complete`
+- `ai_smart_execution`
 - `ai_cancel`
 - `ai_get_run`
 - `open_provider_auth`

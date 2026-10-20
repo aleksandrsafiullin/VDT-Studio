@@ -56,7 +56,7 @@ export interface AgentClient {
   getRun(runId: string): Promise<VdtAgentRunSnapshot>;
   subscribe(runId: string, handlers: AgentEventHandlers): () => void;
   sendMessage(runId: string, message: AgentUserMessage): Promise<VdtAgentRunSnapshot>;
-  cancel(runId: string): Promise<void>;
+  cancel(runId: string, options?: { awaitTerminal?: boolean }): Promise<void>;
 }
 
 export function createAgentClient(fetcher: typeof fetch = fetch): AgentClient {
@@ -105,13 +105,14 @@ export function createAgentClient(fetcher: typeof fetch = fetch): AgentClient {
       );
       return payload.snapshot;
     },
-    async cancel(runId) {
+    async cancel(runId, options) {
       const response = await fetcher(`/api/agent/runs/${encodeURIComponent(runId)}/cancel`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: "{}"
+        body: options?.awaitTerminal ? JSON.stringify({ awaitTerminal: true }) : "{}"
       });
-      await readJsonResponse<{ ok: true }>(response, "Agent run could not be cancelled.");
+      const receipt = await readJsonResponse<{ ok: true; terminalCleanupConfirmed?: boolean }>(response, "Agent run could not be cancelled.");
+      if (options?.awaitTerminal && receipt.terminalCleanupConfirmed !== true) throw new Error("Agent cleanup is not confirmed. Finish the current run and retry.");
     }
   };
 }

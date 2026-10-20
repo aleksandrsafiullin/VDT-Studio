@@ -1,11 +1,12 @@
-import type { VdtChangeSet } from "@vdt-studio/vdt-core";
-import { nowIso, warning } from "@vdt-studio/vdt-core";
-import type { DeepenNodeOutput } from "../../schemas/deepen-node";
+import type { VdtChangeSet, VdtProject } from "@vdt-studio/vdt-core";
+import { nowIso, warning, reconcileIncomingKpiPlan } from "@vdt-studio/vdt-core";
+import { deepenNodeOutputSchema, type DeepenNodeOutput } from "../../schemas/deepen-node";
 
 export function deepenNodeOutputToChangeSet(
   output: DeepenNodeOutput,
-  options: { backendId: string; changeSetId?: string }
+  options: { backendId: string; project: VdtProject; changeSetId?: string }
 ): VdtChangeSet {
+  output = deepenNodeOutputSchema.parse(output);
   const childIds = new Set(output.nodes.map((node) => node.id));
   const additions = output.nodes.map((node) => {
     const parentEdge = output.edges.find(
@@ -46,13 +47,13 @@ export function deepenNodeOutputToChangeSet(
       }
     }));
 
-  return {
+  const changeSet: VdtChangeSet = {
     id: options.changeSetId ?? `changeset_deepen_${output.targetNodeId}`,
     taskType: "deepen_node",
     backendId: options.backendId,
     createdAt: nowIso(),
     additions,
-    updates: [],
+    updates: [{ id: `formula_${output.targetNodeId}`, nodeId: output.targetNodeId, patch: { formula: output.targetFormula, type: output.targetNodeId === options.project.rootNodeId ? "root_kpi" : "calculated" } }],
     deletions: [],
     edgeChanges,
     assumptions: output.assumptions,
@@ -67,4 +68,5 @@ export function deepenNodeOutputToChangeSet(
       })
     )
   };
+  return reconcileIncomingKpiPlan(options.project, changeSet, output.targetNodeId);
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/timeout-limits";
 import { productionVolumeProject } from "@vdt-studio/vdt-core";
+import { validateAndMapDeepenNode } from "@vdt-studio/ai-harness/browser";
 import {
   type AiExecutionProgressEvent,
   createAiExecutionClient,
@@ -56,7 +57,10 @@ function agentRunFixture(overrides: Record<string, unknown> = {}) {
 
 function deepenNodeOutputFixture() {
   return {
+    schemaVersion: "deepen_node.v2",
     targetNodeId: "unplanned_downtime",
+    targetFormula: "equipment_failure_downtime_test",
+    retainedNodeIds: [],
     nodes: [
       {
         id: "equipment_failure_downtime_test",
@@ -792,19 +796,7 @@ describe("AiExecutionClient", () => {
         ok: true,
         result: {
           kind: "change_set",
-          changeSet: {
-            id: "changeset_deepen_unplanned_downtime",
-            taskType: "deepen_node",
-            backendId: "openai_compatible",
-            createdAt: "2026-06-24T00:00:00.000Z",
-            additions: [],
-            updates: [],
-            deletions: [],
-            edgeChanges: [],
-            assumptions: [],
-            questions: [],
-            warnings: []
-          },
+          changeSet: validateAndMapDeepenNode(productionVolumeProject, deepenNodeOutputFixture(), "unplanned_downtime", "openai_compatible").changeSet,
           agentRun: agentRunFixture()
         }
       })
@@ -826,6 +818,19 @@ describe("AiExecutionClient", () => {
     });
   });
 
+  it.each(["hosted", "development", "desktop"] as const)("rejects a historical mapped child-only %s result before complete", async mode => {
+    const changeSet = validateAndMapDeepenNode(productionVolumeProject, deepenNodeOutputFixture(), "unplanned_downtime", "fixture").changeSet;
+    changeSet.updates = []; changeSet.edgeChanges = [];
+    const result = { kind: "change_set", changeSet, agentRun: agentRunFixture() };
+    const events: AiExecutionProgressEvent[] = [];
+    const fetcher = vi.fn(async () => jsonResponse({ ok: true, result, output: result }));
+    const client = mode === "desktop" ? new DesktopAiExecutionClient(fetcher, vi.fn(async () => ({ ok: true, result })))
+      : mode === "development" ? new DevelopmentRunnerClient(fetcher) : createAiExecutionClient("hosted_web", fetcher);
+    await expect(client.complete({ providerId: mode === "hosted" ? "openai_compatible" : "local_runner", providerConfig: { backendId: "codex_subscription" },
+      taskType: "deepen_node", input: { project: productionVolumeProject, nodeId: "unplanned_downtime" } }, { onProgress: event => events.push(event) })).rejects.toThrow(/parent formula/);
+    expect(events.some(event => event.phase === "complete")).toBe(false);
+  });
+
   it("maps development runtime raw deepen output to a change set and keeps agentRun progress", async () => {
     const events: AiExecutionProgressEvent[] = [];
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
@@ -838,7 +843,7 @@ describe("AiExecutionClient", () => {
       expect(body.request).toMatchObject({
         backendId: "codex_subscription",
         taskType: "deepen_node",
-        schemaId: "deepen-node-v1"
+        schemaId: "deepen-node-v2"
       });
       return jsonResponse({
         ok: true,
@@ -847,7 +852,7 @@ describe("AiExecutionClient", () => {
           requestId: body.request?.requestId,
           backendId: "codex_subscription",
           taskType: "deepen_node",
-          schemaId: "deepen-node-v1",
+          schemaId: "deepen-node-v2",
           status: "succeeded",
           schemaValid: true,
           progress: {
@@ -893,7 +898,7 @@ describe("AiExecutionClient", () => {
           requestId: body.request?.requestId,
           backendId: "codex_subscription",
           taskType: "deepen_node",
-          schemaId: "deepen-node-v1",
+          schemaId: "deepen-node-v2",
           status: "succeeded",
           schemaValid: true,
           progress: {
@@ -927,7 +932,7 @@ describe("AiExecutionClient", () => {
       expect(args?.request).toMatchObject({
         backendId: "codex_subscription",
         taskType: "deepen_node",
-        schemaId: "deepen-node-v1"
+        schemaId: "deepen-node-v2"
       });
       return {
         ok: true,

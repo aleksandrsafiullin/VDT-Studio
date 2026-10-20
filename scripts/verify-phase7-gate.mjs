@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productionVolumeProject } from "../packages/vdt-core/src/examples/production-volume.ts";
+import { buildKpiSuggestionContext, buildKpiSuggestionTaskInput } from "../packages/vdt-core/src/index.ts";
 import { runAiTask } from "../packages/ai-harness/src/tasks/run-ai-task.ts";
 import { MockProvider } from "../packages/ai-harness/src/providers/mock-provider.ts";
 import {
@@ -21,6 +22,7 @@ const DEFAULT_ROOT = resolve(dirname(SCRIPT_PATH), "..");
 export const CANONICAL_RUN_TASK_TYPES = [
   "generate_tree",
   "deepen_node",
+  "suggest_incoming_kpis",
   "simplify_branch",
   "suggest_alternative",
   "suggest_formula",
@@ -198,7 +200,7 @@ function assertDocs(root) {
   const readme = read(root, "README.md");
   const roadmap = read(root, "docs/ROADMAP.md");
 
-  if (!readme.includes("The schema registry contains 18 task contracts. Seventeen are exposed product tasks")) {
+  if (!readme.includes("The schema registry contains 19 task contracts. Eighteen are exposed product tasks")) {
     fail("README must list the bounded AI actions.");
   }
   for (const taskType of CANONICAL_EXPOSED_TASK_TYPES) {
@@ -206,7 +208,7 @@ function assertDocs(root) {
       fail(`README AI Actions section is missing ${taskType}.`);
     }
   }
-  if (!roadmap.includes("18 registered task schemas, 17 exposed product tasks")) {
+  if (!roadmap.includes("19 registered task schemas, 18 exposed product tasks")) {
     fail("docs/ROADMAP.md must record the current task/schema gate surface.");
   }
 }
@@ -215,9 +217,11 @@ function cloneProject() {
   return structuredClone(productionVolumeProject);
 }
 
-function taskInput(taskType) {
+async function taskInput(taskType) {
   const project = cloneProject();
   switch (taskType) {
+    case "suggest_incoming_kpis":
+      return buildKpiSuggestionTaskInput(await buildKpiSuggestionContext(project, { workspaceId: "phase7", vdtId: null, targetNodeId: project.rootNodeId, period: { key: "2026-10", grain: "month" } }));
     case "generate_tree":
       return {
         rootKpi: "Production Volume",
@@ -273,6 +277,7 @@ function taskInput(taskType) {
 }
 
 function expectedKind(taskType) {
+  if (taskType === "suggest_incoming_kpis") return "suggestions";
   if (taskType === "generate_tree") return "project";
   if (GRAPH_MUTATION_TASKS.has(taskType)) return "change_set";
   if (ADVISORY_TASKS.has(taskType)) return "advisory";
@@ -284,7 +289,7 @@ async function assertMockProviderCoverage() {
   const provider = new MockProvider();
   const results = [];
   for (const taskType of CANONICAL_RUN_TASK_TYPES) {
-    const result = await runAiTask(taskType, provider, taskInput(taskType));
+    const result = await runAiTask(taskType, provider, await taskInput(taskType));
     const kind = expectedKind(taskType);
     if (result.kind !== kind) {
       fail(`MockProvider returned ${result.kind} for ${taskType}; expected ${kind}.`);

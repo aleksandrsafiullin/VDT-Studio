@@ -367,7 +367,8 @@ async function startSupervisorAgentRun(input: {
         supervisorState,
         existingFinishReceipt: supervisorState?.finishReceipt ?? null,
         ...(request.mode === "deepen_node"
-          ? { modeCompletion: { immediateChildCreated: hasNewImmediateChild(request, builder) } }
+          ? { modeCompletion: { immediateChildCreated: hasNewImmediateChild(request, builder), selectedNodeId: request.input.selectedNodeId,
+              createdNodeIds: newImmediateChildIds(request, builder) } }
           : {})
       });
     },
@@ -741,9 +742,24 @@ export async function handleStructuredModelAgentMessage(
   return await compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
 }
 
-export async function cancelStructuredModelAgentRun(runId: string): Promise<PublicAgentRunSnapshot> {
+const confirmedSupervisorClosures = new Set<string>();
+/** Optional selected-layer handoff: cancellation status alone is not cleanup. */
+export async function cancelStructuredModelAgentRun(runId: string, awaitTerminal = false): Promise<PublicAgentRunSnapshot> {
+  if (!awaitTerminal) return cancelStructuredModelAgentRunInternal(runId, false);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([cancelStructuredModelAgentRunInternal(runId, true), new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new PublicSupervisorRunError("MODEL_AGENT_CLEANUP_PENDING", "Agent cleanup is not confirmed. Finish the current run and retry.", 409)), 5_000);
+    })]);
+  } catch (error) {
+    if (error instanceof PublicSupervisorRunError) throw error;
+    throw new PublicSupervisorRunError("MODEL_AGENT_CLEANUP_PENDING", "Agent cleanup is not confirmed. Finish the current run and retry.", 409);
+  } finally { if (timer) clearTimeout(timer); }
+}
+async function cancelStructuredModelAgentRunInternal(runId: string, awaitTerminal: boolean): Promise<PublicAgentRunSnapshot> {
   const active = activeRuns.get(runId);
   if (!active) {
+    if (awaitTerminal && confirmedSupervisorClosures.has(runId)) return compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
     throw new PublicSupervisorRunError(
       "MODEL_AGENT_RECOVERY_REQUIRED",
       "The persisted Model Agent run has no active fenced controller to authorize cancellation.",
@@ -751,25 +767,30 @@ export async function cancelStructuredModelAgentRun(runId: string): Promise<Publ
     );
   }
   const cancelled = await active.supervisor.cancel("User cancelled the run.");
-  if (!cancelled.armed) {
+  if (!cancelled.armed && !(awaitTerminal && ["succeeded", "failed", "cancelled", "closed"].includes(active.supervisor.status))) {
     throw new PublicSupervisorRunError(
       "MODEL_AGENT_FINAL_COMMITTED",
       "The run already started its durable final commit and can no longer be cancelled.",
       409
     );
   }
-  agentRuntime.store.updateRun(runId, {
+  if (cancelled.armed) agentRuntime.store.updateRun(runId, {
     status: "cancelled",
     phase: "reporting",
     completedAt: new Date().toISOString(),
     ...safeCliSessionTelemetryPatch(runId, active.supervisor, { includeLatencyPercentiles: true })
   });
   watchActiveSupervisorLifecycle(runId, active);
+  if (awaitTerminal) {
+    await active.lifecycleTask;
+    if (activeRuns.get(runId) === active || !confirmedSupervisorClosures.has(runId)) throw new PublicSupervisorRunError("MODEL_AGENT_CLEANUP_PENDING", "Agent cleanup is not confirmed. Finish the current run and retry.", 409);
+  }
   return await compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
 }
 
 export function resetActiveSupervisorRunsForTests(): void {
   if (process.env.NODE_ENV !== "test") return;
+  confirmedSupervisorClosures.clear();
   for (const [runId, active] of activeRuns) {
     activeRuns.delete(runId);
     void active.supervisor.close()
@@ -808,6 +829,8 @@ async function releaseActiveSupervisorRun(runId: string, active: ActiveSuperviso
   persistCanaryMetricsSidecar(runId, active);
   try {
     await active.supervisor.close();
+    confirmedSupervisorClosures.add(runId);
+    while (confirmedSupervisorClosures.size > 256) confirmedSupervisorClosures.delete(confirmedSupervisorClosures.values().next().value!);
   } finally {
     if (activeRuns.get(runId) === active) activeRuns.delete(runId);
     await active.persistence.close?.();
@@ -1511,16 +1534,15 @@ function applyManualProjectChange(
 }
 
 function hasNewImmediateChild(request: VdtAgentStartRequest, builder: VdtBuilderSession): boolean {
+  return newImmediateChildIds(request, builder).length > 0;
+}
+function newImmediateChildIds(request: VdtAgentStartRequest, builder: VdtBuilderSession): string[] {
   const selectedNodeId = request.input.selectedNodeId;
-  if (!selectedNodeId) return false;
-  const originalChildIds = new Set(
-    request.input.project?.graph.edges
-      .filter((edge) => edge.sourceNodeId === selectedNodeId)
-      .map((edge) => edge.targetNodeId) ?? []
-  );
-  return builder.getProject().graph.edges.some(
-    (edge) => edge.sourceNodeId === selectedNodeId && !originalChildIds.has(edge.targetNodeId)
-  );
+  if (!selectedNodeId) return [];
+  const originalNodeIds = new Set(request.input.project?.graph.nodes.map(node => node.id) ?? []);
+  return builder.getProject().graph.edges.filter(
+    (edge) => edge.sourceNodeId === selectedNodeId && !originalNodeIds.has(edge.targetNodeId)
+  ).map(edge => edge.targetNodeId);
 }
 
 function normalizeApprovalSelection(selectedChangeIds: readonly string[]): string[] {

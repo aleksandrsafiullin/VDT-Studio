@@ -26,8 +26,10 @@ export function ApiKeyStorage() {
     };
     const persistence = connectApiKeyPersistence({
       getSettings: () => useVdtStudioStore.getState().executionSettings,
-      setApiKey: (apiKey) => {
-        useVdtStudioStore.getState().setExecutionSettingsField("apiKey", apiKey);
+      setApiKey: (apiKey, scope) => {
+        const state = useVdtStudioStore.getState();
+        if (scope !== undefined) state.restoreApiKeyFromVault(scope, apiKey);
+        else state.setExecutionSettingsField("apiKey", apiKey);
       },
       subscribe: (listener) => useVdtStudioStore.subscribe((state, previous) => {
         if (state.executionSettings !== previous.executionSettings) listener(state.executionSettings);

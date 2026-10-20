@@ -1,0 +1,481 @@
+[
+  {
+    "schemaVersion": "kpi_suggestion_context.v1",
+    "workspaceId": "project_live_kpi_20261016_ciaqx2",
+    "projectId": "project_dispatch_397b135736f6",
+    "vdtId": "vdt_39caee78-d59b-4d00-b1a8-86ddd26f360c",
+    "targetNodeId": "waste_loaded_speed_kmh",
+    "graphFingerprint": "sha256:8ca61e8f441cfd236b4f785f3aa8bc01d7c575b5f57992367ee5ac062ce559ab",
+    "contextHash": "sha256:fd5b86320129862a8732e1e78196c78e0e47381d9d918cba58067e889997a983",
+    "period": {
+      "key": "explicit:2026-10-05–2026-10-11",
+      "grain": "custom"
+    },
+    "business": {
+      "name": "Dispatch autonomous · hierarchy-api-gpt6-r3"
+    },
+    "root": {
+      "id": "excavation",
+      "name": "Фактическая выемка горной массы",
+      "type": "root_kpi",
+      "status": "ai_suggested",
+      "unit": "t",
+      "formula": "ore_output + waste_output",
+      "valueKnown": false,
+      "valueStatus": null,
+      "provenance": "unsourced"
+    },
+    "target": {
+      "id": "waste_loaded_speed_kmh",
+      "name": "Фактическая гружёная скорость, порода",
+      "type": "input",
+      "status": "accepted",
+      "unit": "km/h",
+      "valueKnown": true,
+      "valueStatus": "calculated",
+      "provenance": "sourced"
+    },
+    "children": [],
+    "ancestors": [
+      {
+        "id": "excavation",
+        "name": "Фактическая выемка горной массы",
+        "type": "root_kpi",
+        "status": "ai_suggested",
+        "unit": "t",
+        "formula": "ore_output + waste_output",
+        "valueKnown": false,
+        "valueStatus": null,
+        "provenance": "unsourced"
+      },
+      {
+        "id": "waste_cycle_min",
+        "name": "Полный цикл на породе",
+        "type": "calculated",
+        "status": "ai_suggested",
+        "unit": "min/trip",
+        "formula": "waste_loaded_travel_min + waste_empty_travel_min + waste_loading_min_trip + waste_dumping_min_trip + waste_incycle_wait_min_trip",
+        "valueKnown": false,
+        "valueStatus": null,
+        "provenance": "unsourced"
+      },
+      {
+        "id": "waste_loaded_travel_min",
+        "name": "Гружёное движение, порода",
+        "type": "calculated",
+        "status": "ai_suggested",
+        "unit": "min/trip",
+        "formula": "waste_loaded_km_trip / waste_loaded_speed_kmh * 60",
+        "valueKnown": false,
+        "valueStatus": null,
+        "provenance": "unsourced"
+      },
+      {
+        "id": "waste_output",
+        "name": "Выемка породы",
+        "type": "calculated",
+        "status": "ai_suggested",
+        "description": "Рассчитывается из производительного времени автопарка, доли времени на породе, длительности полного измеренного цикла и фактической массы груза на рейс.",
+        "unit": "t",
+        "formula": "waste_prod_hours * 60 / waste_cycle_min * waste_avg_payload_t",
+        "valueKnown": false,
+        "valueStatus": null,
+        "provenance": "unsourced"
+      }
+    ],
+    "siblings": [
+      {
+        "id": "waste_loaded_km_trip",
+        "name": "Среднее гружёное расстояние на рейс, порода",
+        "type": "input",
+        "status": "accepted",
+        "unit": "km/trip",
+        "valueKnown": true,
+        "valueStatus": "calculated",
+        "provenance": "sourced"
+      }
+    ],
+    "decompositionPlan": {
+      "goal": "Фактическая недельная выемка = productive hours по материалу × 60 / полный цикл × фактическая загрузка. Полный цикл включает движение, загрузку, разгрузку и внутрецикловое ожидание; время состояний сверяется без двойного вычитания.",
+      "nodes": [
+        {
+          "kind": "input",
+          "nodeId": "waste_loaded_speed_kmh",
+          "parentNodeId": "waste_loaded_travel_min"
+        }
+      ],
+      "version": 1
+    },
+    "planScope": {
+      "selection": "target_and_direct_children",
+      "totalNodes": 34,
+      "excludedUnrelatedNodes": 33
+    },
+    "parentRelationships": [
+      {
+        "parentNodeId": "excavation",
+        "childNodeId": "waste_output",
+        "relation": "additive_component"
+      },
+      {
+        "parentNodeId": "waste_cycle_min",
+        "childNodeId": "waste_loaded_travel_min",
+        "relation": "additive_component"
+      },
+      {
+        "parentNodeId": "waste_loaded_travel_min",
+        "childNodeId": "waste_loaded_km_trip",
+        "relation": "positive_driver"
+      },
+      {
+        "parentNodeId": "waste_loaded_travel_min",
+        "childNodeId": "waste_loaded_speed_kmh",
+        "relation": "positive_driver"
+      },
+      {
+        "parentNodeId": "waste_output",
+        "childNodeId": "waste_cycle_min",
+        "relation": "negative_driver"
+      }
+    ],
+    "omissions": {
+      "directChildren": 0,
+      "ancestors": 0,
+      "siblings": 0,
+      "planNodes": 0,
+      "relationships": 0,
+      "text": false,
+      "cyclic": false
+    }
+  },
+  {
+    "schemaVersion": "kpi_suggestion_context.v1",
+    "workspaceId": "project_live_kpi_20261016_ciaqx2",
+    "projectId": "project_dispatch_397b135736f6",
+    "vdtId": "vdt_39caee78-d59b-4d00-b1a8-86ddd26f360c",
+    "targetNodeId": "waste_empty_speed_kmh",
+    "graphFingerprint": "sha256:8ca61e8f441cfd236b4f785f3aa8bc01d7c575b5f57992367ee5ac062ce559ab",
+    "contextHash": "sha256:6933cbb1cf1c68fa73c7a6e6ea0132108e0fdeb6a0b6059372744c2edcfe562d",
+    "period": {
+      "key": "explicit:2026-10-05–2026-10-11",
+      "grain": "custom"
+    },
+    "business": {
+      "name": "Dispatch autonomous · hierarchy-api-gpt6-r3"
+    },
+    "root": {
+      "id": "excavation",
+      "name": "Фактическая выемка горной массы",
+      "type": "root_kpi",
+      "status": "ai_suggested",
+      "unit": "t",
+      "formula": "ore_output + waste_output",
+      "valueKnown": false,
+      "valueStatus": null,
+      "provenance": "unsourced"
+    },
+    "target": {
+      "id": "waste_empty_speed_kmh",
+      "name": "Фактическая порожняя скорость, порода",
+      "type": "input",
+      "status": "accepted",
+      "unit": "km/h",
+      "valueKnown": true,
+      "valueStatus": "calculated",
+      "provenance": "sourced"
+    },
+    "children": [],
+    "ancestors": [
+      {
+        "id": "excavation",
+        "name": "Фактическая выемка горной массы",
+        "type": "root_kpi",
+        "status": "ai_suggested",
+        "unit": "t",
+        "formula": "ore_output + waste_output",
+        "valueKnown": false,
+        "valueStatus": null,
+        "provenance": "unsourced"
+      },
+      {
+        "id": "waste_cycle_min",
+        "name": "Полный цикл на породе",
+        "type": "calculated",
+        "status": "ai_suggested",
+        "unit": "min/trip",
+        "formula": "waste_loaded_travel_min + waste_empty_travel_min + waste_loading_min_trip + waste_dumping_min_trip + waste_incycle_wait_min_trip",
+        "valueKnown": false,
+        "valueStatus": null,
+        "provenance": "unsourced"
+      },
+      {
+        "id": "waste_empty_travel_min",
+        "name": "Порожнее движение, порода",
+        "type": "calculated",
+        "status": "ai_suggested",
+        "unit": "min/trip",
+        "formula": "waste_empty_km_trip / waste_empty_speed_kmh * 60",
+        "valueKnown": false,
+        "valueStatus": null,
+        "provenance": "unsourced"
+      },
+      {
+        "id": "waste_output",
+        "name": "Выемка породы",
+        "type": "calculated",
+        "status": "ai_suggested",
+        "description": "Рассчитывается из производительного времени автопарка, доли времени на породе, длительности полного измеренного цикла и фактической массы груза на рейс.",
+        "unit": "t",
+        "formula": "waste_prod_hours * 60 / waste_cycle_min * waste_avg_payload_t",
+        "valueKnown": false,
+        "valueStatus": null,
+        "provenance": "unsourced"
+      }
+    ],
+    "siblings": [
+      {
+        "id": "waste_empty_km_trip",
+        "name": "Среднее порожнее расстояние на рейс, порода",
+        "type": "input",
+        "status": "accepted",
+        "unit": "km/trip",
+        "valueKnown": true,
+        "valueStatus": "calculated",
+        "provenance": "sourced"
+      }
+    ],
+    "decompositionPlan": {
+      "goal": "Фактическая недельная выемка = productive hours по материалу × 60 / полный цикл × фактическая загрузка. Полный цикл включает движение, загрузку, разгрузку и внутрецикловое ожидание; время состояний сверяется без двойного вычитания.",
+      "nodes": [
+        {
+          "kind": "input",
+          "nodeId": "waste_empty_speed_kmh",
+          "parentNodeId": "waste_empty_travel_min"
+        }
+      ],
+      "version": 1
+    },
+    "planScope": {
+      "selection": "target_and_direct_children",
+      "totalNodes": 34,
+      "excludedUnrelatedNodes": 33
+    },
+    "parentRelationships": [
+      {
+        "parentNodeId": "excavation",
+        "childNodeId": "waste_output",
+        "relation": "additive_component"
+      },
+      {
+        "parentNodeId": "waste_cycle_min",
+        "childNodeId": "waste_empty_travel_min",
+        "relation": "additive_component"
+      },
+      {
+        "parentNodeId": "waste_empty_travel_min",
+        "childNodeId": "waste_empty_km_trip",
+        "relation": "positive_driver"
+      },
+      {
+        "parentNodeId": "waste_empty_travel_min",
+        "childNodeId": "waste_empty_speed_kmh",
+        "relation": "positive_driver"
+      },
+      {
+        "parentNodeId": "waste_output",
+        "childNodeId": "waste_cycle_min",
+        "relation": "negative_driver"
+      }
+    ],
+    "omissions": {
+      "directChildren": 0,
+      "ancestors": 0,
+      "siblings": 0,
+      "planNodes": 0,
+      "relationships": 0,
+      "text": false,
+      "cyclic": false
+    }
+  },
+  {
+    "schemaVersion": "kpi_suggestion_context.v1",
+    "workspaceId": "project_live_kpi_20261016_ciaqx2",
+    "projectId": "project_dispatch_397b135736f6",
+    "vdtId": "vdt_39caee78-d59b-4d00-b1a8-86ddd26f360c",
+    "targetNodeId": "waste_incycle_wait_min_trip",
+    "graphFingerprint": "sha256:8ca61e8f441cfd236b4f785f3aa8bc01d7c575b5f57992367ee5ac062ce559ab",
+    "contextHash": "sha256:99fe99e5232ab55f01bff0731ee46cd97ba91da5e07811772c3ba28351d797b2",
+    "period": {
+      "key": "explicit:2026-10-05–2026-10-11",
+      "grain": "custom"
+    },
+    "business": {
+      "name": "Dispatch autonomous · hierarchy-api-gpt6-r3"
+    },
+    "root": {
+      "id": "excavation",
+      "name": "Фактическая выемка горной массы",
+      "type": "root_kpi",
+      "status": "ai_suggested",
+      "unit": "t",
+      "formula": "ore_output + waste_output",
+      "valueKnown": false,
+      "valueStatus": null,
+      "provenance": "unsourced"
+    },
+    "target": {
+      "id": "waste_incycle_wait_min_trip",
+      "name": "Ожидание внутри цикла, порода",
+      "type": "input",
+      "status": "accepted",
+      "description": "Уже входит в productive state; не вычитать отдельно из календарных часов.",
+      "unit": "min/trip",
+      "valueKnown": true,
+      "valueStatus": "calculated",
+      "provenance": "sourced"
+    },
+    "children": [],
+    "ancestors": [
+      {
+        "id": "excavation",
+        "name": "Фактическая выемка горной массы",
+        "type": "root_kpi",
+        "status": "ai_suggested",
+        "unit": "t",
+        "formula": "ore_output + waste_output",
+        "valueKnown": false,
+        "valueStatus": null,
+        "provenance": "unsourced"
+      },
+      {
+        "id": "waste_cycle_min",
+        "name": "Полный цикл на породе",
+        "type": "calculated",
+        "status": "ai_suggested",
+        "unit": "min/trip",
+        "formula": "waste_loaded_travel_min + waste_empty_travel_min + waste_loading_min_trip + waste_dumping_min_trip + waste_incycle_wait_min_trip",
+        "valueKnown": false,
+        "valueStatus": null,
+        "provenance": "unsourced"
+      },
+      {
+        "id": "waste_output",
+        "name": "Выемка породы",
+        "type": "calculated",
+        "status": "ai_suggested",
+        "description": "Рассчитывается из производительного времени автопарка, доли времени на породе, длительности полного измеренного цикла и фактической массы груза на рейс.",
+        "unit": "t",
+        "formula": "waste_prod_hours * 60 / waste_cycle_min * waste_avg_payload_t",
+        "valueKnown": false,
+        "valueStatus": null,
+        "provenance": "unsourced"
+      }
+    ],
+    "siblings": [
+      {
+        "id": "waste_dumping_min_trip",
+        "name": "Разгрузка, порода",
+        "type": "input",
+        "status": "accepted",
+        "unit": "min/trip",
+        "valueKnown": true,
+        "valueStatus": "calculated",
+        "provenance": "sourced"
+      },
+      {
+        "id": "waste_empty_travel_min",
+        "name": "Порожнее движение, порода",
+        "type": "calculated",
+        "status": "ai_suggested",
+        "unit": "min/trip",
+        "formula": "waste_empty_km_trip / waste_empty_speed_kmh * 60",
+        "valueKnown": false,
+        "valueStatus": null,
+        "provenance": "unsourced"
+      },
+      {
+        "id": "waste_loaded_travel_min",
+        "name": "Гружёное движение, порода",
+        "type": "calculated",
+        "status": "ai_suggested",
+        "unit": "min/trip",
+        "formula": "waste_loaded_km_trip / waste_loaded_speed_kmh * 60",
+        "valueKnown": false,
+        "valueStatus": null,
+        "provenance": "unsourced"
+      },
+      {
+        "id": "waste_loading_min_trip",
+        "name": "Загрузка, порода",
+        "type": "input",
+        "status": "accepted",
+        "unit": "min/trip",
+        "valueKnown": true,
+        "valueStatus": "calculated",
+        "provenance": "sourced"
+      }
+    ],
+    "decompositionPlan": {
+      "goal": "Фактическая недельная выемка = productive hours по материалу × 60 / полный цикл × фактическая загрузка. Полный цикл включает движение, загрузку, разгрузку и внутрецикловое ожидание; время состояний сверяется без двойного вычитания.",
+      "nodes": [
+        {
+          "kind": "input",
+          "nodeId": "waste_incycle_wait_min_trip",
+          "parentNodeId": "waste_cycle_min"
+        }
+      ],
+      "version": 1
+    },
+    "planScope": {
+      "selection": "target_and_direct_children",
+      "totalNodes": 34,
+      "excludedUnrelatedNodes": 33
+    },
+    "parentRelationships": [
+      {
+        "parentNodeId": "excavation",
+        "childNodeId": "waste_output",
+        "relation": "additive_component"
+      },
+      {
+        "parentNodeId": "waste_cycle_min",
+        "childNodeId": "waste_dumping_min_trip",
+        "relation": "additive_component"
+      },
+      {
+        "parentNodeId": "waste_cycle_min",
+        "childNodeId": "waste_empty_travel_min",
+        "relation": "additive_component"
+      },
+      {
+        "parentNodeId": "waste_cycle_min",
+        "childNodeId": "waste_incycle_wait_min_trip",
+        "relation": "additive_component"
+      },
+      {
+        "parentNodeId": "waste_cycle_min",
+        "childNodeId": "waste_loaded_travel_min",
+        "relation": "additive_component"
+      },
+      {
+        "parentNodeId": "waste_cycle_min",
+        "childNodeId": "waste_loading_min_trip",
+        "relation": "additive_component"
+      },
+      {
+        "parentNodeId": "waste_output",
+        "childNodeId": "waste_cycle_min",
+        "relation": "negative_driver"
+      }
+    ],
+    "omissions": {
+      "directChildren": 0,
+      "ancestors": 0,
+      "siblings": 0,
+      "planNodes": 0,
+      "relationships": 0,
+      "text": false,
+      "cyclic": false
+    }
+  }
+]

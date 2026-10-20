@@ -1,5 +1,5 @@
 import type { VdtChangeSet, VdtProject, VdtWarning } from "@vdt-studio/vdt-core";
-import { previewChangeSet, validateGraph, warning } from "@vdt-studio/vdt-core";
+import { previewChangeSet, validateGraph, validateIncomingKpiLayer, warning } from "@vdt-studio/vdt-core";
 import { TASK_LIMITS } from "../tasks/registry";
 import {
   deepenNodeOutputSchema,
@@ -101,9 +101,10 @@ export function validateAndMapDeepenNode(
     rawOutput,
     inputTargetNodeId
   );
-  const changeSet = deepenNodeOutputToChangeSet(output, { backendId });
+  const changeSet = deepenNodeOutputToChangeSet(output, { backendId, project });
   changeSet.warnings = [...changeSet.warnings, ...semanticWarnings];
 
+  validateIncomingKpiLayer(previewChangeSet(project, changeSet), output.targetNodeId, output.nodes.map(node => node.id), output.retainedNodeIds);
   const graphValidation = validateDeepenNodeChangeSet(project, changeSet);
   if (!graphValidation.valid) {
     const messages = graphValidation.warnings.map((entry) => entry.message).join("; ");

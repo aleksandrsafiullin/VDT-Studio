@@ -1,3 +1,4 @@
+import { reconcileIncomingKpiPlan } from "@vdt-studio/vdt-core";
 import { z } from "zod";
 import { parquetMetadataAsync, parquetReadObjects, parquetSchema } from "hyparquet";
 import * as XLSX from "xlsx";
@@ -1399,7 +1400,7 @@ function buildVdtChangeSet(
   const updates = incomingKpiBreakdown?.updates ?? [];
   const purposeWarnings = incomingKpiBreakdown?.review.blockingReasons.map((message) => warning("error", "data_discovery_validation_failed", message)) ?? [];
 
-  return {
+  const changeSet: VdtChangeSet = {
     id: `changeset_data_${safeId(input.datasetId).slice(0, 32)}`,
     taskType: "analyze_raw_dataset",
     backendId: "data_harness",
@@ -1425,6 +1426,7 @@ function buildVdtChangeSet(
     questions: incomingKpiBreakdown?.review.questions.map((question) => question.message) ?? proposal.questions,
     warnings: [...proposal.warnings, ...purposeWarnings]
   };
+  return incomingKpiBreakdown && additions.length ? reconcileIncomingKpiPlan(input.project, changeSet, targetNodeId) : changeSet;
 }
 
 function sourceIdFor(input: AnalyzeRawDatasetInput): string {

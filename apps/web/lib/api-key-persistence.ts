@@ -21,7 +21,7 @@ export function apiKeyScope(settings: ExecutionSettings): string | undefined {
 
 export interface ApiKeySettingsSource {
   getSettings(): ExecutionSettings;
-  setApiKey(value: string): void;
+  setApiKey(value: string, scope?: string): void;
   subscribe(listener: (settings: ExecutionSettings) => void): () => void;
 }
 
@@ -42,10 +42,10 @@ export function connectApiKeyPersistence(
   const publish = (expected: number, status: ApiKeyStorageStatus) => {
     if (!disposed && expected === generation) onStatus(status);
   };
-  const apply = (next: string) => {
+  const apply = (next: string, restoredScope = scope) => {
     value = next;
     applying = true;
-    try { source.setApiKey(next); } finally { applying = false; }
+    try { source.setApiKey(next, restoredScope); } finally { applying = false; }
   };
   const enqueue = (job: () => Promise<void>) => {
     queue = queue.then(job, job);
@@ -61,7 +61,7 @@ export function connectApiKeyPersistence(
       try {
         const saved = await vault.read(target);
         if (disposed || expected !== generation) return;
-        apply(saved ?? "");
+        apply(saved ?? "", target);
         failure = undefined;
         publish(expected, saved ? "saved" : "empty");
       } catch {

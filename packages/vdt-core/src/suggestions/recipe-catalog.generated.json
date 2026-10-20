@@ -1,0 +1,152 @@
+{
+  "schemaVersion": "kpi_recipe_catalog.v1",
+  "version": "sha256:8c29997393d2d5dc60ba2391de78a549586e36a236a41015700e2e04de40e779",
+  "recipes": [
+    {
+      "id": "production.rate_yield",
+      "title": "Bottleneck rate × yield",
+      "targetRole": "average_productivity",
+      "formula": "bottleneck_rate * yield_factor",
+      "unitRule": "rate_yield",
+      "children": [
+        {
+          "key": "bottleneck_rate",
+          "conceptKey": "bottleneck_rate",
+          "name": "Bottleneck rate",
+          "unitRole": "mass_rate",
+          "relation": "multiplicative_driver"
+        },
+        {
+          "key": "yield_factor",
+          "conceptKey": "yield_factor",
+          "name": "Yield factor",
+          "unitRole": "fraction",
+          "relation": "multiplicative_driver"
+        }
+      ],
+      "limitations": [
+        "Yield is an unknown decimal fraction, not an assumed 100%.",
+        "Confirm that yield belongs inside this rate and is not already applied upstream."
+      ],
+      "skillId": "mining.production_volume",
+      "skillVersion": 3,
+      "skillHash": "sha256:7e897d71583e45f13854d19fe36b1f194e17e3d7140c3cad2b1d5d210b3d0a62",
+      "recipeHash": "sha256:68d1309d0ce9563e9f7c14fa4ab546cf9855d3c8f762536813933d284a954874"
+    },
+    {
+      "id": "production.time_losses",
+      "title": "Calendar time less downtime",
+      "targetRole": "effective_working_time",
+      "formula": "calendar_time - planned_downtime - unplanned_downtime",
+      "unitRule": "time_losses",
+      "children": [
+        {
+          "key": "calendar_time",
+          "conceptKey": "calendar_time",
+          "name": "Calendar time",
+          "unitRole": "target",
+          "relation": "additive_component"
+        },
+        {
+          "key": "planned_downtime",
+          "conceptKey": "planned_downtime",
+          "name": "Planned downtime",
+          "unitRole": "target",
+          "relation": "subtractive_component"
+        },
+        {
+          "key": "unplanned_downtime",
+          "conceptKey": "unplanned_downtime",
+          "name": "Unplanned downtime",
+          "unitRole": "target",
+          "relation": "subtractive_component"
+        }
+      ],
+      "limitations": [
+        "All time components use the same period and hour basis.",
+        "Downtime categories must be mutually exclusive."
+      ],
+      "skillId": "mining.production_volume",
+      "skillVersion": 3,
+      "skillHash": "sha256:7e897d71583e45f13854d19fe36b1f194e17e3d7140c3cad2b1d5d210b3d0a62",
+      "recipeHash": "sha256:1e5b9bfb9adf02ac168bbe79d5a14857bc3ceedf031d55c007e90ebd99abe0e7"
+    },
+    {
+      "id": "production.time_rate",
+      "title": "Working time × productivity",
+      "targetRole": "production_volume",
+      "formula": "working_time * productivity",
+      "unitRule": "mass_time_rate",
+      "children": [
+        {
+          "key": "working_time",
+          "conceptKey": "effective_working_time",
+          "name": "Effective working time",
+          "unitRole": "working_time",
+          "relation": "multiplicative_driver"
+        },
+        {
+          "key": "productivity",
+          "conceptKey": "average_productivity",
+          "name": "Average productivity",
+          "unitRole": "mass_rate",
+          "relation": "multiplicative_driver"
+        }
+      ],
+      "limitations": [
+        "Confirm the production boundary and common analysis period.",
+        "Do not count the same downtime in both working time and productivity."
+      ],
+      "skillId": "mining.production_volume",
+      "skillVersion": 3,
+      "skillHash": "sha256:7e897d71583e45f13854d19fe36b1f194e17e3d7140c3cad2b1d5d210b3d0a62",
+      "recipeHash": "sha256:e4c1f77722af208c28d5b940376d480feb021e66449dd7995c1ca641292ce142"
+    },
+    {
+      "id": "revenue.quantity_price_net",
+      "title": "Quantity × price, less discounts and refunds",
+      "targetRole": "revenue",
+      "formula": "units_sold * selling_price * (1 - discount_rate) - refunds",
+      "unitRule": "revenue_net",
+      "children": [
+        {
+          "key": "units_sold",
+          "conceptKey": "units_sold",
+          "name": "Units sold",
+          "unitRole": "quantity",
+          "relation": "multiplicative_driver"
+        },
+        {
+          "key": "selling_price",
+          "conceptKey": "average_selling_price",
+          "name": "Average selling price before discounts",
+          "unitRole": "unit_price",
+          "relation": "multiplicative_driver"
+        },
+        {
+          "key": "discount_rate",
+          "conceptKey": "discount_rate",
+          "name": "Discount rate",
+          "unitRole": "fraction",
+          "relation": "formula_dependency"
+        },
+        {
+          "key": "refunds",
+          "conceptKey": "refunds",
+          "name": "Refunds",
+          "unitRole": "target",
+          "relation": "subtractive_component"
+        }
+      ],
+      "limitations": [
+        "Selling price is before discounts and net of tax unless explicitly modeled.",
+        "Refunds must not already be netted out of units or price.",
+        "Discount rate is an unknown decimal fraction; quantity and refunds share the revenue period and currency."
+      ],
+      "skillId": "finance.revenue_profit",
+      "skillVersion": 2,
+      "skillHash": "sha256:59e565d792ae2997c3d66d142d7fc577b1fc5e8d6e41516932664599d0b01afe",
+      "recipeHash": "sha256:5269750cfa1b2327058b03ef09fe0e301e416c90a74cbc1353798d4439d1ec36"
+    }
+  ]
+}

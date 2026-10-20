@@ -6,9 +6,11 @@ import {
   LOCAL_RUNTIME_VERSION,
   LocalRuntimeError,
   cancelRuntimeRequest,
+  cancelRuntimeRequestWithAcknowledgement,
   completeRuntime,
   createLocalRuntimeContext,
   getRuntimeRun,
+  resolveSmartRuntimeExecution,
   listRuntimeBackends,
   parseCompletionPayload,
   testRuntimeBackend,
@@ -218,13 +220,23 @@ export async function routeLocalRunnerRequest(request: IncomingMessage, context:
     return testRuntimeBackend(backendId, context.runtime);
   }
   if (request.method === "POST" && url.pathname === "/v1/completions") {
-    return completeRuntime(parseCompletionPayload(await readJson(request)), context.runtime);
+    const controller = new AbortController();
+    const abort = () => controller.abort(); request.socket.once("close", abort);
+    try { return await completeRuntime(parseCompletionPayload(await readJson(request)), context.runtime, controller.signal); }
+    finally { request.socket.removeListener("close", abort); }
+  }
+  if (request.method === "POST" && url.pathname === "/v1/smart-execution") {
+    const body = await readJson(request);
+    if (!isRecord(body) || body.backendId !== "codex_subscription" || Object.keys(body).some(key => !["backendId", "model", "timeoutMs"].includes(key)) || (body.model !== undefined && typeof body.model !== "string") || (body.timeoutMs !== undefined && (typeof body.timeoutMs !== "number" || !Number.isSafeInteger(body.timeoutMs) || body.timeoutMs <= 0))) throw new HttpError(400, "INVALID_REQUEST", "Invalid Smart identity request.");
+    const controller = new AbortController(), abort = () => controller.abort(); request.socket.once("close", abort);
+    try { return await resolveSmartRuntimeExecution(body.model as string | undefined, context.runtime, controller.signal, body.timeoutMs as number | undefined); }
+    finally { request.socket.removeListener("close", abort); }
   }
   const cancelMatch = url.pathname.match(/^\/v1\/completions\/([^/]+)\/cancel$/);
   if (request.method === "POST" && cancelMatch) {
     await readJson(request);
     const requestId = decodeURIComponent(cancelMatch[1]!);
-    return cancelRuntimeRequest(requestId, context.runtime);
+    return cancelRuntimeRequestWithAcknowledgement(requestId, context.runtime);
   }
   const runMatch = url.pathname.match(/^\/v1\/runs\/([^/]+)$/);
   if (request.method === "GET" && runMatch) {

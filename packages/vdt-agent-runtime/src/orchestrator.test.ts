@@ -412,7 +412,7 @@ describe("VdtAgentRuntime decision loop", { timeout: 30_000 }, () => {
           nodeId: "mining_capacity",
           name: "Mining capacity",
           type: "input",
-          unit: "tonnes/year",
+          unit: "tonnes",
           relation: "positive_driver"
         }
       },
@@ -425,10 +425,11 @@ describe("VdtAgentRuntime decision loop", { timeout: 30_000 }, () => {
           nodeId: "equipment_capacity",
           name: "Equipment capacity",
           type: "input",
-          unit: "tonnes/year",
+          unit: "tonnes",
           relation: "positive_driver"
         }
       },
+      { type: "call_tool", toolName: "vdt.set_formula", statusMessage: "Setting the selected calculation.", args: { nodeId: "ore_mined", formula: "mining_capacity" } },
       {
         type: "finish",
         summary: "Added the next incoming KPI level.",

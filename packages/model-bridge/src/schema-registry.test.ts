@@ -207,7 +207,7 @@ describe("schema registry", () => {
     expect(schemaIdForTask("orchestrator_first_response")).toBe("orchestrator-first-response-v1");
     expect(schemaIdForTask("agent_decision")).toBe("agent-decision-v2");
     expect(schemaIdForTask("agent_plan")).toBe("agent-plan-v1");
-    expect(schemaIdForTask("deepen_node")).toBe("deepen-node-v1");
+    expect(schemaIdForTask("deepen_node")).toBe("deepen-node-v2");
     expect(schemaIdForTask("review_model")).toBe("review-model-v1");
     expect(schemaIdForTask("generate_executive_summary")).toBe("generate-executive-summary-v1");
   });

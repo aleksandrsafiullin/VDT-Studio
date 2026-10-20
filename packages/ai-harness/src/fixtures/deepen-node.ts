@@ -1,6 +1,9 @@
 import { deepenNodeOutputSchema, type DeepenNodeOutput } from "../schemas/deepen-node";
 
 export const unplannedDowntimeDeepenOutput: DeepenNodeOutput = deepenNodeOutputSchema.parse({
+  schemaVersion: "deepen_node.v2",
+  targetFormula: "equipment_failure_downtime + process_interruption_downtime",
+  retainedNodeIds: [],
   targetNodeId: "unplanned_downtime",
   nodes: [
     {

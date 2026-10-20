@@ -11,6 +11,7 @@ const REQUIRED_COMMANDS = [
   "ai_test_backend",
   "ai_list_models",
   "ai_complete",
+  "ai_smart_execution",
   "ai_cancel",
   "ai_get_run",
   "open_provider_auth",

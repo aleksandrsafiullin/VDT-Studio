@@ -74,8 +74,9 @@ export function createManagedAwareAiProvider(request: AiRouteProviderRequest, re
           },
           ...(selectedModel ? { model: selectedModel } : {}),
           ...(timeoutMs ? { timeoutMs } : {})
-        }, context);
+        }, context, params.signal);
         const payload = result.payload as { ok?: boolean; output?: unknown; error?: { code?: string; message?: string } } | undefined;
+        if (params.taskType === "suggest_incoming_kpis" && payload?.error?.code === "CLEANUP_UNCONFIRMED") throw Object.assign(new Error("Smart cleanup could not be confirmed."), { code: "CLEANUP_UNCONFIRMED" });
         if (params.signal?.aborted) {
           throw new DOMException("The operation was aborted.", "AbortError");
         }
@@ -102,7 +103,7 @@ export function createManagedAwareAiProvider(request: AiRouteProviderRequest, re
  * only for the managed envelope that already carries `data` losslessly.
  */
 function managedRunnerPrompt(taskType: string, userPrompt: string): string {
-  if (taskType === "agent_decision" || taskType === "orchestrator_first_response") {
+  if (taskType === "suggest_incoming_kpis" || taskType === "agent_decision" || taskType === "orchestrator_first_response") {
     return "Use input.data as the canonical VDT context and return only the requested structured response.";
   }
   return userPrompt;

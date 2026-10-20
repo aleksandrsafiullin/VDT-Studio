@@ -9,7 +9,8 @@ import {
 
 interface GeminiGenerateContentResponse {
   candidates?: Array<{
-    content?: { parts?: Array<{ text?: string }> };
+    finishReason?: string;
+    content?: { parts?: Array<{ text?: string; functionCall?: unknown; [key: string]: unknown }> };
   }>;
   promptFeedback?: { blockReason?: string };
 }
@@ -32,8 +33,9 @@ export class GeminiProvider implements AiProvider {
       fetch: this.config.fetch ?? globalThis.fetch,
       url: `${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`,
       signal: params.signal,
-      timeoutMs: this.config.timeoutMs,
-      maxResponseBytes: this.config.maxResponseBytes,
+      timeoutMs: params.taskType === "suggest_incoming_kpis" ? Math.min(this.config.timeoutMs ?? 15_000, 15_000) : this.config.timeoutMs,
+      maxResponseBytes: params.taskType === "suggest_incoming_kpis" ? 64 * 1024 : this.config.maxResponseBytes,
+      requireAbortSettlement: params.taskType === "suggest_incoming_kpis",
       init: {
         method: "POST",
         headers: {
@@ -50,7 +52,7 @@ export class GeminiProvider implements AiProvider {
           ],
           generationConfig: {
             temperature: params.temperature ?? 0.2,
-            maxOutputTokens: params.maxTokens ?? 2200,
+            maxOutputTokens: params.taskType === "suggest_incoming_kpis" ? Math.min(params.maxTokens ?? 2048, 2048) : params.maxTokens ?? 2200,
             responseMimeType: "application/json",
             ...(jsonSchema ? { responseJsonSchema: jsonSchema } : {})
           }
@@ -58,7 +60,11 @@ export class GeminiProvider implements AiProvider {
       }
     })) as GeminiGenerateContentResponse;
 
-    const text = payload.candidates?.[0]?.content?.parts
+    const candidate = payload.candidates?.[0];
+    if (params.taskType === "suggest_incoming_kpis" && (payload.promptFeedback?.blockReason || payload.candidates?.length !== 1 || candidate?.finishReason !== "STOP" || !candidate.content?.parts?.length || candidate.content.parts.some(part => Object.keys(part).some(key => key !== "text") || typeof part.text !== "string"))) {
+      throw new Error("Smart provider did not return one completed text-only result.");
+    }
+    const text = candidate?.content?.parts
       ?.map((part) => part.text ?? "")
       .join("");
     if (!text && payload.promptFeedback?.blockReason) {

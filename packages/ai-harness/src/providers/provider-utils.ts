@@ -56,6 +56,7 @@ interface ProviderRequestOptions {
   signal?: AbortSignal | undefined;
   timeoutMs?: number | undefined;
   maxResponseBytes?: number | undefined;
+  requireAbortSettlement?: boolean;
 }
 
 /** Keep actionable protocol identifiers, never the upstream message, request
@@ -73,16 +74,16 @@ export class ProviderHttpError extends Error {
   }
 }
 
-async function providerHttpError(response: Response, limit: number, providerName: string) {
+async function providerHttpError(response: Response, limit: number, providerName: string, signal: AbortSignal, confirm = false) {
   const codes = new Set(["unsupported_parameter", "unsupported_value", "invalid_parameter", "invalid_value", "invalid_json_schema", "invalid_api_key", "insufficient_quota", "rate_limit_exceeded", "model_not_found"]);
   const params = new Set(["model", "max_tokens", "max_completion_tokens", "temperature", "top_p", "response_format", "reasoning_effort", "messages", "tools"]);
   let code: string | undefined;
   let param: string | undefined;
   try {
-    const payload = JSON.parse(await readBoundedText(response, limit, providerName));
+    const payload = JSON.parse(await readBoundedText(response, limit, providerName, signal, confirm));
     if (typeof payload?.error?.code === "string" && codes.has(payload.error.code)) code = payload.error.code;
     if (typeof payload?.error?.param === "string" && params.has(payload.error.param)) param = payload.error.param;
-  } catch { /* Preserve a safe status-only error for unrecognized envelopes. */ }
+  } catch (error) { if (error && typeof error === "object" && "code" in error && error.code === "CLEANUP_UNCONFIRMED") throw error; /* Safe status-only error otherwise. */ }
   return new ProviderHttpError(providerName, response.status, code, param);
 }
 
@@ -94,14 +95,32 @@ function positiveInteger(value: number | undefined, fallback: number, name: stri
   return resolved;
 }
 
-async function readBoundedText(response: Response, limit: number, providerName: string) {
+export async function awaitProviderAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) { void operation.catch(() => {}); signal.throwIfAborted(); }
+  let abort = () => {};
+  const interrupted = new Promise<never>((_, reject) => { abort = () => reject(new DOMException("Request aborted.", "AbortError")); });
+  signal.addEventListener("abort", abort, { once: true });
+  try { return await Promise.race([operation, interrupted]); }
+  finally { signal.removeEventListener("abort", abort); }
+}
+
+export async function awaitProviderSettlement<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined, abort = () => {};
+  const unconfirmed = new Promise<never>((_, reject) => { abort = () => { timer ??= setTimeout(() => reject(Object.assign(new Error("HTTP request closure could not be confirmed."), { code: "CLEANUP_UNCONFIRMED" })), 1250); }; });
+  signal.addEventListener("abort", abort, { once: true }); if (signal.aborted) abort();
+  try { return await Promise.race([operation, unconfirmed]); }
+  finally { if (timer) clearTimeout(timer); signal.removeEventListener("abort", abort); }
+}
+
+export async function readBoundedText(response: Response, limit: number, providerName: string, signal?: AbortSignal, confirm = false) {
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > limit) {
+    if (response.body) { const closure = response.body.cancel(); if (confirm) await awaitProviderSettlement(closure, AbortSignal.abort()); else void closure.catch(() => {}); }
     throw new Error(`${providerName} response exceeded the maximum allowed size.`);
   }
 
   if (!response.body) {
-    const buffer = await response.arrayBuffer();
+    const buffer = await (signal ? (confirm ? awaitProviderSettlement(response.arrayBuffer(), signal) : awaitProviderAbort(response.arrayBuffer(), signal)) : response.arrayBuffer());
     if (buffer.byteLength > limit) {
       throw new Error(`${providerName} response exceeded the maximum allowed size.`);
     }
@@ -109,24 +128,34 @@ async function readBoundedText(response: Response, limit: number, providerName: 
   }
 
   const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let total = 0;
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let closure: Promise<void> | undefined;
+  const abort = () => { closure ??= reader.cancel(); void closure.catch(() => {}); };
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
+  let total = 0, reachedEof = false;
   let text = "";
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      signal?.throwIfAborted();
+      const { done, value } = await (signal ? (confirm ? awaitProviderSettlement(reader.read(), signal) : awaitProviderAbort(reader.read(), signal)) : reader.read());
+      if (done) { reachedEof = true; break; }
       total += value.byteLength;
       if (total > limit) {
-        await reader.cancel();
+        closure ??= reader.cancel(); void closure.catch(() => {});
         throw new Error(`${providerName} response exceeded the maximum allowed size.`);
       }
       text += decoder.decode(value, { stream: true });
     }
     return text + decoder.decode();
   } finally {
-    reader.releaseLock();
+    signal?.removeEventListener("abort", abort);
+    // A decoder/read failure can leave an otherwise live response behind.
+    // Keep ownership until this same reader acknowledges cancellation.
+    if (!reachedEof) { closure ??= reader.cancel(); void closure.catch(() => {}); }
+    if (confirm && closure) await awaitProviderSettlement(closure, AbortSignal.abort());
+    try { reader.releaseLock(); } catch { /* A cancelled pending read owns the lock. */ }
   }
 }
 
@@ -153,22 +182,24 @@ export async function requestProviderJson(options: ProviderRequestOptions): Prom
   }, timeoutMs);
 
   try {
-    const response = await options.fetch(options.url, {
+    controller.signal.throwIfAborted();
+    const response = await (options.requireAbortSettlement ? awaitProviderSettlement : awaitProviderAbort)(options.fetch(options.url, {
       ...options.init,
       signal: controller.signal
-    });
+    }), controller.signal);
 
     if (!response.ok) {
-      throw await providerHttpError(response, maxResponseBytes, options.providerName);
+      throw await providerHttpError(response, maxResponseBytes, options.providerName, controller.signal, options.requireAbortSettlement);
     }
 
-    const raw = await readBoundedText(response, maxResponseBytes, options.providerName);
+    const raw = await readBoundedText(response, maxResponseBytes, options.providerName, controller.signal, options.requireAbortSettlement);
     try {
       return JSON.parse(raw) as unknown;
     } catch {
       throw new Error(`${options.providerName} returned an invalid JSON response envelope.`);
     }
   } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "CLEANUP_UNCONFIRMED") throw error;
     if (controller.signal.aborted) {
       throw new Error(
         timedOut

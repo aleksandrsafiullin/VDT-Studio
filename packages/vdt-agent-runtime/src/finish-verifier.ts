@@ -4,6 +4,7 @@ import {
   extractFormulaReferences,
   validateGraph,
   inspectDecompositionHierarchy,
+  validateIncomingKpiLayer,
   type VdtProject
 } from "@vdt-studio/vdt-core";
 import type { AgentSessionBinding } from "./agent-execution-contracts";
@@ -33,6 +34,8 @@ export interface DeterministicFinishVerificationInput {
   currentFinishCallId?: string | undefined;
   modeCompletion?: {
     immediateChildCreated?: boolean | undefined;
+    selectedNodeId?: string | undefined;
+    createdNodeIds?: string[] | undefined;
   } | undefined;
   supervisorState?: AgentSupervisorPersistenceStateV2 | null | undefined;
   existingFinishReceipt?: FinishReceiptV2 | null | undefined;
@@ -84,6 +87,10 @@ export function verifyDeterministicRunFinish(
       detail: `Calculated nodes still need formulas: ${backlog.slice(0, 12).map((item) => item.nodeId).join(", ")}.`
     }], { formulaBacklogCount: backlog.length });
   }
+  if (input.mode === "deepen_node") {
+    try { validateIncomingKpiLayer(project, input.modeCompletion?.selectedNodeId ?? "", input.modeCompletion?.createdNodeIds ?? []); }
+    catch (error) { return rejected([{ code: "TARGET_FORMULA_REQUIRED", detail: error instanceof Error ? error.message : "Check the selected incoming formula." }]); }
+  }
 
   const validation = validateGraph(project);
   const validationSummary = summarizeValidation(validation);
@@ -106,14 +113,14 @@ export function verifyDeterministicRunFinish(
 
   const calculation = calculateGraph(project);
   const calculationSummary = summarizeCalculation(calculation);
-  if (calculation.errors.length > 0) {
+  if (calculation.errors.some(error => input.mode !== "deepen_node" || error.type !== "missing_value")) {
     return rejected([{
       code: "CALCULATION_ERRORS",
       detail: calculation.errors.slice(0, 8).map((error) => error.message).join("; ")
     }], { calculation: calculationSummary });
   }
   if (
-    calculation.rootValue === undefined || !Number.isFinite(calculation.rootValue)
+    input.mode !== "deepen_node" && (calculation.rootValue === undefined || !Number.isFinite(calculation.rootValue))
   ) {
     return rejected([{ code: "ROOT_VALUE_NOT_FINITE", detail: "Calculated root value is missing or non-finite." }]);
   }

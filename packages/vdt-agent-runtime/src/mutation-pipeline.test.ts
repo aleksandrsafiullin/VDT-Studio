@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { VdtBuilderSession, type VdtChangeSet } from "@vdt-studio/vdt-core";
+import { VdtBuilderSession, inspectDecompositionHierarchy, type VdtChangeSet } from "@vdt-studio/vdt-core";
 import { applyPendingMutationProposal, proposeAndMaybeApplyMutation } from "./mutation-pipeline";
 import { AgentRunStore } from "./run-store";
 import type { AgentToolContext } from "./tool-registry";
@@ -7,6 +7,20 @@ import type { AgentToolContext } from "./tool-registry";
 const timestamp = "2026-06-29T00:00:00.000Z";
 
 describe("mutation pipeline progressive scope", () => {
+  it("owns only the selected incoming plan delta in the saved mutation receipt", () => {
+    const { builder, context } = createMutationContext({ mode: "deepen_node", selectedNodeId: "selected" });
+    builder.addDriver({ parentNodeId: "production_volume", nodeId: "selected", name: "Selected", unit: "tonnes", baselineValue: 3 });
+    builder.setFormula({ nodeId: "production_volume", formula: "selected" });
+    builder.updateNode({ nodeId: "production_volume", patch: { decompositionPlan: { version: 1, goal: "One selected input", nodes: [{ nodeId: "selected", parentNodeId: "production_volume", kind: "input" }] } } });
+    const changes = changeSet("selected_formula", [{ nodeId: "new_factor", parentNodeId: "selected", name: "Measured factor" }]);
+    changes.additions[0]!.type = "input"; changes.additions[0]!.unit = "tonnes";
+    changes.updates.push({ id: "set_selected_formula", nodeId: "selected", patch: { formula: "new_factor", type: "calculated" } });
+    const applied = proposeAndMaybeApplyMutation(context, { targetNodeId: "selected", title: "Selected formula", summary: "One layer", changeSet: changes });
+    expect(applied.applied).toBe(true); expect(inspectDecompositionHierarchy(builder.getProject(), "incremental_user_apply").valid).toBe(true);
+    expect(applied.proposal.changeSet.updates.some(update => update.nodeId === "production_volume" && update.patch.decompositionPlan?.nodes.some(entry => entry.nodeId === "new_factor"))).toBe(true);
+    const forbidden = changeSet("unowned_plan", []); forbidden.updates.push({ id: "replace_plan", nodeId: "production_volume", patch: { decompositionPlan: { version: 1, goal: "Injected", nodes: [] } } });
+    expect(() => proposeAndMaybeApplyMutation(context, { targetNodeId: "selected", title: "Bad plan", summary: "Unowned", changeSet: forbidden })).toThrow(/only the selected KPI/);
+  });
   it("marks only approval-pausing proposals for an immediate public snapshot refresh", () => {
     const automatic = createMutationContext({ autoApplyPatches: true });
     applyLayer(automatic.context, "production_volume", [

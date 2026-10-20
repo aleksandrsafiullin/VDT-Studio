@@ -449,6 +449,7 @@ const MOCK_OUTPUT_BY_TASK: Record<AiTaskType, unknown> = {
     warnings: []
   },
   generate_tree: productionVolumeAiOutput,
+  suggest_incoming_kpis: { status: "empty", rationale: "No applicable proposal in this deterministic fixture.", limitations: [], groups: [] },
   deepen_node: unplannedDowntimeDeepenOutput,
   simplify_branch: averageProductivitySimplifyOutput,
   suggest_alternative: effectiveWorkingTimeAlternativeOutput,

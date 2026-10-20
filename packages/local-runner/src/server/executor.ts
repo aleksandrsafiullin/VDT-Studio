@@ -18,6 +18,7 @@ import {
 } from "@vdt-studio/model-bridge";
 import type { BackendManifest, CompletionRequest } from "../cli/types";
 import { selectCodexExecutable } from "@vdt-studio/model-bridge/node";
+import { executeSmartSuggestion } from "./smart-suggestions";
 
 const advisoryStub = Object.freeze({
   assumptions: [] as string[],
@@ -39,6 +40,7 @@ const mockNode = Object.freeze({
 
 const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
   "connection-test-v1": { ok: true },
+  "suggest-incoming-kpis-v1": { status: "empty", rationale: "No applicable proposal in this deterministic fixture.", limitations: [], groups: [] },
   "orchestrator-first-response-v1": {
     assistantMessage: "I will use the visible brief as the source of truth and start by checking the requested VDT scope.",
     nextAction: "continue_building",
@@ -262,6 +264,7 @@ const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
     warnings: []
   },
   "generate-tree-v1": { projectTitle: "Mock tree", rootNodeId: "root", nodes: [mockNode], edges: [], ...advisoryStub },
+  "deepen-node-v2": { schemaVersion: "deepen_node.v2", targetNodeId: "node-1", targetFormula: "child_a", retainedNodeIds: [], nodes: [{ ...mockNode, id: "child_a", name: "Child A" }], edges: [], ...advisoryStub },
   "deepen-node-v1": { targetNodeId: "node-1", nodes: [{ ...mockNode, id: "child_a", name: "Child A" }], edges: [], ...advisoryStub },
   "simplify-branch-v1": { branchRootNodeId: "node-1", nodeRemovals: [], edgeChanges: [], rationale: "Mock", ...advisoryStub },
   "suggest-alternative-v1": { targetNodeId: "node-1", nodes: [{ ...mockNode, id: "alternative_a", name: "Alternative A" }], edges: [], rationale: "Mock", ...advisoryStub },
@@ -1428,6 +1431,7 @@ export async function executeCompletion(
 ): Promise<ExecutionResult> {
   if (!isVdtSchemaId(request.schemaId)) throw Object.assign(new Error("Unknown schemaId."), { code: "UNKNOWN_SCHEMA" });
   if (signal.aborted) throw abortError();
+  if (request.taskType === "suggest_incoming_kpis") return executeSmartSuggestion(manifest, request, signal, options);
   const prompt = JSON.stringify({
     requestId: request.requestId,
     taskType: request.taskType,

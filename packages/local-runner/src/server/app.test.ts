@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AuditEvent, BackendManifest } from "../cli/types";
 import { schemaTasks, VDT_SCHEMA_IDS } from "@vdt-studio/model-bridge";
+import { buildKpiSuggestionContext, buildKpiSuggestionTaskInput, createSmartKpiMeasuredFixture } from "@vdt-studio/vdt-core";
 import { createLocalRunnerServer, getRunnerPairingInfo, type LocalRunnerServer } from "./app";
 
 const origin = "http://127.0.0.1:3000";
@@ -166,7 +167,9 @@ describe.skipIf(!hasLoopback)("schema allowlist", { timeout: 30_000 }, () => {
         backendId: "mock",
         taskType: schemaTasks[schemaId],
         schemaId,
-        input: {}
+        input: schemaId === "suggest-incoming-kpis-v1"
+          ? buildKpiSuggestionTaskInput(await buildKpiSuggestionContext(createSmartKpiMeasuredFixture(), { workspaceId: "allowlist_qa", vdtId: null, targetNodeId: "measured_output", period: { key: "2026-10", grain: "month" } }))
+          : {}
       }
     });
     expect(response.status).toBe(200);

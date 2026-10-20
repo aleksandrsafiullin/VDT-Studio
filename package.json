@@ -42,6 +42,8 @@
     "security:audit": "corepack pnpm audit --prod --audit-level high",
     "ci:verify": "node scripts/verify-ci-workflows.mjs",
     "phase7:verify": "node --import tsx scripts/verify-phase7-gate.mjs",
+    "smart-kpi:recipes:generate": "node --import tsx scripts/generate-smart-kpi-recipes.mjs",
+    "smart-kpi:recipes:verify": "node --import tsx scripts/generate-smart-kpi-recipes.mjs --check",
     "docs:verify": "node scripts/verify-release-docs.mjs",
     "certification:verify": "node scripts/verify-provider-certification.mjs",
     "evaluation:verify": "node --import tsx scripts/evaluate-providers.mjs",

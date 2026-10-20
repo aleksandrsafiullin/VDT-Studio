@@ -12,6 +12,7 @@ import {
   openRuntimeProviderAuth,
   listRuntimeBackends,
   parseCompletionPayload,
+  resolveSmartRuntimeExecution,
   type LocalRuntimeConfig,
   type LocalRuntimeContext,
   type RuntimeResult
@@ -36,6 +37,7 @@ export interface SidecarRuntimeOptions {
   readonly stderr?: NodeJS.WriteStream;
   readonly nonce?: string;
 }
+const smartAdmissions = new WeakMap<LocalRuntimeContext, Map<string, AbortController>>();
 
 export async function handleSidecarRequest(
   message: SidecarRequestMessage,
@@ -50,6 +52,8 @@ export async function handleSidecarRequest(
 }
 
 export function handleSidecarCancel(message: SidecarCancelMessage, context: LocalRuntimeContext): void {
+  const admission = smartAdmissions.get(context)?.get(message.requestId);
+  if (admission) { admission.abort(); return; }
   cancelRuntimeRequest(message.requestId, context);
 }
 
@@ -149,6 +153,16 @@ async function routeSidecarRequest(message: SidecarRequestMessage, context: Loca
   if (message.method === "complete") {
     return completeRuntime(parseCompletionPayload({ ...message.payload, requestId: message.requestId }), context);
   }
+  if (message.method === "smart_execution") {
+    const { backendId, model, timeoutMs = 5000 } = message.payload;
+    if (backendId !== "codex_subscription" || Object.keys(message.payload).some(k => !["backendId", "model", "timeoutMs"].includes(k))
+      || model !== undefined && typeof model !== "string" || !Number.isSafeInteger(timeoutMs) || Number(timeoutMs) <= 0 || Number(timeoutMs) > 5000) throw new LocalRuntimeError(400, "INVALID_SMART_METADATA", "Invalid Smart metadata request.");
+    let entries = smartAdmissions.get(context); if (!entries) { entries = new Map(); smartAdmissions.set(context, entries); }
+    if (entries.size >= 16 || entries.has(message.requestId)) throw new LocalRuntimeError(409, "PREPARATION_CAPACITY", "Smart metadata admission is already active or full.");
+    const controller = new AbortController(); entries.set(message.requestId, controller);
+    try { return await resolveSmartRuntimeExecution(model as string | undefined, context, controller.signal, Number(timeoutMs)); }
+    finally { entries.delete(message.requestId); }
+  }
   if (message.method === "get_run") {
     const runRequestId = typeof message.payload.runRequestId === "string" ? message.payload.runRequestId : "";
     if (!runRequestId) throw new LocalRuntimeError(400, "INVALID_REQUEST_ID", "runRequestId is required.");
@@ -192,6 +206,7 @@ function requireBackendId(payload: JsonObject): string {
 function normalizeSidecarRuntimeError(error: unknown): { readonly code: string; readonly message: string } {
   if (error instanceof LocalRuntimeError) return { code: error.code, message: error.message };
   if (error instanceof SidecarProtocolError) return { code: error.code, message: error.message };
+  if (error && typeof error === "object" && "code" in error && error.code === "CLEANUP_UNCONFIRMED") return { code: "CLEANUP_UNCONFIRMED", message: "Owned Smart execution cleanup could not be confirmed." };
   return { code: "SIDECAR_RUNTIME_ERROR", message: error instanceof Error ? error.message : "Sidecar runtime failed safely." };
 }
 

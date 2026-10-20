@@ -51,7 +51,7 @@ export const deepenNodeInputSchema = z.object({
   context: deepenNodeContextSchema.optional()
 });
 
-export const deepenNodeOutputSchema = z
+export const historicalDeepenNodeOutputSchema = z
   .object({
     targetNodeId: aiNodeIdSchema,
     nodes: z.array(aiVdtNodeSchema).min(1).max(maxAdditions),
@@ -125,6 +125,18 @@ export const deepenNodeOutputSchema = z
       }
     }
   });
+
+/** Historical child-only records remain readable. New executions/applications
+ * must carry the explicit selected-target definition in the v2 receipt. */
+export const deepenNodeOutputSchema = historicalDeepenNodeOutputSchema.innerType().extend({
+  schemaVersion: z.literal("deepen_node.v2"),
+  targetFormula: z.string().min(1).max(500),
+  retainedNodeIds: z.array(aiNodeIdSchema).max(16)
+}).strict().superRefine((output, context) => {
+  const historical = historicalDeepenNodeOutputSchema.safeParse(output);
+  if (!historical.success) for (const issue of historical.error.issues) context.addIssue(issue);
+  for (const node of output.nodes) if (node.formula?.trim() || node.type === "calculated") context.addIssue({ code: z.ZodIssueCode.custom, path: ["nodes", node.id], message: "Add only one layer of primitive measured inputs." });
+});
 
 export type DeepenNodeContext = z.infer<typeof deepenNodeContextSchema>;
 export type DeepenNodeProjectExcerpt = z.infer<typeof deepenNodeProjectExcerptSchema>;

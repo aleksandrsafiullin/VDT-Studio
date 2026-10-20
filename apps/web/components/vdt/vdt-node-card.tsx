@@ -5,7 +5,7 @@ import type { NodeProps } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
 import type { VdtNode } from "@vdt-studio/vdt-core";
 import { clsx } from "clsx";
-import { FileUp, GitBranchPlus, Sparkles } from "lucide-react";
+import { FileUp, GitBranchPlus, Lightbulb, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -24,15 +24,20 @@ function valuesDiffer(base: number | undefined, candidate: number | undefined) {
 
 export interface VdtNodeCardData extends Record<string, unknown> {
   node: VdtNode;
+  rootRole?: boolean | undefined;
   referenceGroup?: boolean | undefined;
   value?: number | undefined;
   mainScenarioValue?: number | undefined;
   rootScenarioEffect?: { absoluteChange?: number | undefined; percentageChange?: number | undefined } | undefined;
   highlighted?: boolean | undefined;
   onSelect?: ((nodeId: string) => void) | undefined;
-  onAddManualIncomingKpi?: ((nodeId: string) => void) | undefined;
+  onAddManualIncomingKpi?: ((nodeId: string, rail: HTMLElement, trigger: HTMLButtonElement) => void) | undefined;
   onAddAiIncomingKpis?: ((nodeId: string) => void) | undefined;
   onAddFileIncomingKpis?: ((nodeId: string) => void) | undefined;
+  smartOpen?: boolean | undefined;
+  onSmartActivate?: ((nodeId: string, rail: HTMLElement, trigger: HTMLButtonElement, source: "pointer" | "focus" | "touch") => void) | undefined;
+  onSmartLeave?: (() => void) | undefined;
+  onSmartBlur?: (() => void) | undefined;
 }
 
 function ValueRow({
@@ -73,12 +78,17 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
   const highlighted = nodeData.highlighted === true;
   const typeIcon = getNodeTypeIcon(node.type);
   const isRootKpi = node.type === "root_kpi";
+  const calculatedRoot = (nodeData.rootRole ?? isRootKpi) && Boolean(node.formula?.trim());
   const potentialDiffers = valuesDiffer(value, mainScenarioValue);
   const effectDiffers =
     rootScenarioEffect?.absoluteChange !== undefined &&
     Math.abs(rootScenarioEffect.absoluteChange) > VALUE_EPSILON;
   const stopActionEvent = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
+  };
+  const activateSmart = (rail: HTMLElement, source: "pointer" | "focus" | "touch") => {
+    const trigger = rail.querySelector<HTMLButtonElement>("[data-smart-trigger]");
+    if (trigger) nodeData.onSmartActivate?.(node.id, rail, trigger, source);
   };
 
   return (
@@ -116,6 +126,7 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
           </div>
           <StatusPill status={node.status} className="shrink-0" />
         </div>
+        {calculatedRoot ? <p data-testid="node-calculated-indicator" className="text-[10px] font-medium text-muted">Root KPI · Calculated</p> : null}
         {nodeData.referenceGroup ? <p className="mt-2 border-t border-slate-100 pt-2 text-xs text-muted">Reference group</p> : <ValueRow label="Base" amount={value} unit={node.unit} />}
         {!nodeData.referenceGroup && mainScenarioValue !== undefined ? (
           <ValueRow
@@ -128,8 +139,11 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
         ) : null}
         <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-accent" />
       </div>
-      <div className="absolute -right-14 top-1/2 z-30 flex h-32 w-14 -translate-y-1/2 items-center justify-end opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100">
-        <div className="nodrag nopan flex flex-col gap-1 rounded-md border border-line bg-white p-1 shadow-lg">
+      <div data-testid="node-incoming-actions" className={clsx("nodrag nopan nowheel absolute -right-14 top-1/2 z-30 flex h-44 w-14 -translate-y-1/2 items-center justify-end transition-opacity duration-100 hover:opacity-100 focus-within:opacity-100 max-sm:opacity-100", nodeData.smartOpen ? "opacity-100" : "opacity-0")}
+        onPointerEnter={event => activateSmart(event.currentTarget, event.pointerType === "touch" ? "touch" : "pointer")}
+        onPointerLeave={() => nodeData.onSmartLeave?.()} onFocusCapture={event => activateSmart(event.currentTarget, "focus")} onBlurCapture={() => nodeData.onSmartBlur?.()}
+        onPointerDown={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()} onWheel={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
+        <div className="nodrag nopan nowheel flex flex-col gap-1 rounded-md border border-line bg-white p-1 shadow-lg">
           <Tooltip label="Add incoming KPI manually" className="block">
             <Button
               type="button"
@@ -143,7 +157,8 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
               onMouseDown={stopActionEvent}
               onClick={(event) => {
                 stopActionEvent(event);
-                nodeData.onAddManualIncomingKpi?.(node.id);
+                const rail = event.currentTarget.closest<HTMLElement>('[data-testid="node-incoming-actions"]');
+                if (rail) nodeData.onAddManualIncomingKpi?.(node.id, rail, event.currentTarget);
               }}
             />
           </Tooltip>
@@ -180,6 +195,20 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
                 nodeData.onAddFileIncomingKpis?.(node.id);
               }}
             />
+          </Tooltip>
+          <Tooltip label="Smart KPI suggestions" className="block">
+            <Button type="button" size="icon" variant="secondary" className="h-8 w-8" icon={<Lightbulb className="h-4 w-4" />}
+              aria-label={`Smart KPI suggestions for ${node.name}`} aria-haspopup="dialog" aria-controls={nodeData.smartOpen ? "smart-kpi-panel" : undefined} aria-expanded={!!nodeData.smartOpen}
+              data-testid="node-smart-kpi-suggestions" data-smart-trigger="true" data-node-name={node.name}
+              disabled={!nodeData.onSmartActivate} onMouseDown={stopActionEvent}
+              onClick={event => { event.stopPropagation(); const rail = event.currentTarget.closest<HTMLElement>('[data-testid="node-incoming-actions"]'); if (rail) activateSmart(rail, "touch"); }}
+              onKeyDown={event => {
+                event.stopPropagation();
+                if (event.key === "Tab" && !event.shiftKey && nodeData.smartOpen) {
+                  const first = document.querySelector<HTMLElement>('[data-testid="smart-kpi-panel"] button:not(:disabled), [data-testid="smart-kpi-panel"] input:not(:disabled)');
+                  if (first) { event.preventDefault(); first.focus(); }
+                }
+              }} />
           </Tooltip>
         </div>
       </div>

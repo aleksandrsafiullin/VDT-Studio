@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { access, lstat, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 export const CODEX_SELECTION_LIMITS = Object.freeze({
   maxDirectories: 128,
@@ -21,6 +22,9 @@ export interface CodexExecutableSelectionOptions {
   env?: NodeJS.ProcessEnv;
   executableCheck?: (candidate: string) => Promise<boolean>;
   versionProbe?: (executable: string, args: readonly string[]) => Promise<{ stdout: string; stderr: string }>;
+  signal?: AbortSignal;
+  /** Smart execution must retain evidence and quarantine if close is unknown. */
+  requireConfirmedCleanup?: boolean;
 }
 
 export interface SelectedCodexExecutable {
@@ -125,7 +129,8 @@ function versionEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return result;
 }
 
-async function probeVersion(executable: string, cwd: string, env: NodeJS.ProcessEnv): Promise<{ stdout: string; stderr: string }> {
+async function probeVersion(executable: string, cwd: string, env: NodeJS.ProcessEnv, options: CodexExecutableSelectionOptions): Promise<{ stdout: string; stderr: string }> {
+  options.signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
     const child = spawn(executable, ["--version"], {
       cwd, env, shell: false, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"]
@@ -138,16 +143,19 @@ async function probeVersion(executable: string, cwd: string, env: NodeJS.Process
     let terminating = false;
     let termination: Promise<void> = Promise.resolve();
     let terminationDeadline: NodeJS.Timeout | undefined;
+    const stdoutDecoder = new StringDecoder("utf8"), stderrDecoder = new StringDecoder("utf8");
+    const abort = () => { failure ??= Object.assign(new Error("Codex CLI version probe cancelled."), { code: "CANCELLED", name: "AbortError" }); terminate(); };
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", abort);
       if (terminationDeadline) clearTimeout(terminationDeadline);
       child.stdout.destroy();
       child.stderr.destroy();
       child.unref();
       if (error) reject(error);
-      else resolve({ stdout, stderr });
+      else resolve({ stdout: stdout + stdoutDecoder.end(), stderr: stderr + stderrDecoder.end() });
     };
     const terminate = () => {
       if (terminating) return;
@@ -155,7 +163,9 @@ async function probeVersion(executable: string, cwd: string, env: NodeJS.Process
       // A dead parent or escaped descendant can keep inherited pipes open indefinitely.
       // Settlement must therefore be independent of both exit and close events.
       terminationDeadline = setTimeout(() => {
-        finish(failure ?? new Error("Codex CLI version probe cleanup timed out."));
+        finish(options.requireConfirmedCleanup
+          ? Object.assign(new Error("Codex CLI probe cleanup could not be confirmed."), { code: "CLEANUP_UNCONFIRMED", retainedDirectory: cwd })
+          : failure ?? new Error("Codex CLI version probe cleanup timed out."));
       }, CODEX_SELECTION_LIMITS.terminationGraceMs);
       if (!child.pid) return;
       if (process.platform === "win32") {
@@ -197,8 +207,8 @@ async function probeVersion(executable: string, cwd: string, env: NodeJS.Process
       if (bytes > CODEX_SELECTION_LIMITS.maxVersionBytes) {
         failure = new Error("Codex CLI version output exceeded the limit.");
         terminate();
-      } else if (stream === "stdout") stdout += chunk.toString("utf8");
-      else stderr += chunk.toString("utf8");
+      } else if (stream === "stdout") stdout += stdoutDecoder.write(chunk);
+      else stderr += stderrDecoder.write(chunk);
     };
     child.stdout.on("data", (chunk: Buffer) => collect(chunk, "stdout"));
     child.stderr.on("data", (chunk: Buffer) => collect(chunk, "stderr"));
@@ -212,37 +222,46 @@ async function probeVersion(executable: string, cwd: string, env: NodeJS.Process
       if (process.platform !== "win32") terminate();
       void termination.then(() => finish(failure ?? (code !== 0 ? new Error("Codex CLI version probe failed.") : undefined)));
     });
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) abort();
   });
 }
 
 /** Shared by detection and execution. No installation, configuration edits, model calls or app-specific paths. */
 export async function selectCodexExecutable(options: CodexExecutableSelectionOptions = {}): Promise<SelectedCodexExecutable | null> {
+  options.signal?.throwIfAborted();
   const candidates = await candidatesOnPath(options);
   if (!candidates.length) return null;
   const cwd = await mkdtemp(path.join(os.tmpdir(), "vdt-codex-selection-"));
+  let retained = false;
   try {
     const env = versionEnvironment(options.env ?? process.env);
     const results: SelectedCodexExecutable[] = [];
     let next = 0;
-    await Promise.all(Array.from({ length: Math.min(candidates.length, CODEX_SELECTION_LIMITS.concurrency) }, async () => {
+    const probes = await Promise.allSettled(Array.from({ length: Math.min(candidates.length, CODEX_SELECTION_LIMITS.concurrency) }, async () => {
       while (next < candidates.length) {
+        options.signal?.throwIfAborted();
         const index = next++;
         const executable = candidates[index]!;
         try {
           const result = options.versionProbe
             ? await options.versionProbe(executable, ["--version"])
-            : await probeVersion(executable, cwd, env);
+            : await probeVersion(executable, cwd, env, options);
           const raw = `${result.stdout}\n${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim().slice(0, 160) || null;
           const version = versionOf(raw) ? raw : null;
           results[index] = {
             executable, alias: "codex", version,
             ...(version ? {} : { error: "Codex CLI version was not recognized." })
           };
-        } catch {
+        } catch (error) {
+          if (options.requireConfirmedCleanup && error && typeof error === "object" && "code" in error && error.code === "CLEANUP_UNCONFIRMED") { retained = true; throw error; }
+          if (options.signal?.aborted) throw error;
           results[index] = { executable, alias: "codex", version: null, error: "Codex CLI version probe failed." };
         }
       }
     }));
+    const rejected = probes.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (rejected.length) throw rejected.find(result => result.reason?.code === "CLEANUP_UNCONFIRMED")?.reason ?? rejected[0]!.reason;
     let selected = results[0]!;
     for (const result of results.slice(1)) {
       const version = versionOf(result.version);
@@ -251,6 +270,6 @@ export async function selectCodexExecutable(options: CodexExecutableSelectionOpt
     }
     return selected;
   } finally {
-    await rm(cwd, { recursive: true, force: true });
+    if (!retained) await rm(cwd, { recursive: true, force: true });
   }
 }

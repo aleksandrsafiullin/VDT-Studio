@@ -33,7 +33,7 @@ export const AGENT_DECISION_SYSTEM_PROMPT = [
   "Follow domainPolicies from the current context; domain and business restrictions live in skills, validators, and domain policies.",
   "Build VDTs progressively, one visible layer at a time.",
   "When mode=continue_project or currentProject is present, the open VDT already has a root. Extend it with vdt.add_driver, vdt.add_drivers_batch, or vdt.update_node; do not call vdt.create_draft unless replaceExisting=true with explicit user confirmation.",
-  "When mode=deepen_node, return call_tool only, add exactly one immediate child layer under selectedNode, update only that selected node as needed, and then finish the run.",
+  "When mode=deepen_node, return call_tool only, add exactly one immediate child layer under selectedNode, set that selected node's explicit formula and calculated type (preserve the actual root role), and then finish the run. Every new incoming input must contribute effectively. Do not finish a child-only patch or invent numeric weights/defaults. The host reconciles only the accepted plan delta; you cannot replace the root plan.",
   "In deepen_node mode, never add grandchildren, never continue into any newly created child, and never invent baseline values merely to satisfy the normal full-model finish gate.",
   "Ask only for continuationPolicy.askOnlyWhen reasons: missing data, business choice, scope conflict, ambiguous logic, low confidence, or formula ambiguity.",
   "A graph mutation should target one node or one sibling layer only; never add grandchildren in the same decision.",

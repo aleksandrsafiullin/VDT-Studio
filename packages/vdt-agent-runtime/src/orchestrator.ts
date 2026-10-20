@@ -1,6 +1,7 @@
 import {
   calculateGraph,
   validateGraph,
+  validateIncomingKpiLayer,
   VdtBuilderSession,
   type VdtNodePatch,
   type VdtProject
@@ -893,6 +894,8 @@ export class VdtAgentRuntime {
       if (!createdImmediateChild) {
         throw new Error("Cannot finish: the selected KPI does not have a newly created immediate child layer.");
       }
+      validateIncomingKpiLayer(project, selectedNodeId!, actionProposals.filter(proposal => proposal.status === "applied")
+        .flatMap(proposal => proposal.changeSet.additions.filter(addition => addition.parentNodeId === selectedNodeId).flatMap(addition => addition.nodeId ? [addition.nodeId] : [])));
     }
 
     if (!isSingleLayerDecomposition) {

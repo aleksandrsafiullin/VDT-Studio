@@ -32,10 +32,11 @@ export class OpenAiCompatibleProvider implements AiProvider {
     const schema = params.schema instanceof z.ZodType ? params.schema : undefined;
     const jsonSchema = params.outputJsonSchema ?? asJsonSchema(params.schema);
     const model = params.model ?? this.config.model;
-    const retainContext = this.config.retainInitialContext ?? params.taskType === "agent_decision";
+    const smart = params.taskType === "suggest_incoming_kpis";
+    const retainContext = !smart && (this.config.retainInitialContext ?? params.taskType === "agent_decision");
     let lastError: unknown;
 
-    const maxAttempts = schema ? 2 : (jsonSchema ? 1 : 2);
+    const maxAttempts = smart ? 1 : (schema ? 2 : (jsonSchema ? 1 : 2));
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const userPrompt = attempt === 0 ? params.userPrompt
         : `${params.userPrompt}\n\nThe previous response was invalid: ${lastError instanceof Error ? lastError.message.slice(0, 2000) : "schema validation failed"}. Return only valid JSON matching the required schema.`;
@@ -44,7 +45,9 @@ export class OpenAiCompatibleProvider implements AiProvider {
         fetch: this.config.fetch ?? globalThis.fetch,
         url: `${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`,
         signal: params.signal,
-        timeoutMs: this.config.timeoutMs ?? (params.taskType === "agent_decision" ? 180_000 : undefined),
+        timeoutMs: smart ? Math.min(this.config.timeoutMs ?? 15_000, 15_000) : this.config.timeoutMs ?? (params.taskType === "agent_decision" ? 180_000 : undefined),
+        ...(smart ? { maxResponseBytes: 64 * 1024 } : {}),
+        requireAbortSettlement: smart,
         init: {
           method: "POST",
           headers: {
@@ -53,7 +56,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
           },
           body: JSON.stringify({
             model,
-            ...completionParameters(model, params),
+            ...completionParameters(model, smart ? { ...params, maxTokens: Math.min(params.maxTokens ?? 2048, 2048) } : params),
             response_format: responseFormat,
             messages: retainContext
               ? this.conversation.messages(`${params.systemPrompt}${responseFormat.type === "json_object" && jsonSchema ? `\n\nReturn JSON matching this exact response schema:\n${JSON.stringify(jsonSchema)}` : ""}`, userPrompt)
@@ -75,11 +78,16 @@ export class OpenAiCompatibleProvider implements AiProvider {
           ? { type: "json_schema", json_schema: { name: "vdt_agent_decision", strict: true, schema: jsonSchema } }
           : { type: "json_object" })) as typeof payload;
       } catch (error) {
-        if (!jsonSchema || !isStructuredSchemaUnsupported(error)) throw error;
+        if (smart || !jsonSchema || !isStructuredSchemaUnsupported(error)) throw error;
         this.strictSchemaUnavailable = true;
         payload = (await request({ type: "json_object" })) as typeof payload;
       }
-      const content = payload.choices?.[0]?.message?.content;
+      const choice = payload.choices?.[0] as { finish_reason?: string; message?: { content?: string; tool_calls?: unknown[]; function_call?: unknown; refusal?: unknown } } | undefined;
+      const message = choice?.message;
+      if (smart && (payload.choices?.length !== 1 || choice?.finish_reason !== "stop" || message?.tool_calls?.length || message?.function_call || message?.refusal)) {
+        throw new Error("Smart provider did not return one completed tool-free result.");
+      }
+      const content = message?.content;
 
       if (!content) {
         throw new Error("OpenAI-compatible provider returned no message content.");

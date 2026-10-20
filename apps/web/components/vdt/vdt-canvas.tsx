@@ -9,7 +9,8 @@ import {
   type Edge,
   type EdgeTypes,
   type Node,
-  type NodeTypes
+  type NodeTypes,
+  type ReactFlowInstance
 } from "@xyflow/react";
 import { VdtRelationEdge, type VdtEdgeData } from "./vdt-edge";
 import {
@@ -30,6 +31,9 @@ import { KpiSpacingPopover } from "./kpi-spacing-popover";
 import { VdtNodeCard, type VdtNodeCardData } from "./vdt-node-card";
 import { collectExistingPositions } from "./layout-positions";
 import { useVdtStudioStore } from "./vdt-store";
+import { useSmartKpi } from "./use-smart-kpi";
+import { SmartKpiPanel } from "./smart-kpi-panel";
+import { visibleSmartKpiTargets } from "./smart-kpi-geometry";
 
 const nodeTypes: NodeTypes = {
   vdtNode: VdtNodeCard
@@ -47,8 +51,11 @@ export function VdtCanvas() {
   const selectNode = useVdtStudioStore((state) => state.selectNode);
   const autoDistributeLayout = useVdtStudioStore((state) => state.autoDistributeLayout);
   const updateNodePosition = useVdtStudioStore((state) => state.updateNodePosition);
-  const addManualIncomingKpi = useVdtStudioStore((state) => state.addManualIncomingKpi);
   const requestIncomingKpisWithAi = useVdtStudioStore((state) => state.requestIncomingKpisWithAi);
+  const selectedNodeId = useVdtStudioStore((state) => state.selectedNodeId);
+  const smart = useSmartKpi();
+  const flow = useRef<ReactFlowInstance<Node<VdtNodeCardData, "vdtNode">, Edge<VdtEdgeData>> | undefined>(undefined);
+  const [viewportRevision, setViewportRevision] = useState(0);
   const calculation = useMemo(() => calculateGraph(project), [project]);
   const mainScenarioContext = useMemo(() => {
     const mainScenario = project.scenarios.find((scenario) => scenario.isMain === true);
@@ -96,6 +103,7 @@ export function VdtCanvas() {
         position: node.position ?? fallbackPositions.get(node.id) ?? { x: 0, y: 0 },
         data: {
           node,
+          rootRole: node.id === project.rootNodeId,
           referenceGroup: referenceGroups.has(node.id),
           value: calculation.values[node.id],
           mainScenarioValue: mainScenarioContext?.values[node.id],
@@ -103,15 +111,20 @@ export function VdtCanvas() {
             node.id === project.rootNodeId ? mainScenarioContext?.rootEffect : undefined,
           highlighted: highlightedSet.has(node.id),
           onSelect: selectNode,
-          onAddManualIncomingKpi: addManualIncomingKpi,
+          onAddManualIncomingKpi: smart.activateManual,
           onAddAiIncomingKpis: (nodeId) => {
+            smart.close();
             void requestIncomingKpisWithAi(nodeId);
           },
-          onAddFileIncomingKpis: requestIncomingKpisFromFile
+          onAddFileIncomingKpis: (nodeId) => { smart.close(); requestIncomingKpisFromFile(nodeId); },
+          smartOpen: smart.active?.targetNodeId === node.id,
+          onSmartActivate: smart.activate,
+          onSmartLeave: smart.leaveRail,
+          onSmartBlur: smart.blurPanel
         }
       })),
     [
-      addManualIncomingKpi,
+      smart.activateManual,
       calculation.values,
       fallbackPositions,
       highlightedSet,
@@ -120,12 +133,26 @@ export function VdtCanvas() {
       project.rootNodeId,
       referenceGroups,
       requestIncomingKpisWithAi,
-      selectNode
+      selectNode,
+      smart.active?.targetNodeId,
+      smart.activate,
+      smart.leaveRail,
+      smart.blurPanel,
+      smart.close
     ]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
   const isDraggingRef = useRef(false);
+  const prepareVisible = useCallback(() => {
+    const instance = flow.current, element = canvasRef.current;
+    if (!instance || !element) return;
+    smart.prewarmVisible(visibleSmartKpiTargets(instance.getNodes().map(node => {
+      const internal = instance.getInternalNode(node.id);
+      return { id: node.id, x: internal?.internals.positionAbsolute.x ?? node.position.x, y: internal?.internals.positionAbsolute.y ?? node.position.y,
+        width: node.measured?.width ?? node.width ?? 238, height: node.measured?.height ?? node.height ?? 140 };
+    }), instance.getViewport(), { width: element.clientWidth, height: element.clientHeight }, useVdtStudioStore.getState().selectedNodeId));
+  }, [smart.prewarmVisible]);
 
   const onNodeDragStart = useCallback(() => {
     isDraggingRef.current = true;
@@ -135,8 +162,9 @@ export function VdtCanvas() {
     (_event: MouseEvent | TouchEvent, node: Node<VdtNodeCardData>) => {
       updateNodePosition(node.id, node.position);
       isDraggingRef.current = false;
+      prepareVisible();
     },
-    [updateNodePosition]
+    [updateNodePosition, prepareVisible]
   );
 
   const nodeById = useMemo(
@@ -187,7 +215,12 @@ export function VdtCanvas() {
     if (isDraggingRef.current) {
       return;
     }
-    setNodes(storeNodes);
+    // Keep measured dimensions when only card actions/selection change. Losing
+    // them briefly hides controlled nodes and disrupts hover and restored focus.
+    setNodes(previous => {
+      const measured = new Map(previous.map(node => [node.id, node.measured]));
+      return storeNodes.map(node => { const size = measured.get(node.id); return size ? { ...node, measured: size } : node; });
+    });
   }, [setNodes, storeNodes]);
 
   useEffect(() => {
@@ -196,6 +229,7 @@ export function VdtCanvas() {
 
     const updateAvailability = () => {
       setFlowCanRender(element.clientWidth > 0 && element.clientHeight > 0);
+      prepareVisible();
     };
 
     updateAvailability();
@@ -207,10 +241,15 @@ export function VdtCanvas() {
     const observer = new ResizeObserver((entries) => {
       const size = entries[0]?.contentRect;
       setFlowCanRender(Boolean(size && size.width > 0 && size.height > 0));
+      prepareVisible();
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [prepareVisible]);
+  useEffect(() => {
+    const frame = requestAnimationFrame(prepareVisible);
+    return () => cancelAnimationFrame(frame);
+  }, [prepareVisible, project.graph.nodes, selectedNodeId]);
 
   return (
     <div
@@ -219,6 +258,7 @@ export function VdtCanvas() {
       data-testid="vdt-canvas"
     >
       <DataImportWizard />
+      <SmartKpiPanel controller={smart} viewportRevision={viewportRevision} />
       <div className="absolute left-4 top-4 z-10 flex items-center gap-2">
         <Button
           size="sm"
@@ -247,6 +287,9 @@ export function VdtCanvas() {
             onNodeClick={(_, node) => selectNode(node.id)}
             onNodeDragStart={onNodeDragStart}
             onNodeDragStop={onNodeDragStop}
+            onInit={instance => { flow.current = instance; requestAnimationFrame(prepareVisible); }}
+            onMove={() => setViewportRevision(revision => revision + 1)}
+            onMoveEnd={prepareVisible}
             nodesDraggable
             panOnScroll
           >
