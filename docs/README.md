@@ -81,7 +81,7 @@ Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md`, the
 | [`ADR-005`](adr/ADR-005-durable-run-coordination-and-manual-reconciliation.md) | Accepted W0.2 durable authority; ADR-006 amends bounded attempts without weakening SQLite, fence or receipt requirements |
 | [`ADR-006`](adr/ADR-006-bounded-dual-profile-agent-execution.md) | Accepted dual-profile target architecture; tested foundations are implemented, public Supervisor/storage wiring is partial, external execution remains default-off and unqualified |
 | [`ADR-007`](adr/ADR-007-encrypted-browser-api-keys.md) | Implemented encrypted origin-local BYOK key retention and deletion; browser-profile security boundary; native qualification open |
-| [`ADR-008`](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md) | Bounded domain/preparation/state/native-source reviews and local Chrome editor/prepared-latency fixtures passed; live model/native package qualification separate |
+| [`ADR-008`](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md) | Bounded Smart preparation/apply with baseline reconciliation and explicitly marked illustrative estimates; local Chrome Add/reload/Undo verified on 2026-10-22; live model/native package qualification separate |
 
 Smart suggestions follow the [plan](implementation/SMART_KPI_SUGGESTIONS_PLAN.md),
 [execution log](implementation/SMART_KPI_SUGGESTIONS_LOG.md) and

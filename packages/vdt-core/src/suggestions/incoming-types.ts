@@ -20,7 +20,7 @@ export type IncomingKpiFormulaAuthorship = "recipe" | "model" | "user_edited" | 
 export type IncomingKpiDraftSource = { kind: "manual" } | { kind: "proposal"; proposalId: string; groupId: string };
 
 /** Unselected blank placeholders may survive in the local draft. Selected own
- * rows require a name/unit and become unknown inputs, never numeric defaults. */
+ * rows require a name/unit; the separate numeric gate resolves their values. */
 export interface IncomingKpiManualRow {
   key: IncomingKpiManualKey;
   selected: boolean;
@@ -46,6 +46,15 @@ export interface IncomingKpiBatchDraft {
   /** Raw text is retained even while incomplete/invalid. No on-type serialize. */
   formula: string;
   formulaAuthorship: IncomingKpiFormulaAuthorship;
+  /** User-entered numeric text stays local until a finite, reconciled Add.
+   * Optional for historical receipts; proposal/model output never owns values. */
+  inputValues?: Record<string, string>;
+  /** Required only when the target has no current or retained reference value. */
+  referenceValue?: string;
+  /** Illustrative estimates are reviewable before Add and never source facts. */
+  estimateMissingValues?: boolean;
+  estimatedAliases?: IncomingKpiAlias[];
+  referenceValueEstimated?: boolean;
 }
 export interface IncomingKpiBatchInput {
   schemaVersion: typeof INCOMING_KPI_APPLY_SCHEMA;

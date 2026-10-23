@@ -62,6 +62,6 @@ export function buildRecipeKpiSuggestions(context: KpiSuggestionContext, decisio
     catalogVersion: catalog.version, proposalId: host.proposalId, targetNodeId: context.targetNodeId, contextHash: context.contextHash,
     createdAt: host.now, expiresAt: new Date(Date.parse(host.now) + KPI_SUGGESTION_LIMITS.ttlMs).toISOString(),
     origin: { kind: "recipe", sourceRef: groups[0]!.recipeBinding!.sourceRef }, rationale: groups[0]!.recipeBinding!.rationale,
-    limitations: ["Proposed decomposition; confirm applicability. All new values remain unknown."], groups
+    limitations: ["Proposed decomposition; confirm applicability. Supply input values before Add; the calculated result must preserve the current KPI."], groups
   }, Date.parse(host.now));
 }

@@ -1,5 +1,51 @@
 # Roadmap
 
+## Project file library
+
+Implemented for local alpha: project-wide uploads before a first VDT, file search,
+display labels, original downloads, archive/restore and explicit per-tree
+attachments. The project **Files** tab and editor **Files** dialog share the same
+immutable sources. The builder offers existing project data and saves/attaches on
+selection before analysis. Existing scoped `data.*` agent tools receive attached
+sources. Detach/archive preserve historical reads and do not permanently erase
+data. Hosted authentication, retention/secure deletion, encryption and parser
+isolation remain open; supported parsing/calculation limits are unchanged.
+
+## Explicit Smart estimates (2026-10-22)
+
+Implemented locally: proposal-backed Smart drafts offer missing-input estimates
+marked **≈**, optional strict entry through Use estimates, assumption provenance
+for edited estimates and dependent values, an explicit estimated-reference flag,
+and pinned recovery validation of numbers and provenance. Baseline equality and
+known-source protection remain required. The reported test GPS branch was saved
+as 200 km / 1000 trips = 0.2 km/trip, with the 138600 t root unchanged. These are
+illustrative values, not a source refresh, benchmark or semantic certification.
+
+## Smart numeric baseline preservation (2026-10-21)
+
+Implemented locally: numeric fields in the compact incoming panel, materialized
+finite new inputs, unique last-input derivation, baseline equality before Add,
+explicit reference entry for an unknown parent, and pinned numeric recovery
+evidence. Existing empty primitive references can be filled through the same
+accepted formula transaction. No automatic source binding/refresh, arbitrary
+numeric estimates or migration of previously saved unknown nodes is claimed.
+
+## Minimal incoming panel and planned input type repair (2026-10-21)
+
+Implemented: selected KPI rows/readable formula/Add by default, with advanced
+editing and details under Edit. New Add atomically restores a formula-free
+Calculated node declared as a plan Input when it has no mathematical children.
+Values, sources and context links are preserved; full hierarchy checks, immutable
+replay, checkpoint Undo and existing release/provider limitations remain.
+
+## Paused agent Cancel repair (2026-10-21)
+
+Implemented: terminal cancellation for a still-owned expired current epoch,
+retry of an aborted controller's failed status projection, retryable UI errors
+and scoped cleanup confirmation before Smart Add. Cancellation preserves edited
+graphs and fences late callbacks. Controller-loss recovery and the full durable
+lease/heartbeat/takeover coordinator remain open; release status is unchanged.
+
 ## Formula and mixed incoming revision (2026-10-20)
 
 Contracts/compiler/one-call preparation/v2 journal and selected-entry boundaries

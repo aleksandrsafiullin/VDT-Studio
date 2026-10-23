@@ -51,14 +51,16 @@ export function createIncomingKpiDraft(
     source: proposal && group ? { kind: "proposal", proposalId: proposal.proposalId, groupId: group.id } : { kind: "manual" },
     childKeys: group?.children.map(child => child.key) ?? [],
     manualChildren: [], existingFactors, formula,
-    formulaAuthorship: proposal ? existingFactors.length || !group?.formula ? "user_edited" : group.recipeBinding ? "recipe" : "model" : "user"
+    formulaAuthorship: proposal ? existingFactors.length || !group?.formula ? "user_edited" : group.recipeBinding ? "recipe" : "model" : "user",
+    ...(proposal ? { estimateMissingValues: true } : {})
   };
   return { schemaVersion: INCOMING_KPI_APPLY_SCHEMA, context, ...(proposal ? { proposal } : {}), draft };
 }
 
 export function editIncomingKpiDraft(input: IncomingKpiBatchInput, patch: Partial<IncomingKpiBatchDraft>): IncomingKpiBatchInput {
+  const valuesOnly = Object.keys(patch).every(key => ["inputValues", "referenceValue", "estimateMissingValues", "estimatedAliases", "referenceValueEstimated"].includes(key));
   return { ...input, draft: { ...input.draft, ...patch, revision: input.draft.revision + 1,
-    formulaAuthorship: input.draft.source.kind === "manual" ? "user" : "user_edited" } };
+    formulaAuthorship: valuesOnly ? input.draft.formulaAuthorship : input.draft.source.kind === "manual" ? "user" : "user_edited" } };
 }
 
 export function incomingKpiDraftReferences(input: IncomingKpiBatchInput, project: VdtProject): IncomingKpiDraftReference[] {
@@ -101,7 +103,9 @@ export class IncomingKpiDraftBook {
     const key = `${ownerKey}/${input.draft.targetNodeId}/${source.kind === "manual" ? "manual" : `${source.proposalId}/${source.groupId}`}`;
     const previous = this.entries.get(key);
     const copied = !previous && copyManualFrom?.draft.manualChildren.length
-      ? editIncomingKpiDraft(input, { manualChildren: copyManualFrom.draft.manualChildren.map(row => ({ ...row })) }) : input;
+      ? editIncomingKpiDraft(input, { manualChildren: copyManualFrom.draft.manualChildren.map(row => ({ ...row })),
+        estimatedAliases: copyManualFrom.draft.estimatedAliases?.filter(alias => copyManualFrom.draft.manualChildren.some(row => row.key === alias)) ?? [],
+        inputValues: Object.fromEntries(copyManualFrom.draft.manualChildren.flatMap(row => copyManualFrom.draft.inputValues?.[row.key] === undefined ? [] : [[row.key, copyManualFrom.draft.inputValues[row.key]!]])) }) : input;
     const entry = previous ?? { key, ownerKey, input: copied, dirty: copied !== input };
     this.entries.delete(key); this.entries.set(key, entry);
     this.active.set(`${ownerKey}/${input.draft.targetNodeId}`, key);

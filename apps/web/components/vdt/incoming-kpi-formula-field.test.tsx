@@ -40,8 +40,21 @@ describe("incoming formula field", () => {
     const html = renderToStaticMarkup(<IncomingKpiFormulaField rawValue={rawValue} references={references} onChange={() => {}} />);
     const preview = html.slice(html.indexOf('data-testid="incoming-kpi-readable-formula"'), html.indexOf("<details"));
     expect(preview).toContain("Moving distance"); expect(preview).toContain("Moving time");
-    expect(preview).toContain("border-orange-300");
-    expect(html).toContain("Edit as text");
+    expect(preview).toContain("text-amber-800");
+    expect(html).toContain(">Edit</summary>");
+  });
+
+  it("keeps row editing, raw text, operators and repeated reference buttons inside one closed disclosure", () => {
+    const html = renderToStaticMarkup(<IncomingKpiFormulaField rawValue="p_1 / p_2" onChange={() => {}}
+      references={[{ alias: "p_1", name: "Distance", unit: "km" }, { alias: "p_2", name: "Time", unit: "h" }]}>
+      <button type="button">+ KPI</button>
+    </IncomingKpiFormulaField>);
+    const beforeEdit = html.slice(0, html.indexOf("<details")), editor = html.slice(html.indexOf("<details"));
+    expect(beforeEdit).toContain("Distance"); expect(beforeEdit).toContain("Time"); expect(beforeEdit).toContain("÷");
+    expect(beforeEdit).not.toContain("Insert"); expect(beforeEdit).not.toContain("+ KPI");
+    expect(editor).toContain('data-testid="incoming-kpi-edit"'); expect(editor).not.toMatch(/^<details[^>]* open=/);
+    expect(editor).toContain("+ KPI"); expect(editor).toContain('aria-label="Formula operators"');
+    expect(editor).toContain('aria-label="Insert KPI reference"');
   });
   it("retains raw partial text, shows readable escaped references and one linked error", () => {
     const html = renderToStaticMarkup(<IncomingKpiFormulaField rawValue={'p_1 + (@ <script>'} onChange={() => {}}

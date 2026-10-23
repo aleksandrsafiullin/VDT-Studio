@@ -4,12 +4,32 @@ import type { VdtProject } from "@vdt-studio/vdt-core";
 import { openVdtStorageDatabase } from "../vdt/storage-database";
 import { jsonError } from "../vdt/storage-response";
 import { resolveTrustedStorageWriteMode } from "../vdt/storage-write-adapter";
-import { DataApiError, readDiscoveryProject, requireDataId, type DataOwner } from "./store";
+import { hasSameLocalOrigin } from "@/lib/local-request-origin";
+import { DataApiError, readDiscoveryProject, requireDataId, type DataOwner, type DatasetFileOwner } from "./store";
 
 export function requireLocalDataAccess(): void {
   if (!resolveTrustedStorageWriteMode()) {
     throw new DataApiError("File discovery is available only in an explicitly trusted local application mode.", 403, "HOSTED_DATA_INGESTION_DISABLED");
   }
+}
+
+export function requireLocalFileRequest(request: Request): void {
+  requireLocalDataAccess();
+  if (request.headers.get("sec-fetch-site") === "cross-site" || (request.headers.has("origin") && !hasSameLocalOrigin(request))) {
+    throw new DataApiError("File requests must come from this local application.", 403, "DATA_ORIGIN_MISMATCH");
+  }
+}
+
+/** Project uploads do not require a tree. A supplied tree is always validated. */
+export function readDatasetFileOwner(input: Record<string, unknown>): DatasetFileOwner {
+  if (input.vdtId !== undefined) return readDataOwner(input)!;
+  requireLocalDataAccess();
+  const projectId = requireDataId(input.projectId, "projectId");
+  const database = openVdtStorageDatabase(process.cwd());
+  try {
+    if (!database.getProject(projectId)) throw new DataApiError("Project not found.", 404, "PROJECT_NOT_FOUND");
+    return { projectId, dataDir: database.dataDir };
+  } finally { database.close(); }
 }
 
 /** Workspace ownership, VDT record identity and graph snapshot identity are separate. */

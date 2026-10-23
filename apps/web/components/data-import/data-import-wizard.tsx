@@ -3,15 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Download, FileText, Loader2, Sparkles, X } from "lucide-react";
-import type { DataDiscoveryFileMetadata, DataDiscoveryRunSnapshot, IncomingKpiOptions } from "@vdt-studio/data-harness";
+import type { DataDiscoveryRunSnapshot, IncomingKpiOptions } from "@vdt-studio/data-harness";
 import { Button } from "@/components/ui/button";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
+import { canAnalyzeProjectFile, DATA_FILE_ACCEPT, listProjectFiles, updateProjectFile, uploadProjectFile, type ProjectFileSource } from "@/lib/project-files-client";
 import { useVdtStudioStore } from "@/components/vdt/vdt-store";
 import { IncomingKpiMappingReview } from "./incoming-kpi-mapping-review";
 import { captureFileImportTarget, FILE_IMPORT_REQUEST_EVENT, fileImportContextError, type FileImportTargetContext } from "./import-context";
 
-type WizardStatus = "idle" | "uploading" | "analyzing" | "saving" | "applying";
-interface SavedSource { datasetId: string; file: DataDiscoveryFileMetadata; sourceUrl: string }
+type WizardStatus = "idle" | "uploading" | "attaching" | "analyzing" | "saving" | "applying";
 interface DiscoveryResponse {
   ok?: boolean;
   snapshot?: DataDiscoveryRunSnapshot;
@@ -24,8 +24,6 @@ interface ImportSession {
   source: "node_action" | "agent_composer_attachment";
 }
 
-const FILE_TYPES = ".csv,.tsv,.txt,.json,.ndjson,.xlsx,.xls,.parquet";
-
 /** One shared modal serves both the composer and every node action. */
 export function DataImportWizard() {
   const projectId = useVdtStudioStore((state) => state.workspace.activeProjectId);
@@ -33,7 +31,7 @@ export function DataImportWizard() {
   const project = useVdtStudioStore((state) => state.project);
   const [session, setSession] = useState<ImportSession>();
   const [file, setFile] = useState<File>();
-  const [sources, setSources] = useState<SavedSource[]>([]);
+  const [sources, setSources] = useState<ProjectFileSource[]>([]);
   const [selectedSourceId, setSelectedSourceId] = useState("");
   const [sourceError, setSourceError] = useState<string>();
   const [sourcesLoading, setSourcesLoading] = useState(false);
@@ -91,15 +89,12 @@ export function DataImportWizard() {
   useEffect(() => {
     if (!session) return;
     const controller = new AbortController();
-    const scope = new URLSearchParams({ projectId: session.context.projectId, vdtId: session.context.vdtId });
     setSources([]);
     setSourcesLoading(true);
     setSourceError(undefined);
-    void fetch(`/api/data/files?${scope}`, { signal: controller.signal })
-      .then(async (response) => {
-        const payload = await readJson<{ ok?: boolean; sources?: SavedSource[]; error?: { message?: string } }>(response);
-        if (!response.ok || !payload.ok) throw new Error(payload.error?.message ?? "Could not load saved project sources.");
-        if (!controller.signal.aborted) setSources((existing) => [...existing, ...(payload.sources ?? []).filter((source) => !existing.some((entry) => entry.datasetId === source.datasetId))]);
+    void listProjectFiles(session.context.projectId, controller.signal)
+      .then((files) => {
+        if (!controller.signal.aborted) setSources((existing) => [...existing, ...files.filter((source) => !source.archived && canAnalyzeProjectFile(source) && !existing.some((entry) => entry.datasetId === source.datasetId))]);
       })
       .catch((caught) => { if (!controller.signal.aborted) setSourceError(message(caught)); })
       .finally(() => { if (!controller.signal.aborted) setSourcesLoading(false); });
@@ -165,6 +160,47 @@ export function DataImportWizard() {
     setMappingChanged(false);
   }
 
+  async function retainFile(next: File, context: FileImportTargetContext, operation: number, signal: AbortSignal) {
+    const source = await uploadProjectFile(context.projectId, next, context.vdtId, signal);
+    assertCurrent(context, operation);
+    setSources((existing) => [source, ...existing.filter((entry) => entry.datasetId !== source.datasetId)]);
+    setSelectedSourceId(source.datasetId);
+    setFile(undefined);
+    return source.datasetId;
+  }
+
+  async function selectLocalFile(next: File) {
+    if (!session || busyRef.current) return;
+    setFile(next);
+    setSelectedSourceId("");
+    setSnapshot(undefined);
+    const { operation, controller } = startOperation("uploading");
+    try {
+      assertCurrent(session.context, operation);
+      await retainFile(next, session.context, operation, controller.signal);
+      finishOperation(operation);
+    } catch (caught) { finishOperation(operation, caught); }
+  }
+
+  async function selectSavedSource(datasetId: string) {
+    if (!session || busyRef.current) return;
+    setSelectedSourceId(datasetId);
+    setFile(undefined);
+    if (fileRef.current) fileRef.current.value = "";
+    setSnapshot(undefined);
+    setError(undefined);
+    if (!datasetId) return;
+    const { context } = session;
+    const { operation, controller } = startOperation("attaching");
+    try {
+      assertCurrent(context, operation);
+      await updateProjectFile(context.projectId, datasetId, { action: "attach", vdtId: context.vdtId }, controller.signal);
+      assertCurrent(context, operation);
+      setSources((existing) => existing.map((source) => source.datasetId === datasetId ? { ...source, vdtIds: [...new Set([...source.vdtIds, context.vdtId])] } : source));
+      finishOperation(operation);
+    } catch (caught) { finishOperation(operation, caught); }
+  }
+
   async function analyze() {
     if (!session || running || (!file && !selectedSourceId)) return;
     const { context } = session;
@@ -174,18 +210,12 @@ export function DataImportWizard() {
       let state = assertCurrent(context, operation);
       let datasetId = selectedSourceId;
       if (file) {
-        const form = new FormData();
-        form.set("file", file);
-        form.set("projectId", context.projectId);
-        form.set("vdtId", context.vdtId);
-        const upload = await fetch("/api/data/files", { method: "POST", body: form, signal: controller.signal });
-        const payload = await readJson<{ ok?: boolean; datasetId?: string; file?: DataDiscoveryFileMetadata; sourceUrl?: string; error?: { message?: string } }>(upload);
-        if (!upload.ok || !payload.ok || !payload.datasetId) throw new Error(payload.error?.message ?? "File upload failed.");
+        datasetId = await retainFile(file, context, operation, controller.signal);
         state = assertCurrent(context, operation);
-        datasetId = payload.datasetId;
-        if (payload.file && payload.sourceUrl) setSources((existing) => [{ datasetId: payload.datasetId!, file: payload.file!, sourceUrl: payload.sourceUrl! }, ...existing.filter((entry) => entry.datasetId !== payload.datasetId)]);
-        setSelectedSourceId(datasetId);
-        setFile(undefined);
+      } else if (!sources.find((source) => source.datasetId === datasetId)?.vdtIds.includes(context.vdtId)) {
+        // Selecting a shared project file grants this tree its own retained association.
+        await updateProjectFile(context.projectId, datasetId, { action: "attach", vdtId: context.vdtId }, controller.signal);
+        state = assertCurrent(context, operation);
       }
       setStatus("analyzing");
       const { providerId, providerConfig } = resolveExecutionSettings(state.executionSettings);
@@ -263,20 +293,22 @@ export function DataImportWizard() {
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div className="rounded-md border border-line p-3">
               <label className="block text-xs font-semibold text-ink" htmlFor="data-import-file">Upload a file</label>
-              <input id="data-import-file" ref={fileRef} type="file" accept={FILE_TYPES} className="mt-2 block w-full text-xs text-muted file:mr-2 file:rounded file:border-0 file:bg-blue-50 file:px-3 file:py-2 file:font-semibold file:text-accent" data-testid="data-import-file-input" disabled={running} onChange={(event) => { const next = event.target.files?.[0]; if (!next) return; setFile(next); setSelectedSourceId(""); setSnapshot(undefined); setError(undefined); }} />
+              <input id="data-import-file" ref={fileRef} type="file" accept={DATA_FILE_ACCEPT} className="mt-2 block w-full text-xs text-muted file:mr-2 file:rounded file:border-0 file:bg-blue-50 file:px-3 file:py-2 file:font-semibold file:text-accent" data-testid="data-import-file-input" disabled={running} onChange={(event) => { const next = event.target.files?.[0]; if (next) void selectLocalFile(next); }} />
               {file ? <p className="mt-2 flex items-center gap-1.5 text-xs text-ink"><FileText className="h-3.5 w-3.5" />{file.name}</p> : null}
+              <p className="mt-2 text-xs leading-5 text-muted">Uploads are saved to the project immediately, even if you close this review.</p>
             </div>
             <div className="rounded-md border border-line p-3">
               <label className="block text-xs font-semibold text-ink" htmlFor="data-import-source">Saved project sources</label>
-              <select id="data-import-source" value={selectedSourceId} disabled={running || sourcesLoading} className="mt-2 w-full rounded-md border border-line bg-white px-2 py-2 text-xs text-ink" onChange={(event) => { setSelectedSourceId(event.target.value); setFile(undefined); if (fileRef.current) fileRef.current.value = ""; setSnapshot(undefined); setError(undefined); }}>
+              <select id="data-import-source" value={selectedSourceId} disabled={running || sourcesLoading} className="mt-2 w-full rounded-md border border-line bg-white px-2 py-2 text-xs text-ink" onChange={(event) => void selectSavedSource(event.target.value)}>
                 <option value="">{sourcesLoading ? "Loading sources…" : sources.length ? "Select a saved source" : "No saved sources yet"}</option>
-                {sources.map((source) => <option key={source.datasetId} value={source.datasetId}>{source.file.fileName} · {source.file.uploadedAt.slice(0, 10)}</option>)}
+                {sources.map((source) => <option key={source.datasetId} value={source.datasetId}>{source.displayName} · {source.file.uploadedAt.slice(0, 10)}</option>)}
               </select>
+              {selectedSource ? <p role="status" className="mt-2 text-xs text-emerald-700" data-testid="data-import-retained">Saved in project files · {selectedSource.displayName}</p> : null}
               {selectedSource ? <a className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-accent" href={selectedSource.sourceUrl} download={selectedSource.file.fileName} data-testid="data-import-download"><Download className="h-3.5 w-3.5" />Download original file</a> : null}
               {sourceError ? <p role="alert" className="mt-2 text-xs text-red-700">{sourceError}</p> : null}
             </div>
           </div>
-          <Button type="button" className="mt-3" size="sm" variant="primary" icon={running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} disabled={(!file && !selectedSourceId) || running || Boolean(contextError)} onClick={() => void analyze()} data-testid="data-import-analyze">{status === "uploading" ? "Uploading…" : status === "analyzing" ? "Analyzing…" : snapshot || selectedSource ? "Analyze again" : "Analyze file"}</Button>
+          <Button type="button" className="mt-3" size="sm" variant="primary" icon={running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} disabled={(!file && !selectedSourceId) || running || Boolean(contextError)} onClick={() => void analyze()} data-testid="data-import-analyze">{status === "uploading" ? "Uploading…" : status === "attaching" ? "Attaching…" : status === "analyzing" ? "Analyzing…" : snapshot || selectedSource ? "Analyze again" : "Analyze file"}</Button>
           {contextError || error ? <div role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" data-testid="data-import-error">{contextError ?? error}</div> : null}
           {snapshot ? <IncomingKpiMappingReview snapshot={snapshot} options={options} running={running} mappingChanged={mappingChanged} onOptionsChange={(next) => { setOptions(next); setMappingChanged(true); }} onCalculate={() => void calculatePreview()} /> : null}
         </div>

@@ -2,7 +2,7 @@
 
 ## Smart incoming KPI suggestions
 
-Strict one-layer alternatives, unknown-value children, explicit recipe applicability,
+Strict one-layer alternatives, value-bearing accepted inputs, explicit recipe applicability,
 configured one-completion preparation and bounded persistent cache/prewarming APIs
 are present. The same right KPI action area retains Manual/AI/File and exposes
 Smart selection; one-layer Add and guarded new-revision Undo use real revision CAS.
@@ -17,7 +17,44 @@ hard CLI token/isolation guarantees or native packaging. See
 [validation](PRODUCTION_READINESS.md#smart-kpi-validation) and
 [ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
 
+Smart proposals still contain definitions, without model-invented numbers. Before
+**Add & calculate**, the panel requires numeric inputs and shows the current and
+calculated parent values. Existing graph values are retained, missing inputs can
+be entered, and exactly one remaining input can be derived by unique arithmetic
+inversion. Smart drafts also offer **Use estimates**, enabled by default for
+proposal-backed drafts: missing inputs receive illustrative values marked **≈**,
+with assumption provenance after Add. Estimated counts remain nonnegative integers
+and fraction/percent bounds are respected. Known values and the parent reference
+are never adjusted to make estimates fit. Mismatches or unresolved inputs block
+Add. If the parent has no number, the user enters its reference explicitly and
+may mark **Reference is an estimate**. Baseline equality uses floating-point
+tolerance; saved scenario overrides remain explicit. Illustrative allocations
+are not measured data, benchmark evidence or model-authored conversion factors.
+
+Ordinary **Cancel** on a structured agent persists the same scoped stop marker as
+the selected-layer handoff and waits for confirmed Supervisor cleanup before
+unlocking Smart Add. Failed cancellation restores the Cancel button and keeps
+status updates connected. Reload restores a retryable button while retaining
+unconfirmed cleanup. Terminal cancellation clears pending questions, preserves
+the edited graph and fences late callbacks. A long human pause does not prevent
+cancellation of the still-owned current epoch; controller-loss recovery remains
+a separate limitation.
+
 Future Smart/Manual incoming additions show a concise editable definition: selected proposal rows, own named/unit rows, retained references and the final formula are one atomic **Add & calculate**. Partial selections are allowed after repairing the formula; invalid raw text remains editable and Add stays disabled. Six new rows are separate from sixteen existing references. Manual-only editing/Add requires no model or key. Each proposal source and its dirty draft remain separate; background replies and explicit preparation refresh cannot silently overwrite user edits.
+
+The default panel shows selected rows, one plain readable formula, **Edit** and
+the primary Add action. A single alternative needs no radio/title repetition;
+multiple alternatives retain selection. Own rows, existing references, raw text,
+operators, insertion buttons and explanatory Details are inside Edit. Manual
+entry opens Edit and focuses the new name. Errors, preparation, save and recovery
+feedback remain visible when actionable.
+
+For a new Add, a node incorrectly marked Calculated without a formula can be
+restored to Input if its existing plan declares input and it has no mathematical
+children. This type-only repair belongs to the same candidate/revision/checkpoint
+as the addition, preserving its values, source, context children and plan. Other
+hierarchy defects still block Add; load-time migration and historical v1 receipt
+recompilation remain absent.
 
 The parent becomes Calculated, with the actual root retaining its root role. Unknown children can make the computed result unavailable; the old measurement remains read-only Source/reference provenance and in the checkpoint. Full limitations are behind Details, with one missing-input note in the default panel. Existing context-only graphs remain readable and are not migrated. Unselected context children stay explanatory; explicit mathematical reuse preserves source IDs and primary parents. The default full-tree grouping/hierarchy rules remain strict.
 
@@ -137,11 +174,15 @@ Current status: planned. Search snippets exist, but source opening, structured b
 
 ### Data and reports
 
+- Keep a reusable project file library and a separate attachment list for each VDT.
+- Upload client files before the first tree exists; choose computer files or saved project sources in the builder.
 - Upload structured extracts, discover tables and semantic roles, define data quality and propose KPI mappings.
 - Calculate approved KPI baselines deterministically on the full dataset.
 - Preserve dataset version, row coverage, transformation plan and lineage.
 
-Current status: **From file** and the composer paperclip open experimental local discovery for a selected undecomposed KPI. Original files are immutable project/VDT-owned sources with an exact-byte download and repeat-analysis list. The configured provider can suggest tables, ordered category columns and additive value mapping; required mapping and model questions must be answered before staging. Full-source deterministic reruns support additive numeric values in confirmed KPI-compatible units, numeric duration or explicit start/end timestamps, confirmed period-total or per-day normalization, at most four category levels and 200 nodes, and complete row/category coverage. The reporting period describes the full extract and denominator rather than applying an implicit date filter. Every generated KPI Description identifies its file/hash, table/columns, filters, calculation, reporting period and covered rows. Staging verifies source integrity and unchanged semantic target state, then returns the normal review preview. Other proposals remain metadata-only mappings; general executable bindings, refresh/reconciliation, production-trusted baselines, complex report layouts, PDF/OCR and connectors are not implemented.
+Current status: the local alpha project workspace provides **VDTs / Files** tabs, project uploads without a tree, search, display-name editing, exact-byte download and archive/restore. **Files for** filters attachments by tree; the editor has a **Files** dialog with **This VDT / Add from project**. One immutable project source can be attached to multiple trees without duplicating its bytes. Detach removes current availability; archive hides a file from new selections. Both retain originals and historical reads, rather than permanently deleting client data. Library uploads accept any file up to 50 MB; unsupported formats remain download-only.
+
+**From file** and the composer paperclip open experimental local discovery for a selected undecomposed KPI. Computer selection saves the source immediately, and saved-source selection immediately attaches it to that tree, independently of analysis or staging. The chooser lists analyzable active sources from the entire project, including uploads from other trees. Explicitly attached structured data is available through existing owner-scoped agent `data.*` tools. Original metadata, filename and bytes remain immutable; library labels and associations are separate. The configured provider can suggest tables, ordered category columns and additive value mapping; required mapping and model questions must be answered before staging. Full-source deterministic reruns support additive numeric values in confirmed KPI-compatible units, numeric duration or explicit start/end timestamps, confirmed period-total or per-day normalization, at most four category levels and 200 nodes, and complete row/category coverage. The reporting period describes the full extract and denominator rather than applying an implicit date filter. Every generated KPI Description identifies its file/hash, table/columns, filters, calculation, reporting period and covered rows. Staging verifies source integrity and unchanged semantic target state, then returns the normal review preview. Other proposals remain metadata-only mappings; general executable bindings, refresh/reconciliation, production-trusted baselines, complex report layouts, PDF/OCR and connectors are not implemented.
 
 ### Model providers and local execution
 

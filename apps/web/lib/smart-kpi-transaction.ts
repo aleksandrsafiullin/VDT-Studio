@@ -1,4 +1,4 @@
-import { buildKpiSuggestionContext, cloneProject, compileIncomingKpiBatch, createVersionSnapshot, expandIncomingKpiFormula, inspectIncomingKpiDraft, kpiCanonicalJson, previewIncomingKpiBatch,
+import { buildKpiSuggestionContext, calculateGraph, cloneProject, compileIncomingKpiBatch, createVersionSnapshot, expandIncomingKpiFormula, inspectIncomingKpiDraft, incomingKpiInputValuePatch, incomingKpiReferenceValuePatch, incomingKpiValuesEqual, kpiCanonicalJson, previewIncomingKpiBatch, resolveIncomingKpiValues,
   type IncomingKpiBatchInput, type KpiSuggestionContext, type KpiSuggestionExecutionIdentity, type KpiSuggestionSelection, type KpiSuggestionSet, type VdtProject } from "@vdt-studio/vdt-core";
 import type { SmartKpiMixedOperation } from "./smart-kpi-incoming-contract";
 import { createStoredVdt, fetchStoredVdtRevisionState, revisionCasFromHead, runtimeCasFromState, saveStoredVdtRevision,
@@ -99,6 +99,7 @@ export function validateSmartKpiOperation(operation: SmartKpiOperation): boolean
         // Historical receipt is replayed exactly. Never apply new draft rules to it.
         if (!operation.proposal || !operation.selection || operation.context.contextHash !== operation.proposal.contextHash || operation.context.targetNodeId !== operation.proposal.targetNodeId) return false;
       } else {
+        if (!operation.resolved.values && [operation.draft.inputValues, operation.draft.referenceValue, operation.draft.estimateMissingValues, operation.draft.estimatedAliases, operation.draft.referenceValueEstimated].some(value => value !== undefined)) return false;
         const inspected = inspectIncomingKpiDraft({ schemaVersion: "incoming_kpi_apply.v2", context: operation.context,
           ...(operation.proposal ? { proposal: operation.proposal } : {}), draft: operation.draft }, operation.before);
         if (!inspected.readyForCompile || !same(inspected.lineage, operation.lineage) || !same(operation.execution, inspected.lineage.kind === "model" ? inspected.lineage.execution : undefined)
@@ -109,11 +110,34 @@ export function validateSmartKpiOperation(operation: SmartKpiOperation): boolean
           const node = operation.candidate.graph.nodes.find(node => node.id === mapped.nodeId);
           const source = mapped.kind === "existing" ? operation.before.graph.nodes.find(node => node.id === mapped.nodeId) : undefined;
           if (!node || node.name !== (source?.name ?? row.name) || node.unit !== row.unit || mapped.kind === "existing" && (!source || source.unit !== row.unit)) return false;
-          if (mapped.kind === "new" && mapped.origin === "manual" && (node.aiGenerated || node.status !== "accepted" || node.valueStatus !== "unknown")) return false;
+          if (mapped.kind === "new" && !operation.resolved.values && (node.baselineValue !== undefined || node.value !== undefined || node.valueStatus !== "unknown")) return false;
+          if (mapped.kind === "new" && mapped.origin === "manual" && (node.aiGenerated || node.status !== "accepted" || !operation.resolved.values && node.valueStatus !== "unknown")) return false;
         }
         const parent = operation.candidate.graph.nodes.find(node => node.id === operation.context.targetNodeId);
         if (expandIncomingKpiFormula(operation.draft.formula, operation.resolved.aliases) !== operation.resolved.formula || parent?.formula !== operation.resolved.formula
           || parent.type !== (parent.id === operation.candidate.rootNodeId ? "root_kpi" : "calculated")) return false;
+        // New receipts pin baseline values as well as aliases/formula. Historical
+        // committing v2 bodies remain exact, including their unknown inputs.
+        if (operation.resolved.values) {
+          const input: IncomingKpiBatchInput = { schemaVersion: "incoming_kpi_apply.v2", context: operation.context,
+            ...(operation.proposal ? { proposal: operation.proposal } : {}), draft: operation.draft };
+          const values = resolveIncomingKpiValues(operation.before, input);
+          if (values.issues.length || !same(values, operation.resolved.values)) return false;
+          for (const row of values.inputs) {
+            const id = operation.resolved.aliases.find(alias => alias.alias === row.alias)?.nodeId;
+            const node = operation.candidate.graph.nodes.find(node => node.id === id);
+            const patch = incomingKpiInputValuePatch(row, input, values.referenceValue!);
+            if (!node || Object.entries(patch).some(([key, value]) => !same(node[key as keyof typeof node], value))) return false;
+          }
+          const oldParent = operation.before.graph.nodes.find(node => node.id === parent.id)!;
+          if (Object.entries(incomingKpiReferenceValuePatch(values, oldParent)).some(([key, value]) => !same(parent[key as keyof typeof parent], value))) return false;
+          const calculated = calculateGraph(operation.candidate).values;
+          if (values.referenceValue === undefined || calculated[parent.id] === undefined || !incomingKpiValuesEqual(calculated[parent.id]!, values.referenceValue)) return false;
+          if (values.inputs.some(row => {
+            const id = operation.resolved.aliases.find(alias => alias.alias === row.alias)?.nodeId;
+            return !id || row.value === undefined || calculated[id] === undefined || !incomingKpiValuesEqual(calculated[id]!, row.value);
+          })) return false;
+        }
       }
       const added = operation.candidate.graph.nodes.filter(n => !operation.before.graph.nodes.some(old => old.id === n.id)).map(n => n.id).sort();
       if (!same(added, [...operation.addedNodeIds].sort()) || added.some(id => !id.startsWith(`${operation.id}_`))) return false;
@@ -309,7 +333,7 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
         if (selected && !(await selected.revalidate(get().executionSettings))) throw failure("The selected execution changed while validating incoming KPIs.");
         if (!ownsBase(get(), operation) || smartKpiBlockedReason(get(), true) || !same(authority(get()), operation.authority)) throw failure("The graph or storage authority changed while validating incoming KPIs.");
         operation = { ...operation, phase: "committing", candidate, addedNodeIds: compiled.newNodeIds, checkpointVersionId: checkpointed.versions.at(-1)!.id,
-          resolved: { aliases: compiled.aliases, formula: compiled.formula },
+          resolved: { aliases: compiled.aliases, formula: compiled.formula, values: compiled.values },
           ...(operation.vdtId ? { input: { idempotencyKey: `smart-add:${operation.vdtId}:${operation.id}`, expectedHead: operation.authority!.head,
             expectedRuntime: operation.authority!.runtime, project: cloneProject(candidate), summary: "Incoming KPI formula and mixed inputs" } } : {}) };
         set({ smartKpiOperation: structuredClone(operation) });

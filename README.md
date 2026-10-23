@@ -8,6 +8,27 @@ revision-CAS Add. The parent becomes Calculated; its source measurement remains
 reference evidence. Manual-only drafts need no provider. Historical v1 writes
 replay exactly; old graphs are not migrated.
 
+The incoming panel defaults to selected KPIs, one readable formula and **Add &
+calculate**. **Edit** contains own/existing KPIs, raw formula tools and details.
+A new Add also restores an incorrectly Calculated, formula-free node to Input
+when its plan declares an input and it has no mathematical children. The same
+revision/checkpoint retains its values, source metadata and reference children.
+
+Smart Add now requires finite input values and preserves the current KPI's
+baseline result. The panel shows input values and current → calculated totals.
+Existing materialized values are retained. Smart offers illustrative estimates
+for missing inputs, visibly marked **≈** and saved as assumptions. **Use estimates**
+can be disabled for measured-value entry. One remaining input can also be derived
+uniquely from known values. Every accepted layer must still reconcile to the
+unchanged parent. If the target has no value, enter its reference explicitly;
+**Reference is an estimate** records an illustrative reference as an assumption.
+This does not implement automatic source-file mapping or refresh.
+
+If an agent is waiting for your answer, **Cancel** confirms its cleanup before
+unlocking Smart Add. A failed cancellation remains retryable; cancellation keeps
+the current graph edits. Long-paused current sessions can still be cancelled
+after their execution fence expires.
+
 Current local Chrome fixtures passed mixed/manual Add, real stored recovery and
 Undo. Prepared controls met the 1 s p95 target in four 30-sample cells; Library200
 p95 was 279.8 ms. The 200 ms goal is not met on the 200-node fixtures. These UI timings
@@ -160,6 +181,10 @@ The node-card **Add incoming KPIs with AI** action is a semi-manual decompositio
 The current agent loop uses local skills and bounded tools. Its live selection path is narrow, mostly English and still relies on deterministic classification/term matching. The corrective target keeps one canonical copy of each skill and makes multilingual understanding and explicit selection an agent responsibility; it does not create translated skill copies, language aliases or an automatic generic fallback.
 
 ### Discover data candidates
+
+The project workspace has a **Files** tab. Upload client data before creating a tree, search and rename library entries, download originals, or archive/restore files. Select a VDT in **Files for** to manage its attachments; the editor's **Files** button opens the same library for the current tree. **Add from project** reuses an existing source without copying its bytes. Removing an attachment or archiving a file preserves originals needed by saved revisions and reviews; this is not permanent deletion. Library storage accepts files up to 50 MB each; only supported structured formats can be analyzed.
+
+**From file** and the composer paperclip can choose supported sources from the entire project. A computer upload is retained immediately on selection, before analysis, and an existing source is attached to the selected tree when chosen. Closing the review does not undo that retention or attachment. Explicitly attached structured files are also available to the existing owner-scoped `data.*` agent tools.
 
 Choose **From file** for the selected KPI, or use the VDT Agent composer paperclip, to upload a supported extract or reopen a retained project source. The configured provider can suggest its table, category hierarchy and additive value mapping, including duration columns or start/end timestamps. Confirm required units, formats, reporting period and any per-day denominator before deterministic code sums all rows and builds up to four category levels and 200 nodes. The normal change-set preview includes Baselines and source provenance in every generated KPI Description. Original bytes remain available in the project source list for download and repeat analysis after reload or discard. Unresolved questions, invalid/truncated data, stale target definitions and incomplete coverage block staging. The reporting period describes the full supplied extract and normalization denominator; it does not silently filter event rows. This remains a local experimental workflow; general ratios, refresh, joins and production-trusted calculations are not implemented.
 

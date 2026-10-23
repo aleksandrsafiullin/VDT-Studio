@@ -10,6 +10,14 @@ Revision 2026-10-20 supersedes the original context-only default for future Add:
 
 ## Decision
 
+Amendment 2026-10-21: new user-authorized Add may include a type-only repair for
+an existing formula-free Calculated node declared as plan Input with no
+mathematical children. The full hierarchy is checked on the repaired candidate;
+values, sources and context links are retained, and the original checkpoint
+supports Undo. This is not load-time migration or recompilation of old receipts.
+The prepared panel defaults to selected rows/readable formula/Add; Edit retains
+advanced controls and details without changing preparation or write authority.
+
 Smart suggestions are read-only proposals for one immediate child layer. The
 same right-side KPI interaction exposes prepared local/cache controls; a
 cold miss uses one bounded structured completion in the configured mode.
@@ -128,6 +136,35 @@ Stored apply/Undo use immutable operation-owned CAS requests through ADR-004,
 with a new revision for Undo. Scratch remains a local draft.
 The compiler is not storage/actor authority. W0.2/default-off flags, provider
 qualification, hosted-write rejection and release `NO-GO` remain unchanged.
+
+## Amendment: finite values and baseline preservation (2026-10-21)
+
+New explicit Smart/Manual Add now resolves finite numeric inputs and requires the
+baseline result to match the evaluated current or retained parent reference.
+The local draft optionally retains alias-keyed numeric text and a user reference
+only when the parent has no number. Known reused inputs are read-only. Exactly one
+missing primitive may be uniquely derived from the reference and other values;
+its provenance identifies derivation rather than independent measurement. Missing
+data, a non-unique solution or baseline mismatch blocks Add. No numeric estimates,
+arbitrary split or calibration is authorized by this amendment. Preparation keeps
+its value-free wire contract. Numeric evidence is pinned/validated in new journals;
+historical committing requests and previously saved graphs are not migrated.
+
+This supersedes the unknown-value Add policy above, while keeping unknown inputs
+permitted during read-only preparation and in the separate agent/file paths.
+
+## Amendment: explicit illustrative estimates (2026-10-22)
+
+Smart may offer illustrative missing-input allocations that preserve an unchanged
+known parent value. Proposal-backed drafts enable the visible Use estimates mode
+by default; manual drafts may opt in. This supersedes the earlier prohibition on
+all numeric estimates, while retaining the prohibition on fabricated measured
+facts, arbitrary formula coefficients, unit conversions and model authority.
+Host estimates are marked **≈**, accepted with Add and persisted as assumptions.
+Known inputs never change, edited estimates retain their identity, and a missing
+parent reference is entered explicitly with a separate estimate flag when needed.
+Finite arithmetic, count/fraction bounds, baseline reconciliation and pinned
+numeric/provenance recovery remain required. No raw-file refresh is implemented.
 
 ## Rejected alternatives
 

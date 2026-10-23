@@ -1,5 +1,31 @@
 # Data Ingestion And KPI Baselines
 
+## Project file library
+
+Implemented for the trusted local alpha: **Project → Files** accepts multiple uploads before any VDT exists and lists client files with original name, editable library label, size, upload date and attached trees. Search, tree filtering, original download, attach/detach and archive/restore are available. The editor **Files** dialog opens **This VDT** and **Add from project** views. One source can serve multiple trees within its owning project; selecting a source never copies or rewrites its payload. Arbitrary files may be retained, but the incoming-KPI chooser offers only the structured formats listed below. Unsupported files remain download-only.
+
+The builder retains a computer file immediately when selected, before any model analysis. Selecting a saved source immediately attaches it to the pinned VDT. Closing/discarding the review leaves retention and attachment intact. Project-only uploads are not exposed to VDT agent tools until explicitly attached. Existing uploads with a legacy metadata `vdtId` remain attached to that original tree and automatically appear in its project library.
+
+File API contract:
+
+- `POST /api/data/files`: multipart `projectId`, `file`, optional `vdtId`. A supplied VDT must belong to the real SQLite project. The 50 MB per-file limit is unchanged.
+- `GET /api/data/files?projectId=...`: active project library; add `includeArchived=true` for archive management, or `vdtId=...` for that tree's current attachments (including archived retained originals). Entries include `displayName`, `archived` and `vdtIds` alongside existing metadata/download fields. Listings read metadata rather than materializing every payload.
+- `GET /api/data/files/<datasetId>?projectId=...` downloads original bytes; an optional `vdtId` requires a current or historical association. Complete reads still verify original size/SHA-256.
+- `PATCH /api/data/files/<datasetId>?projectId=...`: `rename` with `displayName`, `archive`, `restore`, or `attach`/`detach` with a validated same-project `vdtId`. Library labels, archive state and per-tree association records use separate atomic sidecar replacements; immutable `metadata.json` and `payload.bin` are never rewritten. Archive blocks new attachments until restored. Detach hides the current association while preserving access for historical references, so it is not an access-revocation operation.
+
+Archive/restore is a reversible library lifecycle, not secure or permanent deletion. Originals, previous associations, discovery runs and saved graph provenance remain on disk. Encryption, configurable retention/permanent erasure, hosted authentication, parser isolation and explicit outbound-provider consent remain open. Library operations themselves do not invoke a provider or parse a file. The existing `data.*` tools list the current tree's explicitly attached sources; discovery snapshots bind shared bytes to their analysis VDT and preserve separate graph identity.
+
+## Smart numeric baseline gate (2026-10-21)
+
+Smart Add consumes already materialized graph values or explicit user inputs and
+can uniquely derive one missing input from the retained parent reference. It may
+also offer explicitly marked illustrative estimates, saved as assumptions rather
+than uploaded-data facts. All
+accepted inputs must be finite and reconcile to the parent baseline. Derived
+provenance is not a source measurement. This local gate does not read raw files,
+execute metadata mappings or resolve missing source ownership; those ingestion
+limitations remain. A source query note or file name alone cannot supply numbers.
+
 ## Formula-bearing incoming parent and plan (2026-10-20)
 
 Complete accepted file breakdowns mark the target and sum-bearing intermediate nodes Calculated; the actual root keeps `root_kpi`, primitive source leaves remain `data_mapped`. Source baselines, zero, mappings, retained bytes/hash/storageRef and all-or-nothing coverage are preserved. The host reconciles only the accepted target/new hierarchy and formula-reachable dependencies into the existing root plan in the same changeset. Unrelated entries/primary parents survive; an off-root reference hierarchy remains context and does not change the root result. Mapping metadata reapplication preserves a formula-bearing calculated/root type and does not implement automatic source refresh. Planned active and context targets are verified through actual apply and full hierarchy inspection.
@@ -27,8 +53,8 @@ Do not use current import results for operational KPI decisions.
 
 ## Current Flow
 
-1. Select an undecomposed KPI, choose **From file**, then upload a supported extract or choose a previously retained source from that VDT. The composer attachment remains another entry point.
-2. `POST /api/data/files` requires the SQLite workspace `projectId` and actual `vdtId`. It verifies their relationship and stores immutable bytes, the original filename and SHA-256 metadata inside the owning project's `files/<datasetId>/` directory. All data routes require an explicitly trusted `desktop` or `development_web` application mode; hosted mode fails closed.
+1. Select an undecomposed KPI, choose **From file**, then upload a supported extract or choose a retained source from the entire project. The composer attachment remains another entry point. Selection saves/attaches the source before analysis.
+2. `POST /api/data/files` requires the SQLite workspace `projectId` and accepts an optional actual `vdtId` (the builder supplies it). It verifies the project and any tree relationship, then stores immutable bytes, the original filename and SHA-256 metadata inside the owning project's `files/<datasetId>/` directory. All data routes require an explicitly trusted `desktop` or `development_web` application mode; hosted mode fails closed. File requests reject foreign supplied browser origins and cross-site markers.
 3. `POST /api/data/discovery/runs` verifies the source owner/hash, the original graph snapshot identity against the selected VDT record's stored active revision, and the selected target. Workspace project ID, VDT record ID and graph snapshot ID remain separate; imported graph IDs are preserved. It retains the initial project basis and performs full-byte parsing, profiling and configured-provider semantic review through the existing provider abstraction.
 4. The review shows the selected table, ordered category columns, additive calculation, complete hierarchy, row coverage and unresolved decisions. Confirm a numeric value column and its compatible KPI unit, a duration column/unit, or start/end columns with an explicit date format and timezone policy. For per-day values, confirm the inclusive reporting period, denominator and calendar-day, operating-day or entity-day basis, including zero-event days. The reporting period labels the entire supplied extract and defines the denominator; it is not an implicit row filter. Supply a period-specific extract; timestamp consistency checks may reject events outside the declared period.
 5. Structured mapping edits reload the immutable full source and rebuild the hierarchy deterministically. Metadata-only edits cannot answer required mapping or model clarification questions. Empty categories require an explicit Unspecified-category decision; invalid or ambiguous numeric values/durations are never silently excluded.
@@ -106,7 +132,7 @@ The incoming-KPI workflow uses structured options and full-source deterministic 
 - Excel parsing uses the official SheetJS `0.20.3` tarball, pinned by URL and lockfile integrity following [upstream installation guidance](https://docs.sheetjs.com/docs/getting-started/installation/nodejs/). This replaces the unmaintained npm `xlsx@0.18.5` dependency affected by prototype-pollution and ReDoS advisories. Production dependency audit passed on 2026-10-19; this does not provide parser isolation or resource-budget guarantees.
 - Incoming-KPI parsing retains original numeric worksheet serials after SheetJS matrix conversion. Date/time display formats must not convert a duration into a timezone-dependent `Date`; the original cell formats and the confirmed duration/timestamp options still determine units. Regression coverage includes both XLSX and legacy XLS.
 - Request bodies and workbook matrices can be materialized before effective resource limits.
-- Scoped files/runs enforce project/VDT ownership and local app mode; they remain plaintext without a retention/delete or encryption policy.
+- Scoped files enforce project ownership and explicit current/historical tree associations; runs retain their own VDT identity. They remain plaintext. Reversible archive/detach does not provide a permanent retention/delete or encryption policy.
 - The local ownership check is not authenticated hosted multi-user authorization. Legacy global records remain trusted-local compatibility data.
 - MIME magic, archive expansion limits, quarantine and parser process isolation are absent.
 - Model-facing redaction is partial; explicit outbound-provider consent and egress audit are absent.

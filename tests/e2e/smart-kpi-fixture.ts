@@ -5,7 +5,7 @@ import type { KpiSuggestionContext } from "../../packages/vdt-core/src/suggestio
 import type { KpiSuggestionModelOutput } from "../../packages/vdt-core/src/suggestions/model-output";
 import type { VdtProject } from "../../packages/vdt-core/src/types";
 
-export type SmartFixtureKind = "recipe" | "formula" | "contextual" | "independent";
+export type SmartFixtureKind = "recipe" | "formula" | "ratio" | "contextual" | "independent";
 export type SmartPreparationPhase = "startup" | "warmup" | "measurement" | "after-measurement";
 export interface SmartPreparationRequest {
   targetNodeId: string; phase: SmartPreparationPhase; requestStartTime: number; observedAt: number; finishedAt?: number;
@@ -17,7 +17,7 @@ export interface SmartBrowserFixture {
   cleanup(): Promise<void>;
 }
 export async function createSmartBrowserFixture(page: Page, kind: SmartFixtureKind = "formula", nodeCount = 1,
-  options: { rootPreparationGate?: Promise<void>; configureExecution?: boolean; haulageTarget?: boolean } = {}): Promise<SmartBrowserFixture> {
+  options: { rootPreparationGate?: Promise<void>; configureExecution?: boolean; haulageTarget?: boolean; staleInputType?: boolean; unknownTargetValue?: boolean } = {}): Promise<SmartBrowserFixture> {
   const suffix = randomUUID().replaceAll("-", ""), projectId = `project_smart_ui_${suffix}`, vdtId = `vdt_smart_ui_${suffix}`;
   const project = createSmartKpiMeasuredFixture(100); project.id = `legacy_graph_smart_${suffix}`;
   project.graph.nodes[0]!.assumptions = ["Time period: monthly"]; project.graph.nodes[0]!.position = { x: 0, y: 0 };
@@ -30,6 +30,23 @@ export async function createSmartBrowserFixture(page: Page, kind: SmartFixtureKi
     root.name = "Haulage distance output"; root.unit = "km/trip"; root.formula = targetNodeId;
     project.graph.edges.push({ id: "haulage_factor_edge", sourceNodeId: root.id, targetNodeId, relation: "formula_dependency", aiGenerated: false });
     project.scenarios[0]!.overrides = [{ nodeId: targetNodeId, value: 10 }];
+  }
+  if (options.staleInputType) {
+    const root = project.graph.nodes[0]!, target = project.graph.nodes.find(node => node.id === targetNodeId)!;
+    const stale = { ...target, id: "waste_empty_km_trip", name: "Measured empty distance", type: "calculated" as const, formula: undefined,
+      valueStatus: "calculated" as const, baselineValue: 4, position: { x: 520, y: 220 } };
+    const context = { ...target, id: "old_route_context", name: "Historical route context", type: "input" as const, baselineValue: undefined, position: { x: 1040, y: 220 } };
+    project.graph.nodes.push(stale, context); root.formula = `${target.id} + ${stale.id}`;
+    project.graph.edges.push({ id: "edge_stale_input", sourceNodeId: root.id, targetNodeId: stale.id, relation: "formula_dependency", aiGenerated: false },
+      { id: "edge_old_context", sourceNodeId: stale.id, targetNodeId: context.id, relation: "contextual_influence", aiGenerated: false });
+    root.decompositionPlan = { version: 1, goal: "Measured distances with an old contextual layer.", nodes: [
+      { nodeId: target.id, parentNodeId: root.id, kind: "input" }, { nodeId: stale.id, parentNodeId: root.id, kind: "input" },
+      { nodeId: context.id, parentNodeId: stale.id, kind: "context", rationale: "Historical reference only." }
+    ] };
+  }
+  if (options.unknownTargetValue) {
+    const target = project.graph.nodes.find(node => node.id === targetNodeId)!;
+    delete target.baselineValue; delete target.value; target.valueStatus = "unknown";
   }
   for (let i = 1; i < nodeCount; i++) {
     project.graph.nodes.push({ id: `existing_${i}`, name: `Existing QA context ${i}`, type: "input", unit: "fraction", status: "accepted", valueStatus: "unknown", aiGenerated: false,
@@ -56,19 +73,22 @@ export async function createSmartBrowserFixture(page: Page, kind: SmartFixtureKi
     expect(body.providerId).toBe("openai_compatible"); expect(body.providerConfig.model).toBeTruthy(); calls.push(body.input.context);
     const root = body.input.context.targetNodeId === targetNodeId;
     if (root && options.rootPreparationGate) await options.rootPreparationGate;
-    const output: KpiSuggestionModelOutput = root ? { status: "ready", rationale: "Explicit fictitious QA semantic decision for this context.", limitations: ["Fictitious QA proposal; all new values remain unknown."], groups: [{
+    const output: KpiSuggestionModelOutput = root ? { status: "ready", rationale: "Explicit fictitious QA semantic decision for this context.", limitations: ["Fictitious QA proposal; supply values before applying."], groups: [{
       id: "qa_alternative", title: kind === "recipe" ? "Productive time × productivity" : kind === "formula" ? "Measured components" : "Explanatory inputs", selectionMode: kind === "independent" || kind === "contextual" ? "independent" : "all",
       children: kind === "recipe" ? [
         { key: "working_time", conceptKey: "effective_working_time", name: "Working time", unit: "h/month", description: null, existingNodeId: null },
         { key: "productivity", conceptKey: "average_productivity", name: "Productivity", unit: "t/h", description: null, existingNodeId: null }
+      ] : kind === "ratio" ? [
+        { key: "total_distance", conceptKey: "qa_total_distance", name: "Total measured distance", unit: "km", description: null, existingNodeId: null },
+        { key: "measured_trips", conceptKey: "qa_measured_trips", name: "Measured trips", unit: "trip", description: null, existingNodeId: null }
       ] : kind === "formula" ? [
         { key: "component_a", conceptKey: "qa_component_a", name: "QA component A", unit: body.input.context.target.unit!, description: null, existingNodeId: null },
         { key: "component_b", conceptKey: "qa_component_b", name: "QA component B", unit: body.input.context.target.unit!, description: null, existingNodeId: null }
       ] : [
         { key: "qa_availability", conceptKey: "qa_availability", name: "QA availability", unit: "fraction", description: null, existingNodeId: null },
         { key: "qa_supply", conceptKey: "qa_supply", name: "QA supply stability", unit: "fraction", description: null, existingNodeId: null }
-      ], requiredKeys: kind === "independent" || kind === "contextual" ? [] : kind === "recipe" ? ["working_time", "productivity"] : ["component_a", "component_b"],
-      recipeId: kind === "recipe" ? "production.time_rate" : null, formula: kind === "recipe" ? "working_time * productivity" : kind === "formula" ? "component_a + component_b" : null, limitations: []
+      ], requiredKeys: kind === "independent" || kind === "contextual" ? [] : kind === "recipe" ? ["working_time", "productivity"] : kind === "ratio" ? ["total_distance", "measured_trips"] : ["component_a", "component_b"],
+      recipeId: kind === "recipe" ? "production.time_rate" : null, formula: kind === "recipe" ? "working_time * productivity" : kind === "formula" ? "component_a + component_b" : kind === "ratio" ? "total_distance / measured_trips" : null, limitations: []
     }] } : { status: "empty", rationale: "This QA target has no prepared immediate layer.", limitations: [], groups: [] };
     await route.fulfill({ json: { ok: true, result: output } });
   });

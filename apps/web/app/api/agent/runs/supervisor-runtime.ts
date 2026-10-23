@@ -128,6 +128,7 @@ interface ActiveSupervisorRun {
   readonly subscribers: Set<SupervisorEventSubscriber>;
   questionSetId: string | null;
   lifecycleTask?: Promise<void> | undefined;
+  cancellationTask?: Promise<void> | undefined;
 }
 
 const supervisorGlobal = globalThis as typeof globalThis & {
@@ -759,14 +760,45 @@ export async function cancelStructuredModelAgentRun(runId: string, awaitTerminal
 async function cancelStructuredModelAgentRunInternal(runId: string, awaitTerminal: boolean): Promise<PublicAgentRunSnapshot> {
   const active = activeRuns.get(runId);
   if (!active) {
-    if (awaitTerminal && confirmedSupervisorClosures.has(runId)) return compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
+    if (confirmedSupervisorClosures.has(runId)) return compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
     throw new PublicSupervisorRunError(
       "MODEL_AGENT_RECOVERY_REQUIRED",
       "The persisted Model Agent run has no active fenced controller to authorize cancellation.",
       409
     );
   }
-  const cancelled = await active.supervisor.cancel("User cancelled the run.");
+  // Retries share the owned cancellation, including a failed-projection repair.
+  // A second HTTP request must not race another event chain or session close.
+  if (!active.cancellationTask) {
+    const task = cancelOwnedSupervisorRun(runId, active, awaitTerminal);
+    active.cancellationTask = task;
+    void task.catch(() => { if (active.cancellationTask === task) active.cancellationTask = undefined; });
+  }
+  await active.cancellationTask;
+  if (awaitTerminal) {
+    await active.lifecycleTask;
+    if (activeRuns.get(runId) === active || !confirmedSupervisorClosures.has(runId)) throw new PublicSupervisorRunError("MODEL_AGENT_CLEANUP_PENDING", "Agent cleanup is not confirmed. Finish the current run and retry.", 409);
+  }
+  return await compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
+}
+
+async function cancelOwnedSupervisorRun(runId: string, active: ActiveSupervisorRun, awaitTerminal: boolean): Promise<void> {
+  let cancelled: { armed: boolean };
+  try {
+    cancelled = await active.supervisor.cancel("User cancelled the run.");
+  } catch (error) {
+    if (active.supervisor.status !== "cancelled") throw error;
+    // An earlier cancellation may have stopped the session before its event
+    // could be persisted (for example when the epoch fence expired).
+    cancelled = { armed: false };
+  }
+  if (!cancelled.armed && active.supervisor.status === "cancelled") {
+    const head = active.supervisor.outbox.head();
+    if (head?.type !== "runtime_status" || head.payload.code !== "RUN_CANCELLED" || head.payload.state !== "cancelled") {
+      await persistStoppedSupervisorCancellation(runId, active);
+    }
+    cancelled = { armed: true };
+  }
   if (!cancelled.armed && !(awaitTerminal && ["succeeded", "failed", "cancelled", "closed"].includes(active.supervisor.status))) {
     throw new PublicSupervisorRunError(
       "MODEL_AGENT_FINAL_COMMITTED",
@@ -777,15 +809,43 @@ async function cancelStructuredModelAgentRunInternal(runId: string, awaitTermina
   if (cancelled.armed) agentRuntime.store.updateRun(runId, {
     status: "cancelled",
     phase: "reporting",
+    pendingQuestions: undefined,
     completedAt: new Date().toISOString(),
     ...safeCliSessionTelemetryPatch(runId, active.supervisor, { includeLatencyPercentiles: true })
   });
   watchActiveSupervisorLifecycle(runId, active);
-  if (awaitTerminal) {
-    await active.lifecycleTask;
-    if (activeRuns.get(runId) === active || !confirmedSupervisorClosures.has(runId)) throw new PublicSupervisorRunError("MODEL_AGENT_CLEANUP_PENDING", "Agent cleanup is not confirmed. Finish the current run and retry.", 409);
+}
+
+/** Repair only the terminal fact of an already aborted, still-owned controller.
+ * A fresh writer also handles controllers retained across development reloads.
+ * It cannot resume the engine, advance an epoch or publish a graph revision. */
+async function persistStoppedSupervisorCancellation(runId: string, active: ActiveSupervisorRun): Promise<void> {
+  await active.supervisor.wait();
+  await active.supervisor.close();
+  if (activeRuns.get(runId) !== active) {
+    throw new PublicSupervisorRunError("STALE_SUPERVISOR_CALLBACK", "The stopped Supervisor no longer owns this run.", 409);
   }
-  return await compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
+  const persistence = createAgentSupervisorPersistence(agentRuntime.store);
+  try {
+    const durable = await persistence.load(runId), binding = active.supervisor.binding;
+    if (!durable || durable.binding.bindingId !== binding.bindingId || durable.binding.sessionEpoch !== binding.sessionEpoch) {
+      throw new PublicSupervisorRunError("SESSION_EPOCH_MISMATCH", "The stopped Supervisor no longer owns the current session epoch.", 409);
+    }
+    const outbox = new AgentRunEventOutbox(runId, {
+      initialEvents: durable.eventOutbox,
+      sink: { append: event => persistence.appendEvent(event) }
+    });
+    const head = outbox.head();
+    if (head?.type === "runtime_status" && head.payload.code === "RUN_CANCELLED" && head.payload.state === "cancelled") return;
+    const event = await outbox.append({
+      type: "runtime_status", source: "runtime",
+      payload: { code: "RUN_CANCELLED", message: "Agent execution was cancelled.", state: "cancelled" }
+    });
+    agentRuntime.store.updatePublicStatus(runId, { phase: "building_draft", message: "Agent execution was cancelled.", updatedAt: event.timestamp });
+    for (const subscriber of [...active.subscribers]) subscriber(structuredClone(event));
+  } finally {
+    await persistence.close?.();
+  }
 }
 
 export function resetActiveSupervisorRunsForTests(): void {
@@ -1327,6 +1387,7 @@ function syncDurableEventToLegacyState(
       agentRuntime.store.updateRun(runId, {
         status: "cancelled",
         phase: "reporting",
+        pendingQuestions: undefined,
         completedAt: event.timestamp,
         ...safeCliSessionTelemetryPatch(runId, active.supervisor, { includeLatencyPercentiles: true })
       });

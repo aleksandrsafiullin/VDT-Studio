@@ -9,6 +9,13 @@ saved through the existing authority. Historical v1 committing receipts replay
 their exact request without new proposal validation or recompilation. See the
 [incoming contract](architecture/SMART_KPI_INCOMING_CONTRACT.md).
 
+The new-Add compiler derives bounded type-only repairs for formula-free
+`calculated` nodes declared as plan inputs with no mathematical children. It
+validates a virtual repaired base, appends those repairs to the same changeset
+and validates the complete resulting hierarchy. Context/fingerprints and the
+checkpoint remain based on the original graph. Preview never publishes repairs;
+committing v1/v2 journals still replay their exact captured candidate.
+
 `vdt-core/src/suggestions` owns strict contracts, semantic fingerprints, canonical
 recipe provenance and one-layer compilation. `vdt-agent/src/smart-kpi-recipes.ts`
 projects canonical blocks into browser-safe generated data; Node skill loading
@@ -18,6 +25,16 @@ provider selection, pinned API transport and terminal requestId cancellation.
 Client, HTTP host and common runner/sidecar enforce active workspace ownership;
 unknown cleanup quarantines the execution across component disposal and browser
 reload for the host session. No durable agent lease/CAS authority is introduced.
+
+Ordinary structured-agent Cancel reuses `pendingIncomingKpiRestart` as a scoped
+stop marker, retaining it across errors/reload until the terminal cleanup receipt
+and snapshot are confirmed. The current graph is preserved and the old run joins
+the callback fence. Sequence 4 permits only the current epoch's runtime
+`RUN_CANCELLED`/`cancelled` event to obtain a fresh bounded audit fence after its
+ownership fence expires; it does not renew execution authority. Repair of an
+already aborted controller first closes it, then verifies the same binding/epoch
+before appending that terminal fact through fresh persistence. Epoch takeover,
+provider restart and graph writes remain outside this repair.
 
 `smart-kpi-cache.ts` persists only validated proposals and LRU metadata in its own
 origin-local IndexedDB: 256 entries, 2 MiB and 7-day TTL. Corruption/quota errors
@@ -54,12 +71,31 @@ Accepted child roles are ready before new-node publication/prefetch.
 Formula-first preparation admits audited recipes or formally checked generic
 definitions. Formula-null starting rows require an explicit edited formula before
 Add. Existing sourced/context graphs stay readable; future accepted parents become
-calculated and new values remain unknown; missing values,
-a custom period or no recipe match alone do not make it terminal. Genuine model
+calculated only after the local numeric Add gate resolves every effective input
+and verifies baseline equality. Missing values, a custom period or no recipe
+match alone do not prevent preparation. Genuine model
 empty results retain their bounded rationale and limitations through the client,
 memory cooldown and escaped panel text. Provider/validation errors remain failures.
 Changing preparation policy invalidates rebuildable outcomes independently of
 the unchanged proposal wire schema and formula validator.
+
+`incoming-values.ts` resolves existing materialized graph values, user numeric
+text, a uniquely invertible last input and optional illustrative allocations.
+The reference is the evaluated current
+parent, then its retained source value, or an explicit user reference when both
+are absent. It never changes known source values to fit. Add materializes finite
+inputs with user/derived/assumption provenance in its existing changeset and pins the
+resolution in the immutable journal. Recovery checks that resolution against
+its captured base and candidate; historical committing v1/v2 bodies without
+numeric evidence retain exact replay. Preview/editing invokes no model, raw-file
+read or mapping refresh. New source facts are not inferred from KPI names.
+Proposal-backed UI drafts enable `estimateMissingValues`; manual drafts can opt
+in. Deterministic unit-aware seeds and a solved free operand provide a reconciled
+illustration. `estimatedAliases` retains assumption status when estimated text is
+edited; disabling estimates clears those estimated edits rather than relabelling
+them as facts. Unknown parent references require explicit entry and an optional
+`referenceValueEstimated` flag. Parent and input assumption metadata are validated
+with the pinned resolution during recovery, alongside their numbers.
 
 The exact committing journal is read back before a stored POST. Browser quota
 failure cannot throw after in-memory publication or reclassify an acknowledged
@@ -83,6 +119,30 @@ Planned non-numerical reference containers are derived from the root decompositi
 ## Decomposition plan and branch repair
 
 The optional `VdtNode.decompositionPlan` root metadata holds the agent-authored version-1 factor plan. It is a permitted internal node change-set field, not an unrestricted public `vdt.update_node` argument. Existing node-update preview, approval, revision-CAS, receipt, undo and snapshot paths persist it without a storage migration. Formula and visual-edge storage remain independent; the new full-tree Supervisor policy requires their declared hierarchy agreement before finish. The host validates structure and declared shared references, not domain selection or business formulas. Branch reparenting is one ordinary edge change-set transaction, with no numeric or formula rewriting. Legacy/manual project reading and arithmetic stay backward-compatible.
+
+## Project file library
+
+Project files are now owned by the SQLite workspace project, with explicit
+many-to-many tree associations. The web **Files** tab/dialog keeps its listing and
+operation state in the mounted component, reads persisted metadata through the
+local file API and does not put file bytes in Zustand/localStorage. A project can
+upload before its first tree exists. Builder computer/saved-source selection
+retains/attaches immediately; analysis remains a separate operation.
+
+Immutable `files/<datasetId>/{payload.bin,metadata.json}` stay in their existing
+locations. Separate `display-name.json`, `archive.json` and
+`vdts/<vdtId>.json` sidecars hold labels, reversible archival and attachment
+availability. Each sidecar is replaced atomically through its own unique
+temporary file. Independent tree associations do not share a mutable manifest.
+Legacy metadata `vdtId` supplies the original association unless a sidecar
+overrides availability; no SQL migration or source rewrite is needed. Listings
+read metadata only. Original reads still validate full size/hash and paths.
+Detached/archived originals remain readable by previously associated trees for
+saved graph/run references. Attach/restore is explicit; archive is not erasure or
+access revocation. Discovery projects a shared source's metadata into the actual
+analysis VDT while keeping immutable source identity/hash and separate run/graph
+ownership. The existing agent dataset adapter continues listing only current
+attachments of its admitted VDT.
 
 ## Experimental retained-source session path (2026-10-17)
 
@@ -295,7 +355,7 @@ All V2 feature flags are server-owned, fail closed and default to disabled. Proj
 
 This separate experimental local harness accepts provider-assisted table/category/additive-value suggestions through `createManagedAwareAiProvider`. The deterministic incoming compiler supports complete additive hierarchies (up to four category levels and 200 nodes) from numeric values in confirmed target-compatible units, direct durations or explicit start/end timestamps, and confirmed total/per-day normalization. A declared reporting period describes the full source extract/denominator; it is not a row-filter query. All required mapping and provider clarification questions remain apply blockers. Structured edits reload immutable full bytes; final staging reruns against the server-retained initial project basis after validating the client's current semantic target and immediate children. Each generated KPI Description carries source hash/reference, table, columns, filters, calculation, reporting period and row coverage. The core calculator consumes materialized Baselines and parent sum formulas; it does not execute or refresh `dataMapping`.
 
-New upload/list/download/run routes require trusted local app mode and strict project/VDT IDs. SQLite verifies the real workspace project and `vdt.projectId`; `VdtProject.id` is the original graph snapshot identity; it may differ from both the SQLite workspace owner and selected VDT record ID. The selected VDT's stored active revision supplies the expected graph identity for request validation. Imported graph IDs are preserved without rewrites or migrations. Sources are write-once at `projectDir(database.dataDir, projectId)/files/<datasetId>/`, with original name metadata, exact bytes and checked SHA-256/size. Runs retain file ownership plus explicit `workspaceProjectId`/`vdtId` and a separate initial project context. File/run reads use persistent storage instead of trusting an in-memory cache; scope mismatches, unsafe IDs and symlink paths fail closed. Old global `data-discovery` records are retained for trusted-local compatibility and never used as scoped fallbacks. Browser discard leaves source files intact. Hosted multi-user authorization, parser isolation, retention/encryption and general refresh remain open. See `DATA_INGESTION.md`.
+Upload/list/download/library-edit/run routes require trusted local app mode and strict IDs. File operations require a real SQLite project and validate any supplied tree's `vdt.projectId`; analysis/run operations require the actual tree as well. VDT reads require a current or historical explicit association; project library reads can open any source owned by that project. `VdtProject.id` is the original graph snapshot identity; it may differ from both the SQLite workspace owner and selected VDT record ID. The selected VDT's stored active revision supplies the expected graph identity for request validation. Imported graph IDs are preserved without rewrites or migrations. Sources are write-once at `projectDir(database.dataDir, projectId)/files/<datasetId>/`, with original name metadata, exact bytes and checked SHA-256/size. Runs retain file ownership plus explicit `workspaceProjectId`/`vdtId` and a separate initial project context. File/run reads use persistent storage instead of trusting an in-memory cache; scope mismatches, unsafe IDs and symlink paths fail closed. Old global `data-discovery` records are retained for trusted-local compatibility and never used as scoped fallbacks. Browser discard leaves source files intact. Hosted multi-user authorization, parser isolation, permanent retention/erasure, encryption and general refresh remain open. See `DATA_INGESTION.md`.
 
 ### Model execution flow
 
@@ -321,7 +381,7 @@ Local voice input is independent from chat model execution. An AudioWorklet send
 | Projects and VDT metadata | SQLite | Durable source of truth |
 | VDT graph revisions | Strict canonical revision files + SQLite head/attempt/idempotency state | W0.1 atomic revision-CAS writes implemented; Windows durability unverified |
 | Agent runs | SQLite-backed stores: normalized Sequence 4 primary authority plus secondary V1 projection; non-SQLite test stores remain injected | Complete restart coordinator over the same binding, bounded exchange/tool/checkpoint attempts, Event V2 outbox and recovery |
-| Uploaded datasets | Project `files/<datasetId>` immutable sources and project-scoped discovery snapshots; legacy global records retained | Authenticated hosted ownership, retention/encryption and reusable execution |
+| Uploaded datasets | Project `files/<datasetId>` immutable sources with library/association sidecars and project-scoped discovery snapshots; legacy global records retained | Authenticated hosted ownership, permanent retention/erasure, encryption and reusable execution |
 | Skills | `packages/vdt-agent/skills` for current bundled source | Single-copy repository: reviewed bundled source plus immutable verbatim user versions; ACL references; generated sidecar only |
 | Provider status | `release/provider-certification.json` | Canonical release metadata |
 

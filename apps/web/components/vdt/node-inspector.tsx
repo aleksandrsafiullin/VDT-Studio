@@ -119,7 +119,8 @@ export function NodeInspector() {
             <div className="grid grid-cols-2 gap-3 rounded-md border border-line bg-slate-50 p-3">
               <div>
                 <div className="text-xs font-medium uppercase tracking-normal text-muted">Value</div>
-                <div className="mt-1 text-lg font-semibold text-ink">{referenceGroup ? "Reference group" : formatNumber(calculation.values[node.id])}</div>
+                <div className="mt-1 text-lg font-semibold text-ink">{!referenceGroup && calculation.values[node.id] !== undefined && (node.valueStatus === "default_assumption" || node.valueSource?.sourceTier === "assumption")
+                  ? <span className="text-amber-800" title="Illustrative estimate, not measured data." aria-label="Estimate">≈ </span> : null}{referenceGroup ? "Reference group" : formatNumber(calculation.values[node.id])}</div>
               </div>
               <div>
                 <div className="text-xs font-medium uppercase tracking-normal text-muted">Unit</div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useLayoutEffect, useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { TextArea } from "@/components/ui/field";
 import { FormulaReferenceChip } from "./formula-editor/formula-reference-chip";
 
@@ -17,6 +17,9 @@ export interface IncomingKpiFormulaFieldProps {
   references: readonly IncomingKpiFormulaReference[];
   error?: string;
   disabled?: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+  children?: ReactNode;
 }
 
 const rawFormulaLimit = 1024;
@@ -67,10 +70,15 @@ export function IncomingKpiFormulaField({
   onChange,
   references,
   error,
-  disabled = false
+  disabled = false,
+  expanded,
+  onExpandedChange,
+  children
 }: IncomingKpiFormulaFieldProps) {
   const id = useId();
   const [textOpen, setTextOpen] = useState(false);
+  const editorOpen = expanded ?? textOpen;
+  const setEditorOpen = (open: boolean) => { setTextOpen(open); onExpandedChange?.(open); };
   const textarea = useRef<HTMLTextAreaElement>(null);
   const knownReferences = useRef(new Map<string, IncomingKpiFormulaReference>());
   for (const [alias, reference] of knownReferences.current) knownReferences.current.set(alias, { ...reference, selected: false });
@@ -85,10 +93,10 @@ export function IncomingKpiFormulaField({
     const pending = pendingCaret.current;
     if (!pending) return;
     pendingCaret.current = undefined;
-    if (pending.rawValue !== rawValue || disabled || !textOpen) return;
+    if (pending.rawValue !== rawValue || disabled || !editorOpen) return;
     textarea.current?.focus({ preventScroll: true });
     textarea.current?.setSelectionRange(pending.caret, pending.caret);
-  }, [rawValue, disabled, textOpen]);
+  }, [rawValue, disabled, editorOpen]);
 
   const insert = (text: string, operator = false) => {
     if (disabled) return;
@@ -96,13 +104,13 @@ export function IncomingKpiFormulaField({
     const next = (operator ? insertFormulaText : insertIncomingKpiFormulaReference)(
       rawValue,
       text,
-      textOpen && hasSelection.current ? field?.selectionStart : undefined,
-      textOpen && hasSelection.current ? field?.selectionEnd : undefined
+      editorOpen && hasSelection.current ? field?.selectionStart : undefined,
+      editorOpen && hasSelection.current ? field?.selectionEnd : undefined
     );
     if (!next) return;
     hasSelection.current = true;
     if (next.rawValue === rawValue) {
-      if (textOpen) { field?.focus({ preventScroll: true }); field?.setSelectionRange(next.caret, next.caret); }
+      if (editorOpen) { field?.focus({ preventScroll: true }); field?.setSelectionRange(next.caret, next.caret); }
       return;
     }
     pendingCaret.current = next;
@@ -111,14 +119,17 @@ export function IncomingKpiFormulaField({
 
   return (
     <div className="space-y-2" data-testid="incoming-kpi-formula-field">
-      <label htmlFor={id} className="text-xs font-semibold text-ink">Formula</label>
-      <div data-testid="incoming-kpi-readable-formula" aria-label="Formula in KPI names" className="flex min-h-9 flex-wrap items-center gap-1 rounded border border-line bg-slate-50 p-2 text-xs">
-        {readableParts.map((part, index) => part.kind === "reference" ? <FormulaReferenceChip key={index} nodeId={part.reference.alias}
-          displayName={part.reference.name} unknownRef={part.reference.selected === false} dragHandle={<></>} className="py-0.5" /> :
-          <span key={index} className="whitespace-pre-wrap break-all font-mono">{part.text}</span>)}
+      <p className="text-[11px] font-medium text-muted">Formula</p>
+      <div data-testid="incoming-kpi-readable-formula" aria-label="Formula in KPI names" className="rounded-md bg-slate-50 px-2.5 py-2 text-xs leading-5">
+        {readableParts.length ? readableParts.map((part, index) => part.kind === "reference" ? <span key={index}
+          className={part.reference.selected === false ? "font-medium text-amber-800 underline decoration-dotted" : "font-medium"}>{part.reference.name}</span> :
+          <span key={index} className="whitespace-pre-wrap">{part.text.replaceAll("*", "×").replaceAll("/", "÷")}</span>) : <span className="text-muted">Enter a formula in Edit.</span>}
       </div>
-      <details open={textOpen} onToggle={event => setTextOpen(event.currentTarget.open)}>
-        <summary className="cursor-pointer text-xs text-muted">Edit as text</summary>
+      <details open={editorOpen} onToggle={event => { if (event.currentTarget.open !== editorOpen) setEditorOpen(event.currentTarget.open); }} data-testid="incoming-kpi-edit">
+        <summary className="cursor-pointer text-xs text-muted">Edit</summary>
+        <div className="mt-3 space-y-3">
+        {children}
+        <label htmlFor={id} className="block text-xs font-medium">Formula</label>
         <TextArea
         ref={textarea}
         id={id}
@@ -139,7 +150,6 @@ export function IncomingKpiFormulaField({
           onChange(event.currentTarget.value);
         }}
         />
-      </details>
       <div role="group" aria-label="Formula operators" className="flex flex-wrap gap-1">
         {[["+", "+"], ["-", "−"], ["*", "×"], ["/", "÷"], ["(", "("], [")", ")"]].map(([operator, label]) => <button key={operator}
           type="button" disabled={disabled} aria-label={`Insert ${label}`} className="h-7 min-w-7 rounded border border-line bg-white px-1.5 text-xs disabled:opacity-50"
@@ -168,6 +178,8 @@ export function IncomingKpiFormulaField({
           ))}
         </div>
       ) : null}
+        </div>
+      </details>
       {error ? <p id={errorId} role="alert" className="text-xs text-amber-800">{error}</p> : null}
     </div>
   );

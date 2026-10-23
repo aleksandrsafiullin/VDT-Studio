@@ -280,6 +280,21 @@ describe("GenerateActivityPanel", () => {
     expect(html).not.toContain('data-testid="agent-answer-freeform"');
   });
 
+  it("keeps cancelled question history without claiming the agent is still working", () => {
+    const html = renderToStaticMarkup(<GenerateActivityPanel
+      activity={activity({ status: "cancelled", canCancel: false, agentChatMessages: [{
+        id: "question-message", runId: "run-activity-123456789", role: "assistant", kind: "question", createdAt: "2026-10-21T10:00:00Z",
+        questions: [{ id: "basis", question: "Which basis?", reason: "Required.", required: true }]
+      }] })}
+      onCancel={() => undefined}
+    />);
+    expect(html).toContain("Which basis?");
+    expect(html).toContain("Cancelled");
+    expect(html).not.toContain("Working...");
+    expect(isDisabledOpeningTag(openingTagForTestId(html, "continue-agent"))).toBe(true);
+    expect(html).not.toContain('data-testid="cancel-generate"');
+  });
+
   it("renders structured question fields separately", () => {
     const html = renderToStaticMarkup(
       <GenerateActivityPanel

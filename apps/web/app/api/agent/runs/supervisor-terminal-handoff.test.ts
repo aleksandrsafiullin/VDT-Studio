@@ -7,7 +7,7 @@ import { createIncomingGraphFixture } from "../../../../../../packages/vdt-core/
 import { POST as startRun } from "./route";
 import { POST as cancelRun } from "./[runId]/cancel/route";
 import { agentExecutionBindingRegistry, agentRuntime } from "./runtime";
-import { cancelStructuredModelAgentRun, currentModelAgentToolCatalogHash, isStructuredModelAgentRunActive, resetActiveSupervisorRunsForTests } from "./supervisor-runtime";
+import { cancelStructuredModelAgentRun, currentModelAgentToolCatalogHash, getPersistedSupervisorEvents, isStructuredModelAgentRunActive, resetActiveSupervisorRunsForTests } from "./supervisor-runtime";
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); resetActiveSupervisorRunsForTests(); });
 
@@ -34,6 +34,36 @@ async function startPausedRun() {
 }
 
 describe("structured selected-layer terminal ownership", () => {
+  it.each([false, true])("cancels a long-paused run with an expired fence, including an earlier failed projection=%s", async failedProjection => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "vdt-expired-cancel-"));
+    vi.stubEnv("VDT_DATA_DIR", directory); vi.stubEnv("VDT_APP_MODE", "development_web");
+    const { runId, dispose } = await startPausedRun();
+    const originalCancel = VdtRunSupervisor.prototype.cancel;
+    if (failedProjection) vi.spyOn(VdtRunSupervisor.prototype, "cancel").mockImplementation(async function (this: VdtRunSupervisor, reason) {
+      vi.spyOn(this.outbox, "append").mockRejectedValue(Object.assign(new Error("Old writer fence expired."), { code: "WRITE_FENCE_EXPIRED" }));
+      return originalCancel.call(this, reason);
+    });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 48 * 60 * 60 * 1_000);
+    try {
+      const request = () => new Request(`http://localhost:3000/api/agent/runs/${runId}/cancel`, { method: "POST", headers: { "content-type": "application/json" }, body: '{"awaitTerminal":true}' });
+      const receipts = await Promise.all([cancelRun(request(), { params: Promise.resolve({ runId }) }), cancelRun(request(), { params: Promise.resolve({ runId }) })]);
+      for (const receipt of receipts) {
+        expect(receipt.status).toBe(200);
+        expect(await receipt.json()).toMatchObject({ ok: true, status: "cancelled", terminalCleanupConfirmed: true });
+      }
+      expect((await getPersistedSupervisorEvents(runId)).filter(event => event.type === "runtime_status" && event.payload.code === "RUN_CANCELLED")).toHaveLength(1);
+      expect(agentRuntime.store.getSnapshot(runId).pendingQuestions).toBeUndefined();
+      expect(agentRuntime.store.getSnapshot(runId).executionSummary?.sessionEpoch).toBe(1);
+      expect(isStructuredModelAgentRunActive(runId)).toBe(false);
+      const replay = await cancelRun(request(), { params: Promise.resolve({ runId }) });
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toMatchObject({ ok: true, status: "cancelled", terminalCleanupConfirmed: true });
+    } finally {
+      vi.useRealTimers(); dispose(); fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each([false, true])("waits for actual close, retaining unknown cleanup on timeout=%s", async timeout => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "vdt-terminal-handoff-"));
     vi.stubEnv("VDT_DATA_DIR", directory); vi.stubEnv("VDT_APP_MODE", "development_web");

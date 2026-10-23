@@ -24,13 +24,27 @@ export const newIncomingKpiExistingKey = (): IncomingKpiExistingKey => `e_${cryp
 /** Shape validation deliberately accepts raw incomplete formula text and
  * unselected blank rows. It never mutates, normalizes or publishes the draft. */
 export function validateIncomingKpiBatchDraft(value: unknown): IncomingKpiBatchDraft {
-  smartRecord(value, ["schemaVersion", "targetNodeId", "contextHash", "revision", "source", "childKeys", "manualChildren", "existingFactors", "formula", "formulaAuthorship"]);
+  const required = ["schemaVersion", "targetNodeId", "contextHash", "revision", "source", "childKeys", "manualChildren", "existingFactors", "formula", "formulaAuthorship"];
+  smartRecord(value, [...required, "inputValues", "referenceValue", "estimateMissingValues", "estimatedAliases", "referenceValueEstimated"], required);
   smartAssert(value.schemaVersion === INCOMING_KPI_DRAFT_SCHEMA, "INVALID_DRAFT", "Unsupported incoming draft.");
   smartString(value.targetNodeId, 160);
   smartAssert(typeof value.contextHash === "string" && hashPattern.test(value.contextHash), "INVALID_DRAFT", "Refresh the KPI context.");
   smartAssert(Number.isSafeInteger(value.revision) && Number(value.revision) >= 0 && Number(value.revision) <= 0x7fffffff, "INVALID_DRAFT", "Invalid draft revision.");
   smartAssert(["recipe", "model", "user_edited", "user"].includes(String(value.formulaAuthorship)), "INVALID_AUTHORSHIP", "Choose a formula source.");
   smartAssert(rawText(value.formula, limits.localFormula), "FORMULA_LIMIT", "Formula limit: 1,024 characters.");
+  if (value.inputValues !== undefined) {
+    smartAssert(value.inputValues !== null && typeof value.inputValues === "object" && !Array.isArray(value.inputValues), "INVALID_VALUES", "Check the input values.");
+    const entries = Object.entries(value.inputValues);
+    smartAssert(entries.length <= limits.modelRows + limits.newRows + limits.existingReferences && entries.every(([key, text]) => aliasPattern.test(key) && rawText(text, 80)), "INVALID_VALUES", "Check the input values.");
+  }
+  smartAssert(value.referenceValue === undefined || rawText(value.referenceValue, 80), "INVALID_VALUES", "Check the current KPI value.");
+  for (const key of ["estimateMissingValues", "referenceValueEstimated"])
+    smartAssert(value[key] === undefined || typeof value[key] === "boolean", "INVALID_VALUES", "Check the estimate selection.");
+  if (value.estimatedAliases !== undefined) {
+    smartList(value.estimatedAliases, limits.modelRows + limits.newRows + limits.existingReferences);
+    smartAssert(value.estimatedAliases.every(alias => typeof alias === "string" && aliasPattern.test(alias)) && new Set(value.estimatedAliases).size === value.estimatedAliases.length,
+      "INVALID_VALUES", "Check the estimated inputs.");
+  }
   smartRecord(value.source, ["kind", "proposalId", "groupId"], ["kind"]);
   if (value.source.kind === "manual") smartRecord(value.source, ["kind"]);
   else {

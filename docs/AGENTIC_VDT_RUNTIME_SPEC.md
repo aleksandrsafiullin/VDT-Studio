@@ -15,7 +15,13 @@ start. A persisted owner/VDT stop marker survives cancelled events and reload;
 missing cleanup proof cannot admit a second mutator. The five-second handoff
 wait is bounded. Every post-await publication checks the captured owner, VDT,
 marker and active request; graph/configuration/head changes require a retry from
-the current graph. The ordinary Cancel action retains its existing behavior.
+the current graph. Ordinary structured Cancel uses the same persisted stop and
+terminal cleanup confirmation without starting another run; failures restore a
+retryable Cancel button, and completion preserves the current graph. The still-owned
+current epoch may append only its terminal runtime cancellation fact after fence
+expiry, without renewing execution authority. An already aborted controller's
+failed cancellation projection requires actual closure and the same binding/epoch
+before retry; older epochs, graph writes and controller-loss recovery stay blocked.
 
 An internal incremental inspection treats only root-context grouping as a construction warning. Every hard plan/coverage/shared/primary-parent/cycle rule remains blocking; no tool-selectable/persisted bypass exists. Existing old explanatory children may remain context. See [ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
 

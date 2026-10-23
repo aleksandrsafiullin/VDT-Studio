@@ -259,7 +259,10 @@ export function useSmartKpi() {
     const current = activeRef.current, state = useVdtStudioStore.getState();
     if (!current || input.draft.targetNodeId !== current.targetNodeId || state.smartKpiBlockedReason || resolveSmartKpiScope(state).blockedReason) return;
     const result = await state.applySmartKpiSuggestion(input);
-    setFeedback(result.ok ? `${result.addedNodeIds.length} KPI${result.addedNodeIds.length === 1 ? "" : "s"} added${result.durability === "draft" ? " to this draft" : " and saved"}.` : result.reason ?? "The KPI could not be added. Review the status and try again.");
+    setFeedback(result.ok ? result.addedNodeIds.length
+      ? `${result.addedNodeIds.length} KPI${result.addedNodeIds.length === 1 ? "" : "s"} added${result.durability === "draft" ? " to this draft" : " and saved"}.`
+      : `KPI values updated${result.durability === "draft" ? " in this draft" : " and saved"}.`
+      : result.reason ?? "The KPI could not be added. Review the status and try again.");
   }, []);
   const undo = useCallback(async () => { const ok = await useVdtStudioStore.getState().undoSmartKpiSuggestion(); if (ok) setFeedback("Smart addition undone."); }, []);
   const reconcile = useCallback(async () => {

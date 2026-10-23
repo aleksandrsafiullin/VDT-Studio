@@ -37,7 +37,7 @@ async function prepared() {
   const recipe = KPI_SUGGESTION_RECIPES.recipes.find(r => r.id === "production.time_rate")!;
   const proposal = buildRecipeKpiSuggestions(context, [{ binding: { id: "explicit_qa", recipeId: recipe.id, recipeHash: recipe.recipeHash, skillHash: recipe.skillHash,
     targetRole: recipe.targetRole, contextHash: context.contextHash, basis: "selected_skill", sourceRef: "qa-explicit-selected-role", rationale: "Explicit fixture role selection." } }], { proposalId: `fixture_${crypto.randomUUID()}`, now: new Date().toISOString() })!;
-  return { schemaVersion: "incoming_kpi_apply.v2" as const, context, proposal, draft: { schemaVersion: "incoming_kpi_draft.v2" as const, targetNodeId: context.targetNodeId, contextHash: context.contextHash, revision: 0, source: { kind: "proposal" as const, proposalId: proposal.proposalId, groupId: proposal.groups[0]!.id }, childKeys: proposal.groups[0]!.children.map(c => c.key), manualChildren: [], existingFactors: [], formula: incomingKpiProposalFormula(proposal, proposal.groups[0]!.id)!, formulaAuthorship: "recipe" as const } };
+  return { schemaVersion: "incoming_kpi_apply.v2" as const, context, proposal, draft: { schemaVersion: "incoming_kpi_draft.v2" as const, targetNodeId: context.targetNodeId, contextHash: context.contextHash, revision: 0, source: { kind: "proposal" as const, proposalId: proposal.proposalId, groupId: proposal.groups[0]!.id }, childKeys: proposal.groups[0]!.children.map(c => c.key), manualChildren: [], existingFactors: [], formula: incomingKpiProposalFormula(proposal, proposal.groups[0]!.id)!, formulaAuthorship: "recipe" as const, inputValues: { p_1: "8" } } };
 }
 beforeEach(() => {
   quota = undefined;
@@ -52,6 +52,28 @@ beforeEach(() => {
 });
 
 describe("Smart immutable user transaction", () => {
+  it("pins illustrative estimates through lost acknowledgement/reload without changing the measured parent", async () => {
+    const project = createIncomingGraphFixture("measured"); store.setState({ project, selectedNodeId: "target", activeScenarioId: "" });
+    const input = manualInput(await store.getState().buildIncomingKpiContext("target"));
+    const second = `m_${"2".repeat(32)}` as const;
+    input.draft.manualChildren[0]!.unit = "km";
+    input.draft.manualChildren.push({ key: second, selected: true, name: "Illustrative trips", unit: "trip" });
+    input.draft.formula = `${manualKey} / ${second}`; input.draft.estimateMissingValues = true;
+    save.mockRejectedValueOnce(new Error("lost estimated acknowledgement"));
+    expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: false });
+    const operation = store.getState().smartKpiOperation!;
+    expect(validateSmartKpiOperation(operation)).toBe(true);
+    const body = JSON.stringify(save.mock.calls[0]![1]);
+    const corrupted = structuredClone(operation);
+    corrupted.candidate!.graph.nodes.find(node => node.id === corrupted.addedNodeIds[0])!.valueStatus = "user_provided_value";
+    corrupted.input!.project = cloneProject(corrupted.candidate!);
+    expect(validateSmartKpiOperation(corrupted)).toBe(false);
+    await store.persist.rehydrate(); expect(await store.getState().reconcilePendingSmartKpiCommit()).toBe(true);
+    expect(JSON.stringify(save.mock.calls[1]![1])).toBe(body);
+    expect(calculateGraph(store.getState().project).values.target).toBe(4);
+    for (const node of store.getState().project.graph.nodes.filter(node => operation.addedNodeIds.includes(node.id)))
+      expect(node).toMatchObject({ valueStatus: "default_assumption", valueSource: { sourceTier: "assumption", acceptedByUserInDialog: true } });
+  });
   it("builds and previews manual/mixed drafts locally, then commits one calculated parent with source retained", async () => {
     const project = createIncomingGraphFixture("measured"); store.setState({ project, selectedNodeId: "target", activeScenarioId: "" });
     const context = await store.getState().buildIncomingKpiContext("target"), input = manualInput(context);
@@ -69,6 +91,7 @@ describe("Smart immutable user transaction", () => {
     proposal.createdAt = new Date().toISOString(); proposal.expiresAt = new Date(Date.now() + 60_000).toISOString(); input.proposal = proposal;
     input.draft.source = { kind: "proposal", proposalId: proposal.proposalId, groupId: "components" }; input.draft.childKeys = ["second"];
     input.draft.formulaAuthorship = "user_edited"; input.draft.formula = `p_2 + ${manualKey}`;
+    input.draft.inputValues = { p_2: "1" };
     selectedExecution.mockResolvedValue({ execution: proposal.origin.kind === "model" ? proposal.origin.execution : undefined, revalidate: async () => true });
     save.mockRejectedValueOnce(new Error("lost mixed acknowledgement")); expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: false });
     const operation = store.getState().smartKpiOperation!; expect(operation.schemaVersion).toBe("smart_kpi_operation.v2");
@@ -76,7 +99,7 @@ describe("Smart immutable user transaction", () => {
     const request = JSON.stringify(save.mock.calls[0]![1]); await store.persist.rehydrate(); expect(await store.getState().reconcilePendingSmartKpiCommit()).toBe(true);
     expect(JSON.stringify(save.mock.calls[1]![1])).toBe(request); expect(store.getState().project.graph.nodes.some(node => node.name === "First component")).toBe(false);
     expect(store.getState().project.graph.nodes.filter(node => node.id.startsWith(`${operation.id}_`))).toHaveLength(2);
-    expect(store.getState().project.graph.nodes.find(node => node.id.endsWith(manualKey))).toMatchObject({ aiGenerated: false, status: "accepted", valueStatus: "unknown" });
+    expect(store.getState().project.graph.nodes.find(node => node.id.endsWith(manualKey))).toMatchObject({ aiGenerated: false, status: "accepted", baselineValue: 3, valueStatus: "calculated" });
   });
   it("replays a pinned historical v1 committing receipt without applying the new validator or formula policy", async () => {
     const state = store.getState(), input = await prepared(), id = "smart_aaaaaaaa_bbbb_cccc_dddd_eeeeeeeeeeee";
@@ -105,6 +128,33 @@ describe("Smart immutable user transaction", () => {
     memory.set("vdt-studio-state", JSON.stringify(raw)); await store.persist.rehydrate();
     expect(await store.getState().reconcilePendingSmartKpiCommit()).toBe(false); expect(save).toHaveBeenCalledOnce(); expect(store.getState().smartKpiConflictOperation).toBeDefined();
   });
+  it("rejects a changed numeric candidate even when the retained request copies the same corrupted value", async () => {
+    save.mockRejectedValueOnce(new Error("lost numeric acknowledgement"));
+    expect(await store.getState().applySmartKpiSuggestion(await prepared())).toMatchObject({ ok: false });
+    const raw = JSON.parse(memory.get("vdt-studio-state")!);
+    const operation = raw.state.smartKpiOperation;
+    operation.candidate.graph.nodes.find((node: { id: string }) => node.id === operation.addedNodeIds[0]).baselineValue = 999;
+    operation.input.project = structuredClone(operation.candidate);
+    memory.set("vdt-studio-state", JSON.stringify(raw)); await store.persist.rehydrate();
+    expect(await store.getState().reconcilePendingSmartKpiCommit()).toBe(false);
+    expect(save).toHaveBeenCalledOnce(); expect(store.getState().project.graph.nodes).toHaveLength(1);
+  });
+  it("replays an already committing historical v2 unknown-value body without adding current numeric policy", async () => {
+    save.mockRejectedValueOnce(new Error("lost historical v2 acknowledgement"));
+    await store.getState().applySmartKpiSuggestion(await prepared());
+    const operation = structuredClone(store.getState().smartKpiOperation!);
+    if (operation.schemaVersion !== "smart_kpi_operation.v2" || operation.phase !== "committing") throw new Error("Missing v2 receipt");
+    delete operation.resolved.values; delete operation.draft.inputValues;
+    for (const node of operation.candidate.graph.nodes.filter(node => operation.addedNodeIds.includes(node.id))) {
+      delete node.baselineValue; delete node.valueSource; node.valueStatus = "unknown";
+    }
+    operation.input!.project = cloneProject(operation.candidate);
+    const body = JSON.stringify(operation.input);
+    expect(validateSmartKpiOperation(operation)).toBe(true);
+    store.setState({ smartKpiOperation: operation }); await store.persist.rehydrate();
+    expect(await store.getState().reconcilePendingSmartKpiCommit()).toBe(true);
+    expect(JSON.stringify(save.mock.calls[1]![1])).toBe(body);
+  });
   it("replays an exact shared source ID/unit despite a different proposed display label", async () => {
     const project = createIncomingGraphFixture("shared_speed"); store.setState({ project, selectedNodeId: "target", activeScenarioId: "" });
     const input = manualInput(await store.getState().buildIncomingKpiContext("target")), proposal = modelProposal(input.context);
@@ -126,7 +176,7 @@ describe("Smart immutable user transaction", () => {
     const input = await prepared(), before = store.getState().project, baseline = calculateGraph(before).rootValue, scenario = calculateScenarioGraph(before, before.scenarios[0]!).rootValue;
     expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: true, durability: "stored", addedNodeIds: expect.any(Array) });
     const applied = store.getState(); expect(save).toHaveBeenCalledTimes(1); expect(applied.project.graph.nodes).toHaveLength(3);
-    expect(baseline).toBe(0); expect(scenario).toBeDefined(); expect(calculateGraph(applied.project).rootValue).toBeUndefined(); expect(calculateScenarioGraph(applied.project, applied.project.scenarios[0]!).rootValue).toBe(scenario); expect(applied.project.graph.nodes[0]!.baselineValue).toBe(0);
+    expect(baseline).toBe(0); expect(scenario).toBeDefined(); expect(calculateGraph(applied.project).rootValue).toBe(0); expect(calculateScenarioGraph(applied.project, applied.project.scenarios[0]!).rootValue).toBe(scenario); expect(applied.project.graph.nodes[0]!.baselineValue).toBe(0);
     expect(applied.project.graph.nodes[0]!.dataMapping).toEqual(before.graph.nodes[0]!.dataMapping); expect(applied.smartKpiMutation.canUndo).toBe(true);
     save.mockResolvedValueOnce(saved(3)); fetchState.mockResolvedValueOnce(saved(3));
     expect(await applied.undoSmartKpiSuggestion()).toBe(true);

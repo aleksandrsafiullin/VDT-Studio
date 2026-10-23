@@ -9,12 +9,49 @@ const host = { operationId: "smart_formula_fixture", now: "2026-10-19T01:00:00.0
 afterEach(() => vi.useRealTimers());
 
 describe("formula-bearing incoming compilation", () => {
-  it("makes a measured non-root parent calculated, retains source/old contexts, then calculates from new values", async () => {
-    const project = createIncomingGraphFixture("measured"), input = manualInput(await fixtureContext(project)), before = kpiCanonicalJson(project);
+  it("repairs a formula-free calculated node declared as a measured input in the same Add, preserving its value and context", async () => {
+    const project = createIncomingGraphFixture("measured");
+    const measured = { ...structuredClone(project.graph.nodes[1]!), id: "waste_empty_km_trip", name: "Measured empty distance", type: "calculated" as const, value: 4,
+      valueStatus: "calculated" as const, formula: undefined };
+    project.graph.nodes.push(measured);
+    project.graph.nodes[0]!.formula = "target + waste_empty_km_trip";
+    project.graph.edges.push({ id: "edge_measured_distance", sourceNodeId: "output", targetNodeId: measured.id, relation: "formula_dependency", aiGenerated: false });
+    project.graph.nodes[0]!.decompositionPlan!.nodes.push({ nodeId: measured.id, parentNodeId: "output", kind: "input" });
+    project.graph.edges.find(edge => edge.targetNodeId === "old_context")!.sourceNodeId = measured.id;
+    project.graph.nodes[0]!.decompositionPlan!.nodes.find(row => row.nodeId === "old_context")!.parentNodeId = measured.id;
+    project.scenarios = [{ id: "zero_distance", name: "Zero distance", overrides: [{ nodeId: measured.id, value: 0 }], createdAt: host.now, updatedAt: host.now }];
+    expect(inspectDecompositionHierarchy(project, "incremental_user_apply").errors).toEqual(["PLANNED_INPUT_MISMATCH: waste_empty_km_trip"]);
+    const before = kpiCanonicalJson(project), input = manualInput(await fixtureContext(project));
+    expect((await previewIncomingKpiBatch(project, input)).valid).toBe(true);
+    const result = await compileIncomingKpiBatch(project, input, host);
+    const repaired = result.preview.graph.nodes.find(node => node.id === measured.id)!;
+    expect(repaired).toEqual({ ...measured, type: "input", updatedAt: host.now });
+    expect(result.preview.graph.edges.filter(edge => edge.sourceNodeId === measured.id)).toEqual(project.graph.edges.filter(edge => edge.sourceNodeId === measured.id));
+    expect(result.preview.graph.nodes[0]!.decompositionPlan!.nodes.find(row => row.nodeId === measured.id)?.kind).toBe("input");
+    expect(result.changeSet.updates.find(update => update.nodeId === measured.id)?.patch).toEqual({ type: "input" });
+    expect(result.outputPreview).toHaveLength(2);
+    expect(inspectDecompositionHierarchy(result.preview, "incremental_user_apply").valid).toBe(true);
+    expect(kpiCanonicalJson(project)).toBe(before);
+  });
+
+  it("still rejects a real formula or mathematical child contradicting a declared input", async () => {
+    for (const defect of ["formula", "factor_child"] as const) {
+      const project = createIncomingGraphFixture("measured");
+      project.graph.nodes[1]!.type = "calculated";
+      if (defect === "formula") project.graph.nodes[1]!.formula = "old_context";
+      else project.graph.edges.find(edge => edge.targetNodeId === "old_context")!.relation = "formula_dependency";
+      await expect(compileIncomingKpiBatch(project, manualInput(await fixtureContext(project)), host))
+        .rejects.toMatchObject({ code: "INVALID_EXISTING_HIERARCHY" });
+    }
+  });
+
+  it.each(["input", "calculated"] as const)("makes a measured non-root %s parent calculated, retains source/old contexts, then calculates from new values", async sourceType => {
+    const project = createIncomingGraphFixture("measured"); project.graph.nodes[1]!.type = sourceType;
+    const input = manualInput(await fixtureContext(project)), before = kpiCanonicalJson(project);
     const result = await compileIncomingKpiBatch(project, input, host), target = result.preview.graph.nodes.find(node => node.id === "target")!;
     expect(target).toMatchObject({ type: "calculated", baselineValue: 4, valueSource: { sourceTier: "file" }, dataMapping: { unit: "km/trip" } });
-    expect(result.preview.graph.nodes.find(node => node.id === result.newNodeIds[0])).toMatchObject({ aiGenerated: false, status: "accepted", valueStatus: "unknown" });
-    expect(result.outputPreview[0]).toMatchObject({ parentBefore: 4, parentAfter: undefined, rootBefore: 4, rootAfter: undefined });
+    expect(result.preview.graph.nodes.find(node => node.id === result.newNodeIds[0])).toMatchObject({ aiGenerated: false, status: "accepted", baselineValue: 4, valueStatus: "calculated", valueSource: { sourceTier: "derived" } });
+    expect(result.outputPreview[0]).toMatchObject({ parentBefore: 4, parentAfter: 4, rootBefore: 4, rootAfter: 4 });
     expect(result.preview.graph.edges.find(edge => edge.targetNodeId === "old_context")!.relation).toBe("contextual_influence");
     expect(inspectDecompositionHierarchy(result.preview, "incremental_user_apply").valid).toBe(true);
     result.preview.graph.nodes.find(node => node.id === result.newNodeIds[0])!.baselineValue = 7;
@@ -73,15 +110,16 @@ describe("formula-bearing incoming compilation", () => {
     expect(result.preview.graph.edges.find(row => row.targetNodeId === sibling.id)?.relation).toBe("contextual_influence");
     expect(result.preview.graph.nodes.find(row => row.id === context.id)?.type).toBe("calculated");
     expect(inspectDecompositionHierarchy(result.preview, "incremental_user_apply").valid).toBe(true);
-    expect(result.outputPreview[0]).toMatchObject({ parentBefore: 4, parentAfter: undefined });
+    expect(result.outputPreview[0]).toMatchObject({ parentBefore: 4, parentAfter: 4 });
   });
   it("retains root role and permits subset+manual only after an explicitly edited coherent formula", async () => {
     const project = createIncomingGraphFixture("measured"), context = await fixtureContext(project), input = manualInput(context);
     input.proposal = modelProposal(context); input.draft.source = { kind: "proposal", proposalId: input.proposal.proposalId, groupId: "components" };
     input.draft.childKeys = ["second"]; input.draft.formulaAuthorship = "user_edited"; input.draft.formula = `p_2 + ${manualKey}`;
+    input.draft.inputValues = { p_2: "1" };
     const result = await compileIncomingKpiBatch(project, input, host);
     expect(result.newNodeIds).toHaveLength(2); expect(result.lineage).toMatchObject({ requiresExecution: true });
-    expect(result.preview.graph.nodes.find(node => node.id.endsWith(manualKey))).toMatchObject({ aiGenerated: false, status: "accepted", valueStatus: "unknown" });
+    expect(result.preview.graph.nodes.find(node => node.id.endsWith(manualKey))).toMatchObject({ aiGenerated: false, status: "accepted", baselineValue: 3, valueStatus: "calculated" });
     expect(result.preview.graph.nodes.find(node => node.id.endsWith("_p_2"))).toMatchObject({ aiGenerated: true, status: "ai_suggested" });
     expect(result.preview.graph.nodes.filter(node => node.name === "First component")).toHaveLength(0);
     expect(result.preview.graph.nodes[0]!.type).toBe("root_kpi");
@@ -97,6 +135,7 @@ describe("formula-bearing incoming compilation", () => {
     input.draft.manualChildren = []; input.draft.source = { kind: "proposal", proposalId: input.proposal.proposalId, groupId: "components" };
     input.draft.childKeys = ["first", "second"]; input.draft.formulaAuthorship = "model";
     input.draft.formula = incomingKpiProposalFormula(input.proposal, "components")!;
+    input.draft.inputValues = { p_1: "1" };
     vi.useFakeTimers(); vi.setSystemTime(new Date(host.now));
     expect((await previewIncomingKpiBatch(project, input)).valid).toBe(true);
   });

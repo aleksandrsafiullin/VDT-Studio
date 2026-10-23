@@ -34,4 +34,5 @@ export * from "./suggestions/incoming-contract";
 export * from "./suggestions/incoming-unit-contract";
 export * from "./suggestions/incoming-formal";
 export * from "./suggestions/incoming-compile";
+export * from "./suggestions/incoming-values";
 export * from "./suggestions/incoming-path";

@@ -193,12 +193,13 @@ test("creates and reviews every Excel category, reloads and reuses its original 
     await page.locator('.react-flow__node[data-id="downtime_target"]').getByTestId("node-add-file-incoming-kpis").click({ force: true });
     await requireOk(await firstSourceList);
     await expect(page.getByTestId("data-import-target")).toHaveText("Target: Простои в сутки");
-    await page.getByTestId("data-import-file-input").setInputFiles({ name: "downtime-events.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: original });
     const upload = waitForDataResponse(page, "/api/data/files", "POST");
-    await analyzeAndWait(page);
+    await page.getByTestId("data-import-file-input").setInputFiles({ name: "downtime-events.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: original });
     const uploaded = await upload;
     await requireOk(uploaded);
     expect((await uploaded.json()).file).toMatchObject({ sizeBytes: original.length, contentHash: `sha256:${createHash("sha256").update(original).digest("hex")}` });
+    await expect(page.getByTestId("data-import-retained")).toContainText("downtime-events.xlsx");
+    await analyzeAndWait(page);
     await expect(page.getByTestId("data-import-stage-preview")).toBeDisabled();
     await confirmNestedMapping(page);
     await page.screenshot({ path: path.join(evidenceDir, "review.png") });

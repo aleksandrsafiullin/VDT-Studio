@@ -325,10 +325,12 @@ function fallbackChatMessages(activity: GenerateActivityState): AgentChatMessage
 function MessageBubble({
   message,
   canAnswer,
+  cancelled,
   onAnswer
 }: {
   message: AgentChatMessage;
   canAnswer: boolean;
+  cancelled: boolean;
   onAnswer: ((answers: AgentAnswerSubmission) => void) | undefined;
 }) {
   const isUser = message.role === "user";
@@ -355,6 +357,7 @@ function MessageBubble({
         <QuestionCard
           questions={message.questions}
           canSubmit={canAnswer}
+          cancelled={cancelled}
           onAnswer={onAnswer}
         />
       ) : null}
@@ -419,10 +422,12 @@ function ActivityStatusRow({
 function QuestionCard({
   questions,
   canSubmit,
+  cancelled,
   onAnswer
 }: {
   questions: VdtAgentQuestion[];
   canSubmit: boolean;
+  cancelled: boolean;
   onAnswer: ((answers: AgentAnswerSubmission) => void) | undefined;
 }) {
   const [selectedByQuestion, setSelectedByQuestion] = useState<Record<string, string[]>>({});
@@ -579,7 +584,7 @@ function QuestionCard({
         disabled={!canSubmit || !canContinue}
         data-testid="continue-agent"
       >
-        {canSubmit ? "Send answer" : "Working..."}
+        {cancelled ? "Cancelled" : canSubmit ? "Send answer" : "Working..."}
       </Button>
     </form>
   );
@@ -788,6 +793,7 @@ export function GenerateActivityPanel({
             key={message.id}
             message={message}
             canAnswer={activity.status === "needs_user_input" && message.kind === "question"}
+            cancelled={activity.status === "cancelled"}
             onAnswer={onAnswer}
           />
         ))}

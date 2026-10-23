@@ -5,11 +5,21 @@ import { createIncomingGraphFixture, fixtureContext, fixtureExecution, manualKey
 import { createIncomingKpiDraft, editIncomingKpiDraft, incomingKpiDraftReferences, IncomingKpiDraftBook } from "./incoming-kpi-draft";
 
 describe("mixed incoming KPI local drafts", () => {
+  it("keeps numeric text and formula authorship separate, including incomplete values and zero", async () => {
+    const project = createIncomingGraphFixture("measured"), context = await fixtureContext(project), proposal = modelProposal(context);
+    const input = createIncomingKpiDraft(context, project, proposal);
+    const edited = editIncomingKpiDraft(input, { inputValues: { p_1: "0", p_2: "-" } });
+    expect(edited.draft).toMatchObject({ formulaAuthorship: "model", inputValues: { p_1: "0", p_2: "-" } });
+    expect(inspectIncomingKpiDraft(edited, project).readyForCompile).toBe(true);
+    expect(input.draft.inputValues).toBeUndefined();
+    expect(editIncomingKpiDraft(edited, { formula: "p_1 - p_2" }).draft.formulaAuthorship).toBe("user_edited");
+  });
   it("starts with the coherent complete proposed formula and keeps the source immutable", async () => {
     const project = createIncomingGraphFixture("measured"), context = await fixtureContext(project);
     const proposal = modelProposal(context), original = kpiCanonicalJson(proposal);
     const input = createIncomingKpiDraft(context, project, proposal);
     expect(input.draft).toMatchObject({ childKeys: ["first", "second"], formula: "(p_1 + p_2)", formulaAuthorship: "model" });
+    expect(input.draft.estimateMissingValues).toBe(true);
     expect(inspectIncomingKpiDraft(input).readyForCompile).toBe(true);
     expect(kpiCanonicalJson(proposal)).toBe(original);
   });

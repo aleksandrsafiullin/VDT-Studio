@@ -1,16 +1,20 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, rename, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { assertSafeId, projectDir } from "@vdt-studio/storage";
 import type { VdtProject } from "@vdt-studio/vdt-core";
 import type { DataDiscoveryFileMetadata, DataDiscoveryRunSnapshot } from "@vdt-studio/data-harness";
 
-export interface DataOwner {
+export interface DatasetFileOwner {
   projectId: string;
-  vdtId: string;
   dataDir: string;
+  vdtId?: string | undefined;
+}
+
+export interface DataOwner extends DatasetFileOwner {
+  vdtId: string;
   graphProjectId?: string | undefined;
 }
 
@@ -25,6 +29,14 @@ export interface StoredDatasetFile {
   metadata: StoredDatasetMetadata;
   bytes: Uint8Array;
   textPreview: string;
+}
+
+export interface LibraryDatasetFile {
+  datasetId: string;
+  metadata: StoredDatasetMetadata;
+  displayName: string;
+  archived: boolean;
+  vdtIds: string[];
 }
 
 interface DataApiStore {
@@ -58,9 +70,10 @@ export function requireDataId(value: unknown, label: string): string {
   }
 }
 
-export function sourceDownloadUrl(datasetId: string, owner: Pick<DataOwner, "projectId" | "vdtId">): string {
+export function sourceDownloadUrl(datasetId: string, owner: Pick<DatasetFileOwner, "projectId" | "vdtId">): string {
   requireDataId(datasetId, "datasetId");
-  const query = new URLSearchParams({ projectId: owner.projectId, vdtId: owner.vdtId });
+  const query = new URLSearchParams({ projectId: owner.projectId });
+  if (owner.vdtId) query.set("vdtId", owner.vdtId);
   return `/api/data/files/${datasetId}?${query}`;
 }
 
@@ -72,7 +85,7 @@ export function assertFileIntegrity(file: StoredDatasetFile): void {
 }
 
 /** New scoped sources are write-once. The original filename is metadata, never a path. */
-export async function saveDatasetFile(file: StoredDatasetFile, owner?: DataOwner): Promise<void> {
+export async function saveDatasetFile(file: StoredDatasetFile, owner?: DatasetFileOwner): Promise<void> {
   requireDataId(file.datasetId, "datasetId");
   assertOwnership(file.metadata, owner);
   assertFileIntegrity(file);
@@ -96,24 +109,17 @@ export async function saveDatasetFile(file: StoredDatasetFile, owner?: DataOwner
   getDataApiStore().files.set(cacheKey(file.datasetId, owner), file);
 }
 
-export async function readDatasetFile(datasetId: string, owner?: DataOwner): Promise<StoredDatasetFile | undefined> {
+export async function readDatasetFile(datasetId: string, owner?: DatasetFileOwner): Promise<StoredDatasetFile | undefined> {
   requireDataId(datasetId, "datasetId");
   try {
     const directory = await checkedChildDirectory(await datasetParent(owner, false), datasetId, false);
-    const [metadataRaw, bytes] = await Promise.all([
-      readRegularFile(path.join(directory, "metadata.json")),
-      readRegularFile(path.join(directory, "payload.bin"))
-    ]);
-    const parsed = JSON.parse(metadataRaw.toString("utf8")) as {
-      datasetId?: unknown;
-      metadata?: StoredDatasetMetadata;
-      textPreview?: unknown;
-    };
-    if (parsed.datasetId !== datasetId || !parsed.metadata) {
-      throw new DataApiError("Dataset metadata does not match its source identity.", 409, "DATA_SOURCE_INTEGRITY_FAILED");
+    const parsed = await readDatasetMetadata(directory, datasetId);
+    assertProjectOwnership(parsed.metadata, owner);
+    if (owner?.vdtId && !await hasDatasetAssociation(directory, parsed.metadata, owner.vdtId)) {
+      throw new DataApiError("The source is not attached to this VDT.", 404, "DATA_OWNER_MISMATCH");
     }
-    assertOwnership(parsed.metadata, owner);
-    const file = { datasetId, metadata: parsed.metadata, bytes: new Uint8Array(bytes), textPreview: typeof parsed.textPreview === "string" ? parsed.textPreview : "" };
+    const bytes = await readRegularFile(path.join(directory, "payload.bin"));
+    const file = { datasetId, metadata: scopedFileMetadata(parsed.metadata, datasetId, owner), bytes: new Uint8Array(bytes), textPreview: parsed.textPreview };
     assertFileIntegrity(file);
     getDataApiStore().files.set(cacheKey(datasetId, owner), file);
     return file;
@@ -124,6 +130,15 @@ export async function readDatasetFile(datasetId: string, owner?: DataOwner): Pro
 }
 
 export async function listDatasetFiles(owner: DataOwner): Promise<Array<Omit<StoredDatasetFile, "bytes" | "textPreview">>> {
+  // Archive hides a file from new project selections, not from trees already using it.
+  const files = await listLibraryDatasetFiles(owner, true);
+  return files.filter((file) => file.vdtIds.includes(owner.vdtId)).map((file) => ({
+    datasetId: file.datasetId, metadata: scopedFileMetadata(file.metadata, file.datasetId, owner)
+  }));
+}
+
+/** Listings read metadata only; opening a source verifies its complete bytes/hash. */
+export async function listLibraryDatasetFiles(owner: DatasetFileOwner, includeArchived = false): Promise<LibraryDatasetFile[]> {
   let directory: string;
   try {
     directory = await datasetParent(owner, false);
@@ -132,19 +147,123 @@ export async function listDatasetFiles(owner: DataOwner): Promise<Array<Omit<Sto
     throw error;
   }
   const entries = await readdir(directory, { withFileTypes: true });
-  const sources: Array<Omit<StoredDatasetFile, "bytes" | "textPreview">> = [];
+  const sources: LibraryDatasetFile[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(entry.name)) continue;
-    // Each VDT can only list its own sources, even within the same workspace project.
     try {
-      const file = await readDatasetFile(entry.name, owner);
-      if (file) sources.push({ datasetId: file.datasetId, metadata: file.metadata });
+      const child = await checkedChildDirectory(directory, entry.name, false);
+      const { metadata } = await readDatasetMetadata(child, entry.name);
+      assertProjectOwnership(metadata, owner);
+      const details = await readLibraryDetails(child, metadata);
+      if (includeArchived || !details.archived) sources.push({ datasetId: entry.name, metadata, ...details });
     } catch (error) {
+      // An in-flight upload publishes metadata only after its complete payload.
+      if (isMissing(error)) continue;
       if (error instanceof DataApiError && error.code === "DATA_OWNER_MISMATCH") continue;
       throw error;
     }
   }
   return sources.sort((a, b) => b.metadata.uploadedAt.localeCompare(a.metadata.uploadedAt));
+}
+
+/** Library labels, archival and tree associations never rewrite original metadata/bytes. */
+export async function updateLibraryDatasetFile(datasetId: string, owner: DatasetFileOwner, update:
+  | { action: "rename"; displayName: string }
+  | { action: "archive" | "restore" }
+  | { action: "attach" | "detach"; vdtId: string }
+): Promise<void> {
+  requireDataId(datasetId, "datasetId");
+  const directory = await (async () => checkedChildDirectory(await datasetParent(owner, false), datasetId, false))().catch((error: unknown) => {
+    if (isMissing(error)) throw new DataApiError("Dataset file was not found.", 404, "DATASET_NOT_FOUND");
+    throw error;
+  });
+  const { metadata } = await readDatasetMetadata(directory, datasetId);
+  assertProjectOwnership(metadata, owner);
+  if (update.action === "rename") {
+    const displayName = update.displayName.trim();
+    if (!displayName || displayName.length > 255 || /[\u0000-\u001f\u007f]/.test(displayName)) throw new DataApiError("File name must contain 1–255 characters without control characters.");
+    await writeLibraryJson(directory, "display-name.json", { displayName });
+  } else if (update.action === "archive" || update.action === "restore") {
+    await writeLibraryJson(directory, "archive.json", { archived: update.action === "archive" });
+  } else if (update.action === "attach" || update.action === "detach") {
+    requireDataId(update.vdtId, "vdtId");
+    if (update.action === "attach" && (await readLibraryDetails(directory, metadata)).archived) {
+      throw new DataApiError("Restore this archived file before attaching it to another VDT.", 409, "DATA_FILE_ARCHIVED");
+    }
+    if (update.action === "detach" && !await hasDatasetAssociation(directory, metadata, update.vdtId)) {
+      throw new DataApiError("The source is not attached to this VDT.", 404, "DATA_OWNER_MISMATCH");
+    }
+    const links = await checkedChildDirectory(directory, "vdts", true);
+    await writeLibraryJson(links, `${update.vdtId}.json`, { attached: update.action === "attach" });
+  }
+}
+
+async function readDatasetMetadata(directory: string, datasetId: string): Promise<{ metadata: StoredDatasetMetadata; textPreview: string }> {
+  const parsed = JSON.parse((await readRegularFile(path.join(directory, "metadata.json"))).toString("utf8")) as { datasetId?: unknown; metadata?: StoredDatasetMetadata; textPreview?: unknown };
+  const metadata = parsed.metadata;
+  if (parsed.datasetId !== datasetId || !metadata || metadata.storageRef !== datasetId || typeof metadata.fileName !== "string" ||
+    typeof metadata.uploadedAt !== "string" || typeof metadata.contentHash !== "string" || !Number.isSafeInteger(metadata.sizeBytes) || metadata.sizeBytes < 0) {
+    throw new DataApiError("Dataset metadata does not match its source identity.", 409, "DATA_SOURCE_INTEGRITY_FAILED");
+  }
+  return { metadata, textPreview: typeof parsed.textPreview === "string" ? parsed.textPreview : "" };
+}
+
+function assertProjectOwnership(metadata: StoredDatasetMetadata, owner?: DatasetFileOwner): void {
+  if (owner ? metadata.projectId !== owner.projectId : metadata.projectId !== undefined || metadata.vdtId !== undefined) {
+    throw new DataApiError("The source does not belong to this project.", 404, "DATA_OWNER_MISMATCH");
+  }
+}
+
+function scopedFileMetadata(metadata: StoredDatasetMetadata, datasetId: string, owner?: DatasetFileOwner): StoredDatasetMetadata {
+  return owner ? { ...metadata, vdtId: owner.vdtId, sourceUrl: sourceDownloadUrl(datasetId, owner) } : metadata;
+}
+
+async function readLibraryJson(directory: string, filename: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    const value: unknown = JSON.parse((await readRegularFile(path.join(directory, filename))).toString("utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new DataApiError("File library metadata is invalid.", 409, "DATA_SOURCE_INTEGRITY_FAILED");
+    return value as Record<string, unknown>;
+  } catch (error) {
+    if (isMissing(error)) return undefined;
+    throw error;
+  }
+}
+
+async function readLibraryDetails(directory: string, metadata: StoredDatasetMetadata): Promise<Pick<LibraryDatasetFile, "displayName" | "archived" | "vdtIds">> {
+  const [name, archive] = await Promise.all([readLibraryJson(directory, "display-name.json"), readLibraryJson(directory, "archive.json")]);
+  const ids = new Set(metadata.vdtId ? [metadata.vdtId] : []);
+  try {
+    const links = await checkedChildDirectory(directory, "vdts", false);
+    for (const entry of await readdir(links)) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}\.json$/.test(entry)) continue;
+      const id = entry.slice(0, -5);
+      const link = await readLibraryJson(links, entry);
+      if (link?.attached === true) ids.add(id);
+      else if (link?.attached === false) ids.delete(id);
+      else throw new DataApiError("File association metadata is invalid.", 409, "DATA_SOURCE_INTEGRITY_FAILED");
+    }
+  } catch (error) { if (!isMissing(error)) throw error; }
+  return { displayName: typeof name?.displayName === "string" ? name.displayName : metadata.fileName, archived: archive?.archived === true, vdtIds: [...ids].sort() };
+}
+
+async function hasDatasetAssociation(directory: string, metadata: StoredDatasetMetadata, vdtId: string): Promise<boolean> {
+  // Detached sources stay readable by their former VDT for saved revisions and reviews.
+  if (metadata.vdtId === vdtId) return true;
+  try {
+    const link = await readLibraryJson(await checkedChildDirectory(directory, "vdts", false), `${requireDataId(vdtId, "vdtId")}.json`);
+    if (link && typeof link.attached !== "boolean") throw new DataApiError("File association metadata is invalid.", 409, "DATA_SOURCE_INTEGRITY_FAILED");
+    return Boolean(link);
+  } catch (error) { if (isMissing(error)) return false; throw error; }
+}
+
+async function writeLibraryJson(directory: string, filename: string, value: Record<string, unknown>): Promise<void> {
+  const temporary = path.join(directory, `library_${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, JSON.stringify(value), { flag: "wx", mode: 0o600 });
+    await rename(temporary, path.join(directory, filename));
+  } finally {
+    await unlink(temporary).catch((error: unknown) => { if (!isMissing(error)) throw error; });
+  }
 }
 
 export async function saveDiscoveryRun(snapshot: DataDiscoveryRunSnapshot, owner?: DataOwner, project?: VdtProject): Promise<void> {
@@ -202,13 +321,13 @@ export async function readDiscoveryProject(runId: string, owner?: DataOwner): Pr
   }
 }
 
-function assertOwnership(metadata: Pick<StoredDatasetMetadata, "projectId" | "vdtId">, owner?: DataOwner): void {
+function assertOwnership(metadata: Pick<StoredDatasetMetadata, "projectId" | "vdtId">, owner?: DatasetFileOwner): void {
   if (owner ? metadata.projectId !== owner.projectId || metadata.vdtId !== owner.vdtId : metadata.projectId !== undefined || metadata.vdtId !== undefined) {
     throw new DataApiError("The source or run does not belong to this project and VDT.", 404, "DATA_OWNER_MISMATCH");
   }
 }
 
-async function datasetParent(owner: DataOwner | undefined, create: boolean): Promise<string> {
+async function datasetParent(owner: DatasetFileOwner | undefined, create: boolean): Promise<string> {
   if (!owner) return checkedDirectory(legacyDataRoot(), ["data-discovery", "datasets"], create);
   return projectDirectory(owner, ["files"], create);
 }
@@ -218,9 +337,9 @@ async function runParent(owner: DataOwner | undefined, create: boolean): Promise
   return projectDirectory(owner, ["data-discovery", "runs"], create);
 }
 
-async function projectDirectory(owner: DataOwner, segments: string[], create: boolean): Promise<string> {
+async function projectDirectory(owner: DatasetFileOwner, segments: string[], create: boolean): Promise<string> {
   requireDataId(owner.projectId, "projectId");
-  requireDataId(owner.vdtId, "vdtId");
+  if (owner.vdtId !== undefined) requireDataId(owner.vdtId, "vdtId");
   const directory = projectDir(owner.dataDir, owner.projectId);
   return checkedDirectory(owner.dataDir, path.relative(owner.dataDir, directory).split(path.sep).concat(segments), create);
 }
@@ -251,7 +370,7 @@ async function readRegularFile(filePath: string): Promise<Buffer> {
   }
 }
 
-function cacheKey(id: string, owner?: DataOwner): string {
+function cacheKey(id: string, owner?: DatasetFileOwner): string {
   return `${owner?.dataDir ?? legacyDataRoot()}:${owner?.projectId ?? "legacy"}:${owner?.vdtId ?? "legacy"}:${id}`;
 }
 

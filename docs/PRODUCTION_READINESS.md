@@ -1,5 +1,64 @@
 # Production Readiness
 
+## Project file library
+
+Implemented for local alpha: project-wide file upload/list/search, display labels,
+exact original downloads, archive/restore and explicit per-VDT attach/detach.
+Builder selections retain or attach before analysis; shared sources remain one
+immutable payload and are scoped to the actual VDT during discovery. Existing
+uploads remain compatible. Focused API tests cover ownership, sharing, persistence,
+archival, historical reads and path/origin rejection. Existing Excel incoming-KPI
+browser regressions pass with immediate retention. These checks do not qualify
+hosted authorization, permanent erasure/encryption, parser isolation, real-model
+quality or packaged native behavior; release status remains unchanged.
+
+## Explicit Smart estimates (2026-10-22)
+
+Optional illustrative missing-input allocations preserve the parent reference and
+carry `default_assumption`/`sourceTier=assumption` provenance. New Smart proposal
+drafts enable this visible mode by default; measured sources remain unchanged.
+Local domain/store tests cover ratios, sums, zero/count/fraction bounds, edited
+estimate provenance, recovery and rejection of provenance tampering. The reported
+test GPS branch was saved in one revision as 200 / 1000 = 0.2 km/trip, with no
+duplicate nodes and the root unchanged at 138600 t. This is synthetic test evidence;
+source-backed values, business semantics, native/Windows and release remain unqualified.
+
+## Smart numeric Add gate (2026-10-21)
+
+New Add requires finite effective inputs and equality to the evaluated/retained
+parent reference. Local compiler/store tests cover zero, ratios, explicit values,
+unique last-input derivation, mismatch/missing-data rejection, existing empty
+input repair, exact numeric replay and corrupted-candidate rejection. The panel
+shows values and current → calculated result before saving. Missing raw data is
+not replaced with invented measurements. Live source binding, provider semantics,
+native/Windows, production packaging and full release remain unqualified.
+The local Chrome suite passed seven scenarios with deterministic preparation and
+real SQLite writes/reload/Undo. Targeted unit/store runs passed 152 distinct tests;
+these do not establish correctness of missing real source values.
+
+## Minimal incoming panel and planned input type repair (2026-10-21)
+
+New Add repairs the bounded historical type mismatch: a formula-free Calculated
+node declared as plan Input with no mathematical children returns to Input in
+the same candidate/revision/checkpoint. Local compiler tests preserve original
+values, provenance/context links and scenario zero, and retain rejection of
+formula/factor-child contradictions. The live reported panel has no mismatch
+error and enables Add. Advanced controls are collapsed under Edit. This does not
+qualify business semantics, provider latency, native packaging or release.
+An isolated Chrome regression verified real SQLite Add, reload and exact Undo;
+four existing mixed/manual incoming scenarios also passed. The reported live
+draft was inspected without applying a new business formula.
+
+## Paused agent Cancel repair (2026-10-21)
+
+Focused persistence/store and public-route tests cover expired current-epoch
+cancellation, failed cancellation projection/retry, cleanup acknowledgement,
+retained stop markers through reload, graph-edit preservation and late-response
+ownership. Execution receipts/checkpoints and stale epochs remain fenced.
+The reported live paused run returned `cancelled` with positive terminal cleanup
+confirmation. This bounded repair does not qualify controller-loss recovery,
+the full ADR-005 coordinator, native packaging or production release.
+
 <a id="smart-kpi-validation"></a>
 
 ## Formula and mixed incoming revision (2026-10-20)

@@ -715,7 +715,15 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
       new AgentRunEventOutbox(event.runId, { initialEvents: [...events, event] });
       const expectedEpoch = this.expectedEventEpochs.get(event.runId)
         ?? this.currentEpoch(event.runId).sessionEpoch;
-      const fence = this.acquireWriteAttemptFence(event.runId, expectedEpoch);
+      // Stopping the current owner must remain possible after a long human
+      // pause. Only its terminal cancellation fact gets a fresh audit fence;
+      // execution authority is never renewed and older epochs still fail.
+      const terminalCancellation = event.type === "runtime_status"
+        && event.source === "runtime"
+        && event.payload.code === "RUN_CANCELLED"
+        && event.payload.state === "cancelled"
+        && !events.some(previous => previous.type === "final");
+      const fence = this.acquireWriteAttemptFence(event.runId, expectedEpoch, terminalCancellation);
       const canonical = canonicalJson(event);
       this.db.prepare(`
         INSERT INTO agent_run_event_outbox_v2
@@ -867,7 +875,7 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
     };
   }
 
-  private acquireWriteAttemptFence(runId: string, sessionEpoch: number): EpochFence {
+  private acquireWriteAttemptFence(runId: string, sessionEpoch: number, terminalCancellation = false): EpochFence {
     const epochFence = this.currentEpoch(runId);
     if (epochFence.sessionEpoch !== sessionEpoch) {
       throw persistenceError(
@@ -876,7 +884,7 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
       );
     }
     const now = this.now();
-    if (compareTimestamp(epochFence.expiresAt, now) < 0) {
+    if (!terminalCancellation && compareTimestamp(epochFence.expiresAt, now) < 0) {
       throw persistenceError(
         "WRITE_FENCE_EXPIRED",
         `The session-epoch ownership fence for run ${runId} has expired.`

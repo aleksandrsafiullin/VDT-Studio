@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { GitBranch, Plus, Trash2 } from "lucide-react";
+import { FolderOpen, GitBranch, Plus, Trash2 } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { formatNumber } from "@/lib/format";
 import { NewVdtModal, type NewVdtModalValues } from "./new-vdt-modal";
+import { ProjectFilesPanel } from "./project-files-panel";
 import { useVdtStudioStore } from "./vdt-store";
 
 const VALUE_EPSILON = 1e-6;
@@ -30,6 +31,7 @@ function statusClass(status: string): string {
 
 export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => void | Promise<void> }) {
   const [newVdtModalOpen, setNewVdtModalOpen] = useState(false);
+  const [tab, setTab] = useState<"vdts" | "files">("vdts");
   const workspace = useVdtStudioStore((state) => state.workspace);
   const project = useVdtStudioStore((state) => state.project);
   const createWorkspaceProject = useVdtStudioStore((state) => state.createWorkspaceProject);
@@ -69,7 +71,7 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
         <div className="mx-auto flex w-full max-w-6xl flex-col">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0 max-w-xl">
-              <p className="text-sm text-muted">VDTs</p>
+              <p className="text-sm text-muted">{tab === "files" ? "Files" : "VDTs"}</p>
               <h2 className="mt-1 truncate text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
                 {activeSummary?.project.name ?? "No project selected"}
               </h2>
@@ -105,6 +107,13 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
             )}
           </div>
 
+          {activeSummary ? (
+            <div className="mt-7 flex gap-1 border-b border-black/10" aria-label="Project content">
+              <button type="button" aria-pressed={tab === "vdts"} className={clsx("inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium", tab === "vdts" ? "border-accent text-accent" : "border-transparent text-muted hover:text-ink")} onClick={() => setTab("vdts")} data-testid="project-vdts-tab"><GitBranch className="h-4 w-4" />VDTs</button>
+              <button type="button" aria-pressed={tab === "files"} className={clsx("inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium", tab === "files" ? "border-accent text-accent" : "border-transparent text-muted hover:text-ink")} onClick={() => setTab("files")} data-testid="project-files-tab"><FolderOpen className="h-4 w-4" />Files</button>
+            </div>
+          ) : null}
+
           {workspace.error ? (
             <div className="mt-6 rounded-2xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-800">
               {workspace.error}
@@ -112,7 +121,9 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
           ) : null}
 
           <div className="mt-10 min-h-0 flex-1">
-            {activeSummary && rows.length > 0 ? (
+            {tab === "files" && activeSummary ? (
+              <ProjectFilesPanel key={activeSummary.project.id} projectId={activeSummary.project.id} vdts={rows.map((entry) => ({ id: entry.vdt.id, name: entry.vdt.name }))} />
+            ) : activeSummary && rows.length > 0 ? (
               <div
                 className="grid grid-cols-1 gap-5 md:grid-cols-[repeat(auto-fill,minmax(min(100%,420px),1fr))]"
                 data-testid="project-vdt-list"

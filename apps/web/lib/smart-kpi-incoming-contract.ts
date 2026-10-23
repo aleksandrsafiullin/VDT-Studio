@@ -1,5 +1,5 @@
 import type { IncomingKpiBatchInput, IncomingKpiBatchDraft, IncomingKpiBatchPreview,
-  IncomingKpiLineage, IncomingKpiResolvedAlias, KpiSuggestionContext, KpiSuggestionSet, VdtProject } from "@vdt-studio/vdt-core";
+  IncomingKpiLineage, IncomingKpiResolvedAlias, IncomingKpiValueResolution, KpiSuggestionContext, KpiSuggestionSet, VdtProject } from "@vdt-studio/vdt-core";
 import type { SmartKpiApplyResult,
   SmartKpiOperationV1 as SmartKpiLegacyOperation, SmartKpiMutationView } from "./smart-kpi-transaction";
 
@@ -28,7 +28,7 @@ type OperationBase = Omit<SmartKpiLegacyOperation, "schemaVersion" | "kind" | "p
 export type SmartKpiMixedOperation =
   | OperationBase & { phase: "preparing"; resolved?: never; candidate?: never; input?: never; checkpointVersionId?: never }
   | OperationBase & { phase: "committing";
-      resolved: { aliases: IncomingKpiResolvedAlias[]; formula: string };
+      resolved: { aliases: IncomingKpiResolvedAlias[]; formula: string; values?: IncomingKpiValueResolution };
       candidate: VdtProject; input?: NonNullable<SmartKpiLegacyOperation["input"]>; checkpointVersionId: string };
 
 /** Historical v1 committing Add/replay/Undo is never recompiled/reinterpreted.

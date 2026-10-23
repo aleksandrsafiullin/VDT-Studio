@@ -45,12 +45,14 @@ function ValueRow({
   amount,
   unit,
   emphasize = false,
+  estimated = false,
   valueTestId
 }: {
   label: string;
   amount: number | undefined;
   unit?: string | undefined;
   emphasize?: boolean;
+  estimated?: boolean;
   valueTestId?: string;
 }) {
   return (
@@ -60,7 +62,9 @@ function ValueRow({
         <p
           className={clsx("truncate text-base font-semibold", emphasize ? "text-accent" : "text-ink")}
           data-testid={valueTestId}
+          title={estimated && amount !== undefined ? "Illustrative estimate, not measured data." : undefined}
         >
+          {estimated && amount !== undefined ? <span className="text-amber-800" aria-label="Estimate">≈ </span> : null}
           {formatNumber(amount)}
         </p>
       </div>
@@ -79,6 +83,7 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
   const typeIcon = getNodeTypeIcon(node.type);
   const isRootKpi = node.type === "root_kpi";
   const calculatedRoot = (nodeData.rootRole ?? isRootKpi) && Boolean(node.formula?.trim());
+  const estimated = node.valueStatus === "default_assumption" || node.valueSource?.sourceTier === "assumption";
   const potentialDiffers = valuesDiffer(value, mainScenarioValue);
   const effectDiffers =
     rootScenarioEffect?.absoluteChange !== undefined &&
@@ -127,13 +132,14 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
           <StatusPill status={node.status} className="shrink-0" />
         </div>
         {calculatedRoot ? <p data-testid="node-calculated-indicator" className="text-[10px] font-medium text-muted">Root KPI · Calculated</p> : null}
-        {nodeData.referenceGroup ? <p className="mt-2 border-t border-slate-100 pt-2 text-xs text-muted">Reference group</p> : <ValueRow label="Base" amount={value} unit={node.unit} />}
+        {nodeData.referenceGroup ? <p className="mt-2 border-t border-slate-100 pt-2 text-xs text-muted">Reference group</p> : <ValueRow label="Base" amount={value} unit={node.unit} estimated={estimated} />}
         {!nodeData.referenceGroup && mainScenarioValue !== undefined ? (
           <ValueRow
             label="Potential"
             amount={mainScenarioValue}
             unit={node.unit}
             emphasize={potentialDiffers}
+            estimated={estimated}
             valueTestId="node-main-scenario-value"
           />
         ) : null}

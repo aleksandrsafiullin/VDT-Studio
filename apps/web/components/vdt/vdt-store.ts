@@ -1255,6 +1255,8 @@ function applyAgentSnapshot(
       ? state.selectedNodeId
       : undefined;
     const status = mapRuntimeStatus(snapshot);
+    const terminal = status === "ready" || status === "error" || status === "cancelled";
+    const pendingQuestions = terminal ? undefined : snapshot.pendingQuestions;
     const now = nowIso();
     const requestProviderId = (
       snapshot.executionSummary?.backendId
@@ -1288,7 +1290,8 @@ function applyAgentSnapshot(
       ...activity,
       status,
       phase: status === "ready" ? "ready" : activity.phase,
-      canCancel: isCancellableActivityStatus(status),
+      canCancel: !activity.cancelRequested && isCancellableActivityStatus(status),
+      cancelRequested: terminal ? false : activity.cancelRequested,
       agentRun: legacyRun,
       runtimeAgentRun: snapshot,
       selectedSkills: legacyRun.selectedSkills,
@@ -1296,8 +1299,8 @@ function applyAgentSnapshot(
       agentChatMessages: snapshot.chatMessages,
       publicStatus,
       retryableError: snapshot.retryableError,
-      agentQuestions: snapshot.pendingQuestions,
-      questionsForUser: snapshot.pendingQuestions?.map((question) => question.question),
+      agentQuestions: pendingQuestions,
+      questionsForUser: pendingQuestions?.map((question) => question.question),
       finalReport: snapshot.finalReport,
       summary: snapshot.finalReport ?? activity.summary,
       message: snapshot.error?.message ?? activity.message,
@@ -1316,7 +1319,7 @@ function applyAgentSnapshot(
       activeAgentRunId: status === "ready" || status === "error" || status === "cancelled" ? undefined : snapshot.runId,
       agentRun: snapshot,
       agentEvents: snapshot.events,
-      agentPendingQuestions: snapshot.pendingQuestions,
+      agentPendingQuestions: pendingQuestions,
       agentError: snapshot.error?.message,
       isGenerating: status === "running" || status === "needs_user_input",
       generateActivity: nextActivity,
@@ -3494,19 +3497,76 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       },
       applyAgentGraphPatch: (snapshot) => applyAgentSnapshot(set, snapshot),
       cancelAgentRun: async () => {
-        const runId = get().activeAgentRunId ?? get().agentRun?.runId;
-        if (!runId) return;
+        const state = get(), scope = incomingRestartScope(state);
+        const runId = resumableAgentRunId(state);
+        if (!runId || incomingKpiRestarts.has(runId)) return;
+        const unsubscribe = activeAgentEventUnsubscribe;
+        const previous = pendingIncomingRestartHere(state) ? state.pendingIncomingKpiRestart : undefined;
+        const executionSummary = state.agentRun?.executionSummary ?? state.generateActivity?.runtimeAgentRun?.executionSummary;
+        // The binding registry requires compatibility adapters to contain
+        // "compat"; those runs do not have a Supervisor terminal receipt.
+        const structured = Boolean(executionSummary && !/compat/i.test(executionSummary.engineAdapterId));
+        const awaitTerminal = structured || previous?.runId === runId;
+        const ownsCancellation = () => {
+          const current = get(), currentScope = incomingRestartScope(current);
+          return currentScope.workspaceId === scope.workspaceId && currentScope.vdtId === scope.vdtId
+            && resumableAgentRunId(current) === runId;
+        };
+        incomingKpiRestarts.add(runId);
         try {
-          await createAgentClient().cancel(runId);
-          const snapshot = await createAgentClient().getRun(runId);
-          applyAgentSnapshot(set, snapshot);
+          let marker = previous;
+          if (awaitTerminal) {
+            if (state.pendingIncomingKpiRestart && state.pendingIncomingKpiRestart.runId !== runId) {
+              throw new Error("Finish stopping the previous agent in its original VDT, then retry.");
+            }
+            marker ??= { runId, ...scope };
+            set({ pendingIncomingKpiRestart: marker });
+            if (!incomingStopPersisted(marker)) throw new Error("Browser storage could not retain the agent stop request. Retry Cancel.");
+          }
+          const client = createAgentClient();
+          if (!marker?.terminalCleanupConfirmed) {
+            await client.cancel(runId, awaitTerminal ? { awaitTerminal: true } : undefined);
+            if (!ownsCancellation()) return;
+            if (marker) {
+              marker = { ...marker, terminalCleanupConfirmed: true };
+              set({ pendingIncomingKpiRestart: marker });
+              if (!incomingStopPersisted(marker)) throw new Error("Browser storage could not retain confirmed agent cleanup. Retry Cancel.");
+            }
+          }
+          const snapshot = await client.getRun(runId);
+          if (!ownsCancellation()) return;
+          if (snapshot.runId !== runId || !["succeeded", "failed", "cancelled"].includes(snapshot.status)) {
+            throw new Error("Agent cancellation is not terminal. Retry Cancel.");
+          }
+          // Cancellation reports lifecycle only. The builder can predate edits
+          // already made in the open graph, so it must never replace that graph.
+          // Publish terminal activity and remove its stop marker in one saved
+          // state, so a reload cannot strand a terminal chat behind the marker.
+          applyAgentSnapshot(update => set(current => ({
+            ...(typeof update === "function" ? update(current) : update),
+            agentError: undefined, aiError: undefined,
+            ...(marker ? { pendingIncomingKpiRestart: undefined } : {}),
+            smartKpiFencedRunIds: [...new Set([...current.smartKpiFencedRunIds, runId])].slice(-64)
+          })), snapshot, true, true);
+          if (activeAgentEventUnsubscribe === unsubscribe) {
+            unsubscribe?.();
+            activeAgentEventUnsubscribe = undefined;
+            set({ agentConnectionStatus: "disconnected" });
+          }
         } catch (error) {
+          if (!ownsCancellation()) return;
           const message = error instanceof Error ? error.message : "Agent run could not be cancelled.";
-          set({ agentError: message, aiError: message });
+          set(current => ({ agentError: message, aiError: message,
+            generateActivity: current.generateActivity?.runId === runId ? {
+              ...current.generateActivity,
+              cancelRequested: false,
+              canCancel: isCancellableActivityStatus(current.generateActivity.status),
+              message,
+              updatedAt: nowIso()
+            } : current.generateActivity
+          }));
         } finally {
-          activeAgentEventUnsubscribe?.();
-          activeAgentEventUnsubscribe = undefined;
-          set({ agentConnectionStatus: "disconnected" });
+          incomingKpiRestarts.delete(runId);
         }
       },
       cancelGenerate: () => {
@@ -4112,7 +4172,12 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           activeVdtId: persistedActiveVdtExists || persisted?.smartKpiOperation?.vdtId === mergedWorkspace.activeVdtId ? mergedWorkspace.activeVdtId : undefined,
           activePanel: activeWorkspacePanel
         };
-        const generateActivity = persisted?.generateActivity;
+        const savedActivity = persisted?.generateActivity;
+        const generateActivity = savedActivity ? {
+          ...savedActivity,
+          cancelRequested: false,
+          canCancel: isCancellableActivityStatus(savedActivity.status)
+        } : undefined;
         const agentRun = persisted?.agentRun;
         const hasActiveAgentRun = isActiveActivity(generateActivity) || isActiveRuntimeRun(agentRun);
         const activeAgentRunId = hasActiveAgentRun

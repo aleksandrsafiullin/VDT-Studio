@@ -12,11 +12,17 @@ optional immutable `proposal`, and `draft`. `IncomingKpiBatchDraft` contains:
 * `schemaVersion="incoming_kpi_draft.v2"`, `targetNodeId`, `contextHash`, `revision`;
 * `source={kind:"manual"}` or `{kind:"proposal",proposalId,groupId}`;
 * selected original `childKeys`, `manualChildren`, `existingFactors`;
-* raw `formula`, and `formulaAuthorship=recipe|model|user_edited|user`.
+* raw `formula`, and `formulaAuthorship=recipe|model|user_edited|user`;
+* optional `inputValues` (alias → numeric text) and `referenceValue` for a parent
+  without a current/retained value. Numeric text is at most 80 characters; at most
+  28 entries retain selected and deselected proposed/manual/existing rows.
+* optional `estimateMissingValues`, `estimatedAliases` and
+  `referenceValueEstimated`. Flags are boolean; at most 28 unique stable aliases
+  can retain explicitly edited estimate text. They do not grant formula authority.
 
 Own rows are `{key,selected,name,unit,description?}`; existing references are
 `{key,nodeId,selected}`. Unselected blank own rows can remain in a local draft.
-Selected rows require name/unit. New own rows are user-accepted (`status=accepted`, `aiGenerated=false`), while their values remain unknown; a model-backed batch retains its execution lineage. There are no numeric-value fields. Draft shape
+Selected rows require name/unit. New own rows are user-accepted (`status=accepted`, `aiGenerated=false`); their values must pass the numeric gate below. A model-backed batch retains its execution lineage. Proposal/model output cannot supply numeric values. Draft shape
 validation retains incomplete raw formula text, instead of tokenizing/serializing
 it on every keystroke. Changing a name never changes its key.
 
@@ -86,10 +92,81 @@ cycles/plan/shared source checks remain required after syntax admission.
 Root identity uses `rootNodeId`: a formula-bearing root retains `root_kpi`, with
 a concise calculated indicator; other accepted parents become `calculated`.
 Existing source values/mappings remain reference provenance/checkpoint evidence;
-formula evaluation wins and unknown new inputs may make the result unavailable.
+formula evaluation wins and new Add must preserve a finite parent baseline.
 Unselected old context children remain contextual. An off-root reference submodel
 can calculate locally while its plan role remains context and the root stays
 unaffected. Compiler fixtures verify actual baseline/scenario results for these scenarios.
+
+## Numeric baseline preservation (2026-10-21)
+
+After structural validation, new Add requires every effective input to have a
+finite value and the formula result to equal its parent reference within
+`1e-9 * max(abs(reference), abs(result), 1e-6)`. Current formula evaluation wins
+over retained `baselineValue ?? value`; zero is retained. If neither is known,
+the user must supply an explicit reference before Add. The existing parent
+reference and known reused input values cannot be changed to fit the expression.
+
+Existing graph values are reused by explicit source identity. User numeric text
+accepts decimal dot/comma and finite exponent notation; incomplete/invalid text
+stays editable and blocks Add. Exactly one missing new or existing primitive
+input can be derived by inverting a single occurrence through arithmetic/unary
+minus, only with a unique finite solution. With estimates disabled, multiple
+missing values and non-unique min/max require input. Degenerate zero domains
+remain invalid. Derived provenance states that it is not an
+independent measurement; explicit values are user-provided. The panel displays
+values and current → calculated totals before the atomic save.
+
+Numeric patches join the same Add changeset and checkpoint. Empty existing leaf
+inputs may be repaired with the accepted current formula, even with no new nodes.
+The journal pins `resolved.values`; recovery recomputes its deterministic numeric
+evidence from the captured base and verifies the candidate values/result before
+exact replay. Optional fields preserve already committing historical v1/v2
+requests unchanged. There is no load-time migration of old empty inputs, raw-file
+read, mapping execution or source discovery in this gate. Existing saved scenario
+overrides remain intact; baseline equality is not scenario/business certification.
+
+### Illustrative estimates (2026-10-22)
+
+Proposal-backed UI drafts enable **Use estimates** by default; manual drafts can
+opt in. Only missing editable inputs may be estimated. Known and explicitly
+supplied values are never adjusted. Add still requires finite inputs, a valid
+unchanged formula and exact baseline reconciliation within the numeric tolerance.
+Unit-aware illustrative seeds use 1000 for simple counts, equal additive shares
+(integer shares for counts), 0.5 for fractions, 50 for percent, and 1 for other
+free operands. A solved operand closes the equation; valid same-unit min/max
+witnesses may also be offered. The multi-input allocation checks count operands
+as nonnegative safe integers and keeps fraction/percent operands in range.
+Unsupported allocations stay blocked.
+These seeds are mathematical examples, not industry or population evidence.
+
+Estimated fields show **≈** and an illustrative-data tooltip. Materialization
+uses `valueStatus=default_assumption`, `sourceTier=assumption` and explicit notes.
+Edited estimates retain their alias mark; a dependent derived value also stays
+an estimate. Turning estimates off clears marked estimate edits. Existing saved
+assumptions retain their identity and are never relabelled as measured data.
+An unknown parent still requires explicit reference entry; the separate reference
+estimate flag records an illustrative parent value and its dependent inputs as
+assumptions. New journals pin and verify numbers plus this provenance before
+exact replay. Historical committing bodies remain unchanged.
+
+## Minimal panel and bounded input-type repair (2026-10-21)
+
+The default panel shows selected rows, a plain readable formula, Edit and Add.
+One alternative omits redundant title/radio selection; multiple alternatives
+retain their choices. Edit contains own rows, existing references, raw formula,
+operators, insertion buttons and Details. Manual entry opens Edit and focuses
+the name. Preparation/errors and save/recovery feedback remain actionable.
+
+New Add compilation can restore a formula-free `calculated` node to `input`
+only when the existing plan declares Input and neither its visual edges nor
+planned children are mathematical factors. The original graph/context is
+fingerprinted first; full hierarchy validation runs on a virtual repaired base
+and on the final candidate. Type-only patches join the same explicit Add
+changeset. Original values, sources, reference children and plan are preserved,
+and checkpoint Undo restores the original base. A selected parent still becomes
+Calculated only with the new explicit formula. No formula is invented, no
+context is promoted by this repair, no other hierarchy error is waived and no
+repair occurs on load or historical committing replay.
 
 ## Journal and legacy compatibility
 
@@ -120,6 +197,12 @@ but require regeneration before a new Apply. This guard is separate from replay
 of an already committing Smart v1 request.
 
 The compatibility controller retains its supported selected-target message.
+Ordinary structured **Cancel** also persists the scoped stop marker, confirms
+actual cleanup and fences late callbacks before unlocking Smart. Errors/reload
+leave Cancel retryable; terminal snapshots cannot replace current graph edits.
+An expired current-epoch fence permits only its runtime terminal cancellation
+fact, without granting graph-write or provider-resume authority.
+
 An active structured Model Agent instead stops through its owned cancellation
 lane before a fresh `deepen_node` run starts against the current graph. A scoped
 stop marker is persisted before cancellation. A cancelled SSE status or reload

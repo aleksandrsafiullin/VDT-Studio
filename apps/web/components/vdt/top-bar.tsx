@@ -16,6 +16,7 @@ import { formatNumber } from "@/lib/format";
 import { ScenarioModal } from "./scenario-modal";
 import { SettingsModal } from "./settings-modal";
 import { VersionHistoryPanel } from "./version-history-panel";
+import { VdtFilesButton } from "./project-files-dialog";
 import { hasActiveWorkspaceVdt, useVdtStudioStore } from "./vdt-store";
 import { WorkspaceNavigationLink } from "./workspace-navigation-link";
 
@@ -104,6 +105,7 @@ export function TopBar({ projectId, onBackToWorkspace }: TopBarProps) {
       </div>
 
       <div className="flex items-center gap-2">
+        <VdtFilesButton />
         <Tooltip label={graphStatusLabel}>
           <div
             className="hidden h-8 w-8 items-center justify-center rounded-md border border-line bg-slate-50 text-muted md:flex"

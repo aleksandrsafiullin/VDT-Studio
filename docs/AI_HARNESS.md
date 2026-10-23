@@ -1,5 +1,22 @@
 # AI And Agent Harness
 
+## Paused agent cancellation
+
+The current controller can persist its terminal runtime cancellation event after
+the 24-hour session ownership fence expires. Only `RUN_CANCELLED` with state
+`cancelled` and source `runtime` gets a fresh 30-second audit fence; all execution
+receipts/checkpoints retain the expiry check, old epochs stay rejected, and the
+session fence is unchanged. An already aborted controller with a failed event
+write is closed before the same binding/epoch is verified and the terminal fact
+is retried through fresh persistence. A durable final cannot use this exception.
+
+Ordinary structured Cancel requests the bounded terminal cleanup receipt and
+retains a scoped stop marker across errors/reload. Errors restore the button and
+keep status subscriptions; confirmed completion clears pending questions, keeps
+the edited graph and fences late callbacks. A late response cannot alter another
+VDT/run. This is a cancellation repair, not controller-loss recovery or the full
+ADR-005 lease/heartbeat/takeover coordinator.
+
 ## Smart one-completion preparation
 
 `suggest_incoming_kpis` / `suggest-incoming-kpis-v1` is registered through core,

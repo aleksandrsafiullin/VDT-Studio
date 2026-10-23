@@ -2,13 +2,40 @@
 
 ## Incoming KPI formulas and mixed drafts
 
-Future incoming additions use the [formula/mixed contract](architecture/SMART_KPI_INCOMING_CONTRACT.md). One Add installs the selected proposed rows, own rows, explicit retained references and the final expression together. Non-root parents become `calculated`; the actual root keeps `root_kpi`. The original measured/mapped value remains source/reference evidence and in the checkpoint. Formula evaluation takes precedence, so unknown inputs can make the baseline unavailable. Explicit saved scenario overrides still take precedence as before. Existing graphs and committing v1 operations are not migrated.
+Future incoming additions use the [formula/mixed contract](architecture/SMART_KPI_INCOMING_CONTRACT.md). One Add installs the selected proposed rows, own rows, explicit retained references, finite input values and the final expression together. Non-root parents become `calculated`; the actual root keeps `root_kpi`. The original measured/mapped value remains source/reference evidence and in the checkpoint. New Add requires the evaluated baseline to equal the current parent value; unresolved inputs or mismatches block it. Explicit saved scenario overrides still take precedence as before. Existing graphs and committing operations are not migrated.
+
+The local numeric gate uses current evaluation before retained `baselineValue ??
+value`, preserving zero. An explicit user reference is needed if neither exists.
+It can invert one occurrence of one missing input through `+`, `-`, `*`, `/` and
+unary minus, only for a unique finite solution. With estimates disabled it never
+guesses min/max branches or multiple unknowns. The separate **Use estimates** mode
+may offer illustrative allocations, including equal additive shares and valid
+min/max witnesses, marked `default_assumption`/`sourceTier=assumption`. Unit-aware
+seeds plus one solved operand must produce the same finite parent value; known
+values never change. Counts must be nonnegative integers; fractions and percent
+estimates stay in their explicit scale bounds. These are editable illustrations,
+not measured values or a conversion/calibration term added to the formula.
+Explicit values and derived inputs receive distinct provenance; derived values
+are not independent measurements. All required inputs must be finite, denominators
+nonzero and baseline difference at most `1e-9 * max(abs(before), abs(after), 1e-6)`.
+Known existing input values cannot be overwritten by this panel. Source refresh
+and general executable mappings remain separate limitations.
+An explicitly entered missing reference can itself be marked as an estimate;
+that parent reference and any dependent inputs retain assumption provenance.
 
 The feature-local compiler checks strict stable aliases, exact selected/effective membership, full visual/formula cycles, source reuse, existing factor coverage and the actual decomposition plan. Six new rows and sixteen existing references are separate budgets. It checks local/expanded length 1,024/4,096 and AST nodes/depth128/24. Literal-only expressions must stay finite and denominators provably zero are rejected before cancellation shortcuts, even without a decomposition plan. Bounded zero/cancellation checks reject dummy dependencies; this is not a general symbolic solver or business certification.
 
 Generic formulas are permitted with matching dimensions **and scales**, independent of canonical recipe membership. Hours/minutes, km/m, percentages/fractions and distinct currencies are not interchangeable; scalar60/100/1000 is not conversion evidence. Compatible per-trip ratios can work with a custom or missing calendar period. Calendar-denominator units need the matching explicit basis. Model formulas cannot invent numeric weights/defaults; the supported model literal1 is a decimal-fraction complement. User-authored coefficients remain visibly user-authored and do not grant conversion authority. The general engine's existing dimensional limitations remain.
 
 Full baseline and saved-scenario previews show the expected target/downstream change while unrelated results must remain intact. Unselected old context stays contextual. Explicit reuse can activate only the selected reference model's mathematical dependency closure, preserving its primary parents, source metadata and unrelated explanatory children. Off-root reference models may calculate while remaining outside the root calculation. See [ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
+
+A new incoming Add can restore only the type of a formula-free Calculated node
+whose plan declares Input and which has no mathematical children. This repairs
+the historical `PLANNED_INPUT_MISMATCH` shape without inventing an expression or
+promoting context children. Values, value-source metadata, edges and plan are
+unchanged by that repair; full hierarchy and baseline/scenario checks still run.
+The repair is saved with Add and undone with its checkpoint, never on load or
+while replaying a previously captured operation.
 
 The file path installs calculated target/intermediate sum nodes while primitive leaves remain `data_mapped`. Mapping metadata reapplication preserves formula-bearing types and the actual root role; it does not implement a refresh engine. Bounded AI/deepen completion requires an explicit effective target formula rather than a successful child-only patch. The authoritative selected-layer changeset also reconciles its existing plan. Whole-tree agent finish remains unchanged.
 

@@ -187,6 +187,11 @@ describe("SqliteAgentSupervisorPersistence", { timeout: 30_000 }, () => {
       source: "runtime",
       payload: { code: "STALE_CALLBACK", message: "Must be fenced.", state: "running" }
     })).rejects.toMatchObject({ code: "SESSION_EPOCH_MISMATCH" });
+    await expect(staleOutbox.append({
+      type: "runtime_status",
+      source: "runtime",
+      payload: { code: "RUN_CANCELLED", message: "Stale cancellation must be fenced.", state: "cancelled" }
+    })).rejects.toMatchObject({ code: "SESSION_EPOCH_MISMATCH" });
 
     expect(queryOne(fixture.database.databasePath, `
       SELECT COUNT(*) AS count, MAX(session_epoch) AS current_epoch
@@ -438,6 +443,49 @@ describe("SqliteAgentSupervisorPersistence", { timeout: 30_000 }, () => {
 
     authority.close();
     fixture.database.close();
+  });
+
+  it("records only terminal cancellation after the current epoch fence expires, without renewing execution authority", async () => {
+    const fixture = createFixture("expired_cancellation");
+    let now = NOW;
+    const authority = new SqliteAgentSupervisorPersistence(fixture.database.databasePath, {
+      now: () => now,
+      fenceLeaseMs: 1_000
+    });
+    const binding = modelBinding(fixture.runId, fixture.projectId);
+    await authority.createBinding(binding);
+    const outbox = new AgentRunEventOutbox(fixture.runId, {
+      now: () => now,
+      sink: { append: event => authority.appendEvent(event) }
+    });
+    now = "2026-08-28T10:00:00.000Z";
+    try {
+      await expect(outbox.append({ type: "runtime_status", source: "runtime",
+        payload: { code: "HUMAN_INPUT_ACCEPTED", message: "Continue.", state: "running" }
+      })).rejects.toMatchObject({ code: "WRITE_FENCE_EXPIRED" });
+      await expect(outbox.append({ type: "runtime_status", source: "runtime",
+        payload: { code: "RUN_CANCELLED", message: "Invalid nonterminal cancellation.", state: "running" }
+      })).rejects.toMatchObject({ code: "WRITE_FENCE_EXPIRED" });
+      await outbox.append({ type: "runtime_status", source: "runtime",
+        payload: { code: "RUN_CANCELLED", message: "Agent execution was cancelled.", state: "cancelled" }
+      });
+      expect(queryOne(fixture.database.databasePath, `
+        SELECT session_epoch, write_fence_expires_at FROM agent_current_session_epochs_v2 WHERE run_id = ?
+      `, fixture.runId)).toEqual({ session_epoch: 1, write_fence_expires_at: "2026-08-26T10:00:01.000Z" });
+      expect(queryOne(fixture.database.databasePath, `
+        SELECT write_fence_expires_at FROM agent_run_event_outbox_v2 WHERE run_id = ?
+      `, fixture.runId)).toEqual({ write_fence_expires_at: "2026-08-28T10:00:30.000Z" });
+      await expect(authority.appendToolOperationReceipt(completedToolReceipt(binding, 1)))
+        .rejects.toMatchObject({ code: "WRITE_FENCE_EXPIRED" });
+      await expect(authority.saveCheckpoint(checkpoint(binding, 1, "expired-checkpoint", now)))
+        .rejects.toMatchObject({ code: "WRITE_FENCE_EXPIRED" });
+      await expect(outbox.append({ type: "runtime_status", source: "runtime",
+        payload: { code: "HUMAN_INPUT_ACCEPTED", message: "Continue after cancellation.", state: "running" }
+      })).rejects.toMatchObject({ code: "WRITE_FENCE_EXPIRED" });
+    } finally {
+      authority.close();
+      fixture.database.close();
+    }
   });
 
   it("finalizes an origin-epoch finish receipt only under its exact successor owner", async () => {
