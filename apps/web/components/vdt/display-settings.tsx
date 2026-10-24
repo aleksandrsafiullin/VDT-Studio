@@ -10,8 +10,8 @@ export function DisplaySettings() {
   const resetUiPreferences = useVdtStudioStore((state) => state.resetUiPreferences);
 
   return (
-    <div className="space-y-4">
-      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="space-y-4" data-testid="display-settings">
+      <section data-settings-card className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
         <label className="grid gap-3">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -39,7 +39,7 @@ export function DisplaySettings() {
         </label>
       </section>
 
-      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <section data-settings-card className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs leading-5 text-muted">
             Drag the vertical handles between panels on the canvas workspace to resize the setup and inspector rails.

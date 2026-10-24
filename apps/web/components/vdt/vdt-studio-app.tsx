@@ -12,6 +12,7 @@ import { TopBar } from "./top-bar";
 import { useWorkspaceRouteSync } from "./use-workspace-route-sync";
 import { VdtCanvas } from "./vdt-canvas";
 import { WorkspaceModeRail } from "./workspace-mode-rail";
+import styles from "./workspace-shell.module.css";
 import {
   BASE_WORKSPACE_SECTION_MIN_HEIGHT,
   COLLAPSED_PANEL_WIDTH,
@@ -49,7 +50,8 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
     <main
       className={clsx(
         "flex min-h-screen flex-col text-ink lg:h-screen lg:overflow-hidden",
-        isProjectMode ? "vdt-apple-workspace bg-apple-gray" : "bg-canvas"
+        "vdt-apple-workspace",
+        isProjectMode ? "bg-apple-gray" : styles.shell
       )}
       style={{
         ["--vdt-font-scale" as string]: ui.fontScale,
@@ -67,7 +69,7 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
         />
       ) : null}
       <TopBar projectId={projectId} onBackToWorkspace={showProjectWorkspace} />
-      <div className={`vdt-workspace-grid relative grid min-h-0 flex-1 grid-cols-1 ${isProjectMode ? "vdt-workspace-grid-project" : ""}`}>
+      <div className={clsx("vdt-workspace-grid relative grid min-h-0 flex-1 grid-cols-1", isProjectMode ? "vdt-workspace-grid-project" : styles.editorGrid)}>
         <div className="min-h-0 lg:block">
           <WorkspaceModeRail appleStyle={isProjectMode} />
         </div>
@@ -85,8 +87,8 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
           <div className="hidden lg:block" aria-hidden />
         ) : null}
         <section
-          className="flex min-h-0 flex-col overflow-hidden"
-          style={{ minHeight: BASE_WORKSPACE_SECTION_MIN_HEIGHT }}
+          className={clsx("flex min-h-0 flex-col overflow-hidden", !isProjectMode && styles.canvasFrame)}
+          style={{ minHeight: isDesktop && !isProjectMode ? 0 : BASE_WORKSPACE_SECTION_MIN_HEIGHT }}
         >
           {isProjectMode ? <ProjectVdtList onOpenVdt={openWorkspaceVdt} /> : <VdtCanvas />}
         </section>
@@ -101,7 +103,7 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
           <div className="hidden lg:block" aria-hidden />
         ) : null}
         {isProjectMode ? null : (
-          <div className="min-h-0 lg:block">
+          <div className={clsx("min-h-0 lg:block", styles.inspectorSlot)}>
             <NodeInspector />
           </div>
         )}

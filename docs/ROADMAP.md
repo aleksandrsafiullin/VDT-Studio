@@ -1,5 +1,40 @@
 # Roadmap
 
+## Editor workspace panels
+
+Implemented for local web: a shared Apple-style white, light gray and graphite
+palette for the chat, top action bar, navigation rail, canvas tools and Node
+Inspector. The inspector header's node-status icon is omitted; node cards
+retain status information. The canvas has a rounded
+surface and one floating toolbar for zoom/fit, layout/spacing and node interaction; its desktop
+height follows the viewport. The inspector groups properties and formula tools
+around a prominent value/unit, retaining visible estimate/source notes and all
+existing edit, warning, readonly and scenario-lock controls. Saved panel sizing,
+collapse and guarded navigation remain. Dialog contents, model generation,
+calculation contracts and native qualification are separate from this redesign.
+The visual formula row now uses compact reference/number tokens and plain math
+symbols, with hover/focus editing controls and bounded labels. Its expression,
+validation, caret and drag/drop contracts are unchanged.
+
+## Agent chat interface
+
+Implemented for local web: a neutral conversation rail, collapsed model context,
+dark user bubbles, formatted assistant responses with Copy, draft-only starter
+prompts and one rounded composer. The + menu exposes existing file attachment
+and context editing; search, voice and active-model readiness remain accessible.
+Web search uses a compact globe + Off/Auto/On control, neutral state emphasis,
+and separate provider feedback. The
+model control names its readiness and retains semantic status colors. Recording
+shows real PCM levels and duration; final transcription shows its own elapsed
+timer, cancellation and errors. Root KPI and Unit share one row in the editor
+chat context; Period is omitted.
+Context has no repeated Current brief label. The Settings dialog shares the
+neutral editor theme, with a light sidebar, grouped controls, segmented execution
+tabs, checkmarked provider choices and horizontal navigation in narrow windows.
+Enter/Shift + Enter, IME handling, a running-state Stop control and a collapsed
+real-event Work log are wired to the existing chat actions. This UI work does
+not qualify live inference, voice engines or packaged desktop releases.
+
 ## Project file library
 
 Implemented for local alpha: project-wide uploads before a first VDT, file search,

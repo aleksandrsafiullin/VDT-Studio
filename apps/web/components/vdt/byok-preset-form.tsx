@@ -251,8 +251,8 @@ export function ByokPresetForm({
   const showPresetSection = showPresetSelect || (showPresetLabel && preset.releaseStatus === "beta");
 
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" data-testid="byok-preset-form">
-      <div className="border-b border-slate-200 bg-white px-4 py-4 sm:px-5">
+    <div data-settings-card className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" data-testid="byok-preset-form">
+      <div data-settings-card-header className="border-b border-slate-200 bg-white px-4 py-4 sm:px-5">
         <SectionTitle protocol={protocol} />
       </div>
 

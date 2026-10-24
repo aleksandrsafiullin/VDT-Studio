@@ -180,7 +180,7 @@ describe("GenerateActivityPanel", () => {
     );
     expect(html).toContain("Native web search used once");
     expect(html).toContain("haulage cycle time");
-    expect(html).toContain("Runtime");
+    expect(html).toContain(">Update</span>");
     expect(html).not.toContain('data-testid="generate-agent-events"');
   });
 

@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, CircleAlert, Globe, History, LoaderCircle, MessageSquarePlus, Mic, Send, Settings2, Square, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, Check, ChevronDown, CircleAlert, GitBranch, History, LoaderCircle, MessageSquarePlus, Mic, Plus, SlidersHorizontal, Sparkles, Square, X } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { DataImportAttachmentButton } from "@/components/data-import/data-import-attachment-button";
 import { Field, TextArea, TextInput } from "@/components/ui/field";
-import { Panel, PanelCollapseTab, PanelToggleButton, PanelHeader } from "@/components/ui/panel";
+import { Panel, PanelCollapseTab, PanelToggleButton } from "@/components/ui/panel";
 import { hasByokFieldErrors, validateByokSettings } from "@/lib/byok-validation";
-import type { CliRequestReadinessState } from "@/lib/cli-readiness";
+import type { CliRequestReadiness, CliRequestReadinessState } from "@/lib/cli-readiness";
 import { formatExecutionModeSummary } from "@/lib/format-execution-summary";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
@@ -18,45 +18,12 @@ import { SettingsModal } from "./settings-modal";
 import type { SettingsSectionId } from "./settings-nav";
 import { useSpeechSettings } from "./speech-store";
 import { useVoiceDictation } from "./use-voice-dictation";
+import { VoiceInputStatus } from "./voice-input-status";
+import { WebSearchControl, type ResearchStatus } from "./web-search-control";
 import { useCliChatReadiness } from "./use-cli-chat-readiness";
 import type { AgentChatHistoryEntry } from "./vdt-store";
 import type { ResearchMode } from "@/lib/agent-client";
-
-interface ResearchStatus {
-  providerConfigured: boolean;
-  providerId: "brave" | "tavily" | "noop" | string;
-}
-
-const RESEARCH_MODES: ResearchMode[] = ["auto", "on", "off"];
-
-const RESEARCH_MODE_TOOLTIP: Record<ResearchMode, string> = {
-  auto: "Agent may search when local skills are not enough.",
-  on: "Agent should use research for unknown/current process context.",
-  off: "Agent will not use web research."
-};
-
-function nextResearchMode(mode: ResearchMode): ResearchMode {
-  return RESEARCH_MODES[(RESEARCH_MODES.indexOf(mode) + 1) % RESEARCH_MODES.length] ?? "auto";
-}
-
-export function researchModeTooltip(mode: ResearchMode, status: ResearchStatus | undefined): string {
-  const base = RESEARCH_MODE_TOOLTIP[mode];
-  if (mode !== "off" && status?.providerConfigured === false) {
-    return `${base} Research provider is not configured.`;
-  }
-  return base;
-}
-
-export function researchToggleClassName(mode: ResearchMode, unavailable: boolean): string {
-  const tone = unavailable
-    ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
-    : mode === "on"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-      : mode === "off"
-        ? "border-slate-200 bg-slate-50 text-slate-400 hover:bg-slate-100"
-        : "";
-  return ["h-9 w-9 shrink-0", tone].filter(Boolean).join(" ");
-}
+import styles from "./agent-chat.module.css";
 
 function chatStatusLabel(status: AgentChatHistoryEntry["status"]) {
   switch (status) {
@@ -111,14 +78,27 @@ export function ExecutionReadinessDot({ state }: { state: CliRequestReadinessSta
   );
 }
 
+export function describeComposerReadiness(cliReadiness: CliRequestReadiness | undefined, configured: boolean): Pick<CliRequestReadiness, "state" | "label" | "message"> {
+  if (cliReadiness) return cliReadiness;
+  return configured
+    ? { state: "ready", label: "Ready to send", message: "Provider settings are configured. Connection and model access are checked when a request starts." }
+    : { state: "warning", label: "Setup needed", message: "Configure a provider before sending requests." };
+}
+
 export function SetupRail() {
   const hasRequestedCliScan = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>("execution");
   const [confirmSpeechDownload, setConfirmSpeechDownload] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const [instructionText, setInstructionText] = useState("");
   const instructionInputRef = useRef<HTMLTextAreaElement>(null);
+  const briefRef = useRef<HTMLDetailsElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const contextMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const activityScrollRef = useRef<HTMLElement>(null);
+  const followConversationRef = useRef(true);
   const [researchMode, setResearchMode] = useState<ResearchMode>("auto");
   const [researchStatus, setResearchStatus] = useState<ResearchStatus | undefined>();
   const brief = useVdtStudioStore((state) => state.brief);
@@ -170,12 +150,7 @@ export function SetupRail() {
     canRunDeepenAction &&
     !byokValidationBlocked &&
     (cliReadiness?.canExecute ?? true);
-  const executionReadinessState =
-    cliReadiness?.state ?? (canUseConfiguredRuntime ? "ready" : "warning");
-  const executionReadinessLabel = cliReadiness?.label ?? executionSummary.secondary ?? executionSummary.modeLabel;
-  const executionReadinessMessage =
-    cliReadiness?.message ??
-    (canUseConfiguredRuntime ? "The configured provider can accept requests." : "Configure a provider before sending requests.");
+  const { state: executionReadinessState, label: executionReadinessLabel, message: executionReadinessMessage } = describeComposerReadiness(cliReadiness, canUseConfiguredRuntime);
   const pendingChangeCount = pendingChangeSet
     ? pendingChangeSet.additions.length +
       pendingChangeSet.updates.length +
@@ -194,8 +169,36 @@ export function SetupRail() {
     (!isGenerating || Boolean(generateActivity));
   const canStartNewChat = Boolean(generateActivity);
   const hasRetryableError = Boolean(generateActivity?.retryableError);
-  const researchUnavailable = researchMode !== "off" && researchStatus?.providerConfigured === false;
-  const researchTooltip = researchModeTooltip(researchMode, researchStatus);
+  const modelLabel = executionSummary.secondary ?? executionSummary.primary;
+  const canStopResponse = generateActivity?.status === "running" && !instructionText.trim() && !voice.active;
+  const latestChatMessage = generateActivity?.agentChatMessages?.at(-1);
+
+  useEffect(() => {
+    if (!contextMenuOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!contextMenuRef.current?.contains(event.target as Node)) setContextMenuOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setContextMenuOpen(false);
+      contextMenuButtonRef.current?.focus();
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [contextMenuOpen]);
+
+  useEffect(() => {
+    followConversationRef.current = true;
+  }, [generateActivity?.runId]);
+
+  useEffect(() => {
+    const scroll = activityScrollRef.current;
+    if (scroll && followConversationRef.current && !historyOpen) scroll.scrollTop = scroll.scrollHeight;
+  }, [generateActivity?.runId, latestChatMessage?.id, latestChatMessage?.text, generateActivity?.publicStatus?.message, historyOpen]);
 
   useEffect(() => {
     const el = instructionInputRef.current;
@@ -228,7 +231,7 @@ export function SetupRail() {
         if (!cancelled) setResearchStatus(status);
       })
       .catch(() => {
-        if (!cancelled) setResearchStatus({ providerConfigured: false, providerId: "noop" });
+        if (!cancelled) setResearchStatus({ providerConfigured: false, providerId: "noop", checkFailed: true });
       });
     return () => {
       cancelled = true;
@@ -237,8 +240,8 @@ export function SetupRail() {
 
   async function submitAgentInstruction() {
     const text = instructionText.trim();
-    if (!text || voice.active) return;
-    if (!canUseConfiguredRuntime) return;
+    if (!canSendInstruction) return;
+    followConversationRef.current = true;
     if (!canContinueCurrentAgentRun) {
       const shouldContinue = shouldContinueOpenVdt(useVdtStudioStore.getState());
       const accepted = await startAgentRun(text, {
@@ -266,60 +269,65 @@ export function SetupRail() {
   }
 
   return (
-    <Panel className="flex h-full min-h-0 flex-col border-r">
-      <PanelHeader
-        title="VDT Agent"
-        action={
-          <div className="flex shrink-0 items-center gap-1">
+    <Panel className={clsx("flex h-full min-h-0 flex-col border-r", styles.panel)} data-testid="agent-chat-panel" aria-label="VDT Agent chat">
+      <header className={styles.header}>
+        <div className={styles.title}>
+          <span className={styles.agentMark}><GitBranch size={15} aria-hidden="true" /></span>
+          <h2>VDT Agent</h2>
+        </div>
+          <div className={styles.headerActions}>
             <Button
               type="button"
               size="sm"
               variant="ghost"
-              icon={<MessageSquarePlus className="h-3.5 w-3.5" />}
+              className={styles.iconButton}
+              icon={<MessageSquarePlus className="h-4 w-4" />}
               disabled={!canStartNewChat}
               onClick={() => {
                 voice.onManualEdit();
                 const accepted = startNewAgentChat();
-                if (accepted) setHistoryOpen(false);
+                if (accepted) { setHistoryOpen(false); instructionInputRef.current?.focus(); }
               }}
               data-testid="agent-new-chat"
               title="Start new chat"
-            >
-              New
-            </Button>
+              aria-label="Start new chat"
+            />
             <Button
               type="button"
               size="icon"
               variant={historyOpen ? "secondary" : "ghost"}
+              className={clsx(styles.iconButton, historyOpen && styles.iconButtonActive)}
               icon={<History className="h-4 w-4" />}
               onClick={() => setHistoryOpen((open) => !open)}
               data-testid="agent-chat-history-toggle"
               title="Chat history"
               aria-label="Chat history"
+              aria-expanded={historyOpen}
             />
             <PanelToggleButton
               panel="left"
               testId="collapse-left-panel"
               onToggle={toggleLeftPanel}
+              className={styles.iconButton}
             />
           </div>
-        }
-      />
-      <section className="space-y-1.5 border-b border-line px-4 py-2 [&_label]:!gap-1">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <p className="shrink-0 text-[11px] font-semibold uppercase tracking-normal text-muted">Current brief</p>
-          <p className="truncate text-sm font-semibold leading-snug text-ink">{brief.rootKpi || "Untitled VDT"}</p>
-        </div>
-
-        <div className="space-y-1.5">
-          <Field label="Root KPI">
-            <TextInput
-              className="!py-1.5"
-              value={brief.rootKpi}
-              onChange={(event) => setBriefField("rootKpi", event.target.value)}
-            />
-          </Field>
-          <div className="grid grid-cols-2 gap-2">
+      </header>
+      <details ref={briefRef} className={styles.brief} data-testid="agent-model-context">
+        <summary className={styles.briefSummary}>
+          <SlidersHorizontal size={13} aria-hidden="true" />
+          <span className={styles.contextLabel}>Context</span>
+          <span className={styles.contextKpi}>{brief.rootKpi || "Untitled VDT"}</span>
+          <ChevronDown size={13} className={styles.disclosureChevron} aria-hidden="true" />
+        </summary>
+        <div className={styles.briefFields}>
+          <div className={styles.briefRow}>
+            <Field label="Root KPI">
+              <TextInput
+                className="!py-1.5"
+                value={brief.rootKpi}
+                onChange={(event) => setBriefField("rootKpi", event.target.value)}
+              />
+            </Field>
             <Field label="Unit">
               <TextInput
                 className="!py-1.5"
@@ -327,28 +335,26 @@ export function SetupRail() {
                 onChange={(event) => setBriefField("unit", event.target.value)}
               />
             </Field>
-            <Field label="Period">
-              <TextInput
-                className="!py-1.5"
-                value={brief.timePeriod ?? ""}
-                onChange={(event) => setBriefField("timePeriod", event.target.value)}
-              />
-            </Field>
           </div>
         </div>
-      </section>
+      </details>
 
       <div className="flex min-h-0 flex-1 flex-col">
         <section
-          className={agentActivityScrollClassName(hasRetryableError)}
+          ref={activityScrollRef}
+          className={clsx(agentActivityScrollClassName(hasRetryableError), styles.scroll, hasRetryableError && styles.retryScroll)}
           data-testid="agent-activity-scroll"
+          onScroll={(event) => {
+            const scroll = event.currentTarget;
+            followConversationRef.current = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+          }}
         >
-          <div className="space-y-3">
+          <div className={styles.conversation}>
             {historyOpen ? (
-              <section className="space-y-2" data-testid="agent-chat-history">
+              <section className={styles.history} data-testid="agent-chat-history">
                 <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-xs font-semibold uppercase tracking-normal text-muted">Chat history</h3>
-                  <span className="text-xs text-muted">{scopedAgentChatHistory.length}</span>
+                  <h3 className={styles.sectionLabel}>Recent conversations <span className="ml-1 font-normal">{scopedAgentChatHistory.length}</span></h3>
+                  <button type="button" className={styles.iconButton} aria-label="Close chat history" onClick={() => setHistoryOpen(false)}><X size={14} /></button>
                 </div>
                 {scopedAgentChatHistory.length > 0 ? (
                   <div className="space-y-2">
@@ -358,10 +364,7 @@ export function SetupRail() {
                         <button
                           type="button"
                           key={entry.runId}
-                          className={[
-                            "w-full rounded-md border px-3 py-2 text-left transition",
-                            active ? "border-accent bg-blue-50" : "border-line bg-white hover:bg-slate-50"
-                          ].join(" ")}
+                          className={clsx(styles.historyItem, active && styles.historyItemActive)}
                           onClick={() => {
                             const opened = openAgentChat(entry.runId);
                             if (opened) setHistoryOpen(false);
@@ -385,6 +388,30 @@ export function SetupRail() {
               </section>
             ) : null}
 
+            {!generateActivity && !historyOpen ? (
+              <div className={styles.emptyState} data-testid="agent-chat-empty">
+                <span className={styles.welcomeMark}><Sparkles size={22} strokeWidth={1.5} aria-hidden="true" /></span>
+                <p className={styles.emptyEyebrow}>A little clarity goes a long way</p>
+                <h3>What would you like<br />to explore?</h3>
+                <p className={styles.emptyDescription}>Turn your questions and data into<br />a clearer picture of what drives results.</p>
+                <div className={styles.suggestions}>
+                  {[
+                    { label: "Break down this KPI", text: "Help me break down the current KPI into its main drivers." },
+                    { label: "Explore my project data", text: "Help me understand which project data can support this model." },
+                    { label: "Review the model", text: "Review the current model and suggest improvements." }
+                  ].map((suggestion) => (
+                    <button type="button" key={suggestion.label} onClick={() => {
+                      voice.onManualEdit();
+                      setInstructionText(suggestion.text);
+                      instructionInputRef.current?.focus();
+                    }}>
+                      <span>{suggestion.label}</span><ArrowUpRight size={14} aria-hidden="true" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {generateActivity ? (
               <GenerateActivityPanel
                 activity={generateActivity}
@@ -400,8 +427,8 @@ export function SetupRail() {
             ) : null}
 
             {pendingChangeSet ? (
-              <div className="mt-3 rounded-md border border-emerald-200 bg-white p-3" data-testid="agent-patch-ready">
-                <div className="text-xs font-semibold uppercase tracking-normal text-emerald-700">Patch ready</div>
+              <div className={clsx("mt-3 border border-neutral-200 bg-white p-3", styles.actionCard)} data-testid="agent-patch-ready">
+                <div className="text-xs font-semibold uppercase tracking-normal text-neutral-700">Patch ready</div>
                 <p className="mt-1 text-sm leading-5 text-ink">
                   AI prepared {pendingChangeCount} graph change{pendingChangeCount === 1 ? "" : "s"}. Review or apply them.
                 </p>
@@ -441,104 +468,122 @@ export function SetupRail() {
           </div>
         </section>
 
+        <div className={styles.composerDock}>
         <form
-          className="shrink-0 border-t border-line bg-white px-4 py-3"
+          className={styles.composer}
           data-testid="agent-composer"
           onSubmit={(event) => {
             event.preventDefault();
             void submitAgentInstruction();
           }}
         >
-          {voice.active || voice.error ? (
-            <div className="mb-2 flex items-center justify-between gap-2 text-xs leading-5" data-testid="voice-input-status">
-              <span role={voice.error ? "alert" : "status"} className={voice.error ? "text-red-700" : "text-emerald-700"}>
-                {voice.error ?? (voice.state === "starting" ? "Opening microphone…" : voice.state === "finishing" ? "Finishing transcription…" : "Listening… Text appears as you speak.")}
-              </span>
-              <Button type="button" size="icon" variant="ghost" aria-label={voice.active ? "Cancel dictation" : "Dismiss voice input error"} onClick={voice.active ? voice.cancel : voice.clearError} icon={<X className="h-3.5 w-3.5" />} />
-            </div>
-          ) : null}
+          <VoiceInputStatus state={voice.state} error={voice.error} audio={voice.audio} recognizing={voice.recognizing} onStop={() => { void voice.stop(); }} onCancel={voice.cancel} onDismiss={voice.clearError} />
           <TextArea
             ref={instructionInputRef}
             rows={3}
-            className="max-h-[min(40vh,20rem)] min-h-24 overflow-y-auto rounded-md border-line bg-white p-3 text-sm leading-6 shadow-none focus:bg-white"
+            className={clsx("max-h-[min(40vh,20rem)]", styles.input)}
             value={instructionText}
             onChange={(event) => { voice.onManualEdit(); setInstructionText(event.target.value); }}
-            placeholder="Describe the situation, data, constraints, and what to do next..."
+            placeholder="Ask anything about your model…"
+            aria-label="Message VDT Agent"
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                void submitAgentInstruction();
+              }
+            }}
             data-testid="agent-instruction-input"
           />
-          <div className="mt-2 flex items-center gap-2">
-            <button
-              type="button"
-              className={[
-                "flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-line bg-slate-50 px-2.5 text-left transition",
-                "hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              ].join(" ")}
-              onClick={() => { setSettingsSection("execution"); setConfirmSpeechDownload(false); setSettingsOpen(true); }}
-              data-testid="execution-mode-configure"
-              aria-label={`Configure execution mode. ${executionSummary.primary}: ${executionReadinessLabel}`}
-              title={executionReadinessMessage}
-            >
-              <ExecutionReadinessDot state={executionReadinessState} />
-              <span className="min-w-0 flex-1 truncate" data-testid="execution-mode-summary">
-                <span className="truncate text-xs font-semibold text-ink">{executionSummary.primary}</span>
-                <span className="ml-1 truncate text-[11px] text-muted">
-                  {executionReadinessLabel}
-                </span>
-              </span>
-              <Settings2 className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" />
-            </button>
-            <Button
-              type="button"
-              size="icon"
-              variant="secondary"
-              className={clsx("h-9 w-9 shrink-0", voice.state === "listening" ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100" : speech.ready ? "text-emerald-700" : "text-slate-400")}
-              disabled={voice.state === "starting" || voice.state === "finishing" || (!voice.active && (speech.installing || speech.status?.supported === false))}
-              aria-label={voice.active ? "Stop dictation" : speech.ready ? "Start local dictation" : "Set up voice input"}
-              aria-pressed={voice.active}
-              title={speech.installing ? "Downloading the speech model…" : voice.active ? "Stop dictation and review the text" : speech.ready ? "Dictate locally into the chat draft" : "Download a model to enable local voice input"}
-              data-testid="agent-voice-input"
-              data-voice-ready={speech.ready}
-              data-voice-state={voice.state}
-              onClick={() => {
-                if (voice.active) { void voice.stop(); return; }
-                if (!speech.ready) {
-                  setSettingsSection("voice"); setConfirmSpeechDownload(true); setSettingsOpen(true); return;
-                }
-                const input = instructionInputRef.current;
-                void voice.start(instructionText, input?.selectionStart ?? instructionText.length, input?.selectionEnd ?? instructionText.length, speech.modelId, speech.language);
-              }}
-              icon={voice.state === "starting" || voice.state === "finishing" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : voice.state === "listening" ? <Square className="h-3.5 w-3.5 fill-current" /> : <Mic className="h-4 w-4" />}
-            />
-          </div>
-          <div className="mt-2 flex items-center gap-2">
-            <DataImportAttachmentButton />
-            <Button
-              type="button"
-              className={researchToggleClassName(researchMode, researchUnavailable)}
-              size="icon"
-              variant="secondary"
-              icon={<Globe className="h-4 w-4" />}
-              onClick={() => setResearchMode((mode) => nextResearchMode(mode))}
-              title={researchTooltip}
-              aria-label={`Search ${researchMode}`}
-              data-testid="agent-research-mode-toggle"
-              data-research-mode={researchMode}
-              data-provider-configured={researchStatus?.providerConfigured ?? "unknown"}
-            />
-            <div className="flex-1" />
-            <Button
-              type="submit"
-              className="h-9 shrink-0 px-3"
-              size="sm"
-              variant="primary"
-              icon={<Send className="h-4 w-4" />}
-              disabled={!canSendInstruction}
-              data-testid="agent-send-instruction"
-            >
-              Send
-            </Button>
+          <div className={styles.composerToolbar}>
+            <div className={styles.composerTools}>
+              <div ref={contextMenuRef} className={styles.contextMenu}>
+                <button
+                  ref={contextMenuButtonRef}
+                  type="button"
+                  className={clsx(styles.toolButton, contextMenuOpen && styles.toolButtonActive)}
+                  aria-label="Add context"
+                  title="Add context"
+                  aria-expanded={contextMenuOpen}
+                  aria-controls="agent-context-menu"
+                  onClick={() => setContextMenuOpen((open) => !open)}
+                  data-testid="agent-context-menu-toggle"
+                ><Plus size={18} strokeWidth={1.7} aria-hidden="true" /></button>
+                {contextMenuOpen ? (
+                  <div id="agent-context-menu" className={styles.contextPopover} role="group" aria-label="Add context">
+                    <p className={styles.sectionLabel}>Add to your conversation</p>
+                    <DataImportAttachmentButton className={clsx(styles.menuItem)} label="Attach a file" onAttach={() => {
+                      setContextMenuOpen(false);
+                      contextMenuButtonRef.current?.focus();
+                    }} />
+                    <button type="button" className={styles.menuItem} onClick={() => {
+                      setContextMenuOpen(false);
+                      if (briefRef.current) {
+                        briefRef.current.open = true;
+                        briefRef.current.querySelector("input")?.focus();
+                      }
+                    }}><SlidersHorizontal size={16} aria-hidden="true" />Edit model context</button>
+                  </div>
+                ) : null}
+              </div>
+              <WebSearchControl mode={researchMode} status={researchStatus} onChange={setResearchMode} />
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className={clsx(styles.toolButton, voice.state === "listening" && styles.recordingButton)}
+                disabled={voice.state === "starting" || voice.state === "finishing" || (!voice.active && (speech.installing || speech.status?.supported === false))}
+                aria-label={voice.active ? "Stop dictation" : speech.ready ? "Start local dictation" : "Set up voice input"}
+                aria-pressed={voice.active}
+                title={speech.installing ? "Downloading the speech model…" : voice.active ? "Stop dictation and review the text" : speech.ready ? "Dictate locally into the chat draft" : "Download a model to enable local voice input"}
+                data-testid="agent-voice-input"
+                data-voice-ready={speech.ready}
+                data-voice-state={voice.state}
+                onClick={() => {
+                  if (voice.active) { void voice.stop(); return; }
+                  if (!speech.ready) {
+                    setSettingsSection("voice"); setConfirmSpeechDownload(true); setSettingsOpen(true); return;
+                  }
+                  const input = instructionInputRef.current;
+                  void voice.start(instructionText, input?.selectionStart ?? instructionText.length, input?.selectionEnd ?? instructionText.length, speech.modelId, speech.language);
+                }}
+                icon={voice.state === "starting" || voice.state === "finishing" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : voice.state === "listening" ? <Square className="h-3.5 w-3.5 fill-current" /> : <Mic className="h-4 w-4" />}
+              />
+            </div>
+            <div className={styles.composerActions}>
+              <button
+                type="button"
+                className={styles.modelButton}
+                onClick={() => { setSettingsSection("execution"); setConfirmSpeechDownload(false); setSettingsOpen(true); }}
+                data-testid="execution-mode-configure"
+                aria-label={`Configure execution mode. ${executionSummary.primary}: ${executionReadinessLabel}`}
+                title={`${executionSummary.primary} · ${executionReadinessLabel}. ${executionReadinessMessage}`}
+              >
+                <ExecutionReadinessDot state={executionReadinessState} />
+                <span className={styles.modelCopy}><span className={styles.modelName} data-testid="execution-mode-summary">{modelLabel}</span><span className={styles.modelState}>{executionReadinessLabel}</span></span>
+                <ChevronDown size={12} className="shrink-0" aria-hidden="true" />
+              </button>
+              {canStopResponse ? (
+                <button type="button" className={styles.sendButton} aria-label="Stop response" title="Stop response" disabled={!generateActivity.canCancel || generateActivity.cancelRequested} onClick={cancelGenerate} data-testid="agent-stop-response">
+                  {generateActivity.cancelRequested ? <LoaderCircle size={16} className="animate-spin" /> : <Square size={12} fill="currentColor" />}
+                </button>
+              ) : (
+              <Button
+                type="submit"
+                className={styles.sendButton}
+                size="icon"
+                variant="ghost"
+                icon={<ArrowUp size={19} strokeWidth={2} />}
+                disabled={!canSendInstruction}
+                aria-label="Send message"
+                title="Send message"
+                data-testid="agent-send-instruction"
+              />
+              )}
+            </div>
           </div>
         </form>
+        <p className={styles.composerHint}>Enter to send <span>·</span> Shift + Enter for a new line</p>
+        </div>
       </div>
       <SettingsModal
         open={settingsOpen}

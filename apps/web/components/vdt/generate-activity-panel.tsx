@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, ChevronDown, Clock3, Loader2, RotateCcw, X } from "lucide-react";
+import { Activity, Check, CheckCircle2, ChevronDown, CircleAlert, CirclePause, Copy, GitBranch, Loader2, RotateCcw, X } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import type { AgentAnswerPayload, AgentChatMessage, PublicAgentStatus, VdtAgentQuestion } from "@/lib/agent-client";
 import type { GenerateActivityState } from "./vdt-store";
+import { MarkdownText } from "./markdown-text";
+import styles from "./agent-chat.module.css";
 
 export type AgentAnswerSubmission = Record<string, string | number | string[]> | AgentAnswerPayload[];
 
@@ -334,21 +336,33 @@ function MessageBubble({
   onAnswer: ((answers: AgentAnswerSubmission) => void) | undefined;
 }) {
   const isUser = message.role === "user";
+  const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  useEffect(() => {
+    if (!copied && !copyFailed) return;
+    const timeout = window.setTimeout(() => { setCopied(false); setCopyFailed(false); }, 2000);
+    return () => window.clearTimeout(timeout);
+  }, [copied, copyFailed]);
+
   return (
     <article
       className={clsx(
-        "rounded-md border px-3 py-2",
-        isUser ? "border-blue-100 bg-blue-50" : "border-line bg-white"
+        styles.message,
+        isUser ? styles.userMessage : message.role === "system" ? styles.systemMessage : undefined
       )}
       data-testid={`agent-chat-message-${message.role}`}
+      aria-label={isUser ? "Your message" : message.kind === "retryable_error" ? "Needs attention" : "Agent response"}
     >
-      <div className="text-xs font-semibold uppercase tracking-normal text-muted">
-        {isUser ? "User" : message.role === "system" && message.kind !== "retryable_error" ? "Runtime" : message.kind === "retryable_error" ? "Needs attention" : "Agent"}
-      </div>
-      {message.text ? (
-        <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">{message.text}</p>
+      {!isUser ? (
+        <div className={styles.assistantHeader}>
+          <span className={styles.assistantMark}><GitBranch size={12} aria-hidden="true" /></span>
+          <span>{message.kind === "retryable_error" ? "Needs attention" : message.role === "system" ? "Update" : "VDT Agent"}</span>
+        </div>
       ) : null}
-      {message.status ? (
+      {message.text ? (
+        isUser ? <p>{message.text}</p> : <MarkdownText text={message.text} className={clsx(styles.messageBody)} />
+      ) : null}
+      {message.status && message.status.message !== message.text ? (
         <div className="mt-2 text-xs font-medium text-muted" data-testid="agent-public-status">
           {message.status.message}
         </div>
@@ -360,6 +374,26 @@ function MessageBubble({
           cancelled={cancelled}
           onAnswer={onAnswer}
         />
+      ) : null}
+      {!isUser && message.text && message.kind !== "retryable_error" ? (
+        <div className={styles.messageActions}>
+          <button
+            type="button"
+            className={styles.copyButton}
+            aria-label={copied ? "Response copied" : copyFailed ? "Copy failed. Try again" : "Copy response"}
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(message.text ?? "");
+                setCopied(true);
+              } catch {
+                setCopyFailed(true);
+              }
+            }}
+          >
+            {copied ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
+            <span role="status">{copied ? "Copied" : copyFailed ? "Try again" : "Copy"}</span>
+          </button>
+        </div>
       ) : null}
     </article>
   );
@@ -376,44 +410,46 @@ function ActivityStatusRow({
   elapsed: string;
   onCancel: () => void;
 }) {
-  const isWorking = activity.status === "running" || activity.status === "needs_user_input";
+  const isWorking = activity.status === "running" && !isWaitingForUser(activity);
+  const isWaiting = isWaitingForUser(activity);
   const isRecoverable = activity.status === "recovery_required";
   const isTerminal = activity.status === "ready" || activity.status === "error" || activity.status === "cancelled";
-  if (!status && !isWorking && !isRecoverable && !isTerminal) return null;
+  if (!status && !isWorking && !isWaiting && !isRecoverable && !isTerminal) return null;
   return (
     <div
-      className="flex items-center gap-3 rounded-md border border-blue-100 bg-white px-3 py-2"
+      className={styles.statusRow}
       data-testid="agent-current-status"
     >
+      <div className={styles.statusMain}>
       {isWorking ? (
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-accent" aria-hidden="true" />
+        <Loader2 className={clsx(styles.statusIcon, "animate-spin")} aria-hidden="true" />
       ) : isRecoverable ? (
-        <RotateCcw className="h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+        <RotateCcw className={clsx(styles.statusIcon, "!text-amber-600")} aria-hidden="true" />
+      ) : activity.status === "error" ? (
+        <CircleAlert className={clsx(styles.statusIcon, "!text-red-600")} aria-hidden="true" />
+      ) : isWaiting || activity.status === "cancelled" ? (
+        <CirclePause className={styles.statusIcon} aria-hidden="true" />
       ) : (
-        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+        <CheckCircle2 className={styles.statusIcon} aria-hidden="true" />
       )}
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-semibold text-ink">
-          {status?.message ?? statusLabel(activity)}
-        </div>
-        <div className="truncate text-xs text-muted">{activity.providerLabel} - {statusLabel(activity)}</div>
+        <span className={styles.statusLabel}>{statusLabel(activity)}</span>
+        <span className={styles.elapsed} data-testid="generate-activity-elapsed">{elapsed}</span>
       </div>
-      <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-muted">
-        <Clock3 className="h-3.5 w-3.5" aria-hidden="true" />
-        <span data-testid="generate-activity-elapsed">{elapsed}</span>
-      </div>
-      {isWorking || isRecoverable ? (
+      {isWorking || isWaiting || isRecoverable ? (
         <Button
           size="sm"
           variant="ghost"
           icon={<X className="h-3.5 w-3.5" />}
-          className="shrink-0"
+          className={styles.cancelButton}
           disabled={!activity.canCancel || activity.cancelRequested}
           onClick={onCancel}
           data-testid="cancel-generate"
         >
           {activity.cancelRequested ? "Cancelling" : "Cancel"}
         </Button>
+      ) : null}
+      {status?.message && activity.status !== "cancelled" && (activity.status !== "ready" || status.phase === "ready") ? (
+        <p className={styles.statusNote}>{status.message}</p>
       ) : null}
     </div>
   );
@@ -452,7 +488,7 @@ function QuestionCard({
 
   return (
     <form
-      className="mt-3 space-y-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-3"
+      className={clsx("mt-3 space-y-3 border border-stone-200 bg-white/80 px-3 py-3", styles.actionCard)}
       data-testid="generate-questions"
       onSubmit={(event) => {
         event.preventDefault();
@@ -604,7 +640,7 @@ function MutationPreviewCard({
   const validationLabel = proposal.validation.valid ? "Validation passed" : "Validation needs attention";
   return (
     <section
-      className="rounded-md border border-blue-200 bg-blue-50 px-3 py-3"
+      className={clsx("border border-blue-200 bg-blue-50 px-3 py-3", styles.actionCard)}
       data-testid="mutation-preview"
     >
       <div className="text-sm font-semibold text-ink">{proposal.title}</div>
@@ -661,7 +697,7 @@ function GenericApprovalCard({
 }) {
   return (
     <section
-      className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3"
+      className={clsx("border border-amber-200 bg-amber-50 px-3 py-3", styles.actionCard)}
       data-testid="generic-approval-request"
     >
       <div className="text-sm font-semibold text-ink">{request.title || "Approval requested"}</div>
@@ -787,7 +823,7 @@ export function GenerateActivityPanel({
       data-testid="generate-activity-panel"
       aria-live="polite"
     >
-      <div className="space-y-2" data-testid="agent-chat-thread">
+      <div className={styles.thread} data-testid="agent-chat-thread">
         {visibleMessages.map((message) => (
           <MessageBubble
             key={message.id}
@@ -805,6 +841,24 @@ export function GenerateActivityPanel({
         elapsed={elapsed}
         onCancel={onCancel}
       />
+
+      {events.length > 0 ? (
+        <details className={styles.workLog} data-testid="agent-work-log">
+          <summary className={styles.workSummary}>
+            <Activity size={14} aria-hidden="true" />
+            <span>Work log <span className="ml-1 opacity-70">{events.length}</span></span>
+            <ChevronDown size={12} className={styles.disclosureChevron} aria-hidden="true" />
+          </summary>
+          <div className={styles.workEvents}>
+            {events.slice(-12).map((event) => (
+              <article key={event.id} className={styles.workEvent}>
+                <h4>{event.title}</h4>
+                {event.message ? <p>{event.message}</p> : null}
+              </article>
+            ))}
+          </div>
+        </details>
+      ) : null}
 
       {pendingMutation ? (
         <MutationPreviewCard
@@ -825,7 +879,7 @@ export function GenerateActivityPanel({
       {activity.retryableError ? (
         <div
           ref={retryCardRef}
-          className="sticky bottom-0 z-10 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 shadow-sm"
+          className={clsx("sticky bottom-0 z-10 border border-amber-200 bg-amber-50 px-3 py-3 shadow-sm", styles.actionCard)}
           data-testid="agent-retryable-error"
         >
           <p className="text-sm leading-5 text-ink">{activity.retryableError.message}</p>
@@ -875,7 +929,7 @@ export function GenerateActivityPanel({
         </div>
       ) : activity.status === "error" && activity.message ? (
         <div
-          className="rounded-md border border-red-200 bg-red-50 px-3 py-3"
+          className={clsx("border border-red-200 bg-red-50 px-3 py-3", styles.actionCard)}
           data-testid="agent-hard-error"
         >
           <p className="text-sm leading-5 text-ink">{activity.message}</p>

@@ -8,8 +8,9 @@ Status: implemented as an alpha capability for localhost development and the des
 - Choose Tiny (75 MiB), Base (142 MiB, default) or Small (466 MiB). These are multilingual models. Russian is the default dictation language; users may select another language or automatic detection.
 - Download requires a separate **Download and enable** confirmation naming the model and approximate size. **Not now** performs no download. There is no automatic download when opening settings or choosing a model.
 - Progress, cancellation, retryable errors and offline readiness are shown in settings. Installation enables the preference; the user starts recording with a fresh microphone click.
-- A ready microphone toggles recording/stop. Recognized words appear in the existing draft during recording; the current phrase can be refined. Stop finishes the final fragment. Send is disabled while recording/finalizing and is always a separate manual action.
+- A ready microphone toggles recording/stop. A dark recording strip shows Listening, elapsed captured-audio duration and a rolling waveform calculated from actual PCM energy, even while the local recognizer is busy. No speech detected after three seconds is reported explicitly. Recognized words appear in the existing draft as phrases finish; the current phrase can be refined. Stop changes to Transcribing audio with an elapsed processing timer and a frozen recording waveform. Opening the microphone, recording, final processing and failure are separate states. Send is disabled while recording/finalizing and is always a separate manual action.
 - Cancel restores the draft that existed before recording. Typing during recording stops dictation, preserves the manual edit and discards late recognizer responses. Changing VDT or unmounting stops capture and invalidates callbacks.
+- Repeated Stop actions share one completion operation. Errors leave an explicit stopped/error card rather than a listening indicator. The waveform is a bounded display of microphone energy, not a transcript, speech-quality score or completion estimate.
 
 ## Recognition And Latency
 

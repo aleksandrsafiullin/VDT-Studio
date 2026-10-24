@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useId, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { clsx } from "clsx";
 import type { ByokGateway, ByokProtocol } from "@/lib/execution-mode-catalog";
 import { hasLocalAiUi, resolveVdtAppMode } from "@/lib/app-mode";
 import { resolveExecutionCategory, type ExecutionCategory } from "@/lib/execution-category";
@@ -9,6 +8,7 @@ import { LocalCliSettings, LocalExecutionOptions } from "./local-cli-settings";
 import { LocalModelSettings } from "./local-model-settings";
 import { ByokSettings } from "./byok-settings";
 import { useVdtStudioStore } from "./vdt-store";
+import styles from "./settings-modal.module.css";
 
 const PROTOCOL_LABELS: Record<ByokProtocol, string> = {
   anthropic: "Anthropic", openai: "OpenAI", azure: "Azure OpenAI", gemini: "Google Gemini"
@@ -55,17 +55,17 @@ export function ExecutionModeSettings() {
 
   return (
     <div className="space-y-5">
-      <div className="space-y-3 border-b border-line pb-4">
-        <div className={clsx("grid w-full gap-1 rounded-lg border border-slate-200 bg-slate-100 p-1 sm:inline-flex sm:w-fit", tabs.length === 3 ? "grid-cols-3" : "grid-cols-1")} role="tablist" aria-label="Execution mode">
+      <div className={styles.executionHeader}>
+        <div className={styles.tabs} role="tablist" aria-label="Execution mode">
           {tabs.map((tab) => (
             <button key={tab.id} id={`${panelId}-${tab.key}-tab`} type="button" role="tab"
               aria-selected={activeTab === tab.id} aria-controls={`${panelId}-${tab.key}-panel`} tabIndex={activeTab === tab.id ? 0 : -1}
               data-testid={`execution-mode-tab-${tab.key}`}
-              className={clsx("min-w-0 whitespace-nowrap rounded-md px-2 py-2 text-[11px] font-semibold transition sm:px-4 sm:text-xs", activeTab === tab.id ? "bg-ink text-white shadow-sm" : "text-slate-600 hover:bg-white/70 hover:text-ink")}
+              className={styles.tab}
               onClick={() => setExecutionCategory(tab.id)} onKeyDown={handleTabKeyDown}>{tab.label}</button>
           ))}
         </div>
-        <p className="px-1 text-[11px] font-medium text-slate-500">{statusLine}</p>
+        <p className={styles.modeStatus}>{statusLine}</p>
       </div>
       <div id={`${panelId}-${selectedTab.key}-panel`} role="tabpanel" aria-labelledby={`${panelId}-${selectedTab.key}-tab`} data-testid={`execution-mode-panel-${selectedTab.key}`}>
         {activeTab === "cli_subscriptions" ? <LocalCliSettings /> : activeTab === "local_models" ? <LocalModelSettings /> : (

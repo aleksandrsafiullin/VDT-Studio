@@ -34,6 +34,40 @@ export class PcmResampler {
 
 interface Fragment { segment: number; audio: Float32Array; final: boolean }
 
+export interface MicrophoneLevels {
+  levels: readonly number[];
+  elapsedMs: number;
+  hasSpeech: boolean;
+}
+
+export function emptyMicrophoneLevels(): MicrophoneLevels {
+  return { levels: Array<number>(40).fill(0), elapsedMs: 0, hasSpeech: false };
+}
+
+/** Bounded visual feedback from captured PCM, independent of recognizer latency. */
+export class MicrophoneLevelMeter {
+  #levels = emptyMicrophoneLevels().levels;
+  #total = 0;
+  #window = 0;
+  #power = 0;
+  #hasSpeech = false;
+
+  push(samples: Float32Array): MicrophoneLevels | undefined {
+    if (!samples.length) return;
+    this.#total += samples.length;
+    this.#window += samples.length;
+    for (const sample of samples) this.#power += sample * sample;
+    // AudioWorklet messages determine the update rate; never synthesize motion.
+    if (this.#window < SPEECH_SAMPLE_RATE / 20) return;
+    const rms = Math.sqrt(this.#power / this.#window);
+    this.#hasSpeech ||= rms > 0.006;
+    this.#levels = [...this.#levels.slice(1), Math.min(1, rms * 7)];
+    this.#window = 0;
+    this.#power = 0;
+    return { levels: this.#levels, elapsedMs: this.#total * 1000 / SPEECH_SAMPLE_RATE, hasSpeech: this.#hasSpeech };
+  }
+}
+
 /** Incremental snapshots revise only the current phrase; final phrases are never dropped. */
 export class LiveDictationSession {
   #chunks: Float32Array[] = [];

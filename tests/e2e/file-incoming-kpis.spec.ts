@@ -237,6 +237,7 @@ test("creates and reviews every Excel category, reloads and reuses its original 
     await expect(page.getByRole("button", { name: "Select Other downtime", exact: true })).toBeInViewport();
     await page.getByRole("button", { name: "Select Other downtime", exact: true }).click();
     const savedSourceList = waitForDataResponse(page, "/api/data/files", "GET");
+    await page.getByTestId("agent-context-menu-toggle").click();
     await page.getByTestId("data-import-attachment-button").click();
     await requireOk(await savedSourceList);
     await expect(page.getByTestId("data-import-target")).toHaveText("Target: Other downtime");

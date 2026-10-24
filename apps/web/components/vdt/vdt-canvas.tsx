@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
-  Controls,
   ReactFlow,
   useNodesState,
   type Edge,
@@ -23,17 +22,17 @@ import {
   percentageChange,
   resolveFormulaEdgeRelation
 } from "@vdt-studio/vdt-core";
-import { Button } from "@/components/ui/button";
 import { DataImportWizard } from "@/components/data-import/data-import-wizard";
 import { requestIncomingKpisFromFile } from "@/components/data-import/import-context";
-import { SquareGrid2x2 } from "./canvas-toolbar-icons";
-import { KpiSpacingPopover } from "./kpi-spacing-popover";
+import { CanvasControls, CANVAS_ARIA_LABEL_CONFIG } from "./canvas-controls";
 import { VdtNodeCard, type VdtNodeCardData } from "./vdt-node-card";
 import { collectExistingPositions } from "./layout-positions";
 import { useVdtStudioStore } from "./vdt-store";
 import { useSmartKpi } from "./use-smart-kpi";
 import { SmartKpiPanel } from "./smart-kpi-panel";
 import { visibleSmartKpiTargets } from "./smart-kpi-geometry";
+import { clsx } from "clsx";
+import styles from "./workspace-shell.module.css";
 
 const nodeTypes: NodeTypes = {
   vdtNode: VdtNodeCard
@@ -254,23 +253,11 @@ export function VdtCanvas() {
   return (
     <div
       ref={canvasRef}
-      className="relative flex-1 min-h-0 w-full overflow-hidden bg-canvas"
+      className={clsx("relative flex-1 min-h-0 w-full overflow-hidden", styles.canvas)}
       data-testid="vdt-canvas"
     >
       <DataImportWizard />
       <SmartKpiPanel controller={smart} viewportRevision={viewportRevision} />
-      <div className="absolute left-4 top-4 z-10 flex items-center gap-2">
-        <Button
-          size="sm"
-          className="h-8"
-          data-testid="auto-distribute-layout"
-          icon={<SquareGrid2x2 />}
-          onClick={autoDistributeLayout}
-        >
-          Auto-distribute
-        </Button>
-        <KpiSpacingPopover />
-      </div>
       {flowCanRender ? (
         <div className="absolute inset-0">
           <ReactFlow
@@ -292,9 +279,10 @@ export function VdtCanvas() {
             onMoveEnd={prepareVisible}
             nodesDraggable
             panOnScroll
+            ariaLabelConfig={CANVAS_ARIA_LABEL_CONFIG}
           >
-            <Background color="#d8dee8" gap={22} size={1} />
-            <Controls position="bottom-left" />
+            <Background color="var(--workspace-line-soft)" gap={24} size={0.8} />
+            <CanvasControls onAutoDistribute={autoDistributeLayout} />
           </ReactFlow>
         </div>
       ) : null}

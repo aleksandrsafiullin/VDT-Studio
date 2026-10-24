@@ -1,0 +1,121 @@
+.editor {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  container-type: inline-size;
+}
+
+.editor [data-testid="formula-node-palette"] > div > span,
+.editor [data-testid="formula-node-palette"] > div > span > div {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.editor [data-testid="formula-editor-drop-zone"] {
+  display: block;
+  min-height: 42px;
+  padding: 8px;
+}
+
+.editor [data-testid="formula-token-row"] {
+  width: 100%;
+  min-width: 0;
+  gap: 4px 1px;
+}
+
+.editor [data-formula-token-kind] {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 24px;
+  font-size: 0.75em;
+}
+
+.editor [data-formula-token-kind="reference"] { max-width: min(100%, 10rem); }
+
+.editor [data-formula-token-kind="reference"] > span,
+.editor [data-formula-token-kind="number"] > span {
+  min-width: 0;
+  height: 24px;
+  gap: 2px;
+  border-radius: 6px;
+  padding: 2px 5px;
+  font-size: inherit;
+  font-weight: 450;
+  line-height: 16px;
+}
+
+.editor [data-testid^="formula-token-drag-handle-"] {
+  width: 12px;
+  height: 20px;
+  padding: 0;
+  color: var(--workspace-faint, #86868b);
+  opacity: 0;
+}
+
+.editor [data-testid^="formula-token-drag-handle-"] svg { width: 10px; height: 10px; }
+.editor [data-formula-token-kind]:hover [data-testid^="formula-token-drag-handle-"],
+.editor [data-formula-token-kind]:focus-within [data-testid^="formula-token-drag-handle-"] { opacity: 1; }
+
+.editor [data-formula-token-kind]:not([data-formula-token-kind="reference"]):not([data-formula-token-kind="number"]) > span {
+  position: relative;
+  gap: 1px;
+}
+
+.editor [data-formula-token-kind]:not([data-formula-token-kind="reference"]):not([data-formula-token-kind="number"]) > span > span {
+  min-width: 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--workspace-ink, #1d1d1f);
+  font-size: 1.15em;
+  font-weight: 500;
+}
+
+.editor [data-testid="formula-number-token"] {
+  width: auto;
+  min-width: 2ch;
+  max-width: 14ch;
+  border: 0;
+  padding: 0 1px;
+  font-size: inherit;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+}
+
+.editor [data-formula-token-kind] button[aria-label^="Remove"] {
+  width: 12px;
+  height: 14px;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.editor [data-formula-token-kind]:hover button[aria-label^="Remove"],
+.editor [data-formula-token-kind]:focus-within button[aria-label^="Remove"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.editor [data-testid^="formula-operator-remove-"] {
+  position: absolute;
+  z-index: 2;
+  top: -5px;
+  right: -7px;
+  border-radius: 50%;
+  background: var(--workspace-surface, #fff);
+}
+
+.editor [data-testid^="formula-insert-slot-"] {
+  width: 4px;
+  min-width: 4px;
+  min-height: 24px;
+  padding: 0;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .editor [data-formula-token-kind] button[aria-label^="Remove"] { opacity: 1; pointer-events: auto; }
+  .editor [data-testid^="formula-operator-remove-"] { position: static; }
+  .editor [data-formula-token-kind] { min-height: 30px; }
+  .editor [data-testid^="formula-token-drag-handle-"] { width: 18px; height: 28px; opacity: 1; }
+}

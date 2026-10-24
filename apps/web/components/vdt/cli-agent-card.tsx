@@ -126,6 +126,8 @@ export function CliAgentCard({
   return (
     <article
       data-testid={`cli-agent-card-${catalog.id}`}
+      data-settings-card
+      data-selected={selected}
       className={clsx(
         "overflow-hidden rounded-xl border bg-white transition",
         selected ? "border-blue-300 ring-1 ring-blue-100" : "border-line hover:border-slate-300"

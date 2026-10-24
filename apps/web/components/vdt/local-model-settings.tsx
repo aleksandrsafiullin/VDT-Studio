@@ -49,6 +49,8 @@ function LocalModelCard({
   return (
     <article
       data-testid={`local-model-card-${preset.id}`}
+      data-settings-card
+      data-selected={selected}
       className={clsx(
         "flex flex-col gap-3 rounded-lg border bg-white p-3 transition",
         selected ? "border-accent ring-2 ring-blue-100" : "border-line hover:border-slate-300"

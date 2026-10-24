@@ -89,6 +89,7 @@ export function PanelCollapseTab({
 }) {
   return (
     <Panel
+      data-collapsed-panel={panel}
       className={clsx(
         "flex h-full min-h-0 flex-col items-center py-3",
         panel === "left" ? "border-r" : "border-l"

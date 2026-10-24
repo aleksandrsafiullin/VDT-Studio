@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_EXECUTION_SETTINGS } from "@/lib/execution-mode-catalog";
 import { GenerateActivityPanel } from "./generate-activity-panel";
+import { WebSearchControl, researchModeTooltip } from "./web-search-control";
 
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
@@ -21,7 +22,7 @@ const localStorageMock = (() => {
 
 vi.stubGlobal("localStorage", localStorageMock);
 
-const { ExecutionReadinessDot, SetupRail, agentActivityScrollClassName, researchModeTooltip, researchToggleClassName } = await import("./setup-rail");
+const { ExecutionReadinessDot, SetupRail, agentActivityScrollClassName, describeComposerReadiness } = await import("./setup-rail");
 const { useVdtStudioStore } = await import("./vdt-store");
 
 describe("SetupRail agent composer", () => {
@@ -47,17 +48,32 @@ describe("SetupRail agent composer", () => {
     });
   });
 
-  it("renders the search mode toggle as Auto by default", () => {
+  it("names the default web-search mode and makes unconfigured model setup explicit", () => {
     const html = renderToStaticMarkup(<SetupRail />);
 
-    expect(html).toContain('data-testid="data-import-attachment-button"');
-    expect(html).toContain('aria-label="Attach data file to create incoming KPIs"');
+    expect(html).toContain('data-testid="agent-context-menu-toggle"');
+    expect(html).toContain('aria-label="Add context"');
+    expect(html).not.toContain('data-testid="data-import-attachment-button"');
     expect(html).not.toContain('data-testid="data-import-wizard"');
     expect(html).toContain('data-testid="agent-research-mode-toggle"');
     expect(html).toContain('data-research-mode="auto"');
-    expect(html).toContain("Agent may search when local skills are not enough.");
+    expect(html).toContain("Let the agent search when it needs more context.");
+    expect(html).toContain("<span>Auto</span>");
+    expect(html).toContain("Setup needed");
     expect(html).toContain("max-h-[min(40vh,20rem)]");
     expect(html).toContain('data-testid="agent-instruction-input"');
+    expect(html).toContain('aria-label="Message VDT Agent"');
+    expect(html).not.toContain('label="Period"');
+    expect(html).not.toContain(">Period<");
+  });
+
+  it("distinguishes configured API settings from live CLI checks without claiming a tested API connection", () => {
+    expect(describeComposerReadiness(undefined, true)).toEqual({
+      state: "ready", label: "Ready to send", message: "Provider settings are configured. Connection and model access are checked when a request starts."
+    });
+    expect(describeComposerReadiness(undefined, false)).toMatchObject({ state: "warning", label: "Setup needed" });
+    const checking = { state: "checking" as const, canExecute: false, label: "Connecting…", message: "Checking chat availability for the selected model." };
+    expect(describeComposerReadiness(checking, false)).toBe(checking);
   });
 
   it.each([
@@ -78,19 +94,20 @@ describe("SetupRail agent composer", () => {
     expect(agentActivityScrollClassName(true)).toContain("overflow-auto");
   });
 
-  it("shows amber and a tooltip when research is on and the provider is unconfigured", () => {
+  it("separates the selected web mode from missing provider setup, and never marks Off as unavailable", () => {
     const status = { providerConfigured: false as const, providerId: "noop" };
     expect(researchModeTooltip("on", status)).toBe(
-      "Agent should use research for unknown/current process context. Research provider is not configured."
+      "Use web search for missing or current information. Search provider is not configured."
     );
-    expect(researchModeTooltip("auto", status)).toContain("Research provider is not configured.");
-    expect(researchModeTooltip("off", status)).not.toContain("Research provider is not configured.");
-    expect(researchToggleClassName("on", true)).toContain("bg-amber-50");
-    expect(researchToggleClassName("on", true)).toContain("text-amber-700");
-    expect(researchToggleClassName("on", true)).not.toContain("bg-emerald-50");
-    expect(researchToggleClassName("on", false)).toContain("bg-emerald-50");
-    expect(researchToggleClassName("off", true)).toContain("bg-amber-50");
-    expect(researchToggleClassName("off", true)).not.toContain("bg-slate-50");
+    expect(researchModeTooltip("auto", status)).toContain("Search provider is not configured.");
+    expect(researchModeTooltip("off", status)).toBe("Web search is off. Do not search the web.");
+    const off = renderToStaticMarkup(<WebSearchControl mode="off" status={status} onChange={() => undefined} />);
+    const on = renderToStaticMarkup(<WebSearchControl mode="on" status={status} onChange={() => undefined} />);
+    expect(off).toContain('aria-label="Web search: Off"');
+    expect(off).not.toContain("needs setup");
+    expect(on).toContain('aria-label="Web search: On — needs setup"');
+    expect(on).toContain("<span>On</span>");
+    expect(researchModeTooltip("on", { ...status, checkFailed: true })).toContain("availability could not be checked");
   });
 
   it("keeps retry controls inside the scroll region when activity has a retryable error", () => {

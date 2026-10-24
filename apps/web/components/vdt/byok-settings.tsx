@@ -166,9 +166,9 @@ export function ByokSettings() {
 
   return (
     <div className="space-y-4" data-testid="byok-settings">
-      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <section data-settings-card className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
         <h3 className="text-sm font-semibold text-ink">Provider routing</h3>
-        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <div data-settings-routing className="mt-4 grid gap-4 xl:grid-cols-2">
           <SettingsChipRow
             label="Protocol"
             options={PROTOCOL_CHIPS}

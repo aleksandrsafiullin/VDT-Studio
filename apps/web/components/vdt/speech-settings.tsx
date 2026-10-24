@@ -29,12 +29,12 @@ export function SpeechSettings({ confirmOnOpen = false }: { confirmOnOpen?: bool
 
   return (
     <section className="space-y-5" data-testid="speech-settings">
-      <div className="rounded-lg border border-line bg-white p-4">
+      <div data-settings-card className="rounded-lg border border-line bg-white p-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-ink"><Mic className="h-4 w-4" aria-hidden />Local voice input</div>
         <p className="mt-2 text-sm leading-6 text-muted">Dictate into the chat draft and edit before sending. Speech is recognized on this computer. Audio is never sent to a transcription service.</p>
         <p className="mt-2 text-xs leading-5 text-muted">Download a speech model once, then dictate offline. Text appears as you speak, with a short processing delay.</p>
       </div>
-      <div className="grid gap-4 rounded-lg border border-line bg-white p-4">
+      <div data-settings-card className="grid gap-4 rounded-lg border border-line bg-white p-4">
         <Field label="Speech model">
           <SelectInput value={speech.modelId} disabled={speech.installing || starting} data-testid="speech-model-select"
             onChange={(event) => { speech.setModel(event.target.value as SpeechModelId); setConfirm(false); }}>

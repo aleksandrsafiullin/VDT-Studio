@@ -2,6 +2,7 @@
 
 import { useCallback, useRef } from "react";
 import { clsx } from "clsx";
+import styles from "./workspace-shell.module.css";
 
 /**
  * Drag resize supports pointer and mouse events. Keyboard panel sizing is out of scope.
@@ -79,9 +80,7 @@ export function PanelResizeHandle({
       data-testid={testId}
       className={clsx(
         "hidden h-full min-h-0 w-full min-w-[6px] cursor-col-resize touch-none lg:block",
-        "relative before:absolute before:inset-y-0 before:w-px before:bg-line",
-        "before:left-1/2 before:-translate-x-1/2",
-        "hover:before:bg-accent/40 active:before:bg-accent/60"
+        styles.resizeHandle
       )}
       onPointerDown={onPointerDown}
       onMouseDown={onMouseDown}

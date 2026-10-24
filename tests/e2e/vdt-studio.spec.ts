@@ -1455,10 +1455,11 @@ test("creates a saved VDT from the project workspace and restores its brief", { 
   await expect(page.getByTestId("vdt-canvas")).toBeVisible();
   await expect(page).toHaveURL(/\?vdt=/);
   await page.reload();
-  const brief = page.locator("section").filter({ has: page.getByRole("heading", { name: "VDT Agent", exact: true }) }).first();
+  const brief = page.getByTestId("agent-model-context");
+  await brief.locator("summary").click();
   await expect(brief.getByRole("textbox", { name: "Root KPI", exact: true })).toHaveValue("Overall Equipment Effectiveness");
   await expect(brief.getByRole("textbox", { name: "Unit", exact: true })).toHaveValue("%");
-  await expect(brief.getByRole("textbox", { name: "Period", exact: true })).toHaveValue("daily");
+  await expect(brief.getByRole("textbox", { name: "Period", exact: true })).toHaveCount(0);
 });
 
 test("opens settings modal with CLI, Local models and API keys tabs", { tag: "@chromium" }, async ({ page }, testInfo) => {
@@ -2433,9 +2434,10 @@ test("keeps the primary creation flow usable on mobile", { tag: "@mobile-chrome"
   test.skip(testInfo.project.name !== "mobile-chrome", "Mobile smoke only runs on the mobile project.");
 
   await expect(page.getByRole("heading", { name: "VDT Agent", exact: true })).toBeVisible();
+  await page.getByTestId("agent-model-context").locator("summary").click();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
   await expect(page.getByTestId("agent-instruction-input")).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Send$/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeVisible();
 });
 
 test("keeps execution settings reachable on mobile", { tag: "@mobile-chrome" }, async ({ page }, testInfo) => {
@@ -2583,10 +2585,12 @@ test("persists panel width after drag resize", { tag: "@chromium" }, async ({ pa
 test("collapses and expands the setup rail", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Panel collapse runs on desktop viewport.");
 
+  await page.getByTestId("agent-model-context").locator("summary").click();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
   await page.getByTestId("collapse-left-panel").click();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toHaveCount(0);
   await page.getByTestId("expand-left-panel").click();
+  await page.getByTestId("agent-model-context").locator("summary").click();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
 });
 
@@ -2887,6 +2891,7 @@ test("resets display preferences to defaults", { tag: "@chromium" }, async ({ pa
   await expect.poll(async () => (await readPersistedUi(page))?.leftPanelCollapsed).toBe(false);
   await expect.poll(async () => (await readPersistedUi(page))?.rightPanelCollapsed).toBe(false);
 
+  await page.getByTestId("agent-model-context").locator("summary").click();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
   await expect(page.getByTestId("right-panel")).toBeVisible();
   await expect(page.getByTestId("scenario-modal")).toHaveCount(0);
@@ -2954,6 +2959,7 @@ test("shows full setup rail on mobile when left panel was collapsed on desktop",
   await page.reload();
 
   await expect(page.getByRole("heading", { name: "VDT Agent", exact: true })).toBeVisible();
+  await page.getByTestId("agent-model-context").locator("summary").click();
   await expect(page.getByRole("textbox", { name: "Root KPI" })).toBeVisible();
   await expect(page.getByTestId("expand-left-panel")).toHaveCount(0);
 });
@@ -2964,19 +2970,20 @@ test("updates execution mode summary when settings change without reload", { tag
   const setupRail = page.locator("section").filter({ has: page.getByRole("heading", { name: "VDT Agent", exact: true }) }).first();
   const summary = setupRail.getByTestId("execution-mode-summary");
 
-  await expect(summary).toContainText("OpenAI");
+  await expect(setupRail.getByTestId("execution-mode-configure")).toHaveAttribute("aria-label", /OpenAI/);
+  await expect(summary).toContainText("gpt");
 
   await setupRail.getByTestId("execution-mode-configure").click();
   await expect(page.getByTestId("settings-modal")).toBeVisible();
 
   await page.getByTestId("execution-mode-tab-local-models").click();
-  await expect(summary).toContainText("Ollama");
+  await expect(setupRail.getByTestId("execution-mode-configure")).toHaveAttribute("aria-label", /Ollama/);
   await expect(summary).toContainText("qwen3");
 
   await page.getByTestId("execution-mode-tab-byok").click();
   await page.getByTestId("byok-protocol-openai").click();
   await page.getByTestId("byok-gateway-preset").selectOption("alibaba-coding-plan");
-  await expect(summary).toContainText("Alibaba Cloud Coding Plan");
+  await expect(setupRail.getByTestId("execution-mode-configure")).toHaveAttribute("aria-label", /Alibaba Cloud Coding Plan/);
   await expect(summary).toContainText("qwen3-coder-plus");
 });
 

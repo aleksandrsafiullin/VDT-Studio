@@ -104,6 +104,22 @@ Current status: implemented as an alpha foundation. W0.1 atomic revision conflic
 
 ### Factor-tree editing and calculation
 
+The editor uses an Apple-style white, light gray and graphite palette shared
+with the chat. The inspector header omits its node-status icon; status remains
+on node cards. The editor has a compact project/action header, an icon
+navigation rail, a rounded canvas and a grouped node inspector. Zoom, Fit View,
+Auto-distribute, Spacing and node interaction share one floating toolbar at the
+top left, with view, layout and locking controls visually grouped. Layout labels
+hide on narrow canvases while icons and tooltips remain. The desktop canvas fits the available height; mobile retains
+its existing minimum. Panel width/collapse preferences and save-aware Home/Back
+navigation remain in place. The inspector highlights the calculated value and
+unit while preserving visible source notes and **≈** estimates, formula editing,
+readonly derived-source values, scenario locks, root protection and warnings.
+The visual formula editor uses compact chips, bounded labels with full-name
+titles, unboxed symbols and numeric fields sized to their contents. Drag/remove
+controls reveal on hover/focus (remain visible for coarse pointers). Caret,
+insertion, reorder, validation and the raw expression remain unchanged.
+
 - Create and edit nodes, formulas, relations, units, assumptions and statuses.
 - Evaluate formulas without `eval` and expose a calculation trace.
 - Run scenario overrides and calculate root impact.
@@ -118,6 +134,23 @@ Implemented alpha: the editor has one **Versions** control in place of History a
 Restoration requires an inline confirmation and creates a checkpoint of the current graph, scenarios and source references before replacing model state. Saved node positions are preserved. The target is resolved before the checkpoint can evict it at the 20-version FIFO cap. Undo restores the checkpoint and the prior selected node/scenario; it is available during the current page session until subsequent model edits or a VDT switch. Closing the panel leaves an Undo notice in the editor. After reload or further edits, the backup remains accessible through Versions until normal FIFO eviction. Source references are restored, not original file bytes; pending unapplied previews are cleared and are not included in the checkpoint. Version state uses existing draft/revision persistence and does not change the W0.5 durable-ownership boundary.
 
 ### In-product VDT agent
+
+The chat rail has a compact header, a collapsed **Context** editor for the current
+root KPI and unit in one row, without a repeated Current brief label or Period field,
+dark user bubbles and unboxed formatted assistant responses with Copy.
+The empty view offers prompts that only fill the editable draft. A rounded
+composer groups **+ → Attach a file / Edit model context**, web-search mode,
+local dictation, the active model/readiness control and Send. A globe icon with
+**Off / Auto / On** names the selected search mode; provider setup/check failures are explained
+separately. The model control shows its readiness label: green ready, gray
+checking, amber setup/recovery and red missing CLI. API configuration readiness
+does not claim a successful connection test. Enter sends except
+during IME composition; Shift + Enter inserts a newline. When the agent is running
+and the draft is empty, the composer offers Stop. Chat history and New remain in
+the header. Actual status/elapsed time and a collapsed Work log replace stacked
+status boxes; questions, retries and approvals retain their existing callbacks.
+The redesign changes presentation and draft interaction, not model admission,
+generation policy, persistence or provider qualification.
 
 - Preserve the original-language request, inspect bounded local skill candidates and make an explicit agent-owned selection.
 - Decide the next bounded action, use one reviewed tool, receive feedback and iterate.
@@ -153,6 +186,11 @@ an explicit new run; same-session turn-budget continuation remains unfinished.
 ### Local voice input
 
 Implemented alpha: a microphone beside the chat model/provider selector dictates into the editable draft using local whisper.cpp. Provisional text appears during recording, Stop finishes recognition and Send remains manual. Settings → Voice input selects the multilingual model/language and requires explicit download confirmation. Model installation supports Apple silicon/Intel macOS and Windows x64; hosted web fails closed. Native packaged/Windows verification remains open. See [Voice input](VOICE_INPUT.md).
+
+The composer displays actual captured microphone energy and elapsed recording
+time before recognition finishes, then a distinct final-transcription state and
+processing timer. Silence and recognition failure are explicit. These indicators
+do not imply instantaneous word-by-word recognition or a transcription-quality guarantee.
 
 ### Skills and process discovery
 
@@ -200,6 +238,13 @@ Settings separates **CLI**, **Local models**, and **API keys** into top-level ta
 
 Trusted-local web/desktop hosts admit immutable Ollama/LM Studio/vLLM Model Agent bindings from their fixed-endpoint server catalogs (up to 100 valid model IDs per backend, plus the equivalent untagged alias for an installed Ollama :latest model). Catalogs refresh at most once per ten seconds on binding requests, including after an empty catalog or installation. Hosted mode, production-build evaluation and VDT_LOCAL_MODEL_AGENT_ENABLED=false disable this admission. Browser Settings cannot provision bindings. Starts require an exact backend/model match and use the existing Supervisor/Gateway without a runner/API/default fallback. Native packaging, model quality and performance remain unqualified; provider certification is unchanged. Missing matches explain how to start the server and install/load/refresh models. Ollama uses bounded streaming rather than a single five-minute deadline, and each local step receives a compact current graph. Repeated successful reads without a graph change also stop instead of running indefinitely. Numeric facts already present in the original request can be recorded with a server-verified exact quote; missing values still require explicit editable assumptions or user answers. CLI subscriptions retain their separate external_cli_agent requirement.
 
+The Settings dialog uses the editor's neutral visual theme: a light sidebar,
+grouped fields, segmented execution tabs and checkmarked provider choices. The
+dialog retains its size across sections and scrolls content independently;
+narrow windows use horizontal navigation. Memory and Appearance remain disabled.
+This presentation does not change provider readiness, credential retention or
+download confirmation behavior.
+
 ### Editor actions
 
 The node inspector provides **Properties** and **Warnings**. Edits apply directly; there is no per-node Accept/Reject step. AI requests use the chat and the existing node-card **Add incoming KPIs with AI** action. The separate AI tab and its action/result panels, the duplicate inspector Deepen action, the header Review model action and Scenario Mode Explain scenario action are removed. Scenario calculation, overrides and trace remain available. Attached-source incoming-KPI discovery still stages changes for application in the chat. Existing stored node statuses and agent mutation-policy approvals retain their current compatibility behavior.
@@ -208,7 +253,7 @@ Properties displays saved **Value notes** beside the value and editing controls:
 
 ### Export
 
-- Editable Excel workbook export from the application with one **Export Excel** button.
+- Editable Excel workbook export from the application with one **Export to Excel** button.
 - No editor-level JSON import or JSON/Markdown export controls. Full project archive import/export, including attached source files, is planned at the project-workspace level.
 - Download `<VDT display name>.xlsx`, preserving ordinary spaces and Unicode. Replace filesystem-unsafe characters, remove trailing Windows dots/spaces, protect reserved Windows filenames and use a fallback for empty/invalid names.
 - Export the complete graph, including shared and disconnected KPIs, once per KPI; the selected/expanded canvas view does not limit output.

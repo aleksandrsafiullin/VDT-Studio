@@ -53,6 +53,7 @@ export function FormulaNumberToken({
       <input
         type="text"
         inputMode="decimal"
+        size={Math.max(2, Math.min(14, draft.length + 1))}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() => {

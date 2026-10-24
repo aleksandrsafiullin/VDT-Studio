@@ -7,6 +7,7 @@ import type { VdtEdge, VdtNode } from "@vdt-studio/vdt-core";
 import { TextArea } from "@/components/ui/field";
 import { FormulaEditorInteractions } from "./formula-editor-dnd";
 import { useFormulaEditorState } from "./use-formula-editor-state";
+import styles from "./formula-editor.module.css";
 
 export interface FormulaEditorFieldProps {
   formula: string | undefined;
@@ -77,7 +78,7 @@ export function FormulaEditorField({
   const showErrorBanner = inlineErrorMessages.length > 0;
 
   return (
-    <div className="grid gap-1.5">
+    <div className={clsx("grid gap-1.5", styles.editor)}>
       <span
         id="formula-editor-label"
         className="text-[11px] font-semibold uppercase tracking-normal text-slate-500"

@@ -71,6 +71,7 @@ function TokenDragHandle({
         className
       )}
       aria-label="Drag to reorder formula token"
+      title="Drag to reorder"
       data-testid={`formula-token-drag-handle-${index}`}
       {...attributes}
       {...listeners}
@@ -127,6 +128,7 @@ function SortableTokenItem({
       }}
       style={style}
       className="inline-flex shrink-0 cursor-text items-center"
+      data-formula-token-kind={segment.type}
       onClick={(event) => handleTokenBodyClick(event, index, onCaretIndexChange)}
     >
       {renderSegmentToken(segment, {

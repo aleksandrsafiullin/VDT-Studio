@@ -5,6 +5,7 @@ import { clsx } from "clsx";
 import type { ReactNode } from "react";
 import { hasActiveWorkspaceVdt, useVdtStudioStore } from "./vdt-store";
 import { WorkspaceNavigationLink } from "./workspace-navigation-link";
+import styles from "./workspace-shell.module.css";
 
 const modes: Array<{
   id: "home" | "vdt";
@@ -40,7 +41,7 @@ export function WorkspaceModeRail({
         "flex h-auto shrink-0 flex-row gap-1 p-2 lg:h-full lg:flex-col",
         appleStyle
           ? "border-b border-black/5 bg-white/70 backdrop-blur-xl lg:border-b-0 lg:border-r"
-          : "border-b border-line bg-white shadow-panel lg:border-b-0 lg:border-r"
+          : styles.modeRail
       )}
     >
       {modes.map((mode) => {
@@ -57,12 +58,7 @@ export function WorkspaceModeRail({
                   ? "bg-accent/10 text-accent"
                   : "border border-transparent hover:bg-black/[0.04] hover:text-ink"
               )
-            : clsx(
-                "rounded-md border text-slate-600",
-                selected
-                  ? "border-slate-900 bg-slate-900 text-white shadow-sm"
-                  : "border-transparent hover:border-line hover:bg-slate-50 hover:text-ink"
-              )
+            : clsx(styles.navItem, selected && styles.navSelected)
         );
         if (mode.id === "home") {
           return (

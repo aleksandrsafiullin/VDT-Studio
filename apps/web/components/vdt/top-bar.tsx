@@ -19,6 +19,7 @@ import { VersionHistoryPanel } from "./version-history-panel";
 import { VdtFilesButton } from "./project-files-dialog";
 import { hasActiveWorkspaceVdt, useVdtStudioStore } from "./vdt-store";
 import { WorkspaceNavigationLink } from "./workspace-navigation-link";
+import styles from "./workspace-shell.module.css";
 
 interface TopBarProps {
   projectId: string;
@@ -81,37 +82,38 @@ export function TopBar({ projectId, onBackToWorkspace }: TopBarProps) {
     : "Open scenario mode";
 
   return (
-    <header className="relative flex h-14 shrink-0 items-center justify-between gap-4 border-b border-line bg-white px-4">
-      <div className="flex min-w-0 items-center gap-3">
+    <header className={styles.topBar} data-testid="editor-top-bar">
+      <div className={styles.projectIdentity}>
         <WorkspaceNavigationLink
           href={`/projects/${projectId}`}
           onSavedNavigate={onBackToWorkspace}
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line text-graphite transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className={styles.backButton}
           data-testid="back-to-project-workspace"
           aria-label="Back to project workspace"
           title="Back to project workspace"
         >
           <ArrowLeft className="h-4 w-4" />
         </WorkspaceNavigationLink>
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-slate-900 text-white">
+        <div className={styles.projectMark}>
           <GitBranch className="h-4 w-4" />
         </div>
         <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold text-ink">{project.name}</h1>
-          <p className="truncate text-xs text-muted">
+          <h1 className={styles.projectTitle}>{project.name}</h1>
+          <p className={styles.projectSubtitle}>
             {rootNode?.name ?? project.rootNodeId}: {formatNumber(calculation.rootValue)} {rootNode?.unit ?? ""}
           </p>
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className={styles.topActions}>
         <VdtFilesButton />
         <Tooltip label={graphStatusLabel}>
           <div
-            className="hidden h-8 w-8 items-center justify-center rounded-md border border-line bg-slate-50 text-muted md:flex"
+            className={styles.graphStatus}
             role="status"
             aria-label={graphStatusLabel}
             data-testid="graph-validation-status"
+            data-valid={validation.valid}
           >
             <ShieldCheck className="h-4 w-4 text-teal" />
           </div>
@@ -131,7 +133,7 @@ export function TopBar({ projectId, onBackToWorkspace }: TopBarProps) {
         </Button>
         <Button
           size="sm"
-          aria-label="Export Excel"
+          aria-label="Export to Excel"
           data-testid="export-excel"
           icon={<FileSpreadsheet className="h-4 w-4" />}
           onClick={() => {
@@ -147,7 +149,7 @@ export function TopBar({ projectId, onBackToWorkspace }: TopBarProps) {
             }
           }}
         >
-          <span className="hidden sm:inline">Export Excel</span>
+          <span className="hidden sm:inline">Export to Excel</span>
         </Button>
         <VersionHistoryPanel />
         <SettingsModal />

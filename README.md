@@ -73,9 +73,39 @@ VDT Studio is an AI-first, local-first workspace for building editable Value Dri
 
 The inspector contains **Properties** and **Warnings**. Node edits apply directly without per-node Accept/Reject. AI requests use the chat or the node-card incoming-KPI action; the separate AI inspector tab, Review model and Explain scenario controls have been removed. Editor-level JSON import and JSON/Markdown export have also been removed. Full project archive import/export, including attached source files, is planned at the project-workspace level.
 
+The **VDT Agent** chat uses a compact **Context** disclosure for the brief, dark
+user bubbles and formatted assistant responses with Copy. Starter prompts fill a
+draft for review. The rounded composer groups **+ → Attach a file / Edit model
+context**, search, local voice input and model/readiness settings. Enter sends;
+Shift + Enter adds a line. While a request runs with an empty draft, Stop is
+available. Status and the collapsed **Work log** use recorded runtime activity.
+The context editor shows the root KPI and compact unit field in one row, without a Period field. Web search
+uses a globe icon with **Off / Auto / On**, with explanations in its menu and separate
+provider-availability feedback. The model control names its readiness beside the
+model. Voice capture shows a real microphone waveform and recording duration;
+final transcription has a separate processing timer and explicit failure state.
+
+Context uses a single heading without a repeated Current brief label. Settings
+shares the editor's neutral palette, with a light sidebar, grouped fields and
+segmented execution tabs. Its content scrolls independently inside a stable
+dialog; narrow windows use horizontal section navigation.
+
+The editor's top bar, navigation, canvas tools, chat and Node Inspector share an
+Apple-style neutral palette: white surfaces, light gray chrome and graphite
+controls, without decorative green accents. The inspector header omits the node
+status icon; node cards retain their existing status information. The canvas
+uses a rounded surface with one floating toolbar for zoom, fit, layout, spacing
+and node interaction. The inspector leads with the KPI value and unit,
+retains visible source/estimate notes, and groups definition, formula and detail
+fields. Existing warnings, scenario locks, saved panel widths/collapse and
+save-aware navigation remain available.
+Formula rows use compact chips and plain math symbols. Long names retain their
+full text on hover, numeric inputs fit their contents, and drag/remove controls
+appear on hover or keyboard focus while preserving the same expression editing.
+
 Raw-data discovery currently proposes semantic models and metadata mappings. Its local incoming-KPI path also retains the original project source and calculates a complete category hierarchy from confirmed additive numeric values in the KPI unit, duration columns or start/end timestamps, with explicit per-day decisions and provenance in each generated KPI Description. General mapping execution, refresh, reconciliation and production-trusted KPI baselines are not implemented. Web research currently returns search results but does not yet provide an auditable benchmark evidence pipeline. These limitations are tracked in [Data ingestion](docs/DATA_INGESTION.md) and the [roadmap](docs/ROADMAP.md).
 
-`Export Excel` downloads `<VDT display name>.xlsx`, preserving spaces and Unicode while replacing unsafe filename characters. The visible sheets are ordered `Scenario Mode`, `VDT`, `Source`, `Guide`. Numbers display at most two decimal places with spaces between thousands; their full precision remains available to formulas. The full VDT uses native spreadsheet cells and formulas. Each KPI is a vertical block containing its name and unit, Baseline and Potential. Parents sit to the left of their children; two narrow blank columns between levels contain cell-border connectors.
+`Export to Excel` downloads `<VDT display name>.xlsx`, preserving spaces and Unicode while replacing unsafe filename characters. The visible sheets are ordered `Scenario Mode`, `VDT`, `Source`, `Guide`. Numbers display at most two decimal places with spaces between thousands; their full precision remains available to formulas. The full VDT uses native spreadsheet cells and formulas. Each KPI is a vertical block containing its name and unit, Baseline and Potential. Parents sit to the left of their children; two narrow blank columns between levels contain cell-border connectors.
 
 `Scenario Mode` mirrors the selected application scenario (or the first scenario if none is selected) in a compact view of baseline/scenario totals, absolute/percentage change, input-driver effects and the multiplicative effect. Unconfigured scenario values initially link to the Baseline cell in the same row; enter a number to override them. Scenario edits recalculate the totals, effects and every VDT Potential value, including for a non-main scenario. Without configured scenarios, the same controls provide scratch analysis and update Potential.
 
@@ -154,7 +184,7 @@ pnpm local-runner:start
 
 Desktop CLI subscriptions and local model servers use reviewed Tauri commands and the managed sidecar; it does not ask production users to start or pair a runner manually.
 
-For subscription CLIs, the agent-composer indicator reports live request readiness rather than the saved selection. Gray means the CLI check is still running, green **Chat ready** means the selected CLI reports `ready` and the server has a compatible chat binding for the selected model, amber means it is installed but needs authentication, an update, or another recovery action, and red means the completed scan confirmed that it is not installed. The composer remains blocked until the selected CLI reaches `ready`; Settings does not show install options while detection is still unknown. Cursor's **Sign in** action runs the fixed provider-owned `agent login` flow, waits for browser confirmation, verifies CLI access and rescans models; instruction-only providers use the distinct **Sign-in help** label.
+For subscription CLIs, the agent-composer indicator reports live request readiness rather than the saved selection. Light gray means the CLI check is still running, green **Chat ready** means the selected CLI reports `ready` and the server has a compatible chat binding for the selected model, amber means it is installed but needs authentication, an update, or another recovery action, and red means the completed scan confirmed that it is not installed. The composer remains blocked until the selected CLI reaches `ready`; Settings does not show install options while detection is still unknown. Cursor's **Sign in** action runs the fixed provider-owned `agent login` flow, waits for browser confirmation, verifies CLI access and rescans models; instruction-only providers use the distinct **Sign-in help** label.
 
 **Settings → Execution mode** has three separate tabs: **CLI**, **Local models**, and **API keys**. A provider CLI runs on this computer and uses the provider account/cloud service; local inference through Ollama, LM Studio or vLLM belongs to Local models. The active backend determines the selected tab when settings reopen, and switching categories preserves saved CLI and local-server/model choices. Each provider has Test, sign-in and reversible Remove actions; provider details, memory and developer runner pairing are collapsed; local model servers have their own panel. Remove hides a subscription in this browser across reloads and rescans without uninstalling its CLI or signing out. Undo or **Add provider → Add back** restores it. Removing the active provider switches to a remaining verified-ready CLI with explicit feedback, or clears selection until you choose another; a removed memory override returns to Same as chat. Managed sign-in succeeds only after a ready rescan. Settings Test verifies CLI/session readiness and does not certify the selected model or response quality.
 
