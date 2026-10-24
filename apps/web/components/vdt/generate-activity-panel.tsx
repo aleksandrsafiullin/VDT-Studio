@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Check, CheckCircle2, ChevronDown, CircleAlert, CirclePause, Copy, GitBranch, Loader2, RotateCcw, X } from "lucide-react";
+import { Activity, Check, CheckCircle2, ChevronDown, CircleAlert, CirclePause, Copy, Loader2, RotateCcw, X } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import type { AgentAnswerPayload, AgentChatMessage, PublicAgentStatus, VdtAgentQuestion } from "@/lib/agent-client";
 import type { GenerateActivityState } from "./vdt-store";
 import { MarkdownText } from "./markdown-text";
+import { VdtTreeIcon } from "./vdt-tree-icon";
 import styles from "./agent-chat.module.css";
 
 export type AgentAnswerSubmission = Record<string, string | number | string[]> | AgentAnswerPayload[];
@@ -355,7 +356,7 @@ function MessageBubble({
     >
       {!isUser ? (
         <div className={styles.assistantHeader}>
-          <span className={styles.assistantMark}><GitBranch size={12} aria-hidden="true" /></span>
+          <span className={styles.assistantMark}><VdtTreeIcon size={12} /></span>
           <span>{message.kind === "retryable_error" ? "Needs attention" : message.role === "system" ? "Update" : "VDT Agent"}</span>
         </div>
       ) : null}

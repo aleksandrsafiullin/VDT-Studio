@@ -1,6 +1,5 @@
 "use client";
 
-import { Check } from "lucide-react";
 import styles from "./settings-modal.module.css";
 
 export interface SettingsChipOption<T extends string> {
@@ -42,7 +41,6 @@ export function SettingsChipRow<T extends string>({
               onClick={() => onChange(option.id)}
             >
               <span>{option.label}</span>
-              {selected ? <Check size={13} aria-hidden="true" /> : null}
             </button>
           );
         })}

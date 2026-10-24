@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Check, FileJson, GitBranch, History, Loader2, MessageSquare, Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import { Check, FileJson, History, Loader2, MessageSquare, Pencil, Plus, Save, Trash2, X, type LucideIcon } from "lucide-react";
 import { listVersions, type VdtProject } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "@/components/ui/field";
@@ -12,6 +12,7 @@ import type {
   StoredVdtStatus
 } from "@/lib/vdt-storage-client";
 import { useVdtStudioStore, type GenerateActivityState } from "./vdt-store";
+import { VdtTreeIcon } from "./vdt-tree-icon";
 
 interface ProjectExplorerProps {
   project: VdtProject;
@@ -23,7 +24,7 @@ interface ExplorerRow {
   id: string;
   label: string;
   detail: string;
-  Icon: typeof GitBranch;
+  Icon: LucideIcon | typeof VdtTreeIcon;
 }
 
 export function ProjectExplorer({ project, generateActivity, storedSummary: initialStoredSummary }: ProjectExplorerProps) {
@@ -75,7 +76,7 @@ export function ProjectExplorer({ project, generateActivity, storedSummary: init
       id: "vdts",
       label: "Canvas",
       detail: `${project.graph.nodes.length} nodes in active VDT`,
-      Icon: GitBranch
+      Icon: VdtTreeIcon
     },
     {
       id: "conversations",
@@ -461,7 +462,7 @@ function WorkspaceVdtRow({
       aria-selected={active}
       data-testid={`project-explorer-vdt-${vdt.id}`}
     >
-      <GitBranch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" />
+      <VdtTreeIcon className="mt-0.5 h-3.5 w-3.5 text-muted" />
       <button type="button" className="min-w-0 flex-1 text-left" disabled={disabled} onClick={onSelect}>
         <div className="truncate text-xs font-semibold text-ink">{vdt.name}</div>
         <div className="mt-0.5 truncate text-[11px] leading-4 text-muted">

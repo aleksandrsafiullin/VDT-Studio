@@ -385,6 +385,17 @@ Local voice input is independent from chat model execution. An AudioWorklet send
 | Skills | `packages/vdt-agent/skills` for current bundled source | Single-copy repository: reviewed bundled source plus immutable verbatim user versions; ACL references; generated sidecar only |
 | Provider status | `release/provider-certification.json` | Canonical release metadata |
 
+`ui.scenarioHighlightColor` is an opaque six-digit sRGB HEX string stored in the
+existing browser-local `vdt-studio-state` UI preferences. UI updates and hydration
+normalize #RGB/#RRGGBB input; missing/invalid saved values use the pale blue
+default. No storage-version bump is required because `mergeUiPreferences`
+supplies this additive default for older records. Color changes update UI state
+without relayout or graph mutation and are not part of project/revision/export
+payloads. Foreground and border colors are derived from this single saved fill,
+not independently persisted, and are shared by the workspace CSS variables and
+the settings preview. The contrast helper covers the solid color pair only;
+native packaging and full accessibility qualification remain separate.
+
 Subscription visibility is a browser-local Zustand preference (`removedCliAgentIds`), persisted separately from runtime detection. Hydration accepts only known provider IDs, clears any removed chat/memory selection, and does not treat legacy command fields as an active provider. Rescans retain removal preferences and exclude removed providers from automatic selection. A removal may use a remaining live `ready` CLI as a deterministic chat fallback, with visible feedback; without one, the selection is cleared and request readiness blocks execution. It never changes vendor credentials or installed software. Test/auth results and busy flags remain session-only; duplicate actions are guarded. Full and targeted scans serialize; callers sharing a scan await its completion. Test and managed sign-in request a fresh post-action scan, and per-provider revisions prevent older scans/tests from restoring readiness after a failed Test or removal/add-back. Test immediately invalidates prior executable readiness, and success requires a fresh ready result.
 
 ### Sequence 3 runtime artifact policy

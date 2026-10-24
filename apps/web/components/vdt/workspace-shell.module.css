@@ -77,19 +77,6 @@
 
 .backButton:hover { background: var(--workspace-selected); color: var(--workspace-secondary); }
 
-.projectMark {
-  display: flex;
-  height: 32px;
-  width: 32px;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--workspace-line);
-  border-radius: 11px;
-  background: var(--workspace-field);
-  color: var(--workspace-secondary);
-}
-
 .projectTitle {
   overflow: hidden;
   color: var(--workspace-ink);
@@ -291,7 +278,6 @@
   .navSelected::before { left: 50%; bottom: -5px; height: 2px; width: 14px; transform: translateX(-50%); }
   .topBar { min-height: 60px; gap: 8px; padding-inline: 11px; }
   .projectIdentity { gap: 7px; }
-  .projectMark { display: none; }
   .topActions { gap: 3px; }
   .topActions > button { min-width: 30px; padding-inline: 7px; }
   .graphStatus { display: none; }

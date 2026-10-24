@@ -19,8 +19,12 @@ Factor-tree cards now share the neutral theme: a compact type/name/unit header,
 with the unit replacing the upper-right status icon. Base and Potential are
 stacked rows with labels aligned left and numbers aligned right on the same
 line, without repeated units. The integrated root Effect footer is retained.
-Main-scenario Potential differences now use a blue value row, stronger blue
-type and card border for overview. Direct and propagated value differences use
+Main-scenario Potential differences use a configurable value-row fill,
+contrasting stronger type and card border for overview. Display settings offer
+presets, a picker, validated HEX input, live preview and color-only Reset; the
+color persists browser-locally and full display Reset restores pale blue.
+Foreground contrast is calculated automatically for dark/white/black text;
+the same foreground keeps **≈** visible on colored rows. Direct and propagated value differences use
 the same treatment in either direction; unchanged/unavailable comparisons and
 reference groups remain neutral. Selection/highlight borders retain priority.
 Graphite selection stays synchronized with the inspector; hover/focus/touch
@@ -42,7 +46,8 @@ timer, cancellation and errors. Root KPI and Unit share one row in the editor
 chat context; Period is omitted.
 Context has no repeated Current brief label. The Settings dialog shares the
 neutral editor theme, with a light sidebar, grouped controls, segmented execution
-tabs, checkmarked provider choices and horizontal navigation in narrow windows.
+tabs, dark-filled Protocol/Gateway choices with white text and accessible checked
+states in place of checkmarks, and horizontal navigation in narrow windows.
 Enter/Shift + Enter, IME handling, a running-state Stop control and a collapsed
 real-event Work log are wired to the existing chat actions. This UI work does
 not qualify live inference, voice engines or packaged desktop releases.

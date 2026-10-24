@@ -126,13 +126,21 @@ two-line KPI name, upper-right unit tag in place of the status icon and an inset
 Base/Potential comparison. Base is above Potential; each label and its number
 share a line, aligned left and right respectively. Units are not repeated in
 these value rows.
-Potential values that differ from Base use a pale blue row, stronger blue
-label/number and blue card border. This applies to the main scenario's numeric
+Potential values that differ from Base use the configured highlight fill,
+contrasting stronger label/number and matching card border. This applies to the main scenario's numeric
 comparison, including propagated effects, with the existing tolerance; it does
 not distinguish direct overrides or imply that an increase is beneficial.
 Unchanged or unavailable comparisons and reference groups remain neutral;
 selected/highlighted card borders retain priority. Change descriptions remain
 available to assistive technology and in the value tooltip.
+**Settings → Display → Scenario highlight** changes this opaque RGB fill through
+presets, a color picker or validated HEX entry, with an immediate live preview
+and color-only Reset. Browser-local preferences retain it across reloads and
+VDTs; older preferences default to pale blue. Reset display defaults includes
+the color. Graphite/white/black text is selected automatically to meet a 4.5:1
+solid-pair contrast minimum, including the estimate marker on a colored row.
+Light fills receive a darker outline visible against the white card. This is a
+presentation preference and does not modify graph values, scenarios or exports.
 Unit tags and full-value titles preserve numeric context; **≈** remains visible
 on estimated values. The root uses a dark type icon and a compact Effect footer.
 Graphite selection follows the inspector's selected KPI. The rounded
@@ -259,7 +267,8 @@ Settings separates **CLI**, **Local models**, and **API keys** into top-level ta
 Trusted-local web/desktop hosts admit immutable Ollama/LM Studio/vLLM Model Agent bindings from their fixed-endpoint server catalogs (up to 100 valid model IDs per backend, plus the equivalent untagged alias for an installed Ollama :latest model). Catalogs refresh at most once per ten seconds on binding requests, including after an empty catalog or installation. Hosted mode, production-build evaluation and VDT_LOCAL_MODEL_AGENT_ENABLED=false disable this admission. Browser Settings cannot provision bindings. Starts require an exact backend/model match and use the existing Supervisor/Gateway without a runner/API/default fallback. Native packaging, model quality and performance remain unqualified; provider certification is unchanged. Missing matches explain how to start the server and install/load/refresh models. Ollama uses bounded streaming rather than a single five-minute deadline, and each local step receives a compact current graph. Repeated successful reads without a graph change also stop instead of running indefinitely. Numeric facts already present in the original request can be recorded with a server-verified exact quote; missing values still require explicit editable assumptions or user answers. CLI subscriptions retain their separate external_cli_agent requirement.
 
 The Settings dialog uses the editor's neutral visual theme: a light sidebar,
-grouped fields, segmented execution tabs and checkmarked provider choices. The
+grouped fields, segmented execution tabs and dark-filled Protocol/Gateway choices
+with white text, stronger type and accessible checked states in place of checkmarks. The
 dialog retains its size across sections and scrolls content independently;
 narrow windows use horizontal navigation. Memory and Appearance remain disabled.
 This presentation does not change provider readiness, credential retention or

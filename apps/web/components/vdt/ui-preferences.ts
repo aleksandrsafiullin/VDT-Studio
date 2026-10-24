@@ -1,3 +1,5 @@
+import { DEFAULT_SCENARIO_HIGHLIGHT_COLOR, normalizeHighlightColor } from "./scenario-highlight-color";
+
 export const BASE_LEFT_PANEL_WIDTH = 300;
 export const BASE_RIGHT_PANEL_WIDTH = 328;
 export const BASE_WORKSPACE_SECTION_MIN_HEIGHT = 820;
@@ -19,6 +21,7 @@ export const MAX_KPI_VERTICAL_GAP =110;
 
 export interface UiPreferences {
   fontScale: number;
+  scenarioHighlightColor: string;
   kpiHorizontalGap: number;
   kpiVerticalGap: number;
   leftPanelWidth: number;
@@ -29,6 +32,7 @@ export interface UiPreferences {
 
 export const DEFAULT_UI: UiPreferences = {
   fontScale: 0.9,
+  scenarioHighlightColor: DEFAULT_SCENARIO_HIGHLIGHT_COLOR,
   kpiHorizontalGap: DEFAULT_KPI_HORIZONTAL_GAP,
   kpiVerticalGap: DEFAULT_KPI_VERTICAL_GAP,
   leftPanelWidth: DEFAULT_LEFT_PANEL_WIDTH,
@@ -109,6 +113,7 @@ export function mergeUiPreferences(
 
   return {
     fontScale: sanitizeScale(merged.fontScale, clampFontScale, DEFAULT_UI.fontScale),
+    scenarioHighlightColor: normalizeHighlightColor(merged.scenarioHighlightColor) ?? DEFAULT_UI.scenarioHighlightColor,
     kpiHorizontalGap: sanitizeScale(
       merged.kpiHorizontalGap,
       clampKpiHorizontalGap,
@@ -132,6 +137,9 @@ export function applyUiPreference<K extends keyof UiPreferences>(
   value: UiPreferences[K]
 ): UiPreferences {
   let nextValue = value;
+  if (field === "scenarioHighlightColor") {
+    nextValue = (normalizeHighlightColor(value) ?? ui.scenarioHighlightColor) as UiPreferences[K];
+  }
   if (field === "fontScale" && typeof value === "number") {
     nextValue = clampFontScale(value) as UiPreferences[K];
   }
@@ -163,6 +171,7 @@ export function setPanelWidth(
 
 export const UI_PERSIST_KEYS: (keyof UiPreferences)[] = [
   "fontScale",
+  "scenarioHighlightColor",
   "kpiHorizontalGap",
   "kpiVerticalGap",
   "leftPanelWidth",

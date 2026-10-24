@@ -1,13 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FolderOpen, GitBranch, Plus, Trash2 } from "lucide-react";
+import { FolderOpen, Plus, Trash2 } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { formatNumber } from "@/lib/format";
 import { NewVdtModal, type NewVdtModalValues } from "./new-vdt-modal";
 import { ProjectFilesPanel } from "./project-files-panel";
 import { useVdtStudioStore } from "./vdt-store";
+import { VdtTreeIcon } from "./vdt-tree-icon";
 
 const VALUE_EPSILON = 1e-6;
 
@@ -109,7 +110,7 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
 
           {activeSummary ? (
             <div className="mt-7 flex gap-1 border-b border-black/10" aria-label="Project content">
-              <button type="button" aria-pressed={tab === "vdts"} className={clsx("inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium", tab === "vdts" ? "border-accent text-accent" : "border-transparent text-muted hover:text-ink")} onClick={() => setTab("vdts")} data-testid="project-vdts-tab"><GitBranch className="h-4 w-4" />VDTs</button>
+              <button type="button" aria-pressed={tab === "vdts"} className={clsx("inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium", tab === "vdts" ? "border-accent text-accent" : "border-transparent text-muted hover:text-ink")} onClick={() => setTab("vdts")} data-testid="project-vdts-tab"><VdtTreeIcon className="h-4 w-4" />VDTs</button>
               <button type="button" aria-pressed={tab === "files"} className={clsx("inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium", tab === "files" ? "border-accent text-accent" : "border-transparent text-muted hover:text-ink")} onClick={() => setTab("files")} data-testid="project-files-tab"><FolderOpen className="h-4 w-4" />Files</button>
             </div>
           ) : null}
@@ -145,7 +146,7 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
                     >
                       <div className="flex items-start gap-3 pr-8">
                         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-sm">
-                          <GitBranch className="h-4 w-4" />
+                          <VdtTreeIcon className="h-4 w-4" />
                         </span>
                         <div className="min-w-0 flex-1">
                           <h3 className="line-clamp-2 text-base font-semibold leading-snug tracking-tight text-ink">
@@ -222,7 +223,7 @@ export function ProjectVdtList({ onOpenVdt }: { onOpenVdt?: (vdtId: string) => v
                 data-testid="project-vdt-empty"
               >
                 <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-600 shadow-glass">
-                  <GitBranch className="h-9 w-9" strokeWidth={1.5} />
+                  <VdtTreeIcon className="h-9 w-9" />
                 </div>
                 <h3 className="mt-6 text-xl font-semibold tracking-tight text-ink">
                   {activeSummary ? "No VDTs in this project" : "No project selected"}

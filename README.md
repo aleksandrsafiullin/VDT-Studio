@@ -87,7 +87,8 @@ final transcription has a separate processing timer and explicit failure state.
 
 Context uses a single heading without a repeated Current brief label. Settings
 shares the editor's neutral palette, with a light sidebar, grouped fields and
-segmented execution tabs. Its content scrolls independently inside a stable
+segmented execution tabs. Selected Protocol/Gateway buttons use a dark fill and
+white text in place of checkmarks. Its content scrolls independently inside a stable
 dialog; narrow windows use horizontal section navigation.
 
 The editor's top bar, navigation, canvas tools, chat and Node Inspector share an
@@ -105,10 +106,13 @@ labels align left and numbers align right on the same line. The unit appears
 once in the header's upper-right corner in place of the status icon. Graphite
 selection, the integrated root Effect footer, **≈** estimates and relation symbols remain visible;
 Manual/AI/File/Smart actions appear on hover or keyboard focus and on touch devices.
-When the main scenario's Potential differs from Base, its row and number turn
-blue and the card gets a blue border for tree overview. Both direct changes and
-their calculated effects are marked; the color indicates a difference, not an
-improvement. Unchanged values remain neutral.
+When the main scenario's Potential differs from Base, its row and card border
+are highlighted for tree overview. **Settings → Display → Scenario highlight**
+offers presets, a color picker, HEX entry, a live preview and Reset color.
+The fill is saved with browser-local display preferences; text automatically
+switches to a contrasting dark or white color, including on a black fill.
+Both direct changes and their calculated effects are marked; the color indicates
+a difference, not an improvement. Unchanged values remain neutral.
 Formula rows use compact chips and plain math symbols. Long names retain their
 full text on hover, numeric inputs fit their contents, and drag/remove controls
 appear on hover or keyboard focus while preserving the same expression editing.

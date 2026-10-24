@@ -55,7 +55,7 @@ export const SETTINGS_SECTION_META: Record<
   },
   display: {
     title: "Display",
-    subtitle: "Adjust font scale and panel layout for this workspace."
+    subtitle: "Adjust font scale, panel layout and scenario highlight colors."
   }
 };
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, ArrowUpRight, Check, ChevronDown, CircleAlert, GitBranch, History, LoaderCircle, MessageSquarePlus, Mic, Plus, SlidersHorizontal, Sparkles, Square, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, Check, ChevronDown, CircleAlert, History, LoaderCircle, MessageSquarePlus, Mic, Plus, SlidersHorizontal, Sparkles, Square, X } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { DataImportAttachmentButton } from "@/components/data-import/data-import-attachment-button";
@@ -272,7 +272,6 @@ export function SetupRail() {
     <Panel className={clsx("flex h-full min-h-0 flex-col border-r", styles.panel)} data-testid="agent-chat-panel" aria-label="VDT Agent chat">
       <header className={styles.header}>
         <div className={styles.title}>
-          <span className={styles.agentMark}><GitBranch size={15} aria-hidden="true" /></span>
           <h2>VDT Agent</h2>
         </div>
           <div className={styles.headerActions}>

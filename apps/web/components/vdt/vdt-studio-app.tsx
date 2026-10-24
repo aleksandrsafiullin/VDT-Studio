@@ -13,6 +13,7 @@ import { useWorkspaceRouteSync } from "./use-workspace-route-sync";
 import { VdtCanvas } from "./vdt-canvas";
 import { WorkspaceModeRail } from "./workspace-mode-rail";
 import styles from "./workspace-shell.module.css";
+import { getScenarioHighlightColors } from "./scenario-highlight-color";
 import {
   BASE_WORKSPACE_SECTION_MIN_HEIGHT,
   COLLAPSED_PANEL_WIDTH,
@@ -29,6 +30,7 @@ interface VdtStudioAppProps {
 
 function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
   const ui = useVdtStudioStore((state) => state.ui);
+  const highlightColors = getScenarioHighlightColors(ui.scenarioHighlightColor);
   const workspace = useVdtStudioStore((state) => state.workspace);
   const setPanelWidth = useVdtStudioStore((state) => state.setPanelWidth);
   const resumePersistedAgentRun = useVdtStudioStore((state) => state.resumePersistedAgentRun);
@@ -55,6 +57,9 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
       )}
       style={{
         ["--vdt-font-scale" as string]: ui.fontScale,
+        ["--vdt-scenario-highlight-fill" as string]: highlightColors.fill,
+        ["--vdt-scenario-highlight-text" as string]: highlightColors.text,
+        ["--vdt-scenario-highlight-border" as string]: highlightColors.border,
         ["--vdt-mode-rail" as string]: `${MODE_RAIL_WIDTH}px`,
         ["--vdt-left-panel" as string]: `${leftWidth}px`,
         ["--vdt-right-panel" as string]: `${rightWidth}px`,

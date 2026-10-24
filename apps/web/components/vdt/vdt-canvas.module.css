@@ -21,7 +21,7 @@
 }
 
 .root { border-color: var(--workspace-line); }
-.card.scenarioChanged { border-color: #9ab8e3; }
+.card.scenarioChanged { border-color: var(--vdt-scenario-highlight-border, #9ab8e3); }
 .card.highlighted { border-color: #ba9147; box-shadow: 0 0 0 3px #c49a4526, 0 3px 12px #00000006; }
 .card.selected { border-color: var(--workspace-secondary); box-shadow: 0 0 0 3px #51515414, 0 4px 16px #00000008; }
 .rejected { opacity: 0.55; }
@@ -39,9 +39,10 @@
 .value + .value { border-top: 1px solid var(--workspace-line-soft); padding-top: 8px; }
 .valueLabel { flex-shrink: 0; color: var(--workspace-muted); font-size: 0.6875em; font-weight: 450; line-height: 1.4; text-align: left; }
 .amount { min-width: 0; max-width: 100%; margin-left: auto; overflow: hidden; color: var(--workspace-ink); font-size: 1.25em; font-weight: 500; letter-spacing: -0.04em; line-height: 1.25; text-align: right; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.value.changedValue { border-top-color: transparent; border-radius: 5px; background: #e6eefb; box-shadow: 0 0 0 5px #e6eefb; }
-.changedValue .valueLabel { color: #285b9c; font-weight: 550; }
-.changed { color: #285b9c; font-weight: 650; }
+.value.changedValue { border-top-color: transparent; border-radius: 5px; background: var(--vdt-scenario-highlight-fill, #e6eefb); box-shadow: 0 0 0 5px var(--vdt-scenario-highlight-fill, #e6eefb); }
+.changedValue .valueLabel { color: var(--vdt-scenario-highlight-text, #1d1d1f); font-weight: 550; }
+.changed { color: var(--vdt-scenario-highlight-text, #1d1d1f); font-weight: 650; }
+.changedValue .estimate { color: var(--vdt-scenario-highlight-text, #1d1d1f); }
 .unavailable { color: var(--workspace-muted); }
 .estimate { color: #936a27; font-weight: 450; }
 .unit { flex-shrink: 0; max-width: 74px; margin-top: 2px; overflow: hidden; border: 1px solid var(--workspace-line-soft); border-radius: 6px; padding: 3px 6px; background: var(--workspace-field); color: var(--workspace-muted); font-size: 0.625em; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }

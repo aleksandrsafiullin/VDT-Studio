@@ -75,6 +75,15 @@ Scenario, Export to Excel, Versions and Settings in the header with their existi
 labels and save-aware navigation. The graph badge describes graph validation
 only; it must not imply that business assumptions or input values are verified.
 
+Use the shared **VdtTreeIcon** for VDT identity throughout navigation, agent
+responses, project tabs, VDT cards, the explorer and empty states. Keep the editor
+title and **VDT Agent** header text-only to avoid repeating the nearby navigation
+icon. The tree icon mirrors the canvas direction: one circular node on the left
+branches through curved connectors to three circular nodes on the right. Use
+the control's current text color for its strokes. Formula-dependency badges and
+the browser favicon use the same tree shape. Use a plain **+** for adding an
+incoming KPI manually.
+
 Use one floating canvas toolbar at the top left. Group zoom/fit, Auto-distribute
 and Spacing, and node interaction with thin separators in that order. Keep the
 library's existing zoom limits, fit behavior and node-interaction semantics.
@@ -99,10 +108,11 @@ repeat unit tags beside the Base/Potential values.
 Unavailable values remain `n/a`, zero remains zero, and illustrative estimates
 retain **≈** and their explanatory tooltip. Full numbers and units remain
 available in titles when a label is truncated. When the main scenario's Potential
-differs from Base by more than the existing numeric tolerance, show a pale blue
-Potential row, a stronger blue label/number and a blue card border so changed
-values remain identifiable in the tree overview. Use the same blue for increases
-and decreases: it means a difference, not business improvement. Include the
+differs from Base by more than the existing numeric tolerance, use the configured
+Scenario highlight fill on the Potential row, stronger label/number type and a
+matching card border so changed values remain identifiable in the tree overview.
+Use the same treatment for increases and decreases: it means a difference, not
+business improvement. Include the
 change in the card's accessible description and value tooltip. Unchanged or
 unavailable comparisons and reference groups remain neutral. This compares
 calculated values, including propagated changes; it does not identify direct
@@ -146,11 +156,29 @@ to make it fit.
 
 ## Settings
 
+Display includes **Scenario highlight** with opaque sRGB presets, a native color
+picker, #RGB/#RRGGBB input, an example Base 80 / Potential 85 preview and a
+color-only Reset. Keep the current pale blue as the default. Apply chosen colors
+immediately and save them with the existing browser-local display preferences;
+Reset display defaults also restores this color. Invalid HEX entry stays editable
+and cannot replace the current setting; Enter/blur commits valid input and
+Escape cancels the pending edit.
+
+Derive text color from the WCAG 2.2 sRGB luminance/contrast calculation, with an
+unrounded minimum of 4.5:1 for the solid text/fill pair. Prefer graphite on light
+fills and white on dark fills, falling back to true black for midtones that fail
+with both. Apply that foreground to both the label/number and any **≈** marker
+on the colored row. Derive a card border with at least 3:1 contrast against the
+white card, including for white fills. Share the same calculation and row styles
+between preview and canvas. These pairwise checks do not certify the entire UI.
+See [WCAG contrast guidance](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html).
+
 The Settings dialog shares the editor's neutral Apple-style palette. Use a light
 gray sidebar, a white content surface, grouped rounded cards and consistent
 inputs. Mark the active section with a white inset surface, and use a segmented
-control for CLI, Local models and API keys. Protocol and gateway choices show a
-checkmark rather than relying on color alone. Keep real readiness, download and
+control for CLI, Local models and API keys. Selected Protocol and Gateway buttons
+use a dark fill, white text and stronger type in place of checkmarks; preserve
+their radio semantics and `aria-checked` state. Keep real readiness, download and
 error colors meaningful; the visual theme must not imply a successful provider
 test or alter credential retention.
 

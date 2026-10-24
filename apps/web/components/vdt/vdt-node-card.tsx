@@ -5,7 +5,7 @@ import type { NodeProps } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
 import type { VdtNode } from "@vdt-studio/vdt-core";
 import { clsx } from "clsx";
-import { FileUp, GitBranchPlus, Lightbulb, Sparkles } from "lucide-react";
+import { FileUp, Lightbulb, Plus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { formatChange, formatNumber, formatPercent } from "@/lib/format";
@@ -159,7 +159,7 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
               size="icon"
               variant="secondary"
               className={styles.actionButton}
-              icon={<GitBranchPlus className="h-4 w-4" />}
+              icon={<Plus className="h-4 w-4" />}
               aria-label={`Add incoming KPI manually for ${node.name}`}
               data-testid="node-add-manual-incoming-kpi"
               disabled={!nodeData.onAddManualIncomingKpi}

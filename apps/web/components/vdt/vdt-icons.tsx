@@ -6,7 +6,6 @@ import {
   Check,
   CircleHelp,
   Database,
-  GitBranch,
   Globe,
   HelpCircle,
   Link,
@@ -21,9 +20,11 @@ import {
 } from "lucide-react";
 import { clsx } from "clsx";
 import type { VdtEdgeRelation, VdtNodeStatus, VdtNodeType } from "@vdt-studio/vdt-core";
+import { VdtTreeIcon } from "./vdt-tree-icon";
 
 export type VdtIconDisplay =
   | { kind: "lucide"; Icon: LucideIcon; label: string }
+  | { kind: "custom"; Icon: typeof VdtTreeIcon; label: string }
   | { kind: "symbol"; symbol: string; label: string };
 
 export type VdtIconVariant = "status" | "nodeType" | "edge";
@@ -60,7 +61,7 @@ const EDGE_RELATION_ICONS: Record<VdtEdgeRelation, VdtIconDisplay> = {
   negative_driver: { kind: "lucide", Icon: TrendingDown, label: "Negative driver" },
   divisive_driver: { kind: "symbol", symbol: "÷", label: "Divisive driver" },
   positive_driver: { kind: "lucide", Icon: ArrowUpRight, label: "Positive driver" },
-  formula_dependency: { kind: "lucide", Icon: GitBranch, label: "Formula dependency" },
+  formula_dependency: { kind: "custom", Icon: VdtTreeIcon, label: "Formula dependency" },
   contextual_influence: { kind: "lucide", Icon: MessageSquare, label: "Contextual influence" }
 };
 

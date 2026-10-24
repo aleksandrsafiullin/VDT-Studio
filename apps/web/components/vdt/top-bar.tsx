@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { ArrowLeft, FileSpreadsheet, Folder, GitBranch, Route, ShieldCheck } from "lucide-react";
+import { ArrowLeft, FileSpreadsheet, Folder, Route, ShieldCheck } from "lucide-react";
 import {
   calculateGraph,
   EXCEL_MIME_TYPE,
@@ -94,9 +94,6 @@ export function TopBar({ projectId, onBackToWorkspace }: TopBarProps) {
         >
           <ArrowLeft className="h-4 w-4" />
         </WorkspaceNavigationLink>
-        <div className={styles.projectMark}>
-          <GitBranch className="h-4 w-4" />
-        </div>
         <div className="min-w-0">
           <h1 className={styles.projectTitle}>{project.name}</h1>
           <p className={styles.projectSubtitle}>

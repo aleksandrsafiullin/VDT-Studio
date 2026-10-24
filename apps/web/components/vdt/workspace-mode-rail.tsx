@@ -1,10 +1,11 @@
 "use client";
 
-import { Home, GitBranch } from "lucide-react";
+import { Home } from "lucide-react";
 import { clsx } from "clsx";
 import type { ReactNode } from "react";
 import { hasActiveWorkspaceVdt, useVdtStudioStore } from "./vdt-store";
 import { WorkspaceNavigationLink } from "./workspace-navigation-link";
+import { VdtTreeIcon } from "./vdt-tree-icon";
 import styles from "./workspace-shell.module.css";
 
 const modes: Array<{
@@ -20,7 +21,7 @@ const modes: Array<{
   {
     id: "vdt",
     label: "VDT management",
-    icon: <GitBranch className="h-4 w-4" />
+    icon: <VdtTreeIcon className="h-4 w-4" />
   }
 ];
 

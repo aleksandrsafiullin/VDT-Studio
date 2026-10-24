@@ -1,0 +1,24 @@
+.colorHeader { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.colorLayout { display: grid; grid-template-columns: minmax(0, 1fr) 238px; align-items: center; gap: 28px; margin-top: 22px; }
+.colorControls { display: grid; min-width: 0; gap: 15px; }
+.colorLabel { display: block; margin-bottom: 7px; color: var(--settings-muted); font-size: 11px; }
+.colorInputs { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.colorInputs .colorPicker { width: 44px; height: 38px; flex-shrink: 0; min-height: 0; padding: 4px; cursor: pointer; }
+.colorPicker::-webkit-color-swatch-wrapper { padding: 0; }
+.colorPicker::-webkit-color-swatch { border: 0; border-radius: 5px; }
+.colorPicker::-moz-color-swatch { border: 0; border-radius: 5px; }
+.hexInput { width: 112px; font-variant-numeric: tabular-nums; }
+.presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.preset { display: inline-flex; width: 30px; height: 30px; align-items: center; justify-content: center; border: 1px solid #00000020; border-radius: 9px; }
+.preset[aria-pressed="true"] { outline: 2px solid var(--settings-faint); outline-offset: 3px; }
+.colorHint { color: var(--settings-muted); font-size: 11px; line-height: 1.6; }
+.colorError { color: #a63b32; font-size: 11px; line-height: 1.6; }
+.preview { display: grid; justify-items: center; gap: 10px; min-width: 0; }
+.previewCard { width: 238px; max-width: 100%; cursor: default; }
+.previewTitle { flex: 1; min-width: 0; color: #1d1d1f; font-size: 13px; font-weight: 550; }
+.previewCaption { color: var(--settings-muted); font-size: 10px; }
+
+@container (max-width: 540px) {
+  .colorLayout { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+  .preview { justify-items: start; }
+}

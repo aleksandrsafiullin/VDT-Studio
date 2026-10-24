@@ -171,6 +171,7 @@ describe("ui-preferences", () => {
   it("defines the full persist shape for ui preferences", () => {
     expect(UI_PERSIST_KEYS).toEqual([
       "fontScale",
+      "scenarioHighlightColor",
       "kpiHorizontalGap",
       "kpiVerticalGap",
       "leftPanelWidth",
@@ -178,5 +179,22 @@ describe("ui-preferences", () => {
       "leftPanelCollapsed",
       "rightPanelCollapsed"
     ]);
+  });
+
+  it("restores a saved custom color without altering the other display preferences", () => {
+    const changed = applyUiPreference({ ...DEFAULT_UI, fontScale: 1, leftPanelWidth: 350 }, "scenarioHighlightColor", "#ABC");
+    expect(changed.scenarioHighlightColor).toBe("#aabbcc");
+    expect(mergeUiPreferences(JSON.parse(JSON.stringify(changed)))).toEqual(changed);
+    expect(changed.fontScale).toBe(1);
+    expect(changed.leftPanelWidth).toBe(350);
+  });
+
+  it("defaults missing or invalid saved highlight colors and rejects invalid updates", () => {
+    for (const corrupt of [undefined, null, 123, "red", "#12345", "#00000000", "var(--color)"]) {
+      expect(mergeUiPreferences({ scenarioHighlightColor: corrupt } as unknown as Partial<UiPreferences>).scenarioHighlightColor).toBe(DEFAULT_UI.scenarioHighlightColor);
+    }
+    const black = applyUiPreference(DEFAULT_UI, "scenarioHighlightColor", "#000");
+    expect(black.scenarioHighlightColor).toBe("#000000");
+    expect(applyUiPreference(black, "scenarioHighlightColor", "invalid").scenarioHighlightColor).toBe("#000000");
   });
 });
