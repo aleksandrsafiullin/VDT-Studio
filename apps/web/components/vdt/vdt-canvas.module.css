@@ -1,0 +1,82 @@
+.node {
+  position: relative;
+  width: 238px;
+  color: var(--workspace-ink);
+}
+
+.card {
+  position: relative;
+  padding: 13px;
+  border: 1px solid var(--workspace-line-soft);
+  border-radius: 15px;
+  background: var(--workspace-surface);
+  box-shadow: 0 2px 5px #00000004, 0 5px 16px #00000004;
+  cursor: pointer;
+  transition: border-color 160ms, box-shadow 160ms;
+}
+
+.card:hover {
+  border-color: var(--workspace-line);
+  box-shadow: 0 3px 7px #00000005, 0 7px 20px #00000007;
+}
+
+.root { border-color: var(--workspace-line); }
+.card.scenarioChanged { border-color: #9ab8e3; }
+.card.highlighted { border-color: #ba9147; box-shadow: 0 0 0 3px #c49a4526, 0 3px 12px #00000006; }
+.card.selected { border-color: var(--workspace-secondary); box-shadow: 0 0 0 3px #51515414, 0 4px 16px #00000008; }
+.rejected { opacity: 0.55; }
+.card:focus-visible { outline: 2px solid var(--workspace-focus); outline-offset: 4px; }
+
+.header { display: flex; align-items: flex-start; gap: 9px; }
+.typeIcon { display: inline-flex; width: 25px; height: 25px; flex-shrink: 0; align-items: center; justify-content: center; border: 1px solid var(--workspace-line-soft); border-radius: 8px; background: var(--workspace-control); color: var(--workspace-muted); }
+.typeIcon svg { width: 13px; height: 13px; }
+.root .typeIcon { border-color: var(--workspace-ink); background: var(--workspace-ink); color: var(--workspace-surface); }
+.title { display: -webkit-box; flex: 1; min-width: 0; align-self: center; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--workspace-ink); font-size: 0.8125em; font-weight: 550; letter-spacing: -0.02em; line-height: 1.45; overflow-wrap: anywhere; }
+.kind { margin: 5px 0 0 34px; color: var(--workspace-muted); font-size: 0.625em; line-height: 1.5; }
+
+.values { display: grid; min-width: 0; gap: 8px; margin-top: 12px; padding: 10px 11px; border-radius: 10px; background: var(--workspace-control); }
+.value { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 12px; }
+.value + .value { border-top: 1px solid var(--workspace-line-soft); padding-top: 8px; }
+.valueLabel { flex-shrink: 0; color: var(--workspace-muted); font-size: 0.6875em; font-weight: 450; line-height: 1.4; text-align: left; }
+.amount { min-width: 0; max-width: 100%; margin-left: auto; overflow: hidden; color: var(--workspace-ink); font-size: 1.25em; font-weight: 500; letter-spacing: -0.04em; line-height: 1.25; text-align: right; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.value.changedValue { border-top-color: transparent; border-radius: 5px; background: #e6eefb; box-shadow: 0 0 0 5px #e6eefb; }
+.changedValue .valueLabel { color: #285b9c; font-weight: 550; }
+.changed { color: #285b9c; font-weight: 650; }
+.unavailable { color: var(--workspace-muted); }
+.estimate { color: #936a27; font-weight: 450; }
+.unit { flex-shrink: 0; max-width: 74px; margin-top: 2px; overflow: hidden; border: 1px solid var(--workspace-line-soft); border-radius: 6px; padding: 3px 6px; background: var(--workspace-field); color: var(--workspace-muted); font-size: 0.625em; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.reference { display: flex; align-items: center; gap: 7px; margin-top: 12px; padding: 10px 11px; border-radius: 10px; background: var(--workspace-control); color: var(--workspace-muted); font-size: 0.6875em; }
+
+.effect { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 8px; margin-top: 10px; padding: 9px 1px 0; border-top: 1px solid var(--workspace-line-soft); }
+.effectLabel { margin-right: auto; color: var(--workspace-muted); font-size: 0.625em; }
+.effectAmount { max-width: 125px; overflow: hidden; color: var(--workspace-secondary); font-size: 0.75em; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.effectUnit { max-width: 70px; overflow: hidden; color: var(--workspace-muted); font-size: 0.625em; text-overflow: ellipsis; white-space: nowrap; }
+.effectPercent { max-width: 100%; overflow: hidden; padding: 2px 5px; border-radius: 5px; background: var(--workspace-control); color: var(--workspace-muted); font-size: 0.5625em; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.positive .effectAmount, .positive .effectPercent { color: #237354; }
+.positive .effectPercent { background: #edf6f0; }
+.negative .effectAmount, .negative .effectPercent { color: #b0443d; }
+.negative .effectPercent { background: #fcf0ee; }
+
+.card .handle { width: 8px; height: 8px; min-width: 0; min-height: 0; border: 2px solid var(--workspace-surface); background: var(--workspace-line); transition: background 160ms; }
+.card:hover .handle, .selected .handle { background: var(--workspace-secondary); }
+
+.actions { position: absolute; top: 50%; right: -56px; z-index: 30; display: flex; width: 56px; height: 176px; align-items: center; justify-content: flex-end; opacity: 0; transform: translateY(-50%); transition: opacity 120ms; }
+.node:hover .actions, .node:focus-within .actions, .actionsOpen { opacity: 1; }
+.actionToolbar { display: flex; flex-direction: column; gap: 3px; border: 1px solid var(--workspace-line); border-radius: 12px; padding: 4px; background: var(--workspace-surface); box-shadow: 0 4px 16px #0000000d; }
+.actionToolbar .actionButton { width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--workspace-muted); box-shadow: none; }
+.actionToolbar .actionButton:hover { background: var(--workspace-control); color: var(--workspace-ink); }
+.actionToolbar .aiAction { background: var(--workspace-ink); color: var(--workspace-surface); }
+.actionToolbar .aiAction:hover { background: var(--workspace-secondary); color: var(--workspace-surface); }
+.actionToolbar .actionButton:focus-visible { outline: 2px solid var(--workspace-focus); outline-offset: 2px; }
+.actionToolbar .actionButton[aria-expanded="true"] { background: var(--workspace-control); color: var(--workspace-ink); }
+
+.edgeLabel { display: inline-flex; min-width: 23px; height: 23px; align-items: center; justify-content: center; border: 1px solid var(--workspace-line-soft); border-radius: 7px; background: var(--workspace-surface); color: var(--workspace-secondary); box-shadow: 0 1px 3px #00000004; }
+.edgeNegative { border-color: #eadcc4; color: #936a27; }
+
+@media (hover: none), (pointer: coarse) {
+  .actions { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card, .card .handle, .actions { transition: none; }
+}

@@ -5,7 +5,7 @@
 Implemented for local web: a shared Apple-style white, light gray and graphite
 palette for the chat, top action bar, navigation rail, canvas tools and Node
 Inspector. The inspector header's node-status icon is omitted; node cards
-retain status information. The canvas has a rounded
+retain status through accessible descriptions and type-icon tooltips. The canvas has a rounded
 surface and one floating toolbar for zoom/fit, layout/spacing and node interaction; its desktop
 height follows the viewport. The inspector groups properties and formula tools
 around a prominent value/unit, retaining visible estimate/source notes and all
@@ -15,6 +15,18 @@ calculation contracts and native qualification are separate from this redesign.
 The visual formula row now uses compact reference/number tokens and plain math
 symbols, with hover/focus editing controls and bounded labels. Its expression,
 validation, caret and drag/drop contracts are unchanged.
+Factor-tree cards now share the neutral theme: a compact type/name/unit header,
+with the unit replacing the upper-right status icon. Base and Potential are
+stacked rows with labels aligned left and numbers aligned right on the same
+line, without repeated units. The integrated root Effect footer is retained.
+Main-scenario Potential differences now use a blue value row, stronger blue
+type and card border for overview. Direct and propagated value differences use
+the same treatment in either direction; unchanged/unavailable comparisons and
+reference groups remain neutral. Selection/highlight borders retain priority.
+Graphite selection stays synchronized with the inspector; hover/focus/touch
+actions retain Manual/AI/File/Smart entry points. Estimate marks, unavailable
+values, reference groups and relation semantics remain visible. Saved positions
+and card width are preserved.
 
 ## Agent chat interface
 

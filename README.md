@@ -93,12 +93,22 @@ dialog; narrow windows use horizontal section navigation.
 The editor's top bar, navigation, canvas tools, chat and Node Inspector share an
 Apple-style neutral palette: white surfaces, light gray chrome and graphite
 controls, without decorative green accents. The inspector header omits the node
-status icon; node cards retain their existing status information. The canvas
+status icon; node status remains available through the type-icon tooltip and
+the card's accessible description. The canvas
 uses a rounded surface with one floating toolbar for zoom, fit, layout, spacing
 and node interaction. The inspector leads with the KPI value and unit,
 retains visible source/estimate notes, and groups definition, formula and detail
 fields. Existing warnings, scenario locks, saved panel widths/collapse and
 save-aware navigation remain available.
+Tree cards use the same neutral surfaces, with two compact Base/Potential rows:
+labels align left and numbers align right on the same line. The unit appears
+once in the header's upper-right corner in place of the status icon. Graphite
+selection, the integrated root Effect footer, **≈** estimates and relation symbols remain visible;
+Manual/AI/File/Smart actions appear on hover or keyboard focus and on touch devices.
+When the main scenario's Potential differs from Base, its row and number turn
+blue and the card gets a blue border for tree overview. Both direct changes and
+their calculated effects are marked; the color indicates a difference, not an
+improvement. Unchanged values remain neutral.
 Formula rows use compact chips and plain math symbols. Long names retain their
 full text on hover, numeric inputs fit their contents, and drag/remove controls
 appear on hover or keyboard focus while preserving the same expression editing.

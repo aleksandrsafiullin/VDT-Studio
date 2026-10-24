@@ -1,16 +1,16 @@
 "use client";
 
-import type { MouseEvent } from "react";
+import { useId, type MouseEvent } from "react";
 import type { NodeProps } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
 import type { VdtNode } from "@vdt-studio/vdt-core";
 import { clsx } from "clsx";
 import { FileUp, GitBranchPlus, Lightbulb, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { StatusPill } from "@/components/ui/status-pill";
 import { Tooltip } from "@/components/ui/tooltip";
 import { formatChange, formatNumber, formatPercent } from "@/lib/format";
-import { getNodeTypeIcon, VdtIcon } from "./vdt-icons";
+import { getNodeTypeIcon, getStatusIcon, VdtIcon } from "./vdt-icons";
+import styles from "./vdt-canvas.module.css";
 
 const VALUE_EPSILON = 1e-6;
 
@@ -56,35 +56,35 @@ function ValueRow({
   valueTestId?: string;
 }) {
   return (
-    <div className="mt-1.5 flex items-end justify-between gap-3 border-t border-slate-100 pt-1.5 first:mt-2">
-      <div className="min-w-0 flex-1">
-        <p className="text-[10px] font-medium text-muted">{label}</p>
-        <p
-          className={clsx("truncate text-base font-semibold", emphasize ? "text-accent" : "text-ink")}
-          data-testid={valueTestId}
-          title={estimated && amount !== undefined ? "Illustrative estimate, not measured data." : undefined}
-        >
-          {estimated && amount !== undefined ? <span className="text-amber-800" aria-label="Estimate">≈ </span> : null}
-          {formatNumber(amount)}
-        </p>
-      </div>
-      <p className="shrink-0 self-end text-right text-xs font-medium text-muted">{unit ?? "unit n/a"}</p>
+    <div className={clsx(styles.value, emphasize && styles.changedValue)}>
+      <p className={styles.valueLabel}>{label}</p>
+      <p
+        className={clsx(styles.amount, emphasize && styles.changed, amount === undefined && styles.unavailable)}
+        data-testid={valueTestId}
+        title={`${emphasize ? "Changed in main scenario. " : ""}${estimated && amount !== undefined ? "Illustrative estimate, not measured data. " : ""}${formatNumber(amount)} ${unit ?? "unit n/a"}`}
+      >
+        {estimated && amount !== undefined ? <span className={styles.estimate} aria-label="Estimate">≈ </span> : null}
+        {formatNumber(amount)}
+      </p>
     </div>
   );
 }
 
 export function VdtNodeCard({ data, selected }: NodeProps) {
+  const statusId = useId();
   const nodeData = data as unknown as VdtNodeCardData;
   const node = nodeData.node;
   const value = nodeData.value;
   const mainScenarioValue = nodeData.mainScenarioValue;
   const rootScenarioEffect = nodeData.rootScenarioEffect;
   const highlighted = nodeData.highlighted === true;
-  const typeIcon = getNodeTypeIcon(node.type);
-  const isRootKpi = node.type === "root_kpi";
-  const calculatedRoot = (nodeData.rootRole ?? isRootKpi) && Boolean(node.formula?.trim());
+  const isRootKpi = nodeData.rootRole ?? node.type === "root_kpi";
+  const typeIcon = getNodeTypeIcon(isRootKpi ? "root_kpi" : node.type);
+  const statusLabel = getStatusIcon(node.status).label;
+  const calculatedRoot = isRootKpi && Boolean(node.formula?.trim());
   const estimated = node.valueStatus === "default_assumption" || node.valueSource?.sourceTier === "assumption";
   const potentialDiffers = valuesDiffer(value, mainScenarioValue);
+  const scenarioChanged = !nodeData.referenceGroup && potentialDiffers;
   const effectDiffers =
     rootScenarioEffect?.absoluteChange !== undefined &&
     Math.abs(rootScenarioEffect.absoluteChange) > VALUE_EPSILON;
@@ -97,16 +97,15 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
   };
 
   return (
-    <div className="relative flex w-[238px] flex-col gap-2">
+    <div className={styles.node}>
       <div
-        className={[
-          "min-h-[80px] rounded-lg border bg-white px-3 py-2 shadow-node transition",
-          selected ? "border-accent ring-4 ring-blue-100" : highlighted ? "border-amber-400 ring-4 ring-amber-100" : "border-line",
-          node.status === "rejected" ? "opacity-55" : ""
-        ].join(" ")}
+        className={clsx(styles.card, isRootKpi && styles.root, scenarioChanged && styles.scenarioChanged, selected && styles.selected, highlighted && styles.highlighted, node.status === "rejected" && styles.rejected)}
+        data-scenario-changed={scenarioChanged || undefined}
         role="button"
         tabIndex={0}
         aria-label={`Select ${node.name}`}
+        aria-describedby={statusId}
+        aria-pressed={!!selected}
         onClick={() => nodeData.onSelect?.(node.id)}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
@@ -115,47 +114,51 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
           }
         }}
       >
-        <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-slate-400" />
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex min-w-0 flex-1 items-start gap-1.5">
-            <span
-              data-testid="node-type-icon"
-              role="img"
-              aria-label={typeIcon.label}
-              title={typeIcon.label}
-              className="mt-0.5 shrink-0 text-muted"
-            >
-              <VdtIcon display={typeIcon} variant="nodeType" />
-            </span>
-            <h3 className="line-clamp-2 text-sm font-semibold leading-5 text-ink">{node.name}</h3>
-          </div>
-          <StatusPill status={node.status} className="shrink-0" />
+        <Handle type="target" position={Position.Left} className={styles.handle} />
+        <span id={statusId} className="sr-only">{statusLabel}{scenarioChanged ? ". Potential differs from Base in the main scenario." : ""}</span>
+        <div className={styles.header}>
+          <span
+            data-testid="node-type-icon"
+            role="img"
+            aria-label={typeIcon.label}
+            title={`${typeIcon.label} · ${statusLabel}`}
+            className={styles.typeIcon}
+          >
+            <VdtIcon display={typeIcon} variant="nodeType" />
+          </span>
+          <h3 className={styles.title} title={node.name}>{node.name}</h3>
+          <span className={styles.unit} data-testid="node-unit" title={node.unit?.trim() || "Unit unavailable"}>{node.unit?.trim() || "unit n/a"}</span>
         </div>
-        {calculatedRoot ? <p data-testid="node-calculated-indicator" className="text-[10px] font-medium text-muted">Root KPI · Calculated</p> : null}
-        {nodeData.referenceGroup ? <p className="mt-2 border-t border-slate-100 pt-2 text-xs text-muted">Reference group</p> : <ValueRow label="Base" amount={value} unit={node.unit} estimated={estimated} />}
-        {!nodeData.referenceGroup && mainScenarioValue !== undefined ? (
-          <ValueRow
-            label="Potential"
-            amount={mainScenarioValue}
-            unit={node.unit}
-            emphasize={potentialDiffers}
-            estimated={estimated}
-            valueTestId="node-main-scenario-value"
-          />
+        {isRootKpi ? <p data-testid={calculatedRoot ? "node-calculated-indicator" : undefined} className={styles.kind}>{calculatedRoot ? "Root KPI · Calculated" : "Root KPI"}</p> : null}
+        {nodeData.referenceGroup ? <p className={styles.reference}>Reference group</p> : (
+          <div className={styles.values}>
+            <ValueRow label="Base" amount={value} unit={node.unit} estimated={estimated} />
+            {mainScenarioValue !== undefined ? (
+              <ValueRow label="Potential" amount={mainScenarioValue} unit={node.unit} emphasize={potentialDiffers} estimated={estimated} valueTestId="node-main-scenario-value" />
+            ) : null}
+          </div>
+        )}
+        {isRootKpi && rootScenarioEffect ? (
+          <div className={clsx(styles.effect, effectDiffers && ((rootScenarioEffect.absoluteChange ?? 0) > 0 ? styles.positive : styles.negative))} data-testid="root-scenario-effect">
+            <p className={styles.effectLabel}>Effect</p>
+            <p className={styles.effectAmount} title={`${formatChange(rootScenarioEffect.absoluteChange)} ${node.unit ?? "unit n/a"}`}>{formatChange(rootScenarioEffect.absoluteChange)}</p>
+            <p className={styles.effectUnit} title={node.unit}>{node.unit ?? "unit n/a"}</p>
+            <p className={styles.effectPercent} title={formatPercent(rootScenarioEffect.percentageChange)}>{formatPercent(rootScenarioEffect.percentageChange)}</p>
+          </div>
         ) : null}
-        <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-accent" />
+        <Handle type="source" position={Position.Right} className={styles.handle} />
       </div>
-      <div data-testid="node-incoming-actions" className={clsx("nodrag nopan nowheel absolute -right-14 top-1/2 z-30 flex h-44 w-14 -translate-y-1/2 items-center justify-end transition-opacity duration-100 hover:opacity-100 focus-within:opacity-100 max-sm:opacity-100", nodeData.smartOpen ? "opacity-100" : "opacity-0")}
+      <div data-testid="node-incoming-actions" className={clsx("nodrag nopan nowheel", styles.actions, nodeData.smartOpen && styles.actionsOpen)}
         onPointerEnter={event => activateSmart(event.currentTarget, event.pointerType === "touch" ? "touch" : "pointer")}
         onPointerLeave={() => nodeData.onSmartLeave?.()} onFocusCapture={event => activateSmart(event.currentTarget, "focus")} onBlurCapture={() => nodeData.onSmartBlur?.()}
         onPointerDown={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()} onWheel={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
-        <div className="nodrag nopan nowheel flex flex-col gap-1 rounded-md border border-line bg-white p-1 shadow-lg">
+        <div className={clsx("nodrag nopan nowheel", styles.actionToolbar)}>
           <Tooltip label="Add incoming KPI manually" className="block">
             <Button
               type="button"
               size="icon"
               variant="secondary"
-              className="h-8 w-8"
+              className={styles.actionButton}
               icon={<GitBranchPlus className="h-4 w-4" />}
               aria-label={`Add incoming KPI manually for ${node.name}`}
               data-testid="node-add-manual-incoming-kpi"
@@ -173,7 +176,7 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
               type="button"
               size="icon"
               variant="primary"
-              className="h-8 w-8"
+              className={clsx(styles.actionButton, styles.aiAction)}
               icon={<Sparkles className="h-4 w-4" />}
               aria-label={`Add incoming KPIs with AI for ${node.name}`}
               data-testid="node-add-ai-incoming-kpis"
@@ -190,7 +193,7 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
               type="button"
               size="icon"
               variant="secondary"
-              className="h-8 w-8"
+              className={styles.actionButton}
               icon={<FileUp className="h-4 w-4" />}
               aria-label={`Add incoming KPIs from file for ${node.name}`}
               data-testid="node-add-file-incoming-kpis"
@@ -203,7 +206,7 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
             />
           </Tooltip>
           <Tooltip label="Smart KPI suggestions" className="block">
-            <Button type="button" size="icon" variant="secondary" className="h-8 w-8" icon={<Lightbulb className="h-4 w-4" />}
+            <Button type="button" size="icon" variant="secondary" className={styles.actionButton} icon={<Lightbulb className="h-4 w-4" />}
               aria-label={`Smart KPI suggestions for ${node.name}`} aria-haspopup="dialog" aria-controls={nodeData.smartOpen ? "smart-kpi-panel" : undefined} aria-expanded={!!nodeData.smartOpen}
               data-testid="node-smart-kpi-suggestions" data-smart-trigger="true" data-node-name={node.name}
               disabled={!nodeData.onSmartActivate} onMouseDown={stopActionEvent}
@@ -218,37 +221,6 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
           </Tooltip>
         </div>
       </div>
-      {isRootKpi && rootScenarioEffect ? (
-        <div
-          className="rounded-lg border border-line bg-white px-3 py-2 shadow-node"
-          data-testid="root-scenario-effect"
-        >
-          <div className="flex items-end justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-medium uppercase tracking-normal text-muted">Effect</p>
-              <p
-                className={clsx("truncate text-sm font-semibold leading-tight", {
-                  "text-accent": effectDiffers && (rootScenarioEffect.absoluteChange ?? 0) > 0,
-                  "text-red-600": effectDiffers && (rootScenarioEffect.absoluteChange ?? 0) < 0,
-                  "text-ink": !effectDiffers
-                })}
-              >
-                {formatChange(rootScenarioEffect.absoluteChange)}
-              </p>
-            </div>
-            <p className="shrink-0 self-end text-right text-xs font-medium text-muted">{node.unit ?? "unit n/a"}</p>
-          </div>
-          <p
-            className={clsx("mt-0.5 text-xs font-medium", {
-              "text-accent": effectDiffers && (rootScenarioEffect.absoluteChange ?? 0) > 0,
-              "text-red-600": effectDiffers && (rootScenarioEffect.absoluteChange ?? 0) < 0,
-              "text-muted": !effectDiffers
-            })}
-          >
-            {formatPercent(rootScenarioEffect.percentageChange)}
-          </p>
-        </div>
-      ) : null}
     </div>
   );
 }

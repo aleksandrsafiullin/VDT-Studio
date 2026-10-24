@@ -106,7 +106,8 @@ Current status: implemented as an alpha foundation. W0.1 atomic revision conflic
 
 The editor uses an Apple-style white, light gray and graphite palette shared
 with the chat. The inspector header omits its node-status icon; status remains
-on node cards. The editor has a compact project/action header, an icon
+available through the node card's accessible description and type-icon tooltip.
+The editor has a compact project/action header, an icon
 navigation rail, a rounded canvas and a grouped node inspector. Zoom, Fit View,
 Auto-distribute, Spacing and node interaction share one floating toolbar at the
 top left, with view, layout and locking controls visually grouped. Layout labels
@@ -119,6 +120,25 @@ The visual formula editor uses compact chips, bounded labels with full-name
 titles, unboxed symbols and numeric fields sized to their contents. Drag/remove
 controls reveal on hover/focus (remain visible for coarse pointers). Caret,
 insertion, reorder, validation and the raw expression remain unchanged.
+
+Factor-tree cards share these neutral surfaces and use a rounded type icon,
+two-line KPI name, upper-right unit tag in place of the status icon and an inset
+Base/Potential comparison. Base is above Potential; each label and its number
+share a line, aligned left and right respectively. Units are not repeated in
+these value rows.
+Potential values that differ from Base use a pale blue row, stronger blue
+label/number and blue card border. This applies to the main scenario's numeric
+comparison, including propagated effects, with the existing tolerance; it does
+not distinguish direct overrides or imply that an increase is beneficial.
+Unchanged or unavailable comparisons and reference groups remain neutral;
+selected/highlighted card borders retain priority. Change descriptions remain
+available to assistive technology and in the value tooltip.
+Unit tags and full-value titles preserve numeric context; **≈** remains visible
+on estimated values. The root uses a dark type icon and a compact Effect footer.
+Graphite selection follows the inspector's selected KPI. The rounded
+Manual/AI/File/Smart action rail reveals on card hover, keyboard focus and coarse
+pointers. Thin neutral connectors retain relation symbols and amber negative
+relations. Card width and saved positions are preserved.
 
 - Create and edit nodes, formulas, relations, units, assumptions and statuses.
 - Evaluate formulas without `eval` and expose a calculation trace.

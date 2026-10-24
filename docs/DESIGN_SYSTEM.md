@@ -86,6 +86,41 @@ canvas height. Panel resizing and collapse retain their saved preferences.
 On a narrow canvas, layout controls use icons and the spacing popover stacks
 its sliders inside the canvas width. Escape returns focus to its trigger.
 
+### Factor-tree cards
+
+Node cards share the workspace's white, light gray and graphite tokens. Use a
+small rounded type icon, a two-line name with a full-name title and one compact
+unit tag at the upper right in place of the status icon. Keep status in the
+type-icon tooltip and the card's accessible description. A dark type icon
+identifies the root; keep its Calculated label when it has a formula. Place Base
+above the main scenario's Potential in one inset value surface. Each row has its
+label aligned left and tabular number aligned right on the same line; do not
+repeat unit tags beside the Base/Potential values.
+Unavailable values remain `n/a`, zero remains zero, and illustrative estimates
+retain **≈** and their explanatory tooltip. Full numbers and units remain
+available in titles when a label is truncated. When the main scenario's Potential
+differs from Base by more than the existing numeric tolerance, show a pale blue
+Potential row, a stronger blue label/number and a blue card border so changed
+values remain identifiable in the tree overview. Use the same blue for increases
+and decreases: it means a difference, not business improvement. Include the
+change in the card's accessible description and value tooltip. Unchanged or
+unavailable comparisons and reference groups remain neutral. This compares
+calculated values, including propagated changes; it does not identify direct
+overrides exclusively. Selected and highlighted borders retain priority. The
+root's compact Effect footer retains signed amounts/percentages and
+positive/negative colors.
+
+Use a graphite border and a quiet outer ring for the selected KPI, synchronized
+with the inspector, and retain amber emphasis for highlighted nodes. Keep
+reference groups and rejected-node treatment distinct. Manual, AI, file and
+Smart actions share a rounded floating rail, visible on card hover or keyboard
+focus and for coarse pointers; AI uses a dark button. Preserve the existing
+action callbacks, Smart anchoring and keyboard behavior. Connectors and ports
+use thin neutral strokes, retaining relation symbols and amber negative links.
+Keep the card's 238 px width and saved graph positions. Respect reduced motion.
+
+### Inspector
+
 The inspector leads with the current value and its unit. Show **≈** on estimates
 and keep source/assumption notes visible beside that value. Use restrained tabs
 and grouped definition, formula and detail fields with neutral inputs. Preserve
@@ -96,7 +131,8 @@ model quality. Formula tools, token drag targets and raw editing retain the
 same calculation and validation behavior. Graphite marks active navigation
 and inspector tabs without replacing error, estimate or source semantics.
 The inspector header shows its title, selected KPI and collapse control, without
-a node-status icon; node cards keep the existing status information.
+a node-status icon; node status is available through the card's accessible
+description and type-icon tooltip.
 Selecting another KPI or inspector tab starts the panel at the top so the value
 and relevant context are visible; editing the current KPI preserves its scroll.
 

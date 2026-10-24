@@ -99,6 +99,7 @@ export function VdtCanvas() {
       project.graph.nodes.map((node) => ({
         id: node.id,
         type: "vdtNode" as const,
+        selected: node.id === selectedNodeId,
         position: node.position ?? fallbackPositions.get(node.id) ?? { x: 0, y: 0 },
         data: {
           node,
@@ -133,6 +134,7 @@ export function VdtCanvas() {
       referenceGroups,
       requestIncomingKpisWithAi,
       selectNode,
+      selectedNodeId,
       smart.active?.targetNodeId,
       smart.activate,
       smart.leaveRail,

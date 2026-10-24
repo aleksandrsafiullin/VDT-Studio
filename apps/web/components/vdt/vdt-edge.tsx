@@ -10,6 +10,8 @@ import {
 } from "@xyflow/react";
 import type { VdtEdgeRelation } from "@vdt-studio/vdt-core";
 import { getEdgeRelationIcon, VdtIcon } from "./vdt-icons";
+import { clsx } from "clsx";
+import styles from "./vdt-canvas.module.css";
 
 export interface VdtEdgeData extends Record<string, unknown> {
   relation: VdtEdgeRelation;
@@ -23,8 +25,8 @@ function getNodeCenterY(node: InternalNode): number {
 }
 
 const STROKE_BY_RELATION: Partial<Record<VdtEdgeRelation, string>> = {
-  subtractive_component: "#d97706",
-  negative_driver: "#d97706"
+  subtractive_component: "#b39158",
+  negative_driver: "#b39158"
 };
 
 export function VdtRelationEdge({
@@ -63,7 +65,7 @@ export function VdtRelationEdge({
       ? (previousCenterY + targetCenterY) / 2
       : (sourceY + targetY) / 2;
 
-  const stroke = STROKE_BY_RELATION[relation] ?? "#6b7a90";
+  const stroke = STROKE_BY_RELATION[relation] ?? "var(--workspace-line, #d2d2d7)";
 
   return (
     <>
@@ -71,7 +73,7 @@ export function VdtRelationEdge({
         id={id}
         path={edgePath}
         {...(markerEnd ? { markerEnd } : {})}
-        style={{ ...style, stroke, strokeWidth: 1.5 }}
+        style={{ ...style, stroke, strokeWidth: 1.25 }}
       />
       {relation !== "formula_dependency" ? (
         <EdgeLabelRenderer>
@@ -82,7 +84,7 @@ export function VdtRelationEdge({
             }}
           >
             <span
-              className="inline-flex items-center justify-center rounded border border-line bg-white px-1.5 py-0.5 shadow-sm"
+              className={clsx(styles.edgeLabel, STROKE_BY_RELATION[relation] && styles.edgeNegative)}
               title={icon.label}
               aria-label={icon.label}
             >
