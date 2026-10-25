@@ -1,0 +1,45 @@
+.panel { display: grid; align-content: start; gap: 16px; color: var(--workspace-ink, #242426); }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.intro { margin: 0; color: var(--workspace-muted, #77777c); font-size: 12px; line-height: 1.6; }
+.search { display: flex; align-items: center; gap: 8px; color: var(--workspace-muted, #77777c); }
+.search input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font-size: 12px; }
+.search { padding: 9px 11px; border: 1px solid var(--workspace-line, #e5e5e9); border-radius: 9px; background: #fff; }
+.catalog { display: grid; gap: 9px; }
+.card { display: flex; flex-wrap: nowrap; gap: 12px; width: 100%; padding: 13px; border: 1px solid var(--workspace-line, #e5e5e9); border-radius: 13px; background: #fff; text-align: left; transition: border-color 150ms, background 150ms; }
+.card:hover { background: #fafafa; border-color: #b9b9c0; }
+.cardIcon { flex-shrink: 0; margin-top: 2px; color: #73737c; }
+.cardText { flex: 1; display: grid; gap: 5px; min-width: 0; }
+.cardText strong { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 550; line-height: 1.5; }
+.cardText strong svg { flex-shrink: 0; color: #9999a1; }
+.cardText > span { font-size: 12px; line-height: 1.5; color: #75757d; }
+.cardText small { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, monospace; margin-top: 2px; font-size: 10px; color: #8b8b92; }
+.location { display: flex; align-items: center; gap: 12px; padding: 13px; border: 1px solid var(--workspace-line, #e5e5e9); border-radius: 12px; background: #fafafa; min-width: 0; }
+.location > div { display: grid; gap: 5px; min-width: 0; flex: 1; }
+.location strong { font-size: 12px; font-weight: 550; }
+.location span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 10px/1.5 ui-monospace, SFMono-Regular, monospace; color: #81818a; }
+.location > button { flex-shrink: 0; }
+.libraryBar, .formHeading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+.skillButton { display: flex; gap: 12px; text-align: left; min-width: 0; }
+.createForm { display: grid; gap: 13px; padding: 16px; border: 1px solid #d8d8e1; border-radius: 12px; background: #fafafa; }
+.formHeading strong { font-size: 13px; font-weight: 550; }
+.empty { display: grid; justify-items: center; gap: 10px; padding: 34px 15px; border: 1px dashed #dedee6; border-radius: 13px; color: #91919a; text-align: center; }
+.empty strong { font-size: 12px; font-weight: 500; color: #686872; }
+.empty p { margin: 0; font-size: 11px; }
+.fileIssues { padding: 12px; border: 1px solid #eddfc9; border-radius: 10px; background: #fcf9f3; color: #88693e; font-size: 11px; line-height: 1.6; }
+.fileIssues summary { cursor: pointer; }
+.fileIssues > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.fileIssues strong { font-weight: 500; overflow-wrap: anywhere; }
+.notice { display: flex; gap: 8px; align-items: flex-start; padding: 12px; border: 1px solid #dfebe3; border-radius: 10px; background: #f5f9f6; font-size: 12px; line-height: 1.6; }
+.notice svg { flex-shrink: 0; margin-top: 3px; }
+.error { color: #a43e3e; font-size: 12px; line-height: 1.6; }
+.error button { text-decoration: underline; }
+.pending { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #77777c; }
+.contextControl { display: grid; gap: 6px; }
+.contextHeading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--workspace-muted, #77777c); }
+.manageLink { display: flex; align-items: center; gap: 4px; color: var(--workspace-secondary, #66666f); font-size: 10px; padding: 3px 0; }
+.manageLink:hover { color: var(--workspace-ink, #242426); }
+.contextSelect { position: relative; }
+.contextSelect select { width: 100%; min-width: 0; border: 1px solid var(--workspace-line, #dedee5); border-radius: 8px; padding: 8px 22px 8px 10px; background: var(--workspace-field, #fff); color: var(--workspace-ink, #242426); font-size: 11px; text-overflow: ellipsis; }
+.contextSelect > svg { position: absolute; right: 24px; top: 10px; color: #888890; pointer-events: none; }
+.contextSelect select:disabled { opacity: 0.65; }
+.contextNote { margin: 0; font-size: 10px; line-height: 1.5; color: var(--workspace-muted, #77777c); }

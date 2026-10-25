@@ -1,5 +1,64 @@
 # Architecture
 
+## Local skill library and selection
+
+The additive V1 repository is owned by `packages/vdt-storage/src/skill-library.ts`
+with the single editable working library at `<VDT_DATA_DIR>/skills`. Numbered
+immutable records under `<VDT_DATA_DIR>/skill-library-v1/skills` retain admitted
+versions for VDT pins and active runs. There is no graph/SQLite migration or V2 metadata,
+grant, framed-hash or read-ledger implementation in this change.
+
+`managed-skills.ts` initializes the supplied library into ordinary writable
+`<type>/<skill>/SKILL.md` packages, plus the reviewed, declared relative reference
+and evaluation resources. `seeded/<id>.json` records completed initialization.
+Existing paths are never overwritten; later starts do not restore deliberate
+removals. New supplied IDs may be initialized once. The shipped initial record
+retains its original version and raw hash, preserving existing selected pins.
+The reviewed distribution source and generated sidecar assets remain unchanged.
+Old view exports are retained on disk but no longer opened or used as a catalog.
+
+The runtime catalog is derived solely from current working files, not a merged
+bundled/user registry. All identities can be edited and versioned. Legacy
+explicit IDs remain valid; name/description-only files receive a stable internal
+ID from the normalized name. Missing VDT metadata is supplied in the runtime
+artifact. The `fileHash` records exact admitted working bytes, so host metadata
+normalization never rewrites the editor's file or causes repeated versions.
+Moves retain identity; changing a portable name creates another identity.
+Invalid/duplicate entries retain history and surface an issue. Removed files
+leave the catalog; explicitly pinned historical bytes remain readable.
+
+`skill-files.ts` validates nested relative paths and rejects traversal, symlinks
+and hard-linked working files. Enumeration is bounded to 2,000 entries and 12
+path components; SKILL.md is capped at 128 KiB. Companion Markdown inside a
+package is not indexed as another skill. Reviewed seed resources are capped at
+1 MiB each, use declared relative paths only, and have exclusive no-overwrite
+publication. On first working-library access, the previous
+`<VDT_DATA_DIR>/skill-library-v1/files` directory is renamed in full to
+`<VDT_DATA_DIR>/skills`; working bytes, resources, history and selections are
+preserved. If both roots already exist, migration fails without changing either
+folder. Symlinked roots are rejected.
+
+Settings contains a flat search/list, New skill and Open folder. File and folder
+management happens externally. Visible-list polling, focus and manual Refresh
+reload the catalog; changes notify Context only when the catalog signature
+changes. From this VDT appears only within an open tree. It uses the existing
+registered provider transport and publishes a package only through explicit
+Create and open. No returned model tool is executed.
+
+`/api/skills/files` supports only open.folder, open.file and open.skill. Local,
+same-origin, bounded JSON admission precedes library-owned path resolution and a
+fixed OS launcher without a shell or client-provided command/URL. Opening a
+removed entry fails instead of restoring it. Legacy publish/clone APIs retain
+compatibility but have no management UI. No Tauri plugin, command or sidecar
+bundle is changed; packaged-native and non-macOS launches remain unqualified.
+
+Context and the main runtime use this same library. Root-KPI recall is
+provisional; the universal default applies only if its file is available. An
+absent default leaves explicit Context selection available. Version/hash pins,
+run-local catalog snapshots and read-before-select behavior remain intact.
+Legacy compatibility recipe/topology activation remains explicitly separate.
+See [ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md).
+
 ## Smart KPI preparation and explicit apply boundary
 
 Preparation policy `smart-kpi-preparation.v10` retains the v5 direction rules and requires at least two components

@@ -1,5 +1,58 @@
 # Product Specification
 
+## Local skill library
+
+Implemented for the trusted local application: **Settings → Skills** has one
+searchable list, **Open folder**, **New skill**, and **From this VDT** only when a
+VDT is open. The list displays a name, description and relative file path;
+clicking an entry opens its actual editable file in the OS default application.
+There are no Built-in/My skills categories, source labels, folder-management
+commands, import/copy/download/clone controls or embedded Markdown viewer/editor.
+The filesystem is the working library, and the application displays/uses it.
+
+On first access, the supplied skills and declared reference/evaluation resources
+are initialized in `<VDT_DATA_DIR>/skills`. Supplied skills retain
+their identities, initial versions and hashes for existing VDT pins, and are
+editable just like newly created skills. Initial files use
+`<type>/<skill>/SKILL.md`; New skill creates `<name>/SKILL.md` in that same root.
+Seed markers prevent replacing edited files or restoring deliberate deletions.
+New supplied IDs can be initialized once on a future start. The previous V1
+`skill-library-v1/files` folder is moved intact into `skills`, preserving all
+relative paths and editor bytes. Retained history is not another source category.
+
+Users edit, organize, duplicate or remove files with their editor/file manager.
+The name/description Markdown format is supported alongside existing VDT
+frontmatter. Internal VDT metadata is supplied only in the immutable runtime
+artifact, not written into portable working files. Folder/file moves preserve
+identity; changing a portable frontmatter name creates a new identity. To make
+an independent copy of an older explicit-id skill, remove/change its copied id
+and give it a unique name. Companion Markdown in a skill package is not indexed
+as another skill.
+
+Visible-library polling (10 seconds), return/focus, Refresh and new runtime
+catalog access synchronize saves. Valid changes append immutable versions;
+invalid/duplicate files show an issue and retain prior history. Removed files
+leave the catalog and are not recreated when opened or refreshed. Existing VDT
+version pins and active run snapshots remain readable from history.
+
+**From this VDT** uses Skill Author to prepare an unsaved draft from the current
+2–80-node tree with a root formula. Name/description controls precede **Create
+and open**, which writes a new package and opens the external app for review.
+No automatic selection or VDT mutation occurs. Source numerical values are
+omitted; only validated original formulas can become executable topology.
+
+**Context → Skill** selects from the same uncategorized library. Creation uses
+provisional Unicode Root-KPI recall and the universal skill when available; if
+the user removed that default, explicit selection remains possible. KPI edits
+reconsider automatic choices; explicit choices remain pinned. The main agent
+can read and explicitly select another skill with a reason. The selector is
+disabled during an active run.
+
+This local V1 workflow amends the earlier read-only supplied-skill and
+no-universal-preselection rules. V2 grants/read receipts/CAS, Smart Suggested
+binding, native packaging and non-macOS launch qualification remain separate.
+See [ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md).
+
 ## Smart incoming KPI suggestions
 
 Each newly prepared alternative has 2–6 distinct substantive components or
@@ -324,7 +377,7 @@ do not imply instantaneous word-by-word recognition or a transcription-quality g
 - Detect no applicable skill explicitly and, with user permission, ask, research or create a versioned user specification.
 - Preserve selected skill IDs, versions, hashes, assumptions and evidence in the run record.
 
-The target deliberately excludes translated skill copies, language-alias registries, keyword/marker routing as the selection decision and automatic generic fallback. Current status: the local registry contains 11 skills and is heavily mining-focused; its legacy ASCII-oriented retrieval remains live. The versioned repository, read ledger, explicit CAS selection and auditable process-research evidence are not implemented. See [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md).
+The V2 target excludes translated skill copies, language-alias registries and lexical scores as semantic selection decisions. Local V1 now has immutable user versions, Unicode-preserving provisional recall, universal preselection and explicit agent reselection under ADR-010. V2 SQLite metadata, grants, durable read receipts, run-state CAS/idempotent selection and auditable process research remain unimplemented. See [ADR-003](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) and [ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md).
 
 ### Benchmarks
 
@@ -422,7 +475,7 @@ Known Scenario Mode parity boundary: duplicate imported overrides use the last v
 | Basic factor-tree editing and arithmetic | Implemented with known validation gaps |
 | Scenario calculation and trace | Implemented |
 | Agent decision/tool loop | Legacy working prototype; dual-profile Supervisor foundation partial/default-off and not speed-qualified |
-| Skill selection | Legacy deterministic retrieval; agent-owned single-copy target not implemented |
+| Skill selection | Local V1 Context defaults/override and explicit agent reselection; full V2 agent-owned single-copy target not implemented |
 | Web process research | Search-only prototype |
 | Auditable benchmark workflow | Planned |
 | Tabular data discovery | Experimental |

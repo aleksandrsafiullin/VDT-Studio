@@ -8,6 +8,11 @@ This checklist separates CLI/web alpha gates, data-upload blockers and native de
 
 ## CLI/Web Alpha Gates
 
+- [ ] Qualify local skill-file workflows on each release platform: one seeded editable folder, no overwrite or resurrection of removed files,
+  portable SKILL.md packages, external opening, invalid/duplicate files, stable active
+  run pins and same-origin/path/symlink rejection. Local macOS web evidence does
+  not qualify packaged native, Linux/Windows launch behavior or hosted access.
+
 Run on Node `>=24 <25` with pnpm `10.33.2`:
 
 ```bash

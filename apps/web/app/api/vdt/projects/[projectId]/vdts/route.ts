@@ -1,4 +1,5 @@
 import { VdtStorageError } from "@vdt-studio/storage";
+import { resolveVdtSkill } from "@vdt-studio/vdt-agent";
 import {
   buildStoredProjectSummary,
   jsonError,
@@ -91,6 +92,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
       throw new VdtStorageError("PROJECT_NOT_FOUND", "Project not found after initial VDT commit.");
     }
     const summary = buildStoredProjectSummary(database, project);
+    // Skill preselection is independent of the graph commit. A library failure
+    // must not turn a successfully committed creation into a failed response.
+    try { await resolveVdtSkill({ projectId: project.id, vdtId: result.vdt.id, rootKpi: result.vdt.rootKpi ?? result.vdt.name }); }
+    catch { /* Context retries selection on open and surfaces library errors. */ }
     return Response.json({
       schemaVersion: "create_vdt_with_initial_http_response.v1",
       ok: true,

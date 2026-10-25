@@ -15,6 +15,7 @@ import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { filterAgentChatHistoryForVdt, shouldContinueOpenVdt, useVdtStudioStore } from "./vdt-store";
 import { GenerateActivityPanel } from "./generate-activity-panel";
 import { SettingsModal } from "./settings-modal";
+import { SkillContextControl } from "./skill-context-control";
 import type { SettingsSectionId } from "./settings-nav";
 import { useSpeechSettings } from "./speech-store";
 import { useVoiceDictation } from "./use-voice-dictation";
@@ -335,6 +336,7 @@ export function SetupRail() {
               />
             </Field>
           </div>
+          <SkillContextControl onManage={() => { setSettingsSection("skills"); setSettingsOpen(true); }} />
         </div>
       </details>
 

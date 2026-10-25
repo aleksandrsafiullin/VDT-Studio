@@ -27,6 +27,8 @@ import {
   isStructuredModelExecutionBinding
 } from "./execution-bindings";
 import { compactPublicAgentSnapshot } from "./public-snapshot";
+import { resolveVdtSkill } from "@vdt-studio/vdt-agent";
+import { requireVdt } from "../../skills/service";
 import { isOpenAiSessionBinding, openAiSessionBindings } from "./byok-bindings";
 import {
   PublicSupervisorRunError,
@@ -87,6 +89,13 @@ export async function POST(request: Request) {
   let resolved: ReturnType<typeof resolveAgentStartRequest>;
   try {
     resolved = resolveAgentStartRequest(parsed.data as VdtAgentPublicStartRequest);
+    const workspace = resolved.request.workspace;
+    if (workspace?.vdtId) requireVdt(workspace.projectId, workspace.vdtId);
+    const { pin } = await resolveVdtSkill({
+      ...(workspace?.vdtId ? { projectId: workspace.projectId, vdtId: workspace.vdtId } : {}),
+      rootKpi: resolved.request.input.rootKpi ?? resolved.request.input.prompt ?? "Value driver tree"
+    });
+    resolved.request.input.skillSelection = pin;
   } catch (error) {
     if (error instanceof AgentExecutionBindingError) {
       return jsonError(
@@ -95,7 +104,7 @@ export async function POST(request: Request) {
         "AGENT_EXECUTION_BINDING_UNAVAILABLE"
       );
     }
-    throw error;
+    return storageWriteErrorResponse(error, "The selected skill or workspace could not be loaded.");
   }
 
   if (resolved.binding && isStructuredModelExecutionBinding(resolved.binding)) {

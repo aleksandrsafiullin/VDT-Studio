@@ -1,5 +1,56 @@
 # AI And Agent Harness
 
+## Skill Author CLI parsing check (2026-10-25)
+
+Codex completion parsing now accepts a valid structured result before applying
+fallback diagnostic heuristics. The previous substring check treated
+`skill.author_draft` as an authentication failure because `author` contains
+`auth`. Explicit terminal stream failures still reject the response; plain
+authentication/quota diagnostics remain available when no structured result is
+present. Regression checks cover both cases.
+
+A live trusted-local Codex invocation prepared a 14,682-character draft from
+`project_full_depth_universal_final_08` / `vdt_full_depth_universal_final_08`.
+The host validated a 24-driver executable topology with unit `t`, no illustrative
+numeric defaults and no original 1,000,000 root value. The draft was not
+published. Evidence is under `output/playwright/skills-2026-10-25/`.
+The CLI host default was used; its exact resolved model and input-source hash
+were not captured. This is a task-specific functional check, not provider or
+native-package certification.
+
+## Managed skills and Skill Author
+
+The main agent receives the VDT's host-resolved provisional or explicit skill,
+including its exact version/hash. Local tools use the single on-disk catalog;
+`skill.read` remains selection-neutral. `skill.select` requires a successful read
+of that same content in the run, replaces the primary choice and persists the
+agent's reason for Context. Root-KPI recall is provisional, supports Unicode and
+uses the universal skill when no specific pattern matches. It is not model
+confidence or a full semantic resolver. Compatibility compile/topology tools
+retain legacy activation; replacing a user choice through recipe compilation
+requires explicit reselection.
+
+Skill Author is a dedicated, bounded prompt over the existing `agent_decision`
+transport, with a single admitted `skill.author_draft` output. The host validates
+that output and executes no model-returned tool. It receives only the current
+VDT's structure/formulas, omitting source values, rows and file paths. The chosen
+API/local/CLI provider is retained. A 90-second request deadline applies; the
+UI retains an unsaved draft with name/description controls. Create and open is a
+separate local operation that saves a SKILL.md package in the shared folder and opens the default external editor.
+Markdown is not rendered or edited inside the application. External file saves
+are validated into immutable versions before a new catalog load; invalid files
+retain last valid guidance, and active runs retain their prior snapshot.
+This introduces no task/schema ID and no new tool/approval authority. Live
+provider quality, complete V2 read receipts and native packaging remain separate
+qualification work. See [ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md).
+
+The supplied library is a one-time editable seed, including declared resources.
+Subsequent catalog loads read working files; there is no parallel read-only
+bundled catalog. External moves preserve explicit/name-derived identity;
+removals leave the catalog without restoring defaults. Existing pinned history
+remains readable. A portable name/description file receives VDT-only metadata in
+its runtime artifact. These instructions cannot grant tools or permissions.
+
 ## Paused agent cancellation
 
 The current controller can persist its terminal runtime cancellation event after
@@ -99,7 +150,7 @@ The shared file instruction requires `data.write_inputs` for retained-file numer
 
 Hierarchy inspection folds literal constants when finding effective dependencies. A reference used only under a zero multiplier (including a folded constant such as `2 - 2`) cannot satisfy parent/child or root-closure checks and blocks protected finish. Input baseline values and active min/max bottlenecks are not folded, so legitimate zero-valued inputs remain factors. Shared instructions prohibit dummy zero terms and averaging measured totals with their own reconstructions. This bounded structural rule does not certify arbitrary algebraic identities or business causality.
 
-Initial catalog descriptions are bounded to 128 characters to keep the full typed catalog below 35,000 characters. `tools.describe` returns the complete description and argument schema.
+Initial catalog descriptions are bounded to 88 characters to keep the full typed catalog below 35,000 characters. `tools.describe` returns the complete description and argument schema.
 
 ## Source-aware session experiments (2026-10-17)
 
@@ -305,7 +356,7 @@ qualification and the cold/warm live benchmark remain explicit `NO-GO` gates.
 
 The source library is `packages/vdt-agent/skills/`; the sidecar copy is generated.
 
-Current registry: 11 skills across mining, finance, SaaS and generic decomposition. Retrieval combines deterministic domain classification and term matching. Recipe compilation can seed graph structure and known numeric inputs.
+The bundled registry covers mining, finance, SaaS and generic decomposition. Retrieval combines deterministic domain classification and term matching. Recipe compilation can seed graph structure and known numeric inputs.
 
 Known limitations:
 

@@ -1,5 +1,23 @@
 # Provider Compatibility
 
+## Skill Author CLI parsing check (2026-10-25)
+
+Codex completion parsing now accepts a valid structured result before applying
+fallback diagnostic heuristics. The previous substring check treated
+`skill.author_draft` as an authentication failure because `author` contains
+`auth`. Explicit terminal stream failures still reject the response; plain
+authentication/quota diagnostics remain available when no structured result is
+present. Regression checks cover both cases.
+
+A live trusted-local Codex invocation prepared a 14,682-character draft from
+`project_full_depth_universal_final_08` / `vdt_full_depth_universal_final_08`.
+The host validated a 24-driver executable topology with unit `t`, no illustrative
+numeric defaults and no original 1,000,000 root value. The draft was not
+published. Evidence is under `output/playwright/skills-2026-10-25/`.
+The CLI host default was used; its exact resolved model and input-source hash
+were not captured. This is a task-specific functional check, not provider or
+native-package certification.
+
 ## Smart preparation profile (2026-10-19, deterministic fixtures)
 
 The registered read-only Smart task has real configured OpenAI-compatible,

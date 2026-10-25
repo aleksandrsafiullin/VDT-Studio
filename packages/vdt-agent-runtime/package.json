@@ -7,6 +7,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@vdt-studio/storage": "workspace:*",
     "@vdt-studio/vdt-agent": "workspace:*",
     "@vdt-studio/vdt-core": "workspace:*",
     "zod": "^3.25.64"

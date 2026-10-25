@@ -1,5 +1,35 @@
 # VDT Studio
 
+### Skill library and VDT context
+
+**Settings → Skills** shows one searchable library backed by the **Skills folder**
+at `<VDT_DATA_DIR>/skills` (the resolved path is displayed).
+The supplied approaches and their reference/evaluation files are initialized
+there once. All working skills are editable; there are no Built-in/My skills
+categories. Later starts preserve edits and deletions, and newly supplied IDs
+can be initialized without replacing existing files.
+
+**New skill** creates `<name>/SKILL.md` and opens it in your default application.
+A new file needs `name`, `description` and Markdown instructions; the existing VDT
+frontmatter format remains supported. **Open folder** opens the file manager.
+Edit, organize, copy or remove files in your usual editor/file manager; the app
+provides a list and creation rather than a filesystem manager or Markdown editor.
+Changes appear on return, during visible-library polling, Refresh and new agent
+catalog access. Removed files leave the catalog; immutable history and active
+run pins remain available. Duplicate identities or invalid skills show an issue.
+
+**From this VDT** is available only while a VDT is open. Skill Author prepares a
+draft from a tree with a root formula and 2–80 nodes. **Create and open** saves it
+in the same folder for external review, without selecting it or changing the
+VDT. Source numerical values are excluded.
+
+The left panel's **Context → Skill** selects from this same library. A Root KPI
+receives a provisional matching skill or the available universal skill. If the
+default was removed, the user can choose another file. The main agent can read
+and select another skill with a reason as context changes. This local capability
+does not qualify hosted access, native packaging or Smart Suggested skill
+binding. See [ADR-010](docs/adr/ADR-010-local-skill-library-and-context-selection.md).
+
 ### Smart KPI suggestions
 
 Suggestions are available only for **Input** KPIs without an incoming KPI layer

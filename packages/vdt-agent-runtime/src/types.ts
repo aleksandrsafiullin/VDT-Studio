@@ -100,6 +100,9 @@ export interface VdtAgentSelectedSkill {
   score: number;
   reason: string;
   matchedTerms: string[];
+  version?: number | undefined;
+  contentHash?: string | undefined;
+  source?: "auto" | "user" | "agent" | undefined;
 }
 
 export type PublicAgentStatusPhase =
@@ -250,6 +253,8 @@ export interface VdtAgentStartInput {
   levelOfDetail?: "low" | "medium" | "high" | string | undefined;
   project?: VdtProject | undefined;
   selectedNodeId?: string | undefined;
+  /** Host-resolved immutable content. Public start schema never accepts it. */
+  skillSelection?: import("@vdt-studio/vdt-agent").SkillPin | undefined;
 }
 
 export interface VdtAgentWorkspaceContext {

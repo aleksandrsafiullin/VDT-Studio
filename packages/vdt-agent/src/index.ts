@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 export * from "./skill-questions";
 export * from "./skill-recipe";
 export * from "./skill-topology";
+export * from "./managed-skills";
 
 export type VdtAgentStatus = "running" | "needs_user_input" | "waiting_approval" | "recovery_required" | "succeeded" | "failed" | "cancelled";
 
@@ -418,6 +419,31 @@ export function loadDefaultSkillLibrary(): Promise<VdtSkillLibrary> {
   return defaultSkillLibraryPromise;
 }
 
+let defaultSkillResources: Promise<Record<string, Record<string, string>>> | undefined;
+/** Reviewed, declared support files copied beside the initial SKILL.md. This
+ * never reads paths supplied by a live skill or a browser request. */
+export function loadDefaultSkillResources(): Promise<Record<string, Record<string, string>>> {
+  defaultSkillResources ??= (async () => {
+    const library = await loadDefaultSkillLibrary(), root = await resolveDefaultSkillRoot();
+    const { open } = await import("node:fs/promises"), { constants } = await import("node:fs");
+    const result: Record<string, Record<string, string>> = {};
+    for (const skill of library.skills) {
+      result[skill.id] = {};
+      for (const relative of new Set(Object.values({ ...skill.frontmatter.referenceFiles, ...skill.frontmatter.evalFiles }))) {
+        if (relative.startsWith("/") || relative.includes("\\") || relative.split("/").some(part => !part || part.startsWith(".")) || !/\.(md|yaml|yml|json)$/i.test(relative)) throw new Error("Invalid bundled skill resource path.");
+        const file = await open(join(root, dirname(skill.path), relative), constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const stat = await file.stat();
+          if (!stat.isFile() || stat.size > 1024 * 1024) throw new Error("Bundled skill resource exceeds its limit.");
+          result[skill.id]![relative] = await file.readFile("utf8");
+        } finally { await file.close(); }
+      }
+    }
+    return result;
+  })();
+  return defaultSkillResources;
+}
+
 async function resolveDefaultSkillRoot(): Promise<string> {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
@@ -826,6 +852,9 @@ function parseBlockScalarFrontmatterValue(
 }
 
 function parseStringValue(value: string): string {
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try { const parsed: unknown = JSON.parse(value); if (typeof parsed === "string") return parsed.trim(); } catch { /* Compatibility with non-JSON YAML strings. */ }
+  }
   return value.replace(/^["']|["']$/g, "").trim();
 }
 

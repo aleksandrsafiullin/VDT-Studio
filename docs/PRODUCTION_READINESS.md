@@ -1,5 +1,31 @@
 # Production Readiness
 
+## Local skill management boundary (2026-10-25)
+
+Implemented in source: one editable skills directory initialized from supplied
+packages and declared support files, a unified list/Context selector, New skill,
+external default-app/file-manager opening and From this VDT within an open tree.
+No source-category or filesystem-management UI remains. Portable SKILL.md files
+are supported; old VDT files/pins remain readable. Initialization preserves
+subsequent external edits and deletions. Valid saves append immutable versions;
+invalid files retain history. Skill Author excludes source values and admits
+only host-validated topology, with explicit Create and open publication.
+
+OS launches require local/same-origin bounded JSON admission and library-owned
+paths with a fixed executable and no shell. Only open actions remain in the
+file endpoint. Supplied files are edited in the working library; the reviewed
+distribution/sidecar source is untouched. macOS browser checks are task-specific;
+Linux/Windows and packaged-native qualification remain open. No generic desktop
+opener plugin or Tauri command is introduced.
+
+The V1 repository uses immutable filesystem records with version/selection CAS;
+it is not the planned V2 SQLite metadata/read-ledger/grant implementation. Legacy
+recipe/topology activation still exists. Hosted access is disabled. General
+semantic applicability, arbitrary model-generated guidance, live provider
+qualification and packaged native/Windows workflows remain unverified. This
+capability does not change the production/release `NO-GO`. See
+[ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md).
+
 ## Project deletion with AI history
 
 Implemented in source: Sequence 5 adds a checked, backed-up migration and scoped

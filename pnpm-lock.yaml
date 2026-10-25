@@ -44,6 +44,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@vdt-studio/vdt-agent':
+        specifier: workspace:*
+        version: link:../../packages/vdt-agent
       '@dnd-kit/core':
         specifier: ^6.3.1
         version: 6.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -194,6 +197,9 @@ importers:
 
   packages/vdt-agent:
     dependencies:
+      '@vdt-studio/storage':
+        specifier: workspace:*
+        version: link:../vdt-storage
       '@vdt-studio/vdt-core':
         specifier: workspace:*
         version: link:../vdt-core
@@ -203,6 +209,9 @@ importers:
 
   packages/vdt-agent-runtime:
     dependencies:
+      '@vdt-studio/storage':
+        specifier: workspace:*
+        version: link:../vdt-storage
       '@vdt-studio/vdt-agent':
         specifier: workspace:*
         version: link:../vdt-agent

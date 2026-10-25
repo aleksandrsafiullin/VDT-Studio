@@ -4,6 +4,8 @@
 - Date: 2026-07-23
 - Program: [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](../VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md)
 
+The local V1 product workflow is amended by [ADR-010](ADR-010-local-skill-library-and-context-selection.md): a universal preliminary Context choice and one editable on-disk library seeded from supplied skills are user-requested V1 defaults. This ADR remains the unimplemented V2 repository/authorization/selection target; its no-fallback rule does not prohibit that V1 preselection.
+
 ## Context
 
 The current runtime classifies requests with a fixed domain enum, ASCII-oriented term matching and an automatic generic fallback. `skill.read` also mutates `selectedSkills`. Those behaviors are useful evidence about the alpha implementation, but they are not the target architecture.

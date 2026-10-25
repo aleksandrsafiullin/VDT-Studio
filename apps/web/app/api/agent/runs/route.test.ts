@@ -6,6 +6,7 @@ import { createLocalRuntimeContext, AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt
 import type { AgentCapabilityProfile } from "@vdt-studio/vdt-agent-runtime";
 import { VdtBuilderSession } from "@vdt-studio/vdt-core";
 import { VdtStorageError } from "@vdt-studio/storage";
+import { openVdtStorageDatabase } from "../../vdt/storage-database";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as getExecutionBindings, POST as startRun } from "./route";
 import { GET as getRun } from "./[runId]/route";
@@ -1163,6 +1164,11 @@ describe("agent runs API", { timeout: 30_000 }, () => {
   });
 
   it("preserves workspace.vdtId on stored agent run request", async () => {
+    const database = openVdtStorageDatabase(process.cwd());
+    try {
+      if (!database.getProject("project_production_volume")) database.createProject({ id: "project_production_volume", name: "Production Volume" });
+      if (!database.getVdt("vdt_existing_001")) database.createVdt({ id: "vdt_existing_001", projectId: "project_production_volume", name: "Existing VDT", rootKpi: "Production Volume" });
+    } finally { database.close(); }
     const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
       mode: "continue_project",
       input: {

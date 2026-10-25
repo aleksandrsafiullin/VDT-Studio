@@ -10,5 +10,7 @@ export {
 } from "./migrations";
 export type { StorageMigrationOptions } from "./migrations";
 export * from "./project-files";
+export * from "./skill-library";
+export * from "./skill-files";
 export * from "./sqlite";
 export * from "./types";

@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { DisplaySettings } from "./display-settings";
 import { ExecutionModeSettings } from "./execution-mode-settings";
 import { SpeechSettings } from "./speech-settings";
+import { SkillsPanel } from "./skills-panel";
 import styles from "./settings-modal.module.css";
 import {
   SETTINGS_SECTION_META,
@@ -201,6 +202,7 @@ export function SettingsModal({
                     {activeSection === "execution" ? <ExecutionModeSettings /> : null}
                     {activeSection === "voice" ? <SpeechSettings confirmOnOpen={confirmSpeechDownload} /> : null}
                     {activeSection === "display" ? <DisplaySettings /> : null}
+                    {activeSection === "skills" ? <SkillsPanel /> : null}
                   </div>
                 </div>
               </div>

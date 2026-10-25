@@ -1,5 +1,30 @@
 # Agentic VDT Runtime Implementation Spec
 
+## Local V1 skill workflow amendment (2026-10-25)
+
+The user-facing local workflow now provides managed skills and an explicit
+Context selector. VDT creation makes a provisional Root-KPI match and uses the
+universal skill if unmatched. The main agent can read another skill and call
+`skill.select` with a reason; read alone does not select. Runs retain selected
+version/hash/content, and manual selections are scoped to a project and VDT.
+Skill Author is a separate no-publishing operation returning a reviewable draft
+from a bounded VDT structure with numerical source values omitted.
+
+All working skills share one editable folder, initially populated from supplied
+packages and their reference/evaluation resources. Later starts preserve edits
+and removals. The catalog reads only current files; existing pinned history is
+retained. New files use <name>/SKILL.md, including portable name/description
+frontmatter. Folder moves preserve identity. The UI lists/creates skills and
+opens the external editor; filesystem management happens in that editor or the
+file manager. From this VDT is shown only in an open VDT and requires explicit
+Create and open to save a new package without changing the source tree.
+
+[ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md) supersedes the
+no-universal-preselection and read-only supplied-skill rules for local V1. It does not
+claim V2 run-state CAS, tenant grants, canonical framed hashes, durable read
+receipts, certified recipes or completion of corrective migration waves. The
+normative V2 contracts below remain target requirements.
+
 ## Incremental incoming formulas (2026-10-20)
 
 Smart is a separately registered read-only one-completion task; the configured API/CLI/local backend, one-call caps and cache/cancellation ownership remain unchanged. New UI/Manual drafts compile selected/own/retained rows and an explicit final formula through one real revision-CAS transaction. Parents become calculated (actual root retains its role); unknown values are allowed and source measurements stay reference/checkpoint evidence. Historical graphs and v1 pending requests are not migrated.

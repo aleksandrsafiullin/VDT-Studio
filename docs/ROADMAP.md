@@ -1,5 +1,28 @@
 # Roadmap
 
+## Local skill library (2026-10-25)
+
+Implemented in source: one searchable, filesystem-backed library with Open
+folder, New skill and From this VDT only in an open VDT. Supplied and new skills
+share the same editable directory; source categories and in-app filesystem
+management are removed. Packages use SKILL.md, with portable name/description
+frontmatter supported alongside existing VDT metadata. Supplied reference/eval
+resources are copied once; later starts preserve edits and removals.
+The working root is `<VDT_DATA_DIR>/skills`; the previous
+`skill-library-v1/files` directory moves intact on first access, keeping private
+version and selection history separate and unchanged.
+
+External saves update immutable history and the current catalog; removed files
+leave the catalog, while pinned versions remain readable. Context uses that
+same library. Provisional Root-KPI recall uses the universal skill when present;
+users can select another file after removing the default. Skill Author prepares
+a value-free draft from the 2–80-node open VDT and explicit Create and open saves
+it for external review.
+
+V1 persistence is additive. V2 metadata/grants/read receipts/run-state CAS,
+general semantic qualification, automatic Smart Suggested binding and native/
+Windows qualification remain open. See [ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md).
+
 ## Suggested KPI instruction quality (2026-10-25)
 
 Implemented locally: preparation v10 is domain-neutral and uses the actual

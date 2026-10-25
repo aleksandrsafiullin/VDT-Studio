@@ -1,5 +1,55 @@
 # Local AI And Data Threat Model
 
+## Local skill management
+
+Skill routes are restricted to the trusted local application. JSON writes use
+bounded streamed admission. A direct local Host can reconcile Next's
+localhost/127.0.0.1 reconstruction only when both authorities are local, their
+ports agree, the supplied Origin matches that Host and fetch metadata is not
+cross-site. Forwarded headers cannot grant this exception; other AI routes keep
+their default origin policy.
+
+Custom Markdown is untrusted guidance and cannot add tools, read arbitrary
+paths, grant research or authorize mutations. All working skills, including the
+supplied seed, are editable. Admitted versions and any retained fork lineage
+live in the immutable local repository. Path segments are validated, symlinks
+rejected, content hashes checked and stale version/selection writes rejected. This is single-user local
+storage, not tenant authorization or the V2 acceptance/read-ledger protocol.
+
+The editable `<VDT_DATA_DIR>/skills` directory admits at most 2,000 entries, 12
+path components and 128 KiB per Markdown file. It rejects traversal, absolute paths, reserved names,
+symbolic links and hard-linked files. Invalid/duplicate working files remain on
+disk and cannot replace last valid versions. Host versioning retains the exact
+admitted working hash and does not rewrite externally saved bytes. A trusted
+local filesystem user can edit those files; this is not isolation from the owner
+of the machine. An OS-launch POST must pass the same local/same-origin JSON
+guard. It resolves a skill ID or a validated relative file/folder only under the
+repository; no arbitrary URL, command, application or shell is accepted. Launch
+uses `/usr/bin/open`, `/usr/bin/xdg-open` or the fixed Windows Explorer executable
+with one absolute-path argument and a deadline. The supplied library is copied
+once into writable packages with declared relative resources (at most 1 MiB
+each), using exclusive no-overwrite writes.
+Seed markers prevent later overwrites/restoration after user edits/deletion.
+Only the working library is used for live catalog access; reviewed distribution
+sources are not opened for editing. Portable frontmatter cannot grant capability:
+missing VDT metadata is host-normalized only in the immutable runtime artifact.
+Only open actions remain in the file endpoint; file/folder management is external.
+The previous `skill-library-v1/files` root is renamed as a whole into `skills`.
+Migration rejects symlinked roots and stops without changing either directory
+when both roots exist. Private version/selection history stays in place.
+
+Skill Author receives bounded node names, units, formulas and relationships;
+source numerical values, dataset rows and file paths are omitted. Its only
+admitted structured result is an editable draft, never an executed model tool
+or automatic publication. The user explicitly chooses Create and open to save
+the draft for external review. The existing selected provider owns inference. API transport
+uses the existing pinned-destination policy; local CLI uses its current managed
+runtime controls. Original topology can be attached only after deterministic
+validation, without numeric source defaults. Provider error details are not
+returned to the UI. Model-authored prose still needs review; the feature does
+not strengthen general CLI isolation or native/hosted qualification. See
+[ADR-010](../adr/ADR-010-local-skill-library-and-context-selection.md).
+
 ## Smart editor quota fallback
 
 `smart_kpi_storage.v1` is a private quota-only encoding of repeated Smart editor

@@ -2,6 +2,7 @@
 
 import {
   Brain,
+  BookOpen,
   Cpu,
   Monitor,
   Mic,
@@ -14,6 +15,7 @@ import styles from "./settings-modal.module.css";
 export type SettingsSectionId =
   | "execution"
   | "voice"
+  | "skills"
   | "memory"
   | "appearance"
   | "display";
@@ -28,6 +30,7 @@ export interface SettingsSectionConfig {
 export const SETTINGS_SECTIONS: SettingsSectionConfig[] = [
   { id: "execution", label: "Execution mode", icon: Cpu, enabled: true },
   { id: "voice", label: "Voice input", icon: Mic, enabled: true },
+  { id: "skills", label: "Skills", icon: BookOpen, enabled: true },
   { id: "memory", label: "Memory", icon: Brain, enabled: false },
   { id: "appearance", label: "Appearance", icon: Palette, enabled: false },
   { id: "display", label: "Display", icon: Monitor, enabled: true }
@@ -44,6 +47,10 @@ export const SETTINGS_SECTION_META: Record<
   voice: {
     title: "Voice input",
     subtitle: "Download a speech model and dictate locally into chat."
+  },
+  skills: {
+    title: "Skills",
+    subtitle: "Your skills folder, available in every VDT."
   },
   memory: {
     title: "Memory",

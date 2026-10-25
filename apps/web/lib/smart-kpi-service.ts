@@ -61,7 +61,7 @@ async function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise
   try { return await Promise.race([operation, aborted]); } finally { signal.removeEventListener("abort", interrupt); }
 }
 
-async function selectedProvider(request: SmartKpiServiceRequest, signal: AbortSignal, requestUrl: string): Promise<AiProvider> {
+export async function selectedProvider(request: SmartKpiServiceRequest, signal: AbortSignal, requestUrl: string, maxEnvelopeBytes = 24 * 1024): Promise<AiProvider> {
   const config = request.providerConfig ?? {};
   smartRecord(config, ["baseUrl", "endpoint", "model", "deployment", "apiVersion", "anthropicVersion", "apiKey", "maxTokens", "backendId", "runnerUrl", "pairingToken", "timeoutMs"], []);
   const text = (key: string, max = 2048) => { smartString(config[key], max); return config[key] as string; };
@@ -75,7 +75,7 @@ async function selectedProvider(request: SmartKpiServiceRequest, signal: AbortSi
   const model = text("model", 160), apiKey = text("apiKey", 8192);
   const pinnedFetch = (provider: ProxyProvider): typeof fetch => async (raw, init) => {
     const body = String(init?.body ?? "");
-    smartAssert(new TextEncoder().encode(body).byteLength <= 24 * 1024, "INPUT_TOO_LARGE", "Final Smart API envelope exceeds 24 KiB.");
+    smartAssert(new TextEncoder().encode(body).byteLength <= maxEnvelopeBytes, "INPUT_TOO_LARGE", "Final AI request exceeds its size limit.");
     signal.throwIfAborted();
     const target = await resolveProviderTarget(String(raw), provider);
     signal.throwIfAborted();

@@ -80,7 +80,12 @@ export class AgentRunStore {
       status: "queued",
       phase: "classifying_request",
       request: normalizedRequest,
-      selectedSkills: [],
+      selectedSkills: normalizedRequest.input.skillSelection ? [{
+        id: normalizedRequest.input.skillSelection.id, path: normalizedRequest.input.skillSelection.path,
+        title: normalizedRequest.input.skillSelection.title, score: 100, matchedTerms: [],
+        reason: normalizedRequest.input.skillSelection.reason, version: normalizedRequest.input.skillSelection.version,
+        contentHash: normalizedRequest.input.skillSelection.contentHash, source: normalizedRequest.input.skillSelection.source
+      }] : [],
       events: [],
       chatMessages: [],
       chatSeq: 0,

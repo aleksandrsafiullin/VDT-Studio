@@ -64,17 +64,18 @@ export function parseCodexExecJson(
     throw new Error(`Codex exec output exceeds ${limits.maxBytes} bytes.`);
   }
 
-  const combinedError = `${stdout}\n${stderr}`.trim();
-  if (/auth|login|sign[\s-]?in|not logged in/i.test(combinedError) && !/"ok"\s*:\s*true/.test(stdout)) {
-    return { output: undefined, error: stderr.trim() || "Codex authentication required." };
-  }
-  if (/quota|usage limit|rate.?limit/i.test(combinedError) && !/"ok"\s*:\s*true/.test(stdout)) {
-    return { output: undefined, error: stderr.trim() || "Codex usage limit reached." };
-  }
+  // Provider diagnostics are fallback evidence, not a classifier over a valid
+  // model payload. For example, skill.author_draft is not an auth failure.
+  const diagnosticFallback = (): string | undefined => {
+    const diagnostic = `${stdout}\n${stderr}`.trim();
+    if (/\bauth\b|authentication|authorization|\blogin\b|sign[\s-]?in|not logged in/i.test(diagnostic)) return stderr.trim() || "Codex authentication required.";
+    if (/\bquota\b|usage limit|rate.?limit/i.test(diagnostic)) return stderr.trim() || "Codex usage limit reached.";
+    return undefined;
+  };
 
   const trimmed = stdout.trim();
   if (!trimmed) {
-    return { output: undefined, error: stderr.trim() || "Codex exec produced no stdout." };
+    return { output: undefined, error: diagnosticFallback() ?? (stderr.trim() || "Codex exec produced no stdout.") };
   }
 
   try {
@@ -146,13 +147,13 @@ export function parseCodexExecJson(
     try {
       return { output: extractBoundedJson(lastAgentText, limits.maxBytes), rawText: lastAgentText };
     } catch {
-      return { output: undefined, rawText: lastAgentText, error: "Codex agent message did not contain structured JSON." };
+      return { output: undefined, rawText: lastAgentText, error: diagnosticFallback() ?? "Codex agent message did not contain structured JSON." };
     }
   }
 
   try {
     return { output: extractBoundedJson(trimmed, limits.maxBytes), rawText: trimmed };
   } catch {
-    return { output: undefined, error: stderr.trim() || "Codex exec output did not contain structured JSON." };
+    return { output: undefined, error: diagnosticFallback() ?? (stderr.trim() || "Codex exec output did not contain structured JSON.") };
   }
 }

@@ -3,12 +3,12 @@ const isObject = (value: unknown): value is JsonObject => !!value && typeof valu
 export const LOCAL_MODEL_UPFRONT_TOOLS = new Set([
   "tools.describe", "data.list_sources", "data.inspect", "data.read_rows", "data.aggregate", "data.write_inputs", "run.request_finish", "vdt.update_node", "vdt.set_formula",
   "vdt.fill_input_values_batch", "vdt.add_driver", "vdt.add_drivers_batch",
-  "skill.list", "skill.search", "skill.read", "skill.compile_recipe", "skill.seed_draft_from_recipe", "skill.seed_topology", "excavation.seed_topology"
+  "skill.list", "skill.search", "skill.read", "skill.select", "skill.compile_recipe", "skill.seed_draft_from_recipe", "skill.seed_topology", "excavation.seed_topology"
   ,"vdt.set_decomposition_plan", "vdt.inspect_hierarchy", "vdt.reparent_branch"
 ]);
 const singletonTools = new Set([
   "run.request_finish", "user.ask", "user.request_approval", "approval.request",
-  "tools.describe", "skill.search", "skill.list", "skill.read", "skill.compile_recipe", "skill.seed_topology",
+  "tools.describe", "skill.search", "skill.list", "skill.read", "skill.select", "skill.compile_recipe", "skill.seed_topology",
   "vdt.create_draft", "skill.seed_draft_from_recipe", "excavation.seed_topology", "vdt.fill_input_values_batch", "vdt.add_drivers_batch", "data.list_sources", "data.inspect", "data.read_rows", "data.aggregate", "data.write_inputs"
   ,"vdt.set_decomposition_plan", "vdt.reparent_branch"
 ]);

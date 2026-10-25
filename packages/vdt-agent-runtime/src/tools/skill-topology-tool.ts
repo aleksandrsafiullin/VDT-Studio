@@ -1,4 +1,5 @@
-import { loadDefaultSkillLibrary, readExecutableSkillTopology } from "@vdt-studio/vdt-agent";
+import { readExecutableSkillTopology } from "@vdt-studio/vdt-agent";
+import { activateRunSkill, loadRunSkillLibrary } from "./run-skill-library";
 import type { VdtChangeSet } from "@vdt-studio/vdt-core";
 import { z } from "zod";
 import { proposeAndMaybeApplyMutation } from "../mutation-pipeline";
@@ -16,7 +17,7 @@ export const skillSeedTopologyTool: AgentTool = {
   }).strict(),
   outputSchema: z.record(z.unknown()), mutatesProject: true, requiresDraftProject: true, phase: "building_graph",
   async run(context, input) {
-    const library = await loadDefaultSkillLibrary();
+    const library = await loadRunSkillLibrary(context);
     const skill = library.byId.get(input.skillId);
     if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", `Skill "${input.skillId}" was not found.`);
     const topology = readExecutableSkillTopology(skill);
@@ -58,17 +59,12 @@ export const skillSeedTopologyTool: AgentTool = {
     for (const node of topology.nodes) if (node.formula)
       changes.push(requireChangeSet(preview.setFormula({ nodeId: node.id, formula: node.formula }).changeSet));
     changes.push(requireChangeSet(preview.setFormula({ nodeId: root.id, formula: topology.rootFormula }).changeSet));
+    const state = context.store.getState(context.runId);
+    if (!state.selectedSkills.some((entry) => entry.id === skill.id)) activateRunSkill(context, skill, "Executable topology explicitly selected by the agent.");
     const mutation = proposeAndMaybeApplyMutation(context, {
       title: "Executable skill topology selected", summary: `Instantiated ${topology.nodes.length} drivers from ${skill.id}; explicitly selected ${selectedDefaults.length} illustrative defaults.`,
       changeSet: combineChangeSets(changes, context), targetNodeId: root.id, allowSkillDefinedDepth: true
     });
-    if (mutation.applied) {
-      const state = context.store.getState(context.runId);
-      if (!state.selectedSkills.some((entry) => entry.id === skill.id)) context.store.updateRun(context.runId, {
-        selectedSkills: [...state.selectedSkills, { id: skill.id, path: skill.path, title: skill.title, score: 100,
-          reason: "Executable topology explicitly selected by the agent.", matchedTerms: [] }]
-      });
-    }
     return { skillId: skill.id, rootNodeId: root.id, addedNodeIds: [...added], selectedDefaultInputIds: selectedDefaults,
       remainingInputIds: topology.nodes.filter((node) => node.type === "input" && !input.defaults[node.id]).map((node) => node.id),
       revision: mutation.revision, validation: mutation.validation,

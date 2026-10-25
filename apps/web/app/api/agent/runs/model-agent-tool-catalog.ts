@@ -8,6 +8,7 @@ export const TARGET_MODEL_AGENT_TOOLS = [
   "skill.list",
   "skill.search",
   "skill.read",
+  "skill.select",
   "skill.compile_recipe",
   "skill.seed_draft_from_recipe",
   "skill.seed_topology",
@@ -105,7 +106,7 @@ export function modelAgentToolCatalog(tools: ToolRegistry) {
     if (!spec || !definition) throw new Error(`Required target Model Agent tool "${name}" is unavailable.`);
     return {
       ...spec,
-      description: spec.description.length>128?`${spec.description.slice(0,125)}...`:spec.description,
+      description: spec.description.length>88?`${spec.description.slice(0,85)}...`:spec.description,
       inputJsonSchema: definition.inputJsonSchema ?? compactInputSchema(zodToJsonSchema(definition.inputSchema, { $refStrategy: "none" }))
     };
   };

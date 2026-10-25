@@ -2,11 +2,11 @@ import { z } from "zod";
 import {
   classifyVdtRequest,
   compileSkillRecipe,
-  loadDefaultSkillLibrary,
+  rankSkillCandidates,
   readSkillExcerpts,
-  readExecutableSkillTopology,
-  retrieveSkills
+  readExecutableSkillTopology
 } from "@vdt-studio/vdt-agent";
+import { skillContentHash } from "@vdt-studio/storage";
 import { extractFormulaReferences, stableSnakeId, type VdtChangeSet, type VdtProject } from "@vdt-studio/vdt-core";
 import { createStructuredFeedback } from "../feedback";
 import { proposeAndMaybeApplyMutation } from "../mutation-pipeline";
@@ -14,9 +14,10 @@ import { AgentToolError, type AgentTool } from "../tool-registry";
 import { summarizeValidation } from "../summaries";
 import { cloneBuilder, combineChangeSets, requireChangeSet } from "./builder-mutation-utils";
 import { skillSeedTopologyTool } from "./skill-topology-tool";
+import { activateRunSkill, loadRunSkillLibrary } from "./run-skill-library";
 
 export function createSkillTools(): AgentTool[] {
-  return [skillListTool, skillSearchTool, skillReadTool, skillCompileRecipeTool, skillSeedDraftFromRecipeTool, skillSeedTopologyTool];
+  return [skillListTool, skillSearchTool, skillReadTool, skillSelectTool, skillCompileRecipeTool, skillSeedDraftFromRecipeTool, skillSeedTopologyTool];
 }
 
 const skillListTool: AgentTool = {
@@ -25,10 +26,12 @@ const skillListTool: AgentTool = {
   inputSchema: z.object({}),
   outputSchema: z.record(z.unknown()),
   phase: "retrieving_skills",
-  async run() {
-    const library = await loadDefaultSkillLibrary();
+  async run(context) {
+    const library = await loadRunSkillLibrary(context);
+    const current = context.getRun().selectedSkills[0];
     return {
-      skills: library.skills.map((skill) => ({
+      selectedSkill: current,
+      skills: [...library.skills].sort((a, b) => Number(b.id === current?.id) - Number(a.id === current?.id)).map((skill) => ({
         id: skill.id,
         title: skill.title,
         domain: skill.domain,
@@ -56,12 +59,9 @@ const skillSearchTool: AgentTool = {
   outputSchema: z.record(z.unknown()),
   phase: "retrieving_skills",
   async run(context, input) {
-    const library = await loadDefaultSkillLibrary();
+    const library = await loadRunSkillLibrary(context);
     const classification = classifyVdtRequest(input);
-    const candidates = retrieveSkills(input, library, {
-      classification,
-      ...(input.maxSkills !== undefined ? { maxSkills: input.maxSkills } : {})
-    }).map((candidate) => ({
+    const candidates = rankSkillCandidates([input.rootKpi, input.industry, input.businessContext, input.goal].filter(Boolean).join(" "), library).slice(0, input.maxSkills ?? 3).map((candidate) => ({
       id: candidate.skill.id,
       path: candidate.skill.path,
       title: candidate.skill.title,
@@ -95,7 +95,7 @@ const skillReadTool: AgentTool = {
   outputSchema: z.record(z.unknown()),
   phase: "reading_skills",
   async run(context, input) {
-    const library = await loadDefaultSkillLibrary();
+    const library = await loadRunSkillLibrary(context);
     const skill = library.byId.get(input.skillId);
     if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", `Skill "${input.skillId}" was not found.`);
     const [excerpt] = readSkillExcerpts([skill], input.maxChars);
@@ -107,13 +107,15 @@ const skillReadTool: AgentTool = {
       phase: "reading_skills",
       title: "Skill read",
       message: `Read ${skill.id}: ${skill.title}.`,
-      metadata: { id: skill.id, path: skill.path, outputs: skill.frontmatter.outputs }
+      metadata: { id: skill.id, path: skill.path, outputs: skill.frontmatter.outputs, contentHash: skillContentHash(skill.raw), version: skill.frontmatter.version ?? 1 }
     });
     return {
       id: excerpt.id,
       path: excerpt.path,
       title: excerpt.title,
       domain: excerpt.domain,
+      version: skill.frontmatter.version ?? 1,
+      contentHash: skillContentHash(skill.raw),
       excerpt: excerpt.excerpt,
       requiredInputs: skill.frontmatter.requires,
       outputs: excerpt.outputs ?? [],
@@ -132,6 +134,23 @@ const skillReadTool: AgentTool = {
   }
 };
 
+const skillSelectTool: AgentTool = {
+  name: "skill.select",
+  description: "Select the primary VDT skill after reading it. Replaces the preliminary or previous selection when the request context warrants a different skill. Does not change the graph.",
+  inputSchema: z.object({ skillId: z.string().min(1).max(160), reason: z.string().trim().min(1).max(500) }).strict(),
+  outputSchema: z.record(z.unknown()), phase: "reading_skills",
+  async run(context, input) {
+    const library = await loadRunSkillLibrary(context), skill = library.byId.get(input.skillId);
+    if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", "Skill was not found in this run's catalog.");
+    const state = context.store.getState(context.runId), contentHash = skillContentHash(skill.raw);
+    if (!state.events.some(event => event.type === "skill_read" && event.metadata?.id === skill.id && event.metadata.contentHash === contentHash))
+      throw new AgentToolError("SKILL_READ_REQUIRED", "Read this skill before selecting it.");
+    const selected = activateRunSkill(context, skill, input.reason);
+    context.emit({ type: "skill_selected", title: "Skill selected", message: `${skill.title}: ${input.reason}`, metadata: selected });
+    return { selectedSkill: selected };
+  }
+};
+
 const skillCompileRecipeTool: AgentTool = {
   name: "skill.compile_recipe",
   description: "Compile a local markdown skill into a structured executable VDT recipe.",
@@ -141,24 +160,17 @@ const skillCompileRecipeTool: AgentTool = {
   outputSchema: z.record(z.unknown()),
   phase: "planning_decomposition",
   async run(context, input) {
-    const library = await loadDefaultSkillLibrary();
+    const library = await loadRunSkillLibrary(context);
     const skill = library.byId.get(input.skillId);
     if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", `Skill "${input.skillId}" was not found.`);
     const recipe = compileSkillRecipe(skill);
-    const state = context.store.getState(context.runId);
-    const selectedSkills = state.selectedSkills.some((selected) => selected.id === skill.id)
-      ? state.selectedSkills
-      : [
-          ...state.selectedSkills,
-          {
-            id: skill.id,
-            path: skill.path,
-            title: skill.title,
-            score: 100,
-            reason: "Compiled explicitly by agent decision.",
-            matchedTerms: []
-          }
-        ];
+    let state = context.store.getState(context.runId);
+    if (!state.selectedSkills.some(selected => selected.id === skill.id)) {
+      if (state.selectedSkills[0]?.source === "user") throw new AgentToolError("SKILL_SELECTION_REQUIRED", "Read and explicitly select a different skill before compiling it instead of the user's choice.");
+      activateRunSkill(context, skill, "Compiled explicitly by agent decision.");
+      state = context.store.getState(context.runId);
+    }
+    const selectedSkills = state.selectedSkills;
     const feedback = recipe.recipeQuality === "complete"
       ? undefined
       : createStructuredFeedback({
@@ -211,7 +223,7 @@ const skillSeedDraftFromRecipeTool: AgentTool = {
     const state = context.store.getState(context.runId);
     let recipe = state.recipes.find((candidate) => candidate.skillId === input.skillId);
     if (!recipe) {
-      const library = await loadDefaultSkillLibrary();
+      const library = await loadRunSkillLibrary(context);
       const skill = library.byId.get(input.skillId);
       if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", `Skill "${input.skillId}" was not found.`);
       recipe = compileSkillRecipe(skill);
