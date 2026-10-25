@@ -274,6 +274,27 @@ The workspace rail uses a direct Home link to `/`; the editor header's back link
 
 `WorkspaceNavigationLink` intercepts normal client navigation through those two editor links and awaits the existing `saveActiveWorkspaceVdt` CAS/idempotency operation. A failure preserves the editor and displays a navigation error; a save covering an older in-flight snapshot also blocks leaving. Successful Back navigation uses the route-sync hook's explicit project intent, superseding any pending creation route. This closes the link-driven edit-loss path without adding a new revision API or changing the remaining W0.5 draft/durable-ownership boundary.
 
+### Scenario comments and presentation
+
+`VdtScenario.comments?: { nodeId, text }[]` stores per-KPI action notes separately
+from numeric `overrides`. `updateScenarioComment` updates only the addressed
+scenario, and clone copies both collections independently. Ordinary project
+draft/revision serialization, the JSON importer and version snapshots retain
+the optional comments; older projects need no migration. The importer validates
+each entry so the strict revision round-trip preserves the new field. Comments
+do not enter formula evaluation or create numeric overrides. The Excel exporter
+copies the selected scenario's comments by KPI ID into column F of `Scenario Mode`.
+
+Scenario Mode owns transient trace expansion and numeric editing drafts. Trace
+expansion resets on each dialog mount and does not alter the inspector's saved
+panel state. Resting fields use Baseline's English comma grouping, decimal dot
+and two-decimal display precision. A text input with decimal input mode and
+spinbutton semantics avoids native number-input locale substitutions. The
+scenario-specific parser accepts plain or correctly comma-grouped finite numbers;
+invalid drafts cannot clear an existing override. Keyboard arrows retain the
+decimal step grid. Focus exposes the exact value and live edits use the unrounded draft.
+Focus and blur alone never write numeric changes.
+
 ### Editor version flow
 
 `Versions -> selected project.versions checkpoint -> deterministic base comparison / checkpointed restore -> existing draft and revision persistence`
@@ -291,6 +312,15 @@ The browser calls the deterministic `vdt-core` exporter with the complete curren
 Visible sheets are ordered `Scenario Mode`, `VDT`, `Source`, `Guide`, followed by hidden `_Scenario Calc`. `Source` owns editable numeric values for formula-free KPIs, with `KPI`, `Value`, `Source`, `Comment` columns. VDT Baseline formulas compare `SourceInputs[KPI]` with immutable exported human-label keys on the hidden calculation sheet. A `SUMPRODUCT` equality guard requires one matching label; `INDEX` resolves Value using row 1 for a single-row table or `MATCH(TRUE, INDEX(...,0),0)` for larger tables, without comparison-criteria or wildcard interpretation. Unique human-readable KPI labels are stable lookup keys, permitting table sorting/filtering; labels must remain unchanged.
 
 `VDT` places parents left of children with two narrow connector columns between KPI columns. Its Potential formulas consume the same selected scenario calculation as `Scenario Mode`, including a non-main selection or scratch analysis without configured scenarios. `Scenario Mode` uses the selected scenario, or the first scenario as fallback, for totals and driver analysis. Each unconfigured Scenario value is a same-sheet reference to its Baseline cell. The calculation sheet recognizes that exact default formula on formula-bearing drivers as absence of an own override; upstream scenario inputs can therefore recalculate them. Replacing the default reference with a numeric value applies an override. Default-reference recognition uses native `FORMULATEXT` with `IFERROR` and requires Excel 2013 or later. The hidden `_Scenario Calc` sheet evaluates combined and isolated driver cases with live formulas; combined root change minus the sum of isolated effects produces the interaction residual. Scenario Mode keeps compact totals and places the Multiplicative effect label and value on one row; `Guide` holds explanations and errors.
+
+`Scenario Mode` appends `Comment` in column F while existing numeric references
+remain in A–E. `getExcelWorkbookCells` exposes a `commentCell` for each driver
+and additional override. Selected-scenario comments are matched by stable node
+ID and serialized as inline strings, including when no numeric override exists.
+Existing wrapped zebra styles and text-height sizing apply to the 64-character
+column; legacy/scratch scenarios leave it blank. This is an exported editable
+snapshot without application synchronization and is independent of `Source`
+provenance comments.
 
 Native conditional formats select literal-space thousands grouping by displayed magnitude without changing Excel's global separators or rounding stored values/formulas. Numeric displays use two decimals; magnitudes at least `1e48` use scientific notation. Base/Potential prefixes keep negative signs with their numbers. Percentage caches use the application's 0–100 scale with a literal percent-sign format. Source/Comment metadata does not establish external refresh connections.
 

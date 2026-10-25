@@ -27,6 +27,7 @@ export interface ExcelScenarioRow {
   baselineCell: string;
   scenarioCell: string;
   effectCell: string;
+  commentCell: string;
   /** Root cell on the hidden _Scenario Calc sheet, absent for additional overrides. */
   isolatedRootCell?: string;
 }
@@ -227,14 +228,14 @@ export function getExcelWorkbookCells(project: VdtProject, options: ExcelExportO
   const nodeRows = Object.fromEntries(project.graph.nodes.map((node, i) => [node.id, i + 3]));
   ranked.forEach((node, i) => {
     const row = i + 11;
-    drivers[node.nodeId] = { row, baselineCell: address(3, row), scenarioCell: address(4, row), effectCell: address(5, row), isolatedRootCell: address(i + 3, nodeRows[project.rootNodeId] ?? 2) };
+    drivers[node.nodeId] = { row, baselineCell: address(3, row), scenarioCell: address(4, row), effectCell: address(5, row), commentCell: address(6, row), isolatedRootCell: address(i + 3, nodeRows[project.rootNodeId] ?? 2) };
   });
   const activeOverrides = new Map(selected ? getActiveScenarioOverrides(project, selected).map((item) => [item.nodeId, item.value]) : []);
   const additionalOverrides: Record<string, ExcelScenarioRow> = Object.create(null) as Record<string, ExcelScenarioRow>;
   for (const node of project.graph.nodes) {
     if (drivers[node.id] || !activeOverrides.has(node.id)) continue;
     const row = ranked.length + Object.keys(additionalOverrides).length + 15;
-    additionalOverrides[node.id] = { row, baselineCell: address(3, row), scenarioCell: address(4, row), effectCell: address(5, row) };
+    additionalOverrides[node.id] = { row, baselineCell: address(3, row), scenarioCell: address(4, row), effectCell: address(5, row), commentCell: address(6, row) };
   }
   if (ranked.length + 2 > MAX_COLUMNS || project.graph.nodes.length + 2 > MAX_ROWS) {
     throw new Error("The scenario calculation exceeds Excel's worksheet row or column limit.");
@@ -507,7 +508,8 @@ function analysisSheets(project: VdtProject, mapping: ExcelWorkbookCells, option
   text(scenario, 6, 4, "Percent change", 15);
   text(scenario, 8, 4, "Multiplicative effect", 17);
   for (const row of [3, 5, 7, 9]) add(scenario, { row, column: 1, style: 0 });
-  ["Name", "Unit", "Baseline", "Scenario", "Effect"].forEach((name, i) => text(scenario, 10, i + 1, name, 1));
+  const scenarioHeaders = ["Name", "Unit", "Baseline", "Scenario", "Effect", "Comment"];
+  scenarioHeaders.forEach((name, i) => text(scenario, 10, i + 1, name, 1));
   const delta = baseline.rootValue === undefined || selectedCalculation.rootValue === undefined ? undefined : selectedCalculation.rootValue - baseline.rootValue;
   const summary = mapping.scenario.totals;
   const baseRoot = mapping.tree[project.rootNodeId];
@@ -527,6 +529,7 @@ function analysisSheets(project: VdtProject, mapping: ExcelWorkbookCells, option
     const zebra = entry.row % 2 === 1;
     text(scenario, entry.row, 1, node.name, zebra ? 20 : 21);
     text(scenario, entry.row, 2, node.unit ?? "", zebra ? 20 : 21);
+    text(scenario, entry.row, 6, selected?.comments?.find((comment) => comment.nodeId === id)?.text ?? "", zebra ? 20 : 21);
     add(scenario, { row: entry.row, column: 3, formula: numericLink(baseReference), ...cachedResult(baseline, id), label: node.name, style: zebra ? 22 : 11 });
     const override = configured.get(id);
     const hasOverride = configured.has(id);
@@ -545,7 +548,7 @@ function analysisSheets(project: VdtProject, mapping: ExcelWorkbookCells, option
   }
   if (Object.keys(mapping.scenario.additionalOverrides).length > 0) {
     text(scenario, Object.values(mapping.scenario.additionalOverrides)[0]!.row - 2, 1, "Additional overrides", 4);
-    ["Name", "Unit", "Baseline", "Scenario", "Effect"].forEach((name, i) => text(scenario, Object.values(mapping.scenario.additionalOverrides)[0]!.row - 1, i + 1, name, 1));
+    scenarioHeaders.forEach((name, i) => text(scenario, Object.values(mapping.scenario.additionalOverrides)[0]!.row - 1, i + 1, name, 1));
   }
   const effectRefs = Object.values(mapping.scenario.drivers).map((entry) => entry.effectCell);
   const effectSum = effectRefs.length ? effectRefs.join("+") : "0";
@@ -587,14 +590,14 @@ function analysisSheets(project: VdtProject, mapping: ExcelWorkbookCells, option
     return result;
   };
   const sourceWidths = [44, 26, 48, 64];
-  const scenarioWidths = [38, 28, 26, 32, 30];
+  const scenarioWidths = [38, 28, 26, 32, 30, 64];
   const scenarioHeights = heights(scenario, scenarioWidths);
   for (const [row, height] of [[1, 28], [2, 24], [3, 8], [4, 34], [5, 6], [6, 32], [7, 6], [8, 32], [9, 10], [10, 28]] as const) scenarioHeights.set(row, Math.max(height, row === 1 || row === 2 ? scenarioHeights.get(row) ?? 0 : 0));
   for (const entry of Object.values(allControls)) scenarioHeights.set(entry.row, Math.max(28, scenarioHeights.get(entry.row) ?? 0));
   const sourceLastRow = Math.max(6, Object.keys(mapping.source).length + 5);
   return {
     source: sheetXml(source, 4, heights(source, sourceWidths), sourceWidths, false, { table: true, mergeTitle: true, freezeRows: 5 }),
-    scenario: sheetXml(scenario, 5, scenarioHeights, scenarioWidths, false, { mergeTitle: true, freezeRows: 10 }),
+    scenario: sheetXml(scenario, 6, scenarioHeights, scenarioWidths, false, { mergeTitle: true, freezeRows: 10 }),
     helpers: sheetXml(helpers, cases.length + 1, new Map(), [], false),
     table: `${XML_HEADER}<table xmlns="${MAIN_NS}" id="1" name="SourceInputs" displayName="SourceInputs" ref="A5:D${sourceLastRow}" totalsRowShown="0"><autoFilter ref="A5:D${sourceLastRow}"/><tableColumns count="4">${["KPI", "Value", "Source", "Comment"].map((name, i) => `<tableColumn id="${i + 1}" name="${name}"/>`).join("")}</tableColumns><tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/></table>`
   };
@@ -704,6 +707,7 @@ export function exportProjectExcel(project: VdtProject, options: ExcelExportOpti
   for (const note of visualNotes) guideText(noteRow++, 1, note);
   guideText(noteRow++, 1, "Scenario Mode uses the selected scenario (fallback: first saved scenario). No saved scenario starts an editable Baseline scenario. VDT Potential uses this same Scenario Mode calculation, regardless of which saved scenario is main in the application.");
   guideText(noteRow++, 1, "Scenario rows follow the application's input/data-mapped sensitivity ranking at export time. Fixed KPIs remain on Source but have no driver overrides. Default Scenario formulas reference the adjacent Baseline cell on this sheet (=Crow) and mean no own override. Clearing a cell also removes its own override. Formula-bearing inputs then recalculate from upstream scenario values. Numeric values, including zero or a value equal to Baseline, and any other user formula are own overrides. Exact default-reference recognition uses FORMULATEXT (Excel 2013 or later).");
+  guideText(noteRow++, 1, "The Scenario Mode Comment column contains the selected scenario's per-KPI action comments, including comments on unchanged values. Comments are editable text and do not affect calculations. Workbook edits do not synchronize back to the application.");
   guideText(noteRow++, 1, "The hidden _Scenario Calc sheet contains one complete graph column for Total SCENARIO and one graph column per driver's isolated case. Each isolated case changes only that driver. Additional configured calculated/non-driver overrides affect only the combined total.");
   guideText(noteRow++, 1, "Multiplicative effect = total root change minus the sum of the displayed isolated driver effects. Unchanged values contribute zero; an unavailable root/effect remains unavailable. Duplicate imported overrides normalize to the last value once per driver, avoiding the application's duplicate-count residual artifact.");
   guideText(noteRow++, 1, "Numbers display two decimal places with space thousands grouping. Formatting updates with magnitude; stored precision is unchanged. Extremely large magnitudes (at least 1e48) use scientific notation with two decimals.");

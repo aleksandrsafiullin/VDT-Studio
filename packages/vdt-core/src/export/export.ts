@@ -356,6 +356,10 @@ function readScenario(value: Record<string, unknown>, fallbackDate: string): Vdt
     isMain: readOptionalBoolean(value, "isMain"),
     baselineScenarioId: readOptionalString(value, "baselineScenarioId"),
     overrides: readRecordArray(value, "overrides", "scenario overrides").map(readScenarioOverride),
+    comments: value.comments === undefined ? undefined : readRecordArray(value, "comments", "scenario comments").map((comment) => ({
+      nodeId: readString(comment, "nodeId", "scenario comment nodeId"),
+      text: readString(comment, "text", "scenario comment text")
+    })),
     createdAt: readOptionalString(value, "createdAt") ?? fallbackDate,
     updatedAt: readOptionalString(value, "updatedAt") ?? fallbackDate
   };

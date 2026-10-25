@@ -206,6 +206,33 @@ relations. Card width and saved positions are preserved.
 
 Current status: implemented for basic arithmetic. Dimensional algebra, visual-cycle validation and formula/edge consistency are incomplete.
 
+### Scenario Mode
+
+The dialog shares Settings' neutral surfaces, 24 px outer corners, rounded
+controls and circular close button, with a responsive header and scrollable
+driver table. **Calculation trace** starts collapsed every time the dialog
+opens. Its toggle uses the same right-panel icon as the node inspector and
+exposes expanded state to assistive technology. Narrow screens reveal the trace
+over the table instead of squeezing the columns.
+
+Baseline and resting Scenario fields share comma-grouped thousands and a decimal
+dot (for example, `84,000` and `17.14`), at most two decimal places, independently
+of browser locale. The four summary totals use larger tabular numbers (28 px
+at the default desktop scale, 22 px on small screens).
+Scenario fields reveal the exact stored number while focused and retain the
+user's input until blur; formatting, focus and blur do not round stored values
+or create overrides. Decimal-dot input and pasted comma-grouped values are
+accepted. Invalid or incomplete drafts do not replace numeric overrides;
+Arrow Up/Down retains step-based editing. Calculations continue to use full precision.
+
+Each overridable KPI has an editable **Comment** for the actions intended to
+achieve its potential. Comments belong to the selected scenario, save with the
+project and copy when cloning a scenario. They can exist before a value changes
+and survive clearing an override or returning to Baseline. Clearing a comment
+does not change a number. Excel export copies the selected scenario's comments
+to the `Scenario Mode` sheet; workbook comment edits do not synchronize back to
+the application.
+
 ### Model versions
 
 Implemented alpha: the editor has one **Versions** control in place of History and Compare. A responsive modal side panel lists dated checkpoints with readable automatic labels (including legacy task-based names). All panel controls, notices, dates and automatic snapshot names use English. Legacy Russian automatic names are translated for display while user-authored names are preserved. Users can save a named checkpoint, rename one, and select a checkpoint to compare against the current tree. The comparison shows named KPI paths, before/after calculated base values with units, readable old/new formulas, added/removed nodes, selected metadata/relation edits, and separate scenario/source change notices. Scenario overrides are not applied to base comparisons. A changed root identity/name/formula/unit limits comparability; the UI does not imply that a numeric decrease is a business improvement or that a changed KPI is a proven bottleneck.
@@ -343,6 +370,7 @@ Properties displays saved **Value notes** beside the value and editing controls:
 - Provide a native Excel table on `Source` with exactly `KPI`, `Value`, `Source`, `Comment`. Formula-free KPI values of every node type are editable here; VDT Baseline cells link to these authoritative values. Unique KPI labels are lookup keys and must remain unchanged; sorting/filtering preserves the bindings. Preserve available provenance as editable metadata without introducing external data refresh connections.
 - Provide a compact `Scenario Mode` for the selected application scenario, falling back to the first scenario, or scratch analysis when no scenarios exist. Mirror Total BASELINE, Total SCENARIO, absolute and percentage changes, editable overridable input/data-mapped drivers, isolated root effects and Multiplicative effect (total root change minus summed isolated driver effects). Keep the Multiplicative effect label and value on the same row; explanatory instructions belong in `Guide`. Unconfigured scenario cells link directly to the Baseline cell on the same sheet and row. Replacing that formula with a number creates an override; a default reference on a formula-bearing driver preserves its absence of an override so upstream scenario changes still recalculate it. Preserve configured calculated overrides separately. Scenario edits recalculate totals/effects and VDT Potential through native formulas.
 - Product CLI validation, calculation and export.
+- Include `Comment` after `Effect` on the exported `Scenario Mode` driver table and additional-override rows. Match comments to stable KPI IDs in the selected scenario, including drivers without numeric overrides. Missing/legacy comments produce blank editable text cells. Preserve Unicode, line breaks and formula-like text literally, wrap the column and fit row heights. Comments do not enter calculations or replace the separate `Source` provenance comments.
 
 Current status: Excel export is implemented in the editor; full project archive import/export is planned. Visible Excel sheets are ordered `Scenario Mode`, `VDT`, `Source`, `Guide`, followed by the hidden `_Scenario Calc` calculation sheet. The workbook excludes session credentials. It is a standalone calculation copy, with no workbook import/synchronization. The CLI exports JSON and Markdown. PowerPoint and PDF outputs remain planned.
 

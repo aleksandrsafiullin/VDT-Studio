@@ -20,14 +20,18 @@ import {
   calculateScenario,
   calculateScenarioMultiplicativeEffect,
   rankScenarioInputNodes,
-  type VdtInputSensitivity
+  type VdtInputSensitivity,
+  type VdtScenario
 } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Metric } from "@/components/ui/metric";
 import { SelectInput, TextInput } from "@/components/ui/field";
+import { PanelToggleButton } from "@/components/ui/panel";
 import { Tooltip } from "@/components/ui/tooltip";
-import { formatChange, formatNumber, formatPercent, getStepFromDecimalPlaces, countDecimalPlacesFromNumber, countDecimalPlacesFromString } from "@/lib/format";
+import { formatChange, formatNumber, formatPercent, countDecimalPlacesFromNumber, countDecimalPlacesFromString } from "@/lib/format";
+import { parseScenarioNumberInput, stepScenarioNumberInput } from "@/lib/scenario-number-input";
 import { useVdtStudioStore } from "./vdt-store";
+import styles from "./scenario-modal.module.css";
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -70,15 +74,6 @@ function trapFocus(event: KeyboardEvent, container: HTMLElement) {
   }
 }
 
-function parseFiniteInput(value: string) {
-  if (value === "") {
-    return undefined;
-  }
-
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 function commitOverrideValue(
   updateScenarioOverride: (scenarioId: string, nodeId: string, value?: number) => void,
   scenarioId: string,
@@ -86,7 +81,10 @@ function commitOverrideValue(
   baselineValue: number | undefined,
   rawValue: string
 ) {
-  const parsed = parseFiniteInput(rawValue);
+  const parsed = parseScenarioNumberInput(rawValue);
+  if (rawValue.trim() !== "" && parsed === undefined) {
+    return;
+  }
   if (
     parsed !== undefined &&
     baselineValue !== undefined &&
@@ -104,8 +102,8 @@ function initialStepDecimalPlaces(
   baselineValue: number | undefined
 ) {
   return Math.max(
-    countDecimalPlacesFromNumber(overrideValue ?? baselineValue),
-    countDecimalPlacesFromNumber(baselineValue)
+    Math.min(2, countDecimalPlacesFromNumber(overrideValue ?? baselineValue)),
+    Math.min(2, countDecimalPlacesFromNumber(baselineValue))
   );
 }
 
@@ -115,25 +113,35 @@ function ScenarioOverrideRow({
   activeScenarioId,
   disabled,
   isolatedEffect,
-  updateScenarioOverride
+  comment,
+  updateScenarioOverride,
+  updateScenarioComment
 }: {
   node: VdtInputSensitivity;
   overrideValue: number | undefined;
   activeScenarioId: string | undefined;
   disabled: boolean;
   isolatedEffect: number | undefined;
+  comment: string;
   updateScenarioOverride: (scenarioId: string, nodeId: string, value?: number) => void;
+  updateScenarioComment: (scenarioId: string, nodeId: string, text: string) => void;
 }) {
   const baselineValue = node.baselineValue;
   const scenarioValue = overrideValue ?? baselineValue;
-  const displayValue = scenarioValue !== undefined ? String(scenarioValue) : "";
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftValue, setDraftValue] = useState("");
+  const displayValue = isEditing ? draftValue : scenarioValue !== undefined
+    ? formatNumber(scenarioValue) : "";
+  const invalidDraft = isEditing && draftValue.trim() !== "" && parseScenarioNumberInput(draftValue) === undefined;
   const [stepDecimalPlaces, setStepDecimalPlaces] = useState(() =>
     initialStepDecimalPlaces(overrideValue, baselineValue)
   );
 
   useEffect(() => {
-    setStepDecimalPlaces(initialStepDecimalPlaces(overrideValue, baselineValue));
-  }, [node.nodeId, activeScenarioId, overrideValue, baselineValue]);
+    if (!isEditing) {
+      setStepDecimalPlaces(initialStepDecimalPlaces(overrideValue, baselineValue));
+    }
+  }, [node.nodeId, activeScenarioId, overrideValue, baselineValue, isEditing]);
 
   const differsFromBaseline =
     scenarioValue !== undefined &&
@@ -141,9 +149,9 @@ function ScenarioOverrideRow({
     Math.abs(scenarioValue - baselineValue) > OVERRIDE_EPSILON;
 
   return (
-    <tr data-testid={`scenario-override-card-${node.nodeId}`} className="border-b border-line last:border-b-0">
+    <tr data-testid={`scenario-override-card-${node.nodeId}`} className={styles.overrideRow}>
       <td className={OVERRIDE_TABLE_CELL_CLASS}>
-        <span className="block truncate text-xs font-semibold text-ink">{node.nodeName}</span>
+        <span className={clsx(styles.nodeName, "text-xs font-medium")} title={node.nodeName}>{node.nodeName}</span>
       </td>
       <td className={OVERRIDE_TABLE_CELL_CLASS}>
         <span className="block whitespace-nowrap text-xs text-muted">{node.unit ?? "—"}</span>
@@ -155,16 +163,47 @@ function ScenarioOverrideRow({
       </td>
       <td className={OVERRIDE_TABLE_CELL_CLASS}>
         <TextInput
-          className="h-8 w-full max-w-full py-1 text-right text-xs tabular-nums"
-          type="number"
-          step={getStepFromDecimalPlaces(stepDecimalPlaces)}
-          placeholder={baselineValue === undefined ? "n/a" : String(baselineValue)}
+          className={clsx(styles.valueInput, "text-right text-xs tabular-nums")}
+          type="text"
+          inputMode="decimal"
+          lang="en"
+          role="spinbutton"
+          autoComplete="off"
+          spellCheck={false}
+          aria-valuenow={scenarioValue}
+          aria-valuetext={displayValue || undefined}
+          aria-invalid={invalidDraft || undefined}
+          placeholder={baselineValue === undefined ? "n/a" : formatNumber(baselineValue)}
           value={displayValue}
+          title={invalidDraft ? "Use a dot for decimals and commas for thousands." : scenarioValue === undefined ? undefined : String(scenarioValue)}
           disabled={disabled || !activeScenarioId}
           aria-label={`Scenario value for ${node.nodeName}`}
+          onFocus={() => {
+            setDraftValue(scenarioValue === undefined ? "" : String(scenarioValue));
+            setIsEditing(true);
+          }}
+          onBlur={() => setIsEditing(false)}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+              return;
+            }
+            event.preventDefault();
+            if (!activeScenarioId) {
+              return;
+            }
+            const currentValue = parseScenarioNumberInput(draftValue) ?? scenarioValue ?? 0;
+            const nextValue = stepScenarioNumberInput(currentValue, stepDecimalPlaces, event.key === "ArrowUp" ? 1 : -1);
+            if (!Number.isFinite(nextValue)) {
+              return;
+            }
+            const rawValue = String(nextValue);
+            setDraftValue(rawValue);
+            commitOverrideValue(updateScenarioOverride, activeScenarioId, node.nodeId, baselineValue, rawValue);
+          }}
           onChange={(event) => {
             const rawValue = event.target.value;
-            const fromString = countDecimalPlacesFromString(rawValue);
+            setDraftValue(rawValue);
+            const fromString = countDecimalPlacesFromString(rawValue.replaceAll(",", ""));
             if (fromString !== undefined) {
               setStepDecimalPlaces((current) => Math.max(current, fromString));
             }
@@ -186,6 +225,21 @@ function ScenarioOverrideRow({
           {differsFromBaseline && isolatedEffect !== undefined ? formatChange(isolatedEffect) : "—"}
         </span>
       </td>
+      <td className={OVERRIDE_TABLE_CELL_CLASS}>
+        <textarea
+          className={styles.commentInput}
+          rows={1}
+          placeholder="How will you achieve this?"
+          aria-label={`Scenario comment for ${node.nodeName}`}
+          value={comment}
+          disabled={disabled || !activeScenarioId}
+          onChange={(event) => {
+            if (activeScenarioId) {
+              updateScenarioComment(activeScenarioId, node.nodeId, event.target.value);
+            }
+          }}
+        />
+      </td>
     </tr>
   );
 }
@@ -195,26 +249,29 @@ function ScenarioOverridesTable({
   activeScenario,
   disabled,
   isolatedEffects,
-  updateScenarioOverride
+  updateScenarioOverride,
+  updateScenarioComment
 }: {
   rankedInputNodes: VdtInputSensitivity[];
-  activeScenario: { id: string; overrides: { nodeId: string; value: number }[] } | undefined;
+  activeScenario: VdtScenario | undefined;
   disabled: boolean;
   isolatedEffects: Record<string, number | undefined>;
   updateScenarioOverride: (scenarioId: string, nodeId: string, value?: number) => void;
+  updateScenarioComment: (scenarioId: string, nodeId: string, text: string) => void;
 }) {
   return (
     <div
-      className="overflow-x-auto rounded-md border border-line bg-white shadow-sm"
+      className={styles.tableContainer}
       data-testid="scenario-overrides-table"
     >
-      <table className="w-full table-fixed border-collapse">
+      <table className={styles.table}>
         <colgroup>
-          <col className="w-[40%]" />
-          <col className="w-[15%]" />
-          <col className="w-[15%]" />
-          <col className="w-[15%]" />
-          <col className="w-[15%]" />
+          <col className="w-[29%]" />
+          <col className="w-[9%]" />
+          <col className="w-[11%]" />
+          <col className="w-[12%]" />
+          <col className="w-[11%]" />
+          <col className="w-[28%]" />
         </colgroup>
         <thead className="border-b border-line bg-slate-50">
           <tr>
@@ -233,6 +290,9 @@ function ScenarioOverridesTable({
             <th scope="col" className={clsx(OVERRIDE_TABLE_HEADER_CLASS, "text-right")}>
               Effect
             </th>
+            <th scope="col" className={OVERRIDE_TABLE_HEADER_CLASS}>
+              Comment
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -240,13 +300,15 @@ function ScenarioOverridesTable({
             const override = activeScenario?.overrides.find((candidate) => candidate.nodeId === node.nodeId);
             return (
               <ScenarioOverrideRow
-                key={node.nodeId}
+                key={`${activeScenario?.id ?? "none"}:${node.nodeId}`}
                 node={node}
                 overrideValue={override?.value}
                 activeScenarioId={activeScenario?.id}
                 disabled={disabled}
                 isolatedEffect={isolatedEffects[node.nodeId]}
+                comment={activeScenario?.comments?.find((comment) => comment.nodeId === node.nodeId)?.text ?? ""}
                 updateScenarioOverride={updateScenarioOverride}
+                updateScenarioComment={updateScenarioComment}
               />
             );
           })}
@@ -260,6 +322,9 @@ function ScenarioModalContent() {
   const project = useVdtStudioStore((state) => state.project);
   const activeScenarioId = useVdtStudioStore((state) => state.activeScenarioId);
   const updateScenarioOverride = useVdtStudioStore((state) => state.updateScenarioOverride);
+  const updateScenarioComment = useVdtStudioStore((state) => state.updateScenarioComment);
+  const [traceExpanded, setTraceExpanded] = useState(false);
+  const traceId = useId();
 
   const baseline = calculateGraph(project);
   const activeScenario = project.scenarios.find((scenario) => scenario.id === activeScenarioId) ?? project.scenarios[0];
@@ -286,12 +351,12 @@ function ScenarioModalContent() {
   const hasScenarioOverrides = (activeScenario?.overrides.length ?? 0) > 0;
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(320px,1fr)_minmax(260px,320px)]">
+    <div className={styles.contentLayout}>
       <div
-        className="min-h-0 overflow-y-auto border-b border-line px-4 py-4 lg:border-b-0 lg:border-r lg:py-3"
+        className={styles.mainContent}
         data-testid="scenario-middle-column"
       >
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+        <div className={styles.totalsCard}>
           <div
             className="grid min-w-0 flex-1 grid-cols-2 gap-4 sm:grid-cols-4"
             data-testid="scenario-totals-metrics"
@@ -302,9 +367,9 @@ function ScenarioModalContent() {
             <Metric label="Percent" value={formatPercent(scenarioResult?.percentageChange)} tone="positive" />
           </div>
         </div>
-        <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-normal text-muted">
+        <div className={styles.sectionHeading}>
           <Sigma className="h-4 w-4" />
-          Overrides
+          <h3>Overrides</h3>
         </div>
         <ScenarioOverridesTable
           rankedInputNodes={rankedInputNodes}
@@ -312,10 +377,11 @@ function ScenarioModalContent() {
           disabled={!activeScenario}
           isolatedEffects={isolatedEffects}
           updateScenarioOverride={updateScenarioOverride}
+          updateScenarioComment={updateScenarioComment}
         />
         {hasScenarioOverrides && multiplicativeEffect ? (
           <div
-            className="mt-3 rounded-md border border-accent/30 bg-blue-50/60 px-3 py-2"
+            className={styles.multiplicativeEffect}
             data-testid="scenario-multiplicative-effect"
           >
             <div className="flex items-center justify-between gap-3">
@@ -336,22 +402,35 @@ function ScenarioModalContent() {
         ) : null}
       </div>
 
-      <div className="min-h-0 overflow-y-auto px-4 py-4 lg:py-3">
-        <div className="mb-2 text-xs font-semibold uppercase tracking-normal text-muted">Calculation trace</div>
-        <div className="space-y-2">
+      <aside className={clsx(styles.tracePanel, traceExpanded ? styles.traceExpanded : styles.traceCollapsed)}>
+        <div className={styles.traceHeader}>
+          {traceExpanded ? <h3>Calculation trace</h3> : null}
+          <PanelToggleButton
+            panel="right"
+            expanded={traceExpanded}
+            onToggle={() => setTraceExpanded((expanded) => !expanded)}
+            testId="scenario-trace-toggle"
+            aria-label={traceExpanded ? "Collapse calculation trace" : "Expand calculation trace"}
+            title={traceExpanded ? "Collapse calculation trace" : "Expand calculation trace"}
+            aria-expanded={traceExpanded}
+            aria-controls={traceId}
+          />
+        </div>
+        <div id={traceId} hidden={!traceExpanded} className={styles.traceList} data-testid="scenario-calculation-trace">
           {traceItems.map((item) => (
-            <div key={item.nodeId} className="rounded-md border border-line bg-white px-3 py-2">
+            <div key={item.nodeId} className={styles.traceItem}>
               <div className="flex items-center justify-between gap-3">
-                <span className="truncate text-xs font-semibold text-ink">{item.nodeName}</span>
+                <span className="truncate text-xs font-medium text-ink" title={item.nodeName}>{item.nodeName}</span>
                 <span className="shrink-0 text-xs font-semibold text-ink">{formatNumber(item.value)}</span>
               </div>
               {item.resolvedFormula ? (
-                <div className="mt-1 truncate font-mono text-2xs text-muted">{item.resolvedFormula}</div>
+                <div className="mt-1 truncate font-mono text-2xs text-muted" title={item.resolvedFormula}>{item.resolvedFormula}</div>
               ) : null}
             </div>
           ))}
         </div>
-      </div>
+        {!traceExpanded ? <span className={styles.traceVerticalLabel} aria-hidden>Calculation trace</span> : null}
+      </aside>
     </div>
   );
 }
@@ -504,9 +583,9 @@ export function ScenarioModal({
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
+    <div className={styles.overlay}>
       <div
-        className="absolute inset-0 bg-slate-950/45 backdrop-blur-[2px]"
+        className={styles.backdrop}
         aria-hidden="true"
         data-testid="scenario-modal-backdrop"
         onClick={closeModal}
@@ -517,23 +596,21 @@ export function ScenarioModal({
         aria-modal="true"
         aria-labelledby={titleId}
         data-testid="scenario-modal"
-        className={clsx(
-          "vdt-ui-scale relative z-10 flex h-[min(90vh,820px)] w-full max-w-[1200px] flex-col overflow-hidden rounded-lg border border-slate-200/80 bg-white shadow-[0_30px_80px_rgba(15,23,42,0.26)]"
-        )}
+        className={clsx("vdt-ui-scale", styles.dialog)}
       >
-        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-line bg-white px-5 py-4 shadow-sm sm:px-7">
-          <div className="flex min-w-0 items-start gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line bg-slate-50 text-accent shadow-sm">
+        <header className={styles.header}>
+          <div className={styles.identity}>
+            <span className={styles.scenarioMark}>
               <Route className="h-4 w-4" aria-hidden />
             </span>
             <div className="min-w-0">
-              <h2 id={titleId} className="text-xl font-semibold text-ink">
+              <h2 id={titleId} className={styles.title}>
                 Scenario Mode
               </h2>
             </div>
           </div>
-          <div className="flex min-w-0 flex-1 max-w-3xl items-center justify-end gap-2">
-            <label className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-ink">
+          <div className={styles.actions}>
+            <label className={styles.mainScenarioLabel}>
               <input
                 type="checkbox"
                 data-testid="main-scenario-checkbox"
@@ -618,7 +695,7 @@ export function ScenarioModal({
               <TextInput
                 ref={renameInputRef}
                 autoFocus
-                className="min-w-[14rem] max-w-[25rem] w-auto flex-1 text-sm focus-visible:ring-2 focus-visible:ring-accent"
+                className={styles.scenarioSelect}
                 aria-label="Scenario name"
                 data-testid="scenario-name-input"
                 value={scenarioNameDraft}
@@ -656,8 +733,9 @@ export function ScenarioModal({
               />
             ) : (
               <SelectInput
-                className="min-w-[14rem] max-w-[25rem] w-auto flex-1 text-sm"
+                className={styles.scenarioSelect}
                 data-testid="scenario-select"
+                aria-label="Active scenario"
                 value={activeScenario?.id ?? ""}
                 title={activeScenario?.name}
                 onChange={(event) => setActiveScenarioId(event.target.value)}
@@ -669,19 +747,19 @@ export function ScenarioModal({
                 ))}
               </SelectInput>
             )}
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label="Close scenario mode"
-              data-testid="scenario-modal-close"
-              className="shrink-0 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-              icon={<X className="h-4 w-4" />}
-              onClick={closeModal}
-            />
           </div>
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label="Close scenario mode"
+            data-testid="scenario-modal-close"
+            className={styles.closeButton}
+            icon={<X className="h-4 w-4" />}
+            onClick={closeModal}
+          />
         </header>
 
-        <div className="min-h-0 flex-1 overflow-hidden bg-slate-50">
+        <div className={styles.body}>
           {children ?? <ScenarioModalContent />}
         </div>
       </div>

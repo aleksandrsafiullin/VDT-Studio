@@ -29,6 +29,7 @@ function cell(sheet: string, address: string) {
     formula: content.match(/<f>([\s\S]*?)<\/f>/)?.[1]?.replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&").replace(/&apos;/g, "'").replace(/&quot;/g, '"'),
     value: content.match(/<v>(.*?)<\/v>/)?.[1],
     type: content.match(/ t="(.*?)"/)?.[1],
+    text: content.match(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/)?.[1]?.replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&apos;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&"),
     style: Number(content.match(/ s="(.*?)"/)?.[1])
   };
 }
@@ -74,6 +75,77 @@ describe("editable Excel VDT export", () => {
     expect(parts["xl/worksheets/sheet2.xml"]).toContain("Default Scenario formulas reference the adjacent Baseline cell");
     expect(mode).toContain('<col min="5" max="5" width="30"');
     expect(cell(mode, "B4").style).not.toBe(cell(mode, "E4").style);
+  });
+
+  it("exports only the selected scenario's comments by KPI ID, including unchanged drivers and literal formula text", () => {
+    const model = project([
+      node("root", { type: "calculated", formula: "changed+unchanged+blank" }),
+      node("changed", { name: "Driver", value: 10 }),
+      node("unchanged", { name: "Driver", value: 20 }),
+      node("blank", { value: 3 })
+    ]);
+    const note = 'Сократить очередь < 5 минут & проверить "смену".\nНазначить ответственного.\nПроверить эффект.';
+    model.scenarios = [
+      { id: "main", name: "Main", isMain: true, overrides: [], comments: [{ nodeId: "changed", text: "Other scenario comment" }], createdAt: date, updatedAt: date },
+      { id: "selected", name: "Selected", overrides: [{ nodeId: "changed", value: 0 }], comments: [{ nodeId: "changed", text: note }, { nodeId: "unchanged", text: "=1+1" }], createdAt: date, updatedAt: date }
+    ];
+    const exported = workbook(model, { scenarioId: "selected" });
+    const mode = exported.parts["xl/worksheets/sheet4.xml"]!;
+    const rows = exported.workbookMapping.scenario.drivers;
+    expect(cell(mode, "F10").text).toBe("Comment");
+    expect(cell(mode, rows.changed!.commentCell).text).toBe(note);
+    expect(cell(mode, rows.unchanged!.commentCell).text).toBe("=1+1");
+    expect(cell(mode, rows.unchanged!.commentCell).type).toBe("inlineStr");
+    expect(cell(mode, rows.unchanged!.commentCell).formula).toBeUndefined();
+    expect(cell(mode, rows.unchanged!.scenarioCell).formula).toBe(rows.unchanged!.baselineCell);
+    expect(cell(mode, rows.blank!.commentCell).text).toBe("");
+    expect(mode).not.toContain("Other scenario comment");
+    expect(mode).toContain('<col min="6" max="6" width="64"');
+    expect(mode).toContain('<mergeCell ref="A1:F1"/>');
+    expect(cell(mode, rows.changed!.scenarioCell).value).toBe("0");
+    expect(cell(mode, "E4").value).toBe("23");
+
+    const withoutComments = structuredClone(model);
+    delete withoutComments.scenarios[1]!.comments;
+    const original = workbook(withoutComments, { scenarioId: "selected" });
+    for (const [path, content] of Object.entries(exported.parts)) {
+      if (path !== "xl/worksheets/sheet4.xml") expect(content, path).toBe(original.parts[path]);
+    }
+    for (const entry of Object.values(rows)) {
+      for (const address of [entry.baselineCell, entry.scenarioCell, entry.effectCell]) {
+        expect(cell(mode, address).content).toBe(cell(original.parts["xl/worksheets/sheet4.xml"]!, address).content);
+      }
+    }
+  });
+
+  it.each(["first", "legacy", "scratch"])("keeps a usable Comment column for %s scenario fallback", (kind) => {
+    const model = project([node("root", { type: "calculated", formula: "input*2" }), node("input", { value: 5 })]);
+    model.scenarios = [
+      { id: "first", name: "First", overrides: [], comments: [{ nodeId: "input", text: "First scenario plan" }], createdAt: date, updatedAt: date },
+      { id: "main", name: "Main", isMain: true, overrides: [], comments: [{ nodeId: "input", text: "Main scenario plan" }], createdAt: date, updatedAt: date }
+    ];
+    if (kind === "legacy") delete model.scenarios[0]!.comments;
+    if (kind === "scratch") model.scenarios = [];
+    const { parts, workbookMapping } = workbook(model, { scenarioId: "unknown" });
+    const mode = parts["xl/worksheets/sheet4.xml"]!;
+    expect(cell(mode, "F10").text).toBe("Comment");
+    expect(cell(mode, workbookMapping.scenario.drivers.input!.commentCell).text).toBe(kind === "first" ? "First scenario plan" : "");
+    expect(mode).not.toContain("Main scenario plan");
+    expect(cell(mode, "E4").value).toBe("10");
+  });
+
+  it("includes comments on additional overrides and fits wrapped multiline text", () => {
+    const model = project([node("root", { type: "calculated", formula: "calc+input" }), node("calc", { type: "calculated", formula: "input*2" }), node("input", { value: 5 })]);
+    const note = "Изменить технологию\nПроверить на пилоте\nПодтвердить результат";
+    model.scenarios = [{ id: "selected", name: "Selected", overrides: [{ nodeId: "calc", value: 30 }], comments: [{ nodeId: "calc", text: note }], createdAt: date, updatedAt: date }];
+    const { parts, workbookMapping } = workbook(model);
+    const mode = parts["xl/worksheets/sheet4.xml"]!;
+    const entry = workbookMapping.scenario.additionalOverrides.calc!;
+    expect(cell(mode, `F${entry.row - 1}`).text).toBe("Comment");
+    expect(cell(mode, entry.commentCell).text).toBe(note);
+    expect([20, 21]).toContain(cell(mode, entry.commentCell).style);
+    expect(Number(mode.match(new RegExp(`<row r="${entry.row}" ht="([\\d.]+)"`))?.[1])).toBeGreaterThan(28);
+    expect(cell(mode, "E4").value).toBe("35");
   });
 
   it("keeps full precision while formatting every numeric area to two decimals with dynamic space groups", () => {

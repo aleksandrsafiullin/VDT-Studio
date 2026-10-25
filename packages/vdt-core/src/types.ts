@@ -171,9 +171,15 @@ export interface VdtScenario {
   isMain?: boolean | undefined;
   baselineScenarioId?: string | undefined;
   overrides: VdtScenarioOverride[];
+  comments?: VdtScenarioComment[] | undefined;
   results?: VdtScenarioResult | undefined;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface VdtScenarioComment {
+  nodeId: string;
+  text: string;
 }
 
 export interface VdtScenarioOverride {

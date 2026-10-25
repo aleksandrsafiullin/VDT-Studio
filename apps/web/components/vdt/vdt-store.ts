@@ -500,6 +500,7 @@ export interface VdtStudioState {
   deleteScenario: (scenarioId: string) => void;
   cloneScenario: (scenarioId: string) => void;
   updateScenarioOverride: (scenarioId: string, nodeId: string, value?: number) => void;
+  updateScenarioComment: (scenarioId: string, nodeId: string, text: string) => void;
   stageDataDiscoveryChangeSet: (changeSet: VdtChangeSet, context?: FileImportTargetContext) => boolean;
   toggleChangeSelection: (changeId: string) => void;
   applyPendingChangeSet: () => void;
@@ -3893,6 +3894,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             name: uniqueScenarioCopyName(source.name, state.project.scenarios),
             description: source.description ?? defaultScenario().description,
             overrides: source.overrides.map((override) => ({ ...override })),
+            comments: source.comments?.map((comment) => ({ ...comment })),
             createdAt: now,
             updatedAt: now
           };
@@ -3932,6 +3934,33 @@ export const useVdtStudioStore = create<VdtStudioState>()(
                   updatedAt: nowIso()
                 };
               })
+            }
+          };
+        }),
+      updateScenarioComment: (scenarioId, nodeId, text) =>
+        set((state) => {
+          const scenario = state.project.scenarios.find((candidate) => candidate.id === scenarioId);
+          if (!scenario || !state.project.graph.nodes.some((node) => node.id === nodeId)) {
+            return state;
+          }
+
+          const previous = scenario.comments?.find((comment) => comment.nodeId === nodeId)?.text ?? "";
+          if (previous === text || (!previous && !text.trim())) {
+            return state;
+          }
+
+          const comments = (scenario.comments ?? []).filter((comment) => comment.nodeId !== nodeId);
+          if (text.trim()) {
+            comments.push({ nodeId, text });
+          }
+          const updatedAt = nowIso();
+          return {
+            project: {
+              ...state.project,
+              updatedAt,
+              scenarios: state.project.scenarios.map((candidate) => candidate.id === scenarioId
+                ? { ...candidate, comments: comments.length ? comments : undefined, updatedAt }
+                : candidate)
             }
           };
         }),

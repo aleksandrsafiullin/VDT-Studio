@@ -154,6 +154,33 @@ pointers keep them visible. Preserve insertion-slot/caret targets, token order,
 unknown-reference colors and raw editing rather than altering the expression
 to make it fit.
 
+## Scenario Mode
+
+Use the same 24 px outer radius, neutral border/shadow, blurred backdrop,
+rounded fields and circular close control as Settings. Group the four totals in
+one quiet inset card, then show Name, Unit, Baseline, Scenario, Effect and Comment
+in a rounded table. Keep numeric text tabular, long KPI names bounded with full
+titles, and comment text editable in resizable text areas. Make the four summary
+values prominent at 1.75 em on desktop and 1.375 em on small screens, with tabular
+digits and quieter labels. Permit horizontal
+table scrolling on narrow screens without overflowing the dialog.
+
+Calculation trace starts in a slim collapsed rail. Reuse the inspector's
+`PanelToggleButton` and right-panel icon, with a trace-specific accessible name
+and `aria-expanded`/`aria-controls`. Opening the trace leaves both the toggle and
+table usable; at narrow widths the trace overlays the table. Preserve independent
+scrolling, focus trapping, Escape/close behavior and reduced motion.
+
+Match Baseline's comma-grouped thousands, decimal dot and maximum of two decimal
+places in resting Scenario fields, regardless of the browser's numeric locale.
+Expose the exact number on focus and in its title, preserve precision during
+editing and apply display formatting on blur without writing a rounded number.
+Use a decimal-input keyboard and accessible spinbutton behavior, including
+Arrow Up/Down; support pasting numbers with valid comma grouping. Invalid drafts
+must not overwrite existing numbers.
+Action comments belong to a KPI within one scenario and do not imply a numeric
+override or a validated improvement.
+
 ## Settings
 
 Display includes **Scenario highlight** with opaque sRGB presets, a native color

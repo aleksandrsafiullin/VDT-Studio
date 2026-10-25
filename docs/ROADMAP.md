@@ -186,6 +186,7 @@ Implemented at alpha level:
 
 - project/VDT workspace and local SQLite revision storage, including Home/back links that await a successful revision save, preserve edits on save failure, and synchronize browser Back/Forward selection;
 - editable left-to-right canvas, basic formula engine, scenarios and trace;
+- Scenario Mode with Settings-style rounded neutral surfaces, larger summary totals, an initially collapsed calculation trace using the inspector toggle icon, Baseline-matched comma-grouped/decimal-dot resting values independent of browser locale, full-precision editing with grouped-number paste and keyboard stepping, and saved per-scenario KPI action comments that survive override reset and copy with scenario cloning; Export to Excel includes the selected scenario's comments in a wrapped Comment column for drivers and additional overrides, independently of numeric changes;
 - a unified Versions side panel with readable/named checkpoints, before/after KPI/formula comparison, automatic pre-restore backups and session Undo guarded against later edits; the existing 20-snapshot FIFO and W0.5 persistence limitations remain;
 - direct editable Excel export in the editor and product CLI output (JSON/Markdown);
 - a simplified node inspector with Properties/Warnings and direct edits, with AI work in the chat and node-card incoming-KPI action;
