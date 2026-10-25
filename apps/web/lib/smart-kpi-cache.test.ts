@@ -29,10 +29,36 @@ function proposal(s: SmartKpiCacheScope, id = "proposal"): KpiSuggestionSet {
     createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 7 * 86400_000).toISOString(),
     origin: { kind: "model", requestId: "request_fixture", execution: s.execution! }, rationale: "Independent explanatory inputs in QA context.", limitations: [],
     groups: [{ id: "context", title: "Explanatory inputs", selectionMode: "independent", requiredKeys: [], limitations: [],
-      children: [{ key: "availability", conceptKey: "availability", name: "Availability", unit: "fraction" }] }] };
+      children: [{ key: "availability", conceptKey: "availability", name: "Availability", unit: "fraction" },
+        { key: "yield", conceptKey: "yield", name: "Yield", unit: "fraction" }] }] };
 }
 
 describe("Smart KPI isolated cache", () => {
+  it("rejects contextual reuse on put and evicts an otherwise current persisted proposal on lookup", async () => {
+    const storage = new MemoryStorage(), s = await scope(), cache = new SmartKpiCache({ storage, now: () => now });
+    const peer = { ...s.context.target, id: "peer", name: "Sibling availability", unit: "fraction" };
+    s.context.siblings = [peer];
+    const unsafe = proposal(s); unsafe.groups[0]!.children[0]!.existingNodeId = peer.id;
+    expect(await cache.put(s, unsafe)).toBe(false);
+    storage.rows = [{ schema: "smart_kpi_cache.v1", key: cache.key(s), proposal: unsafe, touchedAt: now }];
+    const reloaded = new SmartKpiCache({ storage, now: () => now });
+    await reloaded.hydrate(); expect(reloaded.peek(s)).toBeUndefined(); await reloaded.flush();
+    expect(storage.rows).toHaveLength(0);
+    delete unsafe.groups[0]!.children[0]!.existingNodeId;
+    unsafe.groups[0]!.children[0]!.name = peer.name;
+    expect(await cache.put(s, unsafe)).toBe(false);
+  });
+  it("drops singleton artifacts even with a current key, and invalidates the previous preparation policy", async () => {
+    const storage = new MemoryStorage(), s = await scope(), cache = new SmartKpiCache({ storage, now: () => now });
+    const singleton = proposal(s); singleton.groups[0]!.children.pop();
+    const oldKey = JSON.parse(cache.key(s)); oldKey.preparationVersion = "smart-kpi-preparation.v4";
+    storage.rows = [
+      { schema: "smart_kpi_cache.v1", key: cache.key(s), proposal: singleton, touchedAt: now },
+      { schema: "smart_kpi_cache.v1", key: kpiCanonicalJson(oldKey), proposal: proposal(s), touchedAt: now }
+    ];
+    await cache.hydrate();
+    expect(cache.peek(s)).toBeUndefined(); expect(storage.rows).toHaveLength(0);
+  });
   it("hydrates valid artifacts, reuses unchanged execution after reload, and isolates caller mutation", async () => {
     const storage = new MemoryStorage(), s = await scope(), first = new SmartKpiCache({ storage, now: () => now });
     const p = proposal(s); expect(await first.put(s, p)).toBe(true); p.groups[0]!.children[0]!.name = "caller mutation";
@@ -65,6 +91,8 @@ describe("Smart KPI isolated cache", () => {
     expect(await cache.put({ ...s, execution: { ...execution, credentialEpoch: "other" } }, proposal(s))).toBe(false);
     expect(await cache.put(s, { ...proposal(s), groups: [] })).toBe(false);
     expect(await cache.put(s, { ...proposal(s), rawPrompt: "should not be retained" })).toBe(false);
+    const singleton = proposal(s); singleton.groups[0]!.children.pop();
+    expect(await cache.put(s, singleton)).toBe(false);
     expect(cache.stats().entries).toBe(0);
   });
 

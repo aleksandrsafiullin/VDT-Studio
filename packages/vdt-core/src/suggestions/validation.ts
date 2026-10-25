@@ -202,3 +202,23 @@ export function resolveKpiSuggestionSelection(proposal: KpiSuggestionSet, select
     "CONTEXT_ONLY", "This proposal is contextual; its formula is not independently verified.");
   return group;
 }
+
+/** Current preparation policy, separate from historical proposal/journal shape.
+ * Rebuildable suggestions must split the target; old committing receipts keep
+ * their original validation and exact replay semantics. */
+export function validateKpiSuggestionDecomposition(proposal: KpiSuggestionSet, context?: KpiSuggestionContext): KpiSuggestionSet {
+  for (const group of proposal.groups) smartAssert(group.children.length >= 2, "NOT_A_DECOMPOSITION",
+    "A decomposition needs at least two distinct component KPIs. A renamed copy is not a decomposition.");
+  if (context) {
+    const direct = new Set(context.children.filter(node => node.status !== "rejected").map(node => node.id));
+    const normalize = (name: string) => name.normalize("NFKC").trim().toLocaleLowerCase("en").replace(/[\p{P}\p{Z}\s_]+/gu, " ");
+    const contextOnly = [context.root, context.target, ...context.ancestors, ...context.siblings].filter(node => !direct.has(node.id));
+    for (const group of proposal.groups) for (const child of group.children) {
+      smartAssert(!child.existingNodeId || direct.has(child.existingNodeId), "UNSAFE_DECOMPOSITION",
+        "Suggested components cannot reuse a sibling, ancestor or unrelated KPI. Decompose the target into its own lower-level inputs; refresh suggestions.");
+      smartAssert(child.existingNodeId || !contextOnly.some(node => normalize(node.name) === normalize(child.name)), "UNSAFE_DECOMPOSITION",
+        "A copy of the target, a sibling or an ancestor is not a lower-level component. Refresh suggestions.");
+    }
+  }
+  return proposal;
+}

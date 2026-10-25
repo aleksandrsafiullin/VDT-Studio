@@ -9,11 +9,12 @@ import { SmartKpiScheduler, type SmartKpiNodeSnapshot } from "@/lib/smart-kpi-sc
 import { createSmartKpiPreparedSelection, type SmartKpiPreparedSelection } from "@/lib/smart-kpi-client";
 import { getSmartKpiLibraryProposal, recordSmartKpiDecision } from "@/lib/smart-kpi-decisions";
 import { resolveSmartKpiScope } from "@/lib/smart-kpi-scope";
+import { smartKpiTargetIds } from "@/lib/smart-kpi-targets";
 import { useApiKeyStorage } from "./api-key-storage";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { useVdtStudioStore } from "./vdt-store";
 
-export interface SmartKpiActivation { targetNodeId: string; rail: HTMLElement; trigger: HTMLButtonElement; mode: "smart" | "manual" }
+export interface SmartKpiActivation { targetNodeId: string; rail: HTMLElement; trigger: HTMLButtonElement; mode: "smart" | "manual"; reveal: boolean }
 type Admission = { status: "preparing" | "ready" | "unavailable" | "blocked"; selection?: SmartKpiPreparedSelection; reason?: string };
 const initialSnapshot: SmartKpiNodeSnapshot = { targetNodeId: "", state: { status: "idle" }, stale: false, refreshAvailable: false, canApply: false };
 const runtimeActive = (status?: string) => ["queued", "running", "needs_user_input", "waiting_approval", "recovery_required"].includes(status ?? "");
@@ -28,6 +29,7 @@ export function smartKpiAgentIsActive(state: { isGenerating: boolean; agentRun?:
 /** Exactly one scheduler for the active canvas owner; no provider work in cards. */
 export function useSmartKpi() {
   const project = useVdtStudioStore(state => state.project);
+  const targets = useMemo(() => smartKpiTargetIds({ graph: project.graph }), [project.graph]);
   const workspace = useVdtStudioStore(state => state.workspace);
   const selectedNodeId = useVdtStudioStore(state => state.selectedNodeId);
   const executionSettings = useVdtStudioStore(state => state.executionSettings);
@@ -64,6 +66,8 @@ export function useSmartKpi() {
   const dismissedHover = useRef<{ targetNodeId: string; rect: DOMRect } | undefined>(undefined);
   const restoringFocus = useRef(false), focusFrame = useRef<number | undefined>(undefined);
   const previousProject = useRef<VdtProject | undefined>(undefined);
+  const requestedPreparation = useRef<{ targetNodeId: string; ownerKey: string } | undefined>(undefined);
+  const ownerRef = useRef(ownerKey); ownerRef.current = ownerKey;
 
   const cancelClose = useCallback(() => { if (closed.current) clearTimeout(closed.current); closed.current = undefined; }, []);
   const close = useCallback((restoreFocus = false) => {
@@ -100,7 +104,9 @@ export function useSmartKpi() {
   }, []);
   const scheduleClose = useCallback(() => {
     cancelClose();
-    if (mutationBusyRef.current) return;
+    // Canvas previews stay available while the user explores or pans the tree.
+    // Outside click, Escape, Close or another activation dismisses them.
+    if (mutationBusyRef.current || activeRef.current?.mode === "smart") return;
     closed.current = setTimeout(() => {
       closed.current = undefined;
       if (mutationBusyRef.current) return;
@@ -158,7 +164,8 @@ export function useSmartKpi() {
   }, [scope.workspaceId, cancelClose]);
 
   const executionKey = admission.selection ? kpiCanonicalJson(admission.selection.execution) : "";
-  useEffect(() => { close(); }, [scope.workspaceId, scope.vdtId, project.id, close]);
+  useEffect(() => { requestedPreparation.current = undefined; setFeedback(undefined); close(); }, [scope.workspaceId, scope.vdtId, project.id, close]);
+  useEffect(() => { if (active?.mode === "smart" && !targets.has(active.targetNodeId)) close(); }, [active, targets, close]);
   useEffect(() => {
     if (!active) { setCurrentContext(undefined); return; }
     let current = true;
@@ -183,6 +190,17 @@ export function useSmartKpi() {
       ...(scope.goal ? { goal: scope.goal } : {}), ...(admission.selection ? { execution: admission.selection.execution } : {}) })
       .then(async () => {
         if (!current || scope.blockedReason) return;
+        const requested = requestedPreparation.current;
+        if (requested && requested.ownerKey === ownerKey && admission.selection) {
+          requestedPreparation.current = undefined;
+          // Explicit refresh re-admits current metadata before bypassing the
+          // positive/negative cache. It cannot retry with an obsolete closure.
+          instance.releaseDisplay(requested.targetNodeId);
+          await instance.retry(requested.targetNodeId);
+          if (!current) return;
+          if (activeRef.current?.targetNodeId === requested.targetNodeId) instance.refreshDisplay(requested.targetNodeId);
+          update();
+        }
         await instance.prewarm(useVdtStudioStore.getState().selectedNodeId || null, visible.current);
         if (newParent) await instance.prepareImmediateChildren(newParent);
         const currentActive = activeRef.current;
@@ -215,14 +233,21 @@ export function useSmartKpi() {
   }, [active, close]);
 
   const activate = useCallback((targetNodeId: string, rail: HTMLElement, trigger: HTMLButtonElement, source: "pointer" | "focus" | "touch" | "manual" = "pointer") => {
+    if (source !== "manual" && !smartKpiTargetIds(useVdtStudioStore.getState().project).has(targetNodeId)) return;
     if (source === "focus" && restoringFocus.current || source === "pointer" && dismissedHover.current?.targetNodeId === targetNodeId) return;
+    // Moving the camera can carry another rail under the pointer. An open
+    // draft changes target only through an intentional click/keyboard action.
+    if (source === "pointer" && activeRef.current && activeRef.current.targetNodeId !== targetNodeId) return;
     dismissedHover.current = undefined;
     if (focusFrame.current !== undefined) { cancelAnimationFrame(focusFrame.current); focusFrame.current = undefined; }
     cancelClose(); if (source === "pointer") railInside.current = true;
     const old = activeRef.current;
-    if (old?.targetNodeId === targetNodeId && old.rail === rail && source !== "manual") return;
+    if (old?.targetNodeId === targetNodeId && old.rail === rail && source !== "manual") {
+      if (source !== "pointer" && !old.reveal) { const next = { ...old, reveal: true }; activeRef.current = next; setActive(next); }
+      return;
+    }
     if (old) scheduler.current?.releaseDisplay(old.targetNodeId);
-    const next: SmartKpiActivation = { targetNodeId, rail, trigger, mode: source === "manual" ? "manual" : "smart" };
+    const next: SmartKpiActivation = { targetNodeId, rail, trigger, mode: source === "manual" ? "manual" : "smart", reveal: source !== "pointer" };
     activeRef.current = next; setActive(next); setFeedback(undefined);
     const instance = scheduler.current;
     if (instance?.getSnapshot(targetNodeId).proposal) instance.freezeDisplay(targetNodeId); else instance?.releaseDisplay(targetNodeId);
@@ -240,35 +265,46 @@ export function useSmartKpi() {
     if (!resolveSmartKpiScope(state).blockedReason) void scheduler.current?.prewarm(state.selectedNodeId || null, visible.current);
   }, []);
   const refresh = useCallback(() => {
-    const current = activeRef.current, instance = scheduler.current;
-    if (!current || !instance) return;
-    instance.refreshDisplay(current.targetNodeId);
-    void instance.request(current.targetNodeId).then(() => { instance.refreshDisplay(current.targetNodeId); update(); });
-    setFeedback(undefined);
-  }, []);
-  const retry = useCallback(() => {
     const current = activeRef.current;
-    if (admissionRef.current.status !== "ready") { retryMetadata(); return; }
-    if (current) {
-      const instance = scheduler.current;
-      void instance?.retry(current.targetNodeId).then(() => { instance.refreshDisplay(current.targetNodeId); update(); });
-    }
+    if (!current || !scheduler.current) return;
+    requestedPreparation.current = { targetNodeId: current.targetNodeId, ownerKey: ownerRef.current };
+    setFeedback(undefined);
+    retryMetadata();
   }, []);
+  const retry = refresh;
   const preview = useCallback((input: IncomingKpiBatchInput): Promise<IncomingKpiBatchPreview> => useVdtStudioStore.getState().previewIncomingKpiBatch(input), []);
   const apply = useCallback(async (input: IncomingKpiBatchInput) => {
     const current = activeRef.current, state = useVdtStudioStore.getState();
     if (!current || input.draft.targetNodeId !== current.targetNodeId || state.smartKpiBlockedReason || resolveSmartKpiScope(state).blockedReason) return;
+    if (current.mode === "smart" && !smartKpiTargetIds(state.project).has(current.targetNodeId)) return;
+    const owner = ownerRef.current;
     const result = await state.applySmartKpiSuggestion(input);
-    setFeedback(result.ok ? result.addedNodeIds.length
+    if (result.code === "STALE_EXECUTION" && ownerRef.current === owner) retryMetadata();
+    if (activeRef.current?.targetNodeId === current.targetNodeId && ownerRef.current === owner) setFeedback(result.ok ? result.addedNodeIds.length
       ? `${result.addedNodeIds.length} KPI${result.addedNodeIds.length === 1 ? "" : "s"} added${result.durability === "draft" ? " to this draft" : " and saved"}.`
       : `KPI values updated${result.durability === "draft" ? " in this draft" : " and saved"}.`
       : result.reason ?? "The KPI could not be added. Review the status and try again.");
+    return result;
   }, []);
-  const undo = useCallback(async () => { const ok = await useVdtStudioStore.getState().undoSmartKpiSuggestion(); if (ok) setFeedback("Smart addition undone."); }, []);
+  const undo = useCallback(async () => {
+    const owner = ownerRef.current, target = activeRef.current?.targetNodeId;
+    const ok = await useVdtStudioStore.getState().undoSmartKpiSuggestion();
+    const mutation = useVdtStudioStore.getState().smartKpiMutation;
+    if (ownerRef.current === owner && activeRef.current?.targetNodeId === target) {
+      if (ok) setFeedback("Smart addition undone.");
+      else if (target && mutation.targetNodeId === target) setFeedback(mutation.message ?? "Undo could not be completed.");
+    }
+  }, []);
   const reconcile = useCallback(async () => {
     if (replayingRef.current) return;
+    const owner = ownerRef.current, target = activeRef.current?.targetNodeId;
     replayingRef.current = true; setReplaying(true); setFeedback(undefined);
-    try { await useVdtStudioStore.getState().reconcilePendingSmartKpiCommit(); }
+    try {
+      const ok = await useVdtStudioStore.getState().reconcilePendingSmartKpiCommit();
+      const mutation = useVdtStudioStore.getState().smartKpiMutation;
+      if (!ok && target && ownerRef.current === owner && activeRef.current?.targetNodeId === target && mutation.targetNodeId === target)
+        setFeedback(mutation.message ?? "The save could not be reconciled. Review its status and retry.");
+    }
     finally { replayingRef.current = false; setReplaying(false); }
   }, []);
   const snapshot = active ? scheduler.current?.getSnapshot(active.targetNodeId) ?? initialSnapshot : initialSnapshot;
@@ -276,7 +312,7 @@ export function useSmartKpi() {
     && currentContext.projectId === project.id && currentContext.vdtId === scope.vdtId ? currentContext : undefined;
   const context = snapshot.proposal ? contexts.current.get(snapshot.proposal.contextHash) : latestContext;
   const blockedReason = scope.blockedReason ?? mutationBlockedReason ?? (fullAgentActive ? "Finish or cancel the active agent run before adding KPIs." : undefined);
-  return { active, snapshot, context, latestContext, contextPending, contextError, ownerKey, project, admission, mutation, blockedReason, feedback, replaying, activate, activateManual, leaveRail, enterPanel, leavePanel,
+  return { active, targets, snapshot, context, latestContext, contextPending, contextError, ownerKey, project, admission, mutation, blockedReason, feedback, replaying, activate, activateManual, leaveRail, enterPanel, leavePanel,
     focusPanel: cancelClose, blurPanel: scheduleClose, close, refresh, refreshContext, retry, preview, apply, undo, reconcile, prewarmVisible };
 }
 export type SmartKpiController = ReturnType<typeof useSmartKpi>;

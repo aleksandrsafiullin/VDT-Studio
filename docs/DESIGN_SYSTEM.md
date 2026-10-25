@@ -187,13 +187,47 @@ windows, move enabled section navigation into a horizontal row; Memory and
 Appearance remain unavailable. Preserve Escape, backdrop/close actions, keyboard
 focus containment and returning focus to the trigger. Respect reduced motion.
 
-## Incoming KPI panel
+## Suggested KPI canvas preview and manual panel
 
-Keep the prepared default to selected KPI rows, a plain readable formula and one
-primary **Add & calculate** button. Use a single **Edit** disclosure for own rows,
+The node action rail contains Manual and From file, plus Suggested only for
+Input KPIs without an incoming layer or a formula. Omit the AI/chat shortcut.
+Non-input and already decomposed cards do not open Suggested on hover or focus.
+After Add, remove the now-ineligible preview and preserve Undo in a compact
+canvas notice; that notice is a save receipt, not another proposal.
+
+Smart displays 238 px gray cards with dashed borders and connections in graph
+space, matching the real node-card geometry. Mark them **Suggested · not added
+yet**; reused KPIs identify their reuse. Keep their unit, selection and Base input
+visible, with a compact readable formula and one graphite **Add KPIs** action
+below the group. Avoid an enclosing popup surface, header divider or shadow.
+Keep previews clear of existing nodes. Reveal clipped previews without moving
+saved nodes or zooming in beyond the user's current scale. Reveal the camera
+only after explicit Smart click/keyboard focus; hovering the rail must not move
+Manual/File actions under the pointer. Pointer leave keeps
+the preview available; outside click, Close and Escape dismiss it. Two skeletal
+cards indicate preparation, without an empty formula error or disabled Add.
+Empty/error states show one concise status and available retry action. After Add,
+remove the temporary cards and keep save feedback and Undo.
+Each prepared alternative must have at least two component cards; reject a
+single renamed total rather than offering Add 1 KPI. Refresh/Retry re-admits the
+selected execution. Clean drafts adopt the refreshed source, while edited
+drafts retain Review latest. Keep failed Add feedback with its target and clear
+it on retry; it must not appear beside another KPI's empty-state explanation.
+Do not show a sibling or ancestor as a suggested child. Unsupported inverse
+decompositions fail before cards become ready and expose a specific retry
+explanation. A primitive Input without a supported deeper split may show the
+genuine empty state. A retained unsafe proposal blocks Add before any request.
+Count all checked incoming KPIs on Add, including reused references. For a mixed
+batch, show a compact new/existing breakdown directly below the button and link
+it through the button's accessible description. Reuse never implies another
+copy of the existing KPI. Storage errors refer to browser recovery storage,
+without suggesting that ordinary disk cleanup will necessarily help.
+
+Use a single **Edit** disclosure for own rows,
 existing references, raw text, operators, insertion controls and Details. Show
 alternative titles/radios only when there is a choice. Omit prepared/source badges
-and repeated factor chips from the default view. Manual entry opens Edit and
+and repeated factor chips from the default view. Manual entry retains its
+separate panel and **Add & calculate**, opens Edit and
 focuses its new row; actionable loading, errors and save/recovery remain visible.
 Show a compact numeric field beside each proposed row and a current → calculated
 line. An automatically derived last value appears as a placeholder with a

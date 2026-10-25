@@ -1,5 +1,16 @@
 # Local AI And Data Threat Model
 
+## Smart editor quota fallback
+
+`smart_kpi_storage.v1` is a private quota-only encoding of repeated Smart editor
+payloads. It retains base/current projects, all history needed for Undo and the
+same immutable request. Decoding restores property order and checks expanded
+length/checksum before hydration/readback. The checksum detects corruption;
+it is not a signature or authentication control. Unsupported/corrupt records
+are retained and blocked from automatic overwrite. No keys, raw model prompts,
+permissions, actor authority, revision CAS or API payload policy are added by
+this encoding. If normal and compact writes both fail, no new request is sent.
+
 ## Smart KPI bounded preparation (partial product integration)
 
 Smart proposal data contains no numeric defaults, write/CAS/provider authority or
@@ -9,7 +20,9 @@ not raw rows, file bytes or credentials. The validated cache retains no raw prom
 keys, partial streams or pending jobs. Stable encrypted credential epochs survive
 passive reload, rotate on real replacement/removal/restoration, and use CAS so an
 identity migration cannot resurrect a removed credential. Codex identity hashes
-only nonsecret filesystem/catalog/CLI/policy metadata, never credential bytes.
+only nonsecret config/CLI/policy metadata, never credential bytes. Routine Codex
+model-catalog refresh metadata does not represent binding replacement; selected
+model, actual config/executable/policy changes and credential epoch stay guarded.
 
 All Next web AI Smart entries (`suggestions`, generic `run-task`, development
 runtime, metadata and cancel) enforce same Origin and JSON content type before

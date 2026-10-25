@@ -5,7 +5,7 @@ import type { NodeProps } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
 import type { VdtNode } from "@vdt-studio/vdt-core";
 import { clsx } from "clsx";
-import { FileUp, Lightbulb, Plus, Sparkles } from "lucide-react";
+import { FileUp, Lightbulb, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { formatChange, formatNumber, formatPercent } from "@/lib/format";
@@ -32,7 +32,6 @@ export interface VdtNodeCardData extends Record<string, unknown> {
   highlighted?: boolean | undefined;
   onSelect?: ((nodeId: string) => void) | undefined;
   onAddManualIncomingKpi?: ((nodeId: string, rail: HTMLElement, trigger: HTMLButtonElement) => void) | undefined;
-  onAddAiIncomingKpis?: ((nodeId: string) => void) | undefined;
   onAddFileIncomingKpis?: ((nodeId: string) => void) | undefined;
   smartOpen?: boolean | undefined;
   onSmartActivate?: ((nodeId: string, rail: HTMLElement, trigger: HTMLButtonElement, source: "pointer" | "focus" | "touch") => void) | undefined;
@@ -150,7 +149,7 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
       </div>
       <div data-testid="node-incoming-actions" className={clsx("nodrag nopan nowheel", styles.actions, nodeData.smartOpen && styles.actionsOpen)}
         onPointerEnter={event => activateSmart(event.currentTarget, event.pointerType === "touch" ? "touch" : "pointer")}
-        onPointerLeave={() => nodeData.onSmartLeave?.()} onFocusCapture={event => activateSmart(event.currentTarget, "focus")} onBlurCapture={() => nodeData.onSmartBlur?.()}
+        onPointerLeave={() => nodeData.onSmartLeave?.()} onFocusCapture={event => { if (event.target instanceof Element && event.target.closest("[data-smart-trigger]")) activateSmart(event.currentTarget, "focus"); }} onBlurCapture={() => nodeData.onSmartBlur?.()}
         onPointerDown={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()} onWheel={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
         <div className={clsx("nodrag nopan nowheel", styles.actionToolbar)}>
           <Tooltip label="Add incoming KPI manually" className="block">
@@ -171,23 +170,6 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
               }}
             />
           </Tooltip>
-          <Tooltip label="Add incoming KPIs with AI" className="block">
-            <Button
-              type="button"
-              size="icon"
-              variant="primary"
-              className={clsx(styles.actionButton, styles.aiAction)}
-              icon={<Sparkles className="h-4 w-4" />}
-              aria-label={`Add incoming KPIs with AI for ${node.name}`}
-              data-testid="node-add-ai-incoming-kpis"
-              disabled={!nodeData.onAddAiIncomingKpis}
-              onMouseDown={stopActionEvent}
-              onClick={(event) => {
-                stopActionEvent(event);
-                nodeData.onAddAiIncomingKpis?.(node.id);
-              }}
-            />
-          </Tooltip>
           <Tooltip label="Add incoming KPIs from file" className="block">
             <Button
               type="button"
@@ -205,9 +187,9 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
               }}
             />
           </Tooltip>
-          <Tooltip label="Smart KPI suggestions" className="block">
+          {nodeData.onSmartActivate ? <Tooltip label="Smart KPI suggestions" className="block">
             <Button type="button" size="icon" variant="secondary" className={styles.actionButton} icon={<Lightbulb className="h-4 w-4" />}
-              aria-label={`Smart KPI suggestions for ${node.name}`} aria-haspopup="dialog" aria-controls={nodeData.smartOpen ? "smart-kpi-panel" : undefined} aria-expanded={!!nodeData.smartOpen}
+              aria-label={`Smart KPI suggestions for ${node.name}`} aria-controls={nodeData.smartOpen ? "smart-kpi-panel" : undefined} aria-expanded={!!nodeData.smartOpen}
               data-testid="node-smart-kpi-suggestions" data-smart-trigger="true" data-node-name={node.name}
               disabled={!nodeData.onSmartActivate} onMouseDown={stopActionEvent}
               onClick={event => { event.stopPropagation(); const rail = event.currentTarget.closest<HTMLElement>('[data-testid="node-incoming-actions"]'); if (rail) activateSmart(rail, "touch"); }}
@@ -218,7 +200,7 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
                   if (first) { event.preventDefault(); first.focus(); }
                 }
               }} />
-          </Tooltip>
+          </Tooltip> : null}
         </div>
       </div>
     </div>

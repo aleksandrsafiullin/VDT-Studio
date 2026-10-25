@@ -1,5 +1,47 @@
 # Roadmap
 
+## Suggested decomposition and execution refresh (2026-10-25)
+
+Implemented in source: preparation policy v5 restricts Suggested reuse to active
+direct children and rejects exact normalized copies of contextual metrics. The
+prompt prohibits inverse parent/sibling identities and asks for the target's own
+lower-level components or a genuine empty result. New preview/Add also blocks
+old retained unsafe proposals. General business-semantic quality, including
+synonym recognition, remains a separate qualification task; historical receipt
+replay and explicit manual shared references retain their contract.
+
+Implemented in source: mixed-input Add counts selected new and reused KPIs,
+with an explicit breakdown. Smart recovery persistence has a quota-only,
+lossless reference encoding for repeated project/history/request payloads.
+Readback/hydration restores the exact journal before the existing write gate;
+corrupt or unsupported encoded evidence is retained. Browser/storage verification
+for this correction is recorded separately from live-provider qualification.
+
+Implemented in source: new preparation/cache admission requires two or more
+component KPIs and rejects a single renamed total. The prompt permits unknown
+measurements while requiring a supported definition. Codex catalog refresh
+metadata no longer changes binding identity; actual config, model and credential
+changes remain guarded. Refresh/Retry re-admits execution and clean drafts adopt
+the new source; failed Add messages stay with their target. Live model semantic
+quality and native package qualification remain separate verification work.
+
+## Suggested KPI canvas preview (2026-10-24)
+
+Suggested now targets only undecomposed Input KPIs. A shared eligibility rule
+filters controls, activation, cached displays and every scheduler entry before
+preparation. The duplicate card AI/chat button is removed; Manual/File remain.
+After Add, a compact receipt retains guarded Undo while the parent loses
+Suggested. The compatibility agent runtime action and explicit chat remain.
+
+Implemented for local web: gray, dashed suggested KPI cards and connections
+render directly in the graph viewport. Collision-aware placement, preparation
+placeholders, per-card values/selection, readable formula, Edit and one Add action
+replace the default Smart popup. Previews stay outside persisted nodes/edges;
+dismissal leaves the graph intact. Successful Add removes temporary cards and
+keeps feedback/Undo. Manual entry retains its separate editor. Existing numeric,
+formula and revision safeguards remain; native packaging and live-provider
+qualification are separate.
+
 ## Editor workspace panels
 
 Implemented for local web: a shared Apple-style white, light gray and graphite
@@ -28,7 +70,7 @@ the same foreground keeps **≈** visible on colored rows. Direct and propagated
 the same treatment in either direction; unchanged/unavailable comparisons and
 reference groups remain neutral. Selection/highlight borders retain priority.
 Graphite selection stays synchronized with the inspector; hover/focus/touch
-actions retain Manual/AI/File/Smart entry points. Estimate marks, unavailable
+actions retain Manual/File and eligible Input-leaf Smart entry points. Estimate marks, unavailable
 values, reference groups and relation semantics remain visible. Saved positions
 and card width are preserved.
 

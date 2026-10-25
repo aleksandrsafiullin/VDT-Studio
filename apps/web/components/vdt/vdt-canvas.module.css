@@ -61,13 +61,11 @@
 .card .handle { width: 8px; height: 8px; min-width: 0; min-height: 0; border: 2px solid var(--workspace-surface); background: var(--workspace-line); transition: background 160ms; }
 .card:hover .handle, .selected .handle { background: var(--workspace-secondary); }
 
-.actions { position: absolute; top: 50%; right: -56px; z-index: 30; display: flex; width: 56px; height: 176px; align-items: center; justify-content: flex-end; opacity: 0; transform: translateY(-50%); transition: opacity 120ms; }
+.actions { position: absolute; top: 50%; right: -56px; z-index: 30; display: flex; width: 56px; padding: 12px 0; align-items: center; justify-content: flex-end; opacity: 0; transform: translateY(-50%); transition: opacity 120ms; }
 .node:hover .actions, .node:focus-within .actions, .actionsOpen { opacity: 1; }
 .actionToolbar { display: flex; flex-direction: column; gap: 3px; border: 1px solid var(--workspace-line); border-radius: 12px; padding: 4px; background: var(--workspace-surface); box-shadow: 0 4px 16px #0000000d; }
 .actionToolbar .actionButton { width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--workspace-muted); box-shadow: none; }
 .actionToolbar .actionButton:hover { background: var(--workspace-control); color: var(--workspace-ink); }
-.actionToolbar .aiAction { background: var(--workspace-ink); color: var(--workspace-surface); }
-.actionToolbar .aiAction:hover { background: var(--workspace-secondary); color: var(--workspace-surface); }
 .actionToolbar .actionButton:focus-visible { outline: 2px solid var(--workspace-focus); outline-offset: 2px; }
 .actionToolbar .actionButton[aria-expanded="true"] { background: var(--workspace-control); color: var(--workspace-ink); }
 

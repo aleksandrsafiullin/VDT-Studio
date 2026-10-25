@@ -43,13 +43,14 @@ adapters return typed unavailable rather than switching provider.
 Stable cache identity binds selected model/destination/policy and an opaque
 credential epoch. Passive encrypted-key reload reuses its epoch; replacement,
 removal/restoration or destination changes invalidate it. Codex metadata uses
-nonsecret filesystem/catalog/CLI/policy identity; an unprovable default is labelled
+nonsecret config/CLI/policy identity; routine Codex catalog refresh metadata is
+excluded. An unprovable default is labelled
 `host_default`, not an exact-model claim. Alias drift, live latency, private CLI
 cost limits and hard isolation remain unqualified. See [ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
 
 ## Incoming formula and legacy deepen version
 
-Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v3` with the unchanged bounded one-call wire. The prompt requests a concise coherent definition and matching-scale unknown inputs; generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no admission or inference.
+Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v5` with the bounded one-call wire. Each alternative requires 2–6 substantive components in schema/runtime/cache admission, rejecting a single renamed total. Context-aware preparation admits reused sources only from active direct children and rejects exact normalized contextual-metric copies. The prompt prohibits inverse ancestor/sibling identities and new aliases that disguise them; a primitive Input without a defensible lower-level split may return empty. The prompt requests a concise coherent definition and matching-scale unknown inputs; missing measurements alone do not require empty. Generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no admission or inference. Historical wire/journal replay does not apply this new preparation policy retroactively.
 
 The registered `deepen_node` task now selects `deepen-node-v2`: `schemaVersion=deepen_node.v2`, required `targetFormula`, exact `retainedNodeIds` and one layer of primitive children. Mapping requires the actual project/root and emits formula, calculated/root type and accepted plan delta together. Historical `deepen-node-v1` output remains a readable compatibility schema but cannot apply a new child-only graph mutation. This does not affect exact replay of an already committing Smart v1 request. Both selected-layer agent finish implementations require the target definition and every new input; unknown measured values may remain unavailable. Default full-tree finish remains strict.
 
@@ -106,7 +107,7 @@ The schema registry contains 19 task contracts. Eighteen are exposed product tas
 
 `pnpm phase7:verify` checks task/schema/manifest alignment, route ownership, README exposure and mock coverage.
 
-Registered task contracts describe the compatibility harness and are not a list of editor buttons. The editor no longer exposes the AI inspector tab, standalone review/explanation actions or the legacy client-side action/result store. AI interaction uses the chat and the node-card incoming-KPI runtime action. Agent mutation-policy approvals and file-discovery staging remain separate from the removed per-node Accept/Reject controls.
+Registered task contracts describe the compatibility harness and are not a list of editor buttons. The editor no longer exposes the AI inspector tab, standalone review/explanation actions or the legacy client-side action/result store. AI interaction uses the chat; the duplicate node-card incoming-KPI runtime shortcut is removed. Suggested preparation uses its separate Input-leaf-only path. Agent mutation-policy approvals and file-discovery staging remain separate from the removed per-node Accept/Reject controls.
 
 The agent-composer file attachment passes the configured provider into the data-discovery prototype. In development/desktop, unpaired `local_runner` requests use the managed local runtime; paired runner and API/BYOK requests retain their existing provider boundary. This does not merge the data loop with the main VDT agent skills or research loop.
 
@@ -129,7 +130,7 @@ New runs use `agent-decision-v2`; `agent-decision-v1` remains registered for com
 
 `vdt.add_drivers_batch` may include an explicit `parentFormula`. The children and parent formula form one validated mutation proposal, so parser/reference failure rejects the whole change set. Decision context contains a bottom-up formula backlog, at most 24 prioritized project nodes and the last 12 significant events; project inspection tools remain available for omitted context.
 
-The node-card **Add incoming KPIs with AI** control uses the runtime's structured `deepen_node` action rather than a `user_instruction`. The action adds new nodes only as immediate children of the selected KPI, restricts formula/node updates to that selected KPI, rejects deletions and deeper mutations, and may finish with unknown values because this semi-manual structural step is intentionally narrower than full calculable-VDT generation.
+The dedicated node-card **Add incoming KPIs with AI** control is removed. The compatibility runtime still admits the structured `deepen_node` action rather than a fabricated `user_instruction`. The action adds new nodes only as immediate children of the selected KPI, restricts formula/node updates to that selected KPI, rejects deletions and deeper mutations, and may finish with unknown values because this semi-manual structural step is intentionally narrower than full calculable-VDT generation.
 
 The compatibility loop defaults to `maxSteps=40` with an input cap of 60. Reaching it saves the current draft and exposes a structured `continue_run` action instead of failing the run. The structured Model Agent now observes the same configured turn bound, but currently terminates with `MAX_MODEL_TURNS_EXCEEDED`; a same-session budget-extension action is still missing there. Provider errors can also pause a run. `researchMode` is `auto`, `on` or `off`. `off` rejects `research.search_web` at the tool boundary before any provider call.
 

@@ -1,15 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { buildKpiSuggestionContext, buildRecipeKpiSuggestions, calculateGraph, calculateScenarioGraph, cloneProject, compileKpiSuggestion, createSmartKpiMeasuredFixture, createVersionSnapshot, kpiCanonicalJson,
-  KPI_SUGGESTION_RECIPES, incomingKpiProposalFormula, type IncomingKpiBatchInput, type KpiSuggestionSet } from "@vdt-studio/vdt-core";
+import { buildKpiSuggestionContext, buildRecipeKpiSuggestions, calculateGraph, calculateScenarioGraph, cloneProject, compileIncomingKpiBatch, compileKpiSuggestion, createSmartKpiMeasuredFixture, createVersionSnapshot, kpiCanonicalJson,
+  KPI_SUGGESTION_RECIPES, incomingKpiProposalFormula, inspectIncomingKpiDraft, type IncomingKpiBatchInput, type KpiSuggestionSet } from "@vdt-studio/vdt-core";
 import { createHash } from "node:crypto";
 import { createIncomingGraphFixture, manualInput, manualKey, modelProposal } from "../../../../packages/vdt-core/src/suggestions/incoming-contract.fixtures";
-import { validateSmartKpiOperation, type SmartKpiOperationV1 } from "@/lib/smart-kpi-transaction";
+import { validateSmartKpiOperation, type SmartKpiOperation, type SmartKpiOperationV1 } from "@/lib/smart-kpi-transaction";
 import { persistedExecutionSettings } from "@/lib/execution-mode-catalog";
-import { VdtStorageRequestError, type StoredProjectSummary } from "@/lib/vdt-storage-client";
+import { revisionCasFromHead, runtimeCasFromState, VdtStorageRequestError, type StoredProjectSummary } from "@/lib/vdt-storage-client";
 import { resolveSmartKpiScope } from "@/lib/smart-kpi-scope";
 import { getSmartKpiLibraryProposal } from "@/lib/smart-kpi-decisions";
 import { apiKeyScope, connectApiKeyPersistence } from "@/lib/api-key-persistence";
 import { applyGatewayPreset, DEFAULT_EXECUTION_SETTINGS } from "@/lib/execution-mode-catalog";
+import { studioStateStorage } from "@/lib/smart-kpi-journal";
 
 const save = vi.fn(), fetchState = vi.fn(), create = vi.fn(), load = vi.fn();
 const selectedExecution = vi.fn();
@@ -155,7 +156,7 @@ describe("Smart immutable user transaction", () => {
     expect(await store.getState().reconcilePendingSmartKpiCommit()).toBe(true);
     expect(JSON.stringify(save.mock.calls[1]![1])).toBe(body);
   });
-  it("replays an exact shared source ID/unit despite a different proposed display label", async () => {
+  it("blocks a new inverse proposal but preserves exact replay of an already committing historical shared-source receipt", async () => {
     const project = createIncomingGraphFixture("shared_speed"); store.setState({ project, selectedNodeId: "target", activeScenarioId: "" });
     const input = manualInput(await store.getState().buildIncomingKpiContext("target")), proposal = modelProposal(input.context);
     proposal.createdAt = new Date().toISOString(); proposal.expiresAt = new Date(Date.now() + 60_000).toISOString();
@@ -165,8 +166,29 @@ describe("Smart immutable user transaction", () => {
     ] };
     input.proposal = proposal; input.draft.source = { kind: "proposal", proposalId: proposal.proposalId, groupId: "distance_time" };
     input.draft.childKeys = ["distance", "measured_time"]; input.draft.manualChildren = []; input.draft.formula = "p_1 / p_2"; input.draft.formulaAuthorship = "model";
+    const before = kpiCanonicalJson(store.getState().project);
+    expect(await store.getState().previewIncomingKpiBatch(input)).toMatchObject({ valid: false, issues: [{ code: "UNSAFE_DECOMPOSITION" }] });
+    expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: false, code: "UNSAFE_DECOMPOSITION" });
+    expect(selectedExecution).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled();
+    expect(store.getState().smartKpiOperation).toBeUndefined(); expect(kpiCanonicalJson(store.getState().project)).toBe(before);
+    // Construct a receipt accepted by the earlier policy. Recovery must retain
+    // its original body even though a new request with this proposal is blocked.
+    const state = store.getState(), id = `smart_${"a".repeat(32)}`, now = new Date().toISOString();
+    const compiled = await compileIncomingKpiBatch(project, input, { operationId: id, now });
+    const checkpoint = createVersionSnapshot(project, { name: "Before incoming KPIs", taskType: "suggest_incoming_kpis" });
+    const candidate = { ...compiled.preview, versions: checkpoint.versions };
+    const owner = summary(), authority = { head: revisionCasFromHead(owner.vdts[0]!.head), runtime: runtimeCasFromState(owner.runtimeState) };
+    if (proposal.origin.kind !== "model") throw new Error("Expected a historical model receipt");
+    const operation: SmartKpiOperation = { schemaVersion: "smart_kpi_operation.v2", id, kind: "add", phase: "committing",
+      workspaceId: "owner", vdtId: "stored", projectId: project.id, projectRevision: state.projectRevision,
+      before: cloneProject(project), beforeJson: before, settings: kpiCanonicalJson(persistedExecutionSettings(state.executionSettings)),
+      previousNodeId: "target", previousScenarioId: "", context: input.context, proposal, draft: input.draft, lineage: compiled.lineage,
+      execution: proposal.origin.execution, authority, candidate, addedNodeIds: compiled.newNodeIds,
+      checkpointVersionId: checkpoint.versions.at(-1)!.id, resolved: { aliases: compiled.aliases, formula: compiled.formula, values: compiled.values },
+      input: { idempotencyKey: `smart-add:stored:${id}`, expectedHead: authority.head, expectedRuntime: authority.runtime, project: cloneProject(candidate), summary: "Historical incoming KPI formula" } };
+    expect(validateSmartKpiOperation(operation)).toBe(true); store.setState({ smartKpiOperation: operation });
     selectedExecution.mockResolvedValue({ execution: proposal.origin.kind === "model" ? proposal.origin.execution : undefined, revalidate: async () => true });
-    save.mockRejectedValueOnce(new Error("lost shared acknowledgement")); expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: false });
+    save.mockRejectedValueOnce(new Error("lost shared acknowledgement")); expect(await store.getState().reconcilePendingSmartKpiCommit()).toBe(false);
     const first = JSON.stringify(save.mock.calls[0]![1]); expect(validateSmartKpiOperation(store.getState().smartKpiOperation!)).toBe(true);
     await store.persist.rehydrate(); expect(await store.getState().reconcilePendingSmartKpiCommit()).toBe(true); expect(JSON.stringify(save.mock.calls[1]![1])).toBe(first);
     expect(store.getState().project.graph.nodes.find(node => node.id === "distance")?.name).toBe(project.graph.nodes.find(node => node.id === "distance")!.name);
@@ -261,6 +283,40 @@ describe("Smart immutable user transaction", () => {
     expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: false }); expect(save).not.toHaveBeenCalled();
     expect(store.getState().smartKpiOperation).toBeUndefined(); expect(store.getState().project.graph.nodes).toHaveLength(1);
   });
+  it("compacts a quota-exceeding journal and preserves exact lost-response replay, reload and Undo", async () => {
+    let project = createSmartKpiMeasuredFixture(); project.graph.nodes[0]!.description = "Synthetic history record. ".repeat(100);
+    project.scenarios[0]!.overrides = []; project.scenarios[0]!.isMain = true;
+    for (let i = 0; i < 20; i++) project = createVersionSnapshot(project, { name: `History ${i}` });
+    store.setState({ project });
+    const limit = memory.get("vdt-studio-state")!.length * 3.4, input = await prepared();
+    let oversized = false, compacted = false;
+    quota = value => {
+      const data = JSON.parse(value);
+      if (data.state.smartKpiOperation?.phase === "committing") {
+        oversized ||= value.length > limit;
+        compacted ||= data.smartKpiPersistence?.schemaVersion === "smart_kpi_storage.v1" && value.length <= limit;
+      }
+      return value.length > limit;
+    };
+    save.mockRejectedValueOnce(new Error("Lost acknowledgement"));
+    expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: false });
+    expect(oversized).toBe(true); expect(compacted).toBe(true); expect(save).toHaveBeenCalledTimes(1);
+    const originalBody = JSON.stringify(save.mock.calls[0]![1]);
+    const restored = JSON.parse(studioStateStorage.getItem("vdt-studio-state") as string);
+    expect(JSON.stringify(restored.state.smartKpiOperation.input)).toBe(originalBody);
+    await store.persist.rehydrate();
+    expect(await store.getState().reconcilePendingSmartKpiCommit()).toBe(true);
+    expect(JSON.stringify(save.mock.calls[1]![1])).toBe(originalBody);
+    expect(store.getState().smartKpiMutation.canUndo).toBe(true);
+    await store.persist.rehydrate();
+    const reloaded = store.getState(), retainedUndo = reloaded.smartKpiUndo;
+    expect({ blocked: reloaded.smartKpiBlockedReason, revisionMatches: reloaded.projectRevision === retainedUndo?.projectRevision,
+      projectMatches: kpiCanonicalJson(reloaded.project) === retainedUndo?.appliedJson,
+      changedFields: retainedUndo ? Object.keys(reloaded.project).filter(key => JSON.stringify(reloaded.project[key as keyof typeof reloaded.project]) !== JSON.stringify(JSON.parse(retainedUndo.appliedJson)[key])) : []
+    }).toMatchObject({ blocked: undefined, revisionMatches: true, projectMatches: true });
+    expect(await store.getState().undoSmartKpiSuggestion()).toBe(true);
+    expect(store.getState().project.graph).toEqual(project.graph);
+  });
   it("keeps an acknowledged stored publication known when later browser persistence fails", async () => {
     const input = await prepared(); quota = value => JSON.parse(value).state.project.graph.nodes.length > 1;
     await expect(store.getState().applySmartKpiSuggestion(input)).resolves.toMatchObject({ ok: true, durability: "stored" });
@@ -351,6 +407,30 @@ describe("Smart immutable user transaction", () => {
     expect(await store.getState().reconcilePendingSmartKpiCommit()).toBe(true); expect(save.mock.calls[1]![1]).toEqual(immutable);
     expect(store.getState().smartKpiMutation.status).toBe("succeeded"); expect(store.getState().project.graph.nodes).toHaveLength(3);
     expect(JSON.stringify(JSON.parse(memory.get("vdt-studio-state")!))).not.toContain(settings.apiKey);
+  });
+  it("rejects an old retained singleton before preview, execution admission or a new journal", async () => {
+    const input: IncomingKpiBatchInput = await prepared(), before = store.getState().project, proposal = input.proposal!;
+    const group = proposal.groups[0]!;
+    const singleton = { ...group, children: [{ key: "copy", conceptKey: "renamed_total", name: "Same KPI, renamed", unit: input.context.target.unit! }], requiredKeys: ["copy"], formula: "copy" };
+    delete singleton.recipeBinding; proposal.groups = [singleton];
+    proposal.origin = { kind: "model", requestId: "old-singleton", execution: { mode: "api", backendId: "selected", modelId: "model", bindingVersion: "v1", credentialEpoch: "epoch" } };
+    input.draft.childKeys = ["copy"]; input.draft.formula = "p_1"; input.draft.formulaAuthorship = "model"; input.draft.inputValues = {};
+    // Historical wire/journal shape remains valid; only a new action uses the
+    // current decomposition policy, before any execution or write reservation.
+    expect(inspectIncomingKpiDraft(input, before).readyForCompile).toBe(true);
+    expect(await store.getState().previewIncomingKpiBatch(input)).toMatchObject({ valid: false, issues: [{ code: "NOT_A_DECOMPOSITION" }] });
+    expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: false, code: "NOT_A_DECOMPOSITION" });
+    expect(store.getState().project).toBe(before); expect(store.getState().smartKpiOperation).toBeUndefined();
+    expect(selectedExecution).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled();
+  });
+  it("returns a recoverable execution code before any commit when model lineage changed", async () => {
+    const execution = { mode: "api" as const, backendId: "selected", modelId: "model", bindingVersion: "v1", credentialEpoch: "old-epoch" };
+    const input = await prepared(); input.proposal.origin = { kind: "model", requestId: "changed-before-add", execution };
+    const before = store.getState().project;
+    selectedExecution.mockResolvedValue({ execution: { ...execution, credentialEpoch: "replacement-epoch" }, revalidate: async () => true });
+    expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: false, code: "STALE_EXECUTION" });
+    expect(store.getState().project).toBe(before); expect(save).not.toHaveBeenCalled();
+    expect(store.getState().smartKpiOperation).toBeUndefined();
   });
   it("does not publish a pending model candidate after a real credential epoch change", async () => {
     const execution = { mode: "api" as const, backendId: "selected", modelId: "model", bindingVersion: "v1", credentialEpoch: "old-epoch" };

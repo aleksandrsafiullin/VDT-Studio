@@ -20,6 +20,7 @@ export interface IncomingKpiFormulaFieldProps {
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
   children?: ReactNode;
+  compact?: boolean;
 }
 
 const rawFormulaLimit = 1024;
@@ -73,7 +74,8 @@ export function IncomingKpiFormulaField({
   disabled = false,
   expanded,
   onExpandedChange,
-  children
+  children,
+  compact = false
 }: IncomingKpiFormulaFieldProps) {
   const id = useId();
   const [textOpen, setTextOpen] = useState(false);
@@ -119,8 +121,8 @@ export function IncomingKpiFormulaField({
 
   return (
     <div className="space-y-2" data-testid="incoming-kpi-formula-field">
-      <p className="text-[11px] font-medium text-muted">Formula</p>
-      <div data-testid="incoming-kpi-readable-formula" aria-label="Formula in KPI names" className="rounded-md bg-slate-50 px-2.5 py-2 text-xs leading-5">
+      {!compact ? <p className="text-[11px] font-medium text-muted">Formula</p> : null}
+      <div data-testid="incoming-kpi-readable-formula" aria-label="Formula in KPI names" className={compact ? "text-[11px] leading-5 text-muted" : "rounded-md bg-slate-50 px-2.5 py-2 text-xs leading-5"}>
         {readableParts.length ? readableParts.map((part, index) => part.kind === "reference" ? <span key={index}
           className={part.reference.selected === false ? "font-medium text-amber-800 underline decoration-dotted" : "font-medium"}>{part.reference.name}</span> :
           <span key={index} className="whitespace-pre-wrap">{part.text.replaceAll("*", "×").replaceAll("/", "÷")}</span>) : <span className="text-muted">Enter a formula in Edit.</span>}

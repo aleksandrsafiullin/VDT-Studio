@@ -27,6 +27,24 @@ export function smartKpiRectsIntersect(a: SmartKpiRect, b: SmartKpiRect): boolea
   return a.left < b.left + b.width && a.left + a.width > b.left && a.top < b.top + b.height && a.top + a.height > b.top;
 }
 
+/** Transient graph-space preview. Never moves or inserts project nodes. */
+export function placeSmartKpiPreview(target: SmartKpiRect, size: { width: number; height: number }, obstacles: readonly SmartKpiRect[]): SmartKpiRect {
+  const initial = { left: target.left + target.width + 112, top: target.top + target.height / 2 - size.height / 2, ...size };
+  // Prefer the nearest free space in the next factor column. A bounded search
+  // keeps an already populated tree from being covered by the draft cards.
+  const candidates: SmartKpiRect[] = [];
+  for (let column = 0; column < 4; column++) {
+    const left = initial.left + column * (size.width + 64);
+    const tops = [initial.top, ...obstacles.flatMap(rect => [rect.top + rect.height + 24, rect.top - size.height - 24])];
+    for (const top of tops) {
+      const candidate = { ...initial, left, top };
+      if (obstacles.every(rect => !smartKpiRectsIntersect(candidate, { left: rect.left - 16, top: rect.top - 16, width: rect.width + 32, height: rect.height + 32 }))) candidates.push(candidate);
+    }
+  }
+  candidates.sort((a, b) => Math.hypot(a.left - initial.left, a.top - initial.top) - Math.hypot(b.left - initial.left, b.top - initial.top));
+  return candidates[0] ?? { ...initial, left: Math.max(initial.left, ...obstacles.map(rect => rect.left + rect.width + 64)) };
+}
+
 /** One canvas-level pass at viewport end/resize; no per-card preparation effect. */
 export function visibleSmartKpiTargets(nodes: readonly { id: string; x: number; y: number; width: number; height: number }[],
   transform: { x: number; y: number; zoom: number }, canvas: { width: number; height: number }, selected?: string): string[] {

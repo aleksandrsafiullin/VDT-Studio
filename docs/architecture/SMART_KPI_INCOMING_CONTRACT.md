@@ -46,6 +46,15 @@ The existing mutation view and apply result remain. Context construction and
 preview are local and preparation-free: no inference, CLI/version probe, vault
 admission or provider metadata check on a draft edit. Actual Add revalidates the
 current immutable model lineage at its existing execution/commit boundary.
+Explicit Refresh/Retry re-admits current execution metadata before a fresh
+preparation attempt. A `STALE_EXECUTION` Add failure prompts metadata refresh;
+it never rewrites the old proposal's lineage. Clean drafts may adopt the new
+proposal, while dirty drafts require explicit Review latest. Error feedback is
+scoped to its target. Preparation policy v4 separately requires at least two
+components per new alternative. Store preview/new Add also reject retained
+singleton proposals before execution admission/journal reservation; the panel
+offers Refresh in place of an obsolete one-card preview. Historical committing receipts retain their
+original proposal/compile validation and replay exactly.
 Manual-only context/draft/apply needs no model or credential. `proposal` must be
 absent for manual source; its child selection must be empty.
 
@@ -170,6 +179,18 @@ repair occurs on load or historical committing replay.
 
 ## Journal and legacy compatibility
 
+The origin-local editor storage adapter may use `smart_kpi_storage.v1` after a
+quota failure. This is a private reference encoding of the same journal, not a
+new operation/VDT/API schema. Shared base/current projects, candidate/request
+copies, historical versions and checkpoint snapshots are restored before
+Zustand hydration and exact pre-POST readback. Request property order is retained
+so ambiguous retries keep the original serialized body/key/CAS. Undo retains
+old versions even when the accepted candidate has hit the 20-version cap.
+Expanded length/checksum and bounded reference checks detect corruption; they
+do not grant mutation authority. Unsupported/corrupt encoded evidence is kept
+and automatic overwrites are blocked. If neither representation fits, no new
+request is sent. No user data is deleted and historical raw JSON remains valid.
+
 New additions use `SmartKpiMixedOperation`, `smart_kpi_operation.v2`. Preparing
 records capture complete draft/source lineage before awaits. Committing records
 also require the single resolved alias→ID map, final expanded formula, candidate,
@@ -230,7 +251,7 @@ Contract tests alone do not establish UI, provider or release qualification.
 
 ## Preparation and incoming-path implementation
 
-The wire `kpi_suggestions.v1` / `suggest-incoming-kpis-v1` bounds and one-call transport remain unchanged. Validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v3` invalidate old rebuildable proposals without touching pending operation receipts. Preparation proposes a concise explicit formula or leaves editable starting rows/genuine empty evidence; it never fabricates sums, weights, source values or causal certification.
+The wire `kpi_suggestions.v1` / `suggest-incoming-kpis-v1` and one-call transport remain. Preparation policy `smart-kpi-preparation.v5` retains the 2–6 component bound and adds context-aware direction validation: proposed reused sources must be active direct children, and new rows cannot exactly copy normalized target/ancestor/sibling names. Materialization, scheduler/cache admission and new store preview/Add enforce it, including retained old proposal drafts. Ancestors/siblings remain context only; the prompt prohibits solving an ancestor equation backward or disguising its metrics with new names. This is a bounded guard, not complete semantic/synonym validation. Explicit manual shared-reference compilation is separate. Validator `smart-kpi-validator.v2` preserves historical proposal/journal compatibility. Old rebuildable outcomes are invalidated without touching pending operation receipts. Preparation proposes a concise explicit formula or defensible editable starting rows/genuine empty evidence; missing measurements alone do not require empty. It never fabricates sums, weights, source values or causal certification.
 
 `reconcileIncomingKpiPlan` derives only target/new-node/formula-reachable existing roles and shared references from the accepted change. It preserves unrelated plan entries and primary parents, including off-root reference branches. File nested hierarchies use the same authoritative delta and retain source bytes/hash/mappings/zero. A transient AI layer may await a formula but cannot finish successfully that way. `validateIncomingKpiLayer` checks target type/formula, all new and existing mathematical children, effective references, constant domains, units and full DAG/plan. For legacy AI whose explicit target unit states a calendar denominator, that exact unit denominator supplies the matching measurement basis; no date window or numeric value is inferred.
 

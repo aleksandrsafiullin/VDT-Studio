@@ -12,6 +12,12 @@ adapters are explicitly unavailable for this profile even though their general
 manifests advertise the common task registry. Existing certification statuses and
 release `NO-GO` remain authoritative.
 
+The 2026-10-25 Smart binding correction excludes automatically refreshed Codex
+catalog-file metadata. Config/executable/policy, selected model and credential
+changes remain guarded. Smart preparation policy v4 requires at least two
+components in every alternative; this is a structural gate, not live-model
+semantic qualification or a provider certification change.
+
 Installed Codex `0.146.0` help/features inspection (no inference) verified the
 `exec --ignore-user-config`, `--ignore-rules`, `--strict-config`, read-only/schema
 flags and effective disabled shell/unified-exec features. The removed

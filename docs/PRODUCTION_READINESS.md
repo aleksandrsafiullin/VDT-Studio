@@ -1,5 +1,27 @@
 # Production Readiness
 
+## Suggested decomposition direction (2026-10-25)
+
+Implemented in source: preparation policy v5 limits automatic proposed reuse to
+active direct children and rejects exact normalized target/ancestor/sibling name
+copies. The common one-call prompt prohibits inverse parent identities and
+disguised new copies. Context-aware materialization, cache/scheduler admission
+and new store preview/Add enforce the bounded rule; v4 rebuildable suggestions
+are invalidated. Generic manual compilation and historical committing replay
+remain compatible. This prevents the reported sibling-ID reversal; recognition
+of arbitrary synonyms, complete business-semantic validity and live provider
+quality are still unqualified. No saved user graph is automatically migrated.
+
+Local deterministic regression on 2026-10-25: **10 files / 166 tests passed**,
+including both reported inverse directions, context-source/name rejection,
+current-cache eviction, scheduler Retry and blocking retained new Add before
+journal/admission. A constructed historical shared-source committing receipt
+still replays the exact body after reload; manual shared references retain their
+compiler tests. Full web/core TypeScript passed without incremental output;
+targeted web ESLint had 0 errors / 4 warnings. Documentation verification passed
+30 documents and Phase 7 passed 19 tasks / 19 schemas / 9 manifests. This run did
+not perform live model inference or a new browser/native qualification.
+
 ## Project file library
 
 Implemented for local alpha: project-wide file upload/list/search, display labels,
@@ -60,6 +82,47 @@ confirmation. This bounded repair does not qualify controller-loss recovery,
 the full ADR-005 coordinator, native packaging or production release.
 
 <a id="smart-kpi-validation"></a>
+
+## Mixed inputs and browser recovery quota (2026-10-25)
+
+Local focused checks passed 6 files / 56 tests, including lossless Smart storage,
+exact request ordering, 20-version-cap recovery, changed-anchor rejection,
+unsupported/corrupt evidence retention, quota-failed no-send and legacy records.
+Installed Chrome exercised its built-in origin quota without a patched Storage
+API: a 41-node / 20-snapshot fixture compacted a 7,061,024-character committing
+editor record to 1,479,387 characters. Real private SQLite commit, deliberately
+lost acknowledgement, reload/reconcile with identical HTTP bytes, one-new/one-
+reused input, reload and guarded Undo all passed. The Undo receipt similarly
+compacted 9,908,474 characters to 1,538,970. The existing source kept its value and
+primary parent, and Undo restored the exact original graph.
+
+Evidence: `output/playwright/suggested-kpi-storage-20261025/`. AI preparation was
+deterministic; no live-provider, in-app-WebView, native-package or cross-platform
+qualification is claimed. The record checksum detects corruption, not authorship.
+No snapshots/user data were deleted to fit; API bodies and journal/CAS authority
+remain unchanged. Release `NO-GO` and existing broader limitations remain.
+
+## Suggested KPI correction (2026-10-25)
+
+The two-component preparation/cache minimum, Codex catalog-refresh binding
+stability, execution re-admission, explicit-attempt deduplication and
+target-scoped Add feedback passed focused fixtures: 17 files / 224 tests.
+The final store/UI recheck passed 36 tests, including rejection of a retained
+singleton before preview/admission/new-journal reservation while its historical
+wire shape remains valid.
+Bounded Chrome checks used deterministic preparation responses and real private
+SQLite/storage routes: stale credentials blocked Add; Refresh saved two inputs;
+reload retained them; guarded Undo restored the exact original graph; an empty
+second target showed no unrelated error. A single renamed child was rejected
+before preview/Add, then Retry accepted two components and real Add/Undo passed.
+One broad concurrent SQLite test initially hit its 15 s deadline; the bounded
+two-worker final run passed. Earlier browser harness attempts exposed stale test
+assumptions/navigation deadlines; the final two scenario reports passed.
+
+Evidence is retained under `output/playwright/suggested-kpi-fixes-20261025/`.
+Live model semantic quality, native packaging and cold-provider latency were
+not qualified by these fixtures. The minimum is structural, not a proof of a
+meaningful business decomposition. Existing release blockers remain unchanged.
 
 ## Formula and mixed incoming revision (2026-10-20)
 

@@ -15,16 +15,20 @@ describe("nonsecret Codex Smart binding metadata", () => {
     await writeFile(path.join(codex, "config.toml"), '[profiles.work]\nmodel="profile-only"\n');
     await expect(readCodexSmartDefaultModel(env)).resolves.toBeUndefined();
   });
-  it("reuses passive reload and invalidates catalog/config or credential metadata changes separately", async () => {
+  it("survives catalog refresh and invalidates actual config or credential metadata changes separately", async () => {
     const { env, codex } = await home();
     for (const file of ["config.toml", "models_cache.json", "auth.json"]) await writeFile(path.join(codex, file), "synthetic-never-identity");
     const first = await codexSmartMetadataIdentity(env, "/host/codex", "codex-cli 0.146.0");
     expect(await codexSmartMetadataIdentity({ ...env }, "/host/codex", "codex-cli 0.146.0")).toEqual(first);
     expect(JSON.stringify(first)).not.toContain("synthetic-never-identity");
     await utimes(path.join(codex, "models_cache.json"), new Date("2026-01-01"), new Date("2026-01-01"));
-    const catalog = await codexSmartMetadataIdentity(env, "/host/codex", "codex-cli 0.146.0"); expect(catalog.bindingVersion).not.toBe(first.bindingVersion); expect(catalog.credentialEpoch).toBe(first.credentialEpoch);
+    expect(await codexSmartMetadataIdentity(env, "/host/codex", "codex-cli 0.146.0")).toEqual(first);
+    await writeFile(path.join(codex, "models_cache.json"), "refreshed-catalog-with-different-size");
+    expect(await codexSmartMetadataIdentity(env, "/host/codex", "codex-cli 0.146.0")).toEqual(first);
+    await utimes(path.join(codex, "config.toml"), new Date("2026-01-02"), new Date("2026-01-02"));
+    const configured = await codexSmartMetadataIdentity(env, "/host/codex", "codex-cli 0.146.0"); expect(configured.bindingVersion).not.toBe(first.bindingVersion); expect(configured.credentialEpoch).toBe(first.credentialEpoch);
     await utimes(path.join(codex, "auth.json"), new Date("2026-02-01"), new Date("2026-02-01"));
-    const replaced = await codexSmartMetadataIdentity(env, "/host/codex", "codex-cli 0.146.0"); expect(replaced.credentialEpoch).not.toBe(first.credentialEpoch); expect(replaced.bindingVersion).toBe(catalog.bindingVersion);
+    const replaced = await codexSmartMetadataIdentity(env, "/host/codex", "codex-cli 0.146.0"); expect(replaced.credentialEpoch).not.toBe(first.credentialEpoch); expect(replaced.bindingVersion).toBe(configured.bindingVersion);
     expect((await codexSmartMetadataIdentity(env, "/host/codex", "codex-cli 0.147.0")).bindingVersion).not.toBe(replaced.bindingVersion);
   });
   it("rejects unbounded/unparseable or flag-like default selections", async () => {

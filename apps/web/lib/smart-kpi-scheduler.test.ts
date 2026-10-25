@@ -8,6 +8,7 @@ import { createSmartKpiMeasuredFixture } from "../../../packages/vdt-core/src/su
 import { SmartKpiCache } from "./smart-kpi-cache";
 import { confirmSmartKpiTerminalCleanup, SmartKpiScheduler, type SmartKpiPreparationResult, type SmartKpiWorkspace } from "./smart-kpi-scheduler";
 
+const fixtureTarget = "measured_input";
 const now = Date.parse("2026-10-19T00:00:00.000Z");
 const execution: KpiSuggestionExecutionIdentity = { mode: "api", backendId: "fixture", modelId: "fixture-model", bindingVersion: "v1", credentialEpoch: "epoch1" };
 let workspaceSequence = 0;
@@ -16,6 +17,9 @@ afterEach(() => { for (const scheduler of schedulers.splice(0)) scheduler.dispos
 const tick = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 function workspace(children = 0): SmartKpiWorkspace {
   const project = createSmartKpiMeasuredFixture();
+  project.graph.nodes.push({ ...project.graph.nodes[0]!, id: fixtureTarget, type: "input" });
+  project.graph.nodes[0]!.formula = fixtureTarget;
+  project.graph.edges.push({ id: "measured_input_edge", sourceNodeId: project.rootNodeId, targetNodeId: fixtureTarget, relation: "formula_dependency", aiGenerated: false });
   for (let i = 0; i < children; i++) {
     project.graph.nodes.push({ id: `child_${i}`, name: `Fixture ${i}`, unit: "fraction", type: "input", status: "accepted", aiGenerated: false, createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString() });
     project.graph.edges.push({ id: `edge_${i}`, sourceNodeId: project.rootNodeId, targetNodeId: `child_${i}`, relation: "contextual_influence", aiGenerated: false });
@@ -28,7 +32,8 @@ function proposal(context: KpiSuggestionContext, exec = execution, id = "proposa
     createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 86400_000).toISOString(),
     origin: { kind: "model", requestId: "request_fixture", execution: exec }, rationale: "QA independent explanatory child.", limitations: [],
     groups: [{ id: "context", title: "Explanatory inputs", selectionMode: "independent", requiredKeys: [], limitations: [],
-      children: [{ key: "availability", conceptKey: "availability", name: "Availability", unit: "fraction" }] }] };
+      children: [{ key: "availability", conceptKey: "availability", name: "Availability", unit: "fraction" },
+        { key: "yield", conceptKey: "yield", name: "Yield", unit: "fraction" }] }] };
 }
 function local(context: KpiSuggestionContext): KpiSuggestionSet | undefined {
   const recipe = catalog.recipes.find(r => r.id === "production.time_rate")!;
@@ -53,6 +58,109 @@ function create(options: ConstructorParameters<typeof SmartKpiScheduler>[0]): Sm
 }
 
 describe("Smart KPI bounded scheduling", () => {
+  it("keeps a fresh explicit attempt visible when background prewarm finds an older cached result", async () => {
+    const transport = controlled(), w = workspace(), scheduler = create({ prepare: transport.prepare });
+    await scheduler.setWorkspace(w); await scheduler.request(fixtureTarget); await tick(); transport.resolve(0, "old"); await scheduler.whenSettled();
+    scheduler.releaseDisplay(fixtureTarget); await scheduler.retry(fixtureTarget); await tick(); scheduler.freezeDisplay(fixtureTarget);
+    await scheduler.prewarm(fixtureTarget, [fixtureTarget]);
+    expect(scheduler.getSnapshot(fixtureTarget).state.status).toBe("preparing");
+    transport.resolve(1, "refreshed"); await scheduler.whenSettled();
+    expect(scheduler.getSnapshot(fixtureTarget).proposal?.proposalId).toBe("refreshed");
+    expect(transport.prepare).toHaveBeenCalledTimes(2);
+  });
+
+  it("queues a fresh attempt when re-admission returns the same identity while old cleanup is pending", async () => {
+    const transport = controlled(), w = workspace(), scheduler = create({ prepare: transport.prepare });
+    await scheduler.setWorkspace(w); await scheduler.request(fixtureTarget); await tick();
+    const unadmitted = { ...w }; delete unadmitted.execution;
+    await scheduler.setWorkspace(unadmitted); expect(transport.calls[0]!.signal.aborted).toBe(true);
+    await scheduler.setWorkspace(w); await scheduler.retry(fixtureTarget); await tick();
+    expect(scheduler.diagnostics().queued).toBe(1);
+    transport.resolve(0, "obsolete"); await tick();
+    expect(transport.calls).toHaveLength(2);
+    transport.resolve(1, "readmitted"); await scheduler.whenSettled();
+    expect(scheduler.getSnapshot(fixtureTarget).proposal?.proposalId).toBe("readmitted");
+  });
+
+  it("rejects sibling reuse before display and permits Retry with independent components", async () => {
+    let unsafe = true;
+    const prepare = vi.fn(async ({ context, execution: exec }) => {
+      const output = proposal(context, exec);
+      if (unsafe) output.groups[0]!.children[0]!.existingNodeId = "child_0";
+      return output;
+    });
+    const w = workspace(1), scheduler = create({ prepare }); await scheduler.setWorkspace(w);
+    await scheduler.request(fixtureTarget); await scheduler.whenSettled();
+    const rejected = scheduler.getSnapshot(fixtureTarget);
+    expect(rejected).toMatchObject({ state: { status: "failed" }, canApply: false });
+    expect(rejected.proposal).toBeUndefined();
+    expect("reason" in rejected.state && rejected.state.reason).toContain("own lower-level components");
+    unsafe = false; await scheduler.retry(fixtureTarget); await scheduler.whenSettled();
+    expect(scheduler.getSnapshot(fixtureTarget)).toMatchObject({ state: { status: "ready" }, canApply: true });
+  });
+  it("rejects a singleton rename and permits an explicit retry with a complete decomposition", async () => {
+    let singleton = true;
+    const prepare = vi.fn(async ({ context, execution: exec }) => {
+      const output = proposal(context, exec);
+      if (singleton) output.groups[0]!.children.pop();
+      return output;
+    });
+    const w = workspace(), scheduler = create({ prepare }); await scheduler.setWorkspace(w);
+    await scheduler.request(fixtureTarget); await scheduler.whenSettled();
+    const rejected = scheduler.getSnapshot(fixtureTarget);
+    expect(rejected).toMatchObject({ state: { status: "failed" }, canApply: false });
+    expect(rejected.proposal).toBeUndefined();
+    expect("reason" in rejected.state && rejected.state.reason).toContain("at least two components");
+    singleton = false;
+    await scheduler.retry(fixtureTarget); await scheduler.whenSettled();
+    expect(scheduler.getSnapshot(fixtureTarget)).toMatchObject({ state: { status: "ready" }, canApply: true });
+    expect(prepare).toHaveBeenCalledTimes(2);
+  });
+  it("rejects non-Input targets and existing layers before context, cache, Library or model preparation", async () => {
+    const w = workspace(2), parent = w.project.graph.nodes.find(node => node.id === "child_0")!;
+    w.project.graph.edges.push({ id: "existing_layer", sourceNodeId: parent.id, targetNodeId: "child_1", relation: "contextual_influence", aiGenerated: false });
+    const prepare = vi.fn(async ({ context, execution: exec }) => proposal(context, exec));
+    const library = vi.fn(() => undefined), buildContext = vi.fn(buildKpiSuggestionContext);
+    const s = create({ prepare, library, buildContext }); await s.setWorkspace(w);
+    for (const id of [w.project.rootNodeId, parent.id]) {
+      await s.request(id); await s.retry(id); s.freezeDisplay(id); s.refreshDisplay(id);
+      expect(s.getSnapshot(id)).toMatchObject({ state: { status: "unavailable" }, canApply: false });
+      expect(s.getSnapshot(id).proposal).toBeUndefined();
+    }
+    expect(buildContext).not.toHaveBeenCalled(); expect(library).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled();
+    await s.prewarm(w.project.rootNodeId, [parent.id, "child_1"]); await s.whenSettled();
+    expect(prepare.mock.calls.map(call => call[0].context.targetNodeId)).toEqual(["child_1"]);
+  });
+
+  it("drops a frozen suggestion and cancels its owned preparation when an Input acquires a driver", async () => {
+    const w = workspace(), transport = controlled(), cache = new SmartKpiCache({ storage: null, now: () => now });
+    const s = create({ prepare: transport.prepare, cache }); await s.setWorkspace(w); await s.request(fixtureTarget); await tick();
+    const old = transport.calls[0]!;
+    const changed = structuredClone(w);
+    changed.project.graph.nodes.push({ ...changed.project.graph.nodes[1]!, id: "new_driver", name: "New driver" });
+    changed.project.graph.edges.push({ id: "new_layer", sourceNodeId: fixtureTarget, targetNodeId: "new_driver", relation: "contextual_influence", aiGenerated: false });
+    await s.setWorkspace(changed);
+    expect(old.signal.aborted).toBe(true);
+    await s.retry(fixtureTarget); expect(transport.calls).toHaveLength(1);
+    transport.resolve(0); await s.whenSettled();
+    expect(s.getSnapshot(fixtureTarget)).toMatchObject({ state: { status: "unavailable" }, canApply: false });
+    expect(cache.peek({ context: old.context, execution })).toBeUndefined();
+    await s.prepareImmediateChildren(fixtureTarget); await tick();
+    expect(transport.calls[1]?.context.targetNodeId).toBe("new_driver");
+    transport.resolve(1); await s.whenSettled();
+  });
+
+  it("does not expose a cached or frozen ready proposal after an Input becomes Calculated", async () => {
+    const w = workspace(), prepare = vi.fn(async ({ context, execution: exec }) => proposal(context, exec)), s = create({ prepare });
+    await s.setWorkspace(w); await s.request(fixtureTarget); await s.whenSettled(); s.freezeDisplay(fixtureTarget);
+    expect(s.getSnapshot(fixtureTarget).canApply).toBe(true);
+    const changed = structuredClone(w); changed.project.graph.nodes.find(node => node.id === fixtureTarget)!.type = "calculated";
+    await s.setWorkspace(changed); await s.request(fixtureTarget); await s.retry(fixtureTarget);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(s.getSnapshot(fixtureTarget)).toMatchObject({ state: { status: "unavailable" }, canApply: false });
+    expect(s.getSnapshot(fixtureTarget).proposal).toBeUndefined();
+  });
+
   it("deduplicates full keys and runs hover, selected, new-child then visible with exactly one callback at a time", async () => {
     const w = workspace(4), transport = controlled(), s = create({ prepare: transport.prepare }); await s.setWorkspace(w); s.setFullAgentActive(true);
     await s.request("child_0", { priority: "visible" }); await s.request("child_1", { priority: "new_child" });
@@ -83,13 +191,13 @@ describe("Smart KPI bounded scheduling", () => {
     w.project.graph.edges.push({ id: "grandchild_edge", sourceNodeId: "child_0", targetNodeId: "grandchild", relation: "contextual_influence", aiGenerated: false });
     const prepare = vi.fn(async ({ context, execution: exec }) => proposal(context, exec)), s = create({ prepare });
     await s.setWorkspace(w); s.setFullAgentActive(true);
-    await s.prewarm(w.project.rootNodeId, Array.from({ length: 10 }, (_, i) => `child_${i}`)); expect(s.diagnostics().queued).toBe(7);
+    await s.prewarm(fixtureTarget, Array.from({ length: 10 }, (_, i) => `child_${i}`)); expect(s.diagnostics().queued).toBe(7);
     s.setFullAgentActive(false); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(7);
     const other = create({ prepare }); await other.setWorkspace({ ...w, workspaceId: `${w.workspaceId}_children` });
     await other.prepareImmediateChildren(w.project.rootNodeId); await other.whenSettled();
     // Independent context hashes can resolve in a different order; the direct
     // child set and its cap are the guarantee for equal-priority preparation.
-    expect(prepare.mock.calls.slice(7).map(call => call[0].context.targetNodeId).sort()).toEqual(["child_0", "child_1", "child_2", "child_3", "child_4", "child_5"]);
+    expect(prepare.mock.calls.slice(7).map(call => call[0].context.targetNodeId).sort()).toEqual(["child_1", "child_2", "child_3", "child_4", "child_5", fixtureTarget].sort());
     expect(prepare.mock.calls.some(call => call[0].context.targetNodeId === "grandchild")).toBe(false);
   });
 
@@ -97,50 +205,50 @@ describe("Smart KPI bounded scheduling", () => {
     let hidden = true, notify = () => {};
     const visibility = { isHidden: () => hidden, subscribe: (listener: () => void) => { notify = listener; return () => {}; } };
     const w = workspace(1), prepare = vi.fn(async ({ context, execution: exec }) => proposal(context, exec)), s = create({ prepare, visibility });
-    await s.setWorkspace(w); await s.request(w.project.rootNodeId); await s.request("child_0", { priority: "visible" }); await s.whenSettled(); expect(prepare).not.toHaveBeenCalled();
+    await s.setWorkspace(w); await s.request(fixtureTarget); await s.request("child_0", { priority: "visible" }); await s.whenSettled(); expect(prepare).not.toHaveBeenCalled();
     hidden = false; s.setFullAgentActive(true); notify(); await s.whenSettled(); expect(prepare).not.toHaveBeenCalled();
     s.setFullAgentActive(false); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(2);
-    hidden = true; await s.retry(w.project.rootNodeId); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(3);
+    hidden = true; await s.retry(fixtureTarget); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(3);
   });
 
   it("shares context/fingerprint work across hover and numeric/layout/scenario updates without another model request", async () => {
     const w = workspace(), fingerprint = vi.fn(fingerprintKpiProject), buildContext = vi.fn(buildKpiSuggestionContext);
     const prepare = vi.fn(async ({ context, execution: exec }) => proposal(context, exec)), s = create({ prepare, fingerprint, buildContext });
-    await s.setWorkspace({ ...w, semanticGeneration: "semantics_1" }); await s.request(w.project.rootNodeId); await s.whenSettled();
-    for (let i = 0; i < 15; i++) await s.request(w.project.rootNodeId);
+    await s.setWorkspace({ ...w, semanticGeneration: "semantics_1" }); await s.request(fixtureTarget); await s.whenSettled();
+    for (let i = 0; i < 15; i++) await s.request(fixtureTarget);
     const numeric = structuredClone(w); numeric.project.graph.nodes[0]!.baselineValue = 0; numeric.project.graph.nodes[0]!.position = { x: 100, y: 100 }; numeric.project.scenarios[0]!.overrides[0]!.value = 0;
-    await s.setWorkspace({ ...numeric, semanticGeneration: "semantics_1" }); await s.request(w.project.rootNodeId); await s.whenSettled();
+    await s.setWorkspace({ ...numeric, semanticGeneration: "semantics_1" }); await s.request(fixtureTarget); await s.whenSettled();
     expect(fingerprint).toHaveBeenCalledTimes(1); expect(buildContext).toHaveBeenCalledTimes(1); expect(buildContext.mock.calls[0]![1].graphFingerprint).toMatch(/^sha256:/);
     expect(prepare).toHaveBeenCalledTimes(1);
     numeric.project.businessContext = "Different QA business boundary.";
-    await s.setWorkspace({ ...numeric, semanticGeneration: "semantics_2" }); await s.request(w.project.rootNodeId); await s.whenSettled();
+    await s.setWorkspace({ ...numeric, semanticGeneration: "semantics_2" }); await s.request(fixtureTarget); await s.whenSettled();
     expect(fingerprint).toHaveBeenCalledTimes(2); expect(prepare).toHaveBeenCalledTimes(2);
   });
 
   it("does not spend model work when a new numeric snapshot hashes to the same semantic identity", async () => {
     const w = workspace(), prepare = vi.fn(async ({ context, execution: exec }) => proposal(context, exec)), s = create({ prepare });
-    await s.setWorkspace(w); await s.request(w.project.rootNodeId); await s.whenSettled();
+    await s.setWorkspace(w); await s.request(fixtureTarget); await s.whenSettled();
     const numeric = structuredClone(w); numeric.project.graph.nodes[0]!.baselineValue = 1;
-    await s.setWorkspace(numeric); await s.request(w.project.rootNodeId); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(1);
+    await s.setWorkspace(numeric); await s.request(fixtureTarget); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(1);
   });
 
   it("uses validated warm memory/reloaded cache and explicit local bindings without invoking transport", async () => {
     const w = workspace(), prepare = vi.fn(async () => undefined), cache = new SmartKpiCache({ storage: null, now: () => now });
-    const context = await buildKpiSuggestionContext(w.project, { workspaceId: w.workspaceId, vdtId: w.vdtId, targetNodeId: w.project.rootNodeId, period: w.period });
+    const context = await buildKpiSuggestionContext(w.project, { workspaceId: w.workspaceId, vdtId: w.vdtId, targetNodeId: fixtureTarget, period: w.period });
     await cache.put({ context, execution }, proposal(context));
-    const s = create({ cache, prepare }); await s.setWorkspace(w); await s.request(w.project.rootNodeId); expect(s.getSnapshot(w.project.rootNodeId).state).toMatchObject({ status: "ready", source: "cache" });
+    const s = create({ cache, prepare }); await s.setWorkspace(w); await s.request(fixtureTarget); expect(s.getSnapshot(fixtureTarget).state).toMatchObject({ status: "ready", source: "cache" });
     const { execution: _execution, ...withoutExecution } = w;
     const recipe = create({ prepare, library: local }); await recipe.setWorkspace({ ...withoutExecution, workspaceId: `${w.workspaceId}_recipe` });
-    await recipe.request(w.project.rootNodeId); expect(recipe.getSnapshot(w.project.rootNodeId).state).toMatchObject({ status: "ready", source: "library" }); expect(prepare).not.toHaveBeenCalled();
+    await recipe.request(fixtureTarget); expect(recipe.getSnapshot(fixtureTarget).state).toMatchObject({ status: "ready", source: "library" }); expect(prepare).not.toHaveBeenCalled();
   });
 
   it("holds the lane until terminal cancellation acknowledgement and rejects stale project completion", async () => {
-    const w = workspace(), transport = controlled(), s = create({ prepare: transport.prepare }); await s.setWorkspace(w); await s.request(w.project.rootNodeId); await tick();
+    const w = workspace(), transport = controlled(), s = create({ prepare: transport.prepare }); await s.setWorkspace(w); await s.request(fixtureTarget); await tick();
     const replacement = structuredClone(w); replacement.project.id = "replacement_project";
     await s.setWorkspace(replacement); expect(transport.calls[0]!.signal.aborted).toBe(true);
-    await s.request(w.project.rootNodeId); await tick(); expect(transport.calls).toHaveLength(1);
-    transport.resolve(0); await tick(); expect(transport.calls).toHaveLength(2); expect(s.getSnapshot(w.project.rootNodeId).canApply).toBe(false);
-    transport.resolve(1); await s.whenSettled(); expect(s.getSnapshot(w.project.rootNodeId).state).toMatchObject({ status: "ready", proposal: { proposalId: "proposal_1" } });
+    await s.request(fixtureTarget); await tick(); expect(transport.calls).toHaveLength(1);
+    transport.resolve(0); await tick(); expect(transport.calls).toHaveLength(2); expect(s.getSnapshot(fixtureTarget).canApply).toBe(false);
+    transport.resolve(1); await s.whenSettled(); expect(s.getSnapshot(fixtureTarget).state).toMatchObject({ status: "ready", proposal: { proposalId: "proposal_1" } });
     expect(s.diagnostics().stale).toBe(1); expect(transport.maxConcurrent()).toBe(1);
   });
 
@@ -150,9 +258,9 @@ describe("Smart KPI bounded scheduling", () => {
     const oldGate = deferred<string>(), newGate = deferred<string>(), prepare = vi.fn(async ({ context, execution: exec }) => proposal(context, exec));
     const s = create({ prepare, fingerprint: p => p.id === first.project.id ? oldGate.promise : newGate.promise });
     const initializeOld = s.setWorkspace(first), initializeNew = s.setWorkspace(second); newGate.resolve(newHash); await initializeNew;
-    await s.request(second.project.rootNodeId); await s.whenSettled(); oldGate.resolve(oldHash); await initializeOld;
-    await s.request(second.project.rootNodeId); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(1);
-    expect(prepare.mock.calls[0]![0].context.projectId).toBe("newer_project"); expect(s.getSnapshot(second.project.rootNodeId).canApply).toBe(true);
+    await s.request(fixtureTarget); await s.whenSettled(); oldGate.resolve(oldHash); await initializeOld;
+    await s.request(fixtureTarget); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(1);
+    expect(prepare.mock.calls[0]![0].context.projectId).toBe("newer_project"); expect(s.getSnapshot(fixtureTarget).canApply).toBe(true);
   });
 
   it("cancels deleted targets, and stale outputs never enter the ready cache", async () => {
@@ -165,64 +273,64 @@ describe("Smart KPI bounded scheduling", () => {
   });
 
   it("quarantines unknown cleanup across disposal/recreation and ignores retry/cooldown until host confirmation", async () => {
-    const w = workspace(), transport = controlled(), old = create({ prepare: transport.prepare }); await old.setWorkspace(w); await old.request(w.project.rootNodeId); await tick(); old.dispose();
-    const fresh = create({ prepare: transport.prepare }); await fresh.setWorkspace(w); await fresh.request(w.project.rootNodeId); await tick(); expect(transport.calls).toHaveLength(1);
+    const w = workspace(), transport = controlled(), old = create({ prepare: transport.prepare }); await old.setWorkspace(w); await old.request(fixtureTarget); await tick(); old.dispose();
+    const fresh = create({ prepare: transport.prepare }); await fresh.setWorkspace(w); await fresh.request(fixtureTarget); await tick(); expect(transport.calls).toHaveLength(1);
     transport.calls[0]!.result.reject(Object.assign(new Error("unknown child cleanup"), { code: "CLEANUP_UNCONFIRMED" })); await tick();
-    expect(fresh.diagnostics().blocked).toBe(true); expect(fresh.getSnapshot(w.project.rootNodeId).state.status).toBe("blocked");
-    await fresh.retry(w.project.rootNodeId); await tick(); expect(transport.calls).toHaveLength(1);
+    expect(fresh.diagnostics().blocked).toBe(true); expect(fresh.getSnapshot(fixtureTarget).state.status).toBe("blocked");
+    await fresh.retry(fixtureTarget); await tick(); expect(transport.calls).toHaveLength(1);
     confirmSmartKpiTerminalCleanup({ workspaceId: w.workspaceId, execution, terminalCleanupConfirmedByHost: true });
-    await fresh.retry(w.project.rootNodeId); await tick(); expect(transport.calls).toHaveLength(2);
-    transport.resolve(1); await fresh.whenSettled(); expect(fresh.getSnapshot(w.project.rootNodeId).canApply).toBe(true);
+    await fresh.retry(fixtureTarget); await tick(); expect(transport.calls).toHaveLength(2);
+    transport.resolve(1); await fresh.whenSettled(); expect(fresh.getSnapshot(fixtureTarget).canApply).toBe(true);
   });
 
   it("permits an actual explicit execution replacement while keeping the unresolved old execution quarantined", async () => {
-    const w = workspace(), transport = controlled(), s = create({ prepare: transport.prepare }); await s.setWorkspace(w); await s.request(w.project.rootNodeId); await tick();
+    const w = workspace(), transport = controlled(), s = create({ prepare: transport.prepare }); await s.setWorkspace(w); await s.request(fixtureTarget); await tick();
     transport.calls[0]!.result.reject(Object.assign(new Error("unknown cleanup"), { code: "CLEANUP_UNCONFIRMED" })); await s.whenSettled();
-    await s.setWorkspace({ ...w, execution: { ...execution, backendId: "replacement_backend" } }); await s.request(w.project.rootNodeId); await tick(); expect(transport.calls).toHaveLength(2);
-    transport.resolve(1); await s.whenSettled(); await s.setWorkspace(w); await s.request(w.project.rootNodeId); expect(s.getSnapshot(w.project.rootNodeId).state.status).toBe("blocked");
+    await s.setWorkspace({ ...w, execution: { ...execution, backendId: "replacement_backend" } }); await s.request(fixtureTarget); await tick(); expect(transport.calls).toHaveLength(2);
+    transport.resolve(1); await s.whenSettled(); await s.setWorkspace(w); await s.request(fixtureTarget); expect(s.getSnapshot(fixtureTarget).state.status).toBe("blocked");
     confirmSmartKpiTerminalCleanup({ workspaceId: w.workspaceId, execution, terminalCleanupConfirmedByHost: true });
   });
 
   it("keeps frozen proposal and checked selection stable, marks context stale, and refreshes only explicitly", async () => {
     const w = workspace(), prepare = vi.fn(async ({ context, execution: exec }) => proposal(context, exec, `proposal_${prepare.mock.calls.length}`)), s = create({ prepare });
-    await s.setWorkspace(w); await s.request(w.project.rootNodeId); await s.whenSettled(); s.freezeDisplay(w.project.rootNodeId);
-    const selection = { groupId: "context", childKeys: ["availability"], mode: "contextual" as const }; expect(s.setSelection(w.project.rootNodeId, selection)).toBe(true);
-    await s.retry(w.project.rootNodeId); await s.whenSettled();
-    expect(s.getSnapshot(w.project.rootNodeId)).toMatchObject({ proposal: { proposalId: "proposal_1" }, selection, refreshAvailable: true, canApply: true });
-    s.refreshDisplay(w.project.rootNodeId); expect(s.getSnapshot(w.project.rootNodeId)).toMatchObject({ proposal: { proposalId: "proposal_2" }, refreshAvailable: false }); expect(s.getSnapshot(w.project.rootNodeId).selection).toBeUndefined();
+    await s.setWorkspace(w); await s.request(fixtureTarget); await s.whenSettled(); s.freezeDisplay(fixtureTarget);
+    const selection = { groupId: "context", childKeys: ["availability"], mode: "contextual" as const }; expect(s.setSelection(fixtureTarget, selection)).toBe(true);
+    await s.retry(fixtureTarget); await s.whenSettled();
+    expect(s.getSnapshot(fixtureTarget)).toMatchObject({ proposal: { proposalId: "proposal_1" }, selection, refreshAvailable: true, canApply: true });
+    s.refreshDisplay(fixtureTarget); expect(s.getSnapshot(fixtureTarget)).toMatchObject({ proposal: { proposalId: "proposal_2" }, refreshAvailable: false }); expect(s.getSnapshot(fixtureTarget).selection).toBeUndefined();
     const semantic = structuredClone(w); semantic.project.graph.nodes[0]!.name = "Different semantic metric"; await s.setWorkspace(semantic);
-    expect(s.getSnapshot(w.project.rootNodeId)).toMatchObject({ stale: true, canApply: false, proposal: { proposalId: "proposal_2" } }); expect(s.setSelection(w.project.rootNodeId, selection)).toBe(false);
-    await s.request(w.project.rootNodeId); await s.whenSettled(); expect(s.getSnapshot(w.project.rootNodeId).stale).toBe(true);
-    s.refreshDisplay(w.project.rootNodeId); expect(s.getSnapshot(w.project.rootNodeId)).toMatchObject({ stale: false, canApply: true, proposal: { proposalId: "proposal_3" } });
+    expect(s.getSnapshot(fixtureTarget)).toMatchObject({ stale: true, canApply: false, proposal: { proposalId: "proposal_2" } }); expect(s.setSelection(fixtureTarget, selection)).toBe(false);
+    await s.request(fixtureTarget); await s.whenSettled(); expect(s.getSnapshot(fixtureTarget).stale).toBe(true);
+    s.refreshDisplay(fixtureTarget); expect(s.getSnapshot(fixtureTarget)).toMatchObject({ stale: false, canApply: true, proposal: { proposalId: "proposal_3" } });
   });
 
   it("disables a frozen ready list after TTL expiry or controller disposal", async () => {
     let clock = now; const w = workspace(), s = create({ now: () => clock, prepare: async ({ context, execution: exec }) => proposal(context, exec) });
-    await s.setWorkspace(w); await s.request(w.project.rootNodeId); await s.whenSettled(); s.freezeDisplay(w.project.rootNodeId);
-    clock += 86400_000; expect(s.getSnapshot(w.project.rootNodeId)).toMatchObject({ stale: true, canApply: false });
+    await s.setWorkspace(w); await s.request(fixtureTarget); await s.whenSettled(); s.freezeDisplay(fixtureTarget);
+    clock += 86400_000; expect(s.getSnapshot(fixtureTarget)).toMatchObject({ stale: true, canApply: false });
     const other = create({ prepare: async ({ context, execution: exec }) => proposal(context, exec) }); await other.setWorkspace(w);
-    await other.request(w.project.rootNodeId); await other.whenSettled(); expect(other.getSnapshot(w.project.rootNodeId).canApply).toBe(true);
-    other.dispose(); expect(other.getSnapshot(w.project.rootNodeId).canApply).toBe(false);
+    await other.request(fixtureTarget); await other.whenSettled(); expect(other.getSnapshot(fixtureTarget).canApply).toBe(true);
+    other.dispose(); expect(other.getSnapshot(fixtureTarget).canApply).toBe(false);
   });
 
   it.each(["scope", "dispose"])("rejects an asynchronously delayed local cache hit after %s change", async change => {
     const w = workspace(), gate = deferred<boolean>(), cache = new SmartKpiCache({ storage: null, now: () => now });
     vi.spyOn(cache, "put").mockImplementationOnce(async () => gate.promise);
     const s = create({ cache, prepare: async () => undefined, library: local }); await s.setWorkspace(w);
-    const request = s.request(w.project.rootNodeId); await tick();
+    const request = s.request(fixtureTarget); await tick();
     if (change === "scope") { const changed = structuredClone(w); changed.project.id = "replacement"; await s.setWorkspace(changed); }
     else s.dispose();
-    gate.resolve(true); await request; expect(s.getSnapshot(w.project.rootNodeId).canApply).toBe(false); expect(s.getSnapshot(w.project.rootNodeId).state.status).not.toBe("ready");
+    gate.resolve(true); await request; expect(s.getSnapshot(fixtureTarget).canApply).toBe(false); expect(s.getSnapshot(fixtureTarget).state.status).not.toBe("ready");
   });
 
   it("exposes honest timeout/empty/unavailable/failed states and only explicit retry spends another attempt", async () => {
     let clock = now; const w = workspace(), prepare = vi.fn(async () => { throw Object.assign(new Error("transport timeout after cleanup"), { code: "TIMEOUT" }); });
-    const s = create({ cache: new SmartKpiCache({ storage: null, now: () => clock }), now: () => clock, prepare }); await s.setWorkspace(w); await s.request(w.project.rootNodeId); await s.whenSettled();
-    expect(s.getSnapshot(w.project.rootNodeId).state.status).toBe("timeout"); await s.request(w.project.rootNodeId); expect(prepare).toHaveBeenCalledTimes(1);
-    clock += 30_001; await s.request(w.project.rootNodeId); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(1);
-    await s.retry(w.project.rootNodeId); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(2);
+    const s = create({ cache: new SmartKpiCache({ storage: null, now: () => clock }), now: () => clock, prepare }); await s.setWorkspace(w); await s.request(fixtureTarget); await s.whenSettled();
+    expect(s.getSnapshot(fixtureTarget).state.status).toBe("timeout"); await s.request(fixtureTarget); expect(prepare).toHaveBeenCalledTimes(1);
+    clock += 30_001; await s.request(fixtureTarget); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(1);
+    await s.retry(fixtureTarget); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(2);
     for (const [result, status] of [[undefined, "empty"], [{ status: "unavailable", reason: "Selected adapter unavailable" }, "unavailable"], [{ status: "ready", proposal: { groups: [] } }, "failed"]] as const) {
-      const target = workspace(), other = create({ prepare: async () => result }); await other.setWorkspace(target); await other.request(target.project.rootNodeId); await other.whenSettled(); expect(other.getSnapshot(target.project.rootNodeId).state.status).toBe(status);
+      const target = workspace(), other = create({ prepare: async () => result }); await other.setWorkspace(target); await other.request(fixtureTarget); await other.whenSettled(); expect(other.getSnapshot(fixtureTarget).state.status).toBe(status);
     }
   });
 
@@ -230,12 +338,12 @@ describe("Smart KPI bounded scheduling", () => {
     const w = workspace(), reason = "The measured travel speed has no defensible additional direct inputs in this supplied context.";
     const limitations = ["No road-gradient or road-condition measurements were supplied."];
     const prepare = vi.fn(async () => ({ status: "empty" as const, reason, limitations })), s = create({ prepare });
-    await s.setWorkspace(w); await s.request(w.project.rootNodeId); await s.whenSettled();
-    expect(s.getSnapshot(w.project.rootNodeId)).toMatchObject({ state: { status: "empty", reason, limitations }, canApply: false });
+    await s.setWorkspace(w); await s.request(fixtureTarget); await s.whenSettled();
+    expect(s.getSnapshot(fixtureTarget)).toMatchObject({ state: { status: "empty", reason, limitations }, canApply: false });
     limitations[0] = "mutated after preparation";
-    await s.request(w.project.rootNodeId); expect(prepare).toHaveBeenCalledTimes(1);
-    expect(s.getSnapshot(w.project.rootNodeId).state).toMatchObject({ status: "empty", reason, limitations: ["No road-gradient or road-condition measurements were supplied."] });
-    await s.retry(w.project.rootNodeId); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(2);
+    await s.request(fixtureTarget); expect(prepare).toHaveBeenCalledTimes(1);
+    expect(s.getSnapshot(fixtureTarget).state).toMatchObject({ status: "empty", reason, limitations: ["No road-gradient or road-condition measurements were supplied."] });
+    await s.retry(fixtureTarget); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -243,9 +351,9 @@ describe("Smart KPI bounded scheduling", () => {
     { limitations: [], rawResponse: "untrusted extra field" }
   ])("rejects malformed negative metadata rather than presenting a model-empty success: %j", async metadata => {
     const w = workspace(), s = create({ prepare: async () => ({ status: "empty", reason: "No suitable child inputs.", ...metadata } as unknown as SmartKpiPreparationResult) });
-    await s.setWorkspace(w); await s.request(w.project.rootNodeId); await s.whenSettled();
-    expect(s.getSnapshot(w.project.rootNodeId).state.status).toBe("failed"); expect(s.diagnostics().failed).toBe(1);
-    expect(s.getSnapshot(w.project.rootNodeId).canApply).toBe(false);
+    await s.setWorkspace(w); await s.request(fixtureTarget); await s.whenSettled();
+    expect(s.getSnapshot(fixtureTarget).state.status).toBe("failed"); expect(s.diagnostics().failed).toBe(1);
+    expect(s.getSnapshot(fixtureTarget).canApply).toBe(false);
   });
 
   it("stops/disposes without prematurely releasing owned running work or starting queued jobs", async () => {

@@ -9,7 +9,10 @@ import { cancelSmartKpiPreparation, prepareSmartKpiResponse } from "./smart-kpi-
 import type { AiProvider } from "@vdt-studio/ai-harness";
 
 const empty = { status: "empty", rationale: "No reviewed immediate decomposition.", limitations: [], groups: [] };
-const ready = { status: "ready", rationale: "Productive time is useful explanatory operating context.", limitations: [], groups: [{ id: "context", title: "Operating context", selectionMode: "independent", requiredKeys: [], formula: null, recipeId: null, limitations: [], children: [{ key: "hours", conceptKey: "productive_time", name: "Productive time", unit: "h/month", description: null, existingNodeId: null }] }] };
+const ready = { status: "ready", rationale: "Productive time and rate are measurable operating inputs.", limitations: [], groups: [{ id: "context", title: "Operating inputs", selectionMode: "all", requiredKeys: ["hours", "rate"], formula: "hours * rate", recipeId: null, limitations: [], children: [
+  { key: "hours", conceptKey: "productive_time", name: "Productive time", unit: "h/month", description: null, existingNodeId: null },
+  { key: "rate", conceptKey: "production_rate", name: "Production rate", unit: "t/h", description: null, existingNodeId: null }
+] }] };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 const context = () => buildKpiSuggestionContext(createSmartKpiMeasuredFixture(), { workspaceId: "client_qa", vdtId: null, targetNodeId: "measured_output", period: { key: "2026-10", grain: "month" } });
 const apiSettings = (): ExecutionSettings => ({ ...applyGatewayPreset({ ...DEFAULT_EXECUTION_SETTINGS, executionMode: "byok" }, "openai-default"), apiKey: "synthetic-a", model: "selected", timeoutSec: 2 });
@@ -73,7 +76,7 @@ describe("stable credential and selection identities", () => {
     const ctx = await context(); expect(kpiSuggestionCacheKey(ctx, KPI_SUGGESTION_RECIPES.version, selected.execution)).toBe(kpiSuggestionCacheKey(ctx, KPI_SUGGESTION_RECIPES.version, reopened.execution));
     expect(kpiCanonicalJson(selected.execution)).not.toContain(settings.apiKey);
     const proposal = await selected.prepare({ context: ctx, execution: selected.execution, signal: new AbortController().signal });
-    expect(proposal).toMatchObject({ origin: { kind: "model", execution: selected.execution }, groups: [{ children: [{ name: "Productive time" }] }] });
+    expect(proposal).toMatchObject({ origin: { kind: "model", execution: selected.execution }, groups: [{ children: [{ name: "Productive time" }, { name: "Production rate" }] }] });
     const payload = JSON.parse(String(fetch.mock.calls[0]![1]?.body)); expect(payload.providerConfig).toMatchObject({ model: "selected", apiKey: "synthetic-a", baseUrl: "https://api.openai.com/v1", timeoutMs: 2000 });
     await expect(selected.prepare({ context: ctx, execution: { ...selected.execution, credentialEpoch: "changed" }, signal: new AbortController().signal })).rejects.toMatchObject({ code: "STALE_EXECUTION" });
     const changed = await createSmartKpiPreparedSelection({ ...settings, model: "different" }, { vault, fetch }); expect(changed.execution.modelId).toBe("different");

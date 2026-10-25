@@ -2,10 +2,41 @@
 
 ## Smart incoming KPI suggestions
 
+Each newly prepared alternative has 2–6 distinct substantive components or
+factors. A single renamed total is rejected by the response and preparation
+cache gates. The model instruction requires a defensible decomposition and
+permits missing measured values; a primitive KPI without a supported split may
+return empty. This structural minimum does not certify business semantics.
+Preparation policy v5 also preserves the direction of the existing model:
+siblings/ancestors are context only. Suggested reuse is limited to active
+existing direct children; for an eligible Input leaf every component is new.
+Current preparation/cache/display and new preview/Add reject non-child source
+IDs and exact normalized copies of target/sibling/ancestor names. The prompt
+prohibits inverse identities (`P=A/B` does not justify `A=P*B` as a deeper layer),
+including disguising a parent as a supposedly independent measurement. Missing
+or estimated values do not establish a valid decomposition. Synonyms and
+business meaning still require model/user judgement; this is not general
+semantic certification. Historical committing receipts remain exact-replayable;
+explicit manual formulas/shared references keep their separate contract.
+Refresh/Retry first re-admits current execution metadata and starts an explicit
+attempt. Clean retained drafts adopt the refreshed source; edited drafts remain
+available with an explicit Review latest action. Add errors belong to their
+target; opening another KPI or retrying does not retain unrelated failure text.
+Routine Codex model-catalog refreshes preserve selected execution identity.
+
+The Smart Add button counts every selected new or reused input. Mixed batches
+also show `N new · M existing KPIs reused`; existing nodes retain their identity.
+On browser quota failure, a versioned compact editor record deduplicates Smart
+base/candidate/request/checkpoint/history copies. Every value is restored before
+hydration and immutable-request readback. A corruption checksum detects damaged
+references; it is not authentication. Existing revision CAS/journal validation
+still gates writes. Versions, including the oldest entry needed by Undo when
+the 20-snapshot cap is reached, remain retained in the recovery data.
+
 Strict one-layer alternatives, value-bearing accepted inputs, explicit recipe applicability,
 configured one-completion preparation and bounded persistent cache/prewarming APIs
-are present. The same right KPI action area retains Manual/AI/File and exposes
-Smart selection; one-layer Add and guarded new-revision Undo use real revision CAS.
+are present. The same right KPI action area retains Manual/File and exposes
+Smart selection only for undecomposed Input KPIs; one-layer Add and guarded new-revision Undo use real revision CAS.
 Unknown write outcomes require reconciliation of the original request. An unsaved
 scratch addition is explicitly a draft. Period comes from current model/record
 evidence, never the historical Brief monthly fallback. Historical pre-revision local Chrome fixtures
@@ -42,12 +73,32 @@ a separate limitation.
 
 Future Smart/Manual incoming additions show a concise editable definition: selected proposal rows, own named/unit rows, retained references and the final formula are one atomic **Add & calculate**. Partial selections are allowed after repairing the formula; invalid raw text remains editable and Add stays disabled. Six new rows are separate from sixteen existing references. Manual-only editing/Add requires no model or key. Each proposal source and its dirty draft remain separate; background replies and explicit preparation refresh cannot silently overwrite user edits.
 
-The default panel shows selected rows, one plain readable formula, **Edit** and
-the primary Add action. A single alternative needs no radio/title repetition;
-multiple alternatives retain selection. Own rows, existing references, raw text,
-operators, insertion buttons and explanatory Details are inside Edit. Manual
-entry opens Edit and focuses the new name. Errors, preparation, save and recovery
-feedback remain visible when actionable.
+Suggested targets must have type `input`, no child edges (including context
+children), no existing formula and a non-rejected status. Inputs may be measured,
+sourced or unknown. Other node types and already decomposed Inputs have no
+Suggested control, hover activation, cache display, selected/visible/new-child
+preparation or retry. Target changes cancel owned preparation and hide obsolete
+proposals. After Add, the parent loses Suggested; a compact canvas notice retains
+save feedback and guarded Undo, including after reload. The dedicated card AI
+button is removed. Manual/File and explicit agent chat requests remain available.
+
+The default Smart view places gray, dashed KPI preview cards in the next available
+factor column on the canvas, with dashed connections to their target. The cards
+use graph coordinates and follow zoom/pan. They are presentation only: displaying,
+editing or dismissing them does not insert graph nodes, edges or saved positions.
+They stay open after pointer leave; Close, Escape, outside click or another target
+ends the display. A bounded viewport adjustment reveals clipped previews while
+preserving saved node positions. Loading uses two placeholder cards without a
+premature formula error or Add button. Empty/error responses show their reason.
+
+The cards show selection, unit and input values, including visible **≈** estimates.
+A compact readable formula, **Edit** and one **Add KPIs** action sit below them.
+A single alternative needs no radio/title repetition; multiple alternatives retain
+selection. Own rows, existing references, raw text, operators, insertion buttons
+and explanatory Details are inside Edit. Successful Add removes the temporary
+cards and retains feedback/Undo. Manual entry keeps the separate panel, opens
+Edit and focuses its new name. Actionable validation/save/recovery feedback stays
+visible; the existing atomic Add, numeric reconciliation and revision rules apply.
 
 For a new Add, a node incorrectly marked Calculated without a formula can be
 restored to Input if its existing plan declares input and it has no mathematical
@@ -144,7 +195,7 @@ presentation preference and does not modify graph values, scenarios or exports.
 Unit tags and full-value titles preserve numeric context; **≈** remains visible
 on estimated values. The root uses a dark type icon and a compact Effect footer.
 Graphite selection follows the inspector's selected KPI. The rounded
-Manual/AI/File/Smart action rail reveals on card hover, keyboard focus and coarse
+Manual/File action rail, with Smart only for eligible Input leaves, reveals on card hover, keyboard focus and coarse
 pointers. Thin neutral connectors retain relation symbols and amber negative
 relations. Card width and saved positions are preserved.
 
@@ -186,7 +237,7 @@ generation policy, persistence or provider qualification.
 - Build progressively and finish only with a structurally valid, calculable root.
 - Expose real run events rather than synthetic reasoning.
 - Respect user research policy and manual changes.
-- Support semi-manual node decomposition: **Add incoming KPIs with AI** adds only one immediate child layer per click, without adding a user instruction to the visible chat or recursively expanding the new children.
+- Offer Suggested KPI layers only for undecomposed Inputs. The duplicate card AI/chat button is removed; explicit agent-chat decomposition and the bounded compatibility `deepen_node` runtime action remain available.
 
 Current status: working legacy agent prototype plus a production-disabled,
 checkpoint/resume Cursor qualification canary and a partially qualified dual-profile
@@ -276,7 +327,7 @@ download confirmation behavior.
 
 ### Editor actions
 
-The node inspector provides **Properties** and **Warnings**. Edits apply directly; there is no per-node Accept/Reject step. AI requests use the chat and the existing node-card **Add incoming KPIs with AI** action. The separate AI tab and its action/result panels, the duplicate inspector Deepen action, the header Review model action and Scenario Mode Explain scenario action are removed. Scenario calculation, overrides and trace remain available. Attached-source incoming-KPI discovery still stages changes for application in the chat. Existing stored node statuses and agent mutation-policy approvals retain their current compatibility behavior.
+The node inspector provides **Properties** and **Warnings**. Edits apply directly; there is no per-node Accept/Reject step. AI requests use the chat; the duplicate node-card **Add incoming KPIs with AI** action is removed. The separate AI tab and its action/result panels, the duplicate inspector Deepen action, the header Review model action and Scenario Mode Explain scenario action are removed. Scenario calculation, overrides and trace remain available. Attached-source incoming-KPI discovery still stages changes for application in the chat. Existing stored node statuses and agent mutation-policy approvals retain their current compatibility behavior.
 
 Properties displays saved **Value notes** beside the value and editing controls: value-source notes, non-duplicate assumption details and an optional HTTP(S) source reference. Notes are read-only provenance; the existing baseline control edits the numeric input. This exposes draft assumptions without treating them as measured site data.
 

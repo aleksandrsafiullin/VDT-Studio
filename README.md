@@ -2,14 +2,45 @@
 
 ### Smart KPI suggestions
 
+Suggestions are available only for **Input** KPIs without an incoming KPI layer
+or a formula. The same rule filters hover, selection, cache display, background
+preparation and explicit retry. After Add, the parent no longer offers Suggested;
+a compact canvas notice keeps guarded **Undo** available, including after reload.
+The node-card AI/chat decomposition shortcut is removed; Manual and From file
+remain, and explicit AI requests still use the chat.
+
+Each suggested alternative must contain at least two distinct component KPIs;
+a single renamed copy is rejected. Preparation may propose measurable inputs
+whose values are still unknown. Refresh/Retry re-admits the current execution
+before a fresh attempt. Codex catalog refreshes no longer invalidate Add, and
+failed Add feedback stays with its target KPI.
+
+Suggested preserves the current decomposition direction. Siblings and ancestors
+are context, never suggested inputs to reuse. New preparation rejects such
+references and exact normalized copies; the prompt also prohibits inverse
+identities or renamed copies of a higher-level metric. If no supported deeper
+split exists, a primitive Input may have no suggestions. Explicit manual shared
+references and already committing historical requests keep their own contracts.
+
+The Add count includes all selected inputs, with a separate new/reused count
+when an existing KPI is reused. Reuse keeps the original KPI rather than creating
+a duplicate. If browser quota is reached, Smart persistence stores repeated
+project/history payloads by reference and restores the exact journal before
+readback/recovery; it does not discard versions or bypass the pre-send check.
+
 The [formula/mixed revision](docs/architecture/SMART_KPI_INCOMING_CONTRACT.md)
 adds selected proposals and own KPIs with one explicit editable formula and
 revision-CAS Add. The parent becomes Calculated; its source measurement remains
 reference evidence. Manual-only drafts need no provider. Historical v1 writes
 replay exactly; old graphs are not migrated.
 
-The incoming panel defaults to selected KPIs, one readable formula and **Add &
-calculate**. **Edit** contains own/existing KPIs, raw formula tools and details.
+Smart suggestions appear directly on the canvas as gray, dashed preview cards
+connected to the target KPI. They follow graph pan/zoom and remain outside the
+saved graph until **Add KPIs**. A compact readable formula and **Edit** sit below
+the cards; Edit contains own/existing KPIs, raw formula tools and details.
+Close, Escape or an outside click dismisses the preview without graph changes.
+Successful Add removes the preview cards and retains feedback/Undo. The separate
+manual entry panel keeps **Add & calculate**.
 A new Add also restores an incorrectly Calculated, formula-free node to Input
 when its plan declares an input and it has no mathematical children. The same
 revision/checkpoint retains its values, source metadata and reference children.
@@ -105,7 +136,7 @@ Tree cards use the same neutral surfaces, with two compact Base/Potential rows:
 labels align left and numbers align right on the same line. The unit appears
 once in the header's upper-right corner in place of the status icon. Graphite
 selection, the integrated root Effect footer, **≈** estimates and relation symbols remain visible;
-Manual/AI/File/Smart actions appear on hover or keyboard focus and on touch devices.
+Manual/File actions and eligible Input-leaf Smart suggestions appear on hover or keyboard focus and on touch devices.
 When the main scenario's Potential differs from Base, its row and card border
 are highlighted for tree overview. **Settings → Display → Scenario highlight**
 offers presets, a color picker, HEX entry, a live preview and Reset color.
@@ -220,7 +251,7 @@ The editor's Home and Back to project links save the current model as a revision
 
 `pnpm dev` and the macOS launcher bind the development app to `127.0.0.1` by default. The normal browser address remains `http://localhost:3000`.
 
-The node-card **Add incoming KPIs with AI** action is a semi-manual decomposition step: one click creates only the selected KPI's immediate incoming layer. It starts or resumes the agent with a structured `deepen_node` action, does not insert a synthetic user instruction into the chat, and does not continue into the newly created children. Click the action on a child separately when another level is wanted.
+The dedicated node-card **Add incoming KPIs with AI** button is removed. Use Suggested on an undecomposed Input or make an explicit request in the VDT Agent chat. The compatibility `deepen_node` action retains its existing bounded one-layer runtime contract; removing its card shortcut does not change that contract.
 
 The current agent loop uses local skills and bounded tools. Its live selection path is narrow, mostly English and still relies on deterministic classification/term matching. The corrective target keeps one canonical copy of each skill and makes multilingual understanding and explicit selection an agent responsibility; it does not create translated skill copies, language aliases or an automatic generic fallback.
 

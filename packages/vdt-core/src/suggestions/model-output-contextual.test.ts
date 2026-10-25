@@ -13,7 +13,13 @@ const host = { proposalId: "observed_context_fixture", requestId: "one_call_fixt
  * It contains semantic context/knownness, no raw values, rows or credentials.
  * Candidate outputs below are deterministic contract fixtures, not live inference. */
 describe("observed measured haulage input contexts", () => {
-  it.each(observedContexts)("admits independent explanatory metrics for $targetNodeId", raw => {
+  it.each(["Часы неплановых технических событий", "Измеренные часы организационных событий"])("rejects an identity formula that only renames the target: %s", name => {
+    expect(() => validateKpiSuggestionModelOutput({ status: "ready", rationale: "Same total with a different name.", limitations: [], groups: [{
+      id: "renamed_total", title: "Loss hours", selectionMode: "all", requiredKeys: ["hours"], formula: "hours", recipeId: null, limitations: [],
+      children: [{ key: "hours", conceptKey: "loss_hours", name, unit: "h", description: null, existingNodeId: null }]
+    }] })).toThrow(/at least two distinct component KPIs/);
+  });
+  it.each(observedContexts)("rejects a single explanatory metric as a decomposition for $targetNodeId", raw => {
     const context = validateKpiSuggestionContext(raw);
     expect(context.target).toMatchObject({ type: "input", valueKnown: true, valueStatus: "calculated", provenance: "sourced" });
     expect(context.children).toHaveLength(0);
@@ -30,11 +36,7 @@ describe("observed measured haulage input contexts", () => {
       limitations: ["Наблюдения не устанавливают причинность и не меняют измеренный родительский KPI."],
       groups: [{ id: "contextual_metrics", title: "Возможные факторы для проверки", selectionMode: "independent", requiredKeys: [], formula: null, recipeId: null,
         limitations: [], children: [{ ...candidate, existingNodeId: null }] }] };
-    const proposal = materializeKpiSuggestion(output, context, host)!;
-    expect(proposal.groups[0]).toMatchObject({ selectionMode: "independent", requiredKeys: [], children: [{ unit: candidate.unit }] });
-    expect(proposal.groups[0]).not.toHaveProperty("recipeBinding");
-    expect(proposal.groups[0]).not.toHaveProperty("formula");
-    expect(proposal.groups[0]!.children[0]).not.toHaveProperty("value");
+    expect(() => materializeKpiSuggestion(output, context, host)).toThrow(/at least two distinct component KPIs/);
   });
 
   it("keeps unsupported genuine empty results valid and separates preparation policy identity", () => {
@@ -48,21 +50,21 @@ describe("observed measured haulage input contexts", () => {
     expect(previous).not.toEqual(frame);
   });
 
-  it("materializes a generic measured speed definition on the actual custom-period context", () => {
-    const context = validateKpiSuggestionContext(observedContexts.find(row => row.target.unit === "km/h"));
-    const output: KpiSuggestionModelOutput = { status: "ready", rationale: "Скорость = расстояние / время движения.", limitations: [], groups: [{
-      id: "distance_time", title: "Через расстояние и время", selectionMode: "all", requiredKeys: ["distance", "measured_time"],
-      formula: "distance / measured_time", recipeId: null, limitations: [], children: [
-        { key: "distance", conceptKey: "measured_distance_per_trip", name: "Пройденное расстояние на рейс", unit: "km/trip", description: null, existingNodeId: null },
-        { key: "measured_time", conceptKey: "measured_moving_hours_per_trip", name: "Измеренное время движения на рейс", unit: "h/trip", description: null, existingNodeId: null }
+  it("materializes a proposed two-category waiting-time breakdown on a custom-period context", () => {
+    const context = validateKpiSuggestionContext(observedContexts.find(row => row.target.unit === "min/trip"));
+    const output: KpiSuggestionModelOutput = { status: "ready", rationale: "Ожидание: очередь на погрузку и очередь на разгрузку.", limitations: ["Confirm these disjoint categories cover the target population."], groups: [{
+      id: "waiting_categories", title: "Составляющие ожидания", selectionMode: "all", requiredKeys: ["loading_queue", "unloading_queue"],
+      formula: "loading_queue + unloading_queue", recipeId: null, limitations: [], children: [
+        { key: "loading_queue", conceptKey: "loading_queue_wait", name: "Ожидание в очереди на погрузку", unit: "min/trip", description: null, existingNodeId: null },
+        { key: "unloading_queue", conceptKey: "unloading_queue_wait", name: "Ожидание в очереди на разгрузку", unit: "min/trip", description: null, existingNodeId: null }
       ] }] };
     const proposal = materializeKpiSuggestion(output, context, host)!;
-    expect(proposal.groups[0]?.formula).toBe("distance / measured_time");
+    expect(proposal.groups[0]?.formula).toBe("loading_queue + unloading_queue");
     expect(proposal.groups[0]?.recipeBinding).toBeUndefined();
     expect(proposal.groups[0]?.children.every(row => !("baselineValue" in row) && !("value" in row))).toBe(true);
     const oldPolicyFrame = { ...JSON.parse(kpiSuggestionCacheKey(context, KPI_SUGGESTION_RECIPES.version, execution)), preparationVersion: "smart-kpi-preparation.v2" };
     expect(oldPolicyFrame.preparationVersion).not.toBe(KPI_SUGGESTION_PREPARATION_VERSION);
-    expect(() => materializeKpiSuggestion({ ...output, groups: [{ ...output.groups[0], formula: "2 * distance / measured_time" }] }, context, host)).toThrow();
-    expect(() => materializeKpiSuggestion({ ...output, groups: [{ ...output.groups[0], children: [output.groups[0]!.children[0], { ...output.groups[0]!.children[1], unit: "min/trip" }] }] }, context, host)).toThrow(/scale|unit|basis/i);
+    expect(() => materializeKpiSuggestion({ ...output, groups: [{ ...output.groups[0], formula: "2 * loading_queue + unloading_queue" }] }, context, host)).toThrow();
+    expect(() => materializeKpiSuggestion({ ...output, groups: [{ ...output.groups[0], children: [output.groups[0]!.children[0], { ...output.groups[0]!.children[1], unit: "h/trip" }] }] }, context, host)).toThrow(/scale|unit|basis/i);
   });
 });

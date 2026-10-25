@@ -1,10 +1,11 @@
 import {
   buildKpiSuggestionContext, fingerprintKpiProject, kpiCanonicalJson,
-  resolveKpiSuggestionSelection, validateKpiSuggestionForContext,
+  resolveKpiSuggestionSelection, validateKpiSuggestionForContext, validateKpiSuggestionDecomposition,
   type KpiSuggestionContext, type KpiSuggestionExecutionIdentity, type KpiSuggestionPeriod,
   type KpiSuggestionSelection, type KpiSuggestionSet, type KpiSuggestionState, type VdtProject
 } from "@vdt-studio/vdt-core";
 import { SmartKpiCache, smartKpiExecutionKey, validSmartKpiLimitations, type SmartKpiCacheScope, type SmartKpiNegativeStatus } from "./smart-kpi-cache";
+import { smartKpiTargetIds } from "./smart-kpi-targets";
 
 export const SMART_KPI_SCHEDULER_LIMITS = { queue: 12, visible: 6, children: 6, speculativeAttempts: 8 } as const;
 export type SmartKpiPriority = "hover" | "selected" | "new_child" | "visible";
@@ -72,6 +73,7 @@ export class SmartKpiScheduler {
   private readonly options: SmartKpiSchedulerOptions;
   private readonly owner = Symbol("smart-kpi-scheduler");
   private workspace: SmartKpiWorkspace | undefined;
+  private targets = new Set<string>();
   private generation = "";
   private contexts = new Map<string, Promise<KpiSuggestionContext>>();
   private fingerprints = new Map<string, Promise<string>>();
@@ -135,7 +137,7 @@ export class SmartKpiScheduler {
       if (input.execution) smartKpiExecutionKey(input.execution);
       const generation = kpiCanonicalJson({ workspace: input.workspaceId, project: input.project.id, vdt: input.vdtId,
         graphFingerprint, period: input.period, goal: input.goal ?? null, execution: input.execution ? smartKpiExecutionKey(input.execution) : null });
-      this.workspace = input; this.graphFingerprint = graphFingerprint; this.attachLane(input.workspaceId);
+      this.workspace = input; this.targets = smartKpiTargetIds(input.project); this.graphFingerprint = graphFingerprint; this.attachLane(input.workspaceId);
       if (generation !== this.generation) {
         this.generation = generation; this.contexts.clear(); this.queue.clear(); this.attempted.clear(); this.spent = 0;
         this.cancelActive();
@@ -165,6 +167,12 @@ export class SmartKpiScheduler {
     return context;
   }
   getSnapshot = (targetNodeId: string): SmartKpiNodeSnapshot => {
+    if (this.workspace && !this.targets.has(targetNodeId)) {
+      const exists = this.workspace.project.graph.nodes.some(node => node.id === targetNodeId);
+      return immutable<SmartKpiNodeSnapshot>({ targetNodeId,
+        state: exists ? { status: "unavailable", reason: "Suggestions are available for Input KPIs without incoming KPIs." }
+          : { status: "stale", reason: "The target KPI no longer exists." }, stale: !exists, refreshAvailable: false, canApply: false });
+    }
     const existing = this.frozen.get(targetNodeId) ?? this.snapshots.get(targetNodeId);
     if (existing) {
       if (existing.canApply && existing.proposal && Date.parse(existing.proposal.expiresAt) <= (this.options.now ?? Date.now)()) {
@@ -208,6 +216,7 @@ export class SmartKpiScheduler {
   async request(target: string, options: { priority?: SmartKpiPriority; explicit?: boolean } = {}): Promise<SmartKpiNodeSnapshot> {
     await this.pendingUpdate;
     if (this.disposed || !this.workspace) return this.getSnapshot(target);
+    if (!this.targets.has(target)) return this.getSnapshot(target);
     const generation = this.generation;
     let context: KpiSuggestionContext;
     try { context = await this.context(target); }
@@ -217,6 +226,14 @@ export class SmartKpiScheduler {
     }
     if (this.disposed || generation !== this.generation) return this.getSnapshot(target);
     const scope: SmartKpiCacheScope = { context, ...(this.workspace.execution ? { execution: this.workspace.execution } : {}) }, key = this.cache.key(scope);
+    // A background cache hit must not replace a fresh explicit attempt while
+    // that same target is queued/running (and freeze the older proposal again).
+    if (this.active?.job.key === key && this.active.job.generation === generation && !this.active.job.controller.signal.aborted || this.queue.has(key)) {
+      this.counters.deduplicated++;
+      const queued = this.queue.get(key);
+      if (queued) { if (priority[options.priority ?? "hover"] < priority[queued.priority]) queued.priority = options.priority ?? "hover"; queued.explicit ||= !!options.explicit; }
+      return this.getSnapshot(target);
+    }
     if (!options.explicit) {
       let local: KpiSuggestionSet | undefined;
       try { local = this.options.library?.(context); } catch { /* Invalid local applicability is a miss. */ }
@@ -230,12 +247,6 @@ export class SmartKpiScheduler {
       const negative = this.cache.negative(scope);
       if (negative) { this.publish(target, key, { status: negative.status, reason: negative.reason, ...(negative.limitations ? { limitations: negative.limitations } : {}) }); return this.getSnapshot(target); }
     } else this.cache.clearNegative(scope);
-    if (this.active?.job.key === key || this.queue.has(key)) {
-      this.counters.deduplicated++;
-      const queued = this.queue.get(key);
-      if (queued) { if (priority[options.priority ?? "hover"] < priority[queued.priority]) queued.priority = options.priority ?? "hover"; queued.explicit ||= !!options.explicit; }
-      return this.getSnapshot(target);
-    }
     if (!scope.execution) { this.publish(target, key, { status: "unavailable", reason: "Choose an available execution backend to prepare this KPI." }); return this.getSnapshot(target); }
     const quarantine = laneFor(context.workspaceId).quarantines.get(smartKpiExecutionKey(scope.execution));
     if (quarantine) { this.publish(target, key, { status: "blocked", reason: quarantine }); return this.getSnapshot(target); }
@@ -257,12 +268,12 @@ export class SmartKpiScheduler {
 
   async prewarm(selected: string | null, visible: readonly string[]): Promise<void> {
     await this.pendingUpdate;
-    const ids = [...new Set(visible)].filter(id => id !== selected).slice(0, SMART_KPI_SCHEDULER_LIMITS.visible);
-    await Promise.all([...(selected ? [this.request(selected, { priority: "selected" })] : []), ...ids.map(id => this.request(id, { priority: "visible" }))]);
+    const ids = [...new Set(visible)].filter(id => id !== selected && this.targets.has(id)).slice(0, SMART_KPI_SCHEDULER_LIMITS.visible);
+    await Promise.all([...(selected && this.targets.has(selected) ? [this.request(selected, { priority: "selected" })] : []), ...ids.map(id => this.request(id, { priority: "visible" }))]);
   }
   async prepareImmediateChildren(parentNodeId: string): Promise<void> {
     await this.pendingUpdate;
-    const ids = [...new Set(this.workspace?.project.graph.edges.filter(e => e.sourceNodeId === parentNodeId).map(e => e.targetNodeId))].slice(0, SMART_KPI_SCHEDULER_LIMITS.children);
+    const ids = [...new Set(this.workspace?.project.graph.edges.filter(e => e.sourceNodeId === parentNodeId).map(e => e.targetNodeId))].filter(id => this.targets.has(id)).slice(0, SMART_KPI_SCHEDULER_LIMITS.children);
     await Promise.all(ids.map(id => this.request(id, { priority: "new_child" })));
   }
   retry(target: string): Promise<SmartKpiNodeSnapshot> { return this.request(target, { priority: "hover", explicit: true }); }
@@ -321,7 +332,7 @@ export class SmartKpiScheduler {
       }
       if ("status" in result && Object.keys(result).some(key => !["status", "proposal"].includes(key))) throw new Error("Invalid preparation envelope.");
       const raw = "status" in result ? result.proposal : result;
-      const proposal = validateKpiSuggestionForContext(raw, job.scope.context, this.cache.catalog, (this.options.now ?? Date.now)());
+      const proposal = validateKpiSuggestionDecomposition(validateKpiSuggestionForContext(raw, job.scope.context, this.cache.catalog, (this.options.now ?? Date.now)()), job.scope.context);
       if (proposal.origin.kind !== "model" || smartKpiExecutionKey(proposal.origin.execution) !== executionKey) throw new Error("Prepared result has no matching host execution provenance.");
       if (!await this.cache.put(job.scope, proposal)) throw new Error("Prepared result failed local cache validation.");
       if (!this.current(job)) { this.counters.stale++; return; }
@@ -337,7 +348,9 @@ export class SmartKpiScheduler {
       if (!this.current(job)) { this.counters.stale++; return; }
       const code = errorCode(error);
       const status: SmartKpiNegativeStatus = code === "TIMEOUT" ? "timeout" : code === "SUGGESTIONS_UNAVAILABLE" ? "unavailable" : "failed";
-      const reason = status === "timeout" ? "Preparation timed out. Choose Retry for a new bounded attempt." : status === "unavailable" ? "This execution backend cannot currently prepare suggestions." : "Preparation failed validation or execution. Choose Retry for a new bounded attempt.";
+      const reason = code === "NOT_A_DECOMPOSITION" ? "The suggestion did not split this KPI into at least two components. Retry to prepare a decomposition."
+        : code === "UNSAFE_DECOMPOSITION" ? "The suggestion reused context instead of this KPI's own lower-level components. Retry to prepare a valid decomposition."
+        : status === "timeout" ? "Preparation timed out. Choose Retry for a new bounded attempt." : status === "unavailable" ? "This execution backend cannot currently prepare suggestions." : "Preparation failed validation or execution. Choose Retry for a new bounded attempt.";
       if (status === "timeout") this.counters.timedOut++; else this.counters.failed++;
       this.cache.setNegative(job.scope, status, reason); this.publish(job.targetNodeId, job.key, { status, reason });
     }

@@ -29,7 +29,7 @@ import { VdtNodeCard, type VdtNodeCardData } from "./vdt-node-card";
 import { collectExistingPositions } from "./layout-positions";
 import { useVdtStudioStore } from "./vdt-store";
 import { useSmartKpi } from "./use-smart-kpi";
-import { SmartKpiPanel } from "./smart-kpi-panel";
+import { SmartKpiPanel, SmartKpiUndoNotice } from "./smart-kpi-panel";
 import { visibleSmartKpiTargets } from "./smart-kpi-geometry";
 import { clsx } from "clsx";
 import styles from "./workspace-shell.module.css";
@@ -50,7 +50,6 @@ export function VdtCanvas() {
   const selectNode = useVdtStudioStore((state) => state.selectNode);
   const autoDistributeLayout = useVdtStudioStore((state) => state.autoDistributeLayout);
   const updateNodePosition = useVdtStudioStore((state) => state.updateNodePosition);
-  const requestIncomingKpisWithAi = useVdtStudioStore((state) => state.requestIncomingKpisWithAi);
   const selectedNodeId = useVdtStudioStore((state) => state.selectedNodeId);
   const smart = useSmartKpi();
   const flow = useRef<ReactFlowInstance<Node<VdtNodeCardData, "vdtNode">, Edge<VdtEdgeData>> | undefined>(undefined);
@@ -112,13 +111,9 @@ export function VdtCanvas() {
           highlighted: highlightedSet.has(node.id),
           onSelect: selectNode,
           onAddManualIncomingKpi: smart.activateManual,
-          onAddAiIncomingKpis: (nodeId) => {
-            smart.close();
-            void requestIncomingKpisWithAi(nodeId);
-          },
           onAddFileIncomingKpis: (nodeId) => { smart.close(); requestIncomingKpisFromFile(nodeId); },
           smartOpen: smart.active?.targetNodeId === node.id,
-          onSmartActivate: smart.activate,
+          onSmartActivate: smart.targets.has(node.id) ? smart.activate : undefined,
           onSmartLeave: smart.leaveRail,
           onSmartBlur: smart.blurPanel
         }
@@ -132,10 +127,10 @@ export function VdtCanvas() {
       project.graph.nodes,
       project.rootNodeId,
       referenceGroups,
-      requestIncomingKpisWithAi,
       selectNode,
       selectedNodeId,
       smart.active?.targetNodeId,
+      smart.targets,
       smart.activate,
       smart.leaveRail,
       smart.blurPanel,
@@ -148,12 +143,12 @@ export function VdtCanvas() {
   const prepareVisible = useCallback(() => {
     const instance = flow.current, element = canvasRef.current;
     if (!instance || !element) return;
-    smart.prewarmVisible(visibleSmartKpiTargets(instance.getNodes().map(node => {
+    smart.prewarmVisible(visibleSmartKpiTargets(instance.getNodes().filter(node => smart.targets.has(node.id)).map(node => {
       const internal = instance.getInternalNode(node.id);
       return { id: node.id, x: internal?.internals.positionAbsolute.x ?? node.position.x, y: internal?.internals.positionAbsolute.y ?? node.position.y,
         width: node.measured?.width ?? node.width ?? 238, height: node.measured?.height ?? node.height ?? 140 };
     }), instance.getViewport(), { width: element.clientWidth, height: element.clientHeight }, useVdtStudioStore.getState().selectedNodeId));
-  }, [smart.prewarmVisible]);
+  }, [smart.prewarmVisible, smart.targets]);
 
   const onNodeDragStart = useCallback(() => {
     isDraggingRef.current = true;
@@ -259,7 +254,7 @@ export function VdtCanvas() {
       data-testid="vdt-canvas"
     >
       <DataImportWizard />
-      <SmartKpiPanel controller={smart} viewportRevision={viewportRevision} />
+      <SmartKpiUndoNotice controller={smart} />
       {flowCanRender ? (
         <div className="absolute inset-0">
           <ReactFlow
@@ -283,6 +278,7 @@ export function VdtCanvas() {
             panOnScroll
             ariaLabelConfig={CANVAS_ARIA_LABEL_CONFIG}
           >
+            <SmartKpiPanel controller={smart} viewportRevision={viewportRevision} />
             <Background color="var(--workspace-line-soft)" gap={24} size={0.8} />
             <CanvasControls onAutoDistribute={autoDistributeLayout} />
           </ReactFlow>

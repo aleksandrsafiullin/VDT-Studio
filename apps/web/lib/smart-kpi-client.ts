@@ -128,7 +128,7 @@ export async function prepareSmartThroughHttp(fetcher: typeof fetch, body: Recor
     if (payload.error?.code === "CLEANUP_UNCONFIRMED") throw error("CLEANUP_UNCONFIRMED");
     terminal = true; if (cancellation) await cancellation;
     if (caller.aborted || timedOut) throw error(timedOut ? "TIMEOUT" : "CANCELLED");
-    if (!response.ok || !payload.ok) throw error(payload.error?.code === "SUGGESTIONS_UNAVAILABLE" ? "SUGGESTIONS_UNAVAILABLE" : "PREPARATION_FAILED");
+    if (!response.ok || !payload.ok) throw error(["SUGGESTIONS_UNAVAILABLE", "NOT_A_DECOMPOSITION"].includes(payload.error?.code) ? payload.error.code : "PREPARATION_FAILED");
     return validateKpiSuggestionModelOutput(payload.result);
   } catch (failure) {
     if ((failure as { code?: string })?.code === "CLEANUP_UNCONFIRMED") throw failure;

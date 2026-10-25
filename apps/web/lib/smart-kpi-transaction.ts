@@ -1,4 +1,4 @@
-import { buildKpiSuggestionContext, calculateGraph, cloneProject, compileIncomingKpiBatch, createVersionSnapshot, expandIncomingKpiFormula, inspectIncomingKpiDraft, incomingKpiInputValuePatch, incomingKpiReferenceValuePatch, incomingKpiValuesEqual, kpiCanonicalJson, previewIncomingKpiBatch, resolveIncomingKpiValues,
+import { buildKpiSuggestionContext, calculateGraph, cloneProject, compileIncomingKpiBatch, createVersionSnapshot, expandIncomingKpiFormula, inspectIncomingKpiDraft, incomingKpiInputValuePatch, incomingKpiReferenceValuePatch, incomingKpiValuesEqual, kpiCanonicalJson, previewIncomingKpiBatch, resolveIncomingKpiValues, validateKpiSuggestionDecomposition,
   type IncomingKpiBatchInput, type KpiSuggestionContext, type KpiSuggestionExecutionIdentity, type KpiSuggestionSelection, type KpiSuggestionSet, type VdtProject } from "@vdt-studio/vdt-core";
 import type { SmartKpiMixedOperation } from "./smart-kpi-incoming-contract";
 import { createStoredVdt, fetchStoredVdtRevisionState, revisionCasFromHead, runtimeCasFromState, saveStoredVdtRevision,
@@ -15,7 +15,7 @@ export interface SmartKpiMutationView {
   targetNodeId?: string | undefined; message?: string | undefined; canUndo: boolean; undoBlockedReason?: string | undefined;
 }
 export type SmartKpiApplyInput = IncomingKpiBatchInput;
-export interface SmartKpiApplyResult { ok: boolean; addedNodeIds: string[]; targetNodeId: string; durability: "stored" | "draft"; reason?: string }
+export interface SmartKpiApplyResult { ok: boolean; addedNodeIds: string[]; targetNodeId: string; durability: "stored" | "draft"; reason?: string; code?: string }
 interface Authority { head: VdtRevisionCasV1; runtime: ProjectRuntimeCasV1 }
 export interface SmartKpiOperationV1 {
   schemaVersion: "smart_kpi_operation.v1";
@@ -39,7 +39,13 @@ type Get = () => VdtStudioState;
 type Set = (partial: Partial<VdtStudioState> | ((state: VdtStudioState) => Partial<VdtStudioState>)) => void;
 const same = (a: unknown, b: unknown) => a === undefined || b === undefined ? a === b : kpiCanonicalJson(a) === kpiCanonicalJson(b);
 const configuration = (state: VdtStudioState) => kpiCanonicalJson(persistedExecutionSettings(state.executionSettings));
-const failure = (reason: string) => new Error(reason);
+const failure = (reason: string, code?: string) => Object.assign(new Error(reason), code ? { code } : {});
+const preparationIssue = (input: IncomingKpiBatchInput) => {
+  if (!input.proposal) return;
+  try { validateKpiSuggestionDecomposition(input.proposal, input.context); }
+  catch (error) { return { code: error && typeof error === "object" && "code" in error ? String(error.code) : "NOT_A_DECOMPOSITION",
+    message: error instanceof Error ? error.message : "Check the proposed decomposition. Refresh suggestions." }; }
+};
 const running = new Set<string>();
 const actualConflict = (error: unknown) => error instanceof VdtStorageRequestError && ["REVISION_CONFLICT", "PROJECT_WRITE_STATE_CHANGED", "IDEMPOTENCY_KEY_REUSE"].includes(error.code);
 export function hasSmartKpiRebase(state: VdtStudioState): boolean {
@@ -213,8 +219,10 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
       return result(operation, false, message);
     }
     if (operation.vdtId && !smartKpiJournalPersisted(operation.id, operation.input)) {
-      const message = "Browser storage could not retain the immutable Smart request. Nothing new was sent; free space and retry.";
-      set({ smartKpiOperation: undefined, smartKpiMutation: { status: "failed", canUndo: false, message } });
+      const message = studioStatePersistenceProblem()
+        ? "Browser storage could not retain the recovery copy. Nothing was sent; keep this tab open and retry when browser storage is available."
+        : "The saved Smart request changed before it could be sent. Nothing was sent; reopen this VDT and retry.";
+      set({ smartKpiOperation: undefined, smartKpiMutation: { status: "failed", targetNodeId: operation.context?.targetNodeId ?? operation.previousNodeId, canUndo: false, message } });
       return result(operation, false, message);
     }
     running.add(operation.id);
@@ -290,6 +298,8 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
       return buildKpiSuggestionContext(state.project, { ...scope, targetNodeId });
     },
     previewIncomingKpiBatch: async (input: IncomingKpiBatchInput) => {
+      const issue = preparationIssue(input);
+      if (issue) return { valid: false as const, draftRevision: input.draft.revision, issues: [issue] };
       const state = get(), scope = resolveSmartKpiScope(state);
       const context = !scope.blockedReason ? await buildKpiSuggestionContext(state.project, { ...scope, targetNodeId: input.context.targetNodeId }) : undefined;
       if (!same(context, input.context)) return { valid: false as const, draftRevision: input.draft.revision,
@@ -300,6 +310,8 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
     applySmartKpiSuggestion: async (input: IncomingKpiBatchInput): Promise<SmartKpiApplyResult> => {
       const state = get(), scope = resolveSmartKpiScope(state), reason = smartKpiBlockedReason(state);
       if (reason) return { ok: false, targetNodeId: input.context.targetNodeId, addedNodeIds: [], durability: scope.vdtId ? "stored" : "draft", reason };
+      const issue = preparationIssue(input);
+      if (issue) return { ok: false, targetNodeId: input.context.targetNodeId, addedNodeIds: [], durability: scope.vdtId ? "stored" : "draft", reason: issue.message, code: issue.code };
       const inspected = inspectIncomingKpiDraft(input, state.project);
       if (!inspected.readyForCompile) return { ok: false, targetNodeId: input.context.targetNodeId, addedNodeIds: [], durability: scope.vdtId ? "stored" : "draft", reason: inspected.issues[0]!.message };
       let operation: SmartKpiOperation = { schemaVersion: "smart_kpi_operation.v2", id: `smart_${crypto.randomUUID().replaceAll("-", "_")}`, kind: "add", phase: "preparing",
@@ -313,7 +325,7 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
         smartKpiFencedRunIds: [...new Set([...state.smartKpiFencedRunIds, state.agentRun?.runId, state.generateActivity?.runId, ...state.agentChatHistory.map(h => h.runId)].filter((id): id is string => Boolean(id)))].slice(-64) });
       operation = structuredClone(operation);
       try {
-        if (!smartKpiJournalPersisted(operation.id)) throw failure("Browser storage could not reserve the Smart operation. Nothing was sent; free space and retry.");
+        if (!smartKpiJournalPersisted(operation.id)) throw failure("Browser storage could not reserve the recovery copy. Nothing was sent; keep this tab open and retry when browser storage is available.");
         await reconcileOrdinary(get, set);
         if (!ownsBase(get(), operation)) throw failure("The ordinary pending write changed this scope. Refresh suggestions.");
         const current = get(), currentScope = resolveSmartKpiScope(current);
@@ -321,7 +333,7 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
         let selected;
         if (operation.lineage.kind === "model") {
           selected = await createSmartKpiPreparedSelection(current.executionSettings, current.runnerPairingToken ? { pairingToken: current.runnerPairingToken } : {});
-          if (!same(selected.execution, operation.lineage.execution)) throw failure("The selected model/backend/credential changed. Refresh suggestions.");
+          if (!same(selected.execution, operation.lineage.execution)) throw failure("The selected model/backend/credential changed. Refresh suggestions.", "STALE_EXECUTION");
           operation.execution = selected.execution;
         }
         const context = await buildKpiSuggestionContext(operation.before, { ...currentScope, targetNodeId: operation.context.targetNodeId });
@@ -330,7 +342,7 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
           ...(operation.proposal ? { proposal: operation.proposal } : {}), draft: operation.draft }, { operationId: operation.id, now: new Date().toISOString() });
         const checkpointed = createVersionSnapshot(operation.before, { name: "Before incoming KPIs", taskType: "suggest_incoming_kpis" });
         const candidate = layout({ ...compiled.preview, versions: checkpointed.versions }, current.ui);
-        if (selected && !(await selected.revalidate(get().executionSettings))) throw failure("The selected execution changed while validating incoming KPIs.");
+        if (selected && !(await selected.revalidate(get().executionSettings))) throw failure("The selected execution changed while validating incoming KPIs.", "STALE_EXECUTION");
         if (!ownsBase(get(), operation) || smartKpiBlockedReason(get(), true) || !same(authority(get()), operation.authority)) throw failure("The graph or storage authority changed while validating incoming KPIs.");
         operation = { ...operation, phase: "committing", candidate, addedNodeIds: compiled.newNodeIds, checkpointVersionId: checkpointed.versions.at(-1)!.id,
           resolved: { aliases: compiled.aliases, formula: compiled.formula, values: compiled.values },
@@ -341,7 +353,8 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
       } catch (error) {
         set(current => current.smartKpiOperation?.id !== operation.id ? {} : { smartKpiOperation: undefined,
           smartKpiMutation: { status: "failed", targetNodeId: input.context.targetNodeId, canUndo: false, message: error instanceof Error ? error.message : "Incoming validation failed." } });
-        return result(operation, false, error instanceof Error ? error.message : "Incoming validation failed.");
+        return { ...result(operation, false, error instanceof Error ? error.message : "Incoming validation failed."),
+          ...((error as { code?: string })?.code === "STALE_EXECUTION" ? { code: "STALE_EXECUTION" } : {}) };
       }
     },
     reconcilePendingSmartKpiCommit: async (): Promise<boolean> => {

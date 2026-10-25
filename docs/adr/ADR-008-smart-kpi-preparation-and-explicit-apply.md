@@ -8,7 +8,61 @@ Implementation plans: [initial Smart KPI suggestions](../implementation/SMART_KP
 
 Revision 2026-10-20 supersedes the original context-only default for future Add: selected/own/retained inputs and an explicit final formula are one atomic calculated-parent operation. Existing graphs and historical committing receipts are not migrated.
 
+Preparation amendment 2026-10-25: policy v4 requires 2–6 distinct components
+per alternative, including model JSON schema/runtime validation and rebuildable
+cache admission. Store preview/new Add reject retained singletons before
+execution admission or journal reservation. One renamed total is not a
+decomposition. Unknown measurements
+can remain inputs of a supported definition; primitive/unsupported definitions
+may return empty. Structural checks do not establish business semantics.
+Historical proposal/journal validation and exact replay stay unchanged.
+
+Direction amendment 2026-10-25: preparation policy v5 supersedes v4 for new
+outcomes. Reused proposed inputs must be active direct children. Sibling,
+ancestor, target and unrelated source IDs, plus exact normalized copies of
+contextual names, are rejected during materialization, cache/scheduler admission
+and new preview/Add. The prompt forbids inverse identities (`P=A/B` cannot
+justify `A=P*B` as a deeper decomposition) and renamed/synonymous copies. An
+undecomposed Input must receive its own new lower-level components or a genuine
+empty result. This bounded direction check does not prove arbitrary semantic
+equivalence or business correctness. Explicit manual shared-reference formulas
+and already committing receipts retain their separate compiler/replay contract.
+
+Quota/count amendment 2026-10-25: the Add count includes selected new and reused
+KPIs, with an explicit mixed-batch breakdown. If normal editor persistence hits
+browser quota, a versioned `smart_kpi_storage.v1` reference encoding removes
+redundant physical copies of the same Smart project/history/request payloads.
+All logical values and original request property order are restored before
+hydration/readback. An expanded-record checksum detects damaged references;
+existing journal/CAS/execution checks retain authority. Corrupt/unsupported
+encoding cannot be silently replaced. No version/history, API body, operation
+policy or pending idempotency key is dropped or rewritten; historical raw editor
+records stay readable. If compact persistence also fails, the write stays blocked.
+
+Execution refresh amendment 2026-10-25: Codex binding identity excludes the
+automatically refreshed model-catalog file metadata. Policy, executable/version,
+config metadata, selected model and credential epoch remain guarded. Explicit
+Refresh/Retry re-admits current metadata before a fresh attempt; in-flight
+deduplication precedes cache lookup. Clean retained drafts adopt the refreshed
+proposal, while edited drafts require Review latest. Add failures are displayed
+only for their target and cleared on explicit retry.
+
 ## Decision
+
+Target-scope amendment 2026-10-24: Suggested is offered only for undecomposed
+Input KPIs. Child edges of any relation, existing formulas, other types and
+rejected nodes exclude a target before control display, activation, cache reuse
+or scheduler/provider preparation. Manual/File stay available; the duplicate
+card AI/chat shortcut is removed without changing the compatibility runtime
+action. After Add, the now-decomposed parent hides Suggested and a compact canvas
+receipt retains guarded Undo, including after reload.
+
+Presentation amendment 2026-10-24: Smart uses transient gray/dashed cards and
+connections directly in the graph viewport, with values, readable formula, Edit
+and one explicit Add below the group. These previews never enter persisted graph
+state; dismissal is read-only and successful Add removes them. Manual entry
+retains the screen-space editor. Preparation, formula/numeric validation,
+revision CAS and Undo authority are unchanged by this presentation amendment.
 
 Amendment 2026-10-21: new user-authorized Add may include a type-only repair for
 an existing formula-free Calculated node declared as plan Input with no
@@ -189,7 +243,8 @@ selection. API/local generation is capped at 2048 tokens; CLI's 2048 is a prompt
 request only. There is no research, tool execution, full agent loop, schema
 fallback or repair. Codex selected/default model is retained explicitly when
 provable; otherwise identity honestly labels a stable `host_default` alias bound
-to nonsecret catalog/CLI/config metadata and policy. Alias drift remains
+to nonsecret CLI/config metadata and policy. Catalog refresh timestamps do not
+represent adapter replacement. Alias drift remains
 unqualified. Metadata-only settings admission is a separate no-inference step
 with a 5 s/lower raw budget and bounded owned cleanup.
 

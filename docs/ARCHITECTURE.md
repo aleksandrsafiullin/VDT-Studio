@@ -2,6 +2,62 @@
 
 ## Smart KPI preparation and explicit apply boundary
 
+Preparation policy `smart-kpi-preparation.v5` requires at least two components
+per alternative in model output and rebuildable cache admission. Store preview
+and new Add also reject retained singleton proposals before journal reservation.
+Wire proposal
+validation stays backward compatible for historical committing journals; no
+saved graph or receipt is migrated. The bounded prompt requires substantive
+factors and separates missing measurements from an unsupported definition.
+
+The current-policy validator additionally takes the host-built context. It
+restricts proposed source IDs to active direct children and rejects exact
+normalized target/ancestor/sibling name copies. Materialization, scheduler,
+contextual cache lookup/write and new store preview/Add apply this check. Policy
+v5 invalidates rebuildable v4 outcomes; generic historical wire validation and
+committing receipt replay are unchanged. Ancestor/sibling formulas remain context
+for understanding the target; the shared prompt prohibits algebraic reversal,
+including new aliases for a parent. This direction guard is separate from the
+general manual compiler, which still supports explicit shared references.
+
+Codex binding identity includes policy, selected executable/version and config
+metadata; `models_cache.json` refresh metadata is excluded. Model selection and
+credential epoch checks remain at Add/revalidation. Explicit Refresh/Retry
+re-admits metadata before requesting a new attempt. Scheduler deduplication
+precedes cache lookup so background prewarming cannot replace an in-flight
+explicit attempt with an old artifact. Clean UI drafts adopt an explicitly
+refreshed proposal; dirty drafts retain their source and require Review latest.
+Action feedback is target scoped.
+
+`smart-kpi-storage-codec.ts` supplies a quota-only fallback in
+`studioStateStorage`. The ordinary editor JSON remains the first write attempt.
+If it exceeds origin quota, `smart_kpi_storage.v1` references repeated Smart
+base/candidate/request data and shared version snapshots, plus Undo's applied
+identity/checkpoint. Null placeholders preserve property order. The decoder
+restores the original logical journal and exact serialized request order before
+Zustand hydration or `smartKpiJournalPersisted` readback. A length/checksum covers
+the expanded record so changed anchors or invalid references fail closed;
+unsupported/corrupt encoded records are retained and cannot be overwritten by a
+default editor state. The checksum detects corruption, not authorship. All
+existing journal, execution, head/runtime CAS and acknowledgement checks remain.
+Original legacy editor JSON is readable; stored VDT/API schemas and idempotency
+bodies do not change. No snapshots, drafts or shared caches are deleted to fit.
+
+Smart's transient cards render through a React Flow `ViewportPortal`, with
+collision-aware graph-space placement and dashed presentation connections.
+They never enter controlled React Flow nodes/edges or the persisted project.
+`smart-kpi-targets.ts` owns Input-leaf eligibility, shared by canvas controls,
+activation and the scheduler. Child edges of any relation or an existing formula
+exclude the target. Requests/retries fail before context/cache/provider work;
+selected/visible/new-child batches filter before their caps. Semantic target
+changes cancel obsolete preparation. Post-apply Undo uses a compact canvas
+receipt when the parent is no longer eligible. The duplicate card agent shortcut
+is removed, while the compatibility runtime action remains.
+The existing retained incoming draft, local preview/compiler and atomic revision
+apply/Undo ports remain authoritative. Viewport reveal changes only the camera.
+Manual entry retains its screen-space panel. This presentation change does not
+alter the preparation wire contract, model admission or durable journal format.
+
 The formula/mixed revision uses strict `incoming_kpi_apply.v2` drafts and
 `smart_kpi_operation.v2` journals. Preparation-free context/preview ports feed the
 pure full-project compiler; one immutable resolved alias/formula/candidate is

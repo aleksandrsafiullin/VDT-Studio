@@ -1,7 +1,7 @@
 import {
   KPI_SUGGESTION_PREPARATION_VERSION, KPI_SUGGESTION_RECIPES, KPI_SUGGESTION_SCHEMA, KPI_SUGGESTION_VALIDATOR,
   kpiCanonicalJson, kpiSuggestionCacheKey, parseFormula, validateKpiSuggestionContext,
-  validateKpiSuggestionForContext, validateKpiSuggestionSet,
+  validateKpiSuggestionForContext, validateKpiSuggestionSet, validateKpiSuggestionDecomposition,
   type KpiSuggestionContext, type KpiSuggestionExecutionIdentity,
   type KpiSuggestionRecipeCatalog, type KpiSuggestionSet
 } from "@vdt-studio/vdt-core";
@@ -137,7 +137,7 @@ export class SmartKpiCache {
       if (!raw || typeof raw !== "object" || Array.isArray(raw) || !exactKeys(raw, ["schema", "key", "proposal", "touchedAt"])) return;
       const row = raw as SmartKpiCacheRow;
       if (row.schema !== "smart_kpi_cache.v1" || typeof row.key !== "string" || !Number.isFinite(row.touchedAt) || row.touchedAt < 0) return;
-      const frame = this.frame(row.key), proposal = validateKpiSuggestionSet(row.proposal, this.now());
+      const frame = this.frame(row.key), proposal = validateKpiSuggestionDecomposition(validateKpiSuggestionSet(row.proposal, this.now()));
       if (proposal.catalogVersion !== this.catalog.version || proposal.targetNodeId !== frame.targetNodeId || proposal.contextHash !== frame.contextHash) return;
       if (proposal.origin.kind === "model" && (!frame.execution || smartKpiExecutionKey(proposal.origin.execution) !== smartKpiExecutionKey(frame.execution))) return;
       for (const group of proposal.groups) {
@@ -194,7 +194,7 @@ export class SmartKpiCache {
       if (!row) return;
       const valid = this.validatedRow(row);
       if (!valid) { this.remove(scope); return; }
-      const proposal = validateKpiSuggestionForContext(valid.proposal, scope.context, this.catalog, this.now());
+      const proposal = validateKpiSuggestionDecomposition(validateKpiSuggestionForContext(valid.proposal, scope.context, this.catalog, this.now()), scope.context);
       valid.touchedAt = this.now(); this.rows.set(key, valid);
       this.persist(rows => [...rows.filter(r => !(r && typeof r === "object" && "key" in r && r.key === key)), valid]);
       return clone(proposal);
@@ -206,7 +206,7 @@ export class SmartKpiCache {
   async put(scope: SmartKpiCacheScope, input: unknown): Promise<boolean> {
     await this.hydrate();
     try {
-      const key = this.key(scope), proposal = clone(validateKpiSuggestionForContext(input, scope.context, this.catalog, this.now()));
+      const key = this.key(scope), proposal = clone(validateKpiSuggestionDecomposition(validateKpiSuggestionForContext(input, scope.context, this.catalog, this.now()), scope.context));
       const row = this.validatedRow({ schema: "smart_kpi_cache.v1", key, proposal, touchedAt: this.now() });
       if (!row) return false;
       this.rows = new Map(this.compact([...this.rows.values(), row]).map(r => [r.key, r]));

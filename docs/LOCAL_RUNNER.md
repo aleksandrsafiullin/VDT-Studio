@@ -27,7 +27,9 @@ settings-time step, capped at 5 s/lower raw budget plus bounded owned cleanup.
 Shared host admission ownership deduplicates concurrent probes and quarantines
 unknown cleanup before any workspace identity/scheduler exists. Exact defaults
 are used when provable; otherwise `host_default` is an explicitly qualified alias
-bound to nonsecret config/catalog/CLI/policy metadata. Re-admission uses no one-use
+bound to nonsecret config/CLI/policy metadata. Routine Codex model-catalog
+refreshes do not change the binding; selected model and credential identity
+remain checked. Re-admission uses no one-use
 session ID or secret hash.
 
 For Smart, `/v1/completions/:requestId/cancel` waits for actual executor cleanup and

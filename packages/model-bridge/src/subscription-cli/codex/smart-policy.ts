@@ -67,6 +67,8 @@ export async function readCodexSmartDefaultModel(env: NodeJS.ProcessEnv): Promis
 export async function codexSmartMetadataIdentity(env: NodeJS.ProcessEnv, executable: string, version: string | null) {
   const metadata = async (name: string) => { try { const s = await stat(path.join(codexSmartHome(env), name)); return [s.dev, s.ino, s.size, s.mtimeMs]; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw new Error("Codex binding metadata is unreadable."); } };
   const hash = (value: unknown) => `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
-  return { bindingVersion: hash([SMART_CODEX_POLICY_VERSION, executable, version, await metadata("config.toml"), await metadata("models_cache.json")]),
+  // Codex refreshes models_cache.json during ordinary execution. That catalog
+  // timestamp is not a change to the selected adapter, model or credentials.
+  return { bindingVersion: hash(["smart-codex-binding.v2", SMART_CODEX_POLICY_VERSION, executable, version, await metadata("config.toml")]),
     credentialEpoch: hash(["codex-host-credential-metadata.v1", await metadata("auth.json")]) };
 }
