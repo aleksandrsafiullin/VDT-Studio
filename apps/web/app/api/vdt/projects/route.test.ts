@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { compareVdtProjects, productionVolumeProject, type VdtChangeSet } from "@vdt-studio/vdt-core";
 import {
@@ -15,6 +16,7 @@ import { GET as listProjects, POST as createProject } from "./route";
 import { GET as listProjectVdts, POST as createProjectVdt } from "./[projectId]/vdts/route";
 import { DELETE as deleteVdt, GET as getVdt, PATCH as updateVdt } from "../vdts/[vdtId]/route";
 import { GET as listVdtRevisions, POST as saveVdtRevision } from "../vdts/[vdtId]/revisions/route";
+import { insertProjectDeletionSession } from "../../../../../../packages/vdt-storage/src/project-deletion-test-fixtures";
 
 const tempDirs: string[] = [];
 
@@ -504,6 +506,35 @@ describe("VDT project storage APIs", () => {
       ok: true,
       deletedProjectId: "project_manual"
     });
+  });
+
+  it("deletes a project with persisted AI sessions and removes it from the explorer", async () => {
+    const { root, dataDir } = seedStoredProject();
+    vi.stubEnv("VDT_DATA_DIR", dataDir);
+    const sql = new DatabaseSync(path.join(dataDir, "app.sqlite"));
+    try {
+      insertProjectDeletionSession(sql, "run_storage_api", "project_storage_api");
+    } finally { sql.close(); }
+
+    const response = await deleteProject(new Request("http://localhost:3000/api/vdt/projects/project_storage_api", { method: "DELETE" }), {
+      params: Promise.resolve({ projectId: "project_storage_api" })
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, deletedProjectId: "project_storage_api" });
+    const explorer = await listProjects();
+    expect(await explorer.json()).toMatchObject({ ok: true, projects: [] });
+    const missing = await getProject(new Request("http://localhost:3000/api/vdt/projects/project_storage_api"), {
+      params: Promise.resolve({ projectId: "project_storage_api" })
+    });
+    expect(missing.status).toBe(404);
+    const reopened = openVdtDatabase(root, { dataDir });
+    try {
+      expect(reopened.getAgentRun("run_storage_api")).toBeNull();
+      expect(reopened.getConversation("conversation_storage_api")).toBeNull();
+      expect(reopened.listProjectMutationProposals("project_storage_api")).toEqual([]);
+      expect(reopened.listComparisons("project_storage_api")).toEqual([]);
+    } finally { reopened.close(); }
+    expect(fs.existsSync(path.join(dataDir, "projects", "project_storage_api"))).toBe(false);
   });
 
   it("returns clear not-found responses", async () => {

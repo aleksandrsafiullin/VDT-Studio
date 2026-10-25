@@ -44,14 +44,15 @@ export function validateKpiSuggestionContext(value: unknown): KpiSuggestionConte
   smartRecord(value.period, ["key", "grain"]); smartString(value.period.key, 120);
   smartAssert(["shift", "day", "week", "month", "quarter", "year", "custom"].includes(String(value.period.grain)), "INVALID_CONTEXT", "Unknown Smart period.");
   smartRecord(value.business, ["name", "description", "industry", "context", "goal"], ["name"]); smartString(value.business.name, 160);
-  for (const field of ["description", "industry", "context", "goal"]) if (value.business[field] !== undefined) smartString(value.business[field], field === "context" ? 1500 : field === "goal" ? 500 : field === "description" ? 300 : 160);
+  for (const field of ["description", "industry", "context", "goal"]) if (value.business[field] !== undefined) smartString(value.business[field], field === "context" ? KPI_SUGGESTION_LIMITS.businessContextChars : field === "goal" ? 500 : field === "description" ? 300 : 160);
   const node = (n: unknown) => {
-    smartRecord(n, ["id", "name", "description", "type", "status", "unit", "formula", "valueKnown", "valueStatus", "provenance", "mappingIdentity"],
+    smartRecord(n, ["id", "name", "description", "assumptions", "type", "status", "unit", "formula", "valueKnown", "valueStatus", "provenance", "mappingIdentity"],
       ["id", "name", "type", "status", "valueKnown", "valueStatus", "provenance"]);
     smartString(n.id, 160); smartString(n.name, 160);
     if (n.unit !== undefined) smartString(n.unit, 80);
     if (n.formula !== undefined) smartString(n.formula, 500);
     if (n.description !== undefined) smartString(n.description, 240);
+    if (n.assumptions !== undefined) stringList(n.assumptions, 3, 160);
     smartAssert(["root_kpi", "calculated", "input", "assumption", "external_factor", "data_mapped"].includes(String(n.type))
       && ["ai_suggested", "accepted", "edited", "rejected", "needs_data", "formula_issue", "unit_issue", "assumption", "external_factor"].includes(String(n.status))
       && [null, "unknown", "user_provided_value", "default_assumption", "calculated", "partially_calculable"].includes(n.valueStatus as string | null)

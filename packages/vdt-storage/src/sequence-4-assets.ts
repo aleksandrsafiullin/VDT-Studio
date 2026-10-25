@@ -182,11 +182,19 @@ export function loadVerifiedSequence4Assets(): VerifiedSequence4Assets {
 }
 
 function readExactAsset(kind: keyof typeof ASSETS): Buffer {
-  const expected = ASSETS[kind];
+  return readVerifiedMigrationAsset(ASSETS[kind]);
+}
+
+export function readVerifiedMigrationAsset(expected: {
+  url: URL;
+  basename: string;
+  byteLength: number;
+  rawHash: Sha256;
+}): Buffer {
   const resolved = resolveAssetPath(expected.url, expected.basename);
   const listed = fs.lstatSync(resolved);
   if (!listed.isFile() || listed.isSymbolicLink() || listed.nlink !== 1) {
-    throw new Error(`sequence4_asset_path_invalid:${kind}`);
+    throw new Error(`migration_asset_path_invalid:${expected.basename}`);
   }
   const descriptor = fs.openSync(
     resolved,
@@ -201,17 +209,17 @@ function readExactAsset(kind: keyof typeof ASSETS): Buffer {
       || opened.nlink !== 1
       || opened.size !== expected.byteLength
     ) {
-      throw new Error(`sequence4_asset_path_invalid:${kind}`);
+      throw new Error(`migration_asset_path_invalid:${expected.basename}`);
     }
     const bytes = Buffer.allocUnsafe(expected.byteLength);
     let offset = 0;
     while (offset < bytes.length) {
       const read = fs.readSync(descriptor, bytes, offset, bytes.length - offset, offset);
-      if (read === 0) throw new Error(`sequence4_asset_read_invalid:${kind}`);
+      if (read === 0) throw new Error(`migration_asset_read_invalid:${expected.basename}`);
       offset += read;
     }
     if (hashRawBytes(bytes) !== expected.rawHash) {
-      throw new Error(`sequence4_asset_checksum_invalid:${kind}`);
+      throw new Error(`migration_asset_checksum_invalid:${expected.basename}`);
     }
     return bytes;
   } finally {

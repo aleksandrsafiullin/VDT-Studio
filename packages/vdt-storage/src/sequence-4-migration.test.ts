@@ -7,7 +7,7 @@ import {
   __runBootstrapStorageMigrationsForTests,
   __runSequence3StorageMigrationsForTests,
   computeSchemaHash,
-  runStorageMigrations
+  __runSequence4StorageMigrationsForTests as runStorageMigrations
 } from "./migrations";
 import { VdtStorageError } from "./types";
 

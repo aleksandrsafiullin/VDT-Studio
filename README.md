@@ -22,6 +22,21 @@ identities or renamed copies of a higher-level metric. If no supported deeper
 split exists, a primitive Input may have no suggestions. Explicit manual shared
 references and already committing historical requests keep their own contracts.
 
+Preparation uses the actual project's definitions and bounded KPI assumptions.
+The shared instruction is domain-neutral; it does not attach an excavation skill
+to every request or select a model from industry keywords. Project business
+context may retain up to 8,000 characters within the unchanged 24 KiB provider
+envelope. Suggested may deepen a reference leaf through a physically meaningful
+measurement definition. Units, populations, periods, exclusive attribution and
+independent sources still have to agree. Named fixed reference parameters already
+defined by the project may be proposed as labelled inputs; values are supplied
+separately. Literal conversions, invented coefficients and complete partitions
+above six immediate components remain constrained by the arithmetic contract.
+The [all-level audit](docs/implementation/SMART_KPI_FULL_DEPTH_EVALUATION_2026-10-25.md)
+records measured behavior and limits for all 33 reference nodes over six levels,
+construction/manufacturing controls and a persisted seven-level browser extension.
+The excavation reference belongs only to that QA project.
+
 The Add count includes all selected inputs, with a separate new/reused count
 when an existing KPI is reused. Reuse keeps the original KPI rather than creating
 a duplicate. If browser quota is reached, Smart persistence stores repeated
@@ -92,6 +107,7 @@ VDT Studio is an AI-first, local-first workspace for building editable Value Dri
 ## Current Product Surface
 
 - Project and VDT workspace backed by local SQLite metadata and revision files. The workspace rail's Home link opens the home page; the editor header's back link opens the project workspace. Navigation respects browser Back/Forward.
+- Confirmed project deletion also removes its saved AI sessions and history. Database cleanup rolls back on failure before the project's files are removed; existing migration backups are retained. See [project deletion](docs/adr/ADR-009-project-deletion-with-agent-history.md).
 - Left-to-right editable factor-tree canvas with direct node editing, properties and formula warnings.
 - Deterministic formula evaluation, scenario calculation and calculation trace.
 - Scenario Mode shares the rounded neutral Settings styling and emphasizes its four totals with larger numbers. Its calculation trace starts collapsed and uses the inspector's panel toggle. Scenario inputs match Baseline's comma-grouped thousands and decimal dot, at most two decimals, regardless of browser locale. Focusing a value exposes its exact editable number; keyboard arrows and pasting grouped numbers remain supported. A per-KPI Comment column saves the actions planned to achieve the scenario, independently of numeric overrides, and copies them when cloning a scenario.

@@ -21,6 +21,12 @@ import {
   type VerifiedSequence4Assets
 } from "./sequence-4-assets";
 import {
+  loadVerifiedSequence5Assets,
+  SEQUENCE_5_MANIFEST_HASH,
+  SEQUENCE_5_SCHEMA_HASH,
+  type VerifiedSequence5Assets
+} from "./sequence-5-assets";
+import {
   validateLegacyAgentRunsForSequence3,
   type Sequence3MigrationIdentity,
   type Sequence3TransformAccepted
@@ -170,14 +176,25 @@ interface ValidatedStorageProductionPlanV3
   readonly sequence4Assets: VerifiedSequence4Assets;
 }
 
+interface ValidatedStorageProductionPlanV4 extends ValidatedStorageMigrationPlanBase {
+  readonly planKind: "v4-production";
+  readonly targetManifestHash: Sha256;
+  readonly historicalPrefixManifestHash: Sha256;
+  readonly sequence3Assets: VerifiedSequence3Assets;
+  readonly sequence4Assets: VerifiedSequence4Assets;
+  readonly sequence5Assets: VerifiedSequence5Assets;
+}
+
 type ValidatedStorageMigrationPlan =
   | ValidatedStorageMigrationTestPlan
   | ValidatedStorageProductionPlanV2
-  | ValidatedStorageProductionPlanV3;
+  | ValidatedStorageProductionPlanV3
+  | ValidatedStorageProductionPlanV4;
 
 type ValidatedStorageProductionPlan =
   | ValidatedStorageProductionPlanV2
-  | ValidatedStorageProductionPlanV3;
+  | ValidatedStorageProductionPlanV3
+  | ValidatedStorageProductionPlanV4;
 
 function isProductionMigrationPlan(
   plan: ValidatedStorageMigrationPlan
@@ -196,6 +213,7 @@ let retainedProductionMigrationPlan:
 let retainedSequence4ProductionMigrationPlan:
   | ValidatedStorageProductionPlanV3
   | undefined;
+let retainedSequence5ProductionMigrationPlan: ValidatedStorageProductionPlanV4 | undefined;
 
 export function __createStorageMigrationPlanForTests(input: {
   entries: StorageMigrationFixtureEntryV1[];
@@ -439,6 +457,7 @@ function runStorageMigrationsForPlatform(
   assertSequence3PlatformCapability(platform);
   let sequence3Plan: ValidatedStorageProductionPlanV2;
   let sequence4Plan: ValidatedStorageProductionPlanV3;
+  let sequence5Plan: ValidatedStorageProductionPlanV4;
   try {
     const sequence3Assets = loadVerifiedSequence3Assets();
     const sequence4Assets = loadVerifiedSequence4Assets();
@@ -447,6 +466,7 @@ function runStorageMigrationsForPlatform(
       sequence3Assets,
       sequence4Assets
     );
+    sequence5Plan = sequence5ProductionMigrationPlan(sequence4Plan, loadVerifiedSequence5Assets());
   } catch (error) {
     if (
       error instanceof VdtStorageError &&
@@ -466,14 +486,16 @@ function runStorageMigrationsForPlatform(
     if (userVersion(db) < 3) {
       runStorageMigrationsWithPlan(db, dataDir, options, sequence3Plan);
     }
-    runStorageMigrationsWithPlan(db, dataDir, options, sequence4Plan);
+    if (userVersion(db) < 4) {
+      runStorageMigrationsWithPlan(db, dataDir, options, sequence4Plan);
+    }
+    runStorageMigrationsWithPlan(db, dataDir, options, sequence5Plan);
   } catch (error) {
     throw normalizeProductionMigrationBoundaryError(error);
   }
 }
 
-/** Test-only exact Sequence 3 boundary. Production always continues through
- * the independently verified Sequence 4 extension. */
+/** Test-only exact Sequence 3 boundary. Production continues through later extensions. */
 export function __runSequence3StorageMigrationsForTests(
   db: DatabaseSync,
   dataDir: string,
@@ -486,6 +508,27 @@ export function __runSequence3StorageMigrationsForTests(
       dataDir,
       options,
       productionMigrationPlan(loadVerifiedSequence3Assets())
+    );
+  } catch (error) {
+    throw normalizeProductionMigrationBoundaryError(error);
+  }
+}
+
+/** Test-only exact historical Sequence 4 boundary. */
+export function __runSequence4StorageMigrationsForTests(
+  db: DatabaseSync,
+  dataDir: string,
+  options: StorageMigrationOptions
+): void {
+  assertSequence3PlatformCapability(process.platform);
+  try {
+    const sequence3Assets = loadVerifiedSequence3Assets();
+    if (userVersion(db) < 3) {
+      runStorageMigrationsWithPlan(db, dataDir, options, productionMigrationPlan(sequence3Assets));
+    }
+    runStorageMigrationsWithPlan(
+      db, dataDir, options,
+      sequence4ProductionMigrationPlan(sequence3Assets, loadVerifiedSequence4Assets())
     );
   } catch (error) {
     throw normalizeProductionMigrationBoundaryError(error);
@@ -768,14 +811,23 @@ function persistProductionPreflightChecksumBlockWhenSafe(
   db: DatabaseSync,
   dataDir: string
 ): void {
-  if (userVersion(db) === 3) {
-    persistSequence4PreflightChecksumBlockWhenSafe(db);
+  const version = userVersion(db);
+  if (version === 3 || version === 4 || version === 5) {
+    persistReadyPreflightChecksumBlockWhenSafe(
+      db, version,
+      version === 3 ? EXPECTED_SEQUENCE_3_POSTCONDITION_SCHEMA_HASH
+        : version === 4 ? EXPECTED_SEQUENCE_4_POSTCONDITION_SCHEMA_HASH : SEQUENCE_5_SCHEMA_HASH,
+      version === 3 ? EXPECTED_SEQUENCE_3_MANIFEST_HASH
+        : version === 4 ? EXPECTED_SEQUENCE_4_MANIFEST_HASH : SEQUENCE_5_MANIFEST_HASH
+    );
     return;
   }
   persistSequence3PreflightChecksumBlockWhenSafe(db, dataDir);
 }
 
-function persistSequence4PreflightChecksumBlockWhenSafe(db: DatabaseSync): void {
+function persistReadyPreflightChecksumBlockWhenSafe(
+  db: DatabaseSync, expectedVersion: number, expectedSchemaHash: Sha256, expectedManifestHash: Sha256
+): void {
   let transactionOpen = false;
   try {
     db.exec("BEGIN IMMEDIATE;");
@@ -791,10 +843,10 @@ function persistSequence4PreflightChecksumBlockWhenSafe(db: DatabaseSync): void 
       WHERE status IN ('backed_up', 'applying', 'blocked')
     `).get() as Record<string, unknown> | undefined;
     if (
-      version !== 3
-      || schemaHash !== EXPECTED_SEQUENCE_3_POSTCONDITION_SCHEMA_HASH
-      || Number(applied?.count) !== 3
-      || Number(applied?.max_sequence) !== 3
+      version !== expectedVersion
+      || schemaHash !== expectedSchemaHash
+      || Number(applied?.count) !== expectedVersion
+      || Number(applied?.max_sequence) !== expectedVersion
       || Number(activeAttempts?.count) !== 0
     ) {
       db.exec("ROLLBACK;");
@@ -804,10 +856,10 @@ function persistSequence4PreflightChecksumBlockWhenSafe(db: DatabaseSync): void 
     const changes = db.prepare(`
       UPDATE migration_state
       SET status = 'blocked', blocked_reason = 'checksum_mismatch'
-      WHERE manifest_hash = ? AND current_user_version = 3
-        AND last_applied_sequence = 3 AND status = 'ready'
+      WHERE manifest_hash = ? AND current_user_version = ?
+        AND last_applied_sequence = ? AND status = 'ready'
         AND blocked_reason IS NULL
-    `).run(EXPECTED_SEQUENCE_3_MANIFEST_HASH).changes;
+    `).run(expectedManifestHash, expectedVersion, expectedVersion).changes;
     if (changes !== 1) {
       db.exec("ROLLBACK;");
       transactionOpen = false;
@@ -3525,11 +3577,6 @@ function verifySequence3ReadyState(
     applicationId,
     appliedAt
   );
-  if (adoptions.length !== inputCount) {
-    throw sequence3PostconditionFailure(
-      "Sequence 3 ready adoption cardinality is invalid."
-    );
-  }
   const sourceStatement = db.prepare(`
     SELECT CAST(r.id AS BLOB) AS id_bytes
     FROM legacy_agent_run_adoptions_v1 a
@@ -3543,7 +3590,7 @@ function verifySequence3ReadyState(
     applicationId
   ) as Array<{ id_bytes?: unknown }>;
   if (
-    sourceRows.length !== inputCount ||
+    sourceRows.length !== adoptions.length ||
     sourceRows.some(
       (row, index) =>
         !(row.id_bytes instanceof Uint8Array) ||
@@ -3555,6 +3602,32 @@ function verifySequence3ReadyState(
     throw sequence3PostconditionFailure(
       "Sequence 3 ready adoption set does not match legacy source rows."
     );
+  }
+  if (userVersion(db) >= 5) {
+    if (db.prepare("SELECT 1 FROM project_deletion_runs_v1 LIMIT 1").get()) {
+      throw sequence3PostconditionFailure("An incomplete project deletion scope was committed.");
+    }
+    const deleted = db.prepare(`
+      SELECT run_id, database_id, migration_application_id, migration_sequence, legacy_row_hash
+      FROM project_deleted_legacy_adoptions_v1
+    `).all() as Array<Record<string, unknown>>;
+    for (const row of deleted) {
+      if (
+        row.database_id !== identity.databaseId || row.migration_application_id !== applicationId
+        || Number(row.migration_sequence) !== 3
+      ) throw sequence3PostconditionFailure("Deleted legacy adoption has a foreign migration identity.");
+      adoptions.push({
+        runId: sequence3String(row.run_id, "deleted adoption run"),
+        legacyRowHash: sequence3Sha256(row.legacy_row_hash, "deleted adoption row hash")
+      });
+    }
+    adoptions.sort((left, right) => Buffer.compare(Buffer.from(left.runId, "utf8"), Buffer.from(right.runId, "utf8")));
+    if (new Set(adoptions.map((row) => row.runId)).size !== adoptions.length) {
+      throw sequence3PostconditionFailure("Live and deleted legacy adoption evidence overlaps.");
+    }
+  }
+  if (adoptions.length !== inputCount) {
+    throw sequence3PostconditionFailure("Sequence 3 ready adoption cardinality is invalid.");
   }
   const expectedResultHash = hashFramed(
     "vdt-studio/migration-transform-result",
@@ -6621,6 +6694,39 @@ function sequence4ProductionMigrationPlan(
     targetUserVersion: 4
   });
   retainedSequence4ProductionMigrationPlan = plan;
+  return plan;
+}
+
+function sequence5ProductionMigrationPlan(
+  prefix: ValidatedStorageProductionPlanV3,
+  assets: VerifiedSequence5Assets
+): ValidatedStorageProductionPlanV4 {
+  if (retainedSequence5ProductionMigrationPlan) {
+    if (retainedSequence5ProductionMigrationPlan.sequence5Assets !== assets) {
+      throw migrationRecoveryRequired("Sequence 5 assets changed after plan validation.");
+    }
+    return retainedSequence5ProductionMigrationPlan;
+  }
+  if (assets.historicalPrefixManifestHash !== prefix.targetManifestHash) {
+    throw migrationRecoveryRequired("Sequence 5 is not an exact extension of the Sequence 4 manifest.");
+  }
+  const entry = manifestEntry({
+    ...assets.entry, sqlBytes: assets.sqlBytes, expectedChecksum: assets.entry.sqlChecksum
+  });
+  const prefixHashes = Object.freeze([...prefix.prefixHashes, assets.manifestHash]);
+  const plan: ValidatedStorageProductionPlanV4 = Object.freeze({
+    ...prefix,
+    planKind: "v4-production",
+    targetManifestHash: assets.manifestHash,
+    historicalPrefixManifestHash: prefix.targetManifestHash,
+    sequence5Assets: assets,
+    entries: Object.freeze([...prefix.entries, Object.freeze({ manifestEntry: entry, sqlBytes: Buffer.from(assets.sqlBytes) })]),
+    prefixHashes,
+    prefixSequenceByHash: new Map(prefixHashes.map((hash, index) => [hash, index + 1])),
+    targetSequence: 5,
+    targetUserVersion: 5
+  });
+  retainedSequence5ProductionMigrationPlan = plan;
   return plan;
 }
 

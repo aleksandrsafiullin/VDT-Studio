@@ -6,6 +6,7 @@ import type { VdtProject } from "@vdt-studio/vdt-core";
 import { AtomicRevisionStore } from "./atomic-revisions";
 import { defined, decodeJson, encodeJson, toIso, toMillis } from "./json";
 import { runStorageMigrations } from "./migrations";
+import { deleteProjectAgentData } from "./project-deletion";
 import {
   assertInside,
   assertSafeId,
@@ -162,6 +163,7 @@ export class SqliteVdtDatabase implements VdtDatabase {
     const current = this.getProject(projectId);
     if (!current) return false;
     const deleted = this.transaction(() => {
+      deleteProjectAgentData(this.db, projectId, toMillis(this.now()));
       const vdtRows = this.db.prepare("SELECT id FROM vdts WHERE project_id = ?").all(projectId) as Row[];
       for (const row of vdtRows) {
         const vdtId = string(row.id);

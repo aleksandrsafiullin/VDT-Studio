@@ -7,7 +7,7 @@ factors. A single renamed total is rejected by the response and preparation
 cache gates. The model instruction requires a defensible decomposition and
 permits missing measured values; a primitive KPI without a supported split may
 return empty. This structural minimum does not certify business semantics.
-Preparation policy v5 also preserves the direction of the existing model:
+Preparation policy v10 retains the v5 direction rules and preserves the direction of the existing model:
 siblings/ancestors are context only. Suggested reuse is limited to active
 existing direct children; for an eligible Input leaf every component is new.
 Current preparation/cache/display and new preview/Add reject non-child source
@@ -18,6 +18,23 @@ or estimated values do not establish a valid decomposition. Synonyms and
 business meaning still require model/user judgement; this is not general
 semantic certification. Historical committing receipts remain exact-replayable;
 explicit manual formulas/shared references keep their separate contract.
+The task carries the project's own business/model definitions and up to three
+bounded assumptions per observed KPI. The common prompt is domain-neutral;
+no fixed excavation instruction is attached to arbitrary projects. Project
+business context may retain up to 8,000 characters, subject to the full 24 KiB
+provider-envelope bound and explicit omissions. Specific project direct-factor
+definitions take precedence over an unrelated generic recipe. Limits concern
+the selected immediate layer, not future child
+layers. A Suggested request explicitly asks to deepen the selected input, even
+when the reference tree ends there. Valid event/duration, exclusive cause or
+independent measurement definitions are allowed. A reference leaf alone is not
+an empty-result reason. Deeper definitions preserve physical meaning, population,
+period and unit basis without reversing an existing parent equation. Fixed
+conversion literals remain restricted; a fixed reference parameter explicitly
+defined in the project can be a labelled input, with its value supplied
+separately. Unsupported conversions and complete partitions above six components
+may remain empty with a specific explanation. This does not claim that Smart
+can reproduce every level of a full-agent tree.
 Refresh/Retry first re-admits current execution metadata and starts an explicit
 attempt. Clean retained drafts adopt the refreshed source; edited drafts remain
 available with an explicit Review latest action. Add errors belong to their
@@ -145,6 +162,7 @@ The root KPI appears on the left and drivers expand to the right. The canvas is 
 ### Projects and VDTs
 
 - Create, list, update and delete projects and VDT records.
+- Confirmed complete-project deletion removes its VDTs, revisions, conversations, project files and AI session history. Database cleanup is transactional; files are removed after commit. Existing migration backups and identifiers/hashes needed to verify legacy migration membership remain retained. Individual-VDT deletion with durable AI audit references remains a separate limitation; see [ADR-009](adr/ADR-009-project-deletion-with-agent-history.md).
 - Persist local metadata in SQLite and VDT snapshots as hashed revision files.
 - List, load and compare saved revisions.
 - Preserve user work across reloads while avoiding silent conflict or stale overwrite.

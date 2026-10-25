@@ -48,9 +48,40 @@ excluded. An unprovable default is labelled
 `host_default`, not an exact-model claim. Alias drift, live latency, private CLI
 cost limits and hard isolation remain unqualified. See [ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
 
+Preparation v10 uses a domain-neutral shared prompt and the actual project's
+business/model definitions. It does not send `mining.excavation` to every
+project. An earlier evaluation-only global guidance projection was withdrawn.
+The explicit Ore Excavation QA reference is now supplied only through that test
+project's ordinary `businessContext`; construction/manufacturing controls receive
+their own definitions without that reference. Automatic applicable-skill
+retrieval/binding for Suggested is not implemented by this change.
+
+Project business context may retain up to 8,000 characters. Up to three bounded
+node assumptions accompany business/root/target/ancestor/sibling/plan context
+as untrusted data. A reference leaf may receive a deeper measurable definition.
+Event counts and event-weighted durations need matching populations and periods;
+additive causes need complete, exclusive attribution; opaque unit atoms must
+cancel exactly. No second inference, provider switch or new tool authority is added.
+
+The prompt distinguishes exact recipe bindings from adapted generic formulas,
+requires population and unit cancellation, preserves project-defined immediate layers
+and applies restrictions only to the selected target. Unsupported fixed
+conversions or oversized complete partitions may return a specific empty reason.
+Project-defined fixed parameters may appear as explicitly labelled reference
+inputs, with values entered separately; no model-authored value or literal
+conversion is admitted. Full project semantics and preparation v10 invalidate
+rebuildable cache entries; historical committing journals retain exact replay.
+Context construction reserves instruction/recipes/schema/escaped-envelope space before
+optional excerpts shrink. Final transport gates still enforce 24 KiB.
+Nearest parents and siblings are retained ahead of distant ancestry and optional
+prose, so direction/duplicate decisions retain the immediate model definition.
+The shared instruction explicitly distinguishes legitimate lower-level
+measurement ratios from inverse parent identities and refuses filler expansions
+of a fixed unit conversion itself.
+
 ## Incoming formula and legacy deepen version
 
-Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v5` with the bounded one-call wire. Each alternative requires 2–6 substantive components in schema/runtime/cache admission, rejecting a single renamed total. Context-aware preparation admits reused sources only from active direct children and rejects exact normalized contextual-metric copies. The prompt prohibits inverse ancestor/sibling identities and new aliases that disguise them; a primitive Input without a defensible lower-level split may return empty. The prompt requests a concise coherent definition and matching-scale unknown inputs; missing measurements alone do not require empty. Generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no admission or inference. Historical wire/journal replay does not apply this new preparation policy retroactively.
+Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v10` with the bounded one-call wire. Each alternative requires 2–6 substantive components in schema/runtime/cache admission, rejecting a single renamed total. Context-aware preparation admits reused sources only from active direct children and rejects exact normalized contextual-metric copies. The prompt prohibits inverse ancestor/sibling identities and new aliases that disguise them; an Input without a defensible lower-level split may return empty. The prompt requests a concise coherent definition and matching-scale unknown inputs; missing measurements alone do not require empty. Generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no admission or inference. Historical wire/journal replay does not apply this new preparation policy retroactively.
 
 The registered `deepen_node` task now selects `deepen-node-v2`: `schemaVersion=deepen_node.v2`, required `targetFormula`, exact `retainedNodeIds` and one layer of primitive children. Mapping requires the actual project/root and emits formula, calculated/root type and accepted plan delta together. Historical `deepen-node-v1` output remains a readable compatibility schema but cannot apply a new child-only graph mutation. This does not affect exact replay of an already committing Smart v1 request. Both selected-layer agent finish implementations require the target definition and every new input; unknown measured values may remain unavailable. Default full-tree finish remains strict.
 

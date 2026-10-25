@@ -82,11 +82,18 @@ Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md`, the
 | [`ADR-006`](adr/ADR-006-bounded-dual-profile-agent-execution.md) | Accepted dual-profile target architecture; tested foundations are implemented, public Supervisor/storage wiring is partial, external execution remains default-off and unqualified |
 | [`ADR-007`](adr/ADR-007-encrypted-browser-api-keys.md) | Implemented encrypted origin-local BYOK key retention and deletion; browser-profile security boundary; native qualification open |
 | [`ADR-008`](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md) | Bounded Smart preparation/apply, direction-restricted Suggested components, baseline reconciliation, illustrative estimates and quota-aware lossless editor recovery; local Chrome storage/replay evidence is separate from live model semantic/WebView/native package qualification |
+| [`ADR-009`](adr/ADR-009-project-deletion-with-agent-history.md) | Scoped complete-project deletion with AI history, preserved migration hash evidence and rollback; secure erasure and individual-VDT audit cleanup remain separate |
 
 Smart suggestions follow the [plan](implementation/SMART_KPI_SUGGESTIONS_PLAN.md),
 [execution log](implementation/SMART_KPI_SUGGESTIONS_LOG.md) and
-[independent review](implementation/SMART_KPI_SUGGESTIONS_REVIEW.md). These do not
-change the corrective program's release or W0.2 authority.
+[independent review](implementation/SMART_KPI_SUGGESTIONS_REVIEW.md). The
+[initial quality evaluation](implementation/SMART_KPI_QUALITY_EVALUATION_2026-10-25.md)
+is historical; its global excavation-guidance approach was withdrawn. The current
+[all-level audit](implementation/SMART_KPI_FULL_DEPTH_EVALUATION_2026-10-25.md)
+covers all 33 Ore Excavation reference nodes across six levels, cross-domain
+controls and the persisted seven-level browser extension. It distinguishes
+physical validity from reference fidelity and records remaining contract limits.
+These checks do not change the corrective program's release or W0.2 authority.
 
 ## Historical And Reference-Only Documents
 

@@ -2,6 +2,7 @@ import type { VdtProject, VdtNode } from "../types";
 import type { KpiSuggestionContext, KpiSuggestionExecutionIdentity, KpiSuggestionPeriod, KpiContextNode } from "./types";
 import { KPI_SUGGESTION_LIMITS, KPI_SUGGESTION_PREPARATION_VERSION, KPI_SUGGESTION_SCHEMA, KPI_SUGGESTION_VALIDATOR } from "./types";
 import { validateKpiSuggestionContext } from "./validation";
+import { kpiSuggestionEnvelopeBytes } from "./model-output";
 
 /** Canonical feature-local JSON, not a replacement for storage's frozen serializer. */
 export function kpiCanonicalJson(value: unknown): string {
@@ -52,12 +53,16 @@ export async function buildKpiSuggestionContext(project: VdtProject, options: Bu
     const ins = incoming.get(edge.targetNodeId) ?? new Set<string>(); ins.add(edge.sourceNodeId); incoming.set(edge.targetNodeId, ins);
   }
   const children = [...(outgoing.get(target.id) ?? [])].sort();
-  const ancestorIds = new Set<string>(), frontier = [...(incoming.get(target.id) ?? [])];
-  while (frontier.length) {
-    const id = frontier.pop()!;
-    if (ancestorIds.has(id)) continue;
-    ancestorIds.add(id); frontier.push(...(incoming.get(id) ?? []));
+  const ancestorDistance = new Map<string, number>();
+  const frontier = [...(incoming.get(target.id) ?? [])].map(id => ({ id, distance: 1 }));
+  for (let index = 0; index < frontier.length; index++) {
+    const { id, distance } = frontier[index]!;
+    if ((ancestorDistance.get(id) ?? Infinity) <= distance) continue;
+    ancestorDistance.set(id, distance);
+    frontier.push(...[...(incoming.get(id) ?? [])].map(parent => ({ id: parent, distance: distance + 1 })));
   }
+  const ancestorIds = new Set(ancestorDistance.keys());
+  const orderedAncestors = [...ancestorIds].sort((a, b) => ancestorDistance.get(a)! - ancestorDistance.get(b)! || a.localeCompare(b, "en"));
   const siblings = [...new Set([...(incoming.get(target.id) ?? [])].flatMap(id => [...(outgoing.get(id) ?? [])]))]
     .filter(id => id !== target.id && !children.includes(id)).sort();
   let omittedText = false;
@@ -66,17 +71,21 @@ export async function buildKpiSuggestionContext(project: VdtProject, options: Bu
     if (s.length > max) omittedText = true;
     return s.slice(0, max);
   };
-  const summarize = async (n: VdtNode): Promise<KpiContextNode> => ({
+  const summarize = async (n: VdtNode): Promise<KpiContextNode> => {
+    if ((n.assumptions?.length ?? 0) > 3) omittedText = true;
+    return {
     id: n.id, name: text(n.name, 160)!, type: n.type, status: n.status,
     ...(n.description ? { description: text(n.description, 240)! } : {}),
+    ...(n.assumptions?.length ? { assumptions: n.assumptions.slice(0, 3).map(note => text(note, 160)!) } : {}),
     ...(n.unit ? { unit: text(n.unit, 80)! } : {}), ...(n.formula ? { formula: text(n.formula, 500)! } : {}),
     valueKnown: n.baselineValue !== undefined || n.value !== undefined, valueStatus: n.valueStatus ?? null,
     provenance: n.dataMapping ? "mapped" : n.valueSource ? "sourced" : "unsourced",
     ...(n.dataMapping ? { mappingIdentity: await kpiContentHash(n.dataMapping) } : {})
-  });
+    };
+  };
   const pick = async (ids: string[], max: number) => Promise.all(ids.slice(0, max).filter(id => nodes.has(id)).map(id => summarize(nodes.get(id)!)));
   const [rootSummary, targetSummary, childSummaries, ancestorSummaries, siblingSummaries] = await Promise.all([
-    summarize(root), summarize(target), pick(children, 12), pick([...ancestorIds].sort(), 10), pick(siblings, 8)
+    summarize(root), summarize(target), pick(children, 12), pick(orderedAncestors, 10), pick(siblings, 8)
   ]);
   const relevantPlan = root.decompositionPlan?.nodes.filter(n => n.nodeId === target.id || n.parentNodeId === target.id);
   const summaryIds = new Set([root.id, target.id, ...childSummaries.map(n => n.id), ...ancestorSummaries.map(n => n.id), ...siblingSummaries.map(n => n.id)]);
@@ -91,7 +100,7 @@ export async function buildKpiSuggestionContext(project: VdtProject, options: Bu
     targetNodeId: target.id, graphFingerprint: options.graphFingerprint ?? await fingerprintKpiProject(project), contextHash: "",
     period: options.period,
     business: { name: text(project.name, 160)!, ...(project.description ? { description: text(project.description, 300)! } : {}),
-      ...(project.industry ? { industry: text(project.industry, 160)! } : {}), ...(project.businessContext ? { context: text(project.businessContext, 1500)! } : {}),
+      ...(project.industry ? { industry: text(project.industry, 160)! } : {}), ...(project.businessContext ? { context: text(project.businessContext, KPI_SUGGESTION_LIMITS.businessContextChars)! } : {}),
       ...(options.goal ? { goal: text(options.goal, 500)! } : {}) },
     root: rootSummary, target: targetSummary, children: childSummaries, ancestors: ancestorSummaries, siblings: siblingSummaries,
     // Full plan is fingerprinted above. Excerpt only preserves entries relevant to this target.
@@ -108,11 +117,24 @@ export async function buildKpiSuggestionContext(project: VdtProject, options: Bu
   // Bind full untruncated business/goal plus all graph semantics, not just excerpt text.
   context.contextHash = await kpiContentHash({ schema: context.schemaVersion, workspaceId: options.workspaceId, projectId: project.id,
     vdtId: options.vdtId, targetNodeId: target.id, graphFingerprint: context.graphFingerprint, period: options.period, goal: options.goal });
-  // Optional distant context gives way to a bounded target/direct-child excerpt.
-  while (new TextEncoder().encode(JSON.stringify(context)).byteLength > KPI_SUGGESTION_LIMITS.inputBytes - 4096) {
-    if (context.siblings.pop()) context.omissions.siblings++;
-    else if (context.ancestors.pop()) context.omissions.ancestors++;
+  // Keep the nearest parent and siblings visible for direction/duplicate checks.
+  // Root is always supplied separately; distant ancestry and prose give way first.
+  const shrinkBusinessText = () => {
+    for (const field of ["context", "description", "goal"] as const) {
+      const value = context.business[field];
+      if (value && value.length > 160) { context.business[field] = value.slice(0, Math.max(160, Math.floor(value.length / 2))); return true; }
+    }
+    return false;
+  };
+  while (kpiSuggestionEnvelopeBytes(context) > KPI_SUGGESTION_LIMITS.inputBytes) {
+    let distantIndex = context.ancestors.length - 1;
+    while (distantIndex >= 0 && parentIds.has(context.ancestors[distantIndex]!.id)) distantIndex--;
+    if (distantIndex >= 0) { context.ancestors.splice(distantIndex, 1); context.omissions.ancestors++; }
+    else if (context.decompositionPlan?.nodes.pop()) context.omissions.planNodes++;
+    else if (shrinkBusinessText()) context.omissions.text = true;
+    else if (context.siblings.pop()) context.omissions.siblings++;
     else if (context.children.pop()) context.omissions.directChildren++;
+    else if (context.ancestors.pop()) context.omissions.ancestors++;
     else throw new Error("Smart target/context exceeds the bounded input limit.");
     const remaining = new Set([context.root.id, context.target.id, ...context.children.map(n => n.id), ...context.ancestors.map(n => n.id), ...context.siblings.map(n => n.id)]);
     const kept = context.parentRelationships.filter(e => remaining.has(e.parentNodeId) && remaining.has(e.childNodeId));

@@ -2,7 +2,7 @@
 
 ## Smart KPI preparation and explicit apply boundary
 
-Preparation policy `smart-kpi-preparation.v5` requires at least two components
+Preparation policy `smart-kpi-preparation.v10` retains the v5 direction rules and requires at least two components
 per alternative in model output and rebuildable cache admission. Store preview
 and new Add also reject retained singleton proposals before journal reservation.
 Wire proposal
@@ -14,11 +14,26 @@ The current-policy validator additionally takes the host-built context. It
 restricts proposed source IDs to active direct children and rejects exact
 normalized target/ancestor/sibling name copies. Materialization, scheduler,
 contextual cache lookup/write and new store preview/Add apply this check. Policy
-v5 invalidates rebuildable v4 outcomes; generic historical wire validation and
+v10 invalidates older rebuildable outcomes; generic historical wire validation and
 committing receipt replay are unchanged. Ancestor/sibling formulas remain context
 for understanding the target; the shared prompt prohibits algebraic reversal,
 including new aliases for a parent. This direction guard is separate from the
 general manual compiler, which still supports explicit shared references.
+
+The shared task has no fixed domain guidance catalog. Its input is the bounded
+project context plus the existing arithmetic recipe catalog. Domain definitions
+belong to the actual project's `businessContext`, assumptions and model plan;
+they are untrusted project data, not new tool authority. No industry-keyword
+router or implicit library selection is added. The complete project context is
+fingerprinted, so even an omitted tail invalidates stale preparation results.
+
+Context summaries retain at most three assumptions of 160 characters per node.
+Project business prose may retain up to 8,000 characters. The context builder
+reserves instruction, recipes, schema and escaped provider-envelope bytes.
+Ancestors are ordered by distance. Under pressure, distant ancestry, plan rows
+and optional prose give way before nearby siblings, children and immediate
+parents. Root and target remain explicit, and omission flags/counts remain
+visible. Existing 24 KiB and final transport limits are unchanged.
 
 Codex binding identity includes policy, selected executable/version and config
 metadata; `models_cache.json` refresh metadata is excluded. Model selection and
@@ -176,6 +191,23 @@ Planned non-numerical reference containers are derived from the root decompositi
 
 The optional `VdtNode.decompositionPlan` root metadata holds the agent-authored version-1 factor plan. It is a permitted internal node change-set field, not an unrestricted public `vdt.update_node` argument. Existing node-update preview, approval, revision-CAS, receipt, undo and snapshot paths persist it without a storage migration. Formula and visual-edge storage remain independent; the new full-tree Supervisor policy requires their declared hierarchy agreement before finish. The host validates structure and declared shared references, not domain selection or business formulas. Branch reparenting is one ordinary edge change-set transaction, with no numeric or formula rewriting. Legacy/manual project reading and arithmetic stay backward-compatible.
 
+## Project deletion
+
+Sequence 5 extends the exact historical Sequence 4 manifest with scoped project
+deletion guards. `SqliteVdtDatabase.deleteProject` reserves only the selected
+project's runs, purges their engine/session/coordinator history, and removes the
+revision journals and project in one immediate transaction. Foreign keys remain
+enabled, with cyclic references deferred until COMMIT. The project cascade
+clears the run scopes; failure rolls all database changes back before filesystem
+cleanup. Project directories are removed only after commit.
+
+Legacy adoption hashes move into immutable deletion receipts. Startup combines
+them with verified live adoptions and checks the original Sequence 3 transform
+result and cardinality; historical SQL, application records and manifest hashes
+remain intact. Shared approval policies and migration backups are retained.
+This is complete-project cleanup; individual VDT audit cleanup and secure media
+erasure are not implemented. See [ADR-009](adr/ADR-009-project-deletion-with-agent-history.md).
+
 ## Project file library
 
 Project files are now owned by the SQLite workspace project, with explicit
@@ -250,7 +282,7 @@ flowchart LR
 | `apps/web` | Next.js UI, API routes, Zustand UI/draft state and execution-client boundary |
 | `apps/desktop` | Tauri shell, reviewed native commands, sidecar host and private IPC |
 | `packages/vdt-core` | Graph/domain types, change sets, formula parser/evaluator, validation, scenarios, comparison and export |
-| `packages/vdt-storage` | SQLite project metadata, strict atomic revision commit/recovery, production Sequence 3 plus additive Sequence 4 migration, conversations and filesystem layout |
+| `packages/vdt-storage` | SQLite project metadata, strict atomic revision commit/recovery, production Sequence 3–5 migrations, scoped project deletion, conversations and filesystem layout |
 | `packages/vdt-agent` | Current V1 skill parsing/classification/retrieval and recipe compilation; target single-copy repository contracts |
 | `packages/vdt-agent-runtime` | Compatibility decision loop plus session contracts, Supervisor, VDT Gateway, Event V2 outbox, receipts, finish verification, research tools and mutation pipeline |
 | `packages/data-harness` | Experimental file parsing, profiling, semantic inference, data-agent loop and mapping proposals |

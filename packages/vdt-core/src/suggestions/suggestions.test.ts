@@ -8,6 +8,7 @@ import type { VdtProject } from "../types";
 import { compileKpiSuggestion } from "./compile";
 import { createSmartKpiMeasuredFixture, SMART_KPI_FIXTURE_TIME as now } from "./fixtures";
 import { buildKpiSuggestionContext, fingerprintKpiProject, kpiContentHash, kpiSuggestionCacheKey, smartMutationBlockReason } from "./identity";
+import { kpiSuggestionEnvelopeBytes } from "./model-output";
 import { buildRecipeKpiSuggestions, KPI_SUGGESTION_RECIPES as catalog, validateKpiSuggestionForContext } from "./recipes";
 import type { KpiSuggestionSet, KpiSuggestionContext, KpiRecipeBinding, KpiSuggestionExecutionIdentity, KpiSuggestionSelection } from "./types";
 import { kpiFormulaAvailability, smartUnitDimension, verifyKpiRecipeGroup } from "./units";
@@ -58,7 +59,10 @@ describe("Smart context and preparation identity", () => {
     for (let i = 0; i < 220; i++) addNode(project, `node_${i}`);
     project.graph.edges.push({ id: "shared_dag_edge", sourceNodeId: "node_0", targetNodeId: "node_219", relation: "contextual_influence", aiGenerated: false });
     const context = await contextFor(project);
-    expect(context.children).toHaveLength(12); expect(context.omissions.directChildren).toBe(208);
+    expect(context.children.length).toBeGreaterThan(0);
+    expect(context.children.length).toBeLessThanOrEqual(12);
+    expect(context.children.length + context.omissions.directChildren).toBe(220);
+    expect(kpiSuggestionEnvelopeBytes(context)).toBeLessThanOrEqual(24 * 1024);
     expect(JSON.stringify(context).length).toBeLessThan(24 * 1024);
     project.graph.edges.push({ id: "cycle_edge", sourceNodeId: "node_219", targetNodeId: project.rootNodeId, relation: "contextual_influence", aiGenerated: false });
     expect((await contextFor(project)).omissions.cyclic).toBe(true);
@@ -100,7 +104,7 @@ describe("Smart context and preparation identity", () => {
     expect(() => validateKpiSuggestionContext({ ...context, period: { ...context.period, grain: "hour" } })).toThrow();
     expect(() => validateKpiSuggestionContext({ ...context, business: { ...context.business, context: "x".repeat(30_000) } })).toThrow();
   });
-  it("preserves ancestor order and multiple-parent DAG relationships, not only an ancestor bag", async () => {
+  it("keeps nearest ancestors first and multiple-parent DAG relationships, not only an ancestor bag", async () => {
     const p = createSmartKpiMeasuredFixture(); addNode(p, "a"); addNode(p, "b"); addNode(p, "leaf");
     p.graph.edges.find(e => e.targetNodeId === "b")!.sourceNodeId = "a";
     p.graph.edges.find(e => e.targetNodeId === "leaf")!.sourceNodeId = "b";
@@ -110,7 +114,9 @@ describe("Smart context and preparation identity", () => {
     q.graph.edges.find(e => e.targetNodeId === "b")!.sourceNodeId = q.rootNodeId;
     q.graph.edges.find(e => e.targetNodeId === "leaf")!.sourceNodeId = "a";
     const second = await contextFor(q, "leaf");
-    expect(first.ancestors.map(n => n.id)).toEqual(second.ancestors.map(n => n.id));
+    expect(first.ancestors.map(n => n.id).sort()).toEqual(second.ancestors.map(n => n.id).sort());
+    expect(first.ancestors[0]!.id).toBe("b");
+    expect(second.ancestors[0]!.id).toBe("a");
     expect(first.parentRelationships).not.toEqual(second.parentRelationships);
     expect(first.contextHash).not.toBe(second.contextHash);
     q.graph.edges.push({ id: "second_parent", sourceNodeId: "b", targetNodeId: "leaf", relation: "contextual_influence", aiGenerated: false });

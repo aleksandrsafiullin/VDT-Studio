@@ -4,7 +4,7 @@ orchestrator_id: vdt.mining.excavation
 name: mining-excavation-vdt
 title: Mining excavation VDT decomposition
 domain: mining
-version: 13
+version: 18
 language: en-only
 description: >-
   Use this skill when the user asks to build, deepen, calculate, review, or
@@ -248,6 +248,13 @@ truck_loading_time_min = loading_movement_unloading_time_min
 loaded_trucks_per_hour = 60 / truck_loading_time_min
 ```
 
+Loading movement/unloading here means excavator bucket movement and bucket
+discharge into the truck at the face. Truck departure/arrival means the loaded
+truck clearing the excavator loading position and the next truck positioning
+there. These intervals exclude haul-route travel, queueing and truck dumping
+downstream. Keep excavator relocation within the loading cycle separate from
+period relocation downtime.
+
 Do not expand this into truck fleet sizing, route cycle time, queueing, or
 downstream constraints.
 
@@ -281,6 +288,11 @@ tonnes_per_truck = buckets_per_truck * tonnes_per_bucket
 
 ore_excavator_productivity_tph = loaded_trucks_per_hour * tonnes_per_truck
 ```
+
+Bucket volume denotes rated capacity before the actual fill adjustment. Density
+in the bucket is loose density. Do not apply fill, solid-to-loose conversion or
+swell twice. Bucket capacity needs measured/certified geometry; an unspecified
+bucket cannot be treated as a rectangular box.
 
 ## Rock Productivity
 
@@ -324,6 +336,24 @@ total_excavation_output = sum(class_or_area_excavation_output)
 
 Do not add ore tonnes and rock cubic meters unless the parent KPI defines a
 conversion or reporting convention.
+
+## Optional Measurement Detail
+
+The reference leaves are starting site inputs, not a prohibition on a requested
+deeper definition. Downtime may use distinct events per excavator multiplied by
+event-weighted mean hours per event over the same population and period.
+Per-truck durations may use repetitions per loaded truck times minutes per
+repetition. Additive causes need complete, exclusive attribution: assign every
+overlapping interval to exactly one category, not both or neither. Residual
+"other downtime" needs actual cause definitions before a cause partition.
+
+Independent measurement ratios may define average rated capacity from total
+rated capacity and matching bucket count, solid density from sample mass and
+solid sample volume, or swell from loose and solid volumes of the same material
+quantity. Keep capacity separate from filled material volume and avoid duplicate
+sources when a required measurement already exists in the model. These are
+measurement definitions, not assumed site values or permissions to reverse an
+existing parent equation.
 
 ## Default And Catalog Lookup Contract
 

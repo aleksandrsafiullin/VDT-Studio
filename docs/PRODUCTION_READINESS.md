@@ -1,5 +1,43 @@
 # Production Readiness
 
+## Project deletion with AI history
+
+Implemented in source: Sequence 5 adds a checked, backed-up migration and scoped
+complete-project cleanup for durable AI history. Ordinary audit mutation remains
+blocked; deletion is restricted to the selected project's runs and rolls back on
+database failure. Legacy adoption identifiers/hashes remain sufficient to verify
+the original migration result after deletion and reopen. The project's directory
+is removed after commit; existing migration backups remain retained. Individual
+VDT deletion with audit references, secure erasure, packaged native and Windows
+qualification remain open. See [ADR-009](adr/ADR-009-project-deletion-with-agent-history.md).
+
+## Suggested KPI semantic evaluation (2026-10-25)
+
+Implemented locally: preparation v10 keeps the shared instruction domain-neutral
+and uses actual project definitions and bounded node assumptions in the same
+completion. Project business prose may retain up to 8,000 characters within the
+unchanged 24 KiB provider envelope; full project semantics invalidate stale cache
+results. An earlier global excavation-guidance projection was withdrawn.
+
+The final scenario-specific Codex CLI `gpt-5.6-luna` audit tested all 33 Ore
+Excavation reference nodes on six levels. Nine of ten calculated reference
+layers matched; total downtime received a physically valid alternative rather
+than the ten-category reference partition. Reference leaves were assessed by
+physical meaning, not rejected for added depth. Construction, manufacturing and
+gross-revenue controls matched their own project definitions. A live browser Add
+extended the deepest branch to seven levels and restored 25 nodes after reload,
+with the root preserved. The final deterministic gate passed 247 tests in 18
+files under Node v24.15.0. See the
+[full assessment and evidence](implementation/SMART_KPI_FULL_DEPTH_EVALUATION_2026-10-25.md).
+
+This is not general semantic/provider qualification. Complete immediate
+partitions above six rows, non-child shared-input reuse, automatic applicable-skill
+retrieval for Suggested, realistic numerical estimates and native/Windows
+qualification remain open. The full audit supersedes the
+[historical initial assessment](implementation/SMART_KPI_QUALITY_EVALUATION_2026-10-25.md)
+and distinguishes physical validity from exact reference-tree fidelity.
+The release gate is unchanged.
+
 ## Suggested decomposition direction (2026-10-25)
 
 Implemented in source: preparation policy v5 limits automatic proposed reuse to

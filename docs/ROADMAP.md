@@ -1,5 +1,26 @@
 # Roadmap
 
+## Suggested KPI instruction quality (2026-10-25)
+
+Implemented locally: preparation v10 is domain-neutral and uses the actual
+project's definitions plus bounded node assumptions in the existing completion.
+It does not attach an excavation skill to other projects. Project business prose
+may retain up to 8,000 characters within the unchanged provider-envelope cap;
+full project semantics invalidate stale cache results. The model preserves the
+project's direct factor layer and uses exact recipes only when concepts/units match.
+The [initial evaluation](implementation/SMART_KPI_QUALITY_EVALUATION_2026-10-25.md) is historical.
+The [full-depth follow-up](implementation/SMART_KPI_FULL_DEPTH_EVALUATION_2026-10-25.md)
+tests all 33 reference nodes on six levels. Reference leaves may receive deeper
+Suggested definitions, assessed by physical meaning and scope rather than exact
+reference depth. A real browser Add reached seven levels, persisted 25 nodes and
+preserved the root after reload. Full-reference acceptance
+still requires the complete ten-category downtime layer; explanatory empty
+responses do not satisfy required reference splits. Fixed reference inputs may
+use project-defined values entered separately; automatic fixed-value locking is
+not added. Applicable-skill retrieval/binding for Suggested, arbitrary model
+semantic consistency, non-child shared-input reuse, larger immediate partitions and native/Windows qualification
+remain open. This does not change the release gate.
+
 ## Suggested decomposition and execution refresh (2026-10-25)
 
 Implemented in source: preparation policy v5 restricts Suggested reuse to active
@@ -185,6 +206,7 @@ This roadmap is the operational summary of the authoritative [`VDT_STUDIO_CORREC
 Implemented at alpha level:
 
 - project/VDT workspace and local SQLite revision storage, including Home/back links that await a successful revision save, preserve edits on save failure, and synchronize browser Back/Forward selection;
+- complete-project deletion with scoped AI-history cleanup, transaction rollback and unchanged legacy migration hash verification; individual-VDT audit cleanup and secure erasure remain open ([ADR-009](adr/ADR-009-project-deletion-with-agent-history.md));
 - editable left-to-right canvas, basic formula engine, scenarios and trace;
 - Scenario Mode with Settings-style rounded neutral surfaces, larger summary totals, an initially collapsed calculation trace using the inspector toggle icon, Baseline-matched comma-grouped/decimal-dot resting values independent of browser locale, full-precision editing with grouped-number paste and keyboard stepping, and saved per-scenario KPI action comments that survive override reset and copy with scenario cloning; Export to Excel includes the selected scenario's comments in a wrapped Comment column for drivers and additional overrides, independently of numeric changes;
 - a unified Versions side panel with readable/named checkpoints, before/after KPI/formula comparison, automatic pre-restore backups and session Undo guarded against later edits; the existing 20-snapshot FIFO and W0.5 persistence limitations remain;

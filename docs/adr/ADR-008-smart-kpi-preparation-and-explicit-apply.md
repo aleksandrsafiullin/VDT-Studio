@@ -17,6 +17,23 @@ can remain inputs of a supported definition; primitive/unsupported definitions
 may return empty. Structural checks do not establish business semantics.
 Historical proposal/journal validation and exact replay stay unchanged.
 
+Context amendment 2026-10-25: preparation v10 retains v5 direction checks and
+uses a domain-neutral instruction with actual project definitions and bounded
+node assumptions. A provisional v6/v7 global excavation-guidance projection was
+withdrawn; it is not a runtime dependency. Domain references belong to the
+specific project's context. Business prose may retain up to 8,000 characters;
+context sizing still reserves the full instruction/recipes/schema envelope within
+24 KiB. Full project semantics and the preparation version invalidate rebuildable
+outcomes. Historical output/proposal schemas and committing replay remain compatible.
+
+The [all-level evaluation](../implementation/SMART_KPI_FULL_DEPTH_EVALUATION_2026-10-25.md)
+compares all reference nodes. Reference leaves may receive physically meaningful
+definitions, with matching units/populations/periods, independent measurements
+and complete exclusive cause attribution. Named fixed parameters already defined
+in project context may be labelled reference inputs with separately supplied
+values; literal conversions and invented defaults remain prohibited. No automatic
+domain selection, larger row limit, fixed-value locking or research loop is added.
+
 Direction amendment 2026-10-25: preparation policy v5 supersedes v4 for new
 outcomes. Reused proposed inputs must be active direct children. Sibling,
 ancestor, target and unrelated source IDs, plus exact normalized copies of

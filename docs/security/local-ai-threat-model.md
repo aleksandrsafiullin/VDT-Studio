@@ -90,6 +90,7 @@ Local voice input adds microphone audio and downloaded recognition assets to thi
 
 | Threat | Current control |
 |---|---|
+| Project cleanup bypasses AI audit ownership or leaves deletion enabled | Sequence 5 scopes complete-project cleanup to ownership-checked run IDs inside one immediate transaction; startup rejects committed unfinished scopes, ordinary audit mutation stays blocked, and COMMIT enforces all remaining foreign keys. Legacy membership hashes are retained and checked against the original migration result. Backups remain retained; secure erasure and individual-VDT audit cleanup remain open. See [ADR-009](../adr/ADR-009-project-deletion-with-agent-history.md). |
 | Hosted web executes local CLI | App-mode checks fail closed; hosted copy routes users to Desktop |
 | Webview invokes arbitrary native capability | Reviewed Tauri commands only; no generic shell/filesystem/opener plugins |
 | Frontend supplies executable path/args/env/schema | Runtime parsers reject forbidden fields; manifests own execution details |

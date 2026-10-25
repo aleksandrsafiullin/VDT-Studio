@@ -118,7 +118,7 @@ describe("public Model Agent route with a persistent run store", { timeout: 60_0
       const db = new DatabaseSync(path.join(dataDir, "app.sqlite"));
       try {
         db.exec("PRAGMA foreign_keys = ON;");
-        expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 4 });
+        expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 5 });
         expect(db.prepare(`
           SELECT binding.project_id AS binding_project_id,
                  run.project_id AS run_project_id,
