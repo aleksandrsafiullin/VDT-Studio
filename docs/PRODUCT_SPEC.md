@@ -215,6 +215,9 @@ The root KPI appears on the left and drivers expand to the right. The canvas is 
 ### Projects and VDTs
 
 - Create, list, update and delete projects and VDT records.
+- The home page uses a single **Projects** heading and 26 rem (normally 416 px) cards, shrinking only to fit narrow screens. Two, three and four columns retain the same card width; four columns fit from 1788 px of page width. Container queries account for scrollbar space. Loading placeholders use the same grid.
+- **Create project** opens a modal with required name and optional client name, site and year. One create request persists the complete entered metadata. The dialog contains keyboard focus, restores focus on dismissal and preserves inputs with an inline error after a failed save; dismissal is disabled while saving.
+- **Search** reveals and focuses a search field. Filtering is case-insensitive across the project name, description, industry and saved metadata values, including client, site and year. Every whitespace-separated query term must match; terms may match different fields. A result count, no-results state and clear action are provided. Closing search or pressing Escape resets the filter.
 - Confirmed complete-project deletion removes its VDTs, revisions, conversations, project files and AI session history. Database cleanup is transactional; files are removed after commit. Existing migration backups and identifiers/hashes needed to verify legacy migration membership remain retained. Individual-VDT deletion with durable AI audit references remains a separate limitation; see [ADR-009](adr/ADR-009-project-deletion-with-agent-history.md).
 - Persist local metadata in SQLite and VDT snapshots as hashed revision files.
 - List, load and compare saved revisions.
@@ -407,11 +410,11 @@ Current status: the local alpha project workspace provides **VDTs / Files** tabs
 - Use a standalone paired runner only for development/headless workflows; production desktop uses private IPC.
 - Treat subscription-CLI readiness as an execution gate: only an installed backend with runtime status `ready` may enable agent requests.
 - Populate model pickers only from the current CLI/provider response; when discovery is unsupported or fails, say so and retain manual entry without static availability claims.
-- Allow reversible removal from **Your subscriptions**, with Undo and **Add provider → Add back**. The browser-local preference survives reloads and rescans; it neither uninstalls a CLI nor signs out of its provider account. Removing the selected provider selects a remaining verified-ready CLI with explicit feedback, or clears chat selection when none is ready. A removed memory override returns to **Same as chat**.
+- Allow reversible removal from **Your subscriptions**, with Undo and **Add provider → Add back**. The browser-local preference survives reloads and rescans; it neither uninstalls a CLI nor signs out of its provider account. Removing the selected provider selects a remaining verified-ready CLI with explicit feedback, or clears chat selection when none is ready. Legacy memory preference fields remain compatibility-only.
 
 Current status: implemented at alpha levels that vary by provider. Canonical release status lives in `release/provider-certification.json`. The composer separately shows live chat readiness: checking, connecting, ready, installed-but-blocked, or confirmed not installed. A successful CLI sign-in is insufficient: Send also requires an existing compatible server-owned binding for the selected model. Missing bindings show **Chat unavailable** before submission. Trusted-local development launchers enable the unverified session canary; Codex bindings include models returned by its authenticated host CLI catalog. Production builds remain blocked and no legacy fallback is enabled. Unknown, authentication-required, rate-limited, unsupported, unsafe, unavailable and error states remain fail-closed until a rescan confirms `ready`. Codex and Cursor can report subscription models through their CLIs; API-key OpenAI-compatible, Anthropic and Gemini settings can load models through the server with the session key. Unsupported/failed discovery is explicit and manual. Azure remains deployment-name based because its base-model catalog is not a deployment list. Cursor authentication is a managed CLI flow: Settings starts the manifest-owned `agent login` command, waits for its provider browser confirmation, verifies the resulting CLI session and rescans automatically. Providers without a reviewed managed login command expose sign-in help rather than an authentication claim.
 
-Settings separates **CLI**, **Local models**, and **API keys** into top-level tabs, with the effective backend selecting the active tab on reopen. CLI runs the provider executable on this computer and uses the provider account/cloud service; Local models configures Ollama, LM Studio or vLLM inference separately. Switching categories preserves the saved CLI model, last local server/model and independent memory override. Choosing a different local server uses its own default model until discovery returns server-owned choices. CLI shows an active chat/model summary, inline Test/Sign in results and collapsed provider details; memory and development-only runner pairing remain secondary shared options. Opening Local models does not scan or normalize CLI providers. Instruction-only sign-in help opens during the original click and retains a visible direct link if the browser blocks the tab. Managed sign-in success requires a subsequent `ready` detection; an auth response alone is not success. The managed Settings Test checks CLI/session readiness; it does not certify the selected model or structured response quality. Test immediately invalidates prior readiness and only reports success after a fresh ready scan; failure, missing results and pending/blocked verification keep requests disabled. Failed actions remain retryable.
+Settings separates **CLI**, **Local models**, and **API keys** into top-level tabs, with the effective backend selecting the active tab on reopen. CLI runs the provider executable on this computer and uses the provider account/cloud service; Local models configures Ollama, LM Studio or vLLM inference separately. Switching categories preserves the saved CLI model, last local server/model and legacy compatibility preferences. Choosing a different local server uses its own default model until discovery returns server-owned choices. CLI shows an active chat/model summary, inline Test/Sign in results and collapsed provider details; development-only runner pairing remains a secondary shared option. Opening Local models does not scan or normalize CLI providers. Instruction-only sign-in help opens during the original click and retains a visible direct link if the browser blocks the tab. Managed sign-in success requires a subsequent `ready` detection; an auth response alone is not success. The managed Settings Test checks CLI/session readiness; it does not certify the selected model or structured response quality. Test immediately invalidates prior readiness and only reports success after a fresh ready scan; failure, missing results and pending/blocked verification keep requests disabled. Failed actions remain retryable.
 
 Trusted-local web/desktop hosts admit immutable Ollama/LM Studio/vLLM Model Agent bindings from their fixed-endpoint server catalogs (up to 100 valid model IDs per backend, plus the equivalent untagged alias for an installed Ollama :latest model). Catalogs refresh at most once per ten seconds on binding requests, including after an empty catalog or installation. Hosted mode, production-build evaluation and VDT_LOCAL_MODEL_AGENT_ENABLED=false disable this admission. Browser Settings cannot provision bindings. Starts require an exact backend/model match and use the existing Supervisor/Gateway without a runner/API/default fallback. Native packaging, model quality and performance remain unqualified; provider certification is unchanged. Missing matches explain how to start the server and install/load/refresh models. Ollama uses bounded streaming rather than a single five-minute deadline, and each local step receives a compact current graph. Repeated successful reads without a graph change also stop instead of running indefinitely. Numeric facts already present in the original request can be recorded with a server-verified exact quote; missing values still require explicit editable assumptions or user answers. CLI subscriptions retain their separate external_cli_agent requirement.
 
@@ -419,9 +422,40 @@ The Settings dialog uses the editor's neutral visual theme: a light sidebar,
 grouped fields, segmented execution tabs and dark-filled Protocol/Gateway choices
 with white text, stronger type and accessible checked states in place of checkmarks. The
 dialog retains its size across sections and scrolls content independently;
-narrow windows use horizontal navigation. Memory and Appearance remain disabled.
+narrow windows use horizontal navigation. Personalisation replaces the former Memory placeholder; Appearance remains disabled.
 This presentation does not change provider readiness, credential retention or
 download confirmation behavior.
+
+### Personalisation
+
+Settings → Personalisation contains only **Your instructions**, a browser-local
+list used across all projects. Compact rows show a rule icon, a single-line
+ellipsis preview, User Rule/Disabled state and an actions menu. No textarea is
+rendered in the list. New, clicking a row or Edit opens a separate modal dialog
+with the full text and Enabled switch. Save commits that one entry; Cancel,
+Escape and backdrop dismissal discard its draft. The row menu also supports
+Enable/Disable and Delete; the latest deletion offers Undo until another change.
+Blank entries cannot be saved. The dialog traps focus, keeps the underlying
+Settings inactive and returns focus to its opener when closed. Up to 20 entries, 1,500 characters per entry and
+3,000 characters in the combined list (including separators and disabled text)
+keep storage and the existing Smart request bounded. Limits show actionable
+feedback without truncating accepted text.
+
+The former single text migrates into the first entry, retaining its enabled state.
+There is no project-rule editor in Personalisation or Project management.
+Retained project metadata remains unchanged and inactive; it is never copied into
+global instructions. Effective userInstructions combines only enabled entries,
+in saved order, for chat, Suggested KPI and tree analysis (review_project).
+New runs and subsequent user-instruction messages use current saved instructions;
+in-flight turns and pending question/approval replies retain the admitted snapshot.
+Explicit current requests take precedence over saved instructions. Schema, tool,
+validation, approval and provenance controls remain unchanged.
+
+Smart preparation v12 includes effective instructions in semantic identity.
+Editing, enabling, disabling, removing or reordering active instructions makes
+old preparations/frozen proposals stale. Disabled-text edits do not spend a new
+model request. Historical committing journals replay unchanged. See
+[ADR-011](adr/ADR-011-personalisation-and-project-rules.md).
 
 ### Editor actions
 

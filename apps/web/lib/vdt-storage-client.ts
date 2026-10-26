@@ -165,6 +165,7 @@ export async function createStoredProject(input: {
   name: string;
   description?: string | undefined;
   industry?: string | undefined;
+  metadata?: Record<string, unknown> | undefined;
 }): Promise<StoredProjectSummary> {
   const payload = await requestStorage<{
     schemaVersion?: string;

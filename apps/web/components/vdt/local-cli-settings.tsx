@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 
 import { ChevronDown, Loader2, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
-import { Field, SelectInput, TextInput } from "@/components/ui/field";
+import { Field, TextInput } from "@/components/ui/field";
 import { createAiExecutionClient } from "@/lib/ai-execution-client";
 import { hasStandaloneRunnerUi, resolveVdtAppMode, type VdtAppMode } from "@/lib/app-mode";
 import { isConfirmedNotInstalled } from "@/lib/cli-readiness";
@@ -238,8 +238,7 @@ export function LocalCliSettings() {
     const routing = before.selectedCliAgentId === entry.id
       ? after.selectedCliAgentId ? ` Chat now uses ${getCliCatalogEntry(after.selectedCliAgentId).displayName}.` : " Choose another provider before sending a request."
       : "";
-    const memory = before.memoryCliAgentId === entry.id ? " Memory now follows chat." : "";
-    setRemovedNotice({ id: entry.id, message: `${entry.displayName} removed from Your subscriptions.${routing}${memory}` });
+    setRemovedNotice({ id: entry.id, message: `${entry.displayName} removed from Your subscriptions.${routing}` });
     setAuthStatusByAgent((current) => ({ ...current, [entry.id]: undefined }));
   }
 
@@ -335,50 +334,18 @@ export function LocalCliSettings() {
 }
 
 export function LocalExecutionOptions() {
-  const executionSettings = useVdtStudioStore((state) => state.executionSettings);
-  const cliDetectionAgents = useVdtStudioStore((state) => state.cliDetectionAgents);
-  const removedCliAgentIds = useVdtStudioStore((state) => state.removedCliAgentIds);
-  const setMemoryModelMode = useVdtStudioStore((state) => state.setMemoryModelMode);
   const runnerPairingToken = useVdtStudioStore((state) => state.runnerPairingToken);
   const runnerPairingStatus = useVdtStudioStore((state) => state.runnerPairingStatus);
   const isPairingRunner = useVdtStudioStore((state) => state.isPairingRunner);
   const pairRunner = useVdtStudioStore((state) => state.pairRunner);
   const unpairRunner = useVdtStudioStore((state) => state.unpairRunner);
   const [pairingCode, setPairingCode] = useState("");
-  const installedAgents = CLI_CATALOG.filter((entry) => !removedCliAgentIds.includes(entry.id) &&
-    cliDetectionAgents?.some((agent) => agent.id === entry.id && agent.installed));
-  const memoryModelMode = executionSettings.memoryModelMode ?? "same_as_chat";
-  const memoryCliAgentId = executionSettings.memoryCliAgentId;
-  const canChooseCli = installedAgents.length > 0;
-  const savedMemoryIsUnavailable = memoryCliAgentId && !installedAgents.some((entry) => entry.id === memoryCliAgentId);
   const showStandaloneRunner = hasStandaloneRunnerUi(resolveVdtAppMode());
+
+  if (!showStandaloneRunner) return null;
 
   return (
     <div className="space-y-2 border-t border-line pt-5" data-testid="local-execution-options">
-      <AccordionSection title="Memory model" testId="local-cli-memory-accordion">
-        <div className="space-y-3">
-          <p className="text-xs leading-5 text-muted">Memory follows chat by default. A separate CLI override is kept when you switch execution tabs.</p>
-          <Field label="Memory source">
-            <SelectInput data-testid="local-cli-memory-mode" value={memoryModelMode} onChange={(event) => {
-              if (event.target.value === "same_as_chat") setMemoryModelMode("same_as_chat");
-              else if (canChooseCli) setMemoryModelMode("selected_cli", installedAgents.find((entry) => entry.id === executionSettings.selectedCliAgentId)?.id ?? installedAgents[0]!.id);
-            }}>
-              <option value="same_as_chat">Same as chat</option>
-              <option value="selected_cli" disabled={!canChooseCli}>Choose a separate CLI</option>
-            </SelectInput>
-          </Field>
-          {memoryModelMode === "selected_cli" ? (
-            <Field label="Memory CLI" {...(savedMemoryIsUnavailable ? { hint: "Saved override retained. Open CLI to verify its installation and access." } : {})}>
-              <SelectInput data-testid="local-cli-memory-agent" value={memoryCliAgentId ?? ""} onChange={(event) => setMemoryModelMode("selected_cli", event.target.value as CliAgentId)}>
-                {!memoryCliAgentId ? <option value="" disabled>Choose a CLI in CLI settings</option> : null}
-                {savedMemoryIsUnavailable ? <option value={memoryCliAgentId}>{getCliCatalogEntry(memoryCliAgentId).displayName} (saved override)</option> : null}
-                {installedAgents.map((entry) => <option key={entry.id} value={entry.id}>{entry.displayName}</option>)}
-              </SelectInput>
-            </Field>
-          ) : null}
-          {!canChooseCli ? <p className="text-xs leading-5 text-muted">Open CLI to discover providers for a new override.</p> : null}
-        </div>
-      </AccordionSection>
       {showStandaloneRunner ? (
         <AccordionSection title="Developer runner" testId="local-runner-accordion">
           <section data-testid="local-runner-pairing">

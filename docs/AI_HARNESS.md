@@ -132,7 +132,7 @@ of a fixed unit conversion itself.
 
 ## Incoming formula and legacy deepen version
 
-Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v10` with the bounded one-call wire. Each alternative requires 2–6 substantive components in schema/runtime/cache admission, rejecting a single renamed total. Context-aware preparation admits reused sources only from active direct children and rejects exact normalized contextual-metric copies. The prompt prohibits inverse ancestor/sibling identities and new aliases that disguise them; an Input without a defensible lower-level split may return empty. The prompt requests a concise coherent definition and matching-scale unknown inputs; missing measurements alone do not require empty. Generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no admission or inference. Historical wire/journal replay does not apply this new preparation policy retroactively.
+Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v12` with the bounded one-call wire. Each alternative requires 2–6 substantive components in schema/runtime/cache admission, rejecting a single renamed total. Context-aware preparation admits reused sources only from active direct children and rejects exact normalized contextual-metric copies. The prompt prohibits inverse ancestor/sibling identities and new aliases that disguise them; an Input without a defensible lower-level split may return empty. The prompt requests a concise coherent definition and matching-scale unknown inputs; missing measurements alone do not require empty. Generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no admission or inference. Historical wire/journal replay does not apply this new preparation policy retroactively.
 
 The registered `deepen_node` task now selects `deepen-node-v2`: `schemaVersion=deepen_node.v2`, required `targetFormula`, exact `retainedNodeIds` and one layer of primitive children. Mapping requires the actual project/root and emits formula, calculated/root type and accepted plan delta together. Historical `deepen-node-v1` output remains a readable compatibility schema but cannot apply a new child-only graph mutation. This does not affect exact replay of an already committing Smart v1 request. Both selected-layer agent finish implementations require the target definition and every new input; unknown measured values may remain unavailable. Default full-tree finish remains strict.
 
@@ -566,3 +566,22 @@ Both saved plans pass current hierarchy inspection and arithmetic validation. Im
 These are structural and baseline acceptance results, not full business-model certification. CLI leaves cycle/speed branches contextual and labels some minute-valued leaves as hours. API connects cycle, distance and speed to output and reconciles the baseline truck time balance, but calendar/downtime changes cancel through its calculated ore time share; a 10% change to those inputs leaves tonnage unchanged. Both independent semantic audits therefore remain partial. Earlier timeouts, importer loss, reference-group flattening and literal-zero counterexamples remain separate attempts in the evidence bundle.
 
 CLI used maxSteps 60 with assumptions enabled; API used the ordinary UI defaults maxSteps 40 with the assumptions flag disabled. The common task allowed explicit missing-data assumptions. This is not a controlled provider performance benchmark. Sampled ChatGPT physical footprint during these final cases peaked around 5.13 GiB; a 45-second monitor guarded at 8 GiB or 1.5 GiB swap growth. This does not establish that an earlier application-memory leak is fixed. Local evidence: `hierarchy-contract-2026-10-18-16_jk2fi/hierarchy-verification.html`, saved graph/source audits and resource samples. No production build, full browser E2E or packaged qualification was performed.
+
+## Explicit user instructions
+
+Personalisation → Your instructions provides one browser-local editable list.
+Enabled entries are combined in saved order into bounded userInstructions for
+chat, Smart preparation and review_project. Disabled text and list IDs remain
+local. New starts and explicit follow-up user instructions use this snapshot;
+already executing turns and question/approval replies retain the current run
+snapshot. Initial CLI context, legacy userRequest, HTTP turns and local host
+observations retain it without treating instruction text as numeric provenance
+or new tool authority. Explicit current requests take precedence.
+
+Project rules are no longer applied. Old metadata is retained but inactive;
+new starts/follow-ups and new Smart contexts strip the retired projectRules
+field. Historical immutable journals/snapshots remain readable. Preparation v12
+changes identity when active instruction text/order changes and makes obsolete
+in-flight/frozen suggestions stale. Disabled-text edits do not trigger new
+preparation. This is explicit personalisation without automatic learning or
+account sync. See [ADR-011](adr/ADR-011-personalisation-and-project-rules.md).

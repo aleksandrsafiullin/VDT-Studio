@@ -29,6 +29,7 @@ import {
 import { compactPublicAgentSnapshot } from "./public-snapshot";
 import { resolveVdtSkill } from "@vdt-studio/vdt-agent";
 import { requireVdt } from "../../skills/service";
+import { bindUserInstructions } from "./personalisation";
 import { isOpenAiSessionBinding, openAiSessionBindings } from "./byok-bindings";
 import {
   PublicSupervisorRunError,
@@ -91,6 +92,7 @@ export async function POST(request: Request) {
     resolved = resolveAgentStartRequest(parsed.data as VdtAgentPublicStartRequest);
     const workspace = resolved.request.workspace;
     if (workspace?.vdtId) requireVdt(workspace.projectId, workspace.vdtId);
+    resolved.request.input.personalisation = bindUserInstructions(resolved.request.input.personalisation);
     const { pin } = await resolveVdtSkill({
       ...(workspace?.vdtId ? { projectId: workspace.projectId, vdtId: workspace.vdtId } : {}),
       rootKpi: resolved.request.input.rootKpi ?? resolved.request.input.prompt ?? "Value driver tree"

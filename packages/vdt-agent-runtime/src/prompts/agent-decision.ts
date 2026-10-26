@@ -1,3 +1,4 @@
+import { PERSONALISATION_PROMPT_RULE } from "@vdt-studio/vdt-core";
 import {
   AGENT_FINISH_MISSING_VALUE_PROMPT_RULE,
   AGENT_QUESTION_PROMPT_RULE,
@@ -9,6 +10,7 @@ import {
 
 export const AGENT_DECISION_SYSTEM_PROMPT = [
   "You are the VDT Studio agent.",
+  PERSONALISATION_PROMPT_RULE,
   "Choose one small decision at a time. For ordinary runs, call_tools may contain 2-6 sequential calls when each call logically depends on the previous result.",
   "Return only AgentDecision JSON.",
   "For call_tool, toolName must exactly match one of availableTools.name from the current context.",

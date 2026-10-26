@@ -4,6 +4,9 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
   applyChangeSet,
+  normalizeInstructionPreferences,
+  validInstructionPreferences,
+  type InstructionPreferences,
   calculateGraph,
   cloneProject,
   kpiCanonicalJson,
@@ -30,6 +33,8 @@ import {
 } from "@vdt-studio/ai-harness";
 import { AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/timeout-limits";
 import { makeId } from "@/lib/id";
+import type { ProjectCardMetadata } from "@/lib/project-metadata";
+import { workspacePersonalisation } from "@/lib/personalisation";
 import { studioStateStorage } from "@/lib/smart-kpi-journal";
 import { apiKeyScope } from "@/lib/api-key-persistence";
 import type { SmartKpiIncomingActions } from "@/lib/smart-kpi-incoming-contract";
@@ -332,6 +337,8 @@ interface PendingWorkspaceVdtCreate {
 }
 
 export interface VdtStudioState {
+  personalisation: InstructionPreferences;
+  savePersonalisation: (preferences: InstructionPreferences) => boolean;
   project: VdtProject;
   workspace: VdtWorkspaceState;
   selectedNodeId: string;
@@ -439,7 +446,7 @@ export interface VdtStudioState {
   clearHomeWorkspaceContext: () => void;
   closeWorkspaceVdtEditor: () => void;
   setWorkspacePanel: (panel: WorkspacePanelMode) => void;
-  createWorkspaceProject: (name?: string) => Promise<boolean>;
+  createWorkspaceProject: (name?: string, details?: Partial<ProjectCardMetadata>) => Promise<boolean>;
   renameWorkspaceProject: (projectId: string, name: string) => Promise<boolean>;
   updateWorkspaceProjectDetails: (
     projectId: string,
@@ -1562,6 +1569,19 @@ export const useVdtStudioStore = create<VdtStudioState>()(
   persist(
     (set, get) => guardSmartKpiActions({
       project: buildInitialProject(),
+      personalisation: normalizeInstructionPreferences(undefined),
+      savePersonalisation: (preferences) => {
+        if (!validInstructionPreferences(preferences)) return false;
+        try {
+          const next = normalizeInstructionPreferences(preferences);
+          set({ personalisation: next });
+          const saved = studioStateStorage.getItem("vdt-studio-state");
+          if (typeof saved !== "string") return false;
+          const retained = JSON.parse(saved)?.state?.personalisation;
+          return kpiCanonicalJson(retained ?? null) === kpiCanonicalJson(next);
+        }
+        catch { return false; }
+      },
       workspace: { ...EMPTY_WORKSPACE },
       selectedNodeId: productionVolumeProject.rootNodeId,
       activeScenarioId: productionVolumeProject.scenarios[0]?.id ?? "",
@@ -1775,7 +1795,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               : state.workspace.error
           }
         })),
-      createWorkspaceProject: async (name) => {
+      createWorkspaceProject: async (name, details) => {
         const projectName = name?.trim() || "New project";
         if (hasActiveWorkspaceVdt(get().workspace) && !(await get().saveActiveWorkspaceVdt())) {
           return false;
@@ -1789,9 +1809,15 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
         }));
         try {
+          const metadata: Record<string, string> = {};
+          for (const key of ["clientName", "siteName", "year"] as const) {
+            const value = details?.[key]?.trim();
+            if (value) metadata[key] = value;
+          }
           const summary = await createStoredProject({
             name: projectName,
-            industry: state.project.industry ?? state.brief.industry
+            industry: state.project.industry ?? state.brief.industry,
+            ...(details ? { metadata } : {})
           });
           set((current) => ({
             workspace: {
@@ -3027,6 +3053,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           const shouldContinue = options?.includeCurrentProject ?? shouldContinueOpenVdt(state);
           const input: VdtAgentStartRequest["input"] = {
             ...state.brief,
+            personalisation: workspacePersonalisation(state),
             ...(prompt ? { prompt } : {}),
             ...(options?.selectedNodeId ? { selectedNodeId: options.selectedNodeId } : {}),
             ...(shouldContinue ? { project: state.project } : {})
@@ -3311,6 +3338,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           const snapshot = await createAgentClient().sendMessage(runId, {
             type: "user_instruction",
             text: trimmed,
+            personalisation: workspacePersonalisation(get()),
             ...(selectedNodeId ? { selectedNodeId } : {}),
             ...(researchMode ? { researchMode } : {})
           });
@@ -4135,6 +4163,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       // Session/ephemeral fields are intentionally omitted: runnerPairingToken, cliTestStatusByAgent,
       // providerTestStatus (see PARTIALIZE_EPHEMERAL_STATE_KEYS in provider-persistence.ts).
       partialize: (state) => ({
+        personalisation: state.personalisation,
         project: state.project,
         projectRevision: state.projectRevision,
         smartKpiOperation: state.smartKpiOperation,
@@ -4216,6 +4245,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         return {
           ...currentState,
           ...persisted,
+          personalisation: normalizeInstructionPreferences(persisted?.personalisation),
           project,
           workspace,
           smartKpiOperation: persisted?.smartKpiOperation?.phase === "committing" ? persisted.smartKpiOperation : undefined,

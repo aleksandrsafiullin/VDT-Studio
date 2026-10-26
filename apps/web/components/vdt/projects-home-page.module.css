@@ -1,0 +1,51 @@
+.page {
+  container-type: inline-size;
+}
+
+.content {
+  --card-width: 26rem;
+  --card-gap: 1.25rem;
+  width: calc(100% - 2.5rem);
+  max-width: var(--card-width);
+}
+
+.grid {
+  display: grid;
+  gap: var(--card-gap, 1.25rem);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 26rem), 1fr));
+}
+
+@container (min-width: 40rem) {
+  .content { width: calc(100% - 4rem); }
+}
+
+/* Add a column only when another full-width card and its gap fit. */
+@container (min-width: 57.25rem) {
+  .content { max-width: calc(2 * var(--card-width) + var(--card-gap)); }
+}
+
+@container (min-width: 84.5rem) {
+  .content { max-width: calc(3 * var(--card-width) + 2 * var(--card-gap)); }
+}
+
+@container (min-width: 111.75rem) {
+  .content { max-width: calc(4 * var(--card-width) + 3 * var(--card-gap)); }
+}
+
+.dialog {
+  margin: auto;
+  width: min(36rem, calc(100% - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+  border: 1px solid rgb(0 0 0 / 5%);
+  border-radius: 1.5rem;
+  padding: 0;
+  background: white;
+  color: #17202a;
+  box-shadow: 0 24px 80px rgb(15 23 42 / 20%);
+}
+
+.dialog::backdrop {
+  background: rgb(15 23 42 / 25%);
+  backdrop-filter: blur(6px);
+}

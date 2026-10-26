@@ -655,3 +655,19 @@ When the original structured brief already specifies KPI, unit and period, new-t
 Fresh hierarchy follow-up (2026-10-18): CLI `gpt-6-luna` succeeded in 1828.788 s with 50 nodes; API `gpt-6-luna` succeeded in 932.305 s with 35 nodes. Both new drafts have five levels, an accepted saved plan/visual/formula hierarchy, no calculation errors, and 138600 t roots. Operators did not edit plans/formulas/values. All 30 CLI and 23 API retained-file numerical bindings replayed successfully. Complete node preservation was independently checked across 24 CLI and 2 API edge mutations. API shared research completed twice. Trials were sequential, with sampled ChatGPT footprint about 5.13 GiB maximum in these final cases and no resource guard trigger.
 
 Full business acceptance remains partial: CLI cycle/speed branches are contextual and some time units are mislabeled; API uses cycles/speeds in output but scenario changes to calendar/downtime cancel through its time-share formulas. Baseline reconciliation alone does not prove scenario behavior. See `AI_HARNESS.md` for exact run IDs, option differences and local evidence. The experimental status, hosted credential/ownership gaps, hard CLI-isolation gaps and production/release NO-GO remain unchanged.
+
+## Personalisation capability boundary (2026-10-26)
+
+Implemented locally: one browser-local Your instructions list with compact
+preview rows and separate New/Edit dialogs. Per-entry Save/Cancel, row-menu
+Enable/Disable/Delete and Undo replace inline fields and whole-list Save.
+The earlier single text still migrates without losing its enabled state. Enabled instructions reach chat, Smart preparation v12 and
+tree review. Old project-rule metadata is retained but no longer applied or
+exposed for editing. Active text changes invalidate Smart state without rewriting
+immutable committing journals. Explicit chat instructions refresh the snapshot;
+in-flight turns and pending answers/approvals retain it. Automated persistence,
+migration, prompt and stale-result checks and browser UI evidence establish
+delivery rather than guaranteed model obedience. Live semantic compliance,
+account sync, packaged-native/Windows qualification and full production release
+are not established. Release remains NO-GO. See
+[ADR-011](adr/ADR-011-personalisation-and-project-rules.md).

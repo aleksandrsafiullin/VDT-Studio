@@ -59,9 +59,35 @@ run-local catalog snapshots and read-before-select behavior remain intact.
 Legacy compatibility recipe/topology activation remains explicitly separate.
 See [ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md).
 
+## Personalisation and user instructions
+
+Personalisation is an origin-local Zustand preference in vdt-studio-state:
+{instructions:[{id,enabled,text}]}. The previous single {enabled,text} normalizes
+into one stable legacy-user-instruction entry, retaining its state. No SQL
+migration or graph field is added. Project-rule editors, their dedicated PATCH
+field and the project-rule store action are removed. Existing project metadata
+is retained but ignored by new personalisation snapshots.
+
+Only enabled entries, in saved order and separated by blank lines, form the
+effective userInstructions string. Entries are bounded to 20, each to 1,500
+characters, and their combined text to 3,000 characters including separators.
+IDs and disabled text stay in browser preferences rather than model prompts.
+Project identity cannot change the effective instruction list. Server admission
+strips retired projectRules from starts/follow-ups; new Smart contexts do the
+same. Historical snapshot/journal readers still accept the former bounded field.
+
+Initial CLI/Model Agent context, legacy userRequest, HTTP turns and native local
+observations retain the effective instructions. Follow-up user instructions
+refresh or clear the snapshot; questions/approvals retain the current run context.
+Instruction text grants no tool or provenance authority. Smart hashes, cache and
+scheduler generation include active instruction text. Complete instructions stay
+inside the existing request bound; optional context uses omission reporting.
+Immutable committing/Undo receipts preserve their replay contract. See
+[ADR-011](adr/ADR-011-personalisation-and-project-rules.md).
+
 ## Smart KPI preparation and explicit apply boundary
 
-Preparation policy `smart-kpi-preparation.v10` retains the v5 direction rules and requires at least two components
+Preparation policy `smart-kpi-preparation.v12` retains the v5 direction rules and requires at least two components
 per alternative in model output and rebuildable cache admission. Store preview
 and new Add also reject retained singleton proposals before journal reservation.
 Wire proposal
@@ -363,6 +389,12 @@ The implementation still duplicates substantial draft/project state in Zustand p
 
 The workspace rail uses a direct Home link to `/`; the editor header's back link targets `/projects/<projectId>`. Project/editor route synchronization gives changed URL parameters precedence over the workspace snapshot. Store-driven navigation retains its target until Next.js commits the URL, and asynchronous bootstrap/VDT selection blocks reverse URL writes until it settles. An unchanged route can still reflect a newly created local VDT in `?vdt=...`.
 
+The home creation dialog sends name plus client/site/year metadata through one
+`createWorkspaceProject` / `POST /api/vdt/projects` request. It uses the existing
+SQLite metadata field, with no follow-up PATCH or schema migration. Home search
+filters the loaded project summaries in the browser; the query is transient and
+does not change saved project data.
+
 `WorkspaceNavigationLink` intercepts normal client navigation through those two editor links and awaits the existing `saveActiveWorkspaceVdt` CAS/idempotency operation. A failure preserves the editor and displays a navigation error; a save covering an older in-flight snapshot also blocks leaving. Successful Back navigation uses the route-sync hook's explicit project intent, superseding any pending creation route. This closes the link-driven edit-loss path without adding a new revision API or changing the remaining W0.5 draft/durable-ownership boundary.
 
 ### Scenario comments and presentation
@@ -546,7 +578,7 @@ The browser-side `apps/web/lib/ai-execution-client.ts` selects one of:
 
 Model discovery follows the same ownership boundary. Subscription model IDs come only from adapter-owned CLI commands. BYOK Settings sends `operation: list_models` plus the resolved in-memory provider configuration to `/api/ai/generate-vdt`; the server performs the bounded provider request and returns normalized IDs. The browser never calls provider model endpoints directly, and static preset/CLI catalogs are not treated as availability evidence. Azure uses a manual deployment name because the resource model catalog is not a deployment inventory.
 
-Execution mode UI categories are `cli_subscriptions`, `local_models` and `byok`; the internal execution contract stays `local_cli`/`byok`. The category follows the effective runner/backend rather than a stale selected CLI ID. `executionSettings.savedLocalModelSelection` stores the last local HTTP preset/model across category switches; local-server changes use server-specific defaults. Background CLI scans may refresh detection while another category is active, but cannot normalize its execution selection. Memory overrides are independent and tab switches do not clear them.
+Execution mode UI categories are `cli_subscriptions`, `local_models` and `byok`; the internal execution contract stays `local_cli`/`byok`. The category follows the effective runner/backend rather than a stale selected CLI ID. `executionSettings.savedLocalModelSelection` stores the last local HTTP preset/model across category switches; local-server changes use server-specific defaults. Background CLI scans may refresh detection while another category is active, but cannot normalize its execution selection. Legacy memory override fields are retained for compatibility; their unused controls have been removed.
 
 ## Data And State Ownership
 

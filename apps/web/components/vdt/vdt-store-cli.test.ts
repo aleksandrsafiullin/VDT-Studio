@@ -27,6 +27,7 @@ import * as vdtStorageClient from "@/lib/vdt-storage-client";
 
 beforeEach(() => {
   useVdtStudioStore.setState({
+    personalisation: { instructions: [] },
     isGenerating: false,
     generateActivity: undefined,
     agentChatHistory: [],
@@ -212,7 +213,7 @@ function parseAgentStartBody(fetchMock: MockedFunction<typeof fetch>) {
   const [, requestInit] = startCall!;
   return JSON.parse(String(requestInit?.body)) as {
     mode?: string;
-    input?: { prompt?: string; project?: { id?: string }; businessContext?: string };
+    input?: { prompt?: string; project?: { id?: string }; businessContext?: string; personalisation?: { userInstructions?: string; projectRules?: string } };
     workspace?: { vdtId?: string };
     executionBindingId?: string;
     providerId?: string;
@@ -354,7 +355,7 @@ describe("vdt-store change-set workflow", () => {
     });
   });
 
-  it("startAgentRun sends the first user instruction as prompt instead of dropping it", async () => {
+  it.each(["generate_vdt", "review_project"] as const)("startAgentRun preserves the request and instructions for %s", async (mode) => {
     const prompt = "I have 5 trucks\nAverage distance 2.7 km\nAverage load speed - 7 km/h\nAverage empty speed - 11 km/h";
     const fetchMock = vi.mocked(fetch);
     vi.stubGlobal("EventSource", class {
@@ -413,7 +414,8 @@ describe("vdt-store change-set workflow", () => {
       }
     });
 
-    await useVdtStudioStore.getState().startAgentRun(prompt, { researchMode: "on" });
+    useVdtStudioStore.getState().savePersonalisation({ instructions: [{ id: "test-rule", enabled: true, text: "Reply in Russian and explain assumptions." }] });
+    await useVdtStudioStore.getState().startAgentRun(prompt, { mode, researchMode: "on" });
 
     const body = parseAgentStartBody(fetchMock);
     expect(body.executionBindingId).toBe("openai_byok_session_test");
@@ -421,6 +423,8 @@ describe("vdt-store change-set workflow", () => {
     expect(body).not.toHaveProperty("providerConfig");
     expect((body as { options?: { researchMode?: string } }).options?.researchMode).toBe("on");
     expect(body.input?.prompt).toBe(prompt);
+    expect(body.mode).toBe(mode);
+    expect(body.input?.personalisation?.userInstructions).toBe("Reply in Russian and explain assumptions.");
     expect(body.input?.businessContext ?? "").not.toContain(prompt);
     expect(useVdtStudioStore.getState().agentRun?.selectedSkills.map((skill) => skill.id)).toEqual([
       "mining.haulage_truck_cycle"

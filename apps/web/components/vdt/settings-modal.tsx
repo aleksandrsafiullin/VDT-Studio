@@ -15,6 +15,7 @@ import { DisplaySettings } from "./display-settings";
 import { ExecutionModeSettings } from "./execution-mode-settings";
 import { SpeechSettings } from "./speech-settings";
 import { SkillsPanel } from "./skills-panel";
+import { PersonalisationSettings } from "./personalisation-settings";
 import styles from "./settings-modal.module.css";
 import {
   SETTINGS_SECTION_META,
@@ -203,6 +204,7 @@ export function SettingsModal({
                     {activeSection === "voice" ? <SpeechSettings confirmOnOpen={confirmSpeechDownload} /> : null}
                     {activeSection === "display" ? <DisplaySettings /> : null}
                     {activeSection === "skills" ? <SkillsPanel /> : null}
+                    {activeSection === "personalisation" ? <PersonalisationSettings /> : null}
                   </div>
                 </div>
               </div>

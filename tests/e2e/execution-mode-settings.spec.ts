@@ -24,15 +24,10 @@ test("subscriptions remove, persist through reload and rescan, and can be added 
   await mockDetection(page);
   await openLocalSettings(page);
   await page.getByTestId("cli-agent-select-claude").click();
-  await page.getByTestId("local-cli-memory-accordion").getByRole("button").click();
-  await page.getByTestId("local-cli-memory-mode").selectOption("selected_cli");
-  await page.getByTestId("local-cli-memory-agent").selectOption("claude");
   await page.getByTestId("cli-agent-remove-claude").click();
   await expect(page.getByTestId("cli-agent-card-claude")).toHaveCount(0);
   await expect(page.getByTestId("local-cli-removed-notice")).toContainText("Chat now uses Cursor Agent");
-  await expect(page.getByTestId("local-cli-removed-notice")).toContainText("Memory now follows chat");
   await expect(page.getByTestId("local-cli-undo-remove")).toBeFocused();
-  await expect(page.getByTestId("local-cli-memory-mode")).toHaveValue("same_as_chat");
   await page.reload();
   await page.getByTestId("settings-button").click();
   await expect(page.getByTestId("cli-agent-card-cursor-agent")).toBeVisible();
@@ -150,13 +145,12 @@ test("subscription hierarchy stays compact on a narrow screen with secondary opt
   await expect(page.getByRole("heading", { name: "Your subscriptions", exact: true })).toHaveCount(1);
   await expect(page.getByTestId("local-model-settings")).toHaveCount(0);
   await expect(page.getByRole("tab", { name: "Local models", exact: true })).toBeVisible();
-  await expect(page.getByTestId("local-cli-memory-accordion").getByRole("button")).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByTestId("cli-agent-details-claude")).not.toHaveAttribute("open");
   const widths = await page.getByTestId("local-cli-settings").evaluate((element) => ({ scroll: element.scrollWidth, client: element.clientWidth }));
   expect(widths.scroll).toBeLessThanOrEqual(widths.client + 1);
 });
 
-test("Local models opens independently, restores server/model choices and preserves the memory override", async ({ page }) => {
+test("Local models opens independently, restores server/model choices and preserves legacy preferences", async ({ page }) => {
   let cliScans = 0;
   await page.addInitScript(() => {
     if (localStorage.getItem("vdt-studio-state")) return;
@@ -184,9 +178,6 @@ test("Local models opens independently, restores server/model choices and preser
   await expect(page.getByText("Loading available models...")).toHaveCount(0);
   expect(cliScans).toBe(0);
   await expect(page.getByTestId("local-cli-settings")).toHaveCount(0);
-  await page.getByTestId("local-cli-memory-accordion").getByRole("button").click();
-  await expect(page.getByTestId("local-cli-memory-mode")).toHaveValue("selected_cli");
-  await expect(page.getByTestId("local-cli-memory-agent")).toHaveValue("claude");
   await page.getByTestId("local-model-model-lm_studio_openai").selectOption("second-local");
   await page.getByTestId("settings-modal-close").click();
   await page.getByTestId("settings-button").click();

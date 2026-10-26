@@ -1,4 +1,5 @@
 import type { VdtProject, VdtNode } from "../types";
+import { userOnlyPersonalisation, type AiPersonalisation } from "../personalisation";
 import type { KpiSuggestionContext, KpiSuggestionExecutionIdentity, KpiSuggestionPeriod, KpiContextNode } from "./types";
 import { KPI_SUGGESTION_LIMITS, KPI_SUGGESTION_PREPARATION_VERSION, KPI_SUGGESTION_SCHEMA, KPI_SUGGESTION_VALIDATOR } from "./types";
 import { validateKpiSuggestionContext } from "./validation";
@@ -33,6 +34,7 @@ export async function fingerprintKpiProject(project: VdtProject): Promise<string
 }
 
 export interface BuildKpiContextOptions {
+  personalisation?: AiPersonalisation;
   workspaceId: string;
   vdtId: string | null;
   targetNodeId: string;
@@ -99,6 +101,7 @@ export async function buildKpiSuggestionContext(project: VdtProject, options: Bu
     schemaVersion: "kpi_suggestion_context.v1", workspaceId: options.workspaceId, projectId: project.id, vdtId: options.vdtId,
     targetNodeId: target.id, graphFingerprint: options.graphFingerprint ?? await fingerprintKpiProject(project), contextHash: "",
     period: options.period,
+    ...(options.personalisation?.userInstructions ? { personalisation: userOnlyPersonalisation(options.personalisation) } : {}),
     business: { name: text(project.name, 160)!, ...(project.description ? { description: text(project.description, 300)! } : {}),
       ...(project.industry ? { industry: text(project.industry, 160)! } : {}), ...(project.businessContext ? { context: text(project.businessContext, KPI_SUGGESTION_LIMITS.businessContextChars)! } : {}),
       ...(options.goal ? { goal: text(options.goal, 500)! } : {}) },
@@ -116,7 +119,8 @@ export async function buildKpiSuggestionContext(project: VdtProject, options: Bu
   };
   // Bind full untruncated business/goal plus all graph semantics, not just excerpt text.
   context.contextHash = await kpiContentHash({ schema: context.schemaVersion, workspaceId: options.workspaceId, projectId: project.id,
-    vdtId: options.vdtId, targetNodeId: target.id, graphFingerprint: context.graphFingerprint, period: options.period, goal: options.goal });
+    vdtId: options.vdtId, targetNodeId: target.id, graphFingerprint: context.graphFingerprint, period: options.period, goal: options.goal,
+    ...(context.personalisation ? { personalisation: context.personalisation } : {}) });
   // Keep the nearest parent and siblings visible for direction/duplicate checks.
   // Root is always supplied separately; distant ancestry and prose give way first.
   const shrinkBusinessText = () => {

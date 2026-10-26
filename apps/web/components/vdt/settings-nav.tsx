@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Brain,
+  SlidersHorizontal,
   BookOpen,
   Cpu,
   Monitor,
@@ -16,7 +16,7 @@ export type SettingsSectionId =
   | "execution"
   | "voice"
   | "skills"
-  | "memory"
+  | "personalisation"
   | "appearance"
   | "display";
 
@@ -31,7 +31,7 @@ export const SETTINGS_SECTIONS: SettingsSectionConfig[] = [
   { id: "execution", label: "Execution mode", icon: Cpu, enabled: true },
   { id: "voice", label: "Voice input", icon: Mic, enabled: true },
   { id: "skills", label: "Skills", icon: BookOpen, enabled: true },
-  { id: "memory", label: "Memory", icon: Brain, enabled: false },
+  { id: "personalisation", label: "Personalisation", icon: SlidersHorizontal, enabled: true },
   { id: "appearance", label: "Appearance", icon: Palette, enabled: false },
   { id: "display", label: "Display", icon: Monitor, enabled: true }
 ];
@@ -52,9 +52,9 @@ export const SETTINGS_SECTION_META: Record<
     title: "Skills",
     subtitle: "Your skills folder, available in every VDT."
   },
-  memory: {
-    title: "Memory",
-    subtitle: "Configure how the workspace remembers context."
+  personalisation: {
+    title: "Personalisation",
+    subtitle: "Choose how AI responds and works with your trees."
   },
   appearance: {
     title: "Appearance",

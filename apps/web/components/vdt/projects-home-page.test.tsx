@@ -53,6 +53,10 @@ describe("ProjectsHomePage", () => {
     expect(html).toContain('data-testid="create-project-button"');
     expect(html).toContain("VDT Studio");
     expect(html).toContain("No projects yet");
+    expect(html).toContain('data-testid="search-projects-button"');
+    expect(html).toContain(">Projects</h2>");
+    expect(html).not.toContain("Your workspaces");
+    expect(html).not.toContain("Open a project to manage VDTs or create a new one.");
   });
 
   it("renders saved project cards with counts and updated date", () => {

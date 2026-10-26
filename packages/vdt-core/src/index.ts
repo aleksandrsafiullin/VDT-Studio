@@ -36,3 +36,4 @@ export * from "./suggestions/incoming-formal";
 export * from "./suggestions/incoming-compile";
 export * from "./suggestions/incoming-values";
 export * from "./suggestions/incoming-path";
+export * from "./personalisation";

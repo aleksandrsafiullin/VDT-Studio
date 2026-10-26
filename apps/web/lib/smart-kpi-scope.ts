@@ -1,11 +1,14 @@
-import type { KpiSuggestionPeriod, VdtProject } from "@vdt-studio/vdt-core";
+import type { AiPersonalisation, InstructionPreferences, KpiSuggestionPeriod, VdtProject } from "@vdt-studio/vdt-core";
+import { workspacePersonalisation } from "./personalisation";
 import type { StoredProjectSummary } from "./vdt-storage-client";
 
 export interface SmartKpiScopeState {
+  personalisation?: InstructionPreferences;
   project: VdtProject;
   workspace: { activeProjectId?: string | undefined; activeVdtId?: string | undefined; projectSummaries: StoredProjectSummary[] };
 }
 export interface SmartKpiScope {
+  personalisation?: AiPersonalisation;
   workspaceId: string;
   vdtId: string | null;
   period: KpiSuggestionPeriod;
@@ -43,6 +46,7 @@ export function resolveSmartKpiScope(state: SmartKpiScopeState): SmartKpiScope {
     grain
   };
   return {
+    personalisation: workspacePersonalisation(state),
     workspaceId: (owner ?? `draft:${state.project.id}`).slice(0, 160), vdtId, period,
     ...(state.project.description?.trim() ? { goal: state.project.description.trim().slice(0, 1000) } : {}),
     ...(vdtId && (!owner || !entry || entry.vdt.projectId !== owner) ? { blockedReason: "Stored VDT ownership is unavailable. Refresh the workspace before applying Smart suggestions." } : {}),

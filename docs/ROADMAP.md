@@ -229,6 +229,7 @@ This roadmap is the operational summary of the authoritative [`VDT_STUDIO_CORREC
 Implemented at alpha level:
 
 - project/VDT workspace and local SQLite revision storage, including Home/back links that await a successful revision save, preserve edits on save failure, and synchronize browser Back/Forward selection;
+- compact Projects home with consistent-width cards in one to four columns, a revealable search across project field values, and modal creation that saves name/client/site/year together;
 - complete-project deletion with scoped AI-history cleanup, transaction rollback and unchanged legacy migration hash verification; individual-VDT audit cleanup and secure erasure remain open ([ADR-009](adr/ADR-009-project-deletion-with-agent-history.md));
 - editable left-to-right canvas, basic formula engine, scenarios and trace;
 - Scenario Mode with Settings-style rounded neutral surfaces, larger summary totals, an initially collapsed calculation trace using the inspector toggle icon, Baseline-matched comma-grouped/decimal-dot resting values independent of browser locale, full-precision editing with grouped-number paste and keyboard stepping, and saved per-scenario KPI action comments that survive override reset and copy with scenario cloning; Export to Excel includes the selected scenario's comments in a wrapped Comment column for drivers and additional overrides, independently of numeric changes;
@@ -243,7 +244,7 @@ Implemented at alpha level:
 - structured Model Agent limits repeated tool/schema failures to three attempts and identical successful operations without graph progress to four; counters survive supported checkpoints. Local steps receive a bounded current graph, Ollama uses bounded streaming, a skill-read prerequisite and schema-constrained sibling batches for new trees; assumption-enabled runs are instructed to fill estimates directly. Explicit same-session turn-budget continuation, backoff and other profiles' retry limits remain unfinished;
 - managed Cursor CLI authentication through a fixed manifest command, provider browser confirmation, post-login verification and automatic rescan;
 - encrypted origin-local BYOK key retention across reload/reopen, provider/endpoint isolation, replacement/deletion and storage failure/retry status; browser-profile limits and native qualification remain explicit in [ADR-007](adr/ADR-007-encrypted-browser-api-keys.md);
-- separate CLI, Local models and API keys settings with saved category choices and inline readiness actions and reversible browser-local subscription removal; Undo/Add back, explicit chat fallback feedback, and memory-override reset survive rescans and reloads;
+- separate CLI, Local models and API keys settings with saved category choices and inline readiness actions and reversible browser-local subscription removal; Undo/Add back, explicit chat fallback feedback, and legacy preference cleanup survive rescans and reloads;
 - real agent decision/tool/feedback loop with local skill retrieval;
 - guarded one-click incoming-KPI decomposition that stops after the selected node's immediate child layer;
 - 19 registered task schemas, 18 exposed product tasks and phase-gate drift checks;
@@ -440,3 +441,16 @@ Local structured-turn reliability now includes a bounded current-graph/input bac
 Experimental complete library topologies: a local Model Agent may explicitly select `mining.load_and_haul` through `skill.seed_topology`, accept individually named illustrative defaults, fill supplied facts, and use the normal calculation/finish gates. The single canonical skill artifact contains the annual joint excavation/haulage formulas; defaults are editable assumptions, not site facts or verified benchmarks. Seeding preserves the existing root and cannot replace existing drivers. A fresh local `qwen3.5:4b-q4_K_M` run on 2026-10-17 completed this library workflow with 35 calculable nodes in 10 turns, without operator formula/value edits. See [the live evidence and its limits](AI_HARNESS.md#local-library-completion-evidence-2026-10-17); production/provider qualification is unchanged.
 
 Implemented experimentally for direct OpenAI: explicit session-key/model admission, modern reasoning-model completion parameters, exact response-schema guidance in JSON fallback, and original-brief/admitted-read/current-graph retention. A fresh `gpt-6-luna` library-backed tree completed in 145.436 seconds (35 nodes, 10 turns), without manual formula/value edits. Earlier integration failures remain in the timing inventory. Repeated cold/warm samples, arbitrary tree quality, restart recovery, other API gateways and production certification remain separate work; see [evidence](AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17).
+
+## Personalisation (2026-10-26)
+
+Implemented locally: Personalisation contains only Your instructions as compact
+preview rows. New and row/Edit open a separate text/Enabled dialog with Save and
+Cancel; the row menu provides Enable/Disable and Delete with Undo. The earlier
+single text migrates to one entry. Project-rule editors/application are removed;
+stored legacy project metadata is retained but inactive. Active entries are
+combined for chat, Suggested KPI and tree analysis. Preparation v12 invalidates
+Smart state when active instruction content/order changes. Automatic learning,
+account sync, general semantic obedience across models and packaged-native/
+Windows qualification remain open. See
+[ADR-011](adr/ADR-011-personalisation-and-project-rules.md).

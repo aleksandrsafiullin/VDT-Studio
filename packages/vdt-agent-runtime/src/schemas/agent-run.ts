@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { validAiPersonalisation, type AiPersonalisation } from "@vdt-studio/vdt-core";
+
+export const aiPersonalisationSchema = z.custom<AiPersonalisation>(validAiPersonalisation, "Invalid personalisation instructions.");
 
 const boundedString = (max: number) => z.string().trim().min(1).max(max);
 const optionalBoundedString = (max: number) =>
@@ -16,6 +19,7 @@ export const researchModeSchema = z.enum(["auto", "on", "off"]);
 const agentStartRequestCommonShape = {
   mode: z.enum(["generate_vdt", "continue_project", "deepen_node", "review_project"]),
   input: z.object({
+    personalisation: aiPersonalisationSchema.optional(),
     prompt: optionalBoundedString(2_000),
     rootKpi: optionalBoundedString(160),
     industry: optionalBoundedString(160),

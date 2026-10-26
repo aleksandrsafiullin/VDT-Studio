@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Folder, Plus, Trash2 } from "lucide-react";
+import { Folder, Plus, Search, Trash2, X } from "lucide-react";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "@/components/ui/field";
 import type { StoredProjectSummary } from "@/lib/vdt-storage-client";
-import { projectCardDetailRows } from "@/lib/project-metadata";
+import { projectCardDetailRows, projectMatchesSearch, type ProjectCardMetadata } from "@/lib/project-metadata";
+import { CreateProjectDialog } from "./create-project-dialog";
 import { SettingsModal } from "./settings-modal";
 import { useVdtStudioStore } from "./vdt-store";
+import styles from "./projects-home-page.module.css";
 
 function formatUpdatedAt(value: string): string {
   const date = new Date(value);
@@ -22,7 +24,7 @@ function formatUpdatedAt(value: string): string {
 
 function ProjectsHomeSkeletonCards() {
   return (
-    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
+    <div className={styles.grid} aria-hidden="true">
       {Array.from({ length: 3 }, (_, index) => (
         <div
           key={index}
@@ -94,11 +96,11 @@ export function ProjectsHomeProjectCards({
   }
 
   return (
-    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3" data-testid="projects-home-list">
+    <div className={styles.grid} data-testid="projects-home-list">
       {summaries.map((entry) => (
         <article
           key={entry.project.id}
-          className="group relative"
+          className="group relative min-w-0"
           data-testid={`project-card-${entry.project.id}`}
         >
           <Link
@@ -160,25 +162,41 @@ export function ProjectsHomePage() {
   const createWorkspaceProject = useVdtStudioStore((state) => state.createWorkspaceProject);
   const deleteWorkspaceProject = useVdtStudioStore((state) => state.deleteWorkspaceProject);
   const [createOpen, setCreateOpen] = useState(false);
-  const [projectName, setProjectName] = useState("");
+  const [createError, setCreateError] = useState<string>();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInput = useRef<HTMLInputElement>(null);
+  const searchButton = useRef<HTMLButtonElement>(null);
+  const visibleSummaries = workspace.projectSummaries.filter((entry) => projectMatchesSearch(entry.project, searchQuery));
 
   useEffect(() => {
     clearHomeWorkspaceContext();
     void refreshWorkspace();
   }, [clearHomeWorkspaceContext, refreshWorkspace]);
 
-  async function handleCreateProject(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmed = projectName.trim();
-    if (!trimmed) {
-      return;
-    }
-    const created = await createWorkspaceProject(trimmed);
+  useEffect(() => {
+    if (searchOpen) searchInput.current?.focus();
+  }, [searchOpen]);
+
+  function openCreateDialog() {
+    setCreateError(undefined);
+    setCreateOpen(true);
+  }
+
+  function closeSearch() {
+    setSearchQuery("");
+    setSearchOpen(false);
+    searchButton.current?.focus();
+  }
+
+  async function handleCreateProject(name: string, details: ProjectCardMetadata) {
+    setCreateError(undefined);
+    const created = await createWorkspaceProject(name, details);
     if (!created) {
+      setCreateError(useVdtStudioStore.getState().workspace.error ?? "Project could not be created. Try again.");
       return;
     }
     const projectId = useVdtStudioStore.getState().workspace.activeProjectId;
-    setProjectName("");
     setCreateOpen(false);
     if (projectId) {
       router.push(`/projects/${projectId}`);
@@ -193,7 +211,7 @@ export function ProjectsHomePage() {
   }
 
   return (
-    <main className="vdt-apple-home flex min-h-screen flex-col bg-apple-gray text-ink">
+    <main className={clsx(styles.page, "vdt-apple-home flex min-h-screen flex-col bg-apple-gray text-ink")}>
       <div
         className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(47,111,237,0.08),transparent)]"
         aria-hidden="true"
@@ -210,87 +228,76 @@ export function ProjectsHomePage() {
       </header>
 
       <div
-        className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col px-5 py-12 sm:px-6 sm:py-16"
+        className={clsx(styles.content, "relative mx-auto flex flex-1 flex-col py-12 sm:py-16")}
         data-testid="projects-home"
       >
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="max-w-xl">
-            <p className="text-sm text-muted">Projects</p>
-            <h2 className="mt-1 text-4xl font-semibold tracking-tight text-ink sm:text-5xl">Your workspaces</h2>
-            <p className="mt-3 text-base leading-relaxed text-muted">
-              Open a project to manage VDTs or create a new one.
-            </p>
-          </div>
-          <Button
-            type="button"
-            variant="primary"
-            className="rounded-full px-5 shadow-sm"
-            data-testid="create-project-button"
-            aria-expanded={createOpen}
-            aria-controls="create-project-form"
-            disabled={workspace.isMutating}
-            icon={<Plus className="h-4 w-4" />}
-            onClick={() => setCreateOpen(true)}
-          >
-            Create project
-          </Button>
-        </div>
-
-        <div
-          className={clsx(
-            "grid transition-all duration-200 ease-out",
-            createOpen ? "mt-8 grid-rows-[1fr] opacity-100" : "mt-0 grid-rows-[0fr] opacity-0"
-          )}
-        >
-          <div className="overflow-hidden">
-            {createOpen ? (
-              <form
-                id="create-project-form"
-                className="rounded-2xl border border-black/5 bg-white/90 p-6 shadow-glass backdrop-blur-sm"
-                data-testid="create-project-form"
-                onSubmit={(event) => void handleCreateProject(event)}
-              >
-                <label className="block text-sm font-medium text-ink" htmlFor="new-project-name">
-                  Project name
-                </label>
-                <div className="mt-3 flex flex-wrap items-end gap-3">
-                  <TextInput
-                    id="new-project-name"
-                    data-testid="create-project-name-input"
-                    value={projectName}
-                    placeholder="Mining operations model"
-                    className="min-w-[220px] flex-1 rounded-xl border-black/10"
-                    onChange={(event) => setProjectName(event.target.value)}
-                  />
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    className="rounded-full px-5"
-                    disabled={workspace.isMutating || !projectName.trim()}
-                  >
-                    Create
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="rounded-full"
-                    onClick={() => setCreateOpen(false)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </form>
-            ) : null}
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <h2 className="text-3xl font-semibold tracking-tight text-ink">Projects</h2>
+          <div className="flex items-center gap-3">
+            <Button
+              ref={searchButton}
+              type="button"
+              className="rounded-full px-4"
+              data-testid="search-projects-button"
+              aria-label="Search projects"
+              aria-expanded={searchOpen}
+              aria-controls="project-search"
+              icon={<Search className="h-4 w-4" />}
+              onClick={() => searchOpen ? closeSearch() : setSearchOpen(true)}
+            >
+              Search
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              className="rounded-full px-5 shadow-sm"
+              data-testid="create-project-button"
+              aria-expanded={createOpen}
+              aria-haspopup="dialog"
+              aria-controls="create-project-dialog"
+              disabled={workspace.isMutating}
+              icon={<Plus className="h-4 w-4" />}
+              onClick={openCreateDialog}
+            >
+              Create project
+            </Button>
           </div>
         </div>
 
-        {workspace.error ? (
+        {searchOpen ? (
+          <div id="project-search" role="search" aria-label="Project search" className="mt-6 flex items-center gap-3 rounded-2xl border border-black/10 bg-white/90 px-4 py-2 shadow-sm">
+            <Search className="h-5 w-5 shrink-0 text-muted" aria-hidden="true" />
+            <TextInput
+              ref={searchInput}
+              type="search"
+              aria-label="Search projects by any field"
+              data-testid="project-search-input"
+              placeholder="Search all project fields…"
+              className="min-w-0 border-0 bg-transparent px-0 shadow-none focus:ring-0"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); closeSearch(); } }}
+            />
+            <Button type="button" variant="ghost" size="icon" className="shrink-0 rounded-full" aria-label="Close project search" onClick={closeSearch}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        ) : null}
+
+        {createOpen ? (
+          <CreateProjectDialog isMutating={workspace.isMutating} error={createError} onCreate={handleCreateProject} onClose={() => setCreateOpen(false)} />
+        ) : null}
+
+        {workspace.error && !createOpen ? (
           <div className="mt-6 rounded-2xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-800">
             {workspace.error}
           </div>
         ) : null}
 
-        <div className="mt-10 min-h-0 flex-1" aria-busy={workspace.isLoading}>
+        <div className="mt-8 min-h-0 flex-1" aria-busy={workspace.isLoading}>
+          {searchOpen && !workspace.isLoading ? (
+            <p role="status" className="mb-4 text-sm text-muted">{visibleSummaries.length} of {workspace.projectSummaries.length} projects</p>
+          ) : null}
           {workspace.isLoading ? (
             <>
               <span className="sr-only">Loading projects</span>
@@ -314,14 +321,21 @@ export function ProjectsHomePage() {
                 variant="primary"
                 disabled={workspace.isMutating}
                 icon={<Plus className="h-4 w-4" />}
-                onClick={() => setCreateOpen(true)}
+                onClick={openCreateDialog}
               >
                 Create project
               </Button>
             </div>
+          ) : visibleSummaries.length === 0 ? (
+            <div className="rounded-2xl border border-black/5 bg-white/70 px-6 py-16 text-center" data-testid="projects-home-no-results">
+              <Search className="mx-auto h-8 w-8 text-muted" aria-hidden="true" />
+              <h3 className="mt-4 text-lg font-semibold text-ink">No projects found</h3>
+              <p className="mt-2 text-sm text-muted">Try another name, client, site, year, or project detail.</p>
+              <Button type="button" className="mt-5 rounded-full px-5" onClick={() => { setSearchQuery(""); searchInput.current?.focus(); }}>Clear search</Button>
+            </div>
           ) : (
             <ProjectsHomeProjectCards
-              summaries={workspace.projectSummaries}
+              summaries={visibleSummaries}
               isMutating={workspace.isMutating}
               onDeleteProject={handleDeleteProject}
             />

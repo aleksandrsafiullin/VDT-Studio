@@ -183,6 +183,32 @@ describe("refreshWorkspace scoping", () => {
     expect(workspace.projectSummaries).toHaveLength(2);
   });
 
+  it("creates the project and its entered details in one request", async () => {
+    useVdtStudioStore.getState().clearHomeWorkspaceContext();
+    const summary = sampleSummary("project_new", "Efficiency");
+    summary.project.metadata = { clientName: "Acme", siteName: "Plant A", year: "2026" };
+    mockCreateProject.mockResolvedValueOnce(summary);
+
+    await expect(useVdtStudioStore.getState().createWorkspaceProject(" Efficiency ", {
+      clientName: " Acme ", siteName: " Plant A ", year: " 2026 "
+    })).resolves.toBe(true);
+
+    expect(mockCreateProject).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      name: "Efficiency", metadata: { clientName: "Acme", siteName: "Plant A", year: "2026" }
+    }));
+    expect(useVdtStudioStore.getState().workspace.activeProjectId).toBe("project_new");
+    expect(useVdtStudioStore.getState().workspace.projectSummaries).toContainEqual(summary);
+  });
+
+  it("keeps a failed project creation out of the workspace and allows retry", async () => {
+    useVdtStudioStore.getState().clearHomeWorkspaceContext();
+    mockCreateProject.mockRejectedValueOnce(new Error("Storage unavailable"));
+    await expect(useVdtStudioStore.getState().createWorkspaceProject("Retry", { clientName: "Acme" })).resolves.toBe(false);
+    expect(useVdtStudioStore.getState().workspace.activeProjectId).toBeUndefined();
+    expect(useVdtStudioStore.getState().workspace.error).toBe("Storage unavailable");
+    expect(useVdtStudioStore.getState().workspace.isMutating).toBe(false);
+  });
+
   it("reuses one immutable manual-save request after an ambiguous transport failure", async () => {
     mockSaveRevision.mockRejectedValueOnce(new Error("connection closed after request"));
     const firstResult = await useVdtStudioStore.getState().saveActiveWorkspaceVdt();

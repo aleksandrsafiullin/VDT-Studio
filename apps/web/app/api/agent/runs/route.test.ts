@@ -410,6 +410,11 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       .mockResolvedValueOnce(turnResponse(firstTurn));
     vi.stubGlobal("fetch", providerFetch);
 
+    const instructions = { userInstructions: "Answer in Russian.\n\nExplain assumptions." };
+    const retiredProjectRule = "Retired project rule must not be applied.";
+    const rulesDatabase = openVdtStorageDatabase(process.cwd());
+    rulesDatabase.createProject({ id: `personalised_route_${providerId}`, name: "Instruction workspace", metadata: { personalisation: { enabled: true, text: retiredProjectRule } } });
+    rulesDatabase.close();
     const bindingId = `structured_model_route_${providerId}_${Date.now()}`;
     const dispose = agentExecutionBindingRegistry.register({
       bindingId,
@@ -430,7 +435,8 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     try {
       const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
         mode: "generate_vdt",
-        input: { rootKpi: "Ore hauled", prompt: "Build an Ore hauled VDT." },
+        input: { rootKpi: "Ore hauled", prompt: "Build an Ore hauled VDT.", personalisation: { ...instructions, projectRules: retiredProjectRule } },
+        workspace: { projectId: `personalised_route_${providerId}` },
         executionBindingId: bindingId
       }));
       const body = await readJson(response);
@@ -463,9 +469,11 @@ describe("agent runs API", { timeout: 30_000 }, () => {
         format?: unknown;
       };
       const firstPrompt = JSON.parse(firstProviderBody.messages.find((message) => message.role === "user")!.content) as {
-        delta: { type: string; context?: { tools?: unknown[] } };
+        delta: { type: string; context?: { tools?: unknown[]; brief?: { personalisation?: unknown } } };
       };
       expect(firstPrompt.delta.type).toBe("initial_context");
+      expect(firstPrompt.delta.context?.brief?.personalisation).toEqual(instructions);
+      expect(JSON.stringify(firstPrompt)).not.toContain(retiredProjectRule);
       expect(firstPrompt.delta.context?.tools?.length).toBeGreaterThan(10);
       if (providerId === "ollama") {
         expect(firstPrompt.delta.context?.tools?.find((tool) => (tool as { name?: string }).name === "vdt.add_driver"))
@@ -525,6 +533,9 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       expect(secondPrompt.sessionContinuation.lastConfirmed.inputHash).toMatch(/^sha256:[a-f0-9]{64}$/);
       expect(secondPrompt.sessionContinuation.lastConfirmed.outputHash).toMatch(/^sha256:[a-f0-9]{64}$/);
       const secondPromptText = JSON.stringify(secondPrompt);
+      expect(secondPromptText).toContain("Answer in Russian.");
+      expect(secondPromptText).toContain("Explain assumptions.");
+      expect(secondPromptText).not.toContain(retiredProjectRule);
       expect(secondPromptText).not.toContain('"initialContext"');
       expect(secondPromptText).not.toContain('"project"');
       expect(new TextEncoder().encode(secondPromptText).byteLength).toBeLessThan(8_192);

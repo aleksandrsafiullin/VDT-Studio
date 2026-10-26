@@ -34,6 +34,9 @@ export function recordSmartKpiDecision(context: KpiSuggestionContext, proposal: 
 }
 
 export function getSmartKpiLibraryProposal(context: KpiSuggestionContext): KpiSuggestionSet | undefined {
+  // Canonical recipe labels cannot interpret custom user/project guidance.
+  // Personalized requests use the prepared model proposal/cache instead.
+  if (context.personalisation && Object.keys(context.personalisation).length) return undefined;
   hydrate(); const now = Date.now();
   const entry = memory.find(e => e.scope === scope(context) && e.targetNodeId === context.targetNodeId && e.contextHash === context.contextHash
     && e.catalogVersion === KPI_SUGGESTION_RECIPES.version && e.createdAt > now - TTL && e.createdAt <= now);

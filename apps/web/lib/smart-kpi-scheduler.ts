@@ -1,3 +1,4 @@
+import type { AiPersonalisation } from "@vdt-studio/vdt-core";
 import {
   buildKpiSuggestionContext, fingerprintKpiProject, kpiCanonicalJson,
   resolveKpiSuggestionSelection, validateKpiSuggestionForContext, validateKpiSuggestionDecomposition,
@@ -13,6 +14,7 @@ const priority: Record<SmartKpiPriority, number> = { hover: 0, selected: 1, new_
 export type SmartKpiPreparationResult = KpiSuggestionSet | undefined |
   { status: "ready"; proposal: unknown } | { status: "empty" | "unavailable"; reason: string; limitations?: string[] };
 export interface SmartKpiWorkspace {
+  personalisation?: AiPersonalisation;
   workspaceId: string; project: VdtProject; vdtId: string | null; period: KpiSuggestionPeriod;
   execution?: KpiSuggestionExecutionIdentity; goal?: string;
   /** Optional host token changes ONLY on semantic edits. No revisions/admissions. */
@@ -136,7 +138,8 @@ export class SmartKpiScheduler {
       if (this.disposed || ticket !== this.updateTicket) return;
       if (input.execution) smartKpiExecutionKey(input.execution);
       const generation = kpiCanonicalJson({ workspace: input.workspaceId, project: input.project.id, vdt: input.vdtId,
-        graphFingerprint, period: input.period, goal: input.goal ?? null, execution: input.execution ? smartKpiExecutionKey(input.execution) : null });
+        graphFingerprint, period: input.period, goal: input.goal ?? null, personalisation: input.personalisation ?? null,
+        execution: input.execution ? smartKpiExecutionKey(input.execution) : null });
       this.workspace = input; this.targets = smartKpiTargetIds(input.project); this.graphFingerprint = graphFingerprint; this.attachLane(input.workspaceId);
       if (generation !== this.generation) {
         this.generation = generation; this.contexts.clear(); this.queue.clear(); this.attempted.clear(); this.spent = 0;
@@ -160,7 +163,7 @@ export class SmartKpiScheduler {
       const w = this.workspace!;
       context = (this.options.buildContext ?? buildKpiSuggestionContext)(w.project, {
         workspaceId: w.workspaceId, vdtId: w.vdtId, targetNodeId, period: w.period,
-        graphFingerprint: this.graphFingerprint, ...(w.goal === undefined ? {} : { goal: w.goal })
+        graphFingerprint: this.graphFingerprint, ...(w.goal === undefined ? {} : { goal: w.goal }), ...(w.personalisation ? { personalisation: w.personalisation } : {})
       });
       this.contexts.set(targetNodeId, context);
     }

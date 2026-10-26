@@ -3,10 +3,30 @@ import {
   projectCardDetailLines,
   projectCardDetailRows,
   projectCardMetadata,
-  projectMetadataText
+  projectMetadataText,
+  projectMatchesSearch
 } from "./project-metadata";
 
 describe("project-metadata", () => {
+  const searchableProject = {
+    name: "Plant efficiency",
+    description: "Reduce maintenance downtime",
+    industry: "Manufacturing",
+    metadata: { clientName: "Acme", siteName: "Алматы", year: 2026, custom: { tags: ["Assembly"] } }
+  };
+
+  it.each(["plant", "ACME", "алматы", "2026", "downtime", "manufacturing", "assembly", " acme  2026 "])(
+    "finds projects by user-entered field values: %s", (query) => {
+      expect(projectMatchesSearch(searchableProject, query)).toBe(true);
+    }
+  );
+
+  it("requires all query terms and handles empty or missing fields", () => {
+    expect(projectMatchesSearch(searchableProject, "Acme 2025")).toBe(false);
+    expect(projectMatchesSearch({ name: "Empty" }, "Acme")).toBe(false);
+    expect(projectMatchesSearch({ name: "Empty" }, "  ")).toBe(true);
+  });
+
   it("reads string and numeric metadata values", () => {
     expect(projectMetadataText({ clientName: "Acme", year: 2026 }, "clientName")).toBe("Acme");
     expect(projectMetadataText({ clientName: "Acme", year: 2026 }, "year")).toBe("2026");

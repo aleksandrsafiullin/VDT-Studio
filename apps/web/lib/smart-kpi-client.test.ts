@@ -14,7 +14,7 @@ const ready = { status: "ready", rationale: "Productive time and rate are measur
   { key: "rate", conceptKey: "production_rate", name: "Production rate", unit: "t/h", description: null, existingNodeId: null }
 ] }] };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
-const context = () => buildKpiSuggestionContext(createSmartKpiMeasuredFixture(), { workspaceId: "client_qa", vdtId: null, targetNodeId: "measured_output", period: { key: "2026-10", grain: "month" } });
+const context = (personalisation?: { userInstructions: string }) => buildKpiSuggestionContext(createSmartKpiMeasuredFixture(), { workspaceId: "client_qa", vdtId: null, targetNodeId: "measured_output", period: { key: "2026-10", grain: "month" }, ...(personalisation ? { personalisation } : {}) });
 const apiSettings = (): ExecutionSettings => ({ ...applyGatewayPreset({ ...DEFAULT_EXECUTION_SETTINGS, executionMode: "byok" }, "openai-default"), apiKey: "synthetic-a", model: "selected", timeoutSec: 2 });
 const cliSettings = (): ExecutionSettings => ({ ...applyLocalRunnerPreset({ ...DEFAULT_EXECUTION_SETTINGS, executionMode: "local_cli", selectedCliAgentId: "codex" }, "custom_cli_json"), cliModelSelection: { source: "custom", customModel: "selected" }, timeoutSec: 2 });
 const binding = { backendId: "codex_subscription" as const, requestModel: "selected", modelId: "selected", modelResolution: "exact" as const, bindingVersion: "stable-cli-v1", credentialEpoch: "stable-host-epoch" };
@@ -73,11 +73,13 @@ describe("stable credential and selection identities", () => {
     const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => json({ ok: true, result: ready }));
     const selected = await createSmartKpiPreparedSelection(settings, { vault, fetch, appMode: "development_web" });
     const reopened = await createSmartKpiPreparedSelection(settings, { vault: new IndexedDbApiKeyVault("smart-qa", storage), fetch, appMode: "development_web" });
-    const ctx = await context(); expect(kpiSuggestionCacheKey(ctx, KPI_SUGGESTION_RECIPES.version, selected.execution)).toBe(kpiSuggestionCacheKey(ctx, KPI_SUGGESTION_RECIPES.version, reopened.execution));
+    const ctx = await context({ userInstructions: "Use Russian labels.\n\nUse fiscal periods." });
+    expect(kpiSuggestionCacheKey(ctx, KPI_SUGGESTION_RECIPES.version, selected.execution)).toBe(kpiSuggestionCacheKey(ctx, KPI_SUGGESTION_RECIPES.version, reopened.execution));
     expect(kpiCanonicalJson(selected.execution)).not.toContain(settings.apiKey);
     const proposal = await selected.prepare({ context: ctx, execution: selected.execution, signal: new AbortController().signal });
     expect(proposal).toMatchObject({ origin: { kind: "model", execution: selected.execution }, groups: [{ children: [{ name: "Productive time" }, { name: "Production rate" }] }] });
     const payload = JSON.parse(String(fetch.mock.calls[0]![1]?.body)); expect(payload.providerConfig).toMatchObject({ model: "selected", apiKey: "synthetic-a", baseUrl: "https://api.openai.com/v1", timeoutMs: 2000 });
+    expect(payload.input.context.personalisation).toEqual(ctx.personalisation);
     await expect(selected.prepare({ context: ctx, execution: { ...selected.execution, credentialEpoch: "changed" }, signal: new AbortController().signal })).rejects.toMatchObject({ code: "STALE_EXECUTION" });
     const changed = await createSmartKpiPreparedSelection({ ...settings, model: "different" }, { vault, fetch }); expect(changed.execution.modelId).toBe("different");
     await vault.write(scope, "synthetic-b"); const replaced = await createSmartKpiPreparedSelection({ ...settings, apiKey: "synthetic-b" }, { vault, fetch }); expect(replaced.execution.credentialEpoch).not.toBe(selected.execution.credentialEpoch);

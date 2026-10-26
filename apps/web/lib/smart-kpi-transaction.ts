@@ -77,6 +77,7 @@ export function smartKpiBlockedReason(state: VdtStudioState, ignoreOwnOperation 
 function ownsBase(state: VdtStudioState, operation: SmartKpiOperation): boolean {
   const scope = resolveSmartKpiScope(state);
   return !scope.blockedReason && scope.workspaceId === operation.workspaceId && scope.vdtId === operation.vdtId && state.project.id === operation.projectId
+    && (operation.phase === "committing" || operation.kind === "undo" || same(scope.personalisation ?? {}, operation.context?.personalisation ?? {}))
     && state.projectRevision === operation.projectRevision && kpiCanonicalJson(state.project) === operation.beforeJson
     && (operation.proposal?.origin.kind !== "model" || operation.phase === "committing" || configuration(state) === operation.settings);
 }
@@ -247,7 +248,7 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
       if (operation.kind === "add" && operation.context && operation.proposal && selection) {
         await recordAcceptedSmartKpiChildren({ project: operation.candidate, context: operation.context, proposal: operation.proposal,
           selection, ...(operation.schemaVersion === "smart_kpi_operation.v2" ? { aliases: operation.resolved.aliases } : {}), operationId: operation.id, scope: { workspaceId: operation.workspaceId, vdtId: operation.vdtId,
-            period: operation.context.period, ...(operation.context.business.goal ? { goal: operation.context.business.goal } : {}) } }).catch(() => {});
+            period: operation.context.period, ...(operation.context.personalisation ? { personalisation: operation.context.personalisation } : {}), ...(operation.context.business.goal ? { goal: operation.context.business.goal } : {}) } }).catch(() => {});
       }
       let published = false;
       set(current => {
@@ -383,7 +384,7 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
  * leave an already-started external mutation behind. Inspection remains usable. */
 export function guardSmartKpiActions(state: VdtStudioState, get: Get): VdtStudioState {
   const voidActions = ["resetUiPreferences", "autoDistributeLayout", "clearHomeWorkspaceContext", "closeWorkspaceVdtEditor", "setWorkspacePanel", "updateNodePosition", "setBriefField", "setProviderId", "setProviderConfigField", "setExecutionMode", "setExecutionCategory", "setExecutionSettingsField", "setSelectedCliAgentId", "removeCliAgent", "restoreCliAgent", "setLocalRunnerPreset", "setByokProtocol", "setByokGateway", "setGatewayPreset", "setMemoryModelMode", "setCliModelSelection", "setCliModelForAgent", "loadExample", "updateNode", "updateNodeBaselineValue", "deleteNode", "createScenario", "setMainScenario", "renameScenario", "deleteScenario", "cloneScenario", "updateScenarioOverride", "toggleChangeSelection", "applyPendingChangeSet", "discardPendingChangeSet", "renameVersionSnapshot", "addManualIncomingKpi", "connectAgentEvents"];
-  const falseActions = ["createWorkspaceProject", "renameWorkspaceProject", "updateWorkspaceProjectDetails", "deleteWorkspaceProject", "createWorkspaceVdt", "selectWorkspaceProject", "selectWorkspaceVdt", "renameWorkspaceVdt", "setWorkspaceVdtStatus", "deleteWorkspaceVdt", "saveActiveWorkspaceVdt", "startNewAgentChat", "openAgentChat", "startAgentRun", "sendAgentInstruction", "requestIncomingKpisWithAi", "stageDataDiscoveryChangeSet", "restoreVersionSnapshot", "undoVersionRestore"];
+  const falseActions = ["savePersonalisation", "createWorkspaceProject", "renameWorkspaceProject", "updateWorkspaceProjectDetails", "deleteWorkspaceProject", "createWorkspaceVdt", "selectWorkspaceProject", "selectWorkspaceVdt", "renameWorkspaceVdt", "setWorkspaceVdtStatus", "deleteWorkspaceVdt", "saveActiveWorkspaceVdt", "startNewAgentChat", "openAgentChat", "startAgentRun", "sendAgentInstruction", "requestIncomingKpisWithAi", "stageDataDiscoveryChangeSet", "restoreVersionSnapshot", "undoVersionRestore"];
   const asyncVoid = ["refreshWorkspace", "resumePersistedAgentRun", "sendAgentAnswers", "continueAgentRun", "sendAgentApproval", "generateWithAi", "pairRunner", "unpairRunner"];
   const actions = state as unknown as Record<string, (...args: unknown[]) => unknown>;
   for (const name of [...voidActions, ...falseActions, ...asyncVoid, "saveVersionSnapshot"]) {

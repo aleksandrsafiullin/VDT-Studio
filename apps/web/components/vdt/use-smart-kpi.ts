@@ -34,14 +34,14 @@ export function useSmartKpi() {
   const selectedNodeId = useVdtStudioStore(state => state.selectedNodeId);
   const executionSettings = useVdtStudioStore(state => state.executionSettings);
   const runnerPairingToken = useVdtStudioStore(state => state.runnerPairingToken);
-  const goal = useVdtStudioStore(state => state.brief.goal);
+  const personalisation = useVdtStudioStore(state => state.personalisation);
   const apiKeyStorageStatus = useApiKeyStorage(state => state.status);
   const fullAgentActive = useVdtStudioStore(smartKpiAgentIsActive);
   const mutation = useVdtStudioStore(state => state.smartKpiMutation);
   const mutationBusy = ["applying", "undoing", "reconciling"].includes(mutation.status);
   const mutationBusyRef = useRef(mutationBusy); mutationBusyRef.current = mutationBusy;
   const mutationBlockedReason = useVdtStudioStore(state => state.smartKpiBlockedReason);
-  const scope = useMemo(() => resolveSmartKpiScope({ project, workspace }), [project, workspace, goal]);
+  const scope = useMemo(() => resolveSmartKpiScope({ project, workspace, personalisation }), [project, workspace, personalisation]);
   const scopeKey = kpiCanonicalJson(scope);
   const ownerKey = kpiCanonicalJson([scope.workspaceId, scope.vdtId, project.id]);
   const [admission, setAdmission] = useState<Admission>({ status: "preparing" });
@@ -176,7 +176,7 @@ export function useSmartKpi() {
       .catch((error: unknown) => { if (current) { setCurrentContext(undefined); setContextError(error instanceof Error ? error.message : "Refresh the KPI context."); } })
       .finally(() => { if (current) setContextPending(false); });
     return () => { current = false; };
-  }, [active?.targetNodeId, ownerKey, project, contextRevision]);
+  }, [active?.targetNodeId, ownerKey, project, contextRevision, scopeKey]);
   useEffect(() => {
     const instance = scheduler.current;
     if (!instance) return;
@@ -187,6 +187,7 @@ export function useSmartKpi() {
     const owningParents = [...new Set(project.graph.edges.filter(edge => newIds.has(edge.targetNodeId) && !newIds.has(edge.sourceNodeId)).map(edge => edge.sourceNodeId))];
     const newParent = before && newIds.size ? before.id !== project.id ? project.rootNodeId : owningParents.length === 1 ? owningParents[0] : project.rootNodeId : undefined;
     void instance.setWorkspace({ project, workspaceId: scope.workspaceId, vdtId: scope.vdtId, period: scope.period,
+      ...(scope.personalisation ? { personalisation: scope.personalisation } : {}),
       ...(scope.goal ? { goal: scope.goal } : {}), ...(admission.selection ? { execution: admission.selection.execution } : {}) })
       .then(async () => {
         if (!current || scope.blockedReason) return;

@@ -73,6 +73,14 @@ afterEach(() => {
 });
 
 describe("VDT storage client atomic envelopes", () => {
+  it("includes project details in the initial create request", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ schemaVersion: "project_summary_response.v1", ok: true, summary }));
+    vi.stubGlobal("fetch", fetcher);
+    const input = { name: "Client project", metadata: { clientName: "Acme", siteName: "Plant A", year: "2026" } };
+    await expect(createStoredProject(input)).resolves.toEqual(summary);
+    expect(fetcher).toHaveBeenCalledWith("/api/vdt/projects", expect.objectContaining({ method: "POST", body: JSON.stringify(input) }));
+  });
+
   it("sends exact manual CAS and never sends actor or source", async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({
       schemaVersion: "manual_vdt_revision_commit_response.v1",

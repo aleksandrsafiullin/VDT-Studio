@@ -1,4 +1,5 @@
 import { parseFormula } from "../formula/parser";
+import { validAiPersonalisation } from "../personalisation";
 import { extractReferencesFromAst } from "../formula/evaluator";
 import type { FormulaExpression } from "../formula/ast";
 import { KPI_SUGGESTION_LIMITS, KPI_SUGGESTION_SCHEMA, KPI_SUGGESTION_VALIDATOR } from "./types";
@@ -35,9 +36,10 @@ function date(v: unknown): number {
 }
 
 export function validateKpiSuggestionContext(value: unknown): KpiSuggestionContext {
-  smartRecord(value, ["schemaVersion", "workspaceId", "projectId", "vdtId", "targetNodeId", "graphFingerprint", "contextHash", "period", "business", "root", "target", "children", "ancestors", "siblings", "decompositionPlan", "planScope", "parentRelationships", "omissions"],
+  smartRecord(value, ["personalisation", "schemaVersion", "workspaceId", "projectId", "vdtId", "targetNodeId", "graphFingerprint", "contextHash", "period", "business", "root", "target", "children", "ancestors", "siblings", "decompositionPlan", "planScope", "parentRelationships", "omissions"],
     ["schemaVersion", "workspaceId", "projectId", "vdtId", "targetNodeId", "graphFingerprint", "contextHash", "period", "business", "root", "target", "children", "ancestors", "siblings", "parentRelationships", "omissions"]);
   smartAssert(value.schemaVersion === "kpi_suggestion_context.v1", "INVALID_CONTEXT", "Unknown Smart context schema.");
+  if (value.personalisation !== undefined) smartAssert(validAiPersonalisation(value.personalisation), "INVALID_CONTEXT", "Invalid personalisation instructions.");
   for (const field of ["workspaceId", "projectId", "targetNodeId"]) smartString(value[field], 160);
   if (value.vdtId !== null) smartString(value.vdtId, 160);
   hash(value.graphFingerprint); hash(value.contextHash);

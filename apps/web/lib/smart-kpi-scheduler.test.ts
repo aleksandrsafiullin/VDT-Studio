@@ -58,6 +58,17 @@ function create(options: ConstructorParameters<typeof SmartKpiScheduler>[0]): Sm
 }
 
 describe("Smart KPI bounded scheduling", () => {
+  it("cancels obsolete personalized preparation and prevents its result from being applied", async () => {
+    const transport = controlled(), w = workspace(), scheduler = create({ prepare: transport.prepare });
+    await scheduler.setWorkspace({ ...w, personalisation: { userInstructions: "Use Russian labels." } });
+    await scheduler.request(fixtureTarget); await tick();
+    expect(transport.calls[0]!.context.personalisation).toEqual({ userInstructions: "Use Russian labels." });
+    await scheduler.setWorkspace({ ...w, personalisation: { userInstructions: "Use English labels." } });
+    expect(transport.calls[0]!.signal.aborted).toBe(true);
+    transport.resolve(0, "obsolete-instructions"); await scheduler.whenSettled();
+    expect(scheduler.getSnapshot(fixtureTarget).canApply).toBe(false);
+    expect(scheduler.getSnapshot(fixtureTarget).proposal?.proposalId).not.toBe("obsolete-instructions");
+  });
   it("keeps a fresh explicit attempt visible when background prewarm finds an older cached result", async () => {
     const transport = controlled(), w = workspace(), scheduler = create({ prepare: transport.prepare });
     await scheduler.setWorkspace(w); await scheduler.request(fixtureTarget); await tick(); transport.resolve(0, "old"); await scheduler.whenSettled();

@@ -666,3 +666,19 @@ When the original structured brief already specifies KPI, unit and period, new-t
 Direct OpenAI admission amendment (experimental, 2026-10-17): a trusted local, same-origin caller may explicitly supply an in-memory key and exact model (the client may restore that key from the separate encrypted local vault in [ADR-007](adr/ADR-007-encrypted-browser-api-keys.md)) to `POST /api/agent/bindings/openai`. The server owns the fixed official endpoint, immutable capability/tool-catalog snapshot and one-use binding. Pending admission is bounded to 8 KiB, 16 entries and 60 seconds; production additionally requires the host Model Agent flag. Binding IDs are excluded from discovery and consumed before run initialization. Starts still accept only an execution binding ID; browser credentials, endpoints and commands cannot enter the public run envelope or durable authority. Existing approval, scope, revision, receipt and finish gates apply unchanged. This adds no hosted, External or restart qualification.
 
 The OpenAI structured transport now carries a JSON Schema representation alongside its authoritative runtime validator. JSON-only fallback includes that schema explicitly and may repair one invalid response. The HTTP session retains the original brief/catalog and one last confirmed action, plus bounded admitted read knowledge and a read-only current graph. A semantic checkpoint alone is insufficient to preserve exact source quotes and tool argument fields. A fresh 35-node `gpt-6-luna` library-backed completion is recorded in [AI_HARNESS.md](AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17); it does not establish general business-model correctness or release qualification.
+
+## Personalisation amendment (2026-10-26)
+
+Implemented locally: Your instructions is one browser-local list of independently
+enabled entries. Only their combined text (up to 3,000 characters) enters the
+bounded start input as personalisation.userInstructions. Explicit user_instruction
+messages refresh or clear it. New starts/follow-ups discard retired projectRules;
+project metadata is retained without application. Existing historical readers
+continue to admit that legacy field for immutable journal/snapshot compatibility.
+
+Both execution profiles receive initial guidance, and Model Agent HTTP/native
+turns retain it. Pending answers/approvals and already executing turns retain the
+admitted snapshot. No engine binding, permission, approval, provenance or finish
+authority is granted by text. Specific current requests take precedence over
+saved instructions. This additive V1 capability does not implement the
+default-off corrective V2 runtime. See ADR-011.

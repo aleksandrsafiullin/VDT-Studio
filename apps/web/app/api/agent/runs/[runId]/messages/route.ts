@@ -11,6 +11,7 @@ import {
   readAgentProviderConfig
 } from "../../runtime";
 import { compactPublicAgentSnapshot } from "../../public-snapshot";
+import { bindUserInstructions } from "../../personalisation";
 import {
   PublicSupervisorRunError,
   handleStructuredModelAgentMessage,
@@ -33,6 +34,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
   const parsed = agentUserMessageSchema.safeParse(raw);
   if (!parsed.success) {
     return jsonError(parsed.error.issues[0]?.message ?? "Invalid agent message.");
+  }
+
+  if (parsed.data.type === "user_instruction" && parsed.data.personalisation) {
+    parsed.data.personalisation = bindUserInstructions(parsed.data.personalisation);
   }
 
   if (await isPersistedSupervisorRun(runId)) {

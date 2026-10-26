@@ -243,6 +243,7 @@ export interface SubagentReport {
 export type VdtAgentMode = "generate_vdt" | "continue_project" | "deepen_node" | "review_project";
 
 export interface VdtAgentStartInput {
+  personalisation?: import("@vdt-studio/vdt-core").AiPersonalisation | undefined;
   prompt?: string | undefined;
   rootKpi?: string | undefined;
   industry?: string | undefined;
@@ -591,6 +592,7 @@ export type AgentUserMessage =
   | {
       type: "user_instruction";
       text: string;
+      personalisation?: import("@vdt-studio/vdt-core").AiPersonalisation | undefined;
       selectedNodeId?: string | undefined;
       researchMode?: ResearchMode | undefined;
     }

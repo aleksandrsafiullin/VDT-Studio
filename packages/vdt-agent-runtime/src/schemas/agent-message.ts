@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { researchModeSchema } from "./agent-run";
+import { aiPersonalisationSchema, researchModeSchema } from "./agent-run";
 
 const answerValueSchema = z.union([z.string(), z.number(), z.array(z.string())]);
 
@@ -38,6 +38,7 @@ export const agentUserMessageSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("user_instruction"),
+    personalisation: aiPersonalisationSchema.optional(),
     text: z.string().trim().min(1).max(2_000),
     selectedNodeId: z.string().max(160).optional(),
     researchMode: researchModeSchema.optional()

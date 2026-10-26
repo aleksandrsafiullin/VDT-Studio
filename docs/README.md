@@ -84,6 +84,7 @@ Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md`, the
 | [`ADR-008`](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md) | Bounded Smart preparation/apply, direction-restricted Suggested components, baseline reconciliation, illustrative estimates and quota-aware lossless editor recovery; local Chrome storage/replay evidence is separate from live model semantic/WebView/native package qualification |
 | [`ADR-009`](adr/ADR-009-project-deletion-with-agent-history.md) | Scoped complete-project deletion with AI history, preserved migration hash evidence and rollback; secure erasure and individual-VDT audit cleanup remain separate |
 | [`ADR-010`](adr/ADR-010-local-skill-library-and-context-selection.md) | Local V1 unified on-disk skills, editable supplied seed, Context and Skill Author; V2 and native qualification remain separate |
+| [`ADR-011`](adr/ADR-011-personalisation-and-project-rules.md) | One browser-local list of user instructions, legacy migration and chat/Smart/review propagation; local V1, semantic/native qualification separate |
 
 Smart suggestions follow the [plan](implementation/SMART_KPI_SUGGESTIONS_PLAN.md),
 [execution log](implementation/SMART_KPI_SUGGESTIONS_LOG.md) and

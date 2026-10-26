@@ -3,6 +3,15 @@ import { agentUserMessageSchema } from "./agent-message";
 import { agentStartRequestSchema } from "./agent-run";
 
 describe("agent run schemas", () => {
+  it("preserves bounded instructions for chat and tree analysis, including an explicit clear on a follow-up", () => {
+    const personalisation = { userInstructions: "Reply in Russian.", projectRules: "Use fiscal years." };
+    for (const mode of ["generate_vdt", "continue_project", "review_project"]) {
+      const request = agentStartRequestSchema.parse({ mode, input: { rootKpi: "Output", personalisation }, providerId: "mock" });
+      expect(request.input.personalisation).toEqual(personalisation);
+    }
+    expect(agentUserMessageSchema.parse({ type: "user_instruction", text: "Continue", personalisation: {} })).toHaveProperty("personalisation", {});
+    expect(agentStartRequestSchema.safeParse({ mode: "review_project", providerId: "mock", input: { personalisation: { projectRules: "x".repeat(1501) } } }).success).toBe(false);
+  });
   it("accepts researchMode on start requests and user instructions", () => {
     expect(agentStartRequestSchema.parse({
       mode: "generate_vdt",

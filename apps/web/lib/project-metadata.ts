@@ -1,3 +1,5 @@
+import type { StoredProjectRecord } from "./vdt-storage-client";
+
 export const PROJECT_DETAIL_LABELS = {
   clientName: "Client",
   siteName: "Site",
@@ -18,6 +20,24 @@ export interface ProjectCardMetadata {
   clientName: string;
   siteName: string;
   year: string;
+}
+
+function searchableValues(value: unknown): string[] {
+  if (typeof value === "string" || (typeof value === "number" && Number.isFinite(value))) return [String(value)];
+  if (Array.isArray(value)) return value.flatMap(searchableValues);
+  if (value && typeof value === "object") return Object.values(value).flatMap(searchableValues);
+  return [];
+}
+
+export function projectMatchesSearch(
+  project: Pick<StoredProjectRecord, "name" | "description" | "industry" | "metadata">,
+  query: string
+): boolean {
+  const normalize = (text: string) => text.normalize("NFKC").toLocaleLowerCase();
+  const terms = normalize(query).trim().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+  const text = normalize(searchableValues([project.name, project.description, project.industry, project.metadata]).join(" "));
+  return terms.every((term) => text.includes(term));
 }
 
 export interface ProjectCardDetailRow {
