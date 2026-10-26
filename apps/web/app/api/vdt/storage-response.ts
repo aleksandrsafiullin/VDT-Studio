@@ -26,7 +26,6 @@ export interface StoredProjectSummary {
     vdts: number;
     revisions: number;
     conversations: number;
-    agentRuns: number;
     mutationProposals: number;
     comparisons: number;
   };
@@ -101,10 +100,7 @@ export function buildStoredProjectSummary(database: VdtDatabase, project: Projec
     counts: {
       vdts: vdts.length,
       revisions: vdts.reduce((total, item) => total + item.revisionCount, 0),
-      conversations: database.listConversations(project.id).length,
-      agentRuns: database.listAgentRuns(project.id).length,
-      mutationProposals: database.listProjectMutationProposals(project.id).length,
-      comparisons: database.listComparisons(project.id).length
+      ...database.getProjectActivityCounts(project.id)
     },
     vdts
   };

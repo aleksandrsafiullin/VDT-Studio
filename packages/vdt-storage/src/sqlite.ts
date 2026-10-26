@@ -30,6 +30,7 @@ import type {
   MessageRecord,
   MutationProposalRecord,
   OpenVdtDatabaseOptions,
+  ProjectActivityCounts,
   ProjectRuntimeStateV1,
   ProjectManifest,
   ProjectRecord,
@@ -124,6 +125,16 @@ export class SqliteVdtDatabase implements VdtDatabase {
     const dir = createProjectDir(this.dataDir, record.id);
     writeProjectManifest(dir, manifestFromProject(record));
     return record;
+  }
+
+  getProjectActivityCounts(projectId: string): ProjectActivityCounts {
+    assertSafeId(projectId, "projectId");
+    return this.db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM conversations WHERE project_id = ?) AS conversations,
+        (SELECT COUNT(*) FROM mutation_proposals WHERE project_id = ?) AS mutationProposals,
+        (SELECT COUNT(*) FROM vdt_comparisons WHERE project_id = ?) AS comparisons
+    `).get(projectId, projectId, projectId) as unknown as ProjectActivityCounts;
   }
 
   getProject(projectId: string): ProjectRecord | null {

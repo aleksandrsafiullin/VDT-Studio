@@ -17,10 +17,12 @@ interface BootstrapProjectWorkspaceRouteDeps {
 export async function bootstrapProjectWorkspaceRoute(deps: BootstrapProjectWorkspaceRouteDeps) {
   await deps.refreshWorkspace({ scopedProjectId: deps.projectId });
   const workspace = deps.getWorkspace();
+  if (workspace.error) throw new Error(workspace.error);
   const alreadyOnProject = workspace.activeProjectId === deps.projectId;
 
   if (!alreadyOnProject) {
-    await deps.selectWorkspaceProject(deps.projectId);
+    const selected = await deps.selectWorkspaceProject(deps.projectId);
+    if (!selected) throw new Error(deps.getWorkspace().error ?? "Project not found.");
   }
 
   const syncedWorkspace = deps.getWorkspace();
@@ -58,26 +60,53 @@ export function useWorkspaceRouteSync(projectId: string) {
   const pendingNavigationRef = useRef<{ projectId: string; vdtId?: string | undefined } | undefined>(undefined);
   const previousVdtParamRef = useRef<string | undefined>(vdtParam);
   const [syncVersion, setSyncVersion] = useState(0);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loadedRoute, setLoadedRoute] = useState<{ projectId: string; error?: string } | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
     routeSyncRef.current = true;
     pendingNavigationRef.current = undefined;
+    setLoadedRoute(undefined);
     const initialVdt = searchParams.get("vdt") ?? undefined;
 
     void (async () => {
-      await bootstrapProjectWorkspaceRoute({
-        projectId,
-        initialVdt,
-        refreshWorkspace,
-        selectWorkspaceProject,
-        selectWorkspaceVdt,
-        closeWorkspaceVdtEditor,
-        getWorkspace: () => useVdtStudioStore.getState().workspace
-      });
+      let error: string | undefined;
+      let refreshInBackground = false;
+      try {
+        const cached = useVdtStudioStore.getState().workspace;
+        let prepared = false;
+        // VDT load already returns its owner summary; don't first load every
+        // project. Cached project cards can render while their scope refreshes.
+        if (initialVdt) {
+          prepared = await selectWorkspaceVdt(initialVdt, { expectedProjectId: projectId });
+        } else if (loadAttempt === 0 && cached.projectSummaries.some(entry => entry.project.id === projectId)) {
+          prepared = cached.activeProjectId === projectId && cached.activePanel === "project"
+            || await selectWorkspaceProject(projectId);
+          if (prepared) {
+            closeWorkspaceVdtEditor();
+            refreshInBackground = true;
+          }
+        }
+        if (!prepared) {
+          await bootstrapProjectWorkspaceRoute({
+            projectId,
+            initialVdt,
+            refreshWorkspace,
+            selectWorkspaceProject,
+            selectWorkspaceVdt,
+            closeWorkspaceVdtEditor,
+            getWorkspace: () => useVdtStudioStore.getState().workspace
+          });
+        }
+      } catch (cause) {
+        error = cause instanceof Error ? cause.message : "Project could not be loaded.";
+      }
       if (!cancelled) {
         routeSyncRef.current = false;
+        setLoadedRoute({ projectId, ...(error ? { error } : {}) });
         setSyncVersion((version) => version + 1);
+        if (refreshInBackground) void refreshWorkspace({ scopedProjectId: projectId });
       }
     })();
 
@@ -86,10 +115,10 @@ export function useWorkspaceRouteSync(projectId: string) {
     };
   // Route bootstrap runs once per project; VDT param changes are handled separately.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid re-fetching workspace on query-only navigation
-  }, [closeWorkspaceVdtEditor, projectId, refreshWorkspace, selectWorkspaceProject, selectWorkspaceVdt]);
+  }, [closeWorkspaceVdtEditor, loadAttempt, projectId, refreshWorkspace, selectWorkspaceProject, selectWorkspaceVdt]);
 
   useEffect(() => {
-    if (routeSyncRef.current) {
+    if (routeSyncRef.current || loadedRoute?.projectId !== projectId || loadedRoute.error) {
       return;
     }
 
@@ -133,7 +162,7 @@ export function useWorkspaceRouteSync(projectId: string) {
       pendingNavigationRef.current = { projectId };
       router.replace(`/projects/${projectId}`, { scroll: false });
     }
-  }, [closeWorkspaceVdtEditor, projectId, router, selectWorkspaceVdt, syncVersion, vdtParam, workspace.activePanel, workspace.activeVdtId]);
+  }, [closeWorkspaceVdtEditor, loadedRoute, projectId, router, selectWorkspaceVdt, syncVersion, vdtParam, workspace.activePanel, workspace.activeVdtId]);
 
   const openWorkspaceVdt = useCallback(
     async (vdtId: string) => {
@@ -158,5 +187,16 @@ export function useWorkspaceRouteSync(projectId: string) {
     router.push(`/projects/${projectId}`);
   }, [closeWorkspaceVdtEditor, projectId, router]);
 
-  return { openWorkspaceVdt, showProjectWorkspace };
+  const retryWorkspace = useCallback(() => {
+    setLoadedRoute(undefined);
+    setLoadAttempt((attempt) => attempt + 1);
+  }, []);
+
+  return {
+    openWorkspaceVdt,
+    showProjectWorkspace,
+    isBootstrapping: loadedRoute?.projectId !== projectId,
+    bootstrapError: loadedRoute?.projectId === projectId ? loadedRoute.error : undefined,
+    retryWorkspace
+  };
 }

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { compareVdtProjects, productionVolumeProject, type VdtChangeSet } from "@vdt-studio/vdt-core";
 import {
   openVdtDatabase,
+  SqliteVdtDatabase,
   type ProjectRuntimeStateV1,
   type VdtRevisionHeadV2
 } from "@vdt-studio/storage";
@@ -29,11 +30,38 @@ afterEach(() => {
 });
 
 describe("VDT project storage APIs", () => {
-  it("lists stored projects with VDT, revision, conversation, run, proposal, and comparison counts", async () => {
+  it("loads only the requested project and omits the retired AI-run counter without reading history payloads", async () => {
+    const { dataDir } = seedStoredProject();
+    vi.stubEnv("VDT_DATA_DIR", dataDir);
+    const database = openVdtDatabase(dataDir, { dataDir });
+    database.createProject({ id: "project_unrelated", name: "Unrelated" });
+    database.close();
+    const history = ["listAgentRuns", "listConversations", "listProjectMutationProposals", "listComparisons"] as const;
+    const spies = history.map(method => vi.spyOn(SqliteVdtDatabase.prototype, method).mockImplementation(() => { throw new Error("History must not be loaded for summary counts"); }));
+    try {
+      const response = await listProjects(new Request("http://localhost:3000/api/vdt/projects?projectId=project_storage_api"));
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.projects).toHaveLength(1);
+      expect(body.projects[0].project.id).toBe("project_storage_api");
+      expect(body.projects[0].counts).not.toHaveProperty("agentRuns");
+      expect(body.projects[0].counts).toMatchObject({ conversations: 1, mutationProposals: 1, comparisons: 1 });
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    } finally { for (const spy of spies) spy.mockRestore(); }
+  });
+
+  it("rejects invalid and missing project scopes", async () => {
+    const { dataDir } = seedStoredProject();
+    vi.stubEnv("VDT_DATA_DIR", dataDir);
+    expect((await listProjects(new Request("http://localhost:3000/api/vdt/projects?projectId=.."))).status).toBe(400);
+    expect((await listProjects(new Request("http://localhost:3000/api/vdt/projects?projectId=project_missing"))).status).toBe(404);
+  });
+
+  it("lists stored projects with VDT, revision, conversation, proposal, and comparison counts", async () => {
     const { dataDir } = seedStoredProject();
     vi.stubEnv("VDT_DATA_DIR", dataDir);
 
-    const response = await listProjects();
+    const response = await listProjects(new Request("http://localhost:3000/api/vdt/projects"));
     const body = await response.json() as {
       ok: boolean;
       schemaVersion?: string;
@@ -44,7 +72,6 @@ describe("VDT project storage APIs", () => {
           vdts: number;
           revisions: number;
           conversations: number;
-          agentRuns: number;
           mutationProposals: number;
           comparisons: number;
         };
@@ -70,7 +97,6 @@ describe("VDT project storage APIs", () => {
             vdts: 1,
             revisions: 2,
             conversations: 1,
-            agentRuns: 1,
             mutationProposals: 1,
             comparisons: 1
           },
@@ -166,7 +192,6 @@ describe("VDT project storage APIs", () => {
           vdts: 1,
           revisions: 2,
           conversations: 1,
-          agentRuns: 1,
           mutationProposals: 1,
           comparisons: 1
         }
@@ -521,7 +546,7 @@ describe("VDT project storage APIs", () => {
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, deletedProjectId: "project_storage_api" });
-    const explorer = await listProjects();
+    const explorer = await listProjects(new Request("http://localhost:3000/api/vdt/projects"));
     expect(await explorer.json()).toMatchObject({ ok: true, projects: [] });
     const missing = await getProject(new Request("http://localhost:3000/api/vdt/projects/project_storage_api"), {
       params: Promise.resolve({ projectId: "project_storage_api" })

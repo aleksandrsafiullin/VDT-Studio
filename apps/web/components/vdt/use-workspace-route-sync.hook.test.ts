@@ -14,6 +14,7 @@ const harness = vi.hoisted(() => {
     dirty: false,
     hook: undefined as (() => unknown) | undefined,
     result: undefined as unknown,
+    projectId: "project_a",
     params: new URLSearchParams(),
     navigations: [] as string[],
     store: {} as {
@@ -76,6 +77,7 @@ const harness = vi.hoisted(() => {
       runtime.dirty = true;
       runtime.navigations = [];
       runtime.params = new URLSearchParams(vdtId ? { vdt: vdtId } : {});
+      runtime.projectId = "project_a";
       runtime.router.push = vi.fn((url: string) => { runtime.navigations.push(url); });
       runtime.router.replace = vi.fn((url: string) => { runtime.navigations.push(url); });
       runtime.store = {
@@ -152,7 +154,7 @@ vi.mock("./vdt-store", () => ({
 const { useWorkspaceRouteSync } = await import("./use-workspace-route-sync");
 type HookActions = ReturnType<typeof useWorkspaceRouteSync>;
 function useTestHook() {
-  return useWorkspaceRouteSync("project_a");
+  return useWorkspaceRouteSync(harness.runtime.projectId);
 }
 const actions = () => harness.runtime.result as HookActions;
 const deferred = <T>() => {
@@ -172,6 +174,90 @@ async function mountEditor() {
 
 describe("useWorkspaceRouteSync navigation lifecycle", () => {
   beforeEach(() => { harness.runtime.hook = useTestHook; });
+
+  it("stays loading until a delayed project bootstrap settles", async () => {
+    harness.reset();
+    const refresh = deferred<void>();
+    harness.runtime.store.refreshWorkspace.mockImplementation(() => refresh.promise);
+    harness.render();
+    expect(actions().isBootstrapping).toBe(true);
+    await harness.flush();
+    expect(actions().isBootstrapping).toBe(true);
+    refresh.resolve();
+    await harness.flush();
+    expect(actions().isBootstrapping).toBe(false);
+    expect(actions().bootstrapError).toBeUndefined();
+  });
+
+  it("starts loading again when the project URL changes, before its effect resolves", async () => {
+    harness.reset();
+    harness.render();
+    await harness.flush();
+    const refresh = deferred<void>();
+    harness.runtime.store.refreshWorkspace.mockImplementation(() => refresh.promise);
+    harness.runtime.projectId = "project_b";
+    harness.runtime.dirty = true;
+    harness.render();
+    expect(actions().isBootstrapping).toBe(true);
+    refresh.resolve();
+    await harness.flush();
+    expect(actions().isBootstrapping).toBe(false);
+    expect(harness.runtime.store.workspace.activeProjectId).toBe("project_b");
+  });
+
+  it("settles a failed fetch without rewriting its URL and retries on request", async () => {
+    harness.reset({ activeProjectId: undefined }, "vdt_a");
+    harness.runtime.store.selectWorkspaceVdt.mockResolvedValueOnce(false);
+    harness.runtime.store.refreshWorkspace.mockImplementationOnce(async () => {
+      harness.updateWorkspace({ error: "Storage unavailable" });
+    });
+    harness.render();
+    await harness.flush();
+    expect(actions().isBootstrapping).toBe(false);
+    expect(actions().bootstrapError).toBe("Storage unavailable");
+    expect(harness.runtime.store.selectWorkspaceProject).not.toHaveBeenCalled();
+    expect(harness.runtime.router.replace).not.toHaveBeenCalled();
+    harness.runtime.store.refreshWorkspace.mockImplementationOnce(async () => {
+      harness.updateWorkspace({ error: undefined, activeProjectId: "project_a" });
+    });
+    actions().retryWorkspace();
+    harness.render();
+    expect(actions().isBootstrapping).toBe(true);
+    await harness.flush();
+    expect(actions().isBootstrapping).toBe(false);
+    expect(actions().bootstrapError).toBeUndefined();
+    expect(harness.runtime.store.selectWorkspaceVdt).toHaveBeenCalledWith("vdt_a", { expectedProjectId: "project_a" });
+  });
+
+  it("opens cached project metadata without waiting for its refresh", async () => {
+    harness.reset({ projectSummaries: [{ project: { id: "project_a" } } as VdtWorkspaceState["projectSummaries"][number]] });
+    const refresh = deferred<void>();
+    harness.runtime.store.refreshWorkspace.mockImplementation(() => refresh.promise);
+    harness.render();
+    await harness.flush();
+    expect(actions().isBootstrapping).toBe(false);
+    expect(harness.runtime.store.refreshWorkspace).toHaveBeenCalledWith({ scopedProjectId: "project_a" });
+    refresh.resolve();
+    await harness.flush();
+  });
+
+  it("loads a direct VDT route without fetching the project list first", async () => {
+    harness.reset({ activeProjectId: undefined }, "vdt_a");
+    harness.render();
+    await harness.flush();
+    expect(actions().isBootstrapping).toBe(false);
+    expect(harness.runtime.store.selectWorkspaceVdt).toHaveBeenCalledOnce();
+    expect(harness.runtime.store.refreshWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("settles an unexpected rejected bootstrap as a visible failure", async () => {
+    harness.reset();
+    harness.runtime.store.refreshWorkspace.mockRejectedValueOnce(new Error("Connection lost"));
+    harness.render();
+    await harness.flush();
+    expect(actions().isBootstrapping).toBe(false);
+    expect(actions().bootstrapError).toBe("Connection lost");
+  });
 
   it("keeps a route-only Back link in project mode without replacing the removed query", async () => {
     await mountEditor();

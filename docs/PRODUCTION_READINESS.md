@@ -1,5 +1,20 @@
 # Production Readiness
 
+## Local navigation performance (2026-10-26)
+
+Implemented for local web: cached project/home rendering with scoped background
+refresh, direct VDT loads without a preceding library query, aggregate-only
+summary counters and removal of the AI-run counter. Background refresh preserves
+project form edits and cannot apply superseded selection responses.
+
+Ready-state admission retains bounded immutable-backup verification by exact
+proof and filesystem generation. Cold admission and actual migration/recovery
+retain full byte/integrity checks; live revision hash checks are unchanged.
+This relies on trusted local filesystem metadata. It does not establish native
+or Windows performance support, eliminate cold startup/Next development
+compilation, or change the production/release `NO-GO`. Local timings and checks
+belong to `output/playwright/app-speed-20261026/`.
+
 ## Local skill management boundary (2026-10-25)
 
 Implemented in source: one editable skills directory initialized from supplied

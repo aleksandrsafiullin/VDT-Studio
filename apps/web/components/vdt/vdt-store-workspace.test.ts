@@ -172,6 +172,31 @@ describe("refreshWorkspace scoping", () => {
     expect(workspace.activePanel).toBe("project");
   });
 
+  it("merges a scoped response without discarding other cached projects", async () => {
+    mockFetchSummaries.mockResolvedValueOnce({ projects: [sampleSummary("project_b", "Updated B")] });
+    await useVdtStudioStore.getState().refreshWorkspace({ scopedProjectId: "project_b" });
+    const workspace = useVdtStudioStore.getState().workspace;
+    expect(workspace.projectSummaries.map(entry => entry.project.id).sort()).toEqual(["project_a", "project_b"]);
+    expect(workspace.projectSummaries.find(entry => entry.project.id === "project_b")?.project.name).toBe("Updated B");
+    expect(mockFetchSummaries.mock.calls[0]?.[1]).toBe("project_b");
+  });
+
+  it("aborts superseded refreshes and ignores their late responses", async () => {
+    let finishA!: (value: { projects: StoredProjectSummary[] }) => void;
+    let finishB!: (value: { projects: StoredProjectSummary[] }) => void;
+    mockFetchSummaries.mockImplementationOnce(() => new Promise(resolve => { finishA = resolve; }));
+    mockFetchSummaries.mockImplementationOnce(() => new Promise(resolve => { finishB = resolve; }));
+    const first = useVdtStudioStore.getState().refreshWorkspace({ scopedProjectId: "project_a" });
+    const second = useVdtStudioStore.getState().refreshWorkspace({ scopedProjectId: "project_b" });
+    expect((mockFetchSummaries.mock.calls[0]?.[0] as AbortSignal).aborted).toBe(true);
+    finishB({ projects: [sampleSummary("project_b", "Current B")] });
+    await second;
+    finishA({ projects: [sampleSummary("project_a", "Stale A")] });
+    await first;
+    expect(useVdtStudioStore.getState().workspace.activeProjectId).toBe("project_b");
+    expect(useVdtStudioStore.getState().workspace.projectSummaries.find(entry => entry.project.id === "project_a")?.project.name).toBe("Project A");
+  });
+
   it("leaves workspace unselected after home clear plus unscoped refresh", async () => {
     useVdtStudioStore.getState().clearHomeWorkspaceContext();
     await useVdtStudioStore.getState().refreshWorkspace();

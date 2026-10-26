@@ -7,6 +7,7 @@ import { NodeInspector } from "./node-inspector";
 import { PanelResizeHandle } from "./panel-resize-handle";
 import { ProjectManagementPanel } from "./project-management-panel";
 import { ProjectVdtList } from "./project-vdt-list";
+import { ProjectWorkspaceRouteState } from "./project-workspace-route-state";
 import { SetupRail } from "./setup-rail";
 import { TopBar } from "./top-bar";
 import { useWorkspaceRouteSync } from "./use-workspace-route-sync";
@@ -34,7 +35,7 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
   const workspace = useVdtStudioStore((state) => state.workspace);
   const setPanelWidth = useVdtStudioStore((state) => state.setPanelWidth);
   const resumePersistedAgentRun = useVdtStudioStore((state) => state.resumePersistedAgentRun);
-  const { openWorkspaceVdt, showProjectWorkspace } = useWorkspaceRouteSync(projectId);
+  const { openWorkspaceVdt, showProjectWorkspace, isBootstrapping, bootstrapError, retryWorkspace } = useWorkspaceRouteSync(projectId);
   const isDesktop = useDesktopLayout();
   const isProjectMode = workspace.activePanel === "project" || !hasActiveWorkspaceVdt(workspace);
   const leftCollapsed = !isProjectMode && isDesktop && ui.leftPanelCollapsed;
@@ -47,6 +48,10 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
   useEffect(() => {
     void resumePersistedAgentRun();
   }, [resumePersistedAgentRun]);
+
+  if (isBootstrapping || bootstrapError) {
+    return <ProjectWorkspaceRouteState error={bootstrapError} onRetry={retryWorkspace} />;
+  }
 
   return (
     <main
@@ -119,7 +124,7 @@ function VdtStudioAppContent({ projectId }: VdtStudioAppProps) {
 
 export function VdtStudioApp({ projectId }: VdtStudioAppProps) {
   return (
-    <Suspense fallback={<main className="min-h-screen bg-apple-gray" />}>
+    <Suspense fallback={<ProjectWorkspaceRouteState />}>
       <VdtStudioAppContent projectId={projectId} />
     </Suspense>
   );

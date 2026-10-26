@@ -73,6 +73,15 @@ afterEach(() => {
 });
 
 describe("VDT storage client atomic envelopes", () => {
+  it("requests and validates a single project scope", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ schemaVersion: "project_explorer_response.v1", ok: true, projects: [summary] }));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(fetchStoredProjectExplorerSummary(undefined, "project_client")).resolves.toEqual({ projects: [summary] });
+    expect(fetcher).toHaveBeenCalledWith("/api/vdt/projects?projectId=project_client", expect.any(Object));
+    fetcher.mockResolvedValueOnce(Response.json({ schemaVersion: "project_explorer_response.v1", ok: true, projects: [summary] }));
+    await expect(fetchStoredProjectExplorerSummary(undefined, "project_other")).rejects.toThrow("scope did not match");
+  });
+
   it("includes project details in the initial create request", async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({ schemaVersion: "project_summary_response.v1", ok: true, summary }));
     vi.stubGlobal("fetch", fetcher);

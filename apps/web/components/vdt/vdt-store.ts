@@ -1565,6 +1565,9 @@ function withSyncedLegacyProvider(
   };
 }
 
+let workspaceRefreshGeneration = 0;
+let workspaceRefreshController: AbortController | undefined;
+
 export const useVdtStudioStore = create<VdtStudioState>()(
   persist(
     (set, get) => guardSmartKpiActions({
@@ -1678,6 +1681,14 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         })),
       refreshWorkspace: async (options) => {
         const scopedProjectId = options?.scopedProjectId;
+        const generation = ++workspaceRefreshGeneration;
+        const initialProjectId = get().workspace.activeProjectId;
+        workspaceRefreshController?.abort();
+        const controller = new AbortController();
+        workspaceRefreshController = controller;
+        const isCurrent = () => generation === workspaceRefreshGeneration && (
+          get().workspace.activeProjectId === initialProjectId || get().workspace.activeProjectId === scopedProjectId
+        );
         set((state) => ({
           workspace: {
             ...state.workspace,
@@ -1686,9 +1697,12 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
         }));
         try {
-          const summary = await fetchStoredProjectExplorerSummary();
+          const summary = await fetchStoredProjectExplorerSummary(controller.signal, scopedProjectId);
+          if (!isCurrent()) return;
           set((state) => {
-            const projectSummaries = summary.projects;
+            const projectSummaries = scopedProjectId
+              ? summary.projects.reduce(upsertProjectSummary, state.workspace.projectSummaries)
+              : summary.projects;
             let activeProjectId: string | undefined;
             let activeVdtId: string | undefined;
             let activePanel: WorkspacePanelMode = "project";
@@ -1754,6 +1768,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             };
           });
         } catch (error) {
+          if (!isCurrent()) return;
           set((state) => ({
             workspace: {
               ...state.workspace,

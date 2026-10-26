@@ -107,6 +107,25 @@ describe("bootstrapProjectWorkspaceRoute", () => {
     expect(selectWorkspaceVdt).toHaveBeenCalledWith("vdt_from_project_b", { expectedProjectId: "project_a" });
     expect(closeWorkspaceVdtEditor).toHaveBeenCalledTimes(1);
   });
+
+  it("preserves a refresh failure instead of overwriting it with project selection", async () => {
+    const current = workspace({ error: "Storage unavailable" });
+    await expect(bootstrapProjectWorkspaceRoute({
+      projectId: "project_a", refreshWorkspace, selectWorkspaceProject,
+      selectWorkspaceVdt, closeWorkspaceVdtEditor, getWorkspace: () => current
+    })).rejects.toThrow("Storage unavailable");
+    expect(selectWorkspaceProject).not.toHaveBeenCalled();
+    expect(closeWorkspaceVdtEditor).not.toHaveBeenCalled();
+  });
+
+  it("ends bootstrap with an error when the route project does not exist", async () => {
+    selectWorkspaceProject.mockResolvedValueOnce(false);
+    await expect(bootstrapProjectWorkspaceRoute({
+      projectId: "project_missing", refreshWorkspace, selectWorkspaceProject,
+      selectWorkspaceVdt, closeWorkspaceVdtEditor, getWorkspace: () => workspace()
+    })).rejects.toThrow("Project not found.");
+    expect(selectWorkspaceVdt).not.toHaveBeenCalled();
+  });
 });
 
 describe("shouldCloseWorkspaceVdtEditorForRoute", () => {

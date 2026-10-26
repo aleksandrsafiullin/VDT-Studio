@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { verifyRetainedBackup } from "./verified-backup-cache";
 import { fileURLToPath } from "node:url";
 import {
   assertDensePlainJson,
@@ -1227,7 +1228,8 @@ function verifyDatabaseForPlan(
   db: DatabaseSync,
   dataDir: string,
   plan: ValidatedStorageMigrationPlan,
-  recoveryIdentity?: MigrationForeignKeyCheckIdentityV1
+  recoveryIdentity?: MigrationForeignKeyCheckIdentityV1,
+  retainBackupVerification = false
 ): VerifiedMigrationPlanState {
   db.exec("BEGIN;");
   try {
@@ -1235,7 +1237,8 @@ function verifyDatabaseForPlan(
       db,
       dataDir,
       plan,
-      recoveryIdentity
+      recoveryIdentity,
+      retainBackupVerification
     );
     db.exec("COMMIT;");
     return verified;
@@ -1253,7 +1256,8 @@ function verifyDatabaseForPlanSnapshot(
   db: DatabaseSync,
   dataDir: string,
   plan: ValidatedStorageMigrationPlan,
-  recoveryIdentity?: MigrationForeignKeyCheckIdentityV1
+  recoveryIdentity?: MigrationForeignKeyCheckIdentityV1,
+  retainBackupVerification = false
 ): VerifiedMigrationPlanState {
   const currentUserVersion = userVersion(db);
   if (currentUserVersion < 2) {
@@ -1557,7 +1561,8 @@ function verifyDatabaseForPlanSnapshot(
         backupHash: String(backup.backup_hash) as Sha256,
         backupRelativePath: String(backup.backup_relative_path)
       },
-      plan.entries[startSequence - 1]!.manifestEntry.preconditionSchemaHash
+      plan.entries[startSequence - 1]!.manifestEntry.preconditionSchemaHash,
+      retainBackupVerification
     );
     const expectedAppliedEnd =
       status === "completed" ? targetSequence : nextSequence - 1;
@@ -1696,7 +1701,7 @@ function runLaterMigrations(
     !hasPreliminaryRecoveryArtifacts &&
     preliminaryVersion === plan.targetUserVersion
   ) {
-    const preliminary = verifyDatabaseForPlan(db, dataDir, plan);
+    const preliminary = verifyDatabaseForPlan(db, dataDir, plan, undefined, true);
     if (
       preliminary.currentSequence === plan.targetSequence &&
       preliminary.activeAttempt === null
@@ -4215,7 +4220,8 @@ function verifyLaterBackupEvidence(
     backupHash: Sha256;
     backupRelativePath: string;
   },
-  expectedSchemaHash: Sha256
+  expectedSchemaHash: Sha256,
+  retainVerification = false
 ): void {
   assertSha256(evidence.targetManifestHash, "later backup target manifest hash");
   assertSha256(evidence.sourceDatabaseHash, "later backup source database hash");
@@ -4235,6 +4241,11 @@ function verifyLaterBackupEvidence(
     throw migrationBlocked(
       `Later migration backup is not a regular file: ${evidence.backupRelativePath}.`
     );
+  }
+  if (retainVerification) {
+    return verifyRetainedBackup(backupPath, JSON.stringify([evidence, expectedSchemaHash]), () => {
+      verifyLaterBackupEvidence(dataDir, evidence, expectedSchemaHash);
+    });
   }
   fsyncFileAndDirectory(backupPath);
   const bytes = fs.readFileSync(backupPath);

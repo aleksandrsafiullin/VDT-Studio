@@ -237,16 +237,16 @@ export function ProjectsHomePage() {
             <Button
               ref={searchButton}
               type="button"
-              className="rounded-full px-4"
+              size="icon"
+              className="h-9 w-9 rounded-full"
               data-testid="search-projects-button"
               aria-label="Search projects"
+              title="Search projects"
               aria-expanded={searchOpen}
               aria-controls="project-search"
               icon={<Search className="h-4 w-4" />}
               onClick={() => searchOpen ? closeSearch() : setSearchOpen(true)}
-            >
-              Search
-            </Button>
+            />
             <Button
               type="button"
               variant="primary"
@@ -298,7 +298,7 @@ export function ProjectsHomePage() {
           {searchOpen && !workspace.isLoading ? (
             <p role="status" className="mb-4 text-sm text-muted">{visibleSummaries.length} of {workspace.projectSummaries.length} projects</p>
           ) : null}
-          {workspace.isLoading ? (
+          {workspace.isLoading && workspace.projectSummaries.length === 0 ? (
             <>
               <span className="sr-only">Loading projects</span>
               <ProjectsHomeSkeletonCards />

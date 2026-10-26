@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { FolderPlus, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextInput } from "@/components/ui/field";
@@ -22,9 +22,14 @@ export function ProjectManagementPanel({ urlScopedProjectId }: { urlScopedProjec
   const [clientName, setClientName] = useState("");
   const [siteName, setSiteName] = useState("");
   const [year, setYear] = useState("");
+  const editing = useRef(false);
+  const formProjectId = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     const projectRecord = activeSummary?.project;
+    if (formProjectId.current === projectRecord?.id && editing.current) return;
+    formProjectId.current = projectRecord?.id;
+    editing.current = false;
     setName(projectRecord?.name ?? "");
     setClientName(projectMetadataText(projectRecord?.metadata, "clientName"));
     setSiteName(projectMetadataText(projectRecord?.metadata, "siteName"));
@@ -48,12 +53,13 @@ export function ProjectManagementPanel({ urlScopedProjectId }: { urlScopedProjec
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!activeSummary || !dirty) return;
-    await updateWorkspaceProjectDetails(activeSummary.project.id, {
+    const saved = await updateWorkspaceProjectDetails(activeSummary.project.id, {
       name,
       clientName,
       siteName,
       year
     });
+    if (saved) editing.current = false;
   }
 
   return (
@@ -94,7 +100,7 @@ export function ProjectManagementPanel({ urlScopedProjectId }: { urlScopedProjec
               <TextInput
                 value={name}
                 className="rounded-xl border-black/10"
-                onChange={(event) => setName(event.target.value)}
+                onChange={(event) => { editing.current = true; setName(event.target.value); }}
               />
             </Field>
             <Field label="Client name">
@@ -102,7 +108,7 @@ export function ProjectManagementPanel({ urlScopedProjectId }: { urlScopedProjec
                 value={clientName}
                 placeholder="Client"
                 className="rounded-xl border-black/10"
-                onChange={(event) => setClientName(event.target.value)}
+                onChange={(event) => { editing.current = true; setClientName(event.target.value); }}
               />
             </Field>
             <Field label="Site">
@@ -110,7 +116,7 @@ export function ProjectManagementPanel({ urlScopedProjectId }: { urlScopedProjec
                 value={siteName}
                 placeholder="Site, plant, or operation"
                 className="rounded-xl border-black/10"
-                onChange={(event) => setSiteName(event.target.value)}
+                onChange={(event) => { editing.current = true; setSiteName(event.target.value); }}
               />
             </Field>
             <Field label="Year">
@@ -119,7 +125,7 @@ export function ProjectManagementPanel({ urlScopedProjectId }: { urlScopedProjec
                 value={year}
                 placeholder="2026"
                 className="rounded-xl border-black/10"
-                onChange={(event) => setYear(event.target.value)}
+                onChange={(event) => { editing.current = true; setYear(event.target.value); }}
               />
             </Field>
 

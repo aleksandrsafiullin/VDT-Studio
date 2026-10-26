@@ -132,6 +132,14 @@ ORDER BY type, name, tbl_name
 
 A cross-process migration lease plus an exclusive SQLite migration connection serializes backup, recheck and application. `MigrationAttemptV1` and the bootstrap journal carry owner token, lease generation and expiry; acquire, renew, expired takeover, release and every application record are fenced by that generation. `VACUUM INTO` is the approved synchronous transactionally consistent snapshot equivalent for the current synchronous open boundary. The durable backup file and its containing directory are fsynced; `backupHash` is calculated from the exact backup-file bytes. The main database file is never hashed as a substitute while WAL state may exist.
 
+Ready-state admission may retain a successful verification of an immutable backup
+generation within one process. The bounded cache binds its exact evidence and
+schema to absolute path, device/inode, ownership/mode/link count, size and
+nanosecond mtime/ctime; journal sidecars disable reuse. A cold or changed
+generation performs the full original checks. Migration, takeover and recovery
+do not use this shortcut and always verify the actual backup bytes before use.
+Live schema/runtime/adoption and revision integrity checks remain in place.
+
 Before sequence 2, every legacy revision file is contained-path and hash verified. Sequence 2 preserves each file, writes a tagged `LegacyRevisionAttestationV1`, backfills project runtime defaults, derives each independent VDT head and commit generation from verified legacy rows and marks existing VDT lifecycle ready. Missing/tampered/ambiguous legacy heads block without DDL; migration never fabricates actor or idempotency history.
 
 ### No-clobber publication

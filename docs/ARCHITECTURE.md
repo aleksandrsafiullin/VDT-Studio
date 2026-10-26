@@ -389,6 +389,32 @@ The implementation still duplicates substantial draft/project state in Zustand p
 
 The workspace rail uses a direct Home link to `/`; the editor header's back link targets `/projects/<projectId>`. Project/editor route synchronization gives changed URL parameters precedence over the workspace snapshot. Store-driven navigation retains its target until Next.js commits the URL, and asynchronous bootstrap/VDT selection blocks reverse URL writes until it settles. An unchanged route can still reflect a newly created local VDT in `?vdt=...`.
 
+`useWorkspaceRouteSync` owns transient bootstrap readiness keyed to the URL
+project ID. Cached project summaries select their workspace immediately and
+refresh in the background. Cold project routes retain the shared route/Suspense
+loading and retryable error surfaces. Direct VDT selection already returns the
+owner summary, so it does not first fetch the complete project library.
+`GET /api/vdt/projects?projectId=<id>` uses the existing explorer envelope for one
+validated owner; scoped responses merge into the client library. Abort and
+generation/context guards discard superseded refreshes. Project form drafts
+survive background updates. Retry explicitly reloads instead of trusting cache.
+
+Project summary activity counts use SQL aggregates and never decode history
+payloads. The AI-run counter is omitted; the legacy optional browser field is
+accepted only for persisted-state compatibility. AI history records remain.
+
+Ready-state migration admission retains at most 32 verified immutable backup
+generations per process. The cache binds the absolute path, complete evidence
+and expected schema to device/inode, ownership/mode/link count, size and
+nanosecond modification/change times. Missing/nonregular files, changed evidence
+or generations and SQLite journal sidecars miss the cache. Cold admission runs
+the complete byte-hash, integrity, schema and foreign-key checks. Actual
+migration/recovery always performs full verification. Live database checks and
+revision byte/hash verification remain active; no database connection or backup
+contents are cached. This assumes trustworthy local filesystem metadata; silent
+media corruption with unchanged metadata is rechecked on cold admission and
+before backup use. Native/Windows performance qualification remains separate.
+
 The home creation dialog sends name plus client/site/year metadata through one
 `createWorkspaceProject` / `POST /api/vdt/projects` request. It uses the existing
 SQLite metadata field, with no follow-up PATCH or schema migration. Home search

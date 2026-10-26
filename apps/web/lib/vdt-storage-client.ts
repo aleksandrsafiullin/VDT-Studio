@@ -81,7 +81,8 @@ export interface StoredProjectSummary {
     vdts: number;
     revisions: number;
     conversations: number;
-    agentRuns: number;
+    /** Legacy persisted summaries only; no longer counted or displayed. */
+    agentRuns?: number | undefined;
     mutationProposals: number;
     comparisons: number;
   };
@@ -150,13 +151,16 @@ export function runtimeCasFromState(state: ProjectRuntimeStateV1): ProjectRuntim
   };
 }
 
-export async function fetchStoredProjectExplorerSummary(signal?: AbortSignal): Promise<StoredProjectExplorerSummary> {
+export async function fetchStoredProjectExplorerSummary(signal?: AbortSignal, projectId?: string): Promise<StoredProjectExplorerSummary> {
   const payload = await requestStorage<{
     schemaVersion?: string;
     projects?: StoredProjectSummary[];
-  }>("/api/vdt/projects", signal ? { signal } : undefined);
+  }>(projectId ? `/api/vdt/projects?projectId=${encodeURIComponent(projectId)}` : "/api/vdt/projects", signal ? { signal } : undefined);
   if (payload.schemaVersion !== "project_explorer_response.v1" || !Array.isArray(payload.projects)) {
     throw new Error("Stored project explorer payload was not returned.");
+  }
+  if (projectId && (payload.projects.length !== 1 || payload.projects[0]?.project.id !== projectId)) {
+    throw new Error("Stored project explorer scope did not match the requested project.");
   }
   return { projects: payload.projects };
 }

@@ -230,6 +230,8 @@ Implemented at alpha level:
 
 - project/VDT workspace and local SQLite revision storage, including Home/back links that await a successful revision save, preserve edits on save failure, and synchronize browser Back/Forward selection;
 - compact Projects home with consistent-width cards in one to four columns, a revealable search across project field values, and modal creation that saves name/client/site/year together;
+- immediate cached-project/home rendering with scoped background refresh, direct VDT loading without a project-library fetch, stale-response guards and preserved form drafts; cold-route loading and retryable errors remain;
+- SQL-only summary counters without an AI-run counter, and bounded immutable-backup verification retention for ready-state opens; migration/recovery still verifies backup bytes in full;
 - complete-project deletion with scoped AI-history cleanup, transaction rollback and unchanged legacy migration hash verification; individual-VDT audit cleanup and secure erasure remain open ([ADR-009](adr/ADR-009-project-deletion-with-agent-history.md));
 - editable left-to-right canvas, basic formula engine, scenarios and trace;
 - Scenario Mode with Settings-style rounded neutral surfaces, larger summary totals, an initially collapsed calculation trace using the inspector toggle icon, Baseline-matched comma-grouped/decimal-dot resting values independent of browser locale, full-precision editing with grouped-number paste and keyboard stepping, and saved per-scenario KPI action comments that survive override reset and copy with scenario cloning; Export to Excel includes the selected scenario's comments in a wrapped Comment column for drivers and additional overrides, independently of numeric changes;

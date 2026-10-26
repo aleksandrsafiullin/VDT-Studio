@@ -450,6 +450,12 @@ export interface CreateVdtRevisionInput {
   calculation?: unknown;
 }
 
+export interface ProjectActivityCounts {
+  conversations: number;
+  mutationProposals: number;
+  comparisons: number;
+}
+
 export interface VdtDatabase {
   readonly dataDir: string;
   readonly databasePath: string;
@@ -459,6 +465,7 @@ export interface VdtDatabase {
   updateProject(projectId: string, patch: UpdateProjectInput): ProjectRecord;
   deleteProject(projectId: string): boolean;
   listProjects(): ProjectRecord[];
+  getProjectActivityCounts(projectId: string): ProjectActivityCounts;
   createVdt(input: CreateVdtInput): VdtRecord;
   getVdt(vdtId: string): VdtRecord | null;
   updateVdt(vdtId: string, patch: UpdateVdtInput): VdtRecord;

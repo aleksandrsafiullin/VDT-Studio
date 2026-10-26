@@ -30,8 +30,15 @@ vi.mock("next/navigation", () => ({
 vi.mock("./use-workspace-route-sync", () => ({
   useWorkspaceRouteSync: () => ({
     openWorkspaceVdt: vi.fn(),
-    showProjectWorkspace: vi.fn()
+    showProjectWorkspace: vi.fn(),
+    ...routeState
   })
+}));
+
+const routeState = vi.hoisted(() => ({
+  isBootstrapping: false,
+  bootstrapError: undefined as string | undefined,
+  retryWorkspace: vi.fn()
 }));
 
 const { VdtStudioApp } = await import("./vdt-studio-app");
@@ -39,6 +46,8 @@ const { useVdtStudioStore } = await import("./vdt-store");
 
 describe("VdtStudioApp project mode", () => {
   beforeEach(() => {
+    routeState.isBootstrapping = false;
+    routeState.bootstrapError = undefined;
     localStorageMock.clear();
     useVdtStudioStore.setState((state) => ({
       resumePersistedAgentRun: vi.fn(async () => {}),
@@ -53,6 +62,27 @@ describe("VdtStudioApp project mode", () => {
         error: undefined
       }
     }));
+  });
+
+  it("shows loading before the first workspace effect instead of unselected or create-project states", () => {
+    routeState.isBootstrapping = true;
+    const html = renderToStaticMarkup(<VdtStudioApp projectId="project_mode_test" />);
+    expect(html).toContain('data-testid="project-workspace-loading"');
+    expect(html).toContain("Loading project…");
+    expect(html).not.toContain("No project selected");
+    expect(html).not.toContain("No saved project selected");
+    expect(html).not.toContain("Create project");
+    expect(html).not.toContain("Project not found");
+  });
+
+  it("shows a retryable load failure without project creation actions", () => {
+    routeState.bootstrapError = "Storage unavailable";
+    const html = renderToStaticMarkup(<VdtStudioApp projectId="project_mode_test" />);
+    expect(html).toContain('data-testid="project-workspace-error"');
+    expect(html).toContain("Storage unavailable");
+    expect(html).toContain("Retry");
+    expect(html).not.toContain("No project selected");
+    expect(html).not.toContain("Create project");
   });
 
   it("shows project management without VDT editor surfaces", () => {

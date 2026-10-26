@@ -13,12 +13,17 @@ import { storageWriteErrorResponse } from "../storage-write-adapter";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const requestedId = new URL(request.url).searchParams.get("projectId");
+  const scope = requestedId === null ? undefined : parseSafeId(requestedId, "projectId");
+  if (scope && !scope.ok) return jsonError(scope.message);
   let database: ReturnType<typeof openVdtStorageDatabase> | undefined;
   try {
     database = openVdtStorageDatabase(process.cwd());
     const currentDatabase = database;
-    const projects = currentDatabase.listProjects()
+    const project = scope?.ok ? currentDatabase.getProject(scope.value) : undefined;
+    if (scope && !project) return jsonError("Project not found.", 404, "PROJECT_NOT_FOUND");
+    const projects = (project ? [project] : currentDatabase.listProjects())
       .map((project) => buildStoredProjectSummary(currentDatabase, project));
     return Response.json({
       schemaVersion: "project_explorer_response.v1",

@@ -137,6 +137,7 @@ VDT Studio is an AI-first, local-first workspace for building editable Value Dri
 ## Current Product Surface
 
 - Project and VDT workspace backed by local SQLite metadata and revision files. The workspace rail's Home link opens the home page; the editor header's back link opens the project workspace. Navigation respects browser Back/Forward.
+- Cached projects and the home list render immediately while their metadata refreshes in the background. A direct VDT link loads its own payload without fetching every project first. Cold project loads show **Loading project…**; failures provide Retry and Back to projects. The AI-run counter has been removed; saved AI history remains available.
 - The home page has a compact **Projects** heading, consistent-width cards in up to four columns, and a **Search** button that reveals filtering across project names and details. **Create project** opens a modal for the name, client, site and year; all details are saved with the initial creation.
 - Confirmed project deletion also removes its saved AI sessions and history. Database cleanup rolls back on failure before the project's files are removed; existing migration backups are retained. See [project deletion](docs/adr/ADR-009-project-deletion-with-agent-history.md).
 - Left-to-right editable factor-tree canvas with direct node editing, properties and formula warnings.
