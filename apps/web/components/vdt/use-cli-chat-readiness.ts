@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { createAgentClient, type AgentExecutionBindingSelection } from "@/lib/agent-client";
+import { cliConnectionKey } from "@/lib/cli-connection";
+import { useCliConnectionCheck } from "@/lib/cli-connection-state";
 import { resolveExecutionBindingId } from "@/lib/agent-start-resolver";
 import {
   resolveSelectedCliReadiness,
@@ -27,7 +27,7 @@ export function describeCliChatReadiness(
     canExecute: false,
     label: "Chat unavailable",
     message: failed
-      ? "Chat availability could not be checked. Rescan in Settings and try again."
+      ? "Chat availability could not be checked. Reconnecting automatically."
       : "Chat is unavailable for the selected model on this server. Restart the local app or choose another model in Settings, then try again."
   };
 }
@@ -39,27 +39,8 @@ export function useCliChatReadiness(
 ): CliRequestReadiness | undefined {
   const readiness = resolveSelectedCliReadiness(settings, detections, options);
   const execution = resolveExecutionSettings(settings);
-  const backendId = execution.providerConfig?.backendId;
-  const modelId = execution.providerConfig?.model;
-  const key = JSON.stringify([backendId, modelId]);
-  const enabled = readiness?.canExecute === true;
-  const [check, setCheck] = useState<{
-    key: string;
-    bindings?: AgentExecutionBindingSelection;
-    failed?: boolean;
-  }>();
-
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    setCheck({ key });
-    void createAgentClient().getExecutionBindings().then(
-      (bindings) => { if (!cancelled) setCheck({ key, bindings }); },
-      () => { if (!cancelled) setCheck({ key, failed: true }); }
-    );
-    return () => { cancelled = true; };
-  }, [enabled, key]);
-
+  const key = cliConnectionKey(settings);
+  const check = useCliConnectionCheck();
   const current = check?.key === key ? check : undefined;
   const available = current?.bindings
     ? resolveExecutionBindingId(current.bindings, settings, execution.providerId, execution.providerConfig) !== null

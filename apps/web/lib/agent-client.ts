@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReasoningEffort } from "@vdt-studio/model-bridge";
+
 import type {
   AgentUserMessage,
   VdtAgentEvent,
@@ -29,12 +31,14 @@ export interface StartAgentRunResponse {
 }
 
 export interface PublicAgentExecutionBindingSummary {
+  modelReasoning?: boolean | string | number | undefined;
   bindingId: string;
   executionProfile: "model_agent" | "external_cli_agent";
   engineId: string;
   engineAdapterId: string;
   backendId: string;
   modelId: string;
+  reasoningEffort?: ReasoningEffort | undefined;
 }
 
 export interface AgentExecutionBindingSelection {

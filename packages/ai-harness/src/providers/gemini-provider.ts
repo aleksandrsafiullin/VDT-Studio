@@ -51,6 +51,8 @@ export class GeminiProvider implements AiProvider {
             }
           ],
           generationConfig: {
+            ...(this.config.thinkingLevel !== undefined ? { thinkingConfig: { thinkingLevel: this.config.thinkingLevel.toUpperCase() } }
+              : this.config.thinkingBudget !== undefined ? { thinkingConfig: { thinkingBudget: this.config.thinkingBudget } } : {}),
             temperature: params.temperature ?? 0.2,
             maxOutputTokens: params.taskType === "suggest_incoming_kpis" ? Math.min(params.maxTokens ?? 2048, 2048) : params.maxTokens ?? 2200,
             responseMimeType: "application/json",
@@ -65,6 +67,7 @@ export class GeminiProvider implements AiProvider {
       throw new Error("Smart provider did not return one completed text-only result.");
     }
     const text = candidate?.content?.parts
+      ?.filter((part) => part.thought !== true)
       ?.map((part) => part.text ?? "")
       .join("");
     if (!text && payload.promptFeedback?.blockReason) {

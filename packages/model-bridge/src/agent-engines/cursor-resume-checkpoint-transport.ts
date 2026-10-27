@@ -610,8 +610,7 @@ export class CursorResumeCheckpointTransport {
       "--workspace",
       resolved.workspace,
       ...(input.environment.preauthorizeEmptyWorkspace ? ["--trust"] : []),
-      "--model",
-      input.model,
+      ...(input.model === "auto" ? [] : ["--model", input.model]),
       ...(input.mode === "resume" ? ["--resume", input.expectedSessionId!] : [])
     ];
     if (args.some((arg) => FORBIDDEN_ARGUMENTS.has(arg))) {

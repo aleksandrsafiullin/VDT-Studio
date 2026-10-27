@@ -22,3 +22,4 @@ export * from "./copilot/adapter";
 export * from "./copilot/auth";
 export * from "./copilot/parser";
 export * from "./copilot/version";
+export * from "./reasoning";

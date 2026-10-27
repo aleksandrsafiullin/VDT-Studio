@@ -98,7 +98,7 @@ function expectClaudeOmitted(
 }
 
 describe("ClaudeResumeCheckpointTransport", () => {
-  it("opens and resumes with tools disabled and stdin prompt", async () => {
+  it.each(["claude-sonnet-4-6", "auto"])("opens and resumes %s with tools disabled and stdin prompt", async (model) => {
     const env = await environment();
     const runner = new FakeRunner((request) => ({
       exitCode: 0,
@@ -114,19 +114,23 @@ describe("ClaudeResumeCheckpointTransport", () => {
     const opened = await transport.executeSegment({
       mode: "open",
       environment: env,
-      model: "claude-sonnet-4-6",
+      model,
       prompt: '{"delta":"open"}',
       signal: new AbortController().signal
     }, ["vdt.echo"]);
     const resumed = await transport.executeSegment({
       mode: "resume",
       environment: env,
-      model: "claude-sonnet-4-6",
+      model,
       prompt: '{"delta":"resume"}',
       expectedSessionId: opened.sessionId,
       signal: new AbortController().signal
     }, ["vdt.echo"]);
 
+    for (const request of runner.requests) {
+      if (model === "auto") expect(request.args).not.toContain("--model");
+      else expect(request.args).toEqual(expect.arrayContaining(["--model", model]));
+    }
     expect(opened.sessionId).toBe("claude-session-1");
     expect(resumed.sessionId).toBe("claude-session-1");
     expect(runner.requests[0]?.args).toEqual(expect.arrayContaining(["-p", "--tools", "", "--permission-mode", "dontAsk"]));

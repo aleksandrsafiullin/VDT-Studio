@@ -1,7 +1,8 @@
 import type { ModelBackendDetectionResult } from "../../contract";
 import type { VdtSchemaId } from "../../schema-registry";
 import { assertArgsSafe } from "../security";
-import type { ExecFileProbe, SubscriptionCliAdapter, SubscriptionCliBuildArgsInput, SubscriptionCliModelProbeOptions } from "../types";
+import type { ExecFileProbe, SubscriptionCliAdapter, SubscriptionCliBuildArgsInput, SubscriptionCliModelProbeOptions, SubscriptionCliModelOption } from "../types";
+import { isReasoningEffort } from "../reasoning";
 import { probeCodexAuth } from "./auth";
 import { CODEX_BACKEND_ID, CODEX_FAST_SERVICE_TIER_ARGS, CODEX_MODEL_CATALOG_MAX_BYTES } from "./constants";
 import { parseCodexExecJson } from "./parser";
@@ -89,10 +90,42 @@ async function defaultExecFileProbe(
   return { stdout: result.stdout, stderr: result.stderr };
 }
 
-export async function listCodexModels(
+export function parseCodexModelOptions(output: string): readonly SubscriptionCliModelOption[] {
+  const ids = parseCodexModelList(output);
+  const metadata = new Map<string, SubscriptionCliModelOption>();
+  function read(value: unknown) {
+    if (!isRecord(value)) return;
+    const nested = value.models ?? value.data;
+    if (Array.isArray(nested)) { nested.forEach(read); return; }
+    const id = extractModelId(value);
+    if (!id || !ids.includes(id)) return;
+    const efforts = Array.isArray(value.supported_reasoning_levels)
+      ? [...new Set(value.supported_reasoning_levels.map((level) => isRecord(level) ? level.effort : level).filter(isReasoningEffort))]
+      : [];
+    const defaultEffort = value.default_reasoning_level;
+    metadata.set(id, {
+      id,
+      ...(typeof value.display_name === "string" && value.display_name.trim()
+        ? { label: value.display_name.trim().slice(0, 160) } : {}),
+      ...(efforts.length ? { reasoningEfforts: Object.freeze(efforts) } : {}),
+      ...(isReasoningEffort(defaultEffort) && efforts.includes(defaultEffort) ? { defaultReasoningEffort: defaultEffort } : {})
+    });
+  }
+  try {
+    const parsed: unknown = JSON.parse(output.trim());
+    if (Array.isArray(parsed)) parsed.forEach(read); else read(parsed);
+  } catch {
+    for (const line of output.split(/\r?\n/)) {
+      try { read(JSON.parse(line)); } catch { /* Text catalogs carry IDs only. */ }
+    }
+  }
+  return Object.freeze(ids.map((id) => Object.freeze(metadata.get(id) ?? { id })));
+}
+
+export async function listCodexModelOptions(
   executable: string,
   options: SubscriptionCliModelProbeOptions = {}
-): Promise<readonly string[]> {
+): Promise<readonly SubscriptionCliModelOption[]> {
   const execFile = options.execFile ?? defaultExecFileProbe;
   const execOptions = {
     encoding: "utf8",
@@ -110,7 +143,11 @@ export async function listCodexModels(
     if (!/service_tier|unknown variant `default`|unknown variant "default"/i.test(text)) throw error;
     result = await execFile(executable, ["debug", "models", ...CODEX_FAST_SERVICE_TIER_ARGS], execOptions);
   }
-  return parseCodexModelList(`${result.stdout}\n${result.stderr}`);
+  return parseCodexModelOptions(`${result.stdout}\n${result.stderr}`);
+}
+
+export async function listCodexModels(executable: string, options: SubscriptionCliModelProbeOptions = {}): Promise<readonly string[]> {
+  return Object.freeze((await listCodexModelOptions(executable, options)).map((model) => model.id));
 }
 
 /** Reviewed dynamic flags appended after manifest static args at spawn time. */
@@ -140,6 +177,7 @@ export const codexSubscriptionCliAdapter: SubscriptionCliAdapter = {
   },
 
   parseOutput(stdout: string, stderr: string, _schemaId: VdtSchemaId): unknown {
+    void _schemaId;
     const parsed = parseCodexExecJson(stdout, stderr);
     if (parsed.error) {
       throw Object.assign(new Error(parsed.error), { code: mapCodexError(parsed.error) });
@@ -156,6 +194,10 @@ export const codexSubscriptionCliAdapter: SubscriptionCliAdapter = {
 
   async listModels(executable: string, options?: SubscriptionCliModelProbeOptions): Promise<readonly string[]> {
     return listCodexModels(executable, options);
+  },
+
+  async listModelOptions(executable: string, options?: SubscriptionCliModelProbeOptions) {
+    return listCodexModelOptions(executable, options);
   }
 };
 

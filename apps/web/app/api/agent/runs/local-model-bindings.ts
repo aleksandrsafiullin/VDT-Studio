@@ -10,6 +10,7 @@ import {
   createDefaultModelAgentExecutionBinding,
   type StructuredModelAgentExecutionBindingDefinition
 } from "./execution-bindings";
+import type { ModelReasoningValue } from "@vdt-studio/ai-harness";
 
 export const LOCAL_MODEL_AGENT_BACKENDS = ["ollama", "lm_studio", "vllm"] as const;
 export type LocalModelAgentBackend = typeof LOCAL_MODEL_AGENT_BACKENDS[number];
@@ -34,7 +35,8 @@ export function localModelAgentBindingsEnabled(env: LocalModelAgentEnvironment =
 export function createLocalModelAgentBinding(
   backendId: LocalModelAgentBackend,
   modelId: string,
-  toolCatalogHash: string
+  toolCatalogHash: string,
+  modelReasoning?: ModelReasoningValue
 ): StructuredModelAgentExecutionBindingDefinition {
   const definition = createDefaultModelAgentExecutionBinding({
     env: { VDT_MODEL_AGENT_ENABLED: "true", VDT_MODEL_AGENT_PROVIDER: backendId, VDT_MODEL_AGENT_MODEL: modelId },
@@ -42,7 +44,8 @@ export function createLocalModelAgentBinding(
   });
   return {
     ...definition,
-    bindingId: `local_model_${backendId}_${createHash("sha256").update(modelId).digest("hex")}`,
+    bindingId: `local_model_${backendId}_${createHash("sha256").update(modelReasoning === undefined ? modelId : JSON.stringify([modelId, modelReasoning])).digest("hex")}`,
+    ...(modelReasoning === undefined ? {} : { modelReasoning }),
     capability: { ...definition.capability, engineAdapterId: "local-http-structured-turn-v1" }
   };
 }

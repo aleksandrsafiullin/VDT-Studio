@@ -1,5 +1,143 @@
 # Production Readiness
 
+## Business-agent evaluation correction (2026-10-27)
+
+The October 26–27 revenue runs used a guided prompt that supplied the formula,
+node scope and tool sequence. Their actual connection, parameter and finish
+observations remain technical evidence; they do not establish independent
+business autonomy. Zero operator replies does not remove initial-prompt help.
+The successful Ollama Off tree also has empty input units and does not meet the
+new business-quality criteria merely because it calculates 2,000 USD.
+
+[Agent Evaluation](AGENT_EVALUATION.md) now defines ten natural business seed
+cases, private frozen oracles, offline executable checks and required independent
+semantic review. This testing infrastructure is implemented; live natural-request
+acceptance remains unrun. Existing mock evaluation is a contract test only.
+Neither these assets nor their unit tests promote model quality, provider
+certification or the existing production/release NO-GO.
+
+## Ollama routine-confirmation fix (2026-10-27)
+
+Implemented locally: upfront native validation/calculation schemas and a bounded
+revision-scoped verification workflow from real Gateway results. A calculable
+new tree performs pending validation, calculation and hierarchy inspection
+before clarification or finish; edits, new intent and reconciliation invalidate
+earlier checks. The agent then reviews business coverage and requests the normal
+finish receipt. Real missing-fact questions and canonical approval/scope rules
+remain. No automatic user answer or host-authored business calculation is added.
+Native instructions clarify that user-supplied synthetic inputs need no second
+approval; that provenance does not certify an external measurement.
+Before a proposed construction question reaches the user, the same native model
+gets one bounded review against the brief. It can correct its own plan or retain
+a genuine missing-fact question. No user answer is fabricated; the ordinary
+Gateway validates the resulting action. This can add one local inference call. A private model-selected disposition
+constrains the review action to continuation or a real question, then is removed
+before canonical validation; it never supplies consent.
+
+Eight focused suites / 96 tests and web TypeScript passed in this change. A fresh
+qwen3.5:4b-q4_K_M / Off run completed in 536.857 seconds with a verified finish
+receipt, all three real check tools and no operator answer or graph/value/formula
+edit. All ten native requests retained think:false. Persisted data and reload
+checks confirm three nodes, the product formula and 2,000 USD from 100/20 with
+source quotes. Both input unit fields remain empty, so dimensional/business
+semantics are not qualified. Two additional read-only native wire fixtures
+validated continuation and genuine-question branches without executing tools.
+
+The final On attempt exceeded its 480-second first-turn limit and remains
+recovery_required; cancellation correctly refused without an active fenced
+controller. Earlier failed On iterations and the earlier cancelled case below
+remain failure evidence. Browser Running status still lagged until reload.
+Evidence: `output/ollama-autonomous-completion-20261027/verification.md`. General
+model quality, process restart/resume, native packaging, provider certification
+and release NO-GO are unchanged.
+
+## API and Ollama reasoning (2026-10-26)
+
+Implemented locally: automatic API/local model-access checks after saved-key
+hydration, provider/endpoint/model-scoped reasoning preferences, native API and
+Ollama parameter mappings, and exact immutable chat admission without silent
+reasoning fallback. API access uses strict, same-origin short-lived bindings for
+approved endpoints; local endpoints remain manifest-owned. Controls require real
+capabilities or bounded official documentation; unknown metadata leaves Default.
+Azure deployment reasoning metadata is unavailable. Explicit API Test connection
+also sends the selected reasoning value.
+
+Live OpenAI GPT-6 Luna High connection test passed after the user updated the key;
+High survived reload. Installed Ollama qwen3.5:4b-q4_K_M completed structured
+requests with Off and On. A first, harder On request reached its 60-second test
+deadline; the retained retry used a simpler structured task. These are transport
+checks, not comparative performance or universal model-quality evidence. Other
+API credentials, LM Studio/vLLM inference, Smart reasoning, packaged macOS/Windows
+and production security remain unqualified. Canonical certification and release
+NO-GO remain unchanged. Evidence: `output/api-ollama-reasoning-20261026/verification.md`.
+
+### Follow-up: new VDT creation after browser reload
+
+Live checks in the separate synthetic Provider reload QA project confirm saved
+model/reasoning restoration and automatic Connected without Settings Test.
+OpenAI GPT-6 Luna High completed a new three-node revenue VDT with a verified
+finish receipt; all eight native HTTP requests retained the selected model and
+High, including the structured-format fallback. The saved graph independently
+calculates 2,000 USD from 100 × 20 and survives reload.
+
+Installed Ollama qwen3.5:4b-q4_K_M with On also restored after reload. All nine
+native requests retained the model and `think:true`, including continuation after
+a question and browser reload. Its saved three-node graph independently
+calculates 2,000 USD, but this run did **not** complete unattended: after repairing
+one invalid plan it asked for routine completion confirmation, then asked for
+permission to run validation after an explicit answer. The QA operator cancelled
+the paused session with confirmed terminal cleanup. There is no Ollama finish
+receipt or successful autonomous-completion claim for this case. Individual On
+turns took roughly one to five minutes. Browser status also lagged server state
+until reload; a save-conflict warning cleared after another reload.
+
+The first API attempt was interrupted by replacement of the development server
+process and remains retained as recovery-required evidence. The restart trigger
+was not determined; this does not qualify process restart/resume. Temporary
+request diagnostics contained only model/reasoning/limits/status, were removed,
+and both touched source files were restored byte-for-byte. Evidence and exact
+limits: `output/provider-vdt-reload-20261026/verification.md`. Provider status and
+release NO-GO are unchanged.
+
+## Provider catalogs and reasoning slider (2026-10-26)
+
+Implemented locally: real active-provider CLI/API/local model catalogs in the
+composer, a discrete model-specific reasoning slider and reset, cancellation of
+stale catalog results, manual Azure deployments and API/local model IDs. Codex
+discovery includes the installed ChatGPT macOS bundle and chooses the newest
+recognizable version. Codex/Cursor model admission refreshes on demand after
+60 seconds while preserving existing immutable engines. The verified local CLI
+0.164 catalog advertises GPT-6 Luna, unlike the older npm 0.146 catalog.
+Catalog discovery does not certify inference or add a missing provider chat
+adapter. This earlier catalog slice did not implement API/local reasoning; the
+following API/Ollama slice supersedes that limitation. Gemini/Copilot CLI chat
+sessions, arbitrary API endpoints, native packaging and production isolation
+remain outside this change. Evidence/checks: `output/provider-model-slider-20261026/verification.md`.
+
+## Composer Codex reasoning control (2026-10-26)
+
+Implemented locally: provider-owned model selection in the composer popover,
+model-specific Codex reasoning metadata, persisted model/effort preferences and
+immutable exact-effort chat binding selection. The selected effort reaches open
+and resumed checkpoint commands; active/paused runs stay pinned. Ultra native
+delegation is not admitted. This earlier Codex slice did not qualify API/local
+reasoning; the later API/Ollama slice adds transport controls without qualifying
+model quality, Smart reasoning, packaged platforms or provider isolation. Canonical certification and
+existing release gates remain unchanged. Verification is recorded under
+`output/composer-model-reasoning-20261026/`.
+
+## Selected KPI chat context (2026-10-26)
+
+Implemented locally: the composer names the current selected KPI, new chats
+capture its ID, and the Supervisor resolves bounded current definitions for
+initial context and each queued follow-up. Context transport is separate from
+live model interpretation and native/Windows qualification; this change does
+not alter provider certification, mutation authority or existing release gates.
+Dismissal with × or empty canvas space retains the draft, suppresses automatic
+reattachment and explicitly clears prior KPI focus on the next model message.
+Reselecting a KPI restores targeted context. This adds an optional nullable
+user-instruction field, without changing the required `deepen_node` target.
+
 ## Local navigation performance (2026-10-26)
 
 Implemented for local web: cached project/home rendering with scoped background

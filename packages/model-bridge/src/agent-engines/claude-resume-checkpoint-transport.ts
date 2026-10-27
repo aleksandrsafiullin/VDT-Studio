@@ -69,7 +69,7 @@ const SAFE_CLAUDE_CREDENTIAL_ENVIRONMENT = new Set([
   "USER"
 ]);
 
-export interface ClaudeResumeCheckpointEnvironment extends CheckpointPrivateEnvironment {}
+export type ClaudeResumeCheckpointEnvironment = CheckpointPrivateEnvironment;
 
 export interface ClaudeResumeCheckpointTransportOptions {
   readonly executable: string;
@@ -284,8 +284,7 @@ export class ClaudeResumeCheckpointTransport {
       "--permission-mode",
       "dontAsk",
       "--no-chrome",
-      "--model",
-      input.model,
+      ...(input.model === "auto" ? [] : ["--model", input.model]),
       ...(input.mode === "resume" ? ["--resume", input.expectedSessionId!] : [])
     ];
     assertClaudeCheckpointArgumentsAllowed(args);

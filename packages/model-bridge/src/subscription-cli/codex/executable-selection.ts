@@ -20,6 +20,8 @@ export interface CodexExecutableSelectionOptions {
   platform?: NodeJS.Platform;
   pathExt?: string;
   env?: NodeJS.ProcessEnv;
+  /** Trusted host override; an explicit PATH otherwise disables app discovery. */
+  applicationDirectories?: readonly string[];
   executableCheck?: (candidate: string) => Promise<boolean>;
   versionProbe?: (executable: string, args: readonly string[]) => Promise<{ stdout: string; stderr: string }>;
   signal?: AbortSignal;
@@ -91,7 +93,11 @@ async function candidatesOnPath(options: CodexExecutableSelectionOptions): Promi
   const platform = options.platform ?? process.platform;
   const pathApi = platform === "win32" ? path.win32 : path.posix;
   const env = options.env ?? process.env;
-  const directories = (options.path ?? env.PATH ?? "").split(platform === "win32" ? ";" : ":")
+  const appDirectories = options.applicationDirectories ?? (platform === "darwin" && options.path === undefined
+    ? ["/Applications", ...(env.HOME && path.posix.isAbsolute(env.HOME) ? [path.posix.join(env.HOME, "Applications")] : [])]
+      .map((directory) => path.posix.join(directory, "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"))
+    : []);
+  const directories = [...(options.path ?? env.PATH ?? "").split(platform === "win32" ? ";" : ":"), ...appDirectories]
     .filter((directory) => pathApi.isAbsolute(directory) && !directory.includes("\0"))
     .slice(0, CODEX_SELECTION_LIMITS.maxDirectories);
   const extensions = platform === "win32"

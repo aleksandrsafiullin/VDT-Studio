@@ -66,6 +66,7 @@ export interface GenerateVdtInput {
 }
 
 export interface OpenAiCompatibleProviderConfig {
+  reasoningEffort?: string | undefined;
   baseUrl: string;
   apiKey?: string | undefined;
   model: string;
@@ -77,6 +78,8 @@ export interface OpenAiCompatibleProviderConfig {
 export type AiProviderFetch = typeof globalThis.fetch;
 
 export interface AnthropicProviderConfig {
+  reasoningEffort?: string | undefined;
+  adaptiveThinking?: boolean | undefined;
   apiKey: string;
   model: string;
   baseUrl?: string;
@@ -87,6 +90,7 @@ export interface AnthropicProviderConfig {
 }
 
 export interface AzureOpenAiProviderConfig {
+  reasoningEffort?: string | undefined;
   endpoint: string;
   apiKey: string;
   deployment: string;
@@ -97,6 +101,8 @@ export interface AzureOpenAiProviderConfig {
 }
 
 export interface GeminiProviderConfig {
+  thinkingBudget?: number | undefined;
+  thinkingLevel?: string | undefined;
   apiKey: string;
   model: string;
   baseUrl?: string;

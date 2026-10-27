@@ -1,5 +1,6 @@
 import { readdir, open, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { isCheckpointReasoningEffort, type ReasoningEffort } from "../subscription-cli/reasoning";
 import path from "node:path";
 import {
   codexItemDiagnosticText,
@@ -78,7 +79,7 @@ const SAFE_CODEX_CREDENTIAL_ENVIRONMENT = new Set([
   "USER"
 ]);
 
-export interface CodexResumeCheckpointEnvironment extends CheckpointPrivateEnvironment {}
+export type CodexResumeCheckpointEnvironment = CheckpointPrivateEnvironment;
 
 export interface CodexResumeCheckpointTransportOptions {
   readonly executable: string;
@@ -88,6 +89,7 @@ export interface CodexResumeCheckpointTransportOptions {
   readonly maxOutputBytes?: number;
   readonly maxPromptBytes?: number;
   readonly maxLines?: number;
+  readonly reasoningEffort?: ReasoningEffort | undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -284,8 +286,13 @@ export class CodexResumeCheckpointTransport {
   readonly #maxOutputBytes: number;
   readonly #maxPromptBytes: number;
   readonly #maxLines: number;
+  readonly #reasoningEffort: ReasoningEffort | undefined;
 
   constructor(options: CodexResumeCheckpointTransportOptions) {
+    if (options.reasoningEffort !== undefined && !isCheckpointReasoningEffort(options.reasoningEffort)) {
+      throw checkpointTransportError(`${ERROR_PREFIX}_CONFIGURATION_INVALID`, "Codex reasoning effort is not supported by the checkpoint transport.");
+    }
+    this.#reasoningEffort = options.reasoningEffort;
     if (!path.isAbsolute(options.executable) || options.executable === path.parse(options.executable).root || options.executable.includes("\0")) {
       throw checkpointTransportError(`${ERROR_PREFIX}_CONFIGURATION_INVALID`, "Codex executable must be a non-root absolute path.");
     }
@@ -333,6 +340,7 @@ export class CodexResumeCheckpointTransport {
     const credentials = input.environment.credentialEnvironment ?? [];
     const environment = buildCodexEnvironment(resolved.state, resolved.authHome, credentials);
     const modelArgs = input.model === "auto" ? [] : ["--model", input.model];
+    const reasoningArgs = this.#reasoningEffort ? ["-c", `model_reasoning_effort=${JSON.stringify(this.#reasoningEffort)}`] : [];
     const schemaPath = path.join(resolved.state, `checkpoint-response-${randomUUID()}.json`);
     const args = withForcedCodexSearchFlag(input.mode === "open"
       ? [
@@ -349,6 +357,7 @@ export class CodexResumeCheckpointTransport {
         "-c", "features.apply_patch_freeform=false",
         "-c", 'developer_instructions="You are a VDT checkpoint agent. Follow the supplied output schema: call argsJson is a JSON-encoded object containing the chosen Gateway arguments (the host decodes it to canonical args). At most three calls per turn. Return the required JSON envelope. All file data and VDT operations go exclusively through the supplied action_batch gateway, never native shell, file, patch, MCP, or collaboration tools. Native web search is permitted for public research only. No native filesystem investigation is needed or authorized. The private working directory is intentionally empty."',
         ...modelArgs,
+        ...reasoningArgs,
         "-C",
         resolved.workspace,
         "-"
@@ -366,6 +375,7 @@ export class CodexResumeCheckpointTransport {
         "-c", "features.apply_patch_freeform=false",
         "-c", 'developer_instructions="You are a VDT checkpoint agent. Follow the supplied output schema: call argsJson is a JSON-encoded object containing the chosen Gateway arguments (the host decodes it to canonical args). At most three calls per turn. Return the required JSON envelope. All file data and VDT operations go exclusively through the supplied action_batch gateway, never native shell, file, patch, MCP, or collaboration tools. Native web search is permitted for public research only. No native filesystem investigation is needed or authorized. The private working directory is intentionally empty."',
         ...modelArgs,
+        ...reasoningArgs,
         input.expectedSessionId!,
         "-"
       ], input.forceNativeWebSearch === true);

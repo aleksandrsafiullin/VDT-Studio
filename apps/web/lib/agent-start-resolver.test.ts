@@ -63,6 +63,21 @@ function bindingsFixture(
 }
 
 describe("agent-start-resolver", () => {
+  it("requires the exact Codex model/effort binding and never falls back to another effort", () => {
+    const settings = { ...cursorCliSettings, selectedCliAgentId: "codex" as const,
+      cliModelSelection: { source: "custom" as const, customModel: "model-a", reasoningEffort: "high" as const } };
+    const resolved = resolveExecutionSettings(settings);
+    const base = { bindingId: "base", executionProfile: "external_cli_agent" as const, engineId: "codex", engineAdapterId: "codex-resume-checkpoint-v1", backendId: "codex_subscription", modelId: "model-a" };
+    const high = { ...base, bindingId: "high", reasoningEffort: "high" as const };
+    const catalog = bindingsFixture({ bindings: [base, high] });
+    expect(resolveExecutionBindingId(catalog, settings, resolved.providerId, resolved.providerConfig)).toBe("high");
+    expect(buildAgentPublicStartRequest(commonRequest, settings, catalog, resolved)).toEqual({ ...commonRequest, executionBindingId: "high" });
+    expect(resolveExecutionBindingId(bindingsFixture({ bindings: [base] }), settings, resolved.providerId, resolved.providerConfig)).toBeNull();
+    expect(resolveExecutionBindingId(bindingsFixture({ bindings: [high, base] }), {
+      ...settings, cliModelSelection: { source: "custom", customModel: "model-a" }
+    }, resolved.providerId, resolved.providerConfig)).toBe("base");
+  });
+
   const localSettings = {
     ...DEFAULT_EXECUTION_SETTINGS,
     executionMode: "local_cli" as const,

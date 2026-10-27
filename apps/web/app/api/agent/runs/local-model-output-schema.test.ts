@@ -228,6 +228,36 @@ describe("native local tool argument constraints", () => {
     expect(names(context.forPrompt(envelope, described, { constructingTree: false, projectReadyForFinish: false }))).toEqual(["excavation.seed_topology", "tools.describe", "vdt.calculate", "vdt.validate"]);
   });
 
+  it("runs available checks before completion or clarification and still requires the canonical finish receipt", () => {
+    const context = new LocalModelOutputSchema();
+    const checks = ["vdt.validate", "vdt.calculate", "vdt.inspect_hierarchy"];
+    const prompt = JSON.stringify({ delta: { type: "initial_context", context: { tools:
+      ["tools.describe", ...checks, "run.request_finish"].map((name) => ({ name, inputJsonSchema: { type: "object" } }))
+    } } });
+    const observation = { revision: 3, constructingTree: true, needsStructure: false, projectReadyForFinish: true, hasReadSkill: true };
+    const kinds = (value: unknown) => (value as { properties: { action: { anyOf: Array<{ properties: { type: { const: string } } }> } } }).properties.action.anyOf.map((option) => option.properties.type.const);
+    const first = context.forPrompt(envelope, prompt, observation);
+    // No tools.describe round trip is needed to validate or calculate.
+    expect(names(first)).toEqual(["tools.describe", ...checks].sort());
+    expect(kinds(first)).not.toContain("question");
+    expect(kinds(first)).not.toContain("final");
+    const receiptHash = `sha256:${"b".repeat(64)}`;
+    const checked = context.forPrompt(envelope, JSON.stringify({ delta: { type: "tool_results", results: checks.map((toolName) => ({
+      toolName, status: "succeeded", resultHash: receiptHash, payload: { output: toolName === "vdt.calculate" ? { rootValue: 2000, errors: [] } : { valid: true, errors: [] } }
+    })) } }), observation);
+    expect(names(checked)).toEqual(["run.request_finish", "tools.describe"]);
+    expect(kinds(checked)).toContain("question"); // Genuine business questions remain possible after the checks.
+    expect(kinds(checked)).not.toContain("final");
+    const changed = context.forPrompt(envelope, JSON.stringify({ delta: { type: "tool_results", results: [] } }), { ...observation, revision: 4 });
+    expect(names(changed)).not.toContain("run.request_finish");
+    expect(names(changed)).toContain("vdt.calculate");
+    const final = context.forPrompt(envelope, JSON.stringify({ delta: { type: "tool_results", results: [{
+      toolName: "run.request_finish", status: "succeeded", payload: { receiptId: "actual-finish-receipt", receiptHash }
+    }] } }), observation);
+    expect(kinds(final)).toEqual(["final"]);
+    expect(final).toHaveProperty("properties.action.anyOf.0.properties.finishReceiptId.const", "actual-finish-receipt");
+  });
+
   it("grounds existing target IDs and makes value writes unavailable before a placeholder has drivers", () => {
     const context = new LocalModelOutputSchema();
     const update = { type: "object", properties: { nodeId: { type: "string" }, patch: { type: "object" } } };

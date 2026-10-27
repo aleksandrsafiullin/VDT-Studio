@@ -44,7 +44,7 @@ import { fileImportContextError, type FileImportTargetContext } from "@/componen
 import {
   buildAgentPublicStartRequest
 } from "@/lib/agent-start-resolver";
-import { prepareOpenAiAgentBinding } from "@/lib/openai-agent-binding";
+import { prepareProviderAgentBinding } from "@/lib/provider-agent-binding";
 import {
   createAgentClient,
   type AgentAnswerPayload as RuntimeAgentAnswerPayload,
@@ -342,6 +342,7 @@ export interface VdtStudioState {
   project: VdtProject;
   workspace: VdtWorkspaceState;
   selectedNodeId: string;
+  chatKpiContextExcludedVdtId?: string | undefined;
   selectedEdgeId?: string | undefined;
   selectedPanelTab: "properties" | "warnings";
   activeScenarioId: string;
@@ -472,7 +473,7 @@ export interface VdtStudioState {
     initialInstruction?: string,
     options?: {
       mode?: VdtAgentStartRequest["mode"];
-      selectedNodeId?: string;
+      selectedNodeId?: string | null;
       includeCurrentProject?: boolean;
       researchMode?: ResearchMode | undefined;
       executionBindingId?: string | undefined;
@@ -487,7 +488,7 @@ export interface VdtStudioState {
     selectedChangeIds?: string[] | undefined,
     proposalId?: string | undefined
   ) => Promise<void>;
-  sendAgentInstruction: (text: string, selectedNodeId?: string, researchMode?: ResearchMode) => Promise<boolean>;
+  sendAgentInstruction: (text: string, selectedNodeId?: string | null, researchMode?: ResearchMode) => Promise<boolean>;
   sendManualProjectChange: (change: ManualProjectChange) => Promise<void>;
   addManualIncomingKpi: (parentNodeId: string) => void;
   requestIncomingKpisWithAi: (nodeId: string) => Promise<boolean>;
@@ -497,6 +498,7 @@ export interface VdtStudioState {
   cancelGenerate: () => void;
   loadExample: (exampleId?: ExampleProjectId) => void;
   selectNode: (nodeId: string) => void;
+  clearAgentKpiContext: () => void;
   updateNode: (nodeId: string, patch: Partial<VdtNode>) => void;
   updateNodeBaselineValue: (nodeId: string, value?: number) => void;
   deleteNode: (nodeId: string) => void;
@@ -651,6 +653,11 @@ export function shouldContinueOpenVdt(state: Pick<VdtStudioState, "project" | "w
     state.workspace.activeVdtId &&
     state.project.graph.nodes.length > 0
   );
+}
+
+export function selectedNodeForAgentChat(state: Pick<VdtStudioState, "project" | "workspace" | "selectedNodeId" | "chatKpiContextExcludedVdtId">): VdtNode | undefined {
+  if (state.workspace.activeVdtId && state.chatKpiContextExcludedVdtId === state.workspace.activeVdtId) return undefined;
+  return state.project.graph.nodes.find((node) => node.id === state.selectedNodeId);
 }
 
 function rootNodeForProject(project: VdtProject): VdtNode | undefined {
@@ -1587,6 +1594,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       },
       workspace: { ...EMPTY_WORKSPACE },
       selectedNodeId: productionVolumeProject.rootNodeId,
+      chatKpiContextExcludedVdtId: undefined,
       activeScenarioId: productionVolumeProject.scenarios[0]?.id ?? "",
       selectedPanelTab: "properties",
       brief: {
@@ -3066,11 +3074,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         try {
           const prompt = initialInstruction?.trim();
           const shouldContinue = options?.includeCurrentProject ?? shouldContinueOpenVdt(state);
+          const selectedNodeId = options?.selectedNodeId === null ? undefined
+            : options?.selectedNodeId ?? (shouldContinue ? selectedNodeForAgentChat(state)?.id : undefined);
           const input: VdtAgentStartRequest["input"] = {
             ...state.brief,
             personalisation: workspacePersonalisation(state),
             ...(prompt ? { prompt } : {}),
-            ...(options?.selectedNodeId ? { selectedNodeId: options.selectedNodeId } : {}),
+            ...(selectedNodeId ? { selectedNodeId } : {}),
             ...(shouldContinue ? { project: state.project } : {})
           };
           const workspace = buildAgentWorkspaceContext(state);
@@ -3085,7 +3095,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               researchMode: options?.researchMode ?? "auto"
             }
           };
-          const explicitBindingId = requestedExecutionBindingId ?? await prepareOpenAiAgentBinding(state.executionSettings, providerId, {...providerConfig,enableResearch:options?.researchMode==="on"});
+          const explicitBindingId = requestedExecutionBindingId ?? await prepareProviderAgentBinding(state.executionSettings, providerId, {...providerConfig,enableResearch:options?.researchMode==="on"});
           const bindings = await createAgentClient().getExecutionBindings();
           const startRequest = buildAgentPublicStartRequest(
             commonRequest,
@@ -3300,9 +3310,11 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       sendAgentInstruction: async (text, selectedNodeId, researchMode) => {
         const trimmed = text.trim();
         if (!trimmed) return false;
+        if (selectedNodeId === undefined && get().workspace.activeVdtId &&
+          get().chatKpiContextExcludedVdtId === get().workspace.activeVdtId) selectedNodeId = null;
         const previousRun = get().agentRun?.runId ?? get().generateActivity?.runId;
         if (previousRun && get().smartKpiFencedRunIds.includes(previousRun)) return get().startAgentRun(trimmed, {
-          mode: "continue_project", includeCurrentProject: true, ...(selectedNodeId ? { selectedNodeId } : {}), ...(researchMode ? { researchMode } : {})
+          mode: "continue_project", includeCurrentProject: true, ...(selectedNodeId !== undefined ? { selectedNodeId } : {}), ...(researchMode ? { researchMode } : {})
         });
         const currentRun = get().agentRun;
         const activity = get().generateActivity;
@@ -3354,7 +3366,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             type: "user_instruction",
             text: trimmed,
             personalisation: workspacePersonalisation(get()),
-            ...(selectedNodeId ? { selectedNodeId } : {}),
+            ...(selectedNodeId !== undefined ? { selectedNodeId } : {}),
             ...(researchMode ? { researchMode } : {})
           });
           applyAgentSnapshot(set, snapshot);
@@ -3705,7 +3717,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         });
 
         try {
-          const explicitBindingId = await prepareOpenAiAgentBinding(executionSettings, providerId, resolvedProviderConfig);
+          const explicitBindingId = await prepareProviderAgentBinding(executionSettings, providerId, resolvedProviderConfig);
           const bindings = await createAgentClient().getExecutionBindings();
           const startRequest = buildAgentPublicStartRequest(
             {
@@ -3756,7 +3768,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           ...clearPendingAiActionState()
         });
       },
-      selectNode: (nodeId) => set({ selectedNodeId: nodeId }),
+      selectNode: (nodeId) => set({ selectedNodeId: nodeId, chatKpiContextExcludedVdtId: undefined }),
+      clearAgentKpiContext: () => set({ chatKpiContextExcludedVdtId: get().workspace.activeVdtId }),
       updateNode: (nodeId, patch) => {
         set((state) => ({
           project: updateProjectNode(state.project, nodeId, (node) => ({

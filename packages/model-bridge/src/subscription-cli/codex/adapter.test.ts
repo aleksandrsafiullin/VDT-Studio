@@ -1,9 +1,32 @@
 import { describe, expect, it, vi } from "vitest";
 import { assertArgsSafe } from "../security";
 import * as auth from "./auth";
-import { buildCodexDynamicArgs, codexSubscriptionCliAdapter, listCodexModels, parseCodexModelList } from "./adapter";
+import { buildCodexDynamicArgs, codexSubscriptionCliAdapter, listCodexModels, parseCodexModelList, parseCodexModelOptions } from "./adapter";
 
 describe("codexSubscriptionCliAdapter", () => {
+  it("keeps only provider-reported model reasoning metadata and omits hidden instructions", () => {
+    const catalog = JSON.stringify({ models: [
+      { slug: "model-a", display_name: "Model A", default_reasoning_level: "medium", supported_reasoning_levels: [
+        { effort: "low" }, { effort: "medium" }, { effort: "max" }, { effort: "max" }, { effort: "--unsafe" }
+      ], base_instructions: "not public metadata" },
+      { slug: "hidden", visibility: "hide", supported_reasoning_levels: [{ effort: "high" }] },
+      { slug: "model-b", default_reasoning_level: "high", supported_reasoning_levels: [{ effort: "low" }] }
+    ] });
+    expect(parseCodexModelOptions(catalog)).toEqual([
+      { id: "model-a", label: "Model A", defaultReasoningEffort: "medium", reasoningEfforts: ["low", "medium", "max"] },
+      { id: "model-b", reasoningEfforts: ["low"] }
+    ]);
+  });
+
+  it("does not invent reasoning levels for string or text catalogs", () => {
+    expect(parseCodexModelOptions('["model-a"]')).toEqual([{ id: "model-a" }]);
+    expect(parseCodexModelOptions("model-a\nmodel-b\n")).toEqual([{ id: "model-a" }, { id: "model-b" }]);
+  });
+
+  it("retains reasoning metadata in JSONL catalogs", () => {
+    expect(parseCodexModelOptions(JSON.stringify({ slug: "model-a", supported_reasoning_levels: [{ effort: "high" }] }) + "\nWarning: catalog refreshed"))
+      .toContainEqual({ id: "model-a", reasoningEfforts: ["high"] });
+  });
   it("delegates probeAuth to probeCodexAuth", async () => {
     const probe = vi.spyOn(auth, "probeCodexAuth").mockResolvedValue({
       backendId: "codex_subscription",

@@ -94,6 +94,10 @@ const REQUIRED_SEQUENCE3_ARTIFACT_FREEZE_HASHES = [
 
 const REQUIRED_DOCS = [
   {
+    file: "docs/AGENT_EVALUATION.md",
+    snippets: ["business_autonomy", "evaluator_only", "needs_review", "corepack pnpm agent:eval", "Live acceptance with these"]
+  },
+  {
     file: "AGENTS.md",
     snippets: ["Documentation Is Part of Every Change", "Documentation impact: none", "pnpm docs:verify"]
   },

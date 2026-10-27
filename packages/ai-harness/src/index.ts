@@ -1,4 +1,6 @@
 export * from "./types";
+export * from "./reasoning";
+export { readBoundedText } from "./providers/provider-utils";
 export * from "./tasks/registry";
 export * from "./tasks/run-ai-task";
 export * from "./tasks/deepen-node";

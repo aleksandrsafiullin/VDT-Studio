@@ -33,15 +33,18 @@ export interface DefaultModelAgentBindingOptions {
 }
 
 export interface AgentExecutionBindingSummary {
+  readonly modelReasoning?: import("@vdt-studio/ai-harness").ModelReasoningValue | undefined;
   readonly bindingId: string;
   readonly executionProfile: AgentCapabilityProfile["executionProfile"];
   readonly engineId: string;
   readonly engineAdapterId: string;
   readonly backendId: string;
   readonly modelId: string;
+  readonly reasoningEffort?: ReasoningEffort | undefined;
 }
 
 interface ModelAgentExecutionBindingDefinitionBase {
+  readonly modelReasoning?: import("@vdt-studio/ai-harness").ModelReasoningValue | undefined;
   readonly bindingId: string;
   readonly enabled: boolean;
   readonly modelId: string;
@@ -87,6 +90,7 @@ export interface ExternalCliExecutionBindingDefinition {
   readonly bindingId: string;
   readonly enabled: boolean;
   readonly modelId: string;
+  readonly reasoningEffort?: ReasoningEffort | undefined;
   readonly capability: Extract<AgentCapabilityProfile, { executionProfile: "external_cli_agent" }>;
   /** The current host probe. It must match the stored qualification evidence
    * exactly; a changed CLI/protocol/catalog/platform fails closed. */
@@ -329,7 +333,16 @@ function normalizeDefinition(
     );
   }
   if ("currentQualification" in definition) {
+    if (definition.reasoningEffort !== undefined &&
+      (definition.capability.backendId !== "codex_subscription" || !isCheckpointReasoningEffort(definition.reasoningEffort))) {
+      throw new AgentExecutionBindingError("BINDING_INVALID", "Reasoning effort requires a supported Codex checkpoint binding.");
+    }
     return cloneDefinition(definition);
+  }
+  if (definition.modelReasoning !== undefined && !(typeof definition.modelReasoning === "boolean" ||
+    (typeof definition.modelReasoning === "string" && /^[a-z][a-z0-9_.-]{0,47}$/.test(definition.modelReasoning)) ||
+    (typeof definition.modelReasoning === "number" && Number.isSafeInteger(definition.modelReasoning) && definition.modelReasoning >= 0 && definition.modelReasoning <= 32768))) {
+    throw new AgentExecutionBindingError("BINDING_INVALID", "Model reasoning selection is invalid.");
   }
   if (
     "legacyCompatibilityAdapter" in definition
@@ -393,6 +406,16 @@ function normalizeDefinition(
       );
     }
     const { maxTokens, temperature, providerConfig } = definition.modelEngineAdapter;
+    if (definition.modelReasoning !== undefined) {
+      const provider = definition.modelEngineAdapter.providerId;
+      const local = ["ollama", "lm_studio", "vllm"].includes(provider);
+      if (local && provider !== "ollama" && typeof definition.modelReasoning !== "string")
+        throw new AgentExecutionBindingError("BINDING_INVALID", "This local API requires a named reasoning level.");
+      if (local && provider === "ollama" && typeof definition.modelReasoning === "number")
+        throw new AgentExecutionBindingError("BINDING_INVALID", "Ollama requires a switch or named thinking level.");
+      if (!local && definition.modelReasoning !== (providerConfig?.reasoningEffort ?? providerConfig?.thinkingLevel ?? providerConfig?.thinkingBudget))
+        throw new AgentExecutionBindingError("BINDING_INVALID", "Reasoning must exactly match the immutable provider configuration.");
+    }
     if (["ollama", "lm_studio", "vllm"].includes(definition.modelEngineAdapter.providerId) && providerConfig) {
       throw new AgentExecutionBindingError(
         "BINDING_INVALID",
@@ -571,6 +594,9 @@ function toSummary(definition: AgentExecutionBindingDefinition): AgentExecutionB
     engineId: definition.capability.engineId,
     engineAdapterId: definition.capability.engineAdapterId,
     backendId: definition.capability.backendId,
-    modelId: definition.modelId
+    modelId: definition.modelId,
+    ...("modelReasoning" in definition && definition.modelReasoning !== undefined ? { modelReasoning: definition.modelReasoning } : {}),
+    ...("reasoningEffort" in definition && definition.reasoningEffort ? { reasoningEffort: definition.reasoningEffort } : {})
   };
 }
+import { isCheckpointReasoningEffort, type ReasoningEffort } from "@vdt-studio/model-bridge";

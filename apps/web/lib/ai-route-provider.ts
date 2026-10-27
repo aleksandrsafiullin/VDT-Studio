@@ -45,7 +45,7 @@ export function readProviderConfig(value: unknown) {
     providerConfig.apiKey = config.apiKey;
   }
   if (typeof config.model === "string" && config.model.trim()) {
-    providerConfig.model = config.model.trim().slice(0, 120);
+    providerConfig.model = config.model.trim().slice(0, 160);
   }
   for (const key of ["endpoint", "deployment", "apiVersion", "anthropicVersion"] as const) {
     if (typeof config[key] === "string" && config[key].trim()) {
@@ -67,6 +67,14 @@ export function readMaxTokens(value: unknown): number | undefined {
   }
 
   return Math.min(Math.floor(maxTokens), 1_000_000);
+}
+
+function readReasoningOverrides(value: unknown) {
+  const config = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const named = (value: unknown) => typeof value === "string" && /^[a-z][a-z0-9_.-]{0,47}$/.test(value) ? value : undefined;
+  return { reasoningEffort: named(config.reasoningEffort), thinkingLevel: named(config.thinkingLevel),
+    thinkingBudget: typeof config.thinkingBudget === "number" && Number.isSafeInteger(config.thinkingBudget) && config.thinkingBudget >= 0 && config.thinkingBudget <= 32768 ? config.thinkingBudget : undefined,
+    adaptiveThinking: config.adaptiveThinking === true };
 }
 
 function isPrivateOrLocalHost(hostname: string) {
@@ -207,6 +215,7 @@ export function createAiProvider(request: AiRouteProviderRequest, requestUrl: st
     }
 
     return new OpenAiCompatibleProvider({
+      ...readReasoningOverrides(body.providerConfig),
       baseUrl: requestBaseUrl ?? envBaseUrl,
       apiKey,
       model: providerConfig.model ?? process.env.OPENAI_COMPATIBLE_MODEL ?? DEFAULT_OPENAI_COMPATIBLE_FALLBACK_MODEL
@@ -226,6 +235,7 @@ export function createAiProvider(request: AiRouteProviderRequest, requestUrl: st
       throw new Error("Anthropic API key is required.");
     }
     return new AnthropicProvider({
+      ...readReasoningOverrides(body.providerConfig),
       baseUrl,
       apiKey,
       model: providerConfig.model ?? process.env.ANTHROPIC_MODEL ?? DEFAULT_ANTHROPIC_FALLBACK_MODEL,
@@ -257,6 +267,7 @@ export function createAiProvider(request: AiRouteProviderRequest, requestUrl: st
       throw new Error("Azure OpenAI deployment is required.");
     }
     return new AzureOpenAiProvider({
+      ...readReasoningOverrides(body.providerConfig),
       endpoint,
       apiKey,
       deployment,
@@ -277,6 +288,7 @@ export function createAiProvider(request: AiRouteProviderRequest, requestUrl: st
       throw new Error("Google Gemini API key is required.");
     }
     return new GeminiProvider({
+      ...readReasoningOverrides(body.providerConfig),
       baseUrl,
       apiKey,
       model: providerConfig.model ?? process.env.GEMINI_MODEL ?? "gemini-2.5-pro"

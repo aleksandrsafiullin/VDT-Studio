@@ -1,5 +1,33 @@
 # Product Specification
 
+## Provider model menu and reasoning slider
+
+The composer’s model menu loads the active provider’s CLI, API or local-runtime
+catalog without hardcoded model IDs. A Codex-style discrete slider selects only
+reasoning values advertised for that model or read from its official documentation;
+Default and a reset preserve the provider default. API/local preferences are scoped
+to provider, endpoint and model, persist across reload and are pinned at new-chat
+admission. Ollama uses its actual Off/On or named values; API adapters send native
+effort, thinking level or token budget. Explicit API Test connection checks that
+same selected value. Startup checks restore access after saved-key hydration,
+recheck visible connections and ignore stale results after credential changes.
+Azure uses manual deployment names and Default because deployment reasoning
+metadata is unavailable. API/local manual model IDs remain available. Missing
+catalogs or reasoning metadata are stated explicitly. Provider certification and
+native-platform qualification remain separate.
+
+For native Ollama construction of a new VDT, the creation request authorizes
+routine validation, calculation, hierarchy inspection and finish. A calculable
+draft runs its pending read-only checks before any clarification or finish action.
+Successful checks are scoped to the current graph revision and invalidated by
+new edits or user intent. After checking, the agent reviews business coverage;
+actual missing facts may still require a question. Only the canonical finish
+receipt permits the final response. This does not establish general model quality.
+Before sending a construction question, the same model reviews it once against
+the brief. It can replace a redundant confirmation with its own action; genuine
+missing facts still reach the user. This supplies no answer or automatic consent
+and can add one local inference call.
+
 ## Local skill library
 
 Implemented for the trusted local application: **Settings → Skills** has one
@@ -325,15 +353,48 @@ The empty view offers prompts that only fill the editable draft. A rounded
 composer groups **+ → Attach a file / Edit model context**, web-search mode,
 local dictation, the active model/readiness control and Send. A globe icon with
 **Off / Auto / On** names the selected search mode; provider setup/check failures are explained
-separately. The model control shows its readiness label: green ready, gray
-checking, amber setup/recovery and red missing CLI. API configuration readiness
-does not claim a successful connection test. Enter sends except
+separately. The model control shows only the model name and a readiness dot:
+green ready, gray checking, amber setup/recovery and red missing CLI. Its tooltip
+and accessibility label retain status details. Clicking opens a model/reasoning
+popover; Provider settings is an explicit secondary menu action. Models come from
+the selected provider's discovery/admitted catalog, with unbound CLI models marked
+unavailable. Codex reasoning levels are read from that model's CLI metadata and
+admitted as immutable server bindings. Default preserves model defaults; explicit
+levels persist with the selected model and apply to new chat runs. Picking a new
+model clears the old effort. Active/paused runs keep their binding and disable
+these controls until completion or a new chat. Ultra uses native delegation and
+is outside this Gateway transport. API and local providers use their exact model
+capabilities or bounded official documentation to expose supported native values;
+unknown capabilities leave Default with an explanation. Their saved selection is
+scoped to provider/endpoint/model, so changing a model cannot inherit another
+model's effort. Automatic API/local metadata access checks report Connected only
+after successful model access; this is separate from an explicit generation test. Enter sends except
 during IME composition; Shift + Enter inserts a newline. When the agent is running
 and the draft is empty, the composer offers Stop. Chat history and New remain in
 the header. Actual status/elapsed time and a collapsed Work log replace stacked
 status boxes; questions, retries and approvals retain their existing callbacks.
 The redesign changes presentation and draft interaction, not model admission,
 generation policy, persistence or provider qualification.
+
+Implemented locally: in an open VDT, **Selected KPI** above the message field
+shows the selected node's name and unit and follows canvas/inspector selection.
+The first message of a new chat and subsequent instructions carry that node's
+ID. The Supervisor resolves current graph data (identity, type, unit, description,
+formula, values and immediate parent/child IDs) when admitting each message.
+Each queued instruction retains its own selection snapshot, while visible chat
+keeps the original user text. Context is bounded to 2,000 serialized characters;
+large definitions fall back to identity with `contextTruncated`, and the agent
+can inspect details through existing tools. Missing targets fail explicitly.
+No selection chip is shown for a new tree or an invalid selection. Selecting a
+KPI supplies request context and does not itself authorize edits or restrict an
+explicit request about the wider tree.
+
+The chip's **Remove selected KPI from message** button and an empty-canvas
+click clear the chat's KPI context without clearing the draft or inspector.
+Whole-tree scope remains active through messages and new chats until a KPI is
+deliberately selected again, including the same KPI. This dismissal is local to
+the current VDT and page session. New starts omit the selected ID; follow-ups
+send explicit `selectedNodeId: null` so the model clears earlier KPI focus.
 
 - Preserve the original-language request, inspect bounded local skill candidates and make an explicit agent-owned selection.
 - Decide the next bounded action, use one reviewed tool, receive feedback and iterate.
@@ -412,6 +473,7 @@ Current status: the local alpha project workspace provides **VDTs / Files** tabs
 - Validate every structured result locally.
 - Use a standalone paired runner only for development/headless workflows; production desktop uses private IPC.
 - Treat subscription-CLI readiness as an execution gate: only an installed backend with runtime status `ready` may enable agent requests.
+- After saved settings hydrate, verify the selected CLI and exact chat-model binding at app startup, including Projects and direct VDT links. Keep the result in the app session across navigation. Retry transient failures with backoff while visible and recheck stale access on window return, network restoration or VDT entry, without requiring Settings/Test. Authentication failures still require provider sign-in; saved status never substitutes for a live check.
 - Populate model pickers only from the current CLI/provider response; when discovery is unsupported or fails, say so and retain manual entry without static availability claims.
 - Allow reversible removal from **Your subscriptions**, with Undo and **Add provider → Add back**. The browser-local preference survives reloads and rescans; it neither uninstalls a CLI nor signs out of its provider account. Removing the selected provider selects a remaining verified-ready CLI with explicit feedback, or clears chat selection when none is ready. Legacy memory preference fields remain compatibility-only.
 
@@ -529,4 +591,8 @@ For a new blank VDT, native Ollama construction first discovers and reads a mode
 
 Experimental complete library topologies: a local Model Agent may explicitly select `mining.load_and_haul` through `skill.seed_topology`, accept individually named illustrative defaults, fill supplied facts, and use the normal calculation/finish gates. The single canonical skill artifact contains the annual joint excavation/haulage formulas; defaults are editable assumptions, not site facts or verified benchmarks. Seeding preserves the existing root and cannot replace existing drivers. A fresh local `qwen3.5:4b-q4_K_M` run on 2026-10-17 completed this library workflow with 35 calculable nodes in 10 turns, without operator formula/value edits. See [the live evidence and its limits](AI_HARNESS.md#local-library-completion-evidence-2026-10-17); production/provider qualification is unchanged.
 
-Direct OpenAI API Model Agent execution is experimental in the trusted local app: Send uses the exact selected model and current in-memory key, admits a short-lived server binding and starts the same bounded agent workflow. No manual environment-file copy is required. Reload restores the key from the separate encrypted local vault; backend admissions and active execution copies remain memory-only. Unsupported gateways do not silently route through OpenAI. One fresh `gpt-6-luna` excavation/haulage tree completed with 35 finite nodes in 145.436 seconds and no operator formula/value edits; its assumptions differ from the Ollama example. See [the case evidence and limits](AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17).
+OpenAI-compatible, Anthropic, Gemini and Azure API Model Agent execution is
+experimental in the trusted local app: Send uses the exact selected model, current
+in-memory key and validated reasoning, admits a short-lived server binding and
+starts the same bounded agent workflow. Endpoints must be official/preset or
+explicitly configured by the trusted host. No manual environment-file copy is required. Reload restores the key from the separate encrypted local vault; backend admissions and active execution copies remain memory-only. Unsupported gateways do not silently route through OpenAI. One fresh `gpt-6-luna` excavation/haulage tree completed with 35 finite nodes in 145.436 seconds and no operator formula/value edits; its assumptions differ from the Ollama example. See [the case evidence and limits](AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17).

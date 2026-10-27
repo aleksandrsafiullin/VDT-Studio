@@ -8,6 +8,7 @@ import {
   type GatewayPresetId
 } from "@/lib/execution-mode-catalog";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
+import { loadByokModelCatalog } from "@/lib/provider-model-catalog";
 import { hasByokFieldErrors, validateByokSettings } from "@/lib/byok-validation";
 import { SettingsChipRow } from "./settings-chips";
 import { ByokPresetForm } from "./byok-preset-form";
@@ -83,26 +84,7 @@ export function ByokSettings() {
 
     try {
       const resolved = resolveExecutionSettings(executionSettings);
-      const response = await fetch("/api/ai/generate-vdt", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ operation: "list_models", ...resolved })
-      });
-      const payload = await response.json() as { ok?: boolean; models?: unknown; error?: string };
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.error ?? "Could not load models from the provider.");
-      }
-
-      const seen = new Set<string>();
-      const models = Array.isArray(payload.models)
-        ? payload.models.flatMap((value) => {
-            if (typeof value !== "string") return [];
-            const model = value.trim();
-            if (!model || seen.has(model)) return [];
-            seen.add(model);
-            return [model];
-          })
-        : [];
+      const models = await loadByokModelCatalog(resolved);
       if (requestId !== modelRequestId.current) return;
       setDiscoveredModels(models);
       setModelListLoaded(true);

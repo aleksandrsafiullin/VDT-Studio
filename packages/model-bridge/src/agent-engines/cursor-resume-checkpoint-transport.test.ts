@@ -223,7 +223,7 @@ async function executeOpen(
 }
 
 describe("CursorResumeCheckpointTransport", () => {
-  it("opens and resumes the exact opaque session with shell-free reviewed arguments", async () => {
+  it.each(["gpt-5.5-high", "auto"])("opens and resumes %s with shell-free reviewed arguments", async (model) => {
     const isolated = await environment();
     const runner = new FakeRunner((request) => processResult(stream({
       cwd: request.cwd,
@@ -239,14 +239,14 @@ describe("CursorResumeCheckpointTransport", () => {
     const opened = await transport.executeSegment({
       mode: "open",
       environment: isolated,
-      model: "gpt-5.5-high",
+      model,
       prompt: "open prompt",
       signal: controller.signal
     }, ["vdt.echo"]);
     const resumed = await transport.executeSegment({
       mode: "resume",
       environment: isolated,
-      model: "gpt-5.5-high",
+      model,
       prompt: "resume prompt",
       expectedSessionId: opened.sessionId,
       signal: controller.signal
@@ -263,8 +263,7 @@ describe("CursorResumeCheckpointTransport", () => {
       "ask",
       "--workspace",
       runner.requests[0]!.cwd,
-      "--model",
-      "gpt-5.5-high"
+      ...(model === "auto" ? [] : ["--model", model])
     ]);
     expect(runner.requests[1]?.args).toEqual(expect.arrayContaining(["--resume", "cursor-session-1"]));
     expect(runner.requests[1]?.args).not.toEqual(expect.arrayContaining(["--trust", "--force", "--yolo"]));

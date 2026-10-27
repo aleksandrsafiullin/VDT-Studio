@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "visibility": "evaluator_only",
+  "cases": [
+    {
+      "id": "retail-revenue",
+      "outcome": "completion",
+      "expectedRootValue": 2000,
+      "roles": { "quantity": { "expectedValues": [100] }, "price": { "expectedValues": [20] } },
+      "probes": [
+        { "role": "quantity", "value": 110, "expectedRootValue": 2200 },
+        { "role": "price", "value": 25, "expectedRootValue": 2500 }
+      ],
+      "rubric": ["Revenue must depend on sold quantity and the corresponding realized price, rather than a hardcoded total.", "Require meaningful quantity/currency units and source attribution for the supplied inputs.", "Accept equivalent valid decompositions; do not require exactly three nodes, particular IDs, names or a prescribed skill."]
+    },
+    {
+      "id": "retail-revenue-other-values",
+      "outcome": "completion",
+      "expectedRootValue": 5950,
+      "roles": { "quantity": { "expectedValues": [170] }, "price": { "expectedValues": [35] } },
+      "probes": [
+        { "role": "quantity", "value": 171, "expectedRootValue": 5985 },
+        { "role": "price", "value": 40, "expectedRootValue": 6800 }
+      ],
+      "rubric": ["Use this case to detect cached answers or behavior fitted to the 100/20 example.", "The relationship and units must remain correct for the changed business facts."]
+    },
+    {
+      "id": "retail-net-revenue",
+      "outcome": "completion",
+      "expectedRootValue": 4900,
+      "roles": { "quantity": { "expectedValues": [120] }, "price": { "expectedValues": [50] }, "discount": { "expectedValues": [0.1, 10] }, "refunds": { "expectedValues": [500] } },
+      "probes": [
+        { "role": "quantity", "value": 121, "expectedRootValue": 4945 },
+        { "role": "price", "value": 55, "expectedRootValue": 5440 },
+        { "role": "refunds", "value": 0, "expectedRootValue": 5400 }
+      ],
+      "rubric": ["Apply the discount to sales and subtract the already-discounted refunds once.", "Accept either fraction or percentage input representation when its unit and formula agree."]
+    },
+    {
+      "id": "missing-selling-price",
+      "outcome": "clarification",
+      "roles": {},
+      "probes": [],
+      "reviewNotApplicable": ["units", "finalReport"],
+      "rubric": ["Ask for the missing actual selling price, actual revenue, or a source that resolves it.", "Do not invent a price or present a finite estimate as actual revenue.", "A legitimate business clarification is correct behavior, not a failure to finish unattended."]
+    },
+    {
+      "id": "ambiguous-profitability",
+      "outcome": "clarification",
+      "roles": {},
+      "probes": [],
+      "reviewNotApplicable": ["units", "provenance", "finalReport"],
+      "rubric": ["Resolve whether the user means profit, margin, return or another business objective.", "Do not silently replace an ambiguous goal with a preselected revenue template."]
+    },
+    {
+      "id": "sales-file",
+      "outcome": "completion",
+      "expectedRootValue": 3000,
+      "roles": {},
+      "probes": [],
+      "rubric": ["Use the retained file and executable source/query lineage, not invented user quotes.", "A weighted average price is 25 USD/item; an unweighted mean of 35 would be wrong.", "Accept row/category aggregation or an equivalent quantity/weighted-price model."]
+    },
+    {
+      "id": "serial-line-capacity",
+      "outcome": "completion",
+      "expectedRootValue": 6000,
+      "roles": { "firstStage": { "expectedValues": [500] }, "secondStage": { "expectedValues": [300] }, "workingDays": { "expectedValues": [20] } },
+      "probes": [
+        { "role": "firstStage", "value": 700, "expectedRootValue": 6000 },
+        { "role": "secondStage", "value": 350, "expectedRootValue": 7000 },
+        { "role": "workingDays", "value": 22, "expectedRootValue": 6600 }
+      ],
+      "rubric": ["Respect a serial bottleneck; adding or averaging stage capacities is not a valid throughput model.", "The upstream-capacity change must have no effect while downstream remains the bottleneck."]
+    },
+    {
+      "id": "maintenance-spend",
+      "outcome": "completion",
+      "expectedRootValue": 6000,
+      "roles": { "labor": { "expectedValues": [3000] }, "parts": { "expectedValues": [1800] }, "contractors": { "expectedValues": [1200] } },
+      "probes": [
+        { "role": "labor", "value": 3300, "expectedRootValue": 6300 },
+        { "role": "parts", "value": 0, "expectedRootValue": 4200 }
+      ],
+      "rubric": ["Count each disjoint cost category once.", "Do not add invented overhead or equipment assumptions to already complete actual spend."]
+    },
+    {
+      "id": "haulage-missing-site-facts",
+      "outcome": "clarification",
+      "roles": {},
+      "probes": [],
+      "reviewNotApplicable": ["units", "finalReport"],
+      "rubric": ["Payload, operating time and loading/unloading constraints are not supplied.", "Ask for material site facts; public equipment defaults cannot certify actual site production.", "Relevant guidance may come from a suitable skill or research; do not prescribe an exact skill ID or tool sequence."]
+    },
+    {
+      "id": "equipment-knowledge-gap",
+      "outcome": "clarification_or_labelled_estimate",
+      "roles": {},
+      "probes": [],
+      "rubric": ["Resolve equipment configuration and site assumptions or clearly label a provisional estimate.", "Any claimed manufacturer specification needs an applicable opened source; do not invent citations or treat generic skill defaults as measured site facts.", "If research is unavailable, disclose the gap or ask for data. Absence of research configuration is an environment limitation, not proof of agent incompetence."]
+    }
+  ]
+}

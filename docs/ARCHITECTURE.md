@@ -1,5 +1,92 @@
 # Architecture
 
+## Offline business evaluation boundary
+
+The [agent evaluator](AGENT_EVALUATION.md) projects only natural user text and
+visible setup from `eval/agent-autonomy/requests.v1.json`. Evaluator-only oracles
+are loaded by the offline grading path, never the request-export path. Grading
+uses captured canonical snapshots and persisted graphs, shared core calculation
+and in-memory sensitivity overrides, plus separate independent semantic review.
+It cannot execute a provider, repair a stored graph or grant runtime authority.
+Its acceptance applies to a case only and does not change provider certification.
+
+## Composer model and reasoning selection
+
+The composer popover consumes provider-discovered IDs and public server binding
+summaries. A common catalog client reuses the bounded BYOK list-models route, the
+active local-runtime list command or targeted authenticated CLI detection. Its
+nonsecret identity excludes model/effort and credentials; credential changes
+still invalidate results in memory. Closing or changing the source cancels or
+ignores old results. No model catalog or API key is persisted by the picker.
+Azure deployment names and API/local model IDs can be entered manually.
+Codex reasoning is a discrete slider over only advertised, admitted levels.
+Codex/Cursor host catalogs refresh after 60 seconds and add immutable bindings;
+existing run engines are retained. macOS Codex discovery also checks the reviewed
+ChatGPT app location when it is absent from inherited PATH. Codex's bounded `debug models` parser retains only model IDs/labels and
+supported/default reasoning metadata; hidden models, unknown effort values and
+model instructions are not exposed. The host admits a separate immutable binding
+for each validated model/effort pair, reusing the provider-default model bindings
+for Default. Optional public `reasoningEffort` metadata is additive to the existing
+summary contract. The client resolves an exact backend/model/effort match and sends
+only its opaque binding ID; a missing effort match cannot fall back to Default.
+Existing base/model binding IDs retain their identity. Development serialization
+uses current summary code even when hot reload retains an older registry instance.
+
+`cliModelSelection.reasoningEffort` is an optional browser-local preference in the
+existing settings record, not a credential or provider config edit. The app-wide
+readiness key includes it; a separately retained catalog keeps the open menu stable
+during revalidation. Each host-pinned Codex transport passes the fixed
+`model_reasoning_effort` override on open, resume and envelope correction. Model
+changes clear an old effort, and active/paused runs keep their original binding.
+This CLI setting affects new chat runs. Ultra/native delegation is not admitted.
+
+`ProviderConnection` is mounted beside `CliConnection` at the root. After settings
+and key-vault hydration, its controller probes model access/capabilities without
+starting generation. Keys stay separate from nonsecret source identities; source
+or credential changes abort old requests. Visible healthy access refreshes after
+60 seconds; transient failures retry after 3/10/30/60 seconds. Authentication or
+configuration failures wait for a setting change or renewed focus. Connection
+state and capabilities are ephemeral, never persisted as proof of access.
+
+`modelReasoningBySource` stores only a boolean, named value or bounded token count,
+keyed by provider, backend, endpoint and model/deployment. The resolver attaches
+only the exact preference as `modelReasoning`. The picker shows Default plus
+validated metadata values. Ollama reads `/api/show` thinking values; Anthropic
+reads model effort capabilities; compatible servers may advertise efforts.
+Direct OpenAI can use its exact public model card, and Gemini can use its official
+thinking guide after its model metadata confirms thinking. Those documentation
+requests contain no API key. Azure deployment metadata is unknown, so no levels
+are fabricated. Unknown capability data leaves Default and a diagnostic.
+
+The host revalidates an explicit value before admitting the chat, maps it to
+native `reasoning_effort`, `output_config.effort`, Gemini thinking configuration or
+Ollama `think`, and pins it with the model. False and zero are explicit values;
+Default omits the parameter. Existing/paused runs retain their binding. Controls
+affect new chat runs and explicit API connection tests; Smart reasoning retains
+its separate contract.
+
+## App-wide CLI readiness
+
+The root layout mounts `CliConnection` independently of Settings and VDT panels.
+After Zustand settings hydrate, `lib/cli-connection.ts` checks only the saved
+subscription CLI (or discovers all when CLI mode has no selection). The existing
+trusted runtime owns executable discovery, authentication probes and model lists.
+The frontend then requests server-owned chat bindings and requires an exact
+selected backend/model match. `cli-connection-state.ts` shares only this ephemeral
+binding result with the composer; no ready/authentication result is persisted.
+Navigation therefore reuses the current session check, while a reload verifies
+access afresh. A partial startup scan does not replace Settings' full discovery.
+
+Transient detection/binding failures retry after 3, 10, 30, then at most every
+60 seconds while visible. Healthy sessions do not poll. Window focus, visibility,
+network restoration and VDT entry recheck after 60 seconds for healthy access,
+or a three-second recovery cooldown. Initial startup also works in background
+tabs; subsequent retry timers pause while hidden. Active probes are deduplicated,
+manual tests retain their readiness gate, and late model/provider results or
+unmounted owners cannot publish a connection. Other execution categories and
+intentionally removed subscriptions are preserved. This does not create a model
+conversation or change server canary/qualification policy.
+
 ## Local skill library and selection
 
 The additive V1 repository is owned by `packages/vdt-storage/src/skill-library.ts`
@@ -84,6 +171,27 @@ scheduler generation include active instruction text. Complete instructions stay
 inside the existing request bound; optional context uses omission reporting.
 Immutable committing/Undo receipts preserve their replay contract. See
 [ADR-011](adr/ADR-011-personalisation-and-project-rules.md).
+
+## Selected KPI message context
+
+The composer derives its Selected KPI indicator from the active VDT's current
+selection. New chat starts capture the valid selected ID alongside the current
+project; explicit follow-ups send that message's selected ID. The Supervisor
+resolves a bounded `selectedNode` definition from its authoritative builder for
+initial context and each follow-up. Queued human inputs embed their own
+snapshots so later selection changes do not rewrite an earlier message. The
+visible chat preserves original user text. Definitions over 2,000 serialized
+characters fall back to identity with `contextTruncated`; missing targets fail
+admission. This uses existing request/checkpoint persistence without new storage
+fields, mutation permissions or finish authority.
+
+`chatKpiContextExcludedVdtId` is transient UI state, separate from the inspector's
+`selectedNodeId` and excluded from persistence. The clear button and empty-pane
+click set it for the active VDT; `selectNode` clears it even when selecting the
+same node. Explicit null start options suppress automatic selection fallback.
+Follow-up `selectedNodeId: null` clears runtime selection and emits an explicit
+`selectedNode: null` context in the Supervisor's model-facing human input.
+Omitting the follow-up field keeps the existing compatibility behavior.
 
 ## Smart KPI preparation and explicit apply boundary
 
@@ -679,7 +787,9 @@ coordinator and state rehydration described below are not implemented.
 
 Trusted-local web/desktop hosts admit immutable Ollama/LM Studio/vLLM Model Agent bindings from their fixed-endpoint server catalogs (up to 100 valid model IDs per backend, plus the equivalent untagged alias for an installed Ollama :latest model). Catalogs refresh at most once per ten seconds on binding requests, including after an empty catalog or installation. Hosted mode, production-build evaluation and VDT_LOCAL_MODEL_AGENT_ENABLED=false disable this admission. Browser Settings cannot provision bindings. Starts require an exact backend/model match and use the existing Supervisor/Gateway without a runner/API/default fallback. Native packaging, model quality and performance remain unqualified; provider certification is unchanged.
 
-The model-facing tool catalog preserves actual Zod parameter types, enums and required fields (nested cards bounded to three object levels, catalog below 35,000 characters). Local transports retain the immutable initial brief/catalog and only the last confirmed reply alongside each semantic-checkpoint delta; context is isolated per run. Local structured turns use manifest-owned loopback endpoints without inherited cloud credentials or redirects. Ollama uses native `/api/chat`, direct structured actions (`think=false`), model sampling defaults unless the binding overrides temperature, a 16,384-token context and JSON-schema constrained output; the Model Agent requests at most 4,096 predicted tokens for JSON, three calls and 512 characters of semantic state. Thinking frames are never interpreted as actions. Its compact native-only system instructions avoid repeating the full canonical response schema. All tool names and purposes remain visible; introspection, finish and basic structural/update schemas are upfront, and read-only `tools.describe` retrieves full schemas for 1–6 selected public tools. Hidden tools and draft replacement in continuation mode cannot be admitted. Project inspection results use transport-only columns/rows preserving all returned fields, zeroes, formulas and truncation; canonical Gateway hashes and receipts are unchanged. The Gateway remains authoritative for schema validation, provenance, scope, approvals and mutations. No models are downloaded automatically.
+The model-facing tool catalog preserves actual Zod parameter types, enums and required fields (nested cards bounded to three object levels, catalog below 35,000 characters). Local transports retain the immutable initial brief/catalog and only the last confirmed reply alongside each semantic-checkpoint delta; context is isolated per run. Local structured turns use manifest-owned loopback endpoints without inherited cloud credentials or redirects. Ollama uses native `/api/chat`, direct structured actions with the binding's selected thinking setting, model sampling defaults unless the binding overrides temperature, a 16,384-token context and JSON-schema constrained output; the Model Agent requests 4,096 predicted tokens for explicit Off or 8,192 for default/On (including private reasoning), three calls and 512 characters of semantic state. Thinking frames are never interpreted as actions. Its compact native-only system instructions avoid repeating the full canonical response schema. All tool names and purposes remain visible; introspection, finish and basic structural/update schemas are upfront, and read-only `tools.describe` retrieves full schemas for 1–6 selected public tools. Hidden tools and draft replacement in continuation mode cannot be admitted. Project inspection results use transport-only columns/rows preserving all returned fields, zeroes, formulas and truncation; canonical Gateway hashes and receipts are unchanged. The Gateway remains authoritative for schema validation, provenance, scope, approvals and mutations. No models are downloaded automatically.
+
+Native Ollama new-tree verification is tracked per graph revision in transport-local memory. Validation and calculation schemas are upfront alongside hierarchy inspection. Once calculable, pending read-only checks precede clarification and finish; only admitted successful/replayed Gateway results with result hashes and valid outputs complete them. Ordered mutation results, revision changes, stale revisions, reconciliation, recovery and new user intent invalidate progress. After checking, the actor reviews business coverage and may ask for missing facts. This record is not a finish receipt or durable recovery state; canonical Gateway approval, scope, revision and finish authority remains unchanged. A proposed native construction question receives one additional model review on the same binding with public turn constraints retained before reaching the engine: it can become a model-authored repair/tool action or remain a real question. The review supplies no human input or consent, and the discarded proposal executes no tool. At most two native requests occur in that logical turn. A private model-selected questionDisposition makes continue_work accept only tool/final actions and ask_user only questions; the adapter removes the field and rejects inconsistent pairs before canonical validation. It grants no approval or business facts.
 
 ## Known Architectural Gaps
 
@@ -736,6 +846,18 @@ The experimental local Model Agent can explicitly select `skill.seed_topology` a
 
 Native transport retains all tool names/purposes and the immutable catalog hash while avoiding a second textual copy of schemas already enforced by `format`. Original literal quantities are sent once in the current observation. The semantic checkpoint allows 512 characters. Construction search asks for 3–6 candidates; additional unread discovered skills can be read before building so the actor can cover a broader process scope. Complete topology/default choices are constrained to successful public skill-read evidence; generic builder tools remain available. Canonical tool arguments, provenance, receipts, approval and scope authority are unchanged.
 
-The direct OpenAI client flow has an explicit admission boundary before the public start: `prepareOpenAiAgentBinding` sends the current session key/model/output limit to `POST /api/agent/bindings/openai`, receives an opaque one-use binding, and passes only its ID to `/api/agent/runs`. Trusted-local/same-origin and production host gates, an 8 KiB body bound and a fixed official endpoint constrain admission. The server registrar holds at most 16 pending immutable definitions for 60 seconds; discovery hides these IDs and start unregisters the consumed definition after resolving its private execution copy. No API key is persisted in the VDT, run, session metadata or ordinary frontend preferences. The separate browser vault restores BYOK keys across sessions using the endpoint-scoped encrypted storage and lifecycle in [ADR-007](adr/ADR-007-encrypted-browser-api-keys.md). Other gateways retain their existing explicit host binding path and cannot silently use OpenAI.
+The client flow has an explicit admission boundary before public start:
+`prepareProviderAgentBinding` sends a strict provider-specific session key/model/
+output limit/selected reasoning to `POST /api/agent/bindings/provider`, receives an
+opaque binding and passes only its ID to `/api/agent/runs`. Trusted-local,
+same-origin and production host gates and an 8 KiB streamed body bound constrain
+admission. API endpoints must be official/preset, an exact host-configured value
+or explicitly enabled by both host URL-override flags. URL credentials, query,
+fragment and redirects are rejected. There is no ambient credential fallback.
+Local requests accept only a known backend, model and selected reasoning; their
+endpoint remains manifest-owned and the model must be installed/loaded. The server registrar holds at most 16 pending immutable definitions for 60 seconds; discovery hides these IDs and start unregisters the consumed definition after resolving its private execution copy. No API key is persisted in the VDT, run, session metadata or ordinary frontend preferences. The separate browser vault restores BYOK keys across sessions using the endpoint-scoped encrypted storage and lifecycle in [ADR-007](adr/ADR-007-encrypted-browser-api-keys.md). The older fixed-endpoint `/api/agent/bindings/openai` remains for compatibility.
+API bindings are random one-use admissions; local bindings are deterministic
+model/value bindings with no browser endpoint configuration. Neither can silently
+fall back to another provider or reasoning value.
 
 The OpenAI adapter preserves the initial context and last confirmed action for agent turns, while the Supervisor adds bounded current-graph/admitted-read observations. Its wire JSON Schema accompanies the runtime Zod validator and remains available in JSON fallback prompts. Known reasoning model families use completion-token limits and provider-default sampling. This is stateless HTTP replay, not native session continuation or crash recovery; see [live evidence](AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17).

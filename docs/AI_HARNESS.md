@@ -1,5 +1,119 @@
 # AI And Agent Harness
 
+## Agent evaluation evidence boundary (2026-10-27)
+
+[Agent Evaluation](AGENT_EVALUATION.md) separates mock contracts, transport,
+guided diagnostics and natural business acceptance. The October 26–27 revenue
+runs below received the business formula, exact scope and operational sequence
+in the user prompt. They are guided workflow diagnostics, including the successful
+Off run with zero operator answers. They do not establish independent business
+reasoning or appropriate autonomous skill/research selection.
+
+Ten natural business requests and private evaluator-only oracles are implemented
+with an offline saved-graph evaluator. Only ordinary user text/setup reaches
+generation; semantic review, causal probes, units, sources and question quality
+are assessed separately. Live acceptance on these natural requests remains
+unrun. Mock provider evaluation now explicitly reports that it does not assess
+agent autonomy. Provider certification and runtime contracts are unchanged.
+
+## Provider chat reasoning selection
+
+The composer selects models from the active provider’s real catalog and uses a
+discrete slider for model-specific reasoning. BYOK discovery reuses the
+credential-scoped model-list route; local catalogs use the existing runtime
+client. API/local startup checks probe model access after saved-key hydration.
+Reasoning values come from provider metadata or bounded official model
+capability documentation. Unknown capability data does not create guessed levels.
+Catalogs do not grant a missing chat adapter or qualify a provider.
+Codex/Cursor catalog admission refreshes after 60 seconds, coalesces concurrent
+lookups and appends new bindings without replacing existing engines.
+The authenticated CLI catalog supplies the model-specific supported efforts; the
+host registers immutable model/effort bindings and the browser selects only an
+existing opaque ID. Missing effort matches fail closed without another model or
+Default fallback. The transport pins `model_reasoning_effort` for every open and
+resumed segment, including bounded envelope correction. Default omits the override.
+Active or paused sessions retain their binding; selection is locked until a new
+chat or terminal run. Model selection clears an earlier effort, while the chosen
+pair survives browser reload. API/local selections are stored separately per
+provider/endpoint/model. The host validates the exact selected value before
+pinning a native API/local transport; Default omits the override. Ollama supports
+its advertised boolean or named values, Anthropic its effort capability flags,
+Gemini its thinking levels or token budgets, and OpenAI-compatible servers their
+effort metadata. Direct OpenAI may use its exact official model card when the
+basic model endpoint omits efforts. Azure deployment metadata stays unknown.
+These controls affect new chat runs and explicit API Test connection; Smart
+reasoning is unchanged. Ultra's native delegation is incompatible with
+the current Gateway-only checkpoint contract and is not advertised as a choice.
+No model quality, native isolation or provider certification is promoted.
+
+### Live reload and new-tree check
+
+A follow-up synthetic three-node revenue case exercised the actual browser flow:
+save model/reasoning, reload, wait for automatic model access, then create a new
+VDT through the Supervisor. OpenAI GPT-6 Luna High reached a verified finish
+receipt; its native requests retained High across format fallback and later
+turns. Ollama qwen3.5:4b-q4_K_M retained On as `think:true` across all nine native
+requests, including a paused-question reload and resumed turn. Both saved graphs
+independently calculate 100 × 20 = 2,000 USD.
+
+Ollama's autonomous completion failed this case: it repaired an invalid root-in-
+plan entry, built and populated the graph, then requested unnecessary completion
+and tool-sequence confirmations. One QA answer used only the existing synthetic
+brief and independently verified result; the repeated question was not answered,
+and the session was cancelled with confirmed terminal cleanup. The graph was
+preserved. This verifies connection/parameter transport and arithmetic, not an
+unattended local-model finish, general unit semantics or arbitrary tree quality.
+Browser status lag and an interrupted first API development-server process are
+retained separately. See `output/provider-vdt-reload-20261026/verification.md`.
+
+### Ollama completion workflow (2026-10-27)
+
+The native new-tree schema now includes `vdt.validate` and `vdt.calculate`
+upfront, alongside `vdt.inspect_hierarchy`; calculation readiness still controls
+availability. At a calculable revision, a bounded `verificationWorkflow` reports
+the pending/completed checks from admitted successful/replayed Gateway results
+with result hashes and valid outputs. The model can execute all three checks in
+one batch. While checks remain, clarification and `run.request_finish` are not
+offered. Completed checks are omitted until graph edits, a revision change,
+stale results, reconciliation, recovery or new user intent invalidate them.
+
+After checking, the model reviews business coverage and can ask for a genuinely
+missing fact, or request finish alone. Native instructions explicitly treat
+routine checks and reporting as already authorized; no synthetic answer or
+host-authored business formula is introduced. Only the actual Gateway finish
+receipt unlocks final. The canonical mutation, approval, scope and finish gates
+remain authoritative. These are transport guidance changes for Ollama, not a
+general semantic-completion or recovery guarantee. Targeted tests passed; live
+repeat evidence is tracked in `output/ollama-autonomous-completion-20261027/verification.md`.
+
+Native instructions also distinguish source provenance from measurement
+certification: `user_provided_value` accepts values explicitly supplied for use,
+including synthetic test inputs, without another approval. Literal excerpts do
+not decide semantic target choice; explicitly illustrative assumptions remain
+estimates, and actual absent or contradictory facts may require clarification.
+
+A proposed construction question receives one additional native model review
+against the original brief and graph before reaching `user.ask`. The same model and
+thinking setting remain pinned; all public turn constraints are retained. The review supplies
+no answer, fact or consent: the model may replace a redundant confirmation with
+its own tool action, or retain a genuine missing-fact question. At most two native
+requests occur in that logical turn; no unbounded review loop is introduced.
+A private questionDisposition selects continue_work or ask_user, and the native
+schema enforces the corresponding tool/final or question branch. The adapter
+removes that private field before the canonical engine and Gateway see the turn.
+Thus a continuation statement cannot be encoded as a question after the model
+selects continue_work. The flag never authorizes a mutation or approval.
+
+The final live Off check completed a fresh three-node revenue VDT with all three
+checks, a verified finish receipt and zero operator answers; ten requests retained
+think:false. Persisted arithmetic is 100 × 20 = 2,000 USD and survives reload.
+Both input unit fields are empty, so unit/business semantics remain unqualified.
+Two separate read-only native fixtures exercised both private review branches;
+their proposed tools were not executed. The final On attempt exceeded the
+480-second first-turn limit and remains recovery_required. These are distinct
+results, with no silent reasoning fallback or provider-status promotion. Exact
+runs, prior failed iterations, UI lag and cleanup are in the linked evidence.
+
 ## Skill Author CLI parsing check (2026-10-25)
 
 Codex completion parsing now accepts a valid structured result before applying
@@ -314,6 +428,18 @@ commas without globally replacing commas or changing `min(a,b)` semantics.
 - A proactive instruction accepted during structured inference is queued on
   the same session, checkpointed before the API acknowledges it and merged
   with the next bounded tool/reconciliation delta.
+  New chats include the selected KPI's current definition in initial context.
+  Follow-ups resolve `selectedNodeId` against the live builder and include that
+  message's `selectedNode` snapshot alongside the original request and current
+  personalisation. Selection changes are bound per queued message; the visible
+  transcript keeps the user's original text. Missing nodes fail admission.
+  Definitions over 2,000 serialized characters fall back to identity with
+  `contextTruncated`; existing read tools supply additional graph context.
+  Explicit `selectedNodeId: null` clears the selected target in runtime state
+  and sends `selectedNode: null` with whole-tree guidance to the model. This
+  prevents prior KPI focus from surviving dismissal. New whole-tree chats omit
+  the target; absent follow-up IDs retain compatibility rather than implying
+  an explicit clear. The compatibility decision loop also clears on null.
   An instruction racing with a would-be final prevents that stale final from
   being published. Active questions and approvals must still be resolved by
   their typed response and cannot be bypassed by a generic instruction.
@@ -539,9 +665,22 @@ This verifies one library-backed local construction on this Mac. Earlier freefor
 
 ## OpenAI API Model Agent Evidence (2026-10-17)
 
-The direct OpenAI composer path now explicitly admits the current in-memory API key and the selected model through `POST /api/agent/bindings/openai` before starting the normal Supervisor. Admission is trusted-local and same-origin only, accepts at most 8 KiB of strict JSON, pins `https://api.openai.com/v1`, and rejects endpoint/command overrides. A pending binding is immutable, unlisted, limited to 16 pending admissions and expires after 60 seconds. Start consumes it once; active execution holds its copied configuration in process memory. The public start request, SQLite records and discovery summaries contain no credentials. Production requires `VDT_MODEL_AGENT_ENABLED=true`; production builds and hosted mode cannot admit these sessions. Test connection remains a small JSON probe and does not persist a server-side key or select a different model. Browser-side key entry/restoration is managed by the separate encrypted vault in ADR-007.
+The composer explicitly admits the current in-memory key, selected model and
+reasoning through `POST /api/agent/bindings/provider` before starting the normal
+Supervisor. OpenAI-compatible, Anthropic, Gemini and Azure configurations use
+strict schemas and official/preset or exact host-configured endpoints. Local
+Ollama/LM Studio/vLLM admission accepts no endpoint/key and verifies the installed
+model against the manifest-owned runtime. Admission is trusted-local and
+same-origin only, accepts at most 8 KiB of streamed JSON and rejects command,
+environment and arbitrary endpoint overrides. Explicit reasoning is revalidated
+against capabilities with no fallback to Default. The older direct-OpenAI route
+remains for compatibility. A pending binding is immutable, unlisted, limited to 16 pending admissions and expires after 60 seconds. Start consumes it once; active execution holds its copied configuration in process memory. The public start request, SQLite records and discovery summaries contain no credentials. Production requires `VDT_MODEL_AGENT_ENABLED=true`; production builds and hosted mode cannot admit these sessions. Test connection remains a JSON probe and does not persist a server-side key or
+select a different model. With an explicit API reasoning choice it validates and
+sends that same native value; Default retains the small 1,024-token probe, named
+effort allows 4,096, and a numeric thinking budget reserves 1,024 output tokens
+within the 32,768-token cap. Browser-side key entry/restoration is managed by the separate encrypted vault in ADR-007.
 
-OpenAI-compatible requests recognize GPT-5/GPT-6 and o1/o3/o4 model families, use `max_completion_tokens` and preserve the provider's default reasoning/sampling choices instead of forcing temperature. Agent exchanges have a 180-second deadline; the connection probe permits 1,024 output tokens. Runtime Zod validation remains authoritative. Its JSON Schema is supplied to the HTTP adapter; when strict formatting is unsupported, JSON mode includes that exact schema in the prompt. The adapter remembers that formatting limitation for the session and allows one validation repair. Only known error codes/parameter identifiers can appear in HTTP diagnostics, never upstream free-form error messages.
+OpenAI-compatible requests use `max_completion_tokens` for GPT-5/GPT-6 and o1/o3/o4 families or an explicit validated effort, and omit the sampling override. Default omits reasoning; an explicit choice remains pinned across formatting fallback and later turns. Agent exchanges have a 180-second deadline; the Default connection probe permits 1,024 output tokens. Runtime Zod validation remains authoritative. Its JSON Schema is supplied to the HTTP adapter; when strict formatting is unsupported, JSON mode includes that exact schema in the prompt. The adapter remembers that formatting limitation for the session and allows one validation repair. Only known error codes/parameter identifiers can appear in HTTP diagnostics, never upstream free-form error messages.
 
 The OpenAI agent transport replays the immutable initial brief/catalog and last confirmed assistant action with the new bounded delta. It also supplies the same read-only current graph and admitted tool/skill knowledge used by the local HTTP transport. This prevents losing original source quotes or exact tool fields after an unrelated result. These observations cannot select business inputs, write formulas, grant mutation authority or replace finish verification. Native restart/resume remains unqualified.
 

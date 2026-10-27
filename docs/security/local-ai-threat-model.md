@@ -1,5 +1,53 @@
 # Local AI And Data Threat Model
 
+## API/local model capability and reasoning admission
+
+The new `/api/agent/bindings/provider` route requires trusted-local mode, exact
+same origin, JSON and the production host gate. It bounds streamed input to
+8 KiB/10 seconds and rejects unknown fields. API requests carry an explicitly
+scoped key; no ambient key can accompany a browser-selected endpoint. Endpoints
+must match an official/preset URL, an exact host-configured value, or both explicit
+host override flags. Credentials in URLs, queries, fragments and redirects are
+rejected. This is endpoint admission, not new DNS-pinning or hosted authorization.
+Local input accepts only a known backend, model and selected value; no endpoint,
+command, environment or key is accepted, and the runtime owns its manifest URL.
+
+Metadata fetches are bounded to 10 seconds/256 KiB and fixed error messages omit
+upstream bodies. Only curated capability values enter public responses. Direct
+OpenAI may consult its exact public model card (5 seconds/128 KiB); Gemini may
+consult the fixed official English thinking guide (5 seconds/1 MiB) after model
+metadata confirms thinking. Documentation requests have no API authorization
+headers; gateway/private model IDs are not sent to OpenAI documentation. Parsed
+capabilities are data and cannot add instructions or tools. Unknown formats do
+not create guessed controls. Selected values are revalidated at admission.
+
+API pending definitions are immutable, unlisted, bounded to 16 entries/60 seconds
+and consumed once. Their private execution copy retains credentials only in
+process memory; public start bodies and run evidence contain only binding IDs.
+API research admission still requires explicit enablement and direct OpenAI; keys
+for other vendors cannot establish OpenAI research. Local model/value bindings
+contain no browser endpoint configuration. False and zero remain explicit
+values; unsupported reasoning cannot silently fall back. Browser preferences
+contain only model/value choices and the separate existing encrypted key vault.
+Readiness is ephemeral and stale requests are aborted/ignored after credential
+rotation. No provider certification or native isolation claim follows.
+
+## Catalog discovery boundary
+
+The composer reuses the existing credential-scoped BYOK model-list route and
+manifest-owned local/CLI probes. Model/effort choices do not grant executable,
+argument, environment or endpoint authority. API keys remain transient in the
+request to their configured provider; catalog identities and diagnostics exclude
+credentials, and late results are discarded after source/credential changes.
+macOS Codex discovery additionally checks only the reviewed ChatGPT bundled-CLI
+locations under `/Applications` and the host home’s `Applications`, applying the
+same realpath, executable-file, outside-workspace, candidate and probe bounds as
+PATH discovery. An explicit host PATH suppresses extra app discovery unless the
+host opts in. No installation, global PATH edit or cache deletion is performed.
+New Codex/Cursor catalog bindings are appended; existing runs retain their pinned
+engine. This remains local development wiring, not app provenance verification
+or a production isolation claim.
+
 ## Local skill management
 
 Skill routes are restricted to the trusted local application. JSON writes use

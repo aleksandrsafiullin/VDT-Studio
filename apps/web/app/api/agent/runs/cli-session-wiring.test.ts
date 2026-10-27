@@ -24,6 +24,7 @@ const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtExternalAgentEngines?: unknown;
   __vdtCursorSessionBindingProbe?: unknown;
   __vdtCliSessionRegistrationOutcomes?: unknown;
+  __vdtCliSessionRegistrationTimes?: Map<string, number>;
 };
 
 afterEach(() => {
@@ -36,6 +37,7 @@ afterEach(() => {
   delete runtimeGlobal.__vdtExternalAgentEngines;
   delete runtimeGlobal.__vdtCursorSessionBindingProbe;
   delete runtimeGlobal.__vdtCliSessionRegistrationOutcomes;
+  delete runtimeGlobal.__vdtCliSessionRegistrationTimes;
 });
 
 function mockAllClisInstalled() {
@@ -53,6 +55,96 @@ function mockAllClisInstalled() {
 }
 
 describe("trusted-local CLI session wiring", { timeout: 45_000 }, () => {
+  it("refreshes and coalesces host catalogs while preserving existing engines and bindings", async () => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");
+    mockAllClisInstalled();
+    let models = ["existing-model"];
+    const listModels = vi.fn(async () => models);
+    getSubscriptionCliAdapter.mockImplementation((backend: string) => ({
+      probeAuth: async () => ({ status: "ready" }),
+      listModels: backend === "codex_subscription" ? listModels : async () => []
+    }));
+    const runtime = await import("./runtime");
+    await runtime.ensureServerManagedExecutionBindings();
+    const existingId = cliSessionModelBindingId(runtime.CODEX_SESSION_EXECUTION_BINDING_ID, "existing-model");
+    const existingEngine = runtime.externalAgentEngineForBinding(existingId);
+    models = ["existing-model", "new-account-model"];
+    runtimeGlobal.__vdtCliSessionRegistrationTimes?.set("codex", Date.now() - 60_001);
+    await Promise.all(Array.from({ length: 3 }, () => runtime.ensureServerManagedExecutionBindings()));
+    expect(listModels).toHaveBeenCalledTimes(2);
+    expect(runtime.externalAgentEngineForBinding(existingId)).toBe(existingEngine);
+    expect(runtime.agentExecutionBindingRegistry.resolve(cliSessionModelBindingId(runtime.CODEX_SESSION_EXECUTION_BINDING_ID, "new-account-model")))
+      .toMatchObject({ modelId: "new-account-model" });
+  });
+
+  it("admits models from the authenticated Cursor catalog with its own engine", async () => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");
+    mockAllClisInstalled();
+    getSubscriptionCliAdapter.mockImplementation((backend: string) => ({
+      probeAuth: async () => ({ status: "ready" }),
+      listModels: async () => backend === "cursor_subscription" ? ["cursor-account-model", "--unsafe"] : []
+    }));
+    const runtime = await import("./runtime");
+    await runtime.ensureServerManagedExecutionBindings();
+    const bindingId = cliSessionModelBindingId(runtime.CURSOR_SESSION_EXECUTION_BINDING_ID, "cursor-account-model");
+    expect(runtime.agentExecutionBindingRegistry.resolve(bindingId)).toMatchObject({ modelId: "cursor-account-model", capability: { backendId: "cursor_subscription" } });
+    const { isAdmittedCliSessionCanary } = await import("./supervisor-runtime");
+    expect(isAdmittedCliSessionCanary({ bindingId, modelId: "cursor-account-model", engineAdapterId: "cursor-resume-checkpoint-v1", allowUnqualifiedExternalCanary: true })).toBe(true);
+    expect(runtime.agentExecutionBindingRegistry.resolve(runtime.CURSOR_SESSION_EXECUTION_BINDING_ID).modelId).toBe("auto");
+    expect(runtime.agentExecutionBindingRegistry.resolve(runtime.CLAUDE_SESSION_EXECUTION_BINDING_ID).modelId).toBe("auto");
+  });
+
+  it("rechecks a previously absent CLI without restarting the host", async () => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");
+    detectSubscriptionCli.mockImplementation(async (id: string) => ({ id, installed: false, executable: null, version: null }));
+    const runtime = await import("./runtime");
+    await runtime.ensureServerManagedExecutionBindings();
+    expect(runtime.agentExecutionBindingRegistry.has(runtime.CODEX_SESSION_EXECUTION_BINDING_ID)).toBe(false);
+    mockAllClisInstalled();
+    getSubscriptionCliAdapter.mockReturnValue({ probeAuth: async () => ({ status: "ready" }), listModels: async () => [] });
+    runtimeGlobal.__vdtCliSessionRegistrationTimes?.set("codex", Date.now() - 60_001);
+    await runtime.ensureServerManagedExecutionBindings();
+    expect(runtime.agentExecutionBindingRegistry.resolve(runtime.CODEX_SESSION_EXECUTION_BINDING_ID).modelId).toBe("auto");
+  });
+
+  it("admits immutable model/effort bindings only from authenticated Codex metadata", async () => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");
+    mockAllClisInstalled();
+    getSubscriptionCliAdapter.mockReturnValue({
+      probeAuth: async () => ({ status: "ready" }),
+      listModels: async () => { throw new Error("must use one metadata probe"); },
+      listModelOptions: async () => [{ id: "model-a", reasoningEfforts: ["low", "high", "max", "ultra", "bad"] }, { id: "model-b" }]
+    });
+    const runtime = await import("./runtime");
+    await runtime.ensureServerManagedExecutionBindings();
+    const catalog = runtime.agentExecutionBindingRegistry.summaries().filter((binding) => binding.backendId === "codex_subscription");
+    expect(catalog.filter((binding) => binding.modelId === "model-a").map((binding) => binding.reasoningEffort))
+      .toEqual([undefined, "low", "high", "max"]);
+    expect(catalog.filter((binding) => binding.modelId === "model-b").map((binding) => binding.reasoningEffort)).toEqual([undefined]);
+    const bindingId = cliSessionModelBindingId(runtime.CODEX_SESSION_EXECUTION_BINDING_ID, "model-a", "high");
+    expect(runtime.agentExecutionBindingRegistry.resolve(bindingId)).toMatchObject({ modelId: "model-a", reasoningEffort: "high" });
+    expect(runtime.externalAgentEngineForBinding(bindingId)).toBeDefined();
+    const { isAdmittedCliSessionCanary } = await import("./supervisor-runtime");
+    const identity = { bindingId, modelId: "model-a", engineAdapterId: "codex-resume-checkpoint-v1", allowUnqualifiedExternalCanary: true };
+    expect(isAdmittedCliSessionCanary({ ...identity, reasoningEffort: "high" })).toBe(true);
+    expect(isAdmittedCliSessionCanary(identity)).toBe(false);
+    expect(isAdmittedCliSessionCanary({ ...identity, reasoningEffort: "low" })).toBe(false);
+    expect(isAdmittedCliSessionCanary({ ...identity, modelId: "model-b", reasoningEffort: "high" })).toBe(false);
+    // A development hot reload may retain an older registry's summary method.
+    const legacySummaries = catalog.map(({ reasoningEffort: _effort, ...summary }) => { void _effort; return summary; });
+    const summarySpy = vi.spyOn(runtime.agentExecutionBindingRegistry, "summaries").mockReturnValue(legacySummaries);
+    try {
+      const { GET } = await import("./route");
+      const response = await GET();
+      const body = await response.json();
+      expect(body.bindings.find((binding: { bindingId: string }) => binding.bindingId === bindingId)).toMatchObject({ reasoningEffort: "high" });
+    } finally { summarySpy.mockRestore(); }
+  });
+
   it("admits the selected Codex model from the authenticated host catalog without changing the default binding", async () => {
     vi.stubEnv("VDT_APP_MODE", "development_web");
     vi.stubEnv("VDT_CLI_SESSION_CANARY_ENABLED", "true");

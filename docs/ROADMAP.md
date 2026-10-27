@@ -1,5 +1,30 @@
 # Roadmap
 
+## Business-agent evaluation (2026-10-27)
+
+Implemented: ten natural business requests with separate evaluator-only oracles,
+offline result/sensitivity checks and an independent semantic-review requirement.
+See [Agent Evaluation](AGENT_EVALUATION.md). Previous revenue runs are guided
+workflow diagnostics because the user prompt supplied the formula and tool
+sequence. Live acceptance with the new requests, repeated unseen cases and
+broader provider/model/reasoning coverage remain open; mock passes and correct
+arithmetic alone do not close these tasks.
+
+## Ollama completion workflow (2026-10-27)
+
+Implemented in source: native new-tree validation/calculation schemas are
+available without an extra discovery turn, and revision-scoped Gateway results
+guide validation, calculation and hierarchy inspection before finish. Routine
+tool execution does not require a user confirmation; real business clarification
+and the canonical finish/approval boundaries remain. Targeted regression checks
+passed; a live guided qwen3.5:4b-q4_K_M / Off case completed with a finish receipt and
+no operator answers. The final On attempt hit its first-turn deadline. Evidence
+and remaining unit/UI/recovery limits are recorded in
+`output/ollama-autonomous-completion-20261027/verification.md`.
+Proposed construction questions get one model review before publication, without
+fabricating an answer or bypassing genuine missing facts.
+Arbitrary model quality, restart recovery and native qualification remain open.
+
 ## Local skill library (2026-10-25)
 
 Implemented in source: one searchable, filesystem-backed library with Open
@@ -126,7 +151,20 @@ prompts and one rounded composer. The + menu exposes existing file attachment
 and context editing; search, voice and active-model readiness remain accessible.
 Web search uses a compact globe + Off/Auto/On control, neutral state emphasis,
 and separate provider feedback. The
-model control names its readiness and retains semantic status colors. Recording
+model control retains a colored status dot and model name, with readiness text in
+the tooltip/accessibility label. Its popover selects provider-owned models and
+supported model reasoning values with a discrete slider for new chat runs; active
+bindings remain fixed. Catalogs now load from the active CLI/API/local provider;
+Azure uses manual deployments. macOS discovery includes the installed ChatGPT
+Codex bundle, and Codex/Cursor catalogs refresh without a server restart. Missing
+provider chat adapters remain separate gaps. API/local startup checks and
+endpoint/model-scoped reasoning preferences are implemented locally. Native API
+parameter mappings cover OpenAI-compatible, Anthropic, Gemini and Azure; controls
+require actual capability metadata or official model documentation. Ollama uses
+its advertised thinking values. Live OpenAI High and Ollama Off/On were checked;
+other API keys, LM Studio/vLLM inference, Smart reasoning and native/Windows
+qualification remain separate work. Unknown metadata keeps Default.
+Provider settings is a separate explicit menu action. Recording
 shows real PCM levels and duration; final transcription shows its own elapsed
 timer, cancellation and errors. Root KPI and Unit share one row in the editor
 chat context; Period is omitted.
@@ -137,6 +175,17 @@ states in place of checkmarks, and horizontal navigation in narrow windows.
 Enter/Shift + Enter, IME handling, a running-state Stop control and a collapsed
 real-event Work log are wired to the existing chat actions. This UI work does
 not qualify live inference, voice engines or packaged desktop releases.
+
+Implemented locally: the composer names the selected KPI and unit. New chat
+starts capture the current selection, and follow-up instructions receive a
+bounded definition from the current graph, including selection changes queued
+during inference. This context propagation does not qualify model response
+quality or packaged desktop execution.
+
+Selected-KPI context can be dismissed with × or an empty-canvas click. The
+composer retains its draft and sends whole-tree scope until the next deliberate
+KPI selection. Explicit clearing is carried through ordinary starts, follow-ups
+and restarts of fenced runs.
 
 ## Project file library
 
@@ -242,6 +291,7 @@ Implemented at alpha level:
 - local whisper.cpp dictation with incremental editable drafts and confirmed model downloads; native Windows and packaged microphone qualification remain open ([voice input](VOICE_INPUT.md));
 - provider-owned model discovery for supported subscription CLIs and BYOK OpenAI-compatible, Anthropic and Gemini APIs, with explicit manual fallback and no static availability catalog;
 - trusted-local development CLI session starts, with immutable Codex model bindings from the authenticated host catalog and composer binding checks before Send; external isolation and production qualification remain open;
+- automatic selected-CLI and chat-binding checks from app startup/Projects, reused across VDT navigation, with visible-tab transient retry and stale-access recovery on window/network return; no saved-ready shortcut or automatic login;
 - trusted-local Ollama/LM Studio/vLLM Model Agent starts with server-owned installed-model bindings and schema-constrained local turns; native packaging, quality and performance remain unqualified;
 - structured Model Agent limits repeated tool/schema failures to three attempts and identical successful operations without graph progress to four; counters survive supported checkpoints. Local steps receive a bounded current graph, Ollama uses bounded streaming, a skill-read prerequisite and schema-constrained sibling batches for new trees; assumption-enabled runs are instructed to fill estimates directly. Explicit same-session turn-budget continuation, backoff and other profiles' retry limits remain unfinished;
 - managed Cursor CLI authentication through a fixed manifest command, provider browser confirmation, post-login verification and automatic rescan;

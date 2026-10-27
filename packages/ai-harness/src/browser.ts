@@ -1,4 +1,5 @@
 export { generateVdtOutputSchema } from "./schemas/generate-vdt";
+export * from "./reasoning";
 export { dataAgentDecisionSchema } from "./schemas/data-agent-decision";
 export { rawDatasetAnalysisResultSchema } from "./schemas/analyze-raw-dataset";
 export { generateVdtOutputToProject } from "./validation/to-project";

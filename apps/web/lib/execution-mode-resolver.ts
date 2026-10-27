@@ -1,3 +1,4 @@
+import { isModelReasoningValue, modelReasoningKey } from "@vdt-studio/ai-harness/browser";
 import { resolveEffectiveByokUrls, resolveByokPreset } from "./byok-validation";
 import {
   AGENT_DECISION_TIMEOUT_FLOOR_MS
@@ -560,9 +561,14 @@ function resolveByok(settings: ExecutionSettings): ResolvedExecutionProvider {
 }
 
 export function resolveExecutionSettings(settings: ExecutionSettings): ResolvedExecutionProvider {
-  if (settings.executionMode === "local_cli") {
-    return resolveLocalCli(settings);
+  const resolved = settings.executionMode === "local_cli" ? resolveLocalCli(settings) : resolveByok(settings);
+  const config = resolved.providerConfig ?? {};
+  const key = modelReasoningKey(resolved.providerId, config);
+  const value = settings.modelReasoningBySource?.[key];
+  // Chat admission validates the exact value against fresh host capabilities.
+  // Completion/Smart transports do not consume this preference themselves.
+  if (isModelReasoningValue(value)) {
+    return { ...resolved, providerConfig: { ...config, modelReasoning: value } };
   }
-
-  return resolveByok(settings);
+  return resolved;
 }

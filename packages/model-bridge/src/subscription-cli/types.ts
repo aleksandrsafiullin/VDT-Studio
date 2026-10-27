@@ -2,6 +2,7 @@ import type { ExecFileOptionsWithStringEncoding } from "node:child_process";
 import type { ModelBackendDetectionResult } from "../contract";
 import type { SubscriptionCliId } from "../detection";
 import type { VdtSchemaId } from "../schema-registry";
+import type { ReasoningEffort } from "./reasoning";
 
 export type ExecFileProbe = (
   executable: string,
@@ -29,6 +30,13 @@ export interface SubscriptionCliModelProbeOptions {
   readonly execFile?: ExecFileProbe;
 }
 
+export interface SubscriptionCliModelOption {
+  readonly id: string;
+  readonly label?: string | undefined;
+  readonly reasoningEfforts?: readonly ReasoningEffort[] | undefined;
+  readonly defaultReasoningEffort?: ReasoningEffort | undefined;
+}
+
 export interface SubscriptionCliParseResult {
   output: unknown;
   rawText?: string;
@@ -44,4 +52,5 @@ export interface SubscriptionCliAdapter {
   parseStreamingOutput?(stdout: string, stderr: string, schemaId: VdtSchemaId): unknown | undefined;
   probeAuth?(executable: string, signal?: AbortSignal): Promise<ModelBackendDetectionResult>;
   listModels?(executable: string, options?: SubscriptionCliModelProbeOptions): Promise<readonly string[]>;
+  listModelOptions?(executable: string, options?: SubscriptionCliModelProbeOptions): Promise<readonly SubscriptionCliModelOption[]>;
 }

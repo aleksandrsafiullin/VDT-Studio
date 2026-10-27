@@ -53,6 +53,8 @@ export function resolveExecutionBindingId(
           binding.executionProfile === (category === "cli_subscriptions" ? "external_cli_agent" : "model_agent")
           && binding.backendId === backendId
           && (!modelId || binding.modelId === modelId)
+          && (category !== "cli_subscriptions" || binding.reasoningEffort === executionSettings.cliModelSelection?.reasoningEffort)
+          && (category !== "local_models" || binding.modelReasoning === providerConfig?.modelReasoning)
       )?.bindingId ?? null
     );
   }
@@ -62,7 +64,7 @@ export function resolveExecutionBindingId(
       binding.executionProfile === "model_agent"
   );
   const modelId = typeof providerConfig?.model === "string" ? providerConfig.model.trim() : "";
-  const backendMatch = modelBindings.find((binding) => binding.backendId === providerId && (!modelId || binding.modelId === modelId));
+  const backendMatch = modelBindings.find((binding) => binding.backendId === providerId && (!modelId || binding.modelId === modelId) && binding.modelReasoning === providerConfig?.modelReasoning);
   return backendMatch?.bindingId ?? null;
 }
 

@@ -34,6 +34,18 @@ async function readJson(response: Response) {
 }
 
 describe("generate VDT API route", () => {
+  it("tests the exact selected API reasoning instead of silently using its default", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (url) => String(url).includes("/models/")
+      ? Response.json({ supported_reasoning_efforts: ["low", "high"] })
+      : Response.json({ choices: [{ message: { content: '{"ok":true}' } }] }));
+    vi.stubGlobal("fetch", fetcher);
+    const response = await POST(jsonRequest({ operation: "connection_test", providerId: "openai_compatible",
+      providerConfig: { apiKey: "test-key", model: "provider-owned-model", modelReasoning: "high" } }));
+    expect(response.status).toBe(200);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const body = JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body));
+    expect(body).toMatchObject({ model: "provider-owned-model", reasoning_effort: "high", max_completion_tokens: 4096 });
+  });
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();

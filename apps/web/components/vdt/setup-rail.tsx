@@ -3,16 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, ArrowUpRight, Check, ChevronDown, CircleAlert, History, LoaderCircle, MessageSquarePlus, Mic, Plus, SlidersHorizontal, Sparkles, Square, X } from "lucide-react";
 import { clsx } from "clsx";
+import type { VdtNode } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { DataImportAttachmentButton } from "@/components/data-import/data-import-attachment-button";
 import { Field, TextArea, TextInput } from "@/components/ui/field";
 import { Panel, PanelCollapseTab, PanelToggleButton } from "@/components/ui/panel";
 import { hasByokFieldErrors, validateByokSettings } from "@/lib/byok-validation";
-import type { CliRequestReadiness, CliRequestReadinessState } from "@/lib/cli-readiness";
+import type { CliRequestReadiness } from "@/lib/cli-readiness";
 import { formatExecutionModeSummary } from "@/lib/format-execution-summary";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
-import { filterAgentChatHistoryForVdt, shouldContinueOpenVdt, useVdtStudioStore } from "./vdt-store";
+import { filterAgentChatHistoryForVdt, selectedNodeForAgentChat, shouldContinueOpenVdt, useVdtStudioStore } from "./vdt-store";
 import { GenerateActivityPanel } from "./generate-activity-panel";
 import { SettingsModal } from "./settings-modal";
 import { SkillContextControl } from "./skill-context-control";
@@ -22,6 +23,10 @@ import { useVoiceDictation } from "./use-voice-dictation";
 import { VoiceInputStatus } from "./voice-input-status";
 import { WebSearchControl, type ResearchStatus } from "./web-search-control";
 import { useCliChatReadiness } from "./use-cli-chat-readiness";
+import { ComposerModelPicker } from "./composer-model-picker";
+import { useProviderConnectionCheck } from "@/lib/provider-connection-state";
+import { providerConnectionKey } from "@/lib/provider-connection";
+export { ExecutionReadinessDot } from "./composer-model-picker";
 import type { AgentChatHistoryEntry } from "./vdt-store";
 import type { ResearchMode } from "@/lib/agent-client";
 import styles from "./agent-chat.module.css";
@@ -61,24 +66,6 @@ export function agentActivityScrollClassName(hasRetryableError: boolean): string
   );
 }
 
-export function ExecutionReadinessDot({ state }: { state: CliRequestReadinessState }) {
-  const statusClass = {
-    checking: "bg-slate-400",
-    ready: "bg-emerald-500",
-    warning: "bg-amber-500",
-    not_installed: "bg-red-500"
-  }[state];
-
-  return (
-    <span
-      className={["h-1.5 w-1.5 shrink-0 rounded-full", statusClass].join(" ")}
-      data-testid="execution-mode-status-dot"
-      data-readiness={state}
-      aria-hidden="true"
-    />
-  );
-}
-
 export function describeComposerReadiness(cliReadiness: CliRequestReadiness | undefined, configured: boolean): Pick<CliRequestReadiness, "state" | "label" | "message"> {
   if (cliReadiness) return cliReadiness;
   return configured
@@ -86,8 +73,34 @@ export function describeComposerReadiness(cliReadiness: CliRequestReadiness | un
     : { state: "warning", label: "Setup needed", message: "Configure a provider before sending requests." };
 }
 
+export function SelectedKpiContext({ node, onClear }: { node: Pick<VdtNode, "id" | "name" | "unit"> | undefined; onClear: () => void }) {
+  if (!node) return null;
+  return (
+    <div
+      className={styles.selectedKpi}
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      data-testid="agent-selected-kpi"
+      data-node-id={node.id}
+      title={`${node.name}${node.unit ? ` (${node.unit})` : ""} — included with your message`}
+    >
+      <span className={styles.selectedKpiLabel}>Selected KPI</span>
+      <span className={styles.selectedKpiName}>{node.name}</span>
+      {node.unit ? <span className={styles.selectedKpiUnit}>{node.unit}</span> : null}
+      <button
+        type="button"
+        className={styles.selectedKpiClear}
+        onClick={onClear}
+        aria-label="Remove selected KPI from message"
+        title="Remove selected KPI and ask about the whole tree"
+        data-testid="agent-clear-selected-kpi"
+      ><X size={13} aria-hidden="true" /></button>
+    </div>
+  );
+}
+
 export function SetupRail() {
-  const hasRequestedCliScan = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>("execution");
   const [confirmSpeechDownload, setConfirmSpeechDownload] = useState(false);
@@ -124,9 +137,11 @@ export function SetupRail() {
   const leftPanelCollapsed = useVdtStudioStore((state) => state.ui.leftPanelCollapsed);
   const isDesktop = useDesktopLayout();
   const showCollapsed = isDesktop && leftPanelCollapsed;
-  const selectedNodeId = useVdtStudioStore((state) => state.selectedNodeId);
+  const selectedNode = useVdtStudioStore((state) => shouldContinueOpenVdt(state)
+    ? selectedNodeForAgentChat(state)
+    : undefined);
+  const clearAgentKpiContext = useVdtStudioStore((state) => state.clearAgentKpiContext);
   const setBriefField = useVdtStudioStore((state) => state.setBriefField);
-  const rescanClis = useVdtStudioStore((state) => state.rescanClis);
   const startAgentRun = useVdtStudioStore((state) => state.startAgentRun);
   const startNewAgentChat = useVdtStudioStore((state) => state.startNewAgentChat);
   const openAgentChat = useVdtStudioStore((state) => state.openAgentChat);
@@ -151,7 +166,11 @@ export function SetupRail() {
     canRunDeepenAction &&
     !byokValidationBlocked &&
     (cliReadiness?.canExecute ?? true);
-  const { state: executionReadinessState, label: executionReadinessLabel, message: executionReadinessMessage } = describeComposerReadiness(cliReadiness, canUseConfiguredRuntime);
+  const providerCheck = useProviderConnectionCheck();
+  const currentProviderCheck = providerCheck.key === providerConnectionKey(executionSettings) && providerCheck.state ? providerCheck : undefined;
+  const { state: executionReadinessState, label: executionReadinessLabel, message: executionReadinessMessage } = !cliReadiness && currentProviderCheck
+    ? { state: currentProviderCheck.state!, label: currentProviderCheck.state === "ready" ? "Connected" : currentProviderCheck.state === "checking" ? "Connecting…" : "Connection needs attention", message: currentProviderCheck.message ?? "Checking provider access." }
+    : describeComposerReadiness(cliReadiness, canUseConfiguredRuntime);
   const pendingChangeCount = pendingChangeSet
     ? pendingChangeSet.additions.length +
       pendingChangeSet.updates.length +
@@ -209,19 +228,6 @@ export function SetupRail() {
   }, [instructionText]);
 
   useEffect(() => {
-    if (
-      cliReadiness &&
-      cliDetectionAgents === undefined &&
-      !isRescanningClis &&
-      !cliDetectionError &&
-      !hasRequestedCliScan.current
-    ) {
-      hasRequestedCliScan.current = true;
-      void rescanClis();
-    }
-  }, [cliDetectionAgents, cliDetectionError, cliReadiness, isRescanningClis, rescanClis]);
-
-  useEffect(() => {
     let cancelled = false;
     void fetch("/api/agent/research/status")
       .then(async (response) => {
@@ -247,12 +253,13 @@ export function SetupRail() {
       const shouldContinue = shouldContinueOpenVdt(useVdtStudioStore.getState());
       const accepted = await startAgentRun(text, {
         researchMode,
-        ...(shouldContinue ? { mode: "continue_project", includeCurrentProject: true } : {})
+        ...(shouldContinue ? { mode: "continue_project", includeCurrentProject: true } : {}),
+        ...(shouldContinue ? { selectedNodeId: selectedNode?.id ?? null } : {})
       });
       if (accepted) setInstructionText("");
       return;
     }
-    const accepted = await sendAgentInstruction(text, selectedNodeId, researchMode);
+    const accepted = await sendAgentInstruction(text, selectedNode?.id ?? null, researchMode);
     if (!accepted) return;
     setInstructionText("");
   }
@@ -478,6 +485,10 @@ export function SetupRail() {
             void submitAgentInstruction();
           }}
         >
+          <SelectedKpiContext node={selectedNode} onClear={() => {
+            clearAgentKpiContext();
+            instructionInputRef.current?.focus();
+          }} />
           <VoiceInputStatus state={voice.state} error={voice.error} audio={voice.audio} recognizing={voice.recognizing} onStop={() => { void voice.stop(); }} onCancel={voice.cancel} onDismiss={voice.clearError} />
           <TextArea
             ref={instructionInputRef}
@@ -551,18 +562,10 @@ export function SetupRail() {
               />
             </div>
             <div className={styles.composerActions}>
-              <button
-                type="button"
-                className={styles.modelButton}
-                onClick={() => { setSettingsSection("execution"); setConfirmSpeechDownload(false); setSettingsOpen(true); }}
-                data-testid="execution-mode-configure"
-                aria-label={`Configure execution mode. ${executionSummary.primary}: ${executionReadinessLabel}`}
-                title={`${executionSummary.primary} · ${executionReadinessLabel}. ${executionReadinessMessage}`}
-              >
-                <ExecutionReadinessDot state={executionReadinessState} />
-                <span className={styles.modelCopy}><span className={styles.modelName} data-testid="execution-mode-summary">{modelLabel}</span><span className={styles.modelState}>{executionReadinessLabel}</span></span>
-                <ChevronDown size={12} className="shrink-0" aria-hidden="true" />
-              </button>
+              <ComposerModelPicker modelLabel={modelLabel} providerLabel={executionSummary.primary}
+                readiness={{ state: executionReadinessState, label: executionReadinessLabel, message: executionReadinessMessage }}
+                locked={canContinueCurrentAgentRun}
+                onOpenSettings={() => { setSettingsSection("execution"); setConfirmSpeechDownload(false); setSettingsOpen(true); }} />
               {canStopResponse ? (
                 <button type="button" className={styles.sendButton} aria-label="Stop response" title="Stop response" disabled={!generateActivity.canCancel || generateActivity.cancelRequested} onClick={cancelGenerate} data-testid="agent-stop-response">
                   {generateActivity.cancelRequested ? <LoaderCircle size={16} className="animate-spin" /> : <Square size={12} fill="currentColor" />}

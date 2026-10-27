@@ -48,6 +48,7 @@ export function VdtCanvas() {
   const kpiHorizontalGap = useVdtStudioStore((state) => state.ui.kpiHorizontalGap);
   const kpiVerticalGap = useVdtStudioStore((state) => state.ui.kpiVerticalGap);
   const selectNode = useVdtStudioStore((state) => state.selectNode);
+  const clearAgentKpiContext = useVdtStudioStore((state) => state.clearAgentKpiContext);
   const autoDistributeLayout = useVdtStudioStore((state) => state.autoDistributeLayout);
   const updateNodePosition = useVdtStudioStore((state) => state.updateNodePosition);
   const selectedNodeId = useVdtStudioStore((state) => state.selectedNodeId);
@@ -269,6 +270,7 @@ export function VdtCanvas() {
             maxZoom={1.5}
             onNodesChange={onNodesChange}
             onNodeClick={(_, node) => selectNode(node.id)}
+            onPaneClick={clearAgentKpiContext}
             onNodeDragStart={onNodeDragStart}
             onNodeDragStop={onNodeDragStop}
             onInit={instance => { flow.current = instance; requestAnimationFrame(prepareVisible); }}

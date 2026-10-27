@@ -1,5 +1,92 @@
 # Provider Compatibility
 
+## Business-quality evidence boundary
+
+The October 26–27 revenue runs below are guided workflow diagnostics. Supplying
+the formula and tool sequence in the initial prompt prevents treating even a
+successful finish without operator replies as independent business autonomy.
+[Agent Evaluation](AGENT_EVALUATION.md) defines separate natural requests,
+private criteria and semantic review across provider types. Those test assets
+are implemented; their live acceptance is unrun. Mock/unit checks do not assess
+model quality. Canonical provider statuses remain unchanged.
+
+## Composer model and reasoning selection
+
+The model button opens provider-owned choices and keeps readiness text in its
+tooltip/accessibility label, with only a dot and model name visible. Codex chat
+reasoning choices come from each model's authenticated CLI metadata and require
+an admitted immutable server model/effort binding. Default omits the effort
+override; explicit choices pass `model_reasoning_effort` to every checkpoint
+segment. Unsupported/unknown levels and Ultra native delegation are not admitted.
+The UI uses a discrete slider and a Default reset; it does not fabricate effort
+metadata for other providers. Model catalogs load for the active CLI, BYOK API
+or local HTTP backend, without a static model-ID list. Codex and Cursor expose
+reviewed CLI catalogs; Claude/Gemini/Copilot without a list command show only
+provider-default/host-configured choices. An unavailable chat binding stays
+non-executable. OpenAI-compatible, Anthropic and Gemini APIs reuse the existing
+credential-scoped catalog route. Azure accepts a deployment name manually.
+Ollama, LM Studio and vLLM use their local runtime catalog commands. Catalog
+loading/selection does not implement a missing chat adapter or promote provider
+support. Trusted-local browser-key admission now supports OpenAI-compatible,
+Anthropic, Gemini and Azure through a strict short-lived boundary. Official/preset
+or exact trusted-host endpoints are required; local endpoints remain manifest-owned.
+API/local access is checked automatically after settings/key hydration.
+
+API/local reasoning preferences are scoped to provider, endpoint and model and
+are validated before immutable chat binding. Ollama uses actual `/api/show`
+thinking values, including explicit Off/On; Anthropic uses model effort flags;
+compatible servers may expose named efforts. Direct OpenAI can read its official
+model card, and Gemini can read its official thinking documentation after model
+metadata confirms support. No key is sent to documentation endpoints. Unknown
+metadata, including Azure deployment capabilities, leaves Default. Native request
+mappings are covered by fixtures; live evidence in
+`output/api-ollama-reasoning-20261026/verification.md` covers OpenAI High and
+Ollama Off/On only. Smart reasoning and other providers' live inference remain
+unqualified.
+macOS discovery compares the installed ChatGPT bundled Codex with PATH versions;
+CLI model bindings refresh on demand after 60 seconds without replacing runs.
+This is a chat control/transport change, not a provider support or certification
+promotion. Native packaging, live model quality and Smart reasoning remain outside
+this change.
+
+### Live new-tree follow-up
+
+Browser reload restored OpenAI GPT-6 Luna High and Ollama qwen3.5:4b-q4_K_M On
+without Settings Test. Actual native request metadata preserved those selections
+through the tested runs. OpenAI completed with a finish receipt; Ollama produced
+a saved three-node, 2,000-USD graph but entered repeated routine-confirmation
+questions and was cancelled after one QA answer. Its parameter transport passed;
+autonomous completion did not. Both saved graphs passed independent arithmetic
+and structural checks. These are single local cases, with no certification,
+native-platform or comparative-performance promotion. Evidence, first-attempt
+interruption and UI limitations: `output/provider-vdt-reload-20261026/verification.md`.
+
+The follow-up Ollama completion fix exposes the existing validation/calculation
+schemas directly and tracks current-revision Gateway checks before finish.
+Routine checks precede clarification; actual business questions and all
+canonical finish/approval gates remain. This transport workflow does not change
+canonical provider certification. Follow-up evidence:
+`output/ollama-autonomous-completion-20261027/verification.md`.
+Proposed construction questions receive one review on the same pinned local
+model before publication, with at most one additional inference call; genuine
+missing-fact questions and Gateway approvals remain intact.
+The final synthetic qwen3.5:4b-q4_K_M / Off build completed with a real finish
+receipt, zero operator answers and ten pinned native requests. The final On
+attempt exceeded the 480-second first-turn limit. Reload/data checks and two
+read-only native private-schema fixtures passed; missing input units, UI status
+lag and recovery limits remain explicit in the evidence. This qualifies only the
+tested local control flow and transport, with no certification-status change.
+
+## Automatic connection lifecycle
+
+The app verifies the saved subscription CLI and its selected chat-model binding
+at startup, including Projects, and shares the result across VDT navigation.
+Transient failures retry while visible; stale access is rechecked on window or
+network return and VDT entry. Saved choices never count as verified authentication.
+These are client lifecycle changes over the existing reviewed probes, with no
+adapter, supported model, certification status or native-platform qualification
+change. Canonical `release/provider-certification.json` remains unchanged.
+
 ## Skill Author CLI parsing check (2026-10-25)
 
 Codex completion parsing now accepts a valid structured result before applying

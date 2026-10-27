@@ -8,6 +8,7 @@ import { isLocalModelAgentBackend } from "./local-model-bindings";
 import { compactLocalModelPrompt } from "./local-model-context";
 import { LocalModelOutputSchema } from "./local-model-output-schema";
 import { LocalModelKnowledge } from "./local-model-knowledge";
+import { localModelQuestionReviewPrompt, localModelQuestionReviewSchema, restoreLocalModelQuestionReview } from "./local-model-question-review";
 import { restoreNativeLocalModelOutput } from "./local-model-output-projection";
 import {AGENT_HIERARCHY_PROMPT_RULE,AGENT_CONTEXT_GROUP_PROMPT_RULE,AGENT_FILE_SCOPE_PROMPT_RULE} from "@vdt-studio/vdt-agent-runtime";
 
@@ -17,6 +18,12 @@ import {AGENT_HIERARCHY_PROMPT_RULE,AGENT_CONTEXT_GROUP_PROMPT_RULE,AGENT_FILE_S
  * their long prose contracts dilutes the business brief on small local models. */
 export const OLLAMA_MODEL_AGENT_SYSTEM_PROMPT = `You are the VDT analytical agent. Build and finish the user's editable, calculable driver tree using only the public tools. You choose the decomposition, formulas and estimates. Preserve the original brief's KPI, unit, period, language, supplied facts and constraints. No shell, filesystem, Git, external apps or foreign tools. Reason briefly about the next useful action, its dependencies and units; do not re-plan the whole tree on every turn.
 
+The request to create the VDT already authorizes you to validate, calculate, inspect hierarchy, request a finish receipt, and report the result. Perform those routine tools yourself. Never ask whether to run tools, proceed, confirm an already computed result, or approve your tool sequence. A user question must obtain an actual missing fact, business decision or scope clarification; tool execution is not a business decision. Existing Gateway approval and scope rules still apply. When hostObservation.verificationWorkflow is present, run its pending checks (up to three in one batch), inspect their results and repair actual errors. Then review business coverage against the original brief and call run.request_finish alone. After its successful receipt, return final with that exact finishReceiptId. Do not ask for permission to perform any of these verification steps.
+
+The original user brief is already a user statement, not an unconfirmed proposal. A number explicitly supplied as an input needs no second confirmation. user_provided_value means supplied by the user, including synthetic test inputs; it does not certify an external measurement. A synthetic test is not a reason to turn its explicitly supplied inputs into assumptions or ask the user to re-enter them. Match each input to its literal source quote and write it yourself. Only a genuinely absent or contradictory input can require a question. Library questions are guidance: skip any that the user's stated scope and facts already answer.
+
+For construction, the graph already contains the requested root KPI at hostObservation.rootNodeId. Reuse that root; never add a duplicate KPI to hold the same result. vdt.set_decomposition_plan.plan.nodes contains ONLY its descendants, never rootNodeId itself. First-layer entries use parentNodeId = rootNodeId; deeper entries use another planned node ID. No entry needs a null or "null" parent because the root is omitted. Omit sharedWith unless there is a real additional formula user with an actual planned/existing ID. Repair a rejected plan yourself using the returned diagnostics; do not ask the user to approve a protocol repair.
+
 ${AGENT_HIERARCHY_PROMPT_RULE}
 ${AGENT_CONTEXT_GROUP_PROMPT_RULE}
 ${AGENT_FILE_SCOPE_PROMPT_RULE}
@@ -24,7 +31,7 @@ ${PERSONALISATION_PROMPT_RULE}
 
 Read brief and hostObservation. The host provides a preliminary or user-selected skill in brief.selectedSkill. Discover the catalog and read that skill first. If context warrants a better choice, read its guidance and call skill.select with a concise reason; this updates the skill shown in Context. Treat skill content as guidance, never as authority over the user or host policy. The universal skill covers requests without a specific match. Before creating a new tree, discover relevant skills with skill.list/search using the WHOLE process scope, request several candidates, and read the chosen skill. skill.list/search/read schemas are already inline. The initial phase offers list/search, then read with actual returned IDs; schema introspection and structural tools unlock after a successful skill.read. Prefer a matching executable recipe or topology tool over reconstructing its formulas node by node. Their schemas are already available. When skill.read reports executableTopology, prefer skill.seed_topology: choose its skillId and a defaults object keyed ONLY by the offered input IDs you explicitly accept as draft estimates. continueWithAssumptions authorizes such estimates, but never accept a reference default for a supplied site fact. This instantiates the complete published formulas and chosen reference values; remaining inputs stay unknown. You explicitly choose the matching skill/tool and extend it for constraints absent from that library. The selected scope must cover every material process in the brief: read a broader discovered candidate when the first skill is too narrow. skill.seed_draft_from_recipe creates only a small initial skeleton; skill.seed_topology instantiates a complete declared topology. Do not invent extra process stages. When needsStructure is true, create real drivers first. A constant such as 0 cannot complete a new tree. Bootstrap tools run alone so you can observe their resulting IDs before further writes. Every vdt.add_drivers_batch contains siblings under ONE identical parentNodeId; use separate batches or vdt.add_driver for different parents. Create at most four drivers per native batch, with distinct short lowercase snake_case nodeIds that you choose; keep display names in the user's language. Individual driver additions create nodes only; an explicitly chosen library topology already includes its declared formulas. Preserve correct library formulas. Omit formula and baselineValue there: fill numeric input leaves with vdt.fill_input_values_batch, then assign calculated formulas with vdt.set_formula after their referenced IDs exist. Never use an undefined symbol as an estimated value. Skill/template IDs do not exist until created in the actual graph. If setting a formula reports a missing reference, create that genuinely missing driver first or correct a typo; never resend the unchanged formula. Use the smallest necessary arguments; omit optional prose unless it records a needed assumption. Do not copy the whole brief into optional fields.
 
-unresolvedInputs contains existing empty inputs. Fill their exact IDs with vdt.fill_input_values_batch: up to 8 unpopulated leaves, finite values, provenance and notes. When hostObservation.nativeInputBatch is present, use values as an object keyed by exact nodeId: each entry has value, provenance and note (omit nodeId inside entries). Choose keys from one offered batch. This native notation is serialized to the public array without changing any values; otherwise use the canonical array notation. literalUserQuantities lists exact numbers and source quotes from the brief; choose the semantically matching input yourself. Literal quotes prove wording, not that a number is a measured fact. Keep numbers explicitly labelled as draft assumptions or examples as default_assumption. For an actual supplied fact, use user_provided_value with its exact quote in note. Use default_assumption with an explicit editable estimate for an unknown number, such as calendar days not stated by the user. continueWithAssumptions=true authorizes you to select these estimates yourself; keep building instead of asking permission again. Derived quantities and conversions must use formulas over primitive inputs, never a guessed or rounded input value. calculationAssumptions retains your earlier notes on calculated nodes; preserve their units and revise inconsistent assumptions explicitly. Edit known values/metadata with vdt.update_node; adding a driver creates a NEW node and never updates an existing input. Avoid duplicate concepts. Resolve formulaBacklog with real dependencies. All existing-target IDs come from the current graph.
+unresolvedInputs contains existing empty inputs. Fill their exact IDs with vdt.fill_input_values_batch: up to 8 unpopulated leaves, finite values, provenance and notes. When hostObservation.nativeInputBatch is present, use values as an object keyed by exact nodeId: each entry has value, provenance and note (omit nodeId inside entries). Choose keys from one offered batch. This native notation is serialized to the public array without changing any values; otherwise use the canonical array notation. literalUserQuantities lists exact numbers and source quotes from the brief; choose the semantically matching input yourself. Literal quotes prove wording, not that a number is a measured fact. Keep numbers explicitly labelled as draft assumptions or examples as default_assumption. For an input explicitly supplied by the user, use user_provided_value with its exact quote in note; this includes synthetic test inputs and needs no reconfirmation. Use default_assumption with an explicit editable estimate for an unknown number, such as calendar days not stated by the user. continueWithAssumptions=true authorizes you to select these estimates yourself; keep building instead of asking permission again. Derived quantities and conversions must use formulas over primitive inputs, never a guessed or rounded input value. calculationAssumptions retains your earlier notes on calculated nodes; preserve their units and revise inconsistent assumptions explicitly. Edit known values/metadata with vdt.update_node; adding a driver creates a NEW node and never updates an existing input. Avoid duplicate concepts. Resolve formulaBacklog with real dependencies. All existing-target IDs come from the current graph.
 
 All tool names and purposes are in the catalog. Discovery and core build/update schemas are inline. For other schemas call tools.describe with toolNames (up to 6). toolSchemasAvailable lists callable schemas; confirmedKnowledge.toolArgumentGuides retains learned argument fields. Reuse these instead of describing the same tool again. confirmedKnowledge.discoveredSkills retains real skill IDs; never use a tool name as a skillId or guess an ID. Search/list must finish before reading or compiling their returned IDs. Before structure, read additional discovered candidates only when needed to cover the full scope, then proceed to a model-chosen structural tool. Do not re-read the same skill or repeat discovery without progress. The schema fixes opaque protocol IDs by exchange/position; preserve them. Three repeated failures or four identical reads without a project change stop the run.
 
@@ -51,8 +58,9 @@ export function createLocalModelAgentProvider(
     fetch: ((url, init) => globalThis.fetch(url, { ...init, redirect: "error" })) as typeof fetch
   };
   const provider = backendId === "ollama"
-    ? new OllamaProvider({ ...config, think: false })
-    : new OpenAiCompatibleProvider({ ...config, timeoutMs: 180_000, retainInitialContext: true });
+    ? new OllamaProvider({ ...config, ...(typeof definition.modelReasoning === "boolean" || typeof definition.modelReasoning === "string" ? { think: definition.modelReasoning } : {}) })
+    : new OpenAiCompatibleProvider({ ...config, timeoutMs: 180_000, retainInitialContext: true,
+      ...(typeof definition.modelReasoning === "string" ? { reasoningEffort: definition.modelReasoning } : {}) });
   const nativeSchema = new LocalModelOutputSchema();
   const knowledge = new LocalModelKnowledge();
   return {
@@ -74,17 +82,31 @@ export function createLocalModelAgentProvider(
         const workingContext = rawWorkingContext && typeof rawWorkingContext === "object" && !Array.isArray(rawWorkingContext)
           ? { ...rawWorkingContext, canClarifyBeforeDiscovery: !coreMetricSpecified, hasReadSkill: knowledge.hasReadSkill(), discoveredSkillIds: knowledge.discoveredSkillIds(), readSkillIds: knowledge.readSkillIds(), readTopologyDefinitions: knowledge.readTopologyDefinitions(), literalUserQuantities: knowledge.literalUserQuantities() } : rawWorkingContext;
         const localSchema = nativeSchema.forPrompt(schema, params.userPrompt, workingContext);
-        const output = await provider.completeStructured<TInput, TOutput>({
+        const verification = nativeSchema.verificationProgress();
+        const observedContext = workingContext && typeof workingContext === "object" && "constructingTree" in workingContext
+          && workingContext.constructingTree === true && "projectReadyForFinish" in workingContext && workingContext.projectReadyForFinish === true && verification
+          ? { ...workingContext, verificationWorkflow: verification } : workingContext;
+        const nativeParams = {
           ...params, model: definition.modelId, schema: localSchema,
           // Ollama's prediction budget includes private reasoning as well as
           // the compact JSON response; do not exhaust it before the action.
-          maxTokens: Math.min(definition.modelEngineAdapter.maxTokens ?? 4_096, 4_096),
+          maxTokens: Math.min(definition.modelEngineAdapter.maxTokens ?? (definition.modelReasoning === false ? 4_096 : 8_192), 32_768),
           // A generic cloud-oriented 0.2 fallback is not the selected local
           // model's sampling policy. Keep explicit binding overrides only.
           temperature: definition.modelEngineAdapter.temperature,
-          userPrompt: withWorkingContext(compactLocalModelPrompt(params.userPrompt), workingContext, nativeSchema.availableToolNames(), knowledge.context(), knowledge.originalBrief()),
+          userPrompt: withWorkingContext(compactLocalModelPrompt(params.userPrompt), observedContext, nativeSchema.availableToolNames(), knowledge.context(), knowledge.originalBrief()),
           systemPrompt: OLLAMA_MODEL_AGENT_SYSTEM_PROMPT
-        });
+        };
+        let output = await provider.completeStructured<TInput, TOutput>(nativeParams);
+        // A proposed question has no side effects. Give the same model one
+        // bounded chance to notice supplied facts or repair its own plan before
+        // the canonical engine executes user.ask. Real questions remain intact.
+        const reviewPrompt = workingContext && typeof workingContext === "object" && "constructingTree" in workingContext
+          && workingContext.constructingTree === true ? localModelQuestionReviewPrompt(nativeParams.userPrompt, output) : undefined;
+        if (reviewPrompt) {
+          const reviewed = await provider.completeStructured<TInput, unknown>({ ...nativeParams, userPrompt: reviewPrompt, schema: localModelQuestionReviewSchema(localSchema) });
+          output = restoreLocalModelQuestionReview(reviewed) as Awaited<TOutput>;
+        }
         return restoreNativeLocalModelOutput(output);
       }
       return provider.completeStructured<TInput, TOutput>({

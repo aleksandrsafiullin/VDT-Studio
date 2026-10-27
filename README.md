@@ -156,14 +156,39 @@ The inspector contains **Properties** and **Warnings**. Node edits apply directl
 The **VDT Agent** chat uses a compact **Context** disclosure for the brief, dark
 user bubbles and formatted assistant responses with Copy. Starter prompts fill a
 draft for review. The rounded composer groups **+ → Attach a file / Edit model
-context**, search, local voice input and model/readiness settings. Enter sends;
+context**, search, local voice input and a model picker. Enter sends;
 Shift + Enter adds a line. While a request runs with an empty draft, Stop is
 available. Status and the collapsed **Work log** use recorded runtime activity.
 The context editor shows the root KPI and compact unit field in one row, without a Period field. Web search
 uses a globe icon with **Off / Auto / On**, with explanations in its menu and separate
-provider-availability feedback. The model control names its readiness beside the
-model. Voice capture shows a real microphone waveform and recording duration;
+provider-availability feedback. The model button shows a colored readiness dot
+and model name, with status details in its tooltip/accessibility label. Clicking
+opens the active CLI/API/local provider’s model catalog and a discrete slider
+for supported model reasoning values; Provider settings is a separate menu action.
+Catalog IDs come from the provider, including newer installed Codex app versions
+on macOS. Azure uses a manually entered deployment name. Providers without
+reasoning metadata do not show invented levels. API/local connections are checked
+automatically after settings and saved keys load. API/local reasoning preferences
+are scoped to provider, endpoint and model; Codex uses its CLI model/effort preference.
+Choices persist and are pinned for new chat runs. Ollama exposes its actual
+Off/On or named thinking values, and API transports use their native effort or
+thinking parameters. Explicit API connection tests also check the selected value.
+For native Ollama new-tree construction, validation, calculation and hierarchy
+inspection are already authorized by the creation request. The agent performs
+these checks before clarification or finish, then reviews the brief and obtains
+the normal verified finish receipt. Real missing business facts can still require
+a question. See [the local workflow and evidence](docs/AI_HARNESS.md#ollama-completion-workflow-2026-10-27).
+A proposed construction question is reviewed once by the same model before it
+reaches the user, allowing the agent to correct its own unnecessary confirmation.
+Voice capture shows a real microphone waveform and recording duration;
 final transcription has a separate processing timer and explicit failure state.
+
+In an open tree, the composer shows **Selected KPI** with the current node's
+name and unit. New chats and follow-up messages carry that node's ID; the host
+resolves its current definition for the model. Selecting another node updates
+the next message's context. Selection alone does not request a model change.
+Use the indicator's × button or click empty canvas space to ask about the whole
+tree. The draft is preserved; selecting a KPI again reattaches it to the chat.
 
 Context uses a single heading without a repeated Current brief label. Settings
 shares the editor's neutral palette, with a light sidebar, grouped fields and
@@ -278,6 +303,13 @@ pnpm local-runner:start
 
 Desktop CLI subscriptions and local model servers use reviewed Tauri commands and the managed sidecar; it does not ask production users to start or pair a runner manually.
 
+When CLI mode is saved, opening or reloading the app checks the selected CLI and
+its chat-model binding immediately, including on Projects. Opening a VDT reuses
+that verified session state without a Settings/Test step. Temporary failures retry
+automatically while the app is visible; returning to the window, reconnecting to
+the network or opening a VDT rechecks stale access. Saved provider/model choices
+survive reload, while authentication and readiness are verified afresh.
+
 For subscription CLIs, the agent-composer indicator reports live request readiness rather than the saved selection. Light gray means the CLI check is still running, green **Chat ready** means the selected CLI reports `ready` and the server has a compatible chat binding for the selected model, amber means it is installed but needs authentication, an update, or another recovery action, and red means the completed scan confirmed that it is not installed. The composer remains blocked until the selected CLI reaches `ready`; Settings does not show install options while detection is still unknown. Cursor's **Sign in** action runs the fixed provider-owned `agent login` flow, waits for browser confirmation, verifies CLI access and rescans models; instruction-only providers use the distinct **Sign-in help** label.
 
 **Settings → Personalisation → Your instructions** is one browser-local list.
@@ -366,6 +398,7 @@ pnpm test:e2e
 pnpm docs:verify
 pnpm phase7:verify
 pnpm certification:verify
+pnpm agent:eval check
 pnpm security:audit
 pnpm desktop:sidecar:verify
 pnpm package:alpha
@@ -373,6 +406,11 @@ pnpm package:verify
 ```
 
 `pnpm security:audit` checks production dependencies and must pass for each candidate. The 2026-10-19 dependency remediation passed with zero reported production vulnerabilities. Development-tool advisories and the separate browser, recovery and native release gates remain visible in [Production readiness](docs/PRODUCTION_READINESS.md).
+
+Natural business-agent testing uses [separate user requests and evaluator criteria](docs/AGENT_EVALUATION.md).
+`pnpm agent:eval check` verifies those assets without starting an agent. The
+earlier guided revenue checks and mock provider evaluation do not establish
+independent business autonomy; live acceptance on the natural cases remains open.
 
 ## Product CLI
 
@@ -422,4 +460,12 @@ MIT
 
 Experimental complete library topologies: a local Model Agent may explicitly select `mining.load_and_haul` through `skill.seed_topology`, accept individually named illustrative defaults, fill supplied facts, and use the normal calculation/finish gates. The single canonical skill artifact contains the annual joint excavation/haulage formulas; defaults are editable assumptions, not site facts or verified benchmarks. Seeding preserves the existing root and cannot replace existing drivers. A fresh local `qwen3.5:4b-q4_K_M` run on 2026-10-17 completed this library workflow with 35 calculable nodes in 10 turns, without operator formula/value edits. See [the live evidence and its limits](docs/AI_HARNESS.md#local-library-completion-evidence-2026-10-17); production/provider qualification is unchanged.
 
-Direct OpenAI API Model Agent execution is experimental in the trusted local app. Send admits the selected model and current in-memory key through a separate bounded endpoint, then starts with an opaque one-use binding ID; credentials never enter the saved run request. The binding expires after one minute if unused. GPT-5/GPT-6 and o-series requests use `max_completion_tokens` without an unsupported temperature override. One fresh `gpt-6-luna` excavation/haulage run on 2026-10-17 completed 35 calculable nodes in 10 turns (145.436 seconds), with no operator formula/value edits. See [OpenAI execution evidence](docs/AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17); this is not general provider or performance qualification.
+API Model Agent execution is experimental in the trusted local app. Send admits
+the selected OpenAI-compatible, Anthropic, Gemini or Azure configuration through
+`/api/agent/bindings/provider`, then starts with an opaque one-use binding ID;
+credentials never enter the saved run request. Official/preset endpoints or an
+exact host-configured endpoint are required. The binding expires after one minute
+if unused. Ollama, LM Studio and vLLM use manifest-owned local endpoints and
+installed model checks. Explicit reasoning is validated against current model
+capabilities before an immutable binding is created; unsupported choices cannot
+silently become Default. GPT-5/GPT-6 and o-series requests use `max_completion_tokens` without an unsupported temperature override. One fresh `gpt-6-luna` excavation/haulage run on 2026-10-17 completed 35 calculable nodes in 10 turns (145.436 seconds), with no operator formula/value edits. See [OpenAI execution evidence](docs/AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17); this is not general provider or performance qualification.

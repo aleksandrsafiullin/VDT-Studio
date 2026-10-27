@@ -37,8 +37,10 @@ export class AzureOpenAiProvider implements AiProvider {
           "api-key": this.config.apiKey
         },
         body: JSON.stringify({
-          temperature: params.temperature ?? 0.2,
-          max_tokens: params.taskType === "suggest_incoming_kpis" ? Math.min(params.maxTokens ?? 2048, 2048) : params.maxTokens ?? 2200,
+          ...(this.config.reasoningEffort === undefined ? {
+            temperature: params.temperature ?? 0.2,
+            max_tokens: params.taskType === "suggest_incoming_kpis" ? Math.min(params.maxTokens ?? 2048, 2048) : params.maxTokens ?? 2200
+          } : { reasoning_effort: this.config.reasoningEffort, max_completion_tokens: params.maxTokens ?? 8000 }),
           response_format: responseFormat,
           messages: [
             { role: "system", content: params.systemPrompt },

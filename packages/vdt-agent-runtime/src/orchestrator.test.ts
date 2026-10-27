@@ -394,6 +394,30 @@ function haulageBuildDecisions(): AgentDecision[] {
 }
 
 describe("VdtAgentRuntime decision loop", { timeout: 30_000 }, () => {
+  it("clears a previous KPI selection when a whole-tree instruction explicitly supplies null", async () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Output model", rootKpi: "Output", unit: "t" });
+    const project = builder.getProject();
+    const store = new AgentRunStore();
+    const run = store.createRun({
+      mode: "continue_project", providerId: "decision-test",
+      input: { project, rootKpi: "Output", selectedNodeId: project.rootNodeId },
+      options: { maxSteps: 2 }
+    });
+    const provider = scriptedProvider([{
+      type: "ask_user", statusMessage: "Reviewing the whole model.",
+      questions: [{ id: "review_goal", question: "What should the review prioritize?", reason: "Choose the review goal.", required: true, expectedAnswerType: "text" }]
+    }]);
+    const runtime = createVdtAgentRuntime({ store });
+    const snapshot = await runtime.handleMessage(run.runId, {
+      type: "user_instruction", text: "Review the whole model.", selectedNodeId: null
+    }, { provider });
+    expect(snapshot.request.input.selectedNodeId).toBeUndefined();
+    expect(provider.decisionInputs).toHaveLength(1);
+    expect(provider.decisionInputs[0]?.selectedNode).toBeUndefined();
+    expect(snapshot.chatMessages.find((message) => message.kind === "instruction")?.text).toBe("Review the whole model.");
+  });
+
   it("decomposes only the selected KPI's next level without creating a user chat instruction", async () => {
     const builder = new VdtBuilderSession({ now: () => "2026-08-10T00:00:00.000Z" });
     builder.createDraft({

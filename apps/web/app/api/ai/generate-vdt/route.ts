@@ -17,6 +17,7 @@ import {
 } from "@/lib/execution-mode-catalog";
 import { AGENT_DECISION_TIMEOUT_MAX_MS } from "@vdt-studio/local-runner/server-runtime";
 import { isMockProviderAllowed } from "@/lib/ai-route-provider";
+import { providerConnectionSchema, providerModelCapabilities, validatedReasoningConfig, ProviderConnectionError } from "../../agent/runs/provider-model-capabilities";
 
 interface GenerateVdtRequest extends GenerateVdtInput {
   providerId?: "mock" | "local_cli" | "openai_compatible" | "anthropic" | "azure_openai" | "gemini" | "local_runner";
@@ -84,7 +85,7 @@ function readProviderConfig(value: unknown) {
     providerConfig.apiKey = config.apiKey;
   }
   if (typeof config.model === "string" && config.model.trim()) {
-    providerConfig.model = config.model.trim().slice(0, 120);
+    providerConfig.model = config.model.trim().slice(0, 160);
   }
   for (const key of ["endpoint", "deployment", "apiVersion", "anthropicVersion"] as const) {
     if (typeof config[key] === "string" && config[key].trim()) {
@@ -365,6 +366,15 @@ export async function POST(request: Request) {
       );
     }
 
+    let probeReasoning: Record<string, unknown> = {};
+    const selectedReasoning = body.providerConfig?.modelReasoning;
+    if (connectionTest && selectedReasoning !== undefined && ["openai_compatible", "anthropic", "gemini", "azure_openai"].includes(body.providerId ?? "")) {
+      const connection = providerConnectionSchema.safeParse({ providerId: body.providerId, providerConfig: {
+        ...readProviderConfig(body.providerConfig), modelReasoning: selectedReasoning
+      } });
+      if (!connection.success) throw new ProviderConnectionError("Select a model and scoped API key before testing reasoning.");
+      probeReasoning = validatedReasoningConfig(await providerModelCapabilities(connection.data), selectedReasoning as boolean | string | number);
+    }
     let provider;
     if (body.providerId === "local_cli") {
       throw new Error("Subscription CLI execution must be routed through the local runner.");
@@ -401,6 +411,7 @@ export async function POST(request: Request) {
       }
 
       provider = new OpenAiCompatibleProvider({
+        ...probeReasoning,
         baseUrl: requestBaseUrl ?? envBaseUrl,
         apiKey,
         model: providerConfig.model ?? process.env.OPENAI_COMPATIBLE_MODEL ?? DEFAULT_OPENAI_COMPATIBLE_FALLBACK_MODEL
@@ -429,6 +440,7 @@ export async function POST(request: Request) {
         return modelListResponse(openAiOrAnthropicModelIds(payload));
       }
       provider = new AnthropicProvider({
+        ...probeReasoning,
         baseUrl,
         apiKey,
         model: providerConfig.model ?? process.env.ANTHROPIC_MODEL ?? DEFAULT_ANTHROPIC_FALLBACK_MODEL,
@@ -467,6 +479,7 @@ export async function POST(request: Request) {
         throw new Error("Azure OpenAI deployment is required.");
       }
       provider = new AzureOpenAiProvider({
+        ...probeReasoning,
         endpoint,
         apiKey,
         deployment,
@@ -493,6 +506,7 @@ export async function POST(request: Request) {
         return modelListResponse(geminiModelIds(payload));
       }
       provider = new GeminiProvider({
+        ...probeReasoning,
         baseUrl,
         apiKey,
         model: providerConfig.model ?? process.env.GEMINI_MODEL ?? "gemini-2.5-pro"
@@ -536,7 +550,7 @@ export async function POST(request: Request) {
           systemPrompt: "Return only structured JSON. Do not add commentary.",
           userPrompt: 'Connection test. Return exactly {"ok":true}.',
           temperature: 0,
-          maxTokens: 1024
+          maxTokens: selectedReasoning === undefined ? 1024 : typeof selectedReasoning === "number" ? Math.min(32768, selectedReasoning + 1024) : 4096
       }) as { ok?: unknown };
       if (output?.ok !== true) {
         throw new Error("Provider responded, but did not return the expected connection-test JSON.");
@@ -549,6 +563,7 @@ export async function POST(request: Request) {
       { status: 410 }
     );
   } catch (error) {
+    if (error instanceof ProviderConnectionError) return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     if (
       error instanceof Error &&
       (error.message.includes("base URL") ||

@@ -24,6 +24,7 @@ The previously referenced `Technical Specification for Codex.docx` is not presen
 | [`PRODUCT_SPEC.md`](PRODUCT_SPEC.md) | Current product contract and capability status |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Current package, runtime, persistence and data-flow architecture |
 | [`AI_HARNESS.md`](AI_HARNESS.md) | Model backends, agent runtime, tools, skills and research behavior |
+| [`AGENT_EVALUATION.md`](AGENT_EVALUATION.md) | Natural business cases, isolated evaluator expectations and limits of guided/mock evidence |
 | [`FORMULA_ENGINE.md`](FORMULA_ENGINE.md) | Supported formula/calculation contract and known unit limitations |
 | [`SMART_KPI_INCOMING_CONTRACT.md`](architecture/SMART_KPI_INCOMING_CONTRACT.md) | Formula/mixed draft, local compiler/unit rules, source lineage, v2 journal and legacy incoming-path boundary |
 | [`DATA_INGESTION.md`](DATA_INGESTION.md) | Raw-data discovery, supported formats, limitations and target baseline flow |

@@ -1,5 +1,37 @@
 # Agentic VDT Runtime Implementation Spec
 
+## Chat model/effort binding amendment (2026-10-26)
+
+The composer obtains models through the active CLI, API or local-runtime catalog
+contract. A discrete reasoning slider exposes only model-specific admitted levels;
+provider-default remains a separate position. Catalog availability does not imply
+chat-adapter qualification. Codex/Cursor host catalogs refresh on demand after
+60 seconds while retaining every existing immutable binding/engine.
+
+New chat runs may select an immutable Codex model/effort binding admitted from the
+authenticated host CLI catalog. The public request still contains only its opaque
+binding ID. The host pins the advertised effort with `model_reasoning_effort` on
+open, resume and envelope repair; no frontend-supplied command/config text is
+accepted. Default preserves the transport's model default. Exact effort matching
+is required, and active or paused runs cannot be retargeted by composer preference
+changes. The UI locks those choices until a new chat or terminal state. Ultra
+delegation is outside the current Gateway-only profile.
+
+API/local connections are checked automatically after settings and key hydration.
+A separate provider/endpoint/model preference retains exact boolean, named or
+numeric reasoning values. The new trusted-local same-origin
+`POST /api/agent/bindings/provider` boundary admits OpenAI-compatible, Anthropic,
+Gemini and Azure configurations only for approved endpoints, and local models
+only through manifest-owned endpoints and installed-model checks. Before binding,
+explicit reasoning must match current provider capabilities or bounded official
+model documentation; Default omits the override. No model/effort fallback is
+permitted. API pending bindings retain the existing 8 KiB/16-entry/60-second
+limits and one-use credential boundary; local model/value bindings carry no
+browser endpoint configuration. Public starts still carry only the opaque ID.
+Explicit API connection tests send the selected native value. Azure's unknown
+deployment capabilities do not fabricate controls. Smart reasoning, checkpoint
+authority, qualifications and default-off gates are unchanged.
+
 ## Local V1 skill workflow amendment (2026-10-25)
 
 The user-facing local workflow now provides managed skills and an explicit
@@ -59,6 +91,18 @@ The actor authors all business structure, equations and numerical choices. `vdt.
 Context containers are informational when declared with context children and left without a number/formula. Numerical calculation and formula backlogs skip those containers, while missing numerical reference leaves still block finish. The model receives their IDs explicitly; web cards/inspector show `Reference group`. Multiple direct root context leaves are a construction/finish error, not an import-shape error: legacy snapshots remain readable, and new agents must keep topical reference groups instead of flattening their columns at the root.
 
 Protected hierarchy acceptance uses effective references after literal-constant folding; references eliminated by multiplication by a literal/folded zero are rejected. Agents must classify independent derived checks as context instead of adding dummy formula terms. This does not replace dimensional or business-model review.
+
+Native Ollama new-tree construction treats routine checking as authorized by the
+creation request. Once calculable, pending validation/calculation/hierarchy
+checks precede clarification and finish. A transport-local, revision-scoped
+record uses successful admitted Gateway outputs, clears on edits or new intent,
+and never creates a finish receipt. After checking, missing business facts may
+still require clarification. The actor retains business review; the existing
+Gateway finish handshake and approval/scope rules remain authoritative.
+Before publishing a native construction question, one bounded review on the same
+model can replace an unnecessary confirmation with the actor's own action.
+Genuinely missing facts remain questions. This review is host guidance, not a
+human input, approval or new fact, and never executes the discarded proposal.
 
 ## Local source-tool implementation amendment (2026-10-17, experimental)
 
@@ -181,6 +225,29 @@ The agent should:
 9. Return a final VDT plus a short user-facing report explaining the structure.
 
 The dedicated semi-manual node-card decomposition shortcut has been removed from the editor. For compatibility callers of the bounded decomposition path, a structured `deepen_node` action is the user intent. It must not be represented as a fabricated user chat instruction. One invocation may create only the selected KPI's immediate child layer and update that selected KPI as needed; it must stop before expanding any new child. Unknown values are allowed for this bounded structural step, so the normal full-model calculability finish gate must not force recursive decomposition.
+
+## Selected KPI context (local amendment, 2026-10-26)
+
+An open VDT's composer shows
+the current selected name/unit. New chat input captures the selected node ID.
+Supervisor initial context includes `selectedNode`; each explicit follow-up
+resolves a fresh selected-node snapshot from the current builder and submits it
+with that instruction. A new selection supersedes the earlier selection for
+that message, including when multiple instructions are queued during inference.
+Visible user messages retain their original text. Context is bounded to 2,000
+serialized characters with an explicit identity-only fallback; missing selected
+nodes fail admission. Selection is reference context and grants no mutation,
+approval, scope or finish authority. Live model interpretation and packaged
+desktop qualification remain separate from context transport verification.
+
+The local composer additionally supports explicit dismissal using × or an empty
+canvas click. Dismissal is scoped to the current VDT/page session, preserves the
+draft and inspector, and lasts until another deliberate KPI selection. Explicit
+null start options suppress automatic selection fallback. A follow-up instruction
+may carry `selectedNodeId: null` to clear the runtime target; the Supervisor
+delivers `selectedNode: null` and whole-tree guidance in that message's queued
+context. Omission remains compatible with existing callers. The structured
+`deepen_node` action still requires a non-empty target ID.
 
 ## Non-Goals
 

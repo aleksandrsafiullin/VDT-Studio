@@ -164,7 +164,8 @@ export function LocalCliSettings() {
   }, [removedNotice]);
 
   useEffect(() => {
-    if (hasAttemptedInitialScan.current || cliDetectionAgents !== undefined || isRescanningClis) {
+    const hasFullCatalog = CLI_CATALOG.every((entry) => cliDetectionAgents?.some((agent) => agent.id === entry.id));
+    if (hasAttemptedInitialScan.current || hasFullCatalog || isRescanningClis) {
       return;
     }
 

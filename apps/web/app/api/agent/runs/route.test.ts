@@ -678,7 +678,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     }
   });
 
-  it("rejects a model mutation made stale during inference and sends a reconciliation delta", async () => {
+  it("reconciles a stale mutation and binds each queued instruction to its selected KPI", async () => {
     const toolCatalogHash = currentModelAgentToolCatalogHash();
     const capability: Extract<AgentCapabilityProfile, { executionProfile: "model_agent" }> = {
       schemaVersion: 1,
@@ -707,6 +707,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     };
     const initialBuilder = new VdtBuilderSession({ now: () => "2026-08-26T10:00:00.000Z" });
     initialBuilder.createDraft({ projectTitle: "Ore hauled", rootKpi: "Ore hauled" });
+    initialBuilder.addDriver({ parentNodeId: initialBuilder.getProject().rootNodeId, nodeId: "payload", name: "Payload", type: "input", unit: "t", baselineValue: 0, relation: "positive_driver" });
     const initialProject = initialBuilder.getProject();
     const rootNodeId = initialProject.rootNodeId;
     let resolveInference!: (response: Response) => void;
@@ -757,13 +758,17 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     try {
       const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
         mode: "generate_vdt",
-        input: { rootKpi: "Ore hauled", project: initialProject },
+        input: { rootKpi: "Ore hauled", prompt: "Explain the selected KPI.", project: initialProject, selectedNodeId: rootNodeId },
         executionBindingId: bindingId
       }));
       const body = await readJson(response);
       expect(response.status).toBe(200);
       await waitForProviderCalls(providerFetch, 1);
       expect(providerFetch).toHaveBeenCalledTimes(1);
+
+      const firstProviderBody = JSON.parse(String((providerFetch.mock.calls[0]?.[1] as RequestInit).body)) as { messages: Array<{ role: string; content: string }> };
+      const firstPrompt = JSON.parse(firstProviderBody.messages.find((message) => message.role === "user")!.content);
+      expect(firstPrompt.delta.context.selectedNode).toMatchObject({ id: rootNodeId, name: "Ore hauled", childIds: ["payload"] });
 
       const manualResponse = await postMessage(jsonRequest(
         `http://localhost:3000/api/agent/runs/${body.runId}/messages`,
@@ -780,14 +785,35 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       ), { params: Promise.resolve({ runId: body.runId! }) });
       expect(manualResponse.status).toBe(200);
 
+      const missingSelectionResponse = await postMessage(jsonRequest(
+        `http://localhost:3000/api/agent/runs/${body.runId}/messages`,
+        { type: "user_instruction", text: "Explain this KPI.", selectedNodeId: "deleted-kpi" }
+      ), { params: Promise.resolve({ runId: body.runId! }) });
+      expect(missingSelectionResponse.status).toBe(409);
+      expect(await readJson(missingSelectionResponse)).toMatchObject({ error: { code: "MODEL_AGENT_SELECTED_NODE_MISSING" } });
+
+      const selectedPayloadResponse = await postMessage(jsonRequest(
+        `http://localhost:3000/api/agent/runs/${body.runId}/messages`,
+        { type: "user_instruction", text: "Explain this KPI.", selectedNodeId: "payload" }
+      ), { params: Promise.resolve({ runId: body.runId! }) });
+      expect(selectedPayloadResponse.status).toBe(200);
+
       const queuedInstructionResponse = await postMessage(jsonRequest(
         `http://localhost:3000/api/agent/runs/${body.runId}/messages`,
         {
           type: "user_instruction",
-          text: "Keep the manually revised root name in the next checkpoint."
+          text: "Keep the manually revised root name in the next checkpoint.",
+          selectedNodeId: rootNodeId,
+          personalisation: { userInstructions: "Reply in Russian." }
         }
       ), { params: Promise.resolve({ runId: body.runId! }) });
       expect(queuedInstructionResponse.status).toBe(200);
+
+      const wholeTreeResponse = await postMessage(jsonRequest(
+        `http://localhost:3000/api/agent/runs/${body.runId}/messages`,
+        { type: "user_instruction", text: "Review the whole model.", selectedNodeId: null }
+      ), { params: Promise.resolve({ runId: body.runId! }) });
+      expect(wholeTreeResponse.status).toBe(200);
 
       resolveInference(openAiStructuredResponse({
         turnId: "stale-turn",
@@ -843,11 +869,27 @@ describe("agent runs API", { timeout: 30_000 }, () => {
           },
           results: [expect.objectContaining({ resultCode: "STALE_REVISION" })]
         },
-        inputs: [{
-          type: "user_instruction",
-          text: "Keep the manually revised root name in the next checkpoint."
-        }]
+        inputs: [
+          { type: "user_instruction", text: expect.stringContaining("Current user request:\nExplain this KPI.") },
+          { type: "user_instruction", text: expect.stringContaining("Current user request:\nKeep the manually revised root name in the next checkpoint.") },
+          { type: "user_instruction", text: expect.stringContaining("Current user request:\nReview the whole model.") }
+        ]
       });
+      const queuedInputs = secondPrompt.delta.inputs!;
+      expect(queuedInputs[0]!.text).toContain('"id":"payload"');
+      expect(queuedInputs[0]!.text).toContain('"name":"Payload"');
+      expect(queuedInputs[0]!.text).toContain('"unit":"t"');
+      expect(queuedInputs[0]!.text).toContain('"baselineValue":0');
+      expect(queuedInputs[1]!.text).toContain(`"id":"${rootNodeId}"`);
+      expect(queuedInputs[1]!.text).toContain('"name":"Manually updated Ore hauled"');
+      expect(queuedInputs[1]!.text).toContain("Reply in Russian.");
+      expect(queuedInputs[2]!.text).toContain('"selectedNode":null');
+      expect(queuedInputs[2]!.text).toContain("The prior KPI selection is cleared.");
+      expect(queuedInputs[2]!.text).not.toContain(`"id":"${rootNodeId}"`);
+      expect(agentRuntime.store.getState(body.runId!).request.input.selectedNodeId).toBeUndefined();
+      expect(agentRuntime.store.getState(body.runId!).chatMessages.filter((message) => message.role === "user").map((message) => message.text)).toEqual([
+        "Explain the selected KPI.", "Explain this KPI.", "Keep the manually revised root name in the next checkpoint.", "Review the whole model."
+      ]);
 
       const project = agentRuntime.store.getState(body.runId!).builder!.getProject();
       expect(project.graph.nodes.map((node) => node.id)).not.toContain("must_not_be_added");

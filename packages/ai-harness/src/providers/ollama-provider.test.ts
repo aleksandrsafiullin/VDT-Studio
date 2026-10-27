@@ -32,7 +32,7 @@ describe("native Ollama structured provider", () => {
     expect(init?.headers).not.toHaveProperty("authorization");
     expect(JSON.parse(String(init?.body))).toMatchObject({
       model: "qwen3:8b", stream: true, format: "json",
-      options: { num_ctx: 16_384, num_predict: 4_096 }
+      options: { num_ctx: 16_384, num_predict: 8_000 }
     });
     expect(JSON.parse(String(init?.body))).not.toHaveProperty("think");
     expect(JSON.parse(String(init?.body)).options).not.toHaveProperty("temperature");

@@ -22,12 +22,13 @@ const localStorageMock = (() => {
 
 vi.stubGlobal("localStorage", localStorageMock);
 
-const { shouldContinueOpenVdt, useVdtStudioStore, filterAgentChatHistoryForVdt, purgeAgentChatHistoryForVdt } = await import("./vdt-store");
+const { selectedNodeForAgentChat, shouldContinueOpenVdt, useVdtStudioStore, filterAgentChatHistoryForVdt, purgeAgentChatHistoryForVdt } = await import("./vdt-store");
 import * as vdtStorageClient from "@/lib/vdt-storage-client";
 
 beforeEach(() => {
   useVdtStudioStore.setState({
     personalisation: { instructions: [] },
+    chatKpiContextExcludedVdtId: undefined,
     isGenerating: false,
     generateActivity: undefined,
     agentChatHistory: [],
@@ -145,14 +146,17 @@ function respondAgentRunsEndpoint(
   init: RequestInit | undefined,
   options: {
     bindings?: ReturnType<typeof agentExecutionBindingsGetResponse>;
+    admission?: Response | undefined;
     onPost: (init?: RequestInit) => Response | Promise<Response>;
   }
 ): Response | Promise<Response> | null {
-  if (url.endsWith("/api/agent/bindings/openai") && init?.method === "POST") {
+  if (url.endsWith("/api/agent/bindings/provider") && init?.method === "POST") {
+    if (options.admission) return options.admission;
     const body = JSON.parse(String(init.body));
     return jsonResponse({ ok: true, binding: {
-      bindingId: "openai_byok_session_test", executionProfile: "model_agent",
-      backendId: "openai_compatible", modelId: body.model
+      bindingId: "api_byok_session_test", executionProfile: "model_agent",
+      backendId: body.providerId, modelId: body.providerConfig.model,
+      modelReasoning: body.providerConfig.modelReasoning
     } });
   }
   if (!url.endsWith("/api/agent/runs")) return null;
@@ -164,7 +168,8 @@ function respondAgentRunsEndpoint(
 
 function mockAgentStartFetch(
   runId = "agent-run-start-1",
-  bindings: ReturnType<typeof agentExecutionBindingsGetResponse> = agentExecutionBindingsGetResponse()
+  bindings: ReturnType<typeof agentExecutionBindingsGetResponse> = agentExecutionBindingsGetResponse(),
+  admission?: Response
 ) {
   const fetchMock = vi.mocked(fetch);
   vi.stubGlobal("EventSource", class {
@@ -175,6 +180,7 @@ function mockAgentStartFetch(
     const url = String(input);
     const agentRunsResponse = respondAgentRunsEndpoint(url, init, {
       bindings,
+      admission,
       onPost: (postInit) => ({
         ok: true,
         status: 200,
@@ -418,7 +424,7 @@ describe("vdt-store change-set workflow", () => {
     await useVdtStudioStore.getState().startAgentRun(prompt, { mode, researchMode: "on" });
 
     const body = parseAgentStartBody(fetchMock);
-    expect(body.executionBindingId).toBe("openai_byok_session_test");
+    expect(body.executionBindingId).toBe("api_byok_session_test");
     expect(body).not.toHaveProperty("providerId");
     expect(body).not.toHaveProperty("providerConfig");
     expect((body as { options?: { researchMode?: string } }).options?.researchMode).toBe("on");
@@ -431,8 +437,9 @@ describe("vdt-store change-set workflow", () => {
     ]);
   });
 
-  it("startAgentRun fails locally for a custom BYOK gateway when no server binding is available", async () => {
-    const fetchMock = mockAgentStartFetch("agent-run-unbound", agentExecutionBindingsGetResponse({ empty: true }));
+  it("startAgentRun stops when the trusted host rejects a custom BYOK endpoint", async () => {
+    const fetchMock = mockAgentStartFetch("agent-run-unbound", agentExecutionBindingsGetResponse({ empty: true }),
+      jsonResponse({ ok: false, error: "This custom endpoint must be configured on the trusted host before API chat can use it." }, 400));
     useVdtStudioStore.setState({
       executionSettings: { ...byokExecutionSettings(), gatewayPresetId: "custom", customizeBaseUrl: true, baseUrl: "https://gateway.example/v1" },
       brief: {
@@ -454,14 +461,15 @@ describe("vdt-store change-set workflow", () => {
         ([url, init]) => String(url).endsWith("/api/agent/runs") && init?.method === "POST"
       )
     ).toBe(false);
-    expect(useVdtStudioStore.getState().agentError).toMatch(/server-managed execution binding/i);
+    expect(useVdtStudioStore.getState().agentError).toMatch(/configured on the trusted host/i);
     expect(useVdtStudioStore.getState().isGenerating).toBe(false);
   });
 
-  it("startAgentRun fails locally for a custom BYOK gateway when the binding backend does not match", async () => {
+  it("startAgentRun rejects an admitted binding whose backend does not match the selected API", async () => {
     const fetchMock = mockAgentStartFetch(
       "agent-run-mismatch",
-      agentExecutionBindingsGetResponse({ backendId: "mock" })
+      agentExecutionBindingsGetResponse({ backendId: "mock" }),
+      jsonResponse({ ok: true, binding: { bindingId: "api_byok_session_wrong", executionProfile: "model_agent", backendId: "mock", modelId: "gpt-test" } })
     );
     useVdtStudioStore.setState({
       executionSettings: { ...byokExecutionSettings(), gatewayPresetId: "custom", customizeBaseUrl: true, baseUrl: "https://gateway.example/v1" },
@@ -484,7 +492,7 @@ describe("vdt-store change-set workflow", () => {
         ([url, init]) => String(url).endsWith("/api/agent/runs") && init?.method === "POST"
       )
     ).toBe(false);
-    expect(useVdtStudioStore.getState().agentError).toMatch(/server-managed execution binding/i);
+    expect(useVdtStudioStore.getState().agentError).toMatch(/did not match the selected model and reasoning/i);
     expect(useVdtStudioStore.getState().isGenerating).toBe(false);
   });
 
@@ -493,11 +501,11 @@ describe("vdt-store change-set workflow", () => {
     useVdtStudioStore.setState({ executionSettings: byokExecutionSettings(), brief: { rootKpi: "Excavation", unit: "t", timePeriod: "Year" } });
     await expect(useVdtStudioStore.getState().startAgentRun("Build the draft")).resolves.toBe(true);
     const body = parseAgentStartBody(fetchMock);
-    expect(body.executionBindingId).toBe("openai_byok_session_test");
+    expect(body.executionBindingId).toBe("api_byok_session_test");
     expect(body).not.toHaveProperty("providerConfig");
     expect(JSON.stringify(body)).not.toContain("test-key");
-    const admission = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/agent/bindings/openai"));
-    expect(JSON.parse(String(admission?.[1]?.body))).toMatchObject({ apiKey: "test-key", model: "gpt-test" });
+    const admission = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/agent/bindings/provider"));
+    expect(JSON.parse(String(admission?.[1]?.body))).toMatchObject({ operation: "admit", providerId: "openai_compatible", providerConfig: { apiKey: "test-key", model: "gpt-test" } });
   });
 
   it("startAgentRun can select a discovered server binding without sending provider authority", async () => {
@@ -744,6 +752,57 @@ describe("vdt-store change-set workflow", () => {
     expect(useVdtStudioStore.getState().isGenerating).toBe(false);
   });
 
+  it.each(["calendar_time", "unplanned_downtime", "deleted-kpi"])("new chat captures the current valid selection %s for an open VDT", async (selectedNodeId) => {
+    mockAgentStartFetch("agent-run-selected-kpi");
+    useVdtStudioStore.setState({
+      project: cloneProject(productionVolumeProject),
+      selectedNodeId,
+      workspace: { ...useVdtStudioStore.getState().workspace, activeProjectId: "selected-kpi-project", activeVdtId: "selected-kpi-vdt" },
+      executionSettings: byokExecutionSettings()
+    });
+
+    expect(await useVdtStudioStore.getState().startAgentRun("Explain this KPI.")).toBe(true);
+    const body = parseAgentStartBody(vi.mocked(fetch));
+    expect(body.mode).toBe("continue_project");
+    expect(body.input?.project).toMatchObject({ id: productionVolumeProject.id });
+    expect(body.input).toMatchObject({ prompt: "Explain this KPI." });
+    expect((body.input as { selectedNodeId?: string }).selectedNodeId).toBe(selectedNodeId === "deleted-kpi" ? undefined : selectedNodeId);
+  });
+
+  it("clears only the current tree's chat KPI context and restores it on a deliberate selection", () => {
+    useVdtStudioStore.setState({
+      project: cloneProject(productionVolumeProject), selectedNodeId: "calendar_time",
+      workspace: { ...useVdtStudioStore.getState().workspace, activeVdtId: "context-tree-a" }
+    });
+    useVdtStudioStore.getState().clearAgentKpiContext();
+    expect(useVdtStudioStore.getState().selectedNodeId).toBe("calendar_time");
+    expect(selectedNodeForAgentChat(useVdtStudioStore.getState())).toBeUndefined();
+    useVdtStudioStore.setState({ aiError: "Unrelated update" });
+    expect(selectedNodeForAgentChat(useVdtStudioStore.getState())).toBeUndefined();
+    useVdtStudioStore.setState({ workspace: { ...useVdtStudioStore.getState().workspace, activeVdtId: "context-tree-b" } });
+    expect(selectedNodeForAgentChat(useVdtStudioStore.getState())?.id).toBe("calendar_time");
+    useVdtStudioStore.setState({ workspace: { ...useVdtStudioStore.getState().workspace, activeVdtId: "context-tree-a" } });
+    expect(selectedNodeForAgentChat(useVdtStudioStore.getState())).toBeUndefined();
+    useVdtStudioStore.getState().selectNode("calendar_time");
+    expect(selectedNodeForAgentChat(useVdtStudioStore.getState())?.id).toBe("calendar_time");
+  });
+
+  it.each(["dismissed", "explicit_null"])("starts a whole-tree chat without restoring the inspector selection: %s", async (scope) => {
+    mockAgentStartFetch("agent-run-whole-tree");
+    useVdtStudioStore.setState({
+      project: cloneProject(productionVolumeProject), selectedNodeId: "calendar_time",
+      workspace: { ...useVdtStudioStore.getState().workspace, activeProjectId: "context-project", activeVdtId: "context-tree" },
+      executionSettings: byokExecutionSettings()
+    });
+    if (scope === "dismissed") useVdtStudioStore.getState().clearAgentKpiContext();
+    expect(await useVdtStudioStore.getState().startAgentRun("Review the whole model.", scope === "explicit_null" ? { selectedNodeId: null } : undefined)).toBe(true);
+    const body = parseAgentStartBody(vi.mocked(fetch));
+    expect(body.mode).toBe("continue_project");
+    expect(body.input?.project).toMatchObject({ id: productionVolumeProject.id });
+    expect(body.input).not.toHaveProperty("selectedNodeId");
+    expect(useVdtStudioStore.getState().selectedNodeId).toBe("calendar_time");
+  });
+
   it("startAgentRun with empty graph uses generate_vdt without input.project", async () => {
     mockAgentStartFetch("agent-run-generate-empty");
     useVdtStudioStore.setState({
@@ -769,6 +828,7 @@ describe("vdt-store change-set workflow", () => {
     const body = parseAgentStartBody(vi.mocked(fetch));
     expect(body.mode).toBe("generate_vdt");
     expect(body.input?.project).toBeUndefined();
+    expect(body.input).not.toHaveProperty("selectedNodeId");
     expect(body.workspace?.vdtId).toBeUndefined();
   });
 
@@ -827,7 +887,7 @@ describe("vdt-store change-set workflow", () => {
     });
   });
 
-  it("sendAgentInstruction sends researchMode for the active agent run", async () => {
+  it.each(["calendar_time", null])("sendAgentInstruction preserves research mode and explicit KPI scope %s", async (selectedNodeId) => {
     const runId = "agent-run-research-mode";
     let capturedMessageBody: unknown;
     const fetchMock = vi.mocked(fetch);
@@ -861,7 +921,7 @@ describe("vdt-store change-set workflow", () => {
 
     const accepted = await useVdtStudioStore.getState().sendAgentInstruction(
       "Continue without web research.",
-      "calendar_time",
+      selectedNodeId,
       "off"
     );
 
@@ -869,7 +929,7 @@ describe("vdt-store change-set workflow", () => {
     expect(capturedMessageBody).toMatchObject({
       type: "user_instruction",
       text: "Continue without web research.",
-      selectedNodeId: "calendar_time",
+      selectedNodeId,
       researchMode: "off"
     });
   });
@@ -1553,6 +1613,18 @@ describe("vdt-store cli rescan", () => {
     expect(agent?.status).toBe("ready");
     expect(agent?.authSummary).toMatch(/authenticated/i);
     expect(useVdtStudioStore.getState().cliDiscoveredModelsByAgent["cursor-agent"]).toEqual(["auto"]);
+  });
+
+  it("persists and hydrates the selected Codex model/effort pair, and clears effort on a new model", () => {
+    useVdtStudioStore.getState().setSelectedCliAgentId("codex");
+    useVdtStudioStore.getState().setCliModelForAgent("codex", { source: "custom", customModel: "model-a", reasoningEffort: "high" });
+    const saved = JSON.parse(localStorageMock.getItem("vdt-studio-state")!).state;
+    const hydrated = useVdtStudioStore.persist.getOptions().merge!(saved, {
+      ...useVdtStudioStore.getState(), executionSettings: { ...DEFAULT_EXECUTION_SETTINGS }, cliModelByAgent: {}
+    });
+    expect(hydrated.executionSettings.cliModelSelection).toEqual({ source: "custom", customModel: "model-a", reasoningEffort: "high" });
+    useVdtStudioStore.getState().setCliModelForAgent("codex", { source: "custom", customModel: "model-b" });
+    expect(useVdtStudioStore.getState().executionSettings.cliModelSelection?.reasoningEffort).toBeUndefined();
   });
 
   it("stores live models returned by CLI detection", async () => {

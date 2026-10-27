@@ -109,6 +109,27 @@ function expectCodexOmitted(
 }
 
 describe("CodexResumeCheckpointTransport", () => {
+  it.each(["low", "high", "max"] as const)("passes the host-pinned %s reasoning effort to both open and resume", async (reasoningEffort) => {
+    const env = await environment();
+    const runner = new FakeRunner(() => ({ exitCode: 0, signal: null, stderr: "", stdout: codexStream("reasoning-session") }));
+    const transport = new CodexResumeCheckpointTransport({ executable: "/opt/codex/codex", validatedCliVersion: "0.146.0", runner, reasoningEffort });
+    for (const mode of ["open", "resume"] as const) {
+      await transport.executeSegment({ mode, environment: env, model: "gpt-test", prompt: "task", signal: new AbortController().signal,
+        ...(mode === "resume" ? { expectedSessionId: "reasoning-session" } : {}) }, ["vdt.echo"]);
+    }
+    expect(runner.requests).toHaveLength(2);
+    for (const request of runner.requests) {
+      expect(request.args).toContain(`model_reasoning_effort="${reasoningEffort}"`);
+      expect(request.args).toContain("features.shell_tool=false");
+      expect(request.args).toContain("gpt-test");
+    }
+  });
+
+  it.each(["ultra", 'high" -c features.shell_tool=true'])("rejects unsupported or unbounded effort %s before a child can spawn", (reasoningEffort) => {
+    expect(() => new CodexResumeCheckpointTransport({ executable: "/opt/codex/codex", validatedCliVersion: "0.146.0",
+      reasoningEffort: reasoningEffort as "high" })).toThrow("reasoning effort is not supported");
+  });
+
   it("decodes serialized arguments in the already accepted direct-calls envelope without repair", async () => {
     const env = await environment();
     const turn = JSON.parse(checkpointTurn());

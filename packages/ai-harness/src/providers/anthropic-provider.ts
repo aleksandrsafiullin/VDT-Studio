@@ -37,7 +37,7 @@ export class AnthropicProvider implements AiProvider {
               input_schema: jsonSchema
             }
           ],
-          tool_choice: { type: "tool", name: STRUCTURED_OUTPUT_TOOL }
+          tool_choice: this.config.reasoningEffort === undefined ? { type: "tool", name: STRUCTURED_OUTPUT_TOOL } : { type: "auto" }
         }
       : {};
 
@@ -59,7 +59,10 @@ export class AnthropicProvider implements AiProvider {
         body: JSON.stringify({
           model: params.model ?? this.config.model,
           max_tokens: params.taskType === "suggest_incoming_kpis" ? Math.min(params.maxTokens ?? 2048, 2048) : params.maxTokens ?? 2200,
-          temperature: params.temperature ?? 0.2,
+          ...(this.config.reasoningEffort === undefined ? { temperature: params.temperature ?? 0.2 } : {
+            output_config: { effort: this.config.reasoningEffort },
+            ...(this.config.adaptiveThinking ? { thinking: { type: "adaptive" } } : {})
+          }),
           system: params.systemPrompt,
           messages: [
             {

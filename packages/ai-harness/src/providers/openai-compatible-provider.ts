@@ -8,10 +8,10 @@ function parseJsonResponse(raw: string) {
   return JSON.parse(fenced?.[1] ?? trimmed) as unknown;
 }
 
-function completionParameters(model: string, params: AiCompletionParams<unknown>) {
+function completionParameters(model: string, params: AiCompletionParams<unknown>, reasoningEffort?: string) {
   // Reasoning model families reject legacy max_tokens and can reject sampling
   // overrides at their default reasoning effort. Keep the provider's effort.
-  if (/^(?:o[134](?:-|$)|gpt-(?:5|6)(?:[.-]|$))/i.test(model)) {
+  if (reasoningEffort !== undefined || /^(?:o[134](?:-|$)|gpt-(?:5|6)(?:[.-]|$))/i.test(model)) {
     return { max_completion_tokens: params.maxTokens ?? 2200 };
   }
   return { temperature: params.temperature ?? 0.2, max_tokens: params.maxTokens ?? 2200 };
@@ -56,7 +56,8 @@ export class OpenAiCompatibleProvider implements AiProvider {
           },
           body: JSON.stringify({
             model,
-            ...completionParameters(model, smart ? { ...params, maxTokens: Math.min(params.maxTokens ?? 2048, 2048) } : params),
+            ...(this.config.reasoningEffort === undefined ? {} : { reasoning_effort: this.config.reasoningEffort }),
+            ...completionParameters(model, smart ? { ...params, maxTokens: Math.min(params.maxTokens ?? 2048, 2048) } : params, this.config.reasoningEffort),
             response_format: responseFormat,
             messages: retainContext
               ? this.conversation.messages(`${params.systemPrompt}${responseFormat.type === "json_object" && jsonSchema ? `\n\nReturn JSON matching this exact response schema:\n${JSON.stringify(jsonSchema)}` : ""}`, userPrompt)

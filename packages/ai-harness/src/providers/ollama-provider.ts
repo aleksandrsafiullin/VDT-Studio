@@ -13,7 +13,7 @@ export class OllamaProvider implements AiProvider {
     baseUrl: string;
     model: string;
     fetch?: AiProviderFetch | undefined;
-    think?: boolean | undefined;
+    think?: boolean | string | undefined;
   }) {}
 
   async completeStructured<TInput, TOutput>(params: AiCompletionParams<TInput>): Promise<TOutput> {
@@ -47,7 +47,7 @@ export class OllamaProvider implements AiProvider {
           format: asJsonSchema(params.schema) ?? "json",
           options: {
             num_ctx: 16_384,
-            num_predict: Math.min(params.maxTokens ?? 4_096, 4_096),
+            num_predict: Math.min(params.maxTokens ?? 4_096, 32_768),
             ...(params.temperature === undefined ? {} : { temperature: params.temperature })
           },
           messages: this.conversation.messages(params.systemPrompt, params.userPrompt)

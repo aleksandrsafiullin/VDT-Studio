@@ -1,4 +1,5 @@
 import type { ProxyProvider } from "./provider-target-security";
+import type { ReasoningEffort } from "@vdt-studio/model-bridge";
 import { stripSessionOnlySecrets } from "./session-secrets";
 
 export type ExecutionMode = "local_cli" | "byok";
@@ -26,6 +27,7 @@ export type MemoryModelMode = "same_as_chat" | "selected_cli";
 export interface CliModelSelection {
   source: "agent_default" | "custom";
   customModel?: string | undefined;
+  reasoningEffort?: ReasoningEffort | undefined;
 }
 
 export type AnthropicPresetId =
@@ -95,6 +97,7 @@ export interface LocalRunnerPresetCatalogEntry {
 }
 
 export interface ExecutionSettings {
+  modelReasoningBySource?: Record<string, boolean | string | number> | undefined;
   executionMode: ExecutionMode;
   selectedCliAgentId?: CliAgentId | undefined;
   localRunnerPresetId?: LocalRunnerPresetId | undefined;

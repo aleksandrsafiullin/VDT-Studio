@@ -300,7 +300,7 @@ export class VdtAgentRuntime {
           },
           input: {
             ...state.request.input,
-            selectedNodeId: message.selectedNodeId ?? state.request.input.selectedNodeId,
+            selectedNodeId: message.selectedNodeId === null ? undefined : message.selectedNodeId ?? state.request.input.selectedNodeId,
             ...(message.personalisation ? { personalisation: message.personalisation } : {}),
             businessContext: [state.request.input.businessContext, `User instruction: ${text}`]
               .filter(Boolean)

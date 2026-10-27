@@ -593,7 +593,7 @@ export type AgentUserMessage =
       type: "user_instruction";
       text: string;
       personalisation?: import("@vdt-studio/vdt-core").AiPersonalisation | undefined;
-      selectedNodeId?: string | undefined;
+      selectedNodeId?: string | null | undefined;
       researchMode?: ResearchMode | undefined;
     }
   | {

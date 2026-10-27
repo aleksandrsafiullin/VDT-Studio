@@ -1,8 +1,10 @@
+import { LocalModelVerification, type LocalModelVerificationProgress } from "./local-model-verification";
+
 type JsonObject = Record<string, unknown>;
 const isObject = (value: unknown): value is JsonObject => !!value && typeof value === "object" && !Array.isArray(value);
 export const LOCAL_MODEL_UPFRONT_TOOLS = new Set([
   "tools.describe", "data.list_sources", "data.inspect", "data.read_rows", "data.aggregate", "data.write_inputs", "run.request_finish", "vdt.update_node", "vdt.set_formula",
-  "vdt.fill_input_values_batch", "vdt.add_driver", "vdt.add_drivers_batch",
+  "vdt.fill_input_values_batch", "vdt.add_driver", "vdt.add_drivers_batch", "vdt.validate", "vdt.calculate",
   "skill.list", "skill.search", "skill.read", "skill.select", "skill.compile_recipe", "skill.seed_draft_from_recipe", "skill.seed_topology", "excavation.seed_topology"
   ,"vdt.set_decomposition_plan", "vdt.inspect_hierarchy", "vdt.reparent_branch"
 ]);
@@ -24,15 +26,22 @@ export class LocalModelOutputSchema {
   private callableNames: string[] | undefined;
   private readonly datasets = new Map<string, Map<string,string[]>>();
   private sourcesListed = false;
+  private readonly verification = new LocalModelVerification();
 
   availableToolNames(): string[] { return this.callableNames ?? [...this.tools.keys()]; }
+  verificationProgress(): LocalModelVerificationProgress | undefined { return this.verification.progress(); }
 
   forPrompt(schema: unknown, prompt: string, workingContext?: unknown): unknown {
     let input: unknown;
     try { input = JSON.parse(prompt); } catch { /* Ordinary provider calls have no tool catalog. */ }
     if (isObject(input) && isObject(input.delta)) this.observe(input.delta);
     const observation = isObject(workingContext) ? workingContext : undefined;
+    this.verification.observe(isObject(input) ? input.delta : undefined, observation?.revision, this.admittedNames);
+    const verification = observation?.constructingTree === true && observation.projectReadyForFinish === true
+      ? this.verification.progress() : undefined;
     const eligible = [...this.tools].filter(([name]) => {
+      if (verification?.completed.some((tool) => tool === name)) return false;
+      if (name === "run.request_finish" && verification?.pending.length) return false;
       if(observation?.hierarchyRequired===true&&observation.hasDecompositionPlan===false&&["vdt.add_driver","vdt.add_drivers_batch","skill.seed_topology","skill.seed_draft_from_recipe","excavation.seed_topology","vdt.instantiate_subtree"].includes(name))return false;
       if(name==="data.list_sources"&&this.sourcesListed)return false;
       if(name==="data.inspect"&&this.datasets.size&&[...this.datasets.values()].every(t=>t.size))return false;
@@ -90,6 +99,10 @@ export class LocalModelOutputSchema {
       if (this.initialized && kind === "final" && !this.finishReceiptId) return [];
       if (this.finishReceiptId && kind !== "final") return [];
       if (this.finishReceiptId && isObject(alternative.properties.finishReceiptId)) alternative.properties.finishReceiptId.const = this.finishReceiptId;
+      // Run the already authorized read-only checks before deciding whether
+      // business clarification is needed. Once checked, real questions remain
+      // available; calculability alone does not establish business completeness.
+      if (kind === "question" && verification?.pending.length) return [];
       if (isObject(alternative.properties.type) && alternative.properties.type.const === "question"
         && observation?.constructingTree === true && observation.needsStructure === true && observation.hasReadSkill === false
         && isObject(input) && isObject(input.delta) && (input.delta.type !== "initial_context" || observation.canClarifyBeforeDiscovery === false)) return [];

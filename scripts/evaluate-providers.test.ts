@@ -64,7 +64,8 @@ describe("provider evaluation gate", () => {
     const reportPath = path.join(dir, "report.json");
     const report = await runProviderEvaluation({ providerId: "mock", reportPath });
 
-    expect(report).toMatchObject({ ok: true, providerId: "mock", caseCount: 20, passed: 20, failed: 0 });
+    expect(report).toMatchObject({ ok: true, providerId: "mock", caseCount: 20, passed: 20, failed: 0,
+      evaluationClass: "mock_structured_generation_contract", agentAutonomyAssessed: false });
     expect(report.results.every((entry) => entry.nodeCount >= 6 && entry.edgeCount >= 5)).toBe(true);
     expect(report.results.every((entry) => entry.generatedRootKpi === entry.expectedRootKpi)).toBe(true);
     expect(report.results.every((entry) => entry.generatedRootUnit === entry.expectedRootUnit)).toBe(true);

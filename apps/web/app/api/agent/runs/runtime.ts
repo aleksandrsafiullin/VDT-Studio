@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
+import { getSubscriptionCliAdapter, isCheckpointReasoningEffort, type ReasoningEffort, type SubscriptionCliModelOption } from "@vdt-studio/model-bridge";
 import {
   AgentRunStore,
   AgentRunStateSupervisorPersistence,
@@ -58,7 +59,17 @@ const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtExternalAgentEngines?: Map<string, AgentExecutionEngine>;
   __vdtCursorSessionBindingProbe?: Promise<void>;
   __vdtCliSessionRegistrationOutcomes?: Map<CliSessionRegistrarKey, CliSessionRegistrationOutcome>;
+  __vdtCliSessionRegistrationTimes?: Map<CliSessionRegistrarKey, number>;
+  __vdtCliReasoningRegistrationVersion?: number;
 };
+
+// Re-admit additive model/effort bindings once after development hot reload.
+// Existing immutable bindings and running sessions retain their original engine.
+if (runtimeGlobal.__vdtCliReasoningRegistrationVersion !== 2) {
+  runtimeGlobal.__vdtCliSessionRegistrationOutcomes?.delete("codex");
+  runtimeGlobal.__vdtCliSessionRegistrationOutcomes?.delete("cursor");
+  runtimeGlobal.__vdtCliReasoningRegistrationVersion = 2;
+}
 
 const CLI_SESSION_REGISTRAR_KEYS = ["cursor", "codex", "claude"] as const;
 type CliSessionRegistrarKey = typeof CLI_SESSION_REGISTRAR_KEYS[number];
@@ -72,11 +83,14 @@ function cliSessionRegistrationOutcomes(): Map<CliSessionRegistrarKey, CliSessio
   return runtimeGlobal.__vdtCliSessionRegistrationOutcomes;
 }
 
+function cliSessionRegistrationNeeded(key: CliSessionRegistrarKey): boolean {
+  const outcome = cliSessionRegistrationOutcomes().get(key);
+  return (outcome !== "registered" && outcome !== "absent") ||
+    Date.now() - (runtimeGlobal.__vdtCliSessionRegistrationTimes?.get(key) ?? 0) >= 60_000;
+}
+
 function cliSessionRegistrationProbeNeeded(): boolean {
-  return CLI_SESSION_REGISTRAR_KEYS.some((key) => {
-    const outcome = cliSessionRegistrationOutcomes().get(key);
-    return outcome !== "registered" && outcome !== "absent";
-  });
+  return CLI_SESSION_REGISTRAR_KEYS.some(cliSessionRegistrationNeeded);
 }
 
 const sqliteBackedAgentRunStores =
@@ -136,12 +150,10 @@ export async function ensureServerManagedExecutionBindings(): Promise<void> {
     if (!cliSessionRegistrationProbeNeeded()) return;
   }
   const probe = registerCliSessionCanaries();
-  if (process.env.NODE_ENV !== "production") {
-    runtimeGlobal.__vdtCursorSessionBindingProbe = probe;
-  }
-  await probe;
-  if (cliSessionRegistrationProbeNeeded()) {
-    delete runtimeGlobal.__vdtCursorSessionBindingProbe;
+  runtimeGlobal.__vdtCursorSessionBindingProbe = probe;
+  try { await probe; }
+  finally {
+    if (runtimeGlobal.__vdtCursorSessionBindingProbe === probe) delete runtimeGlobal.__vdtCursorSessionBindingProbe;
   }
 }
 
@@ -349,10 +361,7 @@ function ensureDefaultModelAgentBinding(registry: AgentExecutionBindingRegistry)
 async function registerCliSessionCanaries(): Promise<void> {
   if (!resolveTrustedStorageWriteMode()) return;
   const outcomes = cliSessionRegistrationOutcomes();
-  const pending = CLI_SESSION_REGISTRAR_KEYS.filter((key) => {
-    const outcome = outcomes.get(key);
-    return outcome !== "registered" && outcome !== "absent";
-  });
+  const pending = CLI_SESSION_REGISTRAR_KEYS.filter(cliSessionRegistrationNeeded);
   if (pending.length === 0) return;
 
   const bridge = await import("@vdt-studio/model-bridge/node");
@@ -370,6 +379,9 @@ async function registerCliSessionCanaries(): Promise<void> {
       outcomes.set(key, await registerClaudeSessionCanary(bridge));
     } catch {
       outcomes.set(key, "failed");
+    } finally {
+      runtimeGlobal.__vdtCliSessionRegistrationTimes ??= new Map();
+      runtimeGlobal.__vdtCliSessionRegistrationTimes.set(key, Date.now());
     }
   }));
 }
@@ -380,7 +392,6 @@ async function registerCursorSessionCanary(
   bridge: ModelBridgeNode,
   evaluateCursorVersion: (version: string | null) => { supported: boolean }
 ): Promise<CliSessionRegistrationResult> {
-  if (agentExecutionBindingRegistry.has(CURSOR_SESSION_EXECUTION_BINDING_ID)) return "registered";
   const {
     CursorResumeCheckpointEngine,
     CursorResumeCheckpointTransport,
@@ -414,13 +425,22 @@ async function registerCursorSessionCanary(
   registerCliSessionBinding({
     bindingId: CURSOR_SESSION_EXECUTION_BINDING_ID,
     engine,
-    modelId: process.env.VDT_CURSOR_SESSION_MODEL?.trim() || "cursor-grok-4.6-medium"
+    modelId: process.env.VDT_CURSOR_SESSION_MODEL?.trim() || "auto"
   });
+  try {
+    const adapter = getSubscriptionCliAdapter("cursor_subscription");
+    const signal = AbortSignal.timeout(10_000);
+    if ((await adapter?.probeAuth?.(detection.executable, signal))?.status === "ready") {
+      for (const modelId of new Set((await adapter?.listModels?.(detection.executable, { signal }) ?? []).slice(0, 100))) {
+        if (!isSafeCliModelId(modelId)) continue;
+        registerCliSessionBinding({ bindingId: cliSessionModelBindingId(CURSOR_SESSION_EXECUTION_BINDING_ID, modelId), engine, modelId });
+      }
+    }
+  } catch { /* Keep the admitted host default if discovery is unavailable. */ }
   return "registered";
 }
 
 async function registerCodexSessionCanary(bridge: ModelBridgeNode): Promise<CliSessionRegistrationResult> {
-  if (agentExecutionBindingRegistry.has(CODEX_SESSION_EXECUTION_BINDING_ID)) return "registered";
   const {
     CodexResumeCheckpointEngine,
     CodexResumeCheckpointTransport,
@@ -429,27 +449,27 @@ async function registerCodexSessionCanary(bridge: ModelBridgeNode): Promise<CliS
   const detection = await detectSubscriptionCli("codex");
   if (!detection.installed || !detection.executable || !detection.version) return "absent";
 
+  const executable = detection.executable;
+  const cliVersion = detection.version;
   const toolCatalogHash = modelAgentToolCatalogHash(agentRuntime.tools);
-  const transport = new CodexResumeCheckpointTransport({
-    executable: detection.executable,
-    validatedCliVersion: detection.version,
-    timeoutMs: readPositiveIntegerEnv("VDT_CODEX_SESSION_SEGMENT_TIMEOUT_MS", 180_000)
-  });
-  const engine = new CodexResumeCheckpointEngine({
-    transport,
-    cliVersion: detection.version,
-    toolCatalogHash,
-    allowedToolNames: TARGET_MODEL_AGENT_TOOLS,
-    enableUnverifiedCanary: true,
-    sessionEnvironmentFactory: async ({ binding, recovery }) => createCliSessionEnvironment({
-      bindingId: binding.bindingId,
-      slug: "codex",
-      recovery,
-      credentialEnvironment: codexCredentialEnvironment(),
-      preauthorizeEmptyWorkspace: false
-    }),
-    resolveBinding: resolveDurableSessionBinding
-  });
+  function createEngine(reasoningEffort?: ReasoningEffort) {
+    const transport = new CodexResumeCheckpointTransport({
+      executable, validatedCliVersion: cliVersion, reasoningEffort,
+      timeoutMs: readPositiveIntegerEnv("VDT_CODEX_SESSION_SEGMENT_TIMEOUT_MS", 180_000)
+    });
+    return new CodexResumeCheckpointEngine({
+      transport, cliVersion, toolCatalogHash,
+      allowedToolNames: TARGET_MODEL_AGENT_TOOLS,
+      enableUnverifiedCanary: true,
+      sessionEnvironmentFactory: async ({ binding, recovery }) => createCliSessionEnvironment({
+        bindingId: binding.bindingId, slug: "codex", recovery,
+        credentialEnvironment: codexCredentialEnvironment(), preauthorizeEmptyWorkspace: false
+      }),
+      resolveBinding: resolveDurableSessionBinding
+    });
+  }
+  const engine = createEngine();
+  const reasoningEngines = new Map<ReasoningEffort, AgentExecutionEngine>();
   registerCliSessionBinding({
     bindingId: CODEX_SESSION_EXECUTION_BINDING_ID,
     engine,
@@ -458,20 +478,33 @@ async function registerCodexSessionCanary(bridge: ModelBridgeNode): Promise<CliS
   // A browser selects an existing immutable binding; only the host CLI can
   // supply additional models. Discovery failure retains the host default.
   try {
-    const { getSubscriptionCliAdapter } = await import("@vdt-studio/model-bridge");
     const adapter = getSubscriptionCliAdapter("codex_subscription");
     const signal = AbortSignal.timeout(10_000);
     const auth = await adapter?.probeAuth?.(detection.executable, signal);
     if (auth?.status === "ready") {
-      const models = await adapter?.listModels?.(detection.executable, { signal }) ?? [];
-      for (const modelId of new Set(models.slice(0, 100))) {
-        if (!modelId.trim() || modelId !== modelId.trim() || modelId.length > 160 || modelId.startsWith("-")
-          || Array.from(modelId).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) continue;
+      const models: readonly SubscriptionCliModelOption[] = adapter?.listModelOptions
+        ? await adapter.listModelOptions(detection.executable, { signal })
+        : (await adapter?.listModels?.(detection.executable, { signal }) ?? []).map((id) => ({ id }));
+      const seen = new Set<string>();
+      for (const model of models.slice(0, 100)) {
+        const modelId = model.id;
+        if (seen.has(modelId)) continue;
+        seen.add(modelId);
+        if (!isSafeCliModelId(modelId)) continue;
         registerCliSessionBinding({
           bindingId: cliSessionModelBindingId(CODEX_SESSION_EXECUTION_BINDING_ID, modelId),
           engine,
           modelId
         });
+        for (const effort of new Set(model.reasoningEfforts ?? [])) {
+          if (!isCheckpointReasoningEffort(effort)) continue;
+          let reasoningEngine = reasoningEngines.get(effort);
+          if (!reasoningEngine) { reasoningEngine = createEngine(effort); reasoningEngines.set(effort, reasoningEngine); }
+          registerCliSessionBinding({
+            bindingId: cliSessionModelBindingId(CODEX_SESSION_EXECUTION_BINDING_ID, modelId, effort),
+            engine: reasoningEngine, modelId, reasoningEffort: effort
+          });
+        }
       }
     }
   } catch {
@@ -514,22 +547,30 @@ async function registerClaudeSessionCanary(bridge: ModelBridgeNode): Promise<Cli
   registerCliSessionBinding({
     bindingId: CLAUDE_SESSION_EXECUTION_BINDING_ID,
     engine,
-    modelId: process.env.VDT_CLAUDE_SESSION_MODEL?.trim() || "claude-sonnet-4-6"
+    modelId: process.env.VDT_CLAUDE_SESSION_MODEL?.trim() || "auto"
   });
   return "registered";
+}
+
+function isSafeCliModelId(modelId: string): boolean {
+  return Boolean(modelId.trim()) && modelId === modelId.trim() && modelId.length <= 160 && !modelId.startsWith("-") &&
+    !Array.from(modelId).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
 }
 
 function registerCliSessionBinding(input: {
   bindingId: string;
   engine: AgentExecutionEngine;
   modelId: string;
+  reasoningEffort?: ReasoningEffort | undefined;
 }): void {
+  if (agentExecutionBindingRegistry.has(input.bindingId)) return;
   const capability = input.engine.capability;
   if (capability.executionProfile !== "external_cli_agent") return;
   const definition = {
     bindingId: input.bindingId,
     enabled: true,
     modelId: input.modelId,
+    ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
     capability,
     currentQualification: {
       engineAdapterId: capability.engineAdapterId,

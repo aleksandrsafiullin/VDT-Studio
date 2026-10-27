@@ -23,6 +23,7 @@ import {
 import {
   AgentExecutionBindingError,
   DEFAULT_MODEL_AGENT_EXECUTION_BINDING_ID,
+  executionBindingSummary,
   isExternalCliExecutionBinding,
   isStructuredModelExecutionBinding
 } from "./execution-bindings";
@@ -40,7 +41,11 @@ import {
 
 export async function GET() {
   await ensureServerManagedExecutionBindings();
-  const bindings = agentExecutionBindingRegistry.summaries().filter((binding) => !isOpenAiSessionBinding(binding.bindingId));
+  const bindings = agentExecutionBindingRegistry.summaries()
+    .filter((binding) => !isOpenAiSessionBinding(binding.bindingId))
+    // Development can retain an older registry instance across hot reload.
+    // Serialize the current public contract from its immutable definitions.
+    .map((binding) => executionBindingSummary(agentExecutionBindingRegistry.resolve(binding.bindingId)));
   const defaultBindingId = bindings.some((binding) =>
     binding.bindingId === DEFAULT_MODEL_AGENT_EXECUTION_BINDING_ID
   )

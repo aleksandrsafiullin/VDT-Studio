@@ -3,6 +3,10 @@ import { agentUserMessageSchema } from "./agent-message";
 import { agentStartRequestSchema } from "./agent-run";
 
 describe("agent run schemas", () => {
+  it("admits an explicit whole-tree context while keeping deepen_node targeted", () => {
+    expect(agentUserMessageSchema.parse({ type: "user_instruction", text: "Review the whole tree.", selectedNodeId: null })).toMatchObject({ selectedNodeId: null });
+    expect(agentUserMessageSchema.safeParse({ type: "deepen_node", selectedNodeId: null }).success).toBe(false);
+  });
   it("preserves bounded instructions for chat and tree analysis, including an explicit clear on a follow-up", () => {
     const personalisation = { userInstructions: "Reply in Russian.", projectRules: "Use fiscal years." };
     for (const mode of ["generate_vdt", "continue_project", "review_project"]) {

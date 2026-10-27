@@ -22,7 +22,8 @@ const localStorageMock = (() => {
 
 vi.stubGlobal("localStorage", localStorageMock);
 
-const { ExecutionReadinessDot, SetupRail, agentActivityScrollClassName, describeComposerReadiness } = await import("./setup-rail");
+const { ExecutionReadinessDot, SelectedKpiContext, SetupRail, agentActivityScrollClassName, describeComposerReadiness } = await import("./setup-rail");
+const { ComposerModelPicker } = await import("./composer-model-picker");
 const { useVdtStudioStore } = await import("./vdt-store");
 
 describe("SetupRail agent composer", () => {
@@ -46,6 +47,27 @@ describe("SetupRail agent composer", () => {
       cliDetectionError: undefined,
       isRescanningClis: false
     });
+  });
+
+  it("names the selected KPI and supports missing units", () => {
+    const html = renderToStaticMarkup(<SelectedKpiContext node={{ id: "calendar_time", name: "Calendar Time", unit: "hours/month" }} onClear={() => undefined} />);
+    expect(html).toContain('data-testid="agent-selected-kpi"');
+    expect(html).toContain('data-node-id="calendar_time"');
+    expect(html).toContain("Selected KPI</span>");
+    expect(html).toContain("Calendar Time</span>");
+    expect(html).toContain("hours/month</span>");
+    expect(html).toContain('aria-live="polite"');
+    expect(html).toContain('data-testid="agent-clear-selected-kpi"');
+    expect(html).toContain('aria-label="Remove selected KPI from message"');
+    expect(html).toContain('type="button"');
+    const changed = renderToStaticMarkup(<SelectedKpiContext node={{ id: "unplanned_downtime", name: "Unplanned Downtime", unit: undefined }} onClear={() => undefined} />);
+    expect(changed).toContain('data-node-id="unplanned_downtime"');
+    expect(changed).toContain("Unplanned Downtime</span>");
+    expect(changed).not.toContain('data-node-id="calendar_time"');
+  });
+
+  it("omits the context indicator when there is no selected node", () => {
+    expect(renderToStaticMarkup(<SelectedKpiContext node={undefined} onClear={() => undefined} />)).toBe("");
   });
 
   it("names the default web-search mode and makes unconfigured model setup explicit", () => {
@@ -74,6 +96,18 @@ describe("SetupRail agent composer", () => {
     expect(describeComposerReadiness(undefined, false)).toMatchObject({ state: "warning", label: "Setup needed" });
     const checking = { state: "checking" as const, canExecute: false, label: "Connecting…", message: "Checking chat availability for the selected model." };
     expect(describeComposerReadiness(checking, false)).toBe(checking);
+  });
+
+  it("shows only the model and colored status dot on the model button", () => {
+    const html = renderToStaticMarkup(<ComposerModelPicker modelLabel="gpt-test" providerLabel="Codex CLI"
+      readiness={{ state: "ready", label: "Chat ready", message: "Connected" }} locked={false} onOpenSettings={() => undefined} />);
+    const button = html.match(/<button[^>]*data-testid="execution-mode-configure"[^>]*>([\s\S]*?)<\/button>/)?.[1];
+    expect(button).toContain('data-testid="execution-mode-status-dot"');
+    expect(button).toContain("gpt-test");
+    expect(button).not.toContain("Ready to send");
+    expect(button).not.toContain("Chat ready");
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).toContain('aria-label="Choose model.');
   });
 
   it.each([

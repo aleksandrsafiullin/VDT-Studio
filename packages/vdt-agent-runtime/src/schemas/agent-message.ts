@@ -40,7 +40,7 @@ export const agentUserMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("user_instruction"),
     personalisation: aiPersonalisationSchema.optional(),
     text: z.string().trim().min(1).max(2_000),
-    selectedNodeId: z.string().max(160).optional(),
+    selectedNodeId: z.string().max(160).nullable().optional(),
     researchMode: researchModeSchema.optional()
   }),
   z.object({

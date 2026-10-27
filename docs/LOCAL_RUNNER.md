@@ -1,5 +1,86 @@
 # Local Runner
 
+## Agent testing scope
+
+The October 26–27 revenue checks below are guided workflow diagnostics: their
+user prompt supplied the formula and execution sequence. Reload/native parameter
+evidence remains valid, but it does not establish independent business reasoning.
+[Agent Evaluation](AGENT_EVALUATION.md) defines natural requests and separate
+private criteria for API, CLI and local models. Its offline commands do not
+start a provider or server; live acceptance with those requests remains unrun.
+
+## Composer model and reasoning controls
+
+The chat model button opens a popover rather than Settings, and shows only its
+name and readiness dot; status text remains in tooltip/accessibility metadata.
+Reasoning uses a discrete horizontal slider with ticks, the selected level and a
+provider-default reset. Positions include only the selected model’s admitted
+metadata, in ascending effort order. API and local catalogs load when the menu
+opens through the same provider routes used by Settings; Azure requires a manual
+deployment name. API credentials are scoped to the configured endpoint and are
+not stored in a catalog key or diagnostics. Older responses are ignored after
+provider, endpoint, credential or menu-lifecycle changes.
+Codex's optional `listModelOptions` probe reads supported reasoning levels from
+the same bounded `debug models` response as model discovery. Existing string-ID
+lists and other adapters retain their contract. Only whitelisted model metadata
+is retained; instructions/hidden models are omitted.
+
+The trusted chat host admits an immutable binding per validated model/effort pair.
+The browser selects that ID, with no executable/argument/config authority. The
+reviewed transport passes `-c model_reasoning_effort="<effort>"` on open and resume,
+while Default omits it. The client persists model/effort selection and requires an
+exact binding. These controls apply to new chat runs and remain locked for active
+or paused runs. Ultra enables native delegation and is excluded from this
+Gateway-only profile. API/local preferences are keyed separately by provider,
+endpoint and model/deployment, and preserve explicit false/zero values. API
+admission validates metadata or official documentation before pinning native
+effort/thinking configuration. Ollama Default omits `think`; explicit boolean or
+named values pass through every turn. Local output limits allow up to 32,768
+tokens; an unconfigured Ollama chat uses 4,096 for explicit Off and 8,192 for
+Default/On/named thinking. This does not download models or start a model server.
+Smart reasoning and native pipe contracts are unchanged; provider/native
+qualification remains separate.
+
+Native Ollama new-tree runs expose validation/calculation/hierarchy checks
+directly when calculable and execute them before asking questions or requesting
+finish. Current-revision Gateway results prevent redundant checks; edits, new
+intent or reconciliation invalidate that progress. Routine tool execution needs
+no user confirmation. Real business clarification remains available after the
+checks, and only a verified finish receipt permits final. No server/model start,
+download, endpoint or credential authority changes. See
+[the completion workflow](AI_HARNESS.md#ollama-completion-workflow-2026-10-27).
+A proposed construction question gets one review on the same pinned native model
+before publication; real missing-fact questions remain possible. This adds at
+most one native request per logical turn and never creates a user answer.
+The final local revenue case completed with explicit Off; its selected model and
+think:false survived reload and every native turn. The final On attempt reached
+the 480-second first-turn deadline. These are separate outcomes; no automatic
+reasoning fallback, arbitrary-model success or restart recovery is implied.
+
+A root-mounted API/local connection controller checks saved model access after
+settings/key hydration, refreshes visible connections and ignores stale source or
+credential results. It does not run generation. Azure access cannot be confirmed
+from model metadata; its deployment is checked at chat start. Local model catalogs
+do not wait for unrelated CLI binding discovery.
+
+## Automatic app connection checks
+
+When subscription-CLI mode is saved, the app starts a targeted detection/auth/model
+check after settings hydration, including on Projects and direct VDT links. It
+also checks the selected model's server-owned chat binding before the composer
+reports **Chat ready**. This uses the existing trusted development or desktop
+bridge; it does not run Settings Test, sign in, start a model conversation or
+accept an executable from browser storage. Selection remains durable and live
+readiness remains session-only. Settings still performs full catalog discovery
+after a targeted startup check.
+
+Transient failures retry with 3/10/30/60-second backoff while visible. Healthy
+connections are reused without polling; window/network return or VDT entry
+rechecks access after a 60-second freshness window. Authentication and other
+explicitly blocked statuses remain non-executable and can be rechecked after
+provider sign-in on window return. Hosted web, server binding registration,
+native qualification and provider certification boundaries are unchanged.
+
 ## Smart suggestion completion profile
 
 `suggest_incoming_kpis` / `suggest-incoming-kpis-v1` is a separate one-completion
@@ -106,9 +187,9 @@ Ollama responses stream with independent bounds: 300 seconds to the first valid 
 On a Mac under memory pressure, Ollama supports optional host tuning with `launchctl setenv OLLAMA_FLASH_ATTENTION 1` and `launchctl setenv OLLAMA_KV_CACHE_TYPE q8_0`, followed by an Ollama restart while inference is idle. This global Ollama setting halves the K/V-cache allocation compared with f16, with a precision tradeoff; it does not change the selected weights or the requested context length. See the [Ollama FAQ](https://docs.ollama.com/faq#how-can-i-set-the-quantization-type-for-the-kv-cache). VDT does not silently change these host settings. The 2026-10-17 local run confirmed the same qwen3:8b weights and 16,384-token context with a loaded allocation of about 6.3 GB instead of 7.4 GB; decoding on this Mac fell from about 5–6 to about 3 tokens/second and another exchange hit the 300-second deadline. The host tuning was reverted to its original unset values. This is not provider qualification or a task-quality guarantee.
 
 
-For chat, CLI authentication and execution availability are separate checks. The composer shows **Chat ready** only after the selected backend/model resolves to a server-owned session binding. `pnpm dev` and `run.command` enable the unverified CLI session canary by default; `VDT_CLI_SESSION_CANARY_ENABLED=false` opts out, and production builds reject it. Codex registers its provider-default binding (`auto`, omitted from native `--model` arguments) plus up to 100 validated model IDs from an authenticated CLI catalog. A browser cannot supply executable arguments or invent model bindings. Explicit `VDT_CODEX_SESSION_MODEL` pins the default binding. Restart the local server to refresh its startup model bindings after catalog failure or model-catalog changes. This is development wiring, not hard-isolation or provider certification.
+For chat, CLI authentication and execution availability are separate checks. The composer shows **Chat ready** only after the selected backend/model resolves to a server-owned session binding. `pnpm dev` and `run.command` enable the unverified CLI session canary by default; `VDT_CLI_SESSION_CANARY_ENABLED=false` opts out, and production builds reject it. Codex registers its provider-default binding (`auto`, omitted from native `--model` arguments) plus up to 100 validated model IDs from an authenticated CLI catalog. A browser cannot supply executable arguments or invent model bindings. Explicit `VDT_CODEX_SESSION_MODEL` pins the default binding. Codex and Cursor catalogs are rechecked on demand after 60 seconds, with concurrent refreshes coalesced; newly admitted IDs are appended while existing bindings and engines remain immutable. An absent CLI is also rechecked after that interval. Cursor and Claude provider defaults use `auto` and omit native `--model`; explicit trusted-host model overrides remain supported. This is development wiring, not hard-isolation or provider certification.
 
-When multiple Codex installations are already on `PATH`, detection and default runtime execution share one selector: choose the newest recognizable semantic version, prefer a stable release over a prerelease with the same core version, and retain `PATH` order for equivalent versions. The selector inspects only absolute `PATH` directories and reviewed `codex` names, resolves executable regular files outside the current workspace, and deduplicates realpaths before probing. It considers at most 128 directories and eight candidates, with at most two concurrent version probes bounded to 1.5 seconds and 64 KiB each. Unknown or failed versions cannot outrank recognizable versions; if none are recognizable, detection retains the first safe installation with `version: null` and a sanitized error. This detection fallback does not change independent auth probing or execution-profile qualification. Explicit trusted-host executor overrides remain authoritative. This policy does not install or update a CLI, modify global `PATH` or user configuration, discover app-specific locations, or add model IDs to the provider's response.
+When multiple Codex installations are already present, detection and default runtime execution share one selector: choose the newest recognizable semantic version, prefer a stable release over a prerelease with the same core version, and retain `PATH` order for equivalent versions. On macOS, discovery also checks the fixed ChatGPT bundled-CLI location under `/Applications` and the host home’s `Applications` folder, even when the development server inherited an older PATH. An explicit trusted-host PATH disables those extra locations unless the host opts in. The selector inspects only absolute directories and reviewed `codex` names, resolves executable regular files outside the current workspace, and deduplicates realpaths before probing. It considers at most 128 directories and eight candidates, with at most two concurrent version probes bounded to 1.5 seconds and 64 KiB each. Unknown or failed versions cannot outrank recognizable versions; if none are recognizable, detection retains the first safe installation with `version: null` and a sanitized error. This detection fallback does not change independent auth probing or execution-profile qualification. Explicit trusted-host executor overrides remain authoritative. This policy does not install or update a CLI, modify global `PATH` or user configuration, or add model IDs to the provider's response.
 
 Probe termination adds at most 1.25 seconds of grace, then closes the owned read pipes and settles even if process `close` never arrives. POSIX cleanup kills the owned process group; Windows tree termination uses a separately bounded one-second `taskkill` attempt. Descendants that deliberately escape the owned POSIX process group, and native Windows tree-cleanup behavior, are not qualified cleanup guarantees.
 
@@ -181,6 +262,11 @@ When the original structured brief already specifies KPI, unit and period, new-t
 
 The later successful local test used the smaller `qwen3.5:4b-q4_K_M` model (3,324,173,934 bytes on disk), the direct Ollama Model Agent profile and the complete library workflow. It completed 35 nodes in 10 turns without a timeout, while the earlier qwen3:8b construction had not completed reliably on this Mac. The requested qwen3:8b/qwen3:4b/qwen3:4b-instruct models and task-owned diagnostic alternatives were removed; qwen3.5:4b-q4_K_M remains selected. This is one case, not a universal model recommendation or release qualification; see [live evidence](AI_HARNESS.md#local-library-completion-evidence-2026-10-17).
 
-Direct OpenAI API execution uses a separate experimental trusted-local admission path, not the local CLI runner. It fixes the official endpoint, keeps the supplied key in process memory for the admitted execution, and starts with an opaque one-use ID. GPT-5/GPT-6 and o1/o3/o4 requests use `max_completion_tokens` with provider-default reasoning/sampling; agent exchanges allow 180 seconds and connection probes 1,024 output tokens. The HTTP adapter retains the initial brief/catalog and last confirmed action; runtime validation and bounded repair still apply. Hosted mode/build evaluation are excluded and production needs the host Model Agent flag. See [the 145.436-second gpt-6-luna completion and limitations](AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17).
+API execution uses a separate experimental trusted-local admission path through
+`/api/agent/bindings/provider`. It allows official/preset or exact host-configured
+endpoints, keeps the supplied key in process memory for the admitted execution,
+and starts with an opaque one-use ID. Explicit reasoning is validated and mapped
+to native provider parameters. The older fixed-OpenAI admission is retained for
+compatibility. GPT-5/GPT-6 and o1/o3/o4 requests use `max_completion_tokens` with provider-default sampling. Default omits reasoning; validated explicit effort stays pinned. Agent exchanges allow 180 seconds; Default connection probes allow 1,024 output tokens and explicit reasoning probes reserve a larger bounded output budget. The HTTP adapter retains the initial brief/catalog and last confirmed action; runtime validation and bounded repair still apply. Hosted mode/build evaluation are excluded and production needs the host Model Agent flag. See [the 145.436-second gpt-6-luna completion and limitations](AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17).
 
 Codex private `argsJson` decoding covers both wrapped `action.batch.calls` and direct `action.calls` carriers, including the action type aliases already accepted by the canonical parser. Unknown/duplicate fields and authority arguments still fail canonical validation. One same-session envelope correction receives a bounded validation diagnostic; failed correction stops rather than retrying indefinitely.

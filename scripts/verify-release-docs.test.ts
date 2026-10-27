@@ -428,6 +428,9 @@ fixtureDocs["docs/ROADMAP.md"] +=
     "Do not compress, omit or regenerate"
   ].join("\n") + "\n";
 
+fixtureDocs["docs/AGENT_EVALUATION.md"] =
+  "business_autonomy\nevaluator_only\nneeds_review\ncorepack pnpm agent:eval\nLive acceptance with these\n";
+
 async function createFixture(overrides: Record<string, string | null> = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vdt-release-docs-"));
   tempDirs.push(root);
@@ -448,7 +451,7 @@ describe("verify-release-docs", { timeout: 60_000 }, () => {
   it("passes when required release documents contain the expected guardrails", async () => {
     const root = await createFixture();
 
-    expect(verifyReleaseDocs(root).docs).toHaveLength(30);
+    expect(verifyReleaseDocs(root).docs).toHaveLength(31);
   });
 
   it("fails when a required release document is missing", async () => {

@@ -39,6 +39,23 @@ describe.skipIf(process.platform === "win32")("Codex executable selection", () =
     await expect(detectSubscriptionCli("codex", options)).resolves.toMatchObject({ installed: true, executable: current, version: "codex-cli 0.162.0-alpha.17.2" });
   });
 
+  it("compares an already installed app CLI with PATH candidates without changing PATH", async () => {
+    const old = await installation("codex-cli 0.146.0");
+    const bundled = await installation("codex-cli 0.164.0-alpha.11.1");
+    await expect(selectCodexExecutable({ path: searchPath(old), applicationDirectories: [path.dirname(bundled)] }))
+      .resolves.toMatchObject({ executable: bundled, version: "codex-cli 0.164.0-alpha.11.1" });
+    // An explicit host PATH keeps deterministic, isolated discovery unless opted in.
+    await expect(selectCodexExecutable({ path: searchPath(old) })).resolves.toMatchObject({ executable: old });
+  });
+
+  it("discovers the reviewed macOS app location even when it is missing from the server PATH", async () => {
+    const old = await installation("codex-cli 0.146.0");
+    const hostHome = await tempDirectory();
+    const bundled = await installation("codex-cli 0.164.0-alpha.11.1", path.join(hostHome, "Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"));
+    await expect(selectCodexExecutable({ platform: "darwin", env: { PATH: searchPath(old), HOME: hostHome }, executableCheck: async (candidate) => [old, bundled].includes(candidate) }))
+      .resolves.toMatchObject({ executable: bundled });
+  });
+
   it.each([
     ["0.162.0-alpha.17.2", "0.162.0", true],
     ["0.162.0-alpha.2", "0.162.0-alpha.11", true],

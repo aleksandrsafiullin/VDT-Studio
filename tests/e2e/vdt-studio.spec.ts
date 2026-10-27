@@ -1516,11 +1516,15 @@ test("settings modal keeps stable size across sections", { tag: "@chromium" }, a
   expect(executionAgainBox!.width).toBe(executionBox!.width);
 });
 
-test("setup rail Configure opens settings modal on execution mode", { tag: "@chromium" }, async ({ page }, testInfo) => {
+test("setup rail model menu opens provider settings only after its explicit action", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Setup rail configure runs on desktop viewport.");
   const setupRail = page.locator("section").filter({ has: page.getByRole("heading", { name: "VDT Agent", exact: true }) }).first();
 
   await setupRail.getByTestId("execution-mode-configure").click();
+
+  await expect(page.getByRole("dialog", { name: "Model and reasoning", exact: true })).toBeVisible();
+  await expect(page.getByTestId("settings-modal")).not.toBeVisible();
+  await page.getByRole("button", { name: "Provider settings", exact: true }).click();
 
   const modal = page.getByTestId("settings-modal");
   await expect(modal).toBeVisible();
@@ -2974,6 +2978,7 @@ test("updates execution mode summary when settings change without reload", { tag
   await expect(summary).toContainText("gpt");
 
   await setupRail.getByTestId("execution-mode-configure").click();
+  await page.getByRole("button", { name: "Provider settings", exact: true }).click();
   await expect(page.getByTestId("settings-modal")).toBeVisible();
 
   await page.getByTestId("execution-mode-tab-local-models").click();

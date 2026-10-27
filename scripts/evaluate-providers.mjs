@@ -279,6 +279,8 @@ export async function runProviderEvaluation({
   const average = (values) => (values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length);
   const report = {
     schemaVersion: 1,
+    evaluationClass: "mock_structured_generation_contract",
+    agentAutonomyAssessed: false,
     providerId,
     dataset: dataset.name,
     caseCount: dataset.cases.length,
@@ -318,6 +320,6 @@ if (process.argv[1] === SCRIPT_PATH) {
   const providerId = process.env.VDT_EVAL_PROVIDER ?? "mock";
   const report = await runProviderEvaluation({ providerId });
   process.stdout.write(
-    `Provider evaluation passed: provider=${report.providerId}; cases=${report.caseCount}; report=${DEFAULT_REPORT_PATH}\n`
+    `Provider evaluation passed: provider=${report.providerId}; cases=${report.caseCount}; class=${report.evaluationClass}; agentAutonomyAssessed=false; report=${DEFAULT_REPORT_PATH}\n`
   );
 }
