@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { ArrowLeft, FileSpreadsheet, Folder, Route, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CircleAlert, FileSpreadsheet, Folder, Route, ShieldCheck } from "lucide-react";
 import {
   calculateGraph,
   EXCEL_MIME_TYPE,
@@ -73,7 +73,15 @@ export function TopBar({ projectId, onBackToWorkspace }: TopBarProps) {
 
   const calculation = calculateGraph(project);
   const validation = validateGraph(project.graph, project.rootNodeId);
-  const graphStatusLabel = validation.valid ? "Model graph valid" : `${validation.errors.length} graph issues`;
+  const graphIssues = [...validation.errors, ...validation.warnings,
+    ...(calculation.rootValue === undefined ? calculation.errors : [])];
+  const graphStatusLabel = graphIssues.length ? `${graphIssues.length} model issue${graphIssues.length === 1 ? "" : "s"}` : "Model graph valid";
+  const reviewGraphIssues = () => {
+    const state = useVdtStudioStore.getState();
+    const issueNode = graphIssues.find(item => item.nodeId && project.graph.nodes.some(node => node.id === item.nodeId))?.nodeId ?? project.rootNodeId;
+    state.selectNode(issueNode);
+    useVdtStudioStore.setState({ selectedPanelTab: "warnings", ui: { ...state.ui, rightPanelCollapsed: false } });
+  };
   const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
   const activeScenario =
     project.scenarios.find((scenario) => scenario.id === activeScenarioId) ?? project.scenarios[0];
@@ -104,15 +112,17 @@ export function TopBar({ projectId, onBackToWorkspace }: TopBarProps) {
 
       <div className={styles.topActions}>
         <VdtFilesButton />
-        <Tooltip label={graphStatusLabel}>
+        <Tooltip label={graphIssues.length ? "Review model issues" : graphStatusLabel}>
           <div
             className={styles.graphStatus}
             role="status"
             aria-label={graphStatusLabel}
             data-testid="graph-validation-status"
-            data-valid={validation.valid}
+            data-valid={graphIssues.length === 0}
           >
-            <ShieldCheck className="h-4 w-4 text-teal" />
+            {graphIssues.length ? <button type="button" aria-label="Review model issues" onClick={reviewGraphIssues} className="inline-flex items-center justify-center rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+              <CircleAlert className="h-4 w-4" />
+            </button> : <ShieldCheck className="h-4 w-4 text-teal" />}
           </div>
         </Tooltip>
         <Button

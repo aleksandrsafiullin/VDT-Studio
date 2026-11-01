@@ -44,7 +44,7 @@ describe("data discovery change-set operations", () => {
           id: "add_data_total_minutes",
           nodeId: "data_total_minutes",
           parentNodeId: productionVolumeProject.rootNodeId,
-          relation: "positive_driver",
+          relation: "contextual_influence",
           name: "Total minutes",
           type: "data_mapped",
           unit: "minute",

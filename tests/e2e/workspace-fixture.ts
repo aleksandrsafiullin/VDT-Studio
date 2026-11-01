@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { test as base, expect } from "@playwright/test";
+import type { VdtProject } from "../../packages/vdt-core/src/types";
 
 export interface ProductionWorkspace {
   projectId: string;
@@ -10,12 +11,13 @@ export interface ProductionWorkspace {
 
 // Each test owns its stored model, including across browser projects and retries.
 // Never reuse a previous test's scenarios, revisions or agent history.
-export const test = base.extend<{ productionWorkspace: ProductionWorkspace }>({
-  productionWorkspace: async ({ request }, use) => {
+export const test = base.extend<{ productionWorkspace: ProductionWorkspace; productionModel: VdtProject | undefined }>({
+  productionModel: [undefined, { option: true }],
+  productionWorkspace: async ({ request, productionModel }, use) => {
     const suffix = randomUUID().replaceAll("-", "");
     const projectId = `project_e2e_${suffix}`;
     const vdtId = `vdt_e2e_${suffix}`;
-    const project = JSON.parse(fs.readFileSync(path.resolve("examples/production-volume.json"), "utf8"));
+    const project = productionModel ?? JSON.parse(fs.readFileSync(path.resolve("examples/production-volume.json"), "utf8"));
     const created = await request.post("/api/vdt/projects", {
       data: { id: projectId, name: "E2E Production Volume", industry: project.industry }
     });

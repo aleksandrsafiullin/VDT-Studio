@@ -263,7 +263,9 @@ const MOCK_STUB_OUTPUT: Record<VdtSchemaId, Record<string, unknown>> = {
     questionsForUser: [],
     warnings: []
   },
-  "generate-tree-v1": { projectTitle: "Mock tree", rootNodeId: "root", nodes: [mockNode], edges: [], ...advisoryStub },
+  // A finite synthetic constant satisfies the model contract. This stub tests
+  // transport/schema behavior and makes no claim to derive a business model.
+  "generate-tree-v1": { projectTitle: "Mock tree", rootNodeId: "root", nodes: [{ ...mockNode, formula: "0" }], edges: [], ...advisoryStub },
   "deepen-node-v2": { schemaVersion: "deepen_node.v2", targetNodeId: "node-1", targetFormula: "child_a", retainedNodeIds: [], nodes: [{ ...mockNode, id: "child_a", name: "Child A" }], edges: [], ...advisoryStub },
   "deepen-node-v1": { targetNodeId: "node-1", nodes: [{ ...mockNode, id: "child_a", name: "Child A" }], edges: [], ...advisoryStub },
   "simplify-branch-v1": { branchRootNodeId: "node-1", nodeRemovals: [], edgeChanges: [], rationale: "Mock", ...advisoryStub },

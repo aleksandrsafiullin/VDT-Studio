@@ -49,7 +49,7 @@ describe("subagent tools", () => {
       expect.objectContaining({
         taskId: state.subagentTasks![0]!.id,
         status: "needs_user_input",
-        summaryForOrchestrator: expect.stringContaining("Validation passed")
+        summaryForOrchestrator: expect.stringContaining("Validation has 1 error")
       })
     ]);
     expect(state.subagentReports![0]!.summaryForOrchestrator.length).toBeLessThan(500);

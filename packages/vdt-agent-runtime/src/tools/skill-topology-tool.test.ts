@@ -47,7 +47,12 @@ describe("explicit complete skill topology seeding", () => {
     ] }, context);
     expect(filled.ok).toBe(true);
     const project = builder.getProject(); const result = calculateGraph(project);
-    expect(builder.validate().validation.valid).toBe(true);
+    expect(builder.validate().validation.errors).toEqual([]);
+    expect(project.graph.nodes.find(node => node.id === rootId)?.decompositionPlan?.nodes
+      .find(node => node.nodeId === "haul_distance_km")).toMatchObject({
+      parentNodeId: "loaded_travel_minutes", sharedWith: ["empty_travel_minutes"]
+    });
+    expect(project.graph.edges.filter(edge => edge.targetNodeId === "haul_distance_km")).toHaveLength(1);
     expect(result.errors).toEqual([]);
     expect(result.values.productive_hours_day).toBe(21.5);
     expect(result.values.loaded_travel_minutes).toBe(12);

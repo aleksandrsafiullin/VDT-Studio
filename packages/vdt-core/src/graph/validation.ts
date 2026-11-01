@@ -1,6 +1,8 @@
-import { FormulaParseError, type FormulaExpression } from "../formula/ast";
+import { FormulaParseError } from "../formula/ast";
 import { extractReferencesFromAst } from "../formula/evaluator";
 import { parseFormula } from "../formula/parser";
+import { validateFormulaUnits } from "../formula/unit-validation";
+import { validateModelContract } from "./model-contract";
 import type { ValidationResult, VdtGraph, VdtNode, VdtProject, VdtWarning } from "../types";
 
 type GraphInput = VdtProject | VdtGraph;
@@ -42,91 +44,12 @@ function getRootNodeId(input: GraphInput, rootNodeId?: string): string | undefin
   return roots.length === 1 ? roots[0]?.id : undefined;
 }
 
-function normalizeUnit(unit: string | undefined) {
-  const normalized = unit?.trim().toLowerCase();
-  return normalized ? normalized : undefined;
+export interface ValidateGraphOptions {
+  /** Import preserves repairable drafts; it is not a model-validity gate. */
+  purpose?: "model" | "draft" | "import";
 }
 
-function unitsCompatible(left: string, right: string) {
-  return normalizeUnit(left) === normalizeUnit(right);
-}
-
-function collectUnitWarnings(
-  node: VdtNode,
-  expression: FormulaExpression,
-  nodeById: ReadonlyMap<string, VdtNode>,
-  warnings: VdtWarning[],
-  path = "root"
-): string | undefined {
-  if (expression.type === "number") {
-    return undefined;
-  }
-
-  if (expression.type === "reference") {
-    return normalizeUnit(nodeById.get(expression.name)?.unit);
-  }
-
-  if (expression.type === "unary") {
-    return collectUnitWarnings(node, expression.expression, nodeById, warnings, `${path}-unary`);
-  }
-
-  if (expression.type === "call") {
-    const argUnits: (string | undefined)[] = [];
-    for (const arg of expression.args) {
-      argUnits.push(
-        collectUnitWarnings(node, arg, nodeById, warnings, `${path}-arg-${argUnits.length}`)
-      );
-    }
-
-    for (let index = 0; index < argUnits.length; index += 1) {
-      for (let otherIndex = index + 1; otherIndex < argUnits.length; otherIndex += 1) {
-        const leftUnit = argUnits[index];
-        const rightUnit = argUnits[otherIndex];
-        if (leftUnit && rightUnit && !unitsCompatible(leftUnit, rightUnit)) {
-          warnings.push(
-            warning(
-              `validation-unit-mismatch-${node.id}-${path}-${index}-${otherIndex}`,
-              "unit_mismatch",
-              `Formula for "${node.name}" combines incompatible units in "${expression.name}(...)": ` +
-                `"${leftUnit}" and "${rightUnit}"`,
-              node.id
-            )
-          );
-        }
-      }
-    }
-
-    return argUnits.find((unit) => unit !== undefined);
-  }
-
-  const leftUnit = collectUnitWarnings(node, expression.left, nodeById, warnings, `${path}-left`);
-  const rightUnit = collectUnitWarnings(node, expression.right, nodeById, warnings, `${path}-right`);
-
-  if (
-    (expression.operator === "+" || expression.operator === "-") &&
-    leftUnit &&
-    rightUnit &&
-    !unitsCompatible(leftUnit, rightUnit)
-  ) {
-    warnings.push(
-      warning(
-        `validation-unit-mismatch-${node.id}-${path}`,
-        "unit_mismatch",
-        `Formula for "${node.name}" combines incompatible units with "${expression.operator}": ` +
-          `"${leftUnit}" and "${rightUnit}"`,
-        node.id
-      )
-    );
-  }
-
-  if (expression.operator === "+" || expression.operator === "-") {
-    return leftUnit ?? rightUnit;
-  }
-
-  return undefined;
-}
-
-export function validateGraph(input: GraphInput, rootNodeId?: string): ValidationResult {
+export function validateGraph(input: GraphInput, rootNodeId?: string, options: ValidateGraphOptions = {}): ValidationResult {
   const graph = isProject(input) ? input.graph : input;
   const rootId = getRootNodeId(input, rootNodeId);
   const errors: VdtWarning[] = [];
@@ -244,7 +167,9 @@ export function validateGraph(input: GraphInput, rootNodeId?: string): Validatio
         }
       }
 
-      collectUnitWarnings(node, expression, nodeById, warnings);
+      if (options.purpose !== "import") for (const item of validateFormulaUnits(node, expression, nodeById)) {
+        (item.severity === "error" ? errors : warnings).push(item);
+      }
     } catch (caught) {
       if (!(caught instanceof FormulaParseError)) {
         throw caught;
@@ -301,6 +226,8 @@ export function validateGraph(input: GraphInput, rootNodeId?: string): Validatio
   for (const node of graph.nodes) {
     validateFormulaNode(node.id);
   }
+
+  if (options.purpose !== "import") errors.push(...validateModelContract(graph, rootId, formulaReferencesByNode, options.purpose === "draft"));
 
   if (rootId && nodeIds.has(rootId)) {
     const childrenBySource = new Map<string, string[]>();

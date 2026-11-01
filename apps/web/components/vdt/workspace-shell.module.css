@@ -286,6 +286,7 @@
   .topActions { gap: 3px; }
   .topActions > button { min-width: 30px; padding-inline: 7px; }
   .graphStatus { display: none; }
+  .graphStatus[data-valid="false"] { display: flex; }
 }
 
 @media (prefers-reduced-motion: reduce) {

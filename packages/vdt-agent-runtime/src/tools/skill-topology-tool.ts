@@ -1,6 +1,6 @@
 import { readExecutableSkillTopology } from "@vdt-studio/vdt-agent";
 import { activateRunSkill, loadRunSkillLibrary } from "./run-skill-library";
-import type { VdtChangeSet } from "@vdt-studio/vdt-core";
+import { extractFormulaReferences, type VdtChangeSet, type VdtDecompositionPlan } from "@vdt-studio/vdt-core";
 import { z } from "zod";
 import { proposeAndMaybeApplyMutation } from "../mutation-pipeline";
 import { AgentToolError, type AgentTool } from "../tool-registry";
@@ -59,6 +59,21 @@ export const skillSeedTopologyTool: AgentTool = {
     for (const node of topology.nodes) if (node.formula)
       changes.push(requireChangeSet(preview.setFormula({ nodeId: node.id, formula: node.formula }).changeSet));
     changes.push(requireChangeSet(preview.setFormula({ nodeId: root.id, formula: topology.rootFormula }).changeSet));
+    // The artifact owns the formulas and primary parents. Record its explicit
+    // cross-branch reuse so the visual tree and mathematical DAG stay aligned
+    // without duplicating inputs or inventing a second primary parent.
+    const formulas = [{ id: root.id, formula: topology.rootFormula }, ...topology.nodes];
+    const plan: VdtDecompositionPlan = {
+      version: 1,
+      goal: `Executable topology from ${skill.id}`,
+      nodes: topology.nodes.map(node => {
+        const parentNodeId = node.parentId === "$root" ? root.id : node.parentId;
+        const sharedWith = formulas.filter(user => user.id !== parentNodeId && user.formula
+          && extractFormulaReferences(user.formula).includes(node.id)).map(user => user.id);
+        return { nodeId: node.id, parentNodeId, kind: node.type, ...(sharedWith.length ? { sharedWith } : {}) };
+      })
+    };
+    changes.push(requireChangeSet(preview.updateNode({ nodeId: root.id, patch: { decompositionPlan: plan } }).changeSet));
     const state = context.store.getState(context.runId);
     if (!state.selectedSkills.some((entry) => entry.id === skill.id)) activateRunSkill(context, skill, "Executable topology explicitly selected by the agent.");
     const mutation = proposeAndMaybeApplyMutation(context, {

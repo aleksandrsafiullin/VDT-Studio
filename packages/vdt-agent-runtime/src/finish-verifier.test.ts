@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { productionVolumeProject,VdtBuilderSession,inspectDecompositionHierarchy } from "@vdt-studio/vdt-core";
+import { productionVolumeProject,VdtBuilderSession,inspectDecompositionHierarchy,validateGraph } from "@vdt-studio/vdt-core";
 import type { AgentSessionBinding } from "./agent-execution-contracts";
 import type { AgentSupervisorPersistenceStateV2 } from "./agent-supervisor-persistence";
 import { verifyDeterministicRunFinish } from "./finish-verifier";
@@ -22,6 +22,15 @@ it("requires the recorded hierarchy on protected runs even when the flat graph c
 });
 
 describe("verifyDeterministicRunFinish", () => {
+  it("never issues a finish receipt for formula/link divergence accepted as an editable draft", () => {
+    const project = structuredClone(productionVolumeProject);
+    project.graph.edges = project.graph.edges.filter(edge => edge.targetNodeId !== "average_productivity");
+    expect(validateGraph(project, undefined, { purpose: "draft" }).valid).toBe(true);
+    const result = verifyDeterministicRunFinish({ ...readyInput(), project });
+    expect(result).toMatchObject({ accepted: false, code: "GRAPH_INVALID" });
+    expect(result.finishReceipt).toBeUndefined();
+  });
+
   it("retains full-agent root-group enforcement after an explicit incremental user inspection", () => {
     const b = new VdtBuilderSession(); b.createDraft({ rootKpi: "Output", projectTitle: "Incremental context boundary", unit: "t" });
     b.addDriver({ nodeId: "rate", parentNodeId: "output", name: "Measured rate", baselineValue: 2 }); b.setFormula({ nodeId: "output", formula: "rate" });

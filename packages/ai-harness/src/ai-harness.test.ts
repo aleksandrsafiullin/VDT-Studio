@@ -657,6 +657,7 @@ describe("AI harness", () => {
           {
             id: "bottleneck",
             name: "Bottleneck",
+            unit: "count",
             type: "root_kpi",
             status: "accepted",
             formula: "driver_a",
@@ -667,6 +668,7 @@ describe("AI harness", () => {
           {
             id: "driver_a",
             name: "Driver A",
+            unit: "count",
             type: "input",
             status: "accepted",
             baselineValue: 100,
@@ -677,6 +679,7 @@ describe("AI harness", () => {
           {
             id: "driver_b",
             name: "Driver B",
+            unit: "count",
             type: "input",
             status: "accepted",
             baselineValue: 75,
@@ -707,6 +710,7 @@ describe("AI harness", () => {
     const minFormulaOutput = {
       ...productionVolumeFormulaOutput,
       nodeId: "bottleneck",
+      proposedUnit: "count",
       proposedFormula: "min(driver_a, driver_b)"
     };
 

@@ -45,6 +45,9 @@ describe("vdt.instantiate_subtree", () => {
       sourceNodeId: "ore_hauled",
       relation: "additive_component"
     });
+    // The new mathematical branch must be included explicitly in the root.
+    expect(builder.validate().validation.valid).toBe(false);
+    builder.setFormula({ nodeId: "ore_hauled", formula: "fleet + cat_fleet" });
     expect(builder.validate().validation.valid).toBe(true);
     expect(builder.calculate().calculation.errors).toEqual([]);
   });

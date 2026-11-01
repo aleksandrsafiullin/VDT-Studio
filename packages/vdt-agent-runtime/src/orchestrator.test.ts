@@ -330,6 +330,12 @@ function haulageBuildDecisions(): AgentDecision[] {
     },
     {
       type: "call_tool",
+      toolName: "vdt.add_edge",
+      statusMessage: "Declaring the shared return-route distance.",
+      args: { sourceNodeId: "empty_return_time_h", targetNodeId: "haul_distance_km", relation: "formula_dependency" }
+    },
+    {
+      type: "call_tool",
       toolName: "vdt.set_formula",
       statusMessage: "Setting loaded travel time formula.",
       args: {
@@ -1460,7 +1466,7 @@ describe("VdtAgentRuntime decision loop", { timeout: 30_000 }, () => {
     }, { provider });
 
     expect(provider.taskTypes.every((taskType) => taskType === "agent_decision")).toBe(true);
-    expect(resumed.status).toBe("succeeded");
+    expect(resumed.status, JSON.stringify(resumed.draftProject && validateGraph(resumed.draftProject))).toBe("succeeded");
     expect(resumed.project).toBeDefined();
     expect(resumed.events.some((event) => event.metadata?.taskType === "agent_plan")).toBe(false);
     expect(resumed.chatMessages.map((message) => message.kind)).toEqual(expect.arrayContaining([
@@ -1516,7 +1522,7 @@ describe("VdtAgentRuntime decision loop", { timeout: 30_000 }, () => {
         type: "call_tool",
         toolName: "vdt.create_draft",
         statusMessage: "Creating draft.",
-        args: { projectTitle: "Ore haulage", rootKpi: "Ore haulage", unit: "tonnes/year" }
+        args: { projectTitle: "Ore haulage", rootKpi: "Ore haulage", unit: "h/trip" }
       },
       {
         type: "call_tool",

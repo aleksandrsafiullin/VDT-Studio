@@ -76,7 +76,7 @@ export function proposeAndMaybeApplyMutation(
     ? [...new Set([...normalizedInput.selectedChangeIds, ...collectChangeIds(changeSet).filter(id => !collectChangeIds(rawChangeSet).includes(id))])]
     : collectChangeIds(changeSet);
   const previewProject = previewChangeSet(baseProject, changeSet, new Set(selectedChangeIds));
-  const validation = summarizeValidation(validateGraph(previewProject));
+  const validation = summarizeValidation(validateGraph(previewProject, undefined, { purpose: "draft" }));
   const calculation = validation.valid ? summarizeCalculation(calculateGraph(previewProject)) : undefined;
   const policy = mutationPolicyForRun(context);
   const boundedScope = progressiveScopeForMutation(baseProject, changeSet, normalizedInput.targetNodeId);

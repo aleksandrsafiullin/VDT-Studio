@@ -1,5 +1,17 @@
 # Roadmap
 
+## F-05 regression closure (2026-11-01)
+
+Implemented locally: strict root, visual-cycle, formula/link and supported unit
+checks, with an actionable editor issue indicator and repairable saved drafts.
+The original F-05 test no longer uses expected failure. Progressive construction
+uses a separate internal draft check; final validation stays strict. Explicit
+topology seeding records shared references from the selected artifact.
+See the [F-05 report](implementation/F05_MODEL_VALIDATION_2026-11-01.md).
+The wider W1A typed metric/conversion/quality-state and W4 approval requirements
+remain open; native/package/provider and business-semantic qualification are
+separate gates.
+
 ## Baseline reconciliation (2026-11-01)
 
 Implemented in source: one back-calculated balancing KPI per VDT with an actual
@@ -7,8 +19,10 @@ output target, automatic Baseline reconciliation, a visible card badge, persiste
 settings/checkpoints and matching Excel inverse formulas. Scenarios inherit the
 solved Base and show changes without pinning output to actuals. The bounded
 arithmetic solver rejects nonlinear/multiple-root and dependent min/max paths;
-business validity, native Excel recalculation and packaged/native qualification
-remain separate. See [Formula Engine](FORMULA_ENGINE.md#baseline-back-calculation).
+business validity, broader native Excel coverage and packaged/native qualification
+remain separate. A native Excel for Mac arithmetic smoke check is recorded in the
+[follow-up QA](implementation/BACK_CALCULATION_QA_2026-11-01.md). See
+[Formula Engine](FORMULA_ENGINE.md#baseline-back-calculation).
 
 ## Business-agent evaluation (2026-10-27)
 

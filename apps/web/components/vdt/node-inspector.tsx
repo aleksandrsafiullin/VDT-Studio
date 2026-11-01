@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { CircleAlert, Info, Link2, ShieldCheck, SlidersHorizontal, Trash2 } from "lucide-react";
 import { clsx } from "clsx";
-import { calculateGraph, getDecompositionContextGroupIds } from "@vdt-studio/vdt-core";
+import { calculateGraph, getDecompositionContextGroupIds, validateGraph } from "@vdt-studio/vdt-core";
 import { Button } from "@/components/ui/button";
 import { Field, SelectInput, TextArea, TextInput } from "@/components/ui/field";
 import { Panel, PanelCollapseTab, PanelToggleButton } from "@/components/ui/panel";
@@ -58,7 +58,11 @@ export function NodeInspector() {
 
   const node = project.graph.nodes.find((candidate) => candidate.id === selectedNodeId) ?? project.graph.nodes[0];
   const calculation = calculateGraph(project);
-  const nodeErrors = calculation.errors.filter((error) => error.nodeId === node?.id);
+  const validation = validateGraph(project);
+  const nodeErrors = [...validation.errors, ...calculation.errors.filter(item =>
+    !validation.errors.some(existing => existing.nodeId === item.nodeId && existing.type === item.type))]
+    .filter(item => !item.nodeId || item.nodeId === node?.id);
+  const nodeIssues = [...nodeErrors, ...validation.warnings.filter(item => !item.nodeId || item.nodeId === node?.id)];
   const formulaInlineErrors = nodeErrors.filter(
     (error) =>
       error.type === "formula_parse_error" ||
@@ -115,7 +119,7 @@ export function NodeInspector() {
             onClick={() => useVdtStudioStore.setState({ selectedPanelTab: tab })}
           >
             {tab}
-            {tab === "warnings" && nodeErrors.length > 0 ? <span className={styles.warningDot} aria-hidden="true" /> : null}
+            {tab === "warnings" && nodeIssues.length > 0 ? <span className={styles.warningDot} aria-hidden="true" /> : null}
           </button>
         ))}
       </div>
@@ -234,15 +238,15 @@ export function NodeInspector() {
 
         {selectedPanelTab === "warnings" ? (
           <div className="space-y-3">
-            {nodeErrors.length === 0 ? (
+            {nodeIssues.length === 0 ? (
               <div className={styles.warningEmpty}>
                 <ShieldCheck size={28} strokeWidth={1.3} aria-hidden="true" />
                 <h3>Nothing to review</h3>
                 <p>No formula errors for this node.</p>
               </div>
             ) : (
-              nodeErrors.map((error) => (
-                <div key={error.id} className={styles.warningCard}>
+              nodeIssues.map((error) => (
+                <div key={error.id} className={styles.warningCard} role={error.severity === "error" ? "alert" : "status"}>
                   <CircleAlert size={15} aria-hidden="true" />
                   <p>{error.message}</p>
                 </div>

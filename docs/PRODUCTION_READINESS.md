@@ -1,5 +1,20 @@
 # Production Readiness
 
+## F-05 static model validation (2026-11-01)
+
+Implemented locally: the original four-case F-05 regression runs as a normal test.
+Root role/readiness, visual cycles, mathematical link/formula alignment and
+supported unit/result checks now reject those previously accepted models. The
+editor exposes errors/review warnings through **Review model issues**. Draft
+construction and readable import remain separate from strict final validation;
+complete selected topology seeding retains explicit shared-reference declarations.
+
+Evidence and executed check results are in the
+[F-05 report](implementation/F05_MODEL_VALIDATION_2026-11-01.md). Full typed
+dimensions, percent/entity/time-basis semantics, quality states and approval
+certification remain partial. This local regression fix does not complete W1A/W4
+or change production/release NO-GO, provider qualification or native packaging.
+
 ## Baseline back-calculation (2026-11-01)
 
 Implemented locally: a model-owned actual target and one back-calculated KPI per
@@ -7,10 +22,15 @@ VDT, deterministic Baseline inversion with forward verification, card/inspector
 state, retained source evidence and Baseline-only scenario semantics. JSON/strict
 revision/checkpoint persistence and Excel inverse export use the same core model.
 The solver has explicit arithmetic/complexity limits; nonlinear and dependent
-min/max equations are not supported. Browser/unit evidence is recorded in
-`output/playwright/goal-seek-20261101/verification.md`. Native Excel recalculation,
-packaged/native platforms and business-semantic validation are not qualified by
-this change. Existing production/release blockers remain open.
+min/max equations are not supported. Initial browser/unit evidence is recorded in
+`output/playwright/goal-seek-20261101/verification.md`. Follow-up checks and the
+repeatable browser suite are described in the
+[back-calculation QA report](implementation/BACK_CALCULATION_QA_2026-11-01.md).
+One exported arithmetic model was also opened, edited, recalculated and saved in
+Microsoft Excel for Mac: Baseline stayed 100,000, the balancing value changed with
+Source inputs and the scenario independently reached 104,224. Broader native
+Excel coverage, packaged/native platforms and business-semantic validation remain
+unqualified. Existing production/release blockers remain open.
 
 Desktop packaging remains blocked: the retained generated sidecar is stale
 against current source. A trial `desktop:sidecar:prepare` passed the bundle/hash

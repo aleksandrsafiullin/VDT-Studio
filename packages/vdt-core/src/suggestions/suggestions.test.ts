@@ -264,6 +264,7 @@ describe("Smart full-project one-layer compiler", () => {
     const project = createSmartKpiMeasuredFixture();
     addNode(project, "site_hours", "h/month"); addNode(project, "site_rate", "t/h");
     project.graph.nodes[0]!.formula = "site_hours * site_rate";
+    for (const edge of project.graph.edges) edge.relation = "formula_dependency";
     project.graph.nodes[1]!.baselineValue = 20; project.graph.nodes[2]!.baselineValue = 3;
     project.scenarios[0]!.overrides = [{ nodeId: "site_hours", value: 10 }];
     const { context, proposal } = await prepared(project);

@@ -35,8 +35,10 @@ database migration. Excel uses the same inverse AST, references independent
 Baseline cells, guards original division domains and retains the source number as
 reference evidence. Scenario columns inherit the solved Base. The actual target
 is embedded in the inverse; edit it in the application and re-export. Unsupported
-or over-8,192-character inverse formulas export as `#N/A`. Native Excel
-recalculation and packaged/native platforms require separate qualification.
+or over-8,192-character inverse formulas export as `#N/A`. A single arithmetic
+workflow passed native Excel for Mac recalculation in the
+[follow-up QA](implementation/BACK_CALCULATION_QA_2026-11-01.md); broader workbook
+coverage and packaged/native platforms still require separate qualification.
 
 ## Incoming KPI formulas and mixed drafts
 
@@ -63,7 +65,7 @@ that parent reference and any dependent inputs retain assumption provenance.
 
 The feature-local compiler checks strict stable aliases, exact selected/effective membership, full visual/formula cycles, source reuse, existing factor coverage and the actual decomposition plan. Six new rows and sixteen existing references are separate budgets. It checks local/expanded length 1,024/4,096 and AST nodes/depth128/24. Literal-only expressions must stay finite and denominators provably zero are rejected before cancellation shortcuts, even without a decomposition plan. Bounded zero/cancellation checks reject dummy dependencies; this is not a general symbolic solver or business certification.
 
-Generic formulas are permitted with matching dimensions **and scales**, independent of canonical recipe membership. Hours/minutes, km/m, percentages/fractions and distinct currencies are not interchangeable; scalar60/100/1000 is not conversion evidence. Compatible per-trip ratios can work with a custom or missing calendar period. Calendar-denominator units need the matching explicit basis. Model formulas cannot invent numeric weights/defaults; the supported model literal1 is a decimal-fraction complement. User-authored coefficients remain visibly user-authored and do not grant conversion authority. The general engine's existing dimensional limitations remain.
+Generic incoming formulas are permitted with matching dimensions **and scales**, independent of canonical recipe membership. Hours/minutes, km/m, percentages/fractions and distinct currencies are not interchangeable; scalar60/100/1000 is not conversion evidence. Compatible per-trip ratios can work with a custom or missing calendar period. Calendar-denominator units need the matching explicit basis. Model formulas cannot invent numeric weights/defaults; the supported model literal1 is a decimal-fraction complement. User-authored coefficients remain visibly user-authored and do not grant conversion authority. This feature-local compiler remains stricter than the general legacy-formula scale check described below.
 
 Full baseline and saved-scenario previews show the expected target/downstream change while unrelated results must remain intact. Unselected old context stays contextual. Explicit reuse can activate only the selected reference model's mathematical dependency closure, preserving its primary parents, source metadata and unrelated explanatory children. Off-root reference models may calculate while remaining outside the root calculation. See [ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
 
@@ -143,18 +145,60 @@ Excel's native 255-argument limit is handled by nesting groups of numeric guards
 - non-finite values;
 - rejected nodes referenced by active formulas.
 
+## Model validation
+
+Implemented locally for F-05 (2026-11-01): ordinary `validateGraph` requires the
+actual root to retain `root_kpi`, rejects other root markers and incoming root
+links, and requires a root formula or finite Baseline/value (zero is valid).
+Calculated nodes need formulas, except an explicitly back-calculated KPI.
+Visual cycles are errors even when formulas are acyclic, including cycles in
+context branches. Mathematical links and direct formula references must agree
+in both directions. Unused explanatory links must be contextual. A valid
+decomposition plan may explicitly declare `sharedWith` reuse while preserving
+one primary visual parent. An off-root reference model may calculate locally;
+activating it in the root requires mathematical links or declared reuse.
+
+Validation has three explicit purposes. Default `model` checks the full static
+contract. Internal `draft` checks permit unfinished formulas/link reconciliation
+during progressive edits, while retaining syntax, references, formula/visual
+cycles, root roles and known unit errors. Agent finish always uses `model`, not
+the draft result. `import` checks readable shape and existing formula safety,
+retaining repairable legacy model errors for editing. It does not certify a
+model. These modes add no stored field or migration.
+
+The editor shows **Review model issues** for static errors, review warnings or
+an unavailable root calculation. Clicking it selects the first affected KPI and
+opens Warnings. The issue control remains visible at narrow widths. Saved
+invalid drafts can be reopened and repaired or restored from a valid version.
+
 ## Unit Validation
 
-Current validation normalizes unit text and checks obvious mismatches for additive `+` and `-` expressions and for `min(...)` / `max(...)` argument lists (any pair of defined argument units must match). It does not perform dimensional algebra for multiplication/division, currency/base-year conversion, percentage scale or time-grain reconciliation.
+The general engine derives formal units through multiplication/division and
+checks additive/min/max operands and declared intermediate/root results.
+Spelling aliases, products, ratios, parentheses and bounded integer unit powers
+are supported. Known mass/length/time dimensions and scales, currencies and
+distinct calendar-period/base-year identities detect incompatible declarations.
+For example, `hours * USD/hour` labelled `tonnes` is an error.
 
-Consequences:
+No value is converted automatically. A legacy authored formula may explicitly
+carry a checked numeric scale, for example `hours * 60` declared `min`, or
+`seconds / 60` declared `min`. An omitted/wrong scale is an error for supported
+known quantities. This limited check does not grant conversion authority to
+Smart incoming proposals. Missing/unparseable units and unresolved custom or
+per-entity bases produce review warnings rather than invented dimensions.
+Custom symbols can still cancel formally when spelled identically.
 
-- `hours * USD/hour` can be labelled `tonnes` without a validation error;
-- visual edge relations can diverge from formula dependencies;
-- a visual cycle may pass if formulas remain acyclic;
-- `valid` does not necessarily mean `calculation_ready` or dimensionally correct.
+Percent/fraction values retain legacy scalar semantics; percent numeric scale
+is not certified. Numeric offsets/thresholds retain contextual units. Full typed
+metric definitions, arbitrary unit notation, entity populations, business/time
+grain, timezone/window reconciliation and currency/calendar conversions remain
+unimplemented. `valid` means no blocking static error; warnings, calculation
+readiness, provenance and business correctness still require separate review.
 
-The UI and approval flow must not treat structural validation as complete model certification.
+The original F-05 four-case regression is an ordinary passing test. Its scope
+and supporting core/runtime/Chrome checks are recorded in the
+[F-05 report](implementation/F05_MODEL_VALIDATION_2026-11-01.md); this does not
+complete the broader W1A quality-state and dimensional-contract program.
 
 ## Target Validation States
 

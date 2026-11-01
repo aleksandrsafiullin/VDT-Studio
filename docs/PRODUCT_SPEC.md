@@ -331,7 +331,16 @@ relations. Card width and saved positions are preserved.
 - Run scenario overrides and calculate root impact.
 - Reject unknown references, formula cycles, division by zero and missing values.
 
-Current status: implemented for basic arithmetic. Dimensional algebra, visual-cycle validation and formula/edge consistency are incomplete.
+Current status: basic arithmetic and the local F-05 static model contract are
+implemented. Validation checks the root role/value, visual cycles, formula/link
+agreement and supported unit algebra through intermediate/root results.
+**Review model issues** opens the affected KPI's Warnings, including unit review
+warnings; the issue control remains available on narrow screens. Stored invalid
+drafts remain editable and can be repaired or restored from a valid version.
+Progressive agent edits allow unfinished drafts, while final model validation
+remains strict. Full typed dimensions, percent/entity/time-basis semantics,
+provenance readiness and business certification remain incomplete. See
+[Formula Engine](FORMULA_ENGINE.md#model-validation).
 
 ### Scenario Mode
 

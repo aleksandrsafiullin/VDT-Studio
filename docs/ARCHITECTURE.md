@@ -1,5 +1,28 @@
 # Architecture
 
+## Static model contract and editable drafts (2026-11-01)
+
+`vdt-core/graph/validation.ts` owns static model validation. Its default `model`
+purpose combines shape/formula checks, `graph/model-contract.ts` (root roles,
+visual cycles, formula/link reconciliation and declared shared references), and
+`formula/unit-validation.ts` (formal algebra and supported known scale checks).
+Calculation remains a separate deterministic numeric operation.
+
+Internal changeset apply and agent proposal previews use `purpose: "draft"`
+to permit incremental construction. The applied model summary, editor and finish
+verifier use the default strict contract. `importProjectJson` uses `purpose:
+"import"` so stored semantic errors remain readable and repairable; it retains
+the existing malformed-shape/unsafe-formula rejection. No validation purpose is
+persisted or exposed as an agent-selected finish bypass. SQL schemas, canonical
+snapshot/revision contracts and feature flags are unchanged.
+
+Explicit complete topology seeding derives its decomposition plan and
+`sharedWith` declarations from the selected artifact's existing parents and
+formula references. It preserves one visual parent and one stored shared input;
+it adds no domain inference, formula or numerical default. The general unit
+checker cannot certify unresolved custom/per-entity bases. See
+[Formula Engine](FORMULA_ENGINE.md#model-validation).
+
 ## Baseline reconciliation state
 
 The optional `VdtNode.goalSeek` record belongs to the model, alongside source
@@ -399,7 +422,7 @@ Planned non-numerical reference containers are derived from the root decompositi
 
 ## Decomposition plan and branch repair
 
-The optional `VdtNode.decompositionPlan` root metadata holds the agent-authored version-1 factor plan. It is a permitted internal node change-set field, not an unrestricted public `vdt.update_node` argument. Existing node-update preview, approval, revision-CAS, receipt, undo and snapshot paths persist it without a storage migration. Formula and visual-edge storage remain independent; the new full-tree Supervisor policy requires their declared hierarchy agreement before finish. The host validates structure and declared shared references, not domain selection or business formulas. Branch reparenting is one ordinary edge change-set transaction, with no numeric or formula rewriting. Legacy/manual project reading and arithmetic stay backward-compatible.
+The optional `VdtNode.decompositionPlan` root metadata holds the agent-authored version-1 factor plan, or the plan copied from an explicitly selected complete topology. It is a permitted internal node change-set field, not an unrestricted public `vdt.update_node` argument. Existing node-update preview, approval, revision-CAS, receipt, undo and snapshot paths persist it without a storage migration. Formula and visual-edge storage remain separate fields. Default model validation requires mathematical link/formula agreement or explicit shared references; full-tree Supervisor policy additionally checks the declared construction hierarchy before finish. The host validates structure and declared shared references, not domain selection or business formulas. Branch reparenting is one ordinary edge change-set transaction, with no numeric or formula rewriting. Legacy/manual project reading and arithmetic stay backward-compatible.
 
 ## Project deletion
 

@@ -881,8 +881,7 @@ describe("graph validation", () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  // Remove `.fails` across W1A/W4 when visual topology, formula dependencies, root readiness, and units share one gate.
-  it.fails("[known defect F-05] rejects graph, formula, root, and unit divergence as one contract", () => {
+  it("[F-05] rejects graph, formula, root, and unit divergence as one contract", () => {
     const resultUnitMismatch: VdtProject = {
       ...productionVolumeProject,
       graph: {
@@ -1039,7 +1038,7 @@ describe("graph validation", () => {
     expect(circularResult.errors.some((error) => error.type === "circular_dependency")).toBe(true);
   });
 
-  it("warns on obvious unit mismatches", () => {
+  it("rejects obvious unit mismatches", () => {
     const graph = {
       ...productionVolumeProject.graph,
       nodes: productionVolumeProject.graph.nodes.map((node) =>
@@ -1049,10 +1048,10 @@ describe("graph validation", () => {
 
     const result = validateGraph(graph, productionVolumeProject.rootNodeId);
 
-    expect(result.warnings.some((warning) => warning.type === "unit_mismatch")).toBe(true);
+    expect(result.errors.some((error) => error.type === "unit_mismatch")).toBe(true);
   });
 
-  it("warns on unit mismatches inside min/max calls", () => {
+  it("rejects unit mismatches inside min/max calls", () => {
     const graph = {
       ...productionVolumeProject.graph,
       nodes: productionVolumeProject.graph.nodes.map((node) =>
@@ -1062,7 +1061,7 @@ describe("graph validation", () => {
 
     const result = validateGraph(graph, productionVolumeProject.rootNodeId);
 
-    expect(result.warnings.some((warning) => warning.type === "unit_mismatch")).toBe(true);
+    expect(result.errors.some((error) => error.type === "unit_mismatch")).toBe(true);
   });
 
   it("treats rejected nodes as invalid active model dependencies", () => {
@@ -2098,7 +2097,7 @@ describe("change set apply, preview, and diff", () => {
           id: "add_driver_b",
           nodeId: "driver_b",
           parentNodeId: "root",
-          relation: "positive_driver",
+          relation: "contextual_influence",
           name: "Driver B",
           unit: "units",
           baselineValue: 5
@@ -2140,7 +2139,7 @@ describe("change set apply, preview, and diff", () => {
           id: "add_driver_b",
           nodeId: "driver_b",
           parentNodeId: "root",
-          relation: "positive_driver",
+          relation: "contextual_influence",
           name: "Driver B",
           baselineValue: 5
         },
@@ -2148,7 +2147,7 @@ describe("change set apply, preview, and diff", () => {
           id: "add_driver_c",
           nodeId: "driver_c",
           parentNodeId: "root",
-          relation: "positive_driver",
+          relation: "contextual_influence",
           name: "Driver C",
           baselineValue: 7
         }
@@ -2195,7 +2194,7 @@ describe("change set apply, preview, and diff", () => {
             id: "add_driver_b",
             nodeId: "driver_b",
             parentNodeId: "root",
-            relation: "positive_driver",
+            relation: "contextual_influence",
             name: "Driver B",
             unit: "units",
             baselineValue: 5
@@ -2244,7 +2243,7 @@ describe("change set apply, preview, and diff", () => {
       );
     });
 
-    it("skips unselected change ids during partial apply", () => {
+    it("keeps a partial edit as an invalid draft until the matching formula is selected", () => {
       const project = minimalProject();
       const changeSet = baseChangeSet({
         additions: [
@@ -2269,8 +2268,9 @@ describe("change set apply, preview, and diff", () => {
       const result = applyChangeSet(project, changeSet, new Set(["add_driver_b"]));
 
       expect(result.success).toBe(true);
-      expect(result.project.graph.nodes.map((node) => node.id)).toContain("driver_b");
-      expect(result.project.graph.nodes.find((node) => node.id === "root")?.formula).toBe("driver_a");
+      expect(result.project.graph.nodes.map(node => node.id)).toContain("driver_b");
+      expect(result.project.graph.nodes.find(node => node.id === "root")?.formula).toBe("driver_a");
+      expect(validateGraph(result.project).errors.some(issue => issue.message.includes("not used by its formula"))).toBe(true);
     });
 
     it("preview with partial selection leaves unselected changes out", () => {
@@ -2493,6 +2493,9 @@ describe("change set apply, preview, and diff", () => {
 
     it("applies edge add, update, and remove changes", () => {
       const project = minimalProject();
+      project.graph.nodes[0]!.formula = "driver_b";
+      project.graph.nodes[1]!.type = "external_factor";
+      project.graph.edges[0]!.relation = "contextual_influence";
       const withExtraNode: VdtProject = {
         ...project,
         graph: {

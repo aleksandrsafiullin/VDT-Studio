@@ -106,7 +106,7 @@ describe("ToolRegistry", () => {
     const store = new AgentRunStore({ now: () => "2026-06-26T00:00:00.000Z" });
     const run = store.createRun({
       mode: "generate_vdt",
-      input: { rootKpi: "Excavation", unit: "tonnes/year", timePeriod: "year" },
+      input: { rootKpi: "Excavation", unit: "units*shifts/day", timePeriod: "year" },
       providerId: "mock",
       options: { autoApplyPatches: true }
     });
@@ -114,7 +114,7 @@ describe("ToolRegistry", () => {
     builder.createDraft({
       projectTitle: "Excavation Driver Model",
       rootKpi: "Excavation",
-      unit: "tonnes/year",
+      unit: "units*shifts/day",
       timePeriod: "year"
     });
     store.updateRun(run.runId, { builder, draftProject: builder.getProject() });

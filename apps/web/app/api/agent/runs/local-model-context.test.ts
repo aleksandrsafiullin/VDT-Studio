@@ -22,7 +22,7 @@ describe("local model project inspection projection", () => {
     const root = builder.getProject().rootNodeId;
     builder.addDriver({ parentNodeId: root, nodeId: "capacity", name: "Capacity", type: "calculated", assumptions: ["Editable capacity estimate"] });
     builder.addDriver({ parentNodeId: "capacity", nodeId: "count", name: "Machines", baselineValue: 4 });
-    builder.addDriver({ parentNodeId: root, nodeId: "unused", name: "Unconnected fact", baselineValue: 10 });
+    builder.addDriver({ parentNodeId: root, nodeId: "unused", name: "Unconnected fact", baselineValue: 10, relation: "contextual_influence" });
     builder.setFormula({ nodeId: "capacity", formula: "count * 2" });
     builder.setFormula({ nodeId: root, formula: "capacity" });
     const project = builder.getProject();

@@ -9,6 +9,12 @@ value. Scenarios inherit the solved Base and can show improvements independently
 of the actual target. Stored source values/formulas resume when the option is
 disabled. See [the calculation contract and limits](docs/FORMULA_ENGINE.md#baseline-back-calculation).
 
+Model validation checks the root role, visual cycles, mathematical links against
+formula references and supported unit algebra. The amber **Review model issues**
+control opens the affected KPI's warnings. Incomplete or incompatible stored
+drafts remain editable; a valid calculation alone does not certify the model.
+See [the validation contract](docs/FORMULA_ENGINE.md#model-validation).
+
 ### Skill library and VDT context
 
 **Settings → Skills** shows one searchable library backed by the **Skills folder**

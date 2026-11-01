@@ -28,7 +28,7 @@ export function applyChangeSet(
   }
 
   const next = mutateProjectGraph(baseline, filtered, { touchUpdatedAt: true });
-  const validation = validateGraph(next.graph, next.rootNodeId);
+  const validation = validateGraph(next.graph, next.rootNodeId, { purpose: "draft" });
 
   if (!validation.valid) {
     return {

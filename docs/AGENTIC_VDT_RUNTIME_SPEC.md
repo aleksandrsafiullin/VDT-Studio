@@ -1,5 +1,16 @@
 # Agentic VDT Runtime Implementation Spec
 
+## Local F-05 implementation boundary (2026-11-01)
+
+Incremental construction may retain an unfinished draft between mutations.
+Internal draft validation does not authorize completion: final verification must
+use the strict model contract, including root role, visual/formula cycles,
+mathematical link/formula alignment and supported known unit checks. Importing
+an editable legacy draft likewise grants no model-validity or finish authority.
+Complete selected topology seeding records its explicit shared formula references
+without duplicating source inputs. The broader typed-metric/quality-state target
+remains partial; see [Formula Engine](FORMULA_ENGINE.md#model-validation).
+
 ## Chat model/effort binding amendment (2026-10-26)
 
 The composer obtains models through the active CLI, API or local-runtime catalog

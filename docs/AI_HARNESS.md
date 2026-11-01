@@ -1,5 +1,21 @@
 # AI And Agent Harness
 
+## F-05 validation boundary (2026-11-01)
+
+Progressive mutation previews and changeset apply admit incomplete drafts; syntax,
+references, cycles, root roles and supported known unit errors still block them.
+The applied-state summary and final validation use the full model contract,
+including mathematical link/formula agreement. A construction-valid draft cannot
+obtain a finish receipt while those model errors remain.
+
+Explicit `skill.seed_topology` records the selected artifact's primary parents
+and formula-derived shared references in its decomposition plan. No business
+formula/value is invented. Synthetic mock fixtures now distinguish referenced
+drivers from context, use ratio operand units and give the local runner's
+transport-only root a finite constant. These changes maintain contract tests;
+they do not establish natural business autonomy or change provider certification.
+See the [F-05 contract and limits](FORMULA_ENGINE.md#model-validation).
+
 ## Agent evaluation evidence boundary (2026-10-27)
 
 [Agent Evaluation](AGENT_EVALUATION.md) separates mock contracts, transport,

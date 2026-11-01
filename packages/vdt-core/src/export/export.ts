@@ -511,7 +511,9 @@ export function importProjectJson(json: string): VdtProject {
     updatedAt: readOptionalString(parsed, "updatedAt") ?? fallbackDate
   };
 
-  const validation = validateGraph(project.graph, project.rootNodeId);
+  // Readable draft shape and valid analytical models are separate contracts.
+  // Existing drafts must remain loadable so users can review and repair issues.
+  const validation = validateGraph(project.graph, project.rootNodeId, { purpose: "import" });
   if (project.graph.nodes.some(node => node.id !== project.rootNodeId && node.decompositionPlan !== undefined)) {
     throw new Error("Imported decomposition plan must belong to the root KPI.");
   }

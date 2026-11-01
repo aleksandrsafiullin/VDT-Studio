@@ -15,6 +15,7 @@ import { generateVdtOutputSchema, type GenerateVdtOutput } from "../schemas/gene
 import type { DeepenNodeInput } from "../schemas/deepen-node";
 import type { ExplainNodeInput } from "../schemas/explain-node";
 import type { AiCompletionParams, AiProvider, AiTaskType, GenerateVdtInput } from "../types";
+import { extractFormulaReferences } from "@vdt-studio/vdt-core";
 
 export const productionVolumeAiOutput: GenerateVdtOutput = generateVdtOutputSchema.parse({
   projectTitle: "Production Volume Driver Model",
@@ -531,6 +532,13 @@ function genericGenerateTreeOutput(input: GenerateVdtInput): GenerateVdtOutput {
   const primaryDriverBaseId = `${primaryDriverId}_base`;
   const primaryDriverAdjustmentId = `${primaryDriverId}_adjustment`;
   const firstDriverChildren = [primaryDriverBaseId, primaryDriverAdjustmentId];
+  const formula = rootFormula(rootKpi, driverIds);
+  const formulaDrivers = new Set(extractFormulaReferences(formula));
+  // This is a synthetic transport fixture, not an inferred business formula.
+  // Ratio operands need numerator/denominator units; unused hints are context.
+  const ratioUnits = formula.includes(" / ") ? input.unit?.split("/") : undefined;
+  const numeratorUnit = ratioUnits?.length === 2 ? ratioUnits[0]!.trim() : input.unit;
+  const denominatorUnit = ratioUnits?.length === 2 ? ratioUnits[1]!.trim() : input.unit;
   const nodes: GenerateVdtOutput["nodes"] = [
     {
       id: rootNodeId,
@@ -538,7 +546,7 @@ function genericGenerateTreeOutput(input: GenerateVdtInput): GenerateVdtOutput {
       description: `Top-level KPI for ${input.industry}: ${rootKpi}.`,
       type: "root_kpi",
       unit: input.unit,
-      formula: rootFormula(rootKpi, driverIds),
+      formula,
       aiConfidence: 0.86,
       aiRationale: `Mock baseline uses the business drivers requested for ${rootKpi}.`,
       controllability: "medium",
@@ -549,7 +557,7 @@ function genericGenerateTreeOutput(input: GenerateVdtInput): GenerateVdtOutput {
       name: driver,
       description: `${driver} is a required business driver for ${rootKpi}.`,
       type: index === 0 ? "calculated" as const : "input" as const,
-      unit: input.unit,
+      unit: index === 0 ? numeratorUnit : index === 1 ? denominatorUnit : input.unit,
       ...(index === 0 ? { formula: `${primaryDriverBaseId} + ${primaryDriverAdjustmentId}` } : {}),
       aiConfidence: 0.8,
       aiRationale: `${driver} is included because it is material to the ${rootKpi} evaluation brief.`,
@@ -561,7 +569,7 @@ function genericGenerateTreeOutput(input: GenerateVdtInput): GenerateVdtOutput {
       name: `${drivers[0]} Baseline`,
       description: `Baseline component for ${drivers[0]}.`,
       type: "input",
-      unit: input.unit,
+      unit: numeratorUnit,
       aiConfidence: 0.74,
       aiRationale: `Separates ${drivers[0]} into a baseline component for graph depth.`,
       controllability: "medium",
@@ -572,7 +580,7 @@ function genericGenerateTreeOutput(input: GenerateVdtInput): GenerateVdtOutput {
       name: `${drivers[0]} Adjustment`,
       description: `Adjustment component for ${drivers[0]}.`,
       type: "input",
-      unit: input.unit,
+      unit: numeratorUnit,
       aiConfidence: 0.72,
       aiRationale: `Separates ${drivers[0]} into an operating adjustment for graph depth.`,
       controllability: "high",
@@ -580,11 +588,11 @@ function genericGenerateTreeOutput(input: GenerateVdtInput): GenerateVdtOutput {
     }
   ];
   const edges: GenerateVdtOutput["edges"] = [
-    ...driverIds.map((driverId, index) => ({
+    ...driverIds.map((driverId) => ({
       id: edgeId(rootNodeId, driverId),
       sourceNodeId: rootNodeId,
       targetNodeId: driverId,
-      relation: index === 0 ? "formula_dependency" as const : "positive_driver" as const,
+      relation: formulaDrivers.has(driverId) ? "formula_dependency" as const : "contextual_influence" as const,
       label: "driven by",
       aiConfidence: 0.82
     })),
@@ -826,6 +834,16 @@ function mockAgentDecision(input: unknown): unknown {
   if (!nodeIds.has("haul_distance_km")) return add("haul_distance_km", "Average haul distance", "loaded_travel_time_h", { type: "input", unit: "km", relation: "formula_dependency", baselineValue: 2.7 });
   if (!nodeIds.has("loaded_speed_kmh")) return add("loaded_speed_kmh", "Average loaded speed", "loaded_travel_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 7 });
   if (!nodeIds.has("empty_speed_kmh")) return add("empty_speed_kmh", "Average empty speed", "empty_return_time_h", { type: "input", unit: "km/h", relation: "formula_dependency", baselineValue: 11 });
+
+  const edges = Array.isArray(project.edges) ? project.edges.map(asRecord) : [];
+  if (!edges.some(edge => edge?.sourceNodeId === "empty_return_time_h" && edge.targetNodeId === "haul_distance_km")) {
+    return {
+      type: "call_tool",
+      toolName: "vdt.add_edge",
+      args: { sourceNodeId: "empty_return_time_h", targetNodeId: "haul_distance_km", relation: "formula_dependency" },
+      statusMessage: "Declaring the shared return-route distance."
+    };
+  }
 
   const nodes = Array.isArray(project.nodes) ? project.nodes.map(asRecord) : [];
   const formulaFor = (nodeId: string) => nodes.find((node) => node?.id === nodeId)?.formula;
