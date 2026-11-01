@@ -5,7 +5,7 @@ import type { NodeProps } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
 import type { VdtNode } from "@vdt-studio/vdt-core";
 import { clsx } from "clsx";
-import { FileUp, Lightbulb, Plus } from "lucide-react";
+import { FileUp, Lightbulb, Plus, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { formatChange, formatNumber, formatPercent } from "@/lib/format";
@@ -81,7 +81,7 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
   const typeIcon = getNodeTypeIcon(isRootKpi ? "root_kpi" : node.type);
   const statusLabel = getStatusIcon(node.status).label;
   const calculatedRoot = isRootKpi && Boolean(node.formula?.trim());
-  const estimated = node.valueStatus === "default_assumption" || node.valueSource?.sourceTier === "assumption";
+  const estimated = !node.goalSeek && (node.valueStatus === "default_assumption" || node.valueSource?.sourceTier === "assumption");
   const potentialDiffers = valuesDiffer(value, mainScenarioValue);
   const scenarioChanged = !nodeData.referenceGroup && potentialDiffers;
   const effectDiffers =
@@ -98,7 +98,7 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
   return (
     <div className={styles.node}>
       <div
-        className={clsx(styles.card, isRootKpi && styles.root, scenarioChanged && styles.scenarioChanged, selected && styles.selected, highlighted && styles.highlighted, node.status === "rejected" && styles.rejected)}
+        className={clsx(styles.card, isRootKpi && styles.root, node.goalSeek && styles.backCalculated, scenarioChanged && styles.scenarioChanged, selected && styles.selected, highlighted && styles.highlighted, node.status === "rejected" && styles.rejected)}
         data-scenario-changed={scenarioChanged || undefined}
         role="button"
         tabIndex={0}
@@ -129,6 +129,10 @@ export function VdtNodeCard({ data, selected }: NodeProps) {
           <span className={styles.unit} data-testid="node-unit" title={node.unit?.trim() || "Unit unavailable"}>{node.unit?.trim() || "unit n/a"}</span>
         </div>
         {isRootKpi ? <p data-testid={calculatedRoot ? "node-calculated-indicator" : undefined} className={styles.kind}>{calculatedRoot ? "Root KPI · Calculated" : "Root KPI"}</p> : null}
+        {node.goalSeek ? <p className={clsx(styles.goalSeekBadge, value === undefined && styles.goalSeekUnavailable)} data-testid="node-goal-seek-badge"
+          title={`Baseline is back-calculated to an actual output of ${formatNumber(node.goalSeek.targetValue)}. ${value === undefined ? "No solution: see the inspector." : "Scenarios use the solved Baseline."}`}>
+          <RotateCcw size={10} aria-hidden="true" />{value === undefined ? "Back-calculation · review" : "Back-calculated"}
+        </p> : null}
         {nodeData.referenceGroup ? <p className={styles.reference}>Reference group</p> : (
           <div className={styles.values}>
             <ValueRow label="Base" amount={value} unit={node.unit} estimated={estimated} />

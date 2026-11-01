@@ -1,5 +1,25 @@
 # Production Readiness
 
+## Baseline back-calculation (2026-11-01)
+
+Implemented locally: a model-owned actual target and one back-calculated KPI per
+VDT, deterministic Baseline inversion with forward verification, card/inspector
+state, retained source evidence and Baseline-only scenario semantics. JSON/strict
+revision/checkpoint persistence and Excel inverse export use the same core model.
+The solver has explicit arithmetic/complexity limits; nonlinear and dependent
+min/max equations are not supported. Browser/unit evidence is recorded in
+`output/playwright/goal-seek-20261101/verification.md`. Native Excel recalculation,
+packaged/native platforms and business-semantic validation are not qualified by
+this change. Existing production/release blockers remain open.
+
+Desktop packaging remains blocked: the retained generated sidecar is stale
+against current source. A trial `desktop:sidecar:prepare` passed the bundle/hash
+verifier, but its launcher failed with missing
+`sidecars/migrations/001-legacy-v1-bootstrap.sql`. The trial generated files were
+returned to their pre-run contents; this change does not deliver a refreshed
+desktop sidecar. Packaging the required storage migration assets is separate
+work, and a hash-only verifier pass is not startup qualification.
+
 ## Business-agent evaluation correction (2026-10-27)
 
 The October 26–27 revenue runs used a guided prompt that supplied the formula,

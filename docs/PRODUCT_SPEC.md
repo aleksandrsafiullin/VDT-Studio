@@ -1,5 +1,27 @@
 # Product Specification
 
+## Baseline back-calculation
+
+Implemented in source: Properties can mark one incoming KPI per VDT as
+**Back-calculated**, select a mathematically dependent output and set a finite
+actual value in its existing unit/scale. The output may be the root or another
+calculated KPI. The balancing KPI may have any type; its own source value/formula
+is retained but suspended while this mode supplies its value. Inputs and formulas
+are recalculated on every graph evaluation, including after adding branches.
+The card uses a dashed border and badge, and Properties shows the solved Base.
+Turning the option off resumes the retained source value/formula.
+
+Calibration uses Baseline exclusively. Scenario overrides apply after calibration
+and can change both the balancing KPI and the output; `Not changeable` continues
+to ignore the balancing KPI's own scenario override. Original source provenance
+is preserved. Invalid/deleted targets, missing inputs, zero/ambiguous solutions,
+unsupported nonlinear equations and min/max paths fail visibly without using a
+stale source number. Negative solutions are shown with a review warning.
+Settings persist with the VDT, local draft and version checkpoints; Excel exports
+a live inverse Baseline formula and inherits it in scenarios. See
+[Formula Engine](FORMULA_ENGINE.md#baseline-back-calculation) for supported
+equations and qualification limits.
+
 ## Provider model menu and reasoning slider
 
 The composer’s model menu loads the active provider’s CLI, API or local-runtime

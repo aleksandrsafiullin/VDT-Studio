@@ -44,6 +44,7 @@ export function exportProjectMarkdown(project: VdtProject) {
         node.formula ? `, formula: \`${node.formula}\`` : ""
       }`
     );
+    if (node.goalSeek) lines.push(`  - Back-calculated Baseline: target ${node.goalSeek.targetNodeId} = ${node.goalSeek.targetValue}; value: ${calculation.values[node.id] ?? "n/a"}.`);
   }
 
   lines.push("", "## Calculation Trace", "");
@@ -54,6 +55,7 @@ export function exportProjectMarkdown(project: VdtProject) {
       lines.push(`  - Formula: \`${item.formula}\``);
       lines.push(`  - Resolved: \`${item.resolvedFormula ?? item.formula}\``);
     }
+    if (item.goalSeek) lines.push(`  - Back-calculated from actual target: ${item.goalSeek.targetNodeId} = ${item.goalSeek.targetValue}.`);
   }
 
   if (project.scenarios.length > 0) {
@@ -286,6 +288,14 @@ function readNode(value: Record<string, unknown>, fallbackDate: string): VdtNode
     const errors = decompositionPlanErrors(value.decompositionPlan, nodeId);
     if (errors.length) throw new Error(`Imported decomposition plan is invalid: ${errors[0]}`);
   }
+  let goalSeek: VdtNode["goalSeek"];
+  if (value.goalSeek !== undefined) {
+    if (!isRecord(value.goalSeek)) throw new Error("Imported back-calculation settings must be an object.");
+    const targetNodeId = readString(value.goalSeek, "targetNodeId", "back-calculation target KPI");
+    const targetValue = readOptionalNumber(value.goalSeek, "targetValue");
+    if (targetValue === undefined || !Number.isFinite(targetValue)) throw new Error("Imported back-calculation target value must be finite.");
+    goalSeek = { targetNodeId, targetValue };
+  }
 
   return {
     id: nodeId,
@@ -298,6 +308,7 @@ function readNode(value: Record<string, unknown>, fallbackDate: string): VdtNode
     decompositionPlan: value.decompositionPlan as VdtNode["decompositionPlan"],
     value: readOptionalNumber(value, "value"),
     baselineValue: readOptionalNumber(value, "baselineValue"),
+    goalSeek,
     valueStatus: readOptionalEnum(value, "valueStatus", nodeValueStatuses, "node valueStatus"),
     valueSource: isRecord(value.valueSource) ? value.valueSource as VdtNode["valueSource"] : undefined,
     scenarioValue: readOptionalNumber(value, "scenarioValue"),

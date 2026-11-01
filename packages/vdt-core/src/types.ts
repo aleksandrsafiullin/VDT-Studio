@@ -93,6 +93,8 @@ export interface VdtNode {
   decompositionPlan?: VdtDecompositionPlan | undefined;
   value?: number | undefined;
   baselineValue?: number | undefined;
+  /** One balancing KPI per VDT. Solved against the measured Baseline target. */
+  goalSeek?: VdtGoalSeek | undefined;
   valueStatus?: VdtNodeValueStatus | undefined;
   valueSource?: VdtNodeValueSource | undefined;
   scenarioValue?: number | undefined;
@@ -113,6 +115,11 @@ export interface VdtNode {
   };
   createdAt: string;
   updatedAt: string;
+}
+
+export interface VdtGoalSeek {
+  targetNodeId: string;
+  targetValue: number;
 }
 
 export interface VdtDecompositionPlan {
@@ -155,6 +162,7 @@ export interface VdtWarning {
     | "formula_parse_error"
     | "unknown_reference"
     | "division_by_zero"
+    | "goal_seek_error"
     | "data_discovery_low_confidence"
     | "data_discovery_unsupported_format"
     | "data_discovery_sensitive_values"
@@ -229,6 +237,7 @@ export interface CalculationTraceItem {
   nodeName: string;
   formula?: string | undefined;
   resolvedFormula?: string | undefined;
+  goalSeek?: VdtGoalSeek | undefined;
   value?: number | undefined;
   unit?: string | undefined;
   inputs: {

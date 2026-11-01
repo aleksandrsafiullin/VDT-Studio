@@ -10,6 +10,7 @@ export * from "./formula/serialize";
 export * from "./formula/evaluator";
 export * from "./formula/edge-relation";
 export * from "./formula/calculate";
+export * from "./formula/goal-seek";
 export * from "./graph/validation";
 export * from "./graph/decomposition";
 export * from "./graph/layout";

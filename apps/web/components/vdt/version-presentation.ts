@@ -118,6 +118,7 @@ export function versionNodeChanges(before: VdtProject, current: VdtProject): Ver
       if (left.description !== right.description) details.push("Description changed");
       if (left.status !== right.status) details.push("Status changed");
       if (left.fixedInScenario !== right.fixedInScenario) details.push("Scenario lock changed");
+      if (left.goalSeek?.targetNodeId !== right.goalSeek?.targetNodeId || left.goalSeek?.targetValue !== right.goalSeek?.targetValue) details.push("Back-calculation settings changed");
       const relations = (project: VdtProject) => project.graph.edges.filter((edge) => edge.targetNodeId === id)
         .map((edge) => `${edge.sourceNodeId}:${edge.relation}`).sort().join("|");
       if (relations(before) !== relations(current)) details.push("Connections changed");

@@ -1,6 +1,7 @@
 import { FormulaEvaluationError, FormulaParseError } from "./ast";
 import { evaluateAst, extractReferencesFromAst, resolveFormulaText } from "./evaluator";
 import { parseFormula } from "./parser";
+import { buildGoalSeekPlan } from "./goal-seek";
 import { getDecompositionContextGroupIds } from "../graph/decomposition";
 import type {
   CalculationTraceItem,
@@ -35,6 +36,54 @@ function normalizeOverrides(overrides: CalculateGraphOptions["overrides"]) {
 
 export function calculateGraph(input: VdtProject | VdtGraph, options: CalculateGraphOptions = {}): GraphCalculationResult {
   const graph = isProject(input) ? input.graph : input;
+  const balancing = graph.nodes.filter(node => node.goalSeek);
+  if (!balancing.length) return calculateForwardGraph(input, options);
+
+  const unavailable = new Set(balancing.map(node => node.id));
+  const independent = calculateForwardGraph(input, {}, unavailable);
+  let value: number | undefined;
+  let message: string | undefined;
+  const variable = balancing[0]!;
+  try {
+    if (balancing.length !== 1) throw new Error("Only one KPI per VDT can use back-calculation. Disable the other back-calculation settings.");
+    const modelRoot = isProject(input) ? input.rootNodeId : graph.nodes.find(node => node.type === "root_kpi")?.id ?? graph.nodes[0]?.id;
+    if (variable.id === modelRoot) throw new Error("Choose an incoming KPI for back-calculation, rather than the root KPI.");
+    const plan = buildGoalSeekPlan(graph, variable.id);
+    value = evaluateAst(plan.expression, id => independent.values[id]);
+    if (!Number.isFinite(value)) throw new Error("No unique finite solution. Check the measured inputs and target value.");
+    const verified = calculateForwardGraph(input, { overrides: { [variable.id]: value } });
+    const target = verified.values[variable.goalSeek!.targetNodeId];
+    if (target === undefined || Math.abs(target - variable.goalSeek!.targetValue) > 1e-9 * Math.max(Math.abs(target), Math.abs(variable.goalSeek!.targetValue), 1e-6)) {
+      throw new Error("The target cannot be reached with these inputs. Check missing values, zero divisors and the actual target.");
+    }
+  } catch (error) {
+    value = undefined;
+    message = error instanceof FormulaEvaluationError && error.code === "division_by_zero"
+      ? "No unique finite solution. The balancing KPI has zero influence on the target, or the formula divides by zero."
+      : error instanceof Error ? error.message : "Back-calculation failed.";
+  }
+  const overrides = normalizeOverrides(options.overrides);
+  if (value !== undefined) {
+    unavailable.delete(variable.id);
+    if (!overrides.has(variable.id)) overrides.set(variable.id, value);
+  }
+  // Explicit scenario changes are applied after Baseline calibration, never fed
+  // into its inverse. Failed calibration cannot fall back to stale source values.
+  for (const id of overrides.keys()) unavailable.delete(id);
+  const result = calculateForwardGraph(input, { ...options, overrides: Object.fromEntries(overrides) }, unavailable);
+  for (const node of balancing) {
+    if (message) result.errors.push(warning({ severity: "error", type: "goal_seek_error", nodeId: node.id, message }));
+    else {
+      const trace = result.trace.find(item => item.nodeId === node.id);
+      if (trace && !normalizeOverrides(options.overrides).has(node.id)) trace.goalSeek = node.goalSeek;
+    }
+  }
+  if (value !== undefined && value < 0) result.warnings.push(warning({ severity: "warning", type: "invalid_value", nodeId: variable.id, message: "The back-calculated Baseline is negative. Check whether this is valid for the KPI and review the measured inputs and target." }));
+  return result;
+}
+
+function calculateForwardGraph(input: VdtProject | VdtGraph, options: CalculateGraphOptions = {}, unavailable = new Set<string>()): GraphCalculationResult {
+  const graph = isProject(input) ? input.graph : input;
   const rootNodeId = options.rootNodeId ?? (isProject(input) ? input.rootNodeId : graph.nodes[0]?.id ?? "");
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
   const contextGroups = getDecompositionContextGroupIds(graph, rootNodeId);
@@ -63,6 +112,11 @@ export function calculateGraph(input: VdtProject | VdtGraph, options: CalculateG
 
     if (node.status === "rejected") {
       addError(nodeId, "invalid_graph", `Rejected node ${node.name} is excluded from calculation.`);
+      visited.add(nodeId);
+      return undefined;
+    }
+
+    if (unavailable.has(nodeId)) {
       visited.add(nodeId);
       return undefined;
     }

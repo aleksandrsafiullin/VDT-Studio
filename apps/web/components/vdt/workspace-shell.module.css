@@ -244,6 +244,11 @@
 .scenarioLock label { display: flex; align-items: center; gap: 8px; color: var(--workspace-muted); font-size: 0.8125em; }
 .scenarioLock input { accent-color: var(--workspace-ink); }
 .scenarioLock p { padding-left: 24px; color: var(--workspace-muted); font-size: 0.625em; line-height: 1.7; }
+.goalSeekLabel { display: inline-flex; align-items: center; gap: 6px; }
+.goalSeekResult { display: grid; gap: 4px; padding: 11px; border-radius: 10px; background: #edf5f2; color: #3e6c60; font-size: 0.75em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.goalSeekResult strong { font-size: 1.2em; font-weight: 550; }
+.goalSeekHint { color: var(--workspace-muted); font-size: 0.6875em; line-height: 1.7; }
+.goalSeekIssue { color: #9a4b40; font-size: 0.75em; line-height: 1.6; overflow-wrap: anywhere; }
 .inspectorFooter { padding-top: 16px; border-top: 1px solid var(--workspace-line-soft); }
 .inspectorFooter button { height: 31px; padding-inline: 8px; border: 0; border-radius: 8px; color: #b08075; font-size: 0.75em; }
 .inspectorFooter button:hover:not(:disabled) { background: #fbf0ed; color: #9b5f51; }

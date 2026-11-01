@@ -35,6 +35,47 @@ function cell(sheet: string, address: string) {
 }
 
 describe("editable Excel VDT export", () => {
+  it("exports a live inverse Baseline formula and inherits its solved value in scenarios", () => {
+    const model = project([node("root", { formula: "known - loss" }), node("known", { baselineValue: 100 }),
+      node("loss", { baselineValue: 7, goalSeek: { targetNodeId: "root", targetValue: 80 } })], [["root", "known"], ["root", "loss"]]);
+    model.scenarios = [{ id: "s", name: "Improve", overrides: [{ nodeId: "known", value: 110 }], createdAt: date, updatedAt: date }];
+    const { sheet, parts, workbookMapping: mapping } = workbook(model);
+    const loss = cell(sheet, mapping.tree.loss!.baselineCell);
+    expect(loss.value).toBe("20");
+    expect(loss.formula).toContain(mapping.tree.known!.baselineCell);
+    expect(loss.formula).not.toContain(mapping.tree.root!.baselineCell);
+    expect(loss.formula).not.toContain("SourceInputs");
+    expect(cell(sheet, mapping.tree.root!.baselineCell).value).toBe("80");
+    expect(cell(sheet, mapping.tree.root!.potentialCell).value).toBe("90");
+    expect(cell(parts["xl/worksheets/sheet5.xml"]!, `B${mapping.scenario.calculation.nodeRows.loss}`).formula).toContain(`'VDT'!${mapping.tree.loss!.baselineCell}`);
+    expect(cell(parts["xl/worksheets/sheet3.xml"]!, mapping.source.loss!.valueCell).value).toBe("7");
+    expect(parts["xl/worksheets/sheet3.xml"]).toContain("Back-calculated Baseline");
+    expect(sheet).toContain("Back-calculated");
+  });
+
+  it("keeps a formula-bearing balancing KPI on its solved Base in Excel scenarios", () => {
+    const model = project([node("root", { formula: "x * 2" }), node("x", { type: "calculated", formula: "known * 3", goalSeek: { targetNodeId: "root", targetValue: 40 } }), node("known", { baselineValue: 3 })]);
+    const { sheet, parts, workbookMapping: mapping } = workbook(model);
+    const helper = cell(parts["xl/worksheets/sheet5.xml"]!, `B${mapping.scenario.calculation.nodeRows.x}`);
+    expect(helper.value).toBe("20");
+    expect(helper.formula).toContain(`'VDT'!${mapping.tree.x!.baselineCell}`);
+    expect(helper.formula).not.toContain("*3");
+    expect(cell(sheet, mapping.tree.x!.baselineCell).value).toBe("20");
+  });
+
+  it("guards original inverse division domains and exports unsupported calibration as unavailable", () => {
+    const model = project([node("root", { formula: "x / (x + known)" }), node("known", { baselineValue: 10 }), node("x", { goalSeek: { targetNodeId: "root", targetValue: 0.5 } })]);
+    const exported = workbook(model);
+    const inverse = cell(exported.sheet, exported.mapping.x!.baselineCell);
+    expect(inverse.value).toBe("10");
+    expect(inverse.formula).toContain("<>0");
+    expect(inverse.formula).toContain("IFERROR");
+    model.graph.nodes[0]!.formula = "x*x";
+    const unsupported = workbook(model);
+    expect(cell(unsupported.sheet, unsupported.mapping.x!.baselineCell).formula).toBe("NA()");
+    expect(cell(unsupported.sheet, unsupported.mapping.x!.baselineCell).value).toBe("#N/A");
+  });
+
   it("serializes a deterministic XLSX package with styles, formulas, cached core values and automatic recalculation", () => {
     const model = structuredClone(productionVolumeProject);
     model.scenarios[0]!.isMain = true;

@@ -1,5 +1,22 @@
 # Architecture
 
+## Baseline reconciliation state
+
+The optional `VdtNode.goalSeek` record belongs to the model, alongside source
+values and formulas. The core importer preserves and validates its finite target;
+normal strict revision commits, local draft hydration and version snapshots carry
+it without a SQL migration. The inspector writes it through ordinary node edits.
+Only one balancing KPI is enabled per VDT; conflicting imported settings fail
+calculation rather than picking one implicitly.
+
+`formula/goal-seek.ts` compiles a bounded inverse AST from mathematical
+dependencies. `calculateGraph` resolves it against independent Baseline values,
+verifies a forward pass, then applies scenario overrides. No derived cache is
+persisted, so input/formula/branch edits immediately recompute calibration while
+preserving measured evidence. Excel translates that same inverse into Baseline
+cells; hidden scenario columns inherit the solved Base. See the
+[formula contract](FORMULA_ENGINE.md#baseline-back-calculation).
+
 ## Offline business evaluation boundary
 
 The [agent evaluator](AGENT_EVALUATION.md) projects only natural user text and

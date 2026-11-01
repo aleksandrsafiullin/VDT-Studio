@@ -1,5 +1,15 @@
 # Roadmap
 
+## Baseline reconciliation (2026-11-01)
+
+Implemented in source: one back-calculated balancing KPI per VDT with an actual
+output target, automatic Baseline reconciliation, a visible card badge, persistent
+settings/checkpoints and matching Excel inverse formulas. Scenarios inherit the
+solved Base and show changes without pinning output to actuals. The bounded
+arithmetic solver rejects nonlinear/multiple-root and dependent min/max paths;
+business validity, native Excel recalculation and packaged/native qualification
+remain separate. See [Formula Engine](FORMULA_ENGINE.md#baseline-back-calculation).
+
 ## Business-agent evaluation (2026-10-27)
 
 Implemented: ten natural business requests with separate evaluator-only oracles,

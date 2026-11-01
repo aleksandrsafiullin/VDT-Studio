@@ -10,6 +10,7 @@ import { Panel, PanelCollapseTab, PanelToggleButton } from "@/components/ui/pane
 import { useDesktopLayout } from "@/lib/use-desktop-layout";
 import { formatNumber } from "@/lib/format";
 import { FormulaEditorField } from "./formula-editor";
+import { GoalSeekSettings } from "./goal-seek-settings";
 import { useVdtStudioStore } from "./vdt-store";
 import styles from "./workspace-shell.module.css";
 
@@ -131,7 +132,7 @@ export function NodeInspector() {
             <section className={styles.valueHero} aria-label="Current KPI value">
               <p className={styles.valueLabel}>Value</p>
               <div className={styles.valueRow}>
-                <div className={clsx(styles.valueNumber, referenceGroup && styles.referenceValue)}>{!referenceGroup && calculation.values[node.id] !== undefined && (node.valueStatus === "default_assumption" || node.valueSource?.sourceTier === "assumption")
+                <div className={clsx(styles.valueNumber, referenceGroup && styles.referenceValue)}>{!referenceGroup && !node.goalSeek && calculation.values[node.id] !== undefined && (node.valueStatus === "default_assumption" || node.valueSource?.sourceTier === "assumption")
                   ? <span className="text-amber-800" title="Illustrative estimate, not measured data." aria-label="Estimate">≈ </span> : null}{referenceGroup ? "Reference group" : formatNumber(calculation.values[node.id])}</div>
                 {!referenceGroup ? <span className={styles.valueUnit} title={node.unit ?? "Unit not set"}>{node.unit ?? "n/a"}</span> : null}
               </div>
@@ -181,14 +182,15 @@ export function NodeInspector() {
                 />
               </section>
             )}
+            {!referenceGroup && <GoalSeekSettings key={node.id} project={project} node={node} calculation={calculation} onChange={patch => updateNode(node.id, patch)} />}
             <section className={clsx(styles.inspectorSection, styles.sectionDivider)} aria-label="KPI details">
-              {!referenceGroup && <Field label={derived ? "Source value" : "Baseline value"}>
+              {!referenceGroup && <Field label={node.goalSeek ? "Back-calculated Base" : derived ? "Source value" : "Baseline value"}>
                 <TextInput
                   type="number"
-                  value={node.baselineValue ?? node.value ?? ""}
-                  data-testid={derived ? "node-source-value" : "node-baseline-value"}
-                  readOnly={derived}
-                  onChange={(event) => { if (!derived) updateNodeBaselineValue(node.id, parseFiniteInput(event.target.value)); }}
+                  value={node.goalSeek ? calculation.values[node.id] ?? "" : node.baselineValue ?? node.value ?? ""}
+                  data-testid={node.goalSeek ? "node-back-calculated-value" : derived ? "node-source-value" : "node-baseline-value"}
+                  readOnly={derived || !!node.goalSeek}
+                  onChange={(event) => { if (!derived && !node.goalSeek) updateNodeBaselineValue(node.id, parseFiniteInput(event.target.value)); }}
                 />
               </Field>}
               <Field label="Description">

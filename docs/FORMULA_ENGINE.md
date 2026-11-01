@@ -1,5 +1,43 @@
 # Formula And Calculation Engine
 
+## Baseline back-calculation
+
+`VdtNode.goalSeek?: { targetNodeId: string; targetValue: number }` stores a finite
+actual output target on one balancing KPI per VDT. `calculateGraph` first solves
+the Baseline using independent node values, substitutes the candidate into the
+original forward graph and verifies the target within
+`1e-9 * max(abs(actual), abs(target), 1e-6)`. It then applies any supplied scenario
+overrides to that solved Base, never to the inverse itself. This also governs
+sensitivity, comparisons and exports. A trace item identifies a back-calculated
+value through its `goalSeek` metadata. The project and original values/provenance
+are not mutated by calculation. A balancing KPI with its own formula uses the
+solved Base in scenarios as well; its formula resumes when the mode is disabled.
+
+The bounded symbolic inverse handles `+`, `-`, `*`, `/` and unary minus through
+multiple graph levels, including repeated references when the resulting target
+equation is linear. A rational expression such as `known / x` or
+`x / (x + known)` is supported. Independent min/max subtrees remain normal inputs.
+Nonlinear target equations and min/max paths involving the unknown are rejected;
+no numerical search chooses an arbitrary root or plateau value. Expansion is
+bounded to 4,096 operations and polynomial degree eight. This is deterministic
+arithmetic reconciliation, not certification of a causal model or missing losses.
+
+Duplicate balancing settings, self-targets, a root balancing KPI, missing/rejected target inputs,
+cycles, missing data, division by zero and failed forward verification produce
+`goal_seek_error` on the balancing KPI. Its value and dependent results remain
+unavailable rather than falling back to a stored source number. Explicit scenario
+overrides may still supply a value, but do not clear the calibration error.
+Negative solutions retain their sign and get a warning; units/percentage scales
+are unchanged, with no invented bounds or percentage denominator.
+
+JSON import and strict revision commits retain the optional setting without a
+database migration. Excel uses the same inverse AST, references independent
+Baseline cells, guards original division domains and retains the source number as
+reference evidence. Scenario columns inherit the solved Base. The actual target
+is embedded in the inverse; edit it in the application and re-export. Unsupported
+or over-8,192-character inverse formulas export as `#N/A`. Native Excel
+recalculation and packaged/native platforms require separate qualification.
+
 ## Incoming KPI formulas and mixed drafts
 
 Future incoming additions use the [formula/mixed contract](architecture/SMART_KPI_INCOMING_CONTRACT.md). One Add installs the selected proposed rows, own rows, explicit retained references, finite input values and the final expression together. Non-root parents become `calculated`; the actual root keeps `root_kpi`. The original measured/mapped value remains source/reference evidence and in the checkpoint. New Add requires the evaluated baseline to equal the current parent value; unresolved inputs or mismatches block it. Explicit saved scenario overrides still take precedence as before. Existing graphs and committing operations are not migrated.

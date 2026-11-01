@@ -1,5 +1,14 @@
 # VDT Studio
 
+Baseline reconciliation: select an incoming KPI, enable **Back-calculated** in
+Properties, choose an **Output KPI** and enter its **Actual output** in that KPI's
+units. One balancing KPI per VDT is recalculated whenever model inputs or formulas
+change. A dashed card and badge identify it. This can represent unmeasured losses,
+cycle time or another balancing parameter; it is derived evidence, not a measured
+value. Scenarios inherit the solved Base and can show improvements independently
+of the actual target. Stored source values/formulas resume when the option is
+disabled. See [the calculation contract and limits](docs/FORMULA_ENGINE.md#baseline-back-calculation).
+
 ### Skill library and VDT context
 
 **Settings → Skills** shows one searchable library backed by the **Skills folder**
