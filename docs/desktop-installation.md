@@ -1,5 +1,9 @@
 # Desktop Installation
 
+## Local harness integration (2026-11-02)
+
+Thirteen current presets and custom ACP/JSONL connections use the managed local runtime. Users install/sign in through official provider tools; VDT does not silently install CLIs or replace account flows. New integrations remain experimental until exact native/CLI versions pass qualification. See [Harness connections](HARNESS_CONNECTIONS.md).
+
 Last reviewed: **2026-07-23**.
 
 VDT Studio Desktop is the target distribution for seamless subscription CLI and local-model execution.

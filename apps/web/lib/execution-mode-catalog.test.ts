@@ -15,12 +15,12 @@ import {
 } from "./execution-mode-catalog";
 
 describe("execution-mode-catalog", () => {
-  it("covers the five release-target subscription CLIs with required display metadata", () => {
-    expect(CLI_CATALOG).toHaveLength(5);
-    expect(CLI_AGENT_IDS).toEqual(["cursor-agent", "codex", "claude", "gemini", "copilot"]);
+  it("covers exactly thirteen harnesses with required display metadata", () => {
+    expect(CLI_CATALOG).toHaveLength(13);
+    expect(CLI_AGENT_IDS).toEqual(["cursor-agent", "codex", "claude", "copilot", "opencode", "hermes", "kiro", "kimi", "vibe", "kilo", "qwen", "grok-build", "pi"]);
 
     const ids = CLI_CATALOG.map((entry) => entry.id);
-    expect(new Set(ids).size).toBe(5);
+    expect(new Set(ids).size).toBe(13);
 
     for (const entry of CLI_CATALOG) {
       expect(entry.displayName.trim().length).toBeGreaterThan(0);

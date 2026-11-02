@@ -1,5 +1,20 @@
 # Production Readiness
 
+## Local harness integration (2026-11-02)
+
+Multi-harness integration is implemented with fixture coverage, including a thirteen-preset Suggested KPI dispatcher matrix. Smart model/reasoning selection is separate from chat; capability admission, actual transport mappings and stale-result rejection are checked independently. New/custom adapters remain experimental: fixture success does not certify subscription eligibility, business quality, native hooks/tool isolation, background daemon termination or Windows/native distribution. All existing NO-GO requirements remain. See [Harness connections](HARNESS_CONNECTIONS.md).
+
+## Suggested KPI latency investigation (2026-11-02)
+
+Local scheduling now prioritizes an opened target over viewport/new-child
+speculation, including confirmed cancellation of already active speculation.
+Single-job ownership, eight-attempt budget, immutable execution selection,
+validation and explicit Apply remain required. Live Cursor measurements still
+show several seconds of CLI/model time; prepared UI and controlled queue timings
+are separate evidence. The [latency report](implementation/SMART_KPI_LATENCY_2026-11-02.md)
+records raw samples, checks and review status. No cold-provider SLA or additional
+native/platform qualification is claimed; existing release blockers remain.
+
 ## F-05 static model validation (2026-11-01)
 
 Implemented locally: the original four-case F-05 regression runs as a normal test.

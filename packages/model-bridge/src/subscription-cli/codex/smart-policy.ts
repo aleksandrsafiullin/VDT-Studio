@@ -3,6 +3,8 @@ import { open, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { selectCodexExecutable, type SelectedCodexExecutable } from "./executable-selection";
+import { parseCodexModelOptions } from "./adapter";
+import type { HarnessReasoningValue } from "../reasoning";
 
 export const SMART_CODEX_POLICY_VERSION = "smart-codex-readonly.v1";
 export const SMART_CODEX_DISABLED_FEATURES = Object.freeze(["shell_tool", "unified_exec", "apply_patch_freeform", "multi_agent", "multi_agent_v2", "apps", "plugins", "remote_plugin", "hooks", "browser_use", "browser_use_external", "in_app_browser", "computer_use", "image_generation", "code_mode", "code_mode_host", "memories", "skill_search", "skill_mcp_dependency_install", "tool_suggest", "workspace_dependencies", "goals", "request_permissions_tool"]);
@@ -61,6 +63,21 @@ export async function readCodexSmartDefaultModel(env: NodeJS.ProcessEnv): Promis
     }
     return undefined;
   } finally { await file.close(); }
+}
+
+/** Cached public model capabilities only; never trigger inference or read config instructions. */
+export async function readCodexSmartReasoningValues(env: NodeJS.ProcessEnv, selectedModel: string | undefined): Promise<HarnessReasoningValue[]> {
+  if (!selectedModel) return [];
+  let file;
+  try { file = await open(path.join(codexSmartHome(env), "models_cache.json"), "r"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+  try {
+    const info = await file.stat(); if (info.size > 8 * 1024 * 1024) return [];
+    const buffer = Buffer.alloc(Number(info.size)); await file.read(buffer, 0, buffer.length, 0);
+    const efforts = parseCodexModelOptions(buffer.toString("utf8")).find(option => option.id === selectedModel)?.reasoningEfforts ?? [];
+    return efforts.map(value => value === "none" ? false : value);
+  } catch { return []; }
+  finally { await file.close(); }
 }
 
 /** Public hash uses filesystem metadata only, never credential/config bytes. */

@@ -1,16 +1,11 @@
+import { listHarnessDefinitions, getHarnessDefinition, probeHarnessModels } from "@vdt-studio/model-bridge/node";
+import { BUILTIN_HARNESSES, isHarnessId, type HarnessId } from "@vdt-studio/model-bridge/harness-catalog";
 import { NextResponse } from "next/server";
 import { resolveVdtAppModeForRequest } from "@/lib/app-mode";
 
-const SUBSCRIPTION_CLI_AGENTS = [
-  { id: "cursor-agent", backendId: "cursor_subscription" },
-  { id: "codex", backendId: "codex_subscription" },
-  { id: "claude", backendId: "claude_subscription" },
-  { id: "gemini", backendId: "gemini_subscription" },
-  { id: "copilot", backendId: "copilot_subscription" }
-] as const;
-
+const SUBSCRIPTION_CLI_AGENTS = BUILTIN_HARNESSES;
 type SubscriptionCliAgent = (typeof SUBSCRIPTION_CLI_AGENTS)[number];
-type SubscriptionCliAgentId = SubscriptionCliAgent["id"];
+type SubscriptionCliAgentId = HarnessId;
 
 interface CliDetectionCacheEntry {
   promise: Promise<unknown>;
@@ -22,11 +17,7 @@ const detectionCacheGlobal = globalThis as typeof globalThis & {
 const detectionCache = detectionCacheGlobal.__vdtCliDetectionInFlight ?? new Map<string, CliDetectionCacheEntry>();
 if (process.env.NODE_ENV !== "production") detectionCacheGlobal.__vdtCliDetectionInFlight = detectionCache;
 
-const agentIds = new Set<string>(SUBSCRIPTION_CLI_AGENTS.map((agent) => agent.id));
-
-function isSubscriptionCliAgentId(value: string): value is SubscriptionCliAgentId {
-  return agentIds.has(value);
-}
+function isSubscriptionCliAgentId(value: string): value is SubscriptionCliAgentId { return isHarnessId(value); }
 
 function hostedWebDetection(agent: SubscriptionCliAgent) {
   return {
@@ -65,7 +56,8 @@ async function developmentWebDetectionPayload(agentId?: SubscriptionCliAgentId) 
       }
       const adapter = getSubscriptionCliAdapter(agent.backendId);
       try {
-        modelsByAgent[agent.id] = adapter?.listModels ? await adapter.listModels(agent.executable) : [];
+        const h = getHarnessDefinition(agent.id);
+        modelsByAgent[agent.id] = h && h.transport !== "native" ? (await probeHarnessModels(h, AbortSignal.timeout(5000))).map(m => m.id) : adapter?.listModels ? await adapter.listModels(agent.executable) : [];
       } catch {
         modelsByAgent[agent.id] = [];
       }
@@ -76,7 +68,8 @@ async function developmentWebDetectionPayload(agentId?: SubscriptionCliAgentId) 
     appMode: "development_web",
     ok: true,
     agents,
-    modelsByAgent
+    modelsByAgent,
+    harnesses: listHarnessDefinitions()
   };
 }
 
@@ -111,7 +104,7 @@ export async function GET(request: Request) {
   const agentId = searchParams.get("id");
   const appMode = resolveVdtAppModeForRequest(request);
 
-  if (agentId && !isSubscriptionCliAgentId(agentId)) {
+  if (agentId && (!isSubscriptionCliAgentId(agentId) || !(appMode === "development_web" ? getHarnessDefinition(agentId) : SUBSCRIPTION_CLI_AGENTS.some(h => h.id === agentId)))) {
     return NextResponse.json({ error: `Unknown CLI agent: ${agentId}` }, { status: 400 });
   }
   const requestedAgentId = agentId && isSubscriptionCliAgentId(agentId) ? agentId : undefined;

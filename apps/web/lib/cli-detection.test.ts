@@ -74,7 +74,7 @@ describe("cli-detection", () => {
     });
   });
 
-  it("switches away from an unavailable selected CLI after a full rescan", () => {
+  it("preserves an unavailable selected CLI instead of silently changing provider", () => {
     const settings = {
       ...DEFAULT_EXECUTION_SETTINGS,
       executionMode: "local_cli" as const,
@@ -88,8 +88,8 @@ describe("cli-detection", () => {
     ];
 
     expect(patchSelectedCliCommandAfterRescan(settings, agents)).toMatchObject({
-      selectedCliAgentId: "cursor-agent",
-      command: "agent"
+      selectedCliAgentId: "claude",
+      command: "claude"
     });
   });
 

@@ -28,7 +28,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["all"],
+    "targets": "all",
     "resources": [
       "sidecars/vdt-local-runtime",
       "sidecars/vdt-local-runtime.cmd",

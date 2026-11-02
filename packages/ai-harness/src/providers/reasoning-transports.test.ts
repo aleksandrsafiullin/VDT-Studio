@@ -10,6 +10,29 @@ const params = { taskType: "agent_decision" as const, input: {}, schema: z.objec
   outputJsonSchema: { type: "object", properties: { answer: { type: "string" } }, required: ["answer"], additionalProperties: false },
   systemPrompt: "System", userPrompt: "Question", maxTokens: 8000 };
 describe("reasoning reaches provider requests", () => {
+  it("uses explicit Anthropic thinking disabled for Suggested KPI and keeps its schema channel", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ stop_reason: "tool_use", content: [{ type: "tool_use", name: "return_structured_output", input: { answer: "ok" } }] }));
+    const provider = new AnthropicProvider({ model: "provider-model", apiKey: "test", disableThinking: true, fetch: fetcher });
+    await expect(provider.completeStructured({ ...params, taskType: "suggest_incoming_kpis" })).resolves.toEqual({ answer: "ok" });
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({ thinking: { type: "disabled" }, max_tokens: 2048, tool_choice: { type: "tool", name: "return_structured_output" } });
+  });
+  it("accepts private thinking with an explicitly enabled Smart request but rejects it for Off", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ stop_reason: "tool_use", content: [
+      { type: "thinking", thinking: "private" }, { type: "tool_use", name: "return_structured_output", input: { answer: "ok" } }
+    ] }));
+    const enabled = new AnthropicProvider({ model: "provider-model", apiKey: "test", reasoningEffort: "low", adaptiveThinking: true, fetch: fetcher });
+    await expect(enabled.completeStructured({ ...params, taskType: "suggest_incoming_kpis" })).resolves.toEqual({ answer: "ok" });
+    const disabled = new AnthropicProvider({ model: "provider-model", apiKey: "test", disableThinking: true, fetch: fetcher });
+    await expect(disabled.completeStructured({ ...params, taskType: "suggest_incoming_kpis" })).rejects.toMatchObject({ code: "REASONING_UNSUPPORTED" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+  it("separates Gemini Smart thought text from its JSON while honoring an explicit zero budget", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "private", thought: true }, { text: '{"answer":"ok"}' }] } }] }));
+    const enabled = new GeminiProvider({ model: "provider-model", apiKey: "test", thinkingBudget: 4096, fetch: fetcher });
+    await expect(enabled.completeStructured({ ...params, taskType: "suggest_incoming_kpis" })).resolves.toEqual({ answer: "ok" });
+    const disabled = new GeminiProvider({ model: "provider-model", apiKey: "test", thinkingBudget: 0, fetch: fetcher });
+    await expect(disabled.completeStructured({ ...params, taskType: "suggest_incoming_kpis" })).rejects.toMatchObject({ code: "REASONING_UNSUPPORTED" });
+  });
   it("preserves explicit API effort across a strict-format fallback and subsequent turns", async () => {
     const bodies: Record<string, unknown>[] = [];
     const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {

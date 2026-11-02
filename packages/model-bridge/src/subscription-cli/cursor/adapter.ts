@@ -10,6 +10,7 @@ import { evaluateCursorVersion, parseCursorVersionOutput } from "./version";
 
 /** Reviewed dynamic flags appended after manifest static args at spawn time. */
 export function buildCursorDynamicArgs(input: SubscriptionCliBuildArgsInput): readonly string[] {
+  if (input.modelReasoning !== undefined) throw Object.assign(new Error("Cursor CLI exposes reasoning through provider-specific model variants. Choose Provider default or a different model."), { code: "REASONING_UNSUPPORTED" });
   const args: string[] = [];
   if (input.enableWorkspaceTrust) args.push("--trust");
   if (input.model) args.push("--model", input.model);

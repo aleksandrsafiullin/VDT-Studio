@@ -127,7 +127,10 @@ export function useSmartKpi() {
     const timer = setTimeout(() => { void createSmartKpiPreparedSelection(executionSettings, { ...(runnerPairingToken ? { pairingToken: runnerPairingToken } : {}) })
       .then(selection => { if (current) setAdmission({ status: "ready", selection }); })
       .catch(error => { if (current) setAdmission({ status: error?.code === "CLEANUP_UNCONFIRMED" ? "blocked" : "unavailable",
-        reason: error?.code === "CLEANUP_UNCONFIRMED" ? "The host must confirm previous process cleanup before preparing more suggestions." : "Choose a supported execution backend and model in Execution mode to prepare this KPI." }); }); }, 150);
+        reason: error?.code === "CLEANUP_UNCONFIRMED" ? "The host must confirm previous process cleanup before preparing more suggestions."
+          : error?.code === "REASONING_UNSUPPORTED" ? "This model cannot use the selected Suggested KPI reasoning setting. Choose another model or explicitly select Provider default in Execution mode."
+          : error?.code === "CREDENTIAL_IDENTITY_UNVERIFIED" ? "This host cannot verify the CLI credential source. Recheck the CLI sign-in or choose another connection."
+          : "Choose a supported execution backend and model in Execution mode to prepare this KPI." }); }); }, 150);
     return () => { current = false; clearTimeout(timer); };
   }, [executionSettings, runnerPairingToken, metadataRetry, credentialStatus]);
 
@@ -202,16 +205,17 @@ export function useSmartKpi() {
           if (activeRef.current?.targetNodeId === requested.targetNodeId) instance.refreshDisplay(requested.targetNodeId);
           update();
         }
-        await instance.prewarm(useVdtStudioStore.getState().selectedNodeId || null, visible.current);
-        if (newParent) await instance.prepareImmediateChildren(newParent);
         const currentActive = activeRef.current;
         if (currentActive && currentActive.mode !== "manual") {
           // No checked list exists yet. A metadata/cold-context transition may
           // replace an empty status; only a displayed proposal stays frozen.
           if (!instance.getSnapshot(currentActive.targetNodeId).proposal) instance.releaseDisplay(currentActive.targetNodeId);
           await instance.request(currentActive.targetNodeId, { priority: "hover" });
+          if (!current) return;
           if (activeRef.current === currentActive) instance.freezeDisplay(currentActive.targetNodeId);
         }
+        await instance.prewarm(useVdtStudioStore.getState().selectedNodeId || null, visible.current);
+        if (newParent) await instance.prepareImmediateChildren(newParent);
         update();
       }).catch(() => { if (current) setFeedback("The KPI context could not be prepared. Refresh the workspace and try again."); });
     return () => { current = false; };

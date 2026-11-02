@@ -47,6 +47,14 @@ describe("development local runtime API route", { timeout: 30_000 }, () => {
     expect(body.ok).toBe(false);
   });
 
+  it("accepts the direct loopback Host after Next reconstructs localhost and rejects remote origins", async () => {
+    vi.stubEnv("VDT_APP_MODE", "development_web");
+    for (const [origin, expected] of [["http://127.0.0.1:3000", 400], ["https://attacker.example", 403]] as const) {
+      const response = await POST(new Request("http://localhost:3000/api/ai/dev-runtime", { method: "POST", headers: { "content-type": "application/json", host: "127.0.0.1:3000", origin, "sec-fetch-site": "same-origin" }, body: "{}" }));
+      expect(response.status).toBe(expected);
+    }
+  });
+
   it("allows localhost production builds through the development runtime mode gate", async () => {
     vi.stubEnv("VDT_APP_MODE", undefined);
     vi.stubEnv("NEXT_PUBLIC_VDT_APP_MODE", undefined);

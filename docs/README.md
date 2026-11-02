@@ -1,5 +1,9 @@
 # VDT Studio Documentation Map
 
+## Local harness integration (2026-11-02)
+
+[Harness connections](HARNESS_CONNECTIONS.md) is the current setup/adapter contract; [ADR-012](adr/ADR-012-declarative-local-harness-connections.md) records the registry and shared-transport decision.
+
 Last reviewed against the working tree: **2026-08-26**.
 
 This page defines which documents are current, normative, historical or generated. Use it before planning or implementing repository changes.
@@ -86,10 +90,15 @@ Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md`, the
 | [`ADR-009`](adr/ADR-009-project-deletion-with-agent-history.md) | Scoped complete-project deletion with AI history, preserved migration hash evidence and rollback; secure erasure and individual-VDT audit cleanup remain separate |
 | [`ADR-010`](adr/ADR-010-local-skill-library-and-context-selection.md) | Local V1 unified on-disk skills, editable supplied seed, Context and Skill Author; V2 and native qualification remain separate |
 | [`ADR-011`](adr/ADR-011-personalisation-and-project-rules.md) | One browser-local list of user instructions, legacy migration and chat/Smart/review propagation; local V1, semantic/native qualification separate |
+| [`ADR-012`](adr/ADR-012-declarative-local-harness-connections.md) | Declarative current harness catalog, shared ACP and host-owned custom profiles; live/native qualification separate |
+| [`ADR-013`](adr/ADR-013-independent-suggested-kpi-execution-settings.md) | Independent Suggested KPI model and explicit Off-by-default reasoning; provider mappings, immutable preparation and qualification boundary |
 
 Smart suggestions follow the [plan](implementation/SMART_KPI_SUGGESTIONS_PLAN.md),
 [execution log](implementation/SMART_KPI_SUGGESTIONS_LOG.md) and
 [independent review](implementation/SMART_KPI_SUGGESTIONS_REVIEW.md). The
+[2026-11-02 latency investigation](implementation/SMART_KPI_LATENCY_2026-11-02.md)
+separates cold CLI/model generation, foreground queue/cancellation and prepared
+browser controls. The
 [initial quality evaluation](implementation/SMART_KPI_QUALITY_EVALUATION_2026-10-25.md)
 is historical; its global excavation-guidance approach was withdrawn. The current
 [all-level audit](implementation/SMART_KPI_FULL_DEPTH_EVALUATION_2026-10-25.md)

@@ -21,7 +21,7 @@ async function createFixture(options: { signed?: boolean; selfContained?: boolea
   await writeJson(path.join(root, "apps/desktop/src-tauri/tauri.conf.json"), {
     bundle: {
       active: true,
-      targets: options.installerTarget ? ["all"] : ["app"],
+      targets: options.installerTarget ? "all" : ["app"],
       resources: [
         "sidecars/vdt-local-runtime",
         "sidecars/vdt-local-runtime.cmd",
@@ -74,6 +74,8 @@ describe("verify-desktop-native-readiness", () => {
     );
     expect(result.blockers.map((blocker) => blocker.code)).not.toContain("UNSIGNED_MACOS_BUNDLE");
     expect(result.blockers.map((blocker) => blocker.code)).not.toContain("SIDECAR_NOT_SELF_CONTAINED");
+    expect(result.blockers.map((blocker) => blocker.code)).not.toContain("MISSING_MACOS_INSTALLER_TARGET");
+    expect(result.blockers.map((blocker) => blocker.code)).not.toContain("MISSING_WINDOWS_INSTALLER_TARGET");
   });
 
   it("reports unsigned and Node-dependent sidecars as release blockers", async () => {
@@ -90,7 +92,7 @@ describe("verify-desktop-native-readiness", () => {
     await writeJson(path.join(root, "apps/desktop/src-tauri/tauri.conf.json"), {
       bundle: {
         active: true,
-        targets: ["all"],
+        targets: "all",
         resources: ["sidecars/vdt-local-runtime", "sidecars/vdt-local-runtime.manifest.json"],
         macOS: { signingIdentity: "Developer ID Application: Example" }
       }

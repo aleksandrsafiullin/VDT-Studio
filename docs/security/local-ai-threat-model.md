@@ -1,5 +1,25 @@
 # Local AI And Data Threat Model
 
+## Local harness integration (2026-11-02)
+
+Local user Settings may register a saved executable/argument vector and host environment references, separately from model/task authority. The settings boundary uses local-origin or paired-loopback controls, or the private desktop pipe. Native tool telemetry is rejected, never executed as a VDT tool. Protocol rejection is not hard OS isolation; unconfirmed daemon cancellation retains evidence and blocks Smart reuse. See [Harness connections](../HARNESS_CONNECTIONS.md).
+
+Suggested KPI preferences grant only model and reasoning selection on the
+already selected connection. Paired model discovery requires the same pairing
+and Origin checks as completions; its target is validated as loopback before
+sending the token. Local-model capability requests select a host manifest,
+never a request-supplied provider URL. Exact settings participate in preparation
+identity; stale responses cannot acquire Apply authority. The response budget
+includes private thinking and protocol/status frames, not only visible text.
+
+Provider-specific configuration roots and Vibe's existing CLI credential
+precedence are preserved. Vibe keyring identity inspects only its vendor auth
+source and bounded encrypted-store filesystem metadata; the macOS `security`
+invocation lists user keychain paths and never requests a password or item
+value. Uninspectable stores fail Smart identity admission. Unrelated store
+writes may invalidate preparation conservatively. These probes do not grant
+model-facing filesystem or credential authority.
+
 ## API/local model capability and reasoning admission
 
 The new `/api/agent/bindings/provider` route requires trusted-local mode, exact
@@ -54,8 +74,10 @@ Skill routes are restricted to the trusted local application. JSON writes use
 bounded streamed admission. A direct local Host can reconcile Next's
 localhost/127.0.0.1 reconstruction only when both authorities are local, their
 ports agree, the supplied Origin matches that Host and fetch metadata is not
-cross-site. Forwarded headers cannot grant this exception; other AI routes keep
-their default origin policy.
+cross-site. Forwarded headers cannot grant this exception. Dedicated Smart
+preparation/metadata/cancellation and generic task admission reuse the same
+strict direct-Host reconciliation for Next's local URL reconstruction; the
+global default origin policy is unchanged.
 
 Custom Markdown is untrusted guidance and cannot add tools, read arbitrary
 paths, grant research or authorize mutations. All working skills, including the

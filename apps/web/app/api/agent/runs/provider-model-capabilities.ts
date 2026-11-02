@@ -2,6 +2,7 @@ import { readBoundedText, type ModelReasoningCapabilities, type ModelReasoningVa
 import { createLocalRuntimeContext } from "@vdt-studio/local-runner/server-runtime";
 import { BYOK_GATEWAY_PRESETS } from "@/lib/execution-mode-catalog";
 import { z } from "zod";
+import { claudeModelSupportsThinkingOff, parseLocalModelReasoningCapabilities } from "@vdt-studio/model-bridge";
 
 export const modelReasoningValueSchema = z.union([z.boolean(), z.string().regex(/^[a-z][a-z0-9_.-]{0,47}$/), z.number().int().min(0).max(32768)]);
 const modelId = z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/);
@@ -50,11 +51,10 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
 const levels = (value: unknown): ModelReasoningValue[] => Array.isArray(value) ? [...new Set(value.filter(isModelReasoningValue))].slice(0, 16) : [];
 
 export function parseProviderReasoning(metadata: unknown, providerId: string): ModelReasoningCapabilities | undefined {
+  if (["ollama", "lm_studio", "vllm"].includes(providerId)) return parseLocalModelReasoningCapabilities(metadata, providerId);
   const meta = record(metadata), caps = record(meta.capabilities);
-  if (providerId === "ollama") {
-    const thinking = record(meta.thinking), values = levels(thinking.values).filter((value) => typeof value !== "number");
-    if (!values.length || (values.length === 1 && values[0] === false)) return undefined;
-    return { parameter: "think", values, source: "provider", ...(values.some((value) => value === thinking.default) ? { defaultValue: thinking.default as ModelReasoningValue } : {}) };
+  if (meta.reasoning === false || caps.reasoning === false || meta.thinking === false) {
+    return { parameter: providerId === "ollama" ? "think" : "reasoning_effort", values: [false], source: "provider" };
   }
   if (providerId === "anthropic") {
     const effort = record(caps.effort);
@@ -156,7 +156,7 @@ async function openAiCard(model: string, fetcher: typeof fetch): Promise<ModelRe
   } catch (error) { if (error instanceof ProviderConnectionError) throw error; return undefined; }
 }
 
-export async function providerModelCapabilities(input: ProviderConnection, fetcher: typeof fetch = fetch): Promise<ModelReasoningCapabilities | undefined> {
+export async function providerModelCapabilities(input: ProviderConnection, fetcher: typeof fetch = fetch, purpose?: "suggested_kpi"): Promise<ModelReasoningCapabilities | undefined> {
   if (input.providerId === "local_runner") {
     const { backendId, model } = input.providerConfig;
     const manifest = createLocalRuntimeContext().manifests.get(backendId);
@@ -179,6 +179,12 @@ export async function providerModelCapabilities(input: ProviderConnection, fetch
     : providerId === "gemini" ? { "x-goog-api-key": config.apiKey } : { authorization: `Bearer ${config.apiKey}` };
   const metadata = await boundedProviderMetadata(url, { headers }, fetcher);
   const capabilities = parseProviderReasoning(metadata, providerId);
+  if (purpose === "suggested_kpi" && providerId === "anthropic") {
+    const meta = record(metadata), disabled = record(record(record(record(meta.capabilities).thinking).types).disabled).supported;
+    const direct = ["https://api.anthropic.com", "https://api.anthropic.com/v1"].includes(base);
+    const canDisable = disabled === true || disabled !== false && direct && claudeModelSupportsThinkingOff(typeof meta.id === "string" ? meta.id : config.model);
+    if (canDisable) return { ...(capabilities ?? { parameter: "output_config.effort" as const, values: [], source: "documentation" as const }), values: [false, ...(capabilities?.values.filter(value => value !== false) ?? [])] };
+  }
   if (capabilities) return capabilities;
   if (providerId === "gemini" && base === "https://generativelanguage.googleapis.com") return geminiDocumentedReasoning(record(metadata), config.model.replace(/^models\//, ""), fetcher);
   // Only OpenAI's direct endpoint may consult OpenAI's public model card.
@@ -189,6 +195,7 @@ export async function providerModelCapabilities(input: ProviderConnection, fetch
 export function validatedReasoningConfig(capabilities: ModelReasoningCapabilities | undefined, value: ModelReasoningValue | undefined): Record<string, unknown> {
   if (value === undefined) return {};
   if (!capabilities?.values.includes(value)) throw new ProviderConnectionError("The selected reasoning level is not supported by this model. Refresh its options or choose Default.");
+  if (value === false && capabilities.parameter === "reasoning_effort" && capabilities.values.length === 1) return {};
   if (capabilities.parameter === "think") {
     if (typeof value === "number") throw new ProviderConnectionError("Ollama thinking does not accept a token count.");
     return { think: value };

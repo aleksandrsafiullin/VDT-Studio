@@ -404,10 +404,18 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     const turnResponse = (output: unknown) => providerId === "ollama"
       ? Response.json({ done: true, message: { content: JSON.stringify(output) } })
       : openAiStructuredResponse(output);
-    const providerFetch = vi.fn()
-      .mockResolvedValueOnce(turnResponse(firstTurn))
-      .mockResolvedValueOnce(turnResponse(secondTurn))
-      .mockResolvedValueOnce(turnResponse(firstTurn));
+    const fixtureTurns = [firstTurn, secondTurn, firstTurn];
+    let fixtureTurn = 0, lastFixtureTurn = firstTurn;
+    const providerFetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body ?? "{}"));
+      // Native Ollama reviews proposed construction questions before publication.
+      // A review is not another user turn or permission to skip a real question.
+      if (providerId === "ollama" && JSON.stringify(request.format).includes('"questionDisposition"')) {
+        return turnResponse({ ...lastFixtureTurn, questionDisposition: "ask_user" });
+      }
+      lastFixtureTurn = fixtureTurns[fixtureTurn++] ?? firstTurn;
+      return turnResponse(lastFixtureTurn);
+    });
     vi.stubGlobal("fetch", providerFetch);
 
     const instructions = { userInstructions: "Answer in Russian.\n\nExplain assumptions." };
@@ -453,7 +461,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
         modelId: "server-owned-model",
         sessionEpoch: 1
       });
-      expect(providerFetch).toHaveBeenCalledTimes(1);
+      expect(providerFetch).toHaveBeenCalledTimes(providerId === "ollama" ? 2 : 1);
 
       const instructionDuringQuestion = await postMessage(jsonRequest(
         `http://localhost:3000/api/agent/runs/${body.runId}/messages`,
@@ -498,8 +506,8 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       await waitForRunSnapshot(body.runId!, (snapshot) =>
         snapshot.status === "needs_user_input" && snapshot.pendingQuestions?.[0]?.id === "unit"
       );
-      expect(providerFetch).toHaveBeenCalledTimes(2);
-      const secondProviderBody = JSON.parse(String((providerFetch.mock.calls[1]?.[1] as RequestInit).body)) as {
+      expect(providerFetch).toHaveBeenCalledTimes(providerId === "ollama" ? 4 : 2);
+      const secondProviderBody = JSON.parse(String((providerFetch.mock.calls[providerId === "ollama" ? 2 : 1]?.[1] as RequestInit).body)) as {
         messages: Array<{ role: string; content: string }>;
       };
       const secondPrompt = JSON.parse(secondProviderBody.messages.filter((message) => message.role === "user").at(-1)!.content) as {
@@ -567,7 +575,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       expect(secondSessionBinding).not.toBe(firstSessionBinding);
       expect(agentRuntime.store.getState(body.runId!).request.executionBindingId).toBe(bindingId);
       expect(agentRuntime.store.getState(secondRunBody.runId!).request.executionBindingId).toBe(bindingId);
-      expect(providerFetch).toHaveBeenCalledTimes(3);
+      expect(providerFetch).toHaveBeenCalledTimes(providerId === "ollama" ? 6 : 3);
 
       const secondCancelled = await cancelRun(new Request(
         `http://localhost:3000/api/agent/runs/${secondRunBody.runId}/cancel`,
@@ -587,7 +595,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       });
       await waitForSupervisorReleased(body.runId!);
       expect(isStructuredModelAgentRunActive(body.runId!)).toBe(false);
-      expect(providerFetch).toHaveBeenCalledTimes(3);
+      expect(providerFetch).toHaveBeenCalledTimes(providerId === "ollama" ? 6 : 3);
     } finally {
       dispose();
     }

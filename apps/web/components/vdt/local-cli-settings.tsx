@@ -17,6 +17,7 @@ import {
   type CliModelSelection
 } from "@/lib/execution-mode-catalog";
 import { CliAgentCard, type CliAgentDetectionView } from "./cli-agent-card";
+import { CustomHarnessSettings } from "./custom-harness-settings";
 import { CliInstallGrid } from "./cli-install-grid";
 import { ProviderTestStatusBanner } from "./provider-diagnostics";
 import { useVdtStudioStore, type ProviderTestStatus } from "./vdt-store";
@@ -67,9 +68,9 @@ export function resolveCliSettingsDetectionState(
 ) {
   const detectionById = new Map((detections ?? []).map((detection) => [detection.id, detection] as const));
   const scanPending = isScanning || detections === undefined;
-  const installedAgents = CLI_CATALOG.filter((entry) => !removedAgentIds.includes(entry.id) && detectionById.get(entry.id)?.installed === true);
+  const installedAgents = CLI_CATALOG.filter((entry) => !removedAgentIds.includes(entry.id) && (entry.custom || detectionById.get(entry.id)?.installed === true));
   const removedAgents = CLI_CATALOG.filter((entry) => removedAgentIds.includes(entry.id));
-  const notInstalledAgents = CLI_CATALOG.filter((entry) => !removedAgentIds.includes(entry.id) && isConfirmedNotInstalled(detectionById.get(entry.id)));
+  const notInstalledAgents = CLI_CATALOG.filter((entry) => !entry.custom && !removedAgentIds.includes(entry.id) && isConfirmedNotInstalled(detectionById.get(entry.id)));
 
   return {
     detectionById,
@@ -328,6 +329,7 @@ export function LocalCliSettings() {
           </section>
         ) : null}
         <p className="px-1 text-[11px] leading-5 text-muted">Removing a provider only hides it here. It does not uninstall its CLI or sign out of your account.</p>
+        <CustomHarnessSettings />
       </section>
 
     </div>

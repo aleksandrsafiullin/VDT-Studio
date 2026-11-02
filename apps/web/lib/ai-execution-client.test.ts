@@ -101,7 +101,7 @@ describe("AiExecutionClient", () => {
     const result = await createAiExecutionClient("hosted_web", fetcher as unknown as typeof fetch).detectSubscriptionClis();
 
     expect(fetcher).not.toHaveBeenCalled();
-    expect(result.agents).toHaveLength(5);
+    expect(result.agents).toHaveLength(13);
     expect(result.agents.every((agent) => agent.installed === false && agent.status === "unavailable")).toBe(true);
     expect(result.agents[0]?.authSummary).toBe(HOSTED_WEB_LOCAL_AI_MESSAGE);
   });

@@ -1,5 +1,9 @@
 # Product Specification
 
+## Local harness integration (2026-11-02)
+
+The local AI catalog has thirteen current harness presets plus custom ACP/VDT JSONL profiles. The added presets are Kimi Code, Mistral Vibe, Kilo Code, Qwen Code, Grok Build and Pi. Suggested KPI independently selects its model and reasoning under Settings → Execution mode, with Same as chat model and explicit Off reasoning defaults. Unsupported Off is explained before preparation; Provider default requires an explicit choice. It has no legacy connection records or historical adapter variants. All registered structured tasks include Suggested KPI; chat uses an immutable external session binding. New/custom adapters remain experimental pending live/native qualification. See [Harness connections](HARNESS_CONNECTIONS.md).
+
 ## Baseline back-calculation
 
 Implemented in source: Properties can mark one incoming KPI per VDT as
@@ -167,6 +171,16 @@ honest loading/unavailable state. These measurements do not qualify model speed,
 hard CLI token/isolation guarantees or native packaging. See
 [validation](PRODUCTION_READINESS.md#smart-kpi-validation) and
 [ADR-008](adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
+
+Opened Suggested targets enter the scheduler before viewport/new-child prewarming.
+Automatic visible/new-child requests wait 350 ms; hover, selection and explicit
+Prepare do not. A different eligible hover can cancel active visible/new-child
+work, retaining the slot until terminal cleanup is acknowledged. Active hover,
+selected and explicit requests are protected. Cancelled attempts still count
+toward the eight automatic attempts and are not automatically retried. Unknown
+cleanup blocks that execution. Warm hits require no new model request; cold
+provider time remains separate from these queue improvements. See the
+[latency investigation](implementation/SMART_KPI_LATENCY_2026-11-02.md).
 
 Smart proposals still contain definitions, without model-invented numbers. Before
 **Add & calculate**, the panel requires numeric inputs and shows the current and

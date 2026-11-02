@@ -2,20 +2,143 @@
   "release": "0.1.0-alpha.0",
   "asOf": "2026-06-22",
   "backends": [
-    {"id": "mock", "status": "supported", "liveVerified": true, "evidence": "Deterministic unit and Playwright coverage"},
-    {"id": "openai_compatible", "status": "supported", "liveVerified": false, "evidence": "Protocol fixtures, SSRF controls, and mocked E2E; bounded Smart protocol/cancellation fixtures, no Smart live qualification"},
-    {"id": "anthropic", "status": "supported", "liveVerified": false, "evidence": "Structured provider unit tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification"},
-    {"id": "gemini_api", "status": "supported", "liveVerified": false, "evidence": "Structured provider unit tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification"},
-    {"id": "azure_openai", "status": "supported", "liveVerified": false, "evidence": "Structured provider unit tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification"},
-    {"id": "alibaba_coding_plan", "status": "beta", "liveVerified": false, "evidence": "Catalog, session-secret, and mocked connection coverage"},
-    {"id": "ollama", "status": "supported", "liveVerified": false, "evidence": "Local-runner manifest and schema integration tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification"},
-    {"id": "lm_studio", "status": "supported", "liveVerified": false, "evidence": "Local-runner manifest and schema integration tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification"},
-    {"id": "vllm", "status": "beta", "liveVerified": false, "evidence": "Local-runner manifest and schema integration tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification"},
-    {"id": "cursor_subscription", "status": "beta", "liveVerified": true, "evidence": "Auth and model probes passed; Cursor now runs in open-design-style ephemeral workspace mode without the VDT darwin wrapper"},
-    {"id": "codex_subscription", "status": "alpha", "liveVerified": false, "evidence": "Fake executable, parser, auth, schema, and executor tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification"},
-    {"id": "claude_subscription", "status": "alpha", "liveVerified": false, "evidence": "Fake executable, parser, auth, schema, and executor tests"},
-    {"id": "gemini_subscription", "status": "experimental", "liveVerified": false, "evidence": "Fake executable and deny-all policy tests; CLI unavailable locally"},
-    {"id": "copilot_subscription", "status": "experimental", "liveVerified": false, "evidence": "Fake executable and tool-free manifest tests; CLI unavailable locally"},
-    {"id": "custom_cli", "status": "experimental-disabled", "liveVerified": false, "evidence": "Not exposed as a certified alpha backend"}
+    {
+      "id": "mock",
+      "status": "supported",
+      "liveVerified": true,
+      "evidence": "Deterministic unit and Playwright coverage"
+    },
+    {
+      "id": "openai_compatible",
+      "status": "supported",
+      "liveVerified": false,
+      "evidence": "Protocol fixtures, SSRF controls, and mocked E2E; bounded Smart protocol/cancellation fixtures, no Smart live qualification"
+    },
+    {
+      "id": "anthropic",
+      "status": "supported",
+      "liveVerified": false,
+      "evidence": "Structured provider unit tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification"
+    },
+    {
+      "id": "gemini_api",
+      "status": "supported",
+      "liveVerified": false,
+      "evidence": "Structured provider unit tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification"
+    },
+    {
+      "id": "azure_openai",
+      "status": "supported",
+      "liveVerified": false,
+      "evidence": "Structured provider unit tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification"
+    },
+    {
+      "id": "alibaba_coding_plan",
+      "status": "beta",
+      "liveVerified": false,
+      "evidence": "Catalog, session-secret, and mocked connection coverage"
+    },
+    {
+      "id": "ollama",
+      "status": "supported",
+      "liveVerified": false,
+      "evidence": "Local-runner manifest and schema integration tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification"
+    },
+    {
+      "id": "lm_studio",
+      "status": "supported",
+      "liveVerified": false,
+      "evidence": "Local-runner manifest and schema integration tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification"
+    },
+    {
+      "id": "vllm",
+      "status": "beta",
+      "liveVerified": false,
+      "evidence": "Local-runner manifest and schema integration tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification"
+    },
+    {
+      "id": "cursor_subscription",
+      "status": "beta",
+      "liveVerified": true,
+      "evidence": "Auth and model probes passed; Cursor now runs in open-design-style ephemeral workspace mode without the VDT darwin wrapper; 2026-11-01 host: tree/branch/review and composer-2.5 Smart proposal passed; full session qualification remains unverified (docs/HARNESS_CONNECTIONS.md)"
+    },
+    {
+      "id": "codex_subscription",
+      "status": "alpha",
+      "liveVerified": false,
+      "evidence": "Fake executable, parser, auth, schema, and executor tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification; 2026-11-01 host: structured tree/branch/review passed; gpt-6.1-sol Smart blocked by Code Mode/read-only conflict; session chat timed out, not qualified (docs/HARNESS_CONNECTIONS.md)"
+    },
+    {
+      "id": "claude_subscription",
+      "status": "alpha",
+      "liveVerified": false,
+      "evidence": "Fake executable, parser, auth, schema, and executor tests"
+    },
+    {
+      "id": "copilot_subscription",
+      "status": "experimental",
+      "liveVerified": false,
+      "evidence": "Shared ACP execution; live/native qualification pending; 2026-11-01 CLI 1.0.74 ACP session requires sign-in; no live inference (docs/HARNESS_CONNECTIONS.md)"
+    },
+    {
+      "id": "custom_cli",
+      "status": "experimental",
+      "liveVerified": false,
+      "evidence": "Host-owned ACP/VDT JSONL profiles; session, schema and cancellation fixture checks; arbitrary executables and native platforms remain unqualified"
+    },
+    {
+      "id": "opencode_subscription",
+      "status": "experimental",
+      "liveVerified": false,
+      "evidence": "Shared ACP session/checkpoint and schema-bound completion implementation; fixture evidence only, live/native isolation qualification pending"
+    },
+    {
+      "id": "hermes_subscription",
+      "status": "experimental",
+      "liveVerified": false,
+      "evidence": "Shared ACP session/checkpoint and schema-bound completion implementation; fixture evidence only, live/native isolation qualification pending"
+    },
+    {
+      "id": "kiro_subscription",
+      "status": "experimental",
+      "liveVerified": false,
+      "evidence": "Shared ACP session/checkpoint and schema-bound completion implementation; fixture evidence only, live/native isolation qualification pending"
+    },
+    {
+      "id": "kimi_subscription",
+      "status": "experimental",
+      "liveVerified": false,
+      "evidence": "Shared ACP session/checkpoint and schema-bound completion implementation; fixture coverage only, live account/model/native isolation qualification pending"
+    },
+    {
+      "id": "vibe_subscription",
+      "status": "experimental",
+      "liveVerified": false,
+      "evidence": "Shared ACP session/checkpoint and schema-bound completion implementation; fixture coverage only, live account/model/native isolation qualification pending"
+    },
+    {
+      "id": "kilo_subscription",
+      "status": "experimental",
+      "liveVerified": false,
+      "evidence": "Shared ACP session/checkpoint and schema-bound completion implementation; fixture coverage only, live account/model/native isolation qualification pending"
+    },
+    {
+      "id": "qwen_subscription",
+      "status": "experimental",
+      "liveVerified": false,
+      "evidence": "Shared ACP session/checkpoint and schema-bound completion implementation; fixture coverage only, live account/model/native isolation qualification pending"
+    },
+    {
+      "id": "grok-build_subscription",
+      "status": "experimental",
+      "liveVerified": false,
+      "evidence": "Shared ACP session/checkpoint and schema-bound completion implementation; fixture coverage only, live account/model/native isolation qualification pending"
+    },
+    {
+      "id": "pi_subscription",
+      "status": "experimental",
+      "liveVerified": false,
+      "evidence": "Shared Pi RPC session/checkpoint and schema-bound completion implementation; fixture coverage only, live account/model/native isolation qualification pending"
+    }
   ]
 }

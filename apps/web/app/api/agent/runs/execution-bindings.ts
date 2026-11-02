@@ -4,6 +4,7 @@ import {
   type AgentCapabilityProfile,
   type AgentCapabilityQualificationRequirement
 } from "@vdt-studio/vdt-agent-runtime";
+import { isHarnessBackendId } from "@vdt-studio/model-bridge/harness-catalog";
 
 export const DEFAULT_MODEL_AGENT_EXECUTION_BINDING_ID = "model_agent_default";
 
@@ -573,7 +574,7 @@ export function isExternalCliExecutionBinding(
 function wouldLaunchSubscriptionCli(
   adapter: LegacyModelAgentCompatibilityAdapterDefinition
 ): boolean {
-  if (/(?:cursor|codex|claude).*subscription|subscription.*(?:cursor|codex|claude)/i.test(adapter.providerId)) {
+  if (isHarnessBackendId(adapter.providerId) || /(?:cursor|codex|claude).*subscription|subscription.*(?:cursor|codex|claude)/i.test(adapter.providerId)) {
     return true;
   }
   if (adapter.providerId !== "local_runner") return false;

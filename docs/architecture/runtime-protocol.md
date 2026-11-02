@@ -1,11 +1,20 @@
 # Runtime Protocol
 
+## Local harness integration (2026-11-02)
+
+The version-1 private protocol adds harness_settings with action/profile/removeId and generalizes smart_execution to registered harness backend IDs. Smart metadata and completion accept the independently selected modelReasoning value; explicit false is preserved, validated and included in execution identity. Task requests cannot supply executable/configuration fields. Custom definitions are validated and atomically saved by the host; the UI retains only selection identity. See [Harness connections](../HARNESS_CONNECTIONS.md).
+
+Smart model/reasoning discovery also admits the manifest-owned `ollama`,
+`lm_studio` and `vllm` backends through the same `smart_execution` method and
+`ai_smart_execution` command. Their endpoints remain owned by the host manifest;
+no relative HTTP fallback or new native command is needed in the desktop view.
+
 ## Smart completion registration (partial product integration)
 
 The existing `complete` method now admits the registered
 `suggest_incoming_kpis` / `suggest-incoming-kpis-v1` compact input/output contract.
 The separate metadata-only native command `ai_smart_execution` maps to the strict
-`smart_execution` pipe method with `{backendId:"codex_subscription",model?,timeoutMs?}`
+`smart_execution` pipe method with `{backendId,model?,modelReasoning?,timeoutMs?}`
 and a host UUID request ID. Deadline is at most 5 s/lower raw budget. Endpoint,
 executable, flags, environment, credentials and model-facing writes remain excluded.
 It dispatches the same separate one-completion executor as paired/managed paths,

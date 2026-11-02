@@ -1,3 +1,4 @@
+import { SMART_KPI_INSTRUCTION } from "@vdt-studio/vdt-core";
 import { execFile, spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -7,6 +8,7 @@ import {
   assertArgsSafe,
   extractBoundedJson,
   getSubscriptionCliAdapter,
+  verifyDirectClaudeSubscription,
   getRegisteredJsonSchema,
   getStrictResponseJsonSchema,
   isVdtSchemaId,
@@ -17,8 +19,10 @@ import {
   type VdtSchemaId
 } from "@vdt-studio/model-bridge";
 import type { BackendManifest, CompletionRequest } from "../cli/types";
-import { selectCodexExecutable } from "@vdt-studio/model-bridge/node";
+import { selectCodexExecutable } from "@vdt-studio/model-bridge/local-runtime";
 import { executeSmartSuggestion } from "./smart-suggestions";
+import { executeHarnessCompletion } from "./harness-completion";
+import { probeHarnessModels } from "@vdt-studio/model-bridge/local-runtime";
 
 const advisoryStub = Object.freeze({
   assumptions: [] as string[],
@@ -445,7 +449,7 @@ export const EXECUTION_LIMITS = Object.freeze({
 
 const ALLOWED_ENV_KEYS = [
   "PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "LC_CTYPE", "NO_COLOR",
-  "VDT_FAKE_CURSOR_MODE", "VDT_FAKE_CODEX_MODE", "VDT_FAKE_CLAUDE_MODE", "VDT_FAKE_GEMINI_MODE", "VDT_FAKE_COPILOT_MODE"
+  "VDT_FAKE_CURSOR_MODE", "VDT_FAKE_CODEX_MODE", "VDT_FAKE_CLAUDE_MODE"
 ] as const;
 
 const CODEX_HOME_COPY_FILES = ["auth.json", "installation_id", "models_cache.json"] as const;
@@ -808,13 +812,14 @@ async function executableHelpIncludesUncached(executable: string, needle: string
   }
 }
 
-async function executeCli(
+export async function executeCli(
   manifest: BackendManifest,
   request: CompletionRequest,
   signal: AbortSignal,
   options: ExecutorOptions
 ): Promise<ExecutionResult> {
   assertManifestSafe(manifest);
+  const smart = request.taskType === "suggest_incoming_kpis";
   const adapter = manifest.kind === "subscription_cli" ? getSubscriptionCliAdapter(manifest.id) : undefined;
   const envSource = options.env ?? process.env;
   const executable = await normalizeResolvedExecutable(await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource));
@@ -835,13 +840,15 @@ async function executeCli(
       : undefined;
 
   async function runCliAttempt(prompt: string, timeoutMs: number, requestJson = payload): Promise<ExecutionResult> {
-    if (byteLength(prompt) > EXECUTION_LIMITS.maxPromptBytes) {
+    if (byteLength(prompt) > (smart ? 24 * 1024 : EXECUTION_LIMITS.maxPromptBytes)) {
       throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
     }
 
     const tempRoot = options.tempRoot ?? os.tmpdir();
     await mkdir(tempRoot, { recursive: true });
     const cwd = await mkdtemp(path.join(tempRoot, "vdt-run-"));
+    let processStarted = false;
+    try {
     await chmod(cwd, 0o700);
     const requestPath = path.join(cwd, "request.json");
     await writeFile(requestPath, requestJson, { encoding: "utf8", mode: 0o600, flag: "wx" });
@@ -856,24 +863,21 @@ async function executeCli(
       flag: "wx"
     });
     const outputPath = path.join(cwd, "last-message.json");
-    const toolPolicyPath = path.join(cwd, "deny-all-tools.toml");
-    await writeFile(
-      toolPolicyPath,
-      '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n',
-      { encoding: "utf8", mode: 0o600, flag: "wx" }
-    );
     const promptText = await readFile(promptPath, "utf8");
 
     const staticArgs = manifest.cli?.args ?? [];
+    const directClaudeSubscriptionVerified = manifest.id === "claude_subscription" && request.modelReasoning === false
+      ? await verifyDirectClaudeSubscription(executable, cwd, safeEnvironment(envSource), signal) : false;
     const dynamicArgs = adapter
       ? adapter.buildArgs({
           ...(request.model ? { model: request.model } : {}),
+          ...(request.modelReasoning === undefined ? {} : { modelReasoning: request.modelReasoning }),
+          ...(directClaudeSubscriptionVerified ? { directClaudeSubscriptionVerified } : {}),
           cwd,
           promptPath,
           promptText,
           schemaPath,
           outputPath,
-          toolPolicyPath,
           enableWorkspaceTrust:
             manifest.id === "cursor_subscription" &&
             manifest.safety.trustEphemeralWorkspace === true &&
@@ -911,8 +915,9 @@ async function executeCli(
       nodeSpawn(spawnCommand, [...args], spawnOptions) as ChildProcessWithoutNullStreams))(
       command,
       finalArgs,
-      { cwd, env: childEnv, shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
+      { cwd, env: childEnv, shell: false, windowsHide: true, ...(smart ? { detached: process.platform !== "win32" } : {}), stdio: ["pipe", "pipe", "pipe"] }
     );
+    processStarted = true;
 
     let stdout = "";
     let stderr = "";
@@ -920,12 +925,25 @@ async function executeCli(
     let forceKill: NodeJS.Timeout | undefined;
     let cancelled = false;
     let outputLimitExceeded = false;
+    let processClosed = false, cleanupUnconfirmed = false;
+    let cleanupDeadline: NodeJS.Timeout | undefined;
+    let rejectCompletion: (error: Error) => void = () => {};
+    const processClosure = new Promise<void>(resolve => child.once("close", () => { processClosed = true; resolve(); }));
+    const killOwned = (kind: NodeJS.Signals) => {
+      if (processClosed) return;
+      try {
+        if (smart && process.platform !== "win32" && child.pid) process.kill(-child.pid, kind);
+        else child.kill(kind);
+      } catch { /* process exit is confirmed by close, not by a failed signal */ }
+    };
 
     const terminate = () => {
+      if (cancelled) return;
       cancelled = true;
-      child.kill("SIGTERM");
-      forceKill = setTimeout(() => child.kill("SIGKILL"), EXECUTION_LIMITS.killGraceMs);
+      killOwned("SIGTERM");
+      forceKill = setTimeout(() => killOwned("SIGKILL"), smart ? 250 : EXECUTION_LIMITS.killGraceMs);
       forceKill.unref?.();
+      if (smart) cleanupDeadline = setTimeout(() => { cleanupUnconfirmed = true; rejectCompletion(Object.assign(new Error("Smart CLI process cleanup could not be confirmed."), { code: "CLEANUP_UNCONFIRMED" })); }, 1250);
     };
     signal.addEventListener("abort", terminate, { once: true });
     const effectiveTimeout = Math.min(timeoutMs, EXECUTION_LIMITS.timeoutMs);
@@ -958,8 +976,9 @@ async function executeCli(
         completionSettled = true;
         reject(error);
       };
+      rejectCompletion = fail;
       const trySettleFromStream = (force = false) => {
-        if (!adapter?.parseStreamingOutput) return;
+        if (!adapter?.parseStreamingOutput || request.taskType === "suggest_incoming_kpis") return;
         if (streamingResult || streamingError !== undefined) return;
         const currentByteLength = byteLength(stdout);
         // Cursor previously reparsed the complete accumulated JSONL stream on
@@ -1000,7 +1019,7 @@ async function executeCli(
       child.stdout.on("data", (chunk: Buffer | string) => {
         const chunkText = chunk.toString();
         stdout += chunkText;
-        if (byteLength(stdout) > EXECUTION_LIMITS.maxStdoutBytes) {
+        if (byteLength(stdout) > (smart ? 64 * 1024 : EXECUTION_LIMITS.maxStdoutBytes)) {
           outputLimitExceeded = true;
           terminate();
           return;
@@ -1071,13 +1090,28 @@ async function executeCli(
         });
       }
       assertLineLimit(stdout);
+      if (request.taskType === "suggest_incoming_kpis") {
+        if (byteLength(stdout) > 64 * 1024) throw Object.assign(new Error("Smart CLI stream exceeded its bound."), { code: "OUTPUT_TOO_LARGE" });
+        const inspect = (v: unknown): boolean => {
+          if (!v || typeof v !== "object") return false;
+          if (Array.isArray(v)) return v.some(inspect);
+          const o = v as Record<string, unknown>;
+          if (["tool_use", "tool_call", "tool_result", "command_execution", "file_change", "mcp_tool_call", "web_search"].includes(String(o.type)) || Object.hasOwn(o, "tool_call") || typeof o.num_turns === "number" && o.num_turns > 1) return true;
+          return Object.values(o).some(inspect);
+        };
+        for (const line of stdout.split(/\r?\n/).filter(s => s.trim())) {
+          let parsed: unknown; try { parsed = JSON.parse(line); } catch { throw Object.assign(new Error("Smart CLI returned malformed JSON."), { code: "INVALID_RESPONSE" }); }
+          if (inspect(parsed)) throw Object.assign(new Error("Smart CLI reported native tool activity."), { code: "TOOL_ACTIVITY_REJECTED" });
+        }
+      }
       if (byteLength(stdout) > EXECUTION_LIMITS.maxResultBytes && !adapter) {
         throw Object.assign(new Error("Backend result exceeds the configured limit."), { code: "OUTPUT_TOO_LARGE" });
       }
       const parsedOutput = adapter
         ? adapter.parseOutput(stdout, stderr, request.schemaId as VdtSchemaId)
         : extractBoundedJson(stdout, EXECUTION_LIMITS.maxResultBytes);
-      const output = normalizeRegisteredSchemaOutput(request.schemaId as VdtSchemaId, parsedOutput);
+      if (smart && byteLength(JSON.stringify(parsedOutput)) > 16 * 1024) throw Object.assign(new Error("Smart output exceeded 16 KiB."), { code: "OUTPUT_TOO_LARGE" });
+      const output = smart ? parsedOutput : normalizeRegisteredSchemaOutput(request.schemaId as VdtSchemaId, parsedOutput);
       const schemaValid = validateRegisteredSchema(request.schemaId as VdtSchemaId, output);
       if (!schemaValid) {
         throw Object.assign(new Error("Backend output failed registered schema validation."), {
@@ -1109,16 +1143,38 @@ async function executeCli(
     } finally {
       signal.removeEventListener("abort", terminate);
       if (timeout) clearTimeout(timeout);
+      if (smart && !processClosed && !cleanupUnconfirmed) {
+        terminate();
+        let deadline: NodeJS.Timeout | undefined;
+        try { await Promise.race([processClosure, new Promise<void>(resolve => { deadline = setTimeout(() => { cleanupUnconfirmed = true; resolve(); }, 1250); })]); }
+        finally { if (deadline) clearTimeout(deadline); }
+      }
       if (forceKill) clearTimeout(forceKill);
+      if (cleanupDeadline) clearTimeout(cleanupDeadline);
+      if (cleanupUnconfirmed) {
+        await writeFile(path.join(cwd, "cleanup-status.json"), JSON.stringify({ backendId: manifest.id, status: "cleanup_unconfirmed" }), { mode: 0o600 });
+        child.stdout.destroy(); child.stderr.destroy(); child.stdin.destroy(); child.unref();
+        throw Object.assign(new Error("Smart CLI cleanup is unconfirmed; the execution lane is quarantined."), { code: "CLEANUP_UNCONFIRMED", retainedDirectory: cwd });
+      }
       await rm(cwd, { recursive: true, force: true });
+    }
+    } catch (error) {
+      if (!processStarted) {
+        if ((error as { code?: string })?.code === "CLEANUP_UNCONFIRMED") {
+          await writeFile(path.join(cwd, "cleanup-status.json"), JSON.stringify({ backendId: manifest.id, status: "cleanup_unconfirmed" }), { mode: 0o600 }).catch(() => {});
+          throw Object.assign(error as Error, { retainedDirectory: cwd });
+        }
+        await rm(cwd, { recursive: true, force: true });
+      }
+      throw error;
     }
   }
 
-  const first = await runCliAttempt(buildSubscriptionPrompt(request), request.timeoutMs ?? EXECUTION_LIMITS.timeoutMs).catch(
+  const first = await runCliAttempt((request.taskType === "suggest_incoming_kpis" ? SMART_KPI_INSTRUCTION + "\n" : "") + buildSubscriptionPrompt(request), request.timeoutMs ?? EXECUTION_LIMITS.timeoutMs).catch(
     async (error: unknown) => {
       const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
       if (code !== "SCHEMA_INVALID" && code !== "BACKEND_PARSE_FAILED") throw error;
-      if (request.schemaId === "agent-decision-v2") throw error;
+      if (request.schemaId === "agent-decision-v2" || request.taskType === "suggest_incoming_kpis") throw error;
       const parsedOutput = typeof error === "object" && error !== null && "output" in error ? (error as { output?: unknown }).output : undefined;
       const invalidText =
         parsedOutput === undefined
@@ -1434,6 +1490,7 @@ export async function executeCompletion(
   if (!isVdtSchemaId(request.schemaId)) throw Object.assign(new Error("Unknown schemaId."), { code: "UNKNOWN_SCHEMA" });
   if (signal.aborted) throw abortError();
   if (request.taskType === "suggest_incoming_kpis") return executeSmartSuggestion(manifest, request, signal, options);
+  if (manifest.harness && manifest.harness.transport !== "native") return executeHarnessCompletion(manifest, request, signal, options);
   const prompt = JSON.stringify({
     requestId: request.requestId,
     taskType: request.taskType,
@@ -1461,6 +1518,7 @@ export async function listBackendModels(
 ): Promise<readonly string[]> {
   if (!manifest.modelSelection) return [];
   if (signal.aborted) throw abortError("Model listing was cancelled.");
+  if (manifest.harness && manifest.harness.transport !== "native") return (await probeHarnessModels(manifest.harness, signal, options.env)).map(m => m.id);
   if (manifest.kind === "local_http") {
     return listLocalHttpModels(manifest, signal, options);
   }

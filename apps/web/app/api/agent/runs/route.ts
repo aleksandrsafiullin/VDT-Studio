@@ -1,3 +1,4 @@
+import { isCurrentHarnessSession } from "./harness-session-bindings";
 import {
   agentStartRequestSchema,
   type VdtAgentPublicStartRequest
@@ -42,6 +43,7 @@ import {
 export async function GET() {
   await ensureServerManagedExecutionBindings();
   const bindings = agentExecutionBindingRegistry.summaries()
+    .filter(binding => isCurrentHarnessSession(binding.bindingId))
     .filter((binding) => !isOpenAiSessionBinding(binding.bindingId))
     // Development can retain an older registry instance across hot reload.
     // Serialize the current public contract from its immutable definitions.

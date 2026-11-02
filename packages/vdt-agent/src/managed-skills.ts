@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { LocalSkillRepository, SkillLibraryError, skillContentHash, type SkillFileIssue, type StoredSkillSelection, type StoredSkillVersion } from "@vdt-studio/storage";
+import { LocalSkillRepository, SkillLibraryError, skillContentHash, type SkillFileIssue, type StoredSkillSelection, type StoredSkillVersion } from "@vdt-studio/storage/skills";
 import { z } from "zod";
 import { loadDefaultSkillLibrary, loadDefaultSkillResources, parseFrontmatter, parseSkillMarkdown, readExecutableSkillTopology, type VdtSkill, type VdtSkillLibrary } from "./index";
 

@@ -42,10 +42,10 @@ export async function prepareProviderAgentBinding(settings: ExecutionSettings, p
   return binding.bindingId;
 }
 
-export async function requestProviderModelCapabilities(connection: NonNullable<ReturnType<typeof providerConnectionRequest>>, signal?: AbortSignal, fetcher: typeof fetch = fetch) {
+export async function requestProviderModelCapabilities(connection: NonNullable<ReturnType<typeof providerConnectionRequest>>, signal?: AbortSignal, fetcher: typeof fetch = fetch, purpose?: "suggested_kpi") {
   const response = await fetcher("/api/agent/bindings/provider", {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ operation: "capabilities", ...connection }), ...(signal ? { signal } : {})
+    body: JSON.stringify({ operation: purpose === "suggested_kpi" ? "smart_capabilities" : "capabilities", ...connection }), ...(signal ? { signal } : {})
   });
   const result = await response.json() as { ok?: boolean; modelId?: string; capabilities?: ModelReasoningCapabilities | null; error?: string };
   if (!response.ok || result.ok !== true || result.modelId !== connection.providerConfig.model) {

@@ -17,6 +17,7 @@ export type CliReadinessBackendStatus =
   | "error";
 
 export interface CliReadinessDetection {
+  checks?: import("@vdt-studio/model-bridge/harness-catalog").HarnessAccessChecks;
   id: CliAgentId;
   installed: boolean;
   status?: CliReadinessBackendStatus | undefined;
@@ -66,8 +67,8 @@ export function describeCliDetection(
       agentId,
       state: "ready",
       canExecute: true,
-      label: "CLI ready",
-      message: `${agentName} is installed and authenticated. VDT session-binding availability is checked separately when a run starts.`
+      label: detection.checks?.authentication === "provider_managed" ? "Protocol ready" : "CLI ready",
+      message: detection.checks?.authentication === "provider_managed" ? `${agentName} accepts the protocol session. The provider checks account access and quotas when a task runs. VDT chat compatibility is checked separately.` : `${agentName} is installed and authenticated. VDT session-binding availability is checked separately when a run starts.`
     };
   }
 

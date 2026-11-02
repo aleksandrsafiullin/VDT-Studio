@@ -1,3 +1,4 @@
+import { isHarnessReasoningValue } from "@vdt-studio/model-bridge";
 import { randomUUID } from "node:crypto";
 import { getSpeechRuntime } from "../speech/runtime";
 import {
@@ -13,6 +14,7 @@ import {
   listRuntimeBackends,
   parseCompletionPayload,
   resolveSmartRuntimeExecution,
+  runtimeHarnessSettings,
   type LocalRuntimeConfig,
   type LocalRuntimeContext,
   type RuntimeResult
@@ -143,6 +145,7 @@ export function runLocalRuntimeSidecar(options: SidecarRuntimeOptions = {}): voi
 }
 
 async function routeSidecarRequest(message: SidecarRequestMessage, context: LocalRuntimeContext): Promise<RuntimeResult> {
+  if (message.method === "harness_settings") return runtimeHarnessSettings(message.payload, context);
   if (message.method === "speech") return { statusCode: 200, payload: await getSpeechRuntime().request(message.payload) };
   if (message.method === "list_backends") return listRuntimeBackends(context);
   if (message.method === "detect_clis") {
@@ -154,13 +157,13 @@ async function routeSidecarRequest(message: SidecarRequestMessage, context: Loca
     return completeRuntime(parseCompletionPayload({ ...message.payload, requestId: message.requestId }), context);
   }
   if (message.method === "smart_execution") {
-    const { backendId, model, timeoutMs = 5000 } = message.payload;
-    if (backendId !== "codex_subscription" || Object.keys(message.payload).some(k => !["backendId", "model", "timeoutMs"].includes(k))
-      || model !== undefined && typeof model !== "string" || !Number.isSafeInteger(timeoutMs) || Number(timeoutMs) <= 0 || Number(timeoutMs) > 5000) throw new LocalRuntimeError(400, "INVALID_SMART_METADATA", "Invalid Smart metadata request.");
+    const { backendId, model, modelReasoning, timeoutMs = 5000 } = message.payload;
+    if (typeof backendId !== "string" || Object.keys(message.payload).some(k => !["backendId", "model", "modelReasoning", "timeoutMs"].includes(k))
+      || modelReasoning !== undefined && !isHarnessReasoningValue(modelReasoning) || model !== undefined && typeof model !== "string" || !Number.isSafeInteger(timeoutMs) || Number(timeoutMs) <= 0 || Number(timeoutMs) > 5000) throw new LocalRuntimeError(400, "INVALID_SMART_METADATA", "Invalid Smart metadata request.");
     let entries = smartAdmissions.get(context); if (!entries) { entries = new Map(); smartAdmissions.set(context, entries); }
     if (entries.size >= 16 || entries.has(message.requestId)) throw new LocalRuntimeError(409, "PREPARATION_CAPACITY", "Smart metadata admission is already active or full.");
     const controller = new AbortController(); entries.set(message.requestId, controller);
-    try { return await resolveSmartRuntimeExecution(model as string | undefined, context, controller.signal, Number(timeoutMs)); }
+    try { return await resolveSmartRuntimeExecution(model as string | undefined, context, controller.signal, Number(timeoutMs), backendId as string, isHarnessReasoningValue(modelReasoning) ? modelReasoning : undefined); }
     finally { entries.delete(message.requestId); }
   }
   if (message.method === "get_run") {

@@ -4,6 +4,19 @@ import * as auth from "./auth";
 import { buildClaudeDynamicArgs, claudeSubscriptionCliAdapter } from "./adapter";
 
 describe("claudeSubscriptionCliAdapter", () => {
+  it("passes exact effort and explicit supported thinking Off without model substitution", () => {
+    expect(buildClaudeDynamicArgs({ model: "claude-sonnet-4-6", modelReasoning: "high", promptText: "Return JSON" })).toContain("high");
+    const args = buildClaudeDynamicArgs({ model: "claude-sonnet-4-6", modelReasoning: false, directClaudeSubscriptionVerified: true, promptText: "Return JSON" });
+    const settings = JSON.parse(args[args.indexOf("--settings") + 1]!);
+    expect(settings).toMatchObject({ alwaysThinkingEnabled: false, env: { MAX_THINKING_TOKENS: "0" } });
+    expect(args).toContain("claude-sonnet-4-6");
+  });
+  it("rejects Off for unverified or third-party Claude providers even with a versioned model", () => {
+    expect(() => buildClaudeDynamicArgs({ model: "claude-sonnet-4-6", modelReasoning: false, promptText: "Return JSON" })).toThrowError(expect.objectContaining({ code: "REASONING_UNSUPPORTED" }));
+  });
+  it.each(["auto", "opus", "claude-opus-5-5", "claude-fable-5"])("does not claim thinking Off for %s", model => {
+    expect(() => buildClaudeDynamicArgs({ model, modelReasoning: false, directClaudeSubscriptionVerified: true, promptText: "Return JSON" })).toThrowError(expect.objectContaining({ code: "REASONING_UNSUPPORTED" }));
+  });
   it("delegates probeAuth to probeClaudeAuth", async () => {
     const probe = vi.spyOn(auth, "probeClaudeAuth").mockResolvedValue({
       backendId: "claude_subscription",

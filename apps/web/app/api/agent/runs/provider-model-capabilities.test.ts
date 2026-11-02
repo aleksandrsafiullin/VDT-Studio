@@ -3,12 +3,22 @@ import { parseOpenAiReasoningCard, openAiCardSupportsTextChat, parseProviderReas
 
 afterEach(() => vi.unstubAllEnvs());
 describe("provider model reasoning discovery", () => {
+  it("offers Smart-specific Anthropic Off only for a verified compatible model and keeps chat options unchanged", async () => {
+    const connection = providerConnectionSchema.parse({ providerId: "anthropic", providerConfig: { model: "claude-sonnet-4-6", apiKey: "synthetic" } });
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ id: "claude-sonnet-4-6", capabilities: { effort: { supported: true, low: { supported: true }, high: { supported: true } } } }));
+    expect((await providerModelCapabilities(connection, fetcher))?.values).toEqual(["low", "high"]);
+    expect((await providerModelCapabilities(connection, fetcher, "suggested_kpi"))?.values).toEqual([false, "low", "high"]);
+    fetcher.mockImplementation(async () => Response.json({ id: "claude-sonnet-5-5", capabilities: { effort: { supported: true, low: { supported: true }, high: { supported: true } } } }));
+    expect((await providerModelCapabilities(connection, fetcher, "suggested_kpi"))?.values).toEqual(["low", "high"]);
+    fetcher.mockImplementation(async () => Response.json({ id: "claude-sonnet-4-6", capabilities: { effort: { supported: true, low: { supported: true } }, thinking: { types: { disabled: { supported: false } } } } }));
+    expect((await providerModelCapabilities(connection, fetcher, "suggested_kpi"))?.values).toEqual(["low"]);
+  });
   it("uses exact Ollama switches and named levels without invented capabilities", () => {
     expect(parseProviderReasoning({ thinking: { values: [false, true], default: true }, instructions: "untrusted" }, "ollama"))
       .toEqual({ parameter: "think", values: [false, true], defaultValue: true, source: "provider" });
     expect(parseProviderReasoning({ thinking: { values: ["low", "medium", "high"], default: "medium" } }, "ollama")?.values).toEqual(["low", "medium", "high"]);
     expect(parseProviderReasoning({ capabilities: ["thinking"] }, "ollama")).toBeUndefined();
-    expect(parseProviderReasoning({ thinking: { values: [false] } }, "ollama")).toBeUndefined();
+    expect(parseProviderReasoning({ thinking: { values: [false] } }, "ollama")?.values).toEqual([false]);
   });
   it("reads Anthropic supported effort fields and the adaptive thinking capability", () => {
     expect(parseProviderReasoning({ capabilities: { effort: { supported: true, low: { supported: true }, high: { supported: true }, max: { supported: false } }, thinking: { types: { adaptive: { supported: true } } } } }, "anthropic"))

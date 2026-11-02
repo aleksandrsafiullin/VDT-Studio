@@ -25,6 +25,7 @@ export type CliAgentBackendStatus =
   | "error";
 
 export interface CliAgentDetectionView {
+  checks?: import("@vdt-studio/model-bridge/harness-catalog").HarnessAccessChecks;
   id: CliAgentId;
   installed: boolean;
   executable: string | null;
@@ -181,6 +182,12 @@ export function CliAgentCard({
         {selected ? <span className="flex shrink-0 items-center gap-1 pt-1 text-[11px] font-medium text-blue-700"><Check className="h-3.5 w-3.5" aria-hidden="true" />For chat</span> : null}
       </div>
 
+      {detection.checks ? <div data-testid={`cli-agent-checks-${catalog.id}`} className="flex flex-wrap gap-x-3 gap-y-1 px-4 pb-3 text-[10px] text-muted">
+        <span>Installation: {detection.installed ? "found" : "missing"}</span>
+        <span>Account: {({ verified: "verified", required: "sign in required", provider_managed: "checked by provider on use", unknown: "unverified" })[detection.checks.authentication]}</span>
+        <span>Protocol: {detection.checks.protocol}</span>
+      </div> : null}
+
       <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
         {!selected ? (
           <Button type="button" size="sm" variant="secondary" onClick={onSelect} aria-label={`Use ${catalog.displayName} for chat`}>Use for chat</Button>
@@ -241,7 +248,7 @@ export function CliAgentCard({
       {visibleAuthStatus ? (
         <div className="border-t border-line px-3 py-2">
           <ProviderTestStatusBanner status={visibleAuthStatus} testId={`provider-auth-status-${catalog.id}`} />
-          {catalog.id !== "cursor-agent" ? <a data-testid={`cli-agent-sign-in-guide-${catalog.id}`} className="mt-2 inline-block text-xs text-accent underline underline-offset-2" href={catalog.docsUrl} target="_blank" rel="noopener noreferrer">Open sign-in guide ↗</a> : null}
+          {catalog.id !== "cursor-agent" && catalog.docsUrl ? <a data-testid={`cli-agent-sign-in-guide-${catalog.id}`} className="mt-2 inline-block text-xs text-accent underline underline-offset-2" href={catalog.docsUrl} target="_blank" rel="noopener noreferrer">Open sign-in guide ↗</a> : null}
         </div>
       ) : null}
 
@@ -312,7 +319,7 @@ export function CliAgentCard({
             {versionLabel ? <span data-testid={`cli-agent-version-chip-${catalog.id}`}>{versionLabel === "compatible" ? "Compatible" : versionLabel === "incompatible" ? "Incompatible" : "Unknown"}</span> : null}</p> : null}
           {detection.authSummary ? <p className="break-words" data-testid={`cli-agent-auth-summary-${catalog.id}`}>{detection.authSummary}</p> : null}
           {detection.error || detection.diagnostics?.length ? <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-[11px]">{[detection.error, ...(detection.diagnostics ?? [])].filter(Boolean).join("\n")}</pre> : null}
-          <a className="inline-block text-accent underline underline-offset-2" href={catalog.docsUrl} target="_blank" rel="noopener noreferrer">{catalog.id === "cursor-agent" ? "Provider documentation" : "Open sign-in guide"} ↗</a>
+          {catalog.docsUrl ? <a className="inline-block text-accent underline underline-offset-2" href={catalog.docsUrl} target="_blank" rel="noopener noreferrer">{catalog.id === "cursor-agent" ? "Provider documentation" : "Open sign-in guide"} ↗</a> : null}
         </div>
       </details>
     </article>

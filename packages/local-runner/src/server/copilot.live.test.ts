@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { findExecutableOnPath, testCopilotConnection } from "@vdt-studio/model-bridge";
+import { detectSubscriptionCli, enrichSubscriptionCliDetections } from "@vdt-studio/model-bridge/local-runtime";
 import { createManifestRegistry } from "./manifests";
 import { executeCompletion } from "./executor";
 
 const liveEnabled = process.env.VDT_LIVE_COPILOT === "1";
 
 describe.skipIf(!liveEnabled)("copilot live integration", () => {
-  it("probes plan authentication", async () => {
-    const match = await findExecutableOnPath(["copilot"]);
-    expect(match).not.toBeNull();
-    await expect(testCopilotConnection(match!.executable)).resolves.toMatchObject({ status: "ready" });
+  it("opens an authenticated ACP session", async () => {
+    const detected = await detectSubscriptionCli("copilot");
+    expect(detected.installed).toBe(true);
+    await expect(enrichSubscriptionCliDetections([detected])).resolves.toEqual([
+      expect.objectContaining({ id: "copilot", status: "ready" })
+    ]);
   });
 
   it("runs a tool-free schema-valid connection test", async () => {

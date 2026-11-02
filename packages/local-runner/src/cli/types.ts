@@ -11,6 +11,8 @@ export type BackendSupportLevel =
   | "experimental-disabled";
 
 export interface BackendManifest {
+  /** Frozen host-owned descriptor; never read from a completion request. */
+  harness?: import("@vdt-studio/model-bridge").HarnessDefinition;
   id: string;
   label: string;
   kind: BackendKind;
@@ -47,6 +49,7 @@ export interface CompletionRequest {
   schemaId: string;
   input: unknown;
   model?: string;
+  modelReasoning?: import("@vdt-studio/model-bridge").HarnessReasoningValue;
   timeoutMs?: number;
 }
 

@@ -22,7 +22,7 @@ interface SignInOptions {
 /** Open instruction-only help while the click still owns browser user activation. */
 export async function runCliSignIn({ entry, openGuidance, authenticate, rescan, getVerification, onStatus }: SignInOptions) {
   const managed = entry.id === "cursor-agent";
-  if (!managed) {
+  if (!managed && entry.docsUrl) {
     try {
       openGuidance(entry.docsUrl);
     } catch {

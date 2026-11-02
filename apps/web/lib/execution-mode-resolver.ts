@@ -222,7 +222,7 @@ function isStaleDefaultMockExecution(
 }
 
 function isUntouchedDefaultExecution(settings: ExecutionSettings): boolean {
-  return (Object.keys(DEFAULT_EXECUTION_SETTINGS) as Array<keyof ExecutionSettings>).every((key) =>
+  return !settings.smartKpiBySource && (Object.keys(DEFAULT_EXECUTION_SETTINGS) as Array<keyof ExecutionSettings>).every((key) =>
     JSON.stringify(settings[key]) === JSON.stringify(DEFAULT_EXECUTION_SETTINGS[key])
   );
 }
@@ -456,18 +456,12 @@ function resolveLocalCli(settings: ExecutionSettings): ResolvedExecutionProvider
   }
 
   if (runnerProviderId === "cli_stub") {
-    const backendByAgent: Record<CliAgentId, string> = {
-      "cursor-agent": "cursor_subscription",
-      codex: "codex_subscription",
-      claude: "claude_subscription",
-      gemini: "gemini_subscription",
-      copilot: "copilot_subscription"
-    };
+    const selected = settings.selectedCliAgentId;
     return {
       providerId: "local_runner",
       providerConfig: {
         runnerUrl: settings.runnerUrl ?? "http://127.0.0.1:8765",
-        backendId: settings.selectedCliAgentId ? backendByAgent[settings.selectedCliAgentId] : "",
+        backendId: selected ? selected === "cursor-agent" ? "cursor_subscription" : `${selected}_subscription` : "",
         model:
           settings.cliModelSelection?.source === "custom"
             ? settings.cliModelSelection.customModel

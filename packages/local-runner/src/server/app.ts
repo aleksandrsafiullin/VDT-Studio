@@ -1,3 +1,4 @@
+import { isHarnessReasoningValue } from "@vdt-studio/model-bridge";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AuditEvent, BackendManifest } from "../cli/types";
 import type { ExecutorOptions } from "./executor";
@@ -11,7 +12,9 @@ import {
   createLocalRuntimeContext,
   getRuntimeRun,
   resolveSmartRuntimeExecution,
+  runtimeHarnessSettings,
   listRuntimeBackends,
+  listRuntimeModels,
   parseCompletionPayload,
   testRuntimeBackend,
   type LocalRuntimeContext,
@@ -213,6 +216,10 @@ export async function routeLocalRunnerRequest(request: IncomingMessage, context:
   if (request.method === "GET" && url.pathname === "/v1/backends") {
     return listRuntimeBackends(context.runtime);
   }
+  const modelsMatch = url.pathname.match(/^\/v1\/backends\/([^/]+)\/models$/);
+  if (request.method === "GET" && modelsMatch) {
+    return listRuntimeModels(decodeURIComponent(modelsMatch[1]!), context.runtime);
+  }
   const testMatch = url.pathname.match(/^\/v1\/backends\/([^/]+)\/test$/);
   if (request.method === "POST" && testMatch) {
     assertEmptyBody(await readJson(request));
@@ -225,11 +232,12 @@ export async function routeLocalRunnerRequest(request: IncomingMessage, context:
     try { return await completeRuntime(parseCompletionPayload(await readJson(request)), context.runtime, controller.signal); }
     finally { request.socket.removeListener("close", abort); }
   }
+  if (request.method === "POST" && url.pathname === "/v1/harnesses") return runtimeHarnessSettings(await readJson(request) as { action?: unknown; profile?: unknown; removeId?: unknown }, context.runtime);
   if (request.method === "POST" && url.pathname === "/v1/smart-execution") {
     const body = await readJson(request);
-    if (!isRecord(body) || body.backendId !== "codex_subscription" || Object.keys(body).some(key => !["backendId", "model", "timeoutMs"].includes(key)) || (body.model !== undefined && typeof body.model !== "string") || (body.timeoutMs !== undefined && (typeof body.timeoutMs !== "number" || !Number.isSafeInteger(body.timeoutMs) || body.timeoutMs <= 0))) throw new HttpError(400, "INVALID_REQUEST", "Invalid Smart identity request.");
+    if (!isRecord(body) || typeof body.backendId !== "string" || Object.keys(body).some(key => !["backendId", "model", "modelReasoning", "timeoutMs"].includes(key)) || (body.modelReasoning !== undefined && !isHarnessReasoningValue(body.modelReasoning)) || (body.model !== undefined && typeof body.model !== "string") || (body.timeoutMs !== undefined && (typeof body.timeoutMs !== "number" || !Number.isSafeInteger(body.timeoutMs) || body.timeoutMs <= 0))) throw new HttpError(400, "INVALID_REQUEST", "Invalid Smart identity request.");
     const controller = new AbortController(), abort = () => controller.abort(); request.socket.once("close", abort);
-    try { return await resolveSmartRuntimeExecution(body.model as string | undefined, context.runtime, controller.signal, body.timeoutMs as number | undefined); }
+    try { return await resolveSmartRuntimeExecution(body.model as string | undefined, context.runtime, controller.signal, body.timeoutMs as number | undefined, body.backendId as string, isHarnessReasoningValue(body.modelReasoning) ? body.modelReasoning : undefined); }
     finally { request.socket.removeListener("close", abort); }
   }
   const cancelMatch = url.pathname.match(/^\/v1\/completions\/([^/]+)\/cancel$/);

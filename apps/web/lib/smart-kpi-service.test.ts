@@ -65,6 +65,23 @@ describe("Smart preparation service authority and deadlines", () => {
 
 describe("all Smart HTTP entries admit requests before trusted execution", () => {
   for (const [name, route] of [["suggestions", suggestions], ["run-task", generic], ["dev-runtime", development], ["suggestions/cancel", cancellation], ["suggestions/execution", execution]] as const) {
+    it(`${name} accepts direct same-port local Host reconstruction but ignores forwarded authority`, async () => {
+      vi.stubEnv("VDT_APP_MODE", "development_web");
+      const url = `http://localhost:3192/api/ai/${name}`;
+      const headers = { "content-type": "application/json", host: "127.0.0.1:3192", origin: "http://127.0.0.1:3192", "sec-fetch-site": "same-origin" };
+      // An empty DTO must reach its own validator; none of these requests can
+      // start inference, cancellation or an executable.
+      const admitted = await route(new Request(url, { method: "POST", headers, body: "{}" }));
+      expect(admitted.status).not.toBe(403);
+      for (const overrides of [
+        { origin: "https://hostile.example" },
+        { "sec-fetch-site": "cross-site" },
+        { host: "127.0.0.1:3193", origin: "http://127.0.0.1:3193" },
+        { host: "evil.example:3192" },
+        { host: "localhost:3192", "x-forwarded-host": "127.0.0.1:3192", forwarded: "host=127.0.0.1:3192" },
+        { origin: "https://127.0.0.1:3192", "x-forwarded-proto": "https" }
+      ]) expect((await route(new Request(url, { method: "POST", headers: { ...headers, ...overrides }, body: "{}" }))).status).toBe(403);
+    });
     it(`${name} rejects hostile Origin and text/plain before parsing`, async () => {
       vi.stubEnv("VDT_APP_MODE", "development_web");
       for (const headers of [{ "content-type": "application/json", origin: "https://hostile.example" }, { "content-type": "text/plain", origin: "http://localhost:3000" }]) {

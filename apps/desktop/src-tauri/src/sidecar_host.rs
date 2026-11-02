@@ -124,6 +124,10 @@ impl DesktopRuntime {
         Ok(self.state())
     }
 
+    pub fn harness_settings(&self, payload: Value) -> Result<Value, RuntimeError> {
+        self.request("harness_settings", payload, None)
+    }
+
     pub fn list_backends(&self) -> Result<Vec<RuntimeBackendStatus>, RuntimeError> {
         let payload = self.request("list_backends", json!({}), None)?;
         let backends = payload

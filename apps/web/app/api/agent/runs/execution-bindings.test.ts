@@ -185,6 +185,10 @@ describe("AgentExecutionBindingRegistry", () => {
     }));
   });
 
+  it.each(["copilot", "opencode", "hermes", "kiro", "kimi", "vibe", "kilo", "qwen", "grok-build", "pi", "custom-fixture"])("rejects a legacy fallback for %s", id => {
+    expect(() => new AgentExecutionBindingRegistry([modelBinding({ bindingId: "forbidden_harness", legacyCompatibilityAdapter: { providerId: `${id}_subscription`, providerConfig: {} } })])).toThrowError(expect.objectContaining({ code: "MODEL_BINDING_CLI_COMPATIBILITY_FORBIDDEN" }));
+  });
+
   it("keeps structured Model Agent bindings distinct from compatibility adapters", () => {
     const registry = new AgentExecutionBindingRegistry([{
       bindingId: "structured_model",

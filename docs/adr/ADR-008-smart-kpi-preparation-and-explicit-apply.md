@@ -6,6 +6,14 @@ latency fixtures passed; final integrated status belongs to the execution log.
 Date: 2026-10-19.
 Implementation plans: [initial Smart KPI suggestions](../implementation/SMART_KPI_SUGGESTIONS_PLAN.md), [formula/mixed revision](../implementation/SMART_KPI_FORMULA_MIXED_PLAN.md).
 
+Execution-settings amendment 2026-11-02: [ADR-013](ADR-013-independent-suggested-kpi-execution-settings.md)
+adds independent model and reasoning preferences for preparation. The model
+initially follows chat, while reasoning is explicitly Off and never inherits
+chat. Unsupported Off is visible before inference; Provider default is an
+explicit choice. The resolved model/reasoning participate in binding/cache
+identity and action-time revalidation across all harnesses, API and local
+transports. This does not change proposal, formula, Apply or transaction authority.
+
 Revision 2026-10-20 supersedes the original context-only default for future Add: selected/own/retained inputs and an explicit final formula are one atomic calculated-parent operation. Existing graphs and historical committing receipts are not migrated.
 
 Preparation amendment 2026-10-25: policy v4 requires 2–6 distinct components
@@ -93,7 +101,7 @@ Smart suggestions are read-only proposals for one immediate child layer. The
 same right-side KPI interaction exposes prepared local/cache controls; a
 cold miss uses one bounded structured completion in the configured mode.
 The `suggest_incoming_kpis` / `suggest-incoming-kpis-v1` contract is registered
-through API/BYOK, trusted-local selected Codex, manifest local HTTP and the common
+through API/BYOK, trusted-local selected harnesses, manifest local HTTP and the common
 runner/desktop completion registry. It never invokes/resumes the full deepen
 agent. A bounded persistent cache and one-workspace scheduler expose preparation
 and frozen selection hooks. Same-hover controls and durable Add/Undo are wired;
@@ -251,13 +259,23 @@ The cache stores validated proposals/LRU metadata only, bounded to 256 entries,
 Negative results cool down for 30 s in memory. The scheduler owns one job/queue12,
 8 automatic attempts per semantic generation and at most 6 visible/new-child
 preparations. Semantic fingerprints/contexts are shared rather than recalculated
-on hover. A frozen list is never silently reordered and stale results cannot
-publish/cache after scope changes.
+on hover. Opened targets enqueue before speculation. Visible/new-child misses
+wait 350 ms, while hover/selection/explicit work and cache hits proceed directly.
+A current eligible hover for a different uncached target may abort this
+controller's active visible/new-child attempt. Same-target promotion permanently
+protects the active job; selected/hover/explicit jobs cannot be preempted. The
+cancelled target is stale with an actionable explanation, not a model empty or
+failure. It keeps its spent attempt and has no automatic retry. The existing
+terminal acknowledgement/quarantine path still owns the lane throughout abort.
+A frozen list is never silently reordered and stale results cannot publish/cache
+after scope changes. This scheduling change does not alter preparation/cache
+identity, model, reasoning or prompts.
 
 One completion uses at most 24 KiB input, 16 KiB final output and 64 KiB transport
 envelope, with 15 s HTTP/30 s CLI or a lower raw timeout, including CLI version
-selection. API/local generation is capped at 2048 tokens; CLI's 2048 is a prompt
-request only. There is no research, tool execution, full agent loop, schema
+selection. API/local generation is capped at 2048 tokens; CLI transports have no
+verified hard generation-token ceiling. Codex receives a 2048-token prompt
+request; native Cursor exposes no reviewed max-token flag. There is no research, tool execution, full agent loop, schema
 fallback or repair. Codex selected/default model is retained explicitly when
 provable; otherwise identity honestly labels a stable `host_default` alias bound
 to nonsecret CLI/config metadata and policy. Catalog refresh timestamps do not

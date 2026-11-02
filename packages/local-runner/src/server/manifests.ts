@@ -1,10 +1,12 @@
 import {
+  BUILTIN_HARNESSES,
   VDT_OUTPUT_SCHEMA_IDS,
   VDT_SCHEMA_IDS,
   schemaTasks,
   type VdtAiTaskType
 } from "@vdt-studio/model-bridge";
 import type { BackendManifest } from "../cli/types";
+import { listHarnessDefinitions } from "@vdt-studio/model-bridge/local-runtime";
 
 /** All canonical VDT AI task types, deduplicated across compatibility schema versions. */
 export const ALL_VDT_TASK_TYPES = [...new Set(
@@ -134,59 +136,20 @@ export const BUILTIN_BACKEND_MANIFESTS: readonly BackendManifest[] = Object.free
     },
     safety: { toolsDisabled: true, requiresOsSandbox: false, certified: true }
   },
-  {
-    id: "gemini_subscription",
-    label: "Gemini CLI",
-    kind: "subscription_cli",
-    supportLevel: "experimental",
-    taskTypes: ALL_VDT_TASK_TYPES,
-    schemaIds: ALL_VDT_SCHEMA_IDS,
-    modelSelection: true,
-    cli: {
-      executableAliases: ["gemini"],
-      args: ["--output-format", "json", "--approval-mode", "default"],
-      versionArgs: ["--version"]
-    },
-    safety: {
-      toolsDisabled: true,
-      requiresOsSandbox: false,
-      certified: true
-    }
-  },
-  {
-    id: "copilot_subscription",
-    label: "GitHub Copilot CLI",
-    kind: "subscription_cli",
-    supportLevel: "experimental",
-    taskTypes: ALL_VDT_TASK_TYPES,
-    schemaIds: ALL_VDT_SCHEMA_IDS,
-    modelSelection: true,
-    cli: {
-      executableAliases: ["copilot"],
-      args: [
-        "--output-format=json",
-        "--stream=off",
-        "--available-tools=",
-        "--disable-builtin-mcps",
-        "--no-custom-instructions",
-        "--no-ask-user",
-        "--no-auto-update"
-      ],
-      versionArgs: ["--version"]
-    },
-    safety: {
-      toolsDisabled: true,
-      requiresOsSandbox: false,
-      certified: true
-    }
-  }
+  ...BUILTIN_HARNESSES.filter(h => h.transport !== "native").map((h): BackendManifest => ({
+    id: h.backendId, label: h.name, kind: "subscription_cli", supportLevel: "experimental", taskTypes: ALL_VDT_TASK_TYPES, schemaIds: ALL_VDT_SCHEMA_IDS, modelSelection: true, harness: h,
+    cli: { executableAliases: [h.command], args: h.args, versionArgs: ["--version"] }, safety: { toolsDisabled: false, requiresOsSandbox: false, certified: false }
+  }))
 ]);
 
-export function createManifestRegistry(additional: readonly BackendManifest[] = []): ReadonlyMap<string, BackendManifest> {
+export function createManifestRegistry(additional: readonly BackendManifest[] = [], env: NodeJS.ProcessEnv = process.env): ReadonlyMap<string, BackendManifest> {
   const registry = new Map<string, BackendManifest>();
-  for (const manifest of [...BUILTIN_BACKEND_MANIFESTS, ...additional]) {
+  const harnesses = listHarnessDefinitions(env);
+  const extras: BackendManifest[] = harnesses.filter(h => !BUILTIN_BACKEND_MANIFESTS.some(m => m.id === h.backendId)).map(h => ({ id: h.backendId, label: h.name, kind: h.custom ? "custom_cli" : "subscription_cli", supportLevel: "experimental", taskTypes: ALL_VDT_TASK_TYPES, schemaIds: ALL_VDT_SCHEMA_IDS, modelSelection: true,
+    cli: { executableAliases: [h.command], args: h.args, versionArgs: ["--version"] }, harness: h, safety: { toolsDisabled: false, requiresOsSandbox: false, certified: false } }));
+  for (const manifest of [...BUILTIN_BACKEND_MANIFESTS, ...extras, ...additional]) {
     if (registry.has(manifest.id)) throw new Error(`Duplicate backend manifest: ${manifest.id}`);
-    registry.set(manifest.id, Object.freeze({ ...manifest }));
+    registry.set(manifest.id, Object.freeze({ ...manifest, ...(harnesses.find(h => h.backendId === manifest.id) ? { harness: harnesses.find(h => h.backendId === manifest.id)! } : {}) }));
   }
   return registry;
 }

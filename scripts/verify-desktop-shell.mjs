@@ -7,6 +7,7 @@ const DEFAULT_ROOT = resolve(dirname(SCRIPT_PATH), "..");
 
 const REQUIRED_COMMANDS = [
   "ai_list_backends",
+  "ai_harness_settings",
   "ai_detect_subscription_clis",
   "ai_test_backend",
   "ai_list_models",
@@ -56,7 +57,7 @@ export function verifyDesktopShell(root = DEFAULT_ROOT) {
   }
   if (tauriConfig.bundle?.active !== true) fail("desktop bundle must be active.");
   const targets = tauriConfig.bundle?.targets;
-  if (!Array.isArray(targets) || !(targets.includes("all") || (targets.includes("dmg") && (targets.includes("msi") || targets.includes("nsis"))))) {
+  if (targets !== "all" && !(Array.isArray(targets) && targets.includes("dmg") && (targets.includes("msi") || targets.includes("nsis")))) {
     fail("desktop bundle targets must cover both macOS and Windows installers.");
   }
   const resources = tauriConfig.bundle?.resources;

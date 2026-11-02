@@ -1,6 +1,21 @@
 # Provider Compatibility
 
+## Local harness integration (2026-11-02)
+
+Copilot, OpenCode, Hermes, Kiro, Kimi Code, Mistral Vibe, Kilo Code, Qwen Code and Grok Build use the shared ACP integration. Pi uses native RPC behind the same session contract. Only current harness connections are registered; pre-release versions do not retain retired providers or compatibility adapters. Custom profiles are experimental and checked at protocol/session/schema boundaries. The fixture matrix includes Suggested KPI for all thirteen current presets; no new live or native provider certification is implied. See [Harness connections](HARNESS_CONNECTIONS.md).
+
 ## Business-quality evidence boundary
+
+Suggested KPI model/reasoning controls are implemented independently of chat;
+their current contract is [ADR-013](adr/ADR-013-independent-suggested-kpi-execution-settings.md).
+Off is advertised only when Smart execution can honor it. The existing provider
+endpoint has a read-only `smart_capabilities` operation for that purpose; it
+does not alter generic chat capabilities. Native Cursor has no reviewed
+independent control. Native Claude Off requires verified `claude.ai` access and
+a compatible selected model; always-thinking models remain excluded.
+Vibe Smart keyring identity currently requires an inspectable macOS encrypted
+store, or a verified environment/`.env` source. Unknown stores are explicit
+limitations, not a provider or key fallback. See [harness credential boundaries](HARNESS_CONNECTIONS.md).
 
 The October 26–27 revenue runs below are guided workflow diagnostics. Supplying
 the formula and tool sequence in the initial prompt prevents treating even a
@@ -21,8 +36,7 @@ segment. Unsupported/unknown levels and Ultra native delegation are not admitted
 The UI uses a discrete slider and a Default reset; it does not fabricate effort
 metadata for other providers. Model catalogs load for the active CLI, BYOK API
 or local HTTP backend, without a static model-ID list. Codex and Cursor expose
-reviewed CLI catalogs; Claude/Gemini/Copilot without a list command show only
-provider-default/host-configured choices. An unavailable chat binding stays
+reviewed CLI catalogs; Native Claude without a list command exposes provider-default/host-configured choices; ACP/Pi catalogs come from their session/model protocol. An unavailable chat binding stays
 non-executable. OpenAI-compatible, Anthropic and Gemini APIs reuse the existing
 credential-scoped catalog route. Azure accepts a deployment name manually.
 Ollama, LM Studio and vLLM use their local runtime catalog commands. Catalog
@@ -228,9 +242,17 @@ This table must match `release/provider-certification.json`, `packages/model-bri
 | `cursor_subscription` | `beta` |
 | `codex_subscription` | `alpha` |
 | `claude_subscription` | `alpha` |
-| `gemini_subscription` | `experimental` |
 | `copilot_subscription` | `experimental` |
-| `custom_cli` | `experimental-disabled` |
+| `opencode_subscription` | `experimental` |
+| `hermes_subscription` | `experimental` |
+| `kiro_subscription` | `experimental` |
+| `kimi_subscription` | `experimental` |
+| `vibe_subscription` | `experimental` |
+| `kilo_subscription` | `experimental` |
+| `qwen_subscription` | `experimental` |
+| `grok-build_subscription` | `experimental` |
+| `pi_subscription` | `experimental` |
+| `custom_cli` | `experimental` |
 
 ## Live environment variables
 
@@ -239,7 +261,6 @@ This table must match `release/provider-certification.json`, `packages/model-bri
 | `VDT_LIVE_CURSOR=1` | Enable maintainer-only live Cursor CLI tests. Requires `agent` on PATH and an authenticated Cursor account. |
 | `VDT_LIVE_CODEX=1` | Enable maintainer-only live Codex CLI tests (`codex.live.test.ts`). Requires `codex` on PATH and ChatGPT subscription sign-in. |
 | `VDT_LIVE_CLAUDE=1` | Enable maintainer-only live Claude Code tests (`claude.live.test.ts`). Requires `claude` on PATH and Claude Pro sign-in. |
-| `VDT_LIVE_GEMINI=1` | Enable maintainer-only Gemini CLI auth + tool-free executor tests. |
 | `VDT_LIVE_COPILOT=1` | Enable maintainer-only GitHub Copilot CLI auth + tool-free executor tests. |
 
 Run live probes from a normal developer terminal, not from a sandboxed CI container:
@@ -546,26 +567,6 @@ qualification claim and is not a CI live gate.
   runner) with `claude` installed — not this plan.
 - No automatic backend/profile fallback exists.
 
-## Gemini CLI (`gemini_subscription`)
-
-| Field | Value |
-| --- | --- |
-| Executable | `gemini` |
-| Minimum version | `0.43.0` (`GEMINI_CLI_MIN_VERSION`) |
-| Release status | **Experimental** |
-| Tested in CI | Parser/auth/unit tests + `fake-gemini.cjs` executor integration |
-| Maintainer live verification | Pending; CLI is not installed on the 2026-06-22 maintainer machine |
-| Account modes | Gemini Code Assist Enterprise; individual free/Google AI Pro/Ultra service ended on 2026-06-18 |
-| Tool boundary | Supplemental admin policy denies `toolName = "*"` at priority 999; no `--yolo` |
-| OS sandbox | Not required in manifest — tools are denied through the temp admin policy and output is locally schema-validated |
-| Platform matrix | **Experimental:** macOS, Linux and Windows when `gemini` is on PATH and account eligibility allows CLI use; live output still pending. |
-
-Reviewed flags: `--output-format json`, `--approval-mode default`, `--admin-policy <temp-policy>`, optional `--model`, and `--prompt`.
-
-The parser extracts exactly one bounded JSON document from the official headless `response` envelope and then applies the registered local schema. Diagnostics distinguish authentication, allowance/rate limit and organization policy failures.
-
-Google's 2026 transition means the original Phase 5 personal-allowance criterion cannot be completed through `gemini` after 2026-06-18. Antigravity CLI support is a separate future backend and is not silently substituted here.
-
 ## Alibaba Cloud Coding Plan (`openai_compatible` / BYOK preset)
 
 | Field | Value |
@@ -603,18 +604,20 @@ Select **BYOK → OpenAI → Gateway preset: Alibaba Cloud Coding Plan (Beta)** 
 | Field | Value |
 | --- | --- |
 | Executable | `copilot` |
-| Minimum version | `1.0.0` (`COPILOT_CLI_MIN_VERSION`) |
+| Transport | ACP over stdio: `--acp --stdio` |
 | Release status | **Experimental** |
-| Tested in CI | Parser/auth/unit tests + `fake-copilot.cjs` executor integration |
-| Maintainer live verification | Pending; `pnpm live:copilot -- --connection-only` now reaches the Copilot SLI install gate, but `copilot` is not installed on PATH on the 2026-06-24 maintainer machine |
-| Account mode | GitHub Copilot plan authentication; organization policy must allow Copilot CLI |
-| Tool boundary | Empty `--available-tools`, built-in MCP disabled, project instructions disabled, no allow-all flags |
-| OS sandbox | Not required in manifest — tools/MCP/project instructions are disabled through reviewed CLI flags and output is locally schema-validated |
-| Platform matrix | **Experimental:** macOS, Linux and Windows when `copilot` is on PATH and the user's GitHub Copilot policy allows CLI use; live output still pending. |
+| Protocol/model check | Initialize and open an ACP session, then discover/select the exact model through ACP |
+| Tests | Shared ACP process/session/cancellation fixtures and `fake-copilot.cjs` executor integration |
+| Last host check (2026-11-01) | CLI `1.0.74` installed; ACP session requires sign-in; live inference not verified |
+| Account | Official Copilot CLI sign-in; GitHub plan and organization policy apply |
+| Tool boundary | Empty `--available-tools`, built-in MCP and custom instructions disabled; native tool/permission activity rejected |
+| Native qualification | OS isolation, background cleanup and supported-platform qualification remain unverified |
 
-Reviewed flags: `--output-format=json`, `--stream=off`, `--available-tools=`, `--disable-builtin-mcps`, `--no-custom-instructions`, `--no-ask-user`, `--no-auto-update`, optional `--model`, and `--prompt`.
-
-The parser accepts bounded JSONL, selects the terminal assistant response, extracts one JSON document and validates it locally. Diagnostics distinguish authentication, premium request/usage limits, unavailable plans and organization policy disablement.
+The preset uses `--available-tools=`, `--disable-builtin-mcps`,
+`--no-custom-instructions` and `--no-auto-update` with ACP. The shared runtime
+handles sessions, model selection, structured responses and cancellation. There
+is one Copilot transport; no headless JSONL parser or adapter is retained.
+See [Harness connections](HARNESS_CONNECTIONS.md) for the shared contract.
 
 The generic `vdt.fill_input_values_batch` fills 1–8 existing unpopulated non-calculated input leaves in one atomic mutation with a finite number, explicit user/default provenance and a source note. User values require the same trusted quote/answer grounding as single writes. Unknown IDs, duplicate writes, computed/root nodes, non-leaf nodes, ungrounded user values and invalid arguments reject the whole batch. It cannot add nodes, change formulas or bypass mutation approval, scoped `deepen_node` checks, revision fencing or finish verification. Single/batch driver additions reject collisions in their normalized IDs instead of silently suffixing a copied input ID; distinct quantities require explicit unique IDs.
 

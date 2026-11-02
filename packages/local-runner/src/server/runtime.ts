@@ -1,8 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { resolveSmartHarnessIdentity, listHarnessDefinitions, updateHarnessProfiles, getHarnessDefinition } from "@vdt-studio/model-bridge/local-runtime";
+import { createHash, randomUUID } from "node:crypto";
+import { readLocalSmartReasoningCapabilities } from "./smart-suggestions";
 import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import { promisify } from "node:util";
 import {
   isVdtSchemaId,
+  isHarnessReasoningValue,
+  type HarnessReasoningValue,
   schemaSupportsTask,
   type VdtAiTaskType
 } from "@vdt-studio/model-bridge";
@@ -14,7 +18,7 @@ import {
   selectSmartCodexExecutable, readCodexSmartDefaultModel, codexSmartMetadataIdentity,
   type DetectionOptions,
   type SubscriptionCliId
-} from "@vdt-studio/model-bridge/node";
+} from "@vdt-studio/model-bridge/local-runtime";
 import { validateGraph, validateKpiSuggestionTaskInput, type VdtGraph, type VdtProject, type VdtWarning } from "@vdt-studio/vdt-core";
 import {
   appendAgenticVdtRunEvent,
@@ -120,7 +124,7 @@ function setRunProgress(run: ActiveRun, phase: RunProgressPhase, status: RunStat
 export function createLocalRuntimeContext(config: LocalRuntimeConfig = {}): LocalRuntimeContext {
   return {
     config,
-    manifests: createManifestRegistry(config.manifests),
+    manifests: createManifestRegistry(config.manifests, config.executor?.env),
     runs: new Map(),
     smartLanes: new Map(),
     authInProgress: new Set(),
@@ -133,10 +137,23 @@ export function listRuntimeBackends(context: LocalRuntimeContext): RuntimeResult
   return { statusCode: 200, payload: { ok: true, backends: [...context.manifests.values()].map(publicManifest) } };
 }
 
+export async function runtimeHarnessSettings(payload: { action?: unknown; profile?: unknown; removeId?: unknown }, context: LocalRuntimeContext): Promise<RuntimeResult> {
+  const action = payload.action ?? "list";
+  if (action === "save") await updateHarnessProfiles({ profile: payload.profile }, context.config.executor?.env);
+  else if (action === "remove") {
+    if (typeof payload.removeId !== "string" || !payload.removeId.startsWith("custom-")) throw new LocalRuntimeError(400, "INVALID_HARNESS_PROFILE", "A custom system ID is required.");
+    await updateHarnessProfiles({ removeId: payload.removeId as `custom-${string}` }, context.config.executor?.env);
+  } else if (action !== "list") throw new LocalRuntimeError(400, "INVALID_HARNESS_PROFILE", "Unknown harness settings action.");
+  context.manifests = createManifestRegistry(context.config.manifests, context.config.executor?.env);
+  const harnesses = listHarnessDefinitions(context.config.executor?.env);
+  return { statusCode: 200, payload: { ok: true, harnesses, profiles: harnesses.filter(h => h.custom) } };
+}
+
 export async function detectRuntimeSubscriptionClis(
   context: LocalRuntimeContext,
   agentId?: string
 ): Promise<RuntimeResult> {
+  context.manifests = createManifestRegistry(context.config.manifests, context.config.executor?.env);
   if (agentId !== undefined && !isSubscriptionCliId(agentId)) {
     throw new LocalRuntimeError(400, "UNKNOWN_CLI_AGENT", `Unknown CLI agent: ${agentId}`);
   }
@@ -179,7 +196,7 @@ export async function detectRuntimeSubscriptionClis(
     })
   );
 
-  return { statusCode: 200, payload: { ok: true, agents, modelsByAgent } };
+  return { statusCode: 200, payload: { ok: true, agents, modelsByAgent, harnesses: listHarnessDefinitions(context.config.executor?.env) } };
 }
 
 export async function listRuntimeModels(backendId: string, context: LocalRuntimeContext): Promise<RuntimeResult> {
@@ -250,6 +267,14 @@ export async function checkRuntimeBackendReadiness(backendId: string, context: L
 
 export async function completeRuntime(request: CompletionRequest, context: LocalRuntimeContext, callerSignal?: AbortSignal): Promise<RuntimeResult> {
   callerSignal?.throwIfAborted();
+  // Freeze the current saved definition in this request's manifest; subsequent
+  // profile edits can affect new work without retargeting an active process.
+  if (request.backendId.startsWith("custom-")) {
+    const next = new Map(context.manifests);
+    const saved = createManifestRegistry(context.config.manifests, context.config.executor?.env).get(request.backendId);
+    if (saved) next.set(request.backendId, saved); else next.delete(request.backendId);
+    context.manifests = next;
+  }
   if (context.runs.has(request.requestId)) throw new LocalRuntimeError(409, "DUPLICATE_REQUEST_ID", "requestId already exists.");
   if (context.runs.size >= MAX_RETAINED_RUNS) {
     const completedId = [...context.runs].find(([, run]) => run.status !== "running")?.[0];
@@ -684,19 +709,23 @@ export async function cancelRuntimeRequestWithAcknowledgement(requestId: string,
   return { statusCode: 200, payload: { ok: true, requestId, status: run.status, cleanupConfirmed: true } };
 }
 
-export async function resolveSmartRuntimeExecution(model: string | undefined, context: LocalRuntimeContext, caller: AbortSignal, timeoutMs = 5_000): Promise<RuntimeResult> {
+export async function resolveSmartRuntimeExecution(model: string | undefined, context: LocalRuntimeContext, caller: AbortSignal, timeoutMs = 5_000, backendId = "codex_subscription", modelReasoning?: HarnessReasoningValue): Promise<RuntimeResult> {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new LocalRuntimeError(400, "INVALID_TIMEOUT", "Invalid metadata deadline.");
   const controller = new AbortController(), abort = () => controller.abort(); caller.addEventListener("abort", abort, { once: true }); if (caller.aborted) abort();
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; abort(); }, Math.min(timeoutMs, 5_000));
   try {
     const env = context.config.executor?.env ?? process.env;
-    const selection = await selectSmartCodexExecutable(env, controller.signal);
-    if (!selection?.version) throw new LocalRuntimeError(503, "SUGGESTIONS_UNAVAILABLE", "A recognized selected Codex CLI is required.");
-    const configured = model && model !== "auto" ? model : await readCodexSmartDefaultModel(env);
-    if (configured && (configured.length > 160 || configured.startsWith("-") || /[\x00-\x20]/.test(configured))) throw new LocalRuntimeError(400, "INVALID_MODEL", "Invalid selected model.");
-    const identity = { backendId: "codex_subscription", modelId: configured ?? "host_default", requestModel: configured ?? "auto", modelResolution: configured ? "exact" : "host_default_alias",
-      ...await codexSmartMetadataIdentity(env, selection.executable, selection.version) };
+    if (["ollama", "lm_studio", "vllm"].includes(backendId)) {
+      const manifest = context.manifests.get(backendId);
+      if (!manifest?.localHttp || manifest.kind !== "local_http") throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "The selected host does not expose this local model backend.");
+      const capabilities = await readLocalSmartReasoningCapabilities(manifest, model ?? "", controller.signal, context.config.executor);
+      const reasoningValues = capabilities?.values ?? [];
+      if (modelReasoning !== undefined && !reasoningValues.some(value => value === modelReasoning || modelReasoning === false && ["none", "off", "disabled"].includes(String(value)))) throw new LocalRuntimeError(422, "REASONING_UNSUPPORTED", "The selected local model does not advertise this reasoning setting.");
+      const bindingVersion = `sha256:${createHash("sha256").update(JSON.stringify(["smart-local-metadata.v1", backendId, manifest.localHttp.baseUrl, model, modelReasoning ?? null])).digest("hex")}`;
+      return { statusCode: 200, payload: { ok: true, identity: { backendId, modelId: model, requestModel: model, modelResolution: "exact", bindingVersion, credentialEpoch: "manifest-no-credential.v1", reasoningValues } } };
+    }
+    const identity = await resolveSmartHarnessIdentity(backendId, model, controller.signal, env, modelReasoning);
     controller.signal.throwIfAborted();
     return { statusCode: 200, payload: { ok: true, identity } };
   } catch (error) {
@@ -723,7 +752,7 @@ export function getRuntimeRun(requestId: string, context: LocalRuntimeContext): 
 export async function openRuntimeProviderAuth(backendId: string, context: LocalRuntimeContext): Promise<RuntimeResult> {
   const manifest = context.manifests.get(backendId);
   if (!manifest) throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
-  if (manifest.kind !== "subscription_cli") {
+  if (manifest.kind !== "subscription_cli" && manifest.kind !== "custom_cli") {
     throw new LocalRuntimeError(400, "AUTH_ACTION_UNAVAILABLE", "Provider authentication is only available for subscription backends.");
   }
   if (manifest.cli?.authArgs?.length) {
@@ -795,21 +824,14 @@ export async function openRuntimeProviderAuth(backendId: string, context: LocalR
   return { statusCode: 200, payload: { ok: true, backendId, ...action } };
 }
 
-function subscriptionAgentIdForBackend(backendId: string): SubscriptionCliId | undefined {
-  if (backendId === "cursor_subscription") return "cursor-agent";
-  if (backendId === "codex_subscription") return "codex";
-  if (backendId === "claude_subscription") return "claude";
-  if (backendId === "gemini_subscription") return "gemini";
-  if (backendId === "copilot_subscription") return "copilot";
-  return undefined;
-}
+function subscriptionAgentIdForBackend(backendId: string): SubscriptionCliId | undefined { return getHarnessDefinition(backendId)?.id; }
 
 export function parseCompletionPayload(value: unknown): CompletionRequest {
   if (!isRecord(value)) throw new LocalRuntimeError(400, "INVALID_BODY", "Completion body must be an object.");
   for (const forbidden of ["command", "args", "providerConfig", "schema", "systemPrompt", "userPrompt", "cwd", "env", "extraArgs"]) {
     if (forbidden in value) throw new LocalRuntimeError(400, "FORBIDDEN_FIELD", `Completion body must not include ${forbidden}.`);
   }
-  const allowed = new Set(["requestId", "backendId", "taskType", "schemaId", "input", "model", "timeoutMs"]);
+  const allowed = new Set(["requestId", "backendId", "taskType", "schemaId", "input", "model", "modelReasoning", "timeoutMs"]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new LocalRuntimeError(400, "UNKNOWN_FIELD", `Unknown completion field: ${key}.`);
   }
@@ -834,6 +856,7 @@ export function parseCompletionPayload(value: unknown): CompletionRequest {
   if (value.model !== undefined && (typeof value.model !== "string" || value.model.length > 160 || value.model.includes("\0"))) {
     throw new LocalRuntimeError(400, "INVALID_MODEL", "model must be a bounded string.");
   }
+  if (value.modelReasoning !== undefined && !isHarnessReasoningValue(value.modelReasoning)) throw new LocalRuntimeError(400, "INVALID_REASONING", "modelReasoning must be a bounded provider reasoning value.");
   return {
     requestId,
     backendId,
@@ -841,6 +864,7 @@ export function parseCompletionPayload(value: unknown): CompletionRequest {
     schemaId,
     input: value.input,
     ...(typeof value.model === "string" ? { model: value.model } : {}),
+    ...(isHarnessReasoningValue(value.modelReasoning) ? { modelReasoning: value.modelReasoning } : {}),
     ...(typeof timeoutMs === "number" ? { timeoutMs } : {})
   };
 }
@@ -865,6 +889,8 @@ function publicRuntimeError(error: unknown): { code: string; message: string } {
     INVALID_PROVIDER_RESPONSE: "Local model returned an invalid response.",
     AUTH_REQUIRED: "Backend account authentication is required.",
     RATE_LIMITED: "Backend account allowance or request limit was reached.",
+    REASONING_UNSUPPORTED: "This model cannot honor the selected reasoning setting. Choose a supported level or explicitly use Provider default.",
+    CREDENTIAL_IDENTITY_UNVERIFIED: "This host cannot verify changes to the CLI credential source. Recheck CLI sign-in or choose another connection.",
     POLICY_DISABLED: "Backend access is disabled by the current plan or organization policy.",
     BACKEND_PARSE_FAILED: "Backend output could not be parsed as the required structured response.",
     BACKEND_EXIT_FAILED: "Backend process exited before producing a valid response."
@@ -897,14 +923,6 @@ function providerAuthAction(backendId: string): { action: "instructions"; label:
       docsUrl: "https://docs.anthropic.com/en/docs/claude-code"
     };
   }
-  if (backendId === "gemini_subscription") {
-    return {
-      action: "instructions",
-      label: "Gemini CLI authentication",
-      instructions: "Use Gemini CLI's official sign-in flow, then rescan this provider in VDT Studio Desktop.",
-      docsUrl: "https://github.com/google-gemini/gemini-cli"
-    };
-  }
   if (backendId === "copilot_subscription") {
     return {
       action: "instructions",
@@ -913,7 +931,8 @@ function providerAuthAction(backendId: string): { action: "instructions"; label:
       docsUrl: "https://docs.github.com/en/copilot"
     };
   }
-  return undefined;
+  const harness = getHarnessDefinition(backendId);
+  return harness ? { action: "instructions", label: `${harness.name} sign-in`, instructions: "Complete sign-in using this system’s official CLI setup, then rescan and test the connection.", docsUrl: harness.docsUrl } : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

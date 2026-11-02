@@ -85,7 +85,7 @@ export function verifyDesktopNativeReadiness(root = DEFAULT_ROOT, env = process.
   }
 
   const targets = tauriConfig.bundle?.targets;
-  if (!Array.isArray(targets) || !targets.some((target) => target === "dmg" || target === "all")) {
+  if (targets !== "all" && (!Array.isArray(targets) || !targets.includes("dmg"))) {
     addBlocker(
       blockers,
       "MISSING_MACOS_INSTALLER_TARGET",
@@ -93,7 +93,7 @@ export function verifyDesktopNativeReadiness(root = DEFAULT_ROOT, env = process.
       `targets=${JSON.stringify(targets)}`
     );
   }
-  if (!Array.isArray(targets) || !targets.some((target) => target === "msi" || target === "nsis" || target === "all")) {
+  if (targets !== "all" && (!Array.isArray(targets) || !targets.some((target) => target === "msi" || target === "nsis"))) {
     addBlocker(
       blockers,
       "MISSING_WINDOWS_INSTALLER_TARGET",

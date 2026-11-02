@@ -1,5 +1,16 @@
 # Local Runner
 
+## Local harness integration (2026-11-02)
+
+Thirteen current harnesses and saved ACP/VDT JSONL profiles share the local runner task contracts. Pi uses the common session port through its native RPC. Suggested KPI carries its independent model and modelReasoning choice, including explicit false for Off, through admission and completion. /v1/harnesses is a paired, Origin-guarded settings operation; generation still accepts only saved backend/model/task IDs. Smart metadata accepts registered harness backend IDs, while Codex retains its private adapter policy. See [Harness connections](HARNESS_CONNECTIONS.md).
+
+Paired model discovery uses authenticated `GET /v1/backends/:id/models` and the
+existing `listRuntimeModels` implementation without inference. Smart reasoning
+metadata reuses `POST /v1/smart-execution` for current harnesses and the
+manifest-owned Ollama, LM Studio and vLLM backends. It accepts backend/model
+selection, never a caller-provided provider URL. Browser requests validate the
+selected loopback runner before sending its pairing token and reject redirects.
+
 ## Agent testing scope
 
 The October 26–27 revenue checks below are guided workflow diagnostics: their
@@ -97,12 +108,11 @@ installation/catalog artifacts, ignores config/rules, preserves the selected or
 configured default model explicitly, uses read-only sandbox, disables reviewed tool
 features/web search, and rejects reported tools/unknown events/multiple turns or
 malformed UTF-8. One invocation does not establish an opaque provider hard token
-limit or OS isolation. Other subscription adapters return typed unavailable for
-Smart; their existing general task profiles are unchanged.
+limit or OS isolation. All current harness adapters also use the structured Smart contract through the shared dispatcher; native Codex execution retains this private policy.
 
-`POST /v1/smart-execution` admits Codex metadata only and requires the same pairing/
+`POST /v1/smart-execution` admits registered harness metadata and requires the same pairing/
 Origin/JSON controls as other protected routes. Its closed body is
-`{backendId:"codex_subscription",model?,timeoutMs?}`; executable paths, flags,
+`{backendId,model?,timeoutMs?}`; executable paths, flags,
 endpoints and credentials stay host-owned. Metadata admission is a separate
 settings-time step, capped at 5 s/lower raw budget plus bounded owned cleanup.
 Shared host admission ownership deduplicates concurrent probes and quarantines
@@ -124,7 +134,7 @@ privileged host confirmation or an actual different execution. HTTP closure mean
 our request/reader, not remote GPU termination. These are host-session boundaries,
 not durable crash/reboot coordination. Native metadata admission/revalidation uses
 the new `ai_smart_execution` -> `smart_execution` pipe method; it shares probe
-ownership and accepts only Codex/model/deadline. The original metadata request
+ownership and accepts only registered backend/model/deadline. The original metadata request
 stays pending until cleanup, with a separate framed cancel writer at the Rust
 host. Real pipe/synthetic native invoke/parser checks passed, not a Rust/native
 build. Local Chrome prepared-control and stored editor/recovery evidence passed;

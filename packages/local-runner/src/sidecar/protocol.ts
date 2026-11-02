@@ -1,3 +1,5 @@
+import { isHarnessReasoningValue } from "@vdt-studio/model-bridge";
+import { isHarnessBackendId } from "@vdt-studio/model-bridge/harness-catalog";
 export const SIDECAR_PROTOCOL_VERSION = 1;
 export const DEFAULT_SIDECAR_MAX_FRAME_BYTES = 1024 * 1024;
 
@@ -8,6 +10,7 @@ export const SIDECAR_REQUEST_METHODS = [
   "list_models",
   "complete",
   "smart_execution",
+  "harness_settings",
   "get_run",
   "open_provider_auth",
   "speech",
@@ -185,8 +188,9 @@ const METHOD_PAYLOAD_KEYS = {
   detect_clis: ["agentId"],
   test_backend: ["backendId"],
   list_models: ["backendId"],
-  complete: ["backendId", "taskType", "schemaId", "input", "model", "timeoutMs"],
-  smart_execution: ["backendId", "model", "timeoutMs"],
+  complete: ["backendId", "taskType", "schemaId", "input", "model", "modelReasoning", "timeoutMs"],
+  smart_execution: ["backendId", "model", "modelReasoning", "timeoutMs"],
+  harness_settings: ["action", "profile", "removeId"],
   get_run: ["runRequestId"],
   open_provider_auth: ["backendId"],
   speech: ["operation", "modelId", "confirmed", "language", "audioBase64", "jobId"],
@@ -326,8 +330,9 @@ function validateRequestPayload(method: SidecarRequestMethod, payload: JsonObjec
   if ("timeoutMs" in payload && (!Number.isSafeInteger(payload.timeoutMs) || Number(payload.timeoutMs) <= 0)) {
     throw new SidecarProtocolError("INVALID_PAYLOAD", "timeoutMs must be a positive safe integer.");
   }
-  if (method === "smart_execution" && (payload.backendId !== "codex_subscription" || Number(payload.timeoutMs ?? 5000) > 5000)) {
-    throw new SidecarProtocolError("INVALID_PAYLOAD", "Smart metadata requires the selected Codex backend and at most 5000ms.");
+  if ("modelReasoning" in payload && !isHarnessReasoningValue(payload.modelReasoning)) throw new SidecarProtocolError("INVALID_PAYLOAD", "modelReasoning must be a bounded provider reasoning value.");
+  if (method === "smart_execution" && (!(isHarnessBackendId(payload.backendId) || ["ollama", "lm_studio", "vllm"].includes(String(payload.backendId))) || Number(payload.timeoutMs ?? 5000) > 5000)) {
+    throw new SidecarProtocolError("INVALID_PAYLOAD", "Smart metadata requires a selected harness backend and at most 5000ms.");
   }
 }
 

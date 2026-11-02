@@ -5,6 +5,7 @@ import {
   LocalRunnerProvider,
   MockProvider,
   OpenAiCompatibleProvider,
+  isModelReasoningValue,
   type AiProvider,
   type LocalRunnerProviderConfig
 } from "@vdt-studio/ai-harness";
@@ -171,6 +172,7 @@ export function readLocalRunnerProviderConfig(value: unknown, origin: string): L
   return {
     runnerUrl,
     backendId,
+    ...(isModelReasoningValue(config.modelReasoning) ? { modelReasoning: config.modelReasoning } : {}),
     pairingToken,
     origin,
     ...(typeof config.model === "string" && config.model.trim() ? { model: config.model.trim().slice(0, 160) } : {}),

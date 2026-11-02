@@ -1,5 +1,14 @@
 # Architecture
 
+## Local harness integration (2026-11-02)
+
+A browser-safe HarnessDefinition describes each connection; host-only profile persistence, executable resolution and shared ACP/JSONL/Pi RPC transports live in model-bridge. The current catalog has thirteen presets. Suggested KPI resolves a separate connection/model-scoped preference, pins the effective model/reasoning in its preparation identity, and revalidates that identity before Apply. Completion requests retain backend/task/model IDs; custom command authority exists only at the explicit local Settings boundary. Active bindings pin configuration versions. See [Harness connections](HARNESS_CONNECTIONS.md).
+
+`model-bridge/local-runtime` exposes completion/process APIs without importing
+the Supervisor engine graph. `storage/skills` exposes filesystem skill storage
+without loading SQLite migrations. This keeps the packaged completion sidecar
+independent of the web Supervisor's durable storage assets.
+
 ## Static model contract and editable drafts (2026-11-01)
 
 `vdt-core/graph/validation.ts` owns static model validation. Its default `model`
@@ -352,7 +361,15 @@ One workspace scheduler owns one in-flight transport/process job and queue 12,
 with hover/selected/new-child/visible priority, deduplication and at most 8 automatic
 provider attempts per semantic generation. Selected plus at most 6 visible old
 nodes or 6 newly added immediate children can prewarm; there is no recursive tree
-build. Semantic graph hashes are shared/memoized, never recomputed on hover. Frozen
+build. Visible/new-child jobs have a 350 ms admission grace; hover/selected/explicit
+jobs and cache hits do not wait for it. An opened target is enqueued before
+prewarming after a workspace update. A different eligible hover cache miss may
+abort active visible/new-child work, but its callback retains the lane until
+terminal acknowledgement. Active same-target promotion is sticky; selected,
+hover and explicit jobs are protected. The cancelled target becomes stale,
+without a negative model result, automatic retry or budget refund. Unknown
+cleanup still quarantines the execution before another job may start.
+Semantic graph hashes are shared/memoized, never recomputed on hover. Frozen
 list/selection and action-time revalidation APIs connect the editor to preparation.
 `smart-kpi-transaction.ts` compiles one immutable candidate and checkpoint, reserves
 before awaiting, reconciles ordinary pending writes, and uses ADR-004's actual

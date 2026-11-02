@@ -8,7 +8,7 @@ import {
 import { SmartKpiCache, smartKpiExecutionKey, validSmartKpiLimitations, type SmartKpiCacheScope, type SmartKpiNegativeStatus } from "./smart-kpi-cache";
 import { smartKpiTargetIds } from "./smart-kpi-targets";
 
-export const SMART_KPI_SCHEDULER_LIMITS = { queue: 12, visible: 6, children: 6, speculativeAttempts: 8 } as const;
+export const SMART_KPI_SCHEDULER_LIMITS = { queue: 12, visible: 6, children: 6, speculativeAttempts: 8, backgroundGraceMs: 350 } as const;
 export type SmartKpiPriority = "hover" | "selected" | "new_child" | "visible";
 const priority: Record<SmartKpiPriority, number> = { hover: 0, selected: 1, new_child: 2, visible: 3 };
 export type SmartKpiPreparationResult = KpiSuggestionSet | undefined |
@@ -41,7 +41,7 @@ export interface SmartKpiSchedulerCounters {
   stale: number; empty: number; failed: number; timedOut: number; queueDropped: number; quarantined: number;
 }
 type Job = { key: string; scope: SmartKpiCacheScope; targetNodeId: string; generation: string;
-  priority: SmartKpiPriority; explicit: boolean; order: number; controller: AbortController };
+  priority: SmartKpiPriority; explicit: boolean; order: number; readyAt: number; controller: AbortController };
 type Lane = { running?: { owner: symbol; execution: string }; quarantines: Map<string, string>; listeners: Set<() => void> };
 // This host-session registry outlives individual canvases. Disposing a component
 // is not evidence that its owned CLI/remote process has terminated.
@@ -94,6 +94,9 @@ export class SmartKpiScheduler {
   private stopped = false;
   private fullAgentActive = false;
   private pumpQueued = false;
+  private backgroundWake: ReturnType<typeof setTimeout> | undefined;
+  private backgroundWakeDone: Promise<void> | undefined;
+  private finishBackgroundWake: (() => void) | undefined;
   private unsubscribeVisibility: (() => void) | undefined;
   private attachedLane: { workspaceId: string; lane: Lane } | undefined;
   private counters: SmartKpiSchedulerCounters = { started: 0, completed: 0, cacheHits: 0, deduplicated: 0,
@@ -123,6 +126,7 @@ export class SmartKpiScheduler {
   }
 
   setWorkspace(input: SmartKpiWorkspace): Promise<void> {
+    this.clearBackgroundWake();
     const ticket = ++this.updateTicket;
     const update = async () => {
       if (this.disposed) return;
@@ -231,10 +235,17 @@ export class SmartKpiScheduler {
     const scope: SmartKpiCacheScope = { context, ...(this.workspace.execution ? { execution: this.workspace.execution } : {}) }, key = this.cache.key(scope);
     // A background cache hit must not replace a fresh explicit attempt while
     // that same target is queued/running (and freeze the older proposal again).
-    if (this.active?.job.key === key && this.active.job.generation === generation && !this.active.job.controller.signal.aborted || this.queue.has(key)) {
+    const running = this.active?.job.key === key && this.active.job.generation === generation && !this.active.job.controller.signal.aborted ? this.active.job : undefined;
+    if (running || this.queue.has(key)) {
       this.counters.deduplicated++;
-      const queued = this.queue.get(key);
-      if (queued) { if (priority[options.priority ?? "hover"] < priority[queued.priority]) queued.priority = options.priority ?? "hover"; queued.explicit ||= !!options.explicit; }
+      const existing = running ?? this.queue.get(key);
+      if (existing) {
+        if (priority[options.priority ?? "hover"] < priority[existing.priority]) existing.priority = options.priority ?? "hover";
+        existing.explicit ||= !!options.explicit;
+        if (existing.explicit || existing.priority === "hover" || existing.priority === "selected") existing.readyAt = 0;
+        if (!running) this.preemptBackground(existing);
+        this.schedule();
+      }
       return this.getSnapshot(target);
     }
     if (!options.explicit) {
@@ -256,7 +267,12 @@ export class SmartKpiScheduler {
     if (!options.explicit && this.attempted.has(key)) {
       this.publish(target, key, { status: "unavailable", reason: "This KPI was already attempted. Choose Prepare or Retry for a new bounded attempt." }); return this.getSnapshot(target);
     }
-    const job: Job = { key, scope, targetNodeId: target, generation, priority: options.priority ?? "hover", explicit: !!options.explicit, order: this.order++, controller: new AbortController() };
+    const selectedPriority = options.priority ?? "hover";
+    // Leave a short opportunity for actual hover/selection before speculative
+    // work owns the lane. Running work still owns it until terminal cleanup.
+    const delayed = !options.explicit && (selectedPriority === "visible" || selectedPriority === "new_child");
+    const job: Job = { key, scope, targetNodeId: target, generation, priority: selectedPriority, explicit: !!options.explicit,
+      order: this.order++, readyAt: delayed ? Date.now() + SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs : 0, controller: new AbortController() };
     if (this.queue.size >= SMART_KPI_SCHEDULER_LIMITS.queue) {
       const worst = [...this.queue.values()].sort((a, b) => priority[b.priority] - priority[a.priority] || b.order - a.order)[0]!;
       this.counters.queueDropped++;
@@ -266,7 +282,7 @@ export class SmartKpiScheduler {
       this.queue.delete(worst.key);
       this.publish(worst.targetNodeId, worst.key, { status: "unavailable", reason: "Preparation queue is full. Choose Prepare to try this KPI." });
     }
-    this.queue.set(key, job); this.publish(target, key, { status: "preparing" }); this.schedule(); return this.getSnapshot(target);
+    this.queue.set(key, job); this.publish(target, key, { status: "preparing" }); this.preemptBackground(job); this.schedule(); return this.getSnapshot(target);
   }
 
   async prewarm(selected: string | null, visible: readonly string[]): Promise<void> {
@@ -283,17 +299,45 @@ export class SmartKpiScheduler {
   setFullAgentActive(active: boolean): void { this.fullAgentActive = active; this.schedule(); }
   private hidden(): boolean { return this.options.visibility?.isHidden() ?? (typeof document !== "undefined" && document.hidden); }
   private eligible(job: Job): boolean { return (!this.fullAgentActive || job.explicit) && (!this.hidden() || job.explicit); }
+  private preemptBackground(hot: Job): void {
+    const running = this.active?.job;
+    if (!running || hot.priority !== "hover" || !this.eligible(hot) || hot.generation !== this.generation
+      || running.generation !== hot.generation || running.key === hot.key || running.explicit
+      || running.controller.signal.aborted || !["visible", "new_child"].includes(running.priority)
+      || !hot.explicit && this.spent >= SMART_KPI_SCHEDULER_LIMITS.speculativeAttempts
+      || this.attachedLane?.lane.running?.owner !== this.owner) return;
+    this.counters.cancelled++;
+    running.controller.abort();
+    this.publish(running.targetNodeId, running.key, { status: "stale", reason: "Background preparation yielded to the KPI you opened. Choose Prepare to try this KPI again." });
+    // No refund or automatic retry: this attempt may already have used quota.
+    // run()/done.finally retain ownership through actual terminal acknowledgement;
+    // unknown cleanup quarantines this execution before the hot job can start.
+  }
   private schedule(): void {
     if (this.pumpQueued || this.disposed) return;
     this.pumpQueued = true; queueMicrotask(() => { this.pumpQueued = false; this.pump(); });
   }
+  private clearBackgroundWake(): void {
+    if (this.backgroundWake !== undefined) clearTimeout(this.backgroundWake);
+    this.backgroundWake = undefined;
+    this.backgroundWakeDone = undefined;
+    this.finishBackgroundWake?.(); this.finishBackgroundWake = undefined;
+  }
   private pump(): void {
+    this.clearBackgroundWake();
     if (this.disposed || this.stopped || this.active || !this.workspace) return;
     const lane = laneFor(this.workspace.workspaceId);
     if (lane.running) return;
     const jobs = [...this.queue.values()].sort((a, b) => priority[a.priority] - priority[b.priority] || a.order - b.order);
-    const job = jobs.find(j => this.eligible(j));
-    if (!job) return;
+    const eligible = jobs.filter(j => this.eligible(j)), now = Date.now();
+    const job = eligible[0];
+    if (!job || job.readyAt > now) {
+      if (job) {
+        this.backgroundWakeDone = new Promise(resolve => { this.finishBackgroundWake = resolve; });
+        this.backgroundWake = setTimeout(() => { this.clearBackgroundWake(); this.schedule(); }, Math.max(1, job.readyAt - now));
+      }
+      return;
+    }
     const execution = smartKpiExecutionKey(job.scope.execution!), quarantine = lane.quarantines.get(execution);
     if (quarantine) {
       for (const pending of jobs) { this.queue.delete(pending.key); this.publish(pending.targetNodeId, pending.key, { status: "blocked", reason: quarantine }); }
@@ -350,8 +394,9 @@ export class SmartKpiScheduler {
       await this.pendingUpdate;
       if (!this.current(job)) { this.counters.stale++; return; }
       const code = errorCode(error);
-      const status: SmartKpiNegativeStatus = code === "TIMEOUT" ? "timeout" : code === "SUGGESTIONS_UNAVAILABLE" ? "unavailable" : "failed";
+      const status: SmartKpiNegativeStatus = code === "TIMEOUT" ? "timeout" : ["SUGGESTIONS_UNAVAILABLE", "REASONING_UNSUPPORTED"].includes(code) ? "unavailable" : "failed";
       const reason = code === "NOT_A_DECOMPOSITION" ? "The suggestion did not split this KPI into at least two components. Retry to prepare a decomposition."
+        : code === "REASONING_UNSUPPORTED" ? "This model does not support the selected Suggested KPI reasoning setting. Choose another model or explicitly select Provider default in Execution mode."
         : code === "UNSAFE_DECOMPOSITION" ? "The suggestion reused context instead of this KPI's own lower-level components. Retry to prepare a valid decomposition."
         : status === "timeout" ? "Preparation timed out. Choose Retry for a new bounded attempt." : status === "unavailable" ? "This execution backend cannot currently prepare suggestions." : "Preparation failed validation or execution. Choose Retry for a new bounded attempt.";
       if (status === "timeout") this.counters.timedOut++; else this.counters.failed++;
@@ -362,6 +407,7 @@ export class SmartKpiScheduler {
     if (this.active && !this.active.job.controller.signal.aborted) { this.counters.cancelled++; this.active.job.controller.abort(); }
   }
   stop(): void {
+    this.clearBackgroundWake();
     this.stopped = true;
     for (const job of this.queue.values()) this.publish(job.targetNodeId, job.key, { status: "unavailable", reason: "Preparation was stopped. Choose Prepare to try again." });
     this.queue.clear();
@@ -370,6 +416,7 @@ export class SmartKpiScheduler {
   }
   resume(): void { if (!this.disposed) { this.stopped = false; this.schedule(); } }
   dispose(): void {
+    this.clearBackgroundWake();
     this.disposed = true; ++this.updateTicket; this.queue.clear(); this.cancelActive(); this.unsubscribeVisibility?.(); this.detachLane();
     for (const [id, snapshot] of this.snapshots) this.snapshots.set(id, this.staleSnapshot(snapshot));
     for (const [id, snapshot] of this.frozen) this.frozen.set(id, this.staleSnapshot(snapshot));
@@ -378,11 +425,14 @@ export class SmartKpiScheduler {
   async whenSettled(): Promise<void> {
     await this.pendingUpdate;
     for (;;) {
-      await Promise.resolve();
+      await this.pendingUpdate;
       if (this.active) { await this.active.done; continue; }
       if (this.pumpQueued) continue;
+      if (this.backgroundWakeDone) { await this.backgroundWakeDone; continue; }
       if (!this.disposed && !this.stopped && this.queue.size && !this.attachedLane?.lane.running &&
-        !this.diagnostics().blocked && [...this.queue.values()].some(job => this.eligible(job))) { this.schedule(); continue; }
+        !this.diagnostics().blocked && [...this.queue.values()].some(job => this.eligible(job))) {
+        this.schedule(); continue;
+      }
       break;
     }
     await this.cache.flush();

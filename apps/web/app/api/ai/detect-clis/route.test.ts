@@ -6,6 +6,12 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route";
 
+// Test PATH fixtures must never compete with a real bundled Codex installation.
+vi.mock("../../../../../../packages/model-bridge/src/subscription-cli/codex/executable-selection", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../../../../../packages/model-bridge/src/subscription-cli/codex/executable-selection")>();
+  return { ...actual, selectCodexExecutable: (options: Parameters<typeof actual.selectCodexExecutable>[0] = {}) => actual.selectCodexExecutable({ ...options, applicationDirectories: [] }) };
+});
+
 const fakeCodex = fileURLToPath(new URL("../../../../../../packages/local-runner/src/server/fixtures/fake-codex.cjs", import.meta.url));
 const fakeCursor = fileURLToPath(new URL("../../../../../../packages/local-runner/src/server/fixtures/fake-cursor.cjs", import.meta.url));
 
@@ -42,14 +48,10 @@ describe("detect CLIs API route", { timeout: 30_000 }, () => {
     expect(response.status).toBe(200);
     expect(body.appMode).toBe("hosted_web");
     expect(body.modelsByAgent).toEqual({});
-    expect(body.agents).toHaveLength(5);
-    expect(body.agents?.map((agent) => agent.id)).toEqual([
-      "cursor-agent",
-      "codex",
-      "claude",
-      "gemini",
-      "copilot"
-    ]);
+    expect(body.agents).toHaveLength(13);
+    expect(body.agents?.map((agent) => agent.id).sort()).toEqual([
+      "cursor-agent", "codex", "claude", "copilot", "opencode", "hermes", "kiro", "kimi", "vibe", "kilo", "qwen", "grok-build", "pi"
+    ].sort());
     expect(body.agents?.every((agent) => agent.installed === false)).toBe(true);
     expect(body.agents?.every((agent) => agent.executable === null)).toBe(true);
     expect(body.agents?.[0]?.status).toBe("unavailable");

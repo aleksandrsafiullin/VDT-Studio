@@ -1,3 +1,4 @@
+import { BUILTIN_HARNESSES, BUILTIN_HARNESS_IDS, type HarnessDefinition, type HarnessId } from "@vdt-studio/model-bridge/harness-catalog";
 import type { ProxyProvider } from "./provider-target-security";
 import type { ReasoningEffort } from "@vdt-studio/model-bridge";
 import { stripSessionOnlySecrets } from "./session-secrets";
@@ -10,8 +11,8 @@ export type ByokGateway = "none" | "ollama" | "senseaudio" | "aihubmix";
 
 export type CliAgentBadge = "official" | "lower-cost" | "many-models";
 
-export const CLI_AGENT_IDS = ["cursor-agent", "codex", "claude", "gemini", "copilot"] as const;
-export type CliAgentId = (typeof CLI_AGENT_IDS)[number];
+export const CLI_AGENT_IDS = BUILTIN_HARNESS_IDS;
+export type CliAgentId = HarnessId;
 
 export type LocalRunnerPresetId = "ollama_openai" | "lm_studio_openai" | "vllm_openai" | "custom_cli_json";
 export type LocalModelPresetId = Exclude<LocalRunnerPresetId, "custom_cli_json">;
@@ -56,6 +57,7 @@ export type GatewayPresetId =
   | MockPresetId;
 
 export interface CliCatalogEntry {
+  custom?: boolean | undefined;
   id: CliAgentId;
   displayName: string;
   subtitle: string;
@@ -97,6 +99,8 @@ export interface LocalRunnerPresetCatalogEntry {
 }
 
 export interface ExecutionSettings {
+  /** Suggested KPI choices are scoped to this connection and never change chat. */
+  smartKpiBySource?: Record<string, SmartKpiModelPreferences> | undefined;
   modelReasoningBySource?: Record<string, boolean | string | number> | undefined;
   executionMode: ExecutionMode;
   selectedCliAgentId?: CliAgentId | undefined;
@@ -128,58 +132,22 @@ export interface ExecutionSettings {
   customizeBaseUrl?: boolean | undefined;
 }
 
-export const CLI_CATALOG: readonly CliCatalogEntry[] = [
-  {
-    id: "claude",
-    displayName: "Claude Code",
-    subtitle: "Claude subscription backend with tools disabled",
-    usageNote: "Billing and rate limits follow your Anthropic subscription and the model Claude Code selects.",
-    primaryCommand: "claude",
-    badges: ["official"],
-    docsUrl: "https://docs.anthropic.com/en/docs/claude-code",
-    installHint: "npm install -g @anthropic-ai/claude-code"
-  },
-  {
-    id: "codex",
-    displayName: "Codex CLI",
-    subtitle: "OpenAI's official terminal coding agent",
-    usageNote: "Billing and rate limits follow your OpenAI subscription and Codex CLI policy.",
-    primaryCommand: "codex",
-    badges: ["official"],
-    docsUrl: "https://developers.openai.com/codex/cli",
-    installHint: "npm install -g @openai/codex"
-  },
-  {
-    id: "gemini",
-    displayName: "Gemini CLI",
-    subtitle: "Google's official Gemini terminal agent",
-    usageNote: "Billing and quotas follow your Google account and Gemini CLI usage policy.",
-    primaryCommand: "gemini",
-    badges: ["official", "many-models"],
-    docsUrl: "https://github.com/google-gemini/gemini-cli",
-    installHint: "npm install -g @google/gemini-cli"
-  },
-  {
-    id: "cursor-agent",
-    displayName: "Cursor Agent",
-    subtitle: "Cursor subscription backend isolated by the local runner",
-    usageNote: "Uses your Cursor subscription; limits depend on your Cursor plan and selected model.",
-    primaryCommand: "agent",
-    badges: ["official"],
-    docsUrl: "https://docs.cursor.com/agent",
-    installHint: "Install via Cursor settings or cursor.com/cli"
-  },
-  {
-    id: "copilot",
-    displayName: "GitHub Copilot CLI",
-    subtitle: "GitHub's official Copilot terminal agent",
-    usageNote: "Uses your GitHub Copilot subscription; limits follow Copilot CLI and GitHub policy.",
-    primaryCommand: "copilot",
-    badges: ["official"],
-    docsUrl: "https://docs.github.com/en/copilot",
-    installHint: "gh extension install github/gh-copilot"
-  }
-];
+export interface SmartKpiModelPreferences {
+  /** Omitted means follow the model selected for chat on this connection. */
+  model?: string | undefined;
+  /** Exact advertised values, remembered independently for each Smart model. */
+  /** null is an explicit opt-in to the provider's default. */
+  reasoningByModel?: Record<string, boolean | string | number | null> | undefined;
+}
+
+function harnessCatalogEntry(h: HarnessDefinition): CliCatalogEntry {
+  return { id: h.id, displayName: h.name, subtitle: "Local agent harness", usageNote: "Uses the account and model provider configured in this harness. Provider limits and billing apply.", primaryCommand: h.command, badges: h.custom ? [] : ["official"], docsUrl: h.docsUrl, installHint: h.installHint, custom: h.custom };
+}
+export const CLI_CATALOG: CliCatalogEntry[] = BUILTIN_HARNESSES.map(harnessCatalogEntry);
+export function registerHarnessCatalog(definitions: readonly HarnessDefinition[]): void {
+  const entries = definitions.map(harnessCatalogEntry);
+  CLI_CATALOG.splice(0, CLI_CATALOG.length, ...entries);
+}
 
 export const LOCAL_RUNNER_PRESET_CATALOG: readonly LocalRunnerPresetCatalogEntry[] = [
   {
@@ -406,9 +374,7 @@ export function getLocalRunnerPreset(id: LocalRunnerPresetId): LocalRunnerPreset
 
 export function getCliCatalogEntry(id: CliAgentId): CliCatalogEntry {
   const entry = CLI_CATALOG.find((candidate) => candidate.id === id);
-  if (!entry) {
-    throw new Error(`Unknown CLI agent: ${id}`);
-  }
+  if (!entry) return { id, displayName: "Custom harness", subtitle: "Reconnect to the local runtime", usageNote: "Refresh the runtime catalog to verify this connection.", primaryCommand: "", badges: [], docsUrl: "", installHint: "" };
   return entry;
 }
 

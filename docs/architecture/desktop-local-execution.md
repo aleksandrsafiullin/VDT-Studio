@@ -1,5 +1,21 @@
 # Desktop Local Execution
 
+The completion sidecar imports the narrow `model-bridge/local-runtime` entrypoint;
+Supervisor checkpoint engines remain in `model-bridge/node`. Filesystem skill
+storage has a separate `storage/skills` entrypoint. These boundaries prevent
+completion-sidecar startup from eagerly loading SQLite migration assets through
+unrelated package exports. Sidecar launch tests exercise the generated bundle.
+
+## Local harness integration (2026-11-02)
+
+Desktop adds ai_harness_settings over the private harness_settings method. The thirteen-preset catalog includes Pi RPC alongside ACP/native adapters. Independent Suggested KPI modelReasoning values cross the existing complete/smart_execution boundary; false is retained as explicit Off rather than omitted. Smart identity admission accepts registered harness IDs throughout Rust and the sidecar; provider resolution and custom executables remain host-owned. Source/pipe checks are distinct from native packaged execution qualification. See [Harness connections](../HARNESS_CONNECTIONS.md).
+
+The same metadata command discovers Smart reasoning for manifest-owned Ollama,
+LM Studio and vLLM. The desktop view does not query a web server on another host
+for the selected local model's capabilities. API Smart capabilities use their
+existing credential-scoped provider boundary. No command can provide an arbitrary
+local model endpoint or executable.
+
 ## Smart preparation and metadata boundary
 
 The existing `ai_complete` command/task registry carries the compact read-only
@@ -10,7 +26,7 @@ rejects late success and quarantines unconfirmed owned cleanup. General agent
 cancellation/profile behavior is unchanged.
 
 `ai_smart_execution` now supplies actual settings-time/revalidation metadata over
-the strict `smart_execution` sidecar method. It admits Codex only, with a 5 s/lower
+the strict `smart_execution` sidecar method. It admits registered harness backends, with a 5 s/lower
 budget and no frontend executable/endpoint authority. Metadata cancellation has
 an owned framed writer shared by Smart completions, and waits for the original
 request to close without waiting behind its Rust response mutex. Strict real

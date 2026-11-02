@@ -11,13 +11,15 @@ export type ExecFileProbe = (
 ) => Promise<{ stdout: string; stderr: string }>;
 
 export interface SubscriptionCliBuildArgsInput {
+  /** Host metadata proof; never a completion request field. */
+  directClaudeSubscriptionVerified?: boolean;
+  modelReasoning?: import("./reasoning").HarnessReasoningValue;
   model?: string;
   cwd?: string;
   promptPath?: string;
   promptText?: string;
   schemaPath?: string;
   outputPath?: string;
-  toolPolicyPath?: string;
   enableWorkspaceTrust?: boolean;
 }
 

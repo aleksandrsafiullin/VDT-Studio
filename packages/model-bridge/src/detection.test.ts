@@ -5,8 +5,8 @@ import path from "node:path";
 import { detectSubscriptionCli, findExecutableOnPath, parseCursorModelList, SUBSCRIPTION_CLI_IDS } from "./detection";
 
 describe("subscription CLI detection", () => {
-  it("limits the product catalog to the five reviewed subscription targets", () => {
-    expect(SUBSCRIPTION_CLI_IDS).toEqual(["cursor-agent", "codex", "claude", "gemini", "copilot"]);
+  it("includes exactly the thirteen current harnesses", () => {
+    expect(SUBSCRIPTION_CLI_IDS).toEqual(["cursor-agent", "codex", "claude", "copilot", "opencode", "hermes", "kiro", "kimi", "vibe", "kilo", "qwen", "grok-build", "pi"]);
   });
 
   it("rejects path-like aliases", async () => {

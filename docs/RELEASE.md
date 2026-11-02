@@ -1,5 +1,11 @@
 # Alpha Release
 
+The local harness integration adds the reviewed `ai_harness_settings` desktop
+command. Desktop foundation verification includes it. Tauri's all-platform
+bundle target uses the valid scalar `"all"`; this configuration change does not
+qualify installers or supply missing native icon/signing assets. See
+[harness connections and qualification limits](HARNESS_CONNECTIONS.md).
+
 Last reviewed: **2026-10-19**.
 
 VDT Studio `0.1.0-alpha.0` packages the Node 24 product CLI and paired localhost runner as a tarball. The web workspace remains source-deployed. The repository also contains a Tauri desktop shell and bundled Node sidecar foundation, but not a signed, clean-machine production installer.

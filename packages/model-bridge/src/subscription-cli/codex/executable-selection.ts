@@ -135,10 +135,12 @@ function versionEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return result;
 }
 
-async function probeVersion(executable: string, cwd: string, env: NodeJS.ProcessEnv, options: CodexExecutableSelectionOptions): Promise<{ stdout: string; stderr: string }> {
+/** Owned, bounded version subprocess. Extra argv comes only from a saved host
+ * profile, never from an AI completion request. */
+export async function probeOwnedCliVersion(executable: string, cwd: string, env: NodeJS.ProcessEnv, options: CodexExecutableSelectionOptions, versionArgs: readonly string[] = ["--version"], timeoutMs: number = CODEX_SELECTION_LIMITS.versionTimeoutMs): Promise<{ stdout: string; stderr: string }> {
   options.signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ["--version"], {
+    const child = spawn(executable, [...versionArgs], {
       cwd, env, shell: false, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"]
     });
     let stdout = "";
@@ -206,7 +208,7 @@ async function probeVersion(executable: string, cwd: string, env: NodeJS.Process
     const timeout = setTimeout(() => {
       failure ??= new Error("Codex CLI version probe timed out.");
       terminate();
-    }, CODEX_SELECTION_LIMITS.versionTimeoutMs);
+    }, timeoutMs);
     const collect = (chunk: Buffer, stream: "stdout" | "stderr") => {
       if (failure || settled) return;
       bytes += chunk.length;
@@ -252,7 +254,7 @@ export async function selectCodexExecutable(options: CodexExecutableSelectionOpt
         try {
           const result = options.versionProbe
             ? await options.versionProbe(executable, ["--version"])
-            : await probeVersion(executable, cwd, env, options);
+            : await probeOwnedCliVersion(executable, cwd, env, options);
           const raw = `${result.stdout}\n${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim().slice(0, 160) || null;
           const version = versionOf(raw) ? raw : null;
           results[index] = {

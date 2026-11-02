@@ -108,6 +108,20 @@ describe.skipIf(!hasLoopback)("Phase 2 transport and pairing", { timeout: 30_000
     expect(protectedResponse.status).toBe(401);
     expect(protectedResponse.body.error.code).toBe("PAIRING_REQUIRED");
   });
+  it("lists models from the paired runner without running inference", async () => {
+    const audit: AuditEvent[] = [], requests: string[] = [];
+    const server = await start({ host: "127.0.0.1", port: 0, auditSink: event => audit.push(event), executor: { fetch: async url => {
+      requests.push(String(url));
+      return Response.json({ data: [{ id: "paired-host-model" }] });
+    } } });
+    expect((await call(server, "/v1/backends/ollama/models")).status).toBe(401);
+    const token = await pair(server);
+    const result = await call(server, "/v1/backends/ollama/models", { token });
+    expect(result).toMatchObject({ status: 200, body: { ok: true, backendId: "ollama", models: ["paired-host-model"] } });
+    expect(requests).toEqual(["http://127.0.0.1:11434/v1/models"]);
+    expect(audit).toEqual([]);
+    expect((await call(server, "/v1/backends/not-registered/models", { token })).status).toBe(404);
+  });
 
   it("pairs once, returns a high-entropy token, and unpairs it", async () => {
     const server = await start({ host: "127.0.0.1", port: 0, pairing: { pairingCode: "123456" } });

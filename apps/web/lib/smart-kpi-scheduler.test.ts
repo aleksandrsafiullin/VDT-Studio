@@ -6,14 +6,14 @@ import {
 } from "@vdt-studio/vdt-core";
 import { createSmartKpiMeasuredFixture } from "../../../packages/vdt-core/src/suggestions/fixtures";
 import { SmartKpiCache } from "./smart-kpi-cache";
-import { confirmSmartKpiTerminalCleanup, SmartKpiScheduler, type SmartKpiPreparationResult, type SmartKpiWorkspace } from "./smart-kpi-scheduler";
+import { confirmSmartKpiTerminalCleanup, SMART_KPI_SCHEDULER_LIMITS, SmartKpiScheduler, type SmartKpiPreparationResult, type SmartKpiWorkspace } from "./smart-kpi-scheduler";
 
 const fixtureTarget = "measured_input";
 const now = Date.parse("2026-10-19T00:00:00.000Z");
 const execution: KpiSuggestionExecutionIdentity = { mode: "api", backendId: "fixture", modelId: "fixture-model", bindingVersion: "v1", credentialEpoch: "epoch1" };
 let workspaceSequence = 0;
 const schedulers: SmartKpiScheduler[] = [];
-afterEach(() => { for (const scheduler of schedulers.splice(0)) scheduler.dispose(); });
+afterEach(() => { for (const scheduler of schedulers.splice(0)) scheduler.dispose(); vi.useRealTimers(); });
 const tick = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 function workspace(children = 0): SmartKpiWorkspace {
   const project = createSmartKpiMeasuredFixture();
@@ -58,6 +58,184 @@ function create(options: ConstructorParameters<typeof SmartKpiScheduler>[0]): Sm
 }
 
 describe("Smart KPI bounded scheduling", () => {
+  it.each(["hover", "selected"] as const)("gives a fresh %s the lane before background grace expires", async intent => {
+    vi.useFakeTimers();
+    const transport = controlled(), s = create({ prepare: transport.prepare }); await s.setWorkspace(workspace(1));
+    await s.prewarm(null, ["child_0"]); await tick();
+    expect(transport.calls).toHaveLength(0);
+    await s.request(fixtureTarget, { priority: intent }); await tick();
+    expect(transport.calls[0]?.context.targetNodeId).toBe(fixtureTarget);
+    transport.resolve(0); await tick();
+    await vi.advanceTimersByTimeAsync(SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs);
+    expect(transport.calls[1]?.context.targetNodeId).toBe("child_0");
+    transport.resolve(1); await s.whenSettled();
+    expect(transport.maxConcurrent()).toBe(1); expect(s.diagnostics().speculativeAttempts).toBe(2);
+  });
+  it.each(["visible", "new_child"] as const)("promotes the same queued %s target without waiting or spending an extra attempt", async queuedPriority => {
+    vi.useFakeTimers();
+    const transport = controlled(), s = create({ prepare: transport.prepare }); await s.setWorkspace(workspace());
+    await s.request(fixtureTarget, { priority: queuedPriority }); await tick();
+    expect(transport.calls).toHaveLength(0);
+    await s.request(fixtureTarget, { priority: "hover" }); await tick();
+    expect(transport.calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs);
+    expect(transport.calls[0]!.signal.aborted).toBe(false);
+    expect(s.diagnostics()).toMatchObject({ started: 1, deduplicated: 1, speculativeAttempts: 1 });
+    transport.resolve(0); await s.whenSettled();
+  });
+  it("wakes deferred background work on its original deadline despite repeated prewarm", async () => {
+    vi.useFakeTimers();
+    const transport = controlled(), s = create({ prepare: transport.prepare }); await s.setWorkspace(workspace(1));
+    await s.prewarm(null, ["child_0"]);
+    await vi.advanceTimersByTimeAsync(200); await s.prewarm(null, ["child_0"]);
+    await vi.advanceTimersByTimeAsync(SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs - 201);
+    expect(transport.calls).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(transport.calls[0]?.context.targetNodeId).toBe("child_0");
+    transport.resolve(0); await s.whenSettled();
+  });
+  it.each(["stop", "dispose", "scope"])("clears the background wake before %s without starting a request", async action => {
+    vi.useFakeTimers();
+    const transport = controlled(), w = workspace(1), s = create({ prepare: transport.prepare }); await s.setWorkspace(w);
+    await s.prewarm(null, ["child_0"]); await tick();
+    if (action === "stop") s.stop();
+    else if (action === "dispose") s.dispose();
+    else { const changed = structuredClone(w); changed.project.id = "replacement"; await s.setWorkspace(changed); }
+    await vi.advanceTimersByTimeAsync(SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs);
+    expect(transport.calls).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("shares one wake timer with whenSettled and releases it immediately on stop", async () => {
+    vi.useFakeTimers();
+    const prepare = vi.fn(async () => undefined), s = create({ prepare }); await s.setWorkspace(workspace(1));
+    await s.prewarm(null, ["child_0"]);
+    const settled = s.whenSettled(); await tick();
+    expect(vi.getTimerCount()).toBe(1);
+    s.stop(); await settled;
+    expect(vi.getTimerCount()).toBe(0); expect(prepare).not.toHaveBeenCalled();
+  });
+  it("cancels background preparation for hover but retains the lane until terminal acknowledgement", async () => {
+    vi.useFakeTimers();
+    const transport = controlled(), s = create({ prepare: transport.prepare }); await s.setWorkspace(workspace(1));
+    await s.prewarm(null, ["child_0"]); await vi.advanceTimersByTimeAsync(SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs);
+    expect(transport.calls[0]?.context.targetNodeId).toBe("child_0");
+    await s.request(fixtureTarget); await tick();
+    expect(transport.calls).toHaveLength(1); expect(transport.calls[0]!.signal.aborted).toBe(true);
+    expect(s.getSnapshot("child_0")).toMatchObject({ state: { status: "stale" }, canApply: false });
+    await vi.advanceTimersByTimeAsync(1000); expect(transport.calls).toHaveLength(1);
+    transport.resolve(0); await tick();
+    expect(transport.calls[1]?.context.targetNodeId).toBe(fixtureTarget);
+    transport.resolve(1); await s.whenSettled(); expect(transport.maxConcurrent()).toBe(1);
+  });
+  it.each(["hover", "selected", "explicit"])("keeps active %s work protected from another hover", async kind => {
+    const transport = controlled(), s = create({ prepare: transport.prepare }); await s.setWorkspace(workspace(1));
+    await s.request("child_0", kind === "explicit" ? { priority: "visible", explicit: true } : { priority: kind as "hover" | "selected" }); await tick();
+    await s.request(fixtureTarget); await tick();
+    expect(transport.calls).toHaveLength(1); expect(transport.calls[0]!.signal.aborted).toBe(false);
+    transport.resolve(0); await tick(); expect(transport.calls[1]?.context.targetNodeId).toBe(fixtureTarget);
+    transport.resolve(1); await s.whenSettled(); expect(transport.maxConcurrent()).toBe(1);
+  });
+  it.each(["hover", "selected", "explicit"])("makes active same-key %s promotion sticky without another attempt", async kind => {
+    vi.useFakeTimers();
+    const transport = controlled(), s = create({ prepare: transport.prepare }); await s.setWorkspace(workspace(1));
+    await s.request("child_0", { priority: "visible" }); await vi.advanceTimersByTimeAsync(SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs);
+    await s.request("child_0", kind === "explicit" ? { explicit: true, priority: "visible" } : { priority: kind as "hover" | "selected" });
+    await s.prewarm(null, ["child_0"]); // Lower-priority repeats cannot undo the promotion.
+    await s.request(fixtureTarget); await tick();
+    expect(transport.calls).toHaveLength(1); expect(transport.calls[0]!.signal.aborted).toBe(false);
+    expect(s.diagnostics()).toMatchObject({ started: 1, speculativeAttempts: 1, deduplicated: 2 });
+    transport.resolve(0); await tick(); transport.resolve(1); await s.whenSettled();
+  });
+  it.each(["hidden", "agent"])("does not abort background work for a %s-ineligible hot request", async gate => {
+    vi.useFakeTimers(); let hidden = false, notify = () => {};
+    const transport = controlled(), s = create({ prepare: transport.prepare, visibility: { isHidden: () => hidden, subscribe: listener => { notify = listener; return () => {}; } } });
+    await s.setWorkspace(workspace(1)); await s.prewarm(null, ["child_0"]); await vi.advanceTimersByTimeAsync(SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs);
+    if (gate === "hidden") { hidden = true; notify(); } else s.setFullAgentActive(true);
+    await s.request(fixtureTarget); await tick();
+    expect(transport.calls[0]!.signal.aborted).toBe(false); expect(transport.calls).toHaveLength(1);
+    transport.resolve(0); await s.whenSettled(); expect(transport.calls).toHaveLength(1);
+    hidden = false; notify(); s.setFullAgentActive(false); await tick();
+    expect(transport.calls[1]?.context.targetNodeId).toBe(fixtureTarget); transport.resolve(1); await s.whenSettled();
+  });
+  it.each(["cache", "negative", "library"])("does not cancel an active background job for a %s hit", async kind => {
+    vi.useFakeTimers();
+    const w = workspace(1), transport = controlled(), cache = new SmartKpiCache({ storage: null, now: () => now });
+    const context = await buildKpiSuggestionContext(w.project, { workspaceId: w.workspaceId, vdtId: w.vdtId, targetNodeId: fixtureTarget, period: w.period });
+    if (kind === "cache") await cache.put({ context, execution }, proposal(context));
+    if (kind === "negative") cache.setNegative({ context, execution }, "empty", "No supported extra factors.");
+    const s = create({ cache, prepare: transport.prepare, ...(kind === "library" ? { library: (ctx: KpiSuggestionContext) => ctx.targetNodeId === fixtureTarget ? local(ctx) : undefined } : {}) });
+    await s.setWorkspace(w); await s.prewarm(null, ["child_0"]); await vi.advanceTimersByTimeAsync(SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs);
+    await s.request(fixtureTarget); await tick();
+    expect(s.getSnapshot(fixtureTarget).state.status).toBe(kind === "negative" ? "empty" : "ready");
+    expect(transport.calls).toHaveLength(1); expect(transport.calls[0]!.signal.aborted).toBe(false);
+    transport.resolve(0); await s.whenSettled();
+  });
+  it("quarantines the preempted execution when cleanup is unknown and does not start the hot request", async () => {
+    vi.useFakeTimers();
+    const transport = controlled(), s = create({ prepare: transport.prepare }); await s.setWorkspace(workspace(1));
+    await s.prewarm(null, ["child_0"]); await vi.advanceTimersByTimeAsync(SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs);
+    await s.request(fixtureTarget); expect(transport.calls[0]!.signal.aborted).toBe(true);
+    transport.calls[0]!.result.reject(Object.assign(new Error("Unknown cleanup"), { code: "CLEANUP_UNCONFIRMED" })); await s.whenSettled();
+    expect(transport.calls).toHaveLength(1); expect(s.getSnapshot(fixtureTarget)).toMatchObject({ state: { status: "blocked" }, canApply: false });
+    expect(s.diagnostics()).toMatchObject({ blocked: true, speculativeAttempts: 1, started: 1 });
+  });
+  it.each(["scope", "dispose"])("retains preemption cleanup quarantine after %s changes", async change => {
+    vi.useFakeTimers();
+    const w = workspace(1), transport = controlled(), old = create({ prepare: transport.prepare }); await old.setWorkspace(w);
+    await old.prewarm(null, ["child_0"]); await vi.advanceTimersByTimeAsync(SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs);
+    await old.request(fixtureTarget); expect(transport.calls[0]!.signal.aborted).toBe(true);
+    const next = change === "dispose" ? create({ prepare: transport.prepare }) : old;
+    if (change === "dispose") old.dispose();
+    const current = structuredClone(w); current.project.id = "replacement"; await next.setWorkspace(current); await next.request(fixtureTarget);
+    transport.calls[0]!.result.reject(Object.assign(new Error("Unknown cleanup"), { code: "CLEANUP_UNCONFIRMED" })); await tick(); await next.whenSettled();
+    expect(transport.calls).toHaveLength(1); expect(next.getSnapshot(fixtureTarget)).toMatchObject({ state: { status: "blocked" }, canApply: false });
+  });
+  it("does not abort another controller's active background request in the shared lane", async () => {
+    vi.useFakeTimers();
+    const w = workspace(1), transport = controlled(), first = create({ prepare: transport.prepare }), second = create({ prepare: transport.prepare });
+    await first.setWorkspace(w); await first.prewarm(null, ["child_0"]); await vi.advanceTimersByTimeAsync(SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs);
+    await second.setWorkspace(w); await second.request(fixtureTarget); await tick();
+    expect(transport.calls).toHaveLength(1); expect(transport.calls[0]!.signal.aborted).toBe(false);
+    transport.resolve(0); await tick(); expect(transport.calls[1]?.context.targetNodeId).toBe(fixtureTarget);
+    transport.resolve(1); await first.whenSettled(); await second.whenSettled(); expect(transport.maxConcurrent()).toBe(1);
+  });
+  it("does not preempt when the nonexplicit hot request has no remaining speculative budget", async () => {
+    vi.useFakeTimers(); let finish!: (result: KpiSuggestionSet) => void;
+    const signals: AbortSignal[] = [];
+    const prepare = vi.fn(async ({ context, execution: exec, signal }) => {
+      if (context.targetNodeId === "child_7") { signals.push(signal); return new Promise<KpiSuggestionSet>(resolve => { finish = resolve; }); }
+      return proposal(context, exec);
+    });
+    const w = workspace(9), s = create({ prepare }); await s.setWorkspace(w);
+    for (let index = 0; index < 7; index++) { await s.request(`child_${index}`); await s.whenSettled(); }
+    await s.request("child_7", { priority: "visible" }); await vi.advanceTimersByTimeAsync(SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs);
+    await s.request("child_8"); await tick(); expect(signals[0]?.aborted).toBe(false);
+    const context = await buildKpiSuggestionContext(w.project, { workspaceId: w.workspaceId, vdtId: w.vdtId, targetNodeId: "child_7", period: w.period });
+    finish(proposal(context)); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(8);
+    expect(s.diagnostics().speculativeAttempts).toBe(8); expect(s.getSnapshot("child_8").state.status).toBe("unavailable");
+    await s.retry("child_8"); await s.whenSettled(); expect(prepare).toHaveBeenCalledTimes(9); expect(s.diagnostics().speculativeAttempts).toBe(8);
+  });
+  it.each(["cache", "negative"])("serves a warm %s hit without a speculative delay or provider call", async kind => {
+    vi.useFakeTimers();
+    const w = workspace(), cache = new SmartKpiCache({ storage: null, now: () => now });
+    const context = await buildKpiSuggestionContext(w.project, { workspaceId: w.workspaceId, vdtId: w.vdtId, targetNodeId: fixtureTarget, period: w.period });
+    if (kind === "cache") await cache.put({ context, execution }, proposal(context));
+    else cache.setNegative({ context, execution }, "empty", "No supported extra factors.");
+    const prepare = vi.fn(async () => undefined), s = create({ cache, prepare }); await s.setWorkspace(w);
+    await s.request(fixtureTarget, { priority: "visible" });
+    expect(s.getSnapshot(fixtureTarget).state.status).toBe(kind === "cache" ? "ready" : "empty");
+    expect(prepare).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  });
+  it("shows an actionable reasoning incompatibility without treating it as an empty proposal", async () => {
+    const prepare = vi.fn(async () => { throw Object.assign(new Error("unsupported"), { code: "REASONING_UNSUPPORTED" }); });
+    const scheduler = create({ prepare }); await scheduler.setWorkspace(workspace());
+    await scheduler.request(fixtureTarget); await scheduler.whenSettled();
+    const result = scheduler.getSnapshot(fixtureTarget);
+    expect(result).toMatchObject({ state: { status: "unavailable" }, canApply: false });
+    expect("reason" in result.state && result.state.reason).toContain("explicitly select Provider default");
+    expect(result.proposal).toBeUndefined();
+    expect(prepare).toHaveBeenCalledOnce();
+  });
   it("cancels obsolete personalized preparation and prevents its result from being applied", async () => {
     const transport = controlled(), w = workspace(), scheduler = create({ prepare: transport.prepare });
     await scheduler.setWorkspace({ ...w, personalisation: { userInstructions: "Use Russian labels." } });
@@ -157,6 +335,7 @@ describe("Smart KPI bounded scheduling", () => {
     expect(s.getSnapshot(fixtureTarget)).toMatchObject({ state: { status: "unavailable" }, canApply: false });
     expect(cache.peek({ context: old.context, execution })).toBeUndefined();
     await s.prepareImmediateChildren(fixtureTarget); await tick();
+    await vi.waitFor(() => expect(transport.calls).toHaveLength(2));
     expect(transport.calls[1]?.context.targetNodeId).toBe("new_driver");
     transport.resolve(1); await s.whenSettled();
   });
@@ -179,6 +358,7 @@ describe("Smart KPI bounded scheduling", () => {
     expect(s.diagnostics()).toMatchObject({ queued: 4, deduplicated: 1, started: 0 });
     s.setFullAgentActive(false); await tick();
     for (const [index, id] of ["child_3", "child_2", "child_1", "child_0"].entries()) {
+      await vi.waitFor(() => expect(transport.calls[index]?.context.targetNodeId).toBe(id));
       expect(transport.calls[index]?.context.targetNodeId).toBe(id); transport.resolve(index); await tick();
     }
     await s.whenSettled(); expect(transport.maxConcurrent()).toBe(1); expect(s.diagnostics().completed).toBe(4);
@@ -248,7 +428,7 @@ describe("Smart KPI bounded scheduling", () => {
     const context = await buildKpiSuggestionContext(w.project, { workspaceId: w.workspaceId, vdtId: w.vdtId, targetNodeId: fixtureTarget, period: w.period });
     await cache.put({ context, execution }, proposal(context));
     const s = create({ cache, prepare }); await s.setWorkspace(w); await s.request(fixtureTarget); expect(s.getSnapshot(fixtureTarget).state).toMatchObject({ status: "ready", source: "cache" });
-    const { execution: _execution, ...withoutExecution } = w;
+    const withoutExecution = { ...w }; delete withoutExecution.execution;
     const recipe = create({ prepare, library: local }); await recipe.setWorkspace({ ...withoutExecution, workspaceId: `${w.workspaceId}_recipe` });
     await recipe.request(fixtureTarget); expect(recipe.getSnapshot(fixtureTarget).state).toMatchObject({ status: "ready", source: "library" }); expect(prepare).not.toHaveBeenCalled();
   });

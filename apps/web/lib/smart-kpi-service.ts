@@ -1,4 +1,6 @@
-import { AnthropicProvider, AzureOpenAiProvider, GeminiProvider, OpenAiCompatibleProvider, runSuggestIncomingKpis, type AiProvider } from "@vdt-studio/ai-harness";
+import { getHarnessDefinition } from "@vdt-studio/model-bridge/node";
+import { AnthropicProvider, AzureOpenAiProvider, GeminiProvider, OpenAiCompatibleProvider, runSuggestIncomingKpis, isModelReasoningValue, type ModelReasoningValue, type AiProvider } from "@vdt-studio/ai-harness";
+import { providerModelCapabilities, validatedReasoningConfig, type ProviderConnection } from "../app/api/agent/runs/provider-model-capabilities";
 import { validateKpiSuggestionTaskInput, smartAssert, smartRecord, smartString, type KpiSuggestionModelOutput } from "@vdt-studio/vdt-core";
 import { resolveProviderTarget, type ProxyProvider } from "./provider-target-security";
 import { fetchPinnedProvider } from "./pinned-provider-fetch";
@@ -63,11 +65,12 @@ async function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise
 
 export async function selectedProvider(request: SmartKpiServiceRequest, signal: AbortSignal, requestUrl: string, maxEnvelopeBytes = 24 * 1024): Promise<AiProvider> {
   const config = request.providerConfig ?? {};
-  smartRecord(config, ["baseUrl", "endpoint", "model", "deployment", "apiVersion", "anthropicVersion", "apiKey", "maxTokens", "backendId", "runnerUrl", "pairingToken", "timeoutMs"], []);
+  smartRecord(config, ["baseUrl", "endpoint", "model", "deployment", "apiVersion", "anthropicVersion", "apiKey", "maxTokens", "backendId", "runnerUrl", "pairingToken", "timeoutMs", "modelReasoning"], []);
+  smartAssert(config.modelReasoning === undefined || isModelReasoningValue(config.modelReasoning), "INVALID_REASONING", "Invalid selected reasoning value.");
   const text = (key: string, max = 2048) => { smartString(config[key], max); return config[key] as string; };
   if (request.providerId === "local_runner") {
     const backendId = text("backendId", 160), model = text("model", 160);
-    smartAssert(["codex_subscription", "ollama", "lm_studio", "vllm"].includes(backendId), "SUGGESTIONS_UNAVAILABLE", "This selected adapter has no one-call Smart policy.");
+    smartAssert(["ollama", "lm_studio", "vllm"].includes(backendId) || getHarnessDefinition(backendId)?.capabilities.structuredCompletion, "SUGGESTIONS_UNAVAILABLE", "This selected adapter has no one-call Smart policy.");
     smartAssert(!config.baseUrl && !config.endpoint && !config.apiKey, "INVALID_PROVIDER", "Local endpoints are manifest-owned.");
     smartAssert(config.pairingToken || resolveTrustedStorageWriteMode(), "SUGGESTIONS_UNAVAILABLE", "Local suggestions require a trusted host or paired runner.");
     return createManagedAwareAiProvider({ providerId: "local_runner", providerConfig: { ...config, backendId, model, timeoutMs: request.timeoutMs } }, requestUrl);
@@ -79,15 +82,38 @@ export async function selectedProvider(request: SmartKpiServiceRequest, signal: 
     signal.throwIfAborted();
     const target = await resolveProviderTarget(String(raw), provider);
     signal.throwIfAborted();
-    return fetchPinnedProvider(target, { method: init?.method ?? "POST", headers: new Headers(init?.headers), body, signal });
+    return fetchPinnedProvider(target, { method: init?.method ?? "GET", headers: new Headers(init?.headers), body, signal });
   };
   const timeoutMs = request.timeoutMs ?? 15_000;
-  if (request.providerId === "openai_compatible") return new OpenAiCompatibleProvider({ baseUrl: text("baseUrl"), model, apiKey, timeoutMs, fetch: pinnedFetch("openai") });
-  if (request.providerId === "anthropic") return new AnthropicProvider({ baseUrl: text("baseUrl"), model, apiKey, timeoutMs, fetch: pinnedFetch("anthropic"), ...(config.anthropicVersion ? { anthropicVersion: text("anthropicVersion", 160) } : {}) });
-  if (request.providerId === "gemini") return new GeminiProvider({ baseUrl: text("baseUrl"), model, apiKey, timeoutMs, fetch: pinnedFetch("google") });
+  const fetcher = pinnedFetch(request.providerId === "gemini" ? "google" : request.providerId === "anthropic" ? "anthropic" : request.providerId === "azure_openai" ? "azure" : "openai");
+  const reasoning = await smartReasoningConfig(request, config.modelReasoning as ModelReasoningValue | undefined, fetcher);
+  if (request.providerId === "openai_compatible") return new OpenAiCompatibleProvider({ baseUrl: text("baseUrl"), model, apiKey, timeoutMs, fetch: fetcher, ...reasoning });
+  if (request.providerId === "anthropic") return new AnthropicProvider({ baseUrl: text("baseUrl"), model, apiKey, timeoutMs, fetch: fetcher, ...reasoning, ...(config.anthropicVersion ? { anthropicVersion: text("anthropicVersion", 160) } : {}) });
+  if (request.providerId === "gemini") return new GeminiProvider({ baseUrl: text("baseUrl"), model, apiKey, timeoutMs, fetch: fetcher, ...reasoning });
   if (request.providerId === "azure_openai") return new AzureOpenAiProvider({ endpoint: text("endpoint"), deployment: text("deployment", 160), apiKey,
-    apiVersion: text("apiVersion", 160), timeoutMs, fetch: pinnedFetch("azure") });
+    apiVersion: text("apiVersion", 160), timeoutMs, fetch: fetcher, ...reasoning });
   throw Object.assign(new Error("Selected provider is unavailable for Smart suggestions."), { code: "SUGGESTIONS_UNAVAILABLE" });
+}
+
+export async function smartReasoningConfig(request: SmartKpiServiceRequest, value: ModelReasoningValue | undefined, fetcher: typeof fetch): Promise<Record<string, unknown>> {
+  if (value === undefined) return {};
+  const config = request.providerConfig ?? {}, model = String(config.model ?? "");
+  // These direct OpenAI models have no reasoning feature to disable. Do not
+  // send an unsupported reasoning parameter to an ordinary text model.
+  if (value === false && request.providerId === "openai_compatible" && String(config.baseUrl).replace(/\/$/, "") === "https://api.openai.com/v1"
+    && /^(?:gpt-3\.5|gpt-4(?:[.-]|$)|chatgpt-4o)/.test(model)) return {};
+  let capabilities;
+  try { capabilities = await providerModelCapabilities({ providerId: request.providerId, providerConfig: config } as ProviderConnection, fetcher, "suggested_kpi"); }
+  catch (error) { throw Object.assign(new Error("Reasoning capabilities could not be verified. Choose Provider default or refresh this model."), { code: "REASONING_UNSUPPORTED", cause: error }); }
+  if (value === false) {
+    if (request.providerId === "anthropic" && capabilities?.values.includes(false)) return { disableThinking: true };
+    const disabled = capabilities?.values.find(option => option === false || option === 0 || ["none", "off", "disabled"].includes(String(option)));
+    if (disabled === undefined) throw Object.assign(new Error("This model does not advertise a way to disable reasoning. Choose Provider default or another model."), { code: "REASONING_UNSUPPORTED" });
+    if (disabled === false && capabilities!.parameter === "reasoning_effort") return {};
+    return validatedReasoningConfig(capabilities, disabled);
+  }
+  try { return validatedReasoningConfig(capabilities, value); }
+  catch (error) { throw Object.assign(new Error("The model cannot honor the selected reasoning level."), { code: "REASONING_UNSUPPORTED", cause: error }); }
 }
 
 async function prepareResponse(raw: SmartKpiServiceRequest, caller: AbortSignal, requestUrl: string, deps: SmartKpiServiceDependencies = {}): Promise<KpiSuggestionModelOutput> {
@@ -113,6 +139,7 @@ async function prepareResponse(raw: SmartKpiServiceRequest, caller: AbortSignal,
     if (error && typeof error === "object" && "code" in error && error.code === "CLEANUP_UNCONFIRMED") throw error;
     if (timedOut) throw Object.assign(new Error("Smart suggestion preparation timed out."), { code: "TIMEOUT" });
     if (caller.aborted) throw Object.assign(new Error("Smart suggestion preparation was cancelled."), { code: "CANCELLED", name: "AbortError" });
+    if ((error as { code?: string })?.code === "unsupported_reasoning") throw Object.assign(new Error("The provider rejected the selected reasoning setting."), { code: "REASONING_UNSUPPORTED" });
     throw error;
   } finally { clearTimeout(timer); caller.removeEventListener("abort", abort); }
 }

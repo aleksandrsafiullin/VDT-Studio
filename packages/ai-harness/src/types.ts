@@ -78,6 +78,7 @@ export interface OpenAiCompatibleProviderConfig {
 export type AiProviderFetch = typeof globalThis.fetch;
 
 export interface AnthropicProviderConfig {
+  disableThinking?: boolean | undefined;
   reasoningEffort?: string | undefined;
   adaptiveThinking?: boolean | undefined;
   apiKey: string;
@@ -118,6 +119,7 @@ export interface LocalHttpProviderConfig {
 }
 
 export interface LocalRunnerProviderConfig {
+  modelReasoning?: import("./reasoning").ModelReasoningValue | undefined;
   runnerUrl: string;
   backendId: string;
   pairingToken: string;

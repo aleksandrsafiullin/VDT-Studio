@@ -75,6 +75,7 @@ export class LocalRunnerProvider implements AiProvider {
                 userPrompt: compactRunnerPrompt(params.taskType, params.userPrompt)
               },
           ...(params.model ?? this.config.model ? { model: params.model ?? this.config.model } : {}),
+          ...(this.config.modelReasoning === undefined ? {} : { modelReasoning: this.config.modelReasoning }),
           ...(this.config.timeoutMs ? { timeoutMs: this.config.timeoutMs } : {})
         })
       });
@@ -100,9 +101,9 @@ export class LocalRunnerProvider implements AiProvider {
     params.signal?.throwIfAborted();
     const headers = { "content-type": "application/json", authorization: `Bearer ${this.config.pairingToken}`, origin: this.config.origin };
     const controller = new AbortController();
-    const timeoutMs = Math.min(this.config.timeoutMs ?? 30_000, this.config.backendId === "codex_subscription" ? 30_000 : 15_000);
+    const timeoutMs = Math.min(this.config.timeoutMs ?? 30_000, this.config.backendId.endsWith("_subscription") ? 30_000 : 15_000);
     const body = JSON.stringify({ requestId, backendId: this.config.backendId, taskType: params.taskType, schemaId: schemaIdForTask(params.taskType),
-      input: { data: params.input, systemPrompt: params.systemPrompt, userPrompt: compactRunnerPrompt(params.taskType, params.userPrompt) }, model: params.model ?? this.config.model, timeoutMs });
+      input: { data: params.input, systemPrompt: params.systemPrompt, userPrompt: compactRunnerPrompt(params.taskType, params.userPrompt) }, model: params.model ?? this.config.model, ...(this.config.modelReasoning === undefined ? {} : { modelReasoning: this.config.modelReasoning }), timeoutMs });
     if (new TextEncoder().encode(body).byteLength > 24 * 1024) throw new Error("Smart runner request exceeds its bound.");
     const unknown = () => Object.assign(new Error("Remote cleanup could not be confirmed; Smart execution is quarantined."), { code: "CLEANUP_UNCONFIRMED" });
     let cancellation: Promise<void> | undefined, terminal = false, timedOut = false;

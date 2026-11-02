@@ -1,9 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_EXECUTION_SETTINGS } from "./execution-mode-catalog";
-import { prepareProviderAgentBinding, providerConnectionRequest } from "./provider-agent-binding";
+import { prepareProviderAgentBinding, providerConnectionRequest, requestProviderModelCapabilities } from "./provider-agent-binding";
 const settings = { ...DEFAULT_EXECUTION_SETTINGS, apiKey: "test-private", model: "selected-model" };
 
 describe("selected-provider chat admission", () => {
+  it.each([[undefined, "capabilities"], ["suggested_kpi", "smart_capabilities"]] as const)("keeps metadata purpose %s separate from admission and inference", async (purpose, operation) => {
+    const fetcher = vi.fn(async () => Response.json({ ok: true, modelId: "selected-model", capabilities: { parameter: "reasoning_effort", values: ["low", "high"], source: "provider" } }));
+    await requestProviderModelCapabilities({ providerId: "anthropic", providerConfig: { model: "selected-model", apiKey: "synthetic-key" } }, undefined, fetcher, purpose);
+    const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(init.body));
+    expect(body).toMatchObject({ operation, providerId: "anthropic", providerConfig: { model: "selected-model" } });
+    expect(body).not.toHaveProperty("input");
+    expect(body).not.toHaveProperty("prompt");
+  });
   it.each(["openai_compatible", "anthropic", "gemini", "azure_openai"])("admits %s without redirecting it through OpenAI", async (providerId) => {
     const binding = { bindingId: "api_byok_session_test", executionProfile: "model_agent", backendId: providerId, modelId: "selected-model", modelReasoning: "high" };
     const fetcher = vi.fn(async () => Response.json({ ok: true, binding }));

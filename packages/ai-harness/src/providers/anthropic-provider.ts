@@ -12,6 +12,7 @@ interface AnthropicMessageResponse {
   content?: Array<
     | { type?: "text"; text?: string }
     | { type?: "tool_use"; name?: string; input?: unknown }
+    | { type: "thinking" | "redacted_thinking"; thinking?: string; data?: string }
   >;
 }
 
@@ -63,6 +64,7 @@ export class AnthropicProvider implements AiProvider {
             output_config: { effort: this.config.reasoningEffort },
             ...(this.config.adaptiveThinking ? { thinking: { type: "adaptive" } } : {})
           }),
+          ...(this.config.disableThinking ? { thinking: { type: "disabled" } } : {}),
           system: params.systemPrompt,
           messages: [
             {
@@ -75,7 +77,8 @@ export class AnthropicProvider implements AiProvider {
       }
     })) as AnthropicMessageResponse;
 
-    if (params.taskType === "suggest_incoming_kpis" && (payload.stop_reason !== "tool_use" || !payload.content?.length || payload.content.filter(item => item.type === "tool_use").length !== 1 || payload.content.some(item => item.type !== "text" && (item.type !== "tool_use" || item.name !== STRUCTURED_OUTPUT_TOOL)))) {
+    if (params.taskType === "suggest_incoming_kpis" && this.config.disableThinking && payload.content?.some(item => item.type === "thinking" || item.type === "redacted_thinking")) throw Object.assign(new Error("The provider returned thinking despite the disabled setting."), { code: "REASONING_UNSUPPORTED" });
+    if (params.taskType === "suggest_incoming_kpis" && (payload.stop_reason !== "tool_use" || !payload.content?.length || payload.content.filter(item => item.type === "tool_use").length !== 1 || payload.content.some(item => !["text", "thinking", "redacted_thinking"].includes(String(item.type)) && (item.type !== "tool_use" || item.name !== STRUCTURED_OUTPUT_TOOL)))) {
       throw new Error("Smart provider did not return the single reviewed structured-output channel.");
     }
     const toolOutput = payload.content?.find(

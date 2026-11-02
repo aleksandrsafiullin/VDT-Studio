@@ -11,7 +11,7 @@ import { executionBindingSummary } from "../../runs/execution-bindings";
 import { providerConnectionSchema, providerModelCapabilities, validatedReasoningConfig, resolveApiConnection, ProviderConnectionError } from "../../runs/provider-model-capabilities";
 import { admitSessionWebResearch } from "../../runs/session-research";
 
-const envelope = z.object({ operation: z.enum(["capabilities", "admit"]), providerId: z.string(), providerConfig: z.unknown(), enableResearch: z.boolean().optional() }).strict();
+const envelope = z.object({ operation: z.enum(["capabilities", "smart_capabilities", "admit"]), providerId: z.string(), providerConfig: z.unknown(), enableResearch: z.boolean().optional() }).strict();
 
 export async function POST(request: Request) {
   const headers = { "cache-control": "no-store" };
@@ -31,9 +31,9 @@ export async function POST(request: Request) {
     // Validate endpoint authority even for Default/no-capability admissions.
     if (connection.providerId !== "local_runner") resolveApiConnection(connection);
     const directOpenAi = connection.providerId === "openai_compatible" && resolveApiConnection(connection).providerConfig.baseUrl === "https://api.openai.com/v1";
-    const capabilities = input.operation === "capabilities" || connection.providerConfig.modelReasoning !== undefined || directOpenAi
-      ? await providerModelCapabilities(connection) : undefined;
-    if (input.operation === "capabilities") return Response.json({ ok: true, modelId: connection.providerConfig.model, capabilities: capabilities ?? null }, { headers });
+    const capabilities = input.operation === "capabilities" || input.operation === "smart_capabilities" || connection.providerConfig.modelReasoning !== undefined || directOpenAi
+      ? await providerModelCapabilities(connection, fetch, input.operation === "smart_capabilities" ? "suggested_kpi" : undefined) : undefined;
+    if (input.operation === "capabilities" || input.operation === "smart_capabilities") return Response.json({ ok: true, modelId: connection.providerConfig.model, capabilities: capabilities ?? null }, { headers });
     const hash = modelAgentToolCatalogHash(agentRuntime.tools);
     if (connection.providerId === "local_runner") {
       const { backendId, model, modelReasoning } = connection.providerConfig;

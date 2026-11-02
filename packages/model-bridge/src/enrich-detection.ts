@@ -1,11 +1,15 @@
 import type { ModelBackendStatus } from "./contract";
 import type { SubscriptionCliDetectionResult } from "./detection";
 import { getSubscriptionCliAdapter } from "./subscription-cli/registry";
+import { getHarnessDefinition } from "./harness/profiles";
+import { probeHarnessModels } from "./harness/rpc-session";
+import type { HarnessAccessChecks } from "./harness/catalog";
 
 export interface EnrichedSubscriptionCliDetection extends SubscriptionCliDetectionResult {
   status?: ModelBackendStatus;
   authSummary?: string;
   diagnostics?: string[];
+  checks?: HarnessAccessChecks;
 }
 
 function publicDetection(agent: SubscriptionCliDetectionResult): SubscriptionCliDetectionResult {
@@ -42,6 +46,23 @@ export async function enrichSubscriptionCliDetection(
     };
   }
 
+  const harness = getHarnessDefinition(agent.backendId);
+  if (harness && harness.transport !== "native") {
+    try {
+      await probeHarnessModels(harness, options.signal ?? AbortSignal.timeout(5000));
+      return { ...publicDetection(agent), status: "ready", authSummary: "Protocol session verified. Account access and quotas remain managed by the provider and are checked when a task runs.", checks: { authentication: "provider_managed", protocol: "verified" }, diagnostics: [] };
+    } catch (e) {
+      const code = (e as { code?: string })?.code;
+      const status: ModelBackendStatus = code === "AUTH_REQUIRED" ? "authentication_required" : code === "RATE_LIMITED" ? "rate_limited" : "error";
+      const reason = code === "HARNESS_CAPABILITY_MISSING" ? "The JSONL adapter must support sessions, structured completion and acknowledged cancellation."
+        : code === "UNSUPPORTED_PROTOCOL" ? "This adapter must implement protocol version 1."
+          : code === "SESSION_MISMATCH" ? "The adapter returned an invalid or changed session ID."
+            : code === "HARNESS_ENV_MISSING" ? "A referenced host environment variable is missing."
+              : code === "CLEANUP_UNCONFIRMED" ? "Cancellation or process cleanup could not be confirmed."
+                : status === "authentication_required" ? "Complete sign-in in the provider CLI, then rescan." : "The harness protocol handshake could not be verified.";
+      return { ...publicDetection(agent), status, authSummary: reason, checks: { authentication: status === "authentication_required" ? "required" : "unknown", protocol: ["HARNESS_CAPABILITY_MISSING", "UNSUPPORTED_PROTOCOL", "SESSION_MISMATCH"].includes(code ?? "") ? "incompatible" : "unverified", reason }, diagnostics: probeDiagnostics(status) };
+    }
+  }
   const adapter = getSubscriptionCliAdapter(agent.backendId);
   if (adapter?.probeAuth) {
     try {
@@ -50,6 +71,7 @@ export async function enrichSubscriptionCliDetection(
         ...publicDetection(agent),
         status: probe.status,
         ...(probe.authSummary ? { authSummary: probe.authSummary } : {}),
+        checks: { authentication: probe.status === "ready" ? "verified" : probe.status === "authentication_required" ? "required" : "unknown", protocol: probe.status === "unsupported_version" ? "incompatible" : "unverified" },
         diagnostics: probeDiagnostics(probe.status)
       };
     } catch {

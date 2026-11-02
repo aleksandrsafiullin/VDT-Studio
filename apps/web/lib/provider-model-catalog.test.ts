@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { BUILTIN_HARNESS_IDS } from "@vdt-studio/model-bridge/harness-catalog";
 import { DEFAULT_EXECUTION_SETTINGS, type ExecutionSettings } from "./execution-mode-catalog";
 import { loadByokModelCatalog, loadProviderModelCatalog, normalizeProviderModelIds, providerModelSource } from "./provider-model-catalog";
 
@@ -41,7 +42,7 @@ describe("provider-owned model catalogs", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it.each(["codex", "cursor-agent", "claude", "gemini", "copilot"] as const)("uses only the authenticated %s CLI catalog", async (cliAgentId) => {
+  it.each(BUILTIN_HARNESS_IDS)("uses only the authenticated %s CLI catalog", async (cliAgentId) => {
     const client = { listModels: vi.fn(), detectSubscriptionClis: vi.fn(async () => ({
       agents: [{ id: cliAgentId, installed: true, executable: null, alias: null, version: null, status: "ready" as const }],
       modelsByAgent: { [cliAgentId]: ["account-model"] }

@@ -1,5 +1,9 @@
 # Release Checklist
 
+## Local harness integration (2026-11-01)
+
+Verify the seven-preset structured-task/Smart matrix, custom ACP and JSONL conformance, model/configuration pinning, strict profile admission and terminal cancellation. Regenerate/verify the sidecar after runtime changes. Do not promote new/custom integrations without live and native qualification. See [Harness connections](HARNESS_CONNECTIONS.md).
+
 Last reviewed: **2026-10-19**.
 
 - [ ] Qualify [encrypted BYOK retention](adr/ADR-007-encrypted-browser-api-keys.md) in packaged native WebViews and Windows: reload/reopen, replacement/deletion, storage denial/corruption and plaintext exclusion from ordinary preferences/exports. Web-client checks do not establish native Keychain or compromised-profile protection.

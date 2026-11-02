@@ -22,7 +22,9 @@ export default defineConfig({
       "@vdt-studio/ai-harness/browser": fileURLToPath(new URL("./packages/ai-harness/src/browser.ts", import.meta.url)),
       "@vdt-studio/ai-harness": fileURLToPath(new URL("./packages/ai-harness/src/index.ts", import.meta.url)),
       "@vdt-studio/cli": fileURLToPath(new URL("./packages/cli/src/index.ts", import.meta.url)),
+      "@vdt-studio/model-bridge/harness-catalog": fileURLToPath(new URL("./packages/model-bridge/src/harness/catalog.ts", import.meta.url)),
       "@vdt-studio/model-bridge/node": fileURLToPath(new URL("./packages/model-bridge/src/node.ts", import.meta.url)),
+      "@vdt-studio/model-bridge/local-runtime": fileURLToPath(new URL("./packages/model-bridge/src/local-runtime.ts", import.meta.url)),
       "@vdt-studio/model-bridge": fileURLToPath(new URL("./packages/model-bridge/src/index.ts", import.meta.url)),
       "@": fileURLToPath(new URL("./apps/web", import.meta.url))
     }

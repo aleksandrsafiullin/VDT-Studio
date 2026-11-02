@@ -48,6 +48,42 @@ describe("Smart local response reader ownership", () => {
 });
 
 describe("Smart task-scoped local transport", () => {
+  it("cleans owned request/prompt files when native reasoning admission rejects before inference", async () => {
+    const root = await directory(), spawn = vi.fn();
+    await expect(executeCompletion(createManifestRegistry().get("cursor_subscription")!, { ...await request("cursor_subscription"), modelReasoning: false }, new AbortController().signal,
+      { tempRoot: root, env: {}, resolveExecutable: async () => "/bin/echo", spawn })).rejects.toMatchObject({ code: "REASONING_UNSUPPORTED" });
+    expect(spawn).not.toHaveBeenCalled(); expect(await readdir(root)).toEqual([]);
+  });
+  it.each([false, true, "low"])("sends independent Ollama thinking %s without changing the selected model", async modelReasoning => {
+    const fetch = vi.fn(async (url: unknown, _init?: RequestInit) => String(url).endsWith("/api/show") ? json({ thinking: { values: [false, true, "low"] } }) : json({ message: { content: JSON.stringify(empty) }, done: true, done_reason: "stop" }));
+    await executeCompletion(createManifestRegistry().get("ollama")!, { ...await request("ollama"), modelReasoning }, new AbortController().signal, { fetch });
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toMatchObject({ model: "selected", think: modelReasoning, options: { num_predict: 2048 } });
+  });
+  it("honors explicit Provider default by omitting Ollama think rather than forcing false", async () => {
+    const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => json({ message: { content: JSON.stringify(empty) }, done: true, done_reason: "stop" }));
+    await executeCompletion(createManifestRegistry().get("ollama")!, await request("ollama"), new AbortController().signal, { fetch });
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).not.toHaveProperty("think");
+  });
+  it("rejects ignored Ollama Off and classifies a provider's explicit thinking refusal without retry", async () => {
+    const input = { ...await request("ollama"), modelReasoning: false };
+    const fetch = vi.fn(async (url: unknown) => String(url).endsWith("/api/show") ? json({ thinking: { values: [false, true] } }) : json({ message: { thinking: "private reasoning", content: JSON.stringify(empty) }, done: true, done_reason: "stop" }));
+    await expect(executeCompletion(createManifestRegistry().get("ollama")!, input, new AbortController().signal, { fetch })).rejects.toMatchObject({ code: "REASONING_UNSUPPORTED" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    fetch.mockReset(); fetch.mockImplementation(async (url: unknown) => String(url).endsWith("/api/show") ? json({ thinking: { values: [false, true] } }) : Response.json({ error: "this model does not support thinking" }, { status: 400 }));
+    await expect(executeCompletion(createManifestRegistry().get("ollama")!, input, new AbortController().signal, { fetch })).rejects.toMatchObject({ code: "REASONING_UNSUPPORTED" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it("requires advertised local-server Off and never silently retries without the requested setting", async () => {
+    const fetch = vi.fn(async (url: unknown, _init?: RequestInit) => String(url).includes("/models/")
+      ? json({ supported_reasoning_efforts: ["none", "low"] })
+      : json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(empty) } }] }));
+    await executeCompletion(createManifestRegistry().get("lm_studio")!, { ...await request("lm_studio"), modelReasoning: false }, new AbortController().signal, { fetch });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toMatchObject({ reasoning_effort: "none", max_completion_tokens: 2048 });
+    fetch.mockClear(); fetch.mockImplementation(async () => json({ supported_reasoning_efforts: ["low", "high"] }));
+    await expect(executeCompletion(createManifestRegistry().get("lm_studio")!, { ...await request("lm_studio"), modelReasoning: false }, new AbortController().signal, { fetch })).rejects.toMatchObject({ code: "REASONING_UNSUPPORTED" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it("dispatches the exact registered task/schema through the native sidecar boundary", async () => {
     const input = await request("mock");
     const result = await handleSidecarRequest({ protocolVersion: SIDECAR_PROTOCOL_VERSION, type: "request", requestId: input.requestId, method: "complete",
@@ -92,6 +128,25 @@ describe("Smart task-scoped local transport", () => {
 });
 
 describe("Smart Codex owned invocation", () => {
+  it.each([false, "low", "high"] as const)("pins independent Codex reasoning %s in its isolated invocation", async modelReasoning => {
+    const root = await directory(), home = await directory(), running = child();
+    await writeFile(path.join(home, "models_cache.json"), JSON.stringify({ models: [{ slug: "selected", supported_reasoning_levels: ["none", "low", "high"] }] }));
+    const spawn = vi.fn((_file: unknown, args: readonly string[]) => {
+      expect(args).toContain(`model_reasoning_effort=${JSON.stringify(modelReasoning === false ? "none" : modelReasoning)}`);
+      queueMicrotask(() => { running.stdout.write(frames(empty)); running.emit("close", 0); }); return running;
+    });
+    await executeCompletion(createManifestRegistry().get("codex_subscription")!, { ...await request(), modelReasoning }, new AbortController().signal,
+      { tempRoot: root, env: { CODEX_HOME: home }, resolveExecutable: async () => "/bin/echo", spawn } as unknown as ExecutorOptions);
+    expect(spawn).toHaveBeenCalledTimes(1); expect(await readdir(root)).toEqual([]);
+  });
+  it("rejects observed reasoning when the selected request explicitly disabled it", () => {
+    expect(() => parseSmartCodexOutput(JSON.stringify({ type: "item.completed", item: { type: "reasoning", text: "private" } }) + "\n" + frames(empty), true)).toThrowError(expect.objectContaining({ code: "REASONING_UNSUPPORTED" }));
+  });
+  it("reports an incompatible read-only model profile without mislabelling it as tool execution", () => {
+    const error = JSON.stringify({ type: "item.completed", item: { type: "error", message: "Code Mode is unavailable because code-mode host is disabled." } });
+    expect(() => parseSmartCodexOutput(error + "\n")).toThrowError(/selected Codex model requires Code Mode/);
+    try { parseSmartCodexOutput(error + "\n"); } catch (e) { expect(e).toMatchObject({ code: "SUGGESTIONS_UNAVAILABLE" }); }
+  });
   it("rejects malformed UTF-8 without silently replacing characters", async () => {
     const root = await directory(), running = child();
     const spawn = () => { queueMicrotask(() => { running.stdout.write(Buffer.from([0xc3, 0x28])); running.emit("close", 0); }); return running; };

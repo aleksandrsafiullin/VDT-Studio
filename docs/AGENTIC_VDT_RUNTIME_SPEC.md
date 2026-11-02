@@ -1,5 +1,9 @@
 # Agentic VDT Runtime Implementation Spec
 
+## Local harness integration (2026-11-02)
+
+ADR-012 extends the external integration catalog to thirteen current presets and host-managed custom ACP/JSONL profiles, including Kimi Code, Mistral Vibe, Kilo Code, Qwen Code, Grok Build and Pi RPC. ADR-013 separates Suggested KPI model/reasoning settings from chat, with explicit Off reasoning by default and no unsupported-value fallback. The existing checkpoint turn, Supervisor/Gateway, immutable model/configuration binding and finish-receipt contracts apply. This amendment grants no qualification, hosted execution, recovery coordinator or direct graph-write authority. See [Harness connections](HARNESS_CONNECTIONS.md).
+
 ## Local F-05 implementation boundary (2026-11-01)
 
 Incremental construction may retain an unfinished draft between mutations.

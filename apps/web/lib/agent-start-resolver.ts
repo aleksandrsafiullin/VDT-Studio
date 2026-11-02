@@ -1,3 +1,4 @@
+import { builtinHarness } from "@vdt-studio/model-bridge/harness-catalog";
 import type {
   AgentExecutionBindingSelection,
   PublicAgentExecutionBindingSummary,
@@ -13,13 +14,12 @@ const CLI_AGENT_DISPLAY_NAMES: Record<string, string> = {
   cursor_subscription: "Cursor",
   codex_subscription: "Codex",
   claude_subscription: "Claude",
-  gemini_subscription: "Gemini",
   copilot_subscription: "Copilot"
 };
 const LOCAL_MODEL_BACKEND_IDS = new Set(["ollama", "lm_studio", "vllm"]);
 
 export function formatNoExternalExecutionBindingMessage(backendId?: string): string {
-  const label = backendId ? CLI_AGENT_DISPLAY_NAMES[backendId] ?? "CLI" : "CLI";
+  const label = backendId ? CLI_AGENT_DISPLAY_NAMES[backendId] ?? builtinHarness(backendId)?.name ?? "CLI" : "CLI";
   return `${label} CLI is installed, but no qualified server-managed ${label} session binding is available. This run was not started; legacy per-decision CLI fallback is disabled.`;
 }
 

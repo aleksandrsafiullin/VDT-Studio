@@ -63,7 +63,8 @@ export class GeminiProvider implements AiProvider {
     })) as GeminiGenerateContentResponse;
 
     const candidate = payload.candidates?.[0];
-    if (params.taskType === "suggest_incoming_kpis" && (payload.promptFeedback?.blockReason || payload.candidates?.length !== 1 || candidate?.finishReason !== "STOP" || !candidate.content?.parts?.length || candidate.content.parts.some(part => Object.keys(part).some(key => key !== "text") || typeof part.text !== "string"))) {
+    if (params.taskType === "suggest_incoming_kpis" && this.config.thinkingBudget === 0 && candidate?.content?.parts?.some(part => part.thought === true)) throw Object.assign(new Error("The provider returned thinking despite a zero thinking budget."), { code: "REASONING_UNSUPPORTED" });
+    if (params.taskType === "suggest_incoming_kpis" && (payload.promptFeedback?.blockReason || payload.candidates?.length !== 1 || candidate?.finishReason !== "STOP" || !candidate.content?.parts?.length || candidate.content.parts.some(part => Object.keys(part).some(key => !["text", "thought", "thoughtSignature"].includes(key)) || typeof part.text !== "string" || part.thought !== undefined && typeof part.thought !== "boolean"))) {
       throw new Error("Smart provider did not return one completed text-only result.");
     }
     const text = candidate?.content?.parts

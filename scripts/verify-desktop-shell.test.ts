@@ -7,6 +7,7 @@ import { verifyDesktopShell } from "./verify-desktop-shell.mjs";
 const tempDirs: string[] = [];
 
 const commands = [
+  "ai_harness_settings",
   "ai_list_backends",
   "ai_detect_subscription_clis",
   "ai_test_backend",
@@ -54,7 +55,7 @@ async function writeFixture(options: {
       },
       bundle: {
         active: true,
-        targets: ["all"],
+        targets: "all",
         resources: [
           "sidecars/vdt-local-runtime",
           "sidecars/vdt-local-runtime.cmd",
@@ -123,7 +124,7 @@ afterEach(async () => {
 
 describe("verify-desktop-shell", () => {
   it("passes the current desktop scaffold", () => {
-    expect(verifyDesktopShell()).toMatchObject({ commandCount: 11 });
+    expect(verifyDesktopShell()).toMatchObject({ commandCount: 12 });
   });
 
   it("fails if a generic native permission is enabled", async () => {

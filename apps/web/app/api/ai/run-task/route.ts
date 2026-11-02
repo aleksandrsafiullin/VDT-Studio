@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
   try {
     try {
-      bodyText = (await readAiRouteBody(request)).text;
+      bodyText = (await readAiRouteBody(request, undefined, { allowLocalHostReconstruction: true })).text;
     } catch (error) {
       const status = aiRouteGuardStatus(error);
       if (status) return NextResponse.json({ ok: false, error: "AI request admission failed." }, { status });

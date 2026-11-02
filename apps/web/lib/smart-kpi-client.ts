@@ -1,21 +1,25 @@
 import { awaitProviderSettlement, readBoundedText } from "@vdt-studio/ai-harness/browser";
 import { buildKpiSuggestionTaskInput, kpiCanonicalJson, kpiContentHash, materializeKpiSuggestion, validateKpiSuggestionModelOutput,
-  type KpiSuggestionContext, type KpiSuggestionExecutionIdentity } from "@vdt-studio/vdt-core";
+  type KpiSuggestionExecutionIdentity } from "@vdt-studio/vdt-core";
 import { apiKeyScope } from "./api-key-persistence";
 import { IndexedDbApiKeyVault, type ApiKeyVault } from "./api-key-vault";
 import { resolveExecutionSettings } from "./execution-mode-resolver";
 import { resolveVdtAppMode, type VdtAppMode } from "./app-mode";
 import { createAiExecutionClient, resolveDesktopSmartExecution, type AiExecutionClient } from "./ai-execution-client";
 import type { ExecutionSettings } from "./execution-mode-catalog";
-import type { SmartCodexHostIdentity } from "./smart-kpi-host-identity";
+import type { SmartHarnessHostIdentity } from "./smart-kpi-host-identity";
 import type { SmartKpiSchedulerOptions } from "./smart-kpi-scheduler";
+import { resolveSmartKpiSettings } from "./smart-kpi-settings";
 
-const error = (code: string) => Object.assign(new Error(code === "CLEANUP_UNCONFIRMED" ? "Preparation transport cleanup is unconfirmed." : "Smart preparation could not complete."), { code });
+const error = (code: string) => Object.assign(new Error(code === "CLEANUP_UNCONFIRMED" ? "Preparation transport cleanup is unconfirmed."
+  : code === "REASONING_UNSUPPORTED" ? "The selected model does not support this Suggested KPI reasoning setting. Choose another model or explicitly select Provider default in Execution mode."
+  : code === "CREDENTIAL_IDENTITY_UNVERIFIED" ? "This host cannot verify changes to the selected CLI credential source. Recheck the CLI sign-in or choose another connection."
+  : "Smart preparation could not complete."), { code });
 export interface SmartKpiClientOptions {
   vault?: ApiKeyVault; fetch?: typeof fetch; appMode?: VdtAppMode; executionClient?: Pick<AiExecutionClient, "complete">;
   pairingToken?: string; now?: () => number;
   /** A stable descriptor admitted by the selected host/runner, never a model. */
-  cliBinding?: SmartCodexHostIdentity;
+  cliBinding?: SmartHarnessHostIdentity;
 }
 export interface SmartKpiPreparedSelection {
   execution: KpiSuggestionExecutionIdentity;
@@ -28,10 +32,11 @@ export interface SmartKpiPreparedSelection {
 /** Resolve once per selected settings/credential change, before hover. Secrets
  * stay in this closure and the existing vault; scheduler/cache see only identity. */
 export async function createSmartKpiPreparedSelection(settings: ExecutionSettings, options: SmartKpiClientOptions = {}): Promise<SmartKpiPreparedSelection> {
-  const resolved = resolveExecutionSettings(settings), config = { ...resolved.providerConfig }, fetcher = options.fetch ?? globalThis.fetch;
+  const smartSettings = resolveSmartKpiSettings(settings);
+  const resolved = resolveExecutionSettings(smartSettings), config = { ...resolved.providerConfig }, fetcher = options.fetch ?? globalThis.fetch;
   const local = resolved.providerId === "local_runner", backendId = local ? String(config.backendId ?? "") : resolved.providerId;
-  const cli = backendId === "codex_subscription", mode = options.appMode ?? resolveVdtAppMode();
-  if (resolved.providerId === "mock" || local && !["codex_subscription", "ollama", "lm_studio", "vllm"].includes(backendId)) throw error("SUGGESTIONS_UNAVAILABLE");
+  const cli = backendId.endsWith("_subscription"), mode = options.appMode ?? resolveVdtAppMode();
+  if (resolved.providerId === "mock" || local && !cli && !["ollama", "lm_studio", "vllm"].includes(backendId)) throw error("SUGGESTIONS_UNAVAILABLE");
   const requestedTimeout = (settings.timeoutSec ?? (cli ? 30 : 15)) * 1000;
   if (!Number.isSafeInteger(requestedTimeout) || requestedTimeout <= 0) throw error("INVALID_TIMEOUT");
   const timeoutMs = Math.min(requestedTimeout, cli ? 30_000 : 15_000);
@@ -45,27 +50,27 @@ export async function createSmartKpiPreparedSelection(settings: ExecutionSetting
       let binding = options.cliBinding;
       if (!binding) {
         if (mode === "desktop" && !options.pairingToken) {
-          binding = await resolveDesktopSmartExecution({ backendId: "codex_subscription", timeoutMs: Math.min(timeoutMs, 5000), ...(config.model ? { model: String(config.model) } : {}) });
+          binding = await resolveDesktopSmartExecution({ backendId, timeoutMs: Math.min(timeoutMs, 5000), ...(config.model ? { model: String(config.model) } : {}), ...(config.modelReasoning !== undefined ? { modelReasoning: config.modelReasoning as boolean | string | number } : {}) });
         } else {
         // Native/paired hosts may supply their existing admitted binding. The
         // development host has a separate bounded metadata-only admission API.
         const admissionMs = Math.min(timeoutMs, 5_000), signal = AbortSignal.timeout(admissionMs + 1_500);
         const destination = options.pairingToken ? `${String(config.runnerUrl).replace(/\/$/, "")}/v1/smart-execution` : "/api/ai/suggestions/execution";
-        const response = await awaitProviderSettlement(fetcher(destination, { method: "POST", redirect: "error", headers: { "content-type": "application/json", ...(options.pairingToken ? { authorization: `Bearer ${options.pairingToken}` } : {}) }, body: JSON.stringify({ backendId, timeoutMs: admissionMs, ...(config.model ? { model: config.model } : {}) }), signal }), signal);
+        const response = await awaitProviderSettlement(fetcher(destination, { method: "POST", redirect: "error", headers: { "content-type": "application/json", ...(options.pairingToken ? { authorization: `Bearer ${options.pairingToken}` } : {}) }, body: JSON.stringify({ backendId, timeoutMs: admissionMs, ...(config.model ? { model: config.model } : {}), ...(config.modelReasoning !== undefined ? { modelReasoning: config.modelReasoning } : {}) }), signal }), signal);
         const payload = JSON.parse(await readBoundedText(response, 8 * 1024, "Smart identity", signal, true));
-        if (!response.ok || !payload.ok) throw error(payload.error?.code === "CLEANUP_UNCONFIRMED" ? "CLEANUP_UNCONFIRMED" : "SUGGESTIONS_UNAVAILABLE");
+        if (!response.ok || !payload.ok) throw error(["CLEANUP_UNCONFIRMED", "REASONING_UNSUPPORTED", "CREDENTIAL_IDENTITY_UNVERIFIED"].includes(payload.error?.code) ? payload.error.code : "SUGGESTIONS_UNAVAILABLE");
         binding = payload.identity;
         }
       }
       if (!binding || binding.backendId !== backendId || !binding.modelId || !binding.requestModel || !binding.bindingVersion || !binding.credentialEpoch
         || !["exact", "host_default_alias"].includes(binding.modelResolution)
-        || settings.cliModelSelection?.source === "custom" && binding.requestModel !== settings.cliModelSelection.customModel) throw error("STALE_EXECUTION");
+        || smartSettings.cliModelSelection?.source === "custom" && binding.requestModel !== smartSettings.cliModelSelection.customModel) throw error("STALE_EXECUTION");
       config.model = binding.requestModel; resolution = binding.modelResolution;
-      identity = { mode: "cli", backendId, modelId: binding.modelId, bindingVersion: binding.bindingVersion, credentialEpoch: binding.credentialEpoch };
+      identity = { mode: "cli", backendId, modelId: binding.modelId, bindingVersion: await kpiContentHash([binding.bindingVersion, "smart-reasoning.v1", config.modelReasoning ?? null]), credentialEpoch: binding.credentialEpoch };
     } else {
       if (!config.model || typeof config.model !== "string") throw error("SUGGESTIONS_UNAVAILABLE");
       identity = { mode: "local_model", backendId, modelId: config.model,
-        bindingVersion: await kpiContentHash(["smart-manifest-local-http.v1", backendId, config.runnerUrl ?? "managed", config.model]), credentialEpoch: "manifest-no-credential.v1" };
+        bindingVersion: await kpiContentHash(["smart-manifest-local-http.v1", backendId, config.runnerUrl ?? "managed", config.model, config.modelReasoning ?? null]), credentialEpoch: "manifest-no-credential.v1" };
     }
   } else {
     const scope = apiKeyScope(settings), key = settings.apiKey, vault = options.vault ?? new IndexedDbApiKeyVault();
@@ -73,10 +78,10 @@ export async function createSmartKpiPreparedSelection(settings: ExecutionSetting
     const credentialEpoch = await vault.identity(scope, key);
     revalidateCredential = async () => { try { if (await vault.identity!(scope, key) !== credentialEpoch) throw error("STALE_EXECUTION"); } catch { throw error("STALE_EXECUTION"); } };
     identity = { mode: "api", backendId, modelId: String(config.model), credentialEpoch,
-      bindingVersion: await kpiContentHash(["smart-api-protocol.v1", scope, config.apiVersion ?? null, config.anthropicVersion ?? null]) };
+      bindingVersion: await kpiContentHash(["smart-api-protocol.v1", scope, config.apiVersion ?? null, config.anthropicVersion ?? null, config.modelReasoning ?? null]) };
   }
   const execution = Object.freeze(identity), key = kpiCanonicalJson(execution);
-  const { cliBinding: _binding, ...readmitOptions } = options;
+  const readmitOptions = { ...options }; delete readmitOptions.cliBinding;
   return { execution, modelResolution: resolution, revalidate: async current => {
     try { return kpiCanonicalJson((await createSmartKpiPreparedSelection(current, cli ? readmitOptions : options)).execution) === key; }
     catch { return false; }
@@ -128,7 +133,7 @@ export async function prepareSmartThroughHttp(fetcher: typeof fetch, body: Recor
     if (payload.error?.code === "CLEANUP_UNCONFIRMED") throw error("CLEANUP_UNCONFIRMED");
     terminal = true; if (cancellation) await cancellation;
     if (caller.aborted || timedOut) throw error(timedOut ? "TIMEOUT" : "CANCELLED");
-    if (!response.ok || !payload.ok) throw error(["SUGGESTIONS_UNAVAILABLE", "NOT_A_DECOMPOSITION"].includes(payload.error?.code) ? payload.error.code : "PREPARATION_FAILED");
+    if (!response.ok || !payload.ok) throw error(["SUGGESTIONS_UNAVAILABLE", "NOT_A_DECOMPOSITION", "REASONING_UNSUPPORTED", "CREDENTIAL_IDENTITY_UNVERIFIED"].includes(payload.error?.code) ? payload.error.code : "PREPARATION_FAILED");
     return validateKpiSuggestionModelOutput(payload.result);
   } catch (failure) {
     if ((failure as { code?: string })?.code === "CLEANUP_UNCONFIRMED") throw failure;

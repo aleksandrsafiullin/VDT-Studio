@@ -5,6 +5,10 @@ import { buildCursorDynamicArgs, cursorSubscriptionCliAdapter, listCursorAgentMo
 import * as auth from "./auth";
 
 describe("cursorSubscriptionCliAdapter", () => {
+  it("requires explicit Provider default when no independent Cursor reasoning control is available", () => {
+    expect(() => buildCursorDynamicArgs({ model: "composer-2.5", modelReasoning: false })).toThrowError(expect.objectContaining({ code: "REASONING_UNSUPPORTED" }));
+    expect(buildCursorDynamicArgs({ model: "composer-2.5" })).toEqual(["--model", "composer-2.5"]);
+  });
   it("delegates probeAuth to probeCursorAuth", async () => {
     const probe = vi.spyOn(auth, "probeCursorAuth").mockResolvedValue({
       backendId: "cursor_subscription",

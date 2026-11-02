@@ -5,7 +5,7 @@ import { readAiRouteBody, SMART_HTTP_BODY_BYTES, aiRouteGuardStatus } from "@/li
 export async function POST(request: Request) {
   const headers = { "cache-control": "no-store", "content-type": "application/json" };
   try {
-    const { text } = await readAiRouteBody(request, SMART_HTTP_BODY_BYTES);
+    const { text } = await readAiRouteBody(request, SMART_HTTP_BODY_BYTES, { allowLocalHostReconstruction: true });
     const result = await prepareSmartKpiResponse(JSON.parse(text) as SmartKpiServiceRequest, request.signal, request.url);
     return Response.json({ ok: true, result }, { headers });
   } catch (error) {

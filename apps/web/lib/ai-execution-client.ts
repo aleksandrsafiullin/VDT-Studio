@@ -1,7 +1,12 @@
+import { registerHarnessCatalog } from "./execution-mode-catalog";
+import { builtinHarness } from "@vdt-studio/model-bridge/harness-catalog";
+import type { HarnessDefinition } from "@vdt-studio/model-bridge";
 import {
   generateVdtOutputSchema,
   generateVdtOutputToProject,
   validateAndMapDeepenNode,
+  isModelReasoningValue,
+  type ModelReasoningValue,
   type GenerateVdtInput,
   type RunAiTaskResult
 } from "@vdt-studio/ai-harness/browser";
@@ -29,6 +34,7 @@ type DesktopBridgeGlobal = typeof globalThis & {
 };
 
 export interface CliAgentDetectionSnapshot {
+  checks?: import("@vdt-studio/model-bridge/harness-catalog").HarnessAccessChecks;
   id: CliAgentId;
   installed: boolean;
   executable: string | null;
@@ -185,6 +191,7 @@ export interface AiExecutionOptions {
 }
 
 interface RuntimeCompletionPayload {
+  modelReasoning?: ModelReasoningValue;
   requestId: string;
   backendId: string;
   taskType: VdtAiTaskType;
@@ -228,6 +235,7 @@ export interface BackendTestResult {
 }
 
 export interface DetectSubscriptionClisResult {
+  harnesses?: HarnessDefinition[];
   agents: CliAgentDetectionSnapshot[];
   modelsByAgent: Partial<Record<CliAgentId, string[]>>;
 }
@@ -382,10 +390,9 @@ function providerWorkLabel(backendId: string | undefined, providerId: string | u
     claude_subscription: "Claude Code",
     codex_subscription: "Codex CLI",
     cursor_subscription: "Cursor Agent",
-    gemini_subscription: "Gemini CLI",
     copilot_subscription: "GitHub Copilot CLI"
   };
-  const known = labels[value];
+  const known = labels[value] ?? builtinHarness(value)?.name;
   if (known) return known;
   return value
     .replace(/_subscription$/, "")
@@ -608,6 +615,7 @@ function buildRuntimeCompletionRequest(
     schemaId: TASK_SCHEMA_IDS[taskType],
     input,
     ...(model === undefined ? {} : { model }),
+    ...(isModelReasoningValue(providerConfig?.modelReasoning) ? { modelReasoning: providerConfig.modelReasoning } : {}),
     ...(timeoutMs === undefined ? {} : { timeoutMs })
   };
 }
@@ -831,7 +839,7 @@ abstract class BaseWebAiExecutionClient implements AiExecutionClient {
     const execution = normalizeExecutionOptions(options);
     if (request.taskType === "suggest_incoming_kpis") {
       const { prepareSmartThroughHttp } = await import("./smart-kpi-client");
-      const cli = request.providerConfig?.backendId === "codex_subscription";
+      const cli = String(request.providerConfig?.backendId ?? "").endsWith("_subscription");
       const timeoutMs = Math.min(typeof request.providerConfig?.timeoutMs === "number" ? request.providerConfig.timeoutMs : (cli ? 30_000 : 15_000), cli ? 30_000 : 15_000);
       const output = await prepareSmartThroughHttp(this.fetcher, { input: request.input, providerId: request.providerId, providerConfig: request.providerConfig, timeoutMs }, execution.signal ?? new AbortController().signal);
       return { kind: "suggestions", result: validateKpiSuggestionModelOutput(output) };
@@ -1070,11 +1078,13 @@ export class DevelopmentRunnerClient extends BaseWebAiExecutionClient {
     const url = agentId ? `/api/ai/detect-clis?id=${encodeURIComponent(agentId)}` : "/api/ai/detect-clis";
     const response = await this.fetcher(url);
     const payload = await readJsonResponse<{
+      harnesses?: HarnessDefinition[];
       agents?: CliAgentDetectionSnapshot[];
       modelsByAgent?: Partial<Record<CliAgentId, string[]>>;
       error?: string;
     }>(response, "CLI detection failed.");
     if (!payload.agents) throw new Error(payload.error ?? "CLI detection failed.");
+    if (payload.harnesses) registerHarnessCatalog(payload.harnesses);
     return { agents: payload.agents, modelsByAgent: payload.modelsByAgent ?? {} };
   }
 
@@ -1588,7 +1598,7 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
       if (smartUnconfirmed) smartCleanupTimer ??= setTimeout(() => rejectSmartCleanup(smartUnconfirmedError()), 2_500);
     };
     options.signal?.addEventListener("abort", abort, { once: true });
-    if (smartUnconfirmed) smartDeadline = setTimeout(() => { smartTimedOut = true; abort(); }, Math.min(request.timeoutMs ?? 30_000, request.backendId === "codex_subscription" ? 30_000 : 15_000));
+    if (smartUnconfirmed) smartDeadline = setTimeout(() => { smartTimedOut = true; abort(); }, Math.min(request.timeoutMs ?? 30_000, request.backendId?.endsWith("_subscription") ? 30_000 : 15_000));
     try {
       const completion = invoke("ai_complete", { request });
       const result = await (smartUnconfirmed ? Promise.race([completion, smartUnconfirmed]) : completion);
@@ -1691,6 +1701,7 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
       const error = typeof payload.error === "string" ? payload.error : "Desktop CLI detection failed.";
       throw new Error(error);
     }
+    if (payload.harnesses) registerHarnessCatalog(payload.harnesses);
     return { agents: payload.agents, modelsByAgent: payload.modelsByAgent ?? {} };
   }
 
@@ -1714,8 +1725,8 @@ export function createAiExecutionClient(
 
 /** Metadata IPC is also an owned operation: ai_cancel only writes a signal;
  * the same request must settle before a later admission may reuse its slot. */
-export async function resolveDesktopSmartExecution(request: { backendId: "codex_subscription"; model?: string; timeoutMs: number },
-  options: { signal?: AbortSignal; invoke?: DesktopInvoke } = {}): Promise<import("./smart-kpi-host-identity").SmartCodexHostIdentity> {
+export async function resolveDesktopSmartExecution(request: { backendId: string; model?: string; modelReasoning?: ModelReasoningValue; timeoutMs: number },
+  options: { signal?: AbortSignal; invoke?: DesktopInvoke } = {}): Promise<import("./smart-kpi-host-identity").SmartHarnessHostIdentity> {
   if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0 || request.timeoutMs > 5000) throw Object.assign(new Error("Invalid Smart metadata deadline."), { code: "INVALID_TIMEOUT" });
   const invoke = options.invoke ?? resolveDesktopInvoke();
   if (!invoke) throw Object.assign(new Error("Desktop Smart metadata bridge is unavailable."), { code: "SUGGESTIONS_UNAVAILABLE" });
@@ -1729,14 +1740,17 @@ export async function resolveDesktopSmartExecution(request: { backendId: "codex_
   options.signal?.addEventListener("abort", abort, { once: true });
   const timer = setTimeout(() => { timedOut = true; abort(); }, request.timeoutMs);
   try {
-    const payload = await Promise.race([invoke("ai_smart_execution", { request: { ...request, requestId } }), unknown]) as { ok?: boolean; identity?: import("./smart-kpi-host-identity").SmartCodexHostIdentity; error?: { code?: string } };
+    const payload = await Promise.race([invoke("ai_smart_execution", { request: { ...request, requestId } }), unknown]) as { ok?: boolean; identity?: import("./smart-kpi-host-identity").SmartHarnessHostIdentity; error?: { code?: string } };
     if (payload?.error?.code === "CLEANUP_UNCONFIRMED") throw Object.assign(new Error("Native metadata cleanup is unconfirmed."), { code: "CLEANUP_UNCONFIRMED" });
     if (aborted || options.signal?.aborted) throw Object.assign(new Error("Native metadata admission did not complete in time."), { code: timedOut ? "TIMEOUT" : "CANCELLED" });
+    if (["REASONING_UNSUPPORTED", "CREDENTIAL_IDENTITY_UNVERIFIED"].includes(payload?.error?.code ?? "")) throw Object.assign(new Error("Selected native Smart metadata is unavailable."), { code: payload.error!.code });
     if (!payload?.ok || !payload.identity || new TextEncoder().encode(JSON.stringify(payload)).byteLength > 8192) throw Object.assign(new Error("Native metadata response is invalid."), { code: "SUGGESTIONS_UNAVAILABLE" });
     return payload.identity;
   } catch (error) {
     if ((error as { code?: string })?.code === "CLEANUP_UNCONFIRMED" || String(error).includes("CLEANUP_UNCONFIRMED") || /SIDECAR_(?:EXITED|READ_FAILED|WRITE_FAILED|STATUS_FAILED)/.test(String(error))) throw Object.assign(new Error("Native metadata cleanup is unconfirmed."), { code: "CLEANUP_UNCONFIRMED" });
     if (aborted || options.signal?.aborted) throw Object.assign(new Error("Native metadata admission did not complete in time."), { code: timedOut ? "TIMEOUT" : "CANCELLED" });
+    const admissionCode = /\b(REASONING_UNSUPPORTED|CREDENTIAL_IDENTITY_UNVERIFIED)\b/.exec(String(error))?.[1];
+    if (admissionCode) throw Object.assign(new Error("Selected native Smart metadata is unavailable."), { code: admissionCode });
     throw error;
   } finally { clearTimeout(timer); if (cleanup) clearTimeout(cleanup); options.signal?.removeEventListener("abort", abort); }
 }

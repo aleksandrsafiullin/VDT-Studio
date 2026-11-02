@@ -7,6 +7,7 @@ import { createSmartKpiPreparedSelection, prepareSmartThroughHttp } from "./smar
 import { DesktopAiExecutionClient, resolveDesktopSmartExecution } from "./ai-execution-client";
 import { cancelSmartKpiPreparation, prepareSmartKpiResponse } from "./smart-kpi-service";
 import type { AiProvider } from "@vdt-studio/ai-harness";
+import { updateSmartKpiPreferences } from "./smart-kpi-settings";
 
 const empty = { status: "empty", rationale: "No reviewed immediate decomposition.", limitations: [], groups: [] };
 const ready = { status: "ready", rationale: "Productive time and rate are measurable operating inputs.", limitations: [], groups: [{ id: "context", title: "Operating inputs", selectionMode: "all", requiredKeys: ["hours", "rate"], formula: "hours * rate", recipeId: null, limitations: [], children: [
@@ -30,6 +31,12 @@ function records() {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("stable credential and selection identities", () => {
+  it.each(["REASONING_UNSUPPORTED", "CREDENTIAL_IDENTITY_UNVERIFIED"])("preserves actionable %s admission errors through HTTP and native metadata", async code => {
+    await expect(createSmartKpiPreparedSelection(cliSettings(), { appMode: "development_web", fetch: async () => json({ ok: false, error: { code } }, 503) })).rejects.toMatchObject({ code });
+    await expect(resolveDesktopSmartExecution({ backendId: "vibe_subscription", timeoutMs: 1000 }, { invoke: async () => ({ ok: false, error: { code } }) })).rejects.toMatchObject({ code });
+    const native = resolveDesktopSmartExecution({ backendId: "vibe_subscription", timeoutMs: 1000 }, { invoke: async () => { throw `${code}: private provider diagnostic`; } });
+    await expect(native).rejects.toMatchObject({ code, message: "Selected native Smart metadata is unavailable." });
+  });
   it("uses native metadata IPC for initial admission and revalidation without relative HTTP", async () => {
     const invoke = vi.fn(async (command: string) => { expect(command).toBe("ai_smart_execution"); return { ok: true, identity: binding }; });
     vi.stubGlobal("__TAURI__", { core: { invoke } }); const fetch = vi.fn();
@@ -70,7 +77,7 @@ describe("stable credential and selection identities", () => {
   });
   it("prepared callback uses selected destination/model and cache identity survives re-admission", async () => {
     const { vault, storage } = records(), settings = apiSettings(), scope = apiKeyScope(settings)!; await vault.write(scope, settings.apiKey!);
-    const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => json({ ok: true, result: ready }));
+    const fetch = vi.fn<(url: unknown, init?: RequestInit) => Promise<Response>>(async () => json({ ok: true, result: ready }));
     const selected = await createSmartKpiPreparedSelection(settings, { vault, fetch, appMode: "development_web" });
     const reopened = await createSmartKpiPreparedSelection(settings, { vault: new IndexedDbApiKeyVault("smart-qa", storage), fetch, appMode: "development_web" });
     const ctx = await context({ userInstructions: "Use Russian labels.\n\nUse fiscal periods." });
@@ -84,16 +91,59 @@ describe("stable credential and selection identities", () => {
     const changed = await createSmartKpiPreparedSelection({ ...settings, model: "different" }, { vault, fetch }); expect(changed.execution.modelId).toBe("different");
     await vault.write(scope, "synthetic-b"); const replaced = await createSmartKpiPreparedSelection({ ...settings, apiKey: "synthetic-b" }, { vault, fetch }); expect(replaced.execution.credentialEpoch).not.toBe(selected.execution.credentialEpoch);
   });
+  it("pins the separate Smart model/reasoning, invalidates stale selections and leaves chat untouched", async () => {
+    const { vault } = records(), chat = apiSettings(); await vault.write(apiKeyScope(chat)!, chat.apiKey!);
+    const model = { ...chat, smartKpiBySource: updateSmartKpiPreferences(chat, { model: "fast-smart" }) };
+    const settings = { ...model, smartKpiBySource: updateSmartKpiPreferences(model, { reasoning: "low" }) };
+    const fetch = vi.fn<(url: unknown, init?: RequestInit) => Promise<Response>>(async () => json({ ok: true, result: ready }));
+    const selected = await createSmartKpiPreparedSelection(settings, { vault, fetch });
+    const changed = { ...settings, smartKpiBySource: updateSmartKpiPreferences(settings, { reasoning: "high" }) };
+    const other = await createSmartKpiPreparedSelection(changed, { vault, fetch });
+    expect(other.execution.modelId).toBe("fast-smart");
+    expect(other.execution.bindingVersion).not.toBe(selected.execution.bindingVersion);
+    await expect(selected.revalidate(changed)).resolves.toBe(false);
+    await selected.prepare({ context: await context(), execution: selected.execution, signal: new AbortController().signal });
+    const body = JSON.parse(String(fetch.mock.calls[0]![1]?.body));
+    expect(body.providerConfig).toMatchObject({ model: "fast-smart", modelReasoning: "low" });
+    expect(settings.model).toBe("selected");
+  });
+  it("distinguishes default Off from an explicitly saved Provider default in payload and cache identity", async () => {
+    const { vault } = records(), settings = apiSettings(); await vault.write(apiKeyScope(settings)!, settings.apiKey!);
+    const fetch = vi.fn<(url: unknown, init?: RequestInit) => Promise<Response>>(async () => json({ ok: true, result: empty }));
+    const off = await createSmartKpiPreparedSelection(settings, { vault, fetch });
+    const provider = await createSmartKpiPreparedSelection({ ...settings, smartKpiBySource: updateSmartKpiPreferences(settings, { reasoning: null }) }, { vault, fetch });
+    expect(provider.execution.bindingVersion).not.toBe(off.execution.bindingVersion);
+    for (const selected of [off, provider]) await selected.prepare({ context: await context(), execution: selected.execution, signal: new AbortController().signal });
+    expect(JSON.parse(String(fetch.mock.calls[0]![1]?.body)).providerConfig.modelReasoning).toBe(false);
+    expect(JSON.parse(String(fetch.mock.calls[1]![1]?.body)).providerConfig).not.toHaveProperty("modelReasoning");
+  });
+  it("sends the Smart model and Off setting to CLI metadata admission", async () => {
+    const chat = cliSettings(), settings = { ...chat, smartKpiBySource: updateSmartKpiPreferences(chat, { model: "fast-cli" }) };
+    const fetch = vi.fn<(url: unknown, init?: RequestInit) => Promise<Response>>(async () => json({ ok: true, identity: { ...binding, requestModel: "fast-cli", modelId: "fast-cli" } }));
+    const selected = await createSmartKpiPreparedSelection(settings, { fetch, appMode: "development_web" });
+    expect(selected.execution.modelId).toBe("fast-cli");
+    expect(JSON.parse(String(fetch.mock.calls[0]![1]?.body))).toMatchObject({ backendId: "codex_subscription", model: "fast-cli", modelReasoning: false });
+    expect(settings.cliModelSelection?.customModel).toBe("selected");
+  });
   it("never provisions credentials, changes backend, or uses an ephemeral identity fallback", async () => {
     const fetch = vi.fn();
     await expect(createSmartKpiPreparedSelection(apiSettings(), { vault: { read: async () => undefined, write: async () => {}, remove: async () => {} }, fetch })).rejects.toMatchObject({ code: "SUGGESTIONS_UNAVAILABLE" });
-    await expect(createSmartKpiPreparedSelection({ ...cliSettings(), selectedCliAgentId: "claude" }, { fetch })).rejects.toMatchObject({ code: "SUGGESTIONS_UNAVAILABLE" }); expect(fetch).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    fetch.mockResolvedValue(Response.json({ ok: false }, { status: 503 }));
+    await expect(createSmartKpiPreparedSelection({ ...cliSettings(), selectedCliAgentId: "claude" }, { fetch })).rejects.toMatchObject({ code: "SUGGESTIONS_UNAVAILABLE" });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[0]).toBe("/api/ai/suggestions/execution");
+  });
+  it.each(["codex", "cursor-agent", "claude", "copilot", "opencode", "hermes", "kiro", "custom-fixture"] as const)("admits the selected %s harness without switching providers", async id => {
+    const backendId = id === "cursor-agent" ? "cursor_subscription" : `${id}_subscription`;
+    const selected = await createSmartKpiPreparedSelection({ ...cliSettings(), selectedCliAgentId: id }, { cliBinding: { ...binding, backendId } });
+    expect(selected.execution).toMatchObject({ mode: "cli", backendId });
   });
   it("preserves a genuine empty rationale and limitations from the selected API model", async () => {
     const { vault } = records(), settings = { ...apiSettings(), model: "gpt-6-luna" };
     await vault.write(apiKeyScope(settings)!, settings.apiKey!);
     const result = { ...empty, rationale: "Не хватает определения показателя для обоснованных дочерних KPI.", limitations: ["Уточните, включает ли показатель ожидание обслуживания."] };
-    const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => json({ ok: true, result }));
+    const fetch = vi.fn<(url: unknown, init?: RequestInit) => Promise<Response>>(async () => json({ ok: true, result }));
     const selected = await createSmartKpiPreparedSelection(settings, { vault, fetch, appMode: "development_web" });
     await expect(selected.prepare({ context: await context(), execution: selected.execution, signal: new AbortController().signal }))
       .resolves.toEqual({ status: "empty", reason: result.rationale, limitations: result.limitations });

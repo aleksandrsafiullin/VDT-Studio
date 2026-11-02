@@ -5,7 +5,7 @@ import { smartRecord, smartString } from "@vdt-studio/vdt-core";
 export async function POST(request: Request) {
   const headers = { "cache-control": "no-store" };
   try {
-    const body: unknown = JSON.parse((await readAiRouteBody(request, SMART_HTTP_BODY_BYTES)).text);
+    const body: unknown = JSON.parse((await readAiRouteBody(request, SMART_HTTP_BODY_BYTES, { allowLocalHostReconstruction: true })).text);
     smartRecord(body, ["requestId"]); smartString(body.requestId, 160);
     const result = await cancelSmartKpiPreparation(body.requestId);
     return Response.json({ ok: true, ...result }, { headers });

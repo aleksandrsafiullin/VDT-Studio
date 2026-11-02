@@ -1,5 +1,19 @@
 # Roadmap
 
+## Local harness integration (2026-11-02)
+
+Implemented: declarative thirteen-harness catalog, shared ACP and Pi RPC execution, custom host profiles and multi-harness Suggested KPI with independent model/reasoning settings. Reasoning is Off by default; unsupported controls remain explicit. The pre-release catalog retains only current systems; retired entries and compatibility adapters are removed. Remaining: exact-version live semantic/permission qualification, packaged desktop acceptance and supported-platform certification; existing corrective/release gates remain open. See [Harness connections](HARNESS_CONNECTIONS.md).
+
+## Suggested KPI latency (2026-11-02)
+
+Implemented locally: foreground enqueue before speculation, a 350 ms grace for
+visible/new-child work, and cancellation of active speculation for an eligible
+opened target, with acknowledged cleanup and the existing quarantine/budget.
+No model, reasoning, prompt, cache identity or validation policy changes were
+needed. Cold CLI/model generation remains several seconds and has no new speed
+SLA. Measurements and qualification limits are in the
+[latency investigation](implementation/SMART_KPI_LATENCY_2026-11-02.md).
+
 ## F-05 regression closure (2026-11-01)
 
 Implemented locally: strict root, visual-cycle, formula/link and supported unit

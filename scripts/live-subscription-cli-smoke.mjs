@@ -1,18 +1,15 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import { BUILTIN_HARNESSES, isHarnessBackendId } from "../packages/model-bridge/src/harness/catalog.ts";
 
-const BACKENDS = Object.freeze({
-  codex_subscription: Object.freeze({ label: "Codex CLI", cliId: "codex" }),
-  cursor_subscription: Object.freeze({ label: "Cursor Agent", cliId: "cursor-agent" }),
-  copilot_subscription: Object.freeze({ label: "GitHub Copilot CLI", cliId: "copilot" })
-});
+const BACKENDS = Object.freeze(Object.fromEntries(BUILTIN_HARNESSES.map(h => [h.backendId, { label: h.name, cliId: h.id }])));
 
 function usage() {
   return [
     "Usage: node --import tsx scripts/live-subscription-cli-smoke.mjs [options]",
     "",
     "Options:",
-    "  --backend <id|all>        codex_subscription, cursor_subscription, copilot_subscription, or all (default: all)",
+    "  --backend <id|all>        Any registered harness backend, including custom IDs, or all thirteen presets (default: all)",
     "  --model <model>           Optional model id passed to the provider CLI",
     "  --timeout-ms <number>     Per completion timeout, max 120000 (default: 120000)",
     "  --connection-only         Skip generate-tree and run install/auth/models/connection only",
@@ -60,7 +57,7 @@ function parseArgs(argv) {
     }
     throw new Error(`Unknown argument: ${arg}`);
   }
-  if (result.backend !== "all" && !(result.backend in BACKENDS)) {
+  if (result.backend !== "all" && !isHarnessBackendId(result.backend)) {
     throw new Error(`Unsupported backend: ${result.backend}`);
   }
   if (!Number.isSafeInteger(result.timeoutMs) || result.timeoutMs <= 0 || result.timeoutMs > 120_000) {
@@ -112,7 +109,7 @@ function summarizeGenerateOutput(output) {
 async function loadRuntime() {
   const [modelBridge, detection, executor, manifests] = await Promise.all([
     import("../packages/model-bridge/src/index.ts"),
-    import("../packages/model-bridge/src/detection.ts"),
+    import("../packages/model-bridge/src/local-runtime.ts"),
     import("../packages/local-runner/src/server/executor.ts"),
     import("../packages/local-runner/src/server/manifests.ts")
   ]);
@@ -120,15 +117,17 @@ async function loadRuntime() {
     getSubscriptionCliAdapter: modelBridge.getSubscriptionCliAdapter,
     validateRegisteredSchema: modelBridge.validateRegisteredSchema,
     detectSubscriptionCli: detection.detectSubscriptionCli,
+    enrichSubscriptionCliDetections: detection.enrichSubscriptionCliDetections,
     executeCompletion: executor.executeCompletion,
+    listBackendModels: executor.listBackendModels,
     createManifestRegistry: manifests.createManifestRegistry
   };
 }
 
 async function runBackend(backendId, options) {
   const runtime = await loadRuntime();
-  const spec = BACKENDS[backendId];
   const manifest = runtime.createManifestRegistry().get(backendId);
+  const spec = BACKENDS[backendId] ?? { label: manifest?.label ?? backendId, cliId: manifest?.harness?.id };
   const adapter = runtime.getSubscriptionCliAdapter(backendId);
   let failed = false;
 
@@ -138,7 +137,7 @@ async function runBackend(backendId, options) {
     printStep("FAIL", "manifest", "backend manifest is missing");
     return false;
   }
-  if (!adapter) {
+  if (!adapter && manifest.harness?.transport === "native") {
     printStep("FAIL", "adapter", "subscription CLI adapter is missing");
     return false;
   }
@@ -154,11 +153,7 @@ async function runBackend(backendId, options) {
   }
 
   const executable = install.value.executable;
-  const auth = await step("auth probe", () => adapter.probeAuth?.(executable) ?? Promise.resolve({
-    backendId,
-    status: "installed",
-    diagnostics: ["Adapter has no auth probe."]
-  }), {
+  const auth = await step("access/protocol probe", async () => (await runtime.enrichSubscriptionCliDetections([install.value]))[0], {
     describe: (result) => `${result.status}${result.authSummary ? ` - ${result.authSummary}` : ""}${diagnosticText(result.diagnostics)}`
   });
   if (!auth.ok || auth.value.status !== "ready") {
@@ -167,8 +162,7 @@ async function runBackend(backendId, options) {
   }
 
   const models = await step("model discovery", async () => {
-    if (!adapter.listModels) return [];
-    return adapter.listModels(executable);
+    return runtime.listBackendModels(manifest, AbortSignal.timeout(10_000), { resolveExecutable: async () => executable });
   }, {
     required: false,
     describe: (result) => result.length > 0 ? result.join(", ") : "no models reported"

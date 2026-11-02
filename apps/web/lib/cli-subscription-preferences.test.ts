@@ -43,6 +43,6 @@ describe("subscription removal preferences", () => {
   });
 
   it("does not change an unrelated chat or memory choice", () => {
-    expect(reconcileRemovedCliSelections(selected, ["gemini"])).toBe(selected);
+    expect(reconcileRemovedCliSelections(selected, ["kiro"])).toBe(selected);
   });
 });

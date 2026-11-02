@@ -81,7 +81,8 @@ async function providerHttpError(response: Response, limit: number, providerName
   let param: string | undefined;
   try {
     const payload = JSON.parse(await readBoundedText(response, limit, providerName, signal, confirm));
-    if (typeof payload?.error?.code === "string" && codes.has(payload.error.code)) code = payload.error.code;
+    if (response.status === 400 && typeof payload?.error?.message === "string" && /thinking|reasoning|effort/i.test(payload.error.message) && /unsupported|not support|cannot|invalid|disabled/i.test(payload.error.message)) code = "unsupported_reasoning";
+    if (code === undefined && typeof payload?.error?.code === "string" && codes.has(payload.error.code)) code = payload.error.code;
     if (typeof payload?.error?.param === "string" && params.has(payload.error.param)) param = payload.error.param;
   } catch (error) { if (error && typeof error === "object" && "code" in error && error.code === "CLEANUP_UNCONFIRMED") throw error; /* Safe status-only error otherwise. */ }
   return new ProviderHttpError(providerName, response.status, code, param);

@@ -1,10 +1,12 @@
 import { FlatCompat } from "@eslint/eslintrc";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const compat = new FlatCompat({
-  baseDirectory: __dirname
+  baseDirectory: __dirname,
+  resolvePluginsRelativeTo: path.dirname(createRequire(import.meta.url).resolve("eslint-config-next/package.json"))
 });
 
 const eslintConfig = [

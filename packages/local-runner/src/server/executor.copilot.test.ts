@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { createManifestRegistry } from "./manifests";
 import { executeCompletion } from "./executor";
 
-const fakeGemini = fileURLToPath(new URL("./fixtures/fake-gemini.cjs", import.meta.url));
 const fakeCopilot = fileURLToPath(new URL("./fixtures/fake-copilot.cjs", import.meta.url));
 
 function request(backendId: string, schemaId = "generate-tree-v1") {
@@ -13,9 +12,8 @@ function request(backendId: string, schemaId = "generate-tree-v1") {
   };
 }
 
-describe("Gemini and Copilot subscription executors", { timeout: 45_000 }, () => {
+describe("Copilot ACP executor", { timeout: 45_000 }, () => {
   for (const provider of [
-    { id: "gemini_subscription", fake: fakeGemini, title: "Fake Gemini tree", envKey: "VDT_FAKE_GEMINI_MODE" },
     { id: "copilot_subscription", fake: fakeCopilot, title: "Fake Copilot tree", envKey: "VDT_FAKE_COPILOT_MODE" }
   ] as const) {
     it(`returns schema-valid output from ${provider.id}`, async () => {

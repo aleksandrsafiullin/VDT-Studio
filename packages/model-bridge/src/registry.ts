@@ -61,9 +61,17 @@ export const MODEL_BACKEND_DEFINITIONS: readonly ModelBackendDefinition[] = Obje
   },
   { id: "codex_subscription", label: "Codex CLI", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "alpha" },
   { id: "claude_subscription", label: "Claude Code", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "alpha" },
-  { id: "gemini_subscription", label: "Gemini CLI", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "experimental" },
   { id: "copilot_subscription", label: "GitHub Copilot CLI", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "experimental" },
-  { id: "custom_cli", label: "Custom JSON CLI", mode: "custom_cli", capabilities: subscription(true), releaseStatus: "experimental-disabled" }
+  { id: "opencode_subscription", label: "OpenCode", mode: "subscription_cli", capabilities: subscription(false, false), releaseStatus: "experimental" },
+  { id: "hermes_subscription", label: "Hermes Agent", mode: "subscription_cli", capabilities: subscription(false, false), releaseStatus: "experimental" },
+  { id: "kiro_subscription", label: "Kiro CLI", mode: "subscription_cli", capabilities: subscription(false, false), releaseStatus: "experimental" },
+  { id: "kimi_subscription", label: "Kimi Code", mode: "subscription_cli", capabilities: subscription(false, false), releaseStatus: "experimental" },
+  { id: "vibe_subscription", label: "Mistral Vibe", mode: "subscription_cli", capabilities: subscription(false, false), releaseStatus: "experimental" },
+  { id: "kilo_subscription", label: "Kilo Code", mode: "subscription_cli", capabilities: subscription(false, false), releaseStatus: "experimental" },
+  { id: "qwen_subscription", label: "Qwen Code", mode: "subscription_cli", capabilities: subscription(false, false), releaseStatus: "experimental" },
+  { id: "grok-build_subscription", label: "Grok Build", mode: "subscription_cli", capabilities: subscription(false, false), releaseStatus: "experimental" },
+  { id: "pi_subscription", label: "Pi", mode: "subscription_cli", capabilities: subscription(false), releaseStatus: "experimental" },
+  { id: "custom_cli", label: "Custom JSON CLI", mode: "custom_cli", capabilities: subscription(false, false), releaseStatus: "experimental" }
 ]);
 
 const registry = new Map(MODEL_BACKEND_DEFINITIONS.map((backend) => [backend.id, backend]));

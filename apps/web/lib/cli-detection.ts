@@ -4,6 +4,7 @@ import {
   type CliAgentId,
   type ExecutionSettings
 } from "./execution-mode-catalog";
+import { BUILTIN_HARNESS_IDS } from "@vdt-studio/model-bridge/harness-catalog";
 
 export interface CliAgentDetectionLike {
   id: CliAgentId;
@@ -12,7 +13,7 @@ export interface CliAgentDetectionLike {
   status?: string | undefined;
 }
 
-const CLI_AUTO_SELECT_PRIORITY: readonly CliAgentId[] = ["cursor-agent", "codex", "claude", "gemini", "copilot"];
+const CLI_AUTO_SELECT_PRIORITY: readonly CliAgentId[] = BUILTIN_HARNESS_IDS;
 
 export function resolveCliCommandForAgent(
   agentId: CliAgentId,
@@ -36,7 +37,9 @@ export function patchSelectedCliCommandAfterRescan(
   );
   const selectedAgent = selectedId ? usableAgents.find((agent) => agent.id === selectedId) : undefined;
 
-  if (!selectedId || (!selectedAgent && rescannedAgentId === undefined)) {
+  if (selectedId && !selectedAgent) return executionSettings;
+
+  if (!selectedId) {
     const preferredId =
       CLI_AUTO_SELECT_PRIORITY.find((id) => usableAgents.some((agent) => agent.id === id)) ??
       CLI_CATALOG.find((entry) => usableAgents.some((agent) => agent.id === entry.id))?.id;

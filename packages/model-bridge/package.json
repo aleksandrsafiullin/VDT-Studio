@@ -9,7 +9,9 @@
   },
   "exports": {
     ".": "./src/index.ts",
-    "./node": "./src/node.ts"
+    "./node": "./src/node.ts",
+    "./local-runtime": "./src/local-runtime.ts",
+    "./harness-catalog": "./src/harness/catalog.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

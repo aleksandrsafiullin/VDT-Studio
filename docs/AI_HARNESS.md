@@ -1,5 +1,9 @@
 # AI And Agent Harness
 
+## Local harness integration (2026-11-02)
+
+Thirteen presets and user ACP/VDT JSONL profiles dispatch through common session/structured-completion ports, including the current Pi RPC transport. Native Codex/Cursor/Claude session paths remain. Suggested KPI uses the selected connection with an independently saved model and reasoning setting, without tools, output repair or automatic Apply. Reasoning defaults to explicit Off; unsupported controls are explained before preparation and Provider default requires an explicit selection. The effective model/reasoning are pinned through cache identity and action-time revalidation. Native isolation and release qualification are unchanged. See [Harness connections](HARNESS_CONNECTIONS.md).
+
 ## F-05 validation boundary (2026-11-01)
 
 Progressive mutation previews and changeset apply admit incomplete drafts; syntax,

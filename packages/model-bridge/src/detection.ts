@@ -5,9 +5,11 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { selectCodexExecutable } from "./subscription-cli/codex/executable-selection";
 import { CODEX_MODEL_CATALOG_MAX_BYTES } from "./subscription-cli/codex/constants";
+import { BUILTIN_HARNESS_IDS, type HarnessId } from "./harness/catalog";
+import { listHarnessDefinitions, getHarnessDefinition } from "./harness/profiles";
 
-export const SUBSCRIPTION_CLI_IDS = ["cursor-agent", "codex", "claude", "gemini", "copilot"] as const;
-export type SubscriptionCliId = (typeof SUBSCRIPTION_CLI_IDS)[number];
+export const SUBSCRIPTION_CLI_IDS = BUILTIN_HARNESS_IDS;
+export type SubscriptionCliId = HarnessId;
 
 interface SubscriptionCliDefinition {
   id: SubscriptionCliId;
@@ -20,7 +22,6 @@ export const SUBSCRIPTION_CLI_DEFINITIONS: readonly SubscriptionCliDefinition[] 
   { id: "cursor-agent", backendId: "cursor_subscription", aliases: ["agent", "cursor-agent", "cursor"], versionArgs: ["--version"] },
   { id: "codex", backendId: "codex_subscription", aliases: ["codex"], versionArgs: ["--version"] },
   { id: "claude", backendId: "claude_subscription", aliases: ["claude"], versionArgs: ["--version"] },
-  { id: "gemini", backendId: "gemini_subscription", aliases: ["gemini"], versionArgs: ["--version"] },
   { id: "copilot", backendId: "copilot_subscription", aliases: ["copilot"], versionArgs: ["--version"] }
 ]);
 
@@ -46,7 +47,7 @@ const execFileAsync = promisify(execFile);
 const definitions = new Map(SUBSCRIPTION_CLI_DEFINITIONS.map((definition) => [definition.id, definition]));
 
 export function isSubscriptionCliId(value: string): value is SubscriptionCliId {
-  return definitions.has(value as SubscriptionCliId);
+  return Boolean(getHarnessDefinition(value));
 }
 
 const defaultExecutableCheck = async (candidate: string) => {
@@ -99,7 +100,8 @@ export async function detectSubscriptionCli(
   id: SubscriptionCliId,
   options: DetectionOptions = {}
 ): Promise<SubscriptionCliDetectionResult> {
-  const definition = definitions.get(id);
+  const harness = getHarnessDefinition(id);
+  const definition = definitions.get(id) ?? (harness ? { id: harness.id, backendId: harness.backendId, aliases: [harness.command] as const, versionArgs: [...(harness.custom ? harness.args : []), "--version"] } : undefined);
   if (!definition) throw new Error(`Unknown subscription CLI: ${id}`);
   if (id === "codex") {
     const selected = await selectCodexExecutable(options);
@@ -107,7 +109,10 @@ export async function detectSubscriptionCli(
       ? { id, backendId: definition.backendId, installed: true, ...selected }
       : { id, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
   }
-  const match = await findExecutableOnPath(definition.aliases, options);
+  const explicit = harness?.custom && path.isAbsolute(harness.command) ? harness.command : undefined;
+  const match = explicit && await (options.executableCheck ?? defaultExecutableCheck)(explicit)
+    ? { executable: explicit, alias: explicit }
+    : await findExecutableOnPath(definition.aliases, options);
   if (!match) return { id, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
   try {
     const result = await (options.versionProbe ?? defaultVersionProbe)(match.executable, definition.versionArgs);
@@ -127,7 +132,7 @@ export async function detectSubscriptionCli(
 }
 
 export async function detectSubscriptionClis(options: DetectionOptions = {}): Promise<SubscriptionCliDetectionResult[]> {
-  return Promise.all(SUBSCRIPTION_CLI_IDS.map((id) => detectSubscriptionCli(id, options)));
+  return Promise.all(listHarnessDefinitions().map(({ id }) => detectSubscriptionCli(id, options)));
 }
 
 export function parseCursorModelList(output: string): string[] {

@@ -7,6 +7,7 @@ import { resolveExecutionCategory, type ExecutionCategory } from "@/lib/executio
 import { LocalCliSettings, LocalExecutionOptions } from "./local-cli-settings";
 import { LocalModelSettings } from "./local-model-settings";
 import { ByokSettings } from "./byok-settings";
+import { SmartKpiSettings } from "./smart-kpi-settings";
 import { useVdtStudioStore } from "./vdt-store";
 import styles from "./settings-modal.module.css";
 
@@ -76,6 +77,7 @@ export function ExecutionModeSettings() {
         )}
       </div>
       {activeTab !== "byok" ? <LocalExecutionOptions /> : null}
+      <SmartKpiSettings />
     </div>
   );
 }

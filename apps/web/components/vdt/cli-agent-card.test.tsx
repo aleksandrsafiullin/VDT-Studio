@@ -112,7 +112,7 @@ describe("CliAgentCard", () => {
     expect(html).not.toContain("claude-sonnet-4-6");
     expect(html).not.toContain("claude-opus-4-8");
     expect(html).toContain("Enter manually…");
-    expect(html).toContain("Billing and rate limits follow your Anthropic subscription");
+    expect(html).toContain("Uses the account and model provider configured in this harness");
   });
 
   it("keeps removal and Test disabled during sign-in and retains a direct help link", () => {
@@ -129,7 +129,7 @@ describe("CliAgentCard", () => {
     expect(html).toMatch(/data-testid="cli-agent-remove-claude"[^>]*disabled/);
     expect(html).toMatch(/data-testid="cli-agent-authenticate-claude"[^>]*disabled/);
     expect(html).toContain('data-testid="cli-agent-sign-in-guide-claude"');
-    expect(html).toContain('href="https://docs.anthropic.com/en/docs/claude-code"');
+    expect(html).toContain('href="https://code.claude.com/docs/en/setup"');
     expect(html).toMatch(/<details\b[^>]*data-testid="cli-agent-details-claude"[^>]*>/);
     expect(html).not.toMatch(/<details\b[^>]*\bopen=/);
   });

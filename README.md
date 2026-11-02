@@ -1,5 +1,9 @@
 # VDT Studio
 
+## Local harness integration (2026-11-02)
+
+Thirteen current local harness presets and custom ACP/JSONL profiles share the AI task dispatcher, including Suggested KPI. Suggested KPI has its own saved model and reasoning controls in Settings → Execution mode; reasoning starts Off and does not inherit the chat setting. The catalog contains current connections only; unpublished versions do not retain retired providers or compatibility adapters. Integration is implemented; live-provider and native qualification remain separate. See [Harness connections](docs/HARNESS_CONNECTIONS.md).
+
 Baseline reconciliation: select an incoming KPI, enable **Back-calculated** in
 Properties, choose an **Output KPI** and enter its **Actual output** in that KPI's
 units. One balancing KPI per VDT is recalculated whenever model inputs or formulas
@@ -124,6 +128,12 @@ Current local Chrome fixtures passed mixed/manual Add, real stored recovery and
 Undo. Prepared controls met the 1 s p95 target in four 30-sample cells; Library200
 p95 was 279.8 ms. The 200 ms goal is not met on the 200-node fixtures. These UI timings
 use deterministic preparation, not live model inference.
+
+Suggested gives an opened KPI priority over automatic viewport preparation.
+Visible/new-child work waits 350 ms before taking the slot; an already running
+background request yields only after confirmed cancellation. Prepared proposals
+remain reusable without another model call. A cold CLI/model response can still
+take several seconds; see the [latency investigation](docs/implementation/SMART_KPI_LATENCY_2026-11-02.md).
 
 The [Smart KPI plan](docs/implementation/SMART_KPI_SUGGESTIONS_PLAN.md) has versioned
 contracts, four explicitly bound canonical recipes, a validated one-layer compiler,

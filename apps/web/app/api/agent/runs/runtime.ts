@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { registerHarnessSessionBindings, isCurrentHarnessSession } from "./harness-session-bindings";
 import { mkdir, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -139,6 +140,7 @@ export const CLAUDE_SESSION_EXECUTION_BINDING_ID = "claude_session_canary";
 export async function ensureServerManagedExecutionBindings(): Promise<void> {
   if (localModelAgentBindingsEnabled()) await localModelBindingRegistrar.refresh();
   if (!cliSessionCanaryEnabled) return;
+  await registerHarnessSessionBindings({ toolCatalogHash: modelAgentToolCatalogHash(agentRuntime.tools), allowedToolNames: TARGET_MODEL_AGENT_TOOLS, forbiddenRoots: resolveCliSessionForbiddenRoots(), register: registerCliSessionBinding, resolveBinding: resolveDurableSessionBinding });
   if (!cliSessionRegistrationProbeNeeded()) return;
   const existing = runtimeGlobal.__vdtCursorSessionBindingProbe;
   if (existing) {
@@ -184,6 +186,7 @@ export function resolveAgentStartRequest(
   }
 
   const binding = agentExecutionBindingRegistry.resolve(request.executionBindingId);
+  if (!isCurrentHarnessSession(request.executionBindingId)) throw new AgentExecutionBindingError("BINDING_DISABLED", "Harness settings changed. Refresh the connection before starting a new run.");
   const { executionBindingId, ...common } = request;
   if (isStructuredModelExecutionBinding(binding)) {
     return {

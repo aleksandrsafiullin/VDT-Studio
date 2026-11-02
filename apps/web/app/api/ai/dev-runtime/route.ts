@@ -45,7 +45,7 @@ export async function POST(request: Request) {
 
   let body: unknown, bodyBytes = 0;
   try {
-    const read = await readAiRouteBody(request); bodyBytes = read.bytes; body = JSON.parse(read.text);
+    const read = await readAiRouteBody(request, undefined, { allowLocalHostReconstruction: true }); bodyBytes = read.bytes; body = JSON.parse(read.text);
   } catch (error) {
     const status = aiRouteGuardStatus(error);
     if (status) return NextResponse.json({ ok: false, error: "AI request admission failed." }, { status });
@@ -59,6 +59,7 @@ export async function POST(request: Request) {
   try {
     const { runtime, context } = loadRuntime();
     const operation = typeof body.operation === "string" ? body.operation : "";
+    if (operation === "harness_settings") return jsonRuntimeResult(await runtime.runtimeHarnessSettings(body, context));
 
     if (operation === "test") {
       const backendId = typeof body.backendId === "string" ? body.backendId.trim() : "";

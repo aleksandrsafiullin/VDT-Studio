@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AiProvider } from "@vdt-studio/ai-harness";
+import { isModelReasoningValue, type AiProvider } from "@vdt-studio/ai-harness";
 import * as managedRuntime from "@vdt-studio/local-runner/server-runtime";
 import {
   getStrictResponseJsonSchema,
@@ -73,6 +73,7 @@ export function createManagedAwareAiProvider(request: AiRouteProviderRequest, re
             userPrompt: managedRunnerPrompt(params.taskType, params.userPrompt)
           },
           ...(selectedModel ? { model: selectedModel } : {}),
+          ...(isModelReasoningValue(providerConfig.modelReasoning) ? { modelReasoning: providerConfig.modelReasoning } : {}),
           ...(timeoutMs ? { timeoutMs } : {})
         }, context, params.signal);
         const payload = result.payload as { ok?: boolean; output?: unknown; error?: { code?: string; message?: string } } | undefined;

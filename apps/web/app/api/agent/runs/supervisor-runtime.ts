@@ -1,5 +1,7 @@
 import { formatAiPersonalisation, PERSONALISATION_PROMPT_RULE, type AiPersonalisation } from "@vdt-studio/vdt-core";
 import { createHash } from "node:crypto";
+import { builtinHarness } from "@vdt-studio/model-bridge/harness-catalog";
+import { isAdmittedHarnessSession } from "./harness-session-bindings";
 import type { ReasoningEffort } from "@vdt-studio/model-bridge";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { AiProvider } from "@vdt-studio/ai-harness";
@@ -103,12 +105,11 @@ const CLI_BACKEND_DISPLAY_NAMES: Record<string, string> = {
   cursor_subscription: "Cursor",
   codex_subscription: "Codex",
   claude_subscription: "Claude",
-  gemini_subscription: "Gemini",
   copilot_subscription: "Copilot"
 };
 
 function externalCliDisplayName(backendId: string): string {
-  return CLI_BACKEND_DISPLAY_NAMES[backendId] ?? "CLI";
+  return CLI_BACKEND_DISPLAY_NAMES[backendId] ?? builtinHarness(backendId)?.name ?? "CLI";
 }
 
 export function isAdmittedCliSessionCanary(input: {
@@ -119,10 +120,10 @@ export function isAdmittedCliSessionCanary(input: {
   allowUnqualifiedExternalCanary?: boolean | undefined;
 }): boolean {
   return input.allowUnqualifiedExternalCanary === true
-    && ADMITTED_CLI_SESSION_CANARIES.some(
+    && (isAdmittedHarnessSession(input) || ADMITTED_CLI_SESSION_CANARIES.some(
       (entry) => matchesCliSessionBinding(input.bindingId, entry.bindingId, input.modelId, input.reasoningEffort)
         && entry.engineAdapterId === input.engineAdapterId
-    );
+    ));
 }
 
 export { externalCliDisplayName };
