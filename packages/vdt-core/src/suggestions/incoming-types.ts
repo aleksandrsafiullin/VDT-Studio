@@ -5,8 +5,8 @@ import type { KpiSuggestionContext, KpiSuggestionExecutionIdentity, KpiSuggestio
 export const INCOMING_KPI_DRAFT_SCHEMA = "incoming_kpi_draft.v2" as const;
 export const INCOMING_KPI_APPLY_SCHEMA = "incoming_kpi_apply.v2" as const;
 export const INCOMING_KPI_LIMITS = {
-  newRows: 6, existingReferences: 16, modelRows: 6, alternatives: 3,
-  localFormula: 1024, expandedFormula: 4096, astNodes: 128, astDepth: 24,
+  newRows: 64, existingReferences: 16, modelRows: 64, alternatives: 3,
+  localFormula: 1024, expandedFormula: 4096, astNodes: 128, astDepth: 64,
   functionArguments: 16, name: 160, unit: 80, description: 120
 } as const;
 

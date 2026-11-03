@@ -1,17 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { RotateCcw } from "lucide-react";
 import { getGoalSeekTargets, type GraphCalculationResult, type VdtNode, type VdtProject } from "@vdt-studio/vdt-core";
 import { Field, SelectInput, TextInput } from "@/components/ui/field";
 import { formatNumber } from "@/lib/format";
 import styles from "./workspace-shell.module.css";
 
-export function GoalSeekSettings({ project, node, calculation, onChange }: {
+export function GoalSeekSettings({ project, node, calculation, onChange, children }: {
   project: VdtProject;
   node: VdtNode;
   calculation: GraphCalculationResult;
   onChange: (patch: Partial<VdtNode>) => void;
+  children?: ReactNode;
 }) {
   const config = node.goalSeek;
   const [draft, setDraft] = useState(String(config?.targetValue ?? ""));
@@ -40,6 +41,7 @@ export function GoalSeekSettings({ project, node, calculation, onChange }: {
         : "Automatically balances Baseline to an actual output. Scenarios start from the solved Base and show the effect of changes."}</p>
     </div>
     {config ? <>
+      {children}
       <Field label="Output KPI">
         <SelectInput value={config.targetNodeId} data-testid="goal-seek-target"
           onChange={event => onChange({ goalSeek: { targetNodeId: event.target.value, targetValue: config.targetValue } })}>

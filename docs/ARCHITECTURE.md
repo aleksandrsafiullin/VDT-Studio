@@ -1,5 +1,18 @@
 # Architecture
 
+## Selected Skill in Suggested KPI (2026-11-03)
+
+The trusted-local `GET /api/ai/suggestions/skill` reuses the existing Context
+selection repository and returns only the pinned ID/title/version/content hash
+and content. The canvas retains this scoped projection in runtime-only state;
+the scheduler and incoming preview share it through `resolveSmartKpiScope`.
+Selection changes invalidate context/cache identity and active/frozen results.
+HTTP completion and new model-backed Add check the owning current selection.
+The shared core/runner task receives reference data with no native tool authority.
+The graph budget remains separate from full selected guidance. No project,
+SQLite or committed-journal migration is introduced. Details and qualification:
+[selected-Skill report](implementation/SMART_KPI_SELECTED_SKILL_2026-11-03.md).
+
 ## Local harness integration (2026-11-02)
 
 A browser-safe HarnessDefinition describes each connection; host-only profile persistence, executable resolution and shared ACP/JSONL/Pi RPC transports live in model-bridge. The current catalog has thirteen presets. Suggested KPI resolves a separate connection/model-scoped preference, pins the effective model/reasoning in its preparation identity, and revalidates that identity before Apply. Completion requests retain backend/task/model IDs; custom command authority exists only at the explicit local Settings boundary. Active bindings pin configuration versions. See [Harness connections](HARNESS_CONNECTIONS.md).
@@ -263,8 +276,9 @@ including new aliases for a parent. This direction guard is separate from the
 general manual compiler, which still supports explicit shared references.
 
 The shared task has no fixed domain guidance catalog. Its input is the bounded
-project context plus the existing arithmetic recipe catalog. Domain definitions
-belong to the actual project's `businessContext`, assumptions and model plan;
+project context, exact Context-selected Skill and existing arithmetic recipe
+catalog. Domain definitions belong to the selected Skill and actual project's
+`businessContext`, assumptions and model plan;
 they are untrusted project data, not new tool authority. No industry-keyword
 router or implicit library selection is added. The complete project context is
 fingerprinted, so even an omitted tail invalidates stale preparation results.
@@ -275,7 +289,9 @@ reserves instruction, recipes, schema and escaped provider-envelope bytes.
 Ancestors are ordered by distance. Under pressure, distant ancestry, plan rows
 and optional prose give way before nearby siblings, children and immediate
 parents. Root and target remain explicit, and omission flags/counts remain
-visible. Existing 24 KiB and final transport limits are unchanged.
+visible. The graph allowance remains 24 KiB; full selected Skill content has a
+separate 128 KiB allowance. Final input is capped at 192 KiB and the HTTP body at
+208 KiB including provider configuration.
 
 Codex binding identity includes policy, selected executable/version and config
 metadata; `models_cache.json` refresh metadata is excluded. Model selection and

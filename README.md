@@ -1,13 +1,21 @@
 # VDT Studio
 
+Suggested KPI uses the exact modelling Skill selected in Context, including its
+pinned version and content. It preserves applicable direct factors and scoped
+cause categories. The six-component limit is removed throughout preparation,
+preview and Add; bounded processing and explicit Add remain. See the
+[selected-Skill contract and verification](docs/implementation/SMART_KPI_SELECTED_SKILL_2026-11-03.md).
+
 ## Local harness integration (2026-11-02)
 
 Thirteen current local harness presets and custom ACP/JSONL profiles share the AI task dispatcher, including Suggested KPI. Suggested KPI has its own saved model and reasoning controls in Settings → Execution mode; reasoning starts Off and does not inherit the chat setting. The catalog contains current connections only; unpublished versions do not retain retired providers or compatibility adapters. Integration is implemented; live-provider and native qualification remain separate. See [Harness connections](docs/HARNESS_CONNECTIONS.md).
 
 Baseline reconciliation: select an incoming KPI, enable **Back-calculated** in
-Properties, choose an **Output KPI** and enter its **Actual output** in that KPI's
+Properties below Description, beside **Not changeable**, choose an **Output KPI**
+and enter its **Actual output** in that KPI's
 units. One balancing KPI per VDT is recalculated whenever model inputs or formulas
-change. A dashed card and badge identify it. This can represent unmeasured losses,
+change. The read-only **Back-calculated Base** field is part of that lower form.
+A dashed card and badge identify it. This can represent unmeasured losses,
 cycle time or another balancing parameter; it is derived evidence, not a measured
 value. Scenarios inherit the solved Base and can show improvements independently
 of the actual target. Stored source values/formulas resume when the option is
@@ -74,13 +82,15 @@ references and already committing historical requests keep their own contracts.
 Preparation uses the actual project's definitions and bounded KPI assumptions.
 The shared instruction is domain-neutral; it does not attach an excavation skill
 to every request or select a model from industry keywords. Project business
-context may retain up to 8,000 characters within the unchanged 24 KiB provider
-envelope. Suggested may deepen a reference leaf through a physically meaningful
+context may retain up to 8,000 characters within the 24 KiB graph allowance.
+Full Context-selected Skill content has a separate 128 KiB allowance; the final
+provider envelope is bounded at 192 KiB. Suggested may deepen a reference leaf through a physically meaningful
 measurement definition. Units, populations, periods, exclusive attribution and
 independent sources still have to agree. Named fixed reference parameters already
 defined by the project may be proposed as labelled inputs; values are supplied
-separately. Literal conversions, invented coefficients and complete partitions
-above six immediate components remain constrained by the arithmetic contract.
+separately. Literal conversions and invented coefficients remain constrained by
+the arithmetic contract. Complete partitions may exceed six immediate components;
+the processing ceiling is 64 rows, with separate formula and output bounds.
 The [all-level audit](docs/implementation/SMART_KPI_FULL_DEPTH_EVALUATION_2026-10-25.md)
 records measured behavior and limits for all 33 reference nodes over six levels,
 construction/manufacturing controls and a persisted seven-level browser extension.
@@ -112,7 +122,7 @@ revision/checkpoint retains its values, source metadata and reference children.
 Smart Add now requires finite input values and preserves the current KPI's
 baseline result. The panel shows input values and current → calculated totals.
 Existing materialized values are retained. Smart offers illustrative estimates
-for missing inputs, visibly marked **≈** and saved as assumptions. **Use estimates**
+for missing inputs, marked **≈** in the Smart preview/editor and saved as assumptions. **Use estimates**
 can be disabled for measured-value entry. One remaining input can also be derived
 uniquely from known values. Every accepted layer must still reconcile to the
 unchanged parent. If the target has no value, enter its reference explicitly;
@@ -234,7 +244,8 @@ save-aware navigation remain available.
 Tree cards use the same neutral surfaces, with two compact Base/Potential rows:
 labels align left and numbers align right on the same line. The unit appears
 once in the header's upper-right corner in place of the status icon. Graphite
-selection, the integrated root Effect footer, **≈** estimates and relation symbols remain visible;
+selection, the integrated root Effect footer and relation symbols remain visible.
+Saved Base/Potential values omit **≈**; their tooltips identify illustrative estimates.
 Manual/File actions and eligible Input-leaf Smart suggestions appear on hover or keyboard focus and on touch devices.
 When the main scenario's Potential differs from Base, its row and card border
 are highlighted for tree overview. **Settings → Display → Scenario highlight**

@@ -7,6 +7,7 @@ import { persistedExecutionSettings } from "./execution-mode-catalog";
 import { createSmartKpiPreparedSelection } from "./smart-kpi-client";
 import { recordAcceptedSmartKpiChildren } from "./smart-kpi-decisions";
 import { resolveSmartKpiScope } from "./smart-kpi-scope";
+import { loadSmartKpiSkill } from "./smart-kpi-skill";
 import { smartKpiJournalPersisted, studioStatePersistenceProblem } from "./smart-kpi-journal";
 import type { VdtStudioState, UiPreferences } from "@/components/vdt/vdt-store";
 
@@ -78,6 +79,7 @@ function ownsBase(state: VdtStudioState, operation: SmartKpiOperation): boolean 
   const scope = resolveSmartKpiScope(state);
   return !scope.blockedReason && scope.workspaceId === operation.workspaceId && scope.vdtId === operation.vdtId && state.project.id === operation.projectId
     && (operation.phase === "committing" || operation.kind === "undo" || same(scope.personalisation ?? {}, operation.context?.personalisation ?? {}))
+    && (operation.phase === "committing" || operation.kind === "undo" || same(scope.selectedSkill ?? null, operation.context?.selectedSkill ?? null))
     && state.projectRevision === operation.projectRevision && kpiCanonicalJson(state.project) === operation.beforeJson
     && (operation.proposal?.origin.kind !== "model" || operation.phase === "committing" || configuration(state) === operation.settings);
 }
@@ -330,6 +332,11 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
         await reconcileOrdinary(get, set);
         if (!ownsBase(get(), operation)) throw failure("The ordinary pending write changed this scope. Refresh suggestions.");
         const current = get(), currentScope = resolveSmartKpiScope(current);
+        if (operation.lineage.kind === "model" && operation.context.selectedSkill && operation.vdtId) {
+          const skill = await loadSmartKpiSkill(operation.workspaceId, operation.vdtId, operation.context.root.name);
+          if (!same(skill, operation.context.selectedSkill)) throw failure("The selected modelling skill changed. Refresh suggestions.", "STALE_SKILL");
+          if (!ownsBase(get(), operation)) throw failure("The KPI context changed while checking its skill. Refresh suggestions.");
+        }
         operation.authority = authority(current);
         let selected;
         if (operation.lineage.kind === "model") {
@@ -354,8 +361,9 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
       } catch (error) {
         set(current => current.smartKpiOperation?.id !== operation.id ? {} : { smartKpiOperation: undefined,
           smartKpiMutation: { status: "failed", targetNodeId: input.context.targetNodeId, canUndo: false, message: error instanceof Error ? error.message : "Incoming validation failed." } });
+        const code = (error as { code?: string })?.code;
         return { ...result(operation, false, error instanceof Error ? error.message : "Incoming validation failed."),
-          ...((error as { code?: string })?.code === "STALE_EXECUTION" ? { code: "STALE_EXECUTION" } : {}) };
+          ...(code === "STALE_EXECUTION" || code === "STALE_SKILL" ? { code } : {}) };
       }
     },
     reconcilePendingSmartKpiCommit: async (): Promise<boolean> => {

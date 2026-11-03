@@ -2,9 +2,9 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { KPI_SUGGESTION_LIMITS as limits, KPI_SUGGESTION_MODEL_JSON_SCHEMA, SMART_KPI_INSTRUCTION,
+import { assertKpiSuggestionSkillIntegrity, KPI_SUGGESTION_LIMITS as limits, KPI_SUGGESTION_MODEL_JSON_SCHEMA, SMART_KPI_INSTRUCTION,
   validateKpiSuggestionModelOutput, validateKpiSuggestionTaskInput } from "@vdt-studio/vdt-core";
-import { selectSmartCodexExecutable, readCodexSmartDefaultModel, readCodexSmartReasoningValues, SMART_CODEX_DISABLED_FEATURES } from "@vdt-studio/model-bridge/local-runtime";
+import { selectSmartCodexExecutable, readCodexSmartDefaultModel, readCodexSmartReasoningValues, SMART_CODEX_DISABLED_FEATURES, SMART_CODEX_CODE_MODE_CONFIG } from "@vdt-studio/model-bridge/local-runtime";
 import { isCheckpointReasoningEffort, parseLocalModelReasoningCapabilities, type LocalModelReasoningCapabilities } from "@vdt-studio/model-bridge";
 import type { BackendManifest, CompletionRequest } from "../cli/types";
 import type { ExecutionResult, ExecutorOptions } from "./executor";
@@ -107,7 +107,7 @@ export async function readLocalSmartReasoningCapabilities(manifest: BackendManif
   return parseLocalModelReasoningCapabilities(await readSmartResponse(response, signal), manifest.id);
 }
 
-async function localCompletion(manifest: BackendManifest, model: string, prompt: string, signal: AbortSignal, options: ExecutorOptions, modelReasoning: CompletionRequest["modelReasoning"]): Promise<unknown> {
+async function localCompletion(manifest: BackendManifest, model: string, prompt: string, signal: AbortSignal, options: ExecutorOptions, modelReasoning: CompletionRequest["modelReasoning"], hasSelectedSkill = false): Promise<unknown> {
   const base = manifest.localHttp!.baseUrl.replace(/\/$/, ""), native = manifest.id === "ollama";
   let reasoning: Record<string, unknown> = {};
   if (modelReasoning !== undefined) {
@@ -122,11 +122,11 @@ async function localCompletion(manifest: BackendManifest, model: string, prompt:
     }
   }
   const body = native ? { model, stream: false, ...reasoning, format: KPI_SUGGESTION_MODEL_JSON_SCHEMA,
-    options: { num_predict: limits.outputTokens, num_ctx: 8192 }, messages: [{ role: "system", content: SMART_KPI_INSTRUCTION }, { role: "user", content: prompt }] }
+    options: { num_predict: limits.outputTokens, num_ctx: hasSelectedSkill ? 32768 : 8192 }, messages: [{ role: "system", content: SMART_KPI_INSTRUCTION }, { role: "user", content: prompt }] }
     : { model, ...reasoning, ...(reasoning.reasoning_effort === undefined ? { max_tokens: limits.outputTokens, temperature: 0 } : { max_completion_tokens: limits.outputTokens }), response_format: { type: "json_schema", json_schema: { name: "smart_kpi", strict: true, schema: KPI_SUGGESTION_MODEL_JSON_SCHEMA } },
       messages: [{ role: "system", content: SMART_KPI_INSTRUCTION }, { role: "user", content: prompt }] };
   const serialized = JSON.stringify(body);
-  if (bytes(serialized) > limits.inputBytes) throw fail("INPUT_TOO_LARGE", "Final Smart provider envelope exceeds 24 KiB.");
+  if (bytes(serialized) > limits.inputBytes) throw fail("INPUT_TOO_LARGE", "Final Smart provider envelope exceeds its bounded input allowance.");
   const response = await fetchSmart(options.fetch ?? fetch, native ? `${base.replace(/\/v1$/, "")}/api/chat` : `${base}/chat/completions`,
     { method: "POST", headers: { "content-type": "application/json" }, body: serialized }, signal);
   const payload = await readSmartResponse(response, signal) as { error?: string; message?: { content?: string; thinking?: string; reasoning_content?: string; tool_calls?: unknown[] }; done?: boolean; done_reason?: string; choices?: Array<{ message?: { content?: string; thinking?: string; reasoning_content?: string; tool_calls?: unknown[]; function_call?: unknown; refusal?: unknown }; finish_reason?: string }> };
@@ -166,7 +166,7 @@ async function cliCompletion(manifest: BackendManifest, model: string, prompt: s
     }
     const schemaPath = path.join(cwd, "schema.json"); await writeFile(schemaPath, JSON.stringify(KPI_SUGGESTION_MODEL_JSON_SCHEMA), { mode: 0o600, flag: "wx" });
     const args = ["exec", "--strict-config", "--ephemeral", "--json", "--color", "never", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only",
-      ...SMART_CODEX_DISABLED_FEATURES.flatMap(feature => ["--disable", feature]), "-c", 'web_search="disabled"', "-c", "tools.update_plan.enabled=false", "-c", "tools.experimental_request_user_input.enabled=false",
+      ...SMART_CODEX_DISABLED_FEATURES.flatMap(feature => ["--disable", feature]), ...SMART_CODEX_CODE_MODE_CONFIG.flatMap(config => ["-c", config]), "-c", 'web_search="disabled"', "-c", "tools.update_plan.enabled=false", "-c", "tools.experimental_request_user_input.enabled=false",
       "-c", "sandbox_workspace_write.network_access=false", ...(effort === undefined ? [] : ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`]), "--output-schema", schemaPath, ...(selectedModel ? ["--model", selectedModel] : []), "-C", cwd, "-"];
     signal.throwIfAborted();
     const js = /\.(?:cjs|mjs|js)$/.test(executable);
@@ -223,12 +223,13 @@ export async function executeSmartSuggestion(manifest: BackendManifest, request:
   try {
     const wrapped = request.input && typeof request.input === "object" && "data" in request.input ? (request.input as { data: unknown }).data : request.input;
     const input = validateKpiSuggestionTaskInput(wrapped);
+    await assertKpiSuggestionSkillIntegrity(input.context);
     const prompt = `${SMART_KPI_INSTRUCTION}\nResponse budget: at most ${limits.outputTokens} tokens.\n${JSON.stringify({ input, schema: KPI_SUGGESTION_MODEL_JSON_SCHEMA })}`;
-    if (bytes(JSON.stringify(request)) > limits.inputBytes || bytes(prompt) > limits.inputBytes) throw fail("INPUT_TOO_LARGE", "Final Smart runner envelope exceeds 24 KiB.");
+    if (bytes(JSON.stringify(request)) > limits.inputBytes || bytes(prompt) > limits.inputBytes) throw fail("INPUT_TOO_LARGE", "Final Smart runner envelope exceeds its bounded input allowance.");
     if (manifest.kind !== "mock" && (!request.model || request.model.startsWith("-") || /[\x00-\x20]/.test(request.model))) throw fail("SUGGESTIONS_UNAVAILABLE", "An explicit host-selected model is required for Smart suggestions.");
     let output: unknown;
     if (manifest.kind === "mock") output = { status: "empty", rationale: "Deterministic empty suggestion fixture.", limitations: [], groups: [] };
-    else if (manifest.kind === "local_http" && manifest.localHttp) output = await localCompletion(manifest, request.model!, JSON.stringify(input), controller.signal, options, request.modelReasoning);
+    else if (manifest.kind === "local_http" && manifest.localHttp) output = await localCompletion(manifest, request.model!, JSON.stringify(input), controller.signal, options, request.modelReasoning, Boolean(input.context.selectedSkill));
     else if (manifest.id === "codex_subscription") output = await cliCompletion(manifest, request.model!, prompt, controller.signal, options, request.modelReasoning);
     else if (manifest.harness?.transport !== "native" && manifest.harness) output = (await executeHarnessCompletion(manifest, { ...request, input }, controller.signal, options)).output;
     else if (manifest.kind === "subscription_cli") output = (await executeCli(manifest, { ...request, input }, controller.signal, options)).output;

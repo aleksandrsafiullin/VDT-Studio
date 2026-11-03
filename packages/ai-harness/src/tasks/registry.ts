@@ -1,4 +1,4 @@
-import type { VdtAiTaskType } from "@vdt-studio/vdt-core";
+import { KPI_SUGGESTION_LIMITS, type VdtAiTaskType } from "@vdt-studio/vdt-core";
 
 /** Plan §9.7 — prompt / input JSON cap. */
 export const DEFAULT_MAX_INPUT_BYTES = 512 * 1024;
@@ -98,7 +98,7 @@ export const TASK_LIMITS: Record<VdtAiTaskType, VdtAiTaskLimits> = {
     maxNodes: 60,
     maxEdges: 120
   }),
-  suggest_incoming_kpis: withSharedReviewArrays({ maxInputBytes: 24 * 1024, maxOutputBytes: 16 * 1024 }),
+  suggest_incoming_kpis: withSharedReviewArrays({ maxInputBytes: KPI_SUGGESTION_LIMITS.inputBytes, maxOutputBytes: KPI_SUGGESTION_LIMITS.outputBytes }),
   deepen_node: withSharedReviewArrays({
     maxInputBytes: DEFAULT_MAX_INPUT_BYTES,
     maxOutputBytes: DEFAULT_MAX_OUTPUT_BYTES,

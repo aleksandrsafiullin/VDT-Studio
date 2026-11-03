@@ -4,6 +4,15 @@ Status: accepted design; domain, preparation, state/native-source and credential
 hydration/revocation reviews approved. Bounded local Chrome editor and prepared
 latency fixtures passed; final integrated status belongs to the execution log.
 Date: 2026-10-19.
+Selected-guidance amendment 2026-11-03: preparation v14 carries the exact
+Context-selected Skill version/content hash/full content as read-only guidance.
+Applicable direct factors and scoped cause categories take priority over
+generic recipes and optional measurement identities. The six-new-row restriction
+is superseded by the bounded 64-row processing ceiling across generation,
+preview, aliases and Add. The nearby graph retains its 24 KiB allowance; guidance
+has a separate 128 KiB content allowance within 192 KiB final input. Historical
+committing operations retain exact replay. See the
+[implementation and verification](../implementation/SMART_KPI_SELECTED_SKILL_2026-11-03.md).
 Implementation plans: [initial Smart KPI suggestions](../implementation/SMART_KPI_SUGGESTIONS_PLAN.md), [formula/mixed revision](../implementation/SMART_KPI_FORMULA_MIXED_PLAN.md).
 
 Execution-settings amendment 2026-11-02: [ADR-013](ADR-013-independent-suggested-kpi-execution-settings.md)

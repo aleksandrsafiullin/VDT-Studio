@@ -1,7 +1,8 @@
 import { getHarnessDefinition } from "@vdt-studio/model-bridge/node";
 import { AnthropicProvider, AzureOpenAiProvider, GeminiProvider, OpenAiCompatibleProvider, runSuggestIncomingKpis, isModelReasoningValue, type ModelReasoningValue, type AiProvider } from "@vdt-studio/ai-harness";
 import { providerModelCapabilities, validatedReasoningConfig, type ProviderConnection } from "../app/api/agent/runs/provider-model-capabilities";
-import { validateKpiSuggestionTaskInput, smartAssert, smartRecord, smartString, type KpiSuggestionModelOutput } from "@vdt-studio/vdt-core";
+import { KPI_SUGGESTION_LIMITS, validateKpiSuggestionTaskInput, smartAssert, smartRecord, smartString, type KpiSuggestionModelOutput } from "@vdt-studio/vdt-core";
+import { assertCurrentSmartKpiSkill } from "./smart-kpi-skill-host";
 import { resolveProviderTarget, type ProxyProvider } from "./provider-target-security";
 import { fetchPinnedProvider } from "./pinned-provider-fetch";
 import { createManagedAwareAiProvider } from "../app/api/agent/runs/managed-ai-provider";
@@ -63,7 +64,7 @@ async function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise
   try { return await Promise.race([operation, aborted]); } finally { signal.removeEventListener("abort", interrupt); }
 }
 
-export async function selectedProvider(request: SmartKpiServiceRequest, signal: AbortSignal, requestUrl: string, maxEnvelopeBytes = 24 * 1024): Promise<AiProvider> {
+export async function selectedProvider(request: SmartKpiServiceRequest, signal: AbortSignal, requestUrl: string, maxEnvelopeBytes = KPI_SUGGESTION_LIMITS.inputBytes): Promise<AiProvider> {
   const config = request.providerConfig ?? {};
   smartRecord(config, ["baseUrl", "endpoint", "model", "deployment", "apiVersion", "anthropicVersion", "apiKey", "maxTokens", "backendId", "runnerUrl", "pairingToken", "timeoutMs", "modelReasoning"], []);
   smartAssert(config.modelReasoning === undefined || isModelReasoningValue(config.modelReasoning), "INVALID_REASONING", "Invalid selected reasoning value.");
@@ -126,6 +127,8 @@ async function prepareResponse(raw: SmartKpiServiceRequest, caller: AbortSignal,
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, duration);
   try {
     controller.signal.throwIfAborted();
+    await assertCurrentSmartKpiSkill(input.context);
+    controller.signal.throwIfAborted();
     const selected = { ...raw, timeoutMs: duration };
     const provider = await abortable(deps.provider ? deps.provider(selected, controller.signal) : selectedProvider(selected, controller.signal, requestUrl), controller.signal);
     controller.signal.throwIfAborted();
@@ -133,6 +136,8 @@ async function prepareResponse(raw: SmartKpiServiceRequest, caller: AbortSignal,
       maxTokens: typeof raw.providerConfig?.maxTokens === "number" ? Math.min(raw.providerConfig.maxTokens, 2048) : 2048 });
     // Managed/paired execution waits for the remote owned-process close/cleanup.
     const result = await operation;
+    controller.signal.throwIfAborted();
+    await assertCurrentSmartKpiSkill(input.context);
     controller.signal.throwIfAborted();
     return result;
   } catch (error) {

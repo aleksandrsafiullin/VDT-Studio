@@ -118,7 +118,9 @@ describe("Smart task-scoped local transport", () => {
   });
   it("quarantines a non-cooperative HTTP request after bounded closure grace", async () => {
     const controller = new AbortController();
-    const pending = executeCompletion(createManifestRegistry().get("ollama")!, await request("ollama"), controller.signal, { fetch: async () => new Promise<Response>(() => {}) }); void pending.catch(() => {});
+    let started!: () => void; const invoked = new Promise<void>(resolve => { started = resolve; });
+    const pending = executeCompletion(createManifestRegistry().get("ollama")!, await request("ollama"), controller.signal, { fetch: async () => { started(); return new Promise<Response>(() => {}); } }); void pending.catch(() => {});
+    await invoked;
     controller.abort(); await expect(pending).rejects.toMatchObject({ code: "CLEANUP_UNCONFIRMED" });
   });
   it("rejects an oversized final input before invoking any adapter", async () => {
@@ -160,6 +162,10 @@ describe("Smart Codex owned invocation", () => {
       queueMicrotask(() => { running.stdout.write(wire.subarray(0, split)); running.stdout.write(wire.subarray(split)); running.emit("close", 0); });
       expect(args).toContain("--ignore-user-config"); expect(args).toContain("--ignore-rules"); expect(args).toContain("--strict-config");
       expect(args).toContain("read-only"); expect(args).toContain('web_search="disabled"'); expect(args).toContain("shell_tool"); expect(args).toContain("unified_exec");
+      expect(args).toContain("view_image");
+      expect(args).not.toContain("code_mode"); expect(args).not.toContain("code_mode_host");
+      expect(args).toContain('features.code_mode={enabled=false,excluded_tool_namespaces=["functions"]}');
+      expect(args).toContain("features.code_mode_host={enabled=true,disable_in_process_fallback=true}");
       expect(config.cwd).not.toBe(process.cwd()); expect((config.env as NodeJS.ProcessEnv).OPENAI_API_KEY).toBeUndefined();
       return running;
     });
@@ -168,9 +174,25 @@ describe("Smart Codex owned invocation", () => {
     expect(output).toMatchObject({ output: empty, repaired: false }); expect(spawn).toHaveBeenCalledTimes(1); expect(await readdir(root)).toEqual([]);
   });
   it("rejects reported tool/unknown events and more than one turn", () => {
-    for (const prefix of [{ type: "item.started", item: { type: "command_execution", command: "touch bad" } }, { type: "unexpected" }, { type: "turn.started" }]) {
+    for (const prefix of [{ type: "item.started", item: { type: "command_execution", command: "touch bad" } },
+      { type: "item.started", item: { type: "code_mode", code: "text(1)" } },
+      { type: "item.completed", item: { type: "custom_tool_call", name: "functions.exec", input: "text(1)" } },
+      { type: "unexpected" }, { type: "turn.started" }]) {
       expect(() => parseSmartCodexOutput(JSON.stringify(prefix) + "\n" + frames(empty))).toThrow();
     }
+  });
+  it("rejects Code Mode activity before accepting later valid output and waits for child closure", async () => {
+    const root = await directory(), running = child(); let spawned = false, settled = false;
+    const pending = executeCompletion(createManifestRegistry().get("codex_subscription")!, await request(), new AbortController().signal,
+      { tempRoot: root, env: {}, resolveExecutable: async () => "/bin/echo", spawn: (() => { spawned = true; return running; }) as unknown as NonNullable<ExecutorOptions["spawn"]> })
+      .finally(() => { settled = true; }); void pending.catch(() => {});
+    await vi.waitFor(() => expect(spawned).toBe(true));
+    running.stdout.write(JSON.stringify({ type: "item.started", item: { type: "code_mode", code: "text(1)" } }) + "\n");
+    running.stdout.write(frames(empty)); await Promise.resolve();
+    expect(settled).toBe(false); expect(await readdir(root)).toHaveLength(1);
+    running.emit("close", 0);
+    await expect(pending).rejects.toMatchObject({ code: "TOOL_ACTIVITY_REJECTED" });
+    expect(await readdir(root)).toEqual([]);
   });
   it("does not settle cancellation or its terminal acknowledgement before delayed child close", async () => {
     const root = await directory(), running = child(); let spawned = false;

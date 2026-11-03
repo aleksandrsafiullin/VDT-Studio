@@ -67,10 +67,11 @@ manual draft or silently attach model lineage to it.
 
 ## Bounds, scale and next compiler boundary
 
-The accepted set permits **6 new proposed/manual nodes**, separately **16 distinct
+The accepted set permits **64 new proposed/manual nodes** as a resource ceiling,
+with no six-component product restriction, separately **16 distinct
 existing references**. Existing factors never consume a new-row slot. Local
 formula length is 1,024 characters, expanded ID formula 4,096; AST nodes/depth are
-128/24, function arguments at most16. Model response bounds remain unchanged.
+128/64, function arguments at most16. Model response bounds remain unchanged.
 All effective selected aliases must appear, no unselected alias may appear, and
 alias maps must be complete/unique. Syntax helpers reject model literal weights
 other than raw `1`, composed numeric weights and repeated model factors; finite
@@ -252,9 +253,15 @@ Contract tests alone do not establish UI, provider or release qualification.
 ## Preparation and incoming-path implementation
 
 The proposal/output schemas `kpi_suggestions.v1` / `suggest-incoming-kpis-v1`
-and one-call transport remain. Preparation v10 uses domain-neutral instructions,
+and one-call transport remain. Preparation v14 uses domain-neutral instructions,
 bounded observed-node assumptions and up to 8,000 characters of the actual
-project's business definitions, within the full 24 KiB provider-envelope cap.
+project's business definitions, within a separate 24 KiB graph-context allowance.
+The Context-selected Skill's exact full content is supplied independently,
+bounded to 128 KiB, under the 192 KiB final provider-input cap. ID/version/raw
+content hash bind preparation and cache identity. The same selection is checked
+at HTTP admission, completion and before a new model-backed Add. It grants no
+tool, file, research or mutation authority. Ordinary models retain the same
+one-completion path; there is no domain-specific routing.
 There is no fixed excavation-guidance catalog in the shared task. Full project
 semantics and preparation version bind rebuildable outcomes. Physically meaningful
 definitions below reference leaves are allowed; a reference endpoint alone is
@@ -266,8 +273,9 @@ labelled reference inputs with matching ratio units and separately supplied
 values. This adds no fixed-value metadata or automatic locking. Model output
 still cannot provide numeric values or literal coefficients beyond raw `1` in
 the supported complement. Complete immediate partitions above six new rows
-remain unsupported. Formula/row bounds and the generic compiler are unchanged.
-It retains the following v5 direction policy for new preparation. Preparation policy `smart-kpi-preparation.v5` retains the 2–6 component bound and adds context-aware direction validation: proposed reused sources must be active direct children, and new rows cannot exactly copy normalized target/ancestor/sibling names. Materialization, scheduler/cache admission and new store preview/Add enforce it, including retained old proposal drafts. Ancestors/siblings remain context only; the prompt prohibits solving an ancestor equation backward or disguising its metrics with new names. This is a bounded guard, not complete semantic/synonym validation. Explicit manual shared-reference compilation is separate. Validator `smart-kpi-validator.v2` preserves historical proposal/journal compatibility. Old rebuildable outcomes are invalidated without touching pending operation receipts. Preparation proposes a concise explicit formula or defensible editable starting rows/genuine empty evidence; missing measurements alone do not require empty. It never fabricates sums, weights, source values or causal certification.
+are supported subject to processing/formula/output bounds. Proposal aliases
+extend through `p_64`; AST substitution keeps `p_1` and `p_10` distinct.
+The v5 direction policy remains for new preparation: proposed reused sources must be active direct children, and new rows cannot exactly copy normalized target/ancestor/sibling names. Materialization, scheduler/cache admission and new store preview/Add enforce it, including retained old proposal drafts. Ancestors/siblings remain context only; the prompt prohibits solving an ancestor equation backward or disguising its metrics with new names. This is a bounded guard, not complete semantic/synonym validation. Explicit manual shared-reference compilation is separate. Validator `smart-kpi-validator.v2` preserves historical proposal/journal compatibility. Old rebuildable outcomes are invalidated without touching pending operation receipts. Preparation proposes a concise explicit formula or defensible editable starting rows/genuine empty evidence; missing measurements alone do not require empty. It never fabricates sums, weights, source values or causal certification.
 
 `reconcileIncomingKpiPlan` derives only target/new-node/formula-reachable existing roles and shared references from the accepted change. It preserves unrelated plan entries and primary parents, including off-root reference branches. File nested hierarchies use the same authoritative delta and retain source bytes/hash/mappings/zero. A transient AI layer may await a formula but cannot finish successfully that way. `validateIncomingKpiLayer` checks target type/formula, all new and existing mathematical children, effective references, constant domains, units and full DAG/plan. For legacy AI whose explicit target unit states a calendar denominator, that exact unit denominator supplies the matching measurement basis; no date window or numeric value is inferred.
 

@@ -211,7 +211,7 @@ Configured API/BYOK adapters and manifest-owned Ollama/LM Studio/vLLM endpoints 
 one request with at most 2048 generation tokens; the selected Codex CLI uses one
 restrictive invocation and a prompt-requested 2048-token budget. CLI does not expose
 a verified hard generation-token ceiling. Input/final output are capped at
-24/16 KiB; HTTP/CLI envelopes at 64 KiB. Deadlines are at most 15 s HTTP or 30 s
+192/16 KiB, with a separate 24 KiB graph-context and 128 KiB selected-Skill content allowance; HTTP/CLI output envelopes remain 64 KiB. Deadlines are at most 15 s HTTP or 30 s
 CLI and respect a lower raw user timeout, including version probing. A bounded
 cleanup grace awaits owned transport/process termination and never accepts late
 success. Metadata-only identity admission is separate from preparation, capped at
@@ -224,6 +224,12 @@ preserves the actual selected/default model, disables reviewed tool features and
 web search, uses read-only sandbox, rejects tool/unknown/multiple-turn stream events
 and strictly decodes UTF-8. The general agent profile is unchanged. Noncore CLI
 adapters return typed unavailable rather than switching provider.
+
+Smart Codex v2 leaves its standalone Code Mode host available for models that
+require it, while excluding built-in nested tools and forbidding in-process
+fallback. Ordinary models keep Code Mode disabled. Any reported Code Mode/tool
+activity still rejects the result; the one-completion contract is unchanged.
+See [the Luna startup fix and evidence](implementation/CODEX_SMART_KPI_2026-11-03.md).
 
 Stable cache identity binds selected model/destination/policy and an opaque
 credential epoch. Passive encrypted-key reload reuses its epoch; replacement,
@@ -257,7 +263,10 @@ inputs, with values entered separately; no model-authored value or literal
 conversion is admitted. Full project semantics and preparation v10 invalidate
 rebuildable cache entries; historical committing journals retain exact replay.
 Context construction reserves instruction/recipes/schema/escaped-envelope space before
-optional excerpts shrink. Final transport gates still enforce 24 KiB.
+optional graph excerpts shrink. Full selected guidance is retained separately;
+final transport gates enforce 192 KiB. The owning Context selection is checked
+at HTTP admission/completion and new model-backed Add, with raw-content hash
+verification in core/harness/runner. The Skill grants no tool authority.
 Nearest parents and siblings are retained ahead of distant ancestry and optional
 prose, so direction/duplicate decisions retain the immediate model definition.
 The shared instruction explicitly distinguishes legitimate lower-level
@@ -266,7 +275,7 @@ of a fixed unit conversion itself.
 
 ## Incoming formula and legacy deepen version
 
-Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v12` with the bounded one-call wire. Each alternative requires 2–6 substantive components in schema/runtime/cache admission, rejecting a single renamed total. Context-aware preparation admits reused sources only from active direct children and rejects exact normalized contextual-metric copies. The prompt prohibits inverse ancestor/sibling identities and new aliases that disguise them; an Input without a defensible lower-level split may return empty. The prompt requests a concise coherent definition and matching-scale unknown inputs; missing measurements alone do not require empty. Generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no admission or inference. Historical wire/journal replay does not apply this new preparation policy retroactively.
+Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v14` with the bounded one-call wire. Each alternative requires at least two substantive components; the six-component product limit is removed across schema/runtime/cache admission, preview and Add. A 64-row processing ceiling and formula/output bounds remain. The exact Context-selected Skill participates in context/cache identity and supplies applicable direct-factor definitions, including causes restricted to an existing target subset. Optional measurement detail does not replace a defined causal layer. Context-aware preparation admits reused sources only from active direct children and rejects exact normalized contextual-metric copies. The prompt prohibits inverse ancestor/sibling identities and new aliases that disguise them; an Input without a defensible lower-level split may return empty. Missing measurements alone do not require empty. Generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no model admission or inference. Historical wire/journal replay does not apply this new preparation policy retroactively.
 
 The registered `deepen_node` task now selects `deepen-node-v2`: `schemaVersion=deepen_node.v2`, required `targetFormula`, exact `retainedNodeIds` and one layer of primitive children. Mapping requires the actual project/root and emits formula, calculated/root type and accepted plan delta together. Historical `deepen-node-v1` output remains a readable compatibility schema but cannot apply a new child-only graph mutation. This does not affect exact replay of an already committing Smart v1 request. Both selected-layer agent finish implementations require the target definition and every new input; unknown measured values may remain unavailable. Default full-tree finish remains strict.
 

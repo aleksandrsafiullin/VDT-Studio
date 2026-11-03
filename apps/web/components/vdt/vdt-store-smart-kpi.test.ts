@@ -14,6 +14,8 @@ import { studioStateStorage } from "@/lib/smart-kpi-journal";
 
 const save = vi.fn(), fetchState = vi.fn(), create = vi.fn(), load = vi.fn();
 const selectedExecution = vi.fn();
+const selectedSkill = vi.fn();
+vi.mock("@/lib/smart-kpi-skill", async original => ({ ...await original<typeof import("@/lib/smart-kpi-skill")>(), loadSmartKpiSkill: (...args: unknown[]) => selectedSkill(...args) }));
 vi.mock("@/lib/smart-kpi-client", async original => ({ ...await original<typeof import("@/lib/smart-kpi-client")>(), createSmartKpiPreparedSelection: (...args: unknown[]) => selectedExecution(...args) }));
 vi.mock("@/lib/vdt-storage-client", async original => ({ ...await original<typeof import("@/lib/vdt-storage-client")>(),
   saveStoredVdtRevision: (...args: unknown[]) => save(...args), fetchStoredVdtRevisionState: (...args: unknown[]) => fetchState(...args), createStoredVdt: (...args: unknown[]) => create(...args), loadStoredVdt: (...args: unknown[]) => load(...args) }));
@@ -44,15 +46,46 @@ beforeEach(() => {
   quota = undefined;
   memory.clear(); save.mockReset(); fetchState.mockReset(); create.mockReset(); load.mockReset(); notify.mockReset();
   selectedExecution.mockReset();
+  selectedSkill.mockReset();
   save.mockResolvedValue(saved()); fetchState.mockResolvedValue(saved());
   const project = createSmartKpiMeasuredFixture(0); project.graph.nodes[0]!.assumptions = ["Time period: monthly"];
   store.setState({ project, projectRevision: 10, selectedNodeId: project.rootNodeId, activeScenarioId: project.scenarios[0]!.id,
     workspace: { activePanel: "vdt", activeProjectId: "owner", activeVdtId: "stored", projectSummaries: [summary()], isLoading: false, isMutating: false },
     isGenerating: false, generateActivity: undefined, agentRun: undefined, activeAgentRunId: undefined, agentPendingQuestions: undefined, agentConnectionStatus: "idle", agentChatHistory: [],
-    smartKpiOperation: undefined, smartKpiUndo: undefined, smartKpiRebaseRequired: undefined, smartKpiConflictOperation: undefined, smartKpiFencedRunIds: [], smartKpiMutation: { status: "idle", canUndo: false }, sendManualProjectChange: notify });
+    smartKpiSkill: undefined, smartKpiOperation: undefined, smartKpiUndo: undefined, smartKpiRebaseRequired: undefined, smartKpiConflictOperation: undefined, smartKpiFencedRunIds: [], smartKpiMutation: { status: "idle", canUndo: false }, sendManualProjectChange: notify });
 });
 
 describe("Smart immutable user transaction", () => {
+  it("rechecks the selected Skill before a new model-backed Add and rejects a changed host pin without graph or revision writes", async () => {
+    const content = "# Service output\nUse the selected service definition.";
+    const skill = { id: "custom.service", title: "Service output", version: 1, content, contentHash: `sha256:${createHash("sha256").update(content).digest("hex")}` };
+    store.setState({ smartKpiSkill: { workspaceId: "owner", vdtId: "stored", status: "ready", skill } });
+    const input = await prepared(), before = kpiCanonicalJson(store.getState().project);
+    input.proposal.origin = { kind: "model", requestId: "selected-skill-change", execution: { mode: "cli", backendId: "selected", modelId: "model", bindingVersion: "v1", credentialEpoch: "epoch" } };
+    selectedSkill.mockResolvedValue({ ...skill, version: 2 });
+    expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: false, code: "STALE_SKILL" });
+    expect(selectedSkill).toHaveBeenCalledWith("owner", "stored", input.context.root.name);
+    expect(kpiCanonicalJson(store.getState().project)).toBe(before);
+    expect(save).not.toHaveBeenCalled(); expect(selectedExecution).not.toHaveBeenCalled();
+  });
+  it("replays an already committing selected-Skill request exactly after the Context selection changes", async () => {
+    const content = "# Service output\nUse the selected service definition.";
+    const skill = { id: "custom.service", title: "Service output", version: 1, content, contentHash: `sha256:${createHash("sha256").update(content).digest("hex")}` };
+    store.setState({ smartKpiSkill: { workspaceId: "owner", vdtId: "stored", status: "ready", skill } });
+    const input = await prepared();
+    const execution = { mode: "cli" as const, backendId: "selected", modelId: "model", bindingVersion: "v1", credentialEpoch: "epoch" };
+    input.proposal.origin = { kind: "model", requestId: "selected-skill-replay", execution };
+    selectedSkill.mockResolvedValue(skill); selectedExecution.mockResolvedValue({ execution, revalidate: async () => true });
+    save.mockRejectedValueOnce(new Error("lost selected-Skill acknowledgement"));
+    expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: false });
+    expect(store.getState().smartKpiOperation?.phase).toBe("committing");
+    const body = JSON.stringify(save.mock.calls[0]![1]);
+    store.setState({ smartKpiSkill: { workspaceId: "owner", vdtId: "stored", status: "ready", skill: { ...skill, version: 2 } } });
+    selectedSkill.mockClear();
+    expect(await store.getState().reconcilePendingSmartKpiCommit()).toBe(true);
+    expect(JSON.stringify(save.mock.calls[1]![1])).toBe(body);
+    expect(selectedSkill).not.toHaveBeenCalled();
+  });
   it("pins illustrative estimates through lost acknowledgement/reload without changing the measured parent", async () => {
     const project = createIncomingGraphFixture("measured"); store.setState({ project, selectedNodeId: "target", activeScenarioId: "" });
     const input = manualInput(await store.getState().buildIncomingKpiContext("target"));

@@ -1,6 +1,6 @@
 import type { VdtProject, VdtNode } from "../types";
 import { userOnlyPersonalisation, type AiPersonalisation } from "../personalisation";
-import type { KpiSuggestionContext, KpiSuggestionExecutionIdentity, KpiSuggestionPeriod, KpiContextNode } from "./types";
+import type { KpiSuggestionContext, KpiSuggestionExecutionIdentity, KpiSuggestionPeriod, KpiContextNode, KpiSuggestionSkill } from "./types";
 import { KPI_SUGGESTION_LIMITS, KPI_SUGGESTION_PREPARATION_VERSION, KPI_SUGGESTION_SCHEMA, KPI_SUGGESTION_VALIDATOR } from "./types";
 import { validateKpiSuggestionContext } from "./validation";
 import { kpiSuggestionEnvelopeBytes } from "./model-output";
@@ -19,6 +19,13 @@ export async function kpiContentHash(value: unknown): Promise<string> {
   return `sha256:${[...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
+export async function assertKpiSuggestionSkillIntegrity(context: Pick<KpiSuggestionContext, "selectedSkill">): Promise<void> {
+  if (!context.selectedSkill) return;
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(context.selectedSkill.content));
+  const actual = `sha256:${[...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("")}`;
+  if (actual !== context.selectedSkill.contentHash) throw Object.assign(new Error("The selected skill content does not match its pinned version."), { code: "STALE_SKILL" });
+}
+
 /** Numeric changes alone do not spend another model request. Knownness/source
  * changes do; exact numeric/scenario/layout state is guarded separately at apply. */
 export async function fingerprintKpiProject(project: VdtProject): Promise<string> {
@@ -34,6 +41,7 @@ export async function fingerprintKpiProject(project: VdtProject): Promise<string
 }
 
 export interface BuildKpiContextOptions {
+  selectedSkill?: KpiSuggestionSkill;
   personalisation?: AiPersonalisation;
   workspaceId: string;
   vdtId: string | null;
@@ -45,6 +53,7 @@ export interface BuildKpiContextOptions {
 }
 
 export async function buildKpiSuggestionContext(project: VdtProject, options: BuildKpiContextOptions): Promise<KpiSuggestionContext> {
+  await assertKpiSuggestionSkillIntegrity(options);
   const nodes = new Map(project.graph.nodes.map(n => [n.id, n]));
   if (nodes.size !== project.graph.nodes.length) throw new Error("Duplicate graph IDs cannot form a Smart context.");
   const target = nodes.get(options.targetNodeId), root = nodes.get(project.rootNodeId);
@@ -98,6 +107,7 @@ export async function buildKpiSuggestionContext(project: VdtProject, options: Bu
     .sort((a, b) => `${a.sourceNodeId}|${a.targetNodeId}|${a.relation}`.localeCompare(`${b.sourceNodeId}|${b.targetNodeId}|${b.relation}`, "en"));
   const relationships = relationshipCandidates.slice(0, 96).map(e => ({ parentNodeId: e.sourceNodeId, childNodeId: e.targetNodeId, relation: e.relation }));
   const context: KpiSuggestionContext = {
+    ...(options.selectedSkill ? { selectedSkill: structuredClone(options.selectedSkill) } : {}),
     schemaVersion: "kpi_suggestion_context.v1", workspaceId: options.workspaceId, projectId: project.id, vdtId: options.vdtId,
     targetNodeId: target.id, graphFingerprint: options.graphFingerprint ?? await fingerprintKpiProject(project), contextHash: "",
     period: options.period,
@@ -120,7 +130,8 @@ export async function buildKpiSuggestionContext(project: VdtProject, options: Bu
   // Bind full untruncated business/goal plus all graph semantics, not just excerpt text.
   context.contextHash = await kpiContentHash({ schema: context.schemaVersion, workspaceId: options.workspaceId, projectId: project.id,
     vdtId: options.vdtId, targetNodeId: target.id, graphFingerprint: context.graphFingerprint, period: options.period, goal: options.goal,
-    ...(context.personalisation ? { personalisation: context.personalisation } : {}) });
+    ...(context.personalisation ? { personalisation: context.personalisation } : {}),
+    ...(context.selectedSkill ? { selectedSkill: { id: context.selectedSkill.id, version: context.selectedSkill.version, contentHash: context.selectedSkill.contentHash } } : {}) });
   // Keep the nearest parent and siblings visible for direction/duplicate checks.
   // Root is always supplied separately; distant ancestry and prose give way first.
   const shrinkBusinessText = () => {
@@ -130,7 +141,10 @@ export async function buildKpiSuggestionContext(project: VdtProject, options: Bu
     }
     return false;
   };
-  while (kpiSuggestionEnvelopeBytes(context) > KPI_SUGGESTION_LIMITS.inputBytes) {
+  // Guidance has its own bounded allowance; never truncate the pinned skill or
+  // let it displace the nearby graph needed for scope/direction checks.
+  const graphContext = () => { const { selectedSkill: _skill, ...graph } = context; return graph; };
+  while (kpiSuggestionEnvelopeBytes(graphContext()) > KPI_SUGGESTION_LIMITS.contextBytes) {
     let distantIndex = context.ancestors.length - 1;
     while (distantIndex >= 0 && parentIds.has(context.ancestors[distantIndex]!.id)) distantIndex--;
     if (distantIndex >= 0) { context.ancestors.splice(distantIndex, 1); context.omissions.ancestors++; }
@@ -144,6 +158,7 @@ export async function buildKpiSuggestionContext(project: VdtProject, options: Bu
     const kept = context.parentRelationships.filter(e => remaining.has(e.parentNodeId) && remaining.has(e.childNodeId));
     context.omissions.relationships += context.parentRelationships.length - kept.length; context.parentRelationships = kept;
   }
+  if (kpiSuggestionEnvelopeBytes(context) > KPI_SUGGESTION_LIMITS.inputBytes) throw new Error("The selected skill and KPI context exceed the bounded input limit.");
   return validateKpiSuggestionContext(context);
 }
 

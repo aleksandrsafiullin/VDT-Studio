@@ -9,7 +9,7 @@ import { INCOMING_KPI_APPLY_SCHEMA, INCOMING_KPI_DRAFT_SCHEMA, INCOMING_KPI_LIMI
   type IncomingKpiFormulaAnalysis, type IncomingKpiFormulaAuthorship, type IncomingKpiLineage,
   type IncomingKpiManualKey, type IncomingKpiProposedAlias, type IncomingKpiResolvedAlias } from "./incoming-types";
 
-const aliasPattern = /^(?:p_[1-6]|[me]_[0-9a-f]{32})$/;
+const aliasPattern = /^(?:p_(?:[1-9]|[1-5][0-9]|6[0-4])|[me]_[0-9a-f]{32})$/;
 const nodeIdPattern = /^[A-Za-z_][A-Za-z0-9_]{0,159}$/;
 const hashPattern = /^sha256:[a-f0-9]{64}$/;
 const rawText = (value: unknown, max: number): value is string => typeof value === "string" && value.length <= max
@@ -209,7 +209,7 @@ export function inspectIncomingKpiDraft(input: IncomingKpiBatchInput, project?: 
       bindings.push({ alias: row.key, origin: "existing", name: node.name, unit: node.unit, existingNodeId: node.id });
     }
     const newNodeCount = bindings.filter(row => !row.existingNodeId).length, existingReferenceCount = bindings.length - newNodeCount;
-    smartAssert(newNodeCount <= limits.newRows && existingReferenceCount <= limits.existingReferences, "ROW_LIMIT", "Limit: 6 new KPIs and 16 existing references.");
+    smartAssert(newNodeCount <= limits.newRows && existingReferenceCount <= limits.existingReferences, "ROW_LIMIT", "The incoming layer exceeds its bounded processing capacity.");
     const existingIds = bindings.filter(row => row.existingNodeId).map(row => row.existingNodeId);
     smartAssert(new Set(existingIds).size === existingIds.length, "DUPLICATE_REFERENCE", "Use each existing KPI once.");
     const analysis = parseIncomingKpiFormula(draft.formula, draft.formulaAuthorship), selected = new Set(bindings.map(row => row.alias));

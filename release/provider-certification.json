@@ -66,7 +66,7 @@
       "id": "codex_subscription",
       "status": "alpha",
       "liveVerified": false,
-      "evidence": "Fake executable, parser, auth, schema, and executor tests; bounded Smart protocol/cancellation fixtures, no Smart live qualification; 2026-11-01 host: structured tree/branch/review passed; gpt-6.1-sol Smart blocked by Code Mode/read-only conflict; session chat timed out, not qualified (docs/HARNESS_CONNECTIONS.md)"
+      "evidence": "Fake executable, parser, auth, schema, and executor tests; bounded Smart protocol/cancellation fixtures; 2026-11-01 host: tree/branch/review passed, v1 Sol Smart blocked by Code Mode and session chat timed out; 2026-11-03 v2: local gpt-5.6-luna Low Smart response passed without tools/repair, native and full provider qualification remain open (docs/implementation/CODEX_SMART_KPI_2026-11-03.md)"
     },
     {
       "id": "claude_subscription",

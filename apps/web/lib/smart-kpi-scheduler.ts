@@ -3,7 +3,7 @@ import {
   buildKpiSuggestionContext, fingerprintKpiProject, kpiCanonicalJson,
   resolveKpiSuggestionSelection, validateKpiSuggestionForContext, validateKpiSuggestionDecomposition,
   type KpiSuggestionContext, type KpiSuggestionExecutionIdentity, type KpiSuggestionPeriod,
-  type KpiSuggestionSelection, type KpiSuggestionSet, type KpiSuggestionState, type VdtProject
+  type KpiSuggestionSelection, type KpiSuggestionSet, type KpiSuggestionState, type VdtProject, type KpiSuggestionSkill
 } from "@vdt-studio/vdt-core";
 import { SmartKpiCache, smartKpiExecutionKey, validSmartKpiLimitations, type SmartKpiCacheScope, type SmartKpiNegativeStatus } from "./smart-kpi-cache";
 import { smartKpiTargetIds } from "./smart-kpi-targets";
@@ -14,6 +14,7 @@ const priority: Record<SmartKpiPriority, number> = { hover: 0, selected: 1, new_
 export type SmartKpiPreparationResult = KpiSuggestionSet | undefined |
   { status: "ready"; proposal: unknown } | { status: "empty" | "unavailable"; reason: string; limitations?: string[] };
 export interface SmartKpiWorkspace {
+  selectedSkill?: KpiSuggestionSkill;
   personalisation?: AiPersonalisation;
   workspaceId: string; project: VdtProject; vdtId: string | null; period: KpiSuggestionPeriod;
   execution?: KpiSuggestionExecutionIdentity; goal?: string;
@@ -143,6 +144,7 @@ export class SmartKpiScheduler {
       if (input.execution) smartKpiExecutionKey(input.execution);
       const generation = kpiCanonicalJson({ workspace: input.workspaceId, project: input.project.id, vdt: input.vdtId,
         graphFingerprint, period: input.period, goal: input.goal ?? null, personalisation: input.personalisation ?? null,
+        selectedSkill: input.selectedSkill ? [input.selectedSkill.id, input.selectedSkill.version, input.selectedSkill.contentHash] : null,
         execution: input.execution ? smartKpiExecutionKey(input.execution) : null });
       this.workspace = input; this.targets = smartKpiTargetIds(input.project); this.graphFingerprint = graphFingerprint; this.attachLane(input.workspaceId);
       if (generation !== this.generation) {
@@ -167,7 +169,8 @@ export class SmartKpiScheduler {
       const w = this.workspace!;
       context = (this.options.buildContext ?? buildKpiSuggestionContext)(w.project, {
         workspaceId: w.workspaceId, vdtId: w.vdtId, targetNodeId, period: w.period,
-        graphFingerprint: this.graphFingerprint, ...(w.goal === undefined ? {} : { goal: w.goal }), ...(w.personalisation ? { personalisation: w.personalisation } : {})
+        graphFingerprint: this.graphFingerprint, ...(w.goal === undefined ? {} : { goal: w.goal }), ...(w.personalisation ? { personalisation: w.personalisation } : {}),
+        ...(w.selectedSkill ? { selectedSkill: w.selectedSkill } : {})
       });
       this.contexts.set(targetNodeId, context);
     }

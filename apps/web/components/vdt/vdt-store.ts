@@ -35,6 +35,7 @@ import { AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt-studio/local-runner/timeou
 import { makeId } from "@/lib/id";
 import type { ProjectCardMetadata } from "@/lib/project-metadata";
 import { workspacePersonalisation } from "@/lib/personalisation";
+import type { SmartKpiSkillState } from "@/lib/smart-kpi-skill";
 import { studioStateStorage } from "@/lib/smart-kpi-journal";
 import { apiKeyScope } from "@/lib/api-key-persistence";
 import type { SmartKpiIncomingActions } from "@/lib/smart-kpi-incoming-contract";
@@ -384,6 +385,8 @@ export interface VdtStudioState {
   smartKpiRebaseRequired?: SmartKpiRebase | undefined;
   smartKpiConflictOperation?: SmartKpiOperation | undefined;
   smartKpiFencedRunIds: string[];
+  /** Runtime-only selected guidance; never persists the library in editor state. */
+  smartKpiSkill?: SmartKpiSkillState | undefined;
   pendingIncomingKpiRestart?: { runId: string; workspaceId: string; vdtId: string | null; terminalCleanupConfirmed?: true } | undefined;
   buildIncomingKpiContext: SmartKpiIncomingActions["buildIncomingKpiContext"];
   previewIncomingKpiBatch: SmartKpiIncomingActions["previewIncomingKpiBatch"];

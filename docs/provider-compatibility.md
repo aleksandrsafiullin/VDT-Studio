@@ -17,6 +17,14 @@ Vibe Smart keyring identity currently requires an inspectable macOS encrypted
 store, or a verified environment/`.env` source. Unknown stores are explicit
 limitations, not a provider or key fallback. See [harness credential boundaries](HARNESS_CONNECTIONS.md).
 
+Codex Smart v2 resolves the required-Code-Mode startup conflict while retaining
+read-only execution and rejection of tool activity. Local `gpt-5.6-luna` / Low
+verification on CLI `0.166.0-alpha.5.1` is recorded in the
+[2026-11-03 report](implementation/CODEX_SMART_KPI_2026-11-03.md).
+The historical Sol failure below used v1. This does not qualify every model,
+native distribution or provider isolation; Codex remains alpha and
+`liveVerified: false` in the certification manifest.
+
 The October 26–27 revenue runs below are guided workflow diagnostics. Supplying
 the formula and tool sequence in the initial prompt prevents treating even a
 successful finish without operator replies as independent business autonomy.

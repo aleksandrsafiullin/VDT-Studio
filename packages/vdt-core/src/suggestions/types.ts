@@ -5,11 +5,12 @@ export const KPI_SUGGESTION_SCHEMA = "kpi_suggestions.v1" as const;
 export const KPI_SUGGESTION_VALIDATOR = "smart-kpi-validator.v2";
 /** Invalidates rebuildable preparation outcomes when task intent changes,
  * independently of the proposal wire schema and arithmetic validator. */
-export const KPI_SUGGESTION_PREPARATION_VERSION = "smart-kpi-preparation.v12";
+export const KPI_SUGGESTION_PREPARATION_VERSION = "smart-kpi-preparation.v14";
 export const KPI_SUGGESTION_TASK = "suggest_incoming_kpis" as const;
 export const KPI_SUGGESTION_TASK_SCHEMA = "suggest-incoming-kpis-v1" as const;
 export const KPI_SUGGESTION_LIMITS = {
-  inputBytes: 24 * 1024, outputBytes: 16 * 1024, groups: 3, children: 6,
+  inputBytes: 192 * 1024, contextBytes: 24 * 1024, skillBytes: 128 * 1024,
+  outputBytes: 16 * 1024, groups: 3, children: 64,
   outputTokens: 2048, apiTimeoutMs: 15_000, cliTimeoutMs: 30_000,
   contextNodes: 32, businessContextChars: 8000, ttlMs: 7 * 24 * 60 * 60 * 1000
 } as const;
@@ -44,7 +45,17 @@ export interface KpiContextNode {
   mappingIdentity?: string;
 }
 
+/** Exact selected local-library version; reference data, never tool authority. */
+export interface KpiSuggestionSkill {
+  id: string;
+  title: string;
+  version: number;
+  contentHash: string;
+  content: string;
+}
+
 export interface KpiSuggestionContext {
+  selectedSkill?: KpiSuggestionSkill;
   personalisation?: AiPersonalisation;
   schemaVersion: "kpi_suggestion_context.v1";
   workspaceId: string;

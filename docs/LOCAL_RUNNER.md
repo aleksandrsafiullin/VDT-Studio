@@ -98,10 +98,19 @@ native qualification and provider certification boundaries are unchanged.
 read-only contract through `/v1/completions`, managed development execution and
 the desktop `complete` pipe method. It never boots/resumes an agent, researches,
 retains conversation or repairs output. API/BYOK uses the same compact task via
-the guarded `/api/ai/suggestions` service. Input/final output are 24/16 KiB and
+the guarded `/api/ai/suggestions` service. Input/final output are 192/16 KiB and
 transport envelopes 64 KiB. API/local generation is capped at 2048 tokens; Codex's
 2048 is prompt-requested only. HTTP/CLI execution is bounded by 15/30 s or the
 lower raw user timeout, including CLI version selection.
+
+The graph-context allowance remains 24 KiB; full Context-selected Skill guidance
+has a separate 128 KiB content bound and participates in context/cache identity.
+The runner verifies its raw-content hash before inference and treats it as
+reference data, with no file/skill tool access. Ollama requests 32,768 context
+tokens when a selected Skill is present (8,192 otherwise); actual model/server
+context capacity and live local-provider quality remain separate qualifications.
+The former six-component restriction is removed; 64 rows and existing formula,
+output, cancellation and explicit-Add bounds remain.
 
 Smart Codex uses a private 0700 HOME/CODEX_HOME/workspace, copies only reviewed auth/
 installation/catalog artifacts, ignores config/rules, preserves the selected or
@@ -109,6 +118,16 @@ configured default model explicitly, uses read-only sandbox, disables reviewed t
 features/web search, and rejects reported tools/unknown events/multiple turns or
 malformed UTF-8. One invocation does not establish an opaque provider hard token
 limit or OS isolation. All current harness adapters also use the structured Smart contract through the shared dispatcher; native Codex execution retains this private policy.
+
+Codex Smart policy `smart-codex-readonly.v2` keeps the standalone Code Mode host
+available for models whose catalog requires `code_mode_only`, including
+`gpt-5.6-luna`. Code Mode stays off for ordinary models; required Code Mode has
+the entire built-in `functions` namespace excluded from its nested tool surface,
+image reading disabled, and no in-process host fallback. The private home has no
+user MCP/hooks/plugins. Every reported tool event, including Code Mode, still
+fails preparation; the task has no tool loop. Policy versioning invalidates
+preparations admitted under the incompatible v1 profile. See the
+[local diagnosis and verification](implementation/CODEX_SMART_KPI_2026-11-03.md).
 
 `POST /v1/smart-execution` admits registered harness metadata and requires the same pairing/
 Origin/JSON controls as other protected routes. Its closed body is

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { KPI_SUGGESTION_LIMITS } from "@vdt-studio/vdt-core";
 import { schemaIdForTask } from "@vdt-studio/model-bridge";
 import type { AiProvider, AiTaskType, LocalRunnerProviderConfig } from "../types";
 import { awaitProviderAbort, awaitProviderSettlement, readBoundedText } from "./provider-utils";
@@ -104,7 +105,7 @@ export class LocalRunnerProvider implements AiProvider {
     const timeoutMs = Math.min(this.config.timeoutMs ?? 30_000, this.config.backendId.endsWith("_subscription") ? 30_000 : 15_000);
     const body = JSON.stringify({ requestId, backendId: this.config.backendId, taskType: params.taskType, schemaId: schemaIdForTask(params.taskType),
       input: { data: params.input, systemPrompt: params.systemPrompt, userPrompt: compactRunnerPrompt(params.taskType, params.userPrompt) }, model: params.model ?? this.config.model, ...(this.config.modelReasoning === undefined ? {} : { modelReasoning: this.config.modelReasoning }), timeoutMs });
-    if (new TextEncoder().encode(body).byteLength > 24 * 1024) throw new Error("Smart runner request exceeds its bound.");
+    if (new TextEncoder().encode(body).byteLength > KPI_SUGGESTION_LIMITS.inputBytes) throw new Error("Smart runner request exceeds its bound.");
     const unknown = () => Object.assign(new Error("Remote cleanup could not be confirmed; Smart execution is quarantined."), { code: "CLEANUP_UNCONFIRMED" });
     let cancellation: Promise<void> | undefined, terminal = false, timedOut = false;
     const reconcile = async () => {

@@ -1,7 +1,7 @@
 /** HTTP admission shared by AI entries before parsing or any trusted execution. */
 import { hasSameLocalOrigin } from "./local-request-origin";
 
-export const SMART_HTTP_BODY_BYTES = 32 * 1024;
+export const SMART_HTTP_BODY_BYTES = 208 * 1024;
 export const AI_ROUTE_BODY_BYTES = 512 * 1024;
 const routeError = (code: string) => Object.assign(new Error(code), { code });
 

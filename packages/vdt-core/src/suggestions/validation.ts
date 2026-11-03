@@ -36,9 +36,16 @@ function date(v: unknown): number {
 }
 
 export function validateKpiSuggestionContext(value: unknown): KpiSuggestionContext {
-  smartRecord(value, ["personalisation", "schemaVersion", "workspaceId", "projectId", "vdtId", "targetNodeId", "graphFingerprint", "contextHash", "period", "business", "root", "target", "children", "ancestors", "siblings", "decompositionPlan", "planScope", "parentRelationships", "omissions"],
+  smartRecord(value, ["selectedSkill", "personalisation", "schemaVersion", "workspaceId", "projectId", "vdtId", "targetNodeId", "graphFingerprint", "contextHash", "period", "business", "root", "target", "children", "ancestors", "siblings", "decompositionPlan", "planScope", "parentRelationships", "omissions"],
     ["schemaVersion", "workspaceId", "projectId", "vdtId", "targetNodeId", "graphFingerprint", "contextHash", "period", "business", "root", "target", "children", "ancestors", "siblings", "parentRelationships", "omissions"]);
   smartAssert(value.schemaVersion === "kpi_suggestion_context.v1", "INVALID_CONTEXT", "Unknown Smart context schema.");
+  if (value.selectedSkill !== undefined) {
+    smartRecord(value.selectedSkill, ["id", "title", "version", "contentHash", "content"]);
+    smartString(value.selectedSkill.id, 160); smartString(value.selectedSkill.title, 160); hash(value.selectedSkill.contentHash);
+    smartAssert(Number.isSafeInteger(value.selectedSkill.version) && Number(value.selectedSkill.version) > 0, "INVALID_CONTEXT", "Invalid selected skill version.");
+    smartString(value.selectedSkill.content, KPI_SUGGESTION_LIMITS.skillBytes);
+    smartAssert(new TextEncoder().encode(value.selectedSkill.content).byteLength <= KPI_SUGGESTION_LIMITS.skillBytes, "INPUT_TOO_LARGE", "The selected skill exceeds its content limit.");
+  }
   if (value.personalisation !== undefined) smartAssert(validAiPersonalisation(value.personalisation), "INVALID_CONTEXT", "Invalid personalisation instructions.");
   for (const field of ["workspaceId", "projectId", "targetNodeId"]) smartString(value[field], 160);
   if (value.vdtId !== null) smartString(value.vdtId, 160);
@@ -193,7 +200,7 @@ export function validateKpiSuggestionSet(value: unknown, now?: number): KpiSugge
 }
 
 export function resolveKpiSuggestionSelection(proposal: KpiSuggestionSet, selection: KpiSuggestionSelection): KpiSuggestionGroup {
-  smartRecord(selection, ["groupId", "childKeys", "mode"]); smartString(selection.groupId, 48); stringList(selection.childKeys, 6, 48);
+  smartRecord(selection, ["groupId", "childKeys", "mode"]); smartString(selection.groupId, 48); stringList(selection.childKeys, KPI_SUGGESTION_LIMITS.children, 48);
   smartAssert(selection.mode === "contextual" || selection.mode === "formula", "INVALID_SELECTION", "Invalid Smart application mode.");
   const group = proposal.groups.find(g => g.id === selection.groupId);
   smartAssert(group, "INVALID_SELECTION", "Select one Smart alternative.");

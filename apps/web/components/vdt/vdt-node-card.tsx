@@ -62,7 +62,6 @@ function ValueRow({
         data-testid={valueTestId}
         title={`${emphasize ? "Changed in main scenario. " : ""}${estimated && amount !== undefined ? "Illustrative estimate, not measured data. " : ""}${formatNumber(amount)} ${unit ?? "unit n/a"}`}
       >
-        {estimated && amount !== undefined ? <span className={styles.estimate} aria-label="Estimate">≈ </span> : null}
         {formatNumber(amount)}
       </p>
     </div>

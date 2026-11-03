@@ -1,4 +1,4 @@
-import { SMART_KPI_INSTRUCTION } from "@vdt-studio/vdt-core";
+import { KPI_SUGGESTION_LIMITS, SMART_KPI_INSTRUCTION } from "@vdt-studio/vdt-core";
 import { getStrictResponseJsonSchema, validateRegisteredSchema, normalizeRegisteredSchemaOutput, extractBoundedJson, type VdtSchemaId } from "@vdt-studio/model-bridge";
 import { withHarnessSession } from "@vdt-studio/model-bridge/local-runtime";
 import type { BackendManifest, CompletionRequest } from "../cli/types";
@@ -15,7 +15,7 @@ export async function executeHarnessCompletion(manifest: BackendManifest, reques
   try {
     const schema = getStrictResponseJsonSchema(request.schemaId as VdtSchemaId);
     const prompt = `${smart ? SMART_KPI_INSTRUCTION + "\n" : ""}Return exactly one JSON object matching the supplied schema. Use only the supplied input. Do not use native tools, skills, hooks, plugins, memory, files, commands, MCP, research or delegation. This is an independent read-only structured completion, not a chat continuation.\n${JSON.stringify({ taskType: request.taskType, input: request.input, schema })}`;
-    if (Buffer.byteLength(prompt) > (smart ? 24 * 1024 : 1024 * 1024)) throw Object.assign(new Error("Harness input exceeds its bound."), { code: "INPUT_TOO_LARGE" });
+    if (Buffer.byteLength(prompt) > (smart ? KPI_SUGGESTION_LIMITS.inputBytes : 1024 * 1024)) throw Object.assign(new Error("Harness input exceeds its bound."), { code: "INPUT_TOO_LARGE" });
     const executable = options.resolveExecutable ? await options.resolveExecutable(manifest, options.env ?? process.env) : undefined;
     const text = await withHarnessSession(h, controller.signal, async session => {
       await session.selectModel(request.model ?? h.defaultModel, controller.signal);

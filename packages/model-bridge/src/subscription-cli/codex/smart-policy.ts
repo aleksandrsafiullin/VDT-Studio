@@ -6,8 +6,17 @@ import { selectCodexExecutable, type SelectedCodexExecutable } from "./executabl
 import { parseCodexModelOptions } from "./adapter";
 import type { HarnessReasoningValue } from "../reasoning";
 
-export const SMART_CODEX_POLICY_VERSION = "smart-codex-readonly.v1";
-export const SMART_CODEX_DISABLED_FEATURES = Object.freeze(["shell_tool", "unified_exec", "apply_patch_freeform", "multi_agent", "multi_agent_v2", "apps", "plugins", "remote_plugin", "hooks", "browser_use", "browser_use_external", "in_app_browser", "computer_use", "image_generation", "code_mode", "code_mode_host", "memories", "skill_search", "skill_mcp_dependency_install", "tool_suggest", "workspace_dependencies", "goals", "request_permissions_tool"]);
+export const SMART_CODEX_POLICY_VERSION = "smart-codex-readonly.v2";
+export const SMART_CODEX_DISABLED_FEATURES = Object.freeze(["shell_tool", "unified_exec", "apply_patch_freeform", "multi_agent", "multi_agent_v2", "apps", "plugins", "remote_plugin", "hooks", "browser_use", "browser_use_external", "in_app_browser", "computer_use", "image_generation", "view_image", "memories", "skill_search", "skill_mcp_dependency_install", "tool_suggest", "workspace_dependencies", "goals", "request_permissions_tool"]);
+/** Catalog models can require Code Mode even with its feature disabled. Keep
+ * its standalone V8 host available, without the built-in functions namespace
+ * (patching, resource reads, etc.) or an in-process fallback. Ordinary models
+ * still leave Code Mode off. Stream admission rejects every reported tool call,
+ * including Code Mode itself; this does not grant a Smart agent/tool loop. */
+export const SMART_CODEX_CODE_MODE_CONFIG = Object.freeze([
+  'features.code_mode={enabled=false,excluded_tool_namespaces=["functions"]}',
+  "features.code_mode_host={enabled=true,disable_in_process_fallback=true}"
+]);
 export const codexSmartHome = (env: NodeJS.ProcessEnv) => env.CODEX_HOME ?? path.join(env.HOME ?? os.homedir(), ".codex");
 const model = (value: string) => { if (!value || value.length > 160 || value.startsWith("-") || /[\x00-\x20]/.test(value)) throw new Error("Codex selected model is invalid."); return value; };
 

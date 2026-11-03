@@ -1,4 +1,4 @@
-import { SMART_KPI_INSTRUCTION } from "@vdt-studio/vdt-core";
+import { KPI_SUGGESTION_LIMITS, SMART_KPI_INSTRUCTION } from "@vdt-studio/vdt-core";
 import { execFile, spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -840,7 +840,7 @@ export async function executeCli(
       : undefined;
 
   async function runCliAttempt(prompt: string, timeoutMs: number, requestJson = payload): Promise<ExecutionResult> {
-    if (byteLength(prompt) > (smart ? 24 * 1024 : EXECUTION_LIMITS.maxPromptBytes)) {
+    if (byteLength(prompt) > (smart ? KPI_SUGGESTION_LIMITS.inputBytes : EXECUTION_LIMITS.maxPromptBytes)) {
       throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
     }
 

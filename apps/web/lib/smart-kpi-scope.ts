@@ -1,13 +1,17 @@
 import type { AiPersonalisation, InstructionPreferences, KpiSuggestionPeriod, VdtProject } from "@vdt-studio/vdt-core";
 import { workspacePersonalisation } from "./personalisation";
 import type { StoredProjectSummary } from "./vdt-storage-client";
+import type { SmartKpiSkillState } from "./smart-kpi-skill";
+import type { KpiSuggestionSkill } from "@vdt-studio/vdt-core";
 
 export interface SmartKpiScopeState {
+  smartKpiSkill?: SmartKpiSkillState | undefined;
   personalisation?: InstructionPreferences;
   project: VdtProject;
   workspace: { activeProjectId?: string | undefined; activeVdtId?: string | undefined; projectSummaries: StoredProjectSummary[] };
 }
 export interface SmartKpiScope {
+  selectedSkill?: KpiSuggestionSkill;
   personalisation?: AiPersonalisation;
   workspaceId: string;
   vdtId: string | null;
@@ -46,6 +50,8 @@ export function resolveSmartKpiScope(state: SmartKpiScopeState): SmartKpiScope {
     grain
   };
   return {
+    ...(state.smartKpiSkill?.status === "ready" && state.smartKpiSkill.workspaceId === owner && state.smartKpiSkill.vdtId === vdtId
+      && state.smartKpiSkill.skill ? { selectedSkill: state.smartKpiSkill.skill } : {}),
     personalisation: workspacePersonalisation(state),
     workspaceId: (owner ?? `draft:${state.project.id}`).slice(0, 160), vdtId, period,
     ...(state.project.description?.trim() ? { goal: state.project.description.trim().slice(0, 1000) } : {}),

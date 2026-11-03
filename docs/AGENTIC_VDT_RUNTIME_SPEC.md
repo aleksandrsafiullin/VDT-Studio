@@ -1,5 +1,17 @@
 # Agentic VDT Runtime Implementation Spec
 
+## Suggested KPI selected-guidance amendment (2026-11-03)
+
+The bounded Suggested KPI task now reads the same project/VDT Skill selection as
+the agent's Context. Its exact version, raw content hash and full content enter
+the task as modelling reference data. The pin participates in preparation/cache
+identity; current-selection checks reject stale preparation and new model-backed
+Add operations. This grants no agent tools or graph-write authority. Immutable
+committing journals retain their original replay semantics. The six-component
+product cap is superseded by a 64-row processing ceiling and the independent
+formula/output bounds. See the
+[implementation report](implementation/SMART_KPI_SELECTED_SKILL_2026-11-03.md).
+
 ## Local harness integration (2026-11-02)
 
 ADR-012 extends the external integration catalog to thirteen current presets and host-managed custom ACP/JSONL profiles, including Kimi Code, Mistral Vibe, Kilo Code, Qwen Code, Grok Build and Pi RPC. ADR-013 separates Suggested KPI model/reasoning settings from chat, with explicit Off reasoning by default and no unsupported-value fallback. The existing checkpoint turn, Supervisor/Gateway, immutable model/configuration binding and finish-receipt contracts apply. This amendment grants no qualification, hosted execution, recovery coordinator or direct graph-write authority. See [Harness connections](HARNESS_CONNECTIONS.md).

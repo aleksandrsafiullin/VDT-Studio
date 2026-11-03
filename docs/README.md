@@ -94,6 +94,7 @@ Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md`, the
 | [`ADR-013`](adr/ADR-013-independent-suggested-kpi-execution-settings.md) | Independent Suggested KPI model and explicit Off-by-default reasoning; provider mappings, immutable preparation and qualification boundary |
 
 Smart suggestions follow the [plan](implementation/SMART_KPI_SUGGESTIONS_PLAN.md),
+[selected-Skill integration and expanded-layer contract](implementation/SMART_KPI_SELECTED_SKILL_2026-11-03.md),
 [execution log](implementation/SMART_KPI_SUGGESTIONS_LOG.md) and
 [independent review](implementation/SMART_KPI_SUGGESTIONS_REVIEW.md). The
 [2026-11-02 latency investigation](implementation/SMART_KPI_LATENCY_2026-11-02.md)

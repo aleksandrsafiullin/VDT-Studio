@@ -9,6 +9,7 @@ import { GET, POST } from "./route";
 import { POST as clone } from "./clone/route";
 import { GET as getSelection, POST as select } from "./selection/route";
 import { POST as files } from "./files/route";
+import { GET as getSuggestedSkill } from "../ai/suggestions/skill/route";
 import { openSkillPath } from "@/lib/open-skill-path";
 
 vi.mock("@/lib/open-skill-path", () => ({ openSkillPath: vi.fn(async () => {}) }));
@@ -97,6 +98,19 @@ describe("local skills API", () => {
     expect((await select(request("/selection", input))).status).toBe(409);
     const reopened = await getSelection(new Request("http://localhost:3000/api/skills/selection?projectId=p&vdtId=v"));
     expect((await reopened.json()).skill).toMatchObject({ id: "finance.revenue_profit", source: "user" });
+  });
+  it("gives Suggested KPI the exact manually selected version under the same local ownership boundary", async () => {
+    const db = openVdtStorageDatabase(process.cwd());
+    try { db.createProject({ id: "p", name: "Project" }); db.createVdt({ id: "v", projectId: "p", name: "Tree", rootKpi: "Unfamiliar KPI" }); } finally { db.close(); }
+    const current = await (await getSelection(new Request("http://localhost:3000/api/skills/selection?projectId=p&vdtId=v"))).json();
+    const created = (await (await POST(request("", { raw: markdown() }))).json()).skill;
+    expect((await select(request("/selection", { projectId: "p", vdtId: "v", skillId: created.id, expectedRevision: current.selection.revision }))).status).toBe(200);
+    const response = await getSuggestedSkill(new Request("http://localhost:3000/api/ai/suggestions/skill?projectId=p&vdtId=v"));
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ ok: true, skill: { id: created.id, title: created.title, version: created.version, contentHash: created.contentHash, content: created.raw } });
+    expect((await getSuggestedSkill(new Request("http://localhost:3000/api/ai/suggestions/skill?projectId=another&vdtId=v"))).status).toBe(404);
+    vi.stubEnv("VDT_APP_MODE", "hosted_web");
+    expect((await getSuggestedSkill(new Request("http://localhost:3000/api/ai/suggestions/skill?projectId=p&vdtId=v"))).status).toBe(403);
   });
   it("lets the user select another skill after the default was deleted from the folder", async () => {
     await GET(new Request("http://localhost:3000/api/skills"));

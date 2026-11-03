@@ -105,8 +105,9 @@ identifies the root; keep its Calculated label when it has a formula. Place Base
 above the main scenario's Potential in one inset value surface. Each row has its
 label aligned left and tabular number aligned right on the same line; do not
 repeat unit tags beside the Base/Potential values.
-Unavailable values remain `n/a`, zero remains zero, and illustrative estimates
-retain **≈** and their explanatory tooltip. Full numbers and units remain
+Unavailable values remain `n/a`, zero remains zero, and saved card values omit
+the **≈** prefix while illustrative estimates retain their explanatory tooltip.
+Full numbers and units remain
 available in titles when a label is truncated. When the main scenario's Potential
 differs from Base by more than the existing numeric tolerance, use the configured
 Scenario highlight fill on the Potential row, stronger label/number type and a
@@ -131,11 +132,14 @@ Keep the card's 238 px width and saved graph positions. Respect reduced motion.
 
 ### Inspector
 
-The inspector leads with the current value and its unit. Show **≈** on estimates
-and keep source/assumption notes visible beside that value. Use restrained tabs
+The inspector leads with the current value and its unit, without an **≈** prefix.
+Keep source/assumption notes visible beside that value. Use restrained tabs
 and grouped definition, formula and detail fields with neutral inputs. Preserve
 readonly source values, the protected root, reference-group treatment and the
-Not changeable toggle. Formula errors and the Warnings tab remain actionable;
+Not changeable toggle. Group the entire Back-calculated form below Description
+immediately above Not changeable, including its read-only Back-calculated Base
+field when enabled. Ordinary Baseline/Source values stay above Description when
+back-calculation is off. Formula errors and the Warnings tab remain actionable;
 an empty warnings state describes the absence of formula errors, not overall
 model quality. Formula tools, token drag targets and raw editing retain the
 same calculation and validation behavior. Graphite marks active navigation
@@ -194,8 +198,8 @@ Escape cancels the pending edit.
 Derive text color from the WCAG 2.2 sRGB luminance/contrast calculation, with an
 unrounded minimum of 4.5:1 for the solid text/fill pair. Prefer graphite on light
 fills and white on dark fills, falling back to true black for midtones that fail
-with both. Apply that foreground to both the label/number and any **≈** marker
-on the colored row. Derive a card border with at least 3:1 contrast against the
+with both. Apply that foreground to the label and number on the colored row.
+Derive a card border with at least 3:1 contrast against the
 white card, including for white fills. Share the same calculation and row styles
 between preview and canvas. These pairwise checks do not certify the entire UI.
 See [WCAG contrast guidance](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html).
@@ -266,8 +270,9 @@ Default Smart illustrations use **≈**, amber fields/tooltips and one **Use
 estimates · illustrative values** checkbox. Keep that choice beside the numeric
 rows; do not add an approval modal. Reference entry has its own **Reference is an
 estimate** checkbox. Measured existing values remain visually distinct and read-only.
-Keep **≈** visible on saved node-card values and the inspector value as well;
-the source note must identify the numbers as illustrative, unmeasured estimates.
+Saved node-card values and the inspector's large Value omit **≈**. Card value
+tooltips and inspector source notes identify illustrative, unmeasured estimates.
+Smart proposal/editor estimate markers remain visible before Add.
 
 ## Versions
 

@@ -133,6 +133,18 @@ this encoding. If normal and compact writes both fail, no new request is sent.
 
 ## Smart KPI bounded preparation (partial product integration)
 
+Selected guidance amendment 2026-11-03: the trusted-local Smart skill metadata
+read reuses the owning Context selection and returns its exact pinned content,
+not arbitrary filesystem paths. The full content is capped at 128 KiB and final
+Smart input at 192 KiB (208 KiB HTTP request including provider configuration).
+The graph keeps its separate 24 KiB allowance. ID/version/content hash bind
+context and cache identity; raw hash validation precedes inference. Current
+selection is checked on HTTP admission/completion and before new model-backed
+Add. Changed/stale pins fail instead of silently switching Skill or using a
+generic recipe. Content is untrusted modelling reference data, never permission
+for tools, dialogue, research, filesystem access or mutation. Existing cleanup,
+quota, journal replay, CAS and explicit Add authority remain.
+
 Smart proposal data contains no numeric defaults, write/CAS/provider authority or
 commands. Explicit context-bound recipe provenance is required; names/keywords
 cannot grant applicability. Bounded context contains mapping hashes/knownness,
@@ -170,6 +182,16 @@ The directory can still contain copied auth artifacts until owned descendants ar
 confirmed stopped; it must not be removed early. This is trusted-local policy,
 not hard OS isolation or a provider token/cost guarantee. Full-agent trust controls
 and release `NO-GO` are unchanged. See [ADR-008](../adr/ADR-008-smart-kpi-preparation-and-explicit-apply.md).
+
+Smart Codex policy v2 permits the standalone Code Mode host required by some
+catalog models, without enabling Code Mode for ordinary models. Its nested
+built-in `functions` namespace is explicitly excluded; image reading is also
+disabled. The host's in-process fallback is forbidden. Private HOME/CODEX_HOME
+still excludes user config, MCP, hooks and plugins. Code Mode's V8 wrapper may
+be advertised when the model requires it, but any observed tool event remains a
+terminal preparation failure, including a later valid assistant result.
+The change does not authorize a tool loop or establish native hard isolation.
+Policy identity changes invalidate old preparation bindings.
 
 BYOK retention uses the separate encrypted origin-local vault in [ADR-007](../adr/ADR-007-encrypted-browser-api-keys.md): AES-256-GCM with non-extractable Web Crypto keys persisted by IndexedDB. Ordinary state/exports/server records exclude plaintext keys. Destination changes clear inherited credentials; deletion removes ciphertext and its key; unreadable data is retained with a visible error/retry. This does not defend against same-origin script execution, malicious extensions or a compromised browser/profile/OS, and is not OS Keychain or hosted authorization. Profile/site-data clearing and eviction are outside normal session retention; native qualification remains open.
 

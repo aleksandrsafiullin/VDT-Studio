@@ -61,13 +61,13 @@ describe("FM-01 incoming draft and immutable source contract", () => {
     delete proposal.groups[0]!.formula;
     expect(incomingKpiProposalFormula(proposal, "components")).toBeUndefined();
   });
-  it("keeps six existing factors plus one new row valid and rejects seven NEW/17 existing rows", async () => {
+  it("keeps existing factors plus new rows valid and bounds processing capacity separately", async () => {
     const project = createIncomingGraphFixture("existing_six"), input = manualInput(await fixtureContext(project));
     input.draft.existingFactors = Array.from({ length: 6 }, (_, i) => ({ key: existingKey(i), nodeId: `factor_${i}`, selected: true }));
     input.draft.formula = [...input.draft.existingFactors.map(row => row.key), manualKey].join(" + ");
     expect(inspectIncomingKpiDraft(input, project)).toMatchObject({ readyForCompile: true, newNodeCount: 1, existingReferenceCount: 6 });
     const tooMany = structuredClone(input);
-    tooMany.draft.manualChildren = Array.from({ length: 7 }, (_, i) => ({ key: `m_${i.toString(16).padStart(32, "0")}` as const, name: `Own${i}`, unit: "km/trip", selected: true }));
+    tooMany.draft.manualChildren = Array.from({ length: 65 }, (_, i) => ({ key: `m_${i.toString(16).padStart(32, "0")}` as const, name: `Own${i}`, unit: "km/trip", selected: true }));
     expect(inspectIncomingKpiDraft(tooMany, project).readyForCompile).toBe(false);
     tooMany.draft.manualChildren = input.draft.manualChildren;
     tooMany.draft.existingFactors = Array.from({ length: 17 }, (_, i) => ({ key: existingKey(i), nodeId: `factor_${i}`, selected: true }));
@@ -105,14 +105,14 @@ describe("FM-01 bounded AST/ID mapping and same-scale unit grammar", () => {
       { alias: manualKey, nodeId: "smart_owned_new_factor", kind: "new", origin: "manual" }
     ])).toBe("max(existing_distance, smart_owned_new_factor)");
     expect(() => parseIncomingKpiFormula("p_1 ".repeat(257), "user")).toThrow();
-    expect(() => parseIncomingKpiFormula("-".repeat(25) + "p_1", "user")).toThrow();
+    expect(() => parseIncomingKpiFormula("-".repeat(65) + "p_1", "user")).toThrow();
     expect(() => parseIncomingKpiFormula(Array.from({ length: 65 }, () => "p_1").join(" + "), "user")).toThrow();
     let terms = Array.from({ length: 50 }, () => "p_1");
     while (terms.length > 1) terms = Array.from({ length: Math.ceil(terms.length / 2) }, (_, i) => terms[i * 2 + 1] ? `(${terms[i * 2]} + ${terms[i * 2 + 1]})` : terms[i * 2]!);
     expect(() => expandIncomingKpiFormula(terms[0]!, [
       { alias: "p_1", nodeId: "x".repeat(160), kind: "existing", origin: "existing" }
     ])).toThrow("4,096");
-    for (const raw of ["target", "p_7", "sin(p_1)", "1"])
+    for (const raw of ["target", "p_65", "p_01", "sin(p_1)", "1"])
       expect(() => parseIncomingKpiFormula(raw, "user")).toThrow();
   });
   it("does not accept model coefficients disguised as literals/constant expressions/repetition, while retaining explicit user edits", () => {

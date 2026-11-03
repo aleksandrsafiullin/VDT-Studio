@@ -15,6 +15,14 @@ are recalculated on every graph evaluation, including after adding branches.
 The card uses a dashed border and badge, and Properties shows the solved Base.
 Turning the option off resumes the retained source value/formula.
 
+Properties groups the entire **Back-calculated** form below Description alongside
+**Not changeable**. When enabled, the read-only **Back-calculated Base**, Output KPI
+and Actual output fields are inside that lower group. Ordinary Baseline/Source
+value fields stay above Description when back-calculation is off.
+The large inspector Value shows the number and unit without an estimate symbol;
+Value notes retain assumption/source explanations. Saved canvas Base/Potential
+values also omit the symbol, with estimate explanations retained in value tooltips.
+
 Calibration uses Baseline exclusively. Scenario overrides apply after calibration
 and can change both the balancing KPI and the output; `Not changeable` continues
 to ignore the balancing KPI's own scenario override. Original source provenance
@@ -109,12 +117,12 @@ See [ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md).
 
 ## Smart incoming KPI suggestions
 
-Each newly prepared alternative has 2–6 distinct substantive components or
+Each newly prepared alternative has at least two distinct substantive components or
 factors. A single renamed total is rejected by the response and preparation
 cache gates. The model instruction requires a defensible decomposition and
 permits missing measured values; a primitive KPI without a supported split may
 return empty. This structural minimum does not certify business semantics.
-Preparation policy v10 retains the v5 direction rules and preserves the direction of the existing model:
+Preparation policy v14 retains the v5 direction rules and preserves the direction of the existing model:
 siblings/ancestors are context only. Suggested reuse is limited to active
 existing direct children; for an eligible Input leaf every component is new.
 Current preparation/cache/display and new preview/Add reject non-child source
@@ -128,8 +136,14 @@ explicit manual formulas/shared references keep their separate contract.
 The task carries the project's own business/model definitions and up to three
 bounded assumptions per observed KPI. The common prompt is domain-neutral;
 no fixed excavation instruction is attached to arbitrary projects. Project
-business context may retain up to 8,000 characters, subject to the full 24 KiB
-provider-envelope bound and explicit omissions. Specific project direct-factor
+business context may retain up to 8,000 characters within a 24 KiB graph-context
+allowance and explicit omissions. The exact Context-selected Skill is retained
+separately, with its ID/version/content hash and full content, under a 128 KiB
+skill-content and 192 KiB final-input bound. Its applicable immediate factors
+take priority over generic recipes and optional measurement identities.
+Changing the selected pin invalidates preparation and requires new review;
+HTTP admission/completion and model-backed Add recheck the current pin.
+Specific project direct-factor
 definitions take precedence over an unrelated generic recipe. Limits concern
 the selected immediate layer, not future child
 layers. A Suggested request explicitly asks to deepen the selected input, even
@@ -139,8 +153,9 @@ an empty-result reason. Deeper definitions preserve physical meaning, population
 period and unit basis without reversing an existing parent equation. Fixed
 conversion literals remain restricted; a fixed reference parameter explicitly
 defined in the project can be a labelled input, with its value supplied
-separately. Unsupported conversions and complete partitions above six components
-may remain empty with a specific explanation. This does not claim that Smart
+separately. The six-component restriction is removed; a resource ceiling of
+64 inputs, formula complexity and output-byte bounds remain. Unsupported
+conversions may remain empty with a specific explanation. This does not claim that Smart
 can reproduce every level of a full-agent tree.
 Refresh/Retry first re-admits current execution metadata and starts an explicit
 attempt. Clean retained drafts adopt the refreshed source; edited drafts remain
@@ -205,7 +220,7 @@ the edited graph and fences late callbacks. A long human pause does not prevent
 cancellation of the still-owned current epoch; controller-loss recovery remains
 a separate limitation.
 
-Future Smart/Manual incoming additions show a concise editable definition: selected proposal rows, own named/unit rows, retained references and the final formula are one atomic **Add & calculate**. Partial selections are allowed after repairing the formula; invalid raw text remains editable and Add stays disabled. Six new rows are separate from sixteen existing references. Manual-only editing/Add requires no model or key. Each proposal source and its dirty draft remain separate; background replies and explicit preparation refresh cannot silently overwrite user edits.
+Future Smart/Manual incoming additions show a concise editable definition: selected proposal rows, own named/unit rows, retained references and the final formula are one atomic **Add & calculate**. Partial selections are allowed after repairing the formula; invalid raw text remains editable and Add stays disabled. New rows use a 64-row processing ceiling, separate from sixteen existing references. Manual-only editing/Add requires no model or key. Each proposal source and its dirty draft remain separate; background replies and explicit preparation refresh cannot silently overwrite user edits.
 
 Suggested targets must have type `input`, no child edges (including context
 children), no existing formula and a non-rejected status. Inputs may be measured,
@@ -225,7 +240,7 @@ ends the display. A bounded viewport adjustment reveals clipped previews while
 preserving saved node positions. Loading uses two placeholder cards without a
 premature formula error or Add button. Empty/error responses show their reason.
 
-The cards show selection, unit and input values, including visible **≈** estimates.
+Smart preview cards show selection, unit and input values, including visible **≈** estimates.
 A compact readable formula, **Edit** and one **Add KPIs** action sit below them.
 A single alternative needs no radio/title repetition; multiple alternatives retain
 selection. Own rows, existing references, raw text, operators, insertion buttons
@@ -306,7 +321,7 @@ top left, with view, layout and locking controls visually grouped. Layout labels
 hide on narrow canvases while icons and tooltips remain. The desktop canvas fits the available height; mobile retains
 its existing minimum. Panel width/collapse preferences and save-aware Home/Back
 navigation remain in place. The inspector highlights the calculated value and
-unit while preserving visible source notes and **≈** estimates, formula editing,
+unit with visible source/assumption notes and no estimate-symbol prefix. It retains formula editing,
 readonly derived-source values, scenario locks, root protection and warnings.
 The visual formula editor uses compact chips, bounded labels with full-name
 titles, unboxed symbols and numeric fields sized to their contents. Drag/remove
@@ -330,11 +345,12 @@ presets, a color picker or validated HEX entry, with an immediate live preview
 and color-only Reset. Browser-local preferences retain it across reloads and
 VDTs; older preferences default to pale blue. Reset display defaults includes
 the color. Graphite/white/black text is selected automatically to meet a 4.5:1
-solid-pair contrast minimum, including the estimate marker on a colored row.
+solid-pair contrast minimum for the labels and numbers on a colored row.
 Light fills receive a darker outline visible against the white card. This is a
 presentation preference and does not modify graph values, scenarios or exports.
-Unit tags and full-value titles preserve numeric context; **≈** remains visible
-on estimated values. The root uses a dark type icon and a compact Effect footer.
+Unit tags and full-value titles preserve numeric context. Saved canvas-card
+values omit **≈**; their titles identify illustrative estimates. The root uses
+a dark type icon and a compact Effect footer.
 Graphite selection follows the inspector's selected KPI. The rounded
 Manual/File action rail, with Smart only for eligible Input leaves, reveals on card hover, keyboard focus and coarse
 pointers. Thin neutral connectors retain relation symbols and amber negative

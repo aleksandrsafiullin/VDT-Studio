@@ -1,8 +1,29 @@
 # Roadmap
 
+## Suggested KPI selected guidance (2026-11-03)
+
+Implemented locally: Suggested KPI receives the full immutable Skill selected in
+Context. Selection/version changes invalidate preparation and stale Add requests.
+The six-component product restriction is removed; a 64-row processing ceiling
+and separate formula/output resource bounds remain. Applicable cause layers take
+priority over optional event-count/mean-duration measurement detail, including
+scoped subsets introduced by the graph. Definitions remain in the selected Skill;
+the common instruction contains no mining taxonomy. Exact Luna checks and the
+remaining provider/platform/semantic qualification limits are recorded in the
+[selected-Skill report](implementation/SMART_KPI_SELECTED_SKILL_2026-11-03.md).
+
 ## Local harness integration (2026-11-02)
 
 Implemented: declarative thirteen-harness catalog, shared ACP and Pi RPC execution, custom host profiles and multi-harness Suggested KPI with independent model/reasoning settings. Reasoning is Off by default; unsupported controls remain explicit. The pre-release catalog retains only current systems; retired entries and compatibility adapters are removed. Remaining: exact-version live semantic/permission qualification, packaged desktop acceptance and supported-platform certification; existing corrective/release gates remain open. See [Harness connections](HARNESS_CONNECTIONS.md).
+
+## Inspector layout (2026-11-02)
+
+Implemented: the complete Back-calculated form, including its enabled read-only
+Base field, sits below Description beside Not changeable. Ordinary Baseline/Source
+fields remain above Description when the option is off.
+The large inspector Value and saved canvas Base/Potential values omit the
+estimate symbol; Value notes and card tooltips retain source/assumption context. Calculation and
+scenario behavior are unchanged.
 
 ## Suggested KPI latency (2026-11-02)
 
@@ -173,11 +194,11 @@ contrasting stronger type and card border for overview. Display settings offer
 presets, a picker, validated HEX input, live preview and color-only Reset; the
 color persists browser-locally and full display Reset restores pale blue.
 Foreground contrast is calculated automatically for dark/white/black text;
-the same foreground keeps **≈** visible on colored rows. Direct and propagated value differences use
+the same foreground keeps labels and numbers legible on colored rows. Direct and propagated value differences use
 the same treatment in either direction; unchanged/unavailable comparisons and
 reference groups remain neutral. Selection/highlight borders retain priority.
 Graphite selection stays synchronized with the inspector; hover/focus/touch
-actions retain Manual/File and eligible Input-leaf Smart entry points. Estimate marks, unavailable
+actions retain Manual/File and eligible Input-leaf Smart entry points. Estimate explanations, unavailable
 values, reference groups and relation semantics remain visible. Saved positions
 and card width are preserved.
 

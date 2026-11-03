@@ -8,7 +8,7 @@ import { POST as generic } from "../app/api/ai/run-task/route";
 import { POST as development } from "../app/api/ai/dev-runtime/route";
 import { POST as cancellation } from "../app/api/ai/suggestions/cancel/route";
 import { POST as execution } from "../app/api/ai/suggestions/execution/route";
-import { readAiRouteBody } from "./ai-route-body";
+import { readAiRouteBody, SMART_HTTP_BODY_BYTES } from "./ai-route-body";
 
 const empty = { status: "empty", rationale: "No suitable immediate children.", limitations: [], groups: [] };
 async function input() { return buildKpiSuggestionTaskInput(await buildKpiSuggestionContext(createSmartKpiMeasuredFixture(), { workspaceId: `qa_${crypto.randomUUID()}`, vdtId: null, targetNodeId: "measured_output", period: { key: "2026-10", grain: "month" } })); }
@@ -103,7 +103,7 @@ describe("all Smart HTTP entries admit requests before trusted execution", () =>
   });
   it("generic/development entries additionally enforce the compact Smart body limit", async () => {
     vi.stubEnv("VDT_APP_MODE", "development_web");
-    for (const [route, body] of [[generic, { taskType: "suggest_incoming_kpis", input: { padding: "x".repeat(33 * 1024) } }], [development, { operation: "complete", request: { taskType: "suggest_incoming_kpis", input: { padding: "x".repeat(33 * 1024) } } }]] as const) {
+    for (const [route, body] of [[generic, { taskType: "suggest_incoming_kpis", input: { padding: "x".repeat(SMART_HTTP_BODY_BYTES + 1) } }], [development, { operation: "complete", request: { taskType: "suggest_incoming_kpis", input: { padding: "x".repeat(SMART_HTTP_BODY_BYTES + 1) } } }]] as const) {
       expect((await route(new Request("http://localhost:3000/api/ai/test", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }))).status).toBe(413);
     }
   });

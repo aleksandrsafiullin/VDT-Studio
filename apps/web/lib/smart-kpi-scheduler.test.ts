@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import {
   buildKpiSuggestionContext, buildRecipeKpiSuggestions, fingerprintKpiProject,
   KPI_SUGGESTION_RECIPES as catalog, KPI_SUGGESTION_SCHEMA, KPI_SUGGESTION_VALIDATOR,
@@ -58,6 +59,21 @@ function create(options: ConstructorParameters<typeof SmartKpiScheduler>[0]): Sm
 }
 
 describe("Smart KPI bounded scheduling", () => {
+  it("changes context/cache generation when only the selected skill pin changes", async () => {
+    const transport = controlled(), s = create({ prepare: transport.prepare }), w = workspace();
+    const pin = (version: number) => { const content = `# Service method\nVersion ${version}: disjoint service causes.`; return { id: "custom.service", title: "Service method", version, content,
+      contentHash: `sha256:${createHash("sha256").update(content).digest("hex")}` }; };
+    await s.setWorkspace({ ...w, selectedSkill: pin(1) }); await s.request(fixtureTarget); await vi.waitFor(() => expect(transport.calls).toHaveLength(1));
+    transport.resolve(0); await s.whenSettled();
+    const before = transport.calls[0]!.context;
+    expect(before.selectedSkill?.version).toBe(1);
+    await s.setWorkspace({ ...w, selectedSkill: pin(2) });
+    expect(s.getSnapshot(fixtureTarget)).toMatchObject({ stale: true, canApply: false });
+    await s.request(fixtureTarget); await vi.waitFor(() => expect(transport.calls).toHaveLength(2));
+    expect(transport.calls[1]!.context.selectedSkill?.version).toBe(2);
+    expect(transport.calls[1]!.context.contextHash).not.toBe(before.contextHash);
+    transport.resolve(1); await s.whenSettled();
+  });
   it.each(["hover", "selected"] as const)("gives a fresh %s the lane before background grace expires", async intent => {
     vi.useFakeTimers();
     const transport = controlled(), s = create({ prepare: transport.prepare }); await s.setWorkspace(workspace(1));

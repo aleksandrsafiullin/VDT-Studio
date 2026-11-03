@@ -3,6 +3,13 @@
 - Status: Implemented local V1 capability; V2 repository/authorization remains separate
 - Date: 2026-10-25
 
+Suggested KPI amendment 2026-11-03: new Smart preparation reuses this same
+Context selection and its immutable content, without activating a full agent or
+allowing native skill/file tools. Selection identity participates in context,
+scheduler, cache and action-time checks. Full selected guidance is retained;
+there is no mining-specific common prompt or keyword-based skill substitution.
+See [ADR-008](ADR-008-smart-kpi-preparation-and-explicit-apply.md).
+
 ## Product decision
 
 Skills are ordinary files in a single editable library. Settings → Skills shows

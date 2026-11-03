@@ -9,6 +9,7 @@ import { SmartKpiScheduler, type SmartKpiNodeSnapshot } from "@/lib/smart-kpi-sc
 import { createSmartKpiPreparedSelection, type SmartKpiPreparedSelection } from "@/lib/smart-kpi-client";
 import { getSmartKpiLibraryProposal, recordSmartKpiDecision } from "@/lib/smart-kpi-decisions";
 import { resolveSmartKpiScope } from "@/lib/smart-kpi-scope";
+import { loadSmartKpiSkill } from "@/lib/smart-kpi-skill";
 import { smartKpiTargetIds } from "@/lib/smart-kpi-targets";
 import { useApiKeyStorage } from "./api-key-storage";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
@@ -35,13 +36,39 @@ export function useSmartKpi() {
   const executionSettings = useVdtStudioStore(state => state.executionSettings);
   const runnerPairingToken = useVdtStudioStore(state => state.runnerPairingToken);
   const personalisation = useVdtStudioStore(state => state.personalisation);
+  const skillState = useVdtStudioStore(state => state.smartKpiSkill);
   const apiKeyStorageStatus = useApiKeyStorage(state => state.status);
   const fullAgentActive = useVdtStudioStore(smartKpiAgentIsActive);
   const mutation = useVdtStudioStore(state => state.smartKpiMutation);
   const mutationBusy = ["applying", "undoing", "reconciling"].includes(mutation.status);
   const mutationBusyRef = useRef(mutationBusy); mutationBusyRef.current = mutationBusy;
   const mutationBlockedReason = useVdtStudioStore(state => state.smartKpiBlockedReason);
-  const scope = useMemo(() => resolveSmartKpiScope({ project, workspace, personalisation }), [project, workspace, personalisation]);
+  const scope = useMemo(() => resolveSmartKpiScope({ project, workspace, personalisation, smartKpiSkill: skillState }), [project, workspace, personalisation, skillState]);
+  const guidanceReady = !scope.vdtId || Boolean(scope.selectedSkill);
+  const guidanceReadyRef = useRef(guidanceReady); guidanceReadyRef.current = guidanceReady;
+  const [skillRefresh, refreshSkill] = useReducer(value => value + 1, 0);
+  const rootName = project.graph.nodes.find(node => node.id === project.rootNodeId)?.name ?? project.name;
+  useEffect(() => {
+    const changed = () => refreshSkill();
+    window.addEventListener("vdt:skills-changed", changed); window.addEventListener("focus", changed);
+    const timer = setInterval(changed, 10_000);
+    return () => { clearInterval(timer); window.removeEventListener("vdt:skills-changed", changed); window.removeEventListener("focus", changed); };
+  }, []);
+  useEffect(() => {
+    const projectId = workspace.activeProjectId, vdtId = workspace.activeVdtId;
+    if (!projectId || !vdtId) return;
+    const controller = new AbortController(); let current = true;
+    const previous = useVdtStudioStore.getState().smartKpiSkill;
+    if (previous?.workspaceId !== projectId || previous.vdtId !== vdtId)
+      useVdtStudioStore.setState({ smartKpiSkill: { workspaceId: projectId, vdtId, status: "loading" } });
+    void loadSmartKpiSkill(projectId, vdtId, rootName, controller.signal).then(skill => {
+      if (!current) return;
+      const before = useVdtStudioStore.getState().smartKpiSkill;
+      if (before?.status === "ready" && before.workspaceId === projectId && before.vdtId === vdtId && kpiCanonicalJson(before.skill) === kpiCanonicalJson(skill)) return;
+      useVdtStudioStore.setState({ smartKpiSkill: { workspaceId: projectId, vdtId, status: "ready", skill } });
+    }).catch(error => { if (current) useVdtStudioStore.setState({ smartKpiSkill: { workspaceId: projectId, vdtId, status: "unavailable", reason: error instanceof Error ? error.message : "Choose a current skill in Context." } }); });
+    return () => { current = false; controller.abort(); };
+  }, [workspace.activeProjectId, workspace.activeVdtId, rootName, skillRefresh]);
   const scopeKey = kpiCanonicalJson(scope);
   const ownerKey = kpiCanonicalJson([scope.workspaceId, scope.vdtId, project.id]);
   const [admission, setAdmission] = useState<Admission>({ status: "preparing" });
@@ -139,7 +166,7 @@ export function useSmartKpi() {
       library: getSmartKpiLibraryProposal,
       prepare: async input => {
         const selected = admissionRef.current.selection;
-        if (!selected) throw Object.assign(new Error("Selected execution is not admitted."), { code: "SUGGESTIONS_UNAVAILABLE" });
+        if (!selected || !guidanceReadyRef.current) throw Object.assign(new Error("Selected execution or modelling skill is not admitted."), { code: "SUGGESTIONS_UNAVAILABLE" });
         const proposal = await selected.prepare(input);
         if (proposal && !("status" in proposal)) { try { recordSmartKpiDecision(input.context, proposal); } catch { /* Rebuildable Library metadata cannot invalidate a valid preparation. */ } }
         return proposal;
@@ -190,10 +217,11 @@ export function useSmartKpi() {
     const owningParents = [...new Set(project.graph.edges.filter(edge => newIds.has(edge.targetNodeId) && !newIds.has(edge.sourceNodeId)).map(edge => edge.sourceNodeId))];
     const newParent = before && newIds.size ? before.id !== project.id ? project.rootNodeId : owningParents.length === 1 ? owningParents[0] : project.rootNodeId : undefined;
     void instance.setWorkspace({ project, workspaceId: scope.workspaceId, vdtId: scope.vdtId, period: scope.period,
+      ...(scope.selectedSkill ? { selectedSkill: scope.selectedSkill } : {}),
       ...(scope.personalisation ? { personalisation: scope.personalisation } : {}),
-      ...(scope.goal ? { goal: scope.goal } : {}), ...(admission.selection ? { execution: admission.selection.execution } : {}) })
+      ...(scope.goal ? { goal: scope.goal } : {}), ...(admission.selection && guidanceReady ? { execution: admission.selection.execution } : {}) })
       .then(async () => {
-        if (!current || scope.blockedReason) return;
+        if (!current || scope.blockedReason || !guidanceReady) return;
         const requested = requestedPreparation.current;
         if (requested && requested.ownerKey === ownerKey && admission.selection) {
           requestedPreparation.current = undefined;
@@ -219,12 +247,12 @@ export function useSmartKpi() {
         update();
       }).catch(() => { if (current) setFeedback("The KPI context could not be prepared. Refresh the workspace and try again."); });
     return () => { current = false; };
-  }, [project, scopeKey, executionKey, scope.workspaceId]); // Semantic work is shared here, never on mouse movement.
+  }, [project, scopeKey, executionKey, scope.workspaceId, guidanceReady]); // Semantic work is shared here, never on mouse movement.
 
   useEffect(() => { scheduler.current?.setFullAgentActive(fullAgentActive); }, [fullAgentActive, scope.workspaceId]);
   useEffect(() => {
-    if (!scope.blockedReason) void scheduler.current?.prewarm(selectedNodeId || null, visible.current);
-  }, [selectedNodeId, scope.blockedReason]);
+    if (!scope.blockedReason && guidanceReady) void scheduler.current?.prewarm(selectedNodeId || null, visible.current);
+  }, [selectedNodeId, scope.blockedReason, guidanceReady]);
   useEffect(() => {
     if (!active) return;
     const outside = (event: PointerEvent) => {
@@ -274,6 +302,7 @@ export function useSmartKpi() {
     if (!current || !scheduler.current) return;
     requestedPreparation.current = { targetNodeId: current.targetNodeId, ownerKey: ownerRef.current };
     setFeedback(undefined);
+    refreshSkill();
     retryMetadata();
   }, []);
   const retry = refresh;
@@ -285,6 +314,7 @@ export function useSmartKpi() {
     const owner = ownerRef.current;
     const result = await state.applySmartKpiSuggestion(input);
     if (result.code === "STALE_EXECUTION" && ownerRef.current === owner) retryMetadata();
+    if (result.code === "STALE_SKILL" && ownerRef.current === owner) refreshSkill();
     if (activeRef.current?.targetNodeId === current.targetNodeId && ownerRef.current === owner) setFeedback(result.ok ? result.addedNodeIds.length
       ? `${result.addedNodeIds.length} KPI${result.addedNodeIds.length === 1 ? "" : "s"} added${result.durability === "draft" ? " to this draft" : " and saved"}.`
       : `KPI values updated${result.durability === "draft" ? " in this draft" : " and saved"}.`
@@ -317,7 +347,8 @@ export function useSmartKpi() {
     && currentContext.projectId === project.id && currentContext.vdtId === scope.vdtId ? currentContext : undefined;
   const context = snapshot.proposal ? contexts.current.get(snapshot.proposal.contextHash) : latestContext;
   const blockedReason = scope.blockedReason ?? mutationBlockedReason ?? (fullAgentActive ? "Finish or cancel the active agent run before adding KPIs." : undefined);
-  return { active, targets, snapshot, context, latestContext, contextPending, contextError, ownerKey, project, admission, mutation, blockedReason, feedback, replaying, activate, activateManual, leaveRail, enterPanel, leavePanel,
+  const effectiveAdmission: Admission = guidanceReady ? admission : { status: skillState?.status === "unavailable" ? "unavailable" : "preparing", reason: skillState?.reason ?? "Loading the selected modelling skill…" };
+  return { active, targets, snapshot, context, latestContext, contextPending, contextError, ownerKey, project, admission: effectiveAdmission, mutation, blockedReason, feedback, replaying, activate, activateManual, leaveRail, enterPanel, leavePanel,
     focusPanel: cancelClose, blurPanel: scheduleClose, close, refresh, refreshContext, retry, preview, apply, undo, reconcile, prewarmVisible };
 }
 export type SmartKpiController = ReturnType<typeof useSmartKpi>;

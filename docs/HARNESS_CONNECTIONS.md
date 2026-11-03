@@ -222,9 +222,15 @@ current CLI inventory also checks the six additional presets.
 | Claude, OpenCode, Hermes, Kiro | Not installed; live acceptance remains unverified. |
 | Kimi Code, Mistral Vibe, Kilo Code, Qwen Code, Grok Build, Pi | Not installed; current protocol/session/Smart fixtures pass, but live subscription and native acceptance remain unverified. |
 
-Suggested KPI failures do not switch models or providers. Codex model/profile
-incompatibility is shown explicitly; no Code Mode host is enabled to bypass the
-read-only constraint. Hermes background-job cancellation remains unverified on
+On 2026-11-03, the Codex Suggested KPI failure was reproduced with
+`gpt-5.6-luna` / Low: its catalog requires Code Mode, while Smart v1 disabled the
+host before inference. Smart v2 makes the standalone host available with no
+built-in nested tools, no in-process fallback, and the same read-only sandbox
+and rejection of all reported tool calls. A live Luna Low structured response
+passed without tool events or repair. This is narrow local evidence, not a
+provider-status promotion; see the [verification report](implementation/CODEX_SMART_KPI_2026-11-03.md).
+
+Suggested KPI failures do not switch models or providers. Hermes background-job cancellation remains unverified on
 real Hermes. Native source/sidecar checks do not qualify a signed installer or
 Windows support. The isolated Rust check used a temporary fixture icon because
 the repository lacks `src-tauri/icons/icon.png`.

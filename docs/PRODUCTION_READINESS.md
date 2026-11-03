@@ -1,5 +1,27 @@
 # Production Readiness
 
+## Selected Skill in Suggested KPI (2026-11-03)
+
+Implemented in source: Smart preparation binds the exact Context-selected Skill,
+retains its full bounded content, invalidates stale selection/cache identities,
+and checks selection again before new model-backed Add. The six-component
+restriction is removed throughout response, preview, aliases and compilation;
+resource/formula/output limits remain. Qualification and live scoped-category
+results are tracked in the [selected-Skill report](implementation/SMART_KPI_SELECTED_SKILL_2026-11-03.md).
+This does not change release/provider status or certify arbitrary semantics,
+native packaging or all local model context capacities.
+
+## Codex Suggested KPI startup fix (2026-11-03)
+
+Implemented locally: Smart Codex v2 admits models requiring the standalone
+Code Mode host, with built-in nested tools excluded and the read-only sandbox,
+stream rejection and confirmed cleanup retained. `gpt-5.6-luna` / Low produced
+a live schema-valid response on this Mac without tool activity or repair.
+The [verification report](implementation/CODEX_SMART_KPI_2026-11-03.md) separates
+transport, browser and deterministic checks. No provider-status promotion,
+cross-model semantic certification, signed/native distribution or release
+`GO` follows from this fix.
+
 ## Local harness integration (2026-11-02)
 
 Multi-harness integration is implemented with fixture coverage, including a thirteen-preset Suggested KPI dispatcher matrix. Smart model/reasoning selection is separate from chat; capability admission, actual transport mappings and stale-result rejection are checked independently. New/custom adapters remain experimental: fixture success does not certify subscription eligibility, business quality, native hooks/tool isolation, background daemon termination or Windows/native distribution. All existing NO-GO requirements remain. See [Harness connections](HARNESS_CONNECTIONS.md).
@@ -247,6 +269,10 @@ qualification remain open. See [ADR-009](adr/ADR-009-project-deletion-with-agent
 
 ## Suggested KPI semantic evaluation (2026-10-25)
 
+Historical evaluation: the selected-Skill amendment above supersedes this run's
+six-row cap, absent selected guidance and 24 KiB final envelope. The recorded
+outcomes below remain evidence for the policy tested on that date.
+
 Implemented locally: preparation v10 keeps the shared instruction domain-neutral
 and uses actual project definitions and bounded node assumptions in the same
 completion. Project business prose may retain up to 8,000 characters within the
@@ -264,10 +290,10 @@ with the root preserved. The final deterministic gate passed 247 tests in 18
 files under Node v24.15.0. See the
 [full assessment and evidence](implementation/SMART_KPI_FULL_DEPTH_EVALUATION_2026-10-25.md).
 
-This is not general semantic/provider qualification. Complete immediate
-partitions above six rows, non-child shared-input reuse, automatic applicable-skill
-retrieval for Suggested, realistic numerical estimates and native/Windows
-qualification remain open. The full audit supersedes the
+This is not general semantic/provider qualification. As of 2026-11-03, complete
+partitions above six rows and exact Context-selected guidance are implemented.
+Non-child shared-input reuse, broader semantic applicability, realistic numerical
+estimates and native/Windows qualification remain open. The full audit supersedes the
 [historical initial assessment](implementation/SMART_KPI_QUALITY_EVALUATION_2026-10-25.md)
 and distinguishes physical validity from exact reference-tree fidelity.
 The release gate is unchanged.
