@@ -29,7 +29,7 @@ export function getGoalSeekTargets(graph: VdtGraph, variableId: string): VdtNode
 }
 
 export interface GoalSeekPlan {
-  /** Inverse expression references only KPIs independent of the balancing KPI. */
+  /** References independent KPIs and, when supplied, the symbolic target input. */
   expression: FormulaExpression;
   /** Original division domains, with the solved value substituted. */
   nonZeroExpressions: FormulaExpression[];
@@ -40,8 +40,9 @@ export interface GoalSeekPlan {
  * repeatedly; the target equation must reduce to degree one. No numerical search
  * or arbitrary choice between multiple roots/flat min/max branches is made.
  * The caller must verify the candidate through the original forward formulas.
+ * Exporters may supply a symbolic target reference to keep the target editable.
  */
-export function buildGoalSeekPlan(graph: VdtGraph, variableId: string): GoalSeekPlan {
+export function buildGoalSeekPlan(graph: VdtGraph, variableId: string, targetReference?: string): GoalSeekPlan {
   const nodes = new Map(graph.nodes.map(node => [node.id, node]));
   const variable = nodes.get(variableId);
   const config = variable?.goalSeek;
@@ -133,7 +134,8 @@ export function buildGoalSeekPlan(graph: VdtGraph, variableId: string): GoalSeek
     }
   };
   const target = compileNode(config.targetNodeId);
-  const equation = add(target.numerator, multiply([literal(config.targetValue)], target.denominator), "-");
+  const targetValue: FormulaExpression = targetReference === undefined ? literal(config.targetValue) : { type: "reference", name: targetReference };
+  const equation = add(target.numerator, multiply([targetValue], target.denominator), "-");
   if (equation.length > 2) throw new Error("Nonlinear back-calculation may have multiple solutions. Choose another target or an independent input KPI.");
   // Constant/zero slopes are diagnosed by the forward caller; retain live references.
   const expression: FormulaExpression = { type: "binary", operator: "/", left: binary("-", zero, equation[0]!), right: equation[1] ?? zero };

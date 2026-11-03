@@ -51,7 +51,9 @@ separate gates.
 
 Implemented in source: one back-calculated balancing KPI per VDT with an actual
 output target, automatic Baseline reconciliation, a visible card badge, persistent
-settings/checkpoints and matching Excel inverse formulas. Scenarios inherit the
+settings/checkpoints and matching Excel inverse formulas. Excel exposes the actual
+output target as an editable **Back-calculation target** in `Source!B3`; the inverse
+references that cell so target changes recalculate the workbook. Scenarios inherit the
 solved Base and show changes without pinning output to actuals. The bounded
 arithmetic solver rejects nonlinear/multiple-root and dependent min/max paths;
 business validity, broader native Excel coverage and packaged/native qualification

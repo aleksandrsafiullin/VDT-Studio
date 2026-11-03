@@ -34,11 +34,20 @@ JSON import and strict revision commits retain the optional setting without a
 database migration. Excel uses the same inverse AST, references independent
 Baseline cells, guards original division domains and retains the source number as
 reference evidence. Scenario columns inherit the solved Base. The actual target
-is embedded in the inverse; edit it in the application and re-export. Unsupported
+is an editable numeric control in `Source!B3`, labeled **Back-calculation target**,
+with the output KPI name and unit alongside it. The inverse uses an absolute
+reference to that cell, including when constant arithmetic would otherwise fold
+the target into a literal. Editing it recalculates the balancing KPI and output
+Baseline directly in Excel; blank or nonnumeric targets remain unavailable, while
+zero is valid. This control sits above the sortable `SourceInputs` table and does
+not change its four-column structure. Workbook edits do not synchronize back to
+the application. Unsupported
 or over-8,192-character inverse formulas export as `#N/A`. A single arithmetic
 workflow passed native Excel for Mac recalculation in the
 [follow-up QA](implementation/BACK_CALCULATION_QA_2026-11-01.md); broader workbook
 coverage and packaged/native platforms still require separate qualification.
+The separate target control also passed root-target edits, zero, blank/text input
+and recovery checks in [Excel target QA](implementation/EXCEL_BACK_CALCULATION_TARGET_2026-11-03.md).
 
 ## Incoming KPI formulas and mixed drafts
 

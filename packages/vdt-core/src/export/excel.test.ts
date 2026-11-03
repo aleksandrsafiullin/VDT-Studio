@@ -45,12 +45,49 @@ describe("editable Excel VDT export", () => {
     expect(loss.formula).toContain(mapping.tree.known!.baselineCell);
     expect(loss.formula).not.toContain(mapping.tree.root!.baselineCell);
     expect(loss.formula).not.toContain("SourceInputs");
+    expect(loss.formula).toContain("'Source'!$B$3");
+    expect(loss.formula).not.toContain("80");
+    expect(mapping.backCalculation).toEqual({ nodeId: "loss", targetNodeId: "root", targetValueCell: "B3" });
+    const source = parts["xl/worksheets/sheet3.xml"]!;
+    expect(cell(source, "A3").text).toBe("Back-calculation target");
+    expect(cell(source, mapping.backCalculation!.targetValueCell).value).toBe("80");
+    expect(cell(source, "B3").formula).toBeUndefined();
+    expect(cell(source, "C3").text).toBe("root");
+    expect(parts["xl/tables/table1.xml"]).toContain('ref="A5:D7"');
     expect(cell(sheet, mapping.tree.root!.baselineCell).value).toBe("80");
     expect(cell(sheet, mapping.tree.root!.potentialCell).value).toBe("90");
     expect(cell(parts["xl/worksheets/sheet5.xml"]!, `B${mapping.scenario.calculation.nodeRows.loss}`).formula).toContain(`'VDT'!${mapping.tree.loss!.baselineCell}`);
     expect(cell(parts["xl/worksheets/sheet3.xml"]!, mapping.source.loss!.valueCell).value).toBe("7");
     expect(parts["xl/worksheets/sheet3.xml"]).toContain("Back-calculated Baseline");
     expect(sheet).toContain("Back-calculated");
+  });
+
+  it.each([0, 40, -80.125])("keeps target %s editable through constant arithmetic without replacing matching model literals", (targetValue) => {
+    const model = project([node("root", { formula: "output + 1" }),
+      node("output", { formula: "x * 2 + 40", unit: "USD/month", name: "Operating result" }),
+      node("x", { goalSeek: { targetNodeId: "output", targetValue } })]);
+    const { sheet, parts, workbookMapping: mapping } = workbook(model);
+    const inverse = cell(sheet, mapping.tree.x!.baselineCell);
+    expect(Number(inverse.value)).toBeCloseTo((targetValue - 40) / 2, 10);
+    expect(inverse.formula).toContain("'Source'!$B$3");
+    expect(inverse.formula).toContain("ISNUMBER('Source'!$B$3)");
+    expect(inverse.formula).toContain("40");
+    expect(inverse.formula).not.toContain(mapping.tree.output!.baselineCell);
+    expect(Number(cell(sheet, mapping.tree.root!.baselineCell).value)).toBeCloseTo(targetValue + 1, 10);
+    expect(cell(parts["xl/worksheets/sheet3.xml"]!, "B3").value).toBe(String(targetValue));
+    expect(cell(parts["xl/worksheets/sheet3.xml"]!, "C3").text).toBe("Operating result [USD/month]");
+  });
+
+  it("keeps the target control visible when the balancing KPI has a formula and there are no Source inputs", () => {
+    const model = project([node("root", { formula: "x * 2" }),
+      node("x", { formula: "3", goalSeek: { targetNodeId: "root", targetValue: 40 } })]);
+    const { sheet, parts, workbookMapping: mapping } = workbook(model);
+    expect(Object.keys(mapping.source)).toHaveLength(0);
+    const source = parts["xl/worksheets/sheet3.xml"]!;
+    expect(cell(source, "A3").text).toBe("Back-calculation target");
+    expect(cell(source, "B3").value).toBe("40");
+    expect(cell(source, "A4").text).toContain("no formula-free inputs");
+    expect(cell(sheet, mapping.tree.x!.baselineCell).formula).toContain("'Source'!$B$3");
   });
 
   it("keeps a formula-bearing balancing KPI on its solved Base in Excel scenarios", () => {
@@ -80,6 +117,8 @@ describe("editable Excel VDT export", () => {
     const model = structuredClone(productionVolumeProject);
     model.scenarios[0]!.isMain = true;
     const { bytes, parts, sheet, mapping } = workbook(model);
+    expect(getExcelWorkbookCells(model).backCalculation).toBeUndefined();
+    expect(parts["xl/worksheets/sheet3.xml"]).not.toContain("Back-calculation target");
     expect(bytes.subarray(0, 2)).toEqual(new Uint8Array([0x50, 0x4b]));
     expect(exportProjectExcel(model)).toEqual(bytes);
     expect(Object.keys(parts)).toHaveLength(12);

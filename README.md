@@ -266,6 +266,8 @@ Raw-data discovery currently proposes semantic models and metadata mappings. Its
 
 The `Source` sheet contains an editable Excel table with `KPI`, `Value`, `Source`, `Comment`. Change its numeric Value cells to recalculate the tree and scenario analysis. Keep KPI labels unchanged; sorting and filtering are supported. `Guide` explains inputs, formulas and unavailable calculations. Source/Comment are workbook metadata and do not refresh external data. Re-importing this exported editable VDT workbook into the application, workbook synchronization and image export are not provided; the CLI retains JSON and Markdown output. Raw Excel source ingestion for incoming KPI analysis is described below.
 
+For a Back-calculated KPI, `Source!B3` holds the editable **Back-calculation target**, with the output KPI name and unit beside it. The inverse formula references this cell. Change it to recalculate the balancing KPI and output Baseline directly in Excel.
+
 The active corrective program is
 [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](docs/VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md).
 Gate A and W0.1 are complete with independent `GO`: local revision writes use

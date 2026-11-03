@@ -204,7 +204,10 @@ test.describe("Back-calculated Baseline", { tag: "@chromium" }, () => {
       expect(book.Sheets.VDT![cells.tree.production_volume!.baselineCell]!.v).toBeCloseTo(100_000, 7);
       const inverse = book.Sheets.VDT![cells.tree.unplanned_downtime!.baselineCell]!;
       expect(inverse.v).toBeCloseTo(720 - 40 - 100_000 / (220 * 0.96), 8);
-      expect(inverse.f).toContain("100000");
+      expect(inverse.f).toContain("'Source'!$B$3");
+      expect(inverse.f).not.toContain("100000");
+      expect(book.Sheets.Source![cells.backCalculation!.targetValueCell]!.v).toBe(100_000);
+      expect(book.Sheets.Source!.A3!.v).toBe("Back-calculation target");
       expect(inverse.f).not.toContain(cells.tree.production_volume!.baselineCell);
       expect(book.Sheets.Source![cells.source.unplanned_downtime!.valueCell]!.v).toBe(80);
       expect(book.Sheets["_Scenario Calc"]![`B${cells.scenario.calculation.nodeRows.unplanned_downtime}`]!.f)

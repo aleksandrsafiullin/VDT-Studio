@@ -36,6 +36,8 @@ export interface ExcelScenarioRow {
 export interface ExcelWorkbookCells {
   tree: Record<string, ExcelNodeCells>;
   source: Record<string, { row: number; valueCell: string; kpiLabel: string; keyCell: string }>;
+  /** Separate editable control on Source, outside the sortable input table. */
+  backCalculation?: { nodeId: string; targetNodeId: string; targetValueCell: string };
   scenario: {
     selectedScenarioId?: string;
     drivers: Record<string, ExcelScenarioRow>;
@@ -211,6 +213,9 @@ function selectedScenario(project: VdtProject, options: ExcelExportOptions) {
 /** Coordinates on Source, Scenario Mode and _Scenario Calc; Source labels remain stable during table sorting. */
 export function getExcelWorkbookCells(project: VdtProject, options: ExcelExportOptions = {}): ExcelWorkbookCells {
   const tree = excelLayout(project);
+  const balancingNodes = project.graph.nodes.filter(node => node.goalSeek);
+  const balancing = balancingNodes.length === 1 ? balancingNodes[0] : undefined;
+  const backCalculation = balancing ? { nodeId: balancing.id, targetNodeId: balancing.goalSeek!.targetNodeId, targetValueCell: "B3" } : undefined;
   const source: ExcelWorkbookCells["source"] = Object.create(null) as ExcelWorkbookCells["source"];
   const labels = new Set<string>();
   for (const [index, node] of project.graph.nodes.entries()) {
@@ -241,7 +246,7 @@ export function getExcelWorkbookCells(project: VdtProject, options: ExcelExportO
   if (ranked.length + 2 > MAX_COLUMNS || project.graph.nodes.length + 2 > MAX_ROWS) {
     throw new Error("The scenario calculation exceeds Excel's worksheet row or column limit.");
   }
-  return { tree, source, scenario: {
+  return { tree, source, ...(backCalculation ? { backCalculation } : {}), scenario: {
     ...(selected ? { selectedScenarioId: selected.id } : {}), drivers, additionalOverrides,
     totals: { baselineCell: "B4", scenarioCell: "E4", absoluteChangeCell: "B6", percentageChangeCell: "E6", multiplicativeEffectCell: "E8" },
     calculation: { nodeRows, selectedRootCell: address(2, nodeRows[project.rootNodeId] ?? 2) }
@@ -299,11 +304,15 @@ function guardedFormula(expression: FormulaExpression, mapping: Record<string, E
   });
 }
 
-function goalSeekFormula(project: VdtProject, node: VdtNode, mapping: Record<string, ExcelNodeCells>) {
+function goalSeekFormula(project: VdtProject, node: VdtNode, mapping: ExcelWorkbookCells) {
   try {
-    if (project.graph.nodes.filter(candidate => candidate.goalSeek).length !== 1 || node.id === project.rootNodeId) return "NA()";
-    const plan = buildGoalSeekPlan(project.graph, node.id);
-    const resolve = (id: string) => mapping[id]?.baselineCell ?? "#REF!";
+    const control = mapping.backCalculation;
+    if (!control || control.nodeId !== node.id || node.id === project.rootNodeId) return "NA()";
+    // The output depends on the balancing KPI, so the inverse expands it rather
+    // than referencing its calculated cell. Its ID can represent the target input.
+    const plan = buildGoalSeekPlan(project.graph, node.id, control.targetNodeId);
+    const targetReference = `'Source'!${control.targetValueCell.replace(/([A-Z]+)(\d+)/, "$$$1$$$2")}`;
+    const resolve = (id: string) => id === control.targetNodeId ? targetReference : mapping.tree[id]?.baselineCell ?? "#REF!";
     const expression = resolvedFormula(plan.expression, resolve);
     const guards = plan.nonZeroExpressions.map(item => `(${resolvedFormula(item, resolve)})<>0`);
     const formula = `IFERROR(${guards.length ? `IF(${variadicCall("AND", guards)},${expression},NA())` : expression},NA())`;
@@ -486,7 +495,7 @@ function provenance(project: VdtProject, node: VdtNode) {
   if (node.goalSeek) {
     sources.unshift("Back-calculated Baseline");
     const target = project.graph.nodes.find(candidate => candidate.id === node.goalSeek!.targetNodeId);
-    comments.push(`Back-calculated to ${target?.name ?? "deleted target"} = ${node.goalSeek.targetValue} ${target?.unit ?? ""}. VDT Baseline uses an inverse formula; this stored source value is reference evidence. Scenarios inherit the solved Base.`);
+    comments.push(`Back-calculated to ${target?.name ?? "deleted target"}. Edit Back-calculation target above the inputs. VDT Baseline uses an inverse formula; this stored source value is reference evidence. Scenarios inherit the solved Base.`);
   }
   if (node.status === "rejected") comments.push("Rejected KPI: excluded from calculations.");
   return { source: [...new Set(sources)].join("; "), comment: comments.join("\n") };
@@ -505,6 +514,15 @@ function analysisSheets(project: VdtProject, mapping: ExcelWorkbookCells, option
   text(source, 2, 1, "Edit Value, Source and Comment. Values feed the entire workbook. KPI labels are unique lookup keys: keep them unchanged. Sorting and filtering are supported.");
   ["KPI", "Value", "Source", "Comment"].forEach((name, i) => text(source, 5, i + 1, name, 1));
   const nodeById = new Map(project.graph.nodes.map((node) => [node.id, node]));
+  if (mapping.backCalculation) {
+    const control = mapping.backCalculation;
+    const balancing = nodeById.get(control.nodeId)!;
+    const target = nodeById.get(control.targetNodeId);
+    text(source, 3, 1, "Back-calculation target", 13);
+    add(source, { row: 3, column: 2, ...cachedNumber(balancing.goalSeek!.targetValue), style: 9 });
+    text(source, 3, 3, target ? `${target.name}${target.unit ? ` [${target.unit}]` : ""}` : "Deleted output KPI", 13);
+    text(source, 3, 4, `Edit this target to recalculate ${balancing.name} and the output Baseline. Scenarios inherit the solved Base.`);
+  }
   for (const [id, entry] of Object.entries(mapping.source)) {
     const node = nodeById.get(id)!;
     const value = node.baselineValue ?? node.value;
@@ -515,7 +533,7 @@ function analysisSheets(project: VdtProject, mapping: ExcelWorkbookCells, option
     text(source, entry.row, 4, info.comment);
   }
   if (Object.keys(mapping.source).length === 0) {
-    text(source, 3, 1, "This model has no formula-free inputs or constants.");
+    text(source, mapping.backCalculation ? 4 : 3, 1, "This model has no formula-free inputs or constants.");
     for (let column = 1; column <= 4; column++) add(source, { row: 6, column, style: 0 });
   }
   text(scenario, 1, 1, "Scenario Mode", 4);
@@ -658,7 +676,7 @@ export function exportProjectExcel(project: VdtProject, options: ExcelExportOpti
       return { formula: numericLink(selectedReference), ...cached };
     }
     if (node.status === "rejected" || baselineCycles.has(node.id)) return { formula: "NA()", error: "#N/A" };
-    if (node.goalSeek) return { formula: goalSeekFormula(project, node, mapping), ...cached };
+    if (node.goalSeek) return { formula: goalSeekFormula(project, node, workbookMapping), ...cached };
     if (node.formula?.trim()) {
       try { return { formula: guardedFormula(parseFormula(node.formula), mapping, false), ...cached }; }
       catch { return { formula: "NA()", error: "#N/A" }; }
@@ -674,7 +692,7 @@ export function exportProjectExcel(project: VdtProject, options: ExcelExportOpti
     rowHeights.set(coordinates.headerRow, Math.max(rowHeights.get(coordinates.headerRow) ?? 44, textHeight(title, 32)));
     const issues = [...baseline.errors, ...potential.errors].filter((item) => item.nodeId === node.id).map((item) => item.message);
     if (baselineCycles.has(node.id) || potentialCycles.has(node.id)) issues.push("Circular formula dependency: unavailable; repair the model formula before exporting.");
-    notes.push([node.id, node.name, coordinates.baselineCell, coordinates.potentialCell, node.formula ?? "", node.goalSeek ? `Back-calculated Baseline: target ${node.goalSeek.targetValue}; Source is retained reference evidence` : node.fixedInScenario ? "Fixed: own scenario override ignored; edit Source" : overrides.has(node.id) ? "Scenario Mode: editable scenario override" : node.formula?.trim() ? "Calculated: edit upstream inputs" : `Source Value: ${workbookMapping.source[node.id]!.valueCell}; Scenario Mode controls Potential`, [...new Set(issues)].join("\n")]);
+    notes.push([node.id, node.name, coordinates.baselineCell, coordinates.potentialCell, node.formula ?? "", node.goalSeek ? `Back-calculated Baseline: edit target on Source${workbookMapping.backCalculation ? `!${workbookMapping.backCalculation.targetValueCell}` : " after repairing back-calculation settings"}; Source Value is retained reference evidence` : node.fixedInScenario ? "Fixed: own scenario override ignored; edit Source" : overrides.has(node.id) ? "Scenario Mode: editable scenario override" : node.formula?.trim() ? "Calculated: edit upstream inputs" : `Source Value: ${workbookMapping.source[node.id]!.valueCell}; Scenario Mode controls Potential`, [...new Set(issues)].join("\n")]);
   }
   const border = (column: number, row: number, bits: number) => {
     const key = address(column, row);
@@ -723,7 +741,7 @@ export function exportProjectExcel(project: VdtProject, options: ExcelExportOpti
   ["Node ID", "KPI", "Base cell", "Potential cell", "VDT formula", "Editing / scenario", "Calculation issues"].forEach((text, i) => guideText(5, i + 1, text, 1));
   notes.forEach((row, i) => row.forEach((text, j) => guideText(i + 6, j + 1, text)));
   let noteRow = notes.length + 7;
-  if (project.graph.nodes.some(node => node.goalSeek)) guideText(noteRow++, 1, "Back-calculated KPIs use an inverse formula in VDT Baseline to keep the configured actual output constant when independent Source inputs change. Their Source Value is retained reference evidence, not the active input. Scenario Mode inherits the solved Base and applies scenario edits without recalibrating to the target. The actual target is embedded in the exported inverse; change it in the application and re-export. Unsupported or oversized inverses show #N/A.");
+  if (project.graph.nodes.some(node => node.goalSeek)) guideText(noteRow++, 1, "Back-calculated KPIs use an inverse formula in VDT Baseline to keep the configured actual output constant when independent Source inputs change. Edit Back-calculation target on Source (B3) to change that output directly in Excel. The inverse references this separate numeric input; the output KPI and its unit are shown beside it. Their Source Value is retained reference evidence, not the active input. Scenario Mode inherits the solved Base and applies scenario edits without recalibrating to the target. Empty or nonnumeric targets and unsupported or oversized inverses show #N/A. Workbook edits do not synchronize back to the application.");
   for (const note of visualNotes) guideText(noteRow++, 1, note);
   guideText(noteRow++, 1, "Scenario Mode uses the selected scenario (fallback: first saved scenario). No saved scenario starts an editable Baseline scenario. VDT Potential uses this same Scenario Mode calculation, regardless of which saved scenario is main in the application.");
   guideText(noteRow++, 1, "Scenario rows follow the application's input/data-mapped sensitivity ranking at export time. Fixed KPIs remain on Source but have no driver overrides. Default Scenario formulas reference the adjacent Baseline cell on this sheet (=Crow) and mean no own override. Clearing a cell also removes its own override. Formula-bearing inputs then recalculate from upstream scenario values. Numeric values, including zero or a value equal to Baseline, and any other user formula are own overrides. Exact default-reference recognition uses FORMULATEXT (Excel 2013 or later).");

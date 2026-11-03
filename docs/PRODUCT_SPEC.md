@@ -30,7 +30,10 @@ is preserved. Invalid/deleted targets, missing inputs, zero/ambiguous solutions,
 unsupported nonlinear equations and min/max paths fail visibly without using a
 stale source number. Negative solutions are shown with a review warning.
 Settings persist with the VDT, local draft and version checkpoints; Excel exports
-a live inverse Baseline formula and inherits it in scenarios. See
+a live inverse Baseline formula and inherits it in scenarios. Its actual output
+target is separately editable in `Source!B3` (**Back-calculation target**), beside
+the output KPI name and unit. The inverse references that cell so changing the
+target recalculates the balancing KPI and output Baseline within the workbook. See
 [Formula Engine](FORMULA_ENGINE.md#baseline-back-calculation) for supported
 equations and qualification limits.
 
