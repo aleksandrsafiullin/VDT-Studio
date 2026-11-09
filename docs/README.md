@@ -92,6 +92,7 @@ Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md`, the
 | [`ADR-011`](adr/ADR-011-personalisation-and-project-rules.md) | One browser-local list of user instructions, legacy migration and chat/Smart/review propagation; local V1, semantic/native qualification separate |
 | [`ADR-012`](adr/ADR-012-declarative-local-harness-connections.md) | Declarative current harness catalog, shared ACP and host-owned custom profiles; live/native qualification separate |
 | [`ADR-013`](adr/ADR-013-independent-suggested-kpi-execution-settings.md) | Independent Suggested KPI model and explicit Off-by-default reasoning; provider mappings, immutable preparation and qualification boundary |
+| [`ADR-014`](adr/ADR-014-tree-to-skill-review-and-updates.md) | Dedicated tree-to-skill draft review and selective versioned updates; implementation/review status and evidence are tracked in the execution plan |
 
 Smart suggestions follow the [plan](implementation/SMART_KPI_SUGGESTIONS_PLAN.md),
 [selected-Skill integration and expanded-layer contract](implementation/SMART_KPI_SELECTED_SKILL_2026-11-03.md),

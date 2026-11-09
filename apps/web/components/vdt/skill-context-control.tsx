@@ -1,20 +1,26 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, LoaderCircle } from "lucide-react";
-import { getVdtSkillContext, listSkills, skillRequest, skillsChanged, type SkillCard, type VdtSkillContext } from "@/lib/skills-client";
+import { BookOpen, LoaderCircle, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { getVdtSkillContext, listSkills, skillContextRootKpi, skillRequest, skillsChanged, type SkillCard, type VdtSkillContext } from "@/lib/skills-client";
 import { useVdtStudioStore } from "./vdt-store";
+import { SkillWorkflowDialog } from "./skill-workflow-dialog";
 import styles from "./skills.module.css";
+import workflowStyles from "./skill-workflow-dialog.module.css";
 
 export function SkillContextControl({ onManage }: { onManage: () => void }) {
   const projectId = useVdtStudioStore(state => state.workspace.activeProjectId);
   const vdtId = useVdtStudioStore(state => state.workspace.activeVdtId);
-  const rootKpi = useVdtStudioStore(state => state.brief.rootKpi);
+  const rootKpi = useVdtStudioStore(state => skillContextRootKpi(state.project, state.brief.rootKpi));
   const generating = useVdtStudioStore(state => state.isGenerating);
   const runSelection = useVdtStudioStore(state => state.agentRun?.selectedSkills.map(skill => skill.id).join(",") ?? "");
   const [skills, setSkills] = useState<SkillCard[]>([]), [context, setContext] = useState<VdtSkillContext>();
   const [error, setError] = useState<string>(), [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0);
+  const [workflowScope, setWorkflowScope] = useState<string>();
+  const workflowTrigger = useRef<HTMLButtonElement>(null);
   const scope = `${projectId ?? ""}/${vdtId ?? ""}`, scopeRef = useRef(scope); scopeRef.current = scope;
+  useEffect(() => { setWorkflowScope(undefined); }, [scope]);
   useEffect(() => { const changed = () => setRefresh(value => value + 1); window.addEventListener("vdt:skills-changed", changed); return () => window.removeEventListener("vdt:skills-changed", changed); }, []);
   useEffect(() => {
     let current = true;
@@ -56,5 +62,7 @@ export function SkillContextControl({ onManage }: { onManage: () => void }) {
     {context?.skill ? <p className={styles.contextNote} title={context.skill.reason}>{context.skill.source === "auto" ? "Suggested by Root KPI" : context.skill.source === "user" ? "Selected by you" : "Selected by agent"} · v{context.skill.version}</p> : null}
     {context?.needsReselection ? <p role="alert" className={styles.error}>{context.message ?? context.skill?.reason}</p> : null}
     {error ? <p role="alert" className={styles.error}>{error} <button type="button" onClick={() => setRefresh(value => value + 1)}>Retry</button></p> : null}
+    <Button type="button" ref={workflowTrigger} size="sm" className={workflowStyles.trigger} icon={<Sparkles size={13} />} disabled={!projectId || !vdtId || generating} aria-haspopup="dialog" aria-expanded={workflowScope === scope} data-testid="work-with-skills" onClick={() => setWorkflowScope(scope)}>Work with skills</Button>
+    <SkillWorkflowDialog key={scope} open={workflowScope === scope} onOpenChange={next => setWorkflowScope(next ? scope : undefined)} context={context} triggerRef={workflowTrigger} onOpenLibrary={onManage} />
   </div>;
 }

@@ -17,7 +17,8 @@ export async function readSkillBody(request: Request) {
 
 export function skillErrorResponse(error: unknown): Response {
   const code = error instanceof SkillLibraryError ? error.code : (error as { code?: string })?.code ?? "INVALID_SKILL";
-  const status = aiRouteGuardStatus(error) ?? (code === "LOCAL_SKILLS_ONLY" ? 403 : code === "SKILL_NOT_FOUND" || code === "VDT_NOT_FOUND" ? 404 : code === "SKILL_CONFLICT" ? 409 : 400);
+  const status = aiRouteGuardStatus(error) ?? (code === "LOCAL_SKILLS_ONLY" ? 403 : code === "SKILL_NOT_FOUND" || code === "VDT_NOT_FOUND" ? 404 : code === "SKILL_CONFLICT" ? 409
+    : code === "SKILL_COMMITTED_WITH_ERROR" || code === "SKILL_SAVE_UNCONFIRMED" ? 503 : 400);
   return Response.json({ ok: false, error: { code, message: error instanceof Error ? error.message : "Skill operation failed." } }, { status });
 }
 

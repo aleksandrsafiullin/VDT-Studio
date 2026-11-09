@@ -194,6 +194,55 @@ changes. From this VDT appears only within an open tree. It uses the existing
 registered provider transport and publishes a package only through explicit
 Create and open. No returned model tool is executed.
 
+The dedicated **Context → Work with skills** dialog adds generated draft review,
+selective updates and portable SKILL.md download. Browser-safe semantic source
+snapshots and anchored change application live in `apps/web/lib/skill-workflow.ts`;
+provider invocation remains server-owned in `skill-author.ts`. The new
+`POST /api/skills/update-from-vdt` prepares proposals using the exact source pin,
+latest immutable version and exact current working bytes. It cannot publish.
+`POST /api/skills/update` separately admits the reviewed update after checking
+VDT scope, selection revision, base/latest content hashes and working file hash.
+Universal fallback updates are rejected. Saving never changes the tree or pin.
+
+Nonoverlapping instruction anchors preserve unrelated bytes; model patches
+cannot rewrite metadata or executable topology. The host may propose original
+validated topology separately. Managed publication coordinates cooperating V1
+writers, swaps guarded working bytes before immutable publication and compensates
+owned failures without overwriting a newer external save. Creation cannot
+overwrite an existing portable identity; no-op updates cannot create versions.
+Portable working files retain their ordinary metadata while immutable runtime
+artifacts receive host identity/version fields. If immutable publication became
+visible before a final check failed, or its visibility cannot be confirmed,
+working bytes are preserved and the explicit save reports HTTP 503 rather than
+rolling back into inconsistent/lost content or automatically retrying.
+This is not a crash-atomic
+two-file transaction or V2 process-loss recovery. See
+[ADR-014](adr/ADR-014-tree-to-skill-review-and-updates.md).
+
+Skill Author's browser-safe deadline policy is in `skill-author-deadline.ts`:
+local/CLI 300 seconds, API 90 seconds. Both preparation routes use the same
+timeout in their provider config and server-owned deadline; `maxDuration=330`
+includes response/cleanup headroom. The server helper in
+`app/api/skills/author-deadline.ts` distinguishes deadline exhaustion (safe 504)
+from caller cancellation (409), removes timer/listener ownership and prevents a
+late ignored-abort result from becoming HTTP success. Paired LocalRunnerProvider
+preserves only TIMEOUT and the two fixed Skill Author context/output-limit codes;
+the latter become safe 422 responses. No global runtime,
+chat or Suggested timeout is changed. The UI captures the execution budget with
+the provider/model before awaiting Context and displays elapsed wall time with
+continuous cancellation. See
+[the follow-up](implementation/SKILL_AUTHOR_LOCAL_TIMEOUT_2026-11-03.md).
+
+For exactly the Ollama creation/update author roles and expected tool contracts,
+the local executor uses native `/api/chat` with the registered response schema.
+Complete serialized-message bytes plus 7,000 output tokens and 2,048 framing
+reserve select a 16,384- or 32,768-token context. Oversize requests fail before
+inference; `/api/show` rejects smaller declared model capacity. The manifest
+owns both URLs. Thinking remains at the provider default, as in the old author
+transport. Only completed, nonempty, tool-free native responses proceed to the
+existing schema and semantic validation. Other roles/backends retain their
+existing transport.
+
 `/api/skills/files` supports only open.folder, open.file and open.skill. Local,
 same-origin, bounded JSON admission precedes library-owned path resolution and a
 fixed OS launcher without a shell or client-provided command/URL. Opening a

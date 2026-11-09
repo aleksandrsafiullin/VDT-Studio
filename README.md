@@ -40,7 +40,8 @@ can be initialized without replacing existing files.
 A new file needs `name`, `description` and Markdown instructions; the existing VDT
 frontmatter format remains supported. **Open folder** opens the file manager.
 Edit, organize, copy or remove files in your usual editor/file manager; the app
-provides a list and creation rather than a filesystem manager or Markdown editor.
+provides a list and creation rather than a filesystem manager. Generated
+tree-to-skill drafts have their own review editor, described below.
 Changes appear on return, during visible-library polling, Refresh and new agent
 catalog access. Removed files leave the catalog; immutable history and active
 run pins remain available. Duplicate identities or invalid skills show an issue.
@@ -49,6 +50,18 @@ run pins remain available. Duplicate identities or invalid skills show an issue.
 draft from a tree with a root formula and 2–80 nodes. **Create and open** saves it
 in the same folder for external review, without selecting it or changing the
 VDT. Source numerical values are excluded.
+
+**Context → Work with skills** opens a dedicated tree workflow, separate from
+Excel export. **Save as new skill** prepares editable name/description/instructions
+and a final Markdown preview before an explicit library save or SKILL.md download.
+**Update used skill** proposes individually selectable/editable changes against
+the Context-pinned skill and its latest working version, with reasons and source
+nodes. Universal fallback trees create a new thematic skill. Updates reject
+stale pins/files and append a version without changing the tree or its selection.
+The dialog shows elapsed preparation time and keeps Cancel available. Local/CLI
+preparation can take up to five minutes; remote APIs retain a 90-second budget.
+See [the workflow contract](docs/adr/ADR-014-tree-to-skill-review-and-updates.md)
+and [implementation/review evidence](docs/implementation/SKILL_WORKFLOW_2026-11-03.md).
 
 The left panel's **Context → Skill** selects from this same library. A Root KPI
 receives a provisional matching skill or the available universal skill. If the

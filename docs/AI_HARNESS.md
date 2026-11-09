@@ -165,18 +165,50 @@ retain legacy activation; replacing a user choice through recipe compilation
 requires explicit reselection.
 
 Skill Author is a dedicated, bounded prompt over the existing `agent_decision`
-transport, with a single admitted `skill.author_draft` output. The host validates
-that output and executes no model-returned tool. It receives only the current
-VDT's structure/formulas, omitting source values, rows and file paths. The chosen
-API/local/CLI provider is retained. A 90-second request deadline applies; the
-UI retains an unsaved draft with name/description controls. Create and open is a
-separate local operation that saves a SKILL.md package in the shared folder and opens the default external editor.
-Markdown is not rendered or edited inside the application. External file saves
+transport, with expected `skill.author_draft` creation or `skill.author_update`
+proposal output. The host validates that output and executes no model-returned
+tool. It receives bounded semantic tree context, including descriptions and
+assumptions, while omitting dedicated source values/rows/paths and redacting
+numerical observations and local paths in narrative context. The chosen
+API/local/CLI provider is retained. Skill preparation has a 300-second local/CLI
+budget and a 90-second API budget, shared by create/update controllers and their
+provider requests. The routes allow 330 seconds for response/cleanup headroom;
+chat, Suggested KPI and global runtime limits are unchanged. The dedicated
+workflow shows elapsed time and the captured preparation budget, keeps Cancel
+available and reports exhausted deadlines explicitly as HTTP 504. A caller
+cancellation is distinct and cannot publish a late result. See
+[the timeout follow-up](implementation/SKILL_AUTHOR_LOCAL_TIMEOUT_2026-11-03.md).
+Ollama's two author roles use native schema-constrained `/api/chat`, with 16K/32K
+context selected from the full message size and 7,000 output tokens. Oversize
+inputs and insufficient declared model capacity fail explicitly rather than
+trimming the tree or skill. The previous generic adapter did not forward author
+reasoning overrides; this scoped transport preserves provider-default thinking.
+The author prompt now names the existing flat `argsJson` wire contract directly.
+The legacy Create and open operation still saves a package for external editing.
+
+**Context → Work with skills** adds in-app editing/review of generated drafts,
+explicit library save and portable download. Update authoring compares the exact
+Context-pinned source, latest working guidance and the tree; the output has
+individually selectable/editable anchored changes with reasons/source nodes.
+Model patches cannot rewrite metadata or executable topology. The host can
+propose validated original tree topology separately, without numerical defaults.
+Missing branches do not justify removing general guidance. Universal fallback
+trees create thematic skills rather than updating universal guidance. A separate
+save rechecks source selection and latest version/content/file hashes, appends a
+new immutable version and leaves existing tree pins/graph unchanged. Tree/scope/
+selection changes fence late browser results and stale draft saves. External saves
 are validated into immutable versions before a new catalog load; invalid files
 retain last valid guidance, and active runs retain their prior snapshot.
 This introduces no task/schema ID and no new tool/approval authority. Live
 provider quality, complete V2 read receipts and native packaging remain separate
 qualification work. See [ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md).
+
+The generic legacy local HTTP completion adapter does not currently map
+`modelReasoning` into its outgoing Ollama-compatible request. An Off flag on an
+earlier author test request therefore proves the request setting, not verified
+Off execution. Native Model Agent and Smart reasoning transports are separate.
+The waiting-budget follow-up leaves the selected model/transport and global
+Ollama configuration unchanged.
 
 The supplied library is a one-time editable seed, including declared resources.
 Subsequent catalog loads read working files; there is no parallel read-only

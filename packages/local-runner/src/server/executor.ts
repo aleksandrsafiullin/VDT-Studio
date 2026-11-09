@@ -1352,6 +1352,7 @@ async function postLocalHttpChat(
   timeoutMs: number
 ): Promise<string> {
   if (!manifest.localHttp) throw Object.assign(new Error("Backend has no local HTTP manifest."), { code: "INVALID_MANIFEST" });
+  const authorBudget = ollamaSkillAuthorBudget(manifest, request, messages);
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal.addEventListener("abort", abort, { once: true });
@@ -1373,6 +1374,50 @@ async function postLocalHttpChat(
       ]
     : [{ type: "json_object" }];
   try {
+    if (authorBudget) {
+      const model = request.model ?? manifest.localHttp.defaultModel;
+      const metadata = await (options.fetch ?? fetch)(ollamaSkillAuthorUrl(manifest.localHttp.baseUrl, "show"), {
+        method: "POST", redirect: "error", signal: controller.signal,
+        headers: { "content-type": "application/json" }, body: JSON.stringify({ model })
+      });
+      const metadataText = await readBoundedResponse(metadata);
+      controller.signal.throwIfAborted();
+      if (!metadata.ok) throw Object.assign(new Error("Local model metadata request failed."), { code: "LOCAL_HTTP_FAILED" });
+      const declaredContext = ollamaDeclaredContext(JSON.parse(metadataText));
+      if (declaredContext !== undefined && declaredContext < authorBudget.num_ctx) throw Object.assign(new Error("The selected model cannot fit the bounded Skill Author context and output budget."), { code: "SKILL_AUTHOR_CONTEXT_LIMIT" });
+      response = await (options.fetch ?? fetch)(ollamaSkillAuthorUrl(manifest.localHttp.baseUrl, "chat"), {
+        method: "POST", redirect: "error", signal: controller.signal,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model, stream: false, format: getStrictResponseJsonSchema("agent-decision-v2"),
+          // Preserve this legacy path's effective provider-default thinking.
+          // Forwarding explicit reasoning is a separate qualification gap.
+          options: { ...authorBudget, temperature: 0 }, messages })
+      });
+      rawResponse = await readBoundedResponse(response);
+      controller.signal.throwIfAborted();
+      assertLineLimit(rawResponse);
+      let native: unknown;
+      try { native = JSON.parse(rawResponse); }
+      catch { throw Object.assign(new Error("Local model returned an invalid native response envelope."), { code: "INVALID_PROVIDER_RESPONSE" }); }
+      if (!isRecord(native)) throw Object.assign(new Error("Local model returned an invalid native response envelope."), { code: "INVALID_PROVIDER_RESPONSE" });
+      if (!response.ok || typeof native.error === "string") {
+        if (typeof native.error === "string" && /context|num_ctx/i.test(native.error) && /exceed|too (?:large|long|small)|insufficient|limit/i.test(native.error)) {
+          throw Object.assign(new Error("The local model rejected the bounded Skill Author context."), { code: "SKILL_AUTHOR_CONTEXT_LIMIT" });
+        }
+        throw Object.assign(new Error("Local model endpoint failed."), { code: "LOCAL_HTTP_FAILED" });
+      }
+      if (native.done_reason === "length") throw Object.assign(new Error("Skill Author exhausted its bounded generation budget before completing an answer."), { code: "SKILL_AUTHOR_OUTPUT_LIMIT" });
+      const message = isRecord(native.message) ? native.message : undefined;
+      if (message?.function_call != null || native.function_call != null
+        || [message?.tool_calls, native.tool_calls].some(value => value != null && (!Array.isArray(value) || value.length > 0))) {
+        throw Object.assign(new Error("Read-only Skill Author returned native tool activity."), { code: "TOOL_ACTIVITY_REJECTED" });
+      }
+      if (native.done !== true || native.done_reason !== "stop" || (message?.role !== undefined && message.role !== "assistant")
+        || typeof message?.content !== "string" || !message.content.trim()) {
+        throw Object.assign(new Error("Local model did not return a completed nonempty Skill Author response."), { code: "INVALID_PROVIDER_RESPONSE" });
+      }
+      return message.content;
+    }
     for (const [index, responseFormat] of responseFormats.entries()) {
       response = await (options.fetch ?? fetch)(`${manifest.localHttp.baseUrl}/chat/completions`, {
         method: "POST",
@@ -1407,6 +1452,40 @@ async function postLocalHttpChat(
   const content = envelope.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw Object.assign(new Error("Local provider response did not contain message content."), { code: "INVALID_PROVIDER_RESPONSE" });
   return content;
+}
+
+/** This changes only the two host-authored read-only completions, never normal
+ * agent/chat/Smart requests or another local provider. No caller chooses budgets. */
+function ollamaSkillAuthorBudget(manifest: BackendManifest, request: CompletionRequest, messages: Array<{ role: "system" | "user"; content: string }>): { num_ctx: number; num_predict: number } | undefined {
+  if (manifest.id !== "ollama" || request.backendId !== "ollama" || request.taskType !== "agent_decision" || request.schemaId !== "agent-decision-v2"
+    || !isRecord(request.input) || !isRecord(request.input.data) || !isRecord(request.input.data.outputContract)) return undefined;
+  const data = request.input.data, contract = data.outputContract as Record<string, unknown>;
+  if (!(data.role === "vdt_skill_author" && contract.toolName === "skill.author_draft")
+    && !(data.role === "vdt_skill_update_author" && contract.toolName === "skill.author_update")) return undefined;
+  const outputTokens = 7000, framingReserve = 2048;
+  // One token per serialized UTF-8 byte is a conservative byte-fallback bound.
+  // Keep complete messages and reserve output plus chat/template framing. Larger
+  // requests fail before inference rather than allowing silent prompt truncation.
+  const required = byteLength(JSON.stringify(messages)) + outputTokens + framingReserve;
+  const context = [16_384, 32_768].find(limit => required <= limit);
+  if (context === undefined) throw Object.assign(new Error("The complete Skill Author prompt exceeds the bounded local context allowance."), { code: "SKILL_AUTHOR_CONTEXT_LIMIT" });
+  return { num_ctx: context, num_predict: outputTokens };
+}
+
+function ollamaSkillAuthorUrl(baseUrl: string, action: "show" | "chat"): string {
+  const url = new URL(baseUrl);
+  url.pathname = `${url.pathname.replace(/\/v1\/?$/, "").replace(/\/+$/, "")}/api/${action}`;
+  url.search = ""; url.hash = "";
+  return url.toString();
+}
+
+function ollamaDeclaredContext(metadata: unknown): number | undefined {
+  if (!isRecord(metadata) || !isRecord(metadata.model_info)) return undefined;
+  const info = metadata.model_info, architecture = info["general.architecture"];
+  const declared = typeof architecture === "string" ? info[`${architecture}.context_length`] : undefined;
+  if (typeof declared === "number" && Number.isSafeInteger(declared) && declared > 0) return declared;
+  const contexts = Object.entries(info).flatMap(([key, value]) => key.endsWith(".context_length") && typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? [value] : []);
+  return contexts.length ? Math.min(...contexts) : undefined;
 }
 
 async function executeLocalHttp(

@@ -1,5 +1,29 @@
 # Local Runner
 
+## Skill Author waiting and Ollama budget (2026-11-03)
+
+Tree-to-skill creation/update preparation allows 300 seconds for local execution
+and 90 seconds for remote APIs. The interface shows elapsed time and keeps
+cancellation available. These budgets do not change chat or Suggested KPI limits.
+
+Exactly the Ollama `vdt_skill_author` / `vdt_skill_update_author` roles, with their
+expected output contracts, use native `/api/chat` and the registered
+`agent-decision-v2` schema. Full serialized-message bytes plus 7,000 output tokens
+and 2,048 framing reserve select a 16,384- or 32,768-token context; larger input
+fails before inference. A bounded `/api/show` rejects smaller declared model
+capacity. Both URLs remain manifest-owned, redirects stay disabled, and no
+source content is trimmed. Truncated, incomplete, empty or native-tool-bearing
+responses fail before the existing schema/semantic checks.
+
+Thinking is omitted to preserve the author transport's effective provider
+default. Explicit author reasoning forwarding remains unqualified; the old
+generic path also omitted it. Other tasks and backends keep their existing
+transport. See the [execution evidence](implementation/SKILL_AUTHOR_LOCAL_TIMEOUT_2026-11-03.md)
+and Ollama's primary [chat](https://docs.ollama.com/api/chat) and
+[thinking](https://docs.ollama.com/capabilities/thinking) contracts.
+Task-specific local checks do not promote canonical provider certification or
+establish native-package/release qualification.
+
 ## Local harness integration (2026-11-02)
 
 Thirteen current harnesses and saved ACP/VDT JSONL profiles share the local runner task contracts. Pi uses the common session port through its native RPC. Suggested KPI carries its independent model and modelReasoning choice, including explicit false for Off, through admission and completion. /v1/harnesses is a paired, Origin-guarded settings operation; generation still accepts only saved backend/model/task IDs. Smart metadata accepts registered harness backend IDs, while Codex retains its private adapter policy. See [Harness connections](HARNESS_CONNECTIONS.md).

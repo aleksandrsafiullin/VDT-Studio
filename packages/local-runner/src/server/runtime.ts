@@ -883,6 +883,8 @@ function publicRuntimeError(error: unknown): { code: string; message: string } {
     OUTPUT_TOO_LARGE: "Backend output exceeded the configured limit.",
     OUTPUT_LINE_TOO_LARGE: "Backend output line exceeded the configured limit.",
     SCHEMA_INVALID: "Backend output failed schema validation.",
+    SKILL_AUTHOR_CONTEXT_LIMIT: "The complete tree and skill guidance cannot fit the bounded local Skill Author context. Reduce the input or choose another model.",
+    SKILL_AUTHOR_OUTPUT_LIMIT: "Skill Author exhausted its bounded output budget before completing an answer. Try again or choose a faster model.",
     BACKEND_NOT_INSTALLED: "Backend executable is not installed.",
     UNSAFE_CONFIGURATION: "Backend is not certified for isolated execution.",
     LOCAL_HTTP_FAILED: "Local model endpoint failed.",

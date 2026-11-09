@@ -51,6 +51,7 @@ const safeSegment = (id: string) => {
 
 export class LocalSkillRepository {
   private readonly root: string;
+  private readonly ownedWriteLocks = new Set<string>();
   readonly files: LocalSkillFiles;
   constructor(dataDir = localSkillDataDir()) {
     this.root = path.resolve(dataDir, "skill-library-v1");
@@ -73,12 +74,14 @@ export class LocalSkillRepository {
   installSeed(input: { id: string; version: number; raw: string }): void {
     safeSegment(input.id);
     if (!Number.isSafeInteger(input.version) || input.version < 1 || input.version > 999_999_999) throw new SkillLibraryError("INVALID_VERSION", "Invalid supplied skill version.");
-    if (!this.get(input.id, input.version)) {
-      this.publishRecord(this.directory("skills", input.id), input.version, {
-        schemaVersion: "local_skill_version.v1", ...input, createdAt: new Date().toISOString(),
-        contentHash: skillContentHash(input.raw), fileHash: skillContentHash(input.raw)
-      } satisfies StoredSkillVersion);
-    }
+    this.withSkillWriteLock(input.id, () => {
+      if (!this.get(input.id, input.version)) {
+        this.publishRecord(this.directory("skills", input.id), input.version, {
+          schemaVersion: "local_skill_version.v1", ...input, createdAt: new Date().toISOString(),
+          contentHash: skillContentHash(input.raw), fileHash: skillContentHash(input.raw)
+        } satisfies StoredSkillVersion);
+      }
+    });
   }
 
   markSeed(id: string): void {
@@ -107,16 +110,93 @@ export class LocalSkillRepository {
     safeSegment(input.id);
     if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0) throw new SkillLibraryError("INVALID_VERSION", "Invalid expected skill version.");
     if (Buffer.byteLength(input.raw, "utf8") > 128 * 1024) throw new SkillLibraryError("SKILL_TOO_LARGE", "Skill must be at most 128 KiB.");
-    const dir = this.directory("skills", input.id);
-    if (this.latest(dir) !== input.expectedVersion) throw new SkillLibraryError("SKILL_CONFLICT", "This skill changed. Reopen the latest version before saving.");
-    const record: StoredSkillVersion = {
-      schemaVersion: "local_skill_version.v1", id: input.id, version: input.expectedVersion + 1,
-      raw: input.raw, contentHash: skillContentHash(input.raw), createdAt: new Date().toISOString(),
-      ...(input.fileHash ? { fileHash: input.fileHash } : {}),
-      ...(input.lineage ? { lineage: input.lineage } : {}), ...(input.sourceVdt ? { sourceVdt: input.sourceVdt } : {})
-    };
-    this.publishRecord(dir, record.version, record);
-    return record;
+    return this.withSkillWriteLock(input.id, () => {
+      const dir = this.directory("skills", input.id);
+      if (this.latest(dir) !== input.expectedVersion) throw new SkillLibraryError("SKILL_CONFLICT", "This skill changed. Reopen the latest version before saving.");
+      const record: StoredSkillVersion = {
+        schemaVersion: "local_skill_version.v1", id: input.id, version: input.expectedVersion + 1,
+        raw: input.raw, contentHash: skillContentHash(input.raw), createdAt: new Date().toISOString(),
+        ...(input.fileHash ? { fileHash: input.fileHash } : {}),
+        ...(input.lineage ? { lineage: input.lineage } : {}), ...(input.sourceVdt ? { sourceVdt: input.sourceVdt } : {})
+      };
+      this.publishRecord(dir, record.version, record);
+      return record;
+    });
+  }
+
+  /** Fail-fast local V1 coordination between cooperating publishers. A managed
+   * save holds this through its working-file swap and history publication, so
+   * another host cannot synchronize intermediate bytes as an external edit.
+   * This is not a crash-atomic transaction or process-loss recovery protocol. */
+  withSkillWriteLock<T>(id: string, operation: () => T): T {
+    safeSegment(id);
+    return this.withWriteLock(this.directory("skills", id), `skill:${id}`, operation);
+  }
+
+  withSelectionWriteLock<T>(projectId: string, vdtId: string, operation: () => T): T {
+    return this.withWriteLock(this.directory("selections", safeSegment(projectId), safeSegment(vdtId)), `selection:${projectId}/${vdtId}`, operation);
+  }
+
+  private withWriteLock<T>(directory: string, key: string, operation: () => T): T {
+    if (this.ownedWriteLocks.has(key)) return operation();
+    const lock = path.join(directory, ".write-lock");
+    const marker = `owner-${process.pid}-${randomUUID()}.json`;
+    let acquired = false;
+    for (let attempt = 0; attempt < 2 && !acquired; attempt++) {
+      try { fs.mkdirSync(lock, { mode: 0o700 }); acquired = true; }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        try { this.recoverDeadWriteLock(lock); }
+        catch (recoveryError) {
+          // The prior owner may release its lock between EEXIST and inspection.
+          // Retry acquisition within the same bounded loop instead of leaking a
+          // transient filesystem ENOENT as a malformed-request failure.
+          if ((recoveryError as NodeJS.ErrnoException).code !== "ENOENT") throw recoveryError;
+        }
+      }
+    }
+    if (!acquired) throw new SkillLibraryError("SKILL_CONFLICT", "Another process is updating this skill. Retry after it finishes.");
+    const owner = path.join(lock, marker);
+    try { fs.writeFileSync(owner, JSON.stringify({ pid: process.pid }), { flag: "wx", mode: 0o600 }); }
+    catch (error) {
+      try { if (!this.removeOwnedWriteLock(lock, marker)) fs.rmdirSync(lock); }
+      catch { /* Keep an incomplete lock visible for recovery if cleanup fails. */ }
+      throw error;
+    }
+    this.ownedWriteLocks.add(key);
+    try {
+      return operation();
+    } finally {
+      this.ownedWriteLocks.delete(key);
+      this.removeOwnedWriteLock(lock, marker);
+    }
+  }
+
+  private recoverDeadWriteLock(lock: string): void {
+    const stat = fs.lstatSync(lock), entries = stat.isDirectory() && !stat.isSymbolicLink() ? fs.readdirSync(lock) : [];
+    const owner = entries.length === 1 ? entries[0]! : "", match = /^owner-([1-9]\d*)-[a-f0-9-]+\.json$/.exec(owner);
+    const pid = match ? Number(match[1]) : 0;
+    if (!Number.isSafeInteger(pid) || pid <= 0 || pid > 2_147_483_647) throw new SkillLibraryError("SKILL_CONFLICT", `An incomplete skill write lock needs recovery. Close all VDT Studio instances before removing only ${lock}, then retry.`);
+    try { process.kill(pid, 0); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+        // Only the owner-specific marker may be removed. If another recovering
+        // host got here first, never rmdir a possibly replacement owner's lock.
+        this.removeOwnedWriteLock(lock, owner);
+        return;
+      } else if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    }
+    throw new SkillLibraryError("SKILL_CONFLICT", `Another process (PID ${pid}) is updating this skill. Retry after it finishes.`);
+  }
+
+  private removeOwnedWriteLock(lock: string, marker: string): boolean {
+    try { fs.unlinkSync(path.join(lock, marker)); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
+    try { fs.rmdirSync(lock); }
+    catch (error) {
+      if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+    }
+    return true;
   }
 
   getSelection(projectId: string, vdtId: string): StoredSkillSelection | null {
@@ -125,12 +205,14 @@ export class LocalSkillRepository {
   }
 
   select(projectId: string, vdtId: string, input: Omit<StoredSkillSelection, "schemaVersion" | "revision" | "updatedAt">, expectedRevision?: number): StoredSkillSelection {
-    const dir = this.directory("selections", safeSegment(projectId), safeSegment(vdtId));
-    const revision = this.latest(dir);
-    if (expectedRevision !== undefined && revision !== expectedRevision) throw new SkillLibraryError("SKILL_CONFLICT", "The selected skill changed. Refresh Context before trying again.");
-    const record: StoredSkillSelection = { ...input, schemaVersion: "local_skill_selection.v1", revision: revision + 1, updatedAt: new Date().toISOString() };
-    this.publishRecord(dir, record.revision, record);
-    return record;
+    return this.withSelectionWriteLock(projectId, vdtId, () => {
+      const dir = this.directory("selections", safeSegment(projectId), safeSegment(vdtId));
+      const revision = this.latest(dir);
+      if (expectedRevision !== undefined && revision !== expectedRevision) throw new SkillLibraryError("SKILL_CONFLICT", "The selected skill changed. Refresh Context before trying again.");
+      const record: StoredSkillSelection = { ...input, schemaVersion: "local_skill_selection.v1", revision: revision + 1, updatedAt: new Date().toISOString() };
+      this.publishRecord(dir, record.revision, record);
+      return record;
+    });
   }
 
   /** Rename the complete working tree, preserving editor bytes and companion

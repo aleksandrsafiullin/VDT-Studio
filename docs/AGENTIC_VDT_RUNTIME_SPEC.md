@@ -78,6 +78,30 @@ opens the external editor; filesystem management happens in that editor or the
 file manager. From this VDT is shown only in an open VDT and requires explicit
 Create and open to save a new package without changing the source tree.
 
+The 2026-11-03 [tree-to-skill amendment](adr/ADR-014-tree-to-skill-review-and-updates.md)
+adds **Context → Work with skills** as a dedicated generated-draft review dialog.
+The user edits/saves/downloads a new thematic skill or selects/edits individual
+proposed updates to the exact pinned source and latest working skill. The author
+remains read-only and model-returned tools do not execute. Update publication is
+a separate local/same-origin operation with selection revision and latest
+version/content/file checks; stale or deleted files cannot be replaced/restored.
+The tree and existing pins remain unchanged. Universal fallback guidance cannot
+be specialized by this tree-update operation. Generated-draft review explicitly
+amends the external-editor-only UI decision; general file management remains
+external. No V2 grant, receipt or autonomous publishing authority is introduced.
+
+Skill Author waiting-budget amendment: create/update preparation uses a shared
+300-second local/CLI or 90-second API deadline, with 330-second route headroom.
+Elapsed wall time and the captured maximum are visible; caller cancellation
+remains available and distinct from a safe HTTP 504 deadline error. Late results
+cannot become successful preparation responses after abort. This scoped waiting
+change does not alter chat, Suggested KPI or global execution ceilings. See
+[the follow-up](implementation/SKILL_AUTHOR_LOCAL_TIMEOUT_2026-11-03.md).
+The two exact Ollama author roles also use a native registered-schema response,
+with full-input fit checks, bounded 16K/32K context and 7,000 output tokens. Source
+context is never trimmed. Provider-default thinking is preserved; this adds no
+tool, mutation or publication authority.
+
 [ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md) supersedes the
 no-universal-preselection and read-only supplied-skill rules for local V1. It does not
 claim V2 run-state CAS, tenant grants, canonical framed hashes, durable read

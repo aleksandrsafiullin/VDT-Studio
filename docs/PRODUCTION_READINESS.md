@@ -230,6 +230,48 @@ or Windows performance support, eliminate cold startup/Next development
 compilation, or change the production/release `NO-GO`. Local timings and checks
 belong to `output/playwright/app-speed-20261026/`.
 
+## Tree-to-skill review and updates (2026-11-03)
+
+Implemented locally: all three independent code reviews passed after corrections,
+129 focused tests passed, web typecheck passed and browser create/download,
+selective update, conflict/recovery, semantic invalidation and cancel checks
+passed. Commands, evidence and boundaries are tracked in
+[the execution plan](implementation/SKILL_WORKFLOW_2026-11-03.md).
+The dedicated Context action prepares editable new-skill drafts or selective
+update proposals. It separates read-only inference from explicit publication,
+checks source pins/latest versions/exact working bytes and preserves tree pins
+and companion resources. Universal fallback creates a thematic skill. Failed
+managed file updates must not publish phantom immutable versions, and no-op
+updates cannot manufacture another version.
+
+Browser generation used deterministic provider fixtures; save/update endpoints
+and filesystem/version checks were real. Separate live author-service calls
+through the actual managed Codex CLI provider returned validated create/update
+results in about 12/10 seconds, without publication. They used the host default
+model; its exact model was not captured. Two Ollama qwen3.5:4b-q4_K_M attempts
+were cancelled at their deadlines. This is task-specific live evidence rather
+than arbitrary semantic or provider certification. Human review remains
+necessary. This local
+V1 extension does not claim crash-atomic working-file/history publication,
+general process-loss recovery, V2 grants/read receipts or packaged-native and
+Windows/Linux qualification. Overall production/release remains `NO-GO`.
+See [ADR-014](adr/ADR-014-tree-to-skill-review-and-updates.md).
+
+The earlier Qwen cancellations above occurred with the original 90-second
+author deadline. The local/CLI author budget has since been aligned with the
+existing 300-second runtime ceiling; APIs retain 90 seconds. The UI shows elapsed
+time and keeps Cancel available. An exhausted deadline returns an explicit safe
+504 rather than a generic model failure. The prior Off flag was requested but
+not mapped by the legacy generic local HTTP adapter, so Off execution was not
+verified. Current review/live evidence belongs to
+[the waiting-budget follow-up](implementation/SKILL_AUTHOR_LOCAL_TIMEOUT_2026-11-03.md);
+no provider or native certification is inferred from that amendment.
+Final real Qwen HTTP creation/update now passed at 223.832/284.811 seconds on a
+three-node fixture after a scoped native Ollama context/output-budget fix. The
+update is close to the new ceiling. A prose unit error remained in the editable
+draft; host-owned executable units were correct. This establishes task-specific
+functional completion, not general model quality or native/release qualification.
+
 ## Local skill management boundary (2026-10-25)
 
 Implemented in source: one editable skills directory initialized from supplied

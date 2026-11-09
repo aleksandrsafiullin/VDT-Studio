@@ -109,6 +109,18 @@ These are client lifecycle changes over the existing reviewed probes, with no
 adapter, supported model, certification status or native-platform qualification
 change. Canonical `release/provider-certification.json` remains unchanged.
 
+## Skill Author local budget (2026-11-03)
+
+Local creation/update preparation now waits up to 300 seconds, with elapsed time
+and cancellation; remote API preparation remains 90 seconds. The two exact
+Ollama author roles use native schema-constrained `/api/chat`, bounded 16K/32K
+context and 7,000 output tokens. Complete-message fit and declared model context
+are checked; source input is never trimmed to fit. Provider-default thinking is
+preserved because the previous generic author path did not forward overrides.
+Other local roles/backends and canonical certification remain unchanged.
+See [local execution details](LOCAL_RUNNER.md#skill-author-waiting-and-ollama-budget-2026-11-03)
+and the [task-specific evidence](implementation/SKILL_AUTHOR_LOCAL_TIMEOUT_2026-11-03.md).
+
 ## Skill Author CLI parsing check (2026-10-25)
 
 Codex completion parsing now accepts a valid structured result before applying

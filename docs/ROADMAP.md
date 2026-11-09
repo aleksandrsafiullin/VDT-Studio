@@ -88,6 +88,21 @@ Arbitrary model quality, restart recovery and native qualification remain open.
 
 ## Local skill library (2026-10-25)
 
+Waiting-budget follow-up 2026-11-03: Skill Author local/CLI preparation now uses
+the existing five-minute runtime allowance, with elapsed time and Cancel in the
+dedicated dialog. API preparation remains 90 seconds. Deadline errors are
+explicit and retain the unsaved review. Independent review/live evidence is
+tracked in [the follow-up report](implementation/SKILL_AUTHOR_LOCAL_TIMEOUT_2026-11-03.md).
+
+2026-11-03 extension, implemented in source with review/acceptance tracked in
+[the execution plan](implementation/SKILL_WORKFLOW_2026-11-03.md): a dedicated
+**Context → Work with skills** dialog supports editable new-skill drafts,
+library save/download and individually reviewed updates to the pinned skill's
+latest working version. Universal trees create thematic skills. Explicit
+publication validates current pin/version/content/file identity and preserves
+tree pins, graph and companion resources. This amends generated-draft review,
+not V2 repository authority; see [ADR-014](adr/ADR-014-tree-to-skill-review-and-updates.md).
+
 Implemented in source: one searchable, filesystem-backed library with Open
 folder, New skill and From this VDT only in an open VDT. Supplied and new skills
 share the same editable directory; source categories and in-app filesystem

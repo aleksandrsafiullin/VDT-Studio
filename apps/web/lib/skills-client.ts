@@ -1,5 +1,6 @@
 import type { SkillCard } from "@vdt-studio/vdt-agent";
 import type { StoredSkillSelection } from "@vdt-studio/storage";
+import type { VdtProject } from "@vdt-studio/vdt-core";
 import { readBoundedText } from "@vdt-studio/ai-harness/browser";
 
 export type { SkillCard };
@@ -21,6 +22,11 @@ export const listSkills = () => skillRequest<SkillLibraryResponse>("/api/skills"
 export const readSkill = (id: string, version?: number) => skillRequest<{ skill: SkillDocument }>(`/api/skills?${new URLSearchParams({ id, ...(version ? { version: String(version) } : {}) })}`);
 export const getVdtSkillContext = (projectId: string, vdtId: string, rootKpi?: string) => skillRequest<VdtSkillContext>(`/api/skills/selection?${new URLSearchParams({ projectId, vdtId, ...(rootKpi?.trim() ? { rootKpi } : {}) })}`);
 export const skillsChanged = () => window.dispatchEvent(new Event("vdt:skills-changed"));
+
+/** A renamed graph root is authoritative even before the creation brief changes. */
+export function skillContextRootKpi(project: Pick<VdtProject, "rootNodeId" | "graph">, fallback = ""): string {
+  return project.graph.nodes.find(node => node.id === project.rootNodeId)?.name ?? fallback;
+}
 
 export const NEW_SKILL_MARKDOWN = `---
 name: new-skill

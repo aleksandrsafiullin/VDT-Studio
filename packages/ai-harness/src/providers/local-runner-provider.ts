@@ -91,7 +91,10 @@ export class LocalRunnerProvider implements AiProvider {
     finally { params.signal?.removeEventListener("abort", cancel); }
     if (!response.ok || !payload.ok) {
       const detail = payload.error?.message ?? `status ${response.status}`;
-      throw new Error(`Local runner request failed: ${detail}`);
+      const error = new Error(`Local runner request failed: ${detail}`);
+      const code = payload.error?.code;
+      if (code === "TIMEOUT" || code === "SKILL_AUTHOR_CONTEXT_LIMIT" || code === "SKILL_AUTHOR_OUTPUT_LIMIT") Object.assign(error, { code });
+      throw error;
     }
     if (payload.output === undefined) throw new Error("Local runner response did not include structured output.");
     return payload.output as TOutput;

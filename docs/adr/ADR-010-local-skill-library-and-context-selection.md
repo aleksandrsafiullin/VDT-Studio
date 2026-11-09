@@ -3,6 +3,12 @@
 - Status: Implemented local V1 capability; V2 repository/authorization remains separate
 - Date: 2026-10-25
 
+Tree-to-skill amendment 2026-11-03: [ADR-014](ADR-014-tree-to-skill-review-and-updates.md)
+adds the dedicated Context workflow, generated-draft review/edit/download and
+explicit selective skill updates. It amends the external-editor-only decision
+below for generated draft/proposal review. Settings remains the same file library;
+the original From this VDT path stays compatible. No V2 authority is introduced.
+
 Suggested KPI amendment 2026-11-03: new Smart preparation reuses this same
 Context selection and its immutable content, without activating a full agent or
 allowing native skill/file tools. Selection identity participates in context,

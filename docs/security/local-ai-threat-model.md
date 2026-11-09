@@ -108,17 +108,58 @@ The previous `skill-library-v1/files` root is renamed as a whole into `skills`.
 Migration rejects symlinked roots and stops without changing either directory
 when both roots exist. Private version/selection history stays in place.
 
-Skill Author receives bounded node names, units, formulas and relationships;
-source numerical values, dataset rows and file paths are omitted. Its only
-admitted structured result is an editable draft, never an executed model tool
-or automatic publication. The user explicitly chooses Create and open to save
-the draft for external review. The existing selected provider owns inference. API transport
+Skill Author receives bounded semantic tree context: names, units, formulas,
+relationships, descriptions and assumptions. Dedicated source numerical values,
+dataset rows and file paths are omitted; local paths and numerical observations
+in narrative descriptions/assumptions are redacted. Admitted structured results
+are creation drafts or update proposals, never executed model tools or automatic
+publication. The dedicated **Context → Work with skills** dialog reviews/edits
+generated content before explicit library save or portable download; legacy
+Create and open remains available for external review. The existing selected provider owns inference. API transport
 uses the existing pinned-destination policy; local CLI uses its current managed
 runtime controls. Original topology can be attached only after deterministic
 validation, without numeric source defaults. Provider error details are not
 returned to the UI. Model-authored prose still needs review; the feature does
 not strengthen general CLI isolation or native/hosted qualification. See
 [ADR-010](../adr/ADR-010-local-skill-library-and-context-selection.md).
+
+Update preparation loads the exact Context pin and exact current working bytes.
+Anchored model changes cannot overlap, alter YAML metadata or author executable
+topology; host-prepared original topology is reviewed separately. The explicit
+save endpoint rechecks local VDT ownership, source selection revision, latest
+version/content hash and working file hash. Changed/invalid/deleted files,
+identity changes and no-op saves fail instead of overwriting/restoring files or
+manufacturing versions. Universal guidance cannot be specialized by this tree
+workflow. Managed V1 writers coordinate file replacement and immutable
+publication and compensate owned failures without overwriting newer external
+bytes; no crash-atomic two-file commit or V2 process-loss recovery is claimed.
+Generated text is editable source rather than trusted executable instruction.
+Protected topology is checked in the assembled guidance result as well as in
+individual passages; split-marker edits and unsafe selected subsets cannot
+promote a JSON example into executable topology. Exact narrative text remains
+only in the browser's semantic invalidation key; inference keeps its redacted
+projection. Original bounded reporting-period metadata is attached by the host
+without using the redacted narrative as executable metadata.
+See [ADR-014](../adr/ADR-014-tree-to-skill-review-and-updates.md).
+
+Author waiting is bounded to 300 seconds for local/CLI execution and 90 seconds
+for APIs, with one shared caller/deadline cancellation owner. Exhausted deadlines
+return a fixed safe 504 message; arbitrary upstream error text/codes are not
+reflected. The paired provider preserves only TIMEOUT and the fixed
+SKILL_AUTHOR_CONTEXT_LIMIT / SKILL_AUTHOR_OUTPUT_LIMIT codes. The latter map to
+safe 422 messages. A late
+ignored-abort completion cannot publish a successful response. UI elapsed time
+does not create an earlier client timeout or modify model/reasoning selection.
+These scoped preparation budgets grant no further tool/publication authority
+and do not increase global runtime limits. See
+[the follow-up](../implementation/SKILL_AUTHOR_LOCAL_TIMEOUT_2026-11-03.md).
+
+The two exact Ollama author roles use manifest-owned native `/api/show` and
+`/api/chat`, with redirects disabled and the same shared deadline. Full prompt
+fit is bounded before inference; 16K/32K context and 7,000 output tokens cannot
+be supplied by the caller. No input is trimmed. Insufficient declared context,
+truncated/incomplete answers or native tool activity fail preparation. Thinking
+remains at the provider default; tool/publication authority is unchanged.
 
 ## Smart editor quota fallback
 

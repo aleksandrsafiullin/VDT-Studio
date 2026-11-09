@@ -72,7 +72,8 @@ searchable list, **Open folder**, **New skill**, and **From this VDT** only when
 VDT is open. The list displays a name, description and relative file path;
 clicking an entry opens its actual editable file in the OS default application.
 There are no Built-in/My skills categories, source labels, folder-management
-commands, import/copy/download/clone controls or embedded Markdown viewer/editor.
+commands or generic import/copy/download/clone controls. The dedicated generated
+draft review below is separate from this library list.
 The filesystem is the working library, and the application displays/uses it.
 
 On first access, the supplied skills and declared reference/evaluation resources
@@ -105,6 +106,34 @@ version pins and active run snapshots remain readable from history.
 and open**, which writes a new package and opens the external app for review.
 No automatic selection or VDT mutation occurs. Source numerical values are
 omitted; only validated original formulas can become executable topology.
+
+**Context → Work with skills** opens a separate tree-to-skill dialog rather than
+an extra Excel export action. **Save as new skill** prepares an unsaved draft
+with editable name, description and instructions, a final Markdown preview, an
+explicit library save and a portable SKILL.md download. **Update used skill**
+compares the exact Context pin, current working skill and current semantic tree.
+Each proposed change shows before/after guidance, its reason and source nodes;
+the user can select a subset and edit accepted text. No selected changes means
+no update. A missing branch is not a request to delete a reusable method.
+
+Tree source includes bounded descriptions/assumptions as well as original
+structure/formulas/units. Dedicated baseline/scenario values, source rows and
+paths are omitted; numerical observations and embedded local paths in narrative
+context are redacted. The 2–80-node/root-formula boundary remains explicit.
+Universal fallback guidance cannot be updated through this tree workflow; save
+a new thematic skill instead. Changed tree meaning, scope or selection fences
+late responses and requires regeneration before saving a stale draft. Saving
+an update checks exact current version/content/file hashes and source selection
+revision; changed, invalid or deleted working files fail without being restored.
+Accepted saves append a local V1 version and retain existing VDT pins, graph and
+companion package resources. See [ADR-014](adr/ADR-014-tree-to-skill-review-and-updates.md).
+
+Preparation can take up to five minutes for local/CLI execution or 90 seconds
+for a remote API. The workflow displays elapsed waiting time and the captured
+maximum, with Cancel continuously available. An exhausted deadline has an
+explicit timeout message and leaves the existing unsaved review intact; it
+cannot later become a successful result. The legacy From this VDT path shares
+the same server budget. These limits do not alter chat or Suggested KPI waits.
 
 **Context → Skill** selects from the same uncategorized library. Creation uses
 provisional Unicode Root-KPI recall and the universal skill when available; if

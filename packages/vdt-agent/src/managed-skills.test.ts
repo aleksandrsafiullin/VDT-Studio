@@ -1,14 +1,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { LocalSkillRepository } from "@vdt-studio/storage";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LocalSkillRepository, skillContentHash } from "@vdt-studio/storage";
 import { draftSkillMarkdown, loadAvailableSkillLibrary, publishManagedSkill, rankSkillCandidates, readAvailableSkill, resolveVdtSkill, synchronizeSkillFiles, UNIVERSAL_SKILL_ID } from "./managed-skills";
 import { loadDefaultSkillLibrary } from "./index";
 
 let root: string, repository: LocalSkillRepository;
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "vdt-managed-skills-")); repository = new LocalSkillRepository(root); });
-afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); fs.rmSync(root, { recursive: true, force: true }); });
 const draft = (title = "Өндіріс") => draftSkillMarkdown({ title, description: "A reusable method", domain: "custom", patterns: ["Өндіріс көлемі", "Выпуск продукции"], instructions: "## When to use\n\nUse measured quantities with consistent units, then validate every dependency." });
 
 describe("managed skill integration", () => {
@@ -133,6 +133,107 @@ describe("managed skill integration", () => {
     expect(next.version).toBe(2);
     expect((await readAvailableSkill(first.id, 1, repository)).card.title).toBe('A "quoted" name');
     expect(() => publishManagedSkill({ id: first.id, raw: draft(), expectedVersion: 1 }, repository)).toThrow(/changed/);
+  });
+  it("does not overwrite an existing portable identity when creating a same-name skill", () => {
+    const raw = '---\nname: production-volume\ndescription: A reusable volume method.\n---\n\n# Production volume\n\nMultiply capacity by productive operating time.\n';
+    const first = publishManagedSkill({ raw }, repository);
+    expect(() => publishManagedSkill({ raw: `${raw}\nAn unrelated proposed method.\n` }, repository)).toThrow(/already exists/);
+    expect(repository.get(first.id)?.version).toBe(1);
+    expect(repository.files.read(first.filePath!)).toBe(raw);
+  });
+  it("keeps portable working files portable when explicitly updating their instructions", () => {
+    const raw = '---\nname: production-volume\ndescription: A reusable volume method.\n---\n\n# Production volume\n\nMultiply capacity by productive operating time.\n';
+    const first = publishManagedSkill({ raw }, repository), changed = `${raw}\nCheck all input periods match.\n`;
+    const second = publishManagedSkill({ id: first.id, expectedVersion: first.version, raw: changed }, repository);
+    expect(second.version).toBe(2);
+    expect(repository.files.read(first.filePath!)).toBe(changed);
+    expect(repository.files.read(first.filePath!)).not.toMatch(/^id:|^version:/m);
+    expect(repository.get(first.id, 1)?.raw).toBe(first.raw);
+    expect(() => publishManagedSkill({ id: first.id, expectedVersion: 2, raw: changed.replace("name: production-volume", "name: renamed-method") }, repository)).toThrow(/name/);
+  });
+  it("rejects removed working files and no-op edits without recreating files or versions", () => {
+    const first = publishManagedSkill({ raw: draft() }, repository);
+    expect(() => publishManagedSkill({ id: first.id, expectedVersion: 1, raw: first.raw }, repository)).toThrow(/no changes/);
+    expect(repository.get(first.id)?.version).toBe(1);
+    fs.unlinkSync(repository.files.filePath(first.filePath!));
+    expect(() => publishManagedSkill({ id: first.id, expectedVersion: 1, raw: draft("Changed") }, repository)).toThrow(/removed/);
+    expect(repository.files.scan().files).toEqual([]);
+    expect(repository.get(first.id)?.version).toBe(1);
+  });
+  it("does not publish a version when guarded working-file replacement fails", () => {
+    const first = publishManagedSkill({ raw: draft() }, repository);
+    vi.spyOn(repository.files, "replace").mockImplementationOnce(() => { throw new Error("The editor changed its file."); });
+    expect(() => publishManagedSkill({ id: first.id, expectedVersion: 1, raw: draft("Changed") }, repository)).toThrow(/editor changed/);
+    expect(repository.get(first.id)?.version).toBe(1);
+    expect(repository.files.read(first.filePath!)).toBe(first.raw);
+  });
+  it("restores its own working bytes when immutable publication fails", () => {
+    const first = publishManagedSkill({ raw: draft() }, repository);
+    vi.spyOn(repository, "publish").mockImplementationOnce(() => { throw new Error("History write failed."); });
+    expect(() => publishManagedSkill({ id: first.id, expectedVersion: 1, raw: draft("Changed") }, repository)).toThrow(/History write/);
+    expect(repository.get(first.id)?.version).toBe(1);
+    expect(repository.files.read(first.filePath!)).toBe(first.raw);
+  });
+  it.each(["create", "update"])("keeps %s working bytes consistent when directory fsync fails after publication", operation => {
+    const original = '---\nname: publication-fault\ndescription: A method used to test publication recovery.\n---\n\n# Publication fault\n\nCheck the method uses consistent input units and periods.\n';
+    const first = operation === "update" ? publishManagedSkill({ raw: original }, repository) : undefined;
+    const changed = `${original}\nNew reviewed guidance that must survive the final storage failure.\n`;
+    const fsync = fs.fsyncSync.bind(fs);
+    let failed = false;
+    vi.spyOn(fs, "fsyncSync").mockImplementation(fd => {
+      if (!failed && fs.fstatSync(fd).isDirectory()) {
+        failed = true;
+        throw Object.assign(new Error("Directory fsync failed after the immutable link."), { code: "EIO" });
+      }
+      fsync(fd);
+    });
+    expect(() => publishManagedSkill({ raw: changed, ...(first ? { id: first.id, expectedVersion: first.version } : {}) }, repository)).toThrow(/is visible.*final storage check failed/);
+    const record = repository.list()[0]!;
+    expect(failed).toBe(true);
+    expect(record.version).toBe(first ? 2 : 1);
+    expect(record.raw).toContain("New reviewed guidance");
+    expect(record.fileHash).toBe(skillContentHash(changed));
+    const files = repository.files.scan().files;
+    expect(files).toHaveLength(1);
+    expect(files[0]!.raw).toBe(changed);
+    expect(synchronizeSkillFiles(repository).issues).toEqual([]);
+    expect(repository.get(record.id)?.version).toBe(record.version);
+    if (first) expect(repository.get(record.id, 1)?.raw).toBe(first.raw);
+  });
+  it("preserves the reviewed working file when publication visibility cannot be read", () => {
+    const first = publishManagedSkill({ raw: draft() }, repository), get = repository.get.bind(repository);
+    const proposed = draft("Changed");
+    vi.spyOn(repository, "publish").mockImplementationOnce(() => { throw Object.assign(new Error("Publication failed."), { code: "EIO" }); });
+    const visibility = vi.spyOn(repository, "get").mockImplementation((id, version) => {
+      if (version === first.version + 1) throw Object.assign(new Error("Storage cannot be read."), { code: "EIO" });
+      return get(id, version);
+    });
+    expect(() => publishManagedSkill({ id: first.id, expectedVersion: 1, raw: proposed }, repository)).toThrow(/outcome could not be confirmed.*working file was kept/);
+    visibility.mockRestore();
+    expect(repository.get(first.id)?.version).toBe(1);
+    expect(repository.files.read(first.filePath!)).toContain('title: "Changed"');
+  });
+  it("preserves an external save made after the swap when publication fails", () => {
+    const first = publishManagedSkill({ raw: draft() }, repository), external = `${first.raw}\nA newer editor save that must survive.\n`;
+    vi.spyOn(repository, "publish").mockImplementationOnce(() => {
+      fs.writeFileSync(repository.files.filePath(first.filePath!), external);
+      throw new Error("History write failed.");
+    });
+    expect(() => publishManagedSkill({ id: first.id, expectedVersion: 1, raw: draft("Changed") }, repository)).toThrow(/History write/);
+    expect(repository.get(first.id)?.version).toBe(1);
+    expect(repository.files.read(first.filePath!)).toBe(external);
+  });
+  it("does not let another host synchronize intermediate working bytes during a managed save", () => {
+    const first = publishManagedSkill({ raw: draft() }, repository), publish = repository.publish.bind(repository);
+    vi.spyOn(repository, "publish").mockImplementationOnce(input => {
+      const other = new LocalSkillRepository(root), refresh = synchronizeSkillFiles(other);
+      expect(refresh.issues.find(issue => issue.path === first.filePath)?.message).toMatch(/Another process/);
+      expect(other.get(first.id)?.version).toBe(1);
+      return publish(input);
+    });
+    const second = publishManagedSkill({ id: first.id, expectedVersion: 1, raw: draft("Changed") }, repository);
+    expect(second.version).toBe(2);
+    expect(repository.files.read(first.filePath!)).toBe(second.raw);
   });
   it("persists the preliminary choice and preserves a manual selection across changed KPIs", async () => {
     const first = await resolveVdtSkill({ projectId: "p", vdtId: "v", rootKpi: "Unfamiliar KPI" }, repository);

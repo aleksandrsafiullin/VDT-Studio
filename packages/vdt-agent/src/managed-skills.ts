@@ -47,11 +47,17 @@ export function synchronizeSkillFiles(repository = new LocalSkillRepository()): 
     if (files.length !== 1) { for (const file of files) state.issues.push({ path: file.path, message: "Duplicate skill identity. Give the copied skill a different name (and remove any copied id)." }); continue; }
     const file = files[0]!;
     try {
-      const previous = repository.get(id), fileHash = skillContentHash(file.raw);
-      if (previous && (fileHash === previous.fileHash || fileHash === previous.contentHash)) continue;
-      const { raw } = prepareSkillMarkdown(file.raw, id, (previous?.version ?? 0) + 1);
-      repository.publish({ id, raw, expectedVersion: previous?.version ?? 0, fileHash,
-        ...(previous?.lineage ? { lineage: previous.lineage } : {}), ...(previous?.sourceVdt ? { sourceVdt: previous.sourceVdt } : {}) });
+      repository.withSkillWriteLock(id, () => {
+        // Re-read after acquiring the publisher lock: a scan from before another
+        // managed save must not admit old bytes as a new external version.
+        const working = repository.files.read(file.path);
+        if (fileIdentity(working) !== id) throw new SkillLibraryError("SKILL_CONFLICT", "The skill identity changed while the library was refreshing. Refresh again.");
+        const previous = repository.get(id), fileHash = skillContentHash(working);
+        if (previous && (fileHash === previous.fileHash || fileHash === previous.contentHash)) return;
+        const { raw } = prepareSkillMarkdown(working, id, (previous?.version ?? 0) + 1);
+        repository.publish({ id, raw, expectedVersion: previous?.version ?? 0, fileHash,
+          ...(previous?.lineage ? { lineage: previous.lineage } : {}), ...(previous?.sourceVdt ? { sourceVdt: previous.sourceVdt } : {}) });
+      });
     } catch (error) { state.issues.push({ path: file.path, message: error instanceof Error ? error.message : "The skill could not be synchronized." }); }
   }
   return state;
@@ -164,28 +170,63 @@ export function draftSkillMarkdown(draft: SkillAuthorDraft): string {
   return `---\nid: user.draft\ntitle: ${quote(draft.title)}\ndescription: ${quote(draft.description)}\ndomain: ${quote(draft.domain)}\nversion: 1\npatterns:\n${draft.patterns.map(pattern => `  - ${quote(pattern)}`).join("\n")}\nkpi_patterns:\n${draft.patterns.map(pattern => `  - ${quote(pattern)}`).join("\n")}\nrequires:\n  - site_specific_inputs\noutputs:\n  - root_kpi\n---\n\n${draft.instructions}\n`;
 }
 
-export function publishManagedSkill(input: { raw: string; id?: string | undefined; expectedVersion?: number | undefined; folder?: string | undefined; lineage?: StoredSkillVersion["lineage"]; sourceVdt?: StoredSkillVersion["sourceVdt"] }, repository = new LocalSkillRepository()) {
+export function publishManagedSkill(input: { raw: string; id?: string | undefined; expectedVersion?: number | undefined; folder?: string | undefined; lineage?: StoredSkillVersion["lineage"]; sourceVdt?: StoredSkillVersion["sourceVdt"];
+  expectedContentHash?: string; expectedFileHash?: string }, repository = new LocalSkillRepository()) {
   const attributes = parseFrontmatter(input.raw).attributes;
   const id = input.id ?? (typeof attributes.name === "string" ? fileIdentity(input.raw) : undefined) ?? `user.${randomUUID()}`;
   const expectedVersion = input.expectedVersion ?? 0;
   if (input.id && input.expectedVersion === undefined) throw new SkillLibraryError("INVALID_VERSION", "Editing requires the expected skill version.");
-  const files = synchronizeSkillFiles(repository), previous = input.id ? repository.get(input.id) : null;
-  if ((previous?.version ?? 0) !== expectedVersion) throw new SkillLibraryError("SKILL_CONFLICT", "This skill changed. Refresh the library before saving.");
-  const { raw, skill } = prepareSkillMarkdown(input.raw, id, expectedVersion + 1);
-  let filePath = files.paths[id];
-  if (filePath && files.issues.some(issue => issue.path === filePath)) throw new SkillLibraryError("SKILL_CONFLICT", "Fix the working file issue before saving this skill.");
-  const existingRaw = filePath ? repository.files.read(filePath) : undefined;
-  const created = !filePath;
-  const working = !input.id && typeof attributes.name === "string" && attributes.id === undefined ? input.raw : raw;
-  if (!filePath) filePath = repository.files.createPackage(input.folder ?? "", typeof attributes.name === "string" ? attributes.name : skill.title, working);
-  let record: StoredSkillVersion;
-  try {
-    record = repository.publish({ id, raw, expectedVersion, fileHash: skillContentHash(working),
-      ...(input.lineage ?? previous?.lineage ? { lineage: input.lineage ?? previous?.lineage } : {}),
-      ...(input.sourceVdt ?? previous?.sourceVdt ? { sourceVdt: input.sourceVdt ?? previous?.sourceVdt } : {}) });
-  } catch (error) { if (created) repository.files.removeIfUnchanged(filePath, working); throw error; }
-  if (existingRaw !== undefined) repository.files.replace(filePath, raw, existingRaw);
-  return { ...skillCard(skill, record, filePath), raw };
+  return repository.withSkillWriteLock(id, () => {
+    const files = synchronizeSkillFiles(repository), previous = repository.get(id);
+    if (!input.id && previous) throw new SkillLibraryError("SKILL_CONFLICT", "A skill with this name already exists. Choose a different name to create a new skill.");
+    if (input.id && expectedVersion > 0 && (!previous || !files.paths[id])) throw new SkillLibraryError("SKILL_CONFLICT", "This skill was removed from the working library. Refresh before saving.");
+    if ((previous?.version ?? 0) !== expectedVersion || input.expectedContentHash && previous?.contentHash !== input.expectedContentHash) throw new SkillLibraryError("SKILL_CONFLICT", "This skill changed. Refresh the library before saving.");
+    const { raw, skill } = prepareSkillMarkdown(input.raw, id, expectedVersion + 1);
+    let filePath = files.paths[id];
+    if (filePath && files.issues.some(issue => issue.path === filePath)) throw new SkillLibraryError("SKILL_CONFLICT", "Fix the working file issue before saving this skill.");
+    const existingRaw = filePath ? repository.files.read(filePath) : undefined;
+    if (input.expectedFileHash && (existingRaw === undefined || skillContentHash(existingRaw) !== input.expectedFileHash)) throw new SkillLibraryError("SKILL_CONFLICT", "The working file changed after review. Prepare the update again.");
+    const portable = typeof attributes.name === "string" && attributes.id === undefined;
+    if (input.id && portable && fileIdentity(input.raw) !== id) throw new SkillLibraryError("SKILL_CONFLICT", "Keep this skill's name to update it, or save the renamed method as a new skill.");
+    if (previous && prepareSkillMarkdown(input.raw, id, previous.version).raw === previous.raw) throw new SkillLibraryError("SKILL_NO_CHANGES", "The skill has no changes to save.");
+    const working = portable ? input.raw : raw;
+    const created = !filePath;
+    if (!filePath) filePath = repository.files.createPackage(input.folder ?? "", typeof attributes.name === "string" ? attributes.name : skill.title, working);
+    // All admission and validation occurs before a working-file mutation. The
+    // file swap must succeed before a new immutable version becomes visible.
+    else repository.files.replace(filePath, working, existingRaw!);
+    let record: StoredSkillVersion;
+    try {
+      record = repository.publish({ id, raw, expectedVersion, fileHash: skillContentHash(working),
+        ...(input.lineage ?? previous?.lineage ? { lineage: input.lineage ?? previous?.lineage } : {}),
+        ...(input.sourceVdt ?? previous?.sourceVdt ? { sourceVdt: input.sourceVdt ?? previous?.sourceVdt } : {}) });
+    } catch (error) {
+      let visible: StoredSkillVersion | null;
+      try { visible = repository.get(id, expectedVersion + 1); }
+      catch (visibilityError) {
+        // A failed final read cannot prove publication was rolled back. Retain
+        // the reviewed working file so a later refresh can reconcile the result.
+        throw Object.assign(new SkillLibraryError("SKILL_SAVE_UNCONFIRMED", "The save outcome could not be confirmed. The reviewed working file was kept. Refresh the library before retrying."),
+          { cause: new AggregateError([error, visibilityError], "Skill publication outcome could not be read.") });
+      }
+      if (visible) {
+        // link() can make the version visible before directory fsync or staging
+        // cleanup fails. Never restore/remove its corresponding working bytes.
+        const saved = visible.raw === raw && visible.fileHash === skillContentHash(working);
+        throw Object.assign(new SkillLibraryError(saved ? "SKILL_COMMITTED_WITH_ERROR" : "SKILL_SAVE_UNCONFIRMED",
+          saved ? `Skill version ${visible.version} is visible, but its final storage check failed. Its working file was kept. Refresh the library before retrying.`
+            : "The skill changed while saving and the save outcome is uncertain. The working file was kept. Refresh the library before retrying."), { cause: error });
+      }
+      if (created) repository.files.removeIfUnchanged(filePath, working);
+      else {
+        // Compensate only while our exact bytes still own the file. An external
+        // save after the swap is retained and will synchronize on the next read.
+        try { repository.files.replace(filePath, existingRaw!, working); } catch { /* Preserve newer external bytes. */ }
+      }
+      throw error;
+    }
+    return { ...skillCard(skill, record, filePath), raw };
+  });
 }
 
 function prepareSkillMarkdown(input: string, id: string, version: number) {
