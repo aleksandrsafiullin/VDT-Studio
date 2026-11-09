@@ -8,7 +8,9 @@ exits. A one-use bootstrap over the private startup channel sets an HttpOnly,
 SameSite cookie. Requests without the session or with a foreign Host or
 Origin fail before Next.js. The macOS Tauri capability limits the main window
 to the reserved origin and the existing application command allowlist.
-Subscription CLI operations still travel over the framed sidecar pipes.
+Subscription CLI operations still travel over the framed sidecar pipes. Each
+POSIX Smart CLI invocation gets its own process group. The runner terminates
+that group at leader exit before releasing the request workspace.
 The native installation keeps the editable SQLite store and settings outside
 the sealed app.
 

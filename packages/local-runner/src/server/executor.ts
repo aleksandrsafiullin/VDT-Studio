@@ -820,6 +820,7 @@ export async function executeCli(
 ): Promise<ExecutionResult> {
   assertManifestSafe(manifest);
   const smart = request.taskType === "suggest_incoming_kpis";
+  const ownsProcessGroup = smart && process.platform !== "win32";
   const adapter = manifest.kind === "subscription_cli" ? getSubscriptionCliAdapter(manifest.id) : undefined;
   const envSource = options.env ?? process.env;
   const executable = await normalizeResolvedExecutable(await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource));
@@ -915,7 +916,7 @@ export async function executeCli(
       nodeSpawn(spawnCommand, [...args], spawnOptions) as ChildProcessWithoutNullStreams))(
       command,
       finalArgs,
-      { cwd, env: childEnv, shell: false, windowsHide: true, ...(smart ? { detached: process.platform !== "win32" } : {}), stdio: ["pipe", "pipe", "pipe"] }
+      { cwd, env: childEnv, shell: false, windowsHide: true, ...(smart ? { detached: ownsProcessGroup } : {}), stdio: ["pipe", "pipe", "pipe"] }
     );
     processStarted = true;
 
@@ -932,10 +933,14 @@ export async function executeCli(
     const killOwned = (kind: NodeJS.Signals) => {
       if (processClosed) return;
       try {
-        if (smart && process.platform !== "win32" && child.pid) process.kill(-child.pid, kind);
+        if (ownsProcessGroup && child.pid) process.kill(-child.pid, kind);
         else child.kill(kind);
       } catch { /* process exit is confirmed by close, not by a failed signal */ }
     };
+
+    // A CLI can exit successfully while helpers in its isolated group keep
+    // the request directory or its pipes open. Finish the group at leader exit.
+    if (ownsProcessGroup) child.once("exit", () => killOwned("SIGKILL"));
 
     const terminate = () => {
       if (cancelled) return;

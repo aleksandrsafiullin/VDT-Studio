@@ -7033,6 +7033,7 @@ ${result.stderr}`.includes(needle);
 async function executeCli(manifest, request, signal, options) {
   assertManifestSafe(manifest);
   const smart = request.taskType === "suggest_incoming_kpis";
+  const ownsProcessGroup = smart && process.platform !== "win32";
   const adapter = manifest.kind === "subscription_cli" ? getSubscriptionCliAdapter(manifest.id) : void 0;
   const envSource = options.env ?? process.env;
   const executable = await normalizeResolvedExecutable(await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource));
@@ -7110,7 +7111,7 @@ async function executeCli(manifest, request, signal, options) {
       const child = (options.spawn ?? ((spawnCommand, args, spawnOptions) => nodeSpawn(spawnCommand, [...args], spawnOptions)))(
         command,
         finalArgs,
-        { cwd, env: childEnv, shell: false, windowsHide: true, ...smart ? { detached: process.platform !== "win32" } : {}, stdio: ["pipe", "pipe", "pipe"] }
+        { cwd, env: childEnv, shell: false, windowsHide: true, ...smart ? { detached: ownsProcessGroup } : {}, stdio: ["pipe", "pipe", "pipe"] }
       );
       processStarted = true;
       let stdout = "";
@@ -7130,11 +7131,12 @@ async function executeCli(manifest, request, signal, options) {
       const killOwned = (kind) => {
         if (processClosed) return;
         try {
-          if (smart && process.platform !== "win32" && child.pid) process.kill(-child.pid, kind);
+          if (ownsProcessGroup && child.pid) process.kill(-child.pid, kind);
           else child.kill(kind);
         } catch {
         }
       };
+      if (ownsProcessGroup) child.once("exit", () => killOwned("SIGKILL"));
       const terminate = () => {
         if (cancelled) return;
         cancelled = true;

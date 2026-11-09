@@ -35,6 +35,11 @@ manifest-owned Ollama, LM Studio and vLLM backends. It accepts backend/model
 selection, never a caller-provided provider URL. Browser requests validate the
 selected loopback runner before sending its pairing token and reject redirects.
 
+Native Smart CLI invocations on macOS and Linux own a detached process group.
+When the CLI leader exits, the runner signals that same group before removing
+the request directory. This also releases helpers that survive a successful
+completion. The Windows process lifecycle stays platform-specific.
+
 ## Agent testing scope
 
 The October 26–27 revenue checks below are guided workflow diagnostics: their

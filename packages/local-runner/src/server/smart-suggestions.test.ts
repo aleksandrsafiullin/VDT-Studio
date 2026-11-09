@@ -48,6 +48,26 @@ describe("Smart local response reader ownership", () => {
 });
 
 describe("Smart task-scoped local transport", () => {
+  it.skipIf(process.platform === "win32")("ends the owned native CLI group when the leader exits successfully", async () => {
+    const root = await directory();
+    const running = Object.assign(child(), { pid: 12345 });
+    const kill = vi.spyOn(process, "kill").mockReturnValue(true);
+    const spawn = vi.fn((_file: string, _args: readonly string[], config: { detached?: boolean }) => {
+      expect(config.detached).toBe(true);
+      queueMicrotask(() => {
+        running.stdout.write(JSON.stringify({ type: "result", result: JSON.stringify(empty) }) + "\n");
+        running.emit("exit", 0, null);
+        running.emit("close", 0, null);
+      });
+      return running;
+    });
+    await expect(executeCompletion(createManifestRegistry().get("cursor_subscription")!, await request("cursor_subscription"), new AbortController().signal, {
+      tempRoot: root, env: {}, resolveExecutable: async () => "/bin/echo", spawn: spawn as unknown as NonNullable<ExecutorOptions["spawn"]>
+    })).resolves.toMatchObject({ output: empty, schemaValid: true });
+    expect(kill).toHaveBeenCalledExactlyOnceWith(-running.pid, "SIGKILL");
+    expect(await readdir(root)).toEqual([]);
+  });
+
   it("cleans owned request/prompt files when native reasoning admission rejects before inference", async () => {
     const root = await directory(), spawn = vi.fn();
     await expect(executeCompletion(createManifestRegistry().get("cursor_subscription")!, { ...await request("cursor_subscription"), modelReasoning: false }, new AbortController().signal,
