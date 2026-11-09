@@ -80,8 +80,10 @@ including unqualified non-macOS stores, produces
 credential epoch. Environment/`.env` sources can be checked independently.
 This does not certify cross-platform keyring support.
 
-Credential epochs are scoped to host purpose and credential source. Refreshing
-an unqualified chat binding neither bypasses Smart's stricter credential proof
+Credential epochs are scoped to the host process, purpose and credential
+source. Route modules share the epoch registry across reloads in that process.
+A credential metadata change allocates a fresh epoch. Refreshing an
+unqualified chat binding neither bypasses Smart's stricter credential proof
 nor invalidates an unchanged Smart preparation. Unknown keyring support remains
 an explicit Smart limitation rather than a claim of verified chat credentials.
 

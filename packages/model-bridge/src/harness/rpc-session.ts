@@ -433,7 +433,10 @@ export function harnessOpaqueIdentity(h: HarnessDefinition, executable: string, 
   credentialEpochs.set(epochScope, entry);
   return { bindingVersion: hash([h, executable, version, roots]), credentialEpoch: entry.epoch };
 }
-const credentialEpochs = new Map<string, { fingerprint: string; epoch: string }>();
+type CredentialEpoch = { fingerprint: string; epoch: string };
+const runtime = globalThis as typeof globalThis & { __vdtHarnessCredentialEpochs?: Map<string, CredentialEpoch> };
+// Reloading a route module must preserve the epoch for unchanged metadata.
+const credentialEpochs = runtime.__vdtHarnessCredentialEpochs ??= new Map();
 const harnessCredentialFiles: Record<string, readonly string[]> = {
   copilot: [".config/github-copilot/config.json"],
   opencode: [".local/share/opencode/auth.json", ".config/opencode/opencode.json", ".config/opencode/opencode.jsonc"],

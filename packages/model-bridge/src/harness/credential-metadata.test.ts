@@ -14,6 +14,18 @@ async function scratch() { const root = await mkdtemp(path.join(tmpdir(), "vdt-c
 afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 
 describe("provider-owned account/config roots", () => {
+  it("keeps a Smart credential epoch when the route module is loaded again in the same process", async () => {
+    const home = await scratch();
+    const harness = builtinHarness("cursor-agent")!;
+    const env = { HOME: home };
+    const first = harnessOpaqueIdentity(harness, "/owned/fixture", "1.0.0", env);
+    vi.resetModules();
+    const { harnessOpaqueIdentity: readmit } = await import("./rpc-session");
+    expect(readmit(harness, "/owned/fixture", "1.0.0", env)).toEqual(first);
+    const changed = readmit(harness, "/owned/fixture", "1.0.0", { HOME: path.join(home, "other-profile") });
+    expect(changed.credentialEpoch).not.toBe(first.credentialEpoch);
+  });
+
   it.each([
     ["kimi", "KIMI_CODE_HOME", "config.toml"], ["pi", "PI_CODING_AGENT_DIR", "auth.json"], ["vibe", "VIBE_HOME", ".env"],
     ["qwen", "QWEN_HOME", "settings.json"], ["grok-build", "GROK_HOME", "auth.json"], ["kilo", "XDG_DATA_HOME", "kilo/auth.json"],

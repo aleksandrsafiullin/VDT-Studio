@@ -5971,7 +5971,8 @@ function harnessOpaqueIdentity(h, executable, version2, env = process.env, metad
   credentialEpochs.set(epochScope, entry);
   return { bindingVersion: hash3([h, executable, version2, roots]), credentialEpoch: entry.epoch };
 }
-var credentialEpochs = /* @__PURE__ */ new Map();
+var runtime = globalThis;
+var credentialEpochs = runtime.__vdtHarnessCredentialEpochs ??= /* @__PURE__ */ new Map();
 var harnessCredentialFiles = {
   copilot: [".config/github-copilot/config.json"],
   opencode: [".local/share/opencode/auth.json", ".config/opencode/opencode.json", ".config/opencode/opencode.jsonc"],
@@ -6001,8 +6002,8 @@ var model = (value) => {
   if (!value || value.length > 160 || value.startsWith("-") || /[\x00-\x20]/.test(value)) throw new Error("Codex selected model is invalid.");
   return value;
 };
-var runtime = globalThis;
-var admissions = () => runtime.__vdtSmartCodexAdmissions ??= /* @__PURE__ */ new Map();
+var runtime2 = globalThis;
+var admissions = () => runtime2.__vdtSmartCodexAdmissions ??= /* @__PURE__ */ new Map();
 var admissionKey = (env) => createHash4("sha256").update(JSON.stringify([SMART_CODEX_POLICY_VERSION, env.PATH ?? "", codexSmartHome(env)])).digest("hex");
 var unconfirmed = () => Object.assign(new Error("Owned Codex metadata probe cleanup remains unconfirmed."), { code: "CLEANUP_UNCONFIRMED" });
 async function selectSmartCodexExecutable(env, signal) {
