@@ -70,32 +70,34 @@ describe("enrichSubscriptionCliDetection", () => {
   });
 
   it("does not expose subprocess commands, credentials or environment guidance", async () => {
+    const probeAuth = vi.fn().mockResolvedValue({
+      backendId: "cursor_subscription",
+      status: "authentication_required",
+      authSummary: "Cursor sign-in required. Sign in with the Cursor CLI.",
+      diagnostics: ["Command failed: agent --prompt private-prompt\nSet CURSOR_API_KEY=private-token"]
+    });
     vi.mocked(getSubscriptionCliAdapter).mockReturnValue({
-      id: "copilot",
-      backendId: "copilot_subscription",
+      id: "cursor-agent",
+      backendId: "cursor_subscription",
       buildArgs: () => [],
       parseOutput: () => ({}),
-      probeAuth: vi.fn().mockResolvedValue({
-        backendId: "copilot_subscription",
-        status: "authentication_required",
-        authSummary: "GitHub sign-in required. Run `copilot login` in a terminal.",
-        diagnostics: ["Command failed: copilot --prompt private-prompt\nSet GITHUB_TOKEN=private-token"]
-      })
+      probeAuth
     });
 
     const result = await enrichSubscriptionCliDetection({
-      id: "copilot",
-      backendId: "copilot_subscription",
+      id: "cursor-agent",
+      backendId: "cursor_subscription",
       installed: true,
-      executable: "/usr/bin/copilot",
-      alias: "copilot",
+      executable: "/usr/bin/agent",
+      alias: "agent",
       version: null,
       error: "Command failed with PRIVATE_SECRET=private-token"
     });
 
+    expect(probeAuth).toHaveBeenCalledOnce();
     expect(result.status).toBe("authentication_required");
     expect(result.diagnostics).toEqual([expect.stringContaining("Complete provider sign-in")]);
-    expect(JSON.stringify(result)).not.toMatch(/private-token|private-prompt|PRIVATE_SECRET|GITHUB_TOKEN/);
+    expect(JSON.stringify(result)).not.toMatch(/private-token|private-prompt|PRIVATE_SECRET|CURSOR_API_KEY/);
   });
 
   it("sanitizes thrown authentication probe failures", async () => {
