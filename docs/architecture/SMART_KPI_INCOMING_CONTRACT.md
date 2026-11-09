@@ -56,7 +56,10 @@ singleton proposals before execution admission/journal reservation; the panel
 offers Refresh in place of an obsolete one-card preview. Historical committing receipts retain their
 original proposal/compile validation and replay exactly.
 Manual-only context/draft/apply needs no model or credential. `proposal` must be
-absent for manual source; its child selection must be empty.
+absent for manual source; its child selection must be empty. Opening Manual uses
+the current graph context independently of any frozen Suggested proposal. An
+untouched draft can refresh on open. Edits remain available for explicit review
+if their context has changed.
 
 Model/recipe authorship requires the unchanged complete source formula and rows;
 partial selection/manual additions require `user_edited` with an explicit valid
@@ -256,6 +259,8 @@ The proposal/output schemas `kpi_suggestions.v1` / `suggest-incoming-kpis-v1`
 and one-call transport remain. Preparation v14 uses domain-neutral instructions,
 bounded observed-node assumptions and up to 8,000 characters of the actual
 project's business definitions, within a separate 24 KiB graph-context allowance.
+Accepted personalisation text is kept in full within the final provider-input
+budget, alongside the graph allowance.
 The Context-selected Skill's exact full content is supplied independently,
 bounded to 128 KiB, under the 192 KiB final provider-input cap. ID/version/raw
 content hash bind preparation and cache identity. The same selection is checked

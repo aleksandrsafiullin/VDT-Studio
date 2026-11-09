@@ -19,7 +19,7 @@ export function createHierarchyTools():AgentTool[]{return [setPlan,inspectHierar
 const setPlan:AgentTool={
  name:"vdt.set_decomposition_plan",
  description:"Declare or revise the complete level-by-level factor plan before adding drivers. Root is implicit. Choose stable future node IDs, one visual parent and calculated/input/context kind for every node; context requires a rationale. Group related reference inputs: more than one direct root context leaf is rejected. A context container needs no numeric value or formula; retain it and fill its numerical leaves. sharedWith lists extra formula users across branches, not extra visual parents. Revising the plan does not move nodes or write formulas/values; repair discrepancies with reparent_branch. All existing nodes must be covered.",
- inputSchema:z.object({plan:planSchema}).strict(),outputSchema:z.record(z.unknown()),mutatesProject:true,requiresDraftProject:true,phase:"planning_decomposition",
+ inputSchema:z.object({plan:planSchema}).strict(),outputSchema:z.record(z.string(), z.unknown()),mutatesProject:true,requiresDraftProject:true,phase:"planning_decomposition",
  run(context,input){
   if(context.getRun().request.mode==="deepen_node")throw new AgentToolError("MUTATION_SCOPE_VIOLATION","A selected-node deepen step cannot replace the whole-tree plan.");
   const project=requireBuilder(context.builder).getProject();const errors=decompositionPlanErrors(input.plan,project.rootNodeId);
@@ -34,13 +34,13 @@ const setPlan:AgentTool={
 };
 const inspectHierarchy:AgentTool={
  name:"vdt.inspect_hierarchy",description:"Read the recorded decomposition plan and actionable hierarchy/formula diagnostics before finishing. This does not change the project.",
- inputSchema:z.object({}).strict(),outputSchema:z.record(z.unknown()),requiresDraftProject:true,phase:"validating_graph",
+ inputSchema:z.object({}).strict(),outputSchema:z.record(z.string(), z.unknown()),requiresDraftProject:true,phase:"validating_graph",
  run(context){const project=requireBuilder(context.builder).getProject(),hierarchy=inspectDecompositionHierarchy(project);return {plan:project.graph.nodes.find(n=>n.id===project.rootNodeId)?.decompositionPlan??null,...hierarchy,errors:hierarchy.errors.slice(0,20),errorCount:hierarchy.errors.length};}
 };
 const reparentBranch:AgentTool={
  name:"vdt.reparent_branch",description:"Atomically move one existing node and its intact descendant branch to parentNodeId. Preserve IDs, formulas, values and source lineage. fromParentNodeId is required when there are multiple current parents. Reject root moves and cycles. If the target link already exists, remove only the obsolete source link. This never authors a formula or revises the declared plan.",
  inputSchema:z.object({nodeId:id,parentNodeId:id,fromParentNodeId:id.optional(),relation:z.enum(["positive_driver","negative_driver","multiplicative_driver","divisive_driver","additive_component","subtractive_component","contextual_influence","formula_dependency"]).optional()}).strict(),
- outputSchema:z.record(z.unknown()),mutatesProject:true,requiresDraftProject:true,phase:"repairing_graph",
+ outputSchema:z.record(z.string(), z.unknown()),mutatesProject:true,requiresDraftProject:true,phase:"repairing_graph",
  run(context,input){
   if(context.getRun().request.mode==="deepen_node")throw new AgentToolError("MUTATION_SCOPE_VIOLATION","A selected-node deepen step cannot reparent an existing branch.");
   const builder=requireBuilder(context.builder),project=builder.getProject();

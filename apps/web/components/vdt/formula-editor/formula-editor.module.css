@@ -84,26 +84,18 @@
 }
 
 .editor [data-formula-token-kind] button[aria-label^="Remove"] {
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
   width: 12px;
-  height: 14px;
+  height: 18px;
   padding: 0;
   opacity: 0;
-  pointer-events: none;
 }
 
 .editor [data-formula-token-kind]:hover button[aria-label^="Remove"],
 .editor [data-formula-token-kind]:focus-within button[aria-label^="Remove"] {
   opacity: 1;
-  pointer-events: auto;
-}
-
-.editor [data-testid^="formula-operator-remove-"] {
-  position: absolute;
-  z-index: 2;
-  top: -5px;
-  right: -7px;
-  border-radius: 50%;
-  background: var(--workspace-surface, #fff);
 }
 
 .editor [data-testid^="formula-insert-slot-"] {
@@ -114,8 +106,7 @@
 }
 
 @media (hover: none), (pointer: coarse) {
-  .editor [data-formula-token-kind] button[aria-label^="Remove"] { opacity: 1; pointer-events: auto; }
-  .editor [data-testid^="formula-operator-remove-"] { position: static; }
+  .editor [data-formula-token-kind] button[aria-label^="Remove"] { opacity: 1; }
   .editor [data-formula-token-kind] { min-height: 30px; }
   .editor [data-testid^="formula-token-drag-handle-"] { width: 18px; height: 28px; opacity: 1; }
 }

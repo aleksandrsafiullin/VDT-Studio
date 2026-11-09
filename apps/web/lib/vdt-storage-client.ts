@@ -122,6 +122,20 @@ export interface SaveStoredVdtRevisionInput {
   summary: string | null;
 }
 
+export interface WorkspaceDraftBase {
+  projectId: string;
+  vdtId: string;
+  expectedHead: VdtRevisionCasV1;
+  expectedRuntime: ProjectRuntimeCasV1;
+}
+
+export function workspaceDraftBase(
+  head: VdtRevisionHeadV2,
+  expectedRuntime: ProjectRuntimeCasV1
+): WorkspaceDraftBase {
+  return { projectId: head.projectId, vdtId: head.vdtId, expectedHead: revisionCasFromHead(head), expectedRuntime };
+}
+
 export class VdtStorageRequestError extends Error {
   constructor(
     message: string,

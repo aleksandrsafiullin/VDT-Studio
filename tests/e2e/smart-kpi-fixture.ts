@@ -30,6 +30,18 @@ export async function createSmartBrowserFixture(page: Page, kind: SmartFixtureKi
     root.name = "Haulage distance output"; root.unit = "km/trip"; root.formula = targetNodeId;
     project.graph.edges.push({ id: "haulage_factor_edge", sourceNodeId: root.id, targetNodeId, relation: "formula_dependency", aiGenerated: false });
     project.scenarios[0]!.overrides = [{ nodeId: targetNodeId, value: 10 }];
+  } else {
+    // Suggested operates on an Input leaf. Keep the measured node and scenario
+    // in place, with a separate root that forwards its calculation.
+    const target = project.graph.nodes[0]!;
+    target.type = "input";
+    project.rootNodeId = "qa_output";
+    project.graph.nodes.unshift({
+      id: project.rootNodeId, name: "QA output", type: "root_kpi", unit: target.unit!,
+      status: "accepted", formula: target.id, aiGenerated: false,
+      position: { x: -360, y: 0 }, createdAt: target.createdAt, updatedAt: target.updatedAt
+    });
+    project.graph.edges.push({ id: "qa_output_factor", sourceNodeId: project.rootNodeId, targetNodeId, relation: "formula_dependency", aiGenerated: false });
   }
   if (options.staleInputType) {
     const root = project.graph.nodes[0]!, target = project.graph.nodes.find(node => node.id === targetNodeId)!;
@@ -48,7 +60,7 @@ export async function createSmartBrowserFixture(page: Page, kind: SmartFixtureKi
     const target = project.graph.nodes.find(node => node.id === targetNodeId)!;
     delete target.baselineValue; delete target.value; target.valueStatus = "unknown";
   }
-  for (let i = 1; i < nodeCount; i++) {
+  for (let i = project.graph.nodes.length; i < nodeCount; i++) {
     project.graph.nodes.push({ id: `existing_${i}`, name: `Existing QA context ${i}`, type: "input", unit: "fraction", status: "accepted", valueStatus: "unknown", aiGenerated: false,
       position: { x: 600 + (i % 8) * 320, y: Math.floor(i / 8) * 180 }, createdAt: project.createdAt, updatedAt: project.updatedAt });
     project.graph.edges.push({ id: `existing_edge_${i}`, sourceNodeId: project.rootNodeId, targetNodeId: `existing_${i}`, relation: "contextual_influence", aiGenerated: false });
@@ -63,6 +75,13 @@ export async function createSmartBrowserFixture(page: Page, kind: SmartFixtureKi
   };
   page.on("requestfinished", finished); page.on("requestfailed", finished);
   await page.route("**/api/ai/detect-clis**", route => route.fulfill({ json: { agents: [], modelsByAgent: {} } }));
+  await page.route("**/api/agent/bindings/provider", route => {
+    const { operation, providerConfig } = route.request().postDataJSON();
+    if (operation === "admit") return route.abort();
+    expect(["capabilities", "smart_capabilities"]).toContain(operation);
+    return route.fulfill({ json: { ok: true, modelId: providerConfig.model, capabilities: null } });
+  });
+  await page.route("**/api/ai/generate-vdt", route => route.abort());
   await page.route("**/api/ai/suggestions/cancel", route => route.fulfill({ json: { ok: true, requestId: route.request().postDataJSON().requestId, status: "cancelled", cleanupConfirmed: true } }));
   // Only read-only preparation is faked. VDT create/load/revision/Undo routes stay real.
   await page.route("**/api/ai/suggestions", async route => {
@@ -92,12 +111,13 @@ export async function createSmartBrowserFixture(page: Page, kind: SmartFixtureKi
     }] } : { status: "empty", rationale: "This QA target has no prepared immediate layer.", limitations: [], groups: [] };
     await route.fulfill({ json: { ok: true, result: output } });
   });
-  const created = await page.request.post("/api/vdt/projects", { data: { id: projectId, name: "Disposable Smart KPI browser QA", industry: "QA" }, timeout: 120_000 });
+  const created = await page.request.post("/api/vdt/projects", { headers: { connection: "close" },
+    data: { id: projectId, name: "Disposable Smart KPI browser QA", industry: "QA" }, timeout: 120_000 });
   expect(created.ok(), await created.text()).toBeTruthy(); const { summary: { runtimeState } } = await created.json();
-  const cleanup = async () => { const deleted = await page.request.delete(`/api/vdt/projects/${projectId}`, { timeout: 120_000, maxRetries: 2 }); expect([200, 404]).toContain(deleted.status());
+  const cleanup = async () => { const deleted = await page.request.delete(`/api/vdt/projects/${projectId}`, { headers: { connection: "close" }, timeout: 120_000, maxRetries: 2 }); expect([200, 404]).toContain(deleted.status());
     page.off("requestfinished", finished); page.off("requestfailed", finished); };
   try {
-    const saved = await page.request.post(`/api/vdt/projects/${projectId}/vdts`, { timeout: 120_000, data: {
+    const saved = await page.request.post(`/api/vdt/projects/${projectId}/vdts`, { headers: { connection: "close" }, timeout: 120_000, data: {
       schemaVersion: "create_vdt_with_initial_http_request.v1", idempotencyKey: `create:${vdtId}`, expectedRuntime: { schemaVersion: "project_runtime_cas.v1", runtimeGeneration: runtimeState.runtimeGeneration, generationVersion: runtimeState.generationVersion },
       vdt: { requestedVdtId: vdtId, name: project.name, rootKpi: project.graph.nodes[0]!.name, unit: project.graph.nodes[0]!.unit!, timePeriod: "monthly", status: "draft", metadata: null }, project
     } });
@@ -135,7 +155,16 @@ export async function createSmartBrowserFixture(page: Page, kind: SmartFixtureKi
 
 export async function openSmartPanel(page: Page, rootId = "measured_output") {
   const rail = page.locator(`.react-flow__node[data-id="${rootId}"]`).getByTestId("node-incoming-actions");
+  await expect(rail.getByTestId("node-smart-kpi-suggestions")).toBeEnabled();
   await page.mouse.move(12, 12); await rail.hover({ timeout: 10_000 }); const panel = page.getByTestId("smart-kpi-panel"); await expect(panel).toBeVisible(); return panel;
+}
+
+export async function waitForSmartAddition(page: Page) {
+  await expect(page.getByTestId("smart-kpi-panel")).toHaveCount(0);
+  const notice = page.getByTestId("smart-kpi-undo-notice");
+  await expect(notice).toContainText("KPIs added");
+  await expect(notice.getByTestId("smart-kpi-undo")).toBeEnabled();
+  return notice;
 }
 export async function readSmartBrowserProject(page: Page): Promise<VdtProject> {
   return page.evaluate(() => JSON.parse(localStorage.getItem("vdt-studio-state")!).state.project as VdtProject);

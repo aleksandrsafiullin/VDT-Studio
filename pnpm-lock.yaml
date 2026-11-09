@@ -44,9 +44,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@vdt-studio/vdt-agent':
-        specifier: workspace:*
-        version: link:../../packages/vdt-agent
       '@dnd-kit/core':
         specifier: ^6.3.1
         version: 6.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -71,6 +68,9 @@ importers:
       '@vdt-studio/storage':
         specifier: workspace:*
         version: link:../../packages/vdt-storage
+      '@vdt-studio/vdt-agent':
+        specifier: workspace:*
+        version: link:../../packages/vdt-agent
       '@vdt-studio/vdt-agent-runtime':
         specifier: workspace:*
         version: link:../../packages/vdt-agent-runtime
@@ -96,11 +96,8 @@ importers:
         specifier: ^19.0.0
         version: 19.2.7(react@19.2.7)
       zod:
-        specifier: ^3.25.64
-        version: 3.25.76
-      zod-to-json-schema:
-        specifier: ^3.25.2
-        version: 3.25.2(zod@3.25.76)
+        specifier: ^4.6.7
+        version: 4.6.7
       zustand:
         specifier: ^5.0.6
         version: 5.0.14(@types/react@19.2.17)(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))
@@ -142,8 +139,8 @@ importers:
         specifier: workspace:*
         version: link:../vdt-core
       zod:
-        specifier: ^3.25.64
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/cli:
     devDependencies:
@@ -169,8 +166,8 @@ importers:
         specifier: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
         version: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
       zod:
-        specifier: ^3.25.64
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/local-runner:
     dependencies:
@@ -204,8 +201,8 @@ importers:
         specifier: workspace:*
         version: link:../vdt-core
       zod:
-        specifier: ^3.25.64
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/vdt-agent-runtime:
     dependencies:
@@ -219,8 +216,8 @@ importers:
         specifier: workspace:*
         version: link:../vdt-core
       zod:
-        specifier: ^3.25.64
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/vdt-core:
     dependencies:
@@ -2932,13 +2929,8 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
 
-  zod-to-json-schema@3.25.2:
-    resolution: {integrity: sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA==}
-    peerDependencies:
-      zod: ^3.25.28 || ^4
-
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
   zustand@4.5.7:
     resolution: {integrity: sha512-CHOUy7mu3lbD6o6LJLfllpjkzhHXSBlX8B9+qPddUsIfeF5S/UZ5q0kmCsnRqT1UHFQZchNFDDzMbQsuesHWlw==}
@@ -5704,11 +5696,7 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod-to-json-schema@3.25.2(zod@3.25.76):
-    dependencies:
-      zod: 3.25.76
-
-  zod@3.25.76: {}
+  zod@4.6.7: {}
 
   zustand@4.5.7(@types/react@19.2.17)(react@19.2.7):
     dependencies:

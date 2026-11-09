@@ -9,9 +9,9 @@ export default defineConfig({
   ...mixed,
   workers: 1,
   projects: [
-    { name: "installed-chrome-timing", testMatch: "smart-kpi-suggestions.spec.ts", grep: /warm Library controls 200 nodes normal/,
-      use: { ...chrome, trace: { mode: "retain-on-failure", snapshots: false, screenshots: false, sources: false } } },
-    { name: "installed-chrome-functional", grep: /mixed partial proposal and own KPI|manual-only editor needs zero model|formula Add saves once/,
+    { name: "installed-chrome-timing", testMatch: "smart-kpi-warm-cache.spec.ts", grep: /warm recipe-backed cache controls 200 nodes normal/,
+      use: chrome },
+    { name: "installed-chrome-functional", grep: /mixed partial proposal and own KPI|manual-only editor preserves the baseline|formula Add saves once/,
       use: { ...chrome, trace: "retain-on-failure" } }
   ]
 });

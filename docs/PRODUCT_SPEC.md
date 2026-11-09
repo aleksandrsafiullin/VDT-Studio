@@ -169,7 +169,8 @@ The task carries the project's own business/model definitions and up to three
 bounded assumptions per observed KPI. The common prompt is domain-neutral;
 no fixed excavation instruction is attached to arbitrary projects. Project
 business context may retain up to 8,000 characters within a 24 KiB graph-context
-allowance and explicit omissions. The exact Context-selected Skill is retained
+allowance and explicit omissions. Accepted personalisation is kept in full
+within the final input cap. The exact Context-selected Skill is retained
 separately, with its ID/version/content hash and full content, under a 128 KiB
 skill-content and 192 KiB final-input bound. Its applicable immediate factors
 take priority over generic recipes and optional measurement identities.
@@ -337,7 +338,7 @@ The root KPI appears on the left and drivers expand to the right. The canvas is 
 - A cached project opens from its saved summary while only that project's metadata refreshes in the background; returning home also preserves existing cards during refresh. Background metadata refresh does not replace edits in the project form. Direct VDT links load the requested VDT and its owner summary without first fetching the complete project library. Superseded refresh responses cannot switch the selected project back.
 - Cold project routes use **Loading project…** until the selected project is ready, without unselected-project or creation prompts. Fetch failures and missing projects provide Retry and Back to projects. Retry explicitly reloads the project; a background refresh failure remains visible alongside the cached workspace.
 - Project summaries omit the AI-run counter. Other counters use SQL aggregates rather than loading conversation, run or proposal payloads. Stored AI sessions and history are preserved.
-- The editor's Home and Back to project links wait for the current revision save before leaving. Save conflicts/failures cancel that link navigation and preserve visible local edits. The back link explicitly supersedes a still-pending newly created VDT route.
+- The editor's Home and Back to project links wait for the current revision save before leaving. A failed save keeps the editor open. A conflict keeps the draft visible and blocks another save, including after a summary refresh. **Discard local edits and reload** opens the stored revision so the user can reapply changes. The back link supersedes a still-pending newly created VDT route.
 
 Current status: implemented as an alpha foundation. W0.1 atomic revision conflict handling is implemented: manual/create/agent writers use one strict CAS/idempotency boundary and an exclusive-create no-clobber final path. Conflicts preserve local unsaved work, and failed auto-save blocks navigation. A single durable source-of-truth policy and metadata/revision ownership remain W0.5 blockers; Windows durability is unverified.
 
@@ -357,8 +358,9 @@ unit with visible source/assumption notes and no estimate-symbol prefix. It reta
 readonly derived-source values, scenario locks, root protection and warnings.
 The visual formula editor uses compact chips, bounded labels with full-name
 titles, unboxed symbols and numeric fields sized to their contents. Drag/remove
-controls reveal on hover/focus (remain visible for coarse pointers). Caret,
-insertion, reorder, validation and the raw expression remain unchanged.
+controls reveal on hover or keyboard focus and stay visible for coarse
+pointers. Remove buttons occupy space inside their tokens, separate from the
+caret insertion slots.
 
 Factor-tree cards share these neutral surfaces and use a rounded type icon,
 two-line KPI name, upper-right unit tag in place of the status icon and an inset

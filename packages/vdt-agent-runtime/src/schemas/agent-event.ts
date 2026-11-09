@@ -86,7 +86,7 @@ export const agentEventSchema = z.object({
   type: agentEventTypeSchema,
   title: z.string(),
   message: z.string(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   patch: z.unknown().optional(),
   questions: z.array(agentQuestionSchema).optional()
 });

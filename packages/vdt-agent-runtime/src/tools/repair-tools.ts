@@ -35,7 +35,7 @@ const repairMissingFormulaReferenceTool: AgentTool = {
       baselineValue: z.number().finite().optional()
     }).optional()
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "repairing_graph",
@@ -130,7 +130,7 @@ const repairOrphanNodeTool: AgentTool = {
     attachToNodeId: z.string().min(1).max(160),
     relation: edgeRelationSchema
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "repairing_graph",
@@ -167,7 +167,7 @@ const repairDuplicateNodeIdTool: AgentTool = {
     newNodeId: z.string().min(1).max(160),
     updateFormulaReferences: z.boolean().optional()
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "repairing_graph",

@@ -134,11 +134,13 @@ import {
   updateStoredProject,
   updateStoredVdt,
   VdtStorageRequestError,
+  workspaceDraftBase,
   type CreateStoredVdtInput,
   type SaveStoredVdtRevisionInput,
   type StoredProjectSummary,
   type StoredVdtRecord,
-  type StoredVdtStatus
+  type StoredVdtStatus,
+  type WorkspaceDraftBase
 } from "@/lib/vdt-storage-client";
 import {
   mergeCliDetectionAgents,
@@ -320,6 +322,8 @@ export interface VdtWorkspaceState {
   isMutating: boolean;
   error?: string | undefined;
   lastSavedAt?: string | undefined;
+  // Bound to the editor snapshot. Summary refreshes must never advance it.
+  draftRevisionBase?: WorkspaceDraftBase | null | undefined;
   pendingRevisionCommit?: PendingWorkspaceRevisionCommit | undefined;
   pendingVdtCreate?: PendingWorkspaceVdtCreate | undefined;
 }
@@ -464,7 +468,7 @@ export interface VdtStudioState {
   deleteWorkspaceProject: (projectId: string) => Promise<boolean>;
   createWorkspaceVdt: (input?: string | CreateWorkspaceVdtParams) => Promise<boolean>;
   selectWorkspaceProject: (projectId: string) => Promise<boolean>;
-  selectWorkspaceVdt: (vdtId: string, options?: { expectedProjectId?: string | undefined }) => Promise<boolean>;
+  selectWorkspaceVdt: (vdtId: string, options?: { expectedProjectId?: string | undefined; discardLocalEdits?: boolean }) => Promise<boolean>;
   renameWorkspaceVdt: (vdtId: string, name: string) => Promise<boolean>;
   setWorkspaceVdtStatus: (vdtId: string, status: StoredVdtStatus) => Promise<boolean>;
   deleteWorkspaceVdt: (vdtId: string) => Promise<boolean>;
@@ -611,10 +615,12 @@ function isRevisionStateConflict(error: unknown): error is VdtStorageRequestErro
 
 function workspaceStorageError(error: unknown, fallback: string): string {
   if (isRevisionStateConflict(error)) {
-    return "This VDT changed on the server. Your local edits are still open; reload or rebase before saving again.";
+    return WORKSPACE_REVISION_CONFLICT;
   }
   return error instanceof Error ? error.message : fallback;
 }
+
+const WORKSPACE_REVISION_CONFLICT = "This VDT changed on the server. Your local edits are still open. Reload the saved version before saving again.";
 
 function removeVdtFromSummaries(
   summaries: StoredProjectSummary[],
@@ -1796,6 +1802,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             ...state.workspace,
             activeProjectId: undefined,
             activeVdtId: undefined,
+            draftRevisionBase: undefined,
             activePanel: "project",
             error: undefined
           }
@@ -1806,6 +1813,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           workspace: {
             ...state.workspace,
             activeVdtId: undefined,
+            draftRevisionBase: undefined,
             activePanel: "project",
             error: undefined
           }
@@ -2087,6 +2095,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
                 projectSummaries: upsertProjectSummary(current.workspace.projectSummaries, created.summary),
                 activeProjectId,
                 activeVdtId: created.vdt.id,
+                draftRevisionBase: workspaceDraftBase(created.head, createOperation.input.expectedRuntime),
                 activePanel: "vdt",
                 isMutating: false,
                 error: undefined,
@@ -2139,9 +2148,15 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         return true;
       },
       selectWorkspaceVdt: async (vdtId, options) => {
-        const rebaseRequired = hasSmartKpiRebase(get());
-        if (get().workspace.activeVdtId === vdtId && !rebaseRequired) {
-          if (options?.expectedProjectId && get().workspace.activeProjectId !== options.expectedProjectId) {
+        const initial = get();
+        const rebaseRequired = hasSmartKpiRebase(initial);
+        const discardLocalEdits = options?.discardLocalEdits === true;
+        if (discardLocalEdits && (initial.workspace.activeVdtId !== vdtId || initial.workspace.isMutating
+          || initial.workspace.isLoading || initial.workspace.pendingRevisionCommit)) {
+          return false;
+        }
+        if (initial.workspace.activeVdtId === vdtId && !rebaseRequired && !discardLocalEdits) {
+          if (options?.expectedProjectId && initial.workspace.activeProjectId !== options.expectedProjectId) {
             set((state) => ({
               workspace: {
                 ...state.workspace,
@@ -2168,7 +2183,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
         }));
         try {
-          if (!rebaseRequired && hasActiveWorkspaceVdt(get().workspace) && !(await get().saveActiveWorkspaceVdt())) {
+          if (!discardLocalEdits && !rebaseRequired && hasActiveWorkspaceVdt(get().workspace) && !(await get().saveActiveWorkspaceVdt())) {
             set((state) => ({
               workspace: {
                 ...state.workspace,
@@ -2183,6 +2198,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
           if (options?.expectedProjectId && loaded.summary.project.id !== options.expectedProjectId) {
             throw new Error("Selected VDT does not belong to this project.");
+          }
+          if (discardLocalEdits && (get().workspace.activeVdtId !== vdtId || get().project !== initial.project)) {
+            throw new Error("The local draft changed while reloading. Review it before discarding.");
           }
           const project = ensureScenario(loaded.activeProject);
           set((state) => ({
@@ -2205,6 +2223,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               activePanel: "vdt",
               activeProjectId: loaded.summary.project.id,
               activeVdtId: loaded.vdt.id,
+              draftRevisionBase: workspaceDraftBase(loaded.head, runtimeCasFromState(loaded.runtimeState)),
               isLoading: false,
               error: undefined
             },
@@ -2331,33 +2350,34 @@ export const useVdtStudioStore = create<VdtStudioState>()(
       },
       saveActiveWorkspaceVdt: async () => {
         const state = get();
+        if (state.workspace.isMutating) return false;
         if (hasSmartKpiRebase(state)) {
           set(current => ({ workspace: { ...current.workspace, error: "The draft predates a storage conflict. Reload the stored VDT before saving; automatic overwrite is blocked." } }));
           return false;
         }
         const activeVdtId = state.workspace.activeVdtId;
         if (!activeVdtId) return false;
-        const owningSummary = summaryContainingVdt(state.workspace.projectSummaries, activeVdtId);
-        const activeEntry = owningSummary?.vdts.find((entry) => entry.vdt.id === activeVdtId);
-        if (!owningSummary?.runtimeState || !activeEntry?.head) {
+        const existingOperation = state.workspace.pendingRevisionCommit?.vdtId === activeVdtId
+          ? state.workspace.pendingRevisionCommit
+          : undefined;
+        const base = state.workspace.draftRevisionBase;
+        if (!existingOperation && (!base || base.vdtId !== activeVdtId || base.projectId !== state.workspace.activeProjectId)) {
           set((current) => ({
             workspace: {
               ...current.workspace,
-              error: "VDT revision state is unavailable. Refresh the workspace before saving."
+              error: base === null ? WORKSPACE_REVISION_CONFLICT
+                : "The base revision of your local draft could not be verified. Reload the saved version before saving."
             }
           }));
           return false;
         }
-        const existingOperation = state.workspace.pendingRevisionCommit?.vdtId === activeVdtId
-          ? state.workspace.pendingRevisionCommit
-          : undefined;
         const operation: PendingWorkspaceRevisionCommit = existingOperation ?? {
           vdtId: activeVdtId,
           projectRevision: state.projectRevision,
           input: {
             idempotencyKey: `manual-save:${activeVdtId}:${generateRunId()}`,
-            expectedHead: revisionCasFromHead(activeEntry.head),
-            expectedRuntime: runtimeCasFromState(owningSummary.runtimeState),
+            expectedHead: base!.expectedHead,
+            expectedRuntime: base!.expectedRuntime,
             project: cloneProject(state.project),
             summary: "Manual workspace save"
           }
@@ -2386,6 +2406,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
                   ? "The submitted snapshot was saved, but newer local edits are still unsaved."
                   : undefined,
                 lastSavedAt: localProjectChanged ? current.workspace.lastSavedAt : nowIso(),
+                ...(current.workspace.activeVdtId === activeVdtId && current.workspace.activeProjectId === saved.head.projectId
+                  ? { draftRevisionBase: workspaceDraftBase(saved.head, operation.input.expectedRuntime) }
+                  : {}),
                 pendingRevisionCommit: undefined
               }
             };
@@ -2395,7 +2418,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           let refreshedState:
             | Awaited<ReturnType<typeof fetchStoredVdtRevisionState>>
             | undefined;
-          if (isRevisionStateConflict(error)) {
+          const conflict = isRevisionStateConflict(error);
+          if (conflict) {
             refreshedState = await fetchStoredVdtRevisionState(activeVdtId).catch(() => undefined);
           }
           const retainPending = shouldRetainPendingStorageOperation(error);
@@ -2407,6 +2431,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
                 : current.workspace.projectSummaries,
               isMutating: false,
               error: workspaceStorageError(error, "VDT could not be saved."),
+              ...(conflict && current.workspace.activeVdtId === activeVdtId ? { draftRevisionBase: null } : {}),
               pendingRevisionCommit: retainPending ? operation : undefined
             }
           }));
@@ -4211,6 +4236,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           isLoading: false,
           isMutating: false,
           lastSavedAt: state.workspace.lastSavedAt,
+          draftRevisionBase: state.workspace.draftRevisionBase,
           pendingRevisionCommit: state.workspace.pendingRevisionCommit,
           pendingVdtCreate: state.workspace.pendingVdtCreate
         },

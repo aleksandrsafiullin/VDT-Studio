@@ -54,17 +54,23 @@ test("removing the final subscription clears chat and Undo restores an accessibl
 });
 
 test("Test exposes busy, failure and retry states without duplicate requests", async ({ page }) => {
-  await mockDetection(page, [detection("claude")]);
+  const claude = detection("claude");
+  await mockDetection(page, [claude]);
   let calls = 0;
   let releaseTest: (() => void) | undefined;
   await page.route("**/api/ai/dev-runtime", async (route) => {
     const body = route.request().postDataJSON();
+    if (body.operation === "harness_settings") return route.fallback();
     expect(body).toEqual({ operation: "test", backendId: "claude_subscription" });
     calls += 1;
     if (calls === 1) {
       await new Promise<void>((resolve) => { releaseTest = resolve; });
+      Object.assign(claude, detection("claude", "authentication_required"));
       await route.fulfill({ status: 502, json: { ok: false, error: "Provider session expired. Sign in and retry." } });
-    } else await route.fulfill({ json: { ok: true } });
+    } else {
+      Object.assign(claude, detection("claude"));
+      await route.fulfill({ json: { ok: true } });
+    }
   });
   await openLocalSettings(page);
   const button = page.getByTestId("cli-agent-test-claude");
@@ -92,6 +98,7 @@ test("managed Sign in verifies readiness before success and allows retry", async
   await page.route("**/api/ai/detect-clis**", async (route) => route.fulfill({ json: { agents: [detection("cursor-agent", ready ? "ready" : "authentication_required")] } }));
   await page.route("**/api/ai/dev-runtime", async (route) => {
     const body = route.request().postDataJSON();
+    if (body.operation === "harness_settings") return route.fallback();
     if (body.operation === "test") {
       await route.fulfill({ status: 401, json: { ok: false, error: "AUTH_REQUIRED: reconnect the provider session." } });
       return;
@@ -128,13 +135,19 @@ test("sign-in guidance opens during the click and retains a direct fallback link
       return null;
     }) as typeof window.open;
   });
-  await page.route("**/api/ai/dev-runtime", async (route) => route.fulfill({ json: { ok: true, action: "instructions", instructions: "Run claude login, then Test." } }));
+  await page.route("**/api/ai/dev-runtime", async (route) => {
+    const body = route.request().postDataJSON();
+    if (body.operation === "harness_settings") return route.fallback();
+    expect(body).toEqual({ operation: "open_provider_auth", backendId: "claude_subscription" });
+    await route.fulfill({ json: { ok: true, action: "instructions", instructions: "Run claude login, then Test." } });
+  });
   await openLocalSettings(page);
   await page.getByTestId("cli-agent-authenticate-claude").click();
   await expect(page.getByTestId("provider-auth-status-claude")).toContainText("Run claude login");
   await expect(page.getByTestId("cli-agent-sign-in-guide-claude")).toBeVisible();
   const opens = await page.evaluate(() => Reflect.get(window, "__signInOpens"));
-  expect(opens).toEqual([{ url: "https://docs.anthropic.com/en/docs/claude-code", active: true }]);
+  expect(opens).toEqual([{ url: "https://code.claude.com/docs/en/setup", active: true }]);
+  await expect(page.getByTestId("cli-agent-sign-in-guide-claude")).toHaveAttribute("href", opens[0].url);
   await expect(page.getByTestId("provider-auth-status-claude")).not.toContainText("verified");
 });
 
@@ -168,7 +181,9 @@ test("Local models opens independently, restores server/model choices and preser
     await route.fulfill({ json: { agents: [detection("codex")] } });
   });
   await page.route("**/api/ai/dev-runtime", async (route) => {
-    expect(route.request().postDataJSON().operation).toBe("list_models");
+    const body = route.request().postDataJSON();
+    if (body.operation === "harness_settings") return route.fallback();
+    expect(body.operation).toBe("list_models");
     await route.fulfill({ json: { ok: true, models: ["local-saved", "second-local"] } });
   });
   await page.goto("/");

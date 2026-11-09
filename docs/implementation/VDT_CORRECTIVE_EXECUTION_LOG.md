@@ -1083,3 +1083,21 @@ Verified: complete Playwright matrix 122/122 passed (Chromium 84, mobile Chrome 
 Local HTML report: output/playwright/local-alpha-2026-10-19-_1z3g4zl/report/index.html. Detailed diagnostics: browser-alpha-_1z3g4zl. Every recorded E2E store was removed after its owned server closed. The source snapshot/build/browser downloads are run-owned and removed after collecting evidence. Original application data, developer caches, previous CLI release artifacts and unrelated processes are preserved.
 
 Not established: full unit-suite rerun or new CLI package qualification in this follow-up; real provider inference and autonomous business correctness; physical audio/devices; browser-history/crash recovery; native installers; Windows/Linux qualification; the aggregate release gate. Existing production/release NO-GO and W0.5 ownership limitations remain.
+
+## Mac local alpha launcher and Zod maintenance — 2026-11-09
+
+The local alpha maintenance run owns this slice. Local self-review and
+automated checks cover the macOS source launcher and the Zod migration.
+The release verdict is `NO-GO`.
+
+Verification ran on macOS arm64 with Node 24.15.0 and pnpm 10.33.2 in
+isolated snapshots. The run used `pnpm install --frozen-lockfile`,
+`pnpm release:verify`, each remaining release command after the aggregate
+stopped, `pnpm test:e2e`, `pnpm desktop:sidecar:prepare`,
+`pnpm desktop:verify`, `pnpm desktop:native:preflight` and
+`git diff --check`. The production-browser smoke used the built Next.js app
+with a fresh APFS store. The comparison browser run used baseline
+`41cd163` with the APFS storage prerequisite applied.
+
+The [readiness record](../PRODUCTION_READINESS.md#mac-local-alpha-launcher-and-zod-verification-2026-11-09)
+contains the results and evidence location.

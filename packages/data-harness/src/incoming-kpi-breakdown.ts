@@ -36,7 +36,7 @@ export const incomingKpiOptionsSchema: z.ZodType<IncomingKpiOptions> = z.object(
   ]).optional(),
   period: z.object({ start: z.string().max(40), end: z.string().max(40) }).optional(),
   missingCategoryPolicy: z.literal("include_unknown").optional(),
-  clarificationAnswers: z.record(z.string().max(4000)).optional(),
+  clarificationAnswers: z.record(z.string(), z.string().max(4000)).optional(),
   confirmed: z.boolean().optional()
 });
 

@@ -69,7 +69,7 @@ const executionBindingStartRequestSchema = z.object({
 const legacyProviderStartRequestSchema = z.object({
   ...agentStartRequestCommonShape,
   providerId: boundedString(120),
-  providerConfig: z.record(z.unknown()).optional()
+  providerConfig: z.record(z.string(), z.unknown()).optional()
 }).strict().superRefine((value, ctx) => {
   for (const forbidden of [
     "command",

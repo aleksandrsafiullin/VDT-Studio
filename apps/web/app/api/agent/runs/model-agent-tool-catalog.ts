@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { AgentToolError, type ToolRegistry } from "@vdt-studio/vdt-agent-runtime";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { toProviderJsonSchema } from "./provider-json-schema";
 
 export const TARGET_MODEL_AGENT_TOOLS = [
   "tools.describe",
@@ -79,7 +79,7 @@ const describeSpec = {
 export function registerModelAgentSchemaTool(tools: ToolRegistry): void {
   if (tools.has(describeSpec.name)) return;
   tools.register({
-    ...describeSpec, inputSchema: describeInput, outputSchema: z.record(z.unknown()),
+    ...describeSpec, inputSchema: describeInput, outputSchema: z.record(z.string(), z.unknown()),
     run(_context, input) {
       const catalog = new Map(modelAgentToolCatalog(tools).map((tool) => [tool.name, tool]));
       const definitions = new Map(tools.list().map((tool) => [tool.name, tool]));
@@ -90,7 +90,7 @@ export function registerModelAgentSchemaTool(tools: ToolRegistry): void {
         return definition ? {
           ...tool,
           description: definition.description,
-          inputJsonSchema: definition.inputJsonSchema ?? zodToJsonSchema(definition.inputSchema, { $refStrategy: "none" })
+          inputJsonSchema: definition.inputJsonSchema ?? toProviderJsonSchema(definition.inputSchema)
         } : tool;
       }) };
     }
@@ -107,7 +107,7 @@ export function modelAgentToolCatalog(tools: ToolRegistry) {
     return {
       ...spec,
       description: spec.description.length>88?`${spec.description.slice(0,85)}...`:spec.description,
-      inputJsonSchema: definition.inputJsonSchema ?? compactInputSchema(zodToJsonSchema(definition.inputSchema, { $refStrategy: "none" }))
+      inputJsonSchema: definition.inputJsonSchema ?? compactInputSchema(toProviderJsonSchema(definition.inputSchema))
     };
   };
   return TARGET_MODEL_AGENT_TOOLS.map((name) => {

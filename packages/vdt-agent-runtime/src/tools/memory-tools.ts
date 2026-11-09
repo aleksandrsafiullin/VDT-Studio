@@ -10,7 +10,7 @@ const getRecentEventsTool: AgentTool = {
   name: "memory.get_recent_events",
   description: "Read recent agent event summaries.",
   inputSchema: z.object({ limit: z.number().int().min(1).max(50).optional() }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   run(context, input) {
     return { events: summarizeEvents(context.store.getState(context.runId).events, input.limit ?? 30) };
@@ -21,7 +21,7 @@ const getUserAnswersTool: AgentTool = {
   name: "memory.get_user_answers",
   description: "Read user answers collected during this run.",
   inputSchema: z.object({}),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   run(context) {
     return { answers: context.store.getState(context.runId).answers };
@@ -32,7 +32,7 @@ const getManualChangesTool: AgentTool = {
   name: "memory.get_manual_changes",
   description: "Read recent manual project changes observed during this run.",
   inputSchema: z.object({ limit: z.number().int().min(1).max(50).optional() }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   run(context, input) {
     return { manualChanges: summarizeManualChanges(context.store.getState(context.runId), input.limit ?? 20) };

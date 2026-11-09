@@ -54,6 +54,10 @@ recipe-label reconstruction. Existing committing journals and checkpoint Undo
 retain historical replay behavior; instruction saves remain guarded during an
 unresolved Smart write.
 
+The full accepted instructions count toward the 192 KiB Smart input envelope.
+The separate 24 KiB graph budget is used for model context and its shared task
+overhead. The byte count for the final envelope includes UTF-8 and JSON escaping.
+
 ## Verification boundary
 
 Focused tests cover legacy migration, independent entry persistence, aggregate

@@ -136,7 +136,7 @@ const extractProcessDriversTool: AgentTool = {
     processDescription: z.string().min(1).max(6_000),
     sourceIds: z.array(z.string().max(160)).max(20).optional()
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   run(_context, input) {
     const sourceIds = input.sourceIds?.length ? input.sourceIds : ["process_description"];
@@ -156,7 +156,7 @@ const proposeDecompositionTool: AgentTool = {
     candidateDrivers: z.array(candidateDriverSchema).min(1).max(30),
     maxFirstLevelDrivers: z.number().int().min(1).max(8).optional()
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   run(_context, input) {
     const maxDrivers = input.maxFirstLevelDrivers ?? 6;

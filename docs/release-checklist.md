@@ -38,15 +38,23 @@ pnpm test:e2e
 
 `pnpm release:verify` covers the non-browser sequence through `package:verify`. Browser E2E remains explicit.
 
+- [ ] For the macOS source launcher, verify Start, Open, Stop, Restart and Ctrl+C with an owned server. With an unrelated HTTP listener on port 3000, verify that the launcher reports the conflict, the listener survives and no browser opens for it. Include a stale legacy PID file and an unrelated listener that takes the port during shutdown.
+
 For browser checks, install the matching Chromium/WebKit engines and use the [isolated E2E procedure](RELEASE.md#browser-e2e-isolation-and-reports). A running development app requires a separate source checkout/snapshot to avoid sharing Next build output. Keep the HTML/JSON report and any failure traces with the candidate evidence; mocked provider UI checks do not qualify real AI output.
 
-Current local browser evidence (2026-10-19): 122 passed, zero failed/skipped/flaky across Chromium, mobile Chrome emulation and WebKit; production web build and production dependency audit passed. [Scope and remaining gates](PRODUCTION_READINESS.md#local-alpha-browser-verification-2026-10-19) remain explicit. This is not an installer, live-provider or aggregate release qualification.
+The [Smart KPI and browser regression recheck](PRODUCTION_READINESS.md#mac-local-alpha-smart-kpi-and-browser-regression-checks-2026-11-09) records the current macOS candidate results. The [formula editor and CLI bundle recheck](PRODUCTION_READINESS.md#mac-local-alpha-formula-editor-and-cli-bundle-verification-2026-11-09), [launcher and Zod run](PRODUCTION_READINESS.md#mac-local-alpha-launcher-and-zod-verification-2026-11-09) and [October local browser run](PRODUCTION_READINESS.md#local-alpha-browser-verification-2026-10-19) retain their respective evidence.
 
 ### Dependency audit evidence
 
-`pnpm security:audit` passed on 2026-10-19 with zero reported production vulnerabilities after dependency remediation. Rerun it for the same candidate as the other release checks; a historical pass never substitutes for the current audit. Full development-tool audit findings are recorded separately in `PRODUCTION_READINESS.md`, without ignored advisories.
+`pnpm security:audit` passed on 2026-11-09 with zero reported production vulnerabilities. Rerun it for each candidate. The full development-tool audit findings are recorded separately in `PRODUCTION_READINESS.md`.
+
+Confirm that the lockfile and packed runtime use patched Zod 4 for [CVE-2023-54404](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5). Run the structured tool and provider-schema tests after changing Zod.
 
 Set `VDT_RELEASE_DIR` to a new empty candidate directory before packaging when a previous artifact already exists. `package:alpha` refuses to replace existing artifacts. The bundle verifier recursively scans directory resources and rejects symbolic links; `package:verify` requires a real loopback runner-health pass and waits for its child before cleaning its owned install directory.
+
+Bundle scanner regression fixtures cover direct JavaScript environment
+forwarding, literal values, literal fallbacks and a credential assignment
+following a valid environment reference on the same line.
 
 `pnpm docs:verify` also requires the active [`corrective plan`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md), [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) and [`execution log`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md). These are contract/evidence artifacts, not proof that V2 behavior is enabled.
 

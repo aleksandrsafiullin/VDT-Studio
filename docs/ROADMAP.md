@@ -183,7 +183,8 @@ render directly in the graph viewport. Collision-aware placement, preparation
 placeholders, per-card values/selection, readable formula, Edit and one Add action
 replace the default Smart popup. Previews stay outside persisted nodes/edges;
 dismissal leaves the graph intact. Successful Add removes temporary cards and
-keeps feedback/Undo. Manual entry retains its separate editor. Existing numeric,
+keeps feedback/Undo. Manual entry opens against the current graph context and
+retains edited drafts for review. Existing numeric,
 formula and revision safeguards remain; native packaging and live-provider
 qualification are separate.
 
@@ -200,8 +201,8 @@ existing edit, warning, readonly and scenario-lock controls. Saved panel sizing,
 collapse and guarded navigation remain. Dialog contents, model generation,
 calculation contracts and native qualification are separate from this redesign.
 The visual formula row now uses compact reference/number tokens and plain math
-symbols, with hover/focus editing controls and bounded labels. Its expression,
-validation, caret and drag/drop contracts are unchanged.
+symbols, with hover/focus editing controls and bounded labels. Each removal
+control sits within its token, leaving the adjacent caret slots available.
 Factor-tree cards now share the neutral theme: a compact type/name/unit header,
 with the unit replacing the upper-right status icon. Base and Potential are
 stacked rows with labels aligned left and numbers aligned right on the same
@@ -353,7 +354,7 @@ This roadmap is the operational summary of the authoritative [`VDT_STUDIO_CORREC
 
 Implemented at alpha level:
 
-- project/VDT workspace and local SQLite revision storage, including Home/back links that await a successful revision save, preserve edits on save failure, and synchronize browser Back/Forward selection;
+- project/VDT workspace and local SQLite revision storage, with Home/back links that wait for a successful save and synchronize browser Back/Forward selection. A conflict preserves the open draft and requires an explicit reload of the saved revision before further saves;
 - compact Projects home with consistent-width cards in one to four columns, a revealable search across project field values, and modal creation that saves name/client/site/year together;
 - immediate cached-project/home rendering with scoped background refresh, direct VDT loading without a project-library fetch, stale-response guards and preserved form drafts; cold-route loading and retryable errors remain;
 - SQL-only summary counters without an AI-run counter, and bounded immutable-backup verification retention for ready-state opens; migration/recovery still verifies backup bytes in full;

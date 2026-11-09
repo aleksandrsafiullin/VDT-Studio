@@ -15,6 +15,7 @@ import {
 } from "../../packages/vdt-core/src/index";
 
 const EXCEL_EXPORT_TEST_TITLE = "downloads editable Excel without session credentials";
+const ANTHROPIC_TEST_BINDING = "api_byok_session_e2e_anthropic";
 function readXlsxXmlEntries(bytes: Buffer) {
   // Read ZIP's central directory so the assertions inspect the actual browser
   // download, independent of the workbook writer's serializer.
@@ -345,6 +346,7 @@ function mockRuntimeStructuredOutputFailureSnapshot(prompt = "Build an excavatio
         maxSteps: 30
       }
     },
+    selectedSkills: [],
     events: [
       {
         id: "agent-run-structured-output-failure:1",
@@ -604,54 +606,6 @@ function mockRuntimeRunningAfterAnswersSnapshot(
       updatedAt: timestamp
     },
     updatedAt: timestamp
-  };
-}
-
-function mockPersistedActiveAgentState(snapshot: ReturnType<typeof mockRuntimeNeedsInputSnapshot>) {
-  const questions = snapshot.pendingQuestions ?? [];
-  return {
-    state: {
-      brief: {
-        rootKpi: "Excavation",
-        industry: "Mining",
-        businessContext: "",
-        unit: "tonnes/year",
-        timePeriod: "year",
-        goal: "",
-        levelOfDetail: "medium"
-      },
-      generateActivity: {
-        runId: snapshot.runId,
-        status: "needs_user_input",
-        phase: "waiting_provider",
-        phaseStartedAt: snapshot.updatedAt,
-        startedAt: snapshot.createdAt,
-        updatedAt: snapshot.updatedAt,
-        providerId: "openai_compatible",
-        providerLabel: "OpenAI",
-        appMode: "development_web",
-        canCancel: true,
-        cancelRequested: false,
-        agentChatMessages: snapshot.chatMessages,
-        publicStatus: snapshot.publicStatus,
-        agentQuestions: questions,
-        questionsForUser: questions.map((question) => question.question),
-        agentRun: {
-          runId: snapshot.runId,
-          status: "needs_user_input",
-          phase: "asking_clarifying_questions",
-          request: { rootKpi: "Excavation" },
-          selectedSkills: [],
-          events: snapshot.events,
-          questionsForUser: questions.map((question) => question.question)
-        }
-      },
-      activeAgentRunId: snapshot.runId,
-      agentRun: snapshot,
-      agentEvents: snapshot.events,
-      agentPendingQuestions: questions
-    },
-    version: 2
   };
 }
 
@@ -1155,17 +1109,51 @@ async function openKpiSpacingPopover(page: Page) {
   return panel;
 }
 
+async function sendMockAgentInstruction(page: Page, prompt: string) {
+  await openSettingsModal(page);
+  await page.getByTestId("execution-mode-tab-byok").click();
+  await page.getByTestId("byok-protocol-anthropic").click();
+  await page.getByTestId("byok-model-custom").fill("vdt-production-model");
+  await page.getByTestId("byok-api-key").fill("session-only-key");
+  await expect(page.getByTestId("byok-api-key-storage-status")).toHaveAttribute("data-status", "saved");
+  await page.keyboard.press("Escape");
+  await page.getByTestId("agent-instruction-input").fill(prompt);
+  await page.getByTestId("agent-send-instruction").click();
+}
+
+async function startMockAgentAwaitingInput(page: Page) {
+  let snapshot = mockRuntimeNeedsInputSnapshot();
+  await page.route("**/api/agent/runs", route => {
+    if (route.request().method() === "GET") return route.fallback();
+    snapshot = { ...snapshot, request: route.request().postDataJSON() };
+    return route.fulfill({ json: { ok: true, runId: snapshot.runId, snapshot } });
+  });
+  await page.route(`**/api/agent/runs/${snapshot.runId}`, route => route.fulfill({ json: { ok: true, snapshot } }));
+  await sendMockAgentInstruction(page, snapshot.request.input.prompt);
+  await expect(page.getByTestId("agent-answer-field-fleet_in_scope-excavator_count")).toBeVisible();
+  await expect.poll(async () => (await readPersistedState(page))?.state?.agentRun?.runId).toBe(snapshot.runId);
+  return snapshot;
+}
+
 test.beforeEach(async ({ page, productionWorkspace }, testInfo) => {
   await page.route("**/api/ai/detect-clis**", (route) => route.fulfill({ json: { agents: [], modelsByAgent: {} } }));
   await page.route("**/api/agent/runs", (route) => route.request().method() === "GET"
     ? route.fulfill({ json: { schemaVersion: 1, ok: true, defaultBindingId: null, bindings: [{
-      bindingId: "e2e_anthropic", executionProfile: "model_agent", engineId: "e2e",
+      bindingId: ANTHROPIC_TEST_BINDING, executionProfile: "model_agent", engineId: "e2e",
       engineAdapterId: "e2e", backendId: "anthropic", modelId: "vdt-production-model"
     }] } }) : route.fallback());
-  await page.route("**/api/agent/bindings/openai", (route) => route.fulfill({ json: { ok: true, binding: {
-    bindingId: "openai_byok_session_e2e", executionProfile: "model_agent", backendId: "openai_compatible",
-    modelId: route.request().postDataJSON().model
-  } } }));
+  await page.route("**/api/agent/bindings/provider", route => {
+    const { operation, providerId, providerConfig } = route.request().postDataJSON();
+    if (operation === "capabilities" || operation === "smart_capabilities") {
+      return route.fulfill({ json: { ok: true, modelId: providerConfig.model, capabilities: null } });
+    }
+    expect(operation).toBe("admit");
+    return route.fulfill({ json: { ok: true, binding: {
+      bindingId: `api_byok_session_e2e_${providerId}`, executionProfile: "model_agent", backendId: providerId,
+      modelId: providerConfig.model, modelReasoning: providerConfig.modelReasoning
+    } } });
+  });
+  await page.route("**/api/ai/generate-vdt", route => route.fulfill({ status: 503, json: { ok: false, error: "No provider response fixture." } }));
   await page.route("**/api/agent/runs/*/events", (route) => route.fulfill({ contentType: "text/event-stream", body: "" }));
   await page.goto("/");
   await page.evaluate(() => localStorage.clear());
@@ -1222,7 +1210,7 @@ test("shows chat-first agent progress after mock VDT generation", { tag: "@chrom
 
   await page.route("**/api/agent/runs", async (route) => {
     if (route.request().method() === "GET") return route.fallback();
-    const snapshot = mockRuntimeAgentSnapshot();
+    const snapshot = { ...mockRuntimeAgentSnapshot(), request: route.request().postDataJSON() };
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -1234,13 +1222,7 @@ test("shows chat-first agent progress after mock VDT generation", { tag: "@chrom
     });
   });
 
-  await openSettingsModal(page);
-  await page.getByTestId("execution-mode-tab-byok").click();
-  await page.getByTestId("byok-api-key").fill("session-only-key");
-  await page.keyboard.press("Escape");
-
-  await page.getByTestId("agent-instruction-input").fill("Build a revenue model.");
-  await page.getByTestId("agent-send-instruction").click();
+  await sendMockAgentInstruction(page, "Build a revenue model.");
 
   await expect(page.getByTestId("generate-activity-panel")).toBeVisible();
   await expect(page.getByTestId("agent-chat-thread")).toContainText("Validation result: Graph validation passed.");
@@ -1269,7 +1251,7 @@ test("keeps the user message visible when the agent provider returns unstructure
   await page.route("**/api/agent/runs", async (route) => {
     if (route.request().method() === "GET") return route.fallback();
     const requestBody = route.request().postDataJSON() as { input?: { prompt?: string } };
-    const snapshot = mockRuntimeStructuredOutputFailureSnapshot(requestBody.input?.prompt);
+    const snapshot = { ...mockRuntimeStructuredOutputFailureSnapshot(requestBody.input?.prompt), request: requestBody };
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -1292,13 +1274,7 @@ test("keeps the user message visible when the agent provider returns unstructure
     });
   });
 
-  await openSettingsModal(page);
-  await page.getByTestId("execution-mode-tab-byok").click();
-  await page.getByTestId("byok-api-key").fill("session-only-key");
-  await page.keyboard.press("Escape");
-
-  await page.getByTestId("agent-instruction-input").fill("Build an excavation model. I have 5 excavators.");
-  await page.getByTestId("agent-send-instruction").click();
+  await sendMockAgentInstruction(page, "Build an excavation model. I have 5 excavators.");
 
   await expect(page.getByTestId("generate-activity-panel")).toBeVisible();
   await expect(page.getByTestId("agent-activity-scroll")).toBeVisible();
@@ -1331,28 +1307,10 @@ test("keeps the user message visible when the agent provider returns unstructure
 test("restores active agent chat and structured questions after page reload", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Agent reload persistence smoke runs on desktop viewport.");
 
-  const snapshot = mockRuntimeNeedsInputSnapshot();
-  await page.route("**/api/agent/runs/agent-run-reload", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ ok: true, snapshot })
-    });
-  });
-  await page.route("**/api/agent/runs/agent-run-reload/events", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "text/event-stream",
-      body: ""
-    });
-  });
-
-  await page.evaluate((persisted) => {
-    const current = JSON.parse(localStorage.getItem("vdt-studio-state") ?? "{}");
-    localStorage.setItem("vdt-studio-state", JSON.stringify({ ...current, state: { ...current.state, ...persisted.state } }));
-  }, mockPersistedActiveAgentState(snapshot));
-
+  const snapshot = await startMockAgentAwaitingInput(page);
+  const resumed = page.waitForResponse(response => new URL(response.url()).pathname === `/api/agent/runs/${snapshot.runId}`);
   await page.reload();
+  expect((await resumed).ok()).toBe(true);
 
   await expect(page.getByTestId("agent-chat-thread")).toContainText("Build an excavation model. I have 5 excavators.");
   await expect(page.getByTestId("agent-chat-thread")).toContainText("I need the fleet and shift inputs");
@@ -1368,7 +1326,7 @@ test("restores active agent chat and structured questions after page reload", { 
 test("submits structured agent answers after reload and shows immediate progress", { tag: "@chromium" }, async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Agent answer submit smoke runs on desktop viewport.");
 
-  const snapshot = mockRuntimeNeedsInputSnapshot();
+  const snapshot = await startMockAgentAwaitingInput(page);
   let capturedMessageBody:
     | {
         type?: string;
@@ -1387,31 +1345,13 @@ test("submits structured agent answers after reload and shows immediate progress
       contentType: "application/json",
       body: JSON.stringify({
         ok: true,
-        snapshot: mockRuntimeRunningAfterAnswersSnapshot(capturedMessageBody?.structuredAnswers ?? [])
+        snapshot: { ...mockRuntimeRunningAfterAnswersSnapshot(capturedMessageBody?.structuredAnswers ?? []), request: snapshot.request }
       })
     });
   });
-  await page.route("**/api/agent/runs/agent-run-reload", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ ok: true, snapshot })
-    });
-  });
-  await page.route("**/api/agent/runs/agent-run-reload/events", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "text/event-stream",
-      body: ""
-    });
-  });
-
-  await page.evaluate((persisted) => {
-    const current = JSON.parse(localStorage.getItem("vdt-studio-state") ?? "{}");
-    localStorage.setItem("vdt-studio-state", JSON.stringify({ ...current, state: { ...current.state, ...persisted.state } }));
-  }, mockPersistedActiveAgentState(snapshot));
-
+  const resumed = page.waitForResponse(response => new URL(response.url()).pathname === `/api/agent/runs/${snapshot.runId}`);
   await page.reload();
+  expect((await resumed).ok()).toBe(true);
 
   await page.getByTestId("agent-answer-field-fleet_in_scope-excavator_count").fill("5");
   await page.getByTestId("agent-answer-field-fleet_in_scope-haul_truck_count").fill("10");
@@ -1750,6 +1690,7 @@ test("shows unsupported Cursor version and disables misleading test success", { 
     throw new Error(`Unsupported Cursor version smoke must not call ${route.request().url()}.`);
   });
   await page.route("**/api/ai/dev-runtime", async (route) => {
+    if (route.request().postDataJSON().operation === "harness_settings") return route.fallback();
     throw new Error(`Unsupported Cursor version smoke must not call ${route.request().url()}.`);
   });
 
@@ -1786,6 +1727,7 @@ test("shows a real Local CLI connection error without falling back to mock", { t
 
   await page.route("**/api/ai/dev-runtime", async (route) => {
     const body = route.request().postDataJSON() as DevRuntimeRequestBody;
+    if (body.operation === "harness_settings") return route.fallback();
     expect(body.operation).toBe("test");
     expect(body.backendId).toBe("claude_subscription");
     expect(JSON.stringify(body)).not.toContain("pairingToken");
@@ -1868,7 +1810,7 @@ test("restores and removes encrypted BYOK keys while excluding plaintext from pr
   await page.keyboard.press("Escape");
   await page.getByTestId("agent-instruction-input").fill("Build a revenue model from the current brief.");
   await page.getByTestId("agent-send-instruction").click();
-  await expect.poll(() => agentRunRequestBody?.executionBindingId).toBe("e2e_anthropic");
+  await expect.poll(() => agentRunRequestBody?.executionBindingId).toBe(ANTHROPIC_TEST_BINDING);
   expect(agentRunRequestBody?.input?.prompt).toBe("Build a revenue model from the current brief.");
   expect(agentRunRequestBody).not.toHaveProperty("providerId");
   expect(agentRunRequestBody).not.toHaveProperty("providerConfig");
@@ -1990,7 +1932,7 @@ test("shows a real BYOK connection error without falling back to mock", { tag: "
   await page.getByTestId("agent-instruction-input").fill("Build a revenue model from the current brief.");
   await page.getByTestId("agent-send-instruction").click();
   await expect(page.getByText("Anthropic authentication failed.")).toBeVisible();
-  await expect.poll(() => agentRunRequestBody?.executionBindingId).toBe("e2e_anthropic");
+  await expect.poll(() => agentRunRequestBody?.executionBindingId).toBe(ANTHROPIC_TEST_BINDING);
   await expect.poll(() => generateRequestBody?.providerId).toBe("anthropic");
   expect(generateRequestBody?.providerId).not.toBe("mock");
   expect(agentRunRequestBody?.executionBindingId).not.toContain("mock");
@@ -2076,8 +2018,8 @@ test("marks main scenario in select and shows scenario values on node cards", { 
   const rootNode = reactFlowNode(page, "production_volume");
   await expect(rootNode.getByTestId("node-main-scenario-value")).toBeVisible();
   await expect(rootNode.getByTestId("node-main-scenario-value")).toContainText("130,944");
-  await expect(rootNode.getByText("Base")).toBeVisible();
-  await expect(rootNode.getByText("Potential")).toBeVisible();
+  await expect(rootNode.getByText("Base", { exact: true })).toBeVisible();
+  await expect(rootNode.getByText("Potential", { exact: true })).toBeVisible();
   await expect(page.getByTestId("root-scenario-effect")).toBeVisible();
   await expect(page.getByTestId("root-scenario-effect")).toContainText("+4,224");
 
@@ -2501,7 +2443,8 @@ test("canvas cards use icons instead of type text and formulas", { tag: "@chromi
 
   await expect(canvasNodes.getByTestId("node-type-icon").first()).toBeVisible();
   await expect(canvasNodes.locator(".font-mono")).toHaveCount(0);
-  await expect(canvasNodes.getByText("CALCULATED")).toHaveCount(0);
+  await expect(canvasNodes.getByText("Calculated", { exact: true })).toHaveCount(0);
+  await expect(canvasNodes.getByTestId("node-calculated-indicator")).toHaveText("Root KPI · Calculated");
   await expect(page.getByText("driven by")).toHaveCount(0);
   await expect(page.getByText("reduced by")).toHaveCount(0);
 });
@@ -3087,8 +3030,8 @@ test("shows usage limits copy on subscription CLI cards", { tag: "@chromium" }, 
   const usageNote = page.getByTestId("provider-usage-note-claude");
   await page.getByTestId("cli-agent-details-claude").getByText("Provider details", { exact: true }).click();
   await expect(usageNote).toBeVisible();
-  await expect(usageNote).toContainText("Billing and rate limits follow your Anthropic subscription");
-  await expect(usageNote).toContainText("model Claude Code selects");
+  await expect(usageNote).toContainText("Uses the account and model provider configured in this harness.");
+  await expect(usageNote).toContainText("Provider limits and billing apply.");
 });
 
 test("sends Cursor generation through the server-managed session binding", { tag: "@chromium" }, async ({ page }, testInfo) => {

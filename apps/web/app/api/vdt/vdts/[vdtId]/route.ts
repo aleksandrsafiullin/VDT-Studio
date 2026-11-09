@@ -26,9 +26,6 @@ export async function GET(_request: Request, { params }: { params: Promise<{ vdt
     if (!vdt) return jsonError("VDT not found.", 404, "VDT_NOT_FOUND");
     const project = database.getProject(vdt.projectId);
     if (!project) return jsonError("Project not found.", 404, "PROJECT_NOT_FOUND");
-    const revisions = database.listVdtRevisions(vdt.id);
-    const activeRevision = revisions.find((revision) => revision.id === vdt.activeRevisionId) ?? revisions.at(-1) ?? null;
-    const activeProject = activeRevision ? database.readVdtRevision(activeRevision) : null;
     const head = database.getVdtRevisionHead(vdt.id);
     if (!head) {
       throw new VdtStorageError(
@@ -36,6 +33,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ vdt
         `VDT revision head is missing for ${vdt.id}.`
       );
     }
+    // The editor pairs this snapshot with this exact head, even if another
+    // process commits while the VDT summary is being assembled.
+    const revisions = database.listVdtRevisions(vdt.id);
+    const activeRevision = revisions.find((revision) => revision.id === head.activeRevisionId) ?? null;
+    if (head.activeRevisionId && !activeRevision) {
+      throw new VdtStorageError("VDT_REVISION_HEAD_MISSING", `Active revision is missing for ${vdt.id}.`);
+    }
+    const activeProject = activeRevision ? database.readVdtRevision(activeRevision) : null;
     const summary = buildStoredProjectSummary(database, project);
     return Response.json({
       schemaVersion: "vdt_load_response.v1",

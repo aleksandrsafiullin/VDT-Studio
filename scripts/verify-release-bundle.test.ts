@@ -8,7 +8,12 @@ import { verifyReleaseBundle } from "./verify-release-bundle.mjs";
 
 const tempDirs: string[] = [];
 
-async function createFixture(options: { tarSecretFile?: boolean; desktopSecret?: boolean; badChecksum?: boolean } = {}) {
+async function createFixture(options: {
+  tarScript?: string;
+  tarSecretFile?: boolean;
+  desktopSecret?: boolean;
+  badChecksum?: boolean;
+} = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vdt-release-bundle-fixture-"));
   tempDirs.push(root);
 
@@ -23,7 +28,7 @@ async function createFixture(options: { tarSecretFile?: boolean; desktopSecret?:
   await writeFile(path.join(root, "packages/cli/package.json"), JSON.stringify({ name: "@vdt-studio/cli", version }));
   await writeFile(path.join(packageDir, "package.json"), JSON.stringify({ name: "@vdt-studio/cli", version }));
   await writeFile(path.join(packageDir, "README.md"), "VDT Studio CLI\n");
-  await writeFile(path.join(packageDir, "index.mjs"), "export const ok = true;\n");
+  await writeFile(path.join(packageDir, "index.mjs"), options.tarScript ?? "export const ok = true;\n");
   if (options.tarSecretFile) {
     await writeFile(path.join(packageDir, ".env"), "OPENAI_API_KEY=sk-thisShouldNeverShip1234567890\n");
   }
@@ -117,6 +122,28 @@ describe("verify-release-bundle", () => {
     const root = await createFixture({ tarSecretFile: true });
 
     expect(() => verifyReleaseBundle(root)).toThrow(/secret-like file/);
+  });
+
+  it("allows direct runtime environment forwarding in bundled JavaScript", async () => {
+    const root = await createFixture({
+      tarScript: [
+        "if (env.MISTRAL_API_KEY) result.MISTRAL_API_KEY = env.MISTRAL_API_KEY;",
+        "result.SERVICE_TOKEN = process.env.SERVICE_TOKEN;"
+      ].join("\n")
+    });
+
+    expect(() => verifyReleaseBundle(root)).not.toThrow();
+  });
+
+  it.each([
+    ["a quoted env-like literal", 'result.MISTRAL_API_KEY = "env.MISTRAL_API_KEY";'],
+    ["a literal fallback", 'result.MISTRAL_API_KEY = env.MISTRAL_API_KEY || "synthetic-credential-12345";'],
+    ["an assignment inside a string", 'const config = "result.MISTRAL_API_KEY=env.MISTRAL_API_KEY;";'],
+    ["a later literal on the same line", 'result.MISTRAL_API_KEY=env.MISTRAL_API_KEY;result.SERVICE_TOKEN="synthetic-credential-12345";']
+  ])("rejects %s in bundled JavaScript", async (_name, tarScript) => {
+    const root = await createFixture({ tarScript });
+
+    expect(() => verifyReleaseBundle(root)).toThrow(/secret environment assignment/);
   });
 
   it("fails if a desktop bundle resource embeds an API key", async () => {

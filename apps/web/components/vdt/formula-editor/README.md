@@ -7,5 +7,6 @@ These conventions describe the implemented component boundary:
 - Drag handles belong on reference/palette chips; spread `dragHandleProps` onto the handle, not the whole chip.
 - Keep stable `data-testid` values on drag handles for browser tests.
 - `FormulaEditorField` scopes compact token presentation through `formula-editor.module.css`: bounded reference labels retain full-name titles, symbols stay unboxed, numeric inputs size to their text, and narrow insertion slots preserve the existing caret/drop behavior. Drag/remove controls reveal on hover or keyboard focus without changing token geometry; touch/coarse pointers keep them visible.
+- Keep remove buttons within the token's layout and hit area so they remain clickable next to insertion slots, including when the row wraps.
 - `useFormulaEditorState` owns token state and mutations. Leaf components receive props/callbacks and must not create duplicate token arrays.
 - Formula syntax and current unit limitations are documented in `docs/FORMULA_ENGINE.md`.

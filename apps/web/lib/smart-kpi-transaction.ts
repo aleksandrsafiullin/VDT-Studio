@@ -2,7 +2,7 @@ import { buildKpiSuggestionContext, calculateGraph, cloneProject, compileIncomin
   type IncomingKpiBatchInput, type KpiSuggestionContext, type KpiSuggestionExecutionIdentity, type KpiSuggestionSelection, type KpiSuggestionSet, type VdtProject } from "@vdt-studio/vdt-core";
 import type { SmartKpiMixedOperation } from "./smart-kpi-incoming-contract";
 import { createStoredVdt, fetchStoredVdtRevisionState, revisionCasFromHead, runtimeCasFromState, saveStoredVdtRevision,
-  VdtStorageRequestError, type ProjectRuntimeCasV1, type SaveStoredVdtRevisionInput, type StoredProjectSummary, type VdtRevisionCasV1 } from "./vdt-storage-client";
+  VdtStorageRequestError, workspaceDraftBase, type ProjectRuntimeCasV1, type SaveStoredVdtRevisionInput, type StoredProjectSummary, type VdtRevisionCasV1 } from "./vdt-storage-client";
 import { persistedExecutionSettings } from "./execution-mode-catalog";
 import { createSmartKpiPreparedSelection } from "./smart-kpi-client";
 import { recordAcceptedSmartKpiChildren } from "./smart-kpi-decisions";
@@ -54,12 +54,23 @@ export function hasSmartKpiRebase(state: VdtStudioState): boolean {
   return Boolean(marker && resolveSmartKpiScope(state).workspaceId === marker.workspaceId && (state.workspace.activeVdtId ?? null) === marker.vdtId);
 }
 
-function authority(state: VdtStudioState): Authority | undefined {
+function storedAuthority(state: VdtStudioState): Authority | undefined {
   if (!state.workspace.activeVdtId) return undefined;
   const summary = state.workspace.projectSummaries.find(s => s.project.id === state.workspace.activeProjectId);
   const entry = summary?.vdts.find(e => e.vdt.id === state.workspace.activeVdtId && e.vdt.projectId === summary.project.id);
   if (!entry || !summary || summary.runtimeState.writeState !== "enabled") throw failure("Stored VDT authority is unavailable or read-only. Refresh before applying suggestions.");
   return { head: revisionCasFromHead(entry.head), runtime: runtimeCasFromState(summary.runtimeState) };
+}
+
+function authority(state: VdtStudioState): Authority | undefined {
+  const stored = storedAuthority(state);
+  if (!stored) return undefined;
+  const base = state.workspace.draftRevisionBase;
+  if (!base || base.vdtId !== state.workspace.activeVdtId || base.projectId !== state.workspace.activeProjectId
+    || !same(base.expectedHead, stored.head) || !same(base.expectedRuntime, stored.runtime)) {
+    throw failure("Reload the saved VDT before applying suggestions to this draft.");
+  }
+  return stored;
 }
 
 export function smartKpiBlockedReason(state: VdtStudioState, ignoreOwnOperation = false): string | undefined {
@@ -84,7 +95,9 @@ function ownsBase(state: VdtStudioState, operation: SmartKpiOperation): boolean 
     && (operation.proposal?.origin.kind !== "model" || operation.phase === "committing" || configuration(state) === operation.settings);
 }
 function authorityMatches(state: VdtStudioState, expected: Authority | undefined): boolean {
-  try { return same(authority(state), expected); } catch { return false; }
+  // A recovered immutable journal already carries the authority used to write
+  // it, including journals saved before the editor tracked its own base.
+  try { return same(storedAuthority(state), expected); } catch { return false; }
 }
 
 /** Recovered journal components are one operation, never independent sources
@@ -193,8 +206,13 @@ async function reconcileOrdinary(get: Get, set: Set) {
   const pending = get().workspace.pendingRevisionCommit;
   if (pending) {
     const saved = await saveStoredVdtRevision(pending.vdtId, pending.input);
-    set(current => ({ workspace: { ...current.workspace, projectSummaries: mergeSummary(current.workspace.projectSummaries, saved.summary),
-      ...(same(current.workspace.pendingRevisionCommit, pending) ? { pendingRevisionCommit: undefined } : {}) } }));
+    set(current => {
+      const stillPending = same(current.workspace.pendingRevisionCommit, pending);
+      const active = current.workspace.activeVdtId === pending.vdtId && current.workspace.activeProjectId === saved.head.projectId;
+      return { workspace: { ...current.workspace, projectSummaries: mergeSummary(current.workspace.projectSummaries, saved.summary),
+        ...(stillPending ? { pendingRevisionCommit: undefined } : {}),
+        ...(stillPending && active ? { draftRevisionBase: workspaceDraftBase(saved.head, pending.input.expectedRuntime) } : {}) } };
+    });
   }
   const create = get().workspace.pendingVdtCreate;
   if (create) {
@@ -205,7 +223,8 @@ async function reconcileOrdinary(get: Get, set: Set) {
       return { ...(publish ? { project: create.input.project, projectRevision: current.projectRevision + 1 } : {}),
         workspace: { ...current.workspace, projectSummaries: mergeSummary(current.workspace.projectSummaries, saved.summary),
           ...(same(current.workspace.pendingVdtCreate, create) ? { pendingVdtCreate: undefined } : {}),
-          ...(publish ? { activeVdtId: saved.vdt.id, activePanel: "vdt" as const } : {}) } };
+          ...(publish ? { activeVdtId: saved.vdt.id, activePanel: "vdt" as const,
+            draftRevisionBase: workspaceDraftBase(saved.head, create.input.expectedRuntime) } : {}) } };
     });
   }
 }
@@ -273,7 +292,8 @@ export function createSmartKpiActions(set: Set, get: Get, layout: (project: VdtP
               : "The submitted Smart revision was saved, but the open graph changed. Your current draft remains open; inspect Versions or reload the owning VDT." },
           workspace: { ...current.workspace, ...(saved ? { projectSummaries: latest ? mergeConflict({ ...current, workspace: { ...current.workspace,
               projectSummaries: mergeSummary(current.workspace.projectSummaries, saved.summary) } }, latest) : mergeSummary(current.workspace.projectSummaries, saved.summary) } : {}),
-            ...(published && saved ? { lastSavedAt: new Date().toISOString() } : {}) }
+            ...(published && saved ? { lastSavedAt: new Date().toISOString(),
+              draftRevisionBase: workspaceDraftBase(saved.head, operation.input!.expectedRuntime) } : {}) }
         };
       });
       if (published && studioStatePersistenceProblem()) set(current => ({ smartKpiMutation: { ...current.smartKpiMutation,

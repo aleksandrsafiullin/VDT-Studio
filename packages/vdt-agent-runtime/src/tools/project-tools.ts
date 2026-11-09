@@ -20,7 +20,7 @@ const getCurrentProjectTool: AgentTool = {
   name: "project.get_current",
   description: "Read the compact current project summary.",
   inputSchema: z.object({}),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   run(context) {
     const project = currentProject(context);
@@ -32,7 +32,7 @@ const readCurrentProjectTool: AgentTool = {
   name: "project.read_current",
   description: "Legacy alias for project.get_current.",
   inputSchema: z.object({}),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   run(context) {
     const project = currentProject(context);
@@ -44,7 +44,7 @@ const getSelectedNodeTool: AgentTool = {
   name: "project.get_selected_node",
   description: "Read the selected node with compact parent and child summaries.",
   inputSchema: z.object({}),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   run(context) {
     const project = requireProject(context);
@@ -60,7 +60,7 @@ const getNodeTool: AgentTool = {
   inputSchema: z.object({
     nodeId: z.string().min(1).max(160)
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   run(context, input) {
     return nodeNeighborhood(requireProject(context), input.nodeId);
@@ -74,7 +74,7 @@ const getSubtreeTool: AgentTool = {
     rootNodeId: z.string().min(1).max(160),
     depth: z.number().int().min(1).max(6).optional()
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   run(context, input) {
     const project = requireProject(context);
@@ -110,7 +110,7 @@ const getRecentManualChangesTool: AgentTool = {
   inputSchema: z.object({
     limit: z.number().int().min(1).max(50).optional()
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   run(context, input) {
     return { manualChanges: summarizeManualChanges(context.store.getState(context.runId), input.limit ?? 20) };

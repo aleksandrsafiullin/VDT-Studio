@@ -14,7 +14,7 @@ export const maxDuration = 330;
 
 const inputSchema = z.object({
   projectId: z.string().min(1).max(128), vdtId: z.string().min(1).max(128), project: z.unknown(),
-  providerId: z.enum(["openai_compatible", "anthropic", "gemini", "azure_openai", "local_runner"]), providerConfig: z.record(z.unknown()),
+  providerId: z.enum(["openai_compatible", "anthropic", "gemini", "azure_openai", "local_runner"]), providerConfig: z.record(z.string(), z.unknown()),
   base: z.object({ id: z.string().min(1).max(160), version: z.number().int().positive(), contentHash: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict(),
   selectionRevision: z.number().int().positive(), feedback: z.string().max(4000).optional()
 }).strict();

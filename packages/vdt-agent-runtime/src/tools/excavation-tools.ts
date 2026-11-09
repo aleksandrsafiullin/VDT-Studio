@@ -118,7 +118,7 @@ const excavationDialoguePolicyTool: AgentTool = {
   inputSchema: z.object({
     section: z.enum(["runtime_principles", "topology_questions", "input_order", "reference_lookup_policy", "final_validation"]).default("input_order")
   }).strict(),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   async run(_context, input) {
     const dialogue = await readReferenceFile("excavation-dialogue-flow.yaml");
@@ -130,7 +130,7 @@ const excavationSeedTopologyTool: AgentTool = {
   name: "excavation.seed_topology",
   description: "Build a mining excavation VDT topology first, with unknown numeric leaves and no silent defaults.",
   inputSchema: seedTopologyInputSchema,
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "building_graph",
@@ -173,7 +173,7 @@ const excavationSuggestReferenceValueTool: AgentTool = {
   name: "excavation.suggest_reference_value",
   description: "Return one targeted excavation reference suggestion for the active input KPI only.",
   inputSchema: suggestInputSchema,
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   async run(_context, input) {
     const suggestion = await suggestExcavationReference(input.nodeId, {
@@ -196,7 +196,7 @@ const excavationWriteInputValueTool: AgentTool = {
   name: "excavation.write_input_value",
   description: "Write one dialog-provided or accepted-default excavation input value with explicit provenance.",
   inputSchema: writeInputValueSchema,
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "building_graph",
@@ -242,7 +242,7 @@ const excavationValidateTool: AgentTool = {
   name: "excavation.validate",
   description: "Validate excavation-specific graph guardrails such as readiness downtime, forbidden haulage creep, and mixed-unit sums.",
   inputSchema: z.object({}),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   requiresDraftProject: true,
   phase: "validating_graph",
   run(context) {

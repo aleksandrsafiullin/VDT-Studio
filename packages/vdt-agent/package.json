@@ -9,7 +9,7 @@
   "dependencies": {
     "@vdt-studio/storage": "workspace:*",
     "@vdt-studio/vdt-core": "workspace:*",
-    "zod": "^3.25.64"
+    "zod": "^4.6.7"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

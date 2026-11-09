@@ -381,6 +381,10 @@ pnpm docs:verify
 
 Release resources are scanned recursively for secret-like files and values, including nested skill resources; resource symlinks reject instead of following paths outside the bundle. Skill copies and integrity hashes exclude only named platform metadata (`.DS_Store`, AppleDouble `._*`, `Thumbs.db`, `desktop.ini`), retain product-file tamper checks, and use fixed LF checkout bytes plus deterministic filename ordering. Existing unexpected product files block preparation instead of being silently deleted. Artifact packaging refuses nonempty output directories and cleans only its unique temporary stage after synchronous children finish.
 
+The generic assignment detector exempts only parsed JavaScript property
+assignments that copy the same named property directly from `env` or
+`process.env`. The signature and filename rules still apply to those files.
+
 Original-request numeric grounding is limited to a short exact quotation in the existing source note, with one numeric quantity equal to the written finite value. Only original request text and retained user messages are trusted sources; assistant text and tool results cannot create user evidence. This is literal-source verification, not semantic verification of a metric/value mapping. Gateway mutation checks, approvals and finish verification still apply. Local `hostObservation` is a read-only builder projection, not extra tool authority.
 
 Native new-tree decoding may restrict an initial user-source claim to literal number/quote pairs extracted from the original prompt and business context. It never assigns those pairs to nodes, converts units or fills a value. That initial-source restriction is relaxed after subsequent human input; the canonical trusted-source check remains mandatory. Final brief/dependency diagnostics are model guidance, not evidence of business correctness. Failed input batches report all provenance issues atomically and retain normal subtree scope checks.
@@ -393,7 +397,7 @@ Direct OpenAI session admission is experimental and trusted-local only. `POST /a
 
 Local Origin matching uses the direct HTTP `Host` authority when present because Next can reconstruct the internal request URL as `localhost` for a browser using `127.0.0.1`. Both internal and direct authorities must be local, the direct port must equal the server URL port, and the browser Origin must match that direct authority exactly. Forwarded proxy headers cannot override it. Foreign hosts, mismatched local origins/ports and cross-site requests remain rejected.
 
-The development launcher defaults to the loopback interface `127.0.0.1`; only an explicit `--hostname`/`-H` argument changes that binding. This does not add authentication or make the trusted single-user mode suitable for a network deployment.
+The `pnpm dev` launcher defaults to `127.0.0.1` and allows an explicit `--hostname`/`-H` override. The macOS `run.command` fixes the address at `127.0.0.1:3000` and controls only its direct Next.js child over a per-checkout Unix socket in a user-owned, private directory. The OS file lock serializes launch ownership. Port inspection informs status and browser opening. Legacy PID files confer no authority. Both entry points assume a trusted single-user machine.
 
 OpenAI HTTP diagnostics admit only a small allowlist of protocol error codes and parameter identifiers. Upstream free-form messages, response bodies, keys and request headers are not exposed. The agent transport's retained initial prompt, last confirmed action, source excerpts, tool-read knowledge and current graph contain business context rather than provider credentials; Gateway provenance/approval/scope/revision authority is unchanged. The successful local API case is evidence of this bounded workflow, not a production security or provider certification.
 

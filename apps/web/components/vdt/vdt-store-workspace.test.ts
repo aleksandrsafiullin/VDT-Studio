@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  runtimeCasFromState,
   VdtStorageRequestError,
+  workspaceDraftBase,
   type StoredProjectSummary
 } from "@/lib/vdt-storage-client";
 
@@ -125,24 +127,22 @@ describe("refreshWorkspace scoping", () => {
     mockLoadVdt.mockReset();
     mockUpdateVdt.mockReset();
     localStorageMock.clear();
-    mockFetchSummaries.mockResolvedValue({
-      projects: [
-        sampleSummary("project_a", "Project A", "vdt_a"),
-        sampleSummary("project_b", "Project B")
-      ]
-    });
+    const projectA = sampleSummary("project_a", "Project A", "vdt_a");
+    const projects = [projectA, sampleSummary("project_b", "Project B")];
+    mockFetchSummaries.mockResolvedValue({ projects });
     useVdtStudioStore.setState((state) => ({
       project: structuredClone(initialProject),
       projectRevision: 0,
       workspace: {
         ...state.workspace,
         activePanel: "vdt",
-        projectSummaries: [
-          sampleSummary("project_a", "Project A", "vdt_a"),
-          sampleSummary("project_b", "Project B")
-        ],
+        projectSummaries: projects,
         activeProjectId: "project_a",
         activeVdtId: "vdt_a",
+        draftRevisionBase: workspaceDraftBase(
+          projectA.vdts[0]!.head,
+          runtimeCasFromState(projectA.runtimeState)
+        ),
         isLoading: false,
         isMutating: false,
         error: undefined,
@@ -290,7 +290,7 @@ describe("refreshWorkspace scoping", () => {
     expect(mockSaveRevision.mock.calls[1]?.[1]).toEqual(firstRequest);
   });
 
-  it("keeps local edits and lastSavedAt on conflict while refreshing only server CAS", async () => {
+  it("keeps local edits and blocks another save after refreshing and rehydrating a conflict", async () => {
     const previousSavedAt = "2026-06-29T13:30:00.000Z";
     useVdtStudioStore.setState((state) => ({
       workspace: {
@@ -333,13 +333,31 @@ describe("refreshWorkspace scoping", () => {
     expect(result).toBe(false);
     expect(state.project).toEqual(projectBefore);
     expect(state.workspace.lastSavedAt).toBe(previousSavedAt);
-    expect(state.workspace.error).toMatch(/reload or rebase/i);
+    expect(state.workspace.error).toMatch(/reload the saved version/i);
     expect(state.workspace.pendingRevisionCommit).toBeUndefined();
     expect(
       sampleEntry(state.workspace.projectSummaries, "vdt_a")?.head.commitGeneration
     ).toBe(2);
     expect(sampleEntry(state.workspace.projectSummaries, "vdt_a")?.vdt).toEqual(vdtBefore);
     expect(mockUpdateVdt).not.toHaveBeenCalled();
+
+    await useVdtStudioStore.persist.rehydrate();
+    await expect(useVdtStudioStore.getState().saveActiveWorkspaceVdt()).resolves.toBe(false);
+    expect(mockSaveRevision).toHaveBeenCalledTimes(1);
+    expect(useVdtStudioStore.getState().project).toEqual(projectBefore);
+  });
+
+  it("submits the editor's original base even when a background refresh has advanced the summary", async () => {
+    const newer = committedPayload(sampleSummary("project_a", "Project A", "vdt_a"), "vdt_a", 2);
+    mockFetchSummaries.mockResolvedValueOnce({ projects: [newer.summary] });
+    mockSaveRevision.mockRejectedValueOnce(new VdtStorageRequestError("stale head", 409, "REVISION_CONFLICT", false));
+    mockFetchRevisionState.mockResolvedValueOnce(newer);
+    await useVdtStudioStore.getState().refreshWorkspace({ scopedProjectId: "project_a" });
+
+    await expect(useVdtStudioStore.getState().saveActiveWorkspaceVdt()).resolves.toBe(false);
+    expect(mockSaveRevision).toHaveBeenCalledExactlyOnceWith("vdt_a", expect.objectContaining({
+      expectedHead: expect.objectContaining({ activeRevisionId: "revision_vdt_a_1", commitGeneration: 1 })
+    }));
   });
 
   it("does not claim a save when the project changes while the commit is in flight", async () => {

@@ -9,7 +9,7 @@ process.env.VDT_SMART_E2E_RUN = run;
 export default defineConfig({
   ...base,
   testDir: __dirname,
-  testMatch: "smart-kpi-suggestions.spec.ts",
+  testMatch: ["smart-kpi-suggestions.spec.ts", "smart-kpi-warm-cache.spec.ts"],
   workers: 1,
   use: { ...base.use, actionTimeout: 10_000, navigationTimeout: 120_000 },
   outputDir: path.join(repository, `output/smart-kpi-suggestions/${run}/test-results`),

@@ -1,9 +1,9 @@
 import { modelAgentStructuredTurnSchema } from "@vdt-studio/vdt-agent-runtime";
 import { describe, expect, it } from "vitest";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { toProviderJsonSchema } from "./provider-json-schema";
 import { LocalModelOutputSchema } from "./local-model-output-schema";
 
-const envelope = zodToJsonSchema(modelAgentStructuredTurnSchema, { $refStrategy: "none" });
+const envelope = toProviderJsonSchema(modelAgentStructuredTurnSchema);
 const addSchema = { type: "object", properties: { parentNodeId: { type: "string" }, name: { type: "string" } }, required: ["parentNodeId", "name"], additionalProperties: false };
 const initial = JSON.stringify({ delta: { type: "initial_context", context: { tools: [{ name: "vdt.add_driver", inputJsonSchema: addSchema }] } } });
 function calls(schema: unknown) {

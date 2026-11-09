@@ -3,7 +3,7 @@ import { agentQuestionSchema } from "./agent-event";
 
 const agentToolCallSchema = z.object({
   toolName: z.string().min(1).max(120),
-  args: z.record(z.unknown())
+  args: z.record(z.string(), z.unknown())
 });
 
 export const agentDecisionV1Schema = z.discriminatedUnion("type", [

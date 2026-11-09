@@ -102,7 +102,7 @@ export function feedbackFromToolEnvelope(
     && envelope.toolName === "vdt.add_drivers_batch"
     && Array.isArray(envelope.error?.details)
     && envelope.error.details.some((issue) => issue?.code === "too_small"
-      && issue.type === "array" && issue.minimum === 2
+      && (issue.origin ?? issue.type) === "array" && issue.minimum === 2
       && Array.isArray(issue.path) && issue.path.length === 1 && issue.path[0] === "drivers");
   const missingFormulaReferences = /^MISSING_FORMULA_REFERENCES?$/.test(code);
   return createStructuredFeedback({

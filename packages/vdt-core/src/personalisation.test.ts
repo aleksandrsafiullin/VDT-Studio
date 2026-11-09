@@ -53,15 +53,19 @@ describe("multiple user instructions", () => {
     expect(same.personalisation).not.toHaveProperty("projectRules");
   });
 
-  it("retains complete maximum-length Unicode instructions inside the Smart budget", async () => {
+  it.each([
+    ["Unicode", "漢".repeat(1500), "界".repeat(1498)],
+    ["JSON-escaped", '\\"'.repeat(750), '\\"'.repeat(749)]
+  ])("retains complete maximum-length %s instructions inside the Smart budget", async (_kind, first, second) => {
     const project = createSmartKpiMeasuredFixture();
     project.businessContext = "Business definitions. ".repeat(400);
-    const saved = { instructions: [{ id: "first", enabled: true, text: "漢".repeat(1500) }, { id: "second", enabled: true, text: "界".repeat(1498) }] };
+    const saved = { instructions: [{ id: "first", enabled: true, text: first }, { id: "second", enabled: true, text: second }] };
     const personalisation = resolveAiPersonalisation(saved);
     expect(personalisation.userInstructions?.length).toBe(INSTRUCTION_TOTAL_LIMIT);
     const context = await buildKpiSuggestionContext(project, { workspaceId: "owner", vdtId: null, targetNodeId: project.rootNodeId,
       period: { key: "2026", grain: "year" }, personalisation });
     expect(context.personalisation).toEqual(personalisation);
+    expect(buildKpiSuggestionTaskInput(context).context.personalisation).toEqual(personalisation);
     expect(kpiSuggestionEnvelopeBytes(context)).toBeLessThanOrEqual(KPI_SUGGESTION_LIMITS.inputBytes);
   });
 });

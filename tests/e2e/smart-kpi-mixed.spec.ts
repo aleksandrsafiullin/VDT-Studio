@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 import { calculateGraph } from "../../packages/vdt-core/src/formula/calculate";
 import { calculateScenarioGraph } from "../../packages/vdt-core/src/scenario/scenario";
-import { createSmartBrowserFixture, openSmartPanel, readSmartBrowserProject } from "./smart-kpi-fixture";
+import { createSmartBrowserFixture, openSmartPanel, readSmartBrowserProject, waitForSmartAddition } from "./smart-kpi-fixture";
 
 const artifacts = process.env.VDT_SMART_E2E_ARTIFACTS ?? "output/smart-kpi-formula-mixed";
 test.beforeAll(async () => { await mkdir(artifacts, { recursive: true }); });
@@ -11,7 +11,7 @@ for (const unknownTargetValue of [false, true]) test(`@chromium illustrative est
   test.setTimeout(180_000);
   const fixture = await createSmartBrowserFixture(page, "ratio", 1, { haulageTarget: true, unknownTargetValue });
   try {
-    let panel = await openSmartPanel(page, fixture.targetNodeId);
+    const panel = await openSmartPanel(page, fixture.targetNodeId);
     await expect(panel.getByRole("checkbox", { name: "Use estimates", exact: true })).toBeChecked();
     const before = await readSmartBrowserProject(page);
     const reference = unknownTargetValue ? 0.2 : 4;
@@ -31,7 +31,7 @@ for (const unknownTargetValue of [false, true]) test(`@chromium illustrative est
     expect((await readSmartBrowserProject(page)).graph).toEqual(before.graph);
     await page.screenshot({ path: `${artifacts}/estimates-ready-${unknownTargetValue ? "estimated" : "measured"}-reference.png`, fullPage: true });
     await panel.getByTestId("smart-kpi-add-selected").click();
-    await expect(panel.getByTestId("smart-kpi-feedback")).toContainText("2 KPIs added and saved");
+    await waitForSmartAddition(page);
     const applied = await readSmartBrowserProject(page);
     expect(calculateGraph(applied).values[fixture.targetNodeId]).toBe(reference);
     for (const name of ["Total measured distance", "Measured trips"]) expect(applied.graph.nodes.find(node => node.name === name)).toMatchObject({
@@ -39,13 +39,14 @@ for (const unknownTargetValue of [false, true]) test(`@chromium illustrative est
     });
     for (const name of ["Total measured distance", "Measured trips"]) {
       const node = applied.graph.nodes.find(node => node.name === name)!;
-      await expect(page.locator(`.react-flow__node[data-id="${node.id}"]`)).toContainText("≈");
+      const card = page.locator(`.react-flow__node[data-id="${node.id}"]`);
+      await expect(card.getByTitle(/^Illustrative estimate, not measured data\./).first()).toBeVisible();
     }
     expect(applied.graph.nodes.find(node => node.id === fixture.targetNodeId)?.valueSource?.sourceTier).toBe(unknownTargetValue ? "assumption" : before.graph.nodes.find(node => node.id === fixture.targetNodeId)?.valueSource?.sourceTier);
     await page.reload(); await expect(page.getByTestId("vdt-canvas")).toBeVisible();
     expect(calculateGraph(await readSmartBrowserProject(page)).values[fixture.targetNodeId]).toBe(reference);
-    panel = await openSmartPanel(page, fixture.targetNodeId);
-    await panel.getByTestId("smart-kpi-undo").click(); await expect(panel.getByTestId("smart-kpi-feedback")).toContainText("undone");
+    const notice = await waitForSmartAddition(page);
+    await notice.getByTestId("smart-kpi-undo").click(); await expect(notice).toHaveCount(0);
     expect((await readSmartBrowserProject(page)).graph).toEqual(before.graph);
   } finally { await fixture.cleanup(); }
 });
@@ -78,7 +79,7 @@ for (const unknownTargetValue of [false, true]) test(`@chromium numeric ratio pr
     await page.screenshot({ path: `${artifacts}/values-ready-${unknownTargetValue ? "entered" : "measured"}.png`, fullPage: true });
     const writes: unknown[] = [];
     page.on("request", request => { if (new URL(request.url()).pathname === `/api/vdt/vdts/${fixture.vdtId}/revisions` && request.method() === "POST") writes.push(request.postDataJSON()); });
-    await add.click(); await expect(panel.getByTestId("smart-kpi-feedback")).toContainText("2 KPIs added and saved");
+    await add.click(); await waitForSmartAddition(page);
     expect(writes).toHaveLength(1);
     const applied = await readSmartBrowserProject(page);
     expect(calculateGraph(applied).values[fixture.targetNodeId]).toBe(4);
@@ -93,7 +94,7 @@ test("@chromium minimal Smart repairs a historical input type with real Add, rel
   test.setTimeout(180_000);
   const fixture = await createSmartBrowserFixture(page, "formula", 1, { haulageTarget: true, staleInputType: true });
   try {
-    let panel = await openSmartPanel(page, fixture.targetNodeId);
+    const panel = await openSmartPanel(page, fixture.targetNodeId);
     await panel.getByRole("checkbox", { name: "Use estimates", exact: true }).uncheck();
     await expect(panel.getByTestId("smart-kpi-add-selected")).toBeDisabled();
     await panel.getByRole("textbox", { name: "Value for QA component A", exact: true }).fill("1");
@@ -111,7 +112,7 @@ test("@chromium minimal Smart repairs a historical input type with real Add, rel
     const originalInput = before.graph.nodes.find(node => node.id === "waste_empty_km_trip")!;
     await page.screenshot({ path: `${artifacts}/minimal-smart-ready.png`, fullPage: true });
     await panel.getByTestId("smart-kpi-add-selected").click();
-    await expect(panel.getByTestId("smart-kpi-feedback")).toContainText("2 KPIs added and saved");
+    await waitForSmartAddition(page);
     const applied = await readSmartBrowserProject(page), repaired = applied.graph.nodes.find(node => node.id === originalInput.id)!;
     expect(calculateGraph(applied).values[fixture.targetNodeId]).toBe(4);
     expect(applied.graph.nodes.find(node => node.name === "QA component A")).toMatchObject({ baselineValue: 1, valueStatus: "user_provided_value" });
@@ -124,8 +125,8 @@ test("@chromium minimal Smart repairs a historical input type with real Add, rel
     expect(saved.activeProject.graph.nodes.find((node: { id: string }) => node.id === originalInput.id).type).toBe("input");
     await page.reload(); await expect(page.getByTestId("vdt-canvas")).toBeVisible();
     expect((await readSmartBrowserProject(page)).graph.nodes.find(node => node.id === originalInput.id)?.type).toBe("input");
-    panel = await openSmartPanel(page, fixture.targetNodeId);
-    await panel.getByTestId("smart-kpi-undo").click(); await expect(panel.getByTestId("smart-kpi-feedback")).toContainText("undone");
+    const notice = await waitForSmartAddition(page);
+    await notice.getByTestId("smart-kpi-undo").click(); await expect(notice).toHaveCount(0);
     expect((await readSmartBrowserProject(page)).graph).toEqual(before.graph);
     const undone = await (await page.request.get(`/api/vdt/vdts/${fixture.vdtId}`)).json();
     expect(undone.revisions).toHaveLength(initial.revisions.length + 2);
@@ -152,8 +153,8 @@ test("@chromium mixed partial proposal and own KPI apply one visible formula, pe
     await panel.getByTestId("incoming-kpi-own-row").click();
     await panel.getByRole("textbox", { name: "KPI name", exact: true }).fill("Own moving distance");
     await panel.getByRole("textbox", { name: "KPI unit", exact: true }).fill("km/trip");
-    expect((await panel.getByRole("textbox", { name: "KPI name", exact: true }).boundingBox())!.width).toBeGreaterThanOrEqual(150);
-    const unitWidth = (await panel.getByRole("textbox", { name: "KPI unit", exact: true }).boundingBox())!.width;
+    expect(await panel.getByRole("textbox", { name: "KPI name", exact: true }).evaluate(element => (element as HTMLElement).offsetWidth)).toBeGreaterThanOrEqual(150);
+    const unitWidth = await panel.getByRole("textbox", { name: "KPI unit", exact: true }).evaluate(element => (element as HTMLElement).offsetWidth);
     expect(unitWidth).toBeGreaterThanOrEqual(70); expect(unitWidth).toBeLessThanOrEqual(90);
     const ownKey = await panel.getByRole("textbox", { name: "KPI name", exact: true }).getAttribute("data-manual-name");
     expect(ownKey).toMatch(/^m_[a-f0-9]{32}$/);
@@ -169,7 +170,7 @@ test("@chromium mixed partial proposal and own KPI apply one visible formula, pe
     const writes: unknown[] = [];
     page.on("request", request => { if (new URL(request.url()).pathname === `/api/vdt/vdts/${fixture.vdtId}/revisions` && request.method() === "POST") writes.push(request.postDataJSON()); });
     await panel.getByTestId("smart-kpi-add-selected").click();
-    await expect(panel.getByTestId("smart-kpi-feedback")).toContainText("2 KPIs added and saved");
+    await waitForSmartAddition(page);
     expect(writes).toHaveLength(1);
     const applied = await readSmartBrowserProject(page), parent = applied.graph.nodes.find(node => node.id === fixture.targetNodeId)!;
     expect(parent.type).toBe("calculated"); expect(parent.formula).toBeTruthy(); expect(parent.baselineValue).toBe(4);
@@ -189,7 +190,8 @@ test("@chromium mixed partial proposal and own KPI apply one visible formula, pe
     expect(stored.activeProject.graph.nodes.find((node: { id: string }) => node.id === parent.id).formula).toBe(parent.formula);
     await page.reload(); await expect(page.getByTestId("vdt-canvas")).toBeVisible();
     expect((await readSmartBrowserProject(page)).graph.nodes).toHaveLength(original.graph.nodes.length + 2);
-    const reopened = await openSmartPanel(page, fixture.targetNodeId);
+    const notice = await waitForSmartAddition(page);
+    const undo = notice.getByTestId("smart-kpi-undo");
     let releaseUndo = () => {}, reportUndoCommitted = () => {};
     const heldUndo = new Promise<void>(resolve => { releaseUndo = resolve; });
     const undoCommitted = new Promise<void>(resolve => { reportUndoCommitted = resolve; });
@@ -200,16 +202,13 @@ test("@chromium mixed partial proposal and own KPI apply one visible formula, pe
       await heldUndo; await route.fulfill({ response });
     });
     try {
-      await reopened.getByTestId("smart-kpi-undo").click(); await undoCommitted;
-      await expect(reopened).toBeFocused();
+      await undo.click(); await undoCommitted;
+      await expect(notice).toContainText("Undoing");
+      await expect(undo).toBeDisabled();
       await page.mouse.move(12, 12);
-      // Cross the 200ms pointer-close deadline while the real save reply is held.
-      await page.waitForTimeout(250);
-      await expect(reopened).toBeVisible(); await expect(reopened).toBeFocused();
+      await expect(notice).toBeVisible();
     } finally { releaseUndo(); }
-    await expect(reopened.getByTestId("smart-kpi-feedback")).toContainText("undone");
-    await expect(reopened).toBeFocused();
-    await page.mouse.click(12, 12); await expect(reopened).toHaveCount(0);
+    await expect(notice).toHaveCount(0);
     const undone = await (await page.request.get(`/api/vdt/vdts/${fixture.vdtId}`, { timeout: 60_000 })).json();
     expect(undone.revisions).toHaveLength(initial.revisions.length + 2);
     expect(undone.activeProject.graph.nodes).toHaveLength(original.graph.nodes.length);
@@ -287,6 +286,6 @@ test("@chromium historical context-only proposals remain readable and cannot sil
     await panel.getByText("Edit", { exact: true }).click();
     await expect(panel.getByTestId("incoming-kpi-formula-input")).toHaveValue("");
     expect((await readSmartBrowserProject(page)).graph).toEqual(before.graph);
-    expect(before.graph.nodes[0]!.baselineValue).toBe(100);
+    expect(before.graph.nodes.find(node => node.id === fixture.targetNodeId)?.baselineValue).toBe(100);
   } finally { await fixture.cleanup(); }
 });

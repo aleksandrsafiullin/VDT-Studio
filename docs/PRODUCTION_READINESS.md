@@ -69,13 +69,13 @@ Source inputs and the scenario independently reached 104,224. Broader native
 Excel coverage, packaged/native platforms and business-semantic validation remain
 unqualified. Existing production/release blockers remain open.
 
-Desktop packaging remains blocked: the retained generated sidecar is stale
-against current source. A trial `desktop:sidecar:prepare` passed the bundle/hash
-verifier, but its launcher failed with missing
+At the time of this check, the retained generated sidecar was stale. A trial
+`desktop:sidecar:prepare` passed the bundle/hash verifier and encountered a
+missing
 `sidecars/migrations/001-legacy-v1-bootstrap.sql`. The trial generated files were
-returned to their pre-run contents; this change does not deliver a refreshed
-desktop sidecar. Packaging the required storage migration assets is separate
-work, and a hash-only verifier pass is not startup qualification.
+returned to their pre-run contents. See the
+[November macOS candidate checks](#mac-local-alpha-launcher-and-zod-verification-2026-11-09)
+for the regenerated sidecar's test results and native preflight status.
 
 ## Business-agent evaluation correction (2026-10-27)
 
@@ -693,6 +693,200 @@ W0.1 is complete with independent implementation/test `GO`. All production manua
 Independent Node 24 evidence passed 182/182 W0.1 tests: storage 59/59 with 100-process contention and real `SIGKILL` recovery, client/store 26/26, core 103/103 and agent packages 91/91. Package/workspace typechecks, isolated production build plus built-route import, strict DTO/error matrices, hosted fail-closed tests and the zero-writer audit also pass.
 
 This closes F-01 and W0.1 only. Wave 0 remains in progress; W0.2–W0.5 are open, V2 flags remain OFF, and real Windows Node 24 durability/capability evidence is absent.
+
+## Mac local alpha storage and editor conflicts (2026-11-09)
+
+Node 24.15.0 created and reopened a project in separate processes on internal
+and external APFS volumes on macOS 27.0.1, with the database at schema 5 and a
+clean foreign-key check. Both volumes reported Darwin type `0x19`. The
+migration latch now checks the filesystem by name through the system tool.
+
+The editor ties its save request to the revision it opened. Six workspace
+checks passed in Chromium and WebKit in both the development server and the
+built local web app, including a real two-tab conflict. Tab B kept its edits
+after the first conflict and sent no write on retry. Explicit reload followed
+by reapplying the edit saved both tabs' changes. Broader recovery and the full
+release gate remain open.
+
+## Mac local alpha launcher and Zod verification (2026-11-09)
+
+The source launcher was tested on arm64 macOS 27.0.1 with Node 24.15.0.
+Start, restart and Ctrl+C managed the real Next.js child. A disposable HTTP
+server stayed alive across Start, Open, Stop and Restart attempts, including
+when a legacy PID file named it and when it acquired port 3000 during shutdown.
+An unrelated checkout could not stop the owned server. Fresh internal and
+external APFS databases both opened and reopened at schema 5.
+
+The frozen lockfile, CLI tarball and regenerated desktop development sidecar
+use Zod 4.6.7 for [CVE-2023-54404](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5).
+The production dependency audit reports zero known vulnerabilities. The full
+audit reports one high, four moderate and one low dev-tool findings. The high
+finding is [Vite's Windows launch-editor advisory](https://github.com/advisories/GHSA-587h-7wmj-h5pm).
+The regenerated sidecar passed all 14 dedicated tests, including its pipe
+handshake, backend listing and deterministic tree generation.
+
+`pnpm release:verify` stopped at Vitest. The remaining steps were executed
+individually. Lint, typecheck, CLI and web build, CI, phase 7, documentation,
+provider metadata, mock evaluation, packaging and offline CLI install passed.
+The first Vitest run reported 6 unexpected failures. After regenerating the
+sidecar and rerunning the complete suite with two workers, 3,529 tests passed,
+1 failed, 3 failed as expected and 11 were skipped. The remaining test exceeds
+the Smart KPI input budget with maximum-length Unicode instructions and also
+fails at baseline `41cd163`. The two provider harness suites passed all 64
+tests when rerun serially.
+
+Bundle verification rejected the compiled CLI for an environment assignment.
+The single match for that rule is a reference to `env.MISTRAL_API_KEY`.
+The bundle gate was red for that candidate. Native preflight requires a pinned
+Tauri CLI, macOS signing and a self-contained sidecar.
+
+The built Next.js app passed the two-tab SQLite conflict test in Chromium and
+WebKit and passed the Chromium manual Add and back-calculation smoke. One
+additional WebKit persistence smoke received `ECONNRESET` on the verification
+GET and passed on an isolated rerun against the same build. The four
+comparison browser cases in CLI Settings, Smart KPI and mock chat also failed
+on `41cd163` with only the APFS prerequisite applied.
+
+The full `pnpm test:e2e` run passed 97 of 151 tests, with 54 failures and
+zero skips or flaky results. The per-browser counts were 70 passed and 43
+failed in Chromium, 15 passed and 5 failed in mobile Chrome emulation, and
+12 passed and 6 failed in WebKit. All 9 workspace navigation and revision
+conflict checks passed. The visual formula editor had repeated pointer
+interception on removal controls. Other failures included Smart KPI, CLI
+Settings, mock agent chat and BYOK workflows. The aggregate candidate is
+`NO-GO`.
+
+Local evidence is retained under
+`output/release/audits/2026-11-09-alpha-launcher-zod.VNAqHs/`.
+
+## Mac local alpha formula editor and CLI bundle verification (2026-11-09)
+
+Both Chromium deletion tests reproduced pointer interception before the fix.
+The reference chip intercepted clicks while its remove button was hidden, and
+an insertion slot intercepted clicks on the operator button that extended
+beyond its token. The removal targets now sit inside each token and remain
+clickable as the row wraps. All 15 visual formula editor scenarios passed in
+the focused Chromium run, including reference and operator persistence,
+palette restoration, caret insertion and drag/reorder.
+
+The built Next.js app passed the WebKit click checks. The original example
+retained the incomplete formula as an open draft when strict revision
+validation rejected it. A separate valid fixture removed a unary operator
+and one repeated KPI reference, saved through **Back to project workspace**,
+and verified both formulas in SQLite.
+
+The scanner now recognizes direct, same-property environment forwarding in
+parsed JavaScript. All 12 bundle scanner tests passed, including quoted
+values, a literal fallback, a configuration string and a later secret
+assignment on the same line. The previous artifact and the fresh CLI candidate
+both passed bundle verification. The new candidate also passed SHA-256, SBOM,
+offline clean installation and the loopback runner health check.
+
+On macOS arm64 with Node 24.15.0 and pnpm 10.33.2, `pnpm release:verify`
+passed lint and typecheck and stopped at Vitest. With two test workers the
+full suite had 3,534 passes, 1 unexpected failure, 3 expected failures and 11
+skips. The failure was the previously reproduced maximum-length Unicode
+Smart KPI input-budget case. Running the remaining commands separately passed
+the CLI and web builds, CI, phase 7, docs, production dependency audit, provider
+certification metadata, deterministic evaluation, Smart KPI recipes, packaging
+and the desktop foundation. Fresh databases opened and reopened at schema 5
+on internal and external APFS. The macOS launcher passed cold start, restart
+and Ctrl+C, with unrelated port occupants surviving and the browser opener
+recorded by a stub. Native preflight still reports the missing pinned Tauri
+CLI, macOS signing and a self-contained sidecar.
+
+The full production dependency audit reported zero known vulnerabilities.
+The audit including development dependencies reported one high, four
+moderate and one low finding.
+
+The full `pnpm test:e2e` run passed 105 of 151 cases, with 46 failures and
+zero skips or flaky classifications. Chromium passed 77 of 113, mobile Chrome
+emulation passed 15 of 20, and WebKit passed 13 of 18. All 15 visual formula
+editor cases and all three two-tab conflict cases passed. The previous run
+passed 97 of 151. Forty-four failures recurred, including CLI Settings,
+Smart KPI, mock chat, BYOK and scenario assertions. The two newly failing
+cases timed out on initial workspace rendering or received `ECONNRESET` on a
+verification GET. Both passed against the built app in an isolated 11-case
+rerun covering workspace navigation, conflict handling and back-calculation.
+The aggregate candidate remains `NO-GO`.
+
+Local evidence and the CLI candidate are retained under
+`output/release/audits/2026-11-09-alpha-formula-bundle.YUn4Tb/`.
+
+## Mac local alpha Smart KPI and browser regression checks (2026-11-09)
+
+The Smart graph budget now excludes accepted instructions, while the final
+envelope still measures them with the full input. Both 3,000-code-unit fixtures
+retained their exact text in the built task input. The UTF-8 CJK and escaped
+JSON envelopes used 32,671 and 35,669 bytes respectively under 196,608 bytes.
+
+A focused cache-denial check exposed a stale manual draft after switching from
+Suggested. Manual now opens with the latest KPI context. Untouched drafts can
+adopt it on open, while edited drafts retain their text for explicit review.
+The cache-denial browser scenario and the clean/edited draft unit regression
+passed after the fix.
+
+The 44 recurrent browser failures comprised 12 CLI and Local models settings
+cases, 19 Smart KPI cases and 13 editor, BYOK and chat cases. The settings
+fixtures now allow the real harness catalog read and isolate specific probes.
+The retry fixture reports the same expired session to both Test and detection.
+Smart fixtures exercise eligible Input leaves, the canvas preview and the
+separate Undo receipt. The revised chat cases use the current provider
+admission route and create a scoped browser run before testing reload.
+These cases retain exact revision and immutable replay assertions. Loopback
+test setup uses fresh HTTP connections for writes. Selected verification
+reads allow one transport retry on connection reset.
+
+The first overlapping release and browser attempt recorded six unit failures
+and one browser startup timeout. The browser trace showed about 40 seconds of
+JavaScript transfer before the test reached its model assertions. The owned
+browser run was interrupted to run the two gates in sequence. In the first run
+the separate build, production dependency audit, CLI archive verification and
+offline install succeeded. Logs for that attempt are retained with the
+sequential result.
+
+The sequential browser run on Next dev still hit three model-test timeouts
+and exposed the inconsistent Claude fixture. One revision request took 9.8 s
+and the following navigation exceeded the test deadline. The interrupted
+run and its traces are retained. The release recheck uses the same three
+browser projects and test timeouts against prebuilt assets. An initial built
+run found that its real API admission smoke needed an explicit opt-in on
+the built test server. The final harness enables it on its isolated loopback
+host and checks admission with a synthetic key.
+
+The full built browser matrix passed 149 of 151 cases. Chromium passed 111
+of 113, mobile Chromium passed 20 of 20, and WebKit passed 18 of 18. Both
+failures were 200-node warm-cache timing checks under full DOM tracing
+with two workers. Their p95 values were 1,451 ms and 2,490 ms, with zero
+preparation calls during measurement. The timing spec now retains only
+action traces. Functional E2E tests retain full failure traces.
+
+All four timing cases passed on the same build in one Chromium worker.
+The 2-node cases had p95 of 211 and 214 ms, and the 200-node cases had p95
+of 451 and 796 ms. Each case measured 30 real pointer activations with
+zero preparation requests during measurement. Taken together, the full
+matrix and timing recheck cover 151 passing cases, including all 44
+previously recurrent failures. The case-level comparison is in
+`browser-triage.tsv`, with both runs retained separately.
+
+The sequential `pnpm release:verify` passed on arm64 macOS with Node 24.15.0
+and pnpm 10.33.2. Vitest passed 3,537 tests with 3 expected failures, 11 skips
+and zero unexpected failures. The complete gate passed lint, types, CLI/web
+build, CI, phase 7, documentation, production dependency audit, provider
+metadata, deterministic evaluation, bundle verification and offline CLI
+installation. SHA-256 matched the retained package. Desktop foundation checks
+passed and regenerated sidecar bytes matched the checkout. Native preflight
+still requires the pinned Tauri CLI, macOS signing and a self-contained sidecar.
+
+Fresh SQLite stores reached schema 5 with clean foreign keys on internal and
+external APFS, including after reopen. A fresh macOS source launcher smoke
+passed cold start, project API access, owned restart, Ctrl+C and the port
+conflict cases with a disposable unrelated listener. The production dependency
+audit reported zero vulnerabilities. The full development-tool audit reported
+one high Windows-specific Vite advisory, four moderate findings and one low.
+
+Local evidence is retained under
+`output/release/audits/2026-11-09-alpha-unicode-e2e.95JkPk/`.
 
 ## Sequence 3 Local Migration Core
 

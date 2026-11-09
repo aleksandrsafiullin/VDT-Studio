@@ -210,7 +210,7 @@ const createDraftTool: AgentTool = {
     goal: optionalInput(z.string().max(1_000)),
     replaceExisting: optionalInput(z.boolean())
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   phase: "building_graph",
   run(context, input) {
@@ -252,7 +252,7 @@ const addDriverTool: AgentTool = {
   name: "vdt.add_driver",
   description: "Add one driver node and edge under an existing parent node.",
   inputSchema: addDriverInputSchema,
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "building_graph",
@@ -295,7 +295,7 @@ const addDriversBatchTool: AgentTool = {
     drivers: z.array(addDriverInputSchema).min(2).max(defaultProgressiveBuildPolicy.maxNodesPerLayer),
     parentFormula: optionalInput(z.string().min(1).max(500))
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "building_graph",
@@ -363,7 +363,7 @@ const instantiateSubtreeTool: AgentTool = {
   name: "vdt.instantiate_subtree",
   description: "Clone one deterministic non-root subtree under an existing parent, with new node ids, source-id-keyed overrides, and internal formula-reference remapping.",
   inputSchema: instantiateSubtreeInputSchema,
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "building_graph",
@@ -492,7 +492,7 @@ const addEdgeTool: AgentTool = {
     relation: edgeRelationInputSchema,
     label: optionalInput(z.string().max(120))
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "building_graph",
@@ -527,7 +527,7 @@ const updateNodeTool: AgentTool = {
   name: "vdt.update_node",
   description: "Update allowed fields on an existing node.",
   inputSchema: z.object({ nodeId: z.string().min(1), patch: nodePatchSchema }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "building_graph",
@@ -589,7 +589,7 @@ const setInputValuesBatchTool: AgentTool = {
     provenance: z.enum(["user_provided_value", "default_assumption"]),
     note: z.string().trim().min(4).max(160)
   }).strict()).min(1).max(8) }).strict(),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "building_graph",
@@ -662,7 +662,7 @@ const deleteNodeTool: AgentTool = {
     nodeId: z.string().min(1).max(160),
     cascadeEdges: z.boolean().optional()
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "building_graph",
@@ -708,7 +708,7 @@ const setFormulaTool: AgentTool = {
     nodeId: z.string().min(1).max(160),
     formula: z.string().min(1).max(500)
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "building_graph",
@@ -740,7 +740,7 @@ const validateTool: AgentTool = {
   name: "vdt.validate",
   description: "Validate the current draft graph and return detailed issues.",
   inputSchema: z.object({}),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   requiresDraftProject: true,
   phase: "validating_graph",
   run(context) {
@@ -766,7 +766,7 @@ const layoutTool: AgentTool = {
   name: "vdt.layout",
   description: "Layout the current draft graph.",
   inputSchema: z.object({}),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "applying_graph",
@@ -788,7 +788,7 @@ const calculateTool: AgentTool = {
   name: "vdt.calculate",
   description: "Calculate deterministic graph values and return root/calculation details.",
   inputSchema: z.object({}),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   requiresDraftProject: true,
   phase: "validating_graph",
   run(context) {

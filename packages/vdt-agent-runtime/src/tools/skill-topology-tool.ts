@@ -13,9 +13,9 @@ export const skillSeedTopologyTool: AgentTool = {
   description: "Instantiate a complete executable topology from an explicitly selected/read skill on a blank root. Select illustrative reference defaults with defaults:{inputId:true}; all other numeric inputs remain unknown.",
   inputSchema: z.object({
     skillId: z.string().min(1).max(160),
-    defaults: z.record(z.literal(true)).refine((value) => Object.keys(value).length <= 24, "Select at most 24 illustrative defaults.")
+    defaults: z.record(z.string(), z.literal(true)).refine((value) => Object.keys(value).length <= 24, "Select at most 24 illustrative defaults.")
   }).strict(),
-  outputSchema: z.record(z.unknown()), mutatesProject: true, requiresDraftProject: true, phase: "building_graph",
+  outputSchema: z.record(z.string(), z.unknown()), mutatesProject: true, requiresDraftProject: true, phase: "building_graph",
   async run(context, input) {
     const library = await loadRunSkillLibrary(context);
     const skill = library.byId.get(input.skillId);

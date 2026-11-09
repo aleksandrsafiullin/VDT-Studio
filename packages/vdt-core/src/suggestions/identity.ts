@@ -141,9 +141,9 @@ export async function buildKpiSuggestionContext(project: VdtProject, options: Bu
     }
     return false;
   };
-  // Guidance has its own bounded allowance; never truncate the pinned skill or
-  // let it displace the nearby graph needed for scope/direction checks.
-  const graphContext = () => { const { selectedSkill: _skill, ...graph } = context; return graph; };
+  // The pinned skill and validated instructions count toward the final
+  // envelope, leaving the graph budget for scope and direction checks.
+  const graphContext = () => { const { selectedSkill: _skill, personalisation: _instructions, ...graph } = context; return graph; };
   while (kpiSuggestionEnvelopeBytes(graphContext()) > KPI_SUGGESTION_LIMITS.contextBytes) {
     let distantIndex = context.ancestors.length - 1;
     while (distantIndex >= 0 && parentIds.has(context.ancestors[distantIndex]!.id)) distantIndex--;

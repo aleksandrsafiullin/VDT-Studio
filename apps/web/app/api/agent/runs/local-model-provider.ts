@@ -2,7 +2,7 @@ import { OllamaProvider, OpenAiCompatibleProvider, type AiCompletionParams, type
 import { createLocalRuntimeContext } from "@vdt-studio/local-runner/server-runtime";
 import { z } from "zod";
 import { PERSONALISATION_PROMPT_RULE } from "@vdt-studio/vdt-core";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { toProviderJsonSchema } from "./provider-json-schema";
 import type { StructuredModelAgentExecutionBindingDefinition } from "./execution-bindings";
 import { isLocalModelAgentBackend } from "./local-model-bindings";
 import { compactLocalModelPrompt } from "./local-model-context";
@@ -69,7 +69,7 @@ export function createLocalModelAgentProvider(
     type: "local_http",
     async completeStructured<TInput, TOutput>(params: AiCompletionParams<TInput>): Promise<TOutput> {
       const schema = params.schema instanceof z.ZodType
-        ? zodToJsonSchema(params.schema, { $refStrategy: "none" })
+        ? toProviderJsonSchema(params.schema)
         : params.schema;
       if (backendId === "ollama") {
         // Native format already enforces this schema. Repeating the entire

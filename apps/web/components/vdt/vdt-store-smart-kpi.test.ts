@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { createIncomingGraphFixture, manualInput, manualKey, modelProposal } from "../../../../packages/vdt-core/src/suggestions/incoming-contract.fixtures";
 import { validateSmartKpiOperation, type SmartKpiOperation, type SmartKpiOperationV1 } from "@/lib/smart-kpi-transaction";
 import { persistedExecutionSettings } from "@/lib/execution-mode-catalog";
-import { revisionCasFromHead, runtimeCasFromState, VdtStorageRequestError, type StoredProjectSummary } from "@/lib/vdt-storage-client";
+import { revisionCasFromHead, runtimeCasFromState, VdtStorageRequestError, workspaceDraftBase, type StoredProjectSummary } from "@/lib/vdt-storage-client";
 import { resolveSmartKpiScope } from "@/lib/smart-kpi-scope";
 import { getSmartKpiLibraryProposal } from "@/lib/smart-kpi-decisions";
 import { apiKeyScope, connectApiKeyPersistence } from "@/lib/api-key-persistence";
@@ -49,8 +49,10 @@ beforeEach(() => {
   selectedSkill.mockReset();
   save.mockResolvedValue(saved()); fetchState.mockResolvedValue(saved());
   const project = createSmartKpiMeasuredFixture(0); project.graph.nodes[0]!.assumptions = ["Time period: monthly"];
+  const owner = summary();
   store.setState({ project, projectRevision: 10, selectedNodeId: project.rootNodeId, activeScenarioId: project.scenarios[0]!.id,
-    workspace: { activePanel: "vdt", activeProjectId: "owner", activeVdtId: "stored", projectSummaries: [summary()], isLoading: false, isMutating: false },
+    workspace: { activePanel: "vdt", activeProjectId: "owner", activeVdtId: "stored", projectSummaries: [owner], isLoading: false, isMutating: false,
+      draftRevisionBase: workspaceDraftBase(owner.vdts[0]!.head, runtimeCasFromState(owner.runtimeState)) },
     isGenerating: false, generateActivity: undefined, agentRun: undefined, activeAgentRunId: undefined, agentPendingQuestions: undefined, agentConnectionStatus: "idle", agentChatHistory: [],
     smartKpiSkill: undefined, smartKpiOperation: undefined, smartKpiUndo: undefined, smartKpiRebaseRequired: undefined, smartKpiConflictOperation: undefined, smartKpiFencedRunIds: [], smartKpiMutation: { status: "idle", canUndo: false }, sendManualProjectChange: notify });
 });
@@ -415,7 +417,7 @@ describe("Smart immutable user transaction", () => {
     expect(await store.getState().applySmartKpiSuggestion(input)).toMatchObject({ ok: false, reason: expect.stringContaining("Reload") });
     expect(await store.getState().saveActiveWorkspaceVdt()).toBe(false); expect(save).toHaveBeenCalledTimes(1); expect(store.getState().project).toBe(before);
     const loaded = createSmartKpiMeasuredFixture(777); loaded.graph.nodes[0]!.assumptions = ["Time period: monthly"];
-    load.mockResolvedValueOnce({ activeProject: loaded, summary: summary(7), vdt: summary(7).vdts[0]!.vdt });
+    load.mockResolvedValueOnce({ ...saved(7), activeProject: loaded });
     expect(await store.getState().selectWorkspaceVdt("stored")).toBe(true); expect(load).toHaveBeenCalledTimes(1); expect(save).toHaveBeenCalledTimes(1);
     expect(store.getState().project.graph.nodes[0]!.baselineValue).toBe(777); expect(store.getState().smartKpiRebaseRequired).toBeUndefined(); expect(store.getState().smartKpiConflictOperation?.before).toEqual(before);
   });

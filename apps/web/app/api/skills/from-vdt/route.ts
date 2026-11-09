@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   let admitted = false;
   try {
     const input = z.object({ projectId: z.string().max(128), vdtId: z.string().max(128), project: z.unknown(),
-      providerId: z.enum(["openai_compatible", "anthropic", "gemini", "azure_openai", "local_runner"]), providerConfig: z.record(z.unknown()),
+      providerId: z.enum(["openai_compatible", "anthropic", "gemini", "azure_openai", "local_runner"]), providerConfig: z.record(z.string(), z.unknown()),
       feedback: z.string().max(4000).optional(),
     }).strict().parse(await readSkillBody(request));
     requireVdt(input.projectId, input.vdtId);

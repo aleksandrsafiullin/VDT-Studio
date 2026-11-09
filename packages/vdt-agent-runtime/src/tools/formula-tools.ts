@@ -16,7 +16,7 @@ const formulaParseTool: AgentTool = {
   name: "formula.parse",
   description: "Parse a formula and return references or a parse error.",
   inputSchema: z.object({ formula: z.string().min(1).max(500) }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "validating_graph",
   run(_context, input) {
     try {
@@ -36,7 +36,7 @@ const formulaExtractReferencesTool: AgentTool = {
   name: "formula.extract_references",
   description: "Extract formula references from a parser-valid formula.",
   inputSchema: z.object({ formula: z.string().min(1).max(500) }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "validating_graph",
   run(_context, input) {
     try {
@@ -54,7 +54,7 @@ const formulaCheckReferencesTool: AgentTool = {
     formula: z.string().min(1).max(500),
     nodeId: z.string().max(160).optional()
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "validating_graph",
   run(context, input) {
     const project = context.builder?.getProject() ?? context.store.getSnapshot(context.runId).draftProject;
@@ -88,7 +88,7 @@ const formulaRenameReferenceTool: AgentTool = {
     from: z.string().min(1).max(160),
     to: z.string().min(1).max(160)
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "repairing_graph",
   run(_context, input) {
     const pattern = new RegExp(`\\b${escapeRegExp(input.from)}\\b`, "g");
@@ -104,7 +104,7 @@ const formulaSuggestReferenceRepairTool: AgentTool = {
     missingReference: z.string().min(1).max(160),
     availableNodeIds: z.array(z.string().max(160)).max(200).optional()
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "repairing_graph",
   run(context, input) {
     const project = context.builder?.getProject() ?? context.store.getSnapshot(context.runId).draftProject;

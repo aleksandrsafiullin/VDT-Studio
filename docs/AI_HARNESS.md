@@ -243,7 +243,9 @@ Configured API/BYOK adapters and manifest-owned Ollama/LM Studio/vLLM endpoints 
 one request with at most 2048 generation tokens; the selected Codex CLI uses one
 restrictive invocation and a prompt-requested 2048-token budget. CLI does not expose
 a verified hard generation-token ceiling. Input/final output are capped at
-192/16 KiB, with a separate 24 KiB graph-context and 128 KiB selected-Skill content allowance; HTTP/CLI output envelopes remain 64 KiB. Deadlines are at most 15 s HTTP or 30 s
+192/16 KiB, with separate 24 KiB graph-context and 128 KiB selected-Skill
+content allowances. Full accepted personalisation counts toward the final
+input cap. HTTP/CLI output envelopes remain 64 KiB. Deadlines are at most 15 s HTTP or 30 s
 CLI and respect a lower raw user timeout, including version probing. A bounded
 cleanup grace awaits owned transport/process termination and never accepts late
 success. Metadata-only identity admission is separate from preparation, capped at

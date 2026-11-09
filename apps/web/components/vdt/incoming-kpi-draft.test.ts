@@ -64,6 +64,19 @@ describe("mixed incoming KPI local drafts", () => {
     expect(inspectIncomingKpiDraft(input).readyForCompile).toBe(false);
   });
 
+  it("refreshes an untouched manual draft on open and preserves an edited draft", async () => {
+    const project = createIncomingGraphFixture("measured");
+    const book = new IncomingKpiDraftBook();
+    const before = book.open("owner", createIncomingKpiDraft(await fixtureContext(project), project));
+    project.description = "Updated context";
+    const current = book.open("owner", createIncomingKpiDraft(await fixtureContext(project), project));
+    expect(current.input.context.contextHash).not.toBe(before.input.context.contextHash);
+
+    const edited = book.save(current, editIncomingKpiDraft(current.input, { formula: "unfinished (" }));
+    project.description = "Another context update";
+    expect(book.open("owner", createIncomingKpiDraft(await fixtureContext(project), project))).toBe(edited);
+  });
+
   it("retains incomplete dirty expressions/source/selection across new sources, alternatives and owner switches", async () => {
     const project = createIncomingGraphFixture("measured"), context = await fixtureContext(project), proposal = modelProposal(context);
     const book = new IncomingKpiDraftBook(), opened = book.open("owner/a", createIncomingKpiDraft(context, project, proposal));

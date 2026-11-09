@@ -342,7 +342,7 @@ function findModelControlledAuthorityKey(
 export const vdtGatewayToolCallSchema = z.object({
   externalCallId: safeIdSchema,
   toolName: nonEmptyString(160),
-  args: z.record(z.unknown())
+  args: z.record(z.string(), z.unknown())
 }).strict().superRefine((value, ctx) => {
   const authorityPath = findModelControlledAuthorityKey(value.args);
   if (authorityPath) {

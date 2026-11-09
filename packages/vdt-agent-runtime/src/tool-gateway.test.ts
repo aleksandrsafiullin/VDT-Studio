@@ -949,7 +949,7 @@ describe("VdtToolGateway", () => {
       name: "research.search_web",
       description: "Broken configured research.",
       inputSchema: z.object({ query: z.string(), purpose: z.string() }).strict(),
-      outputSchema: z.record(z.unknown()),
+      outputSchema: z.record(z.string(), z.unknown()),
       run: () => {
         throw new AgentToolError(
           "RESEARCH_PROVIDER_AUTH_FAILED",
@@ -989,7 +989,7 @@ describe("VdtToolGateway", () => {
       name: "excavation.write_input_value",
       description: "Write a value that cannot persist.",
       inputSchema: z.object({ nodeId: z.string() }).strict(),
-      outputSchema: z.record(z.unknown()),
+      outputSchema: z.record(z.string(), z.unknown()),
       mutatesProject: true,
       run: () => {
         executions += 1;
@@ -1043,7 +1043,7 @@ describe("VdtToolGateway", () => {
       name: "excavation.write_input_value",
       description: "Write while another revision is pending.",
       inputSchema: z.object({ nodeId: z.string() }).strict(),
-      outputSchema: z.record(z.unknown()),
+      outputSchema: z.record(z.string(), z.unknown()),
       mutatesProject: true,
       run: () => {
         throw vdtStorageError("REVISION_CONFLICT", "Another pending revision owns this VDT.");

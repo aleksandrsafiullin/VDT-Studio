@@ -8,6 +8,13 @@ import {
 } from "./schema-issue-summary";
 
 describe("schemaIssueSummary", () => {
+  it("rejects an oversized constrained array before collecting element errors", () => {
+    const parsed = z.array(z.string()).max(6).safeParse(Array(10_000).fill(0));
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(parsed.error.issues).toMatchObject([{ code: "too_big", maximum: 6 }]);
+  });
+
   it("names field paths and expected types for several invalid arguments", () => {
     const schema = z.object({
       drivers: z.array(z.object({

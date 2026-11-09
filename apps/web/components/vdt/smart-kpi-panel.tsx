@@ -56,7 +56,7 @@ export function SmartKpiPanel({ controller, viewportRevision }: { controller: Sm
   const [editing, setEditing] = useState(false);
   const [appliedInput, setAppliedInput] = useState<IncomingKpiBatchInput>();
   const proposal = snapshot.proposal;
-  const context = controller.context ?? controller.latestContext;
+  const context = active?.mode === "manual" ? controller.latestContext : controller.context ?? controller.latestContext;
   const entry = retained?.ownerKey === controller.ownerKey && retained.input.draft.targetNodeId === active?.targetNodeId ? retained : undefined;
   const preview = previewResult?.input === entry?.input && previewResult?.project === controller.project ? previewResult.value : undefined;
   const values = useMemo(() => entry ? resolveIncomingKpiValues(controller.project, entry.input) : undefined, [entry, controller.project]);
@@ -68,12 +68,14 @@ export function SmartKpiPanel({ controller, viewportRevision }: { controller: Sm
     if (!active || !context || context.targetNodeId !== active.targetNodeId) return;
     let current = book.current.get(controller.ownerKey, active.targetNodeId);
     const manual = active.mode === "manual";
-    if (!current || manual && manualActivation.current !== active && current.input.draft.source.kind !== "manual"
+    const openingManual = manual && manualActivation.current !== active;
+    if (openingManual && controller.contextPending) return;
+    if (!current || openingManual
       || !manual && !current.dirty && proposal && (current.input.draft.source.kind === "manual"
         || current.input.draft.source.proposalId !== proposal.proposalId && !snapshot.stale)) {
       current = book.current.open(controller.ownerKey, createIncomingKpiDraft(context, controller.project, manual ? undefined : proposal));
     }
-    if (manual && manualActivation.current !== active) {
+    if (openingManual) {
       setEditing(true);
       manualActivation.current = active;
       const blank = current.input.draft.manualChildren.find(row => !row.name || !row.unit);
@@ -87,7 +89,7 @@ export function SmartKpiPanel({ controller, viewportRevision }: { controller: Sm
       }
     }
     setRetained(current);
-  }, [active, context?.contextHash, proposal?.proposalId, controller.ownerKey]);
+  }, [active, context?.contextHash, proposal?.proposalId, controller.contextPending, controller.ownerKey]);
 
   useEffect(() => {
     setPreviewResult(undefined);

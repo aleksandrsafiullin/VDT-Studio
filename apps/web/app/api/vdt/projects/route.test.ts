@@ -370,6 +370,7 @@ describe("VDT project storage APIs", () => {
     expect(await getVdtResponse.json()).toMatchObject({
       schemaVersion: "vdt_load_response.v1",
       ok: true,
+      activeRevision: { id: createVdtPayload.revision.id },
       activeProject: {
         id: productionVolumeProject.id,
         rootNodeId: productionVolumeProject.rootNodeId

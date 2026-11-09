@@ -118,8 +118,8 @@ readback/recovery; it does not discard versions or bypass the pre-send check.
 The [formula/mixed revision](docs/architecture/SMART_KPI_INCOMING_CONTRACT.md)
 adds selected proposals and own KPIs with one explicit editable formula and
 revision-CAS Add. The parent becomes Calculated; its source measurement remains
-reference evidence. Manual-only drafts need no provider. Historical v1 writes
-replay exactly; old graphs are not migrated.
+reference evidence. Manual opens against the current KPI context and needs no
+provider. Historical v1 writes replay exactly; old graphs are not migrated.
 
 Smart suggestions appear directly on the canvas as gray, dashed preview cards
 connected to the target KPI. They follow graph pan/zoom and remain outside the
@@ -269,7 +269,8 @@ Both direct changes and their calculated effects are marked; the color indicates
 a difference, not an improvement. Unchanged values remain neutral.
 Formula rows use compact chips and plain math symbols. Long names retain their
 full text on hover, numeric inputs fit their contents, and drag/remove controls
-appear on hover or keyboard focus while preserving the same expression editing.
+appear on hover or keyboard focus. Each remove button stays inside its token,
+clear of the neighboring insertion slots.
 
 Raw-data discovery currently proposes semantic models and metadata mappings. Its local incoming-KPI path also retains the original project source and calculates a complete category hierarchy from confirmed additive numeric values in the KPI unit, duration columns or start/end timestamps, with explicit per-day decisions and provenance in each generated KPI Description. General mapping execution, refresh, reconciliation and production-trusted KPI baselines are not implemented. Web research currently returns search results but does not yet provide an auditable benchmark evidence pipeline. These limitations are tracked in [Data ingestion](docs/DATA_INGESTION.md) and the [roadmap](docs/ROADMAP.md).
 
@@ -334,7 +335,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-On macOS you can double-click `run.command` to start, stop or restart the local web app. From Terminal: `./run.command start`, `./run.command stop`, `./run.command restart`.
+On macOS, double-click `run.command` or run `./run.command start`, `./run.command stop` or `./run.command restart` in Terminal. The launcher manages its own Next.js process for this checkout and keeps the browser URL at `http://localhost:3000`. If port 3000 is occupied outside this launcher, it reports the conflict. For an earlier launch or a manually started server, use its original Terminal window to stop it.
 
 Open the URL printed by Next.js. For standalone local-runner development:
 
@@ -369,7 +370,8 @@ open a separate instruction dialog; Save commits that entry and Cancel discards
 its draft. The row menu also provides Enable/Disable and Delete, with Undo for
 the latest deletion. The earlier single text becomes the first
 entry without losing its enabled state. Enabled entries are combined for chat,
-Suggested KPI and tree analysis. Project-rule editors and automatic project-rule
+Suggested KPI and tree analysis. Suggested keeps the accepted text in full
+within its total input budget. Project-rule editors and automatic project-rule
 application have been removed; old project metadata is retained but inactive.
 See [the Personalisation contract](docs/adr/ADR-011-personalisation-and-project-rules.md).
 
@@ -389,7 +391,7 @@ Model Agent runs preserve their draft and stop after three repeats of the same t
 4. Review formulas, assumptions, warnings and proposed changes.
 5. Apply accepted changes, calculate scenarios and save named milestones in Versions.
 
-The editor's Home and Back to project links save the current model as a revision before navigating. A failed save keeps the editor and local changes open with an error, so reopening the VDT cannot silently discard those edits. Versions provides checkpoint comparison, restoration and session Undo; broader draft/revision recovery remains an alpha limitation.
+The editor's Home and Back to project links save the current model as a revision before navigating. A failed save keeps the editor open. If another tab saves first, review your local edits before choosing **Discard local edits and reload**, then reapply the ones you want to keep to the saved version. Versions provides checkpoint comparison, restoration and session Undo. Broader draft recovery remains an alpha limitation.
 
 `pnpm dev` and the macOS launcher bind the development app to `127.0.0.1` by default. The normal browser address remains `http://localhost:3000`.
 

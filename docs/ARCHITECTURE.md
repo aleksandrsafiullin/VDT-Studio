@@ -339,8 +339,9 @@ Ancestors are ordered by distance. Under pressure, distant ancestry, plan rows
 and optional prose give way before nearby siblings, children and immediate
 parents. Root and target remain explicit, and omission flags/counts remain
 visible. The graph allowance remains 24 KiB; full selected Skill content has a
-separate 128 KiB allowance. Final input is capped at 192 KiB and the HTTP body at
-208 KiB including provider configuration.
+separate 128 KiB allowance. Accepted personalisation is measured with the Skill
+and graph in the final 192 KiB input cap. The HTTP body is capped at 208 KiB
+including provider configuration.
 
 Codex binding identity includes policy, selected executable/version and config
 metadata; `models_cache.json` refresh metadata is excluded. Model selection and
@@ -615,7 +616,9 @@ flowchart LR
 
 W0.1 routes all production revision writers through one domain `commitVdtRevision()` boundary. It validates strict canonical payload bytes, reserves idempotency/attempt/head state under CAS, publishes a revision-ID path with `O_CREAT | O_EXCL` no-clobber semantics, fsyncs the file and directory, and only then commits the active head. Manual/create APIs and agent persistence use the same boundary; list/load responses expose persisted project runtime state and per-VDT heads.
 
-The implementation still duplicates substantial draft/project state in Zustand persistence. W0.1 preserves unsaved local edits on conflict and blocks navigation after a failed auto-save, but SQLite-only durable ownership, metadata/revision atomicity and broader dirty-state reconciliation remain W0.5 work. Windows storage durability is not verified.
+The editor persists the head and runtime compare-and-swap values that belong to its draft. It advances that base after loading the corresponding saved snapshot or receiving its own commit receipt. Summary refreshes can update the displayed server head independently. A terminal manual conflict preserves the draft and blocks fresh saves until the user explicitly loads the stored revision. An older browser draft with no verified base follows the same reload path. Ambiguous writes retain their original request and idempotency key.
+
+Zustand still persists substantial draft state. SQLite-only durable ownership, metadata/revision atomicity and broader dirty-state reconciliation remain W0.5 work. Windows storage durability is not verified.
 
 The workspace rail uses a direct Home link to `/`; the editor header's back link targets `/projects/<projectId>`. Project/editor route synchronization gives changed URL parameters precedence over the workspace snapshot. Store-driven navigation retains its target until Next.js commits the URL, and asynchronous bootstrap/VDT selection blocks reverse URL writes until it settles. An unchanged route can still reflect a newly created local VDT in `?vdt=...`.
 
@@ -644,6 +647,11 @@ revision byte/hash verification remain active; no database connection or backup
 contents are cached. This assumes trustworthy local filesystem metadata; silent
 media corruption with unchanged metadata is rechecked on cold admission and
 before backup use. Native/Windows performance qualification remains separate.
+
+On macOS the foreign-key migration latch uses the system `/bin/df` to check
+the data directory against the APFS and HFS filesystem names. Darwin's numeric
+type IDs can vary by host. The check fails closed and runs alongside the
+existing directory owner, mode, no-symlink, device/inode and fsync checks.
 
 The home creation dialog sends name plus client/site/year metadata through one
 `createWorkspaceProject` / `POST /api/vdt/projects` request. It uses the existing
@@ -769,6 +777,11 @@ registered but disabled and omitted from discovery unless
 `VDT_MODEL_AGENT_ENABLED=true`; the legacy provider-ID loop requires its own
 explicit production compatibility flag, and there is no automatic
 profile/backend fallback. Cursor has no accepted hard-isolation qualification.
+On macOS, `run.command` holds a per-checkout file lock while its supervisor owns
+the Next.js child. Status and Stop use a private Unix control socket. Stop waits
+for the owned child to close. Port inspection checks for conflicts and verifies
+the listening process before opening the browser at `http://localhost:3000`.
+
 The trusted-local development launchers explicitly enable unverified CLI
 checkpoint sessions. Codex adds immutable model-specific binding IDs, derived
 from a SHA-256 model identity, only for validated IDs returned by its

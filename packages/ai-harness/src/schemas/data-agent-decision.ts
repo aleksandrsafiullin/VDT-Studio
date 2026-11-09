@@ -47,12 +47,12 @@ export const dataAgentDecisionSchema = z.discriminatedUnion("type", [
     type: z.literal("tool_call"),
     toolName: dataDiscoveryToolNameSchema,
     rationale: z.string().min(1).max(1000),
-    input: z.record(z.unknown())
+    input: z.record(z.string(), z.unknown())
   }),
   z.object({
     type: z.literal("final_proposal"),
     rationale: z.string().min(1).max(2000),
-    result: z.record(z.unknown())
+    result: z.record(z.string(), z.unknown())
   }),
   z.object({
     type: z.literal("ask_user"),

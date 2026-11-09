@@ -10,15 +10,16 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const web = path.join(root, "apps/web");
 const require = createRequire(path.join(web, "package.json"));
 const next = path.join(path.dirname(require.resolve("next/package.json")), "dist/bin/next");
+const nextCommand = process.env.VDT_E2E_USE_BUILD === "1" ? "start" : "dev";
 // Never inherit a developer's VDT_DATA_DIR or use the application's .vdt store.
 const dataDir = mkdtempSync(path.join(tmpdir(), "vdt-e2e-data-"));
 const reportDir = path.join(root, "output/playwright");
 mkdirSync(reportDir, { recursive: true });
 const reportPath = path.join(reportDir, `${path.basename(dataDir)}.json`);
-const report = { dataDir, launcherPid: process.pid, cleaned: false };
+const report = { dataDir, launcherPid: process.pid, nextCommand, cleaned: false };
 writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
 console.log(`E2E temporary storage: ${dataDir}`);
-const child = spawn(process.execPath, [next, "dev", "--hostname", "127.0.0.1", "--port", "3100"], {
+const child = spawn(process.execPath, [next, nextCommand, "--hostname", "127.0.0.1", "--port", "3100"], {
   cwd: web,
   stdio: "inherit",
   env: {
@@ -26,6 +27,8 @@ const child = spawn(process.execPath, [next, "dev", "--hostname", "127.0.0.1", "
     VDT_DATA_DIR: dataDir,
     VDT_ALLOW_MOCK_PROVIDER: "true",
     NEXT_PUBLIC_VDT_ENABLE_STANDALONE_RUNNER: "true",
+    // The admission smoke uses the real route with a synthetic key.
+    ...(nextCommand === "start" ? { VDT_MODEL_AGENT_ENABLED: "true" } : {}),
     VDT_CLI_SESSION_CANARY_ENABLED: "false",
     VDT_LOCAL_MODEL_AGENT_ENABLED: "false",
     VDT_AGENT_LEGACY_COMPATIBILITY_ENABLED: "false",

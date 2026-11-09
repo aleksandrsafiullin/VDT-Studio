@@ -29,7 +29,7 @@ const createTaskTool: AgentTool = {
     publicStatus: z.string().max(300).optional(),
     timeoutMs: z.number().int().min(1_000).max(SUBAGENT_TIMEOUT_MAX_MS).optional()
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   run(context, input) {
     if (context.signal.aborted) {

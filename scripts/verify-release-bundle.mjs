@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { resolveReleaseDirectory } from "./release-paths.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -31,12 +32,11 @@ const SECRET_VALUE_PATTERNS = [
   { label: "Anthropic API key", pattern: /sk-ant-[A-Za-z0-9_-]{20,}/ },
   { label: "GitHub token", pattern: /gh[pousr]_[A-Za-z0-9_]{30,}/ },
   { label: "Google API key", pattern: /AIza[0-9A-Za-z_-]{20,}/ },
-  { label: "AWS access key", pattern: /AKIA[0-9A-Z]{16}/ },
-  {
-    label: "secret environment assignment",
-    pattern: /\b[A-Z0-9_]*(?:API_KEY|SECRET|TOKEN|PASSWORD|PRIVATE_KEY)[A-Z0-9_]*\s*=\s*["']?(?!\s*(?:$|redacted|placeholder|example|test|dummy|changeme|none|null|undefined|0)\b)[^"'\s]{8,}/
-  }
+  { label: "AWS access key", pattern: /AKIA[0-9A-Z]{16}/ }
 ];
+
+const SECRET_ASSIGNMENT = /\b[A-Z0-9_]*(?:API_KEY|SECRET|TOKEN|PASSWORD|PRIVATE_KEY)[A-Z0-9_]*\s*=\s*/g;
+const SECRET_ASSIGNMENT_VALUE = /^["']?(?!\s*(?:$|redacted|placeholder|example|test|dummy|changeme|none|null|undefined|0)\b)[^"'\s]{8,}/;
 
 function fail(message) {
   throw new Error(`Release bundle verification failed: ${message}`);
@@ -84,6 +84,28 @@ function isTextBuffer(buffer) {
   return !buffer.includes(0);
 }
 
+function javascriptEnvForwardingOffsets(path, text) {
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest);
+  const offsets = new Set();
+  function visit(node) {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      ts.isPropertyAccessExpression(node.right)
+    ) {
+      const name = node.left.name.text;
+      const value = node.right.getText(source);
+      if (value === `env.${name}` || value === `process.env.${name}`) {
+        offsets.add(node.left.name.getStart(source));
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  return offsets;
+}
+
 function scanFileForSecrets(path, displayPath) {
   const normalizedDisplay = normalizeTarEntry(displayPath);
   for (const pattern of SECRET_FILE_PATTERNS) {
@@ -95,6 +117,16 @@ function scanFileForSecrets(path, displayPath) {
   const text = buffer.toString("utf8");
   for (const { label, pattern } of SECRET_VALUE_PATTERNS) {
     if (pattern.test(text)) fail(`${label} detected in ${normalizedDisplay}`);
+  }
+  let forwardingOffsets;
+  for (const match of text.matchAll(SECRET_ASSIGNMENT)) {
+    const value = text.slice(match.index + match[0].length);
+    if (!SECRET_ASSIGNMENT_VALUE.test(value)) continue;
+    if (/\.[cm]?js$/i.test(normalizedDisplay)) {
+      forwardingOffsets ??= javascriptEnvForwardingOffsets(normalizedDisplay, text);
+      if (forwardingOffsets.has(match.index)) continue;
+    }
+    fail(`secret environment assignment detected in ${normalizedDisplay}`);
   }
 }
 

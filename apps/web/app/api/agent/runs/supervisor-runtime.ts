@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { builtinHarness } from "@vdt-studio/model-bridge/harness-catalog";
 import { isAdmittedHarnessSession } from "./harness-session-bindings";
 import type { ReasoningEffort } from "@vdt-studio/model-bridge";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { toProviderJsonSchema } from "./provider-json-schema";
 import type { AiProvider } from "@vdt-studio/ai-harness";
 import { VdtBuilderSession, type VdtNodePatch, type VdtProject } from "@vdt-studio/vdt-core";
 import {
@@ -1110,7 +1110,7 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
       input: payload.input,
       schema: request.responseSchema,
       ...(this.definition.modelEngineAdapter.providerId === "openai_compatible" ? {
-        outputJsonSchema: zodToJsonSchema(request.responseSchema, { $refStrategy: "none" })
+        outputJsonSchema: toProviderJsonSchema(request.responseSchema)
       } : {}),
       systemPrompt: MODEL_AGENT_SYSTEM_PROMPT,
       userPrompt: payload.userPrompt,

@@ -6,7 +6,7 @@ import { buildKpiSuggestionContext, buildRecipeKpiSuggestions, calculateGraph, c
 import { POST as createProject } from "@/app/api/vdt/projects/route";
 import { POST as createVdt } from "@/app/api/vdt/projects/[projectId]/vdts/route";
 import { GET as revisions, POST as commit } from "@/app/api/vdt/vdts/[vdtId]/revisions/route";
-import { runtimeCasFromState, type StoredProjectSummary } from "@/lib/vdt-storage-client";
+import { runtimeCasFromState, workspaceDraftBase, type StoredProjectSummary } from "@/lib/vdt-storage-client";
 import { resolveSmartKpiScope } from "@/lib/smart-kpi-scope";
 const memory = new Map<string, string>();
 vi.stubGlobal("localStorage", { getItem: (key: string) => memory.get(key) ?? null, setItem: (key: string, value: string) => memory.set(key, value), removeItem: (key: string) => memory.delete(key) });
@@ -38,7 +38,8 @@ describe("Smart through real SQLite revision routes", () => {
       return revisions(new Request(`http://localhost:3000${url}`), params);
     });
     store.setState({ project, projectRevision: 1, selectedNodeId: project.rootNodeId, activeScenarioId: project.scenarios[0]!.id,
-      workspace: { activePanel: "vdt", activeProjectId: owner, activeVdtId: vdtId, projectSummaries: [body.summary], isLoading: false, isMutating: false },
+      workspace: { activePanel: "vdt", activeProjectId: owner, activeVdtId: vdtId, projectSummaries: [body.summary], isLoading: false, isMutating: false,
+        draftRevisionBase: workspaceDraftBase(body.summary.vdts[0]!.head, runtimeCasFromState(body.summary.runtimeState)) },
       smartKpiOperation: undefined, smartKpiUndo: undefined, smartKpiMutation: { status: "idle", canUndo: false }, smartKpiFencedRunIds: [],
       agentRun: undefined, generateActivity: undefined, agentChatHistory: [], activeAgentRunId: undefined, agentPendingQuestions: undefined, agentConnectionStatus: "idle", isGenerating: false });
     const context = await buildKpiSuggestionContext(project, { ...resolveSmartKpiScope(store.getState()), targetNodeId: project.rootNodeId });
@@ -54,5 +55,7 @@ describe("Smart through real SQLite revision routes", () => {
     expect(await store.getState().undoSmartKpiSuggestion()).toBe(true); expect(store.getState().project.graph).toEqual(project.graph);
     list = await (await revisions(new Request("http://localhost:3000"), { params: Promise.resolve({ vdtId }) })).json();
     expect(list.revisions).toHaveLength(3); expect(posted[2]).toContain("smart-undo:"); expect(store.getState().project.versions[0]?.taskType).toBe("suggest_incoming_kpis");
+    expect(await store.getState().saveActiveWorkspaceVdt()).toBe(true);
+    expect(JSON.parse(posted[3]!).expectedHead.commitGeneration).toBe(3);
   });
 });

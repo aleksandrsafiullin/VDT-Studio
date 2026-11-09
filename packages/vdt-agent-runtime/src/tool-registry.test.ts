@@ -565,7 +565,7 @@ describe("ToolRegistry", () => {
       name: "vdt.persist_write",
       description: "Throw a persist-path storage error.",
       inputSchema: z.object({}).strict(),
-      outputSchema: z.record(z.unknown()),
+      outputSchema: z.record(z.string(), z.unknown()),
       run: () => {
         throw vdtStorageError(
           "PROPOSAL_BASE_NOT_PERSISTED",
@@ -601,7 +601,7 @@ describe("ToolRegistry", () => {
       name: "vdt.fake_delete",
       description: "Throw a duck-typed tool error.",
       inputSchema: z.object({}).strict(),
-      outputSchema: z.record(z.unknown()),
+      outputSchema: z.record(z.string(), z.unknown()),
       run: () => {
         const error = new Error("The formula for Ore hauled references missing node truck_working_time");
         error.name = "AgentToolError";

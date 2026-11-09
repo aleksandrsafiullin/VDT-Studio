@@ -19,12 +19,14 @@ export const test = base.extend<{ productionWorkspace: ProductionWorkspace; prod
     const vdtId = `vdt_e2e_${suffix}`;
     const project = productionModel ?? JSON.parse(fs.readFileSync(path.resolve("examples/production-volume.json"), "utf8"));
     const created = await request.post("/api/vdt/projects", {
+      headers: { connection: "close" },
       data: { id: projectId, name: "E2E Production Volume", industry: project.industry }
     });
     expect(created.status(), await created.text()).toBe(201);
     try {
       const { summary: { runtimeState } } = await created.json();
       const saved = await request.post(`/api/vdt/projects/${projectId}/vdts`, {
+        headers: { connection: "close" },
         data: {
           schemaVersion: "create_vdt_with_initial_http_request.v1",
           idempotencyKey: `create-vdt:${vdtId}`,
@@ -43,7 +45,7 @@ export const test = base.extend<{ productionWorkspace: ProductionWorkspace; prod
       expect(saved.ok(), await saved.text()).toBeTruthy();
       await use({ projectId, vdtId });
     } finally {
-      const deleted = await request.delete(`/api/vdt/projects/${projectId}`, { maxRetries: 2 });
+      const deleted = await request.delete(`/api/vdt/projects/${projectId}`, { headers: { connection: "close" }, maxRetries: 2 });
       expect([200, 404], "Delete only the project owned by this test").toContain(deleted.status());
     }
   }

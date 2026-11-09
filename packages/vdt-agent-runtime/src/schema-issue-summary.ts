@@ -34,6 +34,7 @@ export interface SchemaIssueSummaryInput {
   readonly keys?: readonly string[];
   readonly expected?: unknown;
   readonly received?: unknown;
+  readonly message?: string;
   readonly minimum?: unknown;
   readonly maximum?: unknown;
   readonly inclusive?: unknown;
@@ -74,7 +75,9 @@ function extra(issue: SchemaIssueSummaryInput): string {
   }
   if (issue.code !== "invalid_type") return "";
   const expected = parsedTypeLabel(issue.expected);
-  const received = parsedTypeLabel(issue.received);
+  // Zod 4 includes the received type only in its default diagnostic.
+  const defaultType = /^Invalid input: expected [a-z]+, received ([a-z]+)$/i.exec(issue.message ?? "")?.[1];
+  const received = parsedTypeLabel(issue.received ?? defaultType?.toLowerCase());
   if (!expected && !received) return "";
   return `: ${[expected ? `expected=${expected}` : undefined, received ? `received=${received}` : undefined]
     .filter(Boolean)

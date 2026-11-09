@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import childProcess, { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -1121,7 +1121,7 @@ describe("generalized append-only storage migration plans", { timeout: 60_000 },
     }
   });
 
-  it.each([
+  it.skipIf(process.platform !== "linux").each([
     ["tmpfs", 0x01021994n],
     ["overlayfs", 0x794c7630n]
   ] as const)(
@@ -1174,6 +1174,35 @@ describe("generalized append-only storage migration plans", { timeout: 60_000 },
       db.close();
     }
   );
+
+  it.skipIf(process.platform !== "darwin")("blocks a migration before DDL when macOS cannot admit the volume", () => {
+    const fixture = storageFixture("existing");
+    const before = migrationEvidenceCounts(fixture.databasePath);
+    const probe = vi.spyOn(childProcess, "spawnSync").mockReturnValueOnce({
+      pid: 0,
+      output: [],
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+      status: 1,
+      signal: null
+    });
+    try {
+      expect(captureError(() => runPlan(
+        fixture.databasePath,
+        fixture.dataDir,
+        TEST_MIGRATION_PLAN_VALID_DEFERRED_FK
+      ))).toMatchObject({ code: "MIGRATION_RECOVERY_REQUIRED", retryable: false });
+    } finally {
+      probe.mockRestore();
+    }
+    expect(migrationEvidenceCounts(fixture.databasePath)).toEqual(before);
+    const db = new DatabaseSync(fixture.databasePath);
+    try {
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 2 });
+    } finally {
+      db.close();
+    }
+  });
 
   it("rejects a hard-linked sidecar before DDL", () => {
     const fixture = storageFixture("existing");

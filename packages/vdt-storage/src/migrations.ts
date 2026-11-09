@@ -1,3 +1,4 @@
+import childProcess from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -5386,14 +5387,14 @@ function openMigrationForeignKeyBlockDirectory(
     effectiveUid,
     undefined
   );
+  const realDataDir = fs.realpathSync(dataDir);
+  assertLocalMigrationFileSystem(realDataDir);
   validateOpenedMigrationDirectory(
     dataDir,
     dataStat,
     effectiveUid,
     undefined
   );
-  assertLocalMigrationFileSystem(dataDir);
-  const realDataDir = fs.realpathSync(dataDir);
   const migrationCreated = ensureOwnedMigrationDirectory(
     migrationDir,
     effectiveUid,
@@ -5996,17 +5997,30 @@ function requiredMigrationForeignKeyOpenFlags(): {
 }
 
 function assertLocalMigrationFileSystem(directoryPath: string): void {
+  if (process.platform === "darwin") {
+    // Darwin filesystem type numbers can vary. The system df filters the
+    // exact path by the kernel's filesystem name, without parsing mount text.
+    const result = childProcess.spawnSync(
+      "/bin/df",
+      ["-P", "-T", "apfs,hfs", "--", directoryPath],
+      {
+        stdio: "ignore",
+        env: { LC_ALL: "C", NODE_ENV: process.env.NODE_ENV ?? "production" },
+        timeout: 2_000,
+        killSignal: "SIGKILL"
+      }
+    );
+    if (!result.error && result.status === 0) return;
+    throw new TypeError(
+      "foreign-key migration latches require a reviewed local APFS or HFS filesystem"
+    );
+  }
+
   const fileSystem = fs.statfsSync(directoryPath, { bigint: true });
   const localTypes =
-    process.platform === "darwin"
-      ? new Set([0x1an, 0x4244n])
-      : process.platform === "linux"
-        ? new Set([
-            0xef53n,
-            0x58465342n,
-            0x9123683en
-          ])
-        : new Set<bigint>();
+    process.platform === "linux"
+      ? new Set([0xef53n, 0x58465342n, 0x9123683en])
+      : new Set<bigint>();
   if (!localTypes.has(fileSystem.type)) {
     throw new TypeError(
       `foreign-key migration latches require a reviewed local filesystem (type ${fileSystem.type.toString(16)})`

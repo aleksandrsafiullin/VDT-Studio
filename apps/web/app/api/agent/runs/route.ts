@@ -204,7 +204,7 @@ export async function POST(request: Request) {
   }
 }
 
-function formatZodIssue(issue: { path: Array<string | number>; message: string }): string {
-  const path = issue.path.join(".");
+function formatZodIssue(issue: { path: readonly PropertyKey[]; message: string }): string {
+  const path = issue.path.map(String).join(".");
   return path ? `${path}: ${issue.message}` : issue.message;
 }

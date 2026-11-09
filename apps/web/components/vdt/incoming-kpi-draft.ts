@@ -101,7 +101,10 @@ export class IncomingKpiDraftBook {
   open(ownerKey: string, input: IncomingKpiBatchInput, copyManualFrom?: IncomingKpiBatchInput): RetainedIncomingKpiDraft {
     const source = input.draft.source;
     const key = `${ownerKey}/${input.draft.targetNodeId}/${source.kind === "manual" ? "manual" : `${source.proposalId}/${source.groupId}`}`;
-    const previous = this.entries.get(key);
+    let previous = this.entries.get(key);
+    if (source.kind === "manual" && previous && !previous.dirty && previous.input.context.contextHash !== input.context.contextHash) {
+      previous = undefined;
+    }
     const copied = !previous && copyManualFrom?.draft.manualChildren.length
       ? editIncomingKpiDraft(input, { manualChildren: copyManualFrom.draft.manualChildren.map(row => ({ ...row })),
         estimatedAliases: copyManualFrom.draft.estimatedAliases?.filter(alias => copyManualFrom.draft.manualChildren.some(row => row.key === alias)) ?? [],

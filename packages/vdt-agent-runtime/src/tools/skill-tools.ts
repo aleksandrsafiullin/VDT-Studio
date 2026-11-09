@@ -24,7 +24,7 @@ const skillListTool: AgentTool = {
   name: "skill.list",
   description: "List available VDT skills without reading full markdown.",
   inputSchema: z.object({}),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "retrieving_skills",
   async run(context) {
     const library = await loadRunSkillLibrary(context);
@@ -56,7 +56,7 @@ const skillSearchTool: AgentTool = {
     goal: z.string().max(1_000).optional(),
     maxSkills: z.number().int().min(1).max(10).optional()
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "retrieving_skills",
   async run(context, input) {
     const library = await loadRunSkillLibrary(context);
@@ -92,7 +92,7 @@ const skillReadTool: AgentTool = {
     skillId: z.string().min(1).max(160),
     maxChars: z.number().int().min(200).max(10_000).optional()
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "reading_skills",
   async run(context, input) {
     const library = await loadRunSkillLibrary(context);
@@ -138,7 +138,7 @@ const skillSelectTool: AgentTool = {
   name: "skill.select",
   description: "Select the primary VDT skill after reading it. Replaces the preliminary or previous selection when the request context warrants a different skill. Does not change the graph.",
   inputSchema: z.object({ skillId: z.string().min(1).max(160), reason: z.string().trim().min(1).max(500) }).strict(),
-  outputSchema: z.record(z.unknown()), phase: "reading_skills",
+  outputSchema: z.record(z.string(), z.unknown()), phase: "reading_skills",
   async run(context, input) {
     const library = await loadRunSkillLibrary(context), skill = library.byId.get(input.skillId);
     if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", "Skill was not found in this run's catalog.");
@@ -157,7 +157,7 @@ const skillCompileRecipeTool: AgentTool = {
   inputSchema: z.object({
     skillId: z.string().min(1).max(160)
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   async run(context, input) {
     const library = await loadRunSkillLibrary(context);
@@ -210,10 +210,10 @@ const skillSeedDraftFromRecipeTool: AgentTool = {
     rootKpi: z.string().min(1).max(200),
     unit: z.string().max(80).optional(),
     timePeriod: z.string().max(80).optional(),
-    knownInputs: z.record(z.union([z.string(), z.number()])).optional(),
+    knownInputs: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
     maxInitialDrivers: z.number().int().min(1).max(12).optional()
   }),
-  outputSchema: z.record(z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
   requiresDraftProject: true,
   phase: "building_graph",
