@@ -8158,7 +8158,7 @@ import { execFile as execFile7 } from "node:child_process";
 import { promisify as promisify6 } from "node:util";
 
 // ../vdt-agent/src/index.ts
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // ../../node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/classic/external.js
@@ -28112,13 +28112,19 @@ function loadDefaultSkillLibrary() {
   return defaultSkillLibraryPromise;
 }
 async function resolveDefaultSkillRoot() {
+  const { access: access3 } = await import("node:fs/promises");
+  const bundledDirectory = process.env.VDT_BUNDLED_SKILLS_DIR;
+  if (bundledDirectory) {
+    if (!isAbsolute(bundledDirectory)) throw new Error("Bundled skill directory must be absolute.");
+    await access3(join(bundledDirectory, "registry.md"));
+    return bundledDirectory;
+  }
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
     join(moduleDir, "vdt-agent-skills"),
     join(dirname(moduleDir), "vdt-agent-skills"),
     join(dirname(moduleDir), "skills")
   ];
-  const { access: access3 } = await import("node:fs/promises");
   for (const candidate of candidates) {
     try {
       await access3(join(candidate, "registry.md"));

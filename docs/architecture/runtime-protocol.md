@@ -9,6 +9,15 @@ Smart model/reasoning discovery also admits the manifest-owned `ollama`,
 `ai_smart_execution` command. Their endpoints remain owned by the host manifest;
 no relative HTTP fallback or new native command is needed in the desktop view.
 
+## Local macOS Alpha Packaging
+
+The signed local app includes Node for both the web server and the private
+sidecar. Its web listener serves the existing project and editor routes behind
+a per-launch session. CLI completion, provider authentication and Smart metadata
+still use the native command allowlist and version 1 private framing. The host
+runs CLI discovery and cancellation off the WebKit event thread. It sends a
+cancel frame only while the request still owns the sidecar writer.
+
 ## Smart completion registration (partial product integration)
 
 The existing `complete` method now admits the registered

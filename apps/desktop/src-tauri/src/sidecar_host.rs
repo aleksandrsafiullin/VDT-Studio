@@ -4,12 +4,13 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     env,
+    ffi::OsString,
     fmt,
     fs::File,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
-    sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc, Mutex},
+    sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc, Mutex, OnceLock},
     thread,
     time::{Duration, SystemTime},
 };
@@ -18,6 +19,7 @@ const PROTOCOL_VERSION: u8 = 1;
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 const STARTUP_HANDSHAKE_TIMEOUT_MS: u64 = 5000;
 const PACKAGED_SIDECAR_RELATIVE_PATH: &str = "sidecars/vdt-local-runtime";
+#[cfg(windows)]
 const WINDOWS_PACKAGED_SIDECAR_RELATIVE_PATH: &str = "sidecars/vdt-local-runtime.cmd";
 #[cfg(windows)]
 const PACKAGED_SIDECAR_RELATIVE_PATHS: &[&str] = &[
@@ -62,6 +64,8 @@ impl fmt::Display for RuntimeError {
     }
 }
 
+impl std::error::Error for RuntimeError {}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeBackendStatus {
@@ -83,8 +87,15 @@ pub struct RuntimeState {
 pub struct DesktopRuntime {
     sidecar: Mutex<Option<SidecarProcess>>,
     resource_dir: Mutex<Option<PathBuf>>,
+    bundled_runtime: OnceLock<BundledRuntime>,
     crash_timestamps: Mutex<Vec<SystemTime>>,
     smart_admissions: Mutex<HashMap<String, Arc<SmartMetadataAdmission>>>,
+}
+
+struct BundledRuntime {
+    node: PathBuf,
+    data_dir: PathBuf,
+    path: OsString,
 }
 
 #[derive(Default)]
@@ -115,6 +126,18 @@ impl DesktopRuntime {
             .map_err(|_| RuntimeError::new("SIDECAR_LOCK_FAILED", "Desktop resource directory lock was poisoned."))?;
         *guard = Some(resource_dir);
         Ok(())
+    }
+
+    #[cfg(all(target_os = "macos", not(debug_assertions)))]
+    pub fn set_bundled_runtime(&self, node: PathBuf, data_dir: PathBuf, path: OsString) -> Result<(), RuntimeError> {
+        self.bundled_runtime.set(BundledRuntime { node, data_dir, path })
+            .map_err(|_| RuntimeError::new("SIDECAR_ALREADY_CONFIGURED", "Bundled runtime was already configured."))
+    }
+
+    pub fn stop(&self) {
+        if let Ok(mut sidecar) = self.sidecar.lock() {
+            drop(sidecar.take());
+        }
     }
 
     pub fn start(&self) -> Result<RuntimeState, RuntimeError> {
@@ -174,25 +197,16 @@ impl DesktopRuntime {
         let admission = self.smart_admissions.lock()
             .map_err(|_| RuntimeError::new("SIDECAR_LOCK_FAILED", "Metadata admission lock was poisoned."))?
             .get(request_id).cloned();
-        if let Some(admission) = admission {
-            admission.cancelled.store(true, Ordering::SeqCst);
-            let writer = admission.writer.lock()
-                .map_err(|_| RuntimeError::new("SIDECAR_LOCK_FAILED", "Metadata writer lock was poisoned."))?;
-            if let Some(writer) = writer.as_ref() {
-                return write_sidecar_frame(writer, json!({ "protocolVersion": PROTOCOL_VERSION, "type": "cancel", "requestId": request_id }));
-            }
-            return Ok(());
+        // The runtime can only cancel a currently reserved request. A late
+        // signal must not acquire the response mutex or reach another request.
+        let Some(admission) = admission else { return Ok(()); };
+        admission.cancelled.store(true, Ordering::SeqCst);
+        let writer = admission.writer.lock()
+            .map_err(|_| RuntimeError::new("SIDECAR_LOCK_FAILED", "Metadata writer lock was poisoned."))?;
+        if let Some(writer) = writer.as_ref() {
+            write_sidecar_frame(writer, json!({ "protocolVersion": PROTOCOL_VERSION, "type": "cancel", "requestId": request_id }))?;
         }
-        let mut sidecar = self.lock_or_start()?;
-        let result = sidecar
-            .as_mut()
-            .ok_or_else(|| RuntimeError::new("SIDECAR_NOT_STARTED", "Sidecar was not started."))?
-            .cancel(request_id);
-        if matches!(result.as_ref(), Err(error) if error.is_process_failure()) {
-            *sidecar = None;
-            self.record_crash();
-        }
-        result
+        Ok(())
     }
 
     pub fn reserve_smart_request(&self, request_id: &str) -> Result<(), RuntimeError> {
@@ -236,7 +250,11 @@ impl DesktopRuntime {
                 sidecar.send_request(method, request, Some(request_id.clone()))?;
                 *writer = Some(Arc::clone(&sidecar.stdin));
             }
-            sidecar.read_response()
+            let result = sidecar.read_response();
+            if let Ok(mut writer) = admission.writer.lock() {
+                writer.take();
+            }
+            result
         })();
         if let Ok(mut admissions) = self.smart_admissions.lock() { admissions.remove(&request_id); }
         if matches!(result.as_ref(), Err(error) if error.is_process_failure()) {
@@ -299,7 +317,7 @@ impl DesktopRuntime {
             .map_err(|_| RuntimeError::new("SIDECAR_LOCK_FAILED", "Desktop runtime lock was poisoned."))?;
         if guard.is_none() {
             self.assert_crash_budget()?;
-            *guard = Some(SidecarProcess::start(self.resource_dir()?)?);
+            *guard = Some(SidecarProcess::start(self.resource_dir()?, self.bundled_runtime.get())?);
         }
         Ok(guard)
     }
@@ -336,9 +354,7 @@ impl DesktopRuntime {
 
 impl Drop for DesktopRuntime {
     fn drop(&mut self) {
-        if let Ok(mut sidecar) = self.sidecar.lock() {
-            drop(sidecar.take());
-        }
+        self.stop();
     }
 }
 
@@ -357,10 +373,20 @@ struct SidecarProcess {
 }
 
 impl SidecarProcess {
-    fn start(resource_dir: Option<PathBuf>) -> Result<Self, RuntimeError> {
+    fn start(resource_dir: Option<PathBuf>, bundled: Option<&BundledRuntime>) -> Result<Self, RuntimeError> {
         let binary = sidecar_binary_path(resource_dir.as_deref())?;
         verify_sidecar_integrity(&binary)?;
-        let mut child = Command::new(&binary)
+        let mut command = Command::new(&binary);
+        if let Some(bundled) = bundled {
+            command
+                .env("VDT_NODE", &bundled.node)
+                .env("VDT_DATA_DIR", &bundled.data_dir)
+                .env("VDT_HARNESS_CONFIG", bundled.data_dir.join("harnesses.json"))
+                .env("PATH", &bundled.path)
+                .env_remove("NODE_OPTIONS")
+                .env_remove("NODE_PATH");
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -469,15 +495,6 @@ impl SidecarProcess {
                 .unwrap_or("Sidecar request failed.");
             return Err(RuntimeError::new("SIDECAR_REQUEST_FAILED", format!("{}: {}", code, message)));
         }
-    }
-
-    fn cancel(&mut self, request_id: &str) -> Result<(), RuntimeError> {
-        self.ensure_alive()?;
-        self.write_frame(json!({
-            "protocolVersion": PROTOCOL_VERSION,
-            "type": "cancel",
-            "requestId": request_id
-        }))
     }
 
     fn ensure_alive(&mut self) -> Result<(), RuntimeError> {

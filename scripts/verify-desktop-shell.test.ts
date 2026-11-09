@@ -23,6 +23,7 @@ const commands = [
 
 async function writeFixture(options: {
   permission?: string;
+  macOrigin?: string;
   packageDependency?: string;
   directProcessSpawn?: boolean;
   missingAutoStart?: boolean;
@@ -34,6 +35,21 @@ async function writeFixture(options: {
   tempDirs.push(root);
   await mkdir(path.join(root, "apps/desktop/src-tauri/src"), { recursive: true });
   await mkdir(path.join(root, "apps/desktop/src-tauri/capabilities"), { recursive: true });
+  await mkdir(path.join(root, "apps/desktop/src-tauri/permissions"), { recursive: true });
+  await writeFile(
+    path.join(root, "apps/desktop/src-tauri/permissions/vdt-runtime.json"),
+    JSON.stringify({ permission: [{ identifier: "vdt-runtime", commands: { allow: commands } }] })
+  );
+  await writeFile(
+    path.join(root, "apps/desktop/src-tauri/capabilities/mac-local-web.json"),
+    JSON.stringify({
+      local: false,
+      platforms: ["macOS"],
+      windows: ["main"],
+      remote: { urls: [options.macOrigin ?? "http://127.0.0.1:37541/*"] },
+      permissions: ["vdt-runtime"]
+    })
+  );
 
   await writeFile(
     path.join(root, "apps/desktop/package.json"),
@@ -69,7 +85,7 @@ async function writeFixture(options: {
   );
   await writeFile(
     path.join(root, "apps/desktop/src-tauri/capabilities/default.json"),
-    JSON.stringify({ permissions: options.permission ? [options.permission] : [] })
+    JSON.stringify({ permissions: [options.permission ?? "vdt-runtime"] })
   );
   await writeFile(path.join(root, "apps/desktop/src-tauri/Cargo.toml"), "[package]\nname = \"desktop\"\n[dependencies]\nsha2 = \"0.10\"\n");
   await writeFile(
@@ -130,6 +146,11 @@ describe("verify-desktop-shell", () => {
   it("fails if a generic native permission is enabled", async () => {
     const root = await writeFixture({ permission: "fs:default" });
     expect(() => verifyDesktopShell(root)).toThrow(/default desktop capability must not enable generic permissions/);
+  });
+
+  it("rejects a broadened packaged macOS command origin", async () => {
+    const root = await writeFixture({ macOrigin: "http://127.0.0.1:*/*" });
+    expect(() => verifyDesktopShell(root)).toThrow(/only the owned loopback origin/);
   });
 
   it("fails if a banned plugin dependency is declared", async () => {

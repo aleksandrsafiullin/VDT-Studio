@@ -9,6 +9,7 @@ const nextConfig = {
   // development keeps its existing cache and generated TypeScript files.
   distDir: process.env.VDT_NEXT_DIST_DIR?.trim() || ".next",
   devIndicators: false,
+  output: process.env.VDT_NEXT_STANDALONE === "1" ? "standalone" : undefined,
   outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: [
     "@vdt-studio/vdt-core",

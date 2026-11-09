@@ -8,11 +8,11 @@ qualify installers or supply missing native icon/signing assets. See
 
 Last reviewed: **2026-10-19**.
 
-VDT Studio `0.1.0-alpha.0` packages the Node 24 product CLI and paired localhost runner as a tarball. The web workspace remains source-deployed. The repository also contains a Tauri desktop shell and bundled Node sidecar foundation, but not a signed, clean-machine production installer.
+VDT Studio `0.1.0-alpha.0` packages the Node 24 product CLI and paired localhost runner as a tarball. The web workspace remains source-deployed. The local Apple Silicon alpha also has a signed [desktop packaging path](desktop-installation.md#local-apple-silicon-alpha) with a bundled Node runtime.
 
 ## Current Release Status
 
-The [November macOS candidate checks](PRODUCTION_READINESS.md#mac-local-alpha-smart-kpi-and-browser-regression-checks-2026-11-09) record current Smart KPI, browser and release-gate evidence. Earlier [launcher and dependency checks](PRODUCTION_READINESS.md#mac-local-alpha-launcher-and-zod-verification-2026-11-09) and the [October local browser run](PRODUCTION_READINESS.md#local-alpha-browser-verification-2026-10-19) retain their respective results. GUI distribution, recovery, AI/business acceptance and any claimed platform support still need their own evidence. Native installers remain unqualified.
+The [November macOS candidate checks](PRODUCTION_READINESS.md#mac-local-alpha-smart-kpi-and-browser-regression-checks-2026-11-09) record current Smart KPI, browser and release-gate evidence. Earlier [launcher and dependency checks](PRODUCTION_READINESS.md#mac-local-alpha-launcher-and-zod-verification-2026-11-09) and the [October local browser run](PRODUCTION_READINESS.md#local-alpha-browser-verification-2026-10-19) retain their respective results. GUI distribution, recovery, AI/business acceptance and any claimed platform support still need their own evidence. The local macOS package has a separate install and live-provider acceptance. Production native distribution and other platforms require separate qualification.
 
 ### Dependency audit evidence
 

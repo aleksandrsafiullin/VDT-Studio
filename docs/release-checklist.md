@@ -82,6 +82,12 @@ pnpm desktop:verify
 pnpm desktop:native:preflight
 ```
 
+For the local Apple Silicon alpha, run the signed packaging path in
+[Desktop Installation](desktop-installation.md#local-apple-silicon-alpha).
+Check both Developer ID signatures, the DMG checksum, installation from the
+mounted image, clean-profile startup, a live Smart KPI apply and persistence after restart.
+Keep notarized distribution and the production native preflight as separate gates.
+
 Before claiming clean-machine desktop support:
 
 - Rust Cargo and `rustc` are available;

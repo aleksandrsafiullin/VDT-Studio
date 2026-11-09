@@ -1,0 +1,29 @@
+{
+  "build": {
+    "beforeBuildCommand": null,
+    "frontendDist": null
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "VDT Studio",
+        "width": 1440,
+        "height": 960,
+        "minWidth": 1100,
+        "minHeight": 760,
+        "resizable": true,
+        "fullscreen": false,
+        "create": false
+      }
+    ]
+  },
+  "bundle": {
+    "macOS": {
+      "minimumSystemVersion": "14.0"
+    },
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.icns"
+    ]
+  }
+}

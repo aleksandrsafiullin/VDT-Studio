@@ -1,5 +1,8 @@
 mod sidecar_host;
 
+#[cfg(all(target_os = "macos", not(debug_assertions)))]
+mod packaged_web;
+
 use serde::Deserialize;
 use sidecar_host::{DesktopRuntime, RuntimeBackendStatus};
 use tauri::{Manager, State};
@@ -99,10 +102,12 @@ fn ai_list_backends(runtime: State<'_, DesktopRuntime>) -> Result<Vec<RuntimeBac
 }
 
 #[tauri::command]
-fn ai_detect_subscription_clis(agent_id: Option<String>, runtime: State<'_, DesktopRuntime>) -> Result<serde_json::Value, String> {
-    runtime
-        .detect_subscription_clis(agent_id.as_deref())
-        .map_err(|error| error.to_string())
+async fn ai_detect_subscription_clis(agent_id: Option<String>, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<DesktopRuntime>()
+            .detect_subscription_clis(agent_id.as_deref())
+            .map_err(|error| error.to_string())
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -155,8 +160,10 @@ async fn ai_complete(
 }
 
 #[tauri::command]
-fn ai_cancel(request_id: String, runtime: State<'_, DesktopRuntime>) -> Result<(), String> {
-    runtime.cancel(&request_id).map_err(|error| error.to_string())
+async fn ai_cancel(request_id: String, app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<DesktopRuntime>().cancel(&request_id).map_err(|error| error.to_string())
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -185,6 +192,8 @@ pub fn run() {
             let runtime = app.state::<DesktopRuntime>();
             match app.path().resource_dir() {
                 Ok(resource_dir) => {
+                    #[cfg(all(target_os = "macos", not(debug_assertions)))]
+                    packaged_web::setup(app, &resource_dir, &runtime)?;
                     if let Err(error) = runtime.set_resource_dir(resource_dir) {
                         eprintln!("vdt_desktop_resource_dir_failed: {}", error);
                     }
@@ -193,6 +202,8 @@ pub fn run() {
                     eprintln!("vdt_desktop_resource_dir_unavailable: {}", error);
                 }
             }
+            #[cfg(all(target_os = "macos", debug_assertions))]
+            tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?.build()?;
             if let Err(error) = runtime.start() {
                 eprintln!("vdt_desktop_sidecar_start_failed: {}", error);
             }
@@ -212,8 +223,17 @@ pub fn run() {
             speech_request,
             get_app_mode
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running VDT Studio Desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building VDT Studio Desktop")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                #[cfg(all(target_os = "macos", not(debug_assertions)))]
+                if let Some(web) = app.try_state::<packaged_web::PackagedWeb>() {
+                    web.stop();
+                }
+                app.state::<DesktopRuntime>().stop();
+            }
+        });
 }
 
 #[cfg(test)]
@@ -224,6 +244,12 @@ mod harness_tests {
     }
     fn smart_completion() -> serde_json::Value {
         serde_json::json!({ "requestId": "test-request", "providerId": "local_runner", "backendId": "codex_subscription", "taskType": "suggest_incoming_kpis", "schemaId": "suggest-incoming-kpis-v1", "input": {}, "model": "selected" })
+    }
+    #[test]
+    fn cancelling_an_unowned_request_does_not_start_the_sidecar() {
+        let runtime = super::DesktopRuntime::default();
+        assert!(runtime.cancel("already-finished").is_ok());
+        assert_eq!(runtime.state().status, "stopped");
     }
     #[test]
     fn smart_reasoning_missing_and_explicit_off_remain_distinct() {

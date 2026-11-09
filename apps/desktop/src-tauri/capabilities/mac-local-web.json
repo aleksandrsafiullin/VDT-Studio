@@ -1,0 +1,9 @@
+{
+  "identifier": "mac-local-web",
+  "description": "Reviewed commands for the authenticated packaged web server.",
+  "platforms": ["macOS"],
+  "local": false,
+  "remote": { "urls": ["http://127.0.0.1:37541/*"] },
+  "windows": ["main"],
+  "permissions": ["vdt-runtime"]
+}

@@ -1,0 +1,24 @@
+{
+  "permission": [
+    {
+      "identifier": "vdt-runtime",
+      "description": "Reviewed VDT Studio runtime commands.",
+      "commands": {
+        "allow": [
+          "ai_harness_settings",
+          "ai_list_backends",
+          "ai_detect_subscription_clis",
+          "ai_test_backend",
+          "ai_list_models",
+          "ai_complete",
+          "ai_smart_execution",
+          "ai_cancel",
+          "ai_get_run",
+          "open_provider_auth",
+          "speech_request",
+          "get_app_mode"
+        ]
+      }
+    }
+  ]
+}

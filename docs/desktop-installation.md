@@ -8,11 +8,28 @@ Last reviewed: **2026-07-23**.
 
 VDT Studio Desktop is the target distribution for seamless subscription CLI and local-model execution.
 
-## Current Alpha Boundary
+## Local Apple Silicon Alpha
+
+The local arm64 package uses the Tauri WebKit window, a bundled production Next.js server and Node 24. The app starts and stops the web server and the private AI sidecar together. SQLite and host settings default to the app's local Application Support directory. The user signs in to subscription CLIs through the provider's normal workflow.
+
+Build from a commit that contains the native alpha packaging changes. Install Node 24, Corepack, Rust and the macOS command-line tools on the build Mac. Use an empty destination and a Developer ID Application identity in the login keychain.
+
+```bash
+mkdir -p output/release/local-macos-alpha
+scripts/package-macos-alpha.sh output/release/local-macos-alpha HEAD
+```
+
+The script uses the committed pnpm and Cargo locks, verifies the bundled Node archive checksum, and seals the app and disk image with timestamped signatures. Set `VDT_MACOS_SIGNING_IDENTITY` to the certificate fingerprint if the Mac has multiple Developer ID Application identities. The artifacts include the input commit and a DMG checksum.
+
+Mount the disk image on the Mac and copy VDT Studio into Applications. The built app includes Node and uses port 37541 on IPv4 loopback. A conflicting listener prevents startup. The local acceptance procedure uses an empty absolute `VDT_DATA_DIR` and a fresh 32-digit hexadecimal `VDT_DESKTOP_WEBKIT_PROFILE` to separate SQLite and WebKit state. Quit and reopen with the same values to verify persistence.
+
+The local package has a Developer ID signature. Apple notarization and Gatekeeper acceptance of a quarantined download are separate distribution gates. The native alpha build targets Apple Silicon and configures macOS 14 as its deployment floor. Local host acceptance establishes only the tested macOS and hardware.
+
+## Production Distribution Boundary
 
 The repository contains the Tauri desktop shell foundation under `apps/desktop`, reviewed native commands and embedded local AI runtime sidecar launchers for POSIX and Windows. The current checked-in sidecar is a bundled Node runtime, not a final production sidecar binary.
 
-The Tauri bundle config uses cross-platform desktop bundle targets. This is configuration readiness only; desktop installers are not release-ready until signing, native toolchain verification and self-contained sidecar packaging are complete.
+The shared Tauri bundle configuration retains cross-platform desktop bundle targets. Production distribution still requires notarization, native toolchain verification, the production sidecar gate and platform qualification.
 
 Do not claim clean-machine desktop installation support until:
 

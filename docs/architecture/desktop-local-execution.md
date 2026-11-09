@@ -65,6 +65,22 @@ Settings `ai_test_backend` checks subscription CLI/session readiness using the r
 
 Codex detection and default execution share the node-only installed-executable selector. It chooses the newest recognizable safe Codex CLI already on the host's `PATH`, using bounded isolated `--version` probes; model discovery and detected session-binding wiring then use that selected executable. Equivalent versions retain `PATH` priority, and a stable version outranks its same-core prereleases. No app-specific executable path, installation/update step, model catalog or frontend executable override is introduced. Native Windows process-tree cleanup and packaged desktop execution of this selection path still need platform evidence.
 
+## Packaged macOS Alpha Web Host
+
+A macOS release build creates its WebKit window after the app-owned Next.js server
+accepts requests. The Rust host binds and retains `127.0.0.1:37541` and passes the
+open socket to its packaged Node child. A private startup frame authorizes a
+one-time navigation that sets an HttpOnly, SameSite cookie. The server checks
+the direct Host, origin and session before forwarding requests to Next.js.
+WebKit navigation stays on the owned origin. The Tauri capability grants the
+main window on this exact macOS origin only the existing reviewed commands.
+
+The web server reads the verified release build and bundled skill resources
+inside the app. The desktop host passes its writable data path and its embedded
+Node executable to the private AI sidecar. The same approved pipes carry Smart
+metadata, completions and cancellations. The web server exits on loss of the
+host pipe. The Tauri exit event reaps both children.
+
 ## Disabled Surfaces
 
 `speech_request` delegates the closed local voice-input operations to the private sidecar. It accepts only operation/model/language/job/audio fields, never native paths or executable arguments. The downloader installs pinned whisper.cpp binaries and model weights only after explicit confirmation. macOS microphone purpose text/audio-input entitlement are included in the desktop configuration; native packaged permission prompts and Windows behavior still require qualification. See [Voice input](../VOICE_INPUT.md).

@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export * from "./skill-questions";
@@ -445,13 +445,19 @@ export function loadDefaultSkillResources(): Promise<Record<string, Record<strin
 }
 
 async function resolveDefaultSkillRoot(): Promise<string> {
+  const { access } = await import("node:fs/promises");
+  const bundledDirectory = process.env.VDT_BUNDLED_SKILLS_DIR;
+  if (bundledDirectory) {
+    if (!isAbsolute(bundledDirectory)) throw new Error("Bundled skill directory must be absolute.");
+    await access(join(bundledDirectory, "registry.md"));
+    return bundledDirectory;
+  }
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
     join(moduleDir, "vdt-agent-skills"),
     join(dirname(moduleDir), "vdt-agent-skills"),
     join(dirname(moduleDir), "skills")
   ];
-  const { access } = await import("node:fs/promises");
   for (const candidate of candidates) {
     try {
       await access(join(candidate, "registry.md"));

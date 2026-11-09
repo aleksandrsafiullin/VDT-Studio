@@ -6,8 +6,8 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_ROOT = resolve(dirname(SCRIPT_PATH), "..");
 
 const REQUIRED_COMMANDS = [
-  "ai_list_backends",
   "ai_harness_settings",
+  "ai_list_backends",
   "ai_detect_subscription_clis",
   "ai_test_backend",
   "ai_list_models",
@@ -79,8 +79,26 @@ export function verifyDesktopShell(root = DEFAULT_ROOT) {
   if (tauriConfig.bundle?.macOS?.signingIdentity !== "-") fail("macOS signing identity placeholder must be explicit.");
 
   const capability = JSON.parse(read(root, "apps/desktop/src-tauri/capabilities/default.json"));
-  if (Array.isArray(capability.permissions) && capability.permissions.length > 0) {
+  if (JSON.stringify(capability.permissions) !== '["vdt-runtime"]') {
     fail("default desktop capability must not enable generic permissions.");
+  }
+  const permissions = JSON.parse(read(root, "apps/desktop/src-tauri/permissions/vdt-runtime.json"));
+  if (
+    permissions.permission.length !== 1 ||
+    permissions.permission[0].identifier !== "vdt-runtime" ||
+    JSON.stringify(permissions.permission[0].commands) !== JSON.stringify({ allow: REQUIRED_COMMANDS })
+  ) {
+    fail("desktop runtime permission must contain only the reviewed commands.");
+  }
+  const macCapability = JSON.parse(read(root, "apps/desktop/src-tauri/capabilities/mac-local-web.json"));
+  if (
+    macCapability.local !== false ||
+    JSON.stringify(macCapability.platforms) !== '["macOS"]' ||
+    JSON.stringify(macCapability.windows) !== '["main"]' ||
+    JSON.stringify(macCapability.remote?.urls) !== '["http://127.0.0.1:37541/*"]' ||
+    JSON.stringify(macCapability.permissions) !== '["vdt-runtime"]'
+  ) {
+    fail("packaged macOS capability must match only the owned loopback origin and reviewed commands.");
   }
 
   const rustSource = read(root, "apps/desktop/src-tauri/src/lib.rs");

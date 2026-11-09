@@ -1,5 +1,14 @@
 # Production Readiness
 
+## Local Apple Silicon Package Boundary
+
+The local arm64 alpha has a signed packaging path that embeds Node and serves
+the compiled Next.js application from an authenticated loopback session. The
+Tauri command surface and private sidecar protocol stay in place. Release
+artifacts and host-specific acceptance evidence are recorded per build. Apple
+notarization, quarantined downloads and other Mac or Windows environments
+require separate qualification. See [Desktop Installation](desktop-installation.md#local-apple-silicon-alpha).
+
 ## Selected Skill in Suggested KPI (2026-11-03)
 
 Implemented in source: Smart preparation binds the exact Context-selected Skill,

@@ -1,5 +1,17 @@
 # Local AI And Data Threat Model
 
+## Packaged macOS Alpha Boundary
+
+The signed Apple Silicon alpha serves its web interface over an app-owned
+IPv4 loopback socket. The native host retains that socket if the web child
+exits. A one-use bootstrap over the private startup channel sets an HttpOnly,
+SameSite cookie. Requests without the session or with a foreign Host or
+Origin fail before Next.js. The macOS Tauri capability limits the main window
+to the reserved origin and the existing application command allowlist.
+Subscription CLI operations still travel over the framed sidecar pipes.
+The native installation keeps the editable SQLite store and settings outside
+the sealed app.
+
 ## Local harness integration (2026-11-02)
 
 Local user Settings may register a saved executable/argument vector and host environment references, separately from model/task authority. The settings boundary uses local-origin or paired-loopback controls, or the private desktop pipe. Native tool telemetry is rejected, never executed as a VDT tool. Protocol rejection is not hard OS isolation; unconfirmed daemon cancellation retains evidence and blocks Smart reuse. See [Harness connections](../HARNESS_CONNECTIONS.md).
