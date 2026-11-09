@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSpeechRuntime, SpeechError } from "@vdt-studio/local-runner/speech";
 import { isLocalWebHostname, resolveVdtAppModeForRequest } from "@/lib/app-mode";
+import { hasSameLocalOrigin } from "@/lib/local-request-origin";
 
 export const runtime = "nodejs";
 const MAX_BODY_BYTES = 550_000;
@@ -11,8 +12,9 @@ export async function POST(request: Request) {
   if (!isLocalWebHostname(url.hostname) || resolveVdtAppModeForRequest(request) !== "development_web") {
     return NextResponse.json({ error: "Local voice input is available in VDT Studio Desktop or on localhost." }, { status: 403 });
   }
-  const origin = request.headers.get("origin");
-  if (origin && origin !== url.origin) return NextResponse.json({ error: "Voice input requires a same-origin request." }, { status: 403 });
+  if (request.headers.get("origin") && !hasSameLocalOrigin(request)) {
+    return NextResponse.json({ error: "Voice input requires a same-origin request." }, { status: 403 });
+  }
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return NextResponse.json({ error: "Voice input requires JSON." }, { status: 415 });
   }
