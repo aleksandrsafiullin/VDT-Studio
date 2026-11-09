@@ -1383,9 +1383,16 @@ test("creates a saved VDT from the project workspace and restores its brief", { 
   await page.goto(`/projects/${productionWorkspace.projectId}`);
   await page.getByTestId("new-vdt-button").click();
   const dialog = page.getByTestId("new-vdt-modal");
-  await dialog.getByRole("textbox", { name: "Root KPI", exact: true }).fill("Overall Equipment Effectiveness");
-  await dialog.getByRole("textbox", { name: "Unit", exact: true }).fill("%");
-  await dialog.getByRole("textbox", { name: "Period", exact: true }).fill("daily");
+  const rootKpi = dialog.getByRole("textbox", { name: "Root KPI", exact: true });
+  const unit = dialog.getByRole("textbox", { name: "Unit", exact: true });
+  const period = dialog.getByRole("textbox", { name: "Period", exact: true });
+  await expect(rootKpi).toBeFocused();
+  await rootKpi.fill("Overall Equipment Effectiveness");
+  await unit.fill("%");
+  await period.fill("daily");
+  await expect(rootKpi).toHaveValue("Overall Equipment Effectiveness");
+  await expect(unit).toHaveValue("%");
+  await expect(period).toHaveValue("daily");
   await dialog.getByTestId("new-vdt-modal-confirm").click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByTestId("vdt-canvas")).toBeVisible();
@@ -1420,40 +1427,40 @@ test("settings modal keeps stable size across sections", { tag: "@chromium" }, a
   await expect(modal.getByRole("heading", { name: "Execution mode" })).toBeVisible();
   await expect(page.getByTestId("execution-mode-panel-byok")).toBeVisible();
 
-  const executionBox = await modal.boundingBox();
-  expect(executionBox).not.toBeNull();
+  // The opening animation scales the rendered box without changing the layout.
+  const measureLayout = () => modal.evaluate(element => {
+    const dialog = element as HTMLElement;
+    return { height: dialog.offsetHeight, width: dialog.offsetWidth };
+  });
+  const executionBox = await measureLayout();
 
   await page.getByTestId("execution-mode-tab-local-cli").click();
   await expect(page.getByTestId("execution-mode-panel-local-cli")).toBeVisible();
 
-  const localCliBox = await modal.boundingBox();
-  expect(localCliBox).not.toBeNull();
-  expect(Math.abs(localCliBox!.height - executionBox!.height)).toBeLessThanOrEqual(2);
-  expect(localCliBox!.width).toBe(executionBox!.width);
+  const localCliBox = await measureLayout();
+  expect(Math.abs(localCliBox.height - executionBox.height)).toBeLessThanOrEqual(2);
+  expect(localCliBox.width).toBe(executionBox.width);
 
   await page.getByTestId("execution-mode-tab-byok").click();
   await expect(page.getByTestId("execution-mode-panel-byok")).toBeVisible();
 
-  const byokBox = await modal.boundingBox();
-  expect(byokBox).not.toBeNull();
-  expect(Math.abs(byokBox!.height - executionBox!.height)).toBeLessThanOrEqual(2);
-  expect(byokBox!.width).toBe(executionBox!.width);
+  const byokBox = await measureLayout();
+  expect(Math.abs(byokBox.height - executionBox.height)).toBeLessThanOrEqual(2);
+  expect(byokBox.width).toBe(executionBox.width);
 
   await page.getByTestId("settings-nav-display").click();
   await expect(modal.getByRole("heading", { name: "Display" })).toBeVisible();
 
-  const displayBox = await modal.boundingBox();
-  expect(displayBox).not.toBeNull();
-  expect(Math.abs(displayBox!.height - executionBox!.height)).toBeLessThanOrEqual(2);
-  expect(displayBox!.width).toBe(executionBox!.width);
+  const displayBox = await measureLayout();
+  expect(Math.abs(displayBox.height - executionBox.height)).toBeLessThanOrEqual(2);
+  expect(displayBox.width).toBe(executionBox.width);
 
   await page.getByTestId("settings-nav-execution").click();
   await expect(modal.getByRole("heading", { name: "Execution mode" })).toBeVisible();
 
-  const executionAgainBox = await modal.boundingBox();
-  expect(executionAgainBox).not.toBeNull();
-  expect(Math.abs(executionAgainBox!.height - executionBox!.height)).toBeLessThanOrEqual(2);
-  expect(executionAgainBox!.width).toBe(executionBox!.width);
+  const executionAgainBox = await measureLayout();
+  expect(Math.abs(executionAgainBox.height - executionBox.height)).toBeLessThanOrEqual(2);
+  expect(executionAgainBox.width).toBe(executionBox.width);
 });
 
 test("setup rail model menu opens provider settings only after its explicit action", { tag: "@chromium" }, async ({ page }, testInfo) => {
