@@ -76,10 +76,11 @@ WebKit navigation stays on the owned origin. The Tauri capability grants the
 main window on this exact macOS origin only the existing reviewed commands.
 
 The web server reads the verified release build and bundled skill resources
-inside the app. The desktop host passes its writable data path and its embedded
-Node executable to the private AI sidecar. The same approved pipes carry Smart
-metadata, completions and cancellations. The web server exits on loss of the
-host pipe. The Tauri exit event reaps both children.
+inside the app. It keeps the Next.js route cache in memory so that serving pages
+does not modify signed resources. The desktop host passes its writable data path
+and its embedded Node executable to the private AI sidecar. The same approved
+pipes carry Smart metadata, completions and cancellations. The web server exits
+on loss of the host pipe. The Tauri exit event reaps both children.
 
 ## Disabled Surfaces
 

@@ -14,6 +14,8 @@ globalThis.console = new Console(process.stderr, process.stderr);
 async function start() {
   const dir = process.cwd();
   const { config } = JSON.parse(readFileSync(join(dir, ".next/required-server-files.json"), "utf8"));
+  // Persisting the Next.js route cache would write into the signed app bundle.
+  config.experimental = { ...config.experimental, isrFlushToDisk: false };
   // Use the same compiled configuration contract as Next's generated server.js.
   process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(config);
   const requireWeb = createRequire(join(dir, "server.js"));

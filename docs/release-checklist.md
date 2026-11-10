@@ -86,6 +86,9 @@ For the local Apple Silicon alpha, run the signed packaging path in
 [Desktop Installation](desktop-installation.md#local-apple-silicon-alpha).
 Check both Developer ID signatures, the DMG checksum, installation from the
 mounted image, clean-profile startup, a live Smart KPI apply and persistence after restart.
+Check the installed app signature with `codesign --verify --deep --strict` after
+both launches to catch writes to sealed resources. For a notarized candidate,
+repeat the install and launch from a browser download that carries macOS quarantine.
 Keep notarized distribution and the production native preflight as separate gates.
 
 Before claiming clean-machine desktop support:
