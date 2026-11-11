@@ -60,6 +60,10 @@ VDT_E2E_USE_BUILD=1 pnpm test:e2e --workers=1
 Built mode uses the same temporary-store setup with `next start` and enables
 API admission on the isolated test host for the synthetic-key smoke. A
 single browser worker can reduce CPU contention during timing checks.
+The GitHub E2E and release jobs use this built mode with the same browser
+matrix and test deadlines. The release job builds the browser bundle after
+`release:verify` with the development-web and standalone-runner build settings
+scoped to that browser build.
 
 Existing engine/viewport restrictions are applied through collection tags before fixture creation, so tests for another viewport do not create and delete unused projects. HTML and JSON reports are written to `output/playwright/report/` and `output/playwright/results.json`, with per-server temporary-store cleanup records alongside them; failure screenshots/traces are retained under `test-results/`. CI uploads both output directories even on failure, with seven-day retention. Inspect retained failures before removing their artifacts.
 

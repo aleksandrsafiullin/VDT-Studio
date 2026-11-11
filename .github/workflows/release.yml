@@ -19,8 +19,14 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm release:verify
+      - run: pnpm build:web
+        env:
+          NEXT_PUBLIC_VDT_APP_MODE: development_web
+          NEXT_PUBLIC_VDT_ENABLE_STANDALONE_RUNNER: "true"
       - run: pnpm exec playwright install --with-deps chromium webkit
       - run: pnpm test:e2e
+        env:
+          VDT_E2E_USE_BUILD: "1"
       - uses: anchore/sbom-action@v0
         with:
           path: .

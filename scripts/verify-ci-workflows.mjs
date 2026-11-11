@@ -5,6 +5,13 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_ROOT = resolve(dirname(SCRIPT_PATH), "..");
 
+const BROWSER_E2E_GATES = [
+  "pnpm build:web",
+  "pnpm exec playwright install --with-deps chromium webkit",
+  "pnpm test:e2e",
+  'VDT_E2E_USE_BUILD: "1"'
+];
+
 const WORKFLOW_REQUIREMENTS = [
   {
     file: ".github/workflows/quality.yml",
@@ -12,7 +19,7 @@ const WORKFLOW_REQUIREMENTS = [
   },
   {
     file: ".github/workflows/e2e.yml",
-    snippets: ["pnpm exec playwright install --with-deps chromium webkit", "pnpm test:e2e"]
+    snippets: BROWSER_E2E_GATES
   },
   {
     file: ".github/workflows/e2e-desktop.yml",
@@ -34,7 +41,7 @@ const WORKFLOW_REQUIREMENTS = [
     file: ".github/workflows/release.yml",
     snippets: [
       "pnpm release:verify",
-      "pnpm test:e2e",
+      ...BROWSER_E2E_GATES,
       "output/release/v*/vdt-studio-cli-*.tgz",
       "output/release/v*/SHA256SUMS",
       "output/release/v*/manifest.json",

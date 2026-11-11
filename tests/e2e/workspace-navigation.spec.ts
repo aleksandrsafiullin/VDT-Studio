@@ -1,11 +1,11 @@
 import { expect, type Page } from "@playwright/test";
-import { test } from "./workspace-fixture";
+import { selectCanvasKpi, test } from "./workspace-fixture";
 
 for (const destination of ["project", "home"] as const) {
   test(`retains manual model edits after leaving for ${destination} and reopening the VDT`, async ({ page, productionWorkspace }) => {
     await page.route("**/api/ai/detect-clis**", (route) => route.fulfill({ json: { agents: [], modelsByAgent: {} } }));
     await page.goto(`/projects/${productionWorkspace.projectId}?vdt=${productionWorkspace.vdtId}`);
-    await page.getByRole("button", { name: "Select Nominal Rate", exact: true }).click();
+    await selectCanvasKpi(page, "Nominal Rate");
     const input = page.getByTestId("right-panel").getByRole("spinbutton", { name: "Baseline value", exact: true });
     await input.fill("250");
     await page.getByTestId(destination === "project" ? "back-to-project-workspace" : "workspace-home").click();
@@ -15,7 +15,7 @@ for (const destination of ["project", "home"] as const) {
     }
     await expect(page.getByTestId("project-vdt-list")).toBeVisible();
     await page.getByTestId(`project-vdt-card-${productionWorkspace.vdtId}`).getByRole("button", { name: "Open Production Volume Driver Model", exact: true }).click();
-    await page.getByRole("button", { name: "Select Nominal Rate", exact: true }).click();
+    await selectCanvasKpi(page, "Nominal Rate");
     await expect(input).toHaveValue("250");
     const loaded = await page.request.get(`/api/vdt/vdts/${productionWorkspace.vdtId}`, { maxRetries: 1 });
     expect(loaded.ok()).toBeTruthy();
@@ -36,7 +36,7 @@ test("a stale second tab keeps its draft and cannot overwrite another tab's save
     await expect(tab.getByTestId("vdt-canvas")).toBeVisible();
   }
   async function selectValue(tab: Page, name: string) {
-    await tab.getByRole("button", { name: `Select ${name}`, exact: true }).click();
+    await selectCanvasKpi(tab, name);
     return tab.getByTestId("right-panel").getByRole("spinbutton", { name: "Baseline value", exact: true });
   }
   async function storedModel() {

@@ -1,12 +1,32 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { test as base, expect } from "@playwright/test";
+import { test as base, expect, type Page } from "@playwright/test";
 import type { VdtProject } from "../../packages/vdt-core/src/types";
 
 export interface ProductionWorkspace {
   projectId: string;
   vdtId: string;
+}
+
+export async function selectCanvasKpi(page: Page, name: string) {
+  const canvas = page.getByTestId("vdt-canvas");
+  const node = canvas.getByRole("button", { name: `Select ${name}`, exact: true });
+  await expect(node).toBeVisible();
+  // React Flow resets native container scrolling. Fit the graph before
+  // clicking a card that may be outside the canvas at the default zoom.
+  const cardFitsCanvas = () => node.evaluate((element) => {
+    const bounds = element.closest('[data-testid="vdt-canvas"]')?.getBoundingClientRect();
+    const card = element.getBoundingClientRect();
+    return Boolean(bounds && card.left >= bounds.left && card.right <= bounds.right
+      && card.top >= bounds.top && card.bottom <= bounds.bottom);
+  });
+  if (!(await cardFitsCanvas())) {
+    await canvas.getByRole("button", { name: "Fit View", exact: true }).click();
+    await expect.poll(cardFitsCanvas, { message: `${name} fits inside the graph canvas` }).toBe(true);
+  }
+  await node.click();
+  await expect(node).toHaveAttribute("aria-pressed", "true");
 }
 
 // Each test owns its stored model, including across browser projects and retries.

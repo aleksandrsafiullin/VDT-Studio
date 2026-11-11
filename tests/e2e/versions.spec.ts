@@ -1,5 +1,5 @@
 import { expect } from "@playwright/test";
-import { test } from "./workspace-fixture";
+import { selectCanvasKpi, test } from "./workspace-fixture";
 
 test("saves, compares, restores and undoes a version, then retains the restored model after reload", async ({ page, productionWorkspace }) => {
   await page.route("**/api/ai/detect-clis**", (route) => route.fulfill({ json: { agents: [], modelsByAgent: {} } }));
@@ -13,7 +13,7 @@ test("saves, compares, restores and undoes a version, then retains the restored 
   await expect(versions.getByRole("heading", { name: "Alpha baseline", exact: true })).toBeVisible();
   await versions.getByRole("button", { name: "Close versions", exact: true }).click();
 
-  await page.getByRole("button", { name: "Select Nominal Rate", exact: true }).click();
+  await selectCanvasKpi(page, "Nominal Rate");
   const input = page.getByTestId("right-panel").getByRole("spinbutton", { name: "Baseline value", exact: true });
   await expect(input).toHaveValue("220");
   await input.fill("250");
@@ -36,10 +36,10 @@ test("saves, compares, restores and undoes a version, then retains the restored 
   await versions.getByRole("button", { name: "Restore this version", exact: true }).click();
   await versions.getByTestId("confirm-version-restore").click();
   await versions.getByRole("button", { name: "Close versions", exact: true }).click();
-  await page.getByRole("button", { name: "Select Nominal Rate", exact: true }).click();
+  await selectCanvasKpi(page, "Nominal Rate");
   await expect(input).toHaveValue("220");
   await page.reload();
-  await page.getByRole("button", { name: "Select Nominal Rate", exact: true }).click();
+  await selectCanvasKpi(page, "Nominal Rate");
   await expect(input).toHaveValue("220");
   await page.getByTestId("version-history-button").click();
   await expect(versions.getByRole("button", { name: /^Alpha baseline/ })).toBeVisible();

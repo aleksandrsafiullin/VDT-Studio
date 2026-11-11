@@ -5,6 +5,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { verifyCiWorkflows } from "./verify-ci-workflows.mjs";
 
 const tempDirs: string[] = [];
+const browserE2eSteps = `- run: pnpm build:web
+- run: pnpm exec playwright install --with-deps chromium webkit
+- run: pnpm test:e2e
+  env:
+    VDT_E2E_USE_BUILD: "1"
+`;
 
 async function writeWorkflow(root: string, file: string, text: string) {
   const filePath = path.join(root, file);
@@ -20,7 +26,7 @@ async function createFixture(overrides: Record<string, string> = {}) {
     ".github/workflows/quality.yml":
       "name: Quality\nsteps:\n- run: pnpm lint\n- run: pnpm typecheck\n- run: pnpm test\n- run: pnpm build\n- run: pnpm ci:verify\n- run: pnpm phase7:verify\n- run: pnpm docs:verify\n- run: pnpm evaluation:verify\n- run: pnpm desktop:verify\n",
     ".github/workflows/e2e.yml":
-      "name: E2E\nsteps:\n- run: pnpm exec playwright install --with-deps chromium webkit\n- run: pnpm test:e2e\n",
+      `name: E2E\nsteps:\n${browserE2eSteps}`,
     ".github/workflows/e2e-desktop.yml":
       "name: Desktop E2E Foundation\nstrategy:\n  matrix:\n    os: [macos-14, windows-latest]\nruns-on: ${{ matrix.os }}\nsteps:\n- run: pnpm desktop:verify\n- run: pnpm vitest run scripts/verify-desktop-shell.test.ts scripts/verify-desktop-sidecar.test.ts\n",
     ".github/workflows/package.yml":
@@ -29,7 +35,7 @@ async function createFixture(overrides: Record<string, string> = {}) {
       "name: Desktop Package\non:\n  workflow_dispatch:\nstrategy:\n  matrix:\n    os: [macos-14, windows-latest]\nruns-on: ${{ matrix.os }}\nsteps:\n- run: pnpm desktop:sidecar:prepare\n- run: pnpm desktop:verify\n- run: pnpm desktop:native:preflight\n",
     ".github/workflows/security.yml": "name: Security\nsteps:\n- run: pnpm security:audit\n- run: pnpm certification:verify\n",
     ".github/workflows/release.yml":
-      "name: Release\nsteps:\n- run: pnpm release:verify\n- run: pnpm test:e2e\nfiles:\n  output/release/v*/vdt-studio-cli-*.tgz\n  output/release/v*/SHA256SUMS\n  output/release/v*/manifest.json\n  output/release/v*/sbom.spdx.json\n"
+      `name: Release\nsteps:\n- run: pnpm release:verify\n${browserE2eSteps}files:\n  output/release/v*/vdt-studio-cli-*.tgz\n  output/release/v*/SHA256SUMS\n  output/release/v*/manifest.json\n  output/release/v*/sbom.spdx.json\n`
   };
 
   for (const [file, text] of Object.entries({ ...workflows, ...overrides })) {
@@ -48,6 +54,15 @@ describe("verify-ci-workflows", () => {
     const root = await createFixture();
 
     expect(verifyCiWorkflows(root).workflows).toContain(".github/workflows/package-desktop.yml");
+  });
+
+  it("fails when browser E2E does not use the built web app", async () => {
+    const root = await createFixture({
+      ".github/workflows/e2e.yml":
+        `name: E2E\nsteps:\n${browserE2eSteps.replace('  env:\n    VDT_E2E_USE_BUILD: "1"\n', "")}`
+    });
+
+    expect(() => verifyCiWorkflows(root)).toThrow(/VDT_E2E_USE_BUILD/);
   });
 
   it("fails when the desktop native preflight gate is not wired", async () => {
