@@ -376,6 +376,7 @@ export interface VdtStudioState {
   generateActivity?: GenerateActivityState | undefined;
   agentChatHistory: AgentChatHistoryEntry[];
   activeAgentRunId?: string | undefined;
+  agentWorkspaceDraft?: { runId?: string | undefined; project: VdtProject; base: VdtWorkspaceState["draftRevisionBase"] } | undefined;
   agentRun?: RuntimeAgentRunSnapshot | undefined;
   agentEvents: RuntimeAgentEvent[];
   agentConnectionStatus: "idle" | "connecting" | "connected" | "disconnected" | "error";
@@ -601,6 +602,18 @@ function replaceVdtCommitState(
   });
 }
 
+function advanceAgentSummaryHead(
+  summaries: StoredProjectSummary[],
+  head: StoredProjectSummary["vdts"][number]["head"]
+): StoredProjectSummary[] {
+  return summaries.map((summary) => summary.project.id !== head.projectId ? summary : {
+    ...summary,
+    vdts: summary.vdts.map((entry) => entry.vdt.id === head.vdtId && entry.head.commitGeneration < head.commitGeneration
+      ? { ...entry, head, vdt: { ...entry.vdt, activeRevisionId: head.activeRevisionId ?? undefined } }
+      : entry)
+  });
+}
+
 function shouldRetainPendingStorageOperation(error: unknown): boolean {
   return !(error instanceof VdtStorageRequestError) || error.retryable;
 }
@@ -741,12 +754,27 @@ function buildAgentWorkspaceContext(
   const activeProjectId = state.workspace.activeProjectId?.trim();
   const chosenProjectId = activeProjectId || graphProjectId;
   const vdtId = activeProjectId ? state.workspace.activeVdtId : undefined;
+  const base = state.workspace.draftRevisionBase;
+  const expectedRevision = base && base.projectId === chosenProjectId && base.vdtId === vdtId
+    ? agentExpectedRevision(base)
+    : undefined;
   return {
     projectId: chosenProjectId,
     projectName,
     ...(vdtId ? { vdtId } : {}),
+    ...(expectedRevision ? { expectedRevision } : {}),
     ...(industry ? { industry } : {}),
     ...(description ? { description } : {})
+  };
+}
+
+function agentExpectedRevision(base: WorkspaceDraftBase) {
+  return {
+    expectedActiveRevisionId: base.expectedHead.activeRevisionId,
+    expectedActiveContentIdentity: base.expectedHead.activeContentIdentity,
+    expectedCommitGeneration: base.expectedHead.commitGeneration,
+    expectedRuntimeGeneration: base.expectedRuntime.runtimeGeneration,
+    expectedGenerationVersion: base.expectedRuntime.generationVersion
   };
 }
 
@@ -1202,6 +1230,7 @@ function clearAgentStateForDeletedVdt(state: VdtStudioState, vdtId: string): Par
     ...(runId ? clearPersistedAgentRunState(state, runId) : {}),
     generateActivity: undefined,
     activeAgentRunId: undefined,
+    agentWorkspaceDraft: undefined,
     agentRun: undefined,
     agentEvents: [],
     agentPendingQuestions: undefined,
@@ -1233,6 +1262,7 @@ function clearPersistedAgentRunState(
   if (!touchesRun) return {};
   return {
     activeAgentRunId: undefined,
+    agentWorkspaceDraft: undefined,
     agentRun: state.agentRun?.runId === runId ? undefined : state.agentRun,
     generateActivity: state.generateActivity?.runId === runId ? undefined : state.generateActivity,
     agentEvents: state.agentRun?.runId === runId ? [] : state.agentEvents,
@@ -1256,7 +1286,50 @@ function applyAgentSnapshot(
     if (state.activeAgentRunId && state.activeAgentRunId !== snapshot.runId) {
       return {};
     }
-    const rawProject = preserveCurrentProject ? undefined : snapshot.project ?? snapshot.draftProject;
+    const scope = snapshot.request.workspace;
+    const storedVdt = Boolean(scope?.vdtId);
+    const previous = state.agentRun?.runId === snapshot.runId ? state.agentRun : undefined;
+    const ownedRun = state.activeAgentRunId === snapshot.runId || previous !== undefined;
+    if (storedVdt && (scope?.vdtId !== state.workspace.activeVdtId || scope?.projectId !== state.workspace.activeProjectId
+      || (scope?.expectedRevision && !ownedRun))) {
+      return {};
+    }
+    if (state.agentWorkspaceDraft && !state.agentWorkspaceDraft.runId) return {};
+    if (previous && (previous.updatedAt > snapshot.updatedAt
+      || (previous.events.at(-1)?.seq ?? 0) > (snapshot.events.at(-1)?.seq ?? 0)
+      || (!isActiveRuntimeRun(previous) && isActiveRuntimeRun(snapshot)))) return {};
+    const trackedDraft = state.agentWorkspaceDraft;
+    const base = state.workspace.draftRevisionBase;
+    const previousProject = previous?.project ?? previous?.draftProject ?? previous?.request.input.project;
+    const previousHead = previous?.workspaceRevision?.head;
+    const previousBase = previous?.request.workspace?.expectedRevision;
+    const sameDraft = storedVdt && base && (trackedDraft?.runId === snapshot.runId
+      ? trackedDraft.project === state.project && trackedDraft.base === base
+      : previousProject !== undefined && kpiCanonicalJson(previousProject) === kpiCanonicalJson(state.project)
+        && ((previousHead !== undefined && kpiCanonicalJson(revisionCasFromHead(previousHead)) === kpiCanonicalJson(base.expectedHead))
+          || (previousBase !== undefined && kpiCanonicalJson(previousBase) === kpiCanonicalJson(agentExpectedRevision(base)))));
+    const canApplyStoredDraft = ownedRun && sameDraft && base != null && !state.workspace.isMutating && !state.workspace.isLoading
+      && !state.workspace.pendingRevisionCommit;
+    const revision = snapshot.workspaceRevision;
+    const summary = storedVdt && scope ? summaryForProject(state.workspace.projectSummaries, scope.projectId) : undefined;
+    const knownHead = summary?.vdts.find((entry) => entry.vdt.id === scope?.vdtId)?.head;
+    const canAdoptRevision = storedVdt && canApplyStoredDraft && revision && base
+      && revision.head.vdtId === scope?.vdtId && revision.head.projectId === scope?.projectId
+      && revision.head.activeRevisionId !== null && revision.head.activeContentIdentity !== null && revision.head.pendingRevisionId === null
+      && (revision.head.commitGeneration > base.expectedHead.commitGeneration
+        || kpiCanonicalJson(revisionCasFromHead(revision.head)) === kpiCanonicalJson(base.expectedHead))
+      && revision.runtime.runtimeGeneration === base.expectedRuntime.runtimeGeneration
+      && revision.runtime.generationVersion === base.expectedRuntime.generationVersion
+      && summary?.runtimeState.writeState === "enabled"
+      && revision.runtime.runtimeGeneration === summary.runtimeState.runtimeGeneration
+      && revision.runtime.generationVersion === summary.runtimeState.generationVersion
+      && knownHead && (knownHead.commitGeneration < revision.head.commitGeneration
+        || (knownHead.pendingRevisionId === null && kpiCanonicalJson(knownHead) === kpiCanonicalJson(revision.head)));
+    const nextBase = canAdoptRevision
+      ? workspaceDraftBase(revision.head, { schemaVersion: "project_runtime_cas.v1", ...revision.runtime })
+      : base;
+    const rawProject = preserveCurrentProject || (storedVdt && (!canApplyStoredDraft || (scope?.expectedRevision && !canAdoptRevision)))
+      ? undefined : snapshot.project ?? snapshot.draftProject;
     const shouldPreserveProjectId = Boolean(
       state.project?.id &&
       state.workspace.activeVdtId &&
@@ -1269,7 +1342,7 @@ function applyAgentSnapshot(
     );
     const project = rawProject
       ? ensureScenario(
-          shouldPreserveProjectId
+          shouldPreserveProjectId && !canAdoptRevision
             ? { ...rawProject, id: state.project.id }
             : rawProject
         )
@@ -1337,7 +1410,15 @@ function applyAgentSnapshot(
             project,
             selectedNodeId: preservedSelectedNodeId ?? project.rootNodeId,
             activeScenarioId: resolveMainScenarioId(project),
-            projectRevision: state.projectRevision + 1
+            projectRevision: state.projectRevision + 1,
+            ...(storedVdt ? {
+              agentWorkspaceDraft: { runId: snapshot.runId, project, base: nextBase },
+              ...(canAdoptRevision ? { workspace: {
+                ...state.workspace,
+                draftRevisionBase: nextBase,
+                projectSummaries: advanceAgentSummaryHead(state.workspace.projectSummaries, revision.head)
+              } } : {})
+            } : {})
           }
         : {}),
       activeAgentRunId: status === "ready" || status === "error" || status === "cancelled" ? undefined : snapshot.runId,
@@ -2085,6 +2166,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               brief: briefFromProject(visibleProject),
               generateActivity: undefined,
               activeAgentRunId: undefined,
+              agentWorkspaceDraft: undefined,
               agentRun: undefined,
               agentEvents: [],
               agentPendingQuestions: undefined,
@@ -2212,6 +2294,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             brief: briefFromProject(project),
             generateActivity: undefined,
             activeAgentRunId: undefined,
+            agentWorkspaceDraft: undefined,
             agentRun: undefined,
             agentEvents: [],
             agentPendingQuestions: undefined,
@@ -2988,6 +3071,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           agentChatHistory: upsertAgentChatHistory(state.agentChatHistory, state.generateActivity, state.workspace.activeVdtId),
           generateActivity: undefined,
           activeAgentRunId: undefined,
+          agentWorkspaceDraft: undefined,
           agentRun: undefined,
           agentEvents: [],
           agentPendingQuestions: undefined,
@@ -3014,6 +3098,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           agentChatHistory: upsertAgentChatHistory(current.agentChatHistory, current.generateActivity, current.workspace.activeVdtId),
           generateActivity: entry.activity,
           activeAgentRunId: active ? runId : undefined,
+          agentWorkspaceDraft: undefined,
           agentRun: snapshot,
           agentEvents: snapshot?.events ?? [],
           agentPendingQuestions: snapshot?.pendingQuestions,
@@ -3090,8 +3175,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           });
           return false;
         }
+        const openingDraft = state.workspace.activeVdtId ? { project: state.project, base: state.workspace.draftRevisionBase } : undefined;
         set({
           isGenerating: true,
+          agentWorkspaceDraft: openingDraft,
           aiError: undefined,
           agentError: undefined,
           agentEvents: [],
@@ -3136,18 +3223,26 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             }
           );
           const response = await createAgentClient().startRun(startRequest);
-          set({ activeAgentRunId: response.runId });
+          const current = get();
+          if (current.workspace.activeVdtId !== state.workspace.activeVdtId
+            || current.workspace.activeProjectId !== state.workspace.activeProjectId
+            || (openingDraft && current.agentWorkspaceDraft !== openingDraft)) return false;
+          set({
+            activeAgentRunId: response.runId,
+            agentWorkspaceDraft: openingDraft ? { ...openingDraft, runId: response.runId } : undefined
+          });
           applyAgentSnapshot(set, response.snapshot);
           get().connectAgentEvents(response.runId);
           return true;
         } catch (error) {
           const message = error instanceof Error ? error.message : "Agent run could not be started.";
-          set({
+          set((current) => ({
+            ...(current.agentWorkspaceDraft === openingDraft ? { agentWorkspaceDraft: undefined } : {}),
             aiError: message,
             agentError: message,
             isGenerating: false,
             agentConnectionStatus: "error"
-          });
+          }));
           return false;
         }
       },
@@ -3731,8 +3826,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
               ? { ...providerConfig, pairingToken: runnerPairingToken }
               : providerConfig;
 
+        const openingDraft = state.workspace.activeVdtId ? { project: state.project, base: state.workspace.draftRevisionBase } : undefined;
         set({
           isGenerating: true,
+          agentWorkspaceDraft: openingDraft,
           aiError: undefined,
           ...clearPendingAiActionState(),
           byokFieldErrors: undefined,
@@ -3767,7 +3864,14 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             }
           );
           const response = await createAgentClient().startRun(startRequest);
-          set({ activeAgentRunId: response.runId });
+          const current = get();
+          if (current.workspace.activeVdtId !== state.workspace.activeVdtId
+            || current.workspace.activeProjectId !== state.workspace.activeProjectId
+            || (openingDraft && current.agentWorkspaceDraft !== openingDraft)) return;
+          set({
+            activeAgentRunId: response.runId,
+            agentWorkspaceDraft: openingDraft ? { ...openingDraft, runId: response.runId } : undefined
+          });
           applyAgentSnapshot(set, response.snapshot);
           if (isActiveRuntimeRun(response.snapshot)) {
             get().connectAgentEvents(response.runId);
@@ -3776,12 +3880,13 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : "Agent run could not be started.";
-          set({
+          set((current) => ({
+            ...(current.agentWorkspaceDraft === openingDraft ? { agentWorkspaceDraft: undefined } : {}),
             aiError: message,
             agentError: message,
             isGenerating: false,
             agentConnectionStatus: "error"
-          });
+          }));
         }
       },
       loadExample: (exampleId = "production_volume") => {

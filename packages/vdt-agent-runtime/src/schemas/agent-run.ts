@@ -39,7 +39,20 @@ const agentStartRequestCommonShape = {
     projectName: optionalBoundedString(160),
     industry: optionalBoundedString(160),
     description: optionalBoundedString(1_000),
-    vdtId: safeId().optional()
+    vdtId: safeId().optional(),
+    expectedRevision: z.object({
+      expectedActiveRevisionId: safeId().nullable(),
+      expectedActiveContentIdentity: z.object({
+        scheme: z.enum(["legacy_graph_sha256", "vdt_revision_payload_hash.v1"]),
+        hash: z.string().regex(/^sha256:[a-f0-9]{64}$/)
+      }).strict().nullable(),
+      expectedCommitGeneration: z.number().int().nonnegative(),
+      expectedRuntimeGeneration: z.enum(["v1", "v2"]),
+      expectedGenerationVersion: z.number().int().nonnegative()
+    }).strict().optional()
+  }).refine((workspace) => !workspace.expectedRevision || Boolean(workspace.vdtId), {
+    path: ["expectedRevision"],
+    message: "A revision base requires a stored VDT ID."
   }).optional(),
   options: z.object({
     autoApplyPatches: z.boolean().optional(),

@@ -618,6 +618,13 @@ W0.1 routes all production revision writers through one domain `commitVdtRevisio
 
 The editor persists the head and runtime compare-and-swap values that belong to its draft. It advances that base after loading the corresponding saved snapshot or receiving its own commit receipt. Summary refreshes can update the displayed server head independently. A terminal manual conflict preserves the draft and blocks fresh saves until the user explicitly loads the stored revision. An older browser draft with no verified base follows the same reload path. Ambiguous writes retain their original request and idempotency key.
 
+An agent continuing a stored VDT starts against the editor's saved revision
+and runtime generation. A verified snapshot binds the run's saved project to
+its committed head. The active editor adopts that pair only while it still
+owns the corresponding draft, preserving later local edits and any newer
+server head learned from another tab. A run that loses the revision fence can
+still be opened from history, with its conflicting write left unapplied.
+
 Zustand still persists substantial draft state. SQLite-only durable ownership, metadata/revision atomicity and broader dirty-state reconciliation remain W0.5 work. Windows storage durability is not verified.
 
 The workspace rail uses a direct Home link to `/`; the editor header's back link targets `/projects/<projectId>`. Project/editor route synchronization gives changed URL parameters precedence over the workspace snapshot. Store-driven navigation retains its target until Next.js commits the URL, and asynchronous bootstrap/VDT selection blocks reverse URL writes until it settles. An unchanged route can still reflect a newly created local VDT in `?vdt=...`.

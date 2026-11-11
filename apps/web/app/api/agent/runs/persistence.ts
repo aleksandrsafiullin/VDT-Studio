@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   assertDensePlainJson,
   assertSafeId,
+  canonicalizeJson,
   openVdtDatabase,
   validateStrictVdtProjectCommit,
   vdtPreviewDir,
@@ -27,6 +28,7 @@ import {
   snapshotFromState,
   type AgentRunPersistence,
   type AgentChatMessage,
+  type AgentWorkspaceRevision,
   type MutationProposal,
   type PersistedAgentRunState,
   type VdtAgentEvent,
@@ -90,6 +92,7 @@ interface AgentExistingHeadReplayV1 {
   vdtId: string;
   revisionId: string;
   contentIdentity: RevisionContentIdentityV1;
+  runtime?: AgentWorkspaceRevision["runtime"] | undefined;
 }
 
 type AgentInitialReplayV1 =
@@ -151,10 +154,10 @@ export function createLazySqliteAgentRunPersistence(
       persistence().createRun(state);
     },
     updateRun(state) {
-      persistence().updateRun(state);
+      return persistence().updateRun(state);
     },
     appendEvent(event, state) {
-      persistence().appendEvent(event, state);
+      return persistence().appendEvent(event, state);
     },
     getState(runId) {
       return persistence().getState(runId);
@@ -174,6 +177,13 @@ export function createSqliteAgentRunPersistence(
     createRun(state) {
       const projectContext = storageProjectContextFromState(state);
       const actor = actorFactory(projectContext.projectId);
+      const { vdtId, expectedRevision } = state.request.workspace ?? {};
+      if (vdtId && expectedRevision) {
+        validateBoundStorageVdt(database, vdtId, projectContext.projectId);
+        assertWorkspaceRevisionBase(
+          state, projectContext.projectId, database.getVdtRevisionHead(vdtId), requireProjectRuntimeState(database, projectContext.projectId)
+        );
+      }
       ensureStorageProject(database, state, projectContext);
       const conversationId = ensureConversation(database, projectContext.projectId, state);
       const payload = persistedRunPayload(state);
@@ -190,18 +200,18 @@ export function createSqliteAgentRunPersistence(
         completedAt: state.completedAt
       });
       persistConversationMessages(database, state, conversationId);
-      const replayState = persistRunArtifacts(
+      const artifacts = persistRunArtifacts(
         database,
         state,
         projectContext,
         actor
       );
-      if (replayState) {
+      if (artifacts.replayState) {
         updatePersistedAgentRun(
           database,
           state,
           conversationId,
-          replayState
+          artifacts.replayState
         );
       }
     },
@@ -209,7 +219,7 @@ export function createSqliteAgentRunPersistence(
       const projectContext = storageProjectContextFromState(state);
       const actor = actorFactory(projectContext.projectId);
       ensureStorageProject(database, state, projectContext);
-      const replayState = persistRunArtifacts(
+      const artifacts = persistRunArtifacts(
         database,
         state,
         projectContext,
@@ -221,15 +231,17 @@ export function createSqliteAgentRunPersistence(
         database,
         state,
         conversationId,
-        replayState
+        artifacts.replayState,
+        artifacts.workspaceRevision
       );
+      return artifacts.workspaceRevision;
     },
     appendEvent(event, state) {
       const projectContext = storageProjectContextFromState(state);
       const actor = actorFactory(projectContext.projectId);
       ensureStorageProject(database, state, projectContext);
       appendEventIfNew(database, event);
-      const replayState = persistRunArtifacts(
+      const artifacts = persistRunArtifacts(
         database,
         state,
         projectContext,
@@ -241,8 +253,10 @@ export function createSqliteAgentRunPersistence(
         database,
         state,
         conversationId,
-        replayState
+        artifacts.replayState,
+        artifacts.workspaceRevision
       );
+      return artifacts.workspaceRevision;
     },
     getState(runId) {
       const record = database.getAgentRun(runId);
@@ -286,10 +300,10 @@ function persistRunArtifacts(
   state: VdtAgentRunState,
   projectContext: StorageProjectContext,
   actor: ActorContextV1
-): AgentStorageReplayStateV1 | undefined {
+): { replayState?: AgentStorageReplayStateV1 | undefined; workspaceRevision?: AgentWorkspaceRevision | undefined } {
   const project = state.draftProject ?? state.project;
   const existingReplayState = replayStateForRun(database, state.runId);
-  if (!project) return existingReplayState;
+  if (!project) return { replayState: existingReplayState };
 
   const initial = ensureInitialAgentVdt(
     database,
@@ -305,15 +319,27 @@ function persistRunArtifacts(
     proposals: existingReplayState?.proposals ?? []
   };
 
-  const executed = existingReplayState
-    ? executeStorageReplayState(
-        database,
-        existingReplayState,
-        () => actor,
-        existingReplayState.initial.kind === "existing_head_verified" ||
-          existingReplayState.proposals.length > 0
-      )
-    : initial.executed;
+  const usesEditorBase = state.request.workspace?.expectedRevision !== undefined;
+  const conflictProjection = usesEditorBase && existingReplayState && (
+    state.status === "recovery_required" || state.status === "failed" || state.status === "cancelled"
+    || (state.status === "succeeded" && database.getAgentRun(state.runId)?.status === "succeeded")
+  );
+  let executed: ExecutedStorageReplayStateV1 | undefined;
+  try {
+    executed = existingReplayState
+      ? executeStorageReplayState(
+          database,
+          existingReplayState,
+          () => actor,
+          !usesEditorBase && (existingReplayState.initial.kind === "existing_head_verified" ||
+            existingReplayState.proposals.length > 0)
+        )
+      : initial.executed;
+  } catch (error) {
+    if (conflictProjection && error instanceof VdtStorageError
+      && (error.code === "REVISION_CONFLICT" || error.code === "PROJECT_WRITE_STATE_CHANGED")) return { replayState };
+    throw error;
+  }
   if (!executed) {
     throw new VdtStorageError(
       "AMBIGUOUS_REVISION_RECOVERY",
@@ -322,6 +348,12 @@ function persistRunArtifacts(
   }
   let tipRevisionId = executed.tipRevisionId;
   let tipContentIdentity = executed.tipContentIdentity;
+  if (usesEditorBase && !activeReplayTip(database, replayState, tipRevisionId, tipContentIdentity)) {
+    // A terminal or recovery status remains readable after another editor
+    // wins the head. It carries no authority to replace that editor's graph.
+    if (conflictProjection) return { replayState };
+    throw new VdtStorageError("REVISION_CONFLICT", "This VDT changed during the agent run. Reload the saved version before starting another run.");
+  }
 
   for (const proposal of state.mutationProposals ?? []) {
     const persisted = persistMutationProposal(
@@ -339,7 +371,82 @@ function persistRunArtifacts(
     tipRevisionId = persisted.tipRevisionId;
     tipContentIdentity = persisted.tipContentIdentity;
   }
-  return replayState;
+  return {
+    replayState,
+    workspaceRevision: verifiedWorkspaceRevision(database, state, replayState, tipRevisionId, tipContentIdentity)
+  };
+}
+
+function activeReplayTip(
+  database: VdtDatabase,
+  replayState: AgentStorageReplayStateV1,
+  tipRevisionId: string,
+  tipContentIdentity: RevisionContentIdentityV1
+): VdtRevisionHeadV2 | undefined {
+  const { projectId, vdtId } = replayState.initial;
+  const head = database.getVdtRevisionHead(vdtId);
+  return head && head.projectId === projectId && head.activeRevisionId === tipRevisionId
+    && contentIdentityEqual(head.activeContentIdentity, tipContentIdentity) ? head : undefined;
+}
+
+function verifiedWorkspaceRevision(
+  database: VdtDatabase,
+  state: VdtAgentRunState,
+  replayState: AgentStorageReplayStateV1,
+  tipRevisionId: string,
+  tipContentIdentity: RevisionContentIdentityV1
+): AgentWorkspaceRevision | undefined {
+  const expected = state.request.workspace?.expectedRevision;
+  const snapshot = state.project ?? state.draftProject;
+  if (!expected || !snapshot || tipContentIdentity.scheme !== "vdt_revision_payload_hash.v1") return undefined;
+  const { projectId, vdtId } = replayState.initial;
+  const head = activeReplayTip(database, replayState, tipRevisionId, tipContentIdentity);
+  if (!head || head.pendingRevisionId) return undefined;
+  const runtime = requireProjectRuntimeState(database, projectId);
+  if (runtime.runtimeGeneration !== expected.expectedRuntimeGeneration
+    || runtime.generationVersion !== expected.expectedGenerationVersion || runtime.writeState !== "enabled") return undefined;
+  // Layout is an editor draft operation. It can use the committed base when
+  // the only differences from that commit are the positions and timestamps
+  // written by VdtBuilderSession.layout.
+  try {
+    if (!contentIdentityEqual(validateStrictVdtProjectCommit(snapshot).contentIdentity, tipContentIdentity)) {
+      const revision = database.getVdtRevision(tipRevisionId);
+      if (!revision || revision.vdtId !== vdtId) return undefined;
+      const stored = database.readVdtRevision(revision);
+      const positions = new Map(stored.graph.nodes.map((node) => [node.id, node]));
+      const nodes = snapshot.graph.nodes.map((node) => {
+        const before = positions.get(node.id);
+        if (!before) return node;
+        const { position: _position, ...rest } = node;
+        return { ...rest, updatedAt: before.updatedAt, ...(before.position ? { position: before.position } : {}) };
+      });
+      const withoutLayout = { ...snapshot, updatedAt: stored.updatedAt, graph: { ...snapshot.graph, nodes } };
+      if (!contentIdentityEqual(validateStrictVdtProjectCommit(withoutLayout).contentIdentity, tipContentIdentity)) return undefined;
+    }
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    return undefined;
+  }
+  return { head, runtime: { runtimeGeneration: runtime.runtimeGeneration, generationVersion: runtime.generationVersion } };
+}
+
+function assertWorkspaceRevisionBase(
+  state: VdtAgentRunState,
+  projectId: string,
+  head: VdtRevisionHeadV2 | null,
+  runtime: ProjectRuntimeStateV1
+): void {
+  const expected = state.request.workspace?.expectedRevision;
+  if (!expected) return;
+  if (runtime.runtimeGeneration !== expected.expectedRuntimeGeneration || runtime.generationVersion !== expected.expectedGenerationVersion) {
+    throw new VdtStorageError("PROJECT_WRITE_STATE_CHANGED", "This project's storage runtime changed. Reload the saved VDT before starting an agent run.");
+  }
+  const content = expected.expectedActiveContentIdentity;
+  if (!head || head.projectId !== projectId || head.activeRevisionId !== expected.expectedActiveRevisionId
+    || head.commitGeneration !== expected.expectedCommitGeneration
+    || (content === null ? head.activeContentIdentity !== null : !contentIdentityEqual(head.activeContentIdentity, content))) {
+    throw new VdtStorageError("REVISION_CONFLICT", "This VDT changed on the server. Reload the saved version before starting an agent run.");
+  }
 }
 
 function ensureInitialAgentVdt(
@@ -430,6 +537,7 @@ function ensureInitialAgentVdt(
   }
 
   const head = database.getVdtRevisionHead(vdtId);
+  if (context.vdtId) assertWorkspaceRevisionBase(state, projectId, head, runtime);
   if (!head || head.projectId !== projectId || existing.projectId !== projectId) {
     throw new VdtStorageError(
       "VDT_NOT_READY",
@@ -437,6 +545,15 @@ function ensureInitialAgentVdt(
     );
   }
   if (head.activeRevisionId !== null) {
+    if (context.vdtId && !state.request.workspace?.expectedRevision) {
+      const input = state.request.input.project;
+      const active = database.getVdtRevision(head.activeRevisionId);
+      if (!input || !active || active.vdtId !== vdtId
+        || canonicalizeJson(JSON.parse(JSON.stringify(input)) as JsonValue)
+          !== canonicalizeJson(JSON.parse(JSON.stringify(database.readVdtRevision(active))) as JsonValue)) {
+        throw new VdtStorageError("REVISION_CONFLICT", "The agent request does not match the saved VDT. Reload the saved version before starting an agent run.");
+      }
+    }
     const replay = reconstructExistingInitialReplay(
       database,
       state,
@@ -610,6 +727,8 @@ function persistMutationProposalRecord(
     }
     if (!replay) {
       const runtime = requireProjectRuntimeState(database, projectId);
+      const expectedRuntime = state.request.workspace?.expectedRevision;
+      const initialRuntime = replayState.initial.kind === "existing_head_verified" ? replayState.initial.runtime : undefined;
       const head = database.getVdtRevisionHead(vdtId);
       if (!head || !head.activeRevisionId || !head.activeContentIdentity) {
         throw new VdtStorageError(
@@ -645,8 +764,8 @@ function persistMutationProposalRecord(
           expectedActiveRevisionId: baseRevision.id,
           expectedActiveContentIdentity: head.activeContentIdentity,
           expectedCommitGeneration: head.commitGeneration,
-          expectedRuntimeGeneration: runtime.runtimeGeneration,
-          expectedGenerationVersion: runtime.generationVersion,
+          expectedRuntimeGeneration: expectedRuntime?.expectedRuntimeGeneration ?? initialRuntime?.runtimeGeneration ?? runtime.runtimeGeneration,
+          expectedGenerationVersion: expectedRuntime?.expectedGenerationVersion ?? initialRuntime?.generationVersion ?? runtime.generationVersion,
           idempotencyKey: `agent-proposal:${proposal.id}:apply-v1`,
           intent: {
             source: proposalRevisionSource(proposal),
@@ -1003,7 +1122,8 @@ function reconstructExistingInitialReplay(
       projectId: vdt.projectId,
       vdtId: vdt.id,
       revisionId: head.activeRevisionId,
-      contentIdentity: head.activeContentIdentity
+      contentIdentity: head.activeContentIdentity,
+      runtime: { runtimeGeneration: runtime.runtimeGeneration, generationVersion: runtime.generationVersion }
     };
   }
   if (
@@ -1097,13 +1217,33 @@ function reconcilePersistedReplayState(
 ): VdtAgentRunState {
   if (!replayState) return state;
 
+  if (state.request.workspace?.expectedRevision && (
+    state.status === "succeeded" || state.status === "failed" || state.status === "cancelled" || state.status === "recovery_required"
+  )) {
+    // Settled editor runs are history. Reading them must not reissue writes or
+    // treat their recorded tip as the live head after another editor saves.
+    const recordedHead = state.workspaceRevision?.head;
+    const revisionId = recordedHead?.activeRevisionId;
+    const contentIdentity = recordedHead?.activeContentIdentity;
+    const workspaceRevision = revisionId && contentIdentity
+      ? verifiedWorkspaceRevision(database, state, replayState, revisionId, contentIdentity)
+      : undefined;
+    if (workspaceRevision && revisionId && contentIdentity) {
+      const revision = database.getVdtRevision(revisionId);
+      if (!revision || revision.vdtId !== workspaceRevision.head.vdtId) {
+        throw new VdtStorageError("AMBIGUOUS_REVISION_RECOVERY", "The recorded agent revision could not be verified.");
+      }
+      verifyRevisionContentIdentity(database, revision, contentIdentity);
+    }
+    return { ...state, workspaceRevision };
+  }
+
   let reconciled = state;
   const executed = executeStorageReplayState(
     database,
     replayState,
     actorFactory,
-    replayState.initial.kind === "existing_head_verified" ||
-      replayState.proposals.length > 0
+    replayState.initial.kind === "existing_head_verified" || replayState.proposals.length > 0
   );
 
   for (const { replay, committed } of executed.proposals) {
@@ -1120,6 +1260,10 @@ function reconcilePersistedReplayState(
       replay.proposal.appliedAt ?? committed.revision.createdAt
     );
   }
+  const workspaceRevision = verifiedWorkspaceRevision(
+    database, reconciled, replayState, executed.tipRevisionId, executed.tipContentIdentity
+  );
+  reconciled = { ...reconciled, workspaceRevision };
 
   const record = database.getAgentRun(state.runId);
   if (record) {
@@ -1127,7 +1271,8 @@ function reconcilePersistedReplayState(
       database,
       reconciled,
       record.conversationId,
-      replayState
+      replayState,
+      workspaceRevision
     );
   }
   return reconciled;
@@ -1226,9 +1371,10 @@ function updatePersistedAgentRun(
   database: VdtDatabase,
   state: VdtAgentRunState,
   conversationId: string | undefined,
-  replayState?: AgentStorageReplayStateV1 | undefined
+  replayState?: AgentStorageReplayStateV1 | undefined,
+  workspaceRevision?: AgentWorkspaceRevision | undefined
 ): void {
-  const payload = persistedRunPayload(state, replayState);
+  const payload = persistedRunPayload({ ...state, workspaceRevision }, replayState);
   const requestedVdtId = vdtIdFromState(state);
   const persistedVdtId =
     requestedVdtId && database.getVdt(requestedVdtId)

@@ -1309,15 +1309,19 @@ export class VdtAgentRuntime {
   }
 
   private applyManualChangeToBuilder(state: VdtAgentRunState, change: ManualProjectChange): void {
-    if (!state.builder || change.kind !== "node_updated" || !change.nodeId || !change.patch) return;
+    const builder = state.builder;
+    if (!builder || !change.nodeId) return;
     try {
-      const result = state.builder.updateNode({
-        nodeId: change.nodeId,
-        patch: change.patch as VdtNodePatch
-      });
-      const validation = summarizeValidation(state.builder.validate().validation);
+      if (change.kind === "node_deleted") {
+        builder.deleteNode({ nodeId: change.nodeId, cascadeEdges: true });
+      } else if (change.kind === "node_updated" && change.patch) {
+        builder.updateNode({ nodeId: change.nodeId, patch: change.patch as VdtNodePatch });
+      } else {
+        return;
+      }
+      const validation = summarizeValidation(builder.validate().validation);
       this.store.updateRun(state.runId, {
-        draftProject: result.project,
+        draftProject: builder.getProject(),
         validationState: validation
       });
     } catch {

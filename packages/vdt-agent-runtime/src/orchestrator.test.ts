@@ -502,10 +502,7 @@ describe("VdtAgentRuntime decision loop", { timeout: 30_000 }, () => {
     )).toBe(true);
   });
 
-  // Remove `.fails` in W0.2 when manual operations merge into the active builder or enter an explicit merge state.
-  it.fails("[known defect F-03] does not silently overwrite a manual deletion during an in-flight mutation", async () => {
-    let contractSatisfied: boolean | undefined;
-    try {
+  it("keeps a manual deletion during an in-flight mutation", async () => {
     const initialBuilder = new VdtBuilderSession({ now: () => "2026-07-23T00:00:00.000Z" });
     initialBuilder.createDraft({ projectTitle: "Manual merge", rootKpi: "Production Volume" });
     initialBuilder.addDriver({
@@ -601,47 +598,12 @@ describe("VdtAgentRuntime decision loop", { timeout: 30_000 }, () => {
       event.metadata?.toolName === "test.in_flight_mutation" &&
       event.metadata?.ok === true
     )?.seq;
-    const fixtureIsActuallyConcurrent =
-      typeof toolStartedSeq === "number" &&
-      typeof manualChangeSeq === "number" &&
-      typeof toolCompletedSeq === "number" &&
-      toolStartedSeq < manualChangeSeq &&
-      manualChangeSeq < toolCompletedSeq &&
-      snapshot.draftProject?.graph.nodes.some((node) => node.id === "agent_driver") === true;
-
-    // An invalid fixture must make `it.fails` report an unexpected pass instead of hiding setup drift.
-    if (!fixtureIsActuallyConcurrent) return;
-
-    const reconciliation = snapshot as typeof snapshot & {
-      status: string;
-      mergeState?: string | undefined;
-      reconciliationState?: string | undefined;
-    };
-    const explicitMergeOrRebase = [
-      reconciliation.status,
-      reconciliation.mergeState,
-      reconciliation.reconciliationState,
-      snapshot.error?.code,
-      snapshot.retryableError?.code,
-      snapshot.lastFeedback?.kind,
-      ...snapshot.events.flatMap((event) => [
-        event.metadata?.code,
-        event.metadata?.mergeState,
-        event.metadata?.reconciliationState
-      ])
-    ].some((value) =>
-      typeof value === "string" &&
-      /^(?:needs[_-]?merge|rebase(?:[_-]required)?)$/i.test(value)
-    );
-    const manualDeletionPreserved =
-      snapshot.draftProject?.graph.nodes.some((node) => node.id === "manual_driver") === false;
-
-    contractSatisfied = manualDeletionPreserved || explicitMergeOrRebase;
-    } catch {
-      // Setup/runtime errors must make `it.fails` an unexpected pass, not false evidence.
-      return;
-    }
-    expect(contractSatisfied).toBe(true);
+    expect(toolStartedSeq).toBeTypeOf("number");
+    expect(manualChangeSeq).toBeTypeOf("number");
+    expect(toolCompletedSeq).toBeTypeOf("number");
+    expect(toolStartedSeq!).toBeLessThan(manualChangeSeq!);
+    expect(manualChangeSeq!).toBeLessThan(toolCompletedSeq!);
+    expect(snapshot.draftProject?.graph.nodes.map((node) => node.id)).toEqual(["production_volume", "agent_driver"]);
   });
 
   it("keeps agent_decision schema validation in the orchestrator even when provider validates its supplied schema", async () => {

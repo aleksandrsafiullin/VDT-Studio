@@ -12,6 +12,7 @@ import {
   type AgentEventInput,
   type AgentChatMessage,
   type AgentThreadContext,
+  type AgentWorkspaceRevision,
   type ManualProjectChange,
   type PublicAgentStatus,
   type VdtAgentEvent,
@@ -44,8 +45,8 @@ export interface PersistedAgentRunState {
 
 export interface AgentRunPersistence {
   createRun(state: VdtAgentRunState): void;
-  updateRun(state: VdtAgentRunState): void;
-  appendEvent(event: VdtAgentEvent, state: VdtAgentRunState): void;
+  updateRun(state: VdtAgentRunState): AgentWorkspaceRevision | void;
+  appendEvent(event: VdtAgentEvent, state: VdtAgentRunState): AgentWorkspaceRevision | void;
   getState(runId: string): VdtAgentRunState | null;
   getSnapshot(runId: string): VdtAgentRunSnapshot | null;
 }
@@ -107,8 +108,8 @@ export class AgentRunStore {
       performanceTelemetry: emptyAgentRunPerformanceTelemetry()
     };
     state.visibleContext = visibleContextFromState(state);
-    this.runs.set(runId, state);
     this.persistence?.createRun(state);
+    this.runs.set(runId, state);
     return state;
   }
 
@@ -146,10 +147,11 @@ export class AgentRunStore {
     };
     const updated = {
       ...updatedBase,
+      workspaceRevision: undefined as AgentWorkspaceRevision | undefined,
       visibleContext: visibleContextFromState(updatedBase)
     };
     this.runs.set(runId, updated);
-    this.persistence?.updateRun(updated);
+    updated.workspaceRevision = this.persistence?.updateRun(updated) ?? undefined;
     return updated;
   }
 
@@ -174,10 +176,11 @@ export class AgentRunStore {
     };
     const updated = {
       ...updatedBase,
+      workspaceRevision: undefined as AgentWorkspaceRevision | undefined,
       visibleContext: visibleContextFromState(updatedBase)
     };
     this.runs.set(runId, updated);
-    this.persistence?.updateRun(updated);
+    updated.workspaceRevision = this.persistence?.updateRun(updated) ?? undefined;
     return updated;
   }
 
@@ -198,10 +201,11 @@ export class AgentRunStore {
     };
     const updated = {
       ...updatedBase,
+      workspaceRevision: undefined as AgentWorkspaceRevision | undefined,
       visibleContext: visibleContextFromState(updatedBase)
     };
     this.runs.set(runId, updated);
-    this.persistence?.updateRun(updated);
+    updated.workspaceRevision = this.persistence?.updateRun(updated) ?? undefined;
     return updated;
   }
 
@@ -230,10 +234,11 @@ export class AgentRunStore {
     };
     const updated = {
       ...updatedBase,
+      workspaceRevision: undefined as AgentWorkspaceRevision | undefined,
       visibleContext: visibleContextFromState(updatedBase)
     };
     this.runs.set(runId, updated);
-    this.persistence?.appendEvent(nextEvent, updated);
+    updated.workspaceRevision = this.persistence?.appendEvent(nextEvent, updated) ?? undefined;
     this.eventBus.publish(nextEvent);
     return updated;
   }
@@ -272,10 +277,11 @@ export class AgentRunStore {
     };
     const updated = {
       ...updatedBase,
+      workspaceRevision: undefined as AgentWorkspaceRevision | undefined,
       visibleContext: visibleContextFromState(updatedBase)
     };
     this.runs.set(runId, updated);
-    this.persistence?.updateRun(updated);
+    updated.workspaceRevision = this.persistence?.updateRun(updated) ?? undefined;
     this.appendEvent(runId, {
       type: "run_completed",
       phase: "reporting",
@@ -298,6 +304,7 @@ export function snapshotFromState(state: VdtAgentRunState): VdtAgentRunSnapshot 
     request: redactSecrets(state.request) as VdtAgentStartRequest,
     project: state.project,
     draftProject: state.draftProject,
+    workspaceRevision: state.workspaceRevision,
     selectedSkills: state.selectedSkills,
     events: state.events,
     chatMessages: state.chatMessages,
@@ -367,6 +374,7 @@ export function hydrateAgentRunState(persisted: PersistedAgentRunState): VdtAgen
     request: normalizeStartRequest(snapshot.request),
     project: snapshot.project,
     draftProject: snapshot.draftProject,
+    workspaceRevision: snapshot.workspaceRevision,
     selectedSkills: snapshot.selectedSkills,
     events: snapshot.events,
     chatMessages: snapshot.chatMessages,

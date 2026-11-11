@@ -2,18 +2,20 @@
 
 ## Expected failures and opt-in tests
 
-Three Vitest cases mark reproducible defects with `it.fails`. Remove that
+Two Vitest cases mark reproducible defects with `it.fails`. Remove that
 marker when the regression passes with the corresponding repair.
 
-- F-03 exercises a manual deletion during an in-flight agent mutation. The
-  active runtime needs revision fencing and explicit reconciliation with
-  manual changes before committing the mutation.
 - F-06 exercises raw-data mappings whose metadata suggests a calculated
   input before the baseline and source lineage have been materialized.
   Apply the mapping and verify the resulting value and tree dependency.
 - F-08 exercises skill selection for natural English and Russian requests
   outside the legacy marker rules. Route those requests through the V2
   catalog, read and explicit selection lifecycle.
+
+The F-03 regression now checks that the manual deletion survives an in-flight
+agent mutation. The stored-editor regression also checks revision handoff,
+reopen after a manual edit, stale-tab and late-write rejection, and a fresh
+read of run history after the conflict.
 
 On macOS, two migration filesystem fixtures are reserved for Linux. The
 nine live CLI tests run only with their adapter's `VDT_LIVE_CODEX`,

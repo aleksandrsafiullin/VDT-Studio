@@ -1779,18 +1779,16 @@ function applyManualProjectChange(
     change: message.change
   });
   const state = agentRuntime.store.getState(runId);
-  if (
-    state.builder
-    && message.change.kind === "node_updated"
-    && message.change.nodeId
-    && message.change.patch
-  ) {
-    state.builder.updateNode({
-      nodeId: message.change.nodeId,
-      patch: message.change.patch as VdtNodePatch
-    });
-    agentRuntime.store.updateRun(runId, { draftProject: state.builder.getProject() });
+  const { kind, nodeId, patch } = message.change;
+  if (!state.builder || !nodeId) return;
+  if (kind === "node_deleted") {
+    state.builder.deleteNode({ nodeId, cascadeEdges: true });
+  } else if (kind === "node_updated" && patch) {
+    state.builder.updateNode({ nodeId, patch: patch as VdtNodePatch });
+  } else {
+    return;
   }
+  agentRuntime.store.updateRun(runId, { draftProject: state.builder.getProject() });
 }
 
 function hasNewImmediateChild(request: VdtAgentStartRequest, builder: VdtBuilderSession): boolean {

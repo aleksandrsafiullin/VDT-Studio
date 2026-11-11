@@ -9,6 +9,7 @@ import type {
   VdtWarning
 } from "@vdt-studio/vdt-core";
 import type { VdtAgentQuestion, VdtSkillRecipe } from "@vdt-studio/vdt-agent";
+import type { ProjectRuntimeStateV1, RevisionCommitCommandV2, VdtRevisionHeadV2 } from "@vdt-studio/storage";
 import type {
   AgentExecutionSummaryV2,
   AgentSupervisorPersistenceStateV2
@@ -258,12 +259,22 @@ export interface VdtAgentStartInput {
   skillSelection?: import("@vdt-studio/vdt-agent").SkillPin | undefined;
 }
 
+export type AgentWorkspaceRevisionBase = Pick<RevisionCommitCommandV2,
+  "expectedActiveRevisionId" | "expectedActiveContentIdentity" | "expectedCommitGeneration" |
+  "expectedRuntimeGeneration" | "expectedGenerationVersion">;
+
+export interface AgentWorkspaceRevision {
+  head: VdtRevisionHeadV2;
+  runtime: Pick<ProjectRuntimeStateV1, "runtimeGeneration" | "generationVersion">;
+}
+
 export interface VdtAgentWorkspaceContext {
   projectId: string;
   projectName?: string | undefined;
   industry?: string | undefined;
   description?: string | undefined;
   vdtId?: string | undefined;
+  expectedRevision?: AgentWorkspaceRevisionBase | undefined;
 }
 
 export interface VdtAgentStartRequestBase {
@@ -625,6 +636,8 @@ export interface VdtAgentRunSnapshot {
   request: VdtAgentStartRequest;
   project?: VdtProject | undefined;
   draftProject?: VdtProject | undefined;
+  /** Local storage attests the committed base of this graph and any layout-only draft. */
+  workspaceRevision?: AgentWorkspaceRevision | undefined;
   selectedSkills: VdtAgentSelectedSkill[];
   events: VdtAgentEvent[];
   chatMessages: AgentChatMessage[];
