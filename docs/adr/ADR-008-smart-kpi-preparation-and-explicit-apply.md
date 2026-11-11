@@ -96,6 +96,9 @@ Skills use the ordinary schema, including supported disjoint subtotals. A plan
 rationale that restates the target amount qualifies as a basic definition. The
 bundled Universal Skill is identified by its ID, version and exact source hash.
 Host identity, validation and apply retain the complete task context.
+Preparation v23 recognizes a supported trailing currency code with an optional
+English or Russian preposition in an otherwise exact refund amount label.
+Recipe exclusion still requires the matching operand in the saved ancestor.
 Reopening a draft can reuse a successful preview for the same draft, project
 and Smart scope while the proposal is current. Add recompiles the draft and
 verifies the current execution lineage and storage revision.

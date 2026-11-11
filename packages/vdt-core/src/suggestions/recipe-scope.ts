@@ -14,7 +14,11 @@ export function normalizedLabel(value: string): string {
 function matchesRefundAmountLabel(name: string): boolean {
   // The audited Finance skill treats refunds and returns as the same deduction.
   const words = name.split(" ");
-  if (INCOMING_KPI_UNIT_GRAMMAR.currencies.some(currency => currency.toLowerCase() === words.at(-1))) words.pop();
+  if (INCOMING_KPI_UNIT_GRAMMAR.currencies.some(currency => currency.toLowerCase() === words.at(-1))) {
+    words.pop();
+    const preposition = words.at(-1);
+    if (preposition === "in" || preposition === "в") words.pop();
+  }
   const amount = words.join(" ")
     .replace(/^(?:total|сумма) /u, "")
     .replace(/ (?:after discounts?|после скид(?:ки|ок))$/u, "")

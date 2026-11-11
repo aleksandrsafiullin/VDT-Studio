@@ -88,13 +88,20 @@ describe("Smart model response requirements", () => {
     const context = await contextFor(refund.id);
     const recipeId = "revenue.quantity_price_net";
     const recipe = buildKpiSuggestionTaskInput(await sales()).responseContract.recipes.find(candidate => candidate.id === recipeId)!;
-    for (const label of ["Returns", "Returns amount", "returns_after_discount_usd", "Возвраты"]) {
+    for (const label of ["Returns", "Returns amount", "returns_after_discount_usd", "Возвраты", "Returns in USD", "Returns amount in USD", "Возвраты в USD"]) {
       refund.name = label;
       const contract = buildKpiSuggestionTaskInput(await contextFor(refund.id)).responseContract;
       expect(contract.recipes).toEqual([]);
       expect(contract.excludedAncestorRecipes).toEqual([{ recipeId, targetNodeId: refund.id, repeatedTargetLabel: "Refunds", unit: "USD" }]);
       expect(contract.references.openAiCustomFactorKeys).toEqual(["p_1", "p_2"]);
     }
+    for (const label of ["Returns by channel in USD", "Affiliate channel net revenue in USD"]) {
+      refund.name = label;
+      const contract = buildKpiSuggestionTaskInput(await contextFor(refund.id)).responseContract;
+      expect(contract.excludedAncestorRecipes).toEqual([]);
+      expect(contract.references.openAiCustomFactorKeys).toBeUndefined();
+    }
+    refund.name = "Returns in USD";
     expect(apiGroups(context).map(group => group.recipeId)).toEqual([{ type: "null" }]);
     const targetPlan = (rationale: string) => ({ version: 1 as const, goal: "Preserve the selected target definition.", nodes: [{
       nodeId: context.targetNodeId, parentNodeId: root.id, kind: "input" as const, rationale

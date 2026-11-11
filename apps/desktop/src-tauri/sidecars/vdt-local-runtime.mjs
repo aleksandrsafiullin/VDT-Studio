@@ -1563,7 +1563,11 @@ function normalizedLabel(value) {
 }
 function matchesRefundAmountLabel(name) {
   const words = name.split(" ");
-  if (INCOMING_KPI_UNIT_GRAMMAR.currencies.some((currency) => currency.toLowerCase() === words.at(-1))) words.pop();
+  if (INCOMING_KPI_UNIT_GRAMMAR.currencies.some((currency) => currency.toLowerCase() === words.at(-1))) {
+    words.pop();
+    const preposition = words.at(-1);
+    if (preposition === "in" || preposition === "\u0432") words.pop();
+  }
   const amount = words.join(" ").replace(/^(?:total|сумма) /u, "").replace(/ (?:after discounts?|после скид(?:ки|ок))$/u, "").replace(/ (?:amount|value)$/u, "");
   return /^(?:refunds?|returns?|возврат(?:ы|ов)?)$/u.test(amount);
 }
