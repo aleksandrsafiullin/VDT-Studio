@@ -1,8 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { calculationsWithoutPlannedInputs, VdtBuilderSession, type VdtDecompositionPlan } from "@vdt-studio/vdt-core";
 import { modelAgentStructuredTurnSchema } from "@vdt-studio/vdt-agent-runtime";
 import { createManagedAwareAiProvider } from "./managed-ai-provider";
-import { buildOpenAiModelTurn } from "./openai-agent-decision";
-import { calculationsWithoutPlannedInputs } from "./openai-hierarchy-repair";
+import { buildOpenAiModelTurn, openAiConstructionPlan } from "./openai-agent-decision";
 import { toProviderJsonSchema } from "./provider-json-schema";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -87,35 +87,58 @@ it("uses the actual root and accepted plan IDs for construction calls", () => {
     { name: "vdt.set_decomposition_plan", inputJsonSchema: plan },
     { name: "vdt.add_driver", inputJsonSchema: driver },
     { name: "vdt.add_drivers_batch", inputJsonSchema: object({ drivers: { type: "array", minItems: 2, items: driver } }) },
+    { name: "vdt.update_node", inputJsonSchema: object({ nodeId: string, patch: object({ formula: string, name: string }) }) },
     { name: "vdt.set_formula", inputJsonSchema: object({ nodeId: string, formula: string }) }
   ];
+  const builder = new VdtBuilderSession();
+  builder.createDraft({ projectTitle: "Revenue", rootKpi: "Чистая выручка" });
+  const rootNodeId = builder.getProject().rootNodeId;
   const schema = toProviderJsonSchema(modelAgentStructuredTurnSchema);
-  const rootOnly = { nodeCount: 1, constructingTree: true, needsStructure: true, rootNodeId: "root_kpi",
-    truncated: false, nodeColumns: ["id"], nodes: [["root_kpi"]] };
+  const rootOnly = { nodeCount: 1, constructingTree: true, needsStructure: true, rootNodeId,
+    truncated: false, nodeColumns: ["id"], nodes: [[rootNodeId]] };
   const first = buildOpenAiModelTurn(schema, catalog, rootOnly, "exchange-1", undefined)!;
-  const nodes = [{ nodeId: "net_sales", parentNodeId: "ROOT", kind: "calculated" },
-    { nodeId: "discount", parentNodeId: "root_kpi", kind: "input" },
-    { nodeId: "price_per_item", parentNodeId: "net_sales", kind: "input" }];
+  const nodes: VdtDecompositionPlan["nodes"] = [{ nodeId: "net_sales", parentNodeId: "ROOT", kind: "calculated" },
+    { nodeId: "discount", parentNodeId: rootNodeId, kind: "input" },
+    { nodeId: "price_per_item", parentNodeId: "net_sales", kind: "input", sharedWith: [rootNodeId] }];
   const turn = first.decode({ turnId: "exchange-1", sessionState: "{}", assistantMessage: null,
     action: { type: "action_batch", batch: { calls: [{ toolName: "vdt.set_decomposition_plan", args: { plan: { nodes } } }] } } });
-  const accepted = [{ ...nodes[0], parentNodeId: "root_kpi" }, ...nodes.slice(1)];
+  const accepted = [{ ...nodes[0]!, parentNodeId: rootNodeId }, ...nodes.slice(1)];
   expect(turn).toMatchObject({ action: { batch: { calls: [{ args: { plan: { nodes: accepted } } }] } } });
-  const planned = buildOpenAiModelTurn(schema, catalog, { ...rootOnly, decompositionPlan: { nodes: accepted } },
-    "exchange-2", undefined, { planRecorded: true })!;
+  builder.updateNode({ nodeId: rootNodeId, patch: { decompositionPlan: { version: 1, goal: "Revenue", nodes: accepted } } });
+  const planned = buildOpenAiModelTurn(schema, catalog, rootOnly,
+    "exchange-2", undefined, { planRecorded: true, constructionPlan: openAiConstructionPlan(builder.getProject())! })!;
   expect(planned.toolGuidance.map((tool) => tool.name)).toEqual(["vdt.add_driver", "vdt.add_drivers_batch"]);
   const tools = planned.schema.$defs as { toolCall: { anyOf: unknown[] } };
   expect(tools.toolCall.anyOf[1]).toMatchObject({ properties: { args: { properties: {
     drivers: { maxItems: 2, items: { properties: {
-      nodeId: { enum: ["net_sales", "discount"] }, parentNodeId: { const: "root_kpi" }
+      nodeId: { enum: ["net_sales", "discount"] }, parentNodeId: { const: rootNodeId }
     } } }
   } } } });
-  const partial = buildOpenAiModelTurn(schema, catalog, { ...rootOnly, nodeCount: 3, needsStructure: false,
-    nodes: [["root_kpi"], ["net_sales"], ["discount"]], decompositionPlan: { nodes: accepted } }, "exchange-3", undefined)!;
-  expect(partial.toolGuidance.map((tool) => tool.name)).toEqual(["vdt.set_decomposition_plan", "vdt.add_driver", "vdt.set_formula"]);
+  builder.addDriver({ parentNodeId: rootNodeId, nodeId: "net_sales", name: "Net sales", type: "calculated" });
+  const observation = () => ({ ...rootOnly, needsStructure: false, nodeCount: builder.getProject().graph.nodes.length,
+    nodes: builder.getProject().graph.nodes.map(({ id }) => [id]) });
+  const projectTurn = () => buildOpenAiModelTurn(schema, catalog, observation(), "exchange-3", undefined, {
+    constructionPlan: openAiConstructionPlan(builder.getProject())!
+  })!;
+  const partial = projectTurn();
+  expect(partial.toolGuidance.map((tool) => tool.name)).toEqual(["vdt.set_decomposition_plan", "vdt.add_driver", "vdt.update_node"]);
   const partialTools = partial.schema.$defs as { toolCall: { anyOf: unknown[] } };
-  expect(partialTools.toolCall.anyOf[2]).toMatchObject({ properties: { args: { properties: {
-    nodeId: { enum: ["root_kpi", "net_sales"] }
+  expect(partialTools.toolCall.anyOf[1]).toMatchObject({ properties: { args: { properties: {
+    nodeId: { enum: ["discount"] }, parentNodeId: { const: rootNodeId }
   } } } });
+  expect(partialTools.toolCall.anyOf[2]).not.toHaveProperty("properties.args.properties.patch.properties.formula");
+  builder.addDriver({ parentNodeId: rootNodeId, nodeId: "discount", name: "Discount" });
+  expect(openAiConstructionPlan(builder.getProject())).toEqual({
+    additions: [{ parentNodeId: "net_sales", nodeIds: ["price_per_item"] }], calculatedIds: [], pendingFactors: true
+  });
+  builder.addDriver({ parentNodeId: "net_sales", nodeId: "price_per_item", name: "Price" });
+  expect(openAiConstructionPlan(builder.getProject())).toEqual({
+    additions: [], calculatedIds: [rootNodeId, "net_sales"], pendingFactors: false
+  });
+  expect(projectTurn().toolGuidance.map((tool) => tool.name)).toContain("vdt.set_formula");
+  const existing = buildOpenAiModelTurn(schema, catalog, { ...observation(), constructingTree: false }, "exchange-existing", undefined)!;
+  const existingTools = existing.schema.$defs as { toolCall: { anyOf: unknown[] } };
+  expect(existingTools.toolCall.anyOf[3]).toHaveProperty("properties.args.properties.patch.properties.formula", string);
 });
 
 it("reviews an intermediate without factors and accepts direct or shared operands", () => {

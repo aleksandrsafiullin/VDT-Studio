@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   extractFormulaReferences,
   inspectDecompositionHierarchy,
+  plannedFormulaTargets,
   serializeFormulaTokens,
   stableSnakeId,
   tokenizeFormula,
@@ -201,6 +202,12 @@ function assertNewDriverId(input: AddDriverToolInput, nodeIds: ReadonlySet<strin
   );
 }
 
+function requireDedicatedFormulaTool(context: AgentToolContext, formula: string | undefined, nodeId?: string): void {
+  if (context.requirePlanOperands && formula !== undefined) {
+    throw new AgentToolError("FORMULA_TOOL_REQUIRED", "Use vdt.set_formula for construction formulas once the planned operands exist.", { nodeId });
+  }
+}
+
 const createDraftTool: AgentTool = {
   name: "vdt.create_draft",
   description: "Create a draft VDT project and root KPI node.",
@@ -261,6 +268,7 @@ const addDriverTool: AgentTool = {
   requiresDraftProject: true,
   phase: "building_graph",
   run(context, input) {
+    requireDedicatedFormulaTool(context, input.formula, input.nodeId);
     requirePlannedAdditions(context, [input]);
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
@@ -313,11 +321,13 @@ const addDriversBatchTool: AgentTool = {
     }
     const targetNodeId = drivers[0]?.parentNodeId;
     if (!targetNodeId) throw new AgentToolError("INVALID_TOOL_ARGS", "At least one driver is required.");
+    requireDedicatedFormulaTool(context, input.parentFormula, targetNodeId);
     const previewBuilder = cloneBuilder(context);
     const added: Array<{ nodeId: string; edgeId: string; parentNodeId: string; name: string }> = [];
     const changeSets: VdtChangeSet[] = [];
 
     for (const driver of drivers) {
+      requireDedicatedFormulaTool(context, driver.formula, driver.nodeId);
       const project = previewBuilder.getProject();
       const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
       if (!nodeIds.has(driver.parentNodeId)) {
@@ -578,6 +588,7 @@ const updateNodeTool: AgentTool = {
     if (!node) {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
     }
+    requireDedicatedFormulaTool(context, input.patch.formula, input.nodeId);
     if (input.nodeId === project.rootNodeId) {
       const protectedBrief = protectedBriefFromRun(context);
       if (input.patch.type && input.patch.type !== "root_kpi") {
@@ -775,6 +786,14 @@ const setFormulaTool: AgentTool = {
     const project = builder.getProject();
     if (!project.graph.nodes.some((node) => node.id === input.nodeId)) {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
+    }
+    if (context.requirePlanOperands) {
+      const readyTargets = plannedFormulaTargets(project);
+      if (!readyTargets.includes(input.nodeId)) {
+        throw new AgentToolError("FORMULA_TARGET_NOT_READY", "Formula writes require the root or a planned calculated node whose declared factors all exist. Add missing factors, correct the node type, or revise the plan before writing this formula.", {
+          nodeId: input.nodeId, readyTargets
+        });
+      }
     }
     assertFormulaReferencesIfPresent(project, input.formula, input.nodeId);
     const previewBuilder = cloneBuilder(context);

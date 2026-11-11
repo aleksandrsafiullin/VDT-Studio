@@ -24,6 +24,8 @@ export interface AgentToolContext {
   builder?: VdtBuilderSession | undefined;
   /** Trusted Supervisor policy; never accepted from browser tool arguments. */
   requireDecompositionPlan?: boolean | undefined;
+  /** Direct new-tree construction requires declared operands for subtotals. */
+  requirePlanOperands?: boolean | undefined;
   /** Trusted legacy decision policy for a run that must construct a tree. */
   requireDerivedRoot?: boolean | undefined;
   signal: AbortSignal;

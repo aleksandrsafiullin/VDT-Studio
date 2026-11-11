@@ -526,6 +526,51 @@ describe("ToolRegistry", () => {
     expect(builder.calculate().calculation?.rootValue).toBe(5500);
   });
 
+  it("admits construction formulas only on ready calculated targets through the dedicated tool", async () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
+    const root = builder.getProject().rootNodeId;
+    builder.addDriver({ parentNodeId: root, nodeId: "subtotal", name: "Subtotal", type: "calculated", unit: "USD" });
+    builder.addDriver({ parentNodeId: root, nodeId: "rebate", name: "Rebate", type: "input", unit: "USD", baselineValue: 10 });
+    builder.updateNode({ nodeId: root, patch: { decompositionPlan: { version: 1, goal: "Revenue", nodes: [
+      { nodeId: "subtotal", parentNodeId: root, kind: "calculated" },
+      { nodeId: "rebate", parentNodeId: root, kind: "input" },
+      { nodeId: "sales", parentNodeId: "subtotal", kind: "input" },
+      { nodeId: "fee", parentNodeId: "subtotal", kind: "input" }
+    ] } } });
+    const { registry, context } = sourceUnitContext(builder, "Calculate revenue from sales and rebates.");
+    context.requirePlanOperands = true;
+    context.requireDecompositionPlan = true;
+    const before = builder.getProject();
+    const revision = builder.getRevision();
+    for (const nodeId of ["subtotal", "rebate"]) {
+      expect(await registry.run("vdt.set_formula", { nodeId, formula: nodeId === "subtotal" ? "rebate" : "1" }, context))
+        .toMatchObject({ ok: false, error: { code: "FORMULA_TARGET_NOT_READY", details: { nodeId, readyTargets: [root] } } });
+    }
+    const sales = { nodeId: "sales", parentNodeId: "subtotal", name: "Sales", type: "input", unit: "USD", baselineValue: 90 };
+    const fee = { ...sales, nodeId: "fee", name: "Fee", baselineValue: 5 };
+    expect(await registry.run("vdt.add_driver", { ...sales, formula: "rebate" }, context)).toMatchObject({
+      ok: false, error: { code: "FORMULA_TOOL_REQUIRED" }
+    });
+    for (const args of [{ drivers: [sales, fee], parentFormula: "sales + fee" }, { drivers: [sales, { ...fee, formula: "sales" }] }]) {
+      expect(await registry.run("vdt.add_drivers_batch", args, context)).toMatchObject({
+        ok: false, error: { code: "FORMULA_TOOL_REQUIRED" }
+      });
+    }
+    expect(builder.getRevision()).toBe(revision);
+    expect(builder.getProject()).toEqual(before);
+    expect(await registry.run("vdt.add_driver", sales, context)).toMatchObject({ ok: true });
+    expect(await registry.run("vdt.add_driver", fee, context)).toMatchObject({ ok: true });
+    expect(await registry.run("vdt.set_formula", { nodeId: "subtotal", formula: "sales + fee" }, context)).toMatchObject({ ok: true });
+    expect(await registry.run("vdt.set_formula", { nodeId: root, formula: "subtotal - rebate" }, context)).toMatchObject({ ok: true });
+    for (const formula of ["", "  ", "rebate"]) {
+      expect(await registry.run("vdt.update_node", { nodeId: "subtotal", patch: { formula } }, context)).toMatchObject({
+        ok: false, error: { code: "FORMULA_TOOL_REQUIRED" }
+      });
+    }
+    expect(builder.calculate().calculation?.rootValue).toBe(85);
+  });
+
   it.each([
     [{ nodeId: "missing", value: 5, provenance: "default_assumption", note: "Draft estimate" }, "NODE_NOT_FOUND"],
     [{ nodeId: "ore_hauled", value: 5, provenance: "default_assumption", note: "Draft estimate" }, "INPUT_LEAF_REQUIRED"],

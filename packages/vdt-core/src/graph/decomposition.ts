@@ -73,6 +73,15 @@ export function decompositionPlanGroupingErrors(plan: VdtDecompositionPlan, root
   return leaves.length > 1 ? [`ROOT_CONTEXT_LEAVES_REQUIRE_GROUP: ${leaves.length} reference inputs are direct root children (${leaves.slice(0, 8).map(n => n.nodeId).join(", ")}). Keep related reference inputs under context groups; groups need no numeric value or formula.`] : [];
 }
 
+export function calculationsWithoutPlannedInputs(plan: unknown): string[] {
+  if (!record(plan) || !Array.isArray(plan.nodes)) return [];
+  const factors = plan.nodes.filter((node): node is Record<string, unknown> => record(node) && node.kind !== "context");
+  const users = new Set(factors.flatMap((factor) =>
+    [factor.parentNodeId, ...(Array.isArray(factor.sharedWith) ? factor.sharedWith : [])]));
+  return factors.flatMap((factor) => factor.kind === "calculated" && typeof factor.nodeId === "string"
+    && !users.has(factor.nodeId) ? [factor.nodeId] : []);
+}
+
 /** A declared, unvalued reference container is informational, not an unknown
  * numerical input. Its numerical leaves still participate in normal checks. */
 export function getDecompositionContextGroupIds(graph: VdtGraph, rootId: string): Set<string> {
@@ -148,17 +157,69 @@ export function plannedAdditionErrors(project: VdtProject, additions: Array<{ no
   const plan = project.graph.nodes.find(n => n.id === project.rootNodeId)?.decompositionPlan;
   if (!plan) return ["DECOMPOSITION_PLAN_REQUIRED: call vdt.set_decomposition_plan first."];
   const invalid = decompositionPlanErrors(plan, project.rootNodeId); if (invalid.length) return invalid;
-  const entries = new Map(plan.nodes.map(n => [n.nodeId, n]));
   const existing = new Set(project.graph.nodes.map(n => n.id));
-  const depth = (id: string): number => { let n = 0; while (id !== project.rootNodeId) { n++; id = entries.get(id)!.parentNodeId; } return n; };
+  const { entries, missingEarlierFactors } = plannedAdditionLayer(plan, project.rootNodeId, existing);
   const errors: string[] = [];
   for (const a of additions) {
     const e = a.nodeId ? entries.get(a.nodeId) : undefined;
     if (!e || e.parentNodeId !== a.parentNodeId) { errors.push(`ADDITION_NOT_IN_PLAN: ${a.nodeId ?? "<missing nodeId>"} under ${a.parentNodeId}.`); continue; }
     if (e.kind !== "context") {
-      const missing = plan.nodes.filter(p => p.kind !== "context" && depth(p.nodeId) < depth(e.nodeId) && !existing.has(p.nodeId));
+      const missing = missingEarlierFactors(e.nodeId);
       if (missing.length) errors.push(`EARLIER_LAYER_INCOMPLETE: create ${missing.slice(0,8).map(n=>n.nodeId).join(", ")} first.`);
     }
   }
   return errors;
+}
+
+/** Exactly the missing planned nodes whose parent and earlier factor layers
+ * already exist. Use the same layer rule as mutation admission. */
+export function plannedAdditionCandidates(project: VdtProject): VdtDecompositionPlan["nodes"] {
+  const plan = project.graph.nodes.find(({ id }) => id === project.rootNodeId)?.decompositionPlan;
+  if (!plan || decompositionPlanErrors(plan, project.rootNodeId).length) return [];
+  const existing = new Set(project.graph.nodes.map(({ id }) => id));
+  const { missingEarlierFactors } = plannedAdditionLayer(plan, project.rootNodeId, existing);
+  return plan.nodes.filter((entry) => !existing.has(entry.nodeId) && existing.has(entry.parentNodeId)
+    && (entry.kind === "context" || missingEarlierFactors(entry.nodeId).length === 0));
+}
+
+/** Formula writes can begin when the target and all of its planned factors
+ * exist. The formula may still be revised before the final hierarchy check. */
+export function plannedFormulaTargets(project: VdtProject): string[] {
+  const { graph, rootNodeId } = project;
+  const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
+  const root = nodes.get(rootNodeId);
+  const plan = root?.decompositionPlan;
+  if (root?.type !== "root_kpi" || !plan || decompositionPlanErrors(plan, rootNodeId).length) return [];
+  const operands = new Map<string, string[]>();
+  for (const factor of plan.nodes) {
+    if (factor.kind === "context") continue;
+    for (const user of [factor.parentNodeId, ...(factor.sharedWith ?? [])]) {
+      const references = operands.get(user) ?? [];
+      references.push(factor.nodeId);
+      operands.set(user, references);
+    }
+  }
+  const targets = [rootNodeId, ...plan.nodes.filter(({ kind, nodeId }) => kind === "calculated"
+    && nodes.get(nodeId)?.type === "calculated").map(({ nodeId }) => nodeId)];
+  return targets.filter((id) => {
+    const references = operands.get(id);
+    return references?.length && references.every((reference) => nodes.has(reference));
+  });
+}
+
+function plannedAdditionLayer(plan: VdtDecompositionPlan, rootId: string, existing: ReadonlySet<string>) {
+  const entries = new Map(plan.nodes.map((entry) => [entry.nodeId, entry]));
+  const depths = new Map([[rootId, 0]]);
+  function depth(id: string): number {
+    const known = depths.get(id);
+    if (known !== undefined) return known;
+    const resolved = depth(entries.get(id)!.parentNodeId) + 1;
+    depths.set(id, resolved);
+    return resolved;
+  }
+  const pending = plan.nodes.filter((entry) => entry.kind !== "context" && !existing.has(entry.nodeId));
+  return {
+    entries,
+    missingEarlierFactors: (id: string) => pending.filter((entry) => depth(entry.nodeId) < depth(id))
+  };
 }

@@ -14,8 +14,9 @@ without planned operands gets one model revision before any tool executes.
 The plan tool rejects a remaining operandless calculation. Native additions
 offer the earliest layer admitted by the same rule as the Gateway. The
 dedicated formula tool is available for a calculated target when its planned
-direct and shared operands exist. Node updates retain properties and source
-values during construction. Existing-tree edits retain their tool contract.
+direct and shared operands exist. The schema and canonical tool use the same
+readiness rule. Construction creates nodes and writes properties and source
+values separately from formulas. Existing-tree edits retain their tool contract.
 
 For a calculable new draft with a hierarchy mismatch, including a run that
 started from the editor's saved empty root, the direct OpenAI
@@ -24,7 +25,9 @@ derived from the existing formulas. The model reviews the business result
 before selecting the sequence. An exact unused AI duplicate of the root
 expression may be removed if it has no independent value, source, or children.
 The selected sequence uses the admitted tools and their normal revision and
-approval controls. The current diagnosis is supplied in the repair turn.
+approval controls. A new sequence is withheld when it would touch recorded
+manual edits to affected nodes or links, or when a whole-graph edit is recorded.
+The current diagnosis is supplied in the repair turn.
 The model receives the parent-to-factor direction for visual edges and uses
 `sharedWith` for additional formula users. A pre-existing plan is outside
 the scope of this repair.
@@ -46,8 +49,9 @@ user answer from the current request and source observations. A
 rejected question gives the model one tool action for continuing the work.
 Formula and validation feedback treats an unfinished derived KPI as work for
 the agent and asks the user only for an essential missing source input or choice.
-Formula and parent-link questions about the agent's own unfinished graph
-are filtered using the current plan and hierarchy diagnostics.
+The deterministic filter uses the current formula backlog, mechanical question
+wording, formula choices and matching hierarchy diagnostics. Questions about
+unresolved business choices remain eligible for the bounded review.
 For direct OpenAI construction from a new draft or a saved empty root, the
 work log shows actual tool progress. Questions and approvals keep their
 existing controls. The final action cites the verified receipt for the current

@@ -6,7 +6,7 @@ import { isAdmittedHarnessSession } from "./harness-session-bindings";
 import type { ReasoningEffort } from "@vdt-studio/model-bridge";
 import { toProviderJsonSchema } from "./provider-json-schema";
 import type { AiProvider } from "@vdt-studio/ai-harness";
-import { VdtBuilderSession, type VdtNodePatch, type VdtProject } from "@vdt-studio/vdt-core";
+import { calculationsWithoutPlannedInputs, VdtBuilderSession, type VdtNodePatch, type VdtProject } from "@vdt-studio/vdt-core";
 import {
   AgentRunEventOutbox,
   AgentRunStateSupervisorPersistence,
@@ -66,8 +66,8 @@ import { LocalModelKnowledge } from "./local-model-knowledge";
 import { CONSTRUCTION_QUESTION_CHECK, constructionQuestionReview } from "./local-model-question-review";
 import { resultLanguageInstruction, resultLocale } from "./model-agent-result-language";
 import { formatVerifiedResult, summarizeVerifiedResult, verifiedResultSchema } from "./model-agent-verified-result";
-import { buildOpenAiModelTurn } from "./openai-agent-decision";
-import { calculationsWithoutPlannedInputs, suggestHierarchyRepair, type HierarchyRepairCall } from "./openai-hierarchy-repair";
+import { buildOpenAiModelTurn, openAiConstructionPlan } from "./openai-agent-decision";
+import { rootIdentityWrapper, suggestHierarchyRepair, suggestIdentityPromotion, type HierarchyRepairCall } from "./openai-hierarchy-repair";
 import {
   agentRuntime,
   createAgentSupervisorPersistence,
@@ -76,7 +76,7 @@ import {
 
 const OPENING_RESPONSE_PROMPT_RULE = "The first turn must include an assistantMessage or a question.";
 const OPENING_PLAN_PROMPT_RULE = "Opening summary: the first user-facing assistant message must restate the accepted task in the user's language and outline the intended plan in 3-6 short steps before or alongside the first tool batch.";
-const CONSTRUCTION_CHAT_PROMPT_RULE = "Set assistantMessage to null. The application displays confirmed tool progress and publishes the final KPI value from its verified calculation. Use a question action only for essential missing inputs or unresolved business choices. Keep questions and approval requests focused on the input or decision without stating a computed result.";
+const CONSTRUCTION_CHAT_PROMPT_RULE = "Set assistantMessage to null. The application displays confirmed tool progress and publishes the final KPI value from its verified calculation. Use the current construction frontier and dedicated vdt.set_formula tool once planned operands exist. The requested KPI owns its expression. Avoid a same-unit identity child containing the whole result and retain distinct subtotals the root combines with other factors or operations. Resolve unfinished formulas and graph links through tools. Use a question action only for essential missing inputs or unresolved business choices without stating a computed result.";
 const VERIFIED_RESULT_PROMPT = "The Supervisor verified the calculation in verifiedResult. Return the final action with the supplied finishReceiptId. Set assistantMessage and action.text to null. The application formats the verified value and unit in the user's language. Keep sessionState brief.";
 
 export const MODEL_AGENT_SYSTEM_PROMPT = `You are the in-product VDT Model Agent. You own one logical structured-turn session for the whole run.
@@ -207,16 +207,27 @@ export async function startStructuredModelAgentRun(input: {
           bindingDefinition,
           initialContextDelta,
           bindingDefinition.modelEngineAdapter.providerId === "openai_compatible" ? () => {
-            const builder = agentRuntime.store.getState(runId).builder;
+            const state = agentRuntime.store.getState(runId);
+            const builder = state.builder;
             if (!builder) throw new Error("The Model Agent working draft is unavailable.");
             const project = builder.getProject();
             const observation = localModelWorkingContext(project, builder.getRevision(), requireDerivedRoot, requiresHierarchyForRun(request), directOpenAiConstruction);
+            const constructionPlan = directOpenAiConstruction ? openAiConstructionPlan(project) : undefined;
             const unboundSourceFacts = directOpenAiConstruction && observation.projectReadyForFinish ? unboundQuotedMoneyFacts(project, request) : [];
+            const identityWrapper = directOpenAiConstruction && observation.projectReadyForFinish
+              ? rootIdentityWrapper(project, request, state) : undefined;
             const hierarchyRepair = directOpenAiConstruction && observation.hierarchyRequired
-              && !observation.truncated && !observation.hierarchy.valid
+              && !observation.truncated
               && observation.calculation.errorCount === 0 && Number.isFinite(observation.calculation.rootValue)
-              ? suggestHierarchyRepair(project, request) : undefined;
-            return { ...observation, hierarchyRepair,
+              ? identityWrapper ? suggestIdentityPromotion(project, request, state, identityWrapper)
+                : !observation.hierarchy.valid ? suggestHierarchyRepair(project, request, state) : undefined
+              : undefined;
+            return { ...observation, constructionPlan, hierarchyRepair,
+              ...(identityWrapper ? {
+                projectReadyForFinish: false,
+                duplicateRootOutput: { nodeId: identityWrapper.id, formula: identityWrapper.formula,
+                  reason: "The root only references this same-unit calculated child. Keep the existing factor values and put the final expression on the root." }
+              } : {}),
               ...(unboundSourceFacts.length ? { projectReadyForFinish: false, unboundSourceFacts } : {}) };
           } : undefined,
           () => agentRuntime.store.getState(runId).request.input.personalisation ?? {},
@@ -367,7 +378,7 @@ async function startSupervisorAgentRun(input: {
     gateway: {
       tools: agentRuntime.tools,
       allowedTools: new Set(TARGET_MODEL_AGENT_TOOLS),
-      toolContext: () => createToolContext(runId),
+      toolContext: () => createToolContext(runId, usesOpenAiNativeTurns(bindingDefinition) && requiresDerivedRootForRun(request)),
       allowTool: (toolName, context) => allowTargetTool(request, toolName, context),
       revisionReconciliation: ({ expectedRevision, currentRevision, context }) => {
         const state = context.store.getState(context.runId);
@@ -420,6 +431,15 @@ async function startSupervisorAgentRun(input: {
           : {})
       });
       if (!directOpenAiConstruction || !verification.calculation) return verification;
+      const identityWrapper = rootIdentityWrapper(project, request, current);
+      if (identityWrapper) return {
+        accepted: false,
+        code: "DUPLICATE_ROOT_OUTPUT",
+        payload: {
+          nodeId: identityWrapper.id,
+          message: "The requested KPI is the root. Put the verified expression on the root, retain its factors, and remove the redundant same-unit identity child before finishing."
+        }
+      };
       const verifiedResult = summarizeVerifiedResult(project, verification.calculation);
       return verifiedResult
         ? { ...verification, payload: { ...verification.payload, verifiedResult } }
@@ -1074,7 +1094,9 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
     private readonly definition: StructuredModelAgentExecutionBindingDefinition,
     initialContext?: Extract<ModelAgentTurnDelta, { type: "initial_context" }> | undefined,
     private readonly workingContext?: (() => ReturnType<typeof localModelWorkingContext> & {
+      constructionPlan?: ReturnType<typeof openAiConstructionPlan>;
       hierarchyRepair?: HierarchyRepairCall[] | undefined;
+      duplicateRootOutput?: { nodeId: string; formula?: string | undefined; reason: string } | undefined;
     }) | undefined,
     private readonly personalisation?: (() => AiPersonalisation) | undefined,
     private readonly latestRequest?: (() => string | undefined) | undefined
@@ -1180,14 +1202,17 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
     }
     const native = this.openAiToolCatalog && outputSchema ? buildOpenAiModelTurn(outputSchema, this.openAiToolCatalog,
       nativeContext, request.exchangeId, finishReceiptId,
-      { planRecorded, ...(observation?.hierarchyRepair ? { hierarchyRepair: observation.hierarchyRepair } : {}),
+      { planRecorded, ...(observation?.constructionPlan ? { constructionPlan: observation.constructionPlan } : {}),
+        ...(observation?.hierarchyRepair ? { hierarchyRepair: observation.hierarchyRepair } : {}),
         ...(verifiedFinalText !== undefined ? { verifiedFinalText } : {}) }) : undefined;
     if (this.openAiToolCatalog && !native) {
       throw new PublicSupervisorRunError("MODEL_SCHEMA_UNAVAILABLE", "The OpenAI turn schema could not be built from the admitted tool catalog.");
     }
     if (native && verifiedFinalText === undefined) {
       payload.userPrompt = JSON.stringify({ ...JSON.parse(payload.userPrompt), originalBrief: brief, availableTools: native.toolGuidance,
-        ...(observation?.constructingTree && observation.needsStructure && observation.nodeCount > 0 ? {
+        ...(observation?.constructionPlan?.pendingFactors ? {
+          construction: "Add the earliest pending factors from hostObservation.constructionPlan.additions before deeper factors. Use a sibling batch for one parent, or revise an invalid plan. Formula targets in calculatedIds already have their planned operands. Use vdt.set_formula for formulas and vdt.update_node only for node properties and source values."
+        } : observation?.constructingTree && observation.needsStructure && observation.nodeCount > 0 ? {
           construction: observation.hasDecompositionPlan
             ? "Create the first planned factor layer now using its existing parent and exact planned IDs. Observe the returned leaves before writing their values and formulas."
             : `The existing root ID is ${observation.rootNodeId}. Its missing value or formula is expected while building. Record the smallest complete factor plan with vdt.set_decomposition_plan. When one expression can calculate the result from the supplied source inputs, plan them as immediate children of ${observation.rootNodeId}. Add a calculated subtotal only when needed and plan its operands under it or declare them shared. Omit the root from plan.nodes.`
@@ -1268,6 +1293,7 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
         if (enterKnownFacts) this.lastSourceReviewRevision = observation.revision;
         const recovery = buildOpenAiModelTurn(outputSchema, this.openAiToolCatalog, nativeContext, request.exchangeId, undefined, {
           continueWithoutQuestion: true, requireOpeningMessage: this.confirmedTurnCount === 0, planRecorded,
+          ...(observation.constructionPlan ? { constructionPlan: observation.constructionPlan } : {}),
           ...(observation.hierarchyRepair ? { hierarchyRepair: observation.hierarchyRepair } : {})
         });
         if (!recovery) throw new PublicSupervisorRunError("MODEL_SCHEMA_UNAVAILABLE", "The OpenAI continuation schema could not be built.");
@@ -1299,13 +1325,13 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
 
 const MAX_MODEL_TURN_PROMPT_BYTES = 512 * 1024;
 const OPENAI_HIERARCHY_REPAIR_PROMPT = [
-  "You are the VDT Model Agent. The current formulas produce a finite calculation and the visual hierarchy conflicts with them. The current formulas, inputs, hierarchy errors and a checked sequence of ordinary tool calls are in hostObservation.",
-  "Check that the current formulas implement the user's brief and that the proposed visual changes match it. If they do, select action.type apply_hierarchy_repair to submit exactly hostObservation.hierarchyRepair. The Gateway applies its usual validation and approval rules. The proposal preserves every retained formula and source value.",
+  "You are the VDT Model Agent. The current formulas produce a finite result. The visual hierarchy or a duplicate root output needs correction. The formulas, inputs, diagnostics and checked tool calls are in hostObservation.",
+  "Check that the current formulas implement the user's brief. If the checked repair matches the brief, select action.type apply_hierarchy_repair. The Gateway validates its exact calls. An identity repair promotes the existing expression to the root and keeps source values, units and useful subtotals. Observe the result before completing any remaining hierarchy correction.",
   "If the business model needs a correction first, submit a concrete admitted tool action to correct it. Ask only for an essential missing fact. Honor current user instructions and enabled personalisation. Use the response schema, omit unnecessary assistant prose, and keep sessionState brief."
 ].join(" ");
 const OPENAI_FIRST_PLAN_PROMPT = [
   "You are the VDT Model Agent. Plan the user's editable factor tree from the original brief and confirmed evidence. Preserve the KPI, period, units, exclusions, and all supplied facts. Follow enabled personalisation subject to the current request and tool rules.",
-  "The existing root is already the requested result. Plan only its descendants. For a result that can be calculated in one expression from the supplied quantities, use just those input leaves under the root. Never add another node for the result the root already represents.",
+  "The existing root is already the requested result and owns its final formula. For a result that can be calculated in one expression from the supplied quantities, use just those input leaves under the root. A same-unit child that calculates the entire result with an identity reference at the root is a duplicate. Use an intermediate only for a distinct subtotal the root actually combines with another factor or operation.",
   "Each parent calculation must reference every factor directly under it. If an intermediate calculation is useful, plan its real operands under that intermediate, or declare it as an extra formula user in sharedWith on a factor that lives under a different parent. Do not plan an intermediate with no factors. Use context only for explanatory nodes outside the calculation.",
   "Read the selected skill or retained data first if needed. Use only tools admitted in the response schema. Submit one tool call, with its native argument object or the exact catalog argsJson. Use null for omitted optional fields. The host assigns the call ID and checks all mutations. Keep sessionState brief."
 ].join(" ");
@@ -1508,7 +1534,7 @@ function createInitialContext(
   };
 }
 
-function createToolContext(runId: string): AgentToolContext {
+function createToolContext(runId: string, requirePlanOperands = false): AgentToolContext {
   const state = agentRuntime.store.getState(runId);
   return {
     runId,
@@ -1520,6 +1546,7 @@ function createToolContext(runId: string): AgentToolContext {
     },
     builder: state.builder,
     requireDecompositionPlan: requiresHierarchyForRun(state.request),
+    requirePlanOperands,
     signal: state.abortController.signal
   };
 }

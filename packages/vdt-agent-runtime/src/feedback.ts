@@ -235,6 +235,9 @@ const NON_RETRYABLE_TOOL_FEEDBACK_CODES = new Set([
 ]);
 
 function suggestedToolsForToolError(code: string, context?: AgentFeedbackContext): string[] | undefined {
+  if (code === "INVALID_DECOMPOSITION_PLAN") return ["vdt.set_decomposition_plan"];
+  if (code === "FORMULA_TOOL_REQUIRED") return ["vdt.set_formula"];
+  if (code === "FORMULA_TARGET_NOT_READY") return ["vdt.add_driver", "vdt.add_drivers_batch", "vdt.update_node", "vdt.set_decomposition_plan"];
   if (code === "ROOT_NOT_DERIVED") return ["vdt.add_drivers_batch", "vdt.add_driver", "vdt.set_formula"];
   if (code === "NODE_ID_EXISTS") return ["vdt.update_node", "vdt.set_formula", "project.get_node"];
   if (code === "INPUT_ALREADY_POPULATED") return ["vdt.fill_input_values_batch", "vdt.update_node"];

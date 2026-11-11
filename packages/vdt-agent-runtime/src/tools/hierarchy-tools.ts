@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {decompositionPlanErrors,decompositionPlanGroupingErrors,inspectDecompositionHierarchy,plannedAdditionErrors,type VdtChangeSet} from "@vdt-studio/vdt-core";
+import {calculationsWithoutPlannedInputs,decompositionPlanErrors,decompositionPlanGroupingErrors,inspectDecompositionHierarchy,plannedAdditionErrors,type VdtChangeSet} from "@vdt-studio/vdt-core";
 import {AgentToolError,type AgentTool,type AgentToolContext} from "../tool-registry";
 import {proposeAndMaybeApplyMutation} from "../mutation-pipeline";
 import {cloneBuilder,requireBuilder,requireChangeSet} from "./builder-mutation-utils";
@@ -27,6 +27,10 @@ const setPlan:AgentTool={
   const planned=new Set(input.plan.nodes.map((n:{nodeId:string})=>n.nodeId));
   for(const n of project.graph.nodes)if(n.id!==project.rootNodeId&&!planned.has(n.id))errors.push(`Existing node ${n.id} is missing from the plan.`);
   if(errors.length)throw new AgentToolError("INVALID_DECOMPOSITION_PLAN",errors.slice(0,8).join(" "));
+  const missingOperands = context.requirePlanOperands ? calculationsWithoutPlannedInputs(input.plan) : [];
+  if (missingOperands.length) throw new AgentToolError("INVALID_DECOMPOSITION_PLAN",
+    `Calculated nodes without planned factor inputs: ${missingOperands.slice(0, 8).join(", ")}. Revise the plan with real direct factors or declared shared inputs. Remove any duplicate of the requested root result.`,
+    { calculatedNodesWithoutFactors: missingOperands.slice(0, 20) });
   const preview=cloneBuilder(context);const change=preview.updateNode({nodeId:project.rootNodeId,patch:{decompositionPlan:input.plan}});
   const mutation=proposeAndMaybeApplyMutation(context,{title:"Decomposition plan set",summary:`Recorded ${input.plan.nodes.length} planned nodes; create shallower factor layers before deeper layers.`,changeSet:requireChangeSet(change.changeSet),targetNodeId:project.rootNodeId});
   return {revision:mutation.revision,plannedNodes:input.plan.nodes.length,plan:input.plan,nextStep:"Create the planned first layer, then deeper factor layers; write values and formulas separately.",mutationProposal:{id:mutation.proposal.id,status:mutation.proposal.status}};

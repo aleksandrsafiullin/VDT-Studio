@@ -335,7 +335,9 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     }
   });
 
-  it.each([false, true])("publishes only the verified calculation during direct OpenAI construction and replay with an editable estimate (%s)", async (estimatedRefunds) => {
+  it.each(["grounded", "estimated", "identity wrapper"] as const)("publishes only the verified calculation in direct OpenAI construction (%s)", async (scenario) => {
+    const estimatedRefunds = scenario === "estimated";
+    const identity = scenario === "identity wrapper";
     const rootKpi = "Чистая выручка";
     const knownInputs = "Помоги построить VDT чистой выручки за апрель. Продали 120 товаров, цена по прайсу — 50 долларов за товар. На каждую продажу действовала скидка 10%.";
     const refundNote = estimatedRefunds ? "Редактируемая оценка возвратов за апрель" : "Возвраты составили 500 долларов";
@@ -346,20 +348,30 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     builder.createDraft({ rootKpi, projectTitle: rootKpi, unit: "USD" });
     const project = builder.getProject();
     const parentNodeId = project.rootNodeId;
+    const factorParent = identity ? "net_revenue" : parentNodeId;
     const factors = [
       { nodeId: "sales_qty", unit: "units", value: 120, note: "Продали 120 товаров" },
-      { nodeId: "price_per_item", unit: estimatedRefunds ? "USD/item" : "USD", value: 50, note: "цена по прайсу — 50 долларов за товар" },
+      { nodeId: "price_per_item", unit: scenario === "grounded" ? "USD" : "USD/item", value: 50, note: "цена по прайсу — 50 долларов за товар" },
       { nodeId: "discount_rate", unit: "%", value: 10, note: "На каждую продажу действовала скидка 10%" },
       { nodeId: "returns_amount", unit: "USD", value: 500, note: refundNote }
     ];
     const formula = "sales_qty * price_per_item * (1 - discount_rate / 100) - returns_amount";
-    const calls = [
+    const wrapper = { nodeId: "net_revenue", parentNodeId, kind: "calculated" };
+    const invalidPlan = { toolName: "vdt.set_decomposition_plan", args: {
+      plan: { version: 1, goal: rootKpi, nodes: [wrapper] }
+    } };
+    const calls: Array<{ toolName: string; args: Record<string, unknown> } | "apply_hierarchy_repair"> = [
+      ...(identity ? [invalidPlan, invalidPlan] : []),
       { toolName: "vdt.set_decomposition_plan", args: { plan: {
         version: 1, goal: rootKpi,
-        nodes: factors.map(({ nodeId }) => ({ nodeId, parentNodeId, kind: "input" }))
+        nodes: [...(identity ? [wrapper] : []), ...factors.map(({ nodeId }) => ({ nodeId, parentNodeId: factorParent, kind: "input" }))]
       } } },
+      ...(identity ? [
+        { toolName: "vdt.add_driver", args: { nodeId: factorParent, parentNodeId, type: "calculated", name: "Net revenue", unit: "USD" } },
+        { toolName: "vdt.set_formula", args: { nodeId: factorParent, formula: "0" } }
+      ] : []),
       { toolName: "vdt.add_drivers_batch", args: {
-        drivers: factors.map(({ nodeId, unit }) => ({ nodeId, parentNodeId, name: nodeId, type: "input", unit }))
+        drivers: factors.map(({ nodeId, unit }) => ({ nodeId, parentNodeId: factorParent, name: nodeId, type: "input", unit }))
       } },
       { toolName: "vdt.fill_input_values_batch", args: {
         values: factors.map(({ nodeId, value, note }) => ({
@@ -368,8 +380,13 @@ describe("agent runs API", { timeout: 30_000 }, () => {
         }))
       } },
       { toolName: "vdt.set_formula", args: {
-        nodeId: parentNodeId, formula
+        nodeId: factorParent, formula
       } },
+      ...(identity ? [
+        { toolName: "vdt.set_formula", args: { nodeId: parentNodeId, formula: factorParent } },
+        "apply_hierarchy_repair" as const,
+        "apply_hierarchy_repair" as const
+      ] : []),
       { toolName: "run.request_finish", args: {} }
     ];
     let releaseFinal!: () => void;
@@ -385,7 +402,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       if (call) return openAiStructuredResponse({
         turnId, sessionState: "Continue building from the confirmed graph.",
         assistantMessage: callIndex === 1 ? { messageId: "opening", text: wrongOpening } : null,
-        action: { type: "action_batch", batch: { calls: [call] } }
+        action: call === "apply_hierarchy_repair" ? { type: call } : { type: "action_batch", batch: { calls: [call] } }
       });
       await finalGate;
       return openAiStructuredResponse({
@@ -397,7 +414,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       });
     });
     vi.stubGlobal("fetch", providerFetch);
-    const bindingId = `direct-openai-verified-calculation-${estimatedRefunds ? "estimated" : "provided"}`;
+    const bindingId = `direct-openai-verified-calculation-${scenario.replaceAll(" ", "-")}`;
     const dispose = agentExecutionBindingRegistry.register({
       bindingId, enabled: true, modelId: "gpt-5-nano",
       capability: {
@@ -439,7 +456,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       const requests = providerFetch.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
       expect(requests[0].messages[0].content).toContain("Set assistantMessage to null");
       expect(requests[0].messages[0].content).not.toContain("The first turn must include an assistantMessage");
-      if (!estimatedRefunds) {
+      if (scenario === "grounded") {
         const formulaTurn = JSON.parse(requests[3].messages.find((message: { role: string }) => message.role === "user").content);
         expect(formulaTurn.delta.results).toEqual(expect.arrayContaining([
           expect.objectContaining({
@@ -449,6 +466,37 @@ describe("agent runs API", { timeout: 30_000 }, () => {
             }) })
           })
         ]));
+      }
+      if (identity) {
+        const observations = requests.map((item) =>
+          JSON.parse(item.messages.find((message: { role: string }) => message.role === "user").content));
+        expect(observations[1].planReview).toMatchObject({ calculatedNodesWithoutFactors: [factorParent] });
+        expect(observations[2].delta.results[0]).toMatchObject({
+          resultCode: "INVALID_DECOMPOSITION_PLAN",
+          payload: { error: { details: { calculatedNodesWithoutFactors: [factorParent] } } }
+        });
+        expect(requests[4].response_format.json_schema.schema.$defs.toolCall.anyOf).toContainEqual(expect.objectContaining({
+          properties: expect.objectContaining({ toolName: { type: "string", const: "vdt.set_formula" },
+            args: expect.objectContaining({ properties: expect.objectContaining({ nodeId: expect.objectContaining({ enum: [parentNodeId] }) }) })
+          })
+        }));
+        expect(observations[5].delta.results[0]).toMatchObject({ resultCode: "FORMULA_TARGET_NOT_READY", payload: {
+          error: { details: { nodeId: factorParent, readyTargets: [parentNodeId] } }
+        } });
+        expect(observations[5].hostObservation.nodes.find(([id]: string[]) => id === factorParent)?.[4]).toBeNull();
+        const repairTurns = observations.flatMap(({ hostObservation }, index) =>
+          hostObservation?.hierarchyRepair ? [{ hostObservation, request: requests[index] }] : []);
+        expect(repairTurns).toHaveLength(2);
+        expect(repairTurns[0]!.hostObservation).toMatchObject({
+          projectReadyForFinish: false, duplicateRootOutput: { nodeId: factorParent, formula }
+        });
+        for (const { request } of repairTurns) {
+          expect(JSON.stringify(request.response_format.json_schema.schema)).not.toContain("run.request_finish");
+        }
+        expect(repairTurns[0]!.hostObservation.hierarchyRepair.map(({ toolName }: { toolName: string }) => toolName))
+          .toEqual(["vdt.set_formula", ...Array.from({ length: factors.length }, () => "vdt.reparent_branch")]);
+        expect(repairTurns[1]!.hostObservation.hierarchyRepair.map(({ toolName }: { toolName: string }) => toolName))
+          .toEqual(["vdt.delete_node", "vdt.set_decomposition_plan"]);
       }
       expect(requests.at(-1).response_format.json_schema.schema.properties).toMatchObject({
         assistantMessage: { type: "null" },
@@ -468,6 +516,12 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       expect(completed.finalReport).toContain(formula);
       expect(completed.finalReport).toContain("price_per_item — 50 USD/item");
       expect(completed.finalReport).toContain("returns_amount — 500 USD");
+      expect(completed.draftProject?.graph.nodes).toHaveLength(5);
+      expect(completed.draftProject?.graph.nodes).toEqual(expect.arrayContaining(factors.map(({ nodeId, value, note, unit }) =>
+        expect.objectContaining({
+          id: nodeId, baselineValue: value, unit: nodeId === "price_per_item" ? "USD/item" : unit,
+          valueSource: expect.objectContaining({ note: expect.stringContaining(note) })
+        }))));
       if (estimatedRefunds) {
         expect(completed.finalReport).toContain("В расчёте использованы редактируемые оценки.");
         expect(completed.finalReport).toContain("returns_amount — 500 USD (редактируемая оценка)");
