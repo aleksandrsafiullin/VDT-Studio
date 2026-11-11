@@ -224,6 +224,7 @@ export function validateKpiSuggestionDecomposition(proposal: KpiSuggestionSet, c
   if (context) {
     const direct = new Set(context.children.filter(node => node.status !== "rejected").map(node => node.id));
     const normalize = (name: string) => name.normalize("NFKC").trim().toLocaleLowerCase("en").replace(/[\p{P}\p{Z}\s_]+/gu, " ");
+    const targetId = normalize(context.targetNodeId);
     const contextOnly = [context.root, context.target, ...context.ancestors, ...context.siblings].filter(node => !direct.has(node.id));
     const ancestorRecipes = KPI_SUGGESTION_RECIPES.recipes.flatMap(recipe => {
       const operand = findAncestorRecipeOperand(context, recipe);
@@ -233,6 +234,8 @@ export function validateKpiSuggestionDecomposition(proposal: KpiSuggestionSet, c
       for (const child of group.children) {
         smartAssert(!child.existingNodeId || direct.has(child.existingNodeId), "UNSAFE_DECOMPOSITION",
           "Suggested components cannot reuse a sibling, ancestor or unrelated KPI. Decompose the target into its own lower-level inputs; refresh suggestions.");
+        smartAssert(child.existingNodeId || (normalize(child.key) !== targetId && normalize(child.conceptKey) !== targetId), "UNSAFE_DECOMPOSITION",
+          "The target KPI ID cannot identify a suggested input. Use a distinct measurable factor.");
         smartAssert(child.existingNodeId || !contextOnly.some(node => normalize(node.name) === normalize(child.name)), "UNSAFE_DECOMPOSITION",
           "A copy of the target, a sibling or an ancestor is not a lower-level component. Refresh suggestions.");
       }

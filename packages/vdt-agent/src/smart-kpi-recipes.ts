@@ -3,6 +3,7 @@ import type { KpiSuggestionRecipeCatalog } from "@vdt-studio/vdt-core";
 import { kpiCanonicalJson, smartAssert, smartList, smartRecord, smartString } from "@vdt-studio/vdt-core";
 import { extractFormulaReferences } from "@vdt-studio/vdt-core";
 import type { VdtSkill } from "./index";
+import { UNIVERSAL_SKILL_ID } from "./managed-skills";
 
 const sha = (value: string) => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 const roles = ["target", "working_time", "mass_rate", "fraction", "quantity", "unit_price"];
@@ -45,5 +46,11 @@ export function projectSmartKpiRecipeCatalog(skills: readonly VdtSkill[]): KpiSu
   }
   recipes.sort((a, b) => a.id.localeCompare(b.id, "en"));
   smartAssert(new Set(recipes.map(r => r.id)).size === recipes.length, "INVALID_RECIPE", "Duplicate canonical Smart recipe.");
-  return { schemaVersion: "kpi_recipe_catalog.v1", version: sha(kpiCanonicalJson(recipes)), recipes };
+  const universal = skills.find(skill => skill.id === UNIVERSAL_SKILL_ID);
+  const catalog = { schemaVersion: "kpi_recipe_catalog.v1" as const, version: sha(kpiCanonicalJson(recipes)), recipes };
+  if (!universal) return catalog;
+  const version = universal.frontmatter.version;
+  smartAssert(typeof version === "number" && Number.isSafeInteger(version) && version > 0,
+    "INVALID_RECIPE", "The bundled Universal Skill needs an explicit version.");
+  return { ...catalog, bundledUniversalSkill: { id: universal.id, version, contentHash: sha(universal.raw) } };
 }

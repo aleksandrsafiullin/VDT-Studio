@@ -421,7 +421,7 @@ of a fixed unit conversion itself.
 
 ## Incoming formula and legacy deepen version
 
-Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v18` with the bounded one-call wire. Each alternative requires at least two substantive components; the six-component product limit is removed across schema/runtime/cache admission, preview and Add. A 64-row processing ceiling and formula/output bounds remain. The exact Context-selected Skill participates in context/cache identity and supplies applicable direct-factor definitions, including causes restricted to an existing target subset. Optional measurement detail does not replace a defined causal layer. Context-aware preparation admits reused sources only from active direct children and rejects exact normalized contextual-metric copies. The prompt prohibits inverse ancestor/sibling identities and new aliases that disguise them; an Input without a defensible lower-level split may return empty. Missing measurements alone do not require empty. Generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no model admission or inference. Historical wire/journal replay does not apply this new preparation policy retroactively.
+Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v22` with the bounded one-call wire. Each alternative requires at least two substantive components; the six-component product limit is removed across schema/runtime/cache admission, preview and Add. A 64-row processing ceiling and formula/output bounds remain. The exact Context-selected Skill participates in context/cache identity and supplies applicable direct-factor definitions, including causes restricted to an existing target subset. Optional measurement detail does not replace a defined causal layer. Context-aware preparation admits reused sources only from active direct children and rejects exact normalized contextual-metric copies. The prompt prohibits inverse ancestor/sibling identities and new aliases that disguise them; an Input without a defensible lower-level split may return empty. Missing measurements alone do not require empty. Generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no model admission or inference. Historical wire/journal replay does not apply this new preparation policy retroactively.
 
 The strict OpenAI schema constrains reused IDs to the eligible direct children
 from the current context and pairs recipe references with their exact units.
@@ -439,6 +439,15 @@ canonical catalog on the task wire before building that model input.
 The prompt accepts a defensible target formula with every measurement unknown.
 For a scoped total, one option is the count of matching records multiplied by
 their mean amount. The editor reconciles the input values before Add.
+Preparation puts the selected KPI's excluded identity before the graph
+context. New factors use distinct aliases and meanings. For an evidenced
+adjustment Input leaf with a basic definition, the model receives the target,
+period, exact selected Skill and personalisation. The OpenAI schema admits one
+same-record count × mean group with exact units derived from the parsed target,
+or an empty result. Explicit breakdowns in project or target context, a Skill
+other than the exact bundled Universal Skill and existing child definitions use
+the ordinary schema, where supported disjoint subtotals remain available. The
+host retains the full context for validation and apply.
 Materialization, cache admission and new Add reject a new factor with the same
 operand label or recognized alias and unit. The structure check recognizes
 explicit percentage normalization in the saved ancestor.

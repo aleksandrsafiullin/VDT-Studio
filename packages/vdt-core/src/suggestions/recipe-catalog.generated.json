@@ -148,5 +148,10 @@
       "skillHash": "sha256:59e565d792ae2997c3d66d142d7fc577b1fc5e8d6e41516932664599d0b01afe",
       "recipeHash": "sha256:5269750cfa1b2327058b03ef09fe0e301e416c90a74cbc1353798d4439d1ec36"
     }
-  ]
+  ],
+  "bundledUniversalSkill": {
+    "id": "generic.logical_kpi_decomposition",
+    "version": 1,
+    "contentHash": "sha256:010dfe9ea156057311e4c5511b4400822a3c3e467588897571552ca2117c4077"
+  }
 }

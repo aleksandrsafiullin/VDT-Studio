@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -12,7 +13,11 @@ describe("canonical audited Smart recipe projection", () => {
     expect(catalog).toEqual(KPI_SUGGESTION_RECIPES);
     expect(catalog.recipes.map(r => r.id)).toEqual(["production.rate_yield", "production.time_losses", "production.time_rate", "revenue.quantity_price_net"]);
     expect(catalog.recipes.every(r => r.skillHash.startsWith("sha256:") && r.recipeHash.startsWith("sha256:"))).toBe(true);
-    expect(projectSmartKpiRecipeCatalog([library.byId.get("generic.logical_kpi_decomposition")!].filter(Boolean)).recipes).toEqual([]);
+    const universal = library.byId.get("generic.logical_kpi_decomposition")!;
+    expect(projectSmartKpiRecipeCatalog([universal]).recipes).toEqual([]);
+    expect(catalog.bundledUniversalSkill).toEqual({ id: universal.id, version: universal.frontmatter.version,
+      contentHash: `sha256:${createHash("sha256").update(universal.raw).digest("hex")}` });
+    expect(projectSmartKpiRecipeCatalog(library.skills.filter(skill => skill.id !== universal.id)).version).toBe(catalog.version);
   });
   it("pins exact canonical bytes and rejects partial, duplicate, unknown or numeric-default artifacts", () => {
     const path = resolve("packages/vdt-agent/skills/mining/production-volume.md"), source = readFileSync(path, "utf8");

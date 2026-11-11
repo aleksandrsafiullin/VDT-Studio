@@ -7,16 +7,11 @@ import { resolveKpiRecipeUnits } from "./units";
 
 type FactorUnits = ReadonlyMap<string, string | undefined>;
 
-function normalizedLabel(value: string): string {
+export function normalizedLabel(value: string): string {
   return value.normalize("NFKC").toLocaleLowerCase("en").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
-/** Exact operand names are negative evidence only. Qualifying business scopes
- * remain distinct, including a channel's own revenue or its refund subtotals. */
-function matchesRecipeOperandLabel(label: string, operand: KpiRecipeChild): boolean {
-  const name = normalizedLabel(label);
-  if ([operand.name, operand.key, operand.conceptKey].some(value => normalizedLabel(value) === name)) return true;
-  if (operand.conceptKey !== "refunds") return false;
+function matchesRefundAmountLabel(name: string): boolean {
   // The audited Finance skill treats refunds and returns as the same deduction.
   const words = name.split(" ");
   if (INCOMING_KPI_UNIT_GRAMMAR.currencies.some(currency => currency.toLowerCase() === words.at(-1))) words.pop();
@@ -25,6 +20,20 @@ function matchesRecipeOperandLabel(label: string, operand: KpiRecipeChild): bool
     .replace(/ (?:after discounts?|после скид(?:ки|ок))$/u, "")
     .replace(/ (?:amount|value)$/u, "");
   return /^(?:refunds?|returns?|возврат(?:ы|ов)?)$/u.test(amount);
+}
+
+/** A short definition can restate the amount and its discount qualifier. */
+export function isSimpleRefundAmountDefinition(description: string): boolean {
+  const definition = description.normalize("NFKC").replace(/\s*\/\s*allowances?\b/iu, "");
+  return matchesRefundAmountLabel(normalizedLabel(definition));
+}
+
+/** Exact operand names are negative evidence only. Qualifying business scopes
+ * remain distinct, including a channel's own revenue or its refund subtotals. */
+function matchesRecipeOperandLabel(label: string, operand: KpiRecipeChild): boolean {
+  const name = normalizedLabel(label);
+  return [operand.name, operand.key, operand.conceptKey].some(value => normalizedLabel(value) === name)
+    || operand.conceptKey === "refunds" && matchesRefundAmountLabel(name);
 }
 
 export function repeatsRecipeOperand(context: KpiSuggestionContext, child: KpiSuggestedChild, operand: KpiRecipeChild): boolean {

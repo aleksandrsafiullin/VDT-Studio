@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildKpiSuggestionContext } from "./identity";
 import { createSmartKpiMeasuredFixture } from "./fixtures";
 import { createIncomingGraphFixture, fixtureContext } from "./incoming-contract.fixtures";
-import { buildKpiSuggestionTaskInput, kpiSuggestionApiResponseSchema, materializeKpiSuggestion, validateKpiSuggestionTaskInput, type KpiSuggestionModelOutput } from "./model-output";
+import { buildKpiSuggestionTaskInput, kpiSuggestionApiResponseSchema, kpiSuggestionPromptInput, materializeKpiSuggestion, validateKpiSuggestionTaskInput, type KpiSuggestionModelOutput } from "./model-output";
 import { KPI_SUGGESTION_LIMITS, type KpiSuggestionContext } from "./types";
 
 const host = { proposalId: "contract_qa", requestId: "contract_request", now: "2026-10-20T00:00:00.000Z",
@@ -16,10 +16,11 @@ async function sales(unit = "USD") {
 
 function apiGroups(context: KpiSuggestionContext) {
   const schema = kpiSuggestionApiResponseSchema(buildKpiSuggestionTaskInput(context).responseContract);
-  const groups = schema.properties.groups as { items: { anyOf: {
-    properties: { recipeId: { type: string; const?: string }; children: { items: unknown } }
-  }[] } };
-  return groups.items.anyOf.map(group => group.properties);
+  type GroupSchema = {
+    properties: { recipeId: { type: string; const?: string }; children: { items: unknown }; requiredKeys: { items: unknown } }
+  };
+  const { items } = schema.properties.groups as { items: GroupSchema | { anyOf: GroupSchema[] } };
+  return ("anyOf" in items ? items.anyOf : [items]).map(group => group.properties);
 }
 
 describe("Smart model response requirements", () => {
@@ -72,6 +73,7 @@ describe("Smart model response requirements", () => {
   });
   it("excludes the ancestor's sales recipe when its refund input is the selected target", async () => {
     const project = createSmartKpiMeasuredFixture();
+    delete project.businessContext;
     const root = project.graph.nodes[0]!;
     Object.assign(root, { name: "Чистая выручка", unit: "USD", formula: "unit_price * (units * (1 - discount_pct / 100)) - returns_amount" });
     for (const [id, name, unit] of [
@@ -91,8 +93,68 @@ describe("Smart model response requirements", () => {
       const contract = buildKpiSuggestionTaskInput(await contextFor(refund.id)).responseContract;
       expect(contract.recipes).toEqual([]);
       expect(contract.excludedAncestorRecipes).toEqual([{ recipeId, targetNodeId: refund.id, repeatedTargetLabel: "Refunds", unit: "USD" }]);
+      expect(contract.references.openAiCustomFactorKeys).toEqual(["p_1", "p_2"]);
     }
     expect(apiGroups(context).map(group => group.recipeId)).toEqual([{ type: "null" }]);
+    const targetPlan = (rationale: string) => ({ version: 1 as const, goal: "Preserve the selected target definition.", nodes: [{
+      nodeId: context.targetNodeId, parentNodeId: root.id, kind: "input" as const, rationale
+    }] });
+    for (const rationale of ["Total returns value after discounts.", "Returns amount after discount"]) {
+      const saved = { ...context, decompositionPlan: targetPlan(rationale) };
+      const task = buildKpiSuggestionTaskInput(saved);
+      expect(task.context.decompositionPlan).toEqual(saved.decompositionPlan);
+      expect(task.responseContract.references.openAiCustomFactorKeys).toEqual(["p_1", "p_2"]);
+      expect(kpiSuggestionPromptInput(task).context).toEqual({ targetNodeId: context.targetNodeId, target: context.target, period: context.period });
+    }
+    const { unit: _unit, ...unitlessChild } = context.target;
+    const authoredDescription = { ...context, target: { ...context.target,
+      description: "Merchandise refunds + service allowances" } };
+    const documentedContexts: KpiSuggestionContext[] = [
+      { ...context, children: [{ ...unitlessChild, id: "recorded_cause", name: "Recorded adjustment cause" }] },
+      { ...context, omissions: { ...context.omissions, directChildren: 1 } },
+      { ...context, omissions: { ...context.omissions, planNodes: 1 } },
+      { ...context, target: { ...context.target, formula: "retained_amount" } },
+      { ...context, target: { ...context.target, type: "calculated" } },
+      { ...context, target: { ...context.target, assumptions: ["The documented source separates returned items and service allowances."] } },
+      authoredDescription,
+      { ...context, target: { ...context.target, description: "Returns/allowances by channel" } },
+      { ...context, business: { ...context.business, context: "Only documented disjoint adjustment groups belong to this target." } },
+      { ...context, business: { ...context.business, description: "This target's authored formula uses separately measured adjustments." } },
+      { ...context, decompositionPlan: targetPlan("Use the target's documented source groups.") },
+      { ...context, decompositionPlan: { ...targetPlan("Returns amount after discount"), nodes: [
+        ...targetPlan("Returns amount after discount").nodes,
+        { nodeId: "documented_refund_source", parentNodeId: context.targetNodeId, kind: "input" }
+      ] } }
+    ];
+    for (const documented of documentedContexts) {
+      const task = buildKpiSuggestionTaskInput(documented);
+      expect(kpiSuggestionPromptInput(task).context).toEqual(documented);
+      expect(task.responseContract.references).not.toHaveProperty("openAiCustomFactorKeys");
+      expect(apiGroups(documented)).toHaveLength(1);
+    }
+    const repeated: KpiSuggestionModelOutput["groups"][number] = {
+      id: "returns_layer", title: "Returns amount decomposition", selectionMode: "all", recipeId: null,
+      requiredKeys: ["returns_amount", "refunds_pending"], formula: "returns_amount - refunds_pending", limitations: [],
+      children: [
+        { key: "returns_amount", conceptKey: "returns_amount", name: "Returns amount (USD)", unit: "USD",
+          description: "Gross returns/allowances before adjustments", existingNodeId: null },
+        { key: "refunds_pending", conceptKey: "refunds_pending", name: "Refunds pending (USD)", unit: "USD",
+          description: "Expected refunds to offset gross returns", existingNodeId: null }
+      ]
+    };
+    const replayOutput: KpiSuggestionModelOutput = { status: "ready", rationale: "Target-specific decomposition.", limitations: [], groups: [repeated] };
+    expect(() => materializeKpiSuggestion(replayOutput, context, host)).toThrow(/target KPI ID/);
+    const renamed = { ...repeated, formula: "p_1 - p_2", requiredKeys: ["p_1", "p_2"], children: [
+      { ...repeated.children[0]!, key: "p_1", conceptKey: "renamed_target" }, { ...repeated.children[1]!, key: "p_2" }
+    ] };
+    expect(() => materializeKpiSuggestion({ ...replayOutput, groups: [renamed] }, context, host)).toThrow(/operand in an ancestor recipe/);
+    const distinct = { ...renamed, formula: "p_1 + p_2", children: [
+      { ...renamed.children[0]!, conceptKey: "merchandise_refunds", name: "Recorded merchandise return amounts", description: "Merchandise returns after discounts." },
+      { ...renamed.children[1]!, conceptKey: "service_allowances", name: "Recorded service allowance amounts", description: "Service allowances after discounts." }
+    ] };
+    expect(materializeKpiSuggestion({ ...replayOutput, groups: [distinct] }, context, host)?.groups[0]?.formula).toBe("p_1 + p_2");
+    expect(materializeKpiSuggestion({ ...replayOutput, groups: [distinct] }, authoredDescription, host)?.groups[0]?.formula).toBe("p_1 + p_2");
+    expect(materializeKpiSuggestion({ status: "empty", rationale: "The target population is ambiguous.", limitations: [], groups: [] }, context, host)).toBeUndefined();
     const names = ["Units sold", "Average selling price", "Discount rate", "Refunds"];
     const replay: KpiSuggestionModelOutput["groups"][number] = {
       id: "net_revenue", title: "Net revenue", selectionMode: "all", recipeId, formula: recipe.formula, limitations: [],
@@ -118,6 +180,22 @@ describe("Smart model response requirements", () => {
       ]
     }] };
     expect(materializeKpiSuggestion(output, context, host)?.groups[0]?.formula).toBe(output.groups[0]?.formula);
+    const withDirectChild = structuredClone(project);
+    withDirectChild.graph.nodes.push({ ...refund, id: "stored_refund_count", name: "Recorded refund count", unit: "item" });
+    withDirectChild.graph.edges.push({ id: "edge_retained_refund_count", sourceNodeId: refund.id, targetNodeId: "stored_refund_count",
+      relation: "formula_dependency", aiGenerated: false });
+    const childContext = await buildKpiSuggestionContext(withDirectChild, { workspaceId: "contract_qa", vdtId: null,
+      targetNodeId: refund.id, period: { key: "2026-10", grain: "month" } });
+    expect(buildKpiSuggestionTaskInput(childContext).responseContract.references).not.toHaveProperty("openAiCustomFactorKeys");
+    expect(kpiSuggestionPromptInput(buildKpiSuggestionTaskInput(childContext)).context).toEqual(childContext);
+    expect(apiGroups(childContext)[0]?.children.items).toMatchObject({ properties: { existingNodeId: { anyOf: [
+      { type: "string", enum: ["stored_refund_count"] }, { type: "null" }
+    ] } } });
+    const reuse = output.groups[0]!;
+    const reuseOutput = { ...output, groups: [{ ...reuse, children: [
+      { ...reuse.children[0]!, existingNodeId: "stored_refund_count" }, reuse.children[1]!
+    ] }] };
+    expect(materializeKpiSuggestion(reuseOutput, childContext, host)?.groups[0]?.children[0]?.existingNodeId).toBe("stored_refund_count");
     project.graph.nodes.push({ ...root, id: "partner_revenue", name: "Partner net revenue", type: "input", formula: undefined });
     project.graph.edges.push({ id: "edge_partner_revenue", sourceNodeId: root.id, targetNodeId: "partner_revenue", relation: "contextual_influence", aiGenerated: false });
     const partner = await contextFor("partner_revenue");
@@ -133,6 +211,7 @@ describe("Smart model response requirements", () => {
     const affiliateContract = buildKpiSuggestionTaskInput(affiliate).responseContract;
     expect(affiliateContract.recipes.map(candidate => candidate.id)).toContain(recipeId);
     expect(affiliateContract.excludedAncestorRecipes).toEqual([]);
+    expect(kpiSuggestionPromptInput(buildKpiSuggestionTaskInput(affiliate)).context).toEqual(affiliate);
     const affiliateOutput: KpiSuggestionModelOutput = {
       status: "ready", rationale: refund.description, limitations: [], groups: [{
         ...replay,

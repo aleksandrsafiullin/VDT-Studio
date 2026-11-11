@@ -6,7 +6,7 @@ export const KPI_SUGGESTION_SCHEMA = "kpi_suggestions.v1" as const;
 export const KPI_SUGGESTION_VALIDATOR = "smart-kpi-validator.v2";
 /** Invalidates rebuildable preparation outcomes when task intent changes,
  * independently of the proposal wire schema and arithmetic validator. */
-export const KPI_SUGGESTION_PREPARATION_VERSION = "smart-kpi-preparation.v18";
+export const KPI_SUGGESTION_PREPARATION_VERSION = "smart-kpi-preparation.v22";
 export const KPI_SUGGESTION_TASK = "suggest_incoming_kpis" as const;
 export const KPI_SUGGESTION_TASK_SCHEMA = "suggest-incoming-kpis-v1" as const;
 export const KPI_SUGGESTION_LIMITS = {
@@ -108,6 +108,7 @@ export interface KpiSuggestionRecipeCatalog {
   schemaVersion: "kpi_recipe_catalog.v1";
   version: string;
   recipes: KpiSuggestionRecipe[];
+  bundledUniversalSkill?: Pick<KpiSuggestionSkill, "id" | "version" | "contentHash">;
 }
 
 /** Supplied by an explicit host-observed semantic decision, never inferred from

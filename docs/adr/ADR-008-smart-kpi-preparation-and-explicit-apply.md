@@ -86,6 +86,16 @@ values remain editable. An ambiguous target may still return empty.
 A supplied response contract must match the receiving Smart preparation
 revision. Legacy v1 task inputs may omit the contract, so the receiver
 reconstructs it.
+Preparation v19 explicitly excludes the target identity from new factors.
+Preparation v22 sends the target, period, exact selected Skill and
+personalisation for an evidenced adjustment Input leaf with a basic definition.
+The bounded OpenAI response admits one same-record count × mean group with
+numbered keys and units derived from the parsed target, or an empty result.
+Existing children, authored project or target definitions and custom or edited
+Skills use the ordinary schema, including supported disjoint subtotals. A plan
+rationale that restates the target amount qualifies as a basic definition. The
+bundled Universal Skill is identified by its ID, version and exact source hash.
+Host identity, validation and apply retain the complete task context.
 Reopening a draft can reuse a successful preview for the same draft, project
 and Smart scope while the proposal is current. Add recompiles the draft and
 verifies the current execution lineage and storage revision.
