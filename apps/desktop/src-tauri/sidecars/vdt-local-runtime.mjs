@@ -1562,13 +1562,14 @@ function normalizedLabel(value) {
   return value.normalize("NFKC").toLocaleLowerCase("en").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 function matchesRefundAmountLabel(name) {
-  const words = name.split(" ");
+  const discountQualifier = / (?:after discounts?|already discounted|после скид(?:ки|ок))$/u;
+  const words = name.replace(discountQualifier, "").split(" ");
   if (INCOMING_KPI_UNIT_GRAMMAR.currencies.some((currency) => currency.toLowerCase() === words.at(-1))) {
     words.pop();
     const preposition = words.at(-1);
     if (preposition === "in" || preposition === "\u0432") words.pop();
   }
-  const amount = words.join(" ").replace(/^(?:total|сумма) /u, "").replace(/ (?:after discounts?|после скид(?:ки|ок))$/u, "").replace(/ (?:amount|value)$/u, "");
+  const amount = words.join(" ").replace(/^(?:total|сумма) /u, "").replace(discountQualifier, "").replace(/ (?:amount|value)$/u, "");
   return /^(?:refunds?|returns?|возврат(?:ы|ов)?)$/u.test(amount);
 }
 function isSimpleRefundAmountDefinition(description) {
