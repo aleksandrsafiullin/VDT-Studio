@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { buildKpiSuggestionContext } from "./identity";
 import { createSmartKpiMeasuredFixture } from "./fixtures";
-import { buildKpiSuggestionTaskInput, materializeKpiSuggestion, validateKpiSuggestionTaskInput } from "./model-output";
-import { KPI_SUGGESTION_LIMITS } from "./types";
+import { createIncomingGraphFixture, fixtureContext } from "./incoming-contract.fixtures";
+import { buildKpiSuggestionTaskInput, kpiSuggestionApiResponseSchema, materializeKpiSuggestion, validateKpiSuggestionTaskInput } from "./model-output";
+import { KPI_SUGGESTION_LIMITS, type KpiSuggestionContext } from "./types";
 
 async function sales(unit = "USD") {
   const project = createSmartKpiMeasuredFixture(10000);
@@ -10,7 +11,49 @@ async function sales(unit = "USD") {
   return buildKpiSuggestionContext(project, { workspaceId: "contract_qa", vdtId: null, targetNodeId: project.rootNodeId, period: { key: "2026-10", grain: "month" } });
 }
 
+function apiGroups(context: KpiSuggestionContext) {
+  const schema = kpiSuggestionApiResponseSchema(buildKpiSuggestionTaskInput(context).responseContract);
+  const groups = schema.properties.groups as { items: { anyOf: {
+    properties: { recipeId: { type: string; const?: string }; children: { items: unknown } }
+  }[] } };
+  return groups.items.anyOf.map(group => group.properties);
+}
+
 describe("Smart model response requirements", () => {
+  it("requires new factor identities for an undecomposed input with contextual siblings", async () => {
+    const context = await fixtureContext(createIncomingGraphFixture("shared_speed"));
+    expect(context.siblings.map(node => node.id)).toEqual(["distance"]);
+    expect(context.children).toEqual([]);
+    const custom = apiGroups(context).find(group => group.recipeId.type === "null");
+    expect(custom?.children.items).toMatchObject({ properties: { existingNodeId: { type: "null" } } });
+  });
+  it("limits existing factor identities to active direct children and exact recipe units", async () => {
+    const project = createSmartKpiMeasuredFixture();
+    const root = project.graph.nodes[0]!;
+    root.unit = "USD";
+    for (const { id, unit, status } of [
+      { id: "amount", unit: "USD", status: "accepted" },
+      { id: "count", unit: "units", status: "accepted" },
+      { id: "missing_unit", unit: undefined, status: "accepted" },
+      { id: "rejected", unit: "USD", status: "rejected" }
+    ] as const) {
+      project.graph.nodes.push({ ...root, id, name: id, type: "input", unit, status });
+      project.graph.edges.push({ id: `edge_${id}`, sourceNodeId: root.id, targetNodeId: id, relation: "contextual_influence", aiGenerated: false });
+    }
+    const context = await buildKpiSuggestionContext(project, { workspaceId: "contract_qa", vdtId: null, targetNodeId: root.id, period: { key: "2026-10", grain: "month" } });
+    const groups = apiGroups(context);
+    const reference = (...ids: string[]) => ({ anyOf: [{ type: "string", enum: ids }, { type: "null" }] });
+    const custom = groups.find(group => group.recipeId.type === "null");
+    expect(custom?.children.items).toMatchObject({ properties: { existingNodeId: reference("amount", "count") } });
+    const recipe = groups.find(group => group.recipeId.const === "revenue.quantity_price_net");
+    const recipeChild = (unit: string, existingNodeId: object) => expect.objectContaining({
+      properties: expect.objectContaining({ unit: { type: "string", const: unit }, existingNodeId })
+    });
+    expect(recipe?.children.items).toMatchObject({ anyOf: expect.arrayContaining([
+      recipeChild("USD", reference("amount")),
+      recipeChild("USD/unit", { type: "null" })
+    ]) });
+  });
   it("provides resolved, executable recipe units for the exact target and period", async () => {
     const context = await sales("Usd"), input = buildKpiSuggestionTaskInput(context);
     const contract = input.responseContract;

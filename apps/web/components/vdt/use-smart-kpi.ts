@@ -69,7 +69,7 @@ export function useSmartKpi() {
     }).catch(error => { if (current) useVdtStudioStore.setState({ smartKpiSkill: { workspaceId: projectId, vdtId, status: "unavailable", reason: error instanceof Error ? error.message : "Choose a current skill in Context." } }); });
     return () => { current = false; controller.abort(); };
   }, [workspace.activeProjectId, workspace.activeVdtId, rootName, skillRefresh]);
-  const scopeKey = kpiCanonicalJson(scope);
+  const scopeKey = useMemo(() => kpiCanonicalJson(scope), [scope]);
   const ownerKey = kpiCanonicalJson([scope.workspaceId, scope.vdtId, project.id]);
   const [admission, setAdmission] = useState<Admission>({ status: "preparing" });
   const admissionRef = useRef(admission); admissionRef.current = admission;
@@ -348,7 +348,7 @@ export function useSmartKpi() {
   const context = snapshot.proposal ? contexts.current.get(snapshot.proposal.contextHash) : latestContext;
   const blockedReason = scope.blockedReason ?? mutationBlockedReason ?? (fullAgentActive ? "Finish or cancel the active agent run before adding KPIs." : undefined);
   const effectiveAdmission: Admission = guidanceReady ? admission : { status: skillState?.status === "unavailable" ? "unavailable" : "preparing", reason: skillState?.reason ?? "Loading the selected modelling skill…" };
-  return { active, targets, snapshot, context, latestContext, contextPending, contextError, ownerKey, project, admission: effectiveAdmission, mutation, blockedReason, feedback, replaying, activate, activateManual, leaveRail, enterPanel, leavePanel,
+  return { active, targets, snapshot, context, latestContext, contextPending, contextError, contextScopeKey: scopeKey, ownerKey, project, admission: effectiveAdmission, mutation, blockedReason, feedback, replaying, activate, activateManual, leaveRail, enterPanel, leavePanel,
     focusPanel: cancelClose, blurPanel: scheduleClose, close, refresh, refreshContext, retry, preview, apply, undo, reconcile, prewarmVisible };
 }
 export type SmartKpiController = ReturnType<typeof useSmartKpi>;

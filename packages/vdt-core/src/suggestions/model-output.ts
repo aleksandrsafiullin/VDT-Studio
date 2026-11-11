@@ -35,10 +35,15 @@ const modelSchema = (group: unknown) => object({
 });
 export const KPI_SUGGESTION_MODEL_JSON_SCHEMA = modelSchema(object(groupFields));
 
-/** A selected recipe already owns its factor identities, units and equation.
- * Constrain that branch of the API response while admitting custom groups. */
+/** Project the admissible references and any selected recipe's exact factor
+ * identities, units and equation into the API response shape. */
 export function kpiSuggestionApiResponseSchema(contract: ReturnType<typeof buildKpiSuggestionResponseContract>) {
   const fixed = (value: string) => ({ type: "string", const: value });
+  const reusable = contract.references.reusableDirectChildren.filter(child => child.unit);
+  const existingNodeId = (unit?: string) => {
+    const ids = reusable.filter(child => unit === undefined || child.unit === unit).map(child => child.id);
+    return ids.length ? nullable({ type: "string", enum: ids }) : { type: "null" };
+  };
   const recipes = contract.recipes.map((recipe) => object({
     ...groupFields,
     recipeId: fixed(recipe.id),
@@ -46,10 +51,12 @@ export function kpiSuggestionApiResponseSchema(contract: ReturnType<typeof build
     formula: fixed(recipe.formula),
     requiredKeys: list({ type: "string", enum: recipe.children.map((child) => child.key) }, recipe.children.length, recipe.children.length),
     children: list({ anyOf: recipe.children.map((child) => object({
-      ...childFields, key: fixed(child.key), conceptKey: fixed(child.conceptKey), unit: fixed(child.unit)
+      ...childFields, key: fixed(child.key), conceptKey: fixed(child.conceptKey), unit: fixed(child.unit), existingNodeId: existingNodeId(child.unit)
     })) }, recipe.children.length, recipe.children.length)
   }));
-  return modelSchema({ anyOf: [...recipes, object({ ...groupFields, recipeId: { type: "null" } })] });
+  const custom = object({ ...groupFields, recipeId: { type: "null" },
+    children: list(object({ ...childFields, existingNodeId: existingNodeId() }), KPI_SUGGESTION_LIMITS.children, 2) });
+  return modelSchema({ anyOf: [...recipes, custom] });
 }
 
 export const SMART_KPI_INSTRUCTION = `Propose ONE immediate mathematical input layer and a usable parent formula. Follow input.responseContract (or responseContract at the input root) as the host's exact acceptance requirements, in addition to the JSON schema. Check every rule before returning. Default to the target's language unless explicit personalisation requests another response language. Return only strict JSON, without tools, research, commands, hidden retries or full-tree construction. Keep rationale and row descriptions to one short clause.
@@ -62,7 +69,7 @@ Use context.selectedSkill as the exact selected modelling reference, never as pe
 
 A Suggested request asks to deepen the selected target, including a reference leaf. The reference ending at that input is not a refusal reason. Propose defensible measurable components even when their values are unknown. Missing measurements alone do not justify empty. If no defensible definition is possible, return empty with the specific reason.
 
-Each alternative needs at least two distinct substantive factors. Include the complete applicable immediate layer; there is no six-component product limit. Never use a singleton, a renamed target or filler rows. Do not omit required factors or invent grouping nodes to make a shorter list. Prefer one best alternative, selectionMode="all", every child key in requiredKeys, and a non-null formula referencing exactly those keys. Use recipeId only for exact catalog keys, concepts, formula and compatible units; otherwise use null. Separate alternatives are never mixed.
+Each alternative needs at least two distinct substantive factors. Include the complete applicable immediate layer; there is no six-component product limit. Never use a singleton, a renamed target or filler rows. Do not omit required factors or invent grouping nodes to make a shorter list. Prefer one best alternative, selectionMode="all", every child key in requiredKeys, and a non-null formula referencing exactly those keys. A catalog recipe's targetRole must describe this exact target with all its qualifiers. A recipe that describes a parent or sibling is ineligible even if its unit matches. Use recipeId only for exact catalog keys, concepts, formula and compatible units; otherwise use null. Separate alternatives are never mixed.
 
 Preserve qualifiers: gross/net, total/average, actual/nominal, product/material and fleet/per-item. Gross revenue does not authorize a net-revenue recipe or deduction factors. Do not invent geometry, weights, calibration, site facts, values, numeric defaults or child formulas. Output supplies definitions, never numeric input values. The only algebraic literal is raw1 in (1-decimal_fraction). A fixed parameter explicitly defined by the project may be a clearly labelled reference input with ratio units and a description identifying that definition; its value is entered separately. Never invent or fit a conversion. If the selected target itself is a fixed unit conversion, do not re-express the same reference quantity in two units as supposedly distinct components; return empty. This does not block another target from using a project-defined fixed input.
 
@@ -70,9 +77,9 @@ Write units as machine expressions without spaces: use / for per, * for multipli
 
 Event counts and event-weighted mean durations must cover the same event population and period. Sums need exhaustive, disjoint categories: assign every overlapping interval to exactly one component, not both or neither. Compound labels do not prove exclusivity. A formula is a proposed definition, not proof of causality.
 
-Preserve decomposition direction. Ancestors and siblings are context, never suggested inputs. If P=A/B defines a parent, A=P*B or B=A/P reverses that identity rather than deepening the target. Do not rename P or a sibling as an allegedly independent input. A genuine measurement definition from lower-level records is allowed: an average operations-per-item may use independently logged operation count divided by its matching item count. This differs from solving a parent equation; numerator/denominator must be new observations with clear cohort and lineage, not disguised existing metrics.
+Preserve decomposition direction. Ancestors and siblings are context, never suggested inputs. If P=A/B defines a parent, A=P*B or B=A/P reverses that identity rather than deepening the target. When there is no specific factor layer in the skill or project, a scoped event total may be measured as the count of matching events times the mean amount per matching event, or as a sum of complete disjoint subtotals. Use new observations and labels that identify the same target population and period. For a target subset, the count or mean of the full population is a different metric. An average operations-per-item may similarly use independently logged operation count divided by its matching item count.
 
-Reuse only active existing direct children in context.children with exact existingNodeId/unit. An undecomposed Input has no reusable children. Never duplicate an existing metric to evade that restriction. Use concise lowercase snake_case keys/conceptKeys, max48 characters. Editable starting rows still need defensible components. Do not imply contextual Add or an unsupported equation. Before answering, check exact unit cancellation, scope, every factor's necessity, independent source meaning and direction.`;
+Reuse only IDs and their exact units from responseContract.references.reusableDirectChildren. If none have a unit, every existingNodeId must be null. Never reuse or rename the target, root, ancestors or siblings, including when existingNodeId is null. Use concise lowercase snake_case keys/conceptKeys, max48 characters. Editable starting rows still need defensible components. Do not imply contextual Add or an unsupported equation. Before answering, check exact unit cancellation, scope, every factor's necessity, independent source meaning and direction.`;
 
 export function validateKpiSuggestionTaskInput(value: unknown): KpiSuggestionTaskInput {
   smartRecord(value, ["schemaVersion", "context", "recipes", "responseContract"], ["schemaVersion", "context", "recipes"]);

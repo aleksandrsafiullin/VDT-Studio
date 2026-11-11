@@ -93,6 +93,11 @@ export function VdtCanvas() {
 
   const highlightedSet = useMemo(() => new Set(highlightedNodeIds), [highlightedNodeIds]);
   const referenceGroups = useMemo(() => getDecompositionContextGroupIds(project.graph, project.rootNodeId), [project.graph, project.rootNodeId]);
+  const closeSmartPanel = smart.close;
+  const onAddFileIncomingKpis = useCallback((nodeId: string) => {
+    closeSmartPanel();
+    requestIncomingKpisFromFile(nodeId);
+  }, [closeSmartPanel]);
 
   const storeNodes: Node<VdtNodeCardData, "vdtNode">[] = useMemo(
     () =>
@@ -112,8 +117,7 @@ export function VdtCanvas() {
           highlighted: highlightedSet.has(node.id),
           onSelect: selectNode,
           onAddManualIncomingKpi: smart.activateManual,
-          onAddFileIncomingKpis: (nodeId) => { smart.close(); requestIncomingKpisFromFile(nodeId); },
-          smartOpen: smart.active?.targetNodeId === node.id,
+          onAddFileIncomingKpis,
           onSmartActivate: smart.targets.has(node.id) ? smart.activate : undefined,
           onSmartLeave: smart.leaveRail,
           onSmartBlur: smart.blurPanel
@@ -125,17 +129,16 @@ export function VdtCanvas() {
       fallbackPositions,
       highlightedSet,
       mainScenarioContext,
+      onAddFileIncomingKpis,
       project.graph.nodes,
       project.rootNodeId,
       referenceGroups,
       selectNode,
       selectedNodeId,
-      smart.active?.targetNodeId,
       smart.targets,
       smart.activate,
       smart.leaveRail,
-      smart.blurPanel,
-      smart.close
+      smart.blurPanel
     ]
   );
 
@@ -208,17 +211,29 @@ export function VdtCanvas() {
     });
   }, [nodeById, project.graph.edges]);
 
+  const smartTargetId = smart.active?.targetNodeId;
   useEffect(() => {
     if (isDraggingRef.current) {
       return;
     }
-    // Keep measured dimensions when only card actions/selection change. Losing
-    // them briefly hides controlled nodes and disrupts hover and restored focus.
+    // Keep other cards' node and data identities when the Smart panel opens
+    // or closes. React Flow only needs to update the old and new targets.
     setNodes(previous => {
-      const measured = new Map(previous.map(node => [node.id, node.measured]));
-      return storeNodes.map(node => { const size = measured.get(node.id); return size ? { ...node, measured: size } : node; });
+      const previousById = new Map(previous.map(node => [node.id, node]));
+      return storeNodes.map(node => {
+        const before = previousById.get(node.id);
+        const smartOpen = node.id === smartTargetId;
+        if (before?.data === node.data && before.position === node.position && before.selected === node.selected && !smartOpen) {
+          return before;
+        }
+        return {
+          ...node,
+          data: smartOpen ? { ...node.data, smartOpen: true } : node.data,
+          ...(before?.measured ? { measured: before.measured } : {})
+        };
+      });
     });
-  }, [setNodes, storeNodes]);
+  }, [setNodes, smartTargetId, storeNodes]);
 
   useEffect(() => {
     const element = canvasRef.current;

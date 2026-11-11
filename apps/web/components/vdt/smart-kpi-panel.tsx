@@ -50,7 +50,9 @@ export function SmartKpiPanel({ controller, viewportRevision }: { controller: Sm
   const manualActivation = useRef<typeof active>(null);
   const [placement, setPlacement] = useState<SmartKpiPlacement>();
   const [retained, setRetained] = useState<RetainedIncomingKpiDraft>();
-  const [previewResult, setPreviewResult] = useState<{ input: IncomingKpiBatchInput; project: VdtProject; value: IncomingKpiBatchPreview }>();
+  const [previewResult, setPreviewResult] = useState<{
+    input: IncomingKpiBatchInput; project: VdtProject; scopeKey: string; value: IncomingKpiBatchPreview
+  }>();
   const [focusRow, setFocusRow] = useState<string>();
   const [existingChoice, setExistingChoice] = useState("");
   const [editing, setEditing] = useState(false);
@@ -58,7 +60,11 @@ export function SmartKpiPanel({ controller, viewportRevision }: { controller: Sm
   const proposal = snapshot.proposal;
   const context = active?.mode === "manual" ? controller.latestContext : controller.context ?? controller.latestContext;
   const entry = retained?.ownerKey === controller.ownerKey && retained.input.draft.targetNodeId === active?.targetNodeId ? retained : undefined;
-  const preview = previewResult?.input === entry?.input && previewResult?.project === controller.project ? previewResult.value : undefined;
+  const expiresAt = entry?.input.proposal?.expiresAt;
+  const preview = previewResult && previewResult.input === entry?.input && previewResult.project === controller.project
+    && previewResult.scopeKey === controller.contextScopeKey
+    && (!previewResult.value.valid || !expiresAt || Date.parse(expiresAt) > Date.now()) ? previewResult.value : undefined;
+  const previewReady = preview?.valid === true;
   const values = useMemo(() => entry ? resolveIncomingKpiValues(controller.project, entry.input) : undefined, [entry, controller.project]);
   const currentValues = useMemo(() => calculateGraph(controller.project).values, [controller.project]);
 
@@ -92,16 +98,19 @@ export function SmartKpiPanel({ controller, viewportRevision }: { controller: Sm
   }, [active, context?.contextHash, proposal?.proposalId, controller.contextPending, controller.ownerKey]);
 
   useEffect(() => {
+    // Reopening an identical draft and scope can display the last local preview.
+    // Actual Add still recompiles and checks the current revision.
+    if (!entry || previewReady) return;
     setPreviewResult(undefined);
-    if (!entry) return;
     let current = true;
+    const basis = { input: entry.input, project: controller.project, scopeKey: controller.contextScopeKey };
     const timer = setTimeout(() => { void controller.preview(entry.input)
-      .then(value => { if (current) setPreviewResult({ input: entry.input, project: controller.project, value }); })
-      .catch((error: unknown) => { if (current) setPreviewResult({ input: entry.input, project: controller.project, value: { valid: false, draftRevision: entry.input.draft.revision,
+      .then(value => { if (current) setPreviewResult({ ...basis, value }); })
+      .catch((error: unknown) => { if (current) setPreviewResult({ ...basis, value: { valid: false, draftRevision: entry.input.draft.revision,
         issues: [{ code: "PREVIEW_FAILED", message: error instanceof Error ? error.message : "Check this formula." }] } }); });
     }, 40);
     return () => { current = false; clearTimeout(timer); };
-  }, [entry?.input, controller.project, controller.preview]);
+  }, [entry?.input, controller.project, controller.contextScopeKey, controller.preview, previewReady]);
 
   useLayoutEffect(() => {
     if (!focusRow || !active || active.mode === "manual" && !placement) return;
@@ -159,7 +168,9 @@ export function SmartKpiPanel({ controller, viewportRevision }: { controller: Sm
     + (draft?.existingFactors.filter(row => row.selected).length ?? 0);
   const selectedCount = newCount + reusedCount;
   const existingIds = new Set(draft?.existingFactors.map(row => row.nodeId));
-  const existingCandidates = controller.project.graph.nodes.filter(node => node.id !== active.targetNodeId && node.status !== "rejected" && node.unit && !existingIds.has(node.id));
+  const existingCandidates = editing
+    ? controller.project.graph.nodes.filter(node => node.id !== active.targetNodeId && node.status !== "rejected" && node.unit && !existingIds.has(node.id))
+    : [];
   const history = book.current.list(controller.ownerKey, active.targetNodeId);
   const latestAvailable = Boolean(proposal && source?.kind === "proposal" && proposal.proposalId !== source.proposalId || proposal && source?.kind === "manual" && entry?.dirty);
   let addReason = controller.blockedReason ?? (working ? "Wait for the current save." : undefined);
