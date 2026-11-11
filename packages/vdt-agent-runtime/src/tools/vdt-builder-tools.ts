@@ -19,7 +19,8 @@ import { defaultProgressiveBuildPolicy, proposeAndMaybeApplyMutation } from "../
 import { AgentToolError, type AgentTool, type AgentToolContext } from "../tool-registry";
 import { summarizeCalculation, summarizeValidation } from "../summaries";
 import { cloneBuilder, combineChangeSets, requireBuilder, requireChangeSet, wrapBuilderError } from "./builder-mutation-utils";
-import { assertUserProvidedValueGrounded, runHasUserAnswerForNode } from "./value-provenance";
+import { assertUserProvidedValueGrounded, quoteGroundsValue, runHasUserAnswerForNode } from "./value-provenance";
+import { explicitQuotedInputUnit } from "../value-provenance-contract";
 import { requirePlannedAdditions } from "./hierarchy-tools";
 
 const nodeTypeSchema = z.enum(["root_kpi", "calculated", "input", "assumption", "external_factor", "data_mapped"]);
@@ -139,12 +140,14 @@ const instantiateNodeOverrideSchema = nodePatchSchema.extend({
   aiRationale: optionalInput(z.string().max(800))
 }).strict();
 
+const MAX_SUBTREE_OVERRIDES = 200;
 const instantiateSubtreeInputSchema = z.object({
   sourceRootNodeId: z.string().min(1).max(160),
   targetParentNodeId: z.string().min(1).max(160),
   overrides: optionalInput(
     z.record(z.string().min(1).max(160), instantiateNodeOverrideSchema)
-      .refine((value) => Object.keys(value).length <= 200, "At most 200 node overrides are allowed.")
+      .refine((value) => Object.keys(value).length <= MAX_SUBTREE_OVERRIDES, "At most 200 node overrides are allowed.")
+      .meta({ maxProperties: MAX_SUBTREE_OVERRIDES })
   )
 }).strict();
 
@@ -582,7 +585,7 @@ interface InputValueWrite {
 
 const setInputValuesBatchTool: AgentTool = {
   name: "vdt.fill_input_values_batch",
-  description: "Fill 1-8 UNPOPULATED existing numeric input leaves atomically. Never creates nodes, changes formulas or overwrites known inputs (use vdt.update_node for edits). Copy nodeId from unresolvedInputs. A user-provided note must quote that quantity verbatim; otherwise label a draft assumption.",
+  description: "Fill 1-8 UNPOPULATED existing numeric input leaves atomically. Copy the exact source value and quote from literalUserQuantities. Preserve explicit quoted per-item and percentage units on empty leaves created by this agent run. Use vdt.update_node for intentional edits of populated inputs.",
   inputSchema: z.object({ values: z.array(z.object({
     nodeId: vdtNodeIdSchema,
     value: z.number().finite(),
@@ -626,10 +629,29 @@ const setInputValuesBatchTool: AgentTool = {
     if (groundingErrors.length > 1) throw new AgentToolError("USER_PROVIDED_VALUE_UNGROUNDED",
       `No values were applied. Correct all ${groundingErrors.length} ungrounded entries: ${groundingErrors.map(({ nodeId, error }) => `${nodeId}: ${error.message}`).join("\n")}`,
       { issues: groundingErrors.map(({ nodeId, error }) => ({ nodeId, code: error.code, message: error.message })) });
+    const state = context.store.getState(context.runId);
+    const quotedUnits = new Map<string, string>();
+    if (state.request.mode === "generate_vdt") {
+      for (const item of input.values as InputValueWrite[]) {
+        const node = nodes.get(item.nodeId)!;
+        if (item.provenance !== "user_provided_value" || !node.aiGenerated || node.status !== "ai_suggested"
+          || !state.mutationProposals?.some((proposal) => proposal.source === "agent" && proposal.status === "applied"
+            && proposal.changeSet.additions.some((addition) => addition.nodeId === node.id))) continue;
+        const unit = explicitQuotedInputUnit(item.note, state.visibleContext.brief.unit);
+        if (!unit) continue;
+        const current = node.unit?.trim();
+        const provisional = unit === "%" ? /^(1|fraction|ratio|decimal(?: fraction)?)$/i.test(current ?? "")
+          : current?.toUpperCase() === unit.split("/")[0];
+        if ((!current || provisional) && quoteGroundsValue(context, { value: item.value, quote: item.note })) {
+          quotedUnits.set(node.id, unit);
+        }
+      }
+    }
     const preview = cloneBuilder(context);
     const changes = input.values.map((item: InputValueWrite) => requireChangeSet(preview.updateNode({
       nodeId: item.nodeId,
       patch: {
+        ...(quotedUnits.has(item.nodeId) ? { unit: quotedUnits.get(item.nodeId) } : {}),
         value: item.value, baselineValue: item.value, valueStatus: item.provenance,
         status: item.provenance === "default_assumption" ? "assumption" : "accepted",
         valueSource: {
@@ -644,7 +666,7 @@ const setInputValuesBatchTool: AgentTool = {
       }
     }).changeSet));
     const mutation = proposeAndMaybeApplyMutation(context, {
-      title: "Input values captured", summary: `Filled ${input.values.length} existing numeric inputs with explicit provenance.`,
+      title: "Input values captured", summary: `Filled ${input.values.length} existing numeric inputs with explicit provenance.${quotedUnits.size ? " Retained explicit units from the source quotes on the new draft inputs." : ""}`,
       changeSet: combineChangeSets(changes, context), targetNodeId: context.store.getState(context.runId).request.mode === "deepen_node"
         ? context.store.getState(context.runId).request.input.selectedNodeId ?? project.rootNodeId : project.rootNodeId
     });

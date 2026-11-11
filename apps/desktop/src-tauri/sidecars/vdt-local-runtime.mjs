@@ -653,6 +653,9 @@ var aliases = {
   shifts: "shift"
 };
 var scalar = /* @__PURE__ */ new Set(["1", "%", "fraction", "ratio", "percent", "percentage"]);
+var percent = /* @__PURE__ */ new Set(["%", "percent", "percentage"]);
+var percentScale = 0.01;
+var percentScaleHint = " Percent inputs use a 0\u2013100 scale. Divide by 100 to use a fraction, or multiply a fraction by 100 to produce a percent.";
 var quantities = {
   h: ["time", 3600],
   min: ["time", 60],
@@ -671,18 +674,22 @@ var clean = (unit) => Object.fromEntries(Object.entries(unit).filter(([, power])
 var same = (a, b) => JSON.stringify(clean(a)) === JSON.stringify(clean(b));
 function combine(a, b, sign) {
   const result = Object.assign(/* @__PURE__ */ Object.create(null), a);
-  for (const [atom, power] of Object.entries(b)) result[atom] = (result[atom] ?? 0) + sign * power;
+  for (const [atom2, power] of Object.entries(b)) result[atom2] = (result[atom2] ?? 0) + sign * power;
   return clean(result);
 }
 function physical(unit) {
   const dimensions = /* @__PURE__ */ Object.create(null);
   let scale = 1, known = true;
-  for (const [atom, power] of Object.entries(unit)) {
-    const quantity = Object.hasOwn(quantities, atom) ? quantities[atom] : void 0;
-    const dimension = quantity?.[0] ?? atom;
+  for (const [atom2, power] of Object.entries(unit)) {
+    if (atom2 === "%") {
+      scale *= percentScale ** power;
+      continue;
+    }
+    const quantity = Object.hasOwn(quantities, atom2) ? quantities[atom2] : void 0;
+    const dimension = quantity?.[0] ?? atom2;
     dimensions[dimension] = (dimensions[dimension] ?? 0) + power;
     scale *= (quantity?.[1] ?? 1) ** power;
-    if (!quantity && !identities.has(atom) && !/^(?:usd|eur|gbp|kzt|rub)[_ ]\d{4}$/.test(atom)) known = false;
+    if (!quantity && !identities.has(atom2) && !/^(?:usd|eur|gbp|kzt|rub)[_ ]\d{4}$/.test(atom2)) known = false;
   }
   return { dimensions: clean(dimensions), scale, known };
 }
@@ -695,7 +702,7 @@ function compatible(actual, expected, coefficient) {
   const ratio = from.scale / to.scale;
   return coefficient !== void 0 && Number.isFinite(coefficient) && Math.abs(Math.abs(coefficient) - ratio) <= 1e-12 * Math.max(ratio, Math.abs(coefficient), 1e-12);
 }
-function parseValidationUnit(text2) {
+function parseValidationUnit(text2, enforcePercentageScale = false) {
   if (!text2.trim() || text2.length > 256) return void 0;
   const tokens = text2.trim().toLowerCase().replace(/[·×]/g, "*").match(/[^*/^()]+|[*/^()]/g) ?? [];
   let cursor = 0;
@@ -707,14 +714,14 @@ function parseValidationUnit(text2) {
       result = expression();
       if (tokens[cursor++] !== ")") throw new Error("Unclosed unit group");
     } else {
-      const atom = Object.hasOwn(aliases, token) ? aliases[token] : token;
-      result = scalar.has(atom) ? {} : { [atom]: 1 };
+      const atom2 = Object.hasOwn(aliases, token) ? aliases[token] : token;
+      result = enforcePercentageScale && percent.has(atom2) ? { "%": 1 } : scalar.has(atom2) ? {} : { [atom2]: 1 };
     }
     if (tokens[cursor] === "^") {
       cursor++;
       const power = tokens[cursor++]?.trim() ?? "";
       if (!/^[+-]?\d+$/.test(power) || Math.abs(Number(power)) > 16) throw new Error("Invalid unit power");
-      result = clean(Object.fromEntries(Object.entries(result).map(([atom, exponent]) => [atom, exponent * Number(power)])));
+      result = clean(Object.fromEntries(Object.entries(result).map(([atom2, exponent]) => [atom2, exponent * Number(power)])));
     }
     return result;
   };
@@ -734,17 +741,17 @@ function parseValidationUnit(text2) {
   }
 }
 function formatUnit(unit) {
-  const terms = (sign) => Object.entries(unit).filter(([, power]) => power * sign > 0).map(([atom, power]) => `${atom}${Math.abs(power) === 1 ? "" : `^${Math.abs(power)}`}`).join(" * ");
+  const terms = (sign) => Object.entries(unit).filter(([, power]) => power * sign > 0).map(([atom2, power]) => `${atom2}${Math.abs(power) === 1 ? "" : `^${Math.abs(power)}`}`).join(" * ");
   const numerator = terms(1) || "1", denominator = terms(-1);
   return denominator ? `${numerator} / (${denominator})` : numerator;
 }
-function validateFormulaUnits(node3, expression, nodes) {
+function validateFormulaUnits(node3, expression, nodes, enforcePercentageScale = false) {
   const issues = [];
   const report = (key2, message, severity = "error") => {
     issues.push({ id: `validation-unit-${node3.id}-${key2}`, type: "unit_mismatch", severity, nodeId: node3.id, message });
   };
   const readUnit = (target, key2) => {
-    const unit = target.unit ? parseValidationUnit(target.unit) : void 0;
+    const unit = target.unit ? parseValidationUnit(target.unit, enforcePercentageScale) : void 0;
     if (!unit) report(key2, `The unit of \u201C${target.name}\u201D is missing or cannot be checked. Set a unit to verify the formula for \u201C${node3.name}\u201D.`, "warning");
     return unit;
   };
@@ -759,7 +766,8 @@ function validateFormulaUnits(node3, expression, nodes) {
       const rightToLeft = compatible(right.unit, left.unit, right.coefficient);
       const leftToRight = compatible(left.unit, right.unit, left.coefficient);
       if (rightToLeft === true || leftToRight === true) return { unit: rightToLeft ? left.unit : right.unit, literal: false, coefficient: void 0 };
-      report(path12, `Formula for \u201C${node3.name}\u201D combines ${rightToLeft === void 0 ? "unverified custom" : "incompatible"} units with ${operator}: \u201C${formatUnit(left.unit)}\u201D and \u201C${formatUnit(right.unit)}\u201D.`, rightToLeft === void 0 ? "warning" : "error");
+      const scaleHint = left.unit["%"] !== right.unit["%"] ? percentScaleHint : "";
+      report(path12, `Formula for \u201C${node3.name}\u201D combines ${rightToLeft === void 0 ? "unverified custom" : "incompatible"} units with ${operator}: \u201C${formatUnit(left.unit)}\u201D and \u201C${formatUnit(right.unit)}\u201D.${scaleHint}`, rightToLeft === void 0 ? "warning" : "error");
     }
     return { unit: left.unit && right.unit ? left.unit : void 0, literal: false, coefficient: void 0 };
   };
@@ -776,18 +784,25 @@ function validateFormulaUnits(node3, expression, nodes) {
     if (ast.type === "call") return ast.args.map((arg, index) => visit2(arg, `${path12}-${index}`)).reduce((left2, right2, index) => add(left2, right2, `${path12}-${index}`, `${ast.name}(...)`));
     const left = visit2(ast.left, `${path12}-left`), right = visit2(ast.right, `${path12}-right`);
     if (ast.operator === "+" || ast.operator === "-") return add(left, right, path12, ast.operator);
-    return {
-      unit: left.unit && right.unit ? combine(left.unit, right.unit, ast.operator === "*" ? 1 : -1) : void 0,
-      literal: left.literal && right.literal,
-      coefficient: left.coefficient === void 0 || right.coefficient === void 0 ? void 0 : ast.operator === "*" ? left.coefficient * right.coefficient : left.coefficient / right.coefficient
-    };
+    const multiply = ast.operator === "*";
+    const unit = left.unit && right.unit ? combine(left.unit, right.unit, multiply ? 1 : -1) : void 0;
+    const coefficient = left.coefficient === void 0 || right.coefficient === void 0 ? void 0 : multiply ? left.coefficient * right.coefficient : left.coefficient / right.coefficient;
+    const literal3 = left.literal && right.literal;
+    if (unit?.["%"] && coefficient !== void 0) {
+      const scale = percentScale ** unit["%"];
+      if (scale > 0 && Number.isFinite(scale) && Math.abs(Math.abs(coefficient) - scale) <= 1e-12 * scale) {
+        return { unit: combine(unit, { "%": unit["%"] }, -1), literal: literal3, coefficient: coefficient / scale };
+      }
+    }
+    return { unit, literal: literal3, coefficient };
   };
   const inferred = visit2(expression, "expression");
   if (!inferred.literal) {
     const declared = readUnit(node3, "result-missing");
     if (declared && inferred.unit) {
       const matches = compatible(inferred.unit, declared, inferred.coefficient);
-      if (matches === false) report("result", `The output unit of \u201C${node3.name}\u201D is \u201C${node3.unit}\u201D, but its formula produces \u201C${formatUnit(inferred.unit)}\u201D. Correct the unit or formula.`);
+      const scaleHint = inferred.unit["%"] !== declared["%"] ? percentScaleHint : "";
+      if (matches === false) report("result", `The output unit of \u201C${node3.name}\u201D is \u201C${node3.unit}\u201D, but its formula produces \u201C${formatUnit(inferred.unit)}\u201D. Correct the unit or formula.${scaleHint}`);
       if (matches === void 0) report("result", `The output unit of \u201C${node3.name}\u201D is \u201C${node3.unit}\u201D, while its formula produces \u201C${formatUnit(inferred.unit)}\u201D. Define the custom unit or per-entity basis to verify this relationship.`, "warning");
     }
   }
@@ -1058,7 +1073,7 @@ function validateGraph(input2, rootNodeId, options = {}) {
           );
         }
       }
-      if (options.purpose !== "import") for (const item of validateFormulaUnits(node3, expression, nodeById)) {
+      if (options.purpose !== "import") for (const item of validateFormulaUnits(node3, expression, nodeById, options.enforcePercentageScale)) {
         (item.severity === "error" ? errors : warnings).push(item);
       }
     } catch (caught) {
@@ -1324,15 +1339,15 @@ function validateKpiSuggestionContext(value) {
   };
   const root = node3(value.root), target = node3(value.target);
   smartAssert(target.id === value.targetNodeId, "INVALID_CONTEXT", "Smart target identity differs from its summary.");
-  let count = 2;
+  let count2 = 2;
   for (const field of ["children", "ancestors", "siblings"]) {
     const list2 = value[field];
     smartList(list2, 12);
-    count += list2.length;
+    count2 += list2.length;
     const ids = list2.map((n) => node3(n).id);
     smartAssert(new Set(ids).size === ids.length, "INVALID_CONTEXT", "Duplicate context node summary.");
   }
-  smartAssert(count <= KPI_SUGGESTION_LIMITS.contextNodes, "INVALID_CONTEXT", "Smart context node bound exceeded.");
+  smartAssert(count2 <= KPI_SUGGESTION_LIMITS.contextNodes, "INVALID_CONTEXT", "Smart context node bound exceeded.");
   smartRecord(value.omissions, ["directChildren", "ancestors", "siblings", "planNodes", "relationships", "text", "cyclic"]);
   for (const field of ["directChildren", "ancestors", "siblings", "planNodes", "relationships"]) smartAssert(Number.isSafeInteger(value.omissions[field]) && Number(value.omissions[field]) >= 0, "INVALID_CONTEXT", "Context omission counts must be explicit.");
   smartAssert(typeof value.omissions.text === "boolean" && typeof value.omissions.cyclic === "boolean", "INVALID_CONTEXT", "Context omission flags must be explicit.");
@@ -1664,37 +1679,257 @@ var recipe_catalog_generated_default = {
   ]
 };
 
+// ../vdt-core/src/suggestions/units.ts
+var currencies = /* @__PURE__ */ new Set(["USD", "EUR", "GBP", "KZT", "RUB"]);
+var mass = /* @__PURE__ */ new Set(["t", "tonne", "tonnes"]);
+var time = /* @__PURE__ */ new Set(["h", "hour", "hours"]);
+var count = /* @__PURE__ */ new Set(["unit", "units", "item", "items", "count"]);
+function atom(token, context) {
+  if (mass.has(token.toLowerCase())) return "mass";
+  if (time.has(token.toLowerCase())) return "hour";
+  if (count.has(token.toLowerCase())) return "count";
+  if (currencies.has(token.toUpperCase())) return `currency:${token.toUpperCase()}`;
+  if (context.period.grain !== "custom" && token === context.period.grain) return `period:${context.period.key}`;
+  return void 0;
+}
+function smartUnitDimension(unit, context) {
+  const text2 = unit.trim();
+  if (text2 === "fraction" || text2 === "1") return {};
+  const parts = text2.split("/");
+  smartAssert(parts.length <= 2, "UNSUPPORTED_UNIT", `Unsupported Smart unit: ${unit}.`);
+  const numerator = atom(parts[0], context), denominator = parts[1] ? atom(parts[1], context) : void 0;
+  smartAssert(numerator && (!parts[1] || denominator), "UNSUPPORTED_UNIT", `Unsupported Smart unit/period: ${unit}.`);
+  const result = { [numerator]: 1 };
+  if (denominator) result[denominator] = (result[denominator] ?? 0) - 1;
+  return clean2(result);
+}
+function clean2(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, n]) => n !== 0).sort());
+}
+function same2(a, b) {
+  return kpiCanonicalJson(a) === kpiCanonicalJson(b);
+}
+function resolveKpiRecipeUnits(recipe, context) {
+  const unit = context.target.unit;
+  smartAssert(unit, "UNSUPPORTED_UNIT", "The target needs an explicit supported unit.");
+  const target = smartUnitDimension(unit, context);
+  const periodSuffix = unit.includes("/") && unit.split("/")[1] === context.period.grain ? `/${context.period.grain}` : "";
+  const numerator = unit.split("/")[0];
+  if (recipe.unitRule === "mass_time_rate") smartAssert(same2(target, { mass: 1, ...periodSuffix ? { [`period:${context.period.key}`]: -1 } : {} }), "UNIT_MISMATCH", "Time\xD7rate requires tonnes on a compatible period.");
+  if (recipe.unitRule === "time_losses") smartAssert(same2(target, { hour: 1, ...periodSuffix ? { [`period:${context.period.key}`]: -1 } : {} }), "UNIT_MISMATCH", "Time losses require hours on the same period.");
+  if (recipe.unitRule === "rate_yield") smartAssert(same2(target, { mass: 1, hour: -1 }), "UNIT_MISMATCH", "Rate\xD7yield supports tonnes/hour and decimal fractions only.");
+  const currency = numerator.toUpperCase();
+  if (recipe.unitRule === "revenue_net") smartAssert(currencies.has(currency) && same2(target, { [`currency:${currency}`]: 1, ...periodSuffix ? { [`period:${context.period.key}`]: -1 } : {} }), "UNIT_MISMATCH", "Revenue requires one supported currency on the same period.");
+  return Object.fromEntries(recipe.children.map((child) => [
+    child.key,
+    child.unitRole === "target" ? unit : child.unitRole === "working_time" ? `h${periodSuffix}` : child.unitRole === "mass_rate" ? recipe.unitRule === "rate_yield" ? unit : `${numerator}/h` : child.unitRole === "quantity" ? `units${periodSuffix}` : child.unitRole === "unit_price" ? `${currency}/unit` : "fraction"
+  ]));
+}
+
+// ../vdt-core/src/suggestions/incoming-types.ts
+var INCOMING_KPI_LIMITS = {
+  newRows: 64,
+  existingReferences: 16,
+  modelRows: 64,
+  alternatives: 3,
+  localFormula: 1024,
+  expandedFormula: 4096,
+  astNodes: 128,
+  astDepth: 64,
+  functionArguments: 16,
+  name: 160,
+  unit: 80,
+  description: 120
+};
+var INCOMING_KPI_UNIT_POLICY = {
+  version: "incoming-kpi-units.v1",
+  conversion: "same_scale_only",
+  /** A literal60/100 never establishes hour/minute or percent/fraction proof. */
+  literalConversionProof: false,
+  opaqueAtoms: "case_sensitive_exact_equality",
+  periodBasis: "explicit_matching_grain",
+  perTripRequiresCalendarGrain: false
+};
+
+// ../vdt-core/src/suggestions/incoming-unit-contract.ts
+var spelling = {
+  hour: "h",
+  hours: "h",
+  minute: "min",
+  minutes: "min",
+  second: "s",
+  seconds: "s",
+  sec: "s",
+  tonne: "t",
+  tonnes: "t",
+  kilogram: "kg",
+  kilograms: "kg",
+  trips: "trip",
+  units: "count",
+  unit: "count",
+  item: "count",
+  items: "count"
+};
+var quantities2 = {
+  h: ["time", "h"],
+  min: ["time", "min"],
+  s: ["time", "s"],
+  km: ["length", "km"],
+  m: ["length", "m"],
+  t: ["mass", "t"],
+  kg: ["mass", "kg"],
+  trip: ["trip", "trip"],
+  count: ["count", "count"]
+};
+var periods = /* @__PURE__ */ new Set(["shift", "day", "week", "month", "quarter", "year"]);
+var currencies2 = /* @__PURE__ */ new Set(["USD", "EUR", "GBP", "KZT", "RUB"]);
+var INCOMING_KPI_UNIT_GRAMMAR = { aliases: spelling, quantities: quantities2, periods: [...periods], currencies: [...currencies2] };
+var clean3 = (value) => Object.fromEntries(Object.entries(value).filter(([, exponent]) => exponent !== 0).sort(([a], [b]) => a.localeCompare(b, "en")));
+function parseIncomingKpiUnit(unit, period) {
+  smartAssert(typeof unit === "string" && unit.trim().length > 0 && unit.length <= 80, "UNSUPPORTED_UNIT", "Enter a unit.");
+  const text2 = unit.trim();
+  smartAssert(text2.split("/").length <= 2, "UNSUPPORTED_UNIT", "Use a simple numerator/denominator unit.");
+  const dimensions = {}, scales = {};
+  const parts = text2.split("/");
+  for (let side = 0; side < parts.length; side++) {
+    const terms = parts[side].split("*");
+    smartAssert(terms.length <= 4 && terms.every(Boolean), "UNSUPPORTED_UNIT", "Simplify the unit expression.");
+    for (const term of terms) {
+      const match = /^\s*([\p{L}_][\p{L}\p{N}_]{0,31}|1|%)(?:\^(-?[1-6]))?\s*$/u.exec(term);
+      smartAssert(match, "UNSUPPORTED_UNIT", "Use unit atoms with *, / and integer powers.");
+      const raw = match[1], atom2 = currencies2.has(raw.toUpperCase()) ? raw.toUpperCase() : Object.hasOwn(spelling, raw) ? spelling[raw] : raw;
+      const exponent = (side === 0 ? 1 : -1) * Number(match[2] ?? 1);
+      if (atom2 === "1" || atom2 === "fraction") continue;
+      if (atom2 === "%") {
+        scales["fraction:percent"] = (scales["fraction:percent"] ?? 0) + exponent;
+        continue;
+      }
+      if (periods.has(atom2)) {
+        smartAssert(period.grain === atom2 && !/^(?:unspecified:|conflict:)/.test(period.key), "UNSUPPORTED_PERIOD", "Use an explicit matching period basis.");
+        const key2 = `period:${atom2}:${period.key}`;
+        dimensions[key2] = (dimensions[key2] ?? 0) + exponent;
+        continue;
+      }
+      const quantity = Object.hasOwn(quantities2, atom2) ? quantities2[atom2] : void 0;
+      if (quantity) {
+        const [dimension, scale] = quantity;
+        dimensions[dimension] = (dimensions[dimension] ?? 0) + exponent;
+        scales[`${dimension}:${scale}`] = (scales[`${dimension}:${scale}`] ?? 0) + exponent;
+      } else {
+        const dimension = currencies2.has(atom2) ? `currency:${atom2}` : `opaque:${atom2}`;
+        dimensions[dimension] = (dimensions[dimension] ?? 0) + exponent;
+      }
+    }
+  }
+  return { dimensions: clean3(dimensions), scales: clean3(scales) };
+}
+
 // ../vdt-core/src/suggestions/recipes.ts
 var KPI_SUGGESTION_RECIPES = recipe_catalog_generated_default;
+
+// ../vdt-core/src/suggestions/response-contract.ts
+function buildKpiSuggestionResponseContract(context) {
+  let targetUnit;
+  try {
+    targetUnit = context.target.unit ? parseIncomingKpiUnit(context.target.unit, context.period) : null;
+  } catch {
+    targetUnit = null;
+  }
+  return {
+    version: "smart-kpi-response-contract.v1",
+    limits: {
+      outputBytes: KPI_SUGGESTION_LIMITS.outputBytes,
+      outputTokens: KPI_SUGGESTION_LIMITS.outputTokens,
+      alternatives: KPI_SUGGESTION_LIMITS.groups,
+      minFactors: 2,
+      maxFactors: KPI_SUGGESTION_LIMITS.children,
+      formulaCharacters: 500,
+      astNodes: INCOMING_KPI_LIMITS.astNodes,
+      astDepth: INCOMING_KPI_LIMITS.astDepth,
+      functionArguments: INCOMING_KPI_LIMITS.functionArguments
+    },
+    structure: [
+      "Match the supplied JSON schema exactly, including required null fields and string/array bounds.",
+      "ready needs at least one group; empty needs no groups and a specific reason.",
+      "Group IDs and child keys/conceptKeys use ^[a-z][a-z0-9_]{0,47}$. IDs are unique; keys, conceptKeys and normalized factor names are unique within each group.",
+      "Every group has at least two distinct substantive lower-level components, never renamed copies of the target or contextual metrics.",
+      "all requires every child key exactly once in requiredKeys. independent requires empty requiredKeys, null formula and null recipeId.",
+      "Include the complete applicable immediate layer. If it cannot fit the output budget, return empty with that limitation; never silently omit factors."
+    ],
+    formula: {
+      operators: ["+", "-", "*", "/"],
+      functions: ["min", "max"],
+      rules: [
+        "Use only child keys as references. Reference every child exactly once; no unknown references, repeated, cancelled or zero-weight factors.",
+        "Use no numeric coefficients, defaults, thresholds or conversion multipliers. The only literal is raw 1 as the left side of a subtraction, normally (1 - decimal_fraction).",
+        "Addition, subtraction and min/max require identical dimensions and scales. Multiplication/division must cancel to exactly the target dimensions and scales.",
+        "Do not reverse a parent equation, reuse an ancestor/sibling, cross process boundaries, or assume exclusions, overlap or values.",
+        "Preserve all applicable named factors and qualifiers in the project/selected skill. Missing measurements do not prevent proposing measurable factors."
+      ]
+    },
+    units: {
+      policy: INCOMING_KPI_UNIT_POLICY,
+      grammar: INCOMING_KPI_UNIT_GRAMMAR,
+      target: { text: context.target.unit ?? null, parsed: targetUnit, period: context.period },
+      rules: [
+        "Use machine expressions without spaces: USD/unit, never USD per unit. At most one /, at most four * terms per side, integer powers from -6 through 6 excluding 0.",
+        "Aliases in grammar are exact spelling aliases; other atoms are case-sensitive. Listed currency codes are case-insensitive aliases of their uppercase codes.",
+        "No implicit conversions between h/min/s, km/m, t/kg, percent/fraction or currencies. Use the exact target scale and repeat each opaque population atom exactly.",
+        "A period scopes a total without adding /month or another divisor. Include a period atom only when it is present in the target expression and matches its explicit grain.",
+        "For null target.parsed, a formula cannot be verified: return empty and identify the missing/unsupported target unit."
+      ]
+    },
+    references: {
+      reusableDirectChildren: context.children.filter((node3) => node3.status !== "rejected").map((node3) => ({ id: node3.id, name: node3.name, unit: node3.unit ?? null })),
+      rules: [
+        "existingNodeId must be null for new factors, or an active direct child ID listed here with its exact unit. Never use any other graph ID.",
+        "Do not duplicate an existing KPI name, node ID/conceptKey or smart-concept tag anywhere in the project. Reuse is limited to the listed direct children; explain an unsupported shared reference instead of duplicating it.",
+        "Do not name a new factor as a normalized copy of the root, target, ancestor or sibling. Name equality normalizes NFKC, case, punctuation, spaces and underscores."
+      ]
+    },
+    recipes: KPI_SUGGESTION_RECIPES.recipes.flatMap((recipe) => {
+      try {
+        const units = resolveKpiRecipeUnits(recipe, context);
+        return [{ id: recipe.id, formula: recipe.formula, children: recipe.children.map((child) => ({ key: child.key, conceptKey: child.conceptKey, unit: units[child.key] })) }];
+      } catch {
+        return [];
+      }
+    }),
+    recipeRule: "These recipes have compatible units, not proven business applicability. Use recipeId only when the definition applies and ALL listed keys, concepts, formula and units match. For any custom factor/formula use recipeId:null. Other recipe IDs are ineligible."
+  };
+}
 
 // ../vdt-core/src/suggestions/model-output.ts
 var string = (maxLength) => ({ type: "string", minLength: 1, maxLength });
 var object2 = (properties) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
 var list = (items, maxItems, minItems = 0) => ({ type: "array", items, minItems, maxItems });
 var nullable = (schema) => ({ anyOf: [schema, { type: "null" }] });
-var KPI_SUGGESTION_MODEL_JSON_SCHEMA = object2({
+var childFields = {
+  key: { ...string(48), pattern: "^[a-z][a-z0-9_]{0,47}$" },
+  conceptKey: { ...string(48), pattern: "^[a-z][a-z0-9_]{0,47}$" },
+  name: string(160),
+  unit: { ...string(80), pattern: "^[^\\s/]+(?:/[^\\s/]+)?$" },
+  description: nullable(string(240)),
+  existingNodeId: nullable(string(160))
+};
+var groupFields = {
+  id: { ...string(48), pattern: "^[a-z][a-z0-9_]{0,47}$" },
+  title: string(160),
+  selectionMode: { type: "string", enum: ["all", "independent"] },
+  children: list(object2(childFields), KPI_SUGGESTION_LIMITS.children, 2),
+  requiredKeys: list(string(48), KPI_SUGGESTION_LIMITS.children),
+  formula: nullable(string(500)),
+  recipeId: nullable(string(120)),
+  limitations: list(string(300), 6)
+};
+var modelSchema = (group) => object2({
   status: { type: "string", enum: ["ready", "empty"] },
   rationale: string(300),
   limitations: list(string(300), 6),
-  groups: list(object2({
-    id: string(48),
-    title: string(160),
-    selectionMode: { type: "string", enum: ["all", "independent"] },
-    children: list(object2({
-      key: { ...string(48), pattern: "^[a-z][a-z0-9_]{0,47}$" },
-      conceptKey: { ...string(48), pattern: "^[a-z][a-z0-9_]{0,47}$" },
-      name: string(160),
-      unit: string(80),
-      description: nullable(string(240)),
-      existingNodeId: nullable(string(160))
-    }), KPI_SUGGESTION_LIMITS.children, 2),
-    requiredKeys: list(string(48), KPI_SUGGESTION_LIMITS.children),
-    formula: nullable(string(500)),
-    recipeId: nullable(string(120)),
-    limitations: list(string(300), 6)
-  }), 3)
+  groups: list(group, 3)
 });
-var SMART_KPI_INSTRUCTION = `Propose ONE immediate mathematical input layer and a usable parent formula. Default to the target's language unless explicit personalisation requests another response language. Return only strict JSON, without tools, research, commands, hidden retries or full-tree construction. Keep rationale and row descriptions to one short clause.
+var KPI_SUGGESTION_MODEL_JSON_SCHEMA = modelSchema(object2(groupFields));
+var SMART_KPI_INSTRUCTION = `Propose ONE immediate mathematical input layer and a usable parent formula. Follow input.responseContract (or responseContract at the input root) as the host's exact acceptance requirements, in addition to the JSON schema. Check every rule before returning. Default to the target's language unless explicit personalisation requests another response language. Return only strict JSON, without tools, research, commands, hidden retries or full-tree construction. Keep rationale and row descriptions to one short clause.
 
 ${PERSONALISATION_PROMPT_RULE}
 
@@ -1708,7 +1943,7 @@ Each alternative needs at least two distinct substantive factors. Include the co
 
 Preserve qualifiers: gross/net, total/average, actual/nominal, product/material and fleet/per-item. Gross revenue does not authorize a net-revenue recipe or deduction factors. Do not invent geometry, weights, calibration, site facts, values, numeric defaults or child formulas. Output supplies definitions, never numeric input values. The only algebraic literal is raw1 in (1-decimal_fraction). A fixed parameter explicitly defined by the project may be a clearly labelled reference input with ratio units and a description identifying that definition; its value is entered separately. Never invent or fit a conversion. If the selected target itself is a fixed unit conversion, do not re-express the same reference quantity in two units as supposedly distinct components; return empty. This does not block another target from using a project-defined fixed input.
 
-Cancel units using EXACT atom strings: asset * h/asset * t/h = t; event/asset * h/event = h/asset. Pick one population atom and repeat it exactly, even when labels are plural; asset is not assets and event is not events. Preserve the target's volume syntax: m3, m^3 and m3/item are not interchangeable. Hours are not minutes, percent is not fraction, and currencies/scales/populations cannot be interchanged. A scalar60/100/1000 is not conversion proof. Match input scales. The analysis period scopes a total; do not add a time divisor unless the target is a rate.
+Write units as machine expressions without spaces: use / for per, * for multiplication and ^ for integer powers. For example, a price is USD/unit, never "USD per unit". For catalog recipes, resolve quantity to units (plus the target period suffix), unit_price to the target currency/unit, fraction to fraction, and target to the exact target unit. Cancel units using EXACT atom strings: asset * h/asset * t/h = t; event/asset * h/event = h/asset. Pick one population atom and repeat it exactly, even when labels are plural; asset is not assets and event is not events. Preserve the target's volume syntax: m3, m^3 and m3/item are not interchangeable. Hours are not minutes, percent is not fraction, and currencies/scales/populations cannot be interchanged. A scalar60/100/1000 is not conversion proof. Match input scales. The analysis period scopes a total; do not add a time divisor unless the target is a rate.
 
 Event counts and event-weighted mean durations must cover the same event population and period. Sums need exhaustive, disjoint categories: assign every overlapping interval to exactly one component, not both or neither. Compound labels do not prove exclusivity. A formula is a proposed definition, not proof of causality.
 
@@ -1716,13 +1951,16 @@ Preserve decomposition direction. Ancestors and siblings are context, never sugg
 
 Reuse only active existing direct children in context.children with exact existingNodeId/unit. An undecomposed Input has no reusable children. Never duplicate an existing metric to evade that restriction. Use concise lowercase snake_case keys/conceptKeys, max48 characters. Editable starting rows still need defensible components. Do not imply contextual Add or an unsupported equation. Before answering, check exact unit cancellation, scope, every factor's necessity, independent source meaning and direction.`;
 function validateKpiSuggestionTaskInput(value) {
-  smartRecord(value, ["schemaVersion", "context", "recipes"]);
+  smartRecord(value, ["schemaVersion", "context", "recipes", "responseContract"], ["schemaVersion", "context", "recipes"]);
   smartAssert(value.schemaVersion === KPI_SUGGESTION_TASK_SCHEMA, "INVALID_CONTEXT", "Unknown Smart task schema.");
-  validateKpiSuggestionContext(value.context);
+  const context = validateKpiSuggestionContext(value.context);
   smartList(value.recipes, 4);
   smartAssert(kpiCanonicalJson(value.recipes) === kpiCanonicalJson(KPI_SUGGESTION_RECIPES.recipes), "INVALID_RECIPE", "Only the canonical host recipe catalog is admitted.");
-  smartAssert(new TextEncoder().encode(JSON.stringify(value)).byteLength <= KPI_SUGGESTION_LIMITS.inputBytes, "INPUT_TOO_LARGE", "Smart input exceeds its bounded input allowance.");
-  return value;
+  const responseContract = buildKpiSuggestionResponseContract(context);
+  smartAssert(value.responseContract === void 0 || kpiCanonicalJson(value.responseContract) === kpiCanonicalJson(responseContract), "INVALID_RESPONSE_CONTRACT", "Smart response requirements must match the host validator and context.");
+  const bounded = { ...value, responseContract };
+  smartAssert(new TextEncoder().encode(JSON.stringify(bounded)).byteLength <= KPI_SUGGESTION_LIMITS.inputBytes, "INPUT_TOO_LARGE", "Smart input exceeds its bounded input allowance.");
+  return bounded;
 }
 function projectedGroups(value) {
   return value.groups.map((g) => ({
@@ -2574,7 +2812,7 @@ function fallbackQuestionFromMessage(message) {
     }
   ];
 }
-function normalizeAgentDecisionOutput(output2) {
+function normalizeAgentDecisionOutput(output2, allowSingleCallBatch = false) {
   if (output2.type === "call_tool") {
     const toolName = typeof output2.toolName === "string" ? output2.toolName : "";
     const args = parseJsonObjectString(output2.argsJson ?? output2.args) ?? {};
@@ -2594,6 +2832,16 @@ function normalizeAgentDecisionOutput(output2) {
   }
   if (output2.type === "call_tools") {
     const calls = parseJsonObjectArrayString(output2.callsJson ?? output2.calls) ?? [];
+    const single = allowSingleCallBatch && calls.length === 1 ? calls[0] : void 0;
+    const singleArgs = single && parseJsonObjectString(single.argsJson ?? single.args);
+    if (single && typeof single.toolName === "string" && singleArgs) {
+      return normalizeAgentDecisionOutput({
+        type: "call_tool",
+        toolName: single.toolName,
+        args: singleArgs,
+        statusMessage: output2.statusMessage
+      });
+    }
     return {
       type: output2.type,
       calls: calls.map((call) => ({
@@ -2623,7 +2871,7 @@ function normalizeAgentDecisionOutput(output2) {
 function normalizeRegisteredSchemaOutput(schemaId, output2) {
   if (isDataDiscoverySchemaId(schemaId)) return normalizeDataDiscoveryOutput(schemaId, output2);
   if ((schemaId === "agent-decision-v1" || schemaId === "agent-decision-v2") && isRecord(output2)) {
-    return normalizeAgentDecisionOutput(output2);
+    return normalizeAgentDecisionOutput(output2, schemaId === "agent-decision-v2");
   }
   if (schemaId === "generate-tree-v1" && isRecord(output2)) return orientGenerateTreeEdgesFromRoot(output2);
   return output2;
@@ -6918,9 +7166,21 @@ function buildRepairMessages(schemaId, request, invalidJson, parsedOutput) {
     }
   ];
 }
+function cursorUsesCanonicalDecision(request) {
+  return request.backendId === "cursor_subscription" && request.taskType === "agent_decision" && request.schemaId === "agent-decision-v2";
+}
+function cliResponseSchema(request) {
+  return cursorUsesCanonicalDecision(request) ? getRegisteredJsonSchema(request.schemaId) : getStrictResponseJsonSchema(request.schemaId);
+}
 function buildSubscriptionPrompt(request) {
   const schemaId = request.schemaId;
-  const schemaInstructions = schemaId === "agent-decision-v1" || schemaId === "agent-decision-v2" ? [
+  const schemaInstructions = cursorUsesCanonicalDecision(request) ? [
+    "Return the canonical decision object shown by outputJsonSchema.",
+    "For call_tool use toolName and args as an object; for call_tools use calls as an array of 2-6 {toolName,args} objects.",
+    "For ask_user use questions as an array; for finish use summary and nextSuggestedActions.",
+    "Use real nested JSON objects and arrays. Do not encode args, calls or questions as strings. Include only fields allowed by the selected type.",
+    "Tool names and every argument must match availableTools and their inputJsonSchema. Never batch calls whose arguments depend on an unseen tool result."
+  ].join("\n") : schemaId === "agent-decision-v1" || schemaId === "agent-decision-v2" ? [
     "Agent decision encoding:",
     `- Return the strict fields type, toolName, argsJson, ${schemaId === "agent-decision-v2" ? "callsJson, " : ""}statusMessage, questionsJson, summary, and nextSuggestedActions.`,
     "- For call_tool, set toolName and put the tool arguments in argsJson as a JSON object string.",
@@ -6941,7 +7201,7 @@ function buildSubscriptionPrompt(request) {
     JSON.stringify({
       schemaId: request.schemaId,
       taskType: request.taskType,
-      outputJsonSchema: getStrictResponseJsonSchema(schemaId),
+      outputJsonSchema: cliResponseSchema(request),
       input: request.input,
       ...request.model ? { model: request.model } : {}
     })
@@ -7063,7 +7323,7 @@ async function executeCli(manifest, request, signal, options) {
       const promptPath = path10.join(cwd, "prompt.txt");
       await writeFile5(promptPath, prompt, { encoding: "utf8", mode: 384, flag: "wx" });
       const schemaPath = path10.join(cwd, "schema.json");
-      await writeFile5(schemaPath, `${JSON.stringify(getStrictResponseJsonSchema(request.schemaId), null, 2)}
+      await writeFile5(schemaPath, `${JSON.stringify(cliResponseSchema(request), null, 2)}
 `, {
         encoding: "utf8",
         mode: 384,
@@ -9390,14 +9650,14 @@ function codePointLength(str) {
   const units = str.length;
   if (!highSurrogate.test(str))
     return units;
-  let count = units;
+  let count2 = units;
   for (let i = 0; i < units - 1; i++) {
     if ((str.charCodeAt(i) & 64512) === 55296 && (str.charCodeAt(i + 1) & 64512) === 56320) {
-      count--;
+      count2--;
       i++;
     }
   }
-  return count;
+  return count2;
 }
 function getLengthableOrigin(input2) {
   if (Array.isArray(input2))
@@ -10130,7 +10390,7 @@ __export(regexes_exports, {
   sha512_base64url: () => sha512_base64url,
   sha512_hex: () => sha512_hex,
   string: () => string2,
-  time: () => time,
+  time: () => time2,
   ulid: () => ulid,
   undefined: () => _undefined,
   unicodeEmail: () => unicodeEmail,
@@ -10198,7 +10458,7 @@ function timeSource(args) {
   const regex = typeof args.precision === "number" ? args.precision === -1 ? `${hhmm}` : args.precision === 0 ? `${hhmm}:[0-5]\\d` : `${hhmm}:[0-5]\\d\\.\\d{${args.precision}}` : args.seconds ? `${hhmm}:[0-5]\\d(?:\\.\\d+)?` : `${hhmm}(?::[0-5]\\d(?:\\.\\d+)?)?`;
   return regex;
 }
-function time(args) {
+function time2(args) {
   return new RegExp(`^${timeSource(args)}$`);
 }
 function datetime(args) {
@@ -11102,7 +11362,7 @@ var $ZodISODate = /* @__PURE__ */ $constructor("$ZodISODate", (inst, def) => {
   $ZodStringFormat.init(inst, def);
 });
 var $ZodISOTime = /* @__PURE__ */ $constructor("$ZodISOTime", (inst, def) => {
-  def.pattern ?? (def.pattern = time(def));
+  def.pattern ?? (def.pattern = time2(def));
   $ZodStringFormat.init(inst, def);
 });
 var $ZodISODuration = /* @__PURE__ */ $constructor("$ZodISODuration", (inst, def) => {
@@ -13780,8 +14040,8 @@ function az_default() {
 }
 
 // ../../node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/locales/be.js
-function getBelarusianPlural(count, one2, few, many) {
-  const absCount = Math.abs(count);
+function getBelarusianPlural(count2, one2, few, many) {
+  const absCount = Math.abs(count2);
   const lastDigit = absCount % 10;
   const lastTwoDigits = absCount % 100;
   if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
@@ -16428,8 +16688,8 @@ function hu_default() {
 }
 
 // ../../node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/locales/hy.js
-function getArmenianPlural(count, one2, many) {
-  return Math.abs(count) === 1 ? one2 : many;
+function getArmenianPlural(count2, one2, many) {
+  return Math.abs(count2) === 1 ? one2 : many;
 }
 function withDefiniteArticle(word) {
   if (!word)
@@ -19167,8 +19427,8 @@ function ro_default() {
 }
 
 // ../../node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/locales/ru.js
-function getRussianPlural(count, one2, few, many) {
-  const absCount = Math.abs(count);
+function getRussianPlural(count2, one2, few, many) {
+  const absCount = Math.abs(count2);
   const lastDigit = absCount % 10;
   const lastTwoDigits = absCount % 100;
   if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
@@ -26910,7 +27170,7 @@ __export(iso_exports, {
   date: () => date4,
   datetime: () => datetime2,
   duration: () => duration2,
-  time: () => time2
+  time: () => time3
 });
 function datetime2(params) {
   return _isoDateTime(ZodISODateTime, params);
@@ -26918,7 +27178,7 @@ function datetime2(params) {
 function date4(params) {
   return _isoDate(ZodISODate, params);
 }
-function time2(params) {
+function time3(params) {
   return _isoTime(ZodISOTime, params);
 }
 function duration2(params) {

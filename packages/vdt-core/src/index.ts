@@ -29,6 +29,7 @@ export * from "./suggestions/units";
 export * from "./suggestions/recipes";
 export * from "./suggestions/compile";
 export * from "./suggestions/model-output";
+export * from "./suggestions/response-contract";
 export * from "./suggestions/fixtures";
 export * from "./suggestions/incoming-types";
 export * from "./suggestions/incoming-contract";

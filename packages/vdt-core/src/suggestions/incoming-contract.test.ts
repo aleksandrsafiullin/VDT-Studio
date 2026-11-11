@@ -129,6 +129,8 @@ describe("FM-01 bounded AST/ID mapping and same-scale unit grammar", () => {
     for (const [a, b] of [["h", "min"], ["km", "m"], ["%", "fraction"], ["USD", "EUR"], ["MW", "mW"]])
       expect(parseIncomingKpiUnit(a!, period)).not.toEqual(parseIncomingKpiUnit(b!, period));
     expect(parseIncomingKpiUnit("hours", period)).toEqual(parseIncomingKpiUnit("h", period));
+    expect(parseIncomingKpiUnit("Usd/unit", period)).toEqual(parseIncomingKpiUnit("USD/item", period));
+    expect(parseIncomingKpiUnit("kzt", period)).toEqual(parseIncomingKpiUnit("KZT", period));
     expect(parseIncomingKpiUnit("score/score", period)).toEqual({ dimensions: {}, scales: {} });
     expect(() => parseIncomingKpiUnit("h/month", period)).toThrow("matching period");
     expect(parseIncomingKpiUnit("h/month", { key: "explicit:October", grain: "month" }).dimensions).toHaveProperty("period:month:explicit:October", -1);

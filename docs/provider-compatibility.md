@@ -1,5 +1,27 @@
 # Provider Compatibility
 
+Direct OpenAI Model Agent and OpenAI-compatible compatibility runs use structured argument objects for
+closed builder schemas in the admitted tool catalog. The response schema
+ties each tool name to its own fields and bounds. Smart recipe branches use
+the eligible recipe's equation, factors and exact units from the current
+response contract. The live checks qualify the recorded scenarios.
+
+For reasoning-model OpenAI-compatible `agent_decision` requests, the implicit
+completion allowance is 4,096 tokens, including reasoning. Explicit caller
+limits still take priority. A length-limited decision preserves the draft and
+reports incomplete structured output without replaying the exhausted
+request. The adapter does not silently change model or effort. Smart KPI
+retains its separate 2,048-token cap.
+
+## Original GPT-5 effort discovery (2026-11-11)
+
+Original released GPT-5/mini/nano IDs retain documented Minimal/Low/Medium/High
+controls after selected-card identity verification when their cards omit the
+effort row. Off remains unsupported and choices remain explicit. Safe Smart
+errors distinguish provider failures from rejected output. Limited live nano
+Low evidence does not promote provider-wide qualification. See
+[response-contract repair](implementation/AI_RESPONSE_CONTRACT_2026-11-11.md).
+
 ## Local harness integration (2026-11-02)
 
 Copilot, OpenCode, Hermes, Kiro, Kimi Code, Mistral Vibe, Kilo Code, Qwen Code and Grok Build use the shared ACP integration. Pi uses native RPC behind the same session contract. Only current harness connections are registered; pre-release versions do not retain retired providers or compatibility adapters. Custom profiles are experimental and checked at protocol/session/schema boundaries. The fixture matrix includes Suggested KPI for all thirteen current presets; no new live or native provider certification is implied. See [Harness connections](HARNESS_CONNECTIONS.md).

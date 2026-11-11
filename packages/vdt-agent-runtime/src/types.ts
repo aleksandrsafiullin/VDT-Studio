@@ -550,6 +550,14 @@ export interface AgentDecisionContext {
     guidance?: string | undefined;
   };
   currentProject?: ProjectSummary | undefined;
+  hierarchyForFinish?: { valid: boolean; errors: string[]; errorCount: number } | undefined;
+  literalUserQuantities?: import("./value-provenance-contract").LiteralUserQuantity[] | undefined;
+  literalUserQuantitiesComplete?: boolean | undefined;
+  rootConstruction?: {
+    rootNodeId?: string | undefined;
+    needs: "draft" | "plan" | "drivers" | "referenced_formula";
+    guidance: string;
+  } | undefined;
   formulaBacklog: FormulaBacklogItem[];
   visibleContext: AgentThreadContext;
   selectedNode?: NodeSummary | undefined;

@@ -31,6 +31,14 @@ function records() {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("stable credential and selection identities", () => {
+  it.each(["INCOMPLETE_OUTPUT", "PROVIDER_AUTH", "PROVIDER_QUOTA", "UNIT_MISMATCH"])("preserves actionable %s without returning upstream secrets", async code => {
+    await expect(prepareSmartThroughHttp(async () => json({ ok: false, error: { code, message: "upstream-secret" } }, 422), { timeoutMs: 1000 }, new AbortController().signal))
+      .rejects.toMatchObject({ code });
+    const result = await prepareSmartThroughHttp(async () => json({ ok: false, error: { code, message: "upstream-secret" } }, 422), { timeoutMs: 1000 }, new AbortController().signal).catch(error => error);
+    if (!(result instanceof Error)) throw new Error("Expected a classified Smart failure.");
+    expect(result.message).not.toContain("upstream-secret");
+    expect(result.message).not.toBe("Smart preparation could not complete.");
+  });
   it.each(["REASONING_UNSUPPORTED", "CREDENTIAL_IDENTITY_UNVERIFIED"])("preserves actionable %s admission errors through HTTP and native metadata", async code => {
     await expect(createSmartKpiPreparedSelection(cliSettings(), { appMode: "development_web", fetch: async () => json({ ok: false, error: { code } }, 503) })).rejects.toMatchObject({ code });
     await expect(resolveDesktopSmartExecution({ backendId: "vibe_subscription", timeoutMs: 1000 }, { invoke: async () => ({ ok: false, error: { code } }) })).rejects.toMatchObject({ code });

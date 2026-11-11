@@ -476,7 +476,25 @@ describe("Smart KPI bounded scheduling", () => {
     const changed = structuredClone(w); changed.project.graph.nodes = changed.project.graph.nodes.filter(n => n.id !== "child_0"); changed.project.graph.edges = changed.project.graph.edges.filter(e => e.targetNodeId !== "child_0");
     await s.setWorkspace(changed); await s.request("child_1"); expect(old.signal.aborted).toBe(true);
     transport.resolve(0); await tick(); expect(cache.peek({ context: old.context, execution })).toBeUndefined();
+    await vi.waitFor(() => expect(transport.calls).toHaveLength(2));
     transport.resolve(1); await s.whenSettled(); expect(s.getSnapshot("child_0").state.status).toBe("stale"); expect(s.getSnapshot("child_1").canApply).toBe(true);
+  });
+
+  it("waits for semantic typing to settle before speculative preparation, with explicit Retry immediately available", async () => {
+    const w = workspace(), prepare = vi.fn(async ({ context, execution: exec }) => proposal(context, exec)), s = create({ prepare });
+    await s.setWorkspace(w);
+    vi.useFakeTimers();
+    for (let index = 0; index < 20; index++) {
+      const edited = structuredClone(w); edited.project.graph.nodes[1]!.description = "Sales definition ".repeat(index + 1);
+      await s.setWorkspace(edited); await s.request(fixtureTarget, { priority: "selected" }); await s.request(fixtureTarget, { priority: "hover" });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(prepare).not.toHaveBeenCalled();
+    }
+    await vi.advanceTimersByTimeAsync(SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs); await tick();
+    expect(prepare).toHaveBeenCalledTimes(1);
+    const edited = structuredClone(w); edited.project.graph.nodes[1]!.description = "A final edited definition";
+    await s.setWorkspace(edited); await s.retry(fixtureTarget); await tick();
+    expect(prepare).toHaveBeenCalledTimes(2);
   });
 
   it("quarantines unknown cleanup across disposal/recreation and ignores retry/cooldown until host confirmation", async () => {

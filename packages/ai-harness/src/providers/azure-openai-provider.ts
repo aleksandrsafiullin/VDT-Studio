@@ -4,7 +4,8 @@ import {
   parseStructuredOutput,
   requestProviderJson,
   requireNonEmptyText,
-  trimTrailingSlash
+  trimTrailingSlash,
+  withZodResponseContract
 } from "./provider-utils";
 
 interface AzureChatCompletionResponse {
@@ -43,7 +44,7 @@ export class AzureOpenAiProvider implements AiProvider {
           } : { reasoning_effort: this.config.reasoningEffort, max_completion_tokens: params.maxTokens ?? 8000 }),
           response_format: responseFormat,
           messages: [
-            { role: "system", content: params.systemPrompt },
+            { role: "system", content: withZodResponseContract(params.systemPrompt, params.schema, params.outputJsonSchema) },
             {
               role: "user",
               content: `${params.userPrompt}\n\nReturn only valid JSON matching the required schema.`

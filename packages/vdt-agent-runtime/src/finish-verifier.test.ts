@@ -3,6 +3,7 @@ import { productionVolumeProject,VdtBuilderSession,inspectDecompositionHierarchy
 import type { AgentSessionBinding } from "./agent-execution-contracts";
 import type { AgentSupervisorPersistenceStateV2 } from "./agent-supervisor-persistence";
 import { verifyDeterministicRunFinish } from "./finish-verifier";
+import { unboundQuotedMoneyFacts } from "./model-acceptance-contract";
 
 const HASH_A = `sha256:${"a".repeat(64)}`;
 const HASH_B = `sha256:${"b".repeat(64)}`;
@@ -22,6 +23,39 @@ it("requires the recorded hierarchy on protected runs even when the flat graph c
 });
 
 describe("verifyDeterministicRunFinish", () => {
+  it("requires percent scaling before issuing a receipt for a new tree", () => {
+    const b = new VdtBuilderSession();
+    b.createDraft({ rootKpi: "Revenue", projectTitle: "Revenue", unit: "USD" });
+    b.addDriver({ nodeId: "gross", parentNodeId: "revenue", name: "Gross", unit: "USD", baselineValue: 100 });
+    b.addDriver({ nodeId: "discount", parentNodeId: "revenue", name: "Discount", unit: "%", baselineValue: 10 });
+    b.setFormula({ nodeId: "revenue", formula: "gross * (1 - discount)" });
+    const input = { ...readyInput(), requireDerivedRoot: true, enforcePercentageScale: true };
+    expect(verifyDeterministicRunFinish({ ...input, project: b.getProject() })).toMatchObject({ accepted: false, code: "GRAPH_INVALID" });
+    b.setFormula({ nodeId: "revenue", formula: "gross * (1 - discount / 100)" });
+    expect(verifyDeterministicRunFinish({ ...input, project: b.getProject() })).toMatchObject({ accepted: true, payload: { rootValue: 90 } });
+  });
+
+  it("requires a sourced input when a quoted amount appears as a formula literal", () => {
+    const b = new VdtBuilderSession();
+    b.createDraft({ rootKpi: "Revenue", projectTitle: "Revenue", unit: "USD" });
+    b.addDriver({ nodeId: "gross", parentNodeId: "revenue", name: "Gross", unit: "USD", baselineValue: 100 });
+    b.setFormula({ nodeId: "revenue", formula: "gross - 20" });
+    const request = { mode: "generate_vdt" as const, providerId: "test", input: { prompt: "Refunds were 20 USD." } };
+    const verify = () => {
+      const project = b.getProject();
+      return verifyDeterministicRunFinish({ ...readyInput(), project, unboundSourceFacts: unboundQuotedMoneyFacts(project, request) });
+    };
+    expect(verify()).toMatchObject({ accepted: false, payload: { blockers: [
+      { code: "SOURCE_PROVENANCE_INCOMPLETE", detail: expect.stringContaining("Refunds were 20 USD") }
+    ] } });
+    b.addDriver({ nodeId: "refunds", parentNodeId: "revenue", name: "Refunds", unit: "USD", baselineValue: 20 });
+    b.updateNode({ nodeId: "refunds", patch: { valueStatus: "user_provided_value", valueSource: {
+      sourceTier: "user_input", note: "Refunds were 20 USD", editableInDialog: true, acceptedByUserInDialog: true
+    } } });
+    b.setFormula({ nodeId: "revenue", formula: "gross - refunds" });
+    expect(verify()).toMatchObject({ accepted: true, payload: { rootValue: 80 } });
+  });
+
   it("never issues a finish receipt for formula/link divergence accepted as an editable draft", () => {
     const project = structuredClone(productionVolumeProject);
     project.graph.edges = project.graph.edges.filter(edge => edge.targetNodeId !== "average_productivity");

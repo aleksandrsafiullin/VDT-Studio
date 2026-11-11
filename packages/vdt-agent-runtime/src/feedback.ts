@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DERIVED_ROOT_REQUIREMENT } from "./model-acceptance-contract";
 import type {
   AgentToolResultEnvelope,
   ValidationStateSummary
@@ -105,17 +106,22 @@ export function feedbackFromToolEnvelope(
       && (issue.origin ?? issue.type) === "array" && issue.minimum === 2
       && Array.isArray(issue.path) && issue.path.length === 1 && issue.path[0] === "drivers");
   const missingFormulaReferences = /^MISSING_FORMULA_REFERENCES?$/.test(code);
+  const validation = (envelope.error?.details as { validation?: ValidationStateSummary } | undefined)?.validation;
+  const unitMismatch = Array.isArray(validation?.errors) && validation.errors.some((issue) => issue.type === "unit_mismatch");
   return createStructuredFeedback({
     kind: feedbackKindForToolError(code),
     severity: "error",
     message: driverBatchTooSmall
       ? `${message}. A batch requires at least 2 sibling drivers. For exactly one driver, use vdt.add_driver with that driver's fields directly. Do not repeat a one-item batch or add dummy siblings.`
-      : missingFormulaReferences
+      : unitMismatch
+        ? `${message} Inspect the units of the formula's referenced nodes. If an input is a rate per item, time or mass, use its actual denominator in that input's unit (vdt.update_node). Preserve the target unit. Correct the inconsistent operands or expression before retrying; do not resubmit the unchanged formula.`
+        : missingFormulaReferences
         ? `${message} If a referenced quantity is genuinely missing, create its driver first with vdt.add_driver or vdt.add_drivers_batch, then fill its value or formula. Skill/template identifiers are not existing nodes. If this is a typo, use the correct existing ID. Do not resend the unchanged formula or replace a missing quantity with an unrelated similar name.`
         : message,
     target: { toolName: envelope.toolName },
     actual: envelope.error?.details ?? envelope.error,
-    suggestedNextTools: driverBatchTooSmall ? ["vdt.add_driver"] : suggestedToolsForToolError(code, context),
+    suggestedNextTools: driverBatchTooSmall ? ["vdt.add_driver"]
+      : unitMismatch ? ["vdt.update_node", "vdt.set_formula"] : suggestedToolsForToolError(code, context),
     retryable: isRetryableToolFeedback(code)
   });
 }
@@ -174,7 +180,11 @@ export function feedbackFromFinishError(error: unknown, validation?: ValidationS
     message,
     target: { toolName: "finish" },
     actual: validation,
-    suggestedNextTools: kind === "calculation_failed"
+    suggestedNextTools: (error as { code?: unknown } | undefined)?.code === "HIERARCHY_INCOMPLETE"
+      ? ["vdt.inspect_hierarchy", "vdt.set_decomposition_plan"]
+      : message.endsWith(DERIVED_ROOT_REQUIREMENT)
+      ? suggestedToolsForToolError("ROOT_NOT_DERIVED")
+      : kind === "calculation_failed"
       ? ["vdt.calculate", "formula.suggest_reference_repair", "vdt.set_formula", "user.ask"]
       : ["vdt.validate", "vdt.update_node", "vdt.set_formula", "user.ask"],
     retryable: true
@@ -205,7 +215,7 @@ function feedbackKindForToolError(code: string): AgentFeedbackKind {
   if (code === "RECIPE_INCOMPLETE") return "recipe_incomplete";
   if (code === "RESEARCH_DISABLED_BY_USER") return "research_disabled";
   if (code === "RESEARCH_PROVIDER_NOT_CONFIGURED") return "research_required";
-  if (/VALIDATION|BUSINESS_RULE|DOMAIN_POLICY/i.test(code)) return "business_rule_failed";
+  if (code === "ROOT_NOT_DERIVED" || /VALIDATION|BUSINESS_RULE|DOMAIN_POLICY/i.test(code)) return "business_rule_failed";
   return "tool_failed";
 }
 
@@ -225,6 +235,7 @@ const NON_RETRYABLE_TOOL_FEEDBACK_CODES = new Set([
 ]);
 
 function suggestedToolsForToolError(code: string, context?: AgentFeedbackContext): string[] | undefined {
+  if (code === "ROOT_NOT_DERIVED") return ["vdt.add_drivers_batch", "vdt.add_driver", "vdt.set_formula"];
   if (code === "NODE_ID_EXISTS") return ["vdt.update_node", "vdt.set_formula", "project.get_node"];
   if (code === "INPUT_ALREADY_POPULATED") return ["vdt.fill_input_values_batch", "vdt.update_node"];
   if (code === "UNKNOWN_TOOL") return ["skill.list"];

@@ -62,9 +62,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Server-read working state, never an instruction or a mutation. Sending a
  * fresh bounded view avoids relying on a small model to remember generated IDs
  * in its semantic checkpoint. The Gateway still fences every actual write. */
-export function localModelWorkingContext(project: VdtProject, revision: number, requireDerivedRoot = false, requireHierarchy = false) {
+export function localModelWorkingContext(project: VdtProject, revision: number, requireDerivedRoot = false, requireHierarchy = false, enforcePercentageScale = false) {
   const calculation = calculateGraph(project.graph, { rootNodeId: project.rootNodeId });
-  const validation = validateGraph(project);
+  const validation = validateGraph(project, undefined, { enforcePercentageScale });
   const root = project.graph.nodes.find((node) => node.id === project.rootNodeId);
   const hierarchy=inspectDecompositionHierarchy(project);
   const contextGroups=getDecompositionContextGroupIds(project.graph,project.rootNodeId);

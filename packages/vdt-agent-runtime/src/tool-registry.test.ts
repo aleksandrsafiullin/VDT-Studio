@@ -7,6 +7,21 @@ import { SCHEMA_ISSUE_SUMMARY_MAX_CHARS } from "./schema-issue-summary";
 import { createDefaultToolRegistry } from "./tools";
 
 describe("ToolRegistry", () => {
+  it("publishes the same argument bounds and required fields that built-in tools enforce", () => {
+    const registry = createDefaultToolRegistry();
+    const read = registry.getSpec("skill.read")!.inputJsonSchema as { properties: Record<string, unknown>; required: string[] };
+    expect(read.properties.skillId).toMatchObject({ type: "string", minLength: 1, maxLength: 160 });
+    expect(read.properties.maxChars).toMatchObject({ type: "integer", minimum: 200, maximum: 10000 });
+    expect(read.required).toContain("skillId"); expect(read.required).not.toContain("maxChars");
+    expect(registry.list().every(tool => registry.getSpec(tool.name)!.inputJsonSchema)).toBe(true);
+    expect(registry.getSpec("skill.seed_topology")!.inputJsonSchema).toMatchObject({ properties: { defaults: { maxProperties: 24 } } });
+  });
+  it("publishes nested enums, array limits, nullable values and strict object boundaries", () => {
+    const registry = new ToolRegistry();
+    registry.register({ name: "qa.nested", description: "QA", inputSchema: z.object({ rows: z.array(z.object({ mode: z.enum(["total", "rate"]), value: z.number().positive().nullable() }).strict()).min(1).max(2) }).strict(), outputSchema: z.unknown(), run: () => null });
+    expect(registry.getSpec("qa.nested")!.inputJsonSchema).toMatchObject({ additionalProperties: false, required: ["rows"], properties: { rows: { minItems: 1, maxItems: 2,
+      items: { required: ["mode", "value"], additionalProperties: false, properties: { mode: { enum: ["total", "rate"] }, value: { anyOf: [{ type: "number", exclusiveMinimum: 0 }, { type: "null" }] } } } } } });
+  });
   it("rejects unknown tools and emits a recoverable event", async () => {
     const store = new AgentRunStore({ now: () => "2026-06-26T00:00:00.000Z" });
     const run = store.createRun({

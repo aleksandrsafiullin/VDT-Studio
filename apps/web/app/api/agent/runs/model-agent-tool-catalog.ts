@@ -69,7 +69,7 @@ const describeInput = z.object({ toolNames: z.array(z.string().min(1).max(160)).
 const describeSpec = {
   name: "tools.describe",
   description: "Read exact argument schemas for 1-6 tools from this catalog before using a tool whose schema is not in context.",
-  inputJsonSchema: { type: "object", properties: { toolNames: { type: "array", minItems: 1, maxItems: 6, items: { type: "string" } } }, required: ["toolNames"], additionalProperties: false },
+  inputJsonSchema: toProviderJsonSchema(describeInput),
   mutatesProject: false,
   phase: "planning_decomposition" as const
 };
@@ -107,7 +107,7 @@ export function modelAgentToolCatalog(tools: ToolRegistry) {
     return {
       ...spec,
       description: spec.description.length>88?`${spec.description.slice(0,85)}...`:spec.description,
-      inputJsonSchema: definition.inputJsonSchema ?? compactInputSchema(toProviderJsonSchema(definition.inputSchema))
+      inputJsonSchema: spec.inputJsonSchema
     };
   };
   return TARGET_MODEL_AGENT_TOOLS.map((name) => {
@@ -127,27 +127,6 @@ export function modelAgentToolCatalog(tools: ToolRegistry) {
     }
     return describe(name);
   });
-}
-
-/** Keep actionable types, enums and required fields. Bound nested object
- * detail so a local model receives a usable catalog within its context budget. */
-function compactInputSchema(value: unknown, objectDepth = 0): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const schema = value as Record<string, unknown>;
-  const result: Record<string, unknown> = {};
-  for (const key of ["type", "enum", "const", "default", "minLength", "maxLength", "minimum", "maximum", "minItems", "maxItems", "pattern"]) {
-    if (key in schema) result[key] = schema[key];
-  }
-  if (schema.properties && objectDepth < 3) {
-    result.properties = Object.fromEntries(Object.entries(schema.properties).map(([key, field]) => [key, compactInputSchema(field, objectDepth + 1)]));
-    if (schema.required) result.required = schema.required;
-    if (typeof schema.additionalProperties === "boolean") result.additionalProperties = schema.additionalProperties;
-  }
-  if (schema.items) result.items = compactInputSchema(schema.items, objectDepth);
-  for (const key of ["anyOf", "oneOf", "allOf"] as const) {
-    if (Array.isArray(schema[key])) result[key] = schema[key].map((entry) => compactInputSchema(entry, objectDepth));
-  }
-  return result;
 }
 
 export function modelAgentToolCatalogHash(tools: ToolRegistry): string {

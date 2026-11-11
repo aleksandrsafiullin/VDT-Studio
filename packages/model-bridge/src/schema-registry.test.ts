@@ -292,6 +292,23 @@ describe("schema registry", () => {
     expect(validateRegisteredSchema("agent-decision-v2", normalized)).toBe(true);
   });
 
+  it("accepts a single unambiguous call in the v2 wire batch without guessing malformed arguments", () => {
+    const decision = {
+      type: "call_tools",
+      statusMessage: "Reading the draft root.",
+      callsJson: JSON.stringify([{ toolName: "project.get_node", args: { nodeId: "root" } }])
+    };
+    const normalized = normalizeRegisteredSchemaOutput("agent-decision-v2", decision);
+    expect(normalized).toEqual({
+      type: "call_tool", toolName: "project.get_node", args: { nodeId: "root" }, statusMessage: decision.statusMessage
+    });
+    expect(validateRegisteredSchema("agent-decision-v2", normalized)).toBe(true);
+    const malformed = normalizeRegisteredSchemaOutput("agent-decision-v2", {
+      ...decision, callsJson: JSON.stringify([{ toolName: "project.get_node", argsJson: "{" }])
+    });
+    expect(validateRegisteredSchema("agent-decision-v2", malformed)).toBe(false);
+  });
+
   it("normalizes user-question tool aliases to ask_user decisions", () => {
     const normalized = normalizeRegisteredSchemaOutput("agent-decision-v1", {
       type: "call_tool",

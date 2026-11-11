@@ -1,5 +1,78 @@
 # AI And Agent Harness
 
+## Typed OpenAI-compatible decisions and quoted rates (2026-11-11)
+
+The direct OpenAI Model Agent sends a strict response schema built from its
+pinned tool catalog. Closed builder tools carry native arguments. The
+adapter decodes encoded arguments for other tools before canonical Supervisor
+validation. The current graph determines available inputs and finish admission.
+Construction turns retain the original brief and explain the placeholder stage.
+The first turn can clarify direction. Once the draft contains only its root,
+the next decisions establish the plan and initial factors. The initial plan
+uses the root's actual ID and the builder's identifier format. An intermediate
+without planned operands gets one model revision before any tool executes.
+Additions use the accepted plan's pending IDs and existing parent IDs. Formula
+targets during construction exclude nodes declared as inputs.
+
+For a calculable new draft with a hierarchy mismatch, the direct OpenAI
+transport can offer a checked sequence of plan and parent-link corrections
+derived from the existing formulas. The model reviews the business result
+before selecting the sequence. An exact unused AI duplicate of the root
+expression may be removed if it has no independent value, source, or children.
+The selected sequence uses the admitted tools and their normal revision and
+approval controls. The current diagnosis is supplied in the repair turn.
+
+The direct OpenAI transport filters confirmations of known parameters, routine
+steps and numeric inputs already recorded from the user. It gives supplied quantities priority
+before a numeric question and permits one such continuation per graph revision.
+For other questions, a separate bounded review selects which questions need a
+user answer from the current request and source observations. A
+rejected question gives the model one tool action for continuing the work.
+Formula and validation feedback treats an unfinished derived KPI as work for
+the agent and asks the user only for an essential missing source input or choice.
+After a verified finish receipt, the final turn receives a compact calculation
+summary and the latest user instruction. Explicit response-language instructions
+take precedence. For a clearly Russian or English construction request, the
+host can present the verified number in that locale if the model's prose uses
+the wrong script.
+Each turn uses the current checkpoint, tool catalog projection and confirmed
+observations. Executed calls and their rejections stay in the run history.
+The adapter derives each tool call ID from its exchange and position before
+Supervisor validation. This preserves identity for replay within an exchange.
+New-tree finish validation requires an input leaf for an explicit quoted
+monetary amount used as a literal in the root dependency formulas. The model
+receives the unbound quote in the current observation so it can repair the tree.
+
+The compatibility adapter projects closed builder contracts into native
+structured tool arguments. A selected tool determines its argument schema.
+Complete graph observations constrain existing-node arguments to current IDs
+and batch fills to empty input leaves. Native fields are described by the
+response format. Encoded tools retain their textual argument schemas.
+The model chooses exact number and quote pairs for a complete original brief.
+When the run first fills a new draft input, an explicit quoted per-item rate or
+percent unit enters the same mutation preview as the value and its source.
+Before finish, the adapter receives current graph and plan validation results.
+The host checks the plan against the saved graph and requires explicit scaling
+when a percent input is used as a fraction. The verification is recorded in the
+[response contract follow-up](implementation/AI_RESPONSE_CONTRACT_2026-11-11.md#native-arguments-and-explicit-source-units).
+
+## Response requirements repair (2026-11-11)
+
+Agents receive full argument JSON Schemas generated from their actual validators;
+the in-product catalog retains nested bounds. Smart preparation v15 carries a
+host-derived response contract with resolved units and exact eligible recipes.
+Semantic edits settle before speculative inference; safe failures reach the UI.
+See [causes, contract and verification scope](implementation/AI_RESPONSE_CONTRACT_2026-11-11.md).
+
+The compatibility decision loop now distinguishes a missing draft, an
+unfinished root and a completed dependency formula. It sends full schemas
+only for tools whose draft prerequisite is met, keeps resolved graph errors
+out of the next decision and rejects standalone root writes when the run must
+construct a driver tree. Finishing the compatibility run checks the same
+derived-root prerequisite as Supervisor verification. Genuine missing business
+inputs can still be requested; ordinary plan approval remains host-owned.
+See the [nano follow-up](implementation/AI_RESPONSE_CONTRACT_2026-11-11.md#nano-full-agent-follow-up).
+
 ## Local harness integration (2026-11-02)
 
 Thirteen presets and user ACP/VDT JSONL profiles dispatch through common session/structured-completion ports, including the current Pi RPC transport. Native Codex/Cursor/Claude session paths remain. Suggested KPI uses the selected connection with an independently saved model and reasoning setting, without tools, output repair or automatic Apply. Reasoning defaults to explicit Off; unsupported controls are explained before preparation and Provider default requires an explicit selection. The effective model/reasoning are pinned through cache identity and action-time revalidation. Native isolation and release qualification are unchanged. See [Harness connections](HARNESS_CONNECTIONS.md).

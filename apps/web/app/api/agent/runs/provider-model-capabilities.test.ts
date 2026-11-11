@@ -45,6 +45,21 @@ describe("provider model reasoning discovery", () => {
     const input = providerConnectionSchema.parse({ providerId: "openai_compatible", providerConfig: { model: "future-model", apiKey: "test-secret" } });
     expect((await providerModelCapabilities(input, fetcher))?.values).toEqual(["low", "high"]);
   });
+  it("reads plain current model-card effort rows and uses documented original nano levels after verifying its card identity", async () => {
+    expect(parseOpenAiReasoningCard('- Model ID: current-model\nReasoning.effort supports: none (default), low, medium, high and xhigh.', "current-model")?.values).toEqual(["none", "low", "medium", "high", "xhigh"]);
+    const fetcher = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).startsWith("https://api.openai.com/")) return Response.json({ id: "gpt-5-nano" });
+      expect(init?.headers).toBeUndefined();
+      return new Response(String(url).includes("/models/") ? '- Model ID: gpt-5-nano\n- Model type: reasoning' :
+        '- The GPT-5 family includes `gpt-5`, `gpt-5-mini`, and `gpt-5-nano`.\n- `reasoning.effort` supports `minimal`, `low`, `medium`, and `high`.');
+    });
+    const input = providerConnectionSchema.parse({ providerId: "openai_compatible", providerConfig: { model: "gpt-5-nano", apiKey: "test-secret" } });
+    const caps = await providerModelCapabilities(input, fetcher);
+    expect(caps?.values).toEqual(["minimal", "low", "medium", "high"]);
+    expect(validatedReasoningConfig(caps, "low")).toEqual({ reasoningEffort: "low" });
+    expect(() => validatedReasoningConfig(caps, false)).toThrow(/not supported/);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
   it("keeps private gateway model IDs at their provider", async () => {
     const fetcher = vi.fn(async () => Response.json({ id: "private-model" }));
     const input = providerConnectionSchema.parse({ providerId: "openai_compatible", providerConfig: { model: "private-model", apiKey: "test-secret", baseUrl: "https://api.aihubmix.com/v1" } });

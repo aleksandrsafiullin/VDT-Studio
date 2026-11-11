@@ -7,6 +7,7 @@ import {
   type VdtChangeSet,
   type VdtProject
 } from "@vdt-studio/vdt-core";
+import { DERIVED_ROOT_REQUIREMENT, hasDerivedRoot } from "./model-acceptance-contract";
 import { AgentToolError, type AgentToolContext } from "./tool-registry";
 import { summarizeCalculation, summarizeValidation } from "./summaries";
 import type {
@@ -76,6 +77,13 @@ export function proposeAndMaybeApplyMutation(
     ? [...new Set([...normalizedInput.selectedChangeIds, ...collectChangeIds(changeSet).filter(id => !collectChangeIds(rawChangeSet).includes(id))])]
     : collectChangeIds(changeSet);
   const previewProject = previewChangeSet(baseProject, changeSet, new Set(selectedChangeIds));
+  if (context.requireDerivedRoot && input.source !== "user"
+    && changeSet.updates.some(({ nodeId, patch }) =>
+      nodeId === baseProject.rootNodeId
+      && (patch.formula?.trim() || Number.isFinite(patch.baselineValue) || Number.isFinite(patch.value)))
+    && !hasDerivedRoot(previewProject)) {
+    throw new AgentToolError("ROOT_NOT_DERIVED", DERIVED_ROOT_REQUIREMENT, { nodeId: baseProject.rootNodeId });
+  }
   const validation = summarizeValidation(validateGraph(previewProject, undefined, { purpose: "draft" }));
   const calculation = validation.valid ? summarizeCalculation(calculateGraph(previewProject)) : undefined;
   const policy = mutationPolicyForRun(context);

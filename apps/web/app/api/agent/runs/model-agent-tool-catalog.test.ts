@@ -17,7 +17,12 @@ describe("model-facing tool parameter contracts", () => {
         includeReadinessDowntime: { type: "boolean" }
       }
     });
-    expect(JSON.stringify(catalog).length).toBeLessThan(35_000);
+    // Full nested argument constraints replace lossy depth-based truncation.
+    expect(JSON.stringify(catalog).length).toBeLessThan(40_000);
+    expect(catalog.find(tool => tool.name === "skill.read")?.inputJsonSchema).toMatchObject({ properties: { maxChars: { maximum: 10000 } } });
+    expect(JSON.stringify(catalog.find(tool => tool.name === "vdt.instantiate_subtree")?.inputJsonSchema)).toContain('"maxProperties":200');
+    expect(JSON.stringify(catalog.find(tool => tool.name === "skill.seed_topology")?.inputJsonSchema)).toContain('"maxProperties":24');
+    expect(catalog.find(tool => tool.name === "tools.describe")?.inputJsonSchema).toMatchObject({ properties: { toolNames: { minItems: 1, maxItems: 6, items: { minLength: 1, maxLength: 160 } } } });
     expect(modelAgentToolCatalogHash(tools)).toMatch(/^sha256:[a-f0-9]{64}$/);
   });
 

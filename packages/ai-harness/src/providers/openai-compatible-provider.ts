@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AiCompletionParams, AiProvider, OpenAiCompatibleProviderConfig } from "../types";
-import { LocalModelConversationContext, ProviderHttpError, asJsonSchema, requestProviderJson } from "./provider-utils";
+import { LocalModelConversationContext, ProviderHttpError, asJsonSchema, requestProviderJson, withZodResponseContract } from "./provider-utils";
 
 function parseJsonResponse(raw: string) {
   const trimmed = raw.trim();
@@ -12,7 +12,9 @@ function completionParameters(model: string, params: AiCompletionParams<unknown>
   // Reasoning model families reject legacy max_tokens and can reject sampling
   // overrides at their default reasoning effort. Keep the provider's effort.
   if (reasoningEffort !== undefined || /^(?:o[134](?:-|$)|gpt-(?:5|6)(?:[.-]|$))/i.test(model)) {
-    return { max_completion_tokens: params.maxTokens ?? 2200 };
+    // Agent decisions can contain a full bounded driver layer. Reasoning and
+    // its JSON share this limit; an explicit caller limit always takes priority.
+    return { max_completion_tokens: params.maxTokens ?? (params.taskType === "agent_decision" ? 4096 : 2200) };
   }
   return { temperature: params.temperature ?? 0.2, max_tokens: params.maxTokens ?? 2200 };
 }
@@ -31,6 +33,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
   ): Promise<TOutput> {
     const schema = params.schema instanceof z.ZodType ? params.schema : undefined;
     const jsonSchema = params.outputJsonSchema ?? asJsonSchema(params.schema);
+    const systemPrompt = withZodResponseContract(params.systemPrompt, params.schema, params.outputJsonSchema);
     const model = params.model ?? this.config.model;
     const smart = params.taskType === "suggest_incoming_kpis";
     const retainContext = !smart && (this.config.retainInitialContext ?? params.taskType === "agent_decision");
@@ -60,9 +63,9 @@ export class OpenAiCompatibleProvider implements AiProvider {
             ...completionParameters(model, smart ? { ...params, maxTokens: Math.min(params.maxTokens ?? 2048, 2048) } : params, this.config.reasoningEffort),
             response_format: responseFormat,
             messages: retainContext
-              ? this.conversation.messages(`${params.systemPrompt}${responseFormat.type === "json_object" && jsonSchema ? `\n\nReturn JSON matching this exact response schema:\n${JSON.stringify(jsonSchema)}` : ""}`, userPrompt)
+              ? this.conversation.messages(`${systemPrompt}${responseFormat.type === "json_object" && jsonSchema ? `\n\nReturn JSON matching this exact response schema:\n${JSON.stringify(jsonSchema)}` : ""}`, userPrompt)
               : [
-              { role: "system", content: `${params.systemPrompt}${responseFormat.type === "json_object" && jsonSchema ? `\n\nReturn JSON matching this exact response schema:\n${JSON.stringify(jsonSchema)}` : ""}` },
+              { role: "system", content: `${systemPrompt}${responseFormat.type === "json_object" && jsonSchema ? `\n\nReturn JSON matching this exact response schema:\n${JSON.stringify(jsonSchema)}` : ""}` },
               {
                 role: "user",
                 content: userPrompt
@@ -85,11 +88,17 @@ export class OpenAiCompatibleProvider implements AiProvider {
       }
       const choice = payload.choices?.[0] as { finish_reason?: string; message?: { content?: string; tool_calls?: unknown[]; function_call?: unknown; refusal?: unknown } } | undefined;
       const message = choice?.message;
+      if (smart && choice?.finish_reason === "length") throw Object.assign(new Error("Smart response exhausted its generation budget before completion."), { code: "INCOMPLETE_OUTPUT" });
+      if (params.taskType === "agent_decision" && choice?.finish_reason === "length") {
+        throw Object.assign(new Error("The agent exhausted its generation budget before returning a complete decision."), { code: "INCOMPLETE_OUTPUT" });
+      }
+      if (smart && (choice?.finish_reason === "content_filter" || message?.refusal)) throw Object.assign(new Error("The provider declined this Smart request."), { code: "PROVIDER_REFUSAL" });
       if (smart && (payload.choices?.length !== 1 || choice?.finish_reason !== "stop" || message?.tool_calls?.length || message?.function_call || message?.refusal)) {
-        throw new Error("Smart provider did not return one completed tool-free result.");
+        throw Object.assign(new Error("Smart provider did not return one completed tool-free result."), { code: "INVALID_PROVIDER_OUTPUT" });
       }
       const content = message?.content;
 
+      if (smart && !content) throw Object.assign(new Error("Smart provider returned no completed message content."), { code: "INVALID_PROVIDER_OUTPUT" });
       if (!content) {
         throw new Error("OpenAI-compatible provider returned no message content.");
       }
@@ -104,6 +113,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
       }
     }
 
+    if (smart) throw Object.assign(new Error("Smart response did not match the supplied JSON schema."), { code: "INVALID_PROVIDER_OUTPUT" });
     throw new Error(
       lastError instanceof Error
         ? `AI response could not be parsed or validated: ${lastError.message}`

@@ -7,6 +7,7 @@ import {
 } from "@vdt-studio/vdt-core";
 import { SmartKpiCache, smartKpiExecutionKey, validSmartKpiLimitations, type SmartKpiCacheScope, type SmartKpiNegativeStatus } from "./smart-kpi-cache";
 import { smartKpiTargetIds } from "./smart-kpi-targets";
+import { SMART_KPI_FAILURE_REASONS } from "./smart-kpi-errors";
 
 export const SMART_KPI_SCHEDULER_LIMITS = { queue: 12, visible: 6, children: 6, speculativeAttempts: 8, backgroundGraceMs: 350 } as const;
 export type SmartKpiPriority = "hover" | "selected" | "new_child" | "visible";
@@ -81,6 +82,7 @@ export class SmartKpiScheduler {
   private contexts = new Map<string, Promise<KpiSuggestionContext>>();
   private fingerprints = new Map<string, Promise<string>>();
   private graphFingerprint = "";
+  private semanticReadyAt = 0;
   private snapshots = new Map<string, SmartKpiNodeSnapshot>();
   private frozen = new Map<string, SmartKpiNodeSnapshot>();
   private listeners = new Set<() => void>();
@@ -146,6 +148,9 @@ export class SmartKpiScheduler {
         graphFingerprint, period: input.period, goal: input.goal ?? null, personalisation: input.personalisation ?? null,
         selectedSkill: input.selectedSkill ? [input.selectedSkill.id, input.selectedSkill.version, input.selectedSkill.contentHash] : null,
         execution: input.execution ? smartKpiExecutionKey(input.execution) : null });
+      if (this.workspace?.workspaceId === input.workspaceId && this.workspace.project.id === input.project.id && this.graphFingerprint !== graphFingerprint)
+        this.semanticReadyAt = Date.now() + SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs;
+      else if (this.workspace?.workspaceId !== input.workspaceId || this.workspace.project.id !== input.project.id) this.semanticReadyAt = 0;
       this.workspace = input; this.targets = smartKpiTargetIds(input.project); this.graphFingerprint = graphFingerprint; this.attachLane(input.workspaceId);
       if (generation !== this.generation) {
         this.generation = generation; this.contexts.clear(); this.queue.clear(); this.attempted.clear(); this.spent = 0;
@@ -245,7 +250,8 @@ export class SmartKpiScheduler {
       if (existing) {
         if (priority[options.priority ?? "hover"] < priority[existing.priority]) existing.priority = options.priority ?? "hover";
         existing.explicit ||= !!options.explicit;
-        if (existing.explicit || existing.priority === "hover" || existing.priority === "selected") existing.readyAt = 0;
+        if (existing.explicit) existing.readyAt = 0;
+        else if (existing.priority === "hover" || existing.priority === "selected") existing.readyAt = this.semanticReadyAt;
         if (!running) this.preemptBackground(existing);
         this.schedule();
       }
@@ -275,7 +281,7 @@ export class SmartKpiScheduler {
     // work owns the lane. Running work still owns it until terminal cleanup.
     const delayed = !options.explicit && (selectedPriority === "visible" || selectedPriority === "new_child");
     const job: Job = { key, scope, targetNodeId: target, generation, priority: selectedPriority, explicit: !!options.explicit,
-      order: this.order++, readyAt: delayed ? Date.now() + SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs : 0, controller: new AbortController() };
+      order: this.order++, readyAt: options.explicit ? 0 : Math.max(this.semanticReadyAt, delayed ? Date.now() + SMART_KPI_SCHEDULER_LIMITS.backgroundGraceMs : 0), controller: new AbortController() };
     if (this.queue.size >= SMART_KPI_SCHEDULER_LIMITS.queue) {
       const worst = [...this.queue.values()].sort((a, b) => priority[b.priority] - priority[a.priority] || b.order - a.order)[0]!;
       this.counters.queueDropped++;
@@ -398,10 +404,10 @@ export class SmartKpiScheduler {
       if (!this.current(job)) { this.counters.stale++; return; }
       const code = errorCode(error);
       const status: SmartKpiNegativeStatus = code === "TIMEOUT" ? "timeout" : ["SUGGESTIONS_UNAVAILABLE", "REASONING_UNSUPPORTED"].includes(code) ? "unavailable" : "failed";
-      const reason = code === "NOT_A_DECOMPOSITION" ? "The suggestion did not split this KPI into at least two components. Retry to prepare a decomposition."
+      const reason = SMART_KPI_FAILURE_REASONS[code] ?? (code === "NOT_A_DECOMPOSITION" ? "The suggestion did not split this KPI into at least two components. Retry to prepare a decomposition."
         : code === "REASONING_UNSUPPORTED" ? "This model does not support the selected Suggested KPI reasoning setting. Choose another model or explicitly select Provider default in Execution mode."
         : code === "UNSAFE_DECOMPOSITION" ? "The suggestion reused context instead of this KPI's own lower-level components. Retry to prepare a valid decomposition."
-        : status === "timeout" ? "Preparation timed out. Choose Retry for a new bounded attempt." : status === "unavailable" ? "This execution backend cannot currently prepare suggestions." : "Preparation failed validation or execution. Choose Retry for a new bounded attempt.";
+        : status === "timeout" ? "Preparation timed out. Choose a lower supported reasoning level or another model, then Retry." : status === "unavailable" ? "This execution backend cannot currently prepare suggestions." : "Preparation failed validation or execution. Choose Retry for a new bounded attempt.");
       if (status === "timeout") this.counters.timedOut++; else this.counters.failed++;
       this.cache.setNegative(job.scope, status, reason); this.publish(job.targetNodeId, job.key, { status, reason });
     }

@@ -4,7 +4,8 @@ import {
   parseStructuredOutput,
   requestProviderJson,
   requireNonEmptyText,
-  trimTrailingSlash
+  trimTrailingSlash,
+  withZodResponseContract
 } from "./provider-utils";
 
 interface AnthropicMessageResponse {
@@ -65,7 +66,7 @@ export class AnthropicProvider implements AiProvider {
             ...(this.config.adaptiveThinking ? { thinking: { type: "adaptive" } } : {})
           }),
           ...(this.config.disableThinking ? { thinking: { type: "disabled" } } : {}),
-          system: params.systemPrompt,
+          system: withZodResponseContract(params.systemPrompt, params.schema, params.outputJsonSchema),
           messages: [
             {
               role: "user",

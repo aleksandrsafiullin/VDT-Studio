@@ -164,7 +164,11 @@ export function externalAgentEngineForBinding(bindingId: string): AgentExecution
 }
 
 export function createAgentDecisionProvider(request: VdtAgentStartRequest, requestUrl: string): AgentDecisionProvider {
-  return createManagedAwareAiProvider(resolveProviderRequest(request), requestUrl) as AgentDecisionProvider;
+  // This compatibility loop sends a complete current observation every turn.
+  // Retaining earlier observations repeats stale graph state and tool choices.
+  return createManagedAwareAiProvider(resolveProviderRequest(request), requestUrl, {
+    retainInitialContext: false
+  }) as AgentDecisionProvider;
 }
 
 export const createAgentPlanningProvider = createAgentDecisionProvider;

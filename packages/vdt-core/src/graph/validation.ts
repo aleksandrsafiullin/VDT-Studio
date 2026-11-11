@@ -47,6 +47,8 @@ function getRootNodeId(input: GraphInput, rootNodeId?: string): string | undefin
 export interface ValidateGraphOptions {
   /** Import preserves repairable drafts; it is not a model-validity gate. */
   purpose?: "model" | "draft" | "import";
+  /** Require an explicit scale for calculations using percent units. */
+  enforcePercentageScale?: boolean;
 }
 
 export function validateGraph(input: GraphInput, rootNodeId?: string, options: ValidateGraphOptions = {}): ValidationResult {
@@ -167,7 +169,7 @@ export function validateGraph(input: GraphInput, rootNodeId?: string, options: V
         }
       }
 
-      if (options.purpose !== "import") for (const item of validateFormulaUnits(node, expression, nodeById)) {
+      if (options.purpose !== "import") for (const item of validateFormulaUnits(node, expression, nodeById, options.enforcePercentageScale)) {
         (item.severity === "error" ? errors : warnings).push(item);
       }
     } catch (caught) {

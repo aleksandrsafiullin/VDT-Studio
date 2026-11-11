@@ -41,6 +41,20 @@ describe("F-05 model contract", () => {
     expect(validateGraph(model(formula, "min", "h")).errors.some(issue => issue.type === "unit_mismatch")).toBe(true);
   });
 
+  it("checks explicit percentage scaling without changing legacy formula validation", () => {
+    const options = { enforcePercentageScale: true };
+    const unscaled = model("x * (1 - y)", "USD", "USD", "%");
+    expect(validateGraph(unscaled).valid).toBe(true);
+    expect(validateGraph(unscaled, undefined, options).errors).toContainEqual(expect.objectContaining({
+      type: "unit_mismatch", message: expect.stringContaining("Divide by 100")
+    }));
+    for (const formula of ["x * (1 - y / 100)", "x * (100 - y) / 100", "x * (1 - y * 0.01)"]) {
+      const converted = model(formula, "USD", "USD", "percent");
+      expect(validateGraph(converted, undefined, options).valid).toBe(true);
+      expect(calculateGraph(converted).rootValue).toBe(9);
+    }
+  });
+
   it("requires review instead of inventing the dimension of a custom per-entity basis", () => {
     const project = model("x * y", "t", "custom_devices", "t");
     expect(validateGraph(project).warnings.some(issue => issue.message.includes("per-entity basis"))).toBe(true);

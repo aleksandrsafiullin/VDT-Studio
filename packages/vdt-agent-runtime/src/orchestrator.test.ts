@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { calculateGraph, validateGraph, VdtBuilderSession } from "@vdt-studio/vdt-core";
+import { calculateGraph, inspectDecompositionHierarchy, validateGraph, VdtBuilderSession } from "@vdt-studio/vdt-core";
 import { z } from "zod";
 import {
   createVdtAgentRuntime,
@@ -721,6 +721,25 @@ describe("VdtAgentRuntime decision loop", { timeout: 30_000 }, () => {
     });
   });
 
+  it("pauses on an exhausted provider output budget without replaying the same request", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = structuredDecisionFailureProvider([
+      Object.assign(new Error("The agent exhausted its generation budget before returning a complete decision."), {
+        code: "INCOMPLETE_OUTPUT"
+      })
+    ]);
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { prompt: "Build a VDT for throughput.", rootKpi: "Throughput" },
+      providerId: provider.id
+    }, { provider });
+
+    expect(provider.decisionInputs).toHaveLength(1);
+    expect(snapshot.status).toBe("needs_user_input");
+    expect(snapshot.retryableError).toMatchObject({ code: "STRUCTURED_OUTPUT_FAILED" });
+    expect(snapshot.pendingQuestions ?? []).toHaveLength(0);
+  });
+
   it("feeds forbidden full-plan fields back to the provider and retries the next small decision", async () => {
     const runtime = createVdtAgentRuntime();
     const provider = scriptedProvider([
@@ -1114,6 +1133,140 @@ describe("VdtAgentRuntime decision loop", { timeout: 30_000 }, () => {
     expect(snapshot.lastFeedback).toMatchObject({ kind: "finish_rejected" });
     expect(provider.decisionInputs[2]?.lastFeedback).toMatchObject({ kind: "finish_rejected" });
     expect(snapshot.repairAttemptCount).toBe(1);
+  });
+
+  it("guides an unfinished root toward drivers and rejects standalone writes before proposal", async () => {
+    const runtime = createVdtAgentRuntime();
+    const provider = schemaValidatingRawDecisionProvider([
+      {
+        type: "call_tool", toolName: "vdt.create_draft", statusMessage: "Starting the draft.",
+        args: { projectTitle: "Throughput", rootKpi: "Throughput", unit: "units/shift" }
+      },
+      {
+        type: "call_tools", statusMessage: "Setting a literal formula.",
+        calls: [{ toolName: "vdt.set_formula", args: { nodeId: "throughput", formula: "2 * 6" } }]
+      },
+      {
+        type: "call_tool", toolName: "vdt.update_node", statusMessage: "Trying a direct result.",
+        args: { nodeId: "throughput", patch: { value: 12, valueStatus: "calculated" } }
+      },
+      { type: "finish", summary: "Incomplete draft.", nextSuggestedActions: [] },
+      {
+        type: "call_tool", toolName: "vdt.add_drivers_batch", statusMessage: "Building the dependencies.",
+        args: {
+          drivers: [
+            { parentNodeId: "throughput", nodeId: "cycles", name: "Cycles", type: "input", unit: "cycles/shift", relation: "multiplicative_driver", baselineValue: 2 },
+            { parentNodeId: "throughput", nodeId: "items_per_cycle", name: "Items per cycle", type: "input", unit: "units/cycle", relation: "multiplicative_driver", baselineValue: 6 }
+          ],
+          parentFormula: "cycles * items_per_cycle"
+        }
+      },
+      { type: "finish", summary: "Throughput is 12 units per shift.", nextSuggestedActions: [] }
+    ]);
+    const snapshot = await runtime.startRun({
+      mode: "generate_vdt",
+      input: { prompt: "Build throughput from 2 cycles per shift and 6 items per cycle.", rootKpi: "Throughput" },
+      providerId: "decision-test",
+      options: { autoApplyPatches: true, maxSteps: 6 }
+    }, { provider });
+
+    expect(provider.decisionInputs[0]?.currentProject).toBeUndefined();
+    expect(provider.decisionInputs[0]?.literalUserQuantities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ value: 6, quote: expect.stringContaining("6 items per cycle") })
+    ]));
+    expect(provider.decisionInputs[0]?.rootConstruction).toMatchObject({ needs: "draft" });
+    expect(provider.decisionInputs[0]?.availableTools.some(({ name }) => name === "vdt.set_decomposition_plan")).toBe(false);
+    expect(provider.decisionInputs[1]?.availableTools.some(({ name }) => name === "vdt.set_decomposition_plan")).toBe(true);
+    expect(provider.decisionInputs[1]?.rootConstruction).toMatchObject({ rootNodeId: "throughput", needs: "drivers" });
+    expect(provider.decisionInputs[1]?.recentFeedback).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "graph_validation_failed" })
+    ]));
+    expect(snapshot.events.filter((event) => event.metadata?.code === "ROOT_NOT_DERIVED")).toHaveLength(2);
+    expect(provider.decisionInputs[3]?.lastFeedback?.suggestedNextTools).toContain("vdt.add_drivers_batch");
+    expect(provider.decisionInputs[4]?.lastFeedback?.message).toContain("root formula referencing");
+    expect(provider.decisionInputs[5]?.rootConstruction).toBeUndefined();
+    expect(provider.decisionInputs[5]?.recentFeedback).toEqual([]);
+    expect(snapshot.mutationProposals).toHaveLength(1);
+    expect(snapshot.status).toBe("succeeded");
+    expect(calculateGraph(snapshot.draftProject!).rootValue).toBe(12);
+  });
+
+  it("preserves source units and requires a matching plan and explicit percent scale at finish", async () => {
+    const runtime = createVdtAgentRuntime();
+    const nodes = [
+      { nodeId: "quantity", parentNodeId: "revenue", kind: "input" },
+      { nodeId: "price", parentNodeId: "revenue", kind: "input" },
+      { nodeId: "discount", parentNodeId: "revenue", kind: "input" }
+    ];
+    const provider = Object.assign(scriptedProvider([
+      {
+        type: "call_tool", toolName: "vdt.create_draft", statusMessage: "Starting the draft.",
+        args: { projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" }
+      },
+      {
+        type: "call_tool", toolName: "vdt.add_driver", statusMessage: "Trying to add a driver before the plan.",
+        args: { parentNodeId: "revenue", nodeId: "quantity", name: "Quantity", type: "input", unit: "items" }
+      },
+      {
+        type: "call_tool", toolName: "vdt.set_decomposition_plan", statusMessage: "Planning the tree.",
+        args: { plan: { version: 1, goal: "Revenue", nodes: [...nodes, { nodeId: "subtotal", parentNodeId: "revenue", kind: "calculated" }] } }
+      },
+      {
+        type: "call_tool", toolName: "vdt.add_drivers_batch", statusMessage: "Adding drivers.",
+        args: { drivers: [
+          { parentNodeId: "revenue", nodeId: "quantity", name: "Quantity", type: "input", unit: "items" },
+          { parentNodeId: "revenue", nodeId: "price", name: "Price per item", type: "input", unit: "USD" },
+          { parentNodeId: "revenue", nodeId: "discount", name: "Discount", type: "input", unit: "decimal" }
+        ] }
+      },
+      {
+        type: "call_tool", toolName: "vdt.fill_input_values_batch", statusMessage: "Recording source facts.",
+        args: { values: [
+          { nodeId: "quantity", value: 11, provenance: "user_provided_value", note: "sold 11 items" },
+          { nodeId: "price", value: 7, provenance: "user_provided_value", note: "7 USD per item" },
+          { nodeId: "discount", value: 10, provenance: "user_provided_value", note: "10% discount" }
+        ] }
+      },
+      {
+        type: "call_tool", toolName: "vdt.set_formula", statusMessage: "Setting the formula.",
+        args: { nodeId: "revenue", formula: "quantity * price * (1 - discount)" }
+      },
+      { type: "finish", summary: "Trying to finish with the stale plan.", nextSuggestedActions: [] },
+      {
+        type: "call_tool", toolName: "vdt.set_decomposition_plan", statusMessage: "Recording the actual dependencies.",
+        args: { plan: { version: 1, goal: "Revenue", nodes } }
+      },
+      { type: "finish", summary: "Trying to finish with an unscaled percentage.", nextSuggestedActions: [] },
+      {
+        type: "call_tool", toolName: "vdt.set_formula", statusMessage: "Converting the source percentage explicitly.",
+        args: { nodeId: "revenue", formula: "quantity * price * (1 - discount / 100)" }
+      },
+      { type: "finish", summary: "Revenue is 69.3 USD.", nextSuggestedActions: [] }
+    ]), { requireHierarchyOnFinish: true as const });
+    const result = await runtime.startRun({
+      mode: "generate_vdt", providerId: provider.id,
+      input: { rootKpi: "Revenue", unit: "USD", prompt: "We sold 11 items at 7 USD per item with a 10% discount." },
+      options: { autoApplyPatches: true, maxSteps: 11 }
+    }, { provider });
+
+    expect(result.status).toBe("succeeded");
+    expect(provider.decisionInputs[1]?.rootConstruction).toMatchObject({ needs: "plan" });
+    expect(provider.decisionInputs[1]?.availableTools.map(({ name }) => name)).not.toContain("vdt.add_driver");
+    expect(provider.decisionInputs[2]?.lastToolResult?.error?.message).toContain("DECOMPOSITION_PLAN_REQUIRED");
+    expect(provider.decisionInputs[6]?.hierarchyForFinish).toMatchObject({
+      valid: false, errors: ["PLANNED_NODE_MISSING: subtotal"]
+    });
+    expect(provider.decisionInputs[7]?.lastFeedback?.suggestedNextTools).toContain("vdt.set_decomposition_plan");
+    expect(provider.decisionInputs[8]?.validationState?.errors[0]?.message).toContain("Divide by 100");
+    expect(provider.decisionInputs[9]?.lastFeedback?.message).toContain("Divide by 100");
+    expect(inspectDecompositionHierarchy(result.draftProject!).valid).toBe(true);
+    expect(result.draftProject?.graph.nodes.find((node) => node.id === "price")).toMatchObject({
+      value: 7, unit: "USD/item", valueSource: { note: "7 USD per item" }
+    });
+    expect(result.draftProject?.graph.nodes.find((node) => node.id === "discount")).toMatchObject({
+      value: 10, unit: "%", valueSource: { note: "10% discount" }
+    });
+    expect(calculateGraph(result.draftProject!).rootValue).toBeCloseTo(69.3);
   });
 
   it("asks for modeling direction before skill selection when the visible root KPI is a placeholder", async () => {

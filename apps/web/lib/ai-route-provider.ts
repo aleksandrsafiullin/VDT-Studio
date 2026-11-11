@@ -190,7 +190,11 @@ export class AiRouteProviderError extends Error {
   }
 }
 
-export function createAiProvider(request: AiRouteProviderRequest, requestUrl: string): AiProvider {
+export function createAiProvider(
+  request: AiRouteProviderRequest,
+  requestUrl: string,
+  options: { retainInitialContext?: boolean | undefined } = {}
+): AiProvider {
   const body = request;
 
   if (body.providerId === "local_cli") {
@@ -218,6 +222,7 @@ export function createAiProvider(request: AiRouteProviderRequest, requestUrl: st
 
     return new OpenAiCompatibleProvider({
       ...readReasoningOverrides(body.providerConfig),
+      retainInitialContext: options.retainInitialContext,
       baseUrl: requestBaseUrl ?? envBaseUrl,
       apiKey,
       model: providerConfig.model ?? process.env.OPENAI_COMPATIBLE_MODEL ?? DEFAULT_OPENAI_COMPATIBLE_FALLBACK_MODEL

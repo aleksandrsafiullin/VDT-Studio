@@ -1,5 +1,6 @@
 import { formatAiPersonalisation, PERSONALISATION_PROMPT_RULE, type AiPersonalisation } from "@vdt-studio/vdt-core";
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import { builtinHarness } from "@vdt-studio/model-bridge/harness-catalog";
 import { isAdmittedHarnessSession } from "./harness-session-bindings";
 import type { ReasoningEffort } from "@vdt-studio/model-bridge";
@@ -24,6 +25,8 @@ import {
   applyPendingMutationProposal,
   groundedAnswerRecord,
   rejectPendingMutationProposal,
+  requiresDerivedRootForRun,
+  unboundQuotedMoneyFacts,
   summarizeAgentSupervisorPersistenceState,
   verifyDeterministicRunFinish,
   type AgentHumanInput,
@@ -60,6 +63,10 @@ import { isLocalModelAgentBackend } from "./local-model-bindings";
 import { createLocalModelAgentProvider } from "./local-model-provider";
 import { localModelWorkingContext } from "./local-model-context";
 import { LocalModelKnowledge } from "./local-model-knowledge";
+import { CONSTRUCTION_QUESTION_CHECK, constructionQuestionReview } from "./local-model-question-review";
+import { presentVerifiedResult, resultLanguageInstruction, resultLocale } from "./model-agent-result-language";
+import { buildOpenAiModelTurn } from "./openai-agent-decision";
+import { calculationsWithoutPlannedInputs, suggestHierarchyRepair, type HierarchyRepairCall } from "./openai-hierarchy-repair";
 import {
   agentRuntime,
   createAgentSupervisorPersistence,
@@ -163,6 +170,11 @@ export function currentModelAgentToolCatalogHash(): string {
   return modelAgentToolCatalogHash(agentRuntime.tools);
 }
 
+function usesOpenAiNativeTurns(definition: AgentExecutionBindingDefinition): boolean {
+  const adapter = "modelEngineAdapter" in definition ? definition.modelEngineAdapter : undefined;
+  return adapter?.providerId === "openai_compatible" && adapter.providerConfig?.baseUrl === "https://api.openai.com/v1";
+}
+
 export async function startStructuredModelAgentRun(input: {
   request: VdtAgentStartRequest;
   bindingDefinition: StructuredModelAgentExecutionBindingDefinition;
@@ -184,9 +196,21 @@ export async function startStructuredModelAgentRun(input: {
           bindingDefinition.modelEngineAdapter.providerId === "openai_compatible" ? () => {
             const builder = agentRuntime.store.getState(runId).builder;
             if (!builder) throw new Error("The Model Agent working draft is unavailable.");
-            return localModelWorkingContext(builder.getProject(), builder.getRevision(), requiresDerivedRootForRun(request), requiresHierarchyForRun(request));
+            const requireDerivedRoot = requiresDerivedRootForRun(request);
+            const project = builder.getProject();
+            const requireSourceProvenance = requireDerivedRoot && usesOpenAiNativeTurns(bindingDefinition);
+            const observation = localModelWorkingContext(project, builder.getRevision(), requireDerivedRoot, requiresHierarchyForRun(request), requireSourceProvenance);
+            const unboundSourceFacts = requireSourceProvenance && observation.projectReadyForFinish ? unboundQuotedMoneyFacts(project, request) : [];
+            const hierarchyRepair = requireSourceProvenance && observation.hierarchyRequired
+              && request.mode === "generate_vdt" && (request.input.project?.graph.nodes.length ?? 1) <= 1
+              && !observation.truncated && !observation.hierarchy.valid
+              && observation.calculation.errorCount === 0 && Number.isFinite(observation.calculation.rootValue)
+              ? suggestHierarchyRepair(project) : undefined;
+            return { ...observation, hierarchyRepair,
+              ...(unboundSourceFacts.length ? { projectReadyForFinish: false, unboundSourceFacts } : {}) };
           } : undefined,
-          () => agentRuntime.store.getState(runId).request.input.personalisation ?? {}
+          () => agentRuntime.store.getState(runId).request.input.personalisation ?? {},
+          () => agentRuntime.store.getState(runId).chatMessages.filter((message) => message.role === "user" && message.kind === "instruction").at(-1)?.text
         )
       });
     }
@@ -369,6 +393,9 @@ async function startSupervisorAgentRun(input: {
         mode: request.mode,
         requireDerivedRoot: requiresDerivedRootForRun(request),
         requireHierarchy: requiresHierarchyForRun(request),
+        enforcePercentageScale: requiresDerivedRootForRun(request) && usesOpenAiNativeTurns(bindingDefinition),
+        unboundSourceFacts: requiresDerivedRootForRun(request) && usesOpenAiNativeTurns(bindingDefinition)
+          ? unboundQuotedMoneyFacts(project, request) : undefined,
         pendingQuestion: current.status === "needs_user_input" || Boolean(current.pendingQuestions?.length),
         pendingApproval: current.status === "waiting_approval",
         pendingProposal: Boolean(current.pendingMutationProposal),
@@ -1022,16 +1049,22 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
   private confirmedTurnCount = 0;
   private lastConfirmedTurn: ModelProviderTurnConfirmation | null = null;
   private semanticSessionState: string | null = null;
+  private lastSourceReviewRevision: number | undefined;
   private readonly knowledge = new LocalModelKnowledge();
+  private readonly openAiToolCatalog: unknown;
 
   constructor(
     private readonly provider: AiProvider,
     private readonly definition: StructuredModelAgentExecutionBindingDefinition,
     initialContext?: Extract<ModelAgentTurnDelta, { type: "initial_context" }> | undefined,
-    private readonly workingContext?: (() => unknown) | undefined,
-    private readonly personalisation?: (() => AiPersonalisation) | undefined
+    private readonly workingContext?: (() => ReturnType<typeof localModelWorkingContext> & {
+      hierarchyRepair?: HierarchyRepairCall[] | undefined;
+    }) | undefined,
+    private readonly personalisation?: (() => AiPersonalisation) | undefined,
+    private readonly latestRequest?: (() => string | undefined) | undefined
   ) {
     this.initialContextHash = initialContext?.contextHash ?? null;
+    this.openAiToolCatalog = usesOpenAiNativeTurns(definition) ? initialContext?.context.tools : undefined;
   }
 
   async completeTurn(request: ModelAgentTurnRequest): Promise<ModelAgentTurnResponse> {
@@ -1090,14 +1123,57 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
           semanticState: this.semanticSessionState!
         };
     const payload = buildModelProviderTurnPayload(request, continuation);
-    if (this.personalisation) payload.userPrompt = JSON.stringify({ ...JSON.parse(payload.userPrompt), personalisation: this.personalisation() });
+    const personalisation = this.personalisation?.();
+    if (personalisation) payload.userPrompt = JSON.stringify({ ...JSON.parse(payload.userPrompt), personalisation });
+    const observation = this.workingContext?.();
     if (this.workingContext) {
       this.knowledge.observePrompt(payload.userPrompt);
-      const observation=this.workingContext();
       payload.userPrompt = JSON.stringify({ ...JSON.parse(payload.userPrompt), hostObservation: observation, confirmedKnowledge: this.knowledge.context(),
         ...(this.confirmedTurnCount>=3&&this.knowledge.hasReadSkill()&&observation&&typeof observation==="object"&&"needsStructure"in observation&&observation.needsStructure?{
           constructionProgress:"Discovery has succeeded, but the requested tree still has only its empty root. Construct a small real initial structure now using your selected library or generic builder, then fill its inputs and formulas incrementally from confirmed source observations. Do not repeat unchanged project/file inspections to postpone construction. Choose the business decomposition yourself; do not invent values or finish an incomplete tree."
         }:{}) });
+    }
+    const outputSchema = this.definition.modelEngineAdapter.providerId === "openai_compatible"
+      ? toProviderJsonSchema(request.responseSchema) : undefined;
+    const finishPayload = request.delta.type === "tool_results" ? request.delta.results.find((result) =>
+      result.toolName === "run.request_finish" && (result.status === "succeeded" || result.status === "replayed"))?.payload : undefined;
+    const planRecorded = request.delta.type === "tool_results" && request.delta.results.some((result) =>
+      result.toolName === "vdt.set_decomposition_plan" && (result.status === "succeeded" || result.status === "replayed"));
+    const finishReceipt = finishPayload && typeof finishPayload === "object" && "receiptId" in finishPayload ? finishPayload.receiptId : undefined;
+    const brief = this.knowledge.originalBrief();
+    const facts = this.knowledge.literalUserQuantities();
+    const nativeContext = observation && { ...observation, literalUserQuantities: facts,
+      allowAssumptions: (brief?.options as { continueWithAssumptions?: boolean } | undefined)?.continueWithAssumptions === true };
+    const native = this.openAiToolCatalog && outputSchema ? buildOpenAiModelTurn(outputSchema, this.openAiToolCatalog,
+      nativeContext, request.exchangeId, typeof finishReceipt === "string" ? finishReceipt : undefined,
+      { planRecorded, ...(observation?.hierarchyRepair ? { hierarchyRepair: observation.hierarchyRepair } : {}) }) : undefined;
+    if (this.openAiToolCatalog && !native) {
+      throw new PublicSupervisorRunError("MODEL_SCHEMA_UNAVAILABLE", "The OpenAI turn schema could not be built from the admitted tool catalog.");
+    }
+    if (native) {
+      payload.userPrompt = JSON.stringify({ ...JSON.parse(payload.userPrompt), originalBrief: brief, availableTools: native.toolGuidance,
+        ...(observation?.constructingTree && observation.needsStructure && observation.nodeCount > 0 ? {
+          construction: observation.hasDecompositionPlan
+            ? "Create the first planned factor layer now using its existing parent and exact planned IDs. Observe the returned leaves before writing their values and formulas."
+            : `The existing root ID is ${observation.rootNodeId}. Its missing value or formula is expected while building. Record the smallest complete factor plan with vdt.set_decomposition_plan. When one expression can calculate the result from the supplied source inputs, plan them as immediate children of ${observation.rootNodeId}. Add a calculated subtotal only when needed and plan its operands under it or declare them shared. Omit the root from plan.nodes.`
+        } : {}) });
+    }
+    const writingFinal = !!native && typeof finishReceipt === "string";
+    const planningFirstLayer = !!native && observation?.constructingTree && observation.needsStructure
+      && observation.nodeCount === 1 && !observation.hasDecompositionPlan;
+    const userRequest = this.latestRequest?.() ?? (typeof brief?.prompt === "string" ? brief.prompt : "");
+    const locale = writingFinal ? resultLocale(userRequest, personalisation?.userInstructions) : undefined;
+    const root = writingFinal && observation ? observation.nodes.find((row) => row[0] === observation.rootNodeId) : undefined;
+    const rootValue = finishPayload && typeof finishPayload === "object" && "rootValue" in finishPayload ? finishPayload.rootValue : undefined;
+    const verifiedResult = writingFinal && observation?.constructingTree && typeof rootValue === "number" && Number.isFinite(rootValue)
+      ? { value: rootValue, ...(typeof root?.[1] === "string" ? { name: root[1] } : {}), ...(typeof root?.[3] === "string" ? { unit: root[3] } : {}) }
+      : undefined;
+    if (verifiedResult) {
+      payload.userPrompt = JSON.stringify({ userRequest, personalisation, finishReceiptId: finishReceipt,
+        verifiedResult, formula: root?.[4],
+        inputs: observation?.rootDependencyInputs?.slice(0, 12).map(({ name, value, unit }) => ({ name, value, unit })) });
+    } else if (writingFinal) {
+      payload.userPrompt = JSON.stringify({ ...JSON.parse(payload.userPrompt), userRequest });
     }
     if (new TextEncoder().encode(payload.userPrompt).byteLength > MAX_MODEL_TURN_PROMPT_BYTES) {
       throw new PublicSupervisorRunError(
@@ -1105,21 +1181,79 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
         "The bounded structured-turn checkpoint delta exceeded the configured prompt limit."
       );
     }
-    const output = await this.provider.completeStructured<typeof payload.input, unknown>({
-      taskType: "agent_decision",
+    const completion = {
+      taskType: "agent_decision" as const,
       input: payload.input,
-      schema: request.responseSchema,
-      ...(this.definition.modelEngineAdapter.providerId === "openai_compatible" ? {
-        outputJsonSchema: toProviderJsonSchema(request.responseSchema)
-      } : {}),
-      systemPrompt: MODEL_AGENT_SYSTEM_PROMPT,
+      schema: native ? z.preprocess(native.decode, request.responseSchema) : request.responseSchema,
+      ...(outputSchema ? { outputJsonSchema: native?.schema ?? outputSchema } : {}),
+      systemPrompt: writingFinal
+        ? `${resultLanguageInstruction(locale)} The Supervisor has already verified the result. Return the final-action envelope with the supplied receipt and a short user-facing summary based on confirmed facts.`
+        : native?.hasHierarchyRepair
+        ? OPENAI_HIERARCHY_REPAIR_PROMPT
+        : planningFirstLayer
+        ? OPENAI_FIRST_PLAN_PROMPT
+        : native
+        ? `${MODEL_AGENT_SYSTEM_PROMPT.replace(CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE, "").replace("use user.ask", "return the question action")}\nUse native args for typed tools, or encode one object matching the catalog schema in argsJson. The host assigns external call IDs. Use null for omitted optional fields. Ask only for essential missing facts or unresolved business choices. Routine planning, applying supplied facts and reporting a verified calculation require no chat confirmation. Batch only calls whose arguments already exist in the current observation. Give planning and structure creation their own decisions. Fill source leaves with exact quotes and units, then set the formulas of the calculated nodes. Each formula must reference all its planned factor children and may reference declared shared inputs. Divide percent inputs by 100 when the formula needs a fraction. Keep quoted monetary amounts in separate editable input leaves. If hostObservation.unboundSourceFacts lists an amount, revise the plan, add and fill its input, then replace the literal with that input's ID. When the requested calculation is ready, call run.request_finish.`
+        : MODEL_AGENT_SYSTEM_PROMPT,
       userPrompt: payload.userPrompt,
       model: this.definition.modelId,
       temperature: this.definition.modelEngineAdapter.temperature ?? 0.2,
       maxTokens: this.definition.modelEngineAdapter.maxTokens ?? 8_000,
       signal: request.signal
-    });
-    const parsed = request.responseSchema.parse(output);
+    };
+    let parsed = request.responseSchema.parse(await this.provider.completeStructured<typeof payload.input, unknown>(completion));
+    const proposedPlan = planningFirstLayer && parsed.action.type === "action_batch"
+      ? parsed.action.batch.calls.find(({ toolName }) => toolName === "vdt.set_decomposition_plan")?.args.plan : undefined;
+    const missingOperands = calculationsWithoutPlannedInputs(proposedPlan);
+    if (missingOperands.length) {
+      const userPrompt = JSON.stringify({ ...JSON.parse(payload.userPrompt), planReview: {
+        proposedPlan, calculatedNodesWithoutFactors: missingOperands,
+        instruction: "Revise the proposed plan in one vdt.set_decomposition_plan call. Place the real factors under each retained intermediate or declare shared usage. Remove redundant calculated nodes. Nothing has been applied."
+      } });
+      if (new TextEncoder().encode(userPrompt).byteLength <= MAX_MODEL_TURN_PROMPT_BYTES) {
+        parsed = request.responseSchema.parse(await this.provider.completeStructured<typeof payload.input, unknown>({
+          ...completion, userPrompt
+        }));
+      }
+    }
+    if (native && outputSchema && observation?.constructingTree && parsed.action.type === "question") {
+      const review = constructionQuestionReview(parsed.action.questions, brief, observation, facts);
+      const enterKnownFacts = review.enterKnownFacts && this.lastSourceReviewRevision !== observation.revision;
+      let remaining = review.remaining;
+      if (remaining.length && !enterKnownFacts) {
+        const reviewSchema = z.object({ required: z.array(z.number().int().min(1).max(remaining.length)).max(remaining.length) }).strict();
+        const userPrompt = JSON.stringify({ userRequest, rootKpi: brief?.rootKpi, unit: brief?.unit, timePeriod: brief?.timePeriod,
+          ...(brief?.businessContext !== brief?.prompt ? { businessContext: brief?.businessContext } : {}),
+          suppliedQuantities: facts, unresolvedInputs: observation.unresolvedInputs,
+          questions: remaining.map(({ question, reason }, index) => ({ index: index + 1, question, reason })) });
+        const verdict = await this.provider.completeStructured<typeof payload.input, z.infer<typeof reviewSchema>>({
+          ...completion, schema: reviewSchema, outputJsonSchema: toProviderJsonSchema(reviewSchema),
+          systemPrompt: CONSTRUCTION_QUESTION_CHECK, userPrompt, maxTokens: 2_048
+        });
+        const required = new Set(verdict.required);
+        remaining = remaining.filter((_, index) => required.has(index + 1));
+      }
+      if (remaining.length && !enterKnownFacts) {
+        parsed.action.questions = remaining;
+      } else {
+        if (enterKnownFacts) this.lastSourceReviewRevision = observation.revision;
+        const recovery = buildOpenAiModelTurn(outputSchema, this.openAiToolCatalog, nativeContext, request.exchangeId, undefined, {
+          continueWithoutQuestion: true, requireOpeningMessage: this.confirmedTurnCount === 0, planRecorded,
+          ...(observation.hierarchyRepair ? { hierarchyRepair: observation.hierarchyRepair } : {})
+        });
+        if (!recovery) throw new PublicSupervisorRunError("MODEL_SCHEMA_UNAVAILABLE", "The OpenAI continuation schema could not be built.");
+        const instruction = enterKnownFacts
+          ? "Write the source values already supplied for matching empty leaves. Use their exact quotes. Leave genuinely missing inputs unresolved."
+          : "The brief already supports the next step. Choose one useful tool action. Build or repair the plan and formulas yourself using the stated business facts. The host handles mutation approvals.";
+        parsed = request.responseSchema.parse(await this.provider.completeStructured<typeof payload.input, unknown>({
+          ...completion, schema: z.preprocess(recovery.decode, request.responseSchema), outputJsonSchema: recovery.schema,
+          systemPrompt: `${completion.systemPrompt}\n${instruction}`
+        }));
+      }
+    }
+    if (locale && verifiedResult && parsed.action.type === "final" && parsed.action.finishReceiptId === finishReceipt) {
+      parsed.action.text = presentVerifiedResult(parsed.action.text, locale, verifiedResult);
+    }
     const cursor = `turn:${parsed.turnId}:${hashJson(parsed).slice("sha256:".length, "sha256:".length + 32)}`;
     this.semanticSessionState = parsed.sessionState;
     this.confirmedTurnCount += 1;
@@ -1138,6 +1272,17 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
 }
 
 const MAX_MODEL_TURN_PROMPT_BYTES = 512 * 1024;
+const OPENAI_HIERARCHY_REPAIR_PROMPT = [
+  "You are the VDT Model Agent. The current formulas produce a finite calculation and the visual hierarchy conflicts with them. The current formulas, inputs, hierarchy errors and a checked sequence of ordinary tool calls are in hostObservation.",
+  "Check that the current formulas implement the user's brief and that the proposed visual changes match it. If they do, select action.type apply_hierarchy_repair to submit exactly hostObservation.hierarchyRepair. The Gateway applies its usual validation and approval rules. The proposal preserves every retained formula and source value.",
+  "If the business model needs a correction first, submit a concrete admitted tool action to correct it. Ask only for an essential missing fact. Honor current user instructions and enabled personalisation. Use the response schema, omit unnecessary assistant prose, and keep sessionState brief."
+].join(" ");
+const OPENAI_FIRST_PLAN_PROMPT = [
+  "You are the VDT Model Agent. Plan the user's editable factor tree from the original brief and confirmed evidence. Preserve the KPI, period, units, exclusions, and all supplied facts. Follow enabled personalisation subject to the current request and tool rules.",
+  "The existing root is already the requested result. Plan only its descendants. For a result that can be calculated in one expression from the supplied quantities, use just those input leaves under the root. Never add another node for the result the root already represents.",
+  "Each parent calculation must reference every factor directly under it. If an intermediate calculation is useful, plan its real operands under that intermediate, or declare it as an extra formula user in sharedWith on a factor that lives under a different parent. Do not plan an intermediate with no factors. Use context only for explanatory nodes outside the calculation.",
+  "Read the selected skill or retained data first if needed. Use only tools admitted in the response schema. Submit one tool call, with its native argument object or the exact catalog argsJson. Use null for omitted optional fields. The host assigns the call ID and checks all mutations. Keep sessionState brief."
+].join(" ");
 
 interface ModelProviderTurnConfirmation {
   exchangeId: string;
@@ -1215,16 +1360,7 @@ function createStructuredModelProvider(
   return createAiProvider({
     providerId: definition.modelEngineAdapter.providerId,
     providerConfig
-  }, requestUrl);
-}
-
-export function requiresDerivedRootForRun(request: VdtAgentStartRequest): boolean {
-  if (request.mode === "review_project" || request.mode === "deepen_node") return false;
-  if (request.mode === "generate_vdt") return true;
-  const project = request.input.project;
-  const root = project?.graph.nodes.find((node) => node.id === project.rootNodeId);
-  return !project || (project.graph.nodes.length <= 1 && !root?.formula?.trim()
-    && !Number.isFinite(root?.baselineValue ?? root?.value));
+  }, requestUrl, usesOpenAiNativeTurns(definition) ? { retainInitialContext: false } : undefined);
 }
 
 export function requiresHierarchyForRun(request: VdtAgentStartRequest): boolean {

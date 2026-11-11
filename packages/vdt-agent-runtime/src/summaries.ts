@@ -248,12 +248,12 @@ function repairHintsForWarning(warning: VdtWarning): string[] | undefined {
     return ["Use formula.parse, then vdt.set_formula with a parser-valid expression."];
   }
   if (warning.type === "invalid_graph") {
-    return ["Use project.get_node and a repair tool, or ask the user if the intended graph relation is ambiguous."];
+    return ["Inspect the current nodes, links and formulas and repair their implementation. Ask only if the brief leaves a material business relationship unresolved."];
   }
   if (warning.type === "missing_value") {
     return [
-      "If this run already has a user answer for the node, write it with vdt.update_node using value or baselineValue, valueStatus \"user_provided_value\", and a valueSource noting the user supplied it in this run.",
-      "Otherwise ask the user, or write an assumed number with valueStatus default_assumption and an explicit assumption note — never as user-supplied, researched, measured, or benchmarked. A number from the agent's own native web search uses the same default_assumption status with valueSource.sourceTier native_web_search; it is not a research.search_web citation."
+      "For a derived KPI, complete its drivers and set a formula. An unfinished derived KPI does not need a user-supplied value or formula.",
+      "For a source input, record the supplied fact or answer with its provenance. Ask only for an essential source input that is still missing. Use default_assumption with an explicit note only when assumptions are authorized. Own native web search uses default_assumption and valueSource.sourceTier native_web_search."
     ];
   }
   return undefined;

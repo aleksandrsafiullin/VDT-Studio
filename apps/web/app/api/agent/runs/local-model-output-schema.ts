@@ -223,7 +223,7 @@ export class LocalModelOutputSchema {
 /** Keep native construction steps small and make new IDs usable in formulas.
  * The model authors the IDs and all business fields; canonical tools retain
  * their full schemas and validate every call normally. */
-function boundConstructionArguments(name: string, schema: JsonObject, observation?: JsonObject): JsonObject {
+export function boundConstructionArguments(name: string, schema: JsonObject, observation?: JsonObject): JsonObject {
   if (observation?.constructingTree === true && name === "skill.search" && isObject(schema.properties)) {
     const copy = structuredClone(schema); const properties = copy.properties as JsonObject;
     properties.maxSkills = { type: "integer", minimum: 3, maximum: 6 };
@@ -279,7 +279,7 @@ function boundConstructionArguments(name: string, schema: JsonObject, observatio
 /** Literal constraints do not interpret a number or assign it to a metric.
  * The model chooses the target, value and provenance. A user-provided claim
  * must choose an actual number and exact quote; estimates remain unrestricted. */
-function groundLiteralValues(name: string, schema: JsonObject, observation?: JsonObject): JsonObject {
+export function groundLiteralValues(name: string, schema: JsonObject, observation?: JsonObject, allowAssumptions = true): JsonObject {
   if (name !== "vdt.fill_input_values_batch" || observation?.constructingTree !== true || !Array.isArray(observation.literalUserQuantities)) return schema;
   const copy = structuredClone(schema);
   if (!isObject(copy.properties) || !isObject(copy.properties.values) || !isObject(copy.properties.values.items)) return schema;
@@ -291,8 +291,9 @@ function groundLiteralValues(name: string, schema: JsonObject, observation?: Jso
     if (!isObject(fact) || typeof fact.value !== "number" || !Number.isFinite(fact.value) || typeof fact.quote !== "string") continue;
     groups.set(fact.value, [...new Set([...(groups.get(fact.value) ?? []), fact.quote])]);
   }
+  if (!groups.size && !allowAssumptions) return schema;
   copy.properties.values.items = { anyOf: [
-    { ...item, properties: { ...properties, provenance: { type: "string", const: "default_assumption" } } },
+    ...(allowAssumptions ? [{ ...item, properties: { ...properties, provenance: { type: "string", const: "default_assumption" } } }] : []),
     ...[...groups].map(([value, quotes]) => ({ ...item, properties: {
       ...properties, value: { type: "number", const: value }, provenance: { type: "string", const: "user_provided_value" },
       note: { ...(isObject(properties.note) ? properties.note : {}), enum: quotes }
@@ -303,7 +304,7 @@ function groundLiteralValues(name: string, schema: JsonObject, observation?: Jso
 
 /** Ground only existing-target fields. New node IDs remain agent-authored.
  * An incomplete graph projection must never become an exhaustive allowlist. */
-function groundExistingIds(name: string, schema: JsonObject, observation?: JsonObject): JsonObject {
+export function groundExistingIds(name: string, schema: JsonObject, observation?: JsonObject): JsonObject {
   if (name === "skill.seed_topology" && Array.isArray(observation?.readTopologyDefinitions) && isObject(schema.properties)) {
     const options = observation.readTopologyDefinitions.filter((entry) => isObject(entry) && typeof entry.skillId === "string"
       && Array.isArray(entry.defaultInputIds) && entry.defaultInputIds.every((id) => typeof id === "string"));
@@ -327,15 +328,19 @@ function groundExistingIds(name: string, schema: JsonObject, observation?: JsonO
   if (index < 0) return schema;
   const ids = observation.nodes.flatMap((row) => Array.isArray(row) && typeof row[index] === "string" ? [row[index] as string] : []);
   if (!ids.length) return schema;
+  const leaves = Array.isArray(observation.inputLeafIds) ? observation.inputLeafIds.filter((id): id is string => typeof id === "string") : ids;
+  const unfilled = Array.isArray(observation.unfilledInputLeafIds) ? observation.unfilledInputLeafIds.filter((id): id is string => typeof id === "string") : leaves;
+  return groundNodeIds(name, schema, ids, leaves, unfilled);
+}
+
+export function groundNodeIds(name: string, schema: JsonObject, ids: string[], leaves: string[], unfilled: string[]): JsonObject {
   const copy = structuredClone(schema);
   const properties = copy.properties;
   if (!isObject(properties)) return copy;
   const restrict = (fields: JsonObject, field: string, choices: string[]) => {
     if (choices.length && isObject(fields[field])) fields[field] = { ...fields[field], enum: choices };
   };
-  const leaves = Array.isArray(observation.inputLeafIds) ? observation.inputLeafIds.filter((id): id is string => typeof id === "string") : ids;
-  const unfilled = Array.isArray(observation.unfilledInputLeafIds) ? observation.unfilledInputLeafIds.filter((id): id is string => typeof id === "string") : leaves;
-  if (["vdt.update_node", "vdt.set_formula", "project.get_node"].includes(name)) restrict(properties, "nodeId", ids);
+  if (["vdt.update_node", "vdt.set_formula", "vdt.delete_node", "project.get_node"].includes(name)) restrict(properties, "nodeId", ids);
   if(name==="vdt.reparent_branch")for(const field of ["nodeId","parentNodeId","fromParentNodeId"])restrict(properties,field,ids);
   if (name === "vdt.add_driver") restrict(properties, "parentNodeId", ids);
   if (name === "project.get_subtree") restrict(properties, "rootNodeId", ids);

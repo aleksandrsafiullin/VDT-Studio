@@ -67,6 +67,18 @@ describe("OpenAI-compatible provider response limits", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ max_tokens: 512, temperature: 0.3 });
   });
 
+  it.each([[undefined, 4096], [1337, 1337]])("bounds agent reasoning and reports exhausted output (explicit limit %s)", async (maxTokens, expected) => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      choices: [{ finish_reason: "length", message: { content: "" } }]
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(createProvider().completeStructured({
+      ...params, taskType: "agent_decision", model: "gpt-5-nano", maxTokens
+    })).rejects.toMatchObject({ code: "INCOMPLETE_OUTPUT" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).max_completion_tokens).toBe(expected);
+  });
+
   it("supplies the runtime schema in JSON-mode fallback and remembers unsupported strict formatting", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
@@ -95,8 +107,10 @@ describe("OpenAI-compatible provider response limits", () => {
     for (const userPrompt of ["Original mine facts and tool catalog", "First delta", "Second delta", "Third delta", "Fourth delta", "Fifth delta"])
       await provider.completeStructured({ ...params, taskType: "agent_decision", userPrompt });
     const body = JSON.parse(String(fetchMock.mock.calls[5]?.[1]?.body));
-    expect(body.messages.map((message: { content: string }) => message.content)).toEqual([
-      "System prompt", "Original mine facts and tool catalog", '{"answer":"ok"}',
+    expect(body.messages[0].content).toContain("System prompt");
+    expect(body.messages[0].content).toContain('"required":["answer"]');
+    expect(body.messages.slice(1).map((message: { content: string }) => message.content)).toEqual([
+      "Original mine facts and tool catalog", '{"answer":"ok"}',
       "Second delta", '{"answer":"ok"}', "Third delta", '{"answer":"ok"}', "Fourth delta", '{"answer":"ok"}', "Fifth delta"
     ]);
   });

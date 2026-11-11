@@ -347,6 +347,16 @@ export function asJsonSchema(schema: unknown): Record<string, unknown> | undefin
   return schema as Record<string, unknown>;
 }
 
+/** Zod schemas are local validators, not native provider response formats.
+ * Supply their complete input contract in the prompt as well: JSON mode alone
+ * does not tell a model which object/union it must return. Explicit wire schemas
+ * remain authoritative when a caller supplies a provider projection. */
+export function withZodResponseContract(systemPrompt: string, schema: unknown, outputJsonSchema?: unknown): string {
+  if (!(schema instanceof z.ZodType) || outputJsonSchema !== undefined) return systemPrompt;
+  const contract = z.toJSONSchema(schema, { io: "input", target: "draft-07" });
+  return `${systemPrompt}\n\nReturn only JSON matching this exact response schema. All required fields, discriminators, enums, nested types and bounds apply:\n${JSON.stringify(contract)}`;
+}
+
 export function requireNonEmptyText(value: unknown, providerName: string) {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`${providerName} returned no structured content.`);

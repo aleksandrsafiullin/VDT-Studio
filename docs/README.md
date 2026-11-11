@@ -95,6 +95,7 @@ Implementation gaps are recorded in `PRODUCTION_READINESS.md`, `ROADMAP.md`, the
 | [`ADR-014`](adr/ADR-014-tree-to-skill-review-and-updates.md) | Dedicated tree-to-skill draft review and selective versioned updates; implementation/review status and evidence are tracked in the execution plan |
 
 Smart suggestions follow the [plan](implementation/SMART_KPI_SUGGESTIONS_PLAN.md),
+[response-contract repair](implementation/AI_RESPONSE_CONTRACT_2026-11-11.md),
 [selected-Skill integration and expanded-layer contract](implementation/SMART_KPI_SELECTED_SKILL_2026-11-03.md),
 [execution log](implementation/SMART_KPI_SUGGESTIONS_LOG.md) and
 [independent review](implementation/SMART_KPI_SUGGESTIONS_REVIEW.md). The

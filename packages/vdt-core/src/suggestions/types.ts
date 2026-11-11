@@ -1,11 +1,12 @@
 import type { VdtEdgeRelation, VdtNode } from "../types";
 import type { AiPersonalisation } from "../personalisation";
+import type { KpiSuggestionResponseContract } from "./response-contract";
 
 export const KPI_SUGGESTION_SCHEMA = "kpi_suggestions.v1" as const;
 export const KPI_SUGGESTION_VALIDATOR = "smart-kpi-validator.v2";
 /** Invalidates rebuildable preparation outcomes when task intent changes,
  * independently of the proposal wire schema and arithmetic validator. */
-export const KPI_SUGGESTION_PREPARATION_VERSION = "smart-kpi-preparation.v14";
+export const KPI_SUGGESTION_PREPARATION_VERSION = "smart-kpi-preparation.v15";
 export const KPI_SUGGESTION_TASK = "suggest_incoming_kpis" as const;
 export const KPI_SUGGESTION_TASK_SCHEMA = "suggest-incoming-kpis-v1" as const;
 export const KPI_SUGGESTION_LIMITS = {
@@ -195,4 +196,5 @@ export interface KpiSuggestionTaskInput {
   schemaVersion: typeof KPI_SUGGESTION_TASK_SCHEMA;
   context: KpiSuggestionContext;
   recipes: KpiSuggestionRecipe[];
+  responseContract: KpiSuggestionResponseContract;
 }

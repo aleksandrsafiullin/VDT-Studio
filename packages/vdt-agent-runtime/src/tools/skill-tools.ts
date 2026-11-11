@@ -215,7 +215,6 @@ const skillSeedDraftFromRecipeTool: AgentTool = {
   }),
   outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
-  requiresDraftProject: true,
   phase: "building_graph",
   async run(context, input) {
     const builder = context.builder;

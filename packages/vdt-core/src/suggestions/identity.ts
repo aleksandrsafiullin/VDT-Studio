@@ -144,7 +144,7 @@ export async function buildKpiSuggestionContext(project: VdtProject, options: Bu
   // The pinned skill and validated instructions count toward the final
   // envelope, leaving the graph budget for scope and direction checks.
   const graphContext = () => { const { selectedSkill: _skill, personalisation: _instructions, ...graph } = context; return graph; };
-  while (kpiSuggestionEnvelopeBytes(graphContext()) > KPI_SUGGESTION_LIMITS.contextBytes) {
+  while (new TextEncoder().encode(JSON.stringify(graphContext())).byteLength > KPI_SUGGESTION_LIMITS.contextBytes) {
     let distantIndex = context.ancestors.length - 1;
     while (distantIndex >= 0 && parentIds.has(context.ancestors[distantIndex]!.id)) distantIndex--;
     if (distantIndex >= 0) { context.ancestors.splice(distantIndex, 1); context.omissions.ancestors++; }

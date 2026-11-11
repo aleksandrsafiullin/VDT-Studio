@@ -4,6 +4,7 @@ import { smartAssert, smartList, smartRecord, smartString, validateKpiSuggestion
 import { KPI_SUGGESTION_RECIPES, validateKpiSuggestionForContext } from "./recipes";
 import { kpiCanonicalJson } from "./identity";
 import { PERSONALISATION_PROMPT_RULE } from "../personalisation";
+import { buildKpiSuggestionResponseContract } from "./response-contract";
 
 export interface KpiSuggestionModelOutput {
   status: "ready" | "empty";
@@ -16,16 +17,42 @@ const string = (maxLength: number) => ({ type: "string", minLength: 1, maxLength
 const object = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
 const list = (items: unknown, maxItems: number, minItems = 0) => ({ type: "array", items, minItems, maxItems });
 const nullable = (schema: unknown) => ({ anyOf: [schema, { type: "null" }] });
-export const KPI_SUGGESTION_MODEL_JSON_SCHEMA = object({
+const childFields = {
+  key: { ...string(48), pattern: "^[a-z][a-z0-9_]{0,47}$" },
+  conceptKey: { ...string(48), pattern: "^[a-z][a-z0-9_]{0,47}$" },
+  name: string(160), unit: { ...string(80), pattern: "^[^\\s/]+(?:/[^\\s/]+)?$" },
+  description: nullable(string(240)), existingNodeId: nullable(string(160))
+};
+const groupFields = {
+  id: { ...string(48), pattern: "^[a-z][a-z0-9_]{0,47}$" }, title: string(160), selectionMode: { type: "string", enum: ["all", "independent"] },
+  children: list(object(childFields), KPI_SUGGESTION_LIMITS.children, 2),
+  requiredKeys: list(string(48), KPI_SUGGESTION_LIMITS.children), formula: nullable(string(500)),
+  recipeId: nullable(string(120)), limitations: list(string(300), 6)
+};
+const modelSchema = (group: unknown) => object({
   status: { type: "string", enum: ["ready", "empty"] }, rationale: string(300), limitations: list(string(300), 6),
-  groups: list(object({ id: string(48), title: string(160), selectionMode: { type: "string", enum: ["all", "independent"] },
-    children: list(object({ key: { ...string(48), pattern: "^[a-z][a-z0-9_]{0,47}$" }, conceptKey: { ...string(48), pattern: "^[a-z][a-z0-9_]{0,47}$" },
-      name: string(160), unit: string(80), description: nullable(string(240)), existingNodeId: nullable(string(160)) }), KPI_SUGGESTION_LIMITS.children, 2),
-    requiredKeys: list(string(48), KPI_SUGGESTION_LIMITS.children), formula: nullable(string(500)), recipeId: nullable(string(120)), limitations: list(string(300), 6)
-  }), 3)
+  groups: list(group, 3)
 });
+export const KPI_SUGGESTION_MODEL_JSON_SCHEMA = modelSchema(object(groupFields));
 
-export const SMART_KPI_INSTRUCTION = `Propose ONE immediate mathematical input layer and a usable parent formula. Default to the target's language unless explicit personalisation requests another response language. Return only strict JSON, without tools, research, commands, hidden retries or full-tree construction. Keep rationale and row descriptions to one short clause.
+/** A selected recipe already owns its factor identities, units and equation.
+ * Constrain that branch of the API response while admitting custom groups. */
+export function kpiSuggestionApiResponseSchema(contract: ReturnType<typeof buildKpiSuggestionResponseContract>) {
+  const fixed = (value: string) => ({ type: "string", const: value });
+  const recipes = contract.recipes.map((recipe) => object({
+    ...groupFields,
+    recipeId: fixed(recipe.id),
+    selectionMode: fixed("all"),
+    formula: fixed(recipe.formula),
+    requiredKeys: list({ type: "string", enum: recipe.children.map((child) => child.key) }, recipe.children.length, recipe.children.length),
+    children: list({ anyOf: recipe.children.map((child) => object({
+      ...childFields, key: fixed(child.key), conceptKey: fixed(child.conceptKey), unit: fixed(child.unit)
+    })) }, recipe.children.length, recipe.children.length)
+  }));
+  return modelSchema({ anyOf: [...recipes, object({ ...groupFields, recipeId: { type: "null" } })] });
+}
+
+export const SMART_KPI_INSTRUCTION = `Propose ONE immediate mathematical input layer and a usable parent formula. Follow input.responseContract (or responseContract at the input root) as the host's exact acceptance requirements, in addition to the JSON schema. Check every rule before returning. Default to the target's language unless explicit personalisation requests another response language. Return only strict JSON, without tools, research, commands, hidden retries or full-tree construction. Keep rationale and row descriptions to one short clause.
 
 ${PERSONALISATION_PROMPT_RULE}
 
@@ -39,7 +66,7 @@ Each alternative needs at least two distinct substantive factors. Include the co
 
 Preserve qualifiers: gross/net, total/average, actual/nominal, product/material and fleet/per-item. Gross revenue does not authorize a net-revenue recipe or deduction factors. Do not invent geometry, weights, calibration, site facts, values, numeric defaults or child formulas. Output supplies definitions, never numeric input values. The only algebraic literal is raw1 in (1-decimal_fraction). A fixed parameter explicitly defined by the project may be a clearly labelled reference input with ratio units and a description identifying that definition; its value is entered separately. Never invent or fit a conversion. If the selected target itself is a fixed unit conversion, do not re-express the same reference quantity in two units as supposedly distinct components; return empty. This does not block another target from using a project-defined fixed input.
 
-Cancel units using EXACT atom strings: asset * h/asset * t/h = t; event/asset * h/event = h/asset. Pick one population atom and repeat it exactly, even when labels are plural; asset is not assets and event is not events. Preserve the target's volume syntax: m3, m^3 and m3/item are not interchangeable. Hours are not minutes, percent is not fraction, and currencies/scales/populations cannot be interchanged. A scalar60/100/1000 is not conversion proof. Match input scales. The analysis period scopes a total; do not add a time divisor unless the target is a rate.
+Write units as machine expressions without spaces: use / for per, * for multiplication and ^ for integer powers. For example, a price is USD/unit, never "USD per unit". For catalog recipes, resolve quantity to units (plus the target period suffix), unit_price to the target currency/unit, fraction to fraction, and target to the exact target unit. Cancel units using EXACT atom strings: asset * h/asset * t/h = t; event/asset * h/event = h/asset. Pick one population atom and repeat it exactly, even when labels are plural; asset is not assets and event is not events. Preserve the target's volume syntax: m3, m^3 and m3/item are not interchangeable. Hours are not minutes, percent is not fraction, and currencies/scales/populations cannot be interchanged. A scalar60/100/1000 is not conversion proof. Match input scales. The analysis period scopes a total; do not add a time divisor unless the target is a rate.
 
 Event counts and event-weighted mean durations must cover the same event population and period. Sums need exhaustive, disjoint categories: assign every overlapping interval to exactly one component, not both or neither. Compound labels do not prove exclusivity. A formula is a proposed definition, not proof of causality.
 
@@ -48,19 +75,22 @@ Preserve decomposition direction. Ancestors and siblings are context, never sugg
 Reuse only active existing direct children in context.children with exact existingNodeId/unit. An undecomposed Input has no reusable children. Never duplicate an existing metric to evade that restriction. Use concise lowercase snake_case keys/conceptKeys, max48 characters. Editable starting rows still need defensible components. Do not imply contextual Add or an unsupported equation. Before answering, check exact unit cancellation, scope, every factor's necessity, independent source meaning and direction.`;
 
 export function validateKpiSuggestionTaskInput(value: unknown): KpiSuggestionTaskInput {
-  smartRecord(value, ["schemaVersion", "context", "recipes"]);
+  smartRecord(value, ["schemaVersion", "context", "recipes", "responseContract"], ["schemaVersion", "context", "recipes"]);
   smartAssert(value.schemaVersion === KPI_SUGGESTION_TASK_SCHEMA, "INVALID_CONTEXT", "Unknown Smart task schema.");
-  validateKpiSuggestionContext(value.context); smartList(value.recipes, 4);
+  const context = validateKpiSuggestionContext(value.context); smartList(value.recipes, 4);
   smartAssert(kpiCanonicalJson(value.recipes) === kpiCanonicalJson(KPI_SUGGESTION_RECIPES.recipes), "INVALID_RECIPE", "Only the canonical host recipe catalog is admitted.");
-  smartAssert(new TextEncoder().encode(JSON.stringify(value)).byteLength <= KPI_SUGGESTION_LIMITS.inputBytes, "INPUT_TOO_LARGE", "Smart input exceeds its bounded input allowance.");
-  return value as unknown as KpiSuggestionTaskInput;
+  const responseContract = buildKpiSuggestionResponseContract(context);
+  smartAssert(value.responseContract === undefined || kpiCanonicalJson(value.responseContract) === kpiCanonicalJson(responseContract), "INVALID_RESPONSE_CONTRACT", "Smart response requirements must match the host validator and context.");
+  const bounded = { ...value, responseContract } as unknown as KpiSuggestionTaskInput;
+  smartAssert(new TextEncoder().encode(JSON.stringify(bounded)).byteLength <= KPI_SUGGESTION_LIMITS.inputBytes, "INPUT_TOO_LARGE", "Smart input exceeds its bounded input allowance.");
+  return bounded;
 }
 export function buildKpiSuggestionTaskInput(context: KpiSuggestionContext): KpiSuggestionTaskInput {
   return validateKpiSuggestionTaskInput(taskFields(context));
 }
 
 function taskFields(context: KpiSuggestionContext): KpiSuggestionTaskInput {
-  return { schemaVersion: KPI_SUGGESTION_TASK_SCHEMA, context, recipes: KPI_SUGGESTION_RECIPES.recipes };
+  return { schemaVersion: KPI_SUGGESTION_TASK_SCHEMA, context, recipes: KPI_SUGGESTION_RECIPES.recipes, responseContract: buildKpiSuggestionResponseContract(context) };
 }
 
 /** Reserve actual canonical knowledge, instruction/schema and JSON escaping
@@ -70,7 +100,7 @@ export function kpiSuggestionEnvelopeBytes(context: KpiSuggestionContext): numbe
   const size = (value: string) => new TextEncoder().encode(value).byteLength;
   const cli = `${SMART_KPI_INSTRUCTION}\nResponse budget: at most ${KPI_SUGGESTION_LIMITS.outputTokens} tokens.\n${JSON.stringify({ input, schema })}`;
   const api = JSON.stringify({ model: "m".repeat(160), messages: [{ role: "system", content: SMART_KPI_INSTRUCTION }, { role: "user", content }],
-    response_format: { type: "json_schema", json_schema: { name: "smart_kpi", strict: true, schema } } });
+    response_format: { type: "json_schema", json_schema: { name: "smart_kpi", strict: true, schema: kpiSuggestionApiResponseSchema(input.responseContract) } } });
   return Math.max(size(cli), size(api)) + 1024;
 }
 

@@ -1,5 +1,20 @@
 # Local Runner
 
+## Smart response requirements (2026-11-11)
+
+Smart API, CLI, paired and local-model execution receives the same host-derived
+response contract and schema before inference. Admission regenerates those
+requirements; caller overrides are rejected. Cancellation/cleanup ownership,
+one-call generation and existing size/deadline bounds remain. See
+[the repair contract](implementation/AI_RESPONSE_CONTRACT_2026-11-11.md).
+Ordinary Cursor `agent_decision` v2 completions now request canonical nested
+objects/arrays instead of JSON encoded inside `argsJson`/`callsJson` strings.
+Both response representations remain readable for compatibility; Codex's strict
+schema path and Smart's separate task schema are unchanged.
+A single valid tool call received inside the v2 batch envelope is executed
+as a canonical single call. CLI batch schemas, validation of actual tool
+arguments and approval rules retain their existing bounds.
+
 ## Skill Author waiting and Ollama budget (2026-11-03)
 
 Tree-to-skill creation/update preparation allows 300 seconds for local execution

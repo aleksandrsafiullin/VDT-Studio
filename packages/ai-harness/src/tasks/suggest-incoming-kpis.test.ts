@@ -45,6 +45,9 @@ describe("one-completion Smart task", () => {
     const completeStructured = vi.fn(async (_params: unknown): Promise<unknown> => empty), provider = { completeStructured } as unknown as AiProvider;
     await expect(runSuggestIncomingKpis(provider, input, { maxTokens: 9000 })).resolves.toEqual(empty);
     expect(completeStructured).toHaveBeenCalledTimes(1); expect(completeStructured.mock.calls[0]![0]).toMatchObject({ taskType: "suggest_incoming_kpis", maxTokens: 2048 });
+    const sent = completeStructured.mock.calls[0]![0] as { userPrompt: string; outputJsonSchema: unknown };
+    expect(JSON.parse(sent.userPrompt).responseContract).toEqual(input.responseContract);
+    expect(sent.outputJsonSchema).toEqual(KPI_SUGGESTION_MODEL_JSON_SCHEMA);
     completeStructured.mockResolvedValueOnce({ ...empty, groups: [{ values: [100] }] });
     await expect(runSuggestIncomingKpis(provider, input)).rejects.toThrow(); expect(completeStructured).toHaveBeenCalledTimes(2);
     await expect(runSuggestIncomingKpis(provider, { ...input, recipes: [] })).rejects.toThrow(); expect(completeStructured).toHaveBeenCalledTimes(2);
@@ -92,7 +95,11 @@ describe("Smart API protocols fail closed without retries", () => {
     for (const extra of [{ finish_reason: "length" }, { finish_reason: "content_filter" }, { message: { content: JSON.stringify(empty), tool_calls: [{}] } }, { message: { content: JSON.stringify(empty), function_call: {} } }]) {
       it(`${name} rejects truncation/tool activity ${JSON.stringify(extra).slice(0, 45)}`, async () => {
         const fetch = vi.fn(async () => json(chat(extra)));
-        await expect(factories[name](fetch).completeStructured(params)).rejects.toThrow("completed tool-free"); expect(fetch).toHaveBeenCalledTimes(1);
+        const failed = factories[name](fetch).completeStructured(params);
+        if (name === "openai" && "finish_reason" in extra && extra.finish_reason === "length") await expect(failed).rejects.toMatchObject({ code: "INCOMPLETE_OUTPUT" });
+        else if (name === "openai" && "finish_reason" in extra && extra.finish_reason === "content_filter") await expect(failed).rejects.toMatchObject({ code: "PROVIDER_REFUSAL" });
+        else await expect(failed).rejects.toThrow("completed tool-free");
+        expect(fetch).toHaveBeenCalledTimes(1);
       });
     }
   }

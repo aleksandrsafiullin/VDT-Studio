@@ -1,6 +1,7 @@
+import { collectLiteralUserQuantities, type LiteralUserQuantity } from "@vdt-studio/vdt-agent-runtime";
+
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): value is RecordValue => !!value && typeof value === "object" && !Array.isArray(value);
-export interface LiteralUserQuantity { value: number; quote: string }
 
 /** Bounded, run-local read evidence. A semantic checkpoint is not a substitute
  * for exact tool fields or discovered skill IDs. These are confirmed Gateway
@@ -76,26 +77,10 @@ export class LocalModelKnowledge {
       for (const tool of delta.context.tools) if (record(tool) && typeof tool.name === "string") this.admitted.add(tool.name);
       if (record(delta.context.brief)) {
         this.brief = structuredClone(delta.context.brief);
-        const texts = [...new Set([this.brief.prompt, this.brief.businessContext].filter((text): text is string => typeof text === "string"))];
-        for (const text of texts) {
-          const matches = [...text.matchAll(/[-+]?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?/g)];
-          for (const [index, match] of matches.entries()) {
-            const value = Number(match[0].replace(",", "."));
-            const start = match.index!; const end = start + match[0].length;
-            const previousEnd = index ? matches[index - 1]!.index! + matches[index - 1]![0].length : 0;
-            const leftText = text.slice(previousEnd, start);
-            const separator = Math.max(...[",", ";", ".", "!", "?", "\n"].map((char) => leftText.lastIndexOf(char)));
-            const left = Math.max(previousEnd + separator + 1, start - 60);
-            const next = Math.min(matches[index + 1]?.index ?? text.length, end + 90);
-            const right = text.slice(end, next).split(/[,;.!?\n]/u)[0]!;
-            const quote = text.slice(left, end + right.length).trim();
-            if (!Number.isFinite(value) || quote.length < 4 || quote.length > 160 || !/\p{L}/u.test(quote)) continue;
-            if (!this.quantities.some((item) => item.value === value && item.quote === quote)) {
-              if (this.quantities.length < 30) this.quantities.push({ value, quote });
-              else this.quantitiesTruncated = true;
-            }
-          }
-        }
+        const { quantities, truncated } = collectLiteralUserQuantities([this.brief.prompt, this.brief.businessContext],
+          typeof this.brief.unit === "string" ? this.brief.unit : undefined);
+        this.quantities.push(...quantities);
+        this.quantitiesTruncated = truncated;
       }
     } else if (delta.type === "checkpoint_inputs" && record(delta.checkpointDelta)) {
       if (Array.isArray(delta.inputs) && delta.inputs.some((input) => record(input) && ["user_answer", "user_instruction"].includes(String(input.type)))) this.receivedHumanInput = true;

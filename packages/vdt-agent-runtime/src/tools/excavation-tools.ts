@@ -132,7 +132,6 @@ const excavationSeedTopologyTool: AgentTool = {
   inputSchema: seedTopologyInputSchema,
   outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,
-  requiresDraftProject: true,
   phase: "building_graph",
   run(context, input) {
     const builder = requireBuilder(context.builder);

@@ -4,6 +4,16 @@ Status: accepted design; domain, preparation, state/native-source and credential
 hydration/revocation reviews approved. Bounded local Chrome editor and prepared
 latency fixtures passed; final integrated status belongs to the execution log.
 Date: 2026-10-19.
+Response-contract amendment 2026-11-11: preparation v15 includes host-derived
+output requirements, exact target units/scales/period and resolved eligible
+recipe shapes on every transport. The graph alone retains 24 KiB independently
+of fixed knowledge/schema/requirements; the full escaped input remains bounded
+to 192 KiB. This supersedes the historical v10 whole-envelope 24 KiB reservation
+below. For the structured OpenAI API, each compatible recipe has its own schema
+branch with the recipe's formula, factor keys, concepts, units and count. The
+custom branch permits a model-authored alternative under the current response
+contract. Envelope sizing includes the selected API schema. See
+[repair and verification scope](../implementation/AI_RESPONSE_CONTRACT_2026-11-11.md).
 Selected-guidance amendment 2026-11-03: preparation v14 carries the exact
 Context-selected Skill version/content hash/full content as read-only guidance.
 Applicable direct factors and scoped cause categories take priority over

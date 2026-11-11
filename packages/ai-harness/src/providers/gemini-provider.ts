@@ -4,7 +4,8 @@ import {
   parseStructuredOutput,
   requestProviderJson,
   requireNonEmptyText,
-  trimTrailingSlash
+  trimTrailingSlash,
+  withZodResponseContract
 } from "./provider-utils";
 
 interface GeminiGenerateContentResponse {
@@ -43,7 +44,7 @@ export class GeminiProvider implements AiProvider {
           "x-goog-api-key": this.config.apiKey
         },
         body: JSON.stringify({
-          systemInstruction: { parts: [{ text: params.systemPrompt }] },
+          systemInstruction: { parts: [{ text: withZodResponseContract(params.systemPrompt, params.schema, params.outputJsonSchema) }] },
           contents: [
             {
               role: "user",

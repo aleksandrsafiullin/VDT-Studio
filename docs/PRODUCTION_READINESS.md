@@ -1,5 +1,109 @@
 # Production Readiness
 
+## Expected failures and opt-in tests
+
+Three Vitest cases mark reproducible defects with `it.fails`. Remove that
+marker when the regression passes with the corresponding repair.
+
+- F-03 exercises a manual deletion during an in-flight agent mutation. The
+  active runtime needs revision fencing and explicit reconciliation with
+  manual changes before committing the mutation.
+- F-06 exercises raw-data mappings whose metadata suggests a calculated
+  input before the baseline and source lineage have been materialized.
+  Apply the mapping and verify the resulting value and tree dependency.
+- F-08 exercises skill selection for natural English and Russian requests
+  outside the legacy marker rules. Route those requests through the V2
+  catalog, read and explicit selection lifecycle.
+
+On macOS, two migration filesystem fixtures are reserved for Linux. The
+nine live CLI tests run only with their adapter's `VDT_LIVE_CODEX`,
+`VDT_LIVE_CLAUDE`, `VDT_LIVE_COPILOT` or `VDT_LIVE_CURSOR` flag set to
+`1` and an installed, authenticated CLI. These checks have distinct host
+and credential requirements from the standard unit gate.
+
+## Nano plan and formula reconciliation (2026-11-11)
+
+The direct OpenAI Model Agent can select a checked hierarchy repair for a
+calculable new draft. The repair aligns the plan and visual parents with the
+existing formulas. The saved `MODEL_NO_PROGRESS` draft from the previous
+verification became valid after replaying the proposed calls through the
+standard tools, with its 4,900 USD result and all retained inputs preserved.
+
+The original retail request completed in three fresh local web profiles on
+`gpt-5-nano-2025-08-07` / Low. Each tree passed graph, hierarchy, source-unit
+and sensitivity checks, received a finish receipt and reported 4,900 USD in
+Russian with zero user questions. One live run selected the repair to remove
+an unbuilt intermediate from its plan. Evidence is in
+`output/release/audits/2026-11-11-nano-hierarchy.NHTiiMSe/`.
+
+## Nano clarification and result language (2026-11-11)
+
+The direct OpenAI Model Agent checks proposed questions against supplied facts
+and distinguishes construction work from missing business inputs. Initial
+planning receives the actual root ID and the builder's identifier constraints.
+The final response uses the latest user instruction and the verified result.
+
+Three fresh local web profiles ran the original Russian retail request on
+`gpt-5-nano-2025-08-07` / Low. All three recorded zero user questions and
+calculated 4,900 USD. Two completed with a verified finish receipt, exact source
+quotes, four passing sensitivity checks and a Russian report. One preserved its
+draft after `MODEL_NO_PROGRESS` while repairing a mismatch between the
+decomposition plan and the formulas. Smart KPI independently prepared and
+materialized a four-factor revenue group on nano / Low. The web production
+build and static gates passed with 3,584 passing tests, three expected failures
+and eleven skipped tests. This round left repeated full-agent completion on
+Low open.
+Raw evidence is in `output/release/audits/2026-11-11-nano-questions.NBIZNX8o/`.
+
+## Nano native arguments and rate units (2026-11-11)
+
+Live `gpt-5-nano-2025-08-07` / Low finished the original retail net-revenue
+request through the public Model Agent route. The Supervisor verified 4,900
+USD and issued a finish receipt. All four source quotes, units and sensitivity
+probes matched. A separate run with a specified first-layer layout also passed.
+An earlier attempt on the final build requested confirmation of supplied facts.
+Smart KPI independently prepared and materialized the four-factor net-revenue
+group twice. The checks cover these cases in fresh local web profiles. See the
+[verification follow-up](implementation/AI_RESPONSE_CONTRACT_2026-11-11.md#native-arguments-and-explicit-source-units).
+
+## Nano full-agent follow-up (2026-11-11)
+
+The compatibility runtime repairs missing-draft admission, stale validation
+feedback, derived-root finish parity and exact source-quote guidance. The
+OpenAI-compatible app adapter uses one current observation, native batch
+items and explicit encoded argument/question contracts. A reasoning-budget
+exhaustion pauses the run without repeating the exhausted request.
+
+Live `gpt-5-nano-2025-08-07` / Low asked the correct missing-price question
+without inventing a price. The fully specified net-revenue case still did
+not complete on Low: the model retained an incompatible input unit and
+subsequent tool arguments failed validation. A separate Medium diagnostic
+exhausted the same bounded output allowance and safely paused. Two independent
+Smart regressions were rejected for incompatible units and a timeout,
+respectively; the Smart implementation was not changed in this follow-up.
+The [response-contract follow-up](implementation/AI_RESPONSE_CONTRACT_2026-11-11.md#nano-full-agent-follow-up)
+separates these live results from the deterministic release gates. Nano
+full-agent readiness and provider certification are unchanged. No new native
+installer was built or qualified.
+
+## AI response contracts and local-alpha checks (2026-11-11)
+
+Existing Smart KPI and ordinary-agent paths now receive model-owned validation
+requirements before inference, including full nested tool/response schemas,
+unit/formula constraints, value provenance and derived-root duties. Legacy
+decision instructions no longer mix checkpoint envelopes or finish receipts.
+See the [response-contract repair report](implementation/AI_RESPONSE_CONTRACT_2026-11-11.md).
+
+The repaired source passed the release aggregate and all 151 browser tests.
+Live Smart KPI passed a four-factor net-revenue case on `gpt-5-nano` / Low.
+Cursor `composer-2.5` and Codex `gpt-5.6-luna` also completed one natural-request
+net-revenue tree, with exact source values and four independent recalculation
+probes. These are scoped runtime checks, not broad business-autonomy or installed
+native-app qualification. The same full-agent case did not pass on nano / Low.
+Three known expected failures and eleven skipped unit cases remain; provider
+certification and production NO-GO are unchanged. The current source has not
+been rebuilt into or reaccepted as a signed/notarized Mac installer.
+
 ## Local Apple Silicon Package Boundary
 
 The local arm64 alpha has a signed packaging path that embeds Node and serves

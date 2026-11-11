@@ -13,6 +13,8 @@ const quantities: Record<string, [string, string]> = {
 };
 const periods = new Set(["shift", "day", "week", "month", "quarter", "year"]);
 const currencies = new Set(["USD", "EUR", "GBP", "KZT", "RUB"]);
+/** Shared with the model's response contract; these are the parser's atoms. */
+export const INCOMING_KPI_UNIT_GRAMMAR = { aliases: spelling, quantities, periods: [...periods], currencies: [...currencies] };
 const clean = (value: Record<string, number>) => Object.fromEntries(Object.entries(value).filter(([, exponent]) => exponent !== 0).sort(([a], [b]) => a.localeCompare(b, "en")));
 
 /** FM-01 unit grammar/scale representation only. FM-02 composes these records
@@ -30,7 +32,7 @@ export function parseIncomingKpiUnit(unit: string, period: KpiSuggestionPeriod):
     for (const term of terms) {
       const match = /^\s*([\p{L}_][\p{L}\p{N}_]{0,31}|1|%)(?:\^(-?[1-6]))?\s*$/u.exec(term);
       smartAssert(match, "UNSUPPORTED_UNIT", "Use unit atoms with *, / and integer powers.");
-      const raw = match[1]!, atom = Object.hasOwn(spelling, raw) ? spelling[raw]! : raw;
+      const raw = match[1]!, atom = currencies.has(raw.toUpperCase()) ? raw.toUpperCase() : Object.hasOwn(spelling, raw) ? spelling[raw]! : raw;
       const exponent = (side === 0 ? 1 : -1) * Number(match[2] ?? 1);
       if (atom === "1" || atom === "fraction") continue;
       if (atom === "%") { scales["fraction:percent"] = (scales["fraction:percent"] ?? 0) + exponent; continue; }

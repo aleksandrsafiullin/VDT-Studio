@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import { answerLiveHaulageQuestion as answerQuestion } from "./live-agent-qa-fixture.mjs";
 import { createVdtAgentRuntime } from "../packages/vdt-agent-runtime/src/orchestrator.ts";
 import {
   cancelRuntimeRequest,
@@ -157,24 +158,6 @@ function createLivePlanningProvider(options) {
   };
 }
 
-function answerQuestion(question) {
-  const text = `${question.id ?? ""} ${question.question ?? ""} ${question.reason ?? ""}`.toLowerCase();
-  if (/(payload|tonnes per trip|tons per trip|truck load|load per truck)/.test(text)) return "40 tonnes per loaded trip";
-  if (/(availability|available)/.test(text)) return "85% mechanical availability";
-  if (/(calendar|hours per year|annual hours|yearly hours)/.test(text)) return "8760 calendar hours per year";
-  if (/(operating hours|working hours|productive hours|shift hours)/.test(text)) return "4000 operating hours per year";
-  if (/(loading|load time)/.test(text)) return "4 minutes average loading time";
-  if (/(dump|unload|tipping)/.test(text)) return "2 minutes average dumping time";
-  if (/(queue|spotting|wait|delay)/.test(text)) return "3 minutes average queue and spotting time per cycle";
-  if (/(allocation|ore|waste|dedicated)/.test(text)) return "All 5 trucks are dedicated to ore haulage in this VDT";
-  if (/(mine type|open pit|underground|operation type)/.test(text)) return "Open-pit mine haulage";
-  if (/(distance|haul)/.test(text)) return "Average one-way haul distance is 2.7 km";
-  if (/(loaded speed|load speed)/.test(text)) return "Average loaded speed is 7 km/h";
-  if (/(empty speed|return speed)/.test(text)) return "Average empty return speed is 11 km/h";
-  if (/(truck|fleet|count|number)/.test(text)) return "5 haul trucks";
-  return "Use a reasonable mining haulage assumption, include it as an assumption, and continue building the VDT.";
-}
-
 function collectNodeText(node) {
   return [node.id, node.name, node.description, node.unit, node.formula].filter(Boolean).join(" ").toLowerCase();
 }
@@ -230,7 +213,7 @@ function createStartRequest(options) {
       timeoutMs: options.timeoutMs,
       ...(options.model ? { model: options.model } : {})
     },
-    options: { continueWithAssumptions: false }
+    options: { continueWithAssumptions: false, autoApplyPatches: true }
   };
 }
 

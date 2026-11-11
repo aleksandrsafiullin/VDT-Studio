@@ -10,6 +10,9 @@ const aliases: Record<string, string> = {
   days: "day", weeks: "week", months: "month", quarters: "quarter", years: "year", shifts: "shift"
 };
 const scalar = new Set(["1", "%", "fraction", "ratio", "percent", "percentage"]);
+const percent = new Set(["%", "percent", "percentage"]);
+const percentScale = 0.01;
+const percentScaleHint = " Percent inputs use a 0–100 scale. Divide by 100 to use a fraction, or multiply a fraction by 100 to produce a percent.";
 const quantities: Record<string, [string, number]> = {
   h: ["time", 3600], min: ["time", 60], s: ["time", 1], day: ["time", 86400],
   t: ["mass", 1000], kg: ["mass", 1], kt: ["mass", 1_000_000],
@@ -30,6 +33,10 @@ function physical(unit: Unit) {
   const dimensions: Unit = Object.create(null);
   let scale = 1, known = true;
   for (const [atom, power] of Object.entries(unit)) {
+    if (atom === "%") {
+      scale *= percentScale ** power;
+      continue;
+    }
     const quantity = Object.hasOwn(quantities, atom) ? quantities[atom] : undefined;
     const dimension = quantity?.[0] ?? atom;
     dimensions[dimension] = (dimensions[dimension] ?? 0) + power;
@@ -52,10 +59,8 @@ function compatible(actual: Unit, expected: Unit, coefficient: number | undefine
   return coefficient !== undefined && Number.isFinite(coefficient) && Math.abs(Math.abs(coefficient) - ratio) <= 1e-12 * Math.max(ratio, Math.abs(coefficient), 1e-12);
 }
 
-/** Formal unit algebra: spelling aliases are allowed; magnitude, currency and
- * calendar conversions are not automatic. Percent retains the legacy engine's scalar
- * semantics; this check does not certify a percent/fraction numeric scale. */
-export function parseValidationUnit(text: string): Unit | undefined {
+/** Formal unit algebra with an opt-in check for the percent/fraction scale. */
+export function parseValidationUnit(text: string, enforcePercentageScale = false): Unit | undefined {
   if (!text.trim() || text.length > 256) return undefined;
   const tokens = text.trim().toLowerCase().replace(/[·×]/g, "*").match(/[^*/^()]+|[*/^()]/g) ?? [];
   let cursor = 0;
@@ -68,7 +73,7 @@ export function parseValidationUnit(text: string): Unit | undefined {
       if (tokens[cursor++] !== ")") throw new Error("Unclosed unit group");
     } else {
       const atom = Object.hasOwn(aliases, token) ? aliases[token]! : token;
-      result = scalar.has(atom) ? {} : { [atom]: 1 };
+      result = enforcePercentageScale && percent.has(atom) ? { "%": 1 } : scalar.has(atom) ? {} : { [atom]: 1 };
     }
     if (tokens[cursor] === "^") {
       cursor++;
@@ -99,13 +104,15 @@ function formatUnit(unit: Unit): string {
   return denominator ? `${numerator} / (${denominator})` : numerator;
 }
 
-export function validateFormulaUnits(node: VdtNode, expression: FormulaExpression, nodes: ReadonlyMap<string, VdtNode>): VdtWarning[] {
+export function validateFormulaUnits(
+  node: VdtNode, expression: FormulaExpression, nodes: ReadonlyMap<string, VdtNode>, enforcePercentageScale = false
+): VdtWarning[] {
   const issues: VdtWarning[] = [];
   const report = (key: string, message: string, severity: VdtWarning["severity"] = "error") => {
     issues.push({ id: `validation-unit-${node.id}-${key}`, type: "unit_mismatch", severity, nodeId: node.id, message });
   };
   const readUnit = (target: VdtNode, key: string) => {
-    const unit = target.unit ? parseValidationUnit(target.unit) : undefined;
+    const unit = target.unit ? parseValidationUnit(target.unit, enforcePercentageScale) : undefined;
     if (!unit) report(key, `The unit of “${target.name}” is missing or cannot be checked. Set a unit to verify the formula for “${node.name}”.`, "warning");
     return unit;
   };
@@ -123,7 +130,8 @@ export function validateFormulaUnits(node: VdtNode, expression: FormulaExpressio
       const rightToLeft = compatible(right.unit, left.unit, right.coefficient);
       const leftToRight = compatible(left.unit, right.unit, left.coefficient);
       if (rightToLeft === true || leftToRight === true) return { unit: rightToLeft ? left.unit : right.unit, literal: false, coefficient: undefined };
-      report(path, `Formula for “${node.name}” combines ${rightToLeft === undefined ? "unverified custom" : "incompatible"} units with ${operator}: “${formatUnit(left.unit)}” and “${formatUnit(right.unit)}”.`, rightToLeft === undefined ? "warning" : "error");
+      const scaleHint = left.unit["%"] !== right.unit["%"] ? percentScaleHint : "";
+      report(path, `Formula for “${node.name}” combines ${rightToLeft === undefined ? "unverified custom" : "incompatible"} units with ${operator}: “${formatUnit(left.unit)}” and “${formatUnit(right.unit)}”.${scaleHint}`, rightToLeft === undefined ? "warning" : "error");
     }
     return { unit: left.unit && right.unit ? left.unit : undefined, literal: false, coefficient: undefined };
   };
@@ -141,19 +149,27 @@ export function validateFormulaUnits(node: VdtNode, expression: FormulaExpressio
       .reduce((left, right, index) => add(left, right, `${path}-${index}`, `${ast.name}(...)`));
     const left = visit(ast.left, `${path}-left`), right = visit(ast.right, `${path}-right`);
     if (ast.operator === "+" || ast.operator === "-") return add(left, right, path, ast.operator);
-    return {
-      unit: left.unit && right.unit ? combine(left.unit, right.unit, ast.operator === "*" ? 1 : -1) : undefined,
-      literal: left.literal && right.literal,
-      coefficient: left.coefficient === undefined || right.coefficient === undefined ? undefined
-        : ast.operator === "*" ? left.coefficient * right.coefficient : left.coefficient / right.coefficient
-    };
+    const multiply = ast.operator === "*";
+    const unit = left.unit && right.unit ? combine(left.unit, right.unit, multiply ? 1 : -1) : undefined;
+    const coefficient = left.coefficient === undefined || right.coefficient === undefined ? undefined
+      : multiply ? left.coefficient * right.coefficient : left.coefficient / right.coefficient;
+    // An explicit scale such as p/100 gives subsequent arithmetic a fraction.
+    const literal = left.literal && right.literal;
+    if (unit?.["%"] && coefficient !== undefined) {
+      const scale = percentScale ** unit["%"];
+      if (scale > 0 && Number.isFinite(scale) && Math.abs(Math.abs(coefficient) - scale) <= 1e-12 * scale) {
+        return { unit: combine(unit, { "%": unit["%"] }, -1), literal, coefficient: coefficient / scale };
+      }
+    }
+    return { unit, literal, coefficient };
   };
   const inferred = visit(expression, "expression");
   if (!inferred.literal) {
     const declared = readUnit(node, "result-missing");
     if (declared && inferred.unit) {
       const matches = compatible(inferred.unit, declared, inferred.coefficient);
-      if (matches === false) report("result", `The output unit of “${node.name}” is “${node.unit}”, but its formula produces “${formatUnit(inferred.unit)}”. Correct the unit or formula.`);
+      const scaleHint = inferred.unit["%"] !== declared["%"] ? percentScaleHint : "";
+      if (matches === false) report("result", `The output unit of “${node.name}” is “${node.unit}”, but its formula produces “${formatUnit(inferred.unit)}”. Correct the unit or formula.${scaleHint}`);
       if (matches === undefined) report("result", `The output unit of “${node.name}” is “${node.unit}”, while its formula produces “${formatUnit(inferred.unit)}”. Define the custom unit or per-entity basis to verify this relationship.`, "warning");
     }
   }

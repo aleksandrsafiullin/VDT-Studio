@@ -887,7 +887,7 @@ function fallbackQuestionFromMessage(message: unknown): Record<string, unknown>[
   ];
 }
 
-function normalizeAgentDecisionOutput(output: Record<string, unknown>): Record<string, unknown> {
+function normalizeAgentDecisionOutput(output: Record<string, unknown>, allowSingleCallBatch = false): Record<string, unknown> {
   if (output.type === "call_tool") {
     const toolName = typeof output.toolName === "string" ? output.toolName : "";
     const args = parseJsonObjectString(output.argsJson ?? output.args) ?? {};
@@ -907,6 +907,13 @@ function normalizeAgentDecisionOutput(output: Record<string, unknown>): Record<s
   }
   if (output.type === "call_tools") {
     const calls = parseJsonObjectArrayString(output.callsJson ?? output.calls) ?? [];
+    const single = allowSingleCallBatch && calls.length === 1 ? calls[0] : undefined;
+    const singleArgs = single && parseJsonObjectString(single.argsJson ?? single.args);
+    if (single && typeof single.toolName === "string" && singleArgs) {
+      return normalizeAgentDecisionOutput({
+        type: "call_tool", toolName: single.toolName, args: singleArgs, statusMessage: output.statusMessage
+      });
+    }
     return {
       type: output.type,
       calls: calls.map((call) => ({
@@ -939,7 +946,7 @@ function normalizeAgentDecisionOutput(output: Record<string, unknown>): Record<s
 export function normalizeRegisteredSchemaOutput(schemaId: VdtSchemaId, output: unknown): unknown {
   if (isDataDiscoverySchemaId(schemaId)) return normalizeDataDiscoveryOutput(schemaId, output);
   if ((schemaId === "agent-decision-v1" || schemaId === "agent-decision-v2") && isRecord(output)) {
-    return normalizeAgentDecisionOutput(output);
+    return normalizeAgentDecisionOutput(output, schemaId === "agent-decision-v2");
   }
   if (schemaId === "generate-tree-v1" && isRecord(output)) return orientGenerateTreeEdgesFromRoot(output);
   return output;

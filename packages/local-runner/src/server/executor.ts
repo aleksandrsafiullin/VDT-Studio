@@ -687,9 +687,21 @@ function buildRepairMessages(
   ];
 }
 
+function cursorUsesCanonicalDecision(request: CompletionRequest): boolean {
+  return request.backendId === "cursor_subscription" && request.taskType === "agent_decision" && request.schemaId === "agent-decision-v2";
+}
+function cliResponseSchema(request: CompletionRequest) {
+  return cursorUsesCanonicalDecision(request) ? getRegisteredJsonSchema(request.schemaId as VdtSchemaId) : getStrictResponseJsonSchema(request.schemaId as VdtSchemaId);
+}
 function buildSubscriptionPrompt(request: CompletionRequest): string {
   const schemaId = request.schemaId as VdtSchemaId;
-  const schemaInstructions = schemaId === "agent-decision-v1" || schemaId === "agent-decision-v2"
+  const schemaInstructions = cursorUsesCanonicalDecision(request)
+    ? ["Return the canonical decision object shown by outputJsonSchema.",
+      "For call_tool use toolName and args as an object; for call_tools use calls as an array of 2-6 {toolName,args} objects.",
+      "For ask_user use questions as an array; for finish use summary and nextSuggestedActions.",
+      "Use real nested JSON objects and arrays. Do not encode args, calls or questions as strings. Include only fields allowed by the selected type.",
+      "Tool names and every argument must match availableTools and their inputJsonSchema. Never batch calls whose arguments depend on an unseen tool result."].join("\n")
+    : schemaId === "agent-decision-v1" || schemaId === "agent-decision-v2"
     ? [
         "Agent decision encoding:",
         `- Return the strict fields type, toolName, argsJson, ${schemaId === "agent-decision-v2" ? "callsJson, " : ""}statusMessage, questionsJson, summary, and nextSuggestedActions.`,
@@ -712,7 +724,7 @@ function buildSubscriptionPrompt(request: CompletionRequest): string {
     JSON.stringify({
       schemaId: request.schemaId,
       taskType: request.taskType,
-      outputJsonSchema: getStrictResponseJsonSchema(schemaId),
+      outputJsonSchema: cliResponseSchema(request),
       input: request.input,
       ...(request.model ? { model: request.model } : {})
     })
@@ -858,7 +870,7 @@ export async function executeCli(
     await writeFile(promptPath, prompt, { encoding: "utf8", mode: 0o600, flag: "wx" });
 
     const schemaPath = path.join(cwd, "schema.json");
-    await writeFile(schemaPath, `${JSON.stringify(getStrictResponseJsonSchema(request.schemaId as VdtSchemaId), null, 2)}\n`, {
+    await writeFile(schemaPath, `${JSON.stringify(cliResponseSchema(request), null, 2)}\n`, {
       encoding: "utf8",
       mode: 0o600,
       flag: "wx"

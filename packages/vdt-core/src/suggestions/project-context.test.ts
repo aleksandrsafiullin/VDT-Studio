@@ -50,7 +50,8 @@ describe("domain-neutral Smart project context", () => {
     const context = await buildKpiSuggestionContext(project, { ...options, targetNodeId: "selected_input" });
     expect(context.ancestors[0]!.id).toBe(parent);
     expect(context.siblings.map(node => node.id)).toEqual(["existing_nearby_source", "second_nearby_source"]);
-    expect(context.omissions.ancestors).toBeGreaterThan(3);
+    expect(context.omissions.ancestors).toBeGreaterThan(0);
+    expect(new TextEncoder().encode(JSON.stringify(context)).byteLength).toBeLessThanOrEqual(KPI_SUGGESTION_LIMITS.contextBytes);
     expect(context.root.id).toBe(project.rootNodeId);
     expect(kpiSuggestionEnvelopeBytes(context)).toBeLessThanOrEqual(KPI_SUGGESTION_LIMITS.inputBytes);
   });

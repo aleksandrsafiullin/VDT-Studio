@@ -1,4 +1,5 @@
 import { AgentToolError, type AgentToolContext } from "../tool-registry";
+import { USER_VALUE_QUOTE_LIMITS } from "../value-provenance-contract";
 
 export function runHasUserAnswerForNode(context: AgentToolContext, nodeId: string): boolean {
   const state = context.store.getState(context.runId);
@@ -28,9 +29,9 @@ export function assertUserProvidedValueGrounded(
   );
 }
 
-function quoteGroundsValue(context: AgentToolContext, evidence: { value?: number | undefined; quote?: string | undefined }): boolean {
+export function quoteGroundsValue(context: AgentToolContext, evidence: { value?: number | undefined; quote?: string | undefined }): boolean {
   const quote = evidence.quote?.trim();
-  if (!quote || quote.length < 4 || quote.length > 300 || !/\p{L}/u.test(quote) || !Number.isFinite(evidence.value)) return false;
+  if (!quote || quote.length < USER_VALUE_QUOTE_LIMITS.minCharacters || quote.length > USER_VALUE_QUOTE_LIMITS.maxCharacters || !/\p{L}/u.test(quote) || !Number.isFinite(evidence.value)) return false;
   const texts = userSourceTexts(context);
   // Notes may contain an explicitly quoted excerpt with surrounding attribution.
   // Only the verbatim excerpt can ground the value, never its surrounding prose.

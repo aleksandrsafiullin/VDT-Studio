@@ -1,4 +1,6 @@
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { getRegisteredJsonSchema } from "@vdt-studio/model-bridge";
 import { mkdtemp, rm, writeFile, chmod } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -98,6 +100,20 @@ describe("cursor subscription executor", { timeout: 45_000 }, () => {
       ],
       statusMessage: "Inspecting the project."
     });
+  });
+  it("asks Cursor for native nested decision objects instead of JSON embedded in strings", async () => {
+    let prompt = "", schema: unknown;
+    const result = await executeCompletion(cursorManifest(), { requestId: crypto.randomUUID(), backendId: "cursor_subscription", taskType: "agent_decision", schemaId: "agent-decision-v2", input: { currentProject: { nodes: [] } } }, new AbortController().signal, {
+      ...fakeCursorExecutor(), spawn: (command, args, options) => {
+        prompt = readFileSync(path.join(String(options.cwd), "prompt.txt"), "utf8");
+        schema = JSON.parse(readFileSync(path.join(String(options.cwd), "schema.json"), "utf8"));
+        return nodeSpawn(command, [...args], options) as ChildProcessWithoutNullStreams;
+      }
+    });
+    expect(schema).toEqual(getRegisteredJsonSchema("agent-decision-v2"));
+    expect(prompt).toContain("Do not encode args, calls or questions as strings.");
+    expect(prompt).not.toContain("Return the strict fields");
+    expect(result.output).toMatchObject({ type: "call_tools", calls: [{ args: { nodeId: "root" } }, { args: { nodeId: "root", maxDepth: 2 } }] });
   });
 
   it("orients reversed Cursor generate-tree edges before schema validation", async () => {

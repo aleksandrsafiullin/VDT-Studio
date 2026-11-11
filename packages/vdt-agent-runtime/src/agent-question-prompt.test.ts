@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   AGENT_FINISH_MISSING_VALUE_PROMPT_RULE,
+  AGENT_DECISION_FINISH_VALUE_PROMPT_RULE,
+  AGENT_DECISION_QUESTION_PROMPT_RULE,
+  AGENT_DECISION_BATCH_CONTRACT_PROMPT_RULE,
+  AGENT_DECISION_FINISH_ORDER_PROMPT_RULE,
+  AGENT_HIERARCHY_PROMPT_RULE,
   AGENT_NATIVE_WEB_SEARCH_PROVENANCE_PROMPT_RULE,
   AGENT_QUESTION_PROMPT_RULE,
   AGENT_QUESTION_WRITEBACK_PROMPT_RULE,
@@ -12,6 +17,8 @@ import {
   NATIVE_WEB_SEARCH_EVENT_CODE
 } from "./agent-question-prompt";
 import { AGENT_DECISION_SYSTEM_PROMPT } from "./prompts/agent-decision";
+import { USER_VALUE_PROVENANCE_PROMPT_RULE } from "./value-provenance-contract";
+import { DERIVED_ROOT_PROMPT_RULE } from "./model-acceptance-contract";
 import { AGENT_FIRST_RESPONSE_SYSTEM_PROMPT } from "./prompts/agent-first-response";
 
 describe("agent prompt writeback and finish rules", () => {
@@ -23,15 +30,19 @@ describe("agent prompt writeback and finish rules", () => {
     expect(AGENT_QUESTION_WRITEBACK_PROMPT_RULE).toContain("default_assumption");
     expect(AGENT_QUESTION_WRITEBACK_PROMPT_RULE).toContain("never presented as measured or benchmarked");
     expect(AGENT_QUESTION_WRITEBACK_PROMPT_RULE).toContain("Asking without recording is a failure.");
+    expect(AGENT_QUESTION_WRITEBACK_PROMPT_RULE).toContain(USER_VALUE_PROVENANCE_PROMPT_RULE);
+    expect(AGENT_FINISH_MISSING_VALUE_PROMPT_RULE).toContain(DERIVED_ROOT_PROMPT_RULE);
   });
 
   it("applies the shared constants on the in-runtime prompt surfaces", () => {
-    expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(AGENT_QUESTION_PROMPT_RULE);
-    expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(AGENT_FINISH_MISSING_VALUE_PROMPT_RULE);
-    expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE);
-    expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(AGENT_RESEARCH_PROVIDER_FAILED_PROMPT_RULE);
-    expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE);
-    expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(CHECKPOINT_FINISH_ORDER_PROMPT_RULE);
+    expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(AGENT_DECISION_QUESTION_PROMPT_RULE);
+    expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(AGENT_HIERARCHY_PROMPT_RULE);
+    expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(AGENT_DECISION_FINISH_VALUE_PROMPT_RULE);
+    expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE.replace("Call user.ask", "Return type ask_user"));
+    expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(AGENT_RESEARCH_PROVIDER_FAILED_PROMPT_RULE.replace("Call user.ask", "Return type ask_user"));
+    expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(AGENT_DECISION_BATCH_CONTRACT_PROMPT_RULE);
+    expect(AGENT_DECISION_SYSTEM_PROMPT).toContain(AGENT_DECISION_FINISH_ORDER_PROMPT_RULE);
+    expect(AGENT_DECISION_SYSTEM_PROMPT).not.toMatch(/action_batch|run\.request_finish|finishReceiptId|action\.type/);
     expect(AGENT_FIRST_RESPONSE_SYSTEM_PROMPT).toContain(AGENT_QUESTION_WRITEBACK_PROMPT_RULE);
   });
 

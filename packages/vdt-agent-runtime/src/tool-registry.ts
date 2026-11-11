@@ -24,6 +24,8 @@ export interface AgentToolContext {
   builder?: VdtBuilderSession | undefined;
   /** Trusted Supervisor policy; never accepted from browser tool arguments. */
   requireDecompositionPlan?: boolean | undefined;
+  /** Trusted legacy decision policy for a run that must construct a tree. */
+  requireDerivedRoot?: boolean | undefined;
   signal: AbortSignal;
 }
 
@@ -146,6 +148,9 @@ export class ToolRegistry {
     });
 
     try {
+      if (tool.requiresDraftProject && !context.builder?.getProject().graph.nodes.length) {
+        throw new AgentToolError("NO_DRAFT_PROJECT", "This tool requires an existing draft. Create the draft and use the root ID returned by the tool.");
+      }
       const input = tool.inputSchema.parse(args);
       if(context.requireDecompositionPlan&&["skill.seed_topology","skill.seed_draft_from_recipe","excavation.seed_topology","vdt.instantiate_subtree"].includes(name)){
         const errors=context.builder?plannedAdditionErrors(context.builder.getProject(),[]):["No working project."];
@@ -266,12 +271,14 @@ function latestMutationProposal(context: AgentToolContext): AgentToolResultEnvel
   };
 }
 
+const inputSchemas = new WeakMap<z.ZodType<unknown>, unknown>();
 function zodSchemaSummary(schema: z.ZodType<unknown>): unknown {
-  if (schema instanceof z.ZodObject) {
-    return {
-      type: "object",
-      properties: Object.fromEntries(Object.keys(schema.shape).map((key) => [key, {}]))
-    };
+  let result = inputSchemas.get(schema);
+  if (!result) {
+    // The model must see the types, required fields, enums and bounds that
+    // run() enforces. Input mode preserves optional/defaulted input semantics.
+    const { $schema: _dialect, ...input } = z.toJSONSchema(schema, { io: "input", target: "draft-07" });
+    result = input; inputSchemas.set(schema, result);
   }
-  return { type: "object" };
+  return result;
 }

@@ -402,9 +402,11 @@ agreement and supported unit algebra through intermediate/root results.
 **Review model issues** opens the affected KPI's Warnings, including unit review
 warnings; the issue control remains available on narrow screens. Stored invalid
 drafts remain editable and can be repaired or restored from a valid version.
-Progressive agent edits allow unfinished drafts, while final model validation
-remains strict. Full typed dimensions, percent/entity/time-basis semantics,
-provenance readiness and business certification remain incomplete. See
+Progressive agent edits allow unfinished drafts. Before completing a new tree,
+the structured OpenAI-compatible agent checks explicit percentage conversions
+and agreement between the factor plan and graph. Full typed dimensions,
+entity and time-basis semantics, provenance readiness and business certification
+remain incomplete. See
 [Formula Engine](FORMULA_ENGINE.md#model-validation).
 
 ### Scenario Mode

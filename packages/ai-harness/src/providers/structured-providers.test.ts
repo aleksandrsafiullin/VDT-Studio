@@ -49,7 +49,7 @@ describe("structured completion providers", () => {
     expect(JSON.parse(String(request.body))).toMatchObject({
       model: "claude-test",
       max_tokens: 123,
-      system: "System prompt"
+      system: expect.stringContaining('"required":["answer"]')
     });
   });
 

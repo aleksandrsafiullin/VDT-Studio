@@ -197,12 +197,18 @@ Smart incoming proposals. Missing/unparseable units and unresolved custom or
 per-entity bases produce review warnings rather than invented dimensions.
 Custom symbols can still cancel formally when spelled identically.
 
-Percent/fraction values retain legacy scalar semantics; percent numeric scale
-is not certified. Numeric offsets/thresholds retain contextual units. Full typed
-metric definitions, arbitrary unit notation, entity populations, business/time
-grain, timezone/window reconciliation and currency/calendar conversions remain
-unimplemented. `valid` means no blocking static error; warnings, calculation
-readiness, provenance and business correctness still require separate review.
+For new trees built through the direct OpenAI Model Agent or the structured
+OpenAI-compatible decision adapter,
+the finish gate checks the scale of explicit percent units. An input quoted as
+10% stores `10` with unit `%`. For a currency formula such as
+`amount * (1 - discount / 100)`, the conversion belongs in the expression.
+The gate reports a unit error when a formula uses that input as an unconverted
+fraction. Standard graph validation retains legacy scalar semantics for existing
+and manually authored models. Numeric offsets and thresholds retain contextual
+units. Full typed metric definitions, arbitrary unit notation, entity populations,
+business and time grain, timezone reconciliation and currency/calendar conversions
+remain open. `valid` means the static checks found no blocking error. Warnings,
+calculation readiness, provenance and business correctness require separate review.
 
 The original F-05 four-case regression is an ordinary passing test. Its scope
 and supporting core/runtime/Chrome checks are recorded in the

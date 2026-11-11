@@ -10,12 +10,13 @@ import type { ExecutionSettings } from "./execution-mode-catalog";
 import type { SmartHarnessHostIdentity } from "./smart-kpi-host-identity";
 import type { SmartKpiSchedulerOptions } from "./smart-kpi-scheduler";
 import { resolveSmartKpiSettings } from "./smart-kpi-settings";
+import { SMART_KPI_FAILURE_REASONS } from "./smart-kpi-errors";
 
 const error = (code: string) => Object.assign(new Error(code === "CLEANUP_UNCONFIRMED" ? "Preparation transport cleanup is unconfirmed."
   : code === "STALE_SKILL" ? "The selected modelling skill changed. Refresh Suggested KPI to use the current Context selection."
   : code === "REASONING_UNSUPPORTED" ? "The selected model does not support this Suggested KPI reasoning setting. Choose another model or explicitly select Provider default in Execution mode."
   : code === "CREDENTIAL_IDENTITY_UNVERIFIED" ? "This host cannot verify changes to the selected CLI credential source. Recheck the CLI sign-in or choose another connection."
-  : "Smart preparation could not complete."), { code });
+  : SMART_KPI_FAILURE_REASONS[code] ?? "Smart preparation could not complete."), { code });
 export interface SmartKpiClientOptions {
   vault?: ApiKeyVault; fetch?: typeof fetch; appMode?: VdtAppMode; executionClient?: Pick<AiExecutionClient, "complete">;
   pairingToken?: string; now?: () => number;
@@ -134,7 +135,7 @@ export async function prepareSmartThroughHttp(fetcher: typeof fetch, body: Recor
     if (payload.error?.code === "CLEANUP_UNCONFIRMED") throw error("CLEANUP_UNCONFIRMED");
     terminal = true; if (cancellation) await cancellation;
     if (caller.aborted || timedOut) throw error(timedOut ? "TIMEOUT" : "CANCELLED");
-    if (!response.ok || !payload.ok) throw error(["STALE_SKILL", "SUGGESTIONS_UNAVAILABLE", "NOT_A_DECOMPOSITION", "REASONING_UNSUPPORTED", "CREDENTIAL_IDENTITY_UNVERIFIED"].includes(payload.error?.code) ? payload.error.code : "PREPARATION_FAILED");
+    if (!response.ok || !payload.ok) throw error(["STALE_SKILL", "SUGGESTIONS_UNAVAILABLE", "NOT_A_DECOMPOSITION", "REASONING_UNSUPPORTED", "CREDENTIAL_IDENTITY_UNVERIFIED", ...Object.keys(SMART_KPI_FAILURE_REASONS)].includes(payload.error?.code) ? payload.error.code : "PREPARATION_FAILED");
     return validateKpiSuggestionModelOutput(payload.result);
   } catch (failure) {
     if ((failure as { code?: string })?.code === "CLEANUP_UNCONFIRMED") throw failure;

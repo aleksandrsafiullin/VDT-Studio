@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -45,9 +45,12 @@ let runner;
 let runnerClosed;
 let runnerDidClose = false;
 try {
+  // pnpm incorporates file: paths into store entry names. Keep the dependency
+  // local and short so a deep APFS release-audit path cannot exceed NAME_MAX.
+  copyFileSync(tarball, join(installDir, "cli.tgz"));
   writeFileSync(join(installDir, "package.json"), JSON.stringify({
     name: "vdt-clean-install", private: true, type: "module",
-    dependencies: { [cliManifest.name]: `file:${tarball.replaceAll("\\", "/")}` }
+    dependencies: { [cliManifest.name]: "file:./cli.tgz" }
   }));
   run(["install", "--offline", "--ignore-scripts", "--no-frozen-lockfile", "--store-dir", join(installDir, ".pnpm-store")]);
   const cliEntry = join(installDir, "node_modules", "@vdt-studio", "cli", "dist", "cli.mjs");

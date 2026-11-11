@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildKpiSuggestionContext, buildKpiSuggestionTaskInput } from "@vdt-studio/vdt-core";
 import { createSmartKpiMeasuredFixture } from "@vdt-studio/vdt-core";
 import { prepareSmartKpiResponse } from "./smart-kpi-service";
-import type { AiProvider } from "@vdt-studio/ai-harness";
+import { ProviderHttpError, type AiProvider } from "@vdt-studio/ai-harness";
 import { POST as suggestions } from "../app/api/ai/suggestions/route";
 import { POST as generic } from "../app/api/ai/run-task/route";
 import { POST as development } from "../app/api/ai/dev-runtime/route";
@@ -15,6 +15,11 @@ async function input() { return buildKpiSuggestionTaskInput(await buildKpiSugges
 afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("Smart preparation service authority and deadlines", () => {
+  it.each([[401, undefined, "PROVIDER_AUTH"], [429, "insufficient_quota", "PROVIDER_QUOTA"], [429, "rate_limit_exceeded", "PROVIDER_RATE_LIMIT"], [404, "model_not_found", "PROVIDER_MODEL_UNAVAILABLE"], [400, "invalid_json_schema", "PROVIDER_REQUEST_REJECTED"]] as const)("classifies provider HTTP %s/%s without exposing upstream data", async (status, upstreamCode, code) => {
+    const provider = { completeStructured: async () => { throw new ProviderHttpError("Selected provider", status, upstreamCode); } } as unknown as AiProvider;
+    await expect(prepareSmartKpiResponse({ input: await input(), providerId: "openai_compatible" }, new AbortController().signal, "http://localhost:3000", { provider: async () => provider }))
+      .rejects.toMatchObject({ code, message: "The selected provider rejected Smart preparation." });
+  });
   it("never obtains missing selected credentials or model from ambient defaults", async () => {
     vi.stubEnv("OPENAI_API_KEY", "ambient-never-used");
     const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);

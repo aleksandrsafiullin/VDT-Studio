@@ -1,5 +1,6 @@
 import {
   calculateGraph,
+  inspectDecompositionHierarchy,
   validateGraph,
   validateIncomingKpiLayer,
   VdtBuilderSession,
@@ -21,10 +22,10 @@ import {
   feedbackFromToolEnvelope,
   feedbackFromValidation,
   feedbackFromZodError,
-  formatFeedbackForPrompt,
   type AgentStructuredFeedback
 } from "./feedback";
 import { policySummaryForRun } from "./domain-policies";
+import { DERIVED_ROOT_REQUIREMENT, hasDerivedRoot, requiresDerivedRootForRun } from "./model-acceptance-contract";
 import {
   applyPendingMutationProposal,
   defaultProgressiveBuildPolicy,
@@ -33,14 +34,15 @@ import {
 import { AGENT_DECISION_SYSTEM_PROMPT } from "./prompts/agent-decision";
 import { AgentRunStore } from "./run-store";
 import {
-  agentDecisionSchema,
+  agentDecisionWireSchema,
   AgentDecisionForbiddenFieldsError,
   parseAndGuardAgentDecision,
   type AgentDecision,
   type AgentToolCall
 } from "./schemas/agent-decision";
-import { ToolRegistry, type AgentToolContext } from "./tool-registry";
+import { AgentToolError, ToolRegistry, type AgentToolContext } from "./tool-registry";
 import { createDefaultToolRegistry } from "./tools";
+import { collectLiteralUserQuantities } from "./value-provenance-contract";
 import { validateExcavationProject } from "./tools/excavation-tools";
 import { validateMiningProject } from "./tools/mining-validation";
 import {
@@ -68,11 +70,12 @@ import type {
 
 const MAX_DECISION_REPAIR_ATTEMPTS = 1;
 const MAX_FINISH_REPAIR_ATTEMPTS = 3;
-const rawAgentDecisionProviderSchema = agentDecisionSchema;
+const rawAgentDecisionProviderSchema = agentDecisionWireSchema;
 const FORBIDDEN_BATCH_TOOL_NAMES = new Set(["user.ask", "user.request_approval"]);
 
 export interface AgentDecisionProvider {
   id: string;
+  requireHierarchyOnFinish?: true;
   completeStructured<TInput, TOutput>(params: {
     taskType: "orchestrator_first_response" | "agent_decision";
     input: TInput;
@@ -551,7 +554,7 @@ export class VdtAgentRuntime {
 
     for (let attempt = 0; attempt <= MAX_DECISION_REPAIR_ATTEMPTS; attempt += 1) {
       const state = this.store.getState(runId);
-      const context = this.buildAgentContext(runId);
+      const context = this.buildAgentContext(runId, execution.provider.requireHierarchyOnFinish === true);
 
       this.emit(runId, {
         type: "tool_call_started",
@@ -635,8 +638,10 @@ export class VdtAgentRuntime {
   private async executeDecision(
     runId: string,
     decision: AgentDecision,
-    _execution: VdtAgentExecutionOptions
+    execution: VdtAgentExecutionOptions
   ): Promise<"continue" | "paused" | "finished"> {
+    const requirePlan = execution.provider?.requireHierarchyOnFinish === true
+      && requiresDerivedRootForRun(this.store.getState(runId).request);
     if (decision.type === "ask_user") {
       this.incrementToolCallCount(runId);
       await this.tools.run("user.ask", { questions: decision.questions }, this.toolContext(runId));
@@ -644,7 +649,7 @@ export class VdtAgentRuntime {
     }
 
     if (decision.type === "finish") {
-      const finished = await this.tryFinishRun(runId, decision);
+      const finished = await this.tryFinishRun(runId, decision, requirePlan);
       return finished ? "finished" : "continue";
     }
 
@@ -668,23 +673,24 @@ export class VdtAgentRuntime {
       }
 
       for (const call of decision.calls) {
-        const outcome = await this.executeToolCall(runId, call);
+        const outcome = await this.executeToolCall(runId, call, requirePlan);
         if (outcome === "paused") return "paused";
         if (outcome === "stop") return "continue";
       }
       return "continue";
     }
 
-    const outcome = await this.executeToolCall(runId, decision);
+    const outcome = await this.executeToolCall(runId, decision, requirePlan);
     return outcome === "paused" ? "paused" : "continue";
   }
 
   private async executeToolCall(
     runId: string,
-    call: AgentToolCall
+    call: AgentToolCall,
+    requirePlan: boolean
   ): Promise<"continue" | "stop" | "paused"> {
     this.incrementToolCallCount(runId);
-    const toolResult = await this.tools.run(call.toolName, call.args, this.toolContext(runId));
+    const toolResult = await this.tools.run(call.toolName, call.args, this.toolContext(runId, requirePlan));
     if (!toolResult.ok) {
       const state = this.store.getState(runId);
       const feedback = feedbackFromToolEnvelope(toolResult, {
@@ -730,9 +736,24 @@ export class VdtAgentRuntime {
     });
   }
 
-  private buildAgentContext(runId: string): AgentDecisionContext {
+  private buildAgentContext(runId: string, requirePlan: boolean): AgentDecisionContext {
     const state = this.store.getState(runId);
-    const project = effectiveProject(state);
+    const candidate = effectiveProject(state);
+    const project = candidate?.graph.nodes.length ? candidate : undefined;
+    const rootConstruction = rootConstructionForDecision(state.request, project, requirePlan);
+    const validationState = project && !rootConstruction && requirePlan && requiresDerivedRootForRun(state.request)
+      ? this.validateProjectForRun(runId, project, { enforcePercentageScale: true })
+      : state.validationState;
+    const { prompt, businessContext } = state.request.input;
+    const { quantities, complete } = collectLiteralUserQuantities(
+      [prompt, businessContext], state.visibleContext.brief.unit
+    );
+    const isCurrentFeedback = (feedback: AgentStructuredFeedback) => {
+      if (feedback.message.endsWith(DERIVED_ROOT_REQUIREMENT)) return Boolean(rootConstruction);
+      return feedback.kind !== "graph_validation_failed" || validationState?.errors.some((issue) =>
+        issue.message === feedback.message && issue.nodeId === feedback.target?.nodeId
+        && !(rootConstruction?.rootNodeId && issue.type === "missing_value" && issue.nodeId === rootConstruction.rootNodeId));
+    };
     const selectedNodeId = state.request.input.selectedNodeId;
     const continuationPolicy = continuationPolicyFromState(state);
     const guidance = [continuationPolicy.guidance, state.decisionGuidance].filter(Boolean).join(" ");
@@ -753,11 +774,17 @@ export class VdtAgentRuntime {
         ? { ...continuationPolicy, guidance }
         : continuationPolicy,
       currentProject: project ? summarizeProjectForDecision(project, priorityNodeIds) : undefined,
+      rootConstruction,
+      hierarchyForFinish: project && !rootConstruction ? declaredHierarchyForFinish(state.request, project, requirePlan) : undefined,
+      literalUserQuantities: quantities.length ? quantities : undefined,
+      literalUserQuantitiesComplete: complete && state.chatMessages.every((message) =>
+        message.role !== "user" || message.text === prompt),
       formulaBacklog,
       selectedNode: project && selectedNodeId ? summarizeNode(project, selectedNodeId) : undefined,
       selectedSkills: state.selectedSkills,
       domainPolicies: policySummaryForRun(state),
-      availableTools: this.tools.listSpecs(),
+      availableTools: this.tools.listSpecs().filter((tool) => (!tool.requiresDraftProject || project !== undefined)
+        && (rootConstruction?.needs !== "plan" || !tool.mutatesProject || tool.name === "vdt.set_decomposition_plan")),
       recentEvents: summarizeEvents(state.events),
       visibleContext: state.visibleContext,
       userAnswers: state.answers,
@@ -769,11 +796,11 @@ export class VdtAgentRuntime {
         ...(report.confidence !== undefined ? { confidence: report.confidence } : {})
       })),
       lastToolResult: state.lastToolResult,
-      lastFeedback: state.lastFeedback,
-      recentFeedback: state.feedbackHistory?.slice(-5),
+      lastFeedback: state.lastFeedback && isCurrentFeedback(state.lastFeedback) ? state.lastFeedback : undefined,
+      recentFeedback: state.feedbackHistory?.filter(isCurrentFeedback).slice(-5),
       pendingMutationProposal: state.pendingMutationProposal,
       progressiveBuild: summarizeProgressiveBuild(state.progressiveBuild),
-      validationState: state.validationState,
+      validationState,
       calculationState: state.calculationState,
       constraints: {
         maxOneToolCallPerDecision: state.request.mode === "deepen_node",
@@ -817,10 +844,11 @@ export class VdtAgentRuntime {
   private validateProjectForRun(
     runId: string,
     project: VdtProject,
-    options: { includeSkillValidations?: boolean | undefined } = { includeSkillValidations: true }
+    options: { includeSkillValidations?: boolean | undefined; enforcePercentageScale?: boolean } = {}
   ): ValidationStateSummary {
     const state = this.store.getState(runId);
-    const generic = state.builder?.validate().validation ?? validateGraph(project);
+    const generic = options.enforcePercentageScale ? validateGraph(project, undefined, { enforcePercentageScale: true })
+      : state.builder?.validate().validation ?? validateGraph(project);
     const domainValidations = options.includeSkillValidations === false
       ? []
       : domainValidationsForRun(state, project);
@@ -837,9 +865,11 @@ export class VdtAgentRuntime {
     });
   }
 
-  private async tryFinishRun(runId: string, decision: Extract<AgentDecision, { type: "finish" }>): Promise<boolean> {
+  private async tryFinishRun(
+    runId: string, decision: Extract<AgentDecision, { type: "finish" }>, requirePlan: boolean
+  ): Promise<boolean> {
     try {
-      await this.finishRun(runId, decision);
+      await this.finishRun(runId, decision, requirePlan);
       return true;
     } catch (error) {
       const state = this.store.getState(runId);
@@ -873,10 +903,20 @@ export class VdtAgentRuntime {
     }
   }
 
-  private async finishRun(runId: string, decision: Extract<AgentDecision, { type: "finish" }>): Promise<void> {
+  private async finishRun(
+    runId: string, decision: Extract<AgentDecision, { type: "finish" }>, requirePlan: boolean
+  ): Promise<void> {
     const state = this.store.getState(runId);
     const project = state.builder?.getProject() ?? state.draftProject;
     if (!project) throw new Error("Cannot finish: no draft project exists.");
+    if (requiresDerivedRootForRun(state.request) && !hasDerivedRoot(project)) {
+      throw new Error(`Cannot finish: ${DERIVED_ROOT_REQUIREMENT}`);
+    }
+    const hierarchy = declaredHierarchyForFinish(state.request, project, requirePlan);
+    if (hierarchy && !hierarchy.valid) {
+      throw new AgentToolError("HIERARCHY_INCOMPLETE",
+        `Cannot finish: the declared decomposition plan must match the graph. ${hierarchy.errors.join(" ")} Resolve the missing or inconsistent factors, or revise the plan to describe the valid dependencies you built.`);
+    }
 
     const isSingleLayerDecomposition = state.request.mode === "deepen_node";
     if (isSingleLayerDecomposition) {
@@ -906,10 +946,12 @@ export class VdtAgentRuntime {
       }
     }
 
-    const validation = this.validateProjectForRun(runId, project);
+    const validation = this.validateProjectForRun(runId, project, {
+      enforcePercentageScale: requirePlan && requiresDerivedRootForRun(state.request)
+    });
     if (!validation.valid) {
       this.store.updateRun(runId, { phase: "repairing_graph", validationState: validation });
-      throw new Error("Cannot finish: graph is invalid.");
+      throw new Error(`Cannot finish: graph is invalid. ${validation.errors.slice(0, 3).map((issue) => issue.message).join(" ")}`);
     }
 
     const rootNode = project.graph.nodes.find((node) => node.id === project.rootNodeId);
@@ -984,7 +1026,7 @@ export class VdtAgentRuntime {
     });
   }
 
-  private toolContext(runId: string): AgentToolContext {
+  private toolContext(runId: string, requireDecompositionPlan = false): AgentToolContext {
     const state = this.store.getState(runId);
     return {
       runId,
@@ -995,6 +1037,8 @@ export class VdtAgentRuntime {
         this.store.updateRun(runId, patch);
       },
       builder: state.builder,
+      requireDecompositionPlan,
+      requireDerivedRoot: requiresDerivedRootForRun(state.request),
       signal: state.abortController.signal
     };
   }
@@ -1341,10 +1385,48 @@ class AgentDecisionRepairFailed extends Error {
 }
 
 function promptForAgentDecision(context: AgentDecisionContext): string {
-  const feedback = context.recentFeedback?.length
-    ? `\n\nRecent structured feedback to address before retrying:\n${formatFeedbackForPrompt(context.recentFeedback)}`
-    : "";
-  return `${JSON.stringify(context, null, 2)}${feedback}`;
+  return JSON.stringify(context);
+}
+
+function rootConstructionForDecision(
+  request: VdtAgentStartRequest,
+  project: VdtProject | undefined,
+  requirePlan: boolean
+): AgentDecisionContext["rootConstruction"] {
+  if (!requiresDerivedRootForRun(request)) return undefined;
+  if (!project) return {
+    needs: "draft",
+    guidance: "No root exists yet. Once the business goal is clear, start a draft and observe its returned root ID before planning or adding drivers. Do not ask the user for tool IDs."
+  };
+  const root = project.graph.nodes.find((node) => node.id === project.rootNodeId);
+  if (requirePlan && root && !root.decompositionPlan) return {
+    rootNodeId: root.id,
+    needs: "plan",
+    guidance: "Call vdt.set_decomposition_plan now, before adding factors. For a result directly calculated from source inputs, plan those inputs as its immediate children. Place inputs of a needed subtotal under that subtotal. Each factor has one primary parent and each calculated parent uses its own factor children. Omit the root itself from plan.nodes."
+  };
+  if (!root || hasDerivedRoot(project)) return undefined;
+  const present = new Set(project.graph.nodes.map((node) => node.id));
+  if (requirePlan && root.decompositionPlan?.nodes.some((node) => !present.has(node.nodeId))) return {
+    rootNodeId: root.id,
+    needs: "drivers",
+    guidance: "Create the remaining planned nodes at the earliest incomplete factor layer. Use their exact planned IDs and parents. Fill values and set formulas after observing those nodes in the graph. If the business structure changes, revise the plan before adding its new factors."
+  };
+  const hasDrivers = project.graph.edges.some((edge) =>
+    edge.sourceNodeId === project.rootNodeId && edge.relation !== "contextual_influence");
+  return {
+    rootNodeId: project.rootNodeId,
+    needs: hasDrivers ? "referenced_formula" : "drivers",
+    guidance: hasDrivers
+      ? "Use the current driver IDs to build the root formula. Resolve any genuinely missing source inputs on their leaves."
+      : "Choose the business drivers from the brief and relevant guidance. Use this actual root ID as parentNodeId for its direct children, omit the root from plan.nodes, and add the driver nodes even if some values are missing. Then derive the root from those nodes. Ask only for a specific missing source quantity or business choice, never the requested result or its formula."
+  };
+}
+
+function declaredHierarchyForFinish(request: VdtAgentStartRequest, project: VdtProject, requirePlan: boolean) {
+  if (!requiresDerivedRootForRun(request)
+    || (!requirePlan && !project.graph.nodes.find((node) => node.id === project.rootNodeId)?.decompositionPlan)) return undefined;
+  const { valid, errors } = inspectDecompositionHierarchy(project);
+  return { valid, errors: errors.slice(0, 12), errorCount: errors.length };
 }
 
 function researchPolicyFromState(
@@ -1632,7 +1714,8 @@ function isRetryableProviderError(error: unknown): boolean {
     code === "PROVIDER_UNAVAILABLE" ||
     code === "SCHEMA_REPAIR_FAILED" ||
     code === "BACKEND_PARSE_FAILED" ||
-    code === "SCHEMA_INVALID"
+    code === "SCHEMA_INVALID" ||
+    code === "INCOMPLETE_OUTPUT"
   ) {
     return true;
   }
@@ -1643,7 +1726,7 @@ function retryableCode(error: unknown): "TIMEOUT" | "PROVIDER_UNAVAILABLE" | "SC
   const code = error instanceof Error ? (error as { code?: unknown }).code : undefined;
   if (code === "PROVIDER_UNAVAILABLE") return "PROVIDER_UNAVAILABLE";
   if (code === "SCHEMA_REPAIR_FAILED") return "SCHEMA_REPAIR_FAILED";
-  if (code === "BACKEND_PARSE_FAILED" || code === "SCHEMA_INVALID") return "STRUCTURED_OUTPUT_FAILED";
+  if (code === "BACKEND_PARSE_FAILED" || code === "SCHEMA_INVALID" || code === "INCOMPLETE_OUTPUT") return "STRUCTURED_OUTPUT_FAILED";
   if (error instanceof Error && /structured response|schema validation|schema repair|could not be parsed/i.test(error.message)) {
     return "STRUCTURED_OUTPUT_FAILED";
   }

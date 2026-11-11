@@ -1,5 +1,74 @@
+import type { LiteralUserQuantity, ModelAgentStructuredTurn } from "@vdt-studio/vdt-agent-runtime";
+import type { localModelWorkingContext } from "./local-model-context";
+
 type JsonObject = Record<string, unknown>;
 const object = (value: unknown): value is JsonObject => !!value && typeof value === "object" && !Array.isArray(value);
+
+type Question = Extract<ModelAgentStructuredTurn["action"], { type: "question" }>["questions"][number];
+
+const confirmation = /(?:\b(?:confirm|approve|approval|may I|can I proceed)\b|подтверж|подтверд|согласу|готовы ли вы|можно ли продолжить)/iu;
+const routineStep = /(?:план(?:а)? (?:разложения|декомпозиции)|завершить (?:расч[её]т|построение)|сформировать финальн|run\.request_finish|\b(?:decomposition plan|proceed with (?:the )?(?:build|calculation|plan)|finish the (?:calculation|tree)|generate the final report)\b)/iu;
+const contextConfirmation = /^(?:confirm_(?:inputs?|brief|details|parameters|period|currency)|(?:inputs?|period|currency)_confirmation|period_currency)$/i;
+const rootDesign = /^root(?:_kpi)?_(?:formula|status|baseline|value)(?:_confirm)?$/i;
+
+function numericTargets(question: Question): string[] {
+  if (question.fields?.length) return question.fields.every((field) => field.kind === "number")
+    ? question.fields.map((field) => field.id) : [];
+  return question.expectedAnswerType === "number" || question.answerKind === "number" ? [question.id] : [];
+}
+
+/** Omit redundant questions and prioritize entering known source values once.
+ * The latter orders actions without assigning a quote to a model-authored KPI. */
+export function constructionQuestionReview(
+  questions: Question[], brief: JsonObject | undefined,
+  observation: ReturnType<typeof localModelWorkingContext>, facts: readonly LiteralUserQuantity[] | undefined
+) {
+  const leafIds = new Set(observation.inputLeafIds);
+  const sourcedIds = new Set<string>();
+  const sourcedValues = new Set<number>();
+  for (const [id, , , , , baseline, value, status] of observation.nodes) {
+    const amount = baseline ?? value;
+    if (typeof id !== "string" || !leafIds.has(id) || typeof amount !== "number" || !Number.isFinite(amount)
+      || status !== "user_provided_value") continue;
+    sourcedIds.add(id);
+    sourcedValues.add(amount);
+  }
+  const factValues = new Set(facts?.map((fact) => fact.value));
+  const userScope = [brief?.prompt, brief?.businessContext, brief?.rootKpi, brief?.unit, brief?.timePeriod]
+    .filter((field): field is string => typeof field === "string").join(" ").toLowerCase();
+  const scopeWords = new Set(userScope.match(/[\p{L}\p{N}]+/gu));
+  const remaining = questions.filter((question) => {
+    const text = question.question;
+    const id = question.id.toLowerCase().replace(/-/g, "_");
+    if (confirmation.test(text) && (routineStep.test(text) || /^confirm_(?:decomposition_)?plan$/.test(id))) return false;
+    if (rootDesign.test(id) && /(?:формул|базов|calculated|formula|baseline)/iu.test(text)) return false;
+    const targets = numericTargets(question);
+    if (targets.length && targets.every((target) => sourcedIds.has(target))) return false;
+    if (facts && !question.fields?.length && !targets.length && confirmation.test(text) && contextConfirmation.test(id)) {
+      const amounts = [...text.matchAll(/[-+]?\d+(?:[.,]\d+)?/g)].map(([value]) => Number(value.replace(",", ".")));
+      const currencies = text.match(/\b(?:USD|EUR|GBP|KZT|RUB|CAD|AUD|JPY|CNY|CHF)\b/gi) ?? [];
+      const statedScope = [...text.matchAll(/(?:валюта|currency|период|period)\s*(?:[:=]|\()\s*([\p{L}\p{N}]+)/giu)];
+      const hasKnownScope = currencies.length > 0 || [brief?.rootKpi, brief?.timePeriod].some((value) =>
+        typeof value === "string" && text.toLowerCase().includes(value.toLowerCase()));
+      if (hasKnownScope && currencies.every((value) => scopeWords.has(value.toLowerCase()))
+        && statedScope.every(([, value]) => scopeWords.has(value!.toLowerCase()))
+        && amounts.every((value) => factValues.has(value) || scopeWords.has(String(value)))) return false;
+    }
+    return true;
+  });
+  const enterKnownFacts = !observation.truncated && observation.unfilledInputCount > 0 && remaining.length > 0
+    && remaining.every((question) => numericTargets(question).length > 0)
+    && !!facts?.some(({ value }) => !sourcedValues.has(value));
+  return { remaining, enterKnownFacts };
+}
+
+export const CONSTRUCTION_QUESTION_CHECK = [
+  "Decide which proposed questions need a genuine user answer before the requested business calculation can proceed.",
+  "Keep a question only if the request and current evidence leave an essential external fact or business choice unresolved.",
+  "A value, unit, period, exclusion or order of operations already stated by the user is settled. An alternative that contradicts it needs no confirmation.",
+  "The agent authors the factor structure and formulas, resolves tool and graph errors, records supplied inputs, and reports the verified result. These implementation steps and routine approvals are not user questions.",
+  "Return required as the list of 1-based indexes of the questions that need a user answer. Return an empty list if the agent can proceed."
+].join(" ");
 
 /** One model review before publishing a construction question. This supplies
  * no answer or business decision, and cannot execute the proposed action. */

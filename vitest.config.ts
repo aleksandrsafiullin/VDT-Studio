@@ -7,6 +7,9 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Process/SQLite fixtures need predictable startup on the alpha QA Mac.
+    // Bound concurrent suites instead of loosening cleanup or deadline checks.
+    maxWorkers: 2,
     // Suites that spawn processes or build temp fixtures exceed the 5s default
     // under parallel load while passing in isolation.
     testTimeout: 15_000,

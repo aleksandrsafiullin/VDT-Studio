@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
+import { DERIVED_ROOT_REQUIREMENT, hasDerivedRoot } from "./model-acceptance-contract";
 import {
   calculateGraph,
-  extractFormulaReferences,
   validateGraph,
   inspectDecompositionHierarchy,
   validateIncomingKpiLayer,
@@ -24,6 +24,8 @@ export interface DeterministicFinishVerificationInput {
   /** Server-derived for a run that started from an empty placeholder KPI. */
   requireDerivedRoot?: boolean | undefined;
   requireHierarchy?: boolean | undefined;
+  enforcePercentageScale?: boolean | undefined;
+  unboundSourceFacts?: readonly { quote: string }[] | undefined;
   pendingQuestion: boolean;
   pendingApproval: boolean;
   pendingProposal: boolean;
@@ -70,6 +72,10 @@ export function verifyDeterministicRunFinish(
     blockers.push({ code: "OPERATION_LEDGER_NOT_SETTLED", detail: "An engine or tool operation is unfinished or ambiguous." });
   }
   if (!input.project) blockers.push({ code: "PROJECT_MISSING", detail: "No draft VDT exists." });
+  if (input.unboundSourceFacts?.length) blockers.push({
+    code: "SOURCE_PROVENANCE_INCOMPLETE",
+    detail: `Use each quoted amount as an input leaf in the dependency tree. ${input.unboundSourceFacts.map(({ quote }) => quote).join(". ")}`
+  });
   if (input.mode === "deepen_node" && input.modeCompletion?.immediateChildCreated !== true) {
     blockers.push({ code: "MODE_COMPLETION_MISSING", detail: "The selected KPI has no newly created immediate child layer." });
   }
@@ -92,7 +98,7 @@ export function verifyDeterministicRunFinish(
     catch (error) { return rejected([{ code: "TARGET_FORMULA_REQUIRED", detail: error instanceof Error ? error.message : "Check the selected incoming formula." }]); }
   }
 
-  const validation = validateGraph(project);
+  const validation = validateGraph(project, undefined, { enforcePercentageScale: input.enforcePercentageScale === true });
   const validationSummary = summarizeValidation(validation);
   if (!validation.valid) {
     return rejected([{
@@ -101,14 +107,8 @@ export function verifyDeterministicRunFinish(
     }], { validation: validationSummary });
   }
 
-  if (input.requireDerivedRoot) {
-    const root = project.graph.nodes.find((node) => node.id === project.rootNodeId);
-    if (project.graph.nodes.length < 2 || !root?.formula?.trim() || extractFormulaReferences(root.formula).length === 0) {
-      return rejected([{
-        code: "ROOT_NOT_DERIVED",
-        detail: "A new tree must contain real driver nodes and a root formula referencing them. A standalone number or constant formula is not a completed VDT. Build the requested dependencies before requesting finish."
-      }]);
-    }
+  if (input.requireDerivedRoot && !hasDerivedRoot(project)) {
+    return rejected([{ code: "ROOT_NOT_DERIVED", detail: DERIVED_ROOT_REQUIREMENT }]);
   }
 
   const calculation = calculateGraph(project);

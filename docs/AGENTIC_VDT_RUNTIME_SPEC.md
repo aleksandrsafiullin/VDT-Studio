@@ -1,5 +1,17 @@
 # Agentic VDT Runtime Implementation Spec
 
+## Response requirements amendment (2026-11-11)
+
+Existing agents receive complete argument schemas from their actual validators.
+For a new tree, structured OpenAI-compatible decisions carry native arguments
+for closed builder tools. The finish schema uses the current plan and graph
+validation. The host independently checks that the plan matches the graph and
+that formulas explicitly convert percent inputs when used as fractions.
+Smart v15 includes host-derived structural/formula/unit requirements before
+inference. Host-owned authority, freshness, cleanup and Apply checks remain
+independent. This grants no broader runtime or provider qualification. See
+[the repair contract](implementation/AI_RESPONSE_CONTRACT_2026-11-11.md).
+
 ## Suggested KPI selected-guidance amendment (2026-11-03)
 
 The bounded Suggested KPI task now reads the same project/VDT Skill selection as
@@ -139,6 +151,12 @@ Full-tree public Supervisor runs (`generate_vdt`, `continue_project`) require th
 
 The actor authors all business structure, equations and numerical choices. `vdt.reparent_branch` atomically changes a parent link while preserving the whole descendant branch and all node/source metadata; it rejects cycles, root moves and ambiguous source parents. `vdt.inspect_hierarchy` provides bounded actionable errors. Full-tree finish checks every current/planned node, primary edge and active formula reference, including declared cross-branch reuse. Missing or mismatching structure returns `HIERARCHY_INCOMPLETE` even if arithmetic is finite. The selected-node `deepen_node` contract and read-only `review_project` mode are not expanded into whole-tree planning. No host-generated domain topology or automatic formula repair is introduced.
 
+In direct OpenAI generation from a blank draft, a calculable formula graph can
+provide a candidate for reconciling the plan and visual parents. The candidate
+preserves the model's formulas, source inputs and valid parent links. It is
+validated as a complete graph before the model can choose the exact sequence
+of admitted mutation calls. The Gateway owns execution and approvals.
+
 Context containers are informational when declared with context children and left without a number/formula. Numerical calculation and formula backlogs skip those containers, while missing numerical reference leaves still block finish. The model receives their IDs explicitly; web cards/inspector show `Reference group`. Multiple direct root context leaves are a construction/finish error, not an import-shape error: legacy snapshots remain readable, and new agents must keep topical reference groups instead of flattening their columns at the root.
 
 Protected hierarchy acceptance uses effective references after literal-constant folding; references eliminated by multiplication by a literal/folded zero are rejected. Agents must classify independent derived checks as context instead of adding dummy formula terms. This does not replace dimensional or business-model review.
@@ -193,12 +211,35 @@ universal repeated `AgentDecision` loop or the older minimum event shape.
   `InProductModelAgentEngine` own that loop through structured HTTP/local
   turns. The micro-CLI decision loop is compatibility-only and never a silent
   fallback.
+- An OpenAI-compatible decision with the current tool catalog can use a
+  strict output union keyed by tool name. Closed builder contracts carry
+  native argument objects. Open argument records retain their encoded wire
+  representation. Optional-field null placeholders are decoded before
+  ordinary tool validation. The model chooses each source value and quote
+  from a complete original brief. The first-fill mutation for a new agent
+  input retains the explicit per-item or percent unit from its selected quote
+  when the unit is absent or provisional. New typed runs record the plan before
+  adding factors and use the existing layer and planned-parent checks.
+- The compatibility loop presents an empty builder as no draft; draft-only
+  tools are withheld and reject premature calls. Seed tools that create their
+  own draft retain that ability. The model sees the actual root ID and whether
+  it needs drivers or a referenced formula. Resolved graph errors stay in the
+  audit history but do not drive later decisions. A new tree cannot finish with
+  a standalone number or constant root formula. Manual edits, existing
+  populated models, selected-layer work and Supervisor approval remain under
+  their original contracts.
 - `VdtRunSupervisor` owns lifecycle, durable checkpoints, revisions, questions,
   approvals, cancellation, recovery and finish. No SQLite lease spans an
   unbounded model/CLI wait.
 - `VdtToolGateway` receives only `{ externalCallId, toolName, args }`; it derives
   authority from the server binding, reserves an idempotent receipt and applies
   the exact catalog/phase/policy/preview/validation/calculation boundary.
+- An edit targets a stable node or edge ID. `vdt.update_node` carries that
+  node's patch, `vdt.set_formula` carries one node's expression, and additions
+  name their parent. The host creates and previews the change set against the
+  fenced revision, then applies approved changes. A structural edit can also
+  revise the factor plan stored on the root. The model reads a bounded current
+  observation and can request a node or subtree for details.
 - An `ActionBatch` contains one to six ordered calls, executes sequentially and
   stops on the first error, pause or approval. A question, approval or finish
   request is the only call in its batch.

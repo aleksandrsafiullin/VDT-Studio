@@ -9,6 +9,7 @@ import { compileKpiSuggestion } from "./compile";
 import { createSmartKpiMeasuredFixture, SMART_KPI_FIXTURE_TIME as now } from "./fixtures";
 import { buildKpiSuggestionContext, fingerprintKpiProject, kpiContentHash, kpiSuggestionCacheKey, smartMutationBlockReason } from "./identity";
 import { kpiSuggestionEnvelopeBytes } from "./model-output";
+import { KPI_SUGGESTION_LIMITS } from "./types";
 import { buildRecipeKpiSuggestions, KPI_SUGGESTION_RECIPES as catalog, validateKpiSuggestionForContext } from "./recipes";
 import type { KpiSuggestionSet, KpiSuggestionContext, KpiRecipeBinding, KpiSuggestionExecutionIdentity, KpiSuggestionSelection } from "./types";
 import { kpiFormulaAvailability, smartUnitDimension, verifyKpiRecipeGroup } from "./units";
@@ -62,7 +63,7 @@ describe("Smart context and preparation identity", () => {
     expect(context.children.length).toBeGreaterThan(0);
     expect(context.children.length).toBeLessThanOrEqual(12);
     expect(context.children.length + context.omissions.directChildren).toBe(220);
-    expect(kpiSuggestionEnvelopeBytes(context)).toBeLessThanOrEqual(24 * 1024);
+    expect(kpiSuggestionEnvelopeBytes(context)).toBeLessThanOrEqual(KPI_SUGGESTION_LIMITS.inputBytes);
     expect(JSON.stringify(context).length).toBeLessThan(24 * 1024);
     project.graph.edges.push({ id: "cycle_edge", sourceNodeId: "node_219", targetNodeId: project.rootNodeId, relation: "contextual_influence", aiGenerated: false });
     expect((await contextFor(project)).omissions.cyclic).toBe(true);

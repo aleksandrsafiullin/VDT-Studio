@@ -121,10 +121,14 @@ async function geminiDocumentedReasoning(metadata: Record<string, unknown>, mode
 /** A model card is capability data only. No model IDs or instructions enter the catalog. */
 export function parseOpenAiReasoningCard(markdown: string, model: string): ModelReasoningCapabilities | undefined {
   if (!markdown.split("\n").some((line) => line.match(/^(?:- )?Model ID:\s*`?([^`\s]+)`?\s*$/)?.[1] === model)) return undefined;
-  const line = markdown.split("\n").find((line) => /^`reasoning\.effort` supports /.test(line));
+  return parseOpenAiReasoningLevels(markdown);
+}
+
+function parseOpenAiReasoningLevels(markdown: string): ModelReasoningCapabilities | undefined {
+  const line = markdown.split("\n").find((line) => /^(?:- )?`?reasoning\.effort`? supports\b/i.test(line));
   if (!line || line.length > 600) return undefined;
   const allowed = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
-  const values = [...line.matchAll(/`([a-z]+)`/g)].map((match) => match[1]!).filter((value) => allowed.includes(value));
+  const values = line.replace(/^(?:- )?`?reasoning\.effort`? supports\s*:?\s*/i, "").match(/\b[a-z]+\b/g)?.filter((value) => allowed.includes(value)) ?? [];
   return values.length ? { parameter: "reasoning_effort", values: [...new Set(values)], source: "documentation" } : undefined;
 }
 
@@ -149,7 +153,16 @@ async function openAiCard(model: string, fetcher: typeof fetch): Promise<ModelRe
     if (!response.ok) { await response.body?.cancel(); return undefined; }
     const markdown = await readBoundedText(response, 128 * 1024, "Model card", signal);
     if (openAiCardSupportsTextChat(markdown) === false) throw new ProviderConnectionError("This model does not support text chat through the configured API. Choose a chat model.");
-    const value = parseOpenAiReasoningCard(markdown, model);
+    let value = parseOpenAiReasoningCard(markdown, model);
+    // Legacy GPT-5 cards omit their effort row. These exact released IDs share
+    // the documented original-family levels (verified 2026-11-11):
+    // https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5
+    // Keep this compatibility list closed; never infer future model families.
+    const original = model.replace(/-2025-08-07$/, "");
+    if (!value && ["gpt-5", "gpt-5-mini", "gpt-5-nano"].includes(original)
+      && markdown.split("\n").some(line => line.match(/^(?:- )?Model ID:\s*`?([^`\s]+)`?\s*$/)?.[1] === model)) {
+      value = { parameter: "reasoning_effort", values: ["minimal", "low", "medium", "high"], source: "documentation" };
+    }
     if (docsCache.size >= 128) docsCache.delete(docsCache.keys().next().value!);
     docsCache.set(model, { until: Date.now() + (value ? 3_600_000 : 60_000), value });
     return value;

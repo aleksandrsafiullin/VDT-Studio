@@ -1,5 +1,5 @@
 import type { AiCompletionParams, AiProvider, AiProviderFetch } from "../types";
-import { LocalModelConversationContext, asJsonSchema, parseStructuredOutput, requestProviderNdjson } from "./provider-utils";
+import { LocalModelConversationContext, asJsonSchema, parseStructuredOutput, requestProviderNdjson, withZodResponseContract } from "./provider-utils";
 
 /** Ollama's native endpoint exposes the context budget. Its OpenAI endpoint
  * otherwise silently truncates a full VDT brief/catalog at the 4K default. */
@@ -50,7 +50,7 @@ export class OllamaProvider implements AiProvider {
             num_predict: Math.min(params.maxTokens ?? 4_096, 32_768),
             ...(params.temperature === undefined ? {} : { temperature: params.temperature })
           },
-          messages: this.conversation.messages(params.systemPrompt, params.userPrompt)
+          messages: this.conversation.messages(withZodResponseContract(params.systemPrompt, params.schema, params.outputJsonSchema), params.userPrompt)
         })
       }
     });

@@ -24,13 +24,21 @@ export const agentDecisionV1Schema = z.discriminatedUnion("type", [
   })
 ]);
 
+const agentBatchDecisionSchema = z.object({
+  type: z.literal("call_tools"),
+  calls: z.array(agentToolCallSchema).min(2).max(6),
+  statusMessage: z.string().min(1).max(500)
+});
+
 export const agentDecisionSchema = z.discriminatedUnion("type", [
+  ...agentDecisionV1Schema.options, agentBatchDecisionSchema
+]);
+
+/** A single call in the plural envelope has exactly one unambiguous meaning.
+ * Admit it at the wire boundary, then execute it as a canonical single call. */
+export const agentDecisionWireSchema = z.discriminatedUnion("type", [
   ...agentDecisionV1Schema.options,
-  z.object({
-    type: z.literal("call_tools"),
-    calls: z.array(agentToolCallSchema).min(2).max(6),
-    statusMessage: z.string().min(1).max(500)
-  })
+  agentBatchDecisionSchema.extend({ calls: z.array(agentToolCallSchema).min(1).max(6) })
 ]);
 
 export type AgentDecisionV1 = z.infer<typeof agentDecisionV1Schema>;
@@ -66,5 +74,9 @@ export function parseAndGuardAgentDecision(output: unknown): AgentDecision {
       throw new AgentDecisionForbiddenFieldsError(forbidden);
     }
   }
-  return agentDecisionSchema.parse(output);
+  const decision = agentDecisionWireSchema.parse(output);
+  if (decision.type === "call_tools" && decision.calls.length === 1) {
+    return { type: "call_tool", ...decision.calls[0]!, statusMessage: decision.statusMessage };
+  }
+  return decision;
 }

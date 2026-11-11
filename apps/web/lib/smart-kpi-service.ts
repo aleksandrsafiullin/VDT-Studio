@@ -1,5 +1,5 @@
 import { getHarnessDefinition } from "@vdt-studio/model-bridge/node";
-import { AnthropicProvider, AzureOpenAiProvider, GeminiProvider, OpenAiCompatibleProvider, runSuggestIncomingKpis, isModelReasoningValue, type ModelReasoningValue, type AiProvider } from "@vdt-studio/ai-harness";
+import { AnthropicProvider, AzureOpenAiProvider, GeminiProvider, OpenAiCompatibleProvider, ProviderHttpError, runSuggestIncomingKpis, isModelReasoningValue, type ModelReasoningValue, type AiProvider } from "@vdt-studio/ai-harness";
 import { providerModelCapabilities, validatedReasoningConfig, type ProviderConnection } from "../app/api/agent/runs/provider-model-capabilities";
 import { KPI_SUGGESTION_LIMITS, validateKpiSuggestionTaskInput, smartAssert, smartRecord, smartString, type KpiSuggestionModelOutput } from "@vdt-studio/vdt-core";
 import { assertCurrentSmartKpiSkill } from "./smart-kpi-skill-host";
@@ -83,7 +83,8 @@ export async function selectedProvider(request: SmartKpiServiceRequest, signal: 
     signal.throwIfAborted();
     const target = await resolveProviderTarget(String(raw), provider);
     signal.throwIfAborted();
-    return fetchPinnedProvider(target, { method: init?.method ?? "GET", headers: new Headers(init?.headers), body, signal });
+    const requestSignal = init?.signal ? AbortSignal.any([signal, init.signal]) : signal;
+    return fetchPinnedProvider(target, { method: init?.method ?? "GET", headers: new Headers(init?.headers), body, signal: requestSignal });
   };
   const timeoutMs = request.timeoutMs ?? 15_000;
   const fetcher = pinnedFetch(request.providerId === "gemini" ? "google" : request.providerId === "anthropic" ? "anthropic" : request.providerId === "azure_openai" ? "azure" : "openai");
@@ -145,6 +146,11 @@ async function prepareResponse(raw: SmartKpiServiceRequest, caller: AbortSignal,
     if (timedOut) throw Object.assign(new Error("Smart suggestion preparation timed out."), { code: "TIMEOUT" });
     if (caller.aborted) throw Object.assign(new Error("Smart suggestion preparation was cancelled."), { code: "CANCELLED", name: "AbortError" });
     if ((error as { code?: string })?.code === "unsupported_reasoning") throw Object.assign(new Error("The provider rejected the selected reasoning setting."), { code: "REASONING_UNSUPPORTED" });
+    if (error instanceof ProviderHttpError) {
+      const code = error.code === "insufficient_quota" ? "PROVIDER_QUOTA" : error.code === "model_not_found" ? "PROVIDER_MODEL_UNAVAILABLE"
+        : error.status === 401 || error.status === 403 ? "PROVIDER_AUTH" : error.status === 429 ? "PROVIDER_RATE_LIMIT" : "PROVIDER_REQUEST_REJECTED";
+      throw Object.assign(new Error("The selected provider rejected Smart preparation."), { code });
+    }
     throw error;
   } finally { clearTimeout(timer); caller.removeEventListener("abort", abort); }
 }
