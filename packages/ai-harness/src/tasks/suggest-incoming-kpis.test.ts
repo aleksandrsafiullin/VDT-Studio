@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { buildKpiSuggestionContext, buildKpiSuggestionTaskInput, KPI_SUGGESTION_MODEL_JSON_SCHEMA, materializeKpiSuggestion, validateKpiSuggestionModelOutput } from "@vdt-studio/vdt-core";
+import { buildKpiSuggestionContext, buildKpiSuggestionTaskInput, KPI_SUGGESTION_MODEL_JSON_SCHEMA, materializeKpiSuggestion, validateKpiSuggestionModelOutput,
+  type KpiSuggestionModelOutput, type VdtNode } from "@vdt-studio/vdt-core";
 import { createSmartKpiMeasuredFixture } from "@vdt-studio/vdt-core";
 import { runSuggestIncomingKpis } from "./suggest-incoming-kpis";
 import { OpenAiCompatibleProvider } from "../providers/openai-compatible-provider";
@@ -51,6 +52,64 @@ describe("one-completion Smart task", () => {
     completeStructured.mockResolvedValueOnce({ ...empty, groups: [{ values: [100] }] });
     await expect(runSuggestIncomingKpis(provider, input)).rejects.toThrow(); expect(completeStructured).toHaveBeenCalledTimes(2);
     await expect(runSuggestIncomingKpis(provider, { ...input, recipes: [] })).rejects.toThrow(); expect(completeStructured).toHaveBeenCalledTimes(2);
+  });
+  it("sends a target-first formula definition task for a saved refund input without reoffering the ancestor recipe", async () => {
+    const project = createSmartKpiMeasuredFixture();
+    const createNode = (id: string, name: string, unit: string, fields: Partial<VdtNode>): VdtNode => ({
+      id, name, unit, type: "input", status: "accepted", aiGenerated: true, createdAt: project.createdAt, updatedAt: project.updatedAt, ...fields
+    });
+    project.rootNodeId = "root_kpi";
+    project.graph = {
+      nodes: [
+        createNode("root_kpi", "Чистая выручка", "USD", { type: "root_kpi", formula: "net_revenue" }),
+        createNode("net_revenue", "Net revenue", "USD", {
+          type: "calculated", formula: "qty_sold * price_per_item * (1 - discount_rate/100) - returns_amount"
+        }),
+        createNode("qty_sold", "Qty sold", "items", { baselineValue: 120 }),
+        createNode("price_per_item", "Price per item", "USD/item", { baselineValue: 50 }),
+        createNode("discount_rate", "Discount rate", "%", { baselineValue: 10 }),
+        createNode("returns_amount", "Returns amount", "USD", { baselineValue: 500, description: "Returns/allowances after discounts" })
+      ],
+      edges: ["net_revenue", "qty_sold", "price_per_item", "discount_rate", "returns_amount"].map(targetNodeId => ({
+        id: `edge_${targetNodeId}`, sourceNodeId: targetNodeId === "net_revenue" ? "root_kpi" : "net_revenue", targetNodeId,
+        relation: "formula_dependency", aiGenerated: true
+      }))
+    };
+    const context = await buildKpiSuggestionContext(project, {
+      workspaceId: "qa", vdtId: "saved_vdt", targetNodeId: "returns_amount", period: { key: "explicit:monthly", grain: "month" }
+    });
+    const task = buildKpiSuggestionTaskInput(context);
+    const ready: KpiSuggestionModelOutput = { status: "ready", rationale: "Use amounts from the same return and allowance records.", limitations: [], groups: [{
+      id: "return_adjustments", title: "Return adjustments", selectionMode: "all", recipeId: null,
+      formula: "adjustment_count * mean_adjustment", requiredKeys: ["adjustment_count", "mean_adjustment"], limitations: [],
+      children: [
+        { key: "adjustment_count", conceptKey: "adjustment_count", name: "Return and allowance adjustment count", unit: "adjustment", description: null, existingNodeId: null },
+        { key: "mean_adjustment", conceptKey: "mean_adjustment", name: "Mean adjustment after discount", unit: "USD/adjustment", description: null, existingNodeId: null }
+      ]
+    }] };
+    const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => json(chat({ message: { content: JSON.stringify(ready) } })));
+    const provider = new OpenAiCompatibleProvider({ baseUrl: "https://selected.example/v1", apiKey: "synthetic", model: "gpt-5-nano", reasoningEffort: "low", fetch });
+    const result = await runSuggestIncomingKpis(provider, task);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const request = JSON.parse(String(fetch.mock.calls[0]![1]?.body));
+    expect(request).toMatchObject({ model: "gpt-5-nano", reasoning_effort: "low", response_format: { type: "json_schema" } });
+    expect(request.messages[0].content).toContain("even if every new factor's value is unknown");
+    expect(request.messages[0].content).toContain("Use responseContract.excludedAncestorRecipes only to avoid");
+    const prompt = JSON.parse(request.messages[1].content);
+    expect(prompt).not.toHaveProperty("recipes");
+    expect(Object.keys(prompt.context).slice(0, 2)).toEqual(["targetNodeId", "target"]);
+    expect(prompt.context.target).toMatchObject({ id: "returns_amount", valueKnown: true });
+    expect(prompt.context.target).not.toHaveProperty("baselineValue");
+    expect(prompt.responseContract).toMatchObject({
+      recipes: [],
+      excludedAncestorRecipes: [{ recipeId: "revenue.quantity_price_net", targetNodeId: "returns_amount", repeatedTargetLabel: "Refunds", unit: "USD" }],
+      definition: { ready: expect.stringContaining("measurements unknown"), custom: expect.stringContaining("recipeId:null") }
+    });
+    expect(JSON.stringify(request.response_format)).not.toContain("revenue.quantity_price_net");
+    expect(task.recipes.map(recipe => recipe.id)).toContain("revenue.quantity_price_net");
+    const proposal = materializeKpiSuggestion(result, context, { proposalId: "host", requestId: "request", now: "2026-11-11T00:00:00.000Z",
+      execution: { mode: "api", backendId: "openai_compatible", modelId: "gpt-5-nano", bindingVersion: "qa", credentialEpoch: "opaque" } });
+    expect(proposal?.groups[0]?.formula).toBe("adjustment_count * mean_adjustment");
   });
   it("never accepts model-owned values, provenance, execution or nested children", () => {
     for (const forbidden of ["values", "origin", "execution", "children", "proposalId"]) expect(() => validateKpiSuggestionModelOutput({ ...empty, [forbidden]: 1 })).toThrow();

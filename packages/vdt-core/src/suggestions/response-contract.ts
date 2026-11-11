@@ -22,6 +22,11 @@ export function buildKpiSuggestionResponseContract(context: KpiSuggestionContext
   });
   return {
     version: "smart-kpi-response-contract.v1",
+    definition: {
+      ready: "A defensible formula may have all factor measurements unknown. Return the definitions and units. The editor collects the values.",
+      custom: "When no eligible recipe fits, use recipeId:null for a defensible target-specific formula. A scoped total may use the count of matching records times the mean amount per matching record.",
+      empty: "Use empty with a specific reason when the target definition, unit or a defensible breakdown cannot be established, or the complete layer exceeds the output bounds."
+    },
     limits: { outputBytes: KPI_SUGGESTION_LIMITS.outputBytes, outputTokens: KPI_SUGGESTION_LIMITS.outputTokens,
       alternatives: KPI_SUGGESTION_LIMITS.groups, minFactors: 2, maxFactors: KPI_SUGGESTION_LIMITS.children,
       formulaCharacters: 500, astNodes: INCOMING_KPI_LIMITS.astNodes, astDepth: INCOMING_KPI_LIMITS.astDepth,
@@ -62,12 +67,13 @@ export function buildKpiSuggestionResponseContract(context: KpiSuggestionContext
       ]
     },
     recipes: compatibleRecipes.flatMap(({ recipe, units, ancestorOperand }) => ancestorOperand ? [] : [{
-      id: recipe.id, formula: recipe.formula, children: recipe.children.map(child => ({ key: child.key, conceptKey: child.conceptKey, unit: units[child.key]! }))
+      id: recipe.id, title: recipe.title, targetRole: recipe.targetRole, formula: recipe.formula, limitations: recipe.limitations,
+      children: recipe.children.map(child => ({ key: child.key, conceptKey: child.conceptKey, unit: units[child.key]! }))
     }]),
-    ancestorRecipeOperands: compatibleRecipes.flatMap(({ recipe, ancestorOperand }) => ancestorOperand ? [{
-      recipeId: recipe.id, targetNodeId: context.targetNodeId, operandName: ancestorOperand.name, unit: context.target.unit
+    excludedAncestorRecipes: compatibleRecipes.flatMap(({ recipe, ancestorOperand }) => ancestorOperand ? [{
+      recipeId: recipe.id, targetNodeId: context.targetNodeId, repeatedTargetLabel: ancestorOperand.name, unit: context.target.unit
     }] : []),
-    recipeRule: "Use only a listed recipe whose business definition applies to context.target and matches ALL listed keys, concepts, formula and units. If ancestorRecipeOperands identifies the target as an ancestor recipe's input, deepen that operand. Do not propose a new factor with the same operand meaning and unit under another label or key. For a genuine target-specific custom formula use recipeId:null."
+    recipeRule: "Use only a recipe in recipes whose business definition applies to context.target and matches ALL listed keys, concepts, formula and units. Use excludedAncestorRecipes only to avoid ancestor recipes and repeated target aliases with the same unit. Choose factors independently from the target's own definition."
   };
 }
 

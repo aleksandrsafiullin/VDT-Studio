@@ -1,4 +1,4 @@
-import { assertKpiSuggestionSkillIntegrity, KPI_SUGGESTION_LIMITS, KPI_SUGGESTION_MODEL_JSON_SCHEMA, SMART_KPI_INSTRUCTION, kpiSuggestionApiResponseSchema,
+import { assertKpiSuggestionSkillIntegrity, KPI_SUGGESTION_LIMITS, KPI_SUGGESTION_MODEL_JSON_SCHEMA, SMART_KPI_INSTRUCTION, kpiSuggestionApiResponseSchema, kpiSuggestionPromptInput,
   validateKpiSuggestionModelOutput, validateKpiSuggestionTaskInput, type KpiSuggestionModelOutput, type KpiSuggestionTaskInput } from "@vdt-studio/vdt-core";
 import type { AiProvider } from "../types";
 
@@ -11,7 +11,7 @@ export async function runSuggestIncomingKpis(provider: AiProvider, input: KpiSug
     ? kpiSuggestionApiResponseSchema(bounded.responseContract)
     : KPI_SUGGESTION_MODEL_JSON_SCHEMA;
   const result = await provider.completeStructured({ taskType: "suggest_incoming_kpis", input: bounded, schema,
-    outputJsonSchema: schema, systemPrompt: SMART_KPI_INSTRUCTION, userPrompt: JSON.stringify(bounded),
+    outputJsonSchema: schema, systemPrompt: SMART_KPI_INSTRUCTION, userPrompt: JSON.stringify(kpiSuggestionPromptInput(bounded)),
     maxTokens: Math.min(options.maxTokens ?? KPI_SUGGESTION_LIMITS.outputTokens, KPI_SUGGESTION_LIMITS.outputTokens),
     ...(options.signal ? { signal: options.signal } : {}) });
   options.signal?.throwIfAborted();

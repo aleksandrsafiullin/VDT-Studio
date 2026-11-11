@@ -79,6 +79,13 @@ an operand and the saved ancestor formula uses the target in the corresponding
 operator and unit slot. The detected operand is part of the response contract.
 Materialization, cache admission and new Add also reject new factors that
 repeat the evidenced operand label or a recognized alias at the same unit.
+Preparation v18 reports this evidence in `excludedAncestorRecipes` and sends
+eligible recipes only in the model-facing response contract. The prompt
+prioritizes a defensible definition of the selected target. Unknown factor
+values remain editable. An ambiguous target may still return empty.
+A supplied response contract must match the receiving Smart preparation
+revision. Legacy v1 task inputs may omit the contract, so the receiver
+reconstructs it.
 Reopening a draft can reuse a successful preview for the same draft, project
 and Smart scope while the proposal is current. Add recompiles the draft and
 verifies the current execution lineage and storage revision.

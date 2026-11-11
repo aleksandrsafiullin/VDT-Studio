@@ -82,7 +82,11 @@ describe("Smart task-scoped local transport", () => {
   it("honors explicit Provider default by omitting Ollama think rather than forcing false", async () => {
     const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => json({ message: { content: JSON.stringify(empty) }, done: true, done_reason: "stop" }));
     await executeCompletion(createManifestRegistry().get("ollama")!, await request("ollama"), new AbortController().signal, { fetch });
-    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).not.toHaveProperty("think");
+    const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
+    expect(body).not.toHaveProperty("think");
+    const prompt = JSON.parse(body.messages[1].content);
+    expect(prompt).not.toHaveProperty("recipes");
+    expect(prompt.responseContract.recipes.map((recipe: { id: string }) => recipe.id)).toEqual(["production.time_rate"]);
   });
   it("rejects ignored Ollama Off and classifies a provider's explicit thinking refusal without retry", async () => {
     const input = { ...await request("ollama"), modelReasoning: false };

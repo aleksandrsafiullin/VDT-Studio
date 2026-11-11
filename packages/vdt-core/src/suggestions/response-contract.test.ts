@@ -90,7 +90,7 @@ describe("Smart model response requirements", () => {
       refund.name = label;
       const contract = buildKpiSuggestionTaskInput(await contextFor(refund.id)).responseContract;
       expect(contract.recipes).toEqual([]);
-      expect(contract.ancestorRecipeOperands).toEqual([{ recipeId, targetNodeId: refund.id, operandName: "Refunds", unit: "USD" }]);
+      expect(contract.excludedAncestorRecipes).toEqual([{ recipeId, targetNodeId: refund.id, repeatedTargetLabel: "Refunds", unit: "USD" }]);
     }
     expect(apiGroups(context).map(group => group.recipeId)).toEqual([{ type: "null" }]);
     const names = ["Units sold", "Average selling price", "Discount rate", "Refunds"];
@@ -132,7 +132,7 @@ describe("Smart model response requirements", () => {
     const affiliate = await contextFor(refund.id);
     const affiliateContract = buildKpiSuggestionTaskInput(affiliate).responseContract;
     expect(affiliateContract.recipes.map(candidate => candidate.id)).toContain(recipeId);
-    expect(affiliateContract.ancestorRecipeOperands).toEqual([]);
+    expect(affiliateContract.excludedAncestorRecipes).toEqual([]);
     const affiliateOutput: KpiSuggestionModelOutput = {
       status: "ready", rationale: refund.description, limitations: [], groups: [{
         ...replay,

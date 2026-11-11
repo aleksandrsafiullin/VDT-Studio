@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { assertKpiSuggestionSkillIntegrity, KPI_SUGGESTION_LIMITS as limits, KPI_SUGGESTION_MODEL_JSON_SCHEMA, SMART_KPI_INSTRUCTION,
+import { assertKpiSuggestionSkillIntegrity, KPI_SUGGESTION_LIMITS as limits, KPI_SUGGESTION_MODEL_JSON_SCHEMA, SMART_KPI_INSTRUCTION, kpiSuggestionPromptInput,
   validateKpiSuggestionModelOutput, validateKpiSuggestionTaskInput } from "@vdt-studio/vdt-core";
 import { selectSmartCodexExecutable, readCodexSmartDefaultModel, readCodexSmartReasoningValues, SMART_CODEX_DISABLED_FEATURES, SMART_CODEX_CODE_MODE_CONFIG } from "@vdt-studio/model-bridge/local-runtime";
 import { isCheckpointReasoningEffort, parseLocalModelReasoningCapabilities, type LocalModelReasoningCapabilities } from "@vdt-studio/model-bridge";
@@ -224,15 +224,16 @@ export async function executeSmartSuggestion(manifest: BackendManifest, request:
     const wrapped = request.input && typeof request.input === "object" && "data" in request.input ? (request.input as { data: unknown }).data : request.input;
     const input = validateKpiSuggestionTaskInput(wrapped);
     await assertKpiSuggestionSkillIntegrity(input.context);
-    const prompt = `${SMART_KPI_INSTRUCTION}\nResponse budget: at most ${limits.outputTokens} tokens.\n${JSON.stringify({ input, schema: KPI_SUGGESTION_MODEL_JSON_SCHEMA })}`;
+    const modelInput = kpiSuggestionPromptInput(input);
+    const prompt = `${SMART_KPI_INSTRUCTION}\nResponse budget: at most ${limits.outputTokens} tokens.\n${JSON.stringify({ input: modelInput, schema: KPI_SUGGESTION_MODEL_JSON_SCHEMA })}`;
     if (bytes(JSON.stringify(request)) > limits.inputBytes || bytes(prompt) > limits.inputBytes) throw fail("INPUT_TOO_LARGE", "Final Smart runner envelope exceeds its bounded input allowance.");
     if (manifest.kind !== "mock" && (!request.model || request.model.startsWith("-") || /[\x00-\x20]/.test(request.model))) throw fail("SUGGESTIONS_UNAVAILABLE", "An explicit host-selected model is required for Smart suggestions.");
     let output: unknown;
     if (manifest.kind === "mock") output = { status: "empty", rationale: "Deterministic empty suggestion fixture.", limitations: [], groups: [] };
-    else if (manifest.kind === "local_http" && manifest.localHttp) output = await localCompletion(manifest, request.model!, JSON.stringify(input), controller.signal, options, request.modelReasoning, Boolean(input.context.selectedSkill));
+    else if (manifest.kind === "local_http" && manifest.localHttp) output = await localCompletion(manifest, request.model!, JSON.stringify(modelInput), controller.signal, options, request.modelReasoning, Boolean(input.context.selectedSkill));
     else if (manifest.id === "codex_subscription") output = await cliCompletion(manifest, request.model!, prompt, controller.signal, options, request.modelReasoning);
-    else if (manifest.harness?.transport !== "native" && manifest.harness) output = (await executeHarnessCompletion(manifest, { ...request, input }, controller.signal, options)).output;
-    else if (manifest.kind === "subscription_cli") output = (await executeCli(manifest, { ...request, input }, controller.signal, options)).output;
+    else if (manifest.harness?.transport !== "native" && manifest.harness) output = (await executeHarnessCompletion(manifest, { ...request, input: modelInput }, controller.signal, options)).output;
+    else if (manifest.kind === "subscription_cli") output = (await executeCli(manifest, { ...request, input: modelInput }, controller.signal, options)).output;
     else throw fail("SUGGESTIONS_UNAVAILABLE", "This adapter has no reviewed one-call Smart suggestion policy.");
     controller.signal.throwIfAborted(); validateKpiSuggestionModelOutput(output);
     return { output, outputBytes: bytes(JSON.stringify(output)), schemaValid: true, repaired: false };

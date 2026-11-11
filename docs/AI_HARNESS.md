@@ -11,8 +11,11 @@ The first turn can clarify direction. Once the draft contains only its root,
 the next decisions establish the plan and initial factors. The initial plan
 uses the root's actual ID and the builder's identifier format. An intermediate
 without planned operands gets one model revision before any tool executes.
-Additions use the accepted plan's pending IDs and existing parent IDs. Formula
-targets during construction exclude nodes declared as inputs.
+The plan tool rejects a remaining operandless calculation. Native additions
+offer the earliest layer admitted by the same rule as the Gateway. The
+dedicated formula tool is available for a calculated target when its planned
+direct and shared operands exist. Node updates retain properties and source
+values during construction. Existing-tree edits retain their tool contract.
 
 For a calculable new draft with a hierarchy mismatch, including a run that
 started from the editor's saved empty root, the direct OpenAI
@@ -26,6 +29,15 @@ The model receives the parent-to-factor direction for visual edges and uses
 `sharedWith` for additional formula users. A pre-existing plan is outside
 the scope of this repair.
 
+A new draft can pass arithmetic and hierarchy validation while its root is
+an identity reference to a redundant same-unit child. When that child is an
+untouched addition from the current run with no independent source, scenario
+or other formula use, finish waits for correction. The model can select a
+checked promotion of the existing expression and factors to the root. The
+next hierarchy repair can remove the now-unused duplicate and record the
+aligned plan. Both stages use ordinary validated mutations. Distinct subtotals
+combined by the root retain their role.
+
 The direct OpenAI transport filters confirmations of known parameters, routine
 steps and numeric inputs already recorded from the user. It gives supplied quantities priority
 before a numeric question and permits one such continuation per graph revision.
@@ -34,6 +46,8 @@ user answer from the current request and source observations. A
 rejected question gives the model one tool action for continuing the work.
 Formula and validation feedback treats an unfinished derived KPI as work for
 the agent and asks the user only for an essential missing source input or choice.
+Formula and parent-link questions about the agent's own unfinished graph
+are filtered using the current plan and hierarchy diagnostics.
 For direct OpenAI construction from a new draft or a saved empty root, the
 work log shows actual tool progress. Questions and approvals keep their
 existing controls. The final action cites the verified receipt for the current
@@ -403,7 +417,7 @@ of a fixed unit conversion itself.
 
 ## Incoming formula and legacy deepen version
 
-Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v17` with the bounded one-call wire. Each alternative requires at least two substantive components; the six-component product limit is removed across schema/runtime/cache admission, preview and Add. A 64-row processing ceiling and formula/output bounds remain. The exact Context-selected Skill participates in context/cache identity and supplies applicable direct-factor definitions, including causes restricted to an existing target subset. Optional measurement detail does not replace a defined causal layer. Context-aware preparation admits reused sources only from active direct children and rejects exact normalized contextual-metric copies. The prompt prohibits inverse ancestor/sibling identities and new aliases that disguise them; an Input without a defensible lower-level split may return empty. Missing measurements alone do not require empty. Generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no model admission or inference. Historical wire/journal replay does not apply this new preparation policy retroactively.
+Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v18` with the bounded one-call wire. Each alternative requires at least two substantive components; the six-component product limit is removed across schema/runtime/cache admission, preview and Add. A 64-row processing ceiling and formula/output bounds remain. The exact Context-selected Skill participates in context/cache identity and supplies applicable direct-factor definitions, including causes restricted to an existing target subset. Optional measurement detail does not replace a defined causal layer. Context-aware preparation admits reused sources only from active direct children and rejects exact normalized contextual-metric copies. The prompt prohibits inverse ancestor/sibling identities and new aliases that disguise them; an Input without a defensible lower-level split may return empty. Missing measurements alone do not require empty. Generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no model admission or inference. Historical wire/journal replay does not apply this new preparation policy retroactively.
 
 The strict OpenAI schema constrains reused IDs to the eligible direct children
 from the current context and pairs recipe references with their exact units.
@@ -414,7 +428,13 @@ before a proposal can be applied.
 
 Preparation excludes a recipe when the target label identifies one of its
 operands and the saved ancestor formula uses the target in that operand's
-slot. The model receives the detected operand in `ancestorRecipeOperands`.
+slot. The model receives the recipe and repeated target alias in
+`excludedAncestorRecipes` to constrain reuse. Its recipe choices are the
+eligible definitions in the response contract. The host validates the full
+canonical catalog on the task wire before building that model input.
+The prompt accepts a defensible target formula with every measurement unknown.
+For a scoped total, one option is the count of matching records multiplied by
+their mean amount. The editor reconciles the input values before Add.
 Materialization, cache admission and new Add reject a new factor with the same
 operand label or recognized alias and unit. The structure check recognizes
 explicit percentage normalization in the saved ancestor.
