@@ -571,6 +571,140 @@ describe("ToolRegistry", () => {
     expect(builder.calculate().calculation?.rootValue).toBe(85);
   });
 
+  it("creates only a declared orphan link during new construction, including shared factors", async () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
+    const root = builder.getProject().rootNodeId;
+    builder.addDriver({ parentNodeId: root, nodeId: "gross", name: "Gross", type: "calculated", unit: "USD" });
+    builder.addDriver({ parentNodeId: "gross", nodeId: "sales", name: "Sales", unit: "USD", baselineValue: 120 });
+    builder.updateNode({ nodeId: root, patch: { decompositionPlan: { version: 1, goal: "Revenue", nodes: [
+      { nodeId: "gross", parentNodeId: root, kind: "calculated" },
+      { nodeId: "sales", parentNodeId: "gross", kind: "input", sharedWith: [root] }
+    ] } } });
+    const initial = builder.getProject();
+    const { registry, context } = sourceUnitContext(builder, "Model revenue.");
+    context.requirePlanOperands = true;
+    const link = { sourceNodeId: "gross", targetNodeId: "sales", relation: "formula_dependency" };
+    for (const input of [link, { ...link, sourceNodeId: root }]) {
+      expect(await registry.run("vdt.add_edge", input, context)).toMatchObject({ ok: false,
+        error: { code: "CONSTRUCTION_EDGE_NOT_ADMITTED", details: { orphanLinks: [] } } });
+    }
+    expect(builder.getProject()).toEqual(initial);
+
+    const orphan = structuredClone(initial);
+    orphan.graph.edges = orphan.graph.edges.filter(({ targetNodeId }) => targetNodeId !== "sales");
+    const orphanBuilder = new VdtBuilderSession({ project: orphan });
+    const repairing = sourceUnitContext(orphanBuilder, "Model revenue.");
+    repairing.context.requirePlanOperands = true;
+    for (const input of [{ ...link, sourceNodeId: root }, { ...link, relation: "contextual_influence" }]) {
+      expect(await repairing.registry.run("vdt.add_edge", input, repairing.context)).toMatchObject({ ok: false,
+        error: { code: "CONSTRUCTION_EDGE_NOT_ADMITTED", details: { orphanLinks: [{ nodeId: "sales", parentNodeId: "gross", kind: "input" }] } } });
+    }
+    expect(orphanBuilder.getRevision()).toBe(0);
+    expect(await repairing.registry.run("vdt.add_edge", link, repairing.context)).toMatchObject({ ok: true });
+    expect(orphanBuilder.getProject().graph.edges.filter(({ targetNodeId }) => targetNodeId === "sales"))
+      .toEqual([expect.objectContaining(link)]);
+    expect(await repairing.registry.run("vdt.set_formula", { nodeId: "gross", formula: "2 * sales" }, repairing.context)).toMatchObject({ ok: true });
+    expect(await repairing.registry.run("vdt.set_formula", { nodeId: root, formula: "gross - sales" }, repairing.context)).toMatchObject({ ok: true });
+    expect(orphanBuilder.calculate().calculation?.rootValue).toBe(120);
+  });
+
+  it("keeps quoted measurements unique and unit-consistent across construction writes", async () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
+    const parentNodeId = builder.getProject().rootNodeId;
+    const { registry, context } = sourceUnitContext(builder, "Sold 120 items. Returned 120 items. Discount was 10%.");
+    context.requirePlanOperands = true;
+    context.requireDecompositionPlan = true;
+    const drivers = [
+      { nodeId: "sold", parentNodeId, name: "Sold", unit: "items" },
+      { nodeId: "returned", parentNodeId, name: "Returned", unit: "count" },
+      { nodeId: "discount", parentNodeId, name: "Discount", unit: "" }
+    ];
+    expect(await registry.run("vdt.set_decomposition_plan", { plan: { version: 1, goal: "Use the quoted measurements", nodes: [
+      ...drivers.map(({ nodeId }) => ({ nodeId, parentNodeId, kind: "input" })),
+      { nodeId: "scope_note", parentNodeId: "sold", kind: "context", rationale: "Explain the measurement scope" }
+    ] } }, context)).toMatchObject({ ok: true });
+    expect(await registry.run("vdt.add_drivers_batch", { drivers }, context)).toMatchObject({ ok: true });
+    const source = (nodeId: string, value: number, note: string) => ({ nodeId, value, note, provenance: "user_provided_value" });
+    const sold = source("sold", 120, "Sold 120 items");
+    const returned = source("returned", 120, "Returned 120 items");
+    const fill = (...values: ReturnType<typeof source>[]) => registry.run("vdt.fill_input_values_batch", { values }, context);
+    const before = builder.getProject();
+    expect(await fill(sold, { ...returned, note: sold.note })).toMatchObject({ ok: false, error: {
+      code: "DUPLICATE_SOURCE_FACT", details: { nodeId: "returned", usedBy: "sold" }
+    } });
+    expect(builder.getProject()).toEqual(before);
+    expect(await fill(sold)).toMatchObject({ ok: true });
+    expect(await registry.run("vdt.add_driver", { parentNodeId: "sold", nodeId: "scope_note", name: "Scope note",
+      relation: "contextual_influence" }, context)).toMatchObject({ ok: true });
+    expect(await fill({ ...returned, note: "Sold 120 items." })).toMatchObject({ ok: false, error: { code: "DUPLICATE_SOURCE_FACT" } });
+    expect(await fill({ ...returned, note: "120 items" })).toMatchObject({ ok: false, error: { code: "AMBIGUOUS_SOURCE_QUOTE" } });
+    expect(await registry.run("vdt.update_node", { nodeId: "discount", patch: {
+      baselineValue: 120, valueStatus: "user_provided_value", valueSource: { note: sold.note }
+    } }, context)).toMatchObject({ ok: false, error: { code: "DUPLICATE_SOURCE_FACT" } });
+    expect(await fill(returned)).toMatchObject({ ok: true });
+    const discount = source("discount", 10, "Discount was 10%");
+    expect(await registry.run("vdt.update_node", { nodeId: "discount", patch: { unit: "USD" } }, context)).toMatchObject({ ok: true });
+    expect(await fill(discount)).toMatchObject({ ok: false, error: { code: "SOURCE_UNIT_MISMATCH",
+      details: { nodeId: "discount", sourceUnit: "%", nodeUnit: "USD" } } });
+    expect(await registry.run("vdt.update_node", { nodeId: "discount", patch: { unit: "fraction" } }, context)).toMatchObject({ ok: true });
+    expect(await fill(discount)).toMatchObject({ ok: true, output: {
+      sourceUnitCorrections: [{ nodeId: "discount", previousUnit: "fraction", unit: "%" }]
+    } });
+    expect(await registry.run("vdt.update_node", { nodeId: "discount", patch: { unit: "items" } }, context))
+      .toMatchObject({ ok: false, error: { code: "SOURCE_UNIT_MISMATCH" } });
+    expect(builder.getProject().graph.nodes.find(({ id }) => id === "discount")).toMatchObject({ baselineValue: 10, unit: "%" });
+  });
+
+  it.each(["pieces", "products", "товаров"])("grounds a currency-prefix rate and normalizes %s on a sourced count", async (unit) => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
+    const parentNodeId = builder.getProject().rootNodeId;
+    const priceQuote = "List price was USD 50 per item";
+    const countQuote = "Sold 120 pieces";
+    const { registry, context } = sourceUnitContext(builder, `${priceQuote}. ${countQuote}.`);
+    context.requirePlanOperands = true;
+    expect(await registry.run("vdt.add_drivers_batch", { drivers: [
+      { nodeId: "price", parentNodeId, name: "Price", unit: "USD/item" },
+      { nodeId: "quantity", parentNodeId, name: "Quantity", unit }
+    ] }, context)).toMatchObject({ ok: true });
+    expect(await registry.run("vdt.fill_input_values_batch", { values: [
+      { nodeId: "price", value: 50, note: priceQuote, provenance: "user_provided_value" },
+      { nodeId: "quantity", value: 120, note: countQuote, provenance: "user_provided_value" }
+    ] }, context)).toMatchObject({ ok: true, output: {
+      sourceUnitCorrections: [{ nodeId: "quantity", previousUnit: unit, unit: "items" }]
+    } });
+    expect(builder.getProject().graph.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "price", baselineValue: 50, unit: "USD/item" }),
+      expect.objectContaining({ id: "quantity", baselineValue: 120, unit: "items" })
+    ]));
+  });
+
+  it("reserves the hundred divisor for actual percent scaling during formula admission", async () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
+    const root = builder.getProject().rootNodeId;
+    builder.addDriver({ parentNodeId: root, nodeId: "gross", name: "Gross", unit: "USD", baselineValue: 900 });
+    builder.addDriver({ parentNodeId: root, nodeId: "discount", name: "Discount", unit: "%", baselineValue: 10 });
+    builder.updateNode({ nodeId: root, patch: { decompositionPlan: { version: 1, goal: "Revenue", nodes: [
+      { nodeId: "gross", parentNodeId: root, kind: "input" }, { nodeId: "discount", parentNodeId: root, kind: "input" }
+    ] } } });
+    const { registry, context } = sourceUnitContext(builder, "Refunds were 100 USD. Discount was 10%.");
+    context.requirePlanOperands = true;
+    const before = builder.getProject();
+    for (const [formula, value] of [["gross / 100", 100], ["gross * (90 / 100)", 10]] as const) {
+      expect(await registry.run("vdt.set_formula", { nodeId: root, formula }, context)).toMatchObject({ ok: false, error: {
+        code: "SOURCE_PROVENANCE_INCOMPLETE", details: { unboundSourceFacts: [{ value }] }
+      } });
+    }
+    expect(builder.getProject()).toEqual(before);
+    expect(await registry.run("vdt.set_formula", { nodeId: root, formula: "gross * (1 - discount / 100)" }, context))
+      .toMatchObject({ ok: true });
+    expect(await registry.run("vdt.set_formula", { nodeId: root, formula: "gross * (1 + (-discount) / 100)" }, context))
+      .toMatchObject({ ok: true });
+  });
+
   it.each([
     [{ nodeId: "missing", value: 5, provenance: "default_assumption", note: "Draft estimate" }, "NODE_NOT_FOUND"],
     [{ nodeId: "ore_hauled", value: 5, provenance: "default_assumption", note: "Draft estimate" }, "INPUT_LEAF_REQUIRED"],

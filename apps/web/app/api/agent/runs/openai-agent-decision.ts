@@ -1,6 +1,9 @@
 import { getRegisteredJsonSchema } from "@vdt-studio/model-bridge";
-import type { AgentDecisionContext } from "@vdt-studio/vdt-agent-runtime";
-import { decompositionPlanErrors, plannedAdditionCandidates, plannedFormulaTargets, type VdtProject } from "@vdt-studio/vdt-core";
+import type { AgentDecisionContext, LiteralUserQuantity } from "@vdt-studio/vdt-agent-runtime";
+import {
+  calculationsWithoutPlannedInputs, decompositionPlanErrors, decompositionPlanGroupingErrors,
+  plannedAdditionCandidates, plannedFormulaTargets, plannedOrphanLinks, type VdtDecompositionPlan, type VdtProject
+} from "@vdt-studio/vdt-core";
 import { boundConstructionArguments, groundExistingIds, groundLiteralValues, groundNodeIds } from "./local-model-output-schema";
 import type { HierarchyRepairCall } from "./openai-hierarchy-repair";
 
@@ -182,6 +185,7 @@ export function buildOpenAiModelTurn(
     planRecorded?: boolean;
     constructionPlan?: OpenAiConstructionPlan;
     hierarchyRepair?: HierarchyRepairCall[];
+    initialPlanRepair?: VdtDecompositionPlan;
     verifiedFinalText?: string;
   } = {}
 ) {
@@ -211,24 +215,31 @@ export function buildOpenAiModelTurn(
     if (!record(tool) || typeof tool.name !== "string") continue;
     const name = tool.name;
     if (name === "user.ask") continue;
+    if (options.initialPlanRepair && buildingFirstLayer && name !== "vdt.set_decomposition_plan") continue;
     if (repair && ["vdt.inspect_hierarchy", "vdt.validate", "vdt.calculate"].includes(name)) continue;
     if (buildingFirstLayer && !["vdt.set_decomposition_plan", "vdt.add_driver", "vdt.add_drivers_batch", "tools.describe"].includes(name)
       && !name.startsWith("skill.") && !name.startsWith("data.") && !name.startsWith("research.")) continue;
     if (finishReceiptId || (observation?.nodeCount === 0 && tool.requiresDraftProject)
       || (name === "vdt.create_draft" && typeof observation?.nodeCount === "number" && observation.nodeCount > 0)
       || (name === "run.request_finish" && observation?.projectReadyForFinish !== true)
-      || (name === "vdt.fill_input_values_batch" && observation?.unfilledInputCount === 0)) continue;
+      || (name === "vdt.fill_input_values_batch" && (observation?.unfilledInputCount === 0
+        || (observation?.constructingTree === true && Array.isArray(observation.sourceBindings) && observation.sourceBindings.length > 0
+          && Array.isArray(observation.literalUserQuantities) && observation.literalUserQuantities.length === 0
+          && observation.allowAssumptions !== true)))) continue;
     if (observation?.constructingTree === true && observation?.hierarchyRequired === true
       && observation?.hasDecompositionPlan === false && tool.mutatesProject
       && name !== "vdt.create_draft" && name !== "vdt.set_decomposition_plan") continue;
     if (observation?.needsStructure === true && ["vdt.set_formula", "vdt.update_node", "vdt.validate", "vdt.calculate"].includes(name)) continue;
     if (buildingFirstLayer && options.planRecorded && plan?.additions.length && name === "vdt.set_decomposition_plan") continue;
     if (name === "vdt.set_formula" && plan && !plan.calculatedIds.length) continue;
-    if (!nativeTools.has(name) || !record(tool.inputJsonSchema)) { encoded.push(name); continue; }
+    const constructionLink = name === "vdt.add_edge" && observation?.constructingTree === true && plan;
+    if (constructionLink && !constructionLink.orphanLinks?.length) continue;
+    if ((!nativeTools.has(name) && !constructionLink) || !record(tool.inputJsonSchema)) { encoded.push(name); continue; }
     const ids = name === "vdt.set_formula" && plan
       ? groundNodeIds(name, tool.inputJsonSchema, plan.calculatedIds, [], [])
       : groundExistingIds(name, tool.inputJsonSchema, observation);
-    const args = plan && ["vdt.add_driver", "vdt.add_drivers_batch"].includes(name)
+    const args = constructionLink ? orphanLinkArguments(tool.inputJsonSchema, constructionLink.orphanLinks ?? [])
+      : plan && ["vdt.add_driver", "vdt.add_drivers_batch"].includes(name)
       ? plannedDriverArguments(name, tool.inputJsonSchema, plan.additions, observation)
       : groundLiteralValues(name, boundConstructionArguments(name, ids, observation), observation, observation?.allowAssumptions === true);
     if (!args) continue;
@@ -256,7 +267,10 @@ export function buildOpenAiModelTurn(
     if (options.verifiedFinalText !== undefined) finalProperties.text = { type: "null" };
     return true;
   });
+  const initialPlanRepair = !finishReceiptId && buildingFirstLayer && observation?.hasDecompositionPlan === false
+    && typed.has("vdt.set_decomposition_plan") ? options.initialPlanRepair : undefined;
   if (repair) action.anyOf.push(object({ type: tag("apply_hierarchy_repair") }));
+  if (initialPlanRepair) action.anyOf.push(object({ type: tag("apply_plan_repair") }));
   const schema = strictSchema(root);
   if (!schema) return undefined;
   if (choices.length) schema.$defs = { toolCall: { anyOf: choices } };
@@ -272,6 +286,11 @@ export function buildOpenAiModelTurn(
       return { ...restored, action: { type: "action_batch", batch: {
         calls: repair.map((call, index) => ({ ...call, externalCallId: `${exchangeId}:call:${index + 1}` }))
       } } };
+    }
+    if (restored.action.type === "apply_plan_repair" && initialPlanRepair) {
+      return { ...restored, action: { type: "action_batch", batch: { calls: [{
+        toolName: "vdt.set_decomposition_plan", args: { plan: initialPlanRepair }, externalCallId: `${exchangeId}:call:1`
+      }] } } };
     }
     if (restored.action.type !== "action_batch"
       || !record(restored.action.batch) || !Array.isArray(restored.action.batch.calls)) return restored;
@@ -302,7 +321,7 @@ export function buildOpenAiModelTurn(
     if (typed.has(tool.name)) return [{ name: tool.name, description: tool.description }];
     return encoded.includes(tool.name) ? [{ name: tool.name, description: tool.description, inputJsonSchema: tool.inputJsonSchema }] : [];
   });
-  return { schema, decode, toolGuidance, hasHierarchyRepair: !!repair };
+  return { schema, decode, toolGuidance, hasHierarchyRepair: !!repair, hasInitialPlanRepair: !!initialPlanRepair };
 }
 
 function firstPlanArguments(schema: JsonObject, rootId: unknown): JsonObject {
@@ -343,7 +362,28 @@ type OpenAiConstructionPlan = {
   additions: Array<{ parentNodeId: string; nodeIds: string[] }>;
   calculatedIds: string[];
   pendingFactors: boolean;
+  orphanLinks?: Array<Pick<VdtDecompositionPlan["nodes"][number], "nodeId" | "parentNodeId" | "kind">>;
 };
+
+/** Offer a corrected initial proposal only when deleting the operandless
+ * leaves keeps every other authored entry and produces an executable plan. */
+export function checkedInitialPlanRepair(
+  proposal: unknown, rootNodeId: string, facts: readonly LiteralUserQuantity[] = []
+): VdtDecompositionPlan | undefined {
+  if (decompositionPlanErrors(proposal, rootNodeId).length) return;
+  const plan = proposal as VdtDecompositionPlan;
+  const operandless = new Set(calculationsWithoutPlannedInputs(plan));
+  const parentsAndSharedUsers = new Set(plan.nodes.flatMap(({ parentNodeId, sharedWith }) => [parentNodeId, ...(sharedWith ?? [])]));
+  const nodes = plan.nodes.filter(({ nodeId, sharedWith }) =>
+    !operandless.has(nodeId) || parentsAndSharedUsers.has(nodeId) || sharedWith?.length);
+  const typedFacts = new Set(facts.filter(({ unit }) => unit).map(({ value, quote }) => JSON.stringify([value, quote])));
+  const inputCount = nodes.filter(({ kind }) => kind === "input").length;
+  if (nodes.length === plan.nodes.length || inputCount < Math.max(1, typedFacts.size)) return;
+  const repaired = { ...plan, nodes };
+  if (calculationsWithoutPlannedInputs(repaired).length || decompositionPlanErrors(repaired, rootNodeId).length
+    || decompositionPlanGroupingErrors(repaired, rootNodeId).length) return;
+  return repaired;
+}
 
 /** Project the full current graph into the same addition frontier enforced by
  * the Gateway and the calculated nodes whose declared references exist. */
@@ -363,8 +403,24 @@ export function openAiConstructionPlan(project: VdtProject): OpenAiConstructionP
   const existing = new Set(graph.nodes.map(({ id }) => id));
   const factors = plan.nodes.filter(({ kind }) => kind !== "context");
   const additions = [...byParent].map(([parentNodeId, nodeIds]) => ({ parentNodeId, nodeIds }));
+  const orphanLinks = plannedOrphanLinks(project).slice(0, 12).map(({ nodeId, parentNodeId, kind }) => ({ nodeId, parentNodeId, kind }));
   return { calculatedIds: plannedFormulaTargets(project), additions,
-    pendingFactors: factors.some(({ nodeId }) => !existing.has(nodeId)) };
+    pendingFactors: factors.some(({ nodeId }) => !existing.has(nodeId)), ...(orphanLinks.length ? { orphanLinks } : {}) };
+}
+
+function orphanLinkArguments(schema: JsonObject, links: NonNullable<OpenAiConstructionPlan["orphanLinks"]>): JsonObject | undefined {
+  const variants = links.flatMap(({ nodeId, parentNodeId, kind }) => {
+    const option = structuredClone(schema);
+    if (!record(option.properties) || !record(option.properties.relation)) return [];
+    const relation = option.properties.relation;
+    if (!Array.isArray(relation.enum)) return [];
+    const allowedRelations = relation.enum.filter((value) => (value === "contextual_influence") === (kind === "context"));
+    option.properties.sourceNodeId = tag(parentNodeId);
+    option.properties.targetNodeId = tag(nodeId);
+    relation.enum = allowedRelations;
+    return allowedRelations.length ? [option] : [];
+  });
+  return variants.length ? { anyOf: variants } : undefined;
 }
 
 function plannedDriverArguments(

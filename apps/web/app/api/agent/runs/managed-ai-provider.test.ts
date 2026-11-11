@@ -1,8 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { calculationsWithoutPlannedInputs, VdtBuilderSession, type VdtDecompositionPlan } from "@vdt-studio/vdt-core";
-import { modelAgentStructuredTurnSchema } from "@vdt-studio/vdt-agent-runtime";
+import { createDefaultToolRegistry, modelAgentStructuredTurnSchema } from "@vdt-studio/vdt-agent-runtime";
 import { createManagedAwareAiProvider } from "./managed-ai-provider";
-import { buildOpenAiModelTurn, openAiConstructionPlan } from "./openai-agent-decision";
+import { buildOpenAiModelTurn, checkedInitialPlanRepair, openAiConstructionPlan } from "./openai-agent-decision";
 import { toProviderJsonSchema } from "./provider-json-schema";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -151,6 +151,55 @@ it("reviews an intermediate without factors and accepts direct or shared operand
   ];
   expect(calculationsWithoutPlannedInputs({ nodes })).toEqual(["duplicate_result"]);
   expect(calculationsWithoutPlannedInputs({ nodes: nodes.slice(2) })).toEqual([]);
+});
+
+it("checks a pruned plan without discarding source inputs, context or distinct subtotals", () => {
+  const root = "root_kpi";
+  const nodes: VdtDecompositionPlan["nodes"] = [
+    { nodeId: "subtotal", parentNodeId: root, kind: "calculated" },
+    { nodeId: "quantity", parentNodeId: "subtotal", kind: "input", rationale: "Measured quantity" },
+    { nodeId: "price", parentNodeId: "subtotal", kind: "input", sharedWith: [root] },
+    { nodeId: "refunds", parentNodeId: root, kind: "input" },
+    { nodeId: "source_note", parentNodeId: "quantity", kind: "context", rationale: "Reference scope" }
+  ];
+  const empty = { nodeId: "empty_result", parentNodeId: root, kind: "calculated" } as const;
+  const plan = { version: 1, goal: "Calculate the total", nodes: [...nodes, empty] };
+  const facts = [{ value: 2, quote: "2 items", unit: "items" }, { value: 20, quote: "20 USD per item", unit: "USD/item" },
+    { value: 5, quote: "5 USD of refunds", unit: "USD" }, { value: 100, quote: "Benchmark of 100" }];
+  expect(checkedInitialPlanRepair(plan, root, facts)).toEqual({ ...plan, nodes });
+  expect(checkedInitialPlanRepair({ ...plan, nodes: [nodes[3], empty] }, root, facts)).toBeUndefined();
+  for (const retained of [
+    [...nodes, { ...empty, sharedWith: ["subtotal"] }],
+    [...nodes, empty, { nodeId: "note", parentNodeId: empty.nodeId, kind: "context", rationale: "Preserve this context" }],
+    [...nodes, empty, { nodeId: "new_factor", parentNodeId: empty.nodeId, kind: "input" }]
+  ]) {
+    expect(checkedInitialPlanRepair({ ...plan, nodes: retained }, root)).toBeUndefined();
+  }
+});
+
+it("projects only declared orphan links for native construction", () => {
+  const builder = new VdtBuilderSession();
+  builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue" });
+  const parent = builder.getProject().rootNodeId;
+  builder.addDriver({ parentNodeId: parent, nodeId: "sales", name: "Sales" });
+  builder.updateNode({ nodeId: parent, patch: { decompositionPlan: { version: 1, goal: "Revenue", nodes: [
+    { nodeId: "sales", parentNodeId: parent, kind: "input" }
+  ] } } });
+  const project = builder.getProject();
+  const catalog = [createDefaultToolRegistry().getSpec("vdt.add_edge")!];
+  const turn = (constructingTree = true) => buildOpenAiModelTurn(toProviderJsonSchema(modelAgentStructuredTurnSchema), catalog,
+    { constructingTree, hasDecompositionPlan: true, nodeCount: 2 }, "exchange-edge", undefined,
+    { constructionPlan: openAiConstructionPlan(project)! })!;
+  expect(turn().toolGuidance).toEqual([]);
+  expect(turn(false).toolGuidance).toEqual([expect.objectContaining({ name: "vdt.add_edge" })]);
+  project.graph.edges = [];
+  const orphan = turn();
+  expect(orphan.toolGuidance).toEqual([expect.objectContaining({ name: "vdt.add_edge" })]);
+  expect(orphan.schema.$defs).toMatchObject({ toolCall: { anyOf: [{ properties: { args: { anyOf: [{ properties: {
+    sourceNodeId: { const: parent }, targetNodeId: { const: "sales" },
+    relation: { enum: expect.arrayContaining(["positive_driver", "formula_dependency"]) }
+  } }] } } }] } });
+  expect(JSON.stringify(orphan.schema.$defs)).not.toContain("contextual_influence");
 });
 
 it("offers the checked repair only when every underlying tool is admitted", () => {

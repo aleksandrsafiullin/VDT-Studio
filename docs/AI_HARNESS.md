@@ -11,8 +11,20 @@ The first turn can clarify direction. Once the draft contains only its root,
 the next decisions establish the plan and initial factors. The initial plan
 uses the root's actual ID and the builder's identifier format. An intermediate
 without planned operands gets one model revision before any tool executes.
-The plan tool rejects a remaining operandless calculation. Native additions
-offer the earliest layer admitted by the same rule as the Gateway. The
+The first-plan provider message presents the original brief and typed source
+quotes before the admitted tool guidance. It carries the exact selected Skill,
+personalisation and current tool results. The pinned context stays with the
+runtime.
+When removing just those unused calculated leaves yields a valid plan, that
+revision can offer the model the exact checked plan with all its other entries.
+This optional candidate needs at least as many input leaves as the distinct
+typed source facts observed. The agent decides which facts the formula uses.
+The model can select it or submit its own revision. Both execute through the
+plan tool, which rejects a remaining operandless calculation. Native additions
+offer the earliest layer admitted by the same rule as the Gateway. A driver
+addition creates its visual link. The standalone link tool can restore a
+declared orphan to its planned parent in new construction. Shared formula
+users are declared in the plan. The
 dedicated formula tool is available for a calculated target when its planned
 direct and shared operands exist. The schema and canonical tool use the same
 readiness rule. Construction creates nodes and writes properties and source
@@ -70,9 +82,18 @@ Each turn uses the current checkpoint, tool catalog projection and confirmed
 observations. Executed calls and their rejections stay in the run history.
 The adapter derives each tool call ID from its exchange and position before
 Supervisor validation. This preserves identity for replay within an exchange.
-New-tree finish validation requires an input leaf for an explicit quoted
-monetary amount used as a literal in the root dependency formulas. The model
-receives the unbound quote in the current observation so it can repair the tree.
+Direct OpenAI construction checks an explicit quoted monetary amount or
+percentage used as a formula literal before the write and at finish. The model
+receives the unbound quote and can add an editable source input to the plan.
+The percentage check recognizes a literal ratio, its complement, and a
+bounded constant fraction used as a multiplier. A typed percent input may use
+100 as its scale divisor. The same quoted measurement can populate one new
+input, and the model reuses its ID across formulas. The current draft filters
+consumed quotes from future fill choices, including measurements with attached
+explanatory context. Source admission and finish check
+duplicate quotes and explicit count, currency, per-item and percent units.
+Distinct quotes can carry the same number. Missing business facts and their
+semantic mapping still require model and user review.
 
 The compatibility adapter projects closed builder contracts into native
 structured tool arguments. A selected tool determines its argument schema.

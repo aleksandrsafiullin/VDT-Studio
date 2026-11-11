@@ -11,6 +11,25 @@ export function compactLocalModelPrompt(prompt: string): string {
   return JSON.stringify({ ...input, delta: compactDelta(input.delta) });
 }
 
+/** The native response schema and availableTools already carry the admitted
+ * tools. Preserve the pinned context outside the first-plan provider message. */
+export function compactOpenAiFirstPlanPrompt(prompt: string): string {
+  let input: unknown;
+  try { input = JSON.parse(prompt); } catch { return prompt; }
+  if (!isRecord(input)) return prompt;
+  const { originalBrief, confirmedKnowledge, personalisation, hostObservation, delta, ...rest } = input;
+  let projectedDelta = delta;
+  if (isRecord(delta) && delta.type === "initial_context" && isRecord(delta.context)) {
+    const { tools: _tools, brief: _brief, toolCatalogHash: _toolCatalogHash, ...context } = delta.context;
+    projectedDelta = { ...delta, context };
+  }
+  const orderedKnowledge = isRecord(confirmedKnowledge)
+    ? { literalUserQuantities: confirmedKnowledge.literalUserQuantities, ...confirmedKnowledge }
+    : confirmedKnowledge;
+  return JSON.stringify({ originalBrief, confirmedKnowledge: orderedKnowledge, personalisation, hostObservation,
+    delta: projectedDelta, ...rest });
+}
+
 function compactDelta(delta: Record<string, unknown>): Record<string, unknown> {
   if (delta.type === "initial_context" && isRecord(delta.context) && Array.isArray(delta.context.tools)
     && delta.context.tools.some((tool) => isRecord(tool) && tool.name === "tools.describe")) {

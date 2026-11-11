@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { VdtBuilderSession } from "@vdt-studio/vdt-core";
-import { compactLocalModelPrompt, localModelWorkingContext } from "./local-model-context";
+import { compactLocalModelPrompt, compactOpenAiFirstPlanPrompt, localModelWorkingContext } from "./local-model-context";
 
 describe("local model project inspection projection", () => {
   it("offers all current unfilled inputs in bounded native pages without assigning values", () => {
@@ -85,6 +85,30 @@ describe("local model project inspection projection", () => {
     expect(raw.delta.context.tools[0]).toHaveProperty("inputJsonSchema");
     const old = { delta: { type: "initial_context", context: { tools: [raw.delta.context.tools[1]] } } };
     expect(JSON.parse(compactLocalModelPrompt(JSON.stringify(old)))).toEqual(old);
+  });
+
+  it("puts first-plan sources up front while preserving admitted tools, the selected Skill and result deltas", () => {
+    const originalBrief = { prompt: "Calculate output from 120 items", selectedSkill: { id: "skill-1", version: "3", contentHash: "hash" } };
+    const literalUserQuantities = [{ value: 120, quote: "120 items", unit: "items" }];
+    const personalisation = { userInstructions: "Preserve the time period." };
+    const availableTools = [{ name: "skill.read", inputJsonSchema: { type: "object", properties: { skillId: { type: "string" } } } }];
+    const hostObservation = { rootNodeId: "root_kpi", nodeCount: 1, hasDecompositionPlan: false };
+    const selectedNode = { id: "root_kpi", name: "Output" };
+    const raw = { delta: { type: "initial_context", context: {
+      brief: originalBrief, tools: [{ name: "unadmitted_tool", inputJsonSchema: { type: "object" } }],
+      toolCatalogHash: "pinned-hash", selectedNode
+    } }, originalBrief, personalisation, hostObservation, availableTools,
+    confirmedKnowledge: { readSkills: [{ id: "skill-1", excerpt: "Verified text" }], literalUserQuantities } };
+    const projected = JSON.parse(compactOpenAiFirstPlanPrompt(JSON.stringify(raw)));
+    expect(Object.keys(projected).slice(0, 4)).toEqual(["originalBrief", "confirmedKnowledge", "personalisation", "hostObservation"]);
+    expect(projected).toMatchObject({ originalBrief, personalisation, hostObservation, availableTools,
+      confirmedKnowledge: raw.confirmedKnowledge, delta: { type: "initial_context", context: { selectedNode } } });
+    expect(projected.delta.context).not.toHaveProperty("tools");
+    expect(projected.delta.context).not.toHaveProperty("toolCatalogHash");
+    expect(raw.delta.context.tools).toHaveLength(1);
+    const delta = { type: "tool_results", results: [{ toolName: "vdt.set_decomposition_plan", resultCode: "INVALID_DECOMPOSITION_PLAN",
+      payload: { error: { details: { calculatedNodesWithoutFactors: ["unfinished"] } } } }] };
+    expect(JSON.parse(compactOpenAiFirstPlanPrompt(JSON.stringify({ ...raw, delta }))).delta).toEqual(delta);
   });
 
   it("reduces repeated keys while preserving every node/edge field, zero, formulas and receipt identity", () => {

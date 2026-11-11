@@ -9,6 +9,7 @@ import {
   type VdtProject
 } from "@vdt-studio/vdt-core";
 import type { AgentSessionBinding } from "./agent-execution-contracts";
+import type { ConstructionSourceIssue } from "./construction-source-facts";
 import type {
   AgentSupervisorPersistenceStateV2,
   FinishReceiptV2
@@ -27,6 +28,7 @@ export interface DeterministicFinishVerificationInput {
   requireHierarchy?: boolean | undefined;
   enforcePercentageScale?: boolean | undefined;
   unboundSourceFacts?: readonly { quote: string }[] | undefined;
+  sourceGroundingIssues?: readonly ConstructionSourceIssue[] | undefined;
   pendingQuestion: boolean;
   pendingApproval: boolean;
   pendingProposal: boolean;
@@ -77,12 +79,16 @@ export function verifyDeterministicRunFinish(
   if (!input.project) blockers.push({ code: "PROJECT_MISSING", detail: "No draft VDT exists." });
   if (input.unboundSourceFacts?.length) blockers.push({
     code: "SOURCE_PROVENANCE_INCOMPLETE",
-    detail: `Use each quoted amount as an input leaf in the dependency tree. ${input.unboundSourceFacts.map(({ quote }) => quote).join(". ")}`
+    detail: `Use each quoted amount or percentage as an input leaf in the dependency tree. ${input.unboundSourceFacts.map(({ quote }) => quote).join(". ")}`
+  });
+  if (input.sourceGroundingIssues?.length) blockers.push({
+    code: "SOURCE_GROUNDING_CONFLICT", detail: input.sourceGroundingIssues.slice(0, 8).map(({ detail }) => detail).join(" ")
   });
   if (input.mode === "deepen_node" && input.modeCompletion?.immediateChildCreated !== true) {
     blockers.push({ code: "MODE_COMPLETION_MISSING", detail: "The selected KPI has no newly created immediate child layer." });
   }
-  if (blockers.length > 0 || !input.project) return rejected(blockers);
+  if (blockers.length > 0 || !input.project) return rejected(blockers, input.sourceGroundingIssues?.length
+    ? { sourceGroundingIssues: input.sourceGroundingIssues.slice(0, 8) } : undefined);
 
   const project = input.project;
   if (input.requireHierarchy) {

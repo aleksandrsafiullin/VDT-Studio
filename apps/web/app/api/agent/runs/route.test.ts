@@ -335,9 +335,10 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     }
   });
 
-  it.each(["grounded", "estimated", "identity wrapper"] as const)("publishes only the verified calculation in direct OpenAI construction (%s)", async (scenario) => {
+  it.each(["grounded", "estimated", "identity wrapper", "checked plan"] as const)("publishes only the verified calculation in direct OpenAI construction (%s)", async (scenario) => {
     const estimatedRefunds = scenario === "estimated";
     const identity = scenario === "identity wrapper";
+    const checkedPlan = scenario === "checked plan";
     const rootKpi = "Чистая выручка";
     const knownInputs = "Помоги построить VDT чистой выручки за апрель. Продали 120 товаров, цена по прайсу — 50 долларов за товар. На каждую продажу действовала скидка 10%.";
     const refundNote = estimatedRefunds ? "Редактируемая оценка возвратов за апрель" : "Возвраты составили 500 долларов";
@@ -357,28 +358,32 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     ];
     const formula = "sales_qty * price_per_item * (1 - discount_rate / 100) - returns_amount";
     const wrapper = { nodeId: "net_revenue", parentNodeId, kind: "calculated" };
+    const inputs = factors.map(({ nodeId }) => ({ nodeId, parentNodeId: factorParent, kind: "input" }));
+    const plan = { version: 1, goal: rootKpi, nodes: [...(identity ? [wrapper] : []), ...inputs] };
     const invalidPlan = { toolName: "vdt.set_decomposition_plan", args: {
-      plan: { version: 1, goal: rootKpi, nodes: [wrapper] }
+      plan: { ...plan, nodes: checkedPlan ? [...inputs, wrapper, ...["gross_revenue", "discounted_revenue"].map((nodeId) => ({ ...wrapper, nodeId }))] : [wrapper] }
     } };
-    const calls: Array<{ toolName: string; args: Record<string, unknown> } | "apply_hierarchy_repair"> = [
+    const sourcedValues = factors.map(({ nodeId, value, note }) => ({ nodeId, value, note,
+      provenance: estimatedRefunds && nodeId === "returns_amount" ? "default_assumption" : "user_provided_value" }));
+    const calls: Array<{ toolName: string; args: Record<string, unknown> } | "apply_hierarchy_repair" | "apply_plan_repair"> = [
       ...(identity ? [invalidPlan, invalidPlan] : []),
-      { toolName: "vdt.set_decomposition_plan", args: { plan: {
-        version: 1, goal: rootKpi,
-        nodes: [...(identity ? [wrapper] : []), ...factors.map(({ nodeId }) => ({ nodeId, parentNodeId: factorParent, kind: "input" }))]
-      } } },
+      ...(checkedPlan ? [invalidPlan, "apply_plan_repair" as const] : [{ toolName: "vdt.set_decomposition_plan", args: { plan } }]),
       ...(identity ? [
         { toolName: "vdt.add_driver", args: { nodeId: factorParent, parentNodeId, type: "calculated", name: "Net revenue", unit: "USD" } },
         { toolName: "vdt.set_formula", args: { nodeId: factorParent, formula: "0" } }
       ] : []),
       { toolName: "vdt.add_drivers_batch", args: {
-        drivers: factors.map(({ nodeId, unit }) => ({ nodeId, parentNodeId: factorParent, name: nodeId, type: "input", unit }))
+        drivers: factors.map(({ nodeId, unit }) => ({ nodeId, parentNodeId: factorParent, name: nodeId, type: "input",
+          unit: checkedPlan && nodeId === "discount_rate" ? "" : unit }))
       } },
-      { toolName: "vdt.fill_input_values_batch", args: {
-        values: factors.map(({ nodeId, value, note }) => ({
-          nodeId, value, note,
-          provenance: estimatedRefunds && nodeId === "returns_amount" ? "default_assumption" : "user_provided_value"
-        }))
-      } },
+      ...(checkedPlan ? [{ toolName: "vdt.set_formula", args: {
+        nodeId: parentNodeId, formula: "sales_qty * price_per_item * 0.9 - 500"
+      } }] : []),
+      ...(checkedPlan ? [
+        { toolName: "vdt.fill_input_values_batch", args: { values: sourcedValues.slice(0, 2) } },
+        { toolName: "vdt.fill_input_values_batch", args: { values: [{ ...sourcedValues[0]!, nodeId: "discount_rate" }] } },
+        { toolName: "vdt.fill_input_values_batch", args: { values: sourcedValues.slice(2) } }
+      ] : [{ toolName: "vdt.fill_input_values_batch", args: { values: sourcedValues } }]),
       { toolName: "vdt.set_formula", args: {
         nodeId: factorParent, formula
       } },
@@ -402,7 +407,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       if (call) return openAiStructuredResponse({
         turnId, sessionState: "Continue building from the confirmed graph.",
         assistantMessage: callIndex === 1 ? { messageId: "opening", text: wrongOpening } : null,
-        action: call === "apply_hierarchy_repair" ? { type: call } : { type: "action_batch", batch: { calls: [call] } }
+        action: typeof call === "string" ? { type: call } : { type: "action_batch", batch: { calls: [call] } }
       });
       await finalGate;
       return openAiStructuredResponse({
@@ -466,6 +471,39 @@ describe("agent runs API", { timeout: 30_000 }, () => {
             }) })
           })
         ]));
+      }
+      if (checkedPlan) {
+        const observations = requests.map((item) =>
+          JSON.parse(item.messages.find((message: { role: string }) => message.role === "user").content));
+        expect(observations[0].delta.context).not.toHaveProperty("tools");
+        expect(observations[0].originalBrief).toMatchObject({ prompt, rootKpi, unit: "USD" });
+        expect(observations[0].confirmedKnowledge.literalUserQuantities.map(({ value }: { value: number }) => value))
+          .toEqual([120, 50, 10, 500]);
+        expect(requests[0].messages[0].content).toContain("Start with the source quantities at confirmedKnowledge.literalUserQuantities");
+        expect(observations[1].planReview).toMatchObject({ checkedPlan: plan });
+        expect(observations[1].hostObservation).toMatchObject({ revision: 0, hasDecompositionPlan: false });
+        expect(JSON.stringify(requests[0].response_format.json_schema.schema)).not.toContain("apply_plan_repair");
+        expect(JSON.stringify(requests[1].response_format.json_schema.schema)).toContain("apply_plan_repair");
+        expect(observations[1].availableTools.map(({ name }: { name: string }) => name)).toEqual(["vdt.set_decomposition_plan"]);
+        expect(observations[2].delta.results[0]).toMatchObject({ toolName: "vdt.set_decomposition_plan", resultCode: "OK" });
+        expect(observations[4].delta.results[0]).toMatchObject({ resultCode: "SOURCE_PROVENANCE_INCOMPLETE", payload: {
+          error: { details: { nodeId: parentNodeId, unboundSourceFacts: [
+            { value: 10, quote: factors[2]!.note, unit: "%" }, { value: 500, quote: refundNote }
+          ] } }
+        } });
+        expect(observations[4].hostObservation).toMatchObject({ revision: 2 });
+        expect(observations[5].confirmedKnowledge.literalUserQuantities.map(({ value }: { value: number }) => value))
+          .toEqual([10, 500]);
+        const fill = requests[5].response_format.json_schema.schema.$defs.toolCall.anyOf.find(({ properties }: {
+          properties: { toolName: { const?: string } }
+        }) => properties.toolName.const === "vdt.fill_input_values_batch");
+        expect(fill.properties.args.properties.values.items.anyOf.map(({ properties }: {
+          properties: { value: { const: number } }
+        }) => properties.value.const)).toEqual([10, 500]);
+        expect(observations[6].delta.results[0]).toMatchObject({ resultCode: "DUPLICATE_SOURCE_FACT", payload: {
+          error: { details: { nodeId: "discount_rate", usedBy: "sales_qty" } }
+        } });
+        expect(observations[6].hostObservation).toMatchObject({ revision: 3 });
       }
       if (identity) {
         const observations = requests.map((item) =>

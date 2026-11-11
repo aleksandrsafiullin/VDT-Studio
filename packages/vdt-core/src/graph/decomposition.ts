@@ -182,6 +182,16 @@ export function plannedAdditionCandidates(project: VdtProject): VdtDecomposition
     && (entry.kind === "context" || missingEarlierFactors(entry.nodeId).length === 0));
 }
 
+/** Existing planned children can get their declared visual link only when
+ * no incoming link exists yet. Shared formula users do not add visual links. */
+export function plannedOrphanLinks(project: VdtProject): VdtDecompositionPlan["nodes"] {
+  const plan = project.graph.nodes.find(({ id }) => id === project.rootNodeId)?.decompositionPlan;
+  if (!plan || decompositionPlanErrors(plan, project.rootNodeId).length) return [];
+  const existing = new Set(project.graph.nodes.map(({ id }) => id));
+  const linked = new Set(project.graph.edges.map(({ targetNodeId }) => targetNodeId));
+  return plan.nodes.filter(({ nodeId, parentNodeId }) => existing.has(nodeId) && existing.has(parentNodeId) && !linked.has(nodeId));
+}
+
 /** Formula writes can begin when the target and all of its planned factors
  * exist. The formula may still be revised before the final hierarchy check. */
 export function plannedFormulaTargets(project: VdtProject): string[] {

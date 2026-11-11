@@ -8,6 +8,7 @@ export * from "./formula/ast";
 export * from "./formula/parser";
 export * from "./formula/serialize";
 export * from "./formula/evaluator";
+export { parseValidationUnit } from "./formula/unit-validation";
 export * from "./formula/edge-relation";
 export * from "./formula/calculate";
 export * from "./formula/goal-seek";

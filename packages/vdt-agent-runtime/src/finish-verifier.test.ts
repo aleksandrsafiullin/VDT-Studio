@@ -3,7 +3,7 @@ import { productionVolumeProject,VdtBuilderSession,inspectDecompositionHierarchy
 import type { AgentSessionBinding } from "./agent-execution-contracts";
 import type { AgentSupervisorPersistenceStateV2 } from "./agent-supervisor-persistence";
 import { verifyDeterministicRunFinish } from "./finish-verifier";
-import { unboundQuotedMoneyFacts } from "./model-acceptance-contract";
+import { unboundQuotedFormulaFacts } from "./model-acceptance-contract";
 
 const HASH_A = `sha256:${"a".repeat(64)}`;
 const HASH_B = `sha256:${"b".repeat(64)}`;
@@ -23,6 +23,14 @@ it("requires the recorded hierarchy on protected runs even when the flat graph c
 });
 
 describe("verifyDeterministicRunFinish", () => {
+  it("withholds a finish receipt for conflicting source bindings in a calculable draft", () => {
+    const issue = { code: "DUPLICATE_SOURCE_FACT" as const, nodeId: "discount", usedBy: "quantity", value: 120,
+      quote: "Sold 120 items", detail: "Quantity already owns the quoted measurement." };
+    const result = verifyDeterministicRunFinish({ ...readyInput(), sourceGroundingIssues: [issue] });
+    expect(result).toMatchObject({ accepted: false, code: "SOURCE_GROUNDING_CONFLICT", payload: { sourceGroundingIssues: [issue] } });
+    expect(result.finishReceipt).toBeUndefined();
+  });
+
   it("requires percent scaling before issuing a receipt for a new tree", () => {
     const b = new VdtBuilderSession();
     b.createDraft({ rootKpi: "Revenue", projectTitle: "Revenue", unit: "USD" });
@@ -43,7 +51,7 @@ describe("verifyDeterministicRunFinish", () => {
     const request = { mode: "generate_vdt" as const, providerId: "test", input: { prompt: "Refunds were 20 USD." } };
     const verify = () => {
       const project = b.getProject();
-      return verifyDeterministicRunFinish({ ...readyInput(), project, unboundSourceFacts: unboundQuotedMoneyFacts(project, request) });
+      return verifyDeterministicRunFinish({ ...readyInput(), project, unboundSourceFacts: unboundQuotedFormulaFacts(project, request) });
     };
     expect(verify()).toMatchObject({ accepted: false, payload: { blockers: [
       { code: "SOURCE_PROVENANCE_INCOMPLETE", detail: expect.stringContaining("Refunds were 20 USD") }
@@ -54,6 +62,28 @@ describe("verifyDeterministicRunFinish", () => {
     } } });
     b.setFormula({ nodeId: "revenue", formula: "gross - refunds" });
     expect(verify()).toMatchObject({ accepted: true, payload: { rootValue: 80 } });
+  });
+
+  it("recognizes a quoted percent as a literal multiplier or fraction and preserves scale constants", () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ rootKpi: "Revenue", projectTitle: "Revenue", unit: "USD" });
+    builder.addDriver({ nodeId: "gross", parentNodeId: "revenue", name: "Gross", unit: "USD", baselineValue: 1_000 });
+    const request = { mode: "generate_vdt" as const, providerId: "test", input: {
+      prompt: "A discount of 10% applies. Refunds were 500 USD. A 100 USD cap is informational. The maximum possible discount is 100%."
+    } };
+    for (const formula of ["gross * 0.9 - 500", "gross * (90 / 100) - 500", "gross * (9 / 10) - 500",
+      "gross * (1 - 0.1) - 500", "gross * (1 - 10 / 100) - 500"]) {
+      expect(unboundQuotedFormulaFacts(builder.getProject(), request, { nodeId: "revenue", formula }))
+        .toEqual([{ value: 10, quote: "A discount of 10% applies", unit: "%" }, { value: 500, quote: "Refunds were 500 USD", unit: "USD" }]);
+    }
+    expect(unboundQuotedFormulaFacts(builder.getProject(), request, { nodeId: "revenue", formula: "gross / 100" }))
+      .toEqual([{ value: 100, quote: "A 100 USD cap is informational", unit: "USD" }]);
+    builder.addDriver({ nodeId: "discount", parentNodeId: "revenue", name: "Discount", unit: "%", baselineValue: 10 });
+    builder.addDriver({ nodeId: "refunds", parentNodeId: "revenue", name: "Refunds", unit: "USD", baselineValue: 500 });
+    builder.setFormula({ nodeId: "revenue", formula: "gross * (1 - discount / 100) - refunds" });
+    expect(unboundQuotedFormulaFacts(builder.getProject(), request)).toEqual([]);
+    expect(verifyDeterministicRunFinish({ ...readyInput(), project: builder.getProject(), enforcePercentageScale: true }))
+      .toMatchObject({ accepted: true, payload: { rootValue: 400 } });
   });
 
   it("never issues a finish receipt for formula/link divergence accepted as an editable draft", () => {

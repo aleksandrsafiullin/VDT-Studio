@@ -32,7 +32,7 @@ export function collectLiteralUserQuantities(sources: readonly unknown[], curren
       }
       if (quantities.some((item) => item.value === value && item.quote === quote)) continue;
       if (quantities.length === 30) return { quantities, truncated: true, complete: false };
-      const unit = explicitQuotedInputUnit(quote, currencyContext);
+      const unit = explicitQuotedInputUnit(quote, currencyContext, true);
       quantities.push({ value, quote, ...(unit ? { unit } : {}) });
     }
   }
@@ -41,17 +41,36 @@ export function collectLiteralUserQuantities(sources: readonly unknown[], curren
 
 /** Retain an explicit percentage or per-item rate without changing its value.
  * A generic "dollar" only inherits USD from the selected brief. */
-export function explicitQuotedInputUnit(quote: string, currencyContext?: string): string | undefined {
+export function explicitQuotedInputUnit(quote: string, currencyContext?: string, includeSimpleUnits = false): string | undefined {
   if (/\d+(?:[.,]\d+)?\s*(?:%|percent(?:age)?|процент(?:а|ов)?)(?![\p{L}\p{N}]|\s*(?:\/|per\b|за\s))/iu.test(quote)) return "%";
-  const match = quote.match(/\d+(?:[.,]\d+)?\s*(USD|EUR|GBP|KZT|RUB|CAD|AUD|JPY|CNY|CHF|US dollars?|dollars?|доллар(?:а|ов)?(?:\s+США)?|евро|тенге|рубл(?:ь|я|ей))(?:\s*\/\s*|\s+(?:per|за|for each)\s+)(?:(?:one|each|один|одну|каждый|каждую)\s+)?(?:items?|units?|products?|pieces?|товар(?:а|ов)?|единиц(?:а|у|ы)?|штук(?:а|у|и)?)(?=$|[\s,.!?;])/iu);
-  if (!match) return undefined;
-  const currency = match[1]!.toUpperCase();
-  if (/^(USD|EUR|GBP|KZT|RUB|CAD|AUD|JPY|CNY|CHF)$/.test(currency)) return `${currency}/item`;
-  if (currency === "ЕВРО") return "EUR/item";
-  if (currency === "ТЕНГЕ") return "KZT/item";
-  if (currency.startsWith("РУБЛ")) return "RUB/item";
+  const match = quote.match(/\d+(?:[.,]\d+)?\s*(USD|EUR|GBP|KZT|RUB|CAD|AUD|JPY|CNY|CHF|US dollars?|dollars?|доллар(?:а|ов)?(?:\s+США)?|евро|тенге|рубл(?:ь|я|ей))(?:\s*\/\s*|\s+(?:per|за|for each)\s+)(?:(?:one|each|один|одну|каждый|каждую)\s+)?(?:items?|units?|products?|pieces?|товар(?:а|ов)?|единиц(?:а|у|ы)?|штук(?:а|у|и)?)(?=$|[\s,.!?;])/iu)
+    ?? quote.match(/\b(USD|EUR|GBP|KZT|RUB|CAD|AUD|JPY|CNY|CHF)\s*\d+(?:[.,]\d+)?(?:\s*\/\s*|\s+(?:per|за|for each)\s+)(?:(?:one|each|один|одну|каждый|каждую)\s+)?(?:items?|units?|products?|pieces?|товар(?:а|ов)?|единиц(?:а|у|ы)?|штук(?:а|у|и)?)(?=$|[\s,.!?;])/iu);
+  if (match) {
+    const currency = explicitCurrency(match[1]!, currencyContext);
+    return currency ? `${currency}/item` : undefined;
+  }
+  if (!includeSimpleUnits) return undefined;
+  const money = quote.match(/\d+(?:[.,]\d+)?\s*(USD|EUR|GBP|KZT|RUB|CAD|AUD|JPY|CNY|CHF|US dollars?|dollars?|доллар(?:а|ов)?(?:\s+США)?|евро|тенге|рубл(?:ь|я|ей))(?![\p{L}\p{N}]|\s*(?:\/|per\b|за\s))/iu)
+    ?? quote.match(/\b(USD|EUR|GBP|KZT|RUB|CAD|AUD|JPY|CNY|CHF)\s*\d+(?:[.,]\d+)?(?!\d|[.,]\d|\s*(?:\/|per\b|за\s|for each\b))/iu);
+  if (money) return explicitCurrency(money[1]!, currencyContext);
+  if (/\d+(?:[.,]\d+)?\s*(?:items?|units?|products?|pieces?|товар(?:а|ов)?|единиц(?:а|у|ы)?|штук(?:а|у|и)?)(?![\p{L}\p{N}]|\s*(?:\/|per\b|за\s))/iu.test(quote)) return "items";
+  return undefined;
+}
+
+/** Normalize explicit item-count labels that the graph's unit algebra does
+ * not already recognize as count. */
+export function normalizeQuotedCountUnit(unit: string): string {
+  return unit.replace(/(^|\/)\s*(?:products?|pieces?|товар(?:а|ов)?|единиц(?:а|у|ы)?|штук(?:а|у|и)?)\s*(?=\/|$)/giu, "$1items");
+}
+
+function explicitCurrency(value: string, currencyContext?: string): string | undefined {
+  const currency = value.toUpperCase();
+  if (/^(USD|EUR|GBP|KZT|RUB|CAD|AUD|JPY|CNY|CHF)$/.test(currency)) return currency;
+  if (currency === "ЕВРО") return "EUR";
+  if (currency === "ТЕНГЕ") return "KZT";
+  if (currency.startsWith("РУБЛ")) return "RUB";
   if (currency.startsWith("US DOLLAR") || currency.endsWith(" США")
-    || currencyContext?.split("/")[0]?.trim().toUpperCase() === "USD") return "USD/item";
+    || currencyContext?.split("/")[0]?.trim().toUpperCase() === "USD") return "USD";
   return undefined;
 }
 
