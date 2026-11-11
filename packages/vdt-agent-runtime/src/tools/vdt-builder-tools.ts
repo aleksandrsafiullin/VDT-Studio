@@ -16,11 +16,12 @@ import {
   type VdtProject
 } from "@vdt-studio/vdt-core";
 import { defaultProgressiveBuildPolicy, proposeAndMaybeApplyMutation } from "../mutation-pipeline";
-import { AgentToolError, type AgentTool, type AgentToolContext } from "../tool-registry";
+import { requiresDerivedRootForRun } from "../model-acceptance-contract";
+import { AgentToolError, isAgentToolError, type AgentTool, type AgentToolContext } from "../tool-registry";
+import type { VdtAgentRunState } from "../types";
 import { summarizeCalculation, summarizeValidation } from "../summaries";
 import { cloneBuilder, combineChangeSets, requireBuilder, requireChangeSet, wrapBuilderError } from "./builder-mutation-utils";
-import { assertUserProvidedValueGrounded, quoteGroundsValue, runHasUserAnswerForNode } from "./value-provenance";
-import { explicitQuotedInputUnit } from "../value-provenance-contract";
+import { assertUserProvidedValueGrounded, groundedQuotedInputUnit, runHasUserAnswerForNode } from "./value-provenance";
 import { requirePlannedAdditions } from "./hierarchy-tools";
 
 const nodeTypeSchema = z.enum(["root_kpi", "calculated", "input", "assumption", "external_factor", "data_mapped"]);
@@ -526,6 +527,42 @@ const addEdgeTool: AgentTool = {
   }
 };
 
+function isAgentOwnedConstructionLeaf(state: VdtAgentRunState, project: VdtProject, node: VdtNode): boolean {
+  return requiresDerivedRootForRun(state.request)
+    && node.id !== project.rootNodeId && node.type !== "root_kpi" && node.type !== "calculated"
+    && node.aiGenerated && (node.status === "ai_suggested" || node.status === "accepted")
+    && !node.formula?.trim() && !node.goalSeek
+    && !project.graph.edges.some((edge) => edge.sourceNodeId === node.id)
+    && !state.request.input.project?.graph.nodes.some((existing) => existing.id === node.id)
+    && !state.manualChanges.some(({ change }) => change.nodeId === node.id
+      || change.kind === "project_replaced" || change.kind === "change_set_applied")
+    && Boolean(state.mutationProposals?.some((proposal) =>
+      proposal.runId === state.runId && proposal.source === "agent" && proposal.status === "applied"
+      && proposal.changeSet.additions.some((addition) => addition.nodeId === node.id
+        && proposal.selectedChangeIds.includes(addition.id))));
+}
+
+function sourceUnitCorrection(
+  context: AgentToolContext, project: VdtProject, node: VdtNode,
+  evidence: { value?: number | undefined; quote?: string | undefined },
+  proposedUnit = node.unit
+) {
+  const state = context.store.getState(context.runId);
+  if (node.status !== "ai_suggested" || Number.isFinite(node.baselineValue ?? node.value)
+    || !isAgentOwnedConstructionLeaf(state, project, node)) return undefined;
+  const unit = groundedQuotedInputUnit(context, evidence, state.visibleContext.brief.unit);
+  return provisionalSourceUnitCorrection(node.id, proposedUnit, unit);
+}
+
+function provisionalSourceUnitCorrection(nodeId: string, current: string | undefined, unit: string | undefined) {
+  if (!unit) return undefined;
+  const currentUnit = current?.trim();
+  const provisional = unit === "%" ? /^(1|fraction|ratio|decimal(?: fraction)?)$/i.test(currentUnit ?? "")
+    : currentUnit?.toUpperCase() === unit.split("/")[0];
+  if (currentUnit && !provisional) return undefined;
+  return { nodeId, previousUnit: currentUnit || null, unit };
+}
+
 const updateNodeTool: AgentTool = {
   name: "vdt.update_node",
   description: "Update allowed fields on an existing node.",
@@ -537,7 +574,8 @@ const updateNodeTool: AgentTool = {
   run(context, input) {
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
-    if (!project.graph.nodes.some((node) => node.id === input.nodeId)) {
+    const node = project.graph.nodes.find((candidate) => candidate.id === input.nodeId);
+    if (!node) {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
     }
     if (input.nodeId === project.rootNodeId) {
@@ -553,14 +591,22 @@ const updateNodeTool: AgentTool = {
       }
     }
     assertFormulaReferencesIfPresent(project, input.patch.formula, input.nodeId);
-    if (input.patch.valueStatus === "user_provided_value") {
-      assertUserProvidedValueGrounded(context, input.nodeId, {
+    const patch: VdtNodePatch = { ...input.patch };
+    let correction: ReturnType<typeof sourceUnitCorrection>;
+    if (patch.valueStatus === "user_provided_value") {
+      const evidence = {
         value: input.patch.value ?? input.patch.baselineValue,
         quote: input.patch.valueSource?.note
-      });
+      };
+      assertUserProvidedValueGrounded(context, input.nodeId, evidence);
+      if (!patch.formula?.trim() && patch.type !== "calculated" && patch.type !== "root_kpi"
+        && (patch.baselineValue === undefined || patch.baselineValue === evidence.value)) {
+        correction = sourceUnitCorrection(context, project, node, evidence, patch.unit);
+        if (correction) patch.unit = correction.unit;
+      }
     }
     const previewBuilder = cloneBuilder(context);
-    const result = previewBuilder.updateNode({ nodeId: input.nodeId, patch: input.patch as VdtNodePatch });
+    const result = previewBuilder.updateNode({ nodeId: input.nodeId, patch });
     const mutation = proposeAndMaybeApplyMutation(context, {
       title: "Node updated",
       summary: result.event.message,
@@ -570,6 +616,7 @@ const updateNodeTool: AgentTool = {
     return {
       nodeId: input.nodeId,
       revision: mutation.revision,
+      ...(correction ? { sourceUnitCorrections: [correction] } : {}),
       validation: mutation.validation,
       mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
     };
@@ -583,7 +630,7 @@ interface InputValueWrite {
   note: string;
 }
 
-const setInputValuesBatchTool: AgentTool = {
+const setInputValuesBatchTool: AgentTool<{ values: InputValueWrite[] }> = {
   name: "vdt.fill_input_values_batch",
   description: "Fill 1-8 UNPOPULATED existing numeric input leaves atomically. Copy the exact source value and quote from literalUserQuantities. Preserve explicit quoted per-item and percentage units on empty leaves created by this agent run. Use vdt.update_node for intentional edits of populated inputs.",
   inputSchema: z.object({ values: z.array(z.object({
@@ -600,10 +647,11 @@ const setInputValuesBatchTool: AgentTool = {
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
     const nodes = new Map(project.graph.nodes.map((node) => [node.id, node]));
+    const { values } = input;
     const seen = new Set<string>();
     const groundingErrors: Array<{ nodeId: string; error: AgentToolError }> = [];
     // Validate the entire batch before previewing or committing any write.
-    for (const item of input.values) {
+    for (const item of values) {
       const node = nodes.get(item.nodeId);
       if (!node) throw new AgentToolError("NODE_NOT_FOUND", `Node "${item.nodeId}" was not found. Use an existing input ID from the working graph.`);
       if (seen.has(item.nodeId)) throw new AgentToolError("DUPLICATE_INPUT_WRITE", `Input "${item.nodeId}" occurs more than once in the batch.`);
@@ -629,26 +677,13 @@ const setInputValuesBatchTool: AgentTool = {
     if (groundingErrors.length > 1) throw new AgentToolError("USER_PROVIDED_VALUE_UNGROUNDED",
       `No values were applied. Correct all ${groundingErrors.length} ungrounded entries: ${groundingErrors.map(({ nodeId, error }) => `${nodeId}: ${error.message}`).join("\n")}`,
       { issues: groundingErrors.map(({ nodeId, error }) => ({ nodeId, code: error.code, message: error.message })) });
-    const state = context.store.getState(context.runId);
-    const quotedUnits = new Map<string, string>();
-    if (state.request.mode === "generate_vdt") {
-      for (const item of input.values as InputValueWrite[]) {
-        const node = nodes.get(item.nodeId)!;
-        if (item.provenance !== "user_provided_value" || !node.aiGenerated || node.status !== "ai_suggested"
-          || !state.mutationProposals?.some((proposal) => proposal.source === "agent" && proposal.status === "applied"
-            && proposal.changeSet.additions.some((addition) => addition.nodeId === node.id))) continue;
-        const unit = explicitQuotedInputUnit(item.note, state.visibleContext.brief.unit);
-        if (!unit) continue;
-        const current = node.unit?.trim();
-        const provisional = unit === "%" ? /^(1|fraction|ratio|decimal(?: fraction)?)$/i.test(current ?? "")
-          : current?.toUpperCase() === unit.split("/")[0];
-        if ((!current || provisional) && quoteGroundsValue(context, { value: item.value, quote: item.note })) {
-          quotedUnits.set(node.id, unit);
-        }
-      }
-    }
+    const sourceUnitCorrections = values.flatMap((item) =>
+      item.provenance === "user_provided_value"
+        ? sourceUnitCorrection(context, project, nodes.get(item.nodeId)!, { value: item.value, quote: item.note }) ?? []
+        : []);
+    const quotedUnits = new Map(sourceUnitCorrections.map(({ nodeId, unit }) => [nodeId, unit]));
     const preview = cloneBuilder(context);
-    const changes = input.values.map((item: InputValueWrite) => requireChangeSet(preview.updateNode({
+    const changes = values.map((item) => requireChangeSet(preview.updateNode({
       nodeId: item.nodeId,
       patch: {
         ...(quotedUnits.has(item.nodeId) ? { unit: quotedUnits.get(item.nodeId) } : {}),
@@ -666,12 +701,13 @@ const setInputValuesBatchTool: AgentTool = {
       }
     }).changeSet));
     const mutation = proposeAndMaybeApplyMutation(context, {
-      title: "Input values captured", summary: `Filled ${input.values.length} existing numeric inputs with explicit provenance.${quotedUnits.size ? " Retained explicit units from the source quotes on the new draft inputs." : ""}`,
+      title: "Input values captured", summary: `Filled ${values.length} existing numeric inputs with explicit provenance.${quotedUnits.size ? " Retained explicit units from the source quotes on the new draft inputs." : ""}`,
       changeSet: combineChangeSets(changes, context), targetNodeId: context.store.getState(context.runId).request.mode === "deepen_node"
         ? context.store.getState(context.runId).request.input.selectedNodeId ?? project.rootNodeId : project.rootNodeId
     });
     return {
-      nodeIds: input.values.map((item: InputValueWrite) => item.nodeId), revision: mutation.revision,
+      nodeIds: values.map((item) => item.nodeId), revision: mutation.revision,
+      ...(sourceUnitCorrections.length ? { sourceUnitCorrections } : {}),
       validation: mutation.validation, mutationProposal: { id: mutation.proposal.id, status: mutation.proposal.status }
     };
   }
@@ -743,12 +779,35 @@ const setFormulaTool: AgentTool = {
     assertFormulaReferencesIfPresent(project, input.formula, input.nodeId);
     const previewBuilder = cloneBuilder(context);
     const result = previewBuilder.setFormula(input);
-    const mutation = proposeAndMaybeApplyMutation(context, {
-      title: "Formula set",
-      summary: result.event.message,
-      changeSet: requireChangeSet(result.changeSet),
-      targetNodeId: input.nodeId
-    });
+    let mutation: ReturnType<typeof proposeAndMaybeApplyMutation>;
+    try {
+      mutation = proposeAndMaybeApplyMutation(context, {
+        title: "Formula set",
+        summary: result.event.message,
+        changeSet: requireChangeSet(result.changeSet),
+        targetNodeId: input.nodeId
+      });
+    } catch (error) {
+      if (!isAgentToolError(error) || error.code !== "MUTATION_VALIDATION_FAILED") throw error;
+      const details = error.details as { validation?: ReturnType<typeof summarizeValidation> } | undefined;
+      if (!details?.validation?.errors.some(({ type, nodeId }) => type === "unit_mismatch" && nodeId === input.nodeId)) throw error;
+      const state = context.store.getState(context.runId);
+      const sourceUnitRepairs = extractFormulaReferences(input.formula).slice(0, 8).flatMap((nodeId) => {
+        const node = project.graph.nodes.find((candidate) => candidate.id === nodeId);
+        if (node?.valueStatus !== "user_provided_value" || !isAgentOwnedConstructionLeaf(state, project, node)) return [];
+        const quoteUnit = groundedQuotedInputUnit(context, {
+          value: node.baselineValue ?? node.value, quote: node.valueSource?.note
+        }, state.visibleContext.brief.unit);
+        const correction = provisionalSourceUnitCorrection(node.id, node.unit, quoteUnit);
+        return correction ? [{
+          ...correction,
+          toolName: "vdt.update_node",
+          args: { nodeId, patch: { unit: correction.unit } }
+        }] : [];
+      });
+      if (!sourceUnitRepairs.length) throw error;
+      throw new AgentToolError(error.code, error.message, { ...details, sourceUnitRepairs });
+    }
     return {
       nodeId: input.nodeId,
       revision: mutation.revision,

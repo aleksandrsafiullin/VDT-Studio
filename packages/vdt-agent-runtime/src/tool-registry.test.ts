@@ -443,6 +443,90 @@ describe("ToolRegistry", () => {
   });
 
   it.each([
+    { caseName: "grounded rate", prompt: "The list price was 50 USD per item.", note: "Recorded verbatim: «50 USD per item».", expectedUnit: "USD/item", manualEdit: false },
+    { caseName: "unquoted attribution", prompt: "The list price was 50.", note: "50 USD per item inferred from «The list price was 50».", expectedUnit: "USD", manualEdit: false },
+    { caseName: "manually edited unit", prompt: "The list price was 50 USD per item.", note: "50 USD per item", expectedUnit: "USD", manualEdit: true }
+  ])("uses the grounded unit only on a new agent-owned input ($caseName)", async ({ prompt, note, expectedUnit, manualEdit }) => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
+    const { registry, context } = sourceUnitContext(builder, prompt);
+    expect(await registry.run("vdt.add_driver", {
+      parentNodeId: builder.getProject().rootNodeId, nodeId: "price", name: "List price", unit: "USD"
+    }, context)).toMatchObject({ ok: true });
+    const before = builder.getRevision();
+    if (manualEdit) {
+      context.store.observeManualChange(context.runId, {
+        projectRevision: before,
+        change: { kind: "node_updated", nodeId: "price", patch: { unit: "USD" }, summary: "User set the price unit." }
+      });
+    }
+    const result = await registry.run("vdt.update_node", {
+      nodeId: "price", patch: { baselineValue: 50, valueStatus: "user_provided_value", valueSource: { note } }
+    }, context);
+    expect(result).toMatchObject({ ok: true });
+    if (expectedUnit === "USD/item") {
+      expect(result.output).toMatchObject({
+        sourceUnitCorrections: [{ nodeId: "price", previousUnit: "USD", unit: "USD/item" }]
+      });
+    } else {
+      expect(result.output).not.toHaveProperty("sourceUnitCorrections");
+    }
+    expect(builder.getRevision()).toBe(before + 1);
+    expect(builder.getProject().graph.nodes.find((node) => node.id === "price")).toMatchObject({
+      baselineValue: 50, unit: expectedUnit, valueSource: { note }
+    });
+  });
+
+  it.each(["agent", "retained", "manually edited"] as const)("keeps unit validation strict for a %s input", async (ownership) => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
+    const parentNodeId = builder.getProject().rootNodeId;
+    const drivers = [
+      { parentNodeId, nodeId: "quantity", name: "Quantity", unit: "items", baselineValue: 120 },
+      { parentNodeId, nodeId: "price", name: "List price", unit: "USD", baselineValue: 50 },
+      { parentNodeId, nodeId: "refunds", name: "Refunds", unit: "USD", baselineValue: 500 }
+    ];
+    const note = "50 USD per item";
+    const prompt = `The list price was ${note}.`;
+    const sourcePatch = { value: 50, valueStatus: "user_provided_value" as const, status: "accepted" as const, valueSource: { note } };
+    const active = ownership === "retained" ? undefined : sourceUnitContext(builder, prompt);
+    if (active) {
+      expect(await active.registry.run("vdt.add_drivers_batch", { drivers }, active.context)).toMatchObject({ ok: true });
+      expect(await active.registry.run("vdt.update_node", { nodeId: "price", patch: sourcePatch }, active.context))
+        .toMatchObject({ ok: true });
+    } else {
+      for (const driver of drivers) builder.addDriver(driver);
+      builder.updateNode({ nodeId: "price", patch: sourcePatch });
+    }
+    const { registry, context } = active ?? sourceUnitContext(builder, prompt);
+    if (ownership === "manually edited") {
+      context.store.observeManualChange(context.runId, {
+        projectRevision: builder.getRevision(),
+        change: { kind: "node_updated", nodeId: "price", patch: { unit: "USD" }, summary: "User set the price unit." }
+      });
+    }
+    const formula = { nodeId: parentNodeId, formula: "quantity * price - refunds" };
+    const before = builder.getProject();
+    expect(before.graph.nodes.find((node) => node.id === "price")).toMatchObject({
+      aiGenerated: true, status: "accepted", unit: "USD", valueSource: { note }
+    });
+    const rejected = await registry.run("vdt.set_formula", formula, context);
+    expect(rejected).toMatchObject({ ok: false, error: { code: "MUTATION_VALIDATION_FAILED" } });
+    expect(builder.getProject()).toEqual(before);
+    if (ownership !== "agent") {
+      expect(rejected.error?.details).not.toHaveProperty("sourceUnitRepairs");
+      return;
+    }
+    const args = { nodeId: "price", patch: { unit: "USD/item" } };
+    expect(rejected.error?.details).toMatchObject({
+      sourceUnitRepairs: [{ nodeId: "price", previousUnit: "USD", unit: "USD/item", toolName: "vdt.update_node", args }]
+    });
+    expect(await registry.run("vdt.update_node", args, context)).toMatchObject({ ok: true });
+    expect(await registry.run("vdt.set_formula", formula, context)).toMatchObject({ ok: true });
+    expect(builder.calculate().calculation?.rootValue).toBe(5500);
+  });
+
+  it.each([
     [{ nodeId: "missing", value: 5, provenance: "default_assumption", note: "Draft estimate" }, "NODE_NOT_FOUND"],
     [{ nodeId: "ore_hauled", value: 5, provenance: "default_assumption", note: "Draft estimate" }, "INPUT_LEAF_REQUIRED"],
     [{ nodeId: "truck_count", value: 5, provenance: "user_provided_value", note: "5 trucks" }, "USER_PROVIDED_VALUE_UNGROUNDED"],
@@ -646,6 +730,22 @@ function vdtStorageError(code: string, message: string): Error {
   error.name = "VdtStorageError";
   (error as Error & { code: string }).code = code;
   return error;
+}
+
+function sourceUnitContext(builder: VdtBuilderSession, prompt: string) {
+  const project = builder.getProject();
+  const store = new AgentRunStore();
+  const run = store.createRun({
+    mode: "continue_project", input: { project, rootKpi: "Revenue", unit: "USD", prompt },
+    providerId: "mock", options: { autoApplyPatches: true }
+  });
+  store.updateRun(run.runId, { builder, draftProject: project });
+  const context: AgentToolContext = {
+    runId: run.runId, store, builder, signal: run.abortController.signal,
+    emit: (event) => store.appendEvent(run.runId, event), getRun: () => store.getSnapshot(run.runId),
+    updateRun: (patch) => { store.updateRun(run.runId, patch); }
+  };
+  return { registry: createDefaultToolRegistry(), context };
 }
 
 function inputBatchContext() {

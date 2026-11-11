@@ -62,8 +62,16 @@ Complete graph observations constrain existing-node arguments to current IDs
 and batch fills to empty input leaves. Native fields are described by the
 response format. Encoded tools retain their textual argument schemas.
 The model chooses exact number and quote pairs for a complete original brief.
-When the run first fills a new draft input, an explicit quoted per-item rate or
-percent unit enters the same mutation preview as the value and its source.
+When a run constructs a new tree from a blank draft or a saved empty root, the
+first sourced write to a new agent-owned input can replace a provisional unit
+with the explicit per-item rate or percentage from the grounded excerpt. The
+unit, value and source enter the same mutation preview. Tool output lists the
+unit corrections. When a formula fails unit validation, the tool can return a
+repair call for a referenced provisional input whose exact quote supplies the
+unit. This hint requires an applied addition in the current run with no
+intervening manual edit. Retained and manually edited inputs receive the normal
+validation diagnostic. The agent submits a suggested repair through the usual
+validation and approval controls.
 Before finish, the adapter receives current graph and plan validation results.
 The host checks the plan against the saved graph and requires explicit scaling
 when a percent input is used as a fraction. The verification is recorded in the

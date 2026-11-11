@@ -348,7 +348,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     const parentNodeId = project.rootNodeId;
     const factors = [
       { nodeId: "sales_qty", unit: "units", value: 120, note: "Продали 120 товаров" },
-      { nodeId: "price_per_item", unit: "USD/item", value: 50, note: "цена по прайсу — 50 долларов за товар" },
+      { nodeId: "price_per_item", unit: estimatedRefunds ? "USD/item" : "USD", value: 50, note: "цена по прайсу — 50 долларов за товар" },
       { nodeId: "discount_rate", unit: "%", value: 10, note: "На каждую продажу действовала скидка 10%" },
       { nodeId: "returns_amount", unit: "USD", value: 500, note: refundNote }
     ];
@@ -439,6 +439,17 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       const requests = providerFetch.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
       expect(requests[0].messages[0].content).toContain("Set assistantMessage to null");
       expect(requests[0].messages[0].content).not.toContain("The first turn must include an assistantMessage");
+      if (!estimatedRefunds) {
+        const formulaTurn = JSON.parse(requests[3].messages.find((message: { role: string }) => message.role === "user").content);
+        expect(formulaTurn.delta.results).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            toolName: "vdt.fill_input_values_batch",
+            payload: expect.objectContaining({ output: expect.objectContaining({
+              sourceUnitCorrections: [{ nodeId: "price_per_item", previousUnit: "USD", unit: "USD/item" }]
+            }) })
+          })
+        ]));
+      }
       expect(requests.at(-1).response_format.json_schema.schema.properties).toMatchObject({
         assistantMessage: { type: "null" },
         action: { anyOf: [{ properties: { text: { type: "null" } } }] }

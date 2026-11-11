@@ -1,5 +1,7 @@
 import { AgentToolError, type AgentToolContext } from "../tool-registry";
-import { USER_VALUE_QUOTE_LIMITS } from "../value-provenance-contract";
+import { explicitQuotedInputUnit, USER_VALUE_QUOTE_LIMITS } from "../value-provenance-contract";
+
+type QuoteEvidence = { value?: number | undefined; quote?: string | undefined };
 
 export function runHasUserAnswerForNode(context: AgentToolContext, nodeId: string): boolean {
   const state = context.store.getState(context.runId);
@@ -18,7 +20,7 @@ export function runHasUserAnswerForNode(context: AgentToolContext, nodeId: strin
 export function assertUserProvidedValueGrounded(
   context: AgentToolContext,
   nodeId: string,
-  evidence?: { value?: number | undefined; quote?: string | undefined }
+  evidence?: QuoteEvidence
 ): void {
   if (runHasUserAnswerForNode(context, nodeId)) return;
   if (evidence && quoteGroundsValue(context, evidence)) return;
@@ -29,14 +31,27 @@ export function assertUserProvidedValueGrounded(
   );
 }
 
-export function quoteGroundsValue(context: AgentToolContext, evidence: { value?: number | undefined; quote?: string | undefined }): boolean {
+export function quoteGroundsValue(context: AgentToolContext, evidence: QuoteEvidence): boolean {
+  return groundedQuoteExcerpts(context, evidence).length > 0;
+}
+
+/** Use only the text that proves the value. Attribution outside the exact
+ * excerpt cannot supply a unit. */
+export function groundedQuotedInputUnit(context: AgentToolContext, evidence: QuoteEvidence, currencyContext?: string): string | undefined {
+  const units = new Set(groundedQuoteExcerpts(context, evidence)
+    .filter((excerpt) => [...excerpt.matchAll(numberPattern())].length === 1)
+    .map((excerpt) => explicitQuotedInputUnit(excerpt, currencyContext)));
+  return units.size === 1 ? units.values().next().value : undefined;
+}
+
+function groundedQuoteExcerpts(context: AgentToolContext, evidence: QuoteEvidence): string[] {
   const quote = evidence.quote?.trim();
-  if (!quote || quote.length < USER_VALUE_QUOTE_LIMITS.minCharacters || quote.length > USER_VALUE_QUOTE_LIMITS.maxCharacters || !/\p{L}/u.test(quote) || !Number.isFinite(evidence.value)) return false;
+  if (!quote || quote.length < USER_VALUE_QUOTE_LIMITS.minCharacters || quote.length > USER_VALUE_QUOTE_LIMITS.maxCharacters || !/\p{L}/u.test(quote) || !Number.isFinite(evidence.value)) return [];
   const texts = userSourceTexts(context);
   // Notes may contain an explicitly quoted excerpt with surrounding attribution.
   // Only the verbatim excerpt can ground the value, never its surrounding prose.
   const excerpts = [quote, ...[...quote.matchAll(/["«“]([^"»”\n]+)["»”]/g)].map((match) => match[1]!)];
-  return excerpts.some((excerpt) => {
+  return excerpts.filter((excerpt) => {
     if (excerpt.length < 4 || !/\p{L}/u.test(excerpt)) return false;
     const numbers = [...excerpt.matchAll(numberPattern())].map((match) => numericValue(match[0]));
   // A short, single-quantity quote avoids accepting an unrelated number from
