@@ -99,6 +99,8 @@ Host identity, validation and apply retain the complete task context.
 Preparation v23 recognizes a supported trailing currency code with an optional
 English or Russian preposition in an otherwise exact refund amount label.
 Recipe exclusion still requires the matching operand in the saved ancestor.
+Preparation v24 recognizes the discount qualifier before or after that currency
+phrase, including the equivalent wording `already discounted`.
 Reopening a draft can reuse a successful preview for the same draft, project
 and Smart scope while the proposal is current. Add recompiles the draft and
 verifies the current execution lineage and storage revision.

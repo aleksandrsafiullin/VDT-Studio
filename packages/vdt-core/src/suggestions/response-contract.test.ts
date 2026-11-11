@@ -106,12 +106,17 @@ describe("Smart model response requirements", () => {
     const targetPlan = (rationale: string) => ({ version: 1 as const, goal: "Preserve the selected target definition.", nodes: [{
       nodeId: context.targetNodeId, parentNodeId: root.id, kind: "input" as const, rationale
     }] });
-    for (const rationale of ["Total returns value after discounts.", "Returns amount after discount"]) {
-      const saved = { ...context, decompositionPlan: targetPlan(rationale) };
+    for (const [description, rationale] of [
+      ["Total returns value after discounts", "Total returns value after discounts."],
+      ["Returns amount after discount", "Returns amount after discount"],
+      ["Total returns in USD (after discounts)", "Total returns in USD (already discounted)."],
+      ["Total returns already discounted in USD", "Total returns after discounts (in USD)"]
+    ] as const) {
+      const saved = { ...context, target: { ...context.target, description }, decompositionPlan: targetPlan(rationale) };
       const task = buildKpiSuggestionTaskInput(saved);
       expect(task.context.decompositionPlan).toEqual(saved.decompositionPlan);
       expect(task.responseContract.references.openAiCustomFactorKeys).toEqual(["p_1", "p_2"]);
-      expect(kpiSuggestionPromptInput(task).context).toEqual({ targetNodeId: context.targetNodeId, target: context.target, period: context.period });
+      expect(kpiSuggestionPromptInput(task).context).toEqual({ targetNodeId: context.targetNodeId, target: saved.target, period: context.period });
     }
     const { unit: _unit, ...unitlessChild } = context.target;
     const authoredDescription = { ...context, target: { ...context.target,
@@ -125,9 +130,10 @@ describe("Smart model response requirements", () => {
       { ...context, target: { ...context.target, assumptions: ["The documented source separates returned items and service allowances."] } },
       authoredDescription,
       { ...context, target: { ...context.target, description: "Returns/allowances by channel" } },
+      { ...context, target: { ...context.target, description: "Returns in USD by channel (after discounts)" } },
       { ...context, business: { ...context.business, context: "Only documented disjoint adjustment groups belong to this target." } },
       { ...context, business: { ...context.business, description: "This target's authored formula uses separately measured adjustments." } },
-      { ...context, decompositionPlan: targetPlan("Use the target's documented source groups.") },
+      { ...context, decompositionPlan: targetPlan("Sum merchandise refunds and service allowances in USD (already discounted).") },
       { ...context, decompositionPlan: { ...targetPlan("Returns amount after discount"), nodes: [
         ...targetPlan("Returns amount after discount").nodes,
         { nodeId: "documented_refund_source", parentNodeId: context.targetNodeId, kind: "input" }
