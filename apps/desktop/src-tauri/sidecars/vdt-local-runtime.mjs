@@ -1244,287 +1244,6 @@ function validAiPersonalisation(value) {
   return record3(value) && Object.entries(value).every(([key2, text2]) => ["userInstructions", "projectRules"].includes(key2) && validText(text2, key2 === "userInstructions" ? INSTRUCTION_TOTAL_LIMIT : INSTRUCTION_TEXT_LIMIT) && text2.trim().length > 0);
 }
 
-// ../vdt-core/src/suggestions/validation.ts
-var KpiSuggestionError = class extends Error {
-  constructor(code, message) {
-    super(message);
-    this.code = code;
-    this.name = "KpiSuggestionError";
-  }
-  code;
-};
-function smartAssert(condition, code, message) {
-  if (!condition) throw new KpiSuggestionError(code, message);
-}
-function smartRecord(v, keys, required2 = keys) {
-  smartAssert(
-    v !== null && typeof v === "object" && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype,
-    "INVALID_PROPOSAL",
-    "Smart data must contain plain objects."
-  );
-  smartAssert(
-    Object.keys(v).every((k) => keys.includes(k)) && required2.every((k) => Object.hasOwn(v, k)),
-    "INVALID_PROPOSAL",
-    "Unknown or missing Smart fields."
-  );
-}
-function smartString(v, max = 300) {
-  smartAssert(
-    typeof v === "string" && v.trim().length > 0 && v.length <= max && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(v),
-    "INVALID_PROPOSAL",
-    "A bounded nonempty Smart string is required."
-  );
-}
-function smartList(v, max) {
-  smartAssert(Array.isArray(v) && v.length <= max && Object.keys(v).length === v.length, "INVALID_PROPOSAL", "Invalid Smart array.");
-}
-function stringList(v, max, itemMax = 300) {
-  smartList(v, max);
-  v.forEach((s) => smartString(s, itemMax));
-}
-function hash(v) {
-  smartAssert(typeof v === "string" && /^sha256:[a-f0-9]{64}$/.test(v), "INVALID_PROPOSAL", "Invalid Smart content identity.");
-}
-function key(v) {
-  smartAssert(typeof v === "string" && /^[a-z][a-z0-9_]{0,47}$/.test(v), "INVALID_PROPOSAL", "Invalid Smart local key.");
-}
-function date(v) {
-  smartString(v, 30);
-  const n = Date.parse(v);
-  smartAssert(Number.isFinite(n) && new Date(n).toISOString() === v, "INVALID_PROPOSAL", "A canonical timestamp is required.");
-  return n;
-}
-function validateKpiSuggestionContext(value) {
-  smartRecord(
-    value,
-    ["selectedSkill", "personalisation", "schemaVersion", "workspaceId", "projectId", "vdtId", "targetNodeId", "graphFingerprint", "contextHash", "period", "business", "root", "target", "children", "ancestors", "siblings", "decompositionPlan", "planScope", "parentRelationships", "omissions"],
-    ["schemaVersion", "workspaceId", "projectId", "vdtId", "targetNodeId", "graphFingerprint", "contextHash", "period", "business", "root", "target", "children", "ancestors", "siblings", "parentRelationships", "omissions"]
-  );
-  smartAssert(value.schemaVersion === "kpi_suggestion_context.v1", "INVALID_CONTEXT", "Unknown Smart context schema.");
-  if (value.selectedSkill !== void 0) {
-    smartRecord(value.selectedSkill, ["id", "title", "version", "contentHash", "content"]);
-    smartString(value.selectedSkill.id, 160);
-    smartString(value.selectedSkill.title, 160);
-    hash(value.selectedSkill.contentHash);
-    smartAssert(Number.isSafeInteger(value.selectedSkill.version) && Number(value.selectedSkill.version) > 0, "INVALID_CONTEXT", "Invalid selected skill version.");
-    smartString(value.selectedSkill.content, KPI_SUGGESTION_LIMITS.skillBytes);
-    smartAssert(new TextEncoder().encode(value.selectedSkill.content).byteLength <= KPI_SUGGESTION_LIMITS.skillBytes, "INPUT_TOO_LARGE", "The selected skill exceeds its content limit.");
-  }
-  if (value.personalisation !== void 0) smartAssert(validAiPersonalisation(value.personalisation), "INVALID_CONTEXT", "Invalid personalisation instructions.");
-  for (const field of ["workspaceId", "projectId", "targetNodeId"]) smartString(value[field], 160);
-  if (value.vdtId !== null) smartString(value.vdtId, 160);
-  hash(value.graphFingerprint);
-  hash(value.contextHash);
-  smartRecord(value.period, ["key", "grain"]);
-  smartString(value.period.key, 120);
-  smartAssert(["shift", "day", "week", "month", "quarter", "year", "custom"].includes(String(value.period.grain)), "INVALID_CONTEXT", "Unknown Smart period.");
-  smartRecord(value.business, ["name", "description", "industry", "context", "goal"], ["name"]);
-  smartString(value.business.name, 160);
-  for (const field of ["description", "industry", "context", "goal"]) if (value.business[field] !== void 0) smartString(value.business[field], field === "context" ? KPI_SUGGESTION_LIMITS.businessContextChars : field === "goal" ? 500 : field === "description" ? 300 : 160);
-  const node3 = (n) => {
-    smartRecord(
-      n,
-      ["id", "name", "description", "assumptions", "type", "status", "unit", "formula", "valueKnown", "valueStatus", "provenance", "mappingIdentity"],
-      ["id", "name", "type", "status", "valueKnown", "valueStatus", "provenance"]
-    );
-    smartString(n.id, 160);
-    smartString(n.name, 160);
-    if (n.unit !== void 0) smartString(n.unit, 80);
-    if (n.formula !== void 0) smartString(n.formula, 500);
-    if (n.description !== void 0) smartString(n.description, 240);
-    if (n.assumptions !== void 0) stringList(n.assumptions, 3, 160);
-    smartAssert(["root_kpi", "calculated", "input", "assumption", "external_factor", "data_mapped"].includes(String(n.type)) && ["ai_suggested", "accepted", "edited", "rejected", "needs_data", "formula_issue", "unit_issue", "assumption", "external_factor"].includes(String(n.status)) && [null, "unknown", "user_provided_value", "default_assumption", "calculated", "partially_calculable"].includes(n.valueStatus) && typeof n.valueKnown === "boolean" && ["mapped", "sourced", "unsourced"].includes(String(n.provenance)), "INVALID_CONTEXT", "Invalid Smart node summary.");
-    if (n.mappingIdentity !== void 0) hash(n.mappingIdentity);
-    return n;
-  };
-  const root = node3(value.root), target = node3(value.target);
-  smartAssert(target.id === value.targetNodeId, "INVALID_CONTEXT", "Smart target identity differs from its summary.");
-  let count2 = 2;
-  for (const field of ["children", "ancestors", "siblings"]) {
-    const list2 = value[field];
-    smartList(list2, 12);
-    count2 += list2.length;
-    const ids = list2.map((n) => node3(n).id);
-    smartAssert(new Set(ids).size === ids.length, "INVALID_CONTEXT", "Duplicate context node summary.");
-  }
-  smartAssert(count2 <= KPI_SUGGESTION_LIMITS.contextNodes, "INVALID_CONTEXT", "Smart context node bound exceeded.");
-  smartRecord(value.omissions, ["directChildren", "ancestors", "siblings", "planNodes", "relationships", "text", "cyclic"]);
-  for (const field of ["directChildren", "ancestors", "siblings", "planNodes", "relationships"]) smartAssert(Number.isSafeInteger(value.omissions[field]) && Number(value.omissions[field]) >= 0, "INVALID_CONTEXT", "Context omission counts must be explicit.");
-  smartAssert(typeof value.omissions.text === "boolean" && typeof value.omissions.cyclic === "boolean", "INVALID_CONTEXT", "Context omission flags must be explicit.");
-  smartList(value.parentRelationships, 96);
-  for (const edge of value.parentRelationships) {
-    smartRecord(edge, ["parentNodeId", "childNodeId", "relation"]);
-    smartString(edge.parentNodeId, 160);
-    smartString(edge.childNodeId, 160);
-    smartAssert(["positive_driver", "negative_driver", "multiplicative_driver", "divisive_driver", "additive_component", "subtractive_component", "contextual_influence", "formula_dependency"].includes(String(edge.relation)), "INVALID_CONTEXT", "Invalid context relationship.");
-  }
-  if (value.planScope !== void 0) {
-    smartRecord(value.planScope, ["selection", "totalNodes", "excludedUnrelatedNodes"]);
-    smartAssert(
-      value.planScope.selection === "target_and_direct_children" && Number.isSafeInteger(value.planScope.totalNodes) && Number(value.planScope.totalNodes) >= 0 && Number.isSafeInteger(value.planScope.excludedUnrelatedNodes) && Number(value.planScope.excludedUnrelatedNodes) >= 0 && Number(value.planScope.excludedUnrelatedNodes) <= Number(value.planScope.totalNodes),
-      "INVALID_CONTEXT",
-      "Invalid bounded plan scope."
-    );
-  }
-  if (value.decompositionPlan !== void 0) {
-    smartRecord(value.decompositionPlan, ["version", "goal", "nodes"]);
-    smartAssert(value.decompositionPlan.version === 1, "INVALID_CONTEXT", "Unknown plan version.");
-    smartString(value.decompositionPlan.goal, 500);
-    smartList(value.decompositionPlan.nodes, 12);
-    for (const entry of value.decompositionPlan.nodes) {
-      smartRecord(entry, ["nodeId", "parentNodeId", "kind", "rationale", "sharedWith"], ["nodeId", "parentNodeId", "kind"]);
-      smartString(entry.nodeId, 160);
-      smartString(entry.parentNodeId, 160);
-      smartAssert(["calculated", "input", "context"].includes(String(entry.kind)), "INVALID_CONTEXT", "Invalid plan kind.");
-      if (entry.rationale !== void 0) smartString(entry.rationale, 300);
-      if (entry.sharedWith !== void 0) stringList(entry.sharedWith, 20, 160);
-    }
-  }
-  smartAssert(new TextEncoder().encode(JSON.stringify(value)).byteLength <= KPI_SUGGESTION_LIMITS.inputBytes, "OVERSIZE_CONTEXT", "Smart context exceeds its input bound.");
-  void root;
-  return value;
-}
-function checkExpression(ast) {
-  if (ast.type === "number") smartAssert(ast.value === 1 && ast.raw === "1", "UNSAFE_FORMULA", "Smart formulas cannot introduce numeric assumptions.");
-  else if (ast.type === "binary") {
-    checkExpression(ast.left);
-    checkExpression(ast.right);
-    const left = constantExpression(ast.left), right = constantExpression(ast.right);
-    smartAssert(
-      !(ast.operator === "*" && (left === 0 || right === 0)) && !(ast.operator === "/" && right === 0),
-      "UNSAFE_FORMULA",
-      "Smart formulas cannot mask factors with a constant zero or divide by zero."
-    );
-  } else if (ast.type === "unary") checkExpression(ast.expression);
-  else if (ast.type === "call") ast.args.forEach(checkExpression);
-}
-function constantExpression(ast) {
-  if (ast.type === "number") return ast.value;
-  if (ast.type === "reference") return void 0;
-  if (ast.type === "unary") {
-    const value = constantExpression(ast.expression);
-    return value === void 0 ? void 0 : -value;
-  }
-  if (ast.type === "call") {
-    const values = ast.args.map(constantExpression);
-    return values.every((v) => v !== void 0) ? (ast.name === "min" ? Math.min : Math.max)(...values) : void 0;
-  }
-  const a = constantExpression(ast.left), b = constantExpression(ast.right);
-  return a === void 0 || b === void 0 ? void 0 : ast.operator === "+" ? a + b : ast.operator === "-" ? a - b : ast.operator === "*" ? a * b : a / b;
-}
-function validateKpiSuggestionSet(value, now) {
-  smartRecord(value, ["schemaVersion", "validatorVersion", "catalogVersion", "proposalId", "targetNodeId", "contextHash", "createdAt", "expiresAt", "origin", "rationale", "limitations", "groups"]);
-  smartAssert(value.schemaVersion === KPI_SUGGESTION_SCHEMA && value.validatorVersion === KPI_SUGGESTION_VALIDATOR, "INVALID_PROPOSAL", "Unsupported Smart schema/validator.");
-  smartString(value.catalogVersion, 100);
-  smartString(value.proposalId, 120);
-  smartString(value.targetNodeId, 160);
-  hash(value.contextHash);
-  const created = date(value.createdAt), expires = date(value.expiresAt);
-  smartAssert(expires > created && expires - created <= KPI_SUGGESTION_LIMITS.ttlMs, "INVALID_PROPOSAL", "Invalid Smart proposal lifetime.");
-  if (now !== void 0) smartAssert(created <= now + 6e4 && expires > now, "EXPIRED_PROPOSAL", "Smart suggestions have expired.");
-  smartString(value.rationale);
-  stringList(value.limitations, 6);
-  const origin = value.origin;
-  smartAssert(origin !== null && typeof origin === "object" && !Array.isArray(origin), "INVALID_PROPOSAL", "Missing Smart provenance.");
-  if (origin.kind === "recipe") {
-    smartRecord(origin, ["kind", "sourceRef"]);
-    smartString(origin.sourceRef, 120);
-  } else {
-    smartRecord(origin, ["kind", "requestId", "execution"]);
-    smartAssert(origin.kind === "model", "INVALID_PROPOSAL", "Unsupported Smart origin.");
-    smartString(origin.requestId, 120);
-    smartRecord(origin.execution, ["mode", "backendId", "modelId", "bindingVersion", "credentialEpoch"]);
-    smartAssert(["api", "cli", "local_model"].includes(String(origin.execution.mode)), "INVALID_PROPOSAL", "Invalid Smart execution mode.");
-    for (const field of ["backendId", "modelId", "bindingVersion", "credentialEpoch"]) smartString(origin.execution[field], 160);
-  }
-  smartList(value.groups, KPI_SUGGESTION_LIMITS.groups);
-  smartAssert(value.groups.length > 0, "INVALID_PROPOSAL", "A ready Smart proposal needs at least one group.");
-  const groupIds = /* @__PURE__ */ new Set();
-  for (const group of value.groups) {
-    smartRecord(group, ["id", "title", "selectionMode", "children", "requiredKeys", "formula", "recipeBinding", "limitations"], ["id", "title", "selectionMode", "children", "requiredKeys", "limitations"]);
-    key(group.id);
-    smartString(group.title, 160);
-    stringList(group.limitations, 6);
-    smartAssert(!groupIds.has(group.id), "INVALID_PROPOSAL", "Duplicate Smart alternative.");
-    groupIds.add(group.id);
-    smartAssert(group.selectionMode === "all" || group.selectionMode === "independent", "INVALID_PROPOSAL", "Invalid Smart selection mode.");
-    smartList(group.children, KPI_SUGGESTION_LIMITS.children);
-    smartAssert(group.children.length > 0, "INVALID_PROPOSAL", "A Smart group needs children.");
-    const keys = /* @__PURE__ */ new Set(), concepts = /* @__PURE__ */ new Set();
-    for (const child of group.children) {
-      smartRecord(child, ["key", "conceptKey", "name", "unit", "description", "existingNodeId"], ["key", "conceptKey", "name", "unit"]);
-      key(child.key);
-      key(child.conceptKey);
-      smartString(child.name, 160);
-      smartString(child.unit, 80);
-      if (child.description !== void 0) smartString(child.description, 240);
-      if (child.existingNodeId !== void 0) smartString(child.existingNodeId, 160);
-      smartAssert(!keys.has(child.key) && !concepts.has(child.conceptKey), "DUPLICATE_CONCEPT", "Duplicate Smart keys/concepts.");
-      keys.add(child.key);
-      concepts.add(child.conceptKey);
-    }
-    stringList(group.requiredKeys, KPI_SUGGESTION_LIMITS.children, 48);
-    const required2 = new Set(group.requiredKeys);
-    smartAssert(required2.size === group.requiredKeys.length && [...required2].every((k) => keys.has(k)), "INVALID_PROPOSAL", "Invalid required Smart factors.");
-    smartAssert(
-      group.selectionMode === "all" ? required2.size === keys.size : required2.size === 0 && group.formula === void 0 && group.recipeBinding === void 0,
-      "INCOHERENT_GROUP",
-      "Required factors stay together; independent choices are contextual only."
-    );
-    if (group.formula !== void 0) {
-      smartString(group.formula, 500);
-      let ast;
-      try {
-        ast = parseFormula(group.formula);
-      } catch {
-        throw new KpiSuggestionError("UNSAFE_FORMULA", "Invalid Smart formula.");
-      }
-      checkExpression(ast);
-      const refs = new Set(extractReferencesFromAst(ast));
-      smartAssert(refs.size === keys.size && [...refs].every((k) => keys.has(k)), "INCOHERENT_GROUP", "Formula must use exactly the complete one-layer factor group.");
-    }
-    if (group.recipeBinding !== void 0) {
-      smartRecord(group.recipeBinding, ["id", "recipeId", "recipeHash", "skillHash", "targetRole", "contextHash", "basis", "sourceRef", "rationale"]);
-      const binding = group.recipeBinding;
-      for (const field of ["id", "recipeId", "targetRole", "sourceRef"]) smartString(binding[field], 120);
-      hash(binding.recipeHash);
-      hash(binding.skillHash);
-      hash(binding.contextHash);
-      smartString(binding.rationale);
-      smartAssert(["selected_skill", "accepted_smart", "model_selection"].includes(String(binding.basis)), "INVALID_PROPOSAL", "Smart applicability must have an explicit semantic decision.");
-      smartAssert(binding.contextHash === value.contextHash, "STALE_PROPOSAL", "Recipe decision belongs to a different context.");
-      smartAssert(group.formula !== void 0 && group.selectionMode === "all", "INCOHERENT_GROUP", "Executable recipes require complete factors.");
-    }
-  }
-  smartAssert(new TextEncoder().encode(JSON.stringify(value)).byteLength <= KPI_SUGGESTION_LIMITS.outputBytes, "OVERSIZE_PROPOSAL", "Smart proposal exceeds its output bound.");
-  return value;
-}
-function validateKpiSuggestionDecomposition(proposal, context) {
-  for (const group of proposal.groups) smartAssert(
-    group.children.length >= 2,
-    "NOT_A_DECOMPOSITION",
-    "A decomposition needs at least two distinct component KPIs. A renamed copy is not a decomposition."
-  );
-  if (context) {
-    const direct = new Set(context.children.filter((node3) => node3.status !== "rejected").map((node3) => node3.id));
-    const normalize = (name) => name.normalize("NFKC").trim().toLocaleLowerCase("en").replace(/[\p{P}\p{Z}\s_]+/gu, " ");
-    const contextOnly = [context.root, context.target, ...context.ancestors, ...context.siblings].filter((node3) => !direct.has(node3.id));
-    for (const group of proposal.groups) for (const child of group.children) {
-      smartAssert(
-        !child.existingNodeId || direct.has(child.existingNodeId),
-        "UNSAFE_DECOMPOSITION",
-        "Suggested components cannot reuse a sibling, ancestor or unrelated KPI. Decompose the target into its own lower-level inputs; refresh suggestions."
-      );
-      smartAssert(
-        child.existingNodeId || !contextOnly.some((node3) => normalize(node3.name) === normalize(child.name)),
-        "UNSAFE_DECOMPOSITION",
-        "A copy of the target, a sibling or an ancestor is not a lower-level component. Refresh suggestions."
-      );
-    }
-  }
-  return proposal;
-}
-
 // ../vdt-core/src/suggestions/recipe-catalog.generated.json
 var recipe_catalog_generated_default = {
   schemaVersion: "kpi_recipe_catalog.v1",
@@ -1827,6 +1546,373 @@ function parseIncomingKpiUnit(unit, period) {
 // ../vdt-core/src/suggestions/recipes.ts
 var KPI_SUGGESTION_RECIPES = recipe_catalog_generated_default;
 
+// ../vdt-core/src/suggestions/recipe-scope.ts
+function normalizedLabel(value) {
+  return value.normalize("NFKC").toLocaleLowerCase("en").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+function matchesRecipeOperandLabel(label, operand) {
+  const name = normalizedLabel(label);
+  if ([operand.name, operand.key, operand.conceptKey].some((value) => normalizedLabel(value) === name)) return true;
+  if (operand.conceptKey !== "refunds") return false;
+  const words = name.split(" ");
+  if (INCOMING_KPI_UNIT_GRAMMAR.currencies.some((currency) => currency.toLowerCase() === words.at(-1))) words.pop();
+  const amount = words.join(" ").replace(/^(?:total|сумма) /u, "").replace(/ (?:after discounts?|после скид(?:ки|ок))$/u, "").replace(/ (?:amount|value)$/u, "");
+  return /^(?:refunds?|returns?|возврат(?:ы|ов)?)$/u.test(amount);
+}
+function repeatsRecipeOperand(context, child, operand) {
+  if (child.existingNodeId || !context.target.unit || !matchesRecipeOperandLabel(child.name, operand)) return false;
+  try {
+    return unitShape(child.unit, context.period) === unitShape(context.target.unit, context.period);
+  } catch {
+    return false;
+  }
+}
+function unitShape(unit, period) {
+  return JSON.stringify(parseIncomingKpiUnit(unit, period));
+}
+function commutativeOperands(expression, operator) {
+  if (expression.type !== "binary" || expression.operator !== operator) return [expression];
+  return [...commutativeOperands(expression.left, operator), ...commutativeOperands(expression.right, operator)];
+}
+function formulaShape(expression, units, period, markedFactor, ancestor) {
+  const shape = (part) => formulaShape(part, units, period, markedFactor, ancestor);
+  const factor = (name, unit) => `${name === markedFactor ? "operand" : "factor"}(${unitShape(unit, period)})`;
+  if (expression.type === "number") return `number(${expression.value})`;
+  if (expression.type === "reference") return factor(expression.name, units.get(expression.name) ?? "");
+  if (expression.type === "unary") return `negate(${shape(expression.expression)})`;
+  if (expression.type === "call") return `${expression.name}(${expression.args.map(shape).join(",")})`;
+  const { operator, left, right } = expression;
+  if (ancestor && operator === "/" && left.type === "reference" && units.get(left.name)?.trim() === "%" && right.type === "number" && right.value === 100) return factor(left.name, "fraction");
+  if (operator === "+" || operator === "*") {
+    return `${operator}(${commutativeOperands(expression, operator).map(shape).sort().join(",")})`;
+  }
+  return `${operator}(${shape(left)},${shape(right)})`;
+}
+function matchesAncestorKpiFormula(context, formula, factorUnits, operandKey) {
+  if (!context.target.unit) return false;
+  const ancestors = new Map([context.root, ...context.ancestors].map((node3) => [node3.id, node3]));
+  const relativeUnits = new Map([...ancestors.values(), ...context.siblings, ...context.children, context.target].map((node3) => [node3.id, node3.unit]));
+  const period = context.period;
+  const targetUnit = unitShape(context.target.unit, period);
+  const candidate = parseFormula(formula);
+  const factorCount = extractReferencesFromAst(candidate).length;
+  const candidateShape = formulaShape(candidate, factorUnits, period, operandKey, false);
+  for (const node3 of ancestors.values()) {
+    if (node3.id === context.targetNodeId || node3.status === "rejected" || !node3.formula || !node3.unit) continue;
+    try {
+      if (unitShape(node3.unit, period) !== targetUnit) continue;
+      const actual = parseFormula(node3.formula);
+      const references = extractReferencesFromAst(actual);
+      if (!references.includes(context.targetNodeId) || references.length !== factorCount) continue;
+      if (formulaShape(actual, relativeUnits, period, context.targetNodeId, true) === candidateShape) return true;
+    } catch {
+    }
+  }
+  return false;
+}
+function findAncestorRecipeOperand(context, recipe, resolvedUnits) {
+  const namedOperands = recipe.children.filter((operand) => matchesRecipeOperandLabel(context.target.name, operand));
+  if (!namedOperands.length) return void 0;
+  try {
+    const units = new Map(Object.entries(resolvedUnits ?? resolveKpiRecipeUnits(recipe, context)));
+    return namedOperands.find((operand) => matchesAncestorKpiFormula(context, recipe.formula, units, operand.key));
+  } catch {
+    return void 0;
+  }
+}
+
+// ../vdt-core/src/suggestions/validation.ts
+var KpiSuggestionError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+    this.name = "KpiSuggestionError";
+  }
+  code;
+};
+function smartAssert(condition, code, message) {
+  if (!condition) throw new KpiSuggestionError(code, message);
+}
+function smartRecord(v, keys, required2 = keys) {
+  smartAssert(
+    v !== null && typeof v === "object" && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype,
+    "INVALID_PROPOSAL",
+    "Smart data must contain plain objects."
+  );
+  smartAssert(
+    Object.keys(v).every((k) => keys.includes(k)) && required2.every((k) => Object.hasOwn(v, k)),
+    "INVALID_PROPOSAL",
+    "Unknown or missing Smart fields."
+  );
+}
+function smartString(v, max = 300) {
+  smartAssert(
+    typeof v === "string" && v.trim().length > 0 && v.length <= max && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(v),
+    "INVALID_PROPOSAL",
+    "A bounded nonempty Smart string is required."
+  );
+}
+function smartList(v, max) {
+  smartAssert(Array.isArray(v) && v.length <= max && Object.keys(v).length === v.length, "INVALID_PROPOSAL", "Invalid Smart array.");
+}
+function stringList(v, max, itemMax = 300) {
+  smartList(v, max);
+  v.forEach((s) => smartString(s, itemMax));
+}
+function hash(v) {
+  smartAssert(typeof v === "string" && /^sha256:[a-f0-9]{64}$/.test(v), "INVALID_PROPOSAL", "Invalid Smart content identity.");
+}
+function key(v) {
+  smartAssert(typeof v === "string" && /^[a-z][a-z0-9_]{0,47}$/.test(v), "INVALID_PROPOSAL", "Invalid Smart local key.");
+}
+function date(v) {
+  smartString(v, 30);
+  const n = Date.parse(v);
+  smartAssert(Number.isFinite(n) && new Date(n).toISOString() === v, "INVALID_PROPOSAL", "A canonical timestamp is required.");
+  return n;
+}
+function validateKpiSuggestionContext(value) {
+  smartRecord(
+    value,
+    ["selectedSkill", "personalisation", "schemaVersion", "workspaceId", "projectId", "vdtId", "targetNodeId", "graphFingerprint", "contextHash", "period", "business", "root", "target", "children", "ancestors", "siblings", "decompositionPlan", "planScope", "parentRelationships", "omissions"],
+    ["schemaVersion", "workspaceId", "projectId", "vdtId", "targetNodeId", "graphFingerprint", "contextHash", "period", "business", "root", "target", "children", "ancestors", "siblings", "parentRelationships", "omissions"]
+  );
+  smartAssert(value.schemaVersion === "kpi_suggestion_context.v1", "INVALID_CONTEXT", "Unknown Smart context schema.");
+  if (value.selectedSkill !== void 0) {
+    smartRecord(value.selectedSkill, ["id", "title", "version", "contentHash", "content"]);
+    smartString(value.selectedSkill.id, 160);
+    smartString(value.selectedSkill.title, 160);
+    hash(value.selectedSkill.contentHash);
+    smartAssert(Number.isSafeInteger(value.selectedSkill.version) && Number(value.selectedSkill.version) > 0, "INVALID_CONTEXT", "Invalid selected skill version.");
+    smartString(value.selectedSkill.content, KPI_SUGGESTION_LIMITS.skillBytes);
+    smartAssert(new TextEncoder().encode(value.selectedSkill.content).byteLength <= KPI_SUGGESTION_LIMITS.skillBytes, "INPUT_TOO_LARGE", "The selected skill exceeds its content limit.");
+  }
+  if (value.personalisation !== void 0) smartAssert(validAiPersonalisation(value.personalisation), "INVALID_CONTEXT", "Invalid personalisation instructions.");
+  for (const field of ["workspaceId", "projectId", "targetNodeId"]) smartString(value[field], 160);
+  if (value.vdtId !== null) smartString(value.vdtId, 160);
+  hash(value.graphFingerprint);
+  hash(value.contextHash);
+  smartRecord(value.period, ["key", "grain"]);
+  smartString(value.period.key, 120);
+  smartAssert(["shift", "day", "week", "month", "quarter", "year", "custom"].includes(String(value.period.grain)), "INVALID_CONTEXT", "Unknown Smart period.");
+  smartRecord(value.business, ["name", "description", "industry", "context", "goal"], ["name"]);
+  smartString(value.business.name, 160);
+  for (const field of ["description", "industry", "context", "goal"]) if (value.business[field] !== void 0) smartString(value.business[field], field === "context" ? KPI_SUGGESTION_LIMITS.businessContextChars : field === "goal" ? 500 : field === "description" ? 300 : 160);
+  const node3 = (n) => {
+    smartRecord(
+      n,
+      ["id", "name", "description", "assumptions", "type", "status", "unit", "formula", "valueKnown", "valueStatus", "provenance", "mappingIdentity"],
+      ["id", "name", "type", "status", "valueKnown", "valueStatus", "provenance"]
+    );
+    smartString(n.id, 160);
+    smartString(n.name, 160);
+    if (n.unit !== void 0) smartString(n.unit, 80);
+    if (n.formula !== void 0) smartString(n.formula, 500);
+    if (n.description !== void 0) smartString(n.description, 240);
+    if (n.assumptions !== void 0) stringList(n.assumptions, 3, 160);
+    smartAssert(["root_kpi", "calculated", "input", "assumption", "external_factor", "data_mapped"].includes(String(n.type)) && ["ai_suggested", "accepted", "edited", "rejected", "needs_data", "formula_issue", "unit_issue", "assumption", "external_factor"].includes(String(n.status)) && [null, "unknown", "user_provided_value", "default_assumption", "calculated", "partially_calculable"].includes(n.valueStatus) && typeof n.valueKnown === "boolean" && ["mapped", "sourced", "unsourced"].includes(String(n.provenance)), "INVALID_CONTEXT", "Invalid Smart node summary.");
+    if (n.mappingIdentity !== void 0) hash(n.mappingIdentity);
+    return n;
+  };
+  const root = node3(value.root), target = node3(value.target);
+  smartAssert(target.id === value.targetNodeId, "INVALID_CONTEXT", "Smart target identity differs from its summary.");
+  let count2 = 2;
+  for (const field of ["children", "ancestors", "siblings"]) {
+    const list2 = value[field];
+    smartList(list2, 12);
+    count2 += list2.length;
+    const ids = list2.map((n) => node3(n).id);
+    smartAssert(new Set(ids).size === ids.length, "INVALID_CONTEXT", "Duplicate context node summary.");
+  }
+  smartAssert(count2 <= KPI_SUGGESTION_LIMITS.contextNodes, "INVALID_CONTEXT", "Smart context node bound exceeded.");
+  smartRecord(value.omissions, ["directChildren", "ancestors", "siblings", "planNodes", "relationships", "text", "cyclic"]);
+  for (const field of ["directChildren", "ancestors", "siblings", "planNodes", "relationships"]) smartAssert(Number.isSafeInteger(value.omissions[field]) && Number(value.omissions[field]) >= 0, "INVALID_CONTEXT", "Context omission counts must be explicit.");
+  smartAssert(typeof value.omissions.text === "boolean" && typeof value.omissions.cyclic === "boolean", "INVALID_CONTEXT", "Context omission flags must be explicit.");
+  smartList(value.parentRelationships, 96);
+  for (const edge of value.parentRelationships) {
+    smartRecord(edge, ["parentNodeId", "childNodeId", "relation"]);
+    smartString(edge.parentNodeId, 160);
+    smartString(edge.childNodeId, 160);
+    smartAssert(["positive_driver", "negative_driver", "multiplicative_driver", "divisive_driver", "additive_component", "subtractive_component", "contextual_influence", "formula_dependency"].includes(String(edge.relation)), "INVALID_CONTEXT", "Invalid context relationship.");
+  }
+  if (value.planScope !== void 0) {
+    smartRecord(value.planScope, ["selection", "totalNodes", "excludedUnrelatedNodes"]);
+    smartAssert(
+      value.planScope.selection === "target_and_direct_children" && Number.isSafeInteger(value.planScope.totalNodes) && Number(value.planScope.totalNodes) >= 0 && Number.isSafeInteger(value.planScope.excludedUnrelatedNodes) && Number(value.planScope.excludedUnrelatedNodes) >= 0 && Number(value.planScope.excludedUnrelatedNodes) <= Number(value.planScope.totalNodes),
+      "INVALID_CONTEXT",
+      "Invalid bounded plan scope."
+    );
+  }
+  if (value.decompositionPlan !== void 0) {
+    smartRecord(value.decompositionPlan, ["version", "goal", "nodes"]);
+    smartAssert(value.decompositionPlan.version === 1, "INVALID_CONTEXT", "Unknown plan version.");
+    smartString(value.decompositionPlan.goal, 500);
+    smartList(value.decompositionPlan.nodes, 12);
+    for (const entry of value.decompositionPlan.nodes) {
+      smartRecord(entry, ["nodeId", "parentNodeId", "kind", "rationale", "sharedWith"], ["nodeId", "parentNodeId", "kind"]);
+      smartString(entry.nodeId, 160);
+      smartString(entry.parentNodeId, 160);
+      smartAssert(["calculated", "input", "context"].includes(String(entry.kind)), "INVALID_CONTEXT", "Invalid plan kind.");
+      if (entry.rationale !== void 0) smartString(entry.rationale, 300);
+      if (entry.sharedWith !== void 0) stringList(entry.sharedWith, 20, 160);
+    }
+  }
+  smartAssert(new TextEncoder().encode(JSON.stringify(value)).byteLength <= KPI_SUGGESTION_LIMITS.inputBytes, "OVERSIZE_CONTEXT", "Smart context exceeds its input bound.");
+  void root;
+  return value;
+}
+function checkExpression(ast) {
+  if (ast.type === "number") smartAssert(ast.value === 1 && ast.raw === "1", "UNSAFE_FORMULA", "Smart formulas cannot introduce numeric assumptions.");
+  else if (ast.type === "binary") {
+    checkExpression(ast.left);
+    checkExpression(ast.right);
+    const left = constantExpression(ast.left), right = constantExpression(ast.right);
+    smartAssert(
+      !(ast.operator === "*" && (left === 0 || right === 0)) && !(ast.operator === "/" && right === 0),
+      "UNSAFE_FORMULA",
+      "Smart formulas cannot mask factors with a constant zero or divide by zero."
+    );
+  } else if (ast.type === "unary") checkExpression(ast.expression);
+  else if (ast.type === "call") ast.args.forEach(checkExpression);
+}
+function constantExpression(ast) {
+  if (ast.type === "number") return ast.value;
+  if (ast.type === "reference") return void 0;
+  if (ast.type === "unary") {
+    const value = constantExpression(ast.expression);
+    return value === void 0 ? void 0 : -value;
+  }
+  if (ast.type === "call") {
+    const values = ast.args.map(constantExpression);
+    return values.every((v) => v !== void 0) ? (ast.name === "min" ? Math.min : Math.max)(...values) : void 0;
+  }
+  const a = constantExpression(ast.left), b = constantExpression(ast.right);
+  return a === void 0 || b === void 0 ? void 0 : ast.operator === "+" ? a + b : ast.operator === "-" ? a - b : ast.operator === "*" ? a * b : a / b;
+}
+function validateKpiSuggestionSet(value, now) {
+  smartRecord(value, ["schemaVersion", "validatorVersion", "catalogVersion", "proposalId", "targetNodeId", "contextHash", "createdAt", "expiresAt", "origin", "rationale", "limitations", "groups"]);
+  smartAssert(value.schemaVersion === KPI_SUGGESTION_SCHEMA && value.validatorVersion === KPI_SUGGESTION_VALIDATOR, "INVALID_PROPOSAL", "Unsupported Smart schema/validator.");
+  smartString(value.catalogVersion, 100);
+  smartString(value.proposalId, 120);
+  smartString(value.targetNodeId, 160);
+  hash(value.contextHash);
+  const created = date(value.createdAt), expires = date(value.expiresAt);
+  smartAssert(expires > created && expires - created <= KPI_SUGGESTION_LIMITS.ttlMs, "INVALID_PROPOSAL", "Invalid Smart proposal lifetime.");
+  if (now !== void 0) smartAssert(created <= now + 6e4 && expires > now, "EXPIRED_PROPOSAL", "Smart suggestions have expired.");
+  smartString(value.rationale);
+  stringList(value.limitations, 6);
+  const origin = value.origin;
+  smartAssert(origin !== null && typeof origin === "object" && !Array.isArray(origin), "INVALID_PROPOSAL", "Missing Smart provenance.");
+  if (origin.kind === "recipe") {
+    smartRecord(origin, ["kind", "sourceRef"]);
+    smartString(origin.sourceRef, 120);
+  } else {
+    smartRecord(origin, ["kind", "requestId", "execution"]);
+    smartAssert(origin.kind === "model", "INVALID_PROPOSAL", "Unsupported Smart origin.");
+    smartString(origin.requestId, 120);
+    smartRecord(origin.execution, ["mode", "backendId", "modelId", "bindingVersion", "credentialEpoch"]);
+    smartAssert(["api", "cli", "local_model"].includes(String(origin.execution.mode)), "INVALID_PROPOSAL", "Invalid Smart execution mode.");
+    for (const field of ["backendId", "modelId", "bindingVersion", "credentialEpoch"]) smartString(origin.execution[field], 160);
+  }
+  smartList(value.groups, KPI_SUGGESTION_LIMITS.groups);
+  smartAssert(value.groups.length > 0, "INVALID_PROPOSAL", "A ready Smart proposal needs at least one group.");
+  const groupIds = /* @__PURE__ */ new Set();
+  for (const group of value.groups) {
+    smartRecord(group, ["id", "title", "selectionMode", "children", "requiredKeys", "formula", "recipeBinding", "limitations"], ["id", "title", "selectionMode", "children", "requiredKeys", "limitations"]);
+    key(group.id);
+    smartString(group.title, 160);
+    stringList(group.limitations, 6);
+    smartAssert(!groupIds.has(group.id), "INVALID_PROPOSAL", "Duplicate Smart alternative.");
+    groupIds.add(group.id);
+    smartAssert(group.selectionMode === "all" || group.selectionMode === "independent", "INVALID_PROPOSAL", "Invalid Smart selection mode.");
+    smartList(group.children, KPI_SUGGESTION_LIMITS.children);
+    smartAssert(group.children.length > 0, "INVALID_PROPOSAL", "A Smart group needs children.");
+    const keys = /* @__PURE__ */ new Set(), concepts = /* @__PURE__ */ new Set();
+    for (const child of group.children) {
+      smartRecord(child, ["key", "conceptKey", "name", "unit", "description", "existingNodeId"], ["key", "conceptKey", "name", "unit"]);
+      key(child.key);
+      key(child.conceptKey);
+      smartString(child.name, 160);
+      smartString(child.unit, 80);
+      if (child.description !== void 0) smartString(child.description, 240);
+      if (child.existingNodeId !== void 0) smartString(child.existingNodeId, 160);
+      smartAssert(!keys.has(child.key) && !concepts.has(child.conceptKey), "DUPLICATE_CONCEPT", "Duplicate Smart keys/concepts.");
+      keys.add(child.key);
+      concepts.add(child.conceptKey);
+    }
+    stringList(group.requiredKeys, KPI_SUGGESTION_LIMITS.children, 48);
+    const required2 = new Set(group.requiredKeys);
+    smartAssert(required2.size === group.requiredKeys.length && [...required2].every((k) => keys.has(k)), "INVALID_PROPOSAL", "Invalid required Smart factors.");
+    smartAssert(
+      group.selectionMode === "all" ? required2.size === keys.size : required2.size === 0 && group.formula === void 0 && group.recipeBinding === void 0,
+      "INCOHERENT_GROUP",
+      "Required factors stay together; independent choices are contextual only."
+    );
+    if (group.formula !== void 0) {
+      smartString(group.formula, 500);
+      let ast;
+      try {
+        ast = parseFormula(group.formula);
+      } catch {
+        throw new KpiSuggestionError("UNSAFE_FORMULA", "Invalid Smart formula.");
+      }
+      checkExpression(ast);
+      const refs = new Set(extractReferencesFromAst(ast));
+      smartAssert(refs.size === keys.size && [...refs].every((k) => keys.has(k)), "INCOHERENT_GROUP", "Formula must use exactly the complete one-layer factor group.");
+    }
+    if (group.recipeBinding !== void 0) {
+      smartRecord(group.recipeBinding, ["id", "recipeId", "recipeHash", "skillHash", "targetRole", "contextHash", "basis", "sourceRef", "rationale"]);
+      const binding = group.recipeBinding;
+      for (const field of ["id", "recipeId", "targetRole", "sourceRef"]) smartString(binding[field], 120);
+      hash(binding.recipeHash);
+      hash(binding.skillHash);
+      hash(binding.contextHash);
+      smartString(binding.rationale);
+      smartAssert(["selected_skill", "accepted_smart", "model_selection"].includes(String(binding.basis)), "INVALID_PROPOSAL", "Smart applicability must have an explicit semantic decision.");
+      smartAssert(binding.contextHash === value.contextHash, "STALE_PROPOSAL", "Recipe decision belongs to a different context.");
+      smartAssert(group.formula !== void 0 && group.selectionMode === "all", "INCOHERENT_GROUP", "Executable recipes require complete factors.");
+    }
+  }
+  smartAssert(new TextEncoder().encode(JSON.stringify(value)).byteLength <= KPI_SUGGESTION_LIMITS.outputBytes, "OVERSIZE_PROPOSAL", "Smart proposal exceeds its output bound.");
+  return value;
+}
+function validateKpiSuggestionDecomposition(proposal, context) {
+  for (const group of proposal.groups) smartAssert(
+    group.children.length >= 2,
+    "NOT_A_DECOMPOSITION",
+    "A decomposition needs at least two distinct component KPIs. A renamed copy is not a decomposition."
+  );
+  if (context) {
+    const direct = new Set(context.children.filter((node3) => node3.status !== "rejected").map((node3) => node3.id));
+    const normalize = (name) => name.normalize("NFKC").trim().toLocaleLowerCase("en").replace(/[\p{P}\p{Z}\s_]+/gu, " ");
+    const contextOnly = [context.root, context.target, ...context.ancestors, ...context.siblings].filter((node3) => !direct.has(node3.id));
+    const ancestorRecipes = KPI_SUGGESTION_RECIPES.recipes.flatMap((recipe) => {
+      const operand = findAncestorRecipeOperand(context, recipe);
+      return operand ? [{ recipeId: recipe.id, operand }] : [];
+    });
+    for (const group of proposal.groups) {
+      for (const child of group.children) {
+        smartAssert(
+          !child.existingNodeId || direct.has(child.existingNodeId),
+          "UNSAFE_DECOMPOSITION",
+          "Suggested components cannot reuse a sibling, ancestor or unrelated KPI. Decompose the target into its own lower-level inputs; refresh suggestions."
+        );
+        smartAssert(
+          child.existingNodeId || !contextOnly.some((node3) => normalize(node3.name) === normalize(child.name)),
+          "UNSAFE_DECOMPOSITION",
+          "A copy of the target, a sibling or an ancestor is not a lower-level component. Refresh suggestions."
+        );
+      }
+      smartAssert(
+        !ancestorRecipes.some(({ recipeId, operand }) => group.recipeBinding?.recipeId === recipeId || group.children.some((child) => repeatsRecipeOperand(context, child, operand))),
+        "UNSAFE_DECOMPOSITION",
+        "The suggestion repeats the target's operand in an ancestor recipe. Decompose the target into its own lower-level inputs."
+      );
+    }
+  }
+  return proposal;
+}
+
 // ../vdt-core/src/suggestions/response-contract.ts
 function buildKpiSuggestionResponseContract(context) {
   let targetUnit;
@@ -1835,6 +1921,14 @@ function buildKpiSuggestionResponseContract(context) {
   } catch {
     targetUnit = null;
   }
+  const compatibleRecipes = KPI_SUGGESTION_RECIPES.recipes.flatMap((recipe) => {
+    try {
+      const units = resolveKpiRecipeUnits(recipe, context);
+      return [{ recipe, units, ancestorOperand: findAncestorRecipeOperand(context, recipe, units) }];
+    } catch {
+      return [];
+    }
+  });
   return {
     version: "smart-kpi-response-contract.v1",
     limits: {
@@ -1887,15 +1981,18 @@ function buildKpiSuggestionResponseContract(context) {
         "Do not name a new factor as a normalized copy of the root, target, ancestor or sibling. Name equality normalizes NFKC, case, punctuation, spaces and underscores."
       ]
     },
-    recipes: KPI_SUGGESTION_RECIPES.recipes.flatMap((recipe) => {
-      try {
-        const units = resolveKpiRecipeUnits(recipe, context);
-        return [{ id: recipe.id, formula: recipe.formula, children: recipe.children.map((child) => ({ key: child.key, conceptKey: child.conceptKey, unit: units[child.key] })) }];
-      } catch {
-        return [];
-      }
-    }),
-    recipeRule: "These recipes have compatible units, not proven business applicability. Use recipeId only when the definition applies and ALL listed keys, concepts, formula and units match. For any custom factor/formula use recipeId:null. Other recipe IDs are ineligible."
+    recipes: compatibleRecipes.flatMap(({ recipe, units, ancestorOperand }) => ancestorOperand ? [] : [{
+      id: recipe.id,
+      formula: recipe.formula,
+      children: recipe.children.map((child) => ({ key: child.key, conceptKey: child.conceptKey, unit: units[child.key] }))
+    }]),
+    ancestorRecipeOperands: compatibleRecipes.flatMap(({ recipe, ancestorOperand }) => ancestorOperand ? [{
+      recipeId: recipe.id,
+      targetNodeId: context.targetNodeId,
+      operandName: ancestorOperand.name,
+      unit: context.target.unit
+    }] : []),
+    recipeRule: "Use only a listed recipe whose business definition applies to context.target and matches ALL listed keys, concepts, formula and units. If ancestorRecipeOperands identifies the target as an ancestor recipe's input, deepen that operand. Do not propose a new factor with the same operand meaning and unit under another label or key. For a genuine target-specific custom formula use recipeId:null."
   };
 }
 
@@ -1929,7 +2026,7 @@ var modelSchema = (group) => object2({
   groups: list(group, 3)
 });
 var KPI_SUGGESTION_MODEL_JSON_SCHEMA = modelSchema(object2(groupFields));
-var SMART_KPI_INSTRUCTION = `Propose ONE immediate mathematical input layer and a usable parent formula. Follow input.responseContract (or responseContract at the input root) as the host's exact acceptance requirements, in addition to the JSON schema. Check every rule before returning. Default to the target's language unless explicit personalisation requests another response language. Return only strict JSON, without tools, research, commands, hidden retries or full-tree construction. Keep rationale and row descriptions to one short clause.
+var SMART_KPI_INSTRUCTION = `Propose ONE immediate mathematical input layer and a usable formula for context.target, identified by context.targetNodeId. Determine the selected target's own definition and cohort before choosing factors. Ancestor formulas and selected-skill examples for other metrics provide context for that target. Follow input.responseContract (or responseContract at the input root) as the host's exact acceptance requirements, in addition to the JSON schema. Check every rule before returning. Default to the target's language unless explicit personalisation requests another response language. Return only strict JSON, without tools, research, commands, hidden retries or full-tree construction. Keep rationale and row descriptions to one short clause.
 
 ${PERSONALISATION_PROMPT_RULE}
 
@@ -1939,7 +2036,7 @@ Use context.selectedSkill as the exact selected modelling reference, never as pe
 
 A Suggested request asks to deepen the selected target, including a reference leaf. The reference ending at that input is not a refusal reason. Propose defensible measurable components even when their values are unknown. Missing measurements alone do not justify empty. If no defensible definition is possible, return empty with the specific reason.
 
-Each alternative needs at least two distinct substantive factors. Include the complete applicable immediate layer; there is no six-component product limit. Never use a singleton, a renamed target or filler rows. Do not omit required factors or invent grouping nodes to make a shorter list. Prefer one best alternative, selectionMode="all", every child key in requiredKeys, and a non-null formula referencing exactly those keys. A catalog recipe's targetRole must describe this exact target with all its qualifiers. A recipe that describes a parent or sibling is ineligible even if its unit matches. Use recipeId only for exact catalog keys, concepts, formula and compatible units; otherwise use null. Separate alternatives are never mixed.
+Each alternative needs at least two distinct substantive factors. Include the complete applicable immediate layer; there is no six-component product limit. Never use a singleton, a renamed target or filler rows. Do not omit required factors or invent grouping nodes to make a shorter list. Prefer one best alternative, selectionMode="all", every child key in requiredKeys, and a non-null formula referencing exactly those keys. A recipe's targetRole must describe this exact target with all its qualifiers. Use only a recipe listed in responseContract.recipes and its exact keys, concepts, formula and units. Preserve the distinct meaning of a target that is an input to an ancestor's calculation. Reusing the ancestor's factors under new labels or keys does not deepen the target. An independently measured subset may use analogous arithmetic if its factors have their own scoped definitions. Use recipeId:null for a genuine target-specific custom definition. Separate alternatives are never mixed.
 
 Preserve qualifiers: gross/net, total/average, actual/nominal, product/material and fleet/per-item. Gross revenue does not authorize a net-revenue recipe or deduction factors. Do not invent geometry, weights, calibration, site facts, values, numeric defaults or child formulas. Output supplies definitions, never numeric input values. The only algebraic literal is raw1 in (1-decimal_fraction). A fixed parameter explicitly defined by the project may be a clearly labelled reference input with ratio units and a description identifying that definition; its value is entered separately. Never invent or fit a conversion. If the selected target itself is a fixed unit conversion, do not re-express the same reference quantity in two units as supposedly distinct components; return empty. This does not block another target from using a project-defined fixed input.
 
