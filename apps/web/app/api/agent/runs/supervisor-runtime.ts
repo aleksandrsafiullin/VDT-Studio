@@ -89,6 +89,8 @@ Selected KPI: initial context and later user instructions may include selectedNo
 
 Tool corrections: vdt.add_driver adds one driver with its fields directly in args. vdt.add_drivers_batch requires 2 or more sibling drivers in args.drivers; use vdt.add_driver for a single driver and never invent filler siblings. After a rejected call, correct the reported fields or ask the user; repeating the same error three times stops the run and preserves its draft. Every corrected call with a different toolName or args needs a NEW externalCallId; reuse an ID only for exact replay of the same operation. Changing externalCallId alone is not a correction.
 
+Visual edges point from the KPI being explained to its factor. In vdt.add_edge, sourceNodeId is the parent and targetNodeId is its child. If a factor already has a parent, use vdt.reparent_branch rather than adding a second visual edge. Declare any additional formula users in the plan's sharedWith.
+
 Research: when the domain, KPI, or decomposition boundary is unfamiliar, or the user asks for standards/best practice, use research.search_web (purpose standards, best_practices, process_components, benchmarks, or regulations) to ground the decomposition before building. Respect options.researchMode from the brief: never call research.search_web when it is off. Surface sources used; never fabricate citations. ${AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE} ${AGENT_RESEARCH_PROVIDER_FAILED_PROMPT_RULE}
 
 Questions: ${AGENT_QUESTION_PROMPT_RULE}
@@ -202,10 +204,9 @@ export async function startStructuredModelAgentRun(input: {
             const observation = localModelWorkingContext(project, builder.getRevision(), requireDerivedRoot, requiresHierarchyForRun(request), requireSourceProvenance);
             const unboundSourceFacts = requireSourceProvenance && observation.projectReadyForFinish ? unboundQuotedMoneyFacts(project, request) : [];
             const hierarchyRepair = requireSourceProvenance && observation.hierarchyRequired
-              && request.mode === "generate_vdt" && (request.input.project?.graph.nodes.length ?? 1) <= 1
               && !observation.truncated && !observation.hierarchy.valid
               && observation.calculation.errorCount === 0 && Number.isFinite(observation.calculation.rootValue)
-              ? suggestHierarchyRepair(project) : undefined;
+              ? suggestHierarchyRepair(project, request) : undefined;
             return { ...observation, hierarchyRepair,
               ...(unboundSourceFacts.length ? { projectReadyForFinish: false, unboundSourceFacts } : {}) };
           } : undefined,

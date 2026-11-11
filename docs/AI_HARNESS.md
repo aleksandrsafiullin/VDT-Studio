@@ -14,13 +14,17 @@ without planned operands gets one model revision before any tool executes.
 Additions use the accepted plan's pending IDs and existing parent IDs. Formula
 targets during construction exclude nodes declared as inputs.
 
-For a calculable new draft with a hierarchy mismatch, the direct OpenAI
+For a calculable new draft with a hierarchy mismatch, including a run that
+started from the editor's saved empty root, the direct OpenAI
 transport can offer a checked sequence of plan and parent-link corrections
 derived from the existing formulas. The model reviews the business result
 before selecting the sequence. An exact unused AI duplicate of the root
 expression may be removed if it has no independent value, source, or children.
 The selected sequence uses the admitted tools and their normal revision and
 approval controls. The current diagnosis is supplied in the repair turn.
+The model receives the parent-to-factor direction for visual edges and uses
+`sharedWith` for additional formula users. A pre-existing plan is outside
+the scope of this repair.
 
 The direct OpenAI transport filters confirmations of known parameters, routine
 steps and numeric inputs already recorded from the user. It gives supplied quantities priority

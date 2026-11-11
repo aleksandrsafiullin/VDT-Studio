@@ -151,8 +151,9 @@ Full-tree public Supervisor runs (`generate_vdt`, `continue_project`) require th
 
 The actor authors all business structure, equations and numerical choices. `vdt.reparent_branch` atomically changes a parent link while preserving the whole descendant branch and all node/source metadata; it rejects cycles, root moves and ambiguous source parents. `vdt.inspect_hierarchy` provides bounded actionable errors. Full-tree finish checks every current/planned node, primary edge and active formula reference, including declared cross-branch reuse. Missing or mismatching structure returns `HIERARCHY_INCOMPLETE` even if arithmetic is finite. The selected-node `deepen_node` contract and read-only `review_project` mode are not expanded into whole-tree planning. No host-generated domain topology or automatic formula repair is introduced.
 
-In direct OpenAI generation from a blank draft, a calculable formula graph can
-provide a candidate for reconciling the plan and visual parents. The candidate
+Direct OpenAI runs that build a new tree can provide a candidate for
+reconciling the plan and visual parents once its formulas calculate. This
+includes continuing from a single saved empty root with no prior plan. The candidate
 preserves the model's formulas, source inputs and valid parent links. It is
 validated as a complete graph before the model can choose the exact sequence
 of admitted mutation calls. The Gateway owns execution and approvals.

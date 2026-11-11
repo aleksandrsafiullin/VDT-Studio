@@ -2,6 +2,7 @@ import {
   decompositionPlanErrors, extractFormulaReferences, inspectDecompositionHierarchy, parseFormula, validateGraph,
   type VdtDecompositionPlan, type VdtProject
 } from "@vdt-studio/vdt-core";
+import { requiresDerivedRootForRun, type VdtAgentStartRequest } from "@vdt-studio/vdt-agent-runtime";
 
 export type HierarchyRepairCall = {
   toolName: "vdt.delete_node" | "vdt.reparent_branch" | "vdt.set_decomposition_plan";
@@ -11,7 +12,14 @@ export type HierarchyRepairCall = {
 /** An already calculable new draft can have the right formulas and the wrong
  * visual parents. Offer a checked sequence for the model to select. The
  * proposal changes no retained formulas, source facts, or node IDs. */
-export function suggestHierarchyRepair(project: VdtProject): HierarchyRepairCall[] | undefined {
+export function suggestHierarchyRepair(project: VdtProject, request: VdtAgentStartRequest): HierarchyRepairCall[] | undefined {
+  // An empty root saved by the editor is also a new draft. Keep the repair
+  // restricted to construction so it cannot revise an existing user's plan.
+  const initialGraph = request.input.project?.graph;
+  if (!requiresDerivedRootForRun(request) || (initialGraph && (
+    initialGraph.nodes.length > 1 || initialGraph.edges.length > 0
+    || initialGraph.nodes.some((node) => node.decompositionPlan)
+  ))) return;
   const { rootNodeId, graph } = project;
   const root = graph.nodes.find((node) => node.id === rootNodeId);
   const plan = root?.decompositionPlan;

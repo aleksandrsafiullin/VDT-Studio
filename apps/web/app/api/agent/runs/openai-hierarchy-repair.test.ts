@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { VdtBuilderSession, calculateGraph, inspectDecompositionHierarchy, type VdtDecompositionPlan } from "@vdt-studio/vdt-core";
+import type { VdtAgentStartRequest } from "@vdt-studio/vdt-agent-runtime";
 import { suggestHierarchyRepair } from "./openai-hierarchy-repair";
+
+const generate: VdtAgentStartRequest = {
+  mode: "generate_vdt", providerId: "openai_compatible", input: { rootKpi: "Total", unit: "USD" }
+};
 
 function draft() {
   const builder = new VdtBuilderSession();
   builder.createDraft({ rootKpi: "Total", projectTitle: "Total", unit: "USD" });
-  const root = builder.getProject().rootNodeId;
+  const initialProject = builder.getProject();
+  const root = initialProject.rootNodeId;
   const plan: VdtDecompositionPlan = {
     version: 1,
     goal: "Calculate total",
@@ -27,7 +33,7 @@ function draft() {
   }
   builder.setFormula({ nodeId: root, formula: "gross - adjustment" });
   builder.updateNode({ nodeId: root, patch: { decompositionPlan: plan } });
-  return { builder, root, plan };
+  return { builder, root, plan, initialProject };
 }
 
 describe("checked hierarchy repair", () => {
@@ -36,7 +42,7 @@ describe("checked hierarchy repair", () => {
     const before = builder.getProject();
     expect(calculateGraph(before).rootValue).toBe(190);
     expect(inspectDecompositionHierarchy(before).valid).toBe(false);
-    const calls = suggestHierarchyRepair(before);
+    const calls = suggestHierarchyRepair(before, generate);
     expect(calls).toEqual([
       { toolName: "vdt.delete_node", args: { nodeId: "duplicate", cascadeEdges: true } },
       { toolName: "vdt.reparent_branch", args: { nodeId: "quantity", fromParentNodeId: root, parentNodeId: "gross" } },
@@ -58,24 +64,34 @@ describe("checked hierarchy repair", () => {
   it("keeps an unused result with independent evidence or a different formula for model review", () => {
     const { builder } = draft();
     builder.updateNode({ nodeId: "duplicate", patch: { valueSource: { note: "Retained measurement" } } });
-    expect(suggestHierarchyRepair(builder.getProject())).toBeUndefined();
+    expect(suggestHierarchyRepair(builder.getProject(), generate)).toBeUndefined();
     const independent = draft();
     independent.builder.setFormula({ nodeId: "duplicate", formula: "gross + adjustment" });
-    expect(suggestHierarchyRepair(independent.builder.getProject())).toBeUndefined();
+    expect(suggestHierarchyRepair(independent.builder.getProject(), generate)).toBeUndefined();
   });
 
   it("omits an unbuilt intermediate with no planned inputs from a complete direct calculation", () => {
-    const { builder, root, plan } = draft();
+    const { builder, root, plan, initialProject } = draft();
     for (const nodeId of ["gross", "adjustment", "duplicate"]) builder.deleteNode({ nodeId, cascadeEdges: true });
     builder.setFormula({ nodeId: root, formula: "quantity * price * (1 - rate / 100)" });
-    const proposed = suggestHierarchyRepair(builder.getProject());
+    const proposed = suggestHierarchyRepair(builder.getProject(), generate);
     expect(proposed).toHaveLength(1);
     expect(proposed?.[0]).toMatchObject({ toolName: "vdt.set_decomposition_plan", args: {
       plan: { nodes: plan.nodes.slice(0, 3) }
     } });
+    const continuation: VdtAgentStartRequest = { ...generate, mode: "continue_project",
+      input: { ...generate.input, project: initialProject } };
+    expect(suggestHierarchyRepair(builder.getProject(), continuation)).toEqual(proposed);
+    for (const patch of [{ baselineValue: 190 }, { decompositionPlan: plan }]) {
+      const project = structuredClone(initialProject);
+      Object.assign(project.graph.nodes[0]!, patch);
+      expect(suggestHierarchyRepair(builder.getProject(), {
+        ...continuation, input: { ...continuation.input, project }
+      })).toBeUndefined();
+    }
     builder.updateNode({ nodeId: root, patch: { decompositionPlan: {
       ...plan, nodes: [...plan.nodes, { nodeId: "missing_fact", parentNodeId: root, kind: "input" }]
     } } });
-    expect(suggestHierarchyRepair(builder.getProject())).toBeUndefined();
+    expect(suggestHierarchyRepair(builder.getProject(), generate)).toBeUndefined();
   });
 });
