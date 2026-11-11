@@ -3748,8 +3748,10 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           if (snapshot.runId !== runId || !["succeeded", "failed", "cancelled"].includes(snapshot.status)) {
             throw new Error("Agent cancellation is not terminal. Retry Cancel.");
           }
-          // Cancellation reports lifecycle only. The builder can predate edits
-          // already made in the open graph, so it must never replace that graph.
+          // Confirmed cleanup can expose a newer committed draft. Let the
+          // usual editor-ownership and revision checks decide whether to adopt it.
+          const hasConfirmedStoredDraft = marker?.terminalCleanupConfirmed === true && scope.vdtId !== null
+            && snapshot.request.workspace?.expectedRevision !== undefined && snapshot.workspaceRevision !== undefined;
           // Publish terminal activity and remove its stop marker in one saved
           // state, so a reload cannot strand a terminal chat behind the marker.
           applyAgentSnapshot(update => set(current => ({
@@ -3757,7 +3759,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             agentError: undefined, aiError: undefined,
             ...(marker ? { pendingIncomingKpiRestart: undefined } : {}),
             smartKpiFencedRunIds: [...new Set([...current.smartKpiFencedRunIds, runId])].slice(-64)
-          })), snapshot, true, true);
+          })), snapshot, !hasConfirmedStoredDraft, true);
           if (activeAgentEventUnsubscribe === unsubscribe) {
             unsubscribe?.();
             activeAgentEventUnsubscribe = undefined;

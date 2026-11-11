@@ -622,8 +622,10 @@ An agent continuing a stored VDT starts against the editor's saved revision
 and runtime generation. A verified snapshot binds the run's saved project to
 its committed head. The active editor adopts that pair only while it still
 owns the corresponding draft, preserving later local edits and any newer
-server head learned from another tab. A run that loses the revision fence can
-still be opened from history, with its conflicting write left unapplied.
+server head learned from another tab. Confirmed cancellation may hand off a
+verified partial save through the same draft-ownership and revision checks.
+A run that loses the revision fence can still be opened from history, with
+its conflicting write left unapplied.
 
 Zustand still persists substantial draft state. SQLite-only durable ownership, metadata/revision atomicity and broader dirty-state reconciliation remain W0.5 work. Windows storage durability is not verified.
 
