@@ -12,6 +12,8 @@ VDT Studio `0.1.0-alpha.1` packages the Node 24 product CLI and paired localhost
 
 ## Current Release Status
 
+The [Mac open-alpha plan](OPEN_ALPHA_PLAN.md) tracks the next candidate, supported scenarios, and the QA cases for Codex or Cursor.
+
 The [November macOS candidate checks](PRODUCTION_READINESS.md#mac-local-alpha-smart-kpi-and-browser-regression-checks-2026-11-09) record current Smart KPI, browser and release-gate evidence. Earlier [launcher and dependency checks](PRODUCTION_READINESS.md#mac-local-alpha-launcher-and-zod-verification-2026-11-09) and the [October local browser run](PRODUCTION_READINESS.md#local-alpha-browser-verification-2026-10-19) retain their respective results. GUI distribution, recovery, AI/business acceptance and any claimed platform support still need their own evidence. The local macOS package has a separate install and live-provider acceptance. Production native distribution and other platforms require separate qualification.
 
 ### Dependency audit evidence

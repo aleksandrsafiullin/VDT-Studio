@@ -39,6 +39,7 @@ The previously referenced `Technical Specification for Codex.docx` is not presen
 | [`LOCAL_RUNNER.md`](LOCAL_RUNNER.md) | Standalone loopback runner and security contract |
 | [`provider-compatibility.md`](provider-compatibility.md) | Provider status mirrored from certification metadata |
 | [`RELEASE.md`](RELEASE.md) and [`release-checklist.md`](release-checklist.md) | Alpha packaging and required gates |
+| [`OPEN_ALPHA_PLAN.md`](OPEN_ALPHA_PLAN.md) | Mac open-alpha plan, live provider matrix and executable QA cases |
 | [`desktop-installation.md`](desktop-installation.md) | Desktop support boundary and native blockers |
 | [`architecture/desktop-local-execution.md`](architecture/desktop-local-execution.md) | Tauri command and sidecar host boundary |
 | [`architecture/runtime-protocol.md`](architecture/runtime-protocol.md) | Private framed sidecar protocol |

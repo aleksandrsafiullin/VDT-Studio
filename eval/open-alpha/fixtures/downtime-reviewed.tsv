@@ -1,0 +1,9 @@
+record_id	work_date	stop_type	duration_hours
+Q-01	2026-11-02	Mechanical	1,50
+Q-02	2026-11-02	Electrical	0,75
+Q-03	2026-11-03	Planned	2,00
+Q-04	2026-11-03	Mechanical	0,00
+Q-05	2026-11-04		0,50
+Q-06	2026-11-04	Electrical	1,25
+Q-07	2026-11-04	Planned	1,25
+Q-08	2026-11-04	Mechanical	0,50

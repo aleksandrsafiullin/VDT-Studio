@@ -1,0 +1,12 @@
+event_id,work_date,stop_type,duration_minutes
+DT-01,2026-11-02,Mechanical,90
+DT-02,2026-11-02,Electrical,45
+DT-03,2026-11-02,Planned,135
+DT-04,2026-11-03,Mechanical,150
+DT-05,2026-11-03,Electrical,75
+DT-06,2026-11-03,Planned,30
+DT-07,2026-11-04,Mechanical,30
+DT-08,2026-11-04,Electrical,30
+DT-09,2026-11-04,Planned,75
+DT-10,2026-11-04,Planned,0
+DT-02,2026-11-02,Electrical,45
