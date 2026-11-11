@@ -810,7 +810,7 @@ model against the manifest-owned runtime. Admission is trusted-local and
 same-origin only, accepts at most 8 KiB of streamed JSON and rejects command,
 environment and arbitrary endpoint overrides. Explicit reasoning is revalidated
 against capabilities with no fallback to Default. The older direct-OpenAI route
-remains for compatibility. A pending binding is immutable, unlisted, limited to 16 pending admissions and expires after 60 seconds. Start consumes it once; active execution holds its copied configuration in process memory. The public start request, SQLite records and discovery summaries contain no credentials. Production requires `VDT_MODEL_AGENT_ENABLED=true`; production builds and hosted mode cannot admit these sessions. Test connection remains a JSON probe and does not persist a server-side key or
+remains for compatibility. A pending binding is immutable, unlisted, limited to 16 pending admissions and expires after 60 seconds. Start consumes it once; active execution holds its copied configuration in process memory. The public start request, SQLite records and discovery summaries contain no credentials. The packaged desktop admits the selected provider through its authenticated loopback session. Production development-web mode requires `VDT_MODEL_AGENT_ENABLED=true`. Production builds and hosted mode reject admission. Test connection remains a JSON probe and does not persist a server-side key or
 select a different model. With an explicit API reasoning choice it validates and
 sends that same native value; Default retains the small 1,024-token probe, named
 effort allows 4,096, and a numeric thinking budget reserves 1,024 output tokens

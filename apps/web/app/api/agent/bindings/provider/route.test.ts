@@ -16,6 +16,22 @@ beforeEach(() => vi.stubEnv("VDT_APP_MODE", "development_web"));
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("provider model admission boundary", () => {
+  it("admits a selected provider from the packaged desktop without a development opt-in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VDT_MODEL_AGENT_ENABLED", undefined);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ id: "api-model", supported_reasoning_efforts: ["low", "high"] })));
+    const input = { operation: "admit", ...api };
+    expect((await POST(request(input))).status).toBe(403);
+    vi.stubEnv("VDT_APP_MODE", "desktop");
+    const response = await POST(new Request("http://localhost:37541/api/agent/bindings/provider", {
+      method: "POST",
+      headers: { "content-type": "application/json", host: "127.0.0.1:37541", origin: "http://127.0.0.1:37541" },
+      body: JSON.stringify(input)
+    }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ binding: { modelId: "api-model", modelReasoning: "high" } });
+    expect((await POST(request(input, { origin: "https://foreign.test" }))).status).toBe(403);
+  });
   it("admits the exact API model/effort and never returns its credentials", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ id: "api-model", supported_reasoning_efforts: ["low", "high"] })));
     const response = await POST(request({ operation: "admit", ...api }));

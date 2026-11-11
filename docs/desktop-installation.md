@@ -10,7 +10,7 @@ VDT Studio Desktop is the target distribution for seamless subscription CLI and 
 
 ## Local Apple Silicon Alpha
 
-The local arm64 package uses the Tauri WebKit window, a bundled production Next.js server and Node 24. The app starts and stops the web server and the private AI sidecar together. SQLite and host settings default to the app's local Application Support directory. The user signs in to subscription CLIs through the provider's normal workflow.
+The local arm64 package uses the Tauri WebKit window, a bundled production Next.js server and Node 24. The app starts and stops the web server and the private AI sidecar together. SQLite and host settings default to the app's local Application Support directory. The user signs in to subscription CLIs through the provider's normal workflow. The app can admit a configured API provider for the selected model through its authenticated desktop session.
 
 Build from a commit that contains the native alpha packaging changes. Install Node 24, Corepack, Rust and the macOS command-line tools on the build Mac. Use an empty destination and a Developer ID Application identity in the login keychain.
 

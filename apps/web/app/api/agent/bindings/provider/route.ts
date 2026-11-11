@@ -16,7 +16,11 @@ const envelope = z.object({ operation: z.enum(["capabilities", "smart_capabiliti
 export async function POST(request: Request) {
   const headers = { "cache-control": "no-store" };
   const fail = (message: string, status: number) => Response.json({ ok: false, error: message }, { status, headers });
-  if (!resolveTrustedStorageWriteMode() || process.env.NEXT_PHASE === "phase-production-build" || (process.env.NODE_ENV === "production" && process.env.VDT_MODEL_AGENT_ENABLED !== "true")) return fail("Provider chat requires an enabled trusted local application.", 403);
+  const mode = resolveTrustedStorageWriteMode();
+  if (!mode || process.env.NEXT_PHASE === "phase-production-build"
+    || (mode !== "desktop" && process.env.NODE_ENV === "production" && process.env.VDT_MODEL_AGENT_ENABLED !== "true")) {
+    return fail("Provider chat requires an enabled trusted local application.", 403);
+  }
   if (!hasSameLocalOrigin(request)) return fail("Provider connection requires the application origin.", 403);
   if (!request.headers.get("content-type")?.startsWith("application/json")) return fail("Provider connection requires JSON.", 415);
   let input: z.infer<typeof envelope>;
