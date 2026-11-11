@@ -1,6 +1,6 @@
 [package]
 name = "vdt-studio-desktop"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 description = "VDT Studio Desktop app"
 authors = ["VDT Studio"]
 edition = "2021"

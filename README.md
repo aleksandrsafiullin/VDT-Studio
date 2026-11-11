@@ -180,7 +180,7 @@ Session agents now have project-scoped `data.*` tools to discover retained uploa
 
 VDT Studio is an AI-first, local-first workspace for building editable Value Driver Trees and calculable KPI models. AI proposes structure, users own business logic and approval, and deterministic code owns calculation and validation.
 
-> Current release: `0.1.0-alpha.0`. The repository is suitable for development and controlled alpha evaluation, not production KPI decisions. See [Production readiness](docs/PRODUCTION_READINESS.md).
+> The current candidate is `0.1.0-alpha.1` for development and controlled alpha evaluation. See [Production readiness](docs/PRODUCTION_READINESS.md).
 
 ## Current Product Surface
 

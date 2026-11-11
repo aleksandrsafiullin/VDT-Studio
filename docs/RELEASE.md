@@ -8,7 +8,7 @@ qualify installers or supply missing native icon/signing assets. See
 
 Last reviewed: **2026-10-19**.
 
-VDT Studio `0.1.0-alpha.0` packages the Node 24 product CLI and paired localhost runner as a tarball. The web workspace remains source-deployed. The local Apple Silicon alpha also has a signed [desktop packaging path](desktop-installation.md#local-apple-silicon-alpha) with a bundled Node runtime.
+VDT Studio `0.1.0-alpha.1` packages the Node 24 product CLI and paired localhost runner as a tarball. The web workspace remains source-deployed. The local Apple Silicon alpha also has a signed [desktop packaging path](desktop-installation.md#local-apple-silicon-alpha) with a bundled Node runtime.
 
 ## Current Release Status
 
@@ -72,7 +72,7 @@ Existing engine/viewport restrictions are applied through collection tags before
 By default successful packaging writes the following files. `VDT_RELEASE_DIR` selects an alternative empty directory consistently for packaging, SBOM generation, bundle verification and clean-install verification:
 
 ```text
-output/release/v0.1.0-alpha.0/
+output/release/v0.1.0-alpha.1/
   SHA256SUMS
   manifest.json
   sbom.spdx.json

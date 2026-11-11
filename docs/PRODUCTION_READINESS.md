@@ -765,7 +765,7 @@ Historical verification baseline: **2026-07-24**, Node `24.14.0`, pnpm `10.33.2`
 
 **No-Go for production, hosted file upload, trusted KPI baselines or auditable benchmark claims.**
 
-The current `0.1.0-alpha.0` checkout is suitable for development and controlled evaluation on copies of data. It contains substantial implemented foundations, but several P0/P1 correctness and security blockers remain.
+The current `0.1.0-alpha.1` candidate is suitable for development and controlled evaluation on copies of data. Several P0/P1 correctness and security blockers remain for production use.
 
 The repository does not contain the previously referenced `Technical Specification for Codex.docx`. Current readiness is assessed against executable contracts, current Markdown specs and the [2026-07-23 critical review](CRITICAL_ARCHITECTURE_AND_AGENT_REVIEW_2026-07-23.md).
 
