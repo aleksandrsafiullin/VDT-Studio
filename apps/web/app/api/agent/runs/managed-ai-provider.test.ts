@@ -67,13 +67,13 @@ it("projects Supervisor turns without sending the open args record to OpenAI", (
   expect(JSON.stringify(construction.schema)).not.toContain("memory.add_note");
 });
 
-it("constrains a redundant opening question to a tool action with a visible opening message", () => {
+it.each([true, false])("constrains a redundant opening question during construction (%s)", (constructingTree) => {
   const recovery = buildOpenAiModelTurn(toProviderJsonSchema(modelAgentStructuredTurnSchema), [
     { name: "vdt.create_draft", inputJsonSchema: { type: "object", properties: {} } }
-  ], { nodeCount: 0 }, "exchange-1", undefined, { continueWithoutQuestion: true, requireOpeningMessage: true })!;
+  ], { nodeCount: 0, constructingTree }, "exchange-1", undefined, { continueWithoutQuestion: true, requireOpeningMessage: true })!;
   expect(JSON.stringify(recovery.schema)).not.toContain("questionSetId");
   expect(recovery.schema.properties).toMatchObject({
-    assistantMessage: { anyOf: [{ type: "object" }] }
+    assistantMessage: constructingTree ? { type: "null" } : { anyOf: [{ type: "object" }] }
   });
   expect(() => recovery.decode({ action: { type: "question" } })).toThrow("Action does not match");
 });

@@ -5,6 +5,7 @@ import {
   validateGraph,
   inspectDecompositionHierarchy,
   validateIncomingKpiLayer,
+  type GraphCalculationResult,
   type VdtProject
 } from "@vdt-studio/vdt-core";
 import type { AgentSessionBinding } from "./agent-execution-contracts";
@@ -51,6 +52,8 @@ export interface DeterministicFinishVerificationResult {
   receiptId?: string | undefined;
   receiptHash?: string | undefined;
   finishReceipt?: FinishReceiptV2 | undefined;
+  /** Host-only evidence. The tool receives the bounded payload. */
+  calculation?: GraphCalculationResult | undefined;
 }
 
 /** The model can request finish, but only deterministic VDT authority can
@@ -138,7 +141,7 @@ export function verifyDeterministicRunFinish(
     && existing.validationHash === validationHash
     && existing.calculationHash === calculationHash
   ) {
-    return accepted(existing, calculation.rootValue);
+    return accepted(existing, calculation);
   }
 
   const verifiedAt = (input.now ?? (() => new Date().toISOString()))();
@@ -170,7 +173,7 @@ export function verifyDeterministicRunFinish(
     verifiedAt,
     finalPersistedAt: null
   };
-  return accepted(finishReceipt, calculation.rootValue);
+  return accepted(finishReceipt, calculation);
 }
 
 function hasUnsettledOperation(
@@ -244,14 +247,16 @@ function rejected(
 
 function accepted(
   receipt: FinishReceiptV2,
-  rootValue: number | undefined
+  calculation: GraphCalculationResult
 ): DeterministicFinishVerificationResult {
+  const { rootValue } = calculation;
   return {
     accepted: true,
     code: "FINISH_VERIFIED",
     receiptId: receipt.receiptId,
     receiptHash: receipt.receiptHash,
     finishReceipt: receipt,
+    calculation,
     payload: {
       receiptId: receipt.receiptId,
       receiptHash: receipt.receiptHash,

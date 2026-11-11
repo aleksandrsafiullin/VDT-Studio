@@ -180,6 +180,7 @@ export function buildOpenAiModelTurn(
     requireOpeningMessage?: boolean;
     planRecorded?: boolean;
     hierarchyRepair?: HierarchyRepairCall[];
+    verifiedFinalText?: string;
   } = {}
 ) {
   if (!Array.isArray(catalog)) return undefined;
@@ -187,7 +188,9 @@ export function buildOpenAiModelTurn(
   const properties = root.properties as JsonObject;
   properties.turnId = tag(exchangeId);
   const openingMessage = properties.assistantMessage;
-  if (options.requireOpeningMessage && record(openingMessage) && Array.isArray(openingMessage.anyOf)) {
+  if (observation?.constructingTree === true) {
+    properties.assistantMessage = { type: "null" };
+  } else if (options.requireOpeningMessage && record(openingMessage) && Array.isArray(openingMessage.anyOf)) {
     openingMessage.anyOf = openingMessage.anyOf.filter((item) => !record(item) || item.type !== "null");
   }
   const action = properties.action as { anyOf: JsonObject[] };
@@ -244,7 +247,9 @@ export function buildOpenAiModelTurn(
     if (!finishReceiptId) return kind !== "final"
       && !(kind === "question" && (buildingFirstLayer || options.continueWithoutQuestion));
     if (kind !== "final") return false;
-    (item.properties as JsonObject).finishReceiptId = tag(finishReceiptId);
+    const finalProperties = item.properties as JsonObject;
+    finalProperties.finishReceiptId = tag(finishReceiptId);
+    if (options.verifiedFinalText !== undefined) finalProperties.text = { type: "null" };
     return true;
   });
   if (repair) action.anyOf.push(object({ type: tag("apply_hierarchy_repair") }));
@@ -256,6 +261,9 @@ export function buildOpenAiModelTurn(
     const restored = omitAbsentFields(raw, root);
     if (!record(restored) || !record(restored.action) || typeof restored.action.type !== "string"
       || !actions.has(restored.action.type)) throw invalid("Action does not match the current construction or finish stage.");
+    if (restored.action.type === "final" && options.verifiedFinalText !== undefined) {
+      return { ...restored, action: { ...restored.action, text: options.verifiedFinalText } };
+    }
     if (restored.action.type === "apply_hierarchy_repair" && repair) {
       return { ...restored, action: { type: "action_batch", batch: {
         calls: repair.map((call, index) => ({ ...call, externalCallId: `${exchangeId}:call:${index + 1}` }))

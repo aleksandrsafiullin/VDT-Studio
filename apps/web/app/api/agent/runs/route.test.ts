@@ -82,6 +82,7 @@ async function readJson(response: Response) {
         sessionEpoch?: number;
       };
       visibleContext?: { brief?: { businessContext?: string } };
+      finalReport?: string;
       pendingQuestions?: Array<{ id: string }>;
       selectedSkills: Array<{ id: string }>;
       draftProject?: { rootNodeId: string; graph: { nodes: Array<{ id: string; baselineValue?: number }> } };
@@ -330,6 +331,154 @@ describe("agent runs API", { timeout: 30_000 }, () => {
         body.snapshot?.executionSummary ?? {}
       );
     } finally {
+      dispose();
+    }
+  });
+
+  it.each([false, true])("publishes only the verified calculation during direct OpenAI construction and replay with an editable estimate (%s)", async (estimatedRefunds) => {
+    const rootKpi = "Чистая выручка";
+    const knownInputs = "Помоги построить VDT чистой выручки за апрель. Продали 120 товаров, цена по прайсу — 50 долларов за товар. На каждую продажу действовала скидка 10%.";
+    const refundNote = estimatedRefunds ? "Редактируемая оценка возвратов за апрель" : "Возвраты составили 500 долларов";
+    const prompt = `${knownInputs} ${estimatedRefunds
+      ? "Из выручки после скидки вычти возвраты. Используй редактируемую оценку, если сумма неизвестна."
+      : `${refundNote}, эта сумма уже после скидки.`} НДС не учитываем.`;
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ rootKpi, projectTitle: rootKpi, unit: "USD" });
+    const project = builder.getProject();
+    const parentNodeId = project.rootNodeId;
+    const factors = [
+      { nodeId: "sales_qty", unit: "units", value: 120, note: "Продали 120 товаров" },
+      { nodeId: "price_per_item", unit: "USD/item", value: 50, note: "цена по прайсу — 50 долларов за товар" },
+      { nodeId: "discount_rate", unit: "%", value: 10, note: "На каждую продажу действовала скидка 10%" },
+      { nodeId: "returns_amount", unit: "USD", value: 500, note: refundNote }
+    ];
+    const formula = "sales_qty * price_per_item * (1 - discount_rate / 100) - returns_amount";
+    const calls = [
+      { toolName: "vdt.set_decomposition_plan", args: { plan: {
+        version: 1, goal: rootKpi,
+        nodes: factors.map(({ nodeId }) => ({ nodeId, parentNodeId, kind: "input" }))
+      } } },
+      { toolName: "vdt.add_drivers_batch", args: {
+        drivers: factors.map(({ nodeId, unit }) => ({ nodeId, parentNodeId, name: nodeId, type: "input", unit }))
+      } },
+      { toolName: "vdt.fill_input_values_batch", args: {
+        values: factors.map(({ nodeId, value, note }) => ({
+          nodeId, value, note,
+          provenance: estimatedRefunds && nodeId === "returns_amount" ? "default_assumption" : "user_provided_value"
+        }))
+      } },
+      { toolName: "vdt.set_formula", args: {
+        nodeId: parentNodeId, formula
+      } },
+      { toolName: "run.request_finish", args: {} }
+    ];
+    let releaseFinal!: () => void;
+    const finalGate = new Promise<void>((resolve) => { releaseFinal = resolve; });
+    let callIndex = 0;
+    const wrongOpening = "This yields 5,500 USD for the month.";
+    const wrongFinal = "Итог расчёта — 5 500 USD.";
+    const providerFetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const turnId = body.response_format.json_schema.schema.properties.turnId.const;
+      const context = JSON.parse(body.messages.find((message: { role: string }) => message.role === "user").content);
+      const call = calls[callIndex++];
+      if (call) return openAiStructuredResponse({
+        turnId, sessionState: "Continue building from the confirmed graph.",
+        assistantMessage: callIndex === 1 ? { messageId: "opening", text: wrongOpening } : null,
+        action: { type: "action_batch", batch: { calls: [call] } }
+      });
+      await finalGate;
+      return openAiStructuredResponse({
+        turnId, sessionState: "The finish receipt is verified.",
+        assistantMessage: { messageId: "preamble", text: wrongOpening },
+        action: {
+          type: "final", messageId: "final", finishReceiptId: context.finishReceiptId, text: wrongFinal
+        }
+      });
+    });
+    vi.stubGlobal("fetch", providerFetch);
+    const bindingId = `direct-openai-verified-calculation-${estimatedRefunds ? "estimated" : "provided"}`;
+    const dispose = agentExecutionBindingRegistry.register({
+      bindingId, enabled: true, modelId: "gpt-5-nano",
+      capability: {
+        schemaVersion: 1, executionProfile: "model_agent", engineId: "in-product-model-agent",
+        engineAdapterId: "http-direct-openai-test-v1", backendId: "openai_compatible",
+        protocolVersion: "structured-turn-v1", sessionStrategy: "structured_turn",
+        toolCatalogHash: currentModelAgentToolCatalogHash(), toolIsolation: "permission_only",
+        qualification: {
+          status: "unverified", platform: { os: "test", arch: "test", runtimeVersion: "node-test" },
+          testedAt: null, evidenceHash: null
+        },
+        supportsNativeSession: false, supportsResume: false, supportsStructuredEvents: true,
+        supportsToolBridge: true, supportsQuestions: true, supportsCancellation: true, supportsUsageMetrics: false,
+        cli: null
+      },
+      modelEngineAdapter: {
+        providerId: "openai_compatible",
+        providerConfig: { baseUrl: "https://api.openai.com/v1", apiKey: "test-key", reasoningEffort: "low" }
+      }
+    });
+    try {
+      const response = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+        mode: "continue_project",
+        input: { rootKpi, prompt, project, unit: "USD", timePeriod: "Month" },
+        executionBindingId: bindingId,
+        options: { autoApplyPatches: true, continueWithAssumptions: estimatedRefunds, researchMode: "off" }
+      }));
+      expect(response.status).toBe(200);
+      const runId = (await readJson(response)).runId!;
+      await waitForProviderCalls(providerFetch, calls.length + 1);
+      const beforeFinal = await waitForRunSnapshot(runId, (snapshot) => snapshot.status === "running");
+      expect(beforeFinal).toMatchObject({
+        events: expect.arrayContaining([
+          expect.objectContaining({ type: "tool_call_completed", message: "run.request_finish: FINISH_VERIFIED." })
+        ]),
+        chatMessages: [expect.objectContaining({ role: "user", text: prompt })]
+      });
+      expect(JSON.stringify(beforeFinal)).not.toContain(wrongOpening);
+      const requests = providerFetch.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+      expect(requests[0].messages[0].content).toContain("Set assistantMessage to null");
+      expect(requests[0].messages[0].content).not.toContain("The first turn must include an assistantMessage");
+      expect(requests.at(-1).response_format.json_schema.schema.properties).toMatchObject({
+        assistantMessage: { type: "null" },
+        action: { anyOf: [{ properties: { text: { type: "null" } } }] }
+      });
+
+      releaseFinal();
+      const completed = await waitForRunSnapshot(runId, (snapshot) => snapshot.status === "succeeded");
+      const finalText = expect.stringMatching(/Итог расчёта «Чистая выручка» — 4\s900 USD\./u);
+      expect(completed).toMatchObject({
+        finalReport: finalText,
+        chatMessages: [
+          expect.objectContaining({ role: "user", text: prompt }),
+          expect.objectContaining({ kind: "final_report", text: finalText })
+        ]
+      });
+      expect(completed.finalReport).toContain(formula);
+      expect(completed.finalReport).toContain("price_per_item — 50 USD/item");
+      expect(completed.finalReport).toContain("returns_amount — 500 USD");
+      if (estimatedRefunds) {
+        expect(completed.finalReport).toContain("В расчёте использованы редактируемые оценки.");
+        expect(completed.finalReport).toContain("returns_amount — 500 USD (редактируемая оценка)");
+      } else {
+        expect(completed.finalReport).not.toContain("редактируемые оценки");
+      }
+      await waitForSupervisorReleased(runId);
+      const abort = new AbortController();
+      const replay = await getEvents(new Request(`http://localhost:3000/api/agent/runs/${runId}/events`, {
+        signal: abort.signal
+      }), { params: Promise.resolve({ runId }) });
+      abort.abort();
+      const events = (await replay.text()).split("\n").filter((line) => line.startsWith("data: "))
+        .map((line) => JSON.parse(line.slice("data: ".length)));
+      expect(events.filter((event) => event.type === "assistant_message")).toHaveLength(0);
+      expect(events.filter((event) => event.type === "final")).toEqual([
+        expect.objectContaining({ payload: expect.objectContaining({ text: finalText }) })
+      ]);
+      expect(JSON.stringify({ completed, events })).not.toContain(wrongOpening);
+      expect(JSON.stringify({ completed, events })).not.toContain(wrongFinal);
+    } finally {
+      releaseFinal();
       dispose();
     }
   });

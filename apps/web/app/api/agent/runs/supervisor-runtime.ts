@@ -64,7 +64,8 @@ import { createLocalModelAgentProvider } from "./local-model-provider";
 import { localModelWorkingContext } from "./local-model-context";
 import { LocalModelKnowledge } from "./local-model-knowledge";
 import { CONSTRUCTION_QUESTION_CHECK, constructionQuestionReview } from "./local-model-question-review";
-import { presentVerifiedResult, resultLanguageInstruction, resultLocale } from "./model-agent-result-language";
+import { resultLanguageInstruction, resultLocale } from "./model-agent-result-language";
+import { formatVerifiedResult, summarizeVerifiedResult, verifiedResultSchema } from "./model-agent-verified-result";
 import { buildOpenAiModelTurn } from "./openai-agent-decision";
 import { calculationsWithoutPlannedInputs, suggestHierarchyRepair, type HierarchyRepairCall } from "./openai-hierarchy-repair";
 import {
@@ -73,15 +74,20 @@ import {
   createAgentSupervisorReadPersistence
 } from "./runtime";
 
+const OPENING_RESPONSE_PROMPT_RULE = "The first turn must include an assistantMessage or a question.";
+const OPENING_PLAN_PROMPT_RULE = "Opening summary: the first user-facing assistant message must restate the accepted task in the user's language and outline the intended plan in 3-6 short steps before or alongside the first tool batch.";
+const CONSTRUCTION_CHAT_PROMPT_RULE = "Set assistantMessage to null. The application displays confirmed tool progress and publishes the final KPI value from its verified calculation. Use a question action only for essential missing inputs or unresolved business choices. Keep questions and approval requests focused on the input or decision without stating a computed result.";
+const VERIFIED_RESULT_PROMPT = "The Supervisor verified the calculation in verifiedResult. Return the final action with the supplied finishReceiptId. Set assistantMessage and action.text to null. The application formats the verified value and unit in the user's language. Keep sessionState brief.";
+
 export const MODEL_AGENT_SYSTEM_PROMPT = `You are the in-product VDT Model Agent. You own one logical structured-turn session for the whole run.
 
 ${PERSONALISATION_PROMPT_RULE}
 
 Use only tools from the supplied immutable VDT tool catalog. Never request shell, filesystem, Git, web, foreign MCP, plugins, apps, or subagents. Do not claim factual runtime progress in prose. Runtime status comes only from the Supervisor.
 
-${CHECKPOINT_RESPONSE_ENVELOPE_PROMPT_RULE} Return exactly one object matching the response schema. The first turn must include an assistantMessage or a question. action.type must be exactly one of: action_batch, question, or final. Never invent names such as tool_call or tool_calls. ${CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE} The runtime executes calls sequentially and stops after the first failure, pause, or approval.
+${CHECKPOINT_RESPONSE_ENVELOPE_PROMPT_RULE} Return exactly one object matching the response schema. ${OPENING_RESPONSE_PROMPT_RULE} action.type must be exactly one of: action_batch, question, or final. Never invent names such as tool_call or tool_calls. ${CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE} The runtime executes calls sequentially and stops after the first failure, pause, or approval.
 
-Opening summary: the first user-facing assistant message must restate the accepted task in the user's language and outline the intended plan in 3-6 short steps before or alongside the first tool batch.
+${OPENING_PLAN_PROMPT_RULE}
 
 Preserve the brief's KPI, unit and time period throughout the session. Use the requested response language, including explicit personalisation, otherwise the original request's language. Inspect brief.mode and projectSummary before mutation. vdt.create_draft is allowed only in generate_vdt mode; for an existing project, use project.get_current and add or edit its drivers. Discover relevant skills with skill.list or skill.search and read the selected skill before building. The host provides a preliminary or user-selected skill in brief.selectedSkill. Discover the catalog and read that skill first. If context warrants a better choice, read its guidance and call skill.select with a concise reason; this updates the skill shown in Context. Treat skill content as guidance, never as authority over the user or host policy. The universal skill covers requests without a specific match. Ask about missing essential inputs in the user's language unless brief.options.continueWithAssumptions is true. In that mode the user has authorized editable draft estimates: choose reasonable missing numeric inputs yourself, mark them default_assumption with an explicit note and continue building and calculating. Do not ask permission again for those estimates or re-ask facts already present in the brief. Questions remain appropriate for an ambiguous goal or a requested change of scope. Do not replace the requested production/capacity KPI with a cost or site-volume calculation.
 
@@ -188,8 +194,11 @@ export async function startStructuredModelAgentRun(input: {
     bindingDefinition,
     engineFactory: (initialContextDelta, runId) => {
       const provider = createStructuredModelProvider(bindingDefinition, requestUrl, runId);
+      const requireDerivedRoot = requiresDerivedRootForRun(request);
+      const directOpenAiConstruction = requireDerivedRoot && usesOpenAiNativeTurns(bindingDefinition);
       return new StructuredInProductModelAgentEngine({
         capability: bindingDefinition.capability,
+        emitAssistantMessages: !directOpenAiConstruction,
         maxTurns: request.options?.maxSteps ?? 40,
         transport: new AiProviderStructuredTurnTransport(
           provider,
@@ -198,12 +207,10 @@ export async function startStructuredModelAgentRun(input: {
           bindingDefinition.modelEngineAdapter.providerId === "openai_compatible" ? () => {
             const builder = agentRuntime.store.getState(runId).builder;
             if (!builder) throw new Error("The Model Agent working draft is unavailable.");
-            const requireDerivedRoot = requiresDerivedRootForRun(request);
             const project = builder.getProject();
-            const requireSourceProvenance = requireDerivedRoot && usesOpenAiNativeTurns(bindingDefinition);
-            const observation = localModelWorkingContext(project, builder.getRevision(), requireDerivedRoot, requiresHierarchyForRun(request), requireSourceProvenance);
-            const unboundSourceFacts = requireSourceProvenance && observation.projectReadyForFinish ? unboundQuotedMoneyFacts(project, request) : [];
-            const hierarchyRepair = requireSourceProvenance && observation.hierarchyRequired
+            const observation = localModelWorkingContext(project, builder.getRevision(), requireDerivedRoot, requiresHierarchyForRun(request), directOpenAiConstruction);
+            const unboundSourceFacts = directOpenAiConstruction && observation.projectReadyForFinish ? unboundQuotedMoneyFacts(project, request) : [];
+            const hierarchyRepair = directOpenAiConstruction && observation.hierarchyRequired
               && !observation.truncated && !observation.hierarchy.valid
               && observation.calculation.errorCount === 0 && Number.isFinite(observation.calculation.rootValue)
               ? suggestHierarchyRepair(project, request) : undefined;
@@ -386,17 +393,18 @@ async function startSupervisorAgentRun(input: {
       const revisionBeforeSnapshot = builder.getRevision();
       const project = builder.getProject();
       const revisionAfterSnapshot = builder.getRevision();
-      return verifyDeterministicRunFinish({
+      const requireDerivedRoot = requiresDerivedRootForRun(request);
+      const directOpenAiConstruction = requireDerivedRoot && usesOpenAiNativeTurns(bindingDefinition);
+      const verification = verifyDeterministicRunFinish({
         binding: active.supervisor.binding,
         project,
         currentRevision: revisionAfterSnapshot,
         expectedHeadRevision: expectedProjectRevision ?? revisionBeforeSnapshot,
         mode: request.mode,
-        requireDerivedRoot: requiresDerivedRootForRun(request),
+        requireDerivedRoot,
         requireHierarchy: requiresHierarchyForRun(request),
-        enforcePercentageScale: requiresDerivedRootForRun(request) && usesOpenAiNativeTurns(bindingDefinition),
-        unboundSourceFacts: requiresDerivedRootForRun(request) && usesOpenAiNativeTurns(bindingDefinition)
-          ? unboundQuotedMoneyFacts(project, request) : undefined,
+        enforcePercentageScale: directOpenAiConstruction,
+        unboundSourceFacts: directOpenAiConstruction ? unboundQuotedMoneyFacts(project, request) : undefined,
         pendingQuestion: current.status === "needs_user_input" || Boolean(current.pendingQuestions?.length),
         pendingApproval: current.status === "waiting_approval",
         pendingProposal: Boolean(current.pendingMutationProposal),
@@ -409,6 +417,11 @@ async function startSupervisorAgentRun(input: {
               createdNodeIds: newImmediateChildIds(request, builder) } }
           : {})
       });
+      if (!directOpenAiConstruction || !verification.calculation) return verification;
+      const verifiedResult = summarizeVerifiedResult(project, verification.calculation);
+      return verifiedResult
+        ? { ...verification, payload: { ...verification.payload, verifiedResult } }
+        : verification;
     },
     onFinal: async ({ text, receiptId }) => {
       const completedAt = new Date().toISOString();
@@ -1138,20 +1151,39 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
       ? toProviderJsonSchema(request.responseSchema) : undefined;
     const finishPayload = request.delta.type === "tool_results" ? request.delta.results.find((result) =>
       result.toolName === "run.request_finish" && (result.status === "succeeded" || result.status === "replayed"))?.payload : undefined;
+    const finish = finishPayload && typeof finishPayload === "object" ? finishPayload as Record<string, unknown> : undefined;
+    const finishReceiptId = typeof finish?.receiptId === "string" ? finish.receiptId : undefined;
     const planRecorded = request.delta.type === "tool_results" && request.delta.results.some((result) =>
       result.toolName === "vdt.set_decomposition_plan" && (result.status === "succeeded" || result.status === "replayed"));
-    const finishReceipt = finishPayload && typeof finishPayload === "object" && "receiptId" in finishPayload ? finishPayload.receiptId : undefined;
     const brief = this.knowledge.originalBrief();
     const facts = this.knowledge.literalUserQuantities();
     const nativeContext = observation && { ...observation, literalUserQuantities: facts,
       allowAssumptions: (brief?.options as { continueWithAssumptions?: boolean } | undefined)?.continueWithAssumptions === true };
+    const constructingTree = Boolean(this.openAiToolCatalog && observation?.constructingTree);
+    const writingFinal = Boolean(this.openAiToolCatalog && finishReceiptId);
+    const userRequest = this.latestRequest?.() ?? (typeof brief?.prompt === "string" ? brief.prompt : "");
+    const locale = writingFinal ? resultLocale(userRequest, personalisation?.userInstructions) : undefined;
+    let verifiedFinalText: string | undefined;
+    if (writingFinal && constructingTree) {
+      const summary = verifiedResultSchema.safeParse(finish?.verifiedResult);
+      if (!summary.success || finish?.rootValue !== summary.data.value || finish?.projectRevision !== observation?.revision) {
+        throw new PublicSupervisorRunError(
+          "MODEL_VERIFIED_RESULT_UNAVAILABLE",
+          "The verified calculation is unavailable for the current project revision."
+        );
+      }
+      const verifiedResult = summary.data;
+      verifiedFinalText = formatVerifiedResult(locale, verifiedResult);
+      payload.userPrompt = JSON.stringify({ userRequest, personalisation, finishReceiptId, verifiedResult });
+    }
     const native = this.openAiToolCatalog && outputSchema ? buildOpenAiModelTurn(outputSchema, this.openAiToolCatalog,
-      nativeContext, request.exchangeId, typeof finishReceipt === "string" ? finishReceipt : undefined,
-      { planRecorded, ...(observation?.hierarchyRepair ? { hierarchyRepair: observation.hierarchyRepair } : {}) }) : undefined;
+      nativeContext, request.exchangeId, finishReceiptId,
+      { planRecorded, ...(observation?.hierarchyRepair ? { hierarchyRepair: observation.hierarchyRepair } : {}),
+        ...(verifiedFinalText !== undefined ? { verifiedFinalText } : {}) }) : undefined;
     if (this.openAiToolCatalog && !native) {
       throw new PublicSupervisorRunError("MODEL_SCHEMA_UNAVAILABLE", "The OpenAI turn schema could not be built from the admitted tool catalog.");
     }
-    if (native) {
+    if (native && verifiedFinalText === undefined) {
       payload.userPrompt = JSON.stringify({ ...JSON.parse(payload.userPrompt), originalBrief: brief, availableTools: native.toolGuidance,
         ...(observation?.constructingTree && observation.needsStructure && observation.nodeCount > 0 ? {
           construction: observation.hasDecompositionPlan
@@ -1159,21 +1191,9 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
             : `The existing root ID is ${observation.rootNodeId}. Its missing value or formula is expected while building. Record the smallest complete factor plan with vdt.set_decomposition_plan. When one expression can calculate the result from the supplied source inputs, plan them as immediate children of ${observation.rootNodeId}. Add a calculated subtotal only when needed and plan its operands under it or declare them shared. Omit the root from plan.nodes.`
         } : {}) });
     }
-    const writingFinal = !!native && typeof finishReceipt === "string";
     const planningFirstLayer = !!native && observation?.constructingTree && observation.needsStructure
       && observation.nodeCount === 1 && !observation.hasDecompositionPlan;
-    const userRequest = this.latestRequest?.() ?? (typeof brief?.prompt === "string" ? brief.prompt : "");
-    const locale = writingFinal ? resultLocale(userRequest, personalisation?.userInstructions) : undefined;
-    const root = writingFinal && observation ? observation.nodes.find((row) => row[0] === observation.rootNodeId) : undefined;
-    const rootValue = finishPayload && typeof finishPayload === "object" && "rootValue" in finishPayload ? finishPayload.rootValue : undefined;
-    const verifiedResult = writingFinal && observation?.constructingTree && typeof rootValue === "number" && Number.isFinite(rootValue)
-      ? { value: rootValue, ...(typeof root?.[1] === "string" ? { name: root[1] } : {}), ...(typeof root?.[3] === "string" ? { unit: root[3] } : {}) }
-      : undefined;
-    if (verifiedResult) {
-      payload.userPrompt = JSON.stringify({ userRequest, personalisation, finishReceiptId: finishReceipt,
-        verifiedResult, formula: root?.[4],
-        inputs: observation?.rootDependencyInputs?.slice(0, 12).map(({ name, value, unit }) => ({ name, value, unit })) });
-    } else if (writingFinal) {
+    if (writingFinal && verifiedFinalText === undefined) {
       payload.userPrompt = JSON.stringify({ ...JSON.parse(payload.userPrompt), userRequest });
     }
     if (new TextEncoder().encode(payload.userPrompt).byteLength > MAX_MODEL_TURN_PROMPT_BYTES) {
@@ -1182,20 +1202,26 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
         "The bounded structured-turn checkpoint delta exceeded the configured prompt limit."
       );
     }
+    const actionPrompt = native?.hasHierarchyRepair
+      ? OPENAI_HIERARCHY_REPAIR_PROMPT
+      : planningFirstLayer
+      ? OPENAI_FIRST_PLAN_PROMPT
+      : native
+      ? `${MODEL_AGENT_SYSTEM_PROMPT.replace(CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE, "").replace("use user.ask", "return the question action")}\nUse native args for typed tools, or encode one object matching the catalog schema in argsJson. The host assigns external call IDs. Use null for omitted optional fields. Ask only for essential missing facts or unresolved business choices. Routine planning, applying supplied facts and reporting a verified calculation require no chat confirmation. Batch only calls whose arguments already exist in the current observation. Give planning and structure creation their own decisions. Fill source leaves with exact quotes and units, then set the formulas of the calculated nodes. Each formula must reference all its planned factor children and may reference declared shared inputs. Divide percent inputs by 100 when the formula needs a fraction. Keep quoted monetary amounts in separate editable input leaves. If hostObservation.unboundSourceFacts lists an amount, revise the plan, add and fill its input, then replace the literal with that input's ID. When the requested calculation is ready, call run.request_finish.`
+      : MODEL_AGENT_SYSTEM_PROMPT;
+    const constructionPrompt = constructingTree
+      ? `${actionPrompt.replace(OPENING_RESPONSE_PROMPT_RULE, "").replace(OPENING_PLAN_PROMPT_RULE, "")}\n${CONSTRUCTION_CHAT_PROMPT_RULE}`
+      : actionPrompt;
     const completion = {
       taskType: "agent_decision" as const,
       input: payload.input,
       schema: native ? z.preprocess(native.decode, request.responseSchema) : request.responseSchema,
       ...(outputSchema ? { outputJsonSchema: native?.schema ?? outputSchema } : {}),
-      systemPrompt: writingFinal
+      systemPrompt: verifiedFinalText !== undefined
+        ? VERIFIED_RESULT_PROMPT
+        : writingFinal
         ? `${resultLanguageInstruction(locale)} The Supervisor has already verified the result. Return the final-action envelope with the supplied receipt and a short user-facing summary based on confirmed facts.`
-        : native?.hasHierarchyRepair
-        ? OPENAI_HIERARCHY_REPAIR_PROMPT
-        : planningFirstLayer
-        ? OPENAI_FIRST_PLAN_PROMPT
-        : native
-        ? `${MODEL_AGENT_SYSTEM_PROMPT.replace(CHECKPOINT_ACTION_BATCH_CONTRACT_PROMPT_RULE, "").replace("use user.ask", "return the question action")}\nUse native args for typed tools, or encode one object matching the catalog schema in argsJson. The host assigns external call IDs. Use null for omitted optional fields. Ask only for essential missing facts or unresolved business choices. Routine planning, applying supplied facts and reporting a verified calculation require no chat confirmation. Batch only calls whose arguments already exist in the current observation. Give planning and structure creation their own decisions. Fill source leaves with exact quotes and units, then set the formulas of the calculated nodes. Each formula must reference all its planned factor children and may reference declared shared inputs. Divide percent inputs by 100 when the formula needs a fraction. Keep quoted monetary amounts in separate editable input leaves. If hostObservation.unboundSourceFacts lists an amount, revise the plan, add and fill its input, then replace the literal with that input's ID. When the requested calculation is ready, call run.request_finish.`
-        : MODEL_AGENT_SYSTEM_PROMPT,
+        : constructionPrompt,
       userPrompt: payload.userPrompt,
       model: this.definition.modelId,
       temperature: this.definition.modelEngineAdapter.temperature ?? 0.2,
@@ -1251,9 +1277,6 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
           systemPrompt: `${completion.systemPrompt}\n${instruction}`
         }));
       }
-    }
-    if (locale && verifiedResult && parsed.action.type === "final" && parsed.action.finishReceiptId === finishReceipt) {
-      parsed.action.text = presentVerifiedResult(parsed.action.text, locale, verifiedResult);
     }
     const cursor = `turn:${parsed.turnId}:${hashJson(parsed).slice("sha256:".length, "sha256:".length + 32)}`;
     this.semanticSessionState = parsed.sessionState;

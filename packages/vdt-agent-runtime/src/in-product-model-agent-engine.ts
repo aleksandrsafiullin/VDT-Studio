@@ -130,6 +130,8 @@ export interface ModelAgentTurnTransport {
 export interface StructuredInProductModelAgentEngineOptions {
   capability: Extract<AgentCapabilityProfile, { executionProfile: "model_agent" }>;
   transport: ModelAgentTurnTransport;
+  /** The host can provide the opening and progress through runtime events. */
+  emitAssistantMessages?: boolean | undefined;
   maxTurns?: number | undefined;
   now?: (() => string) | undefined;
   idFactory?: (() => string) | undefined;
@@ -139,6 +141,7 @@ export interface StructuredInProductModelAgentEngineOptions {
 export class StructuredInProductModelAgentEngine implements InProductModelAgentEngine {
   readonly capability: Extract<AgentCapabilityProfile, { executionProfile: "model_agent" }>;
   private readonly transport: ModelAgentTurnTransport;
+  private readonly emitAssistantMessages: boolean;
   private readonly maxTurns: number;
   private readonly now: () => string;
   private readonly idFactory: () => string;
@@ -154,6 +157,7 @@ export class StructuredInProductModelAgentEngine implements InProductModelAgentE
       );
     }
     this.transport = options.transport;
+    this.emitAssistantMessages = options.emitAssistantMessages ?? true;
     this.maxTurns = options.maxTurns ?? 40;
     if (!Number.isSafeInteger(this.maxTurns) || this.maxTurns < 1 || this.maxTurns > 500) {
       throw new ModelAgentEngineError("MODEL_MAX_TURNS_INVALID", "maxTurns must be between 1 and 500.");
@@ -174,6 +178,7 @@ export class StructuredInProductModelAgentEngine implements InProductModelAgentE
       binding,
       host,
       transport: this.transport,
+      emitAssistantMessages: this.emitAssistantMessages,
       maxTurns: this.maxTurns,
       now: this.now,
       idFactory: this.idFactory,
@@ -248,6 +253,7 @@ export class StructuredInProductModelAgentEngine implements InProductModelAgentE
       binding,
       host,
       transport: this.transport,
+      emitAssistantMessages: this.emitAssistantMessages,
       maxTurns: this.maxTurns,
       now: this.now,
       idFactory: this.idFactory,
@@ -261,6 +267,7 @@ interface StructuredModelAgentSessionOptions {
   binding: AgentSessionBinding;
   host: AgentEngineHost;
   transport: ModelAgentTurnTransport;
+  emitAssistantMessages: boolean;
   maxTurns: number;
   now: () => string;
   idFactory: () => string;
@@ -272,6 +279,7 @@ class StructuredModelAgentSession implements AgentRunSession {
   readonly binding: AgentSessionBinding;
   private readonly host: AgentEngineHost;
   private readonly transport: ModelAgentTurnTransport;
+  private readonly emitAssistantMessages: boolean;
   private readonly maxTurns: number;
   private readonly now: () => string;
   private readonly idFactory: () => string;
@@ -300,6 +308,7 @@ class StructuredModelAgentSession implements AgentRunSession {
     this.binding = options.binding;
     this.host = options.host;
     this.transport = options.transport;
+    this.emitAssistantMessages = options.emitAssistantMessages;
     this.maxTurns = options.maxTurns;
     this.now = options.now;
     this.idFactory = options.idFactory;
@@ -406,7 +415,7 @@ class StructuredModelAgentSession implements AgentRunSession {
       yield { type: "checkpoint_requested", reason: "engine_exchange_completed" };
 
       if (response.usage) yield { type: "usage", metrics: response.usage };
-      if (turn.data.assistantMessage) {
+      if (this.emitAssistantMessages && turn.data.assistantMessage) {
         this.firstUserFacingEvent = true;
         yield {
           type: "assistant_message",
@@ -454,7 +463,7 @@ class StructuredModelAgentSession implements AgentRunSession {
         // session to correct; it must not create an out-of-band pause.
         continue;
       }
-      if (!this.firstUserFacingEvent) {
+      if (this.emitAssistantMessages && !this.firstUserFacingEvent) {
         this.terminal = true;
         yield {
           type: "transport_error",

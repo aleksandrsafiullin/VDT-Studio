@@ -2973,12 +2973,48 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         if (get().smartKpiFencedRunIds.includes(runId)) return;
         activeAgentEventUnsubscribe?.();
         set({ agentConnectionStatus: "connecting" });
-        activeAgentEventUnsubscribe = createAgentClient().subscribe(runId, {
-          onOpen: () => set({ agentConnectionStatus: "connected" }),
+        const client = createAgentClient();
+        let subscribed = true;
+        let refreshing = false;
+        let refreshRequested = false;
+        const ownsSubscription = () => {
+          const state = get();
+          return subscribed && !state.smartKpiOperation && !state.smartKpiFencedRunIds.includes(runId)
+            && (state.agentRun?.runId === runId || state.activeAgentRunId === runId);
+        };
+        const refreshSnapshot = async () => {
+          if (!ownsSubscription()) return;
+          refreshRequested = true;
+          if (refreshing) return;
+          refreshing = true;
+          try {
+            while (refreshRequested && ownsSubscription()) {
+              refreshRequested = false;
+              try {
+                const snapshot = await client.getRun(runId);
+                if (ownsSubscription() && !refreshRequested) applyAgentSnapshot(set, snapshot);
+              } catch (error) {
+                if (!ownsSubscription() || refreshRequested) continue;
+                if (isAgentRunNotFoundError(error)) {
+                  set((current) => clearPersistedAgentRunState(current, runId));
+                  return;
+                }
+                const message = error instanceof Error ? error.message : "Agent run could not be refreshed.";
+                set({ agentError: message, aiError: message, agentConnectionStatus: "error" });
+              }
+            }
+          } finally {
+            refreshing = false;
+          }
+        };
+        const unsubscribe = client.subscribe(runId, {
+          onOpen: () => {
+            if (ownsSubscription()) set({ agentConnectionStatus: "connected" });
+          },
+          onSupervisorUpdate: () => { void refreshSnapshot(); },
           onEvent: (event) => {
+            if (!ownsSubscription()) return;
             set((state) => {
-              if (state.smartKpiOperation || state.smartKpiFencedRunIds.includes(runId)) return {};
-              if (state.agentRun?.runId !== runId && state.activeAgentRunId !== runId) return {};
               const byId = new Map(state.agentEvents.map((entry) => [entry.id, entry]));
               byId.set(event.id, event);
               const agentEvents = [...byId.values()].sort((left, right) => left.seq - right.seq);
@@ -3001,21 +3037,16 @@ export const useVdtStudioStore = create<VdtStudioState>()(
                   : state.generateActivity
               };
             });
-            if (shouldRefreshAgentSnapshot(event)) {
-              void createAgentClient().getRun(runId)
-                .then((snapshot) => applyAgentSnapshot(set, snapshot))
-                .catch((error) => {
-                  if (isAgentRunNotFoundError(error)) {
-                    set((current) => clearPersistedAgentRunState(current, runId));
-                    return;
-                  }
-                  const message = error instanceof Error ? error.message : "Agent run could not be refreshed.";
-                  set({ agentError: message, aiError: message, agentConnectionStatus: "error" });
-                });
-            }
+            if (shouldRefreshAgentSnapshot(event)) void refreshSnapshot();
           },
-          onError: () => set({ agentConnectionStatus: "error" })
+          onError: () => {
+            if (ownsSubscription()) set({ agentConnectionStatus: "error" });
+          }
         });
+        activeAgentEventUnsubscribe = () => {
+          subscribed = false;
+          unsubscribe();
+        };
       },
       resumePersistedAgentRun: async () => {
         const state = get();

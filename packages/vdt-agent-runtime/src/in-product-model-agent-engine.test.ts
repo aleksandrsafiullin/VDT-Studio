@@ -115,7 +115,7 @@ describe("StructuredInProductModelAgentEngine", () => {
     });
   });
 
-  it("stops a batch on its first failed call and sends only the bounded result delta", async () => {
+  it.each([true, false])("preserves blocking questions after a failed call with assistant messages enabled (%s)", async (emitAssistantMessages) => {
     const transport = new QueueTransport([
       turn("turn-1", {
         type: "action_batch",
@@ -138,7 +138,7 @@ describe("StructuredInProductModelAgentEngine", () => {
       })
     ]);
     const calls: string[] = [];
-    const session = await makeEngine(transport).openSession({
+    const session = await makeEngine(transport, { emitAssistantMessages }).openSession({
       binding,
       initialContext: {},
       initialContextHash: HASH_A
@@ -157,6 +157,7 @@ describe("StructuredInProductModelAgentEngine", () => {
       type: "tool_results",
       results: [{ externalCallId: "bad-1", status: "failed" }]
     });
+    expect(events.filter((event) => event.type === "assistant_message")).toHaveLength(emitAssistantMessages ? 1 : 0);
     expect(events.at(-1)?.type).toBe("question");
   });
 

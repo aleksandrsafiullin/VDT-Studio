@@ -34,11 +34,20 @@ user answer from the current request and source observations. A
 rejected question gives the model one tool action for continuing the work.
 Formula and validation feedback treats an unfinished derived KPI as work for
 the agent and asks the user only for an essential missing source input or choice.
-After a verified finish receipt, the final turn receives a compact calculation
-summary and the latest user instruction. Explicit response-language instructions
-take precedence. For a clearly Russian or English construction request, the
-host can present the verified number in that locale if the model's prose uses
-the wrong script.
+For direct OpenAI construction from a new draft or a saved empty root, the
+work log shows actual tool progress. Questions and approvals keep their
+existing controls. The final action cites the verified receipt for the current
+revision. The application formats one report from that receipt's Baseline
+calculation. It shows the root KPI, value, unit, formula and up to eight formula
+drivers. It marks contributing editable estimates, including up to four that
+are outside the displayed drivers, and indicates when more rows are available
+in the tree. Explicit response-language instructions take precedence. Russian
+and English use localized wording. Other languages use the saved KPI and
+formula labels, the verified numbers and an approximation marker for estimates.
+The full narrative report, source citations and recommended next deepen action
+remain open under the [final report requirements](AGENTIC_VDT_RUNTIME_SPEC.md#10-final-report-requirements).
+Skill selection and clarification history are available in the existing
+Context and conversation. Existing saved transcripts keep their recorded text.
 Each turn uses the current checkpoint, tool catalog projection and confirmed
 observations. Executed calls and their rejections stay in the run history.
 The adapter derives each tool call ID from its exchange and position before

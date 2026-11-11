@@ -3,6 +3,7 @@
 import type { ReasoningEffort } from "@vdt-studio/model-bridge";
 
 import type {
+  AgentRunEventV2,
   AgentUserMessage,
   VdtAgentEvent,
   VdtAgentPublicStartRequest,
@@ -50,6 +51,7 @@ export interface AgentExecutionBindingSelection {
 
 export interface AgentEventHandlers {
   onEvent?: (event: VdtAgentEvent) => void;
+  onSupervisorUpdate?: () => void;
   onError?: (error: Event) => void;
   onOpen?: () => void;
 }
@@ -92,7 +94,16 @@ export function createAgentClient(fetcher: typeof fetch = fetch): AgentClient {
       const source = new EventSource(`/api/agent/runs/${encodeURIComponent(runId)}/events`);
       source.addEventListener("open", () => handlers.onOpen?.());
       source.addEventListener("agent_event", (event) => {
-        handlers.onEvent?.(JSON.parse((event as MessageEvent).data) as VdtAgentEvent);
+        const update = JSON.parse((event as MessageEvent).data) as VdtAgentEvent | AgentRunEventV2;
+        if (!("schemaVersion" in update)) {
+          handlers.onEvent?.(update);
+          return;
+        }
+        // The durable final event precedes finish persistence and the public
+        // chat projection. RUN_SUCCEEDED follows both.
+        if (update.schemaVersion === 2 && update.type !== "final" && update.type !== "checkpoint") {
+          handlers.onSupervisorUpdate?.();
+        }
       });
       source.addEventListener("error", (event) => handlers.onError?.(event));
       return () => source.close();
