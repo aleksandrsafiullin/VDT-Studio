@@ -3,7 +3,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { expect, type Page } from "@playwright/test";
 import { getExcelWorkbookCells, type VdtProject } from "../../packages/vdt-core/src/index";
-import { test } from "./workspace-fixture";
+import { selectCanvasKpi, test } from "./workspace-fixture";
 
 const XLSX = createRequire(path.resolve("packages/data-harness/package.json"))("xlsx") as {
   read(data: Buffer, options: { type: "buffer" }): { Sheets: Record<string, Record<string, { v?: unknown; f?: string }>> };
@@ -13,13 +13,13 @@ function card(page: Page, id: string) {
   return page.locator(`.react-flow__node[data-id="${id}"]`).getByRole("button", { name: /^Select / });
 }
 
-async function select(page: Page, id: string) {
-  await card(page, id).click();
+async function select(page: Page, name: string) {
+  await selectCanvasKpi(page, name);
   await page.getByRole("tab", { name: "properties", exact: true }).click();
 }
 
-async function enable(page: Page, id = "unplanned_downtime", target = 100_000) {
-  await select(page, id);
+async function enable(page: Page, name = "Unplanned Downtime", target = 100_000) {
+  await select(page, name);
   await page.getByTestId("node-goal-seek-toggle").check();
   await page.getByTestId("goal-seek-target-value").fill(String(target));
 }
@@ -50,7 +50,7 @@ test.describe("Back-calculated Baseline", { tag: "@chromium" }, () => {
   });
 
   test("recalculates measurements, changes output target, validates drafts and restores the source", async ({ page }, testInfo) => {
-    await select(page, "production_volume");
+    await select(page, "Production Volume");
     await expect(page.getByTestId("node-goal-seek-toggle")).toBeDisabled();
     await enable(page);
     await expectSolved(page, 720 - 40 - 100_000 / (220 * 0.96));
@@ -59,11 +59,11 @@ test.describe("Back-calculated Baseline", { tag: "@chromium" }, () => {
     await expect(page.getByTestId("editor-top-bar")).toContainText("100,000");
     await page.screenshot({ path: testInfo.outputPath("calibrated-baseline.png") });
 
-    await select(page, "planned_downtime");
+    await select(page, "Planned Downtime");
     await expect(page.getByTestId("node-goal-seek-toggle")).toBeDisabled();
     await expect(page.getByTestId("goal-seek-settings")).toContainText("already uses back-calculation");
     await page.getByTestId("node-baseline-value").fill("60");
-    await select(page, "unplanned_downtime");
+    await select(page, "Unplanned Downtime");
     await expectSolved(page, 720 - 60 - 100_000 / (220 * 0.96));
     await expect(page.getByTestId("editor-top-bar")).toContainText("100,000");
 
@@ -124,16 +124,16 @@ test.describe("Back-calculated Baseline", { tag: "@chromium" }, () => {
 
   test("shows unsolvable calibration without a stale value and recovers after repair", async ({ page }, testInfo) => {
     await enable(page);
-    await select(page, "nominal_rate");
+    await select(page, "Nominal Rate");
     await page.getByTestId("node-baseline-value").fill("0");
-    await select(page, "unplanned_downtime");
+    await select(page, "Unplanned Downtime");
     await expect(page.getByTestId("node-back-calculated-value")).toHaveValue("");
     await expect(page.getByTestId("goal-seek-settings").getByRole("alert")).toContainText("No unique finite solution");
     await expect(card(page, "unplanned_downtime").getByTestId("node-goal-seek-badge")).toHaveText("Back-calculation · review");
     await page.screenshot({ path: testInfo.outputPath("no-solution.png") });
-    await select(page, "nominal_rate");
+    await select(page, "Nominal Rate");
     await page.getByTestId("node-baseline-value").fill("220");
-    await select(page, "unplanned_downtime");
+    await select(page, "Unplanned Downtime");
     await expectSolved(page, 720 - 40 - 100_000 / (220 * 0.96));
     await expect(page.getByTestId("goal-seek-settings").getByRole("alert")).toHaveCount(0);
   });
@@ -152,9 +152,9 @@ test.describe("Back-calculated Baseline", { tag: "@chromium" }, () => {
     await panel.getByRole("button", { name: "Add & calculate", exact: true }).click();
     await expect(page.getByRole("button", { name: "Select New measured loss", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Close Smart suggestions", exact: true }).click();
-    await page.getByRole("button", { name: "Select New measured loss", exact: true }).click();
+    await select(page, "New measured loss");
     await page.getByTestId("node-baseline-value").fill("15");
-    await select(page, "unplanned_downtime");
+    await select(page, "Unplanned Downtime");
     await expectSolved(page, 720 - 40 - 15 - 100_000 / (220 * 0.96));
     await expect(page.getByTestId("editor-top-bar")).toContainText("100,000");
   });
@@ -174,7 +174,7 @@ test.describe("Back-calculated Baseline", { tag: "@chromium" }, () => {
     await versions.getByRole("button", { name: "Restore this version", exact: true }).click();
     await versions.getByTestId("confirm-version-restore").click();
     await versions.getByRole("button", { name: "Close versions", exact: true }).click();
-    await select(page, "unplanned_downtime");
+    await select(page, "Unplanned Downtime");
     await expect(page.getByTestId("goal-seek-target-value")).toHaveValue("100000");
     await page.getByTestId("back-to-project-workspace").click();
     await expect(page.getByTestId(`project-vdt-card-${productionWorkspace.vdtId}`)).toBeVisible();
@@ -185,7 +185,7 @@ test.describe("Back-calculated Baseline", { tag: "@chromium" }, () => {
       await reopened.route("**/api/ai/detect-clis**", route => route.fulfill({ json: { agents: [], modelsByAgent: {} } }));
       await reopened.goto(`/projects/${productionWorkspace.projectId}?vdt=${productionWorkspace.vdtId}`);
       await expect(reopened.getByTestId("vdt-canvas")).toBeVisible();
-      await select(reopened, "unplanned_downtime");
+      await select(reopened, "Unplanned Downtime");
       await expect(reopened.getByTestId("goal-seek-target-value")).toHaveValue("100000");
       await expectSolved(reopened, 720 - 40 - 100_000 / (220 * 0.96));
       const project = await readProject(reopened);
