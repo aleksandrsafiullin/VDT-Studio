@@ -1,17 +1,21 @@
 import fs from "node:fs";
 import path from "node:path";
 import { inflateRawSync } from "node:zlib";
-import { expect, type Page } from "@playwright/test";
+import { expect, type Page, type Route } from "@playwright/test";
 import { test, type ProductionWorkspace } from "./workspace-fixture";
+import type { AgentWorkspaceRevision, VdtAgentPublicStartRequest } from "../../packages/vdt-agent-runtime/src/types";
 import {
   calculateGraph,
   calculateIsolatedRootEffect,
   calculateScenario,
   calculateScenarioGraph,
   calculateScenarioMultiplicativeEffect,
+  cloneProject,
   getExcelNodeCells,
   getExcelWorkbookCells,
-  importProjectJson
+  importProjectJson,
+  productionVolumeProject,
+  type VdtProject
 } from "../../packages/vdt-core/src/index";
 
 const EXCEL_EXPORT_TEST_TITLE = "downloads editable Excel without session credentials";
@@ -325,6 +329,48 @@ function mockRuntimeAgentSnapshot() {
   };
 }
 
+async function completeMockStoredAgentRun(route: Route, page: Page, workspace: ProductionWorkspace) {
+  const request = route.request().postDataJSON() as VdtAgentPublicStartRequest;
+  expect(request.workspace).toMatchObject(workspace);
+  const base = request.workspace?.expectedRevision;
+  if (!base) throw new Error("The stored agent request did not carry the editor's revision base.");
+
+  const snapshot = mockRuntimeAgentSnapshot();
+  const saved = await page.request.post(`/api/vdt/vdts/${workspace.vdtId}/revisions`, {
+    headers: { connection: "close" },
+    data: {
+      schemaVersion: "manual_vdt_revision_commit_request.v1",
+      idempotencyKey: `e2e-agent-success:${workspace.vdtId}`,
+      expectedHead: {
+        schemaVersion: "vdt_revision_cas.v1",
+        activeRevisionId: base.expectedActiveRevisionId,
+        activeContentIdentity: base.expectedActiveContentIdentity,
+        commitGeneration: base.expectedCommitGeneration
+      },
+      expectedRuntime: {
+        schemaVersion: "project_runtime_cas.v1",
+        runtimeGeneration: base.expectedRuntimeGeneration,
+        generationVersion: base.expectedGenerationVersion
+      },
+      summary: "Completed E2E agent fixture",
+      project: snapshot.project
+    }
+  });
+  expect(saved.status(), await saved.text()).toBe(201);
+  const { head, runtimeState } = await saved.json() as {
+    head: AgentWorkspaceRevision["head"];
+    runtimeState: AgentWorkspaceRevision["runtime"];
+  };
+  const { runtimeGeneration, generationVersion } = runtimeState;
+  await route.fulfill({
+    json: {
+      ok: true,
+      runId: snapshot.runId,
+      snapshot: { ...snapshot, request, workspaceRevision: { head, runtime: { runtimeGeneration, generationVersion } } }
+    }
+  });
+}
+
 function mockRuntimeStructuredOutputFailureSnapshot(prompt = "Build an excavation model. I have 5 excavators.") {
   const timestamp = "2026-06-24T10:00:05.000Z";
   return {
@@ -609,7 +655,7 @@ function mockRuntimeRunningAfterAnswersSnapshot(
   };
 }
 
-function mockGeneratedProject() {
+function mockGeneratedProject(): VdtProject {
   const timestamp = "2026-06-24T10:00:00.000Z";
   return {
     id: "project_revenue_e2e",
@@ -682,9 +728,9 @@ function mockGeneratedProject() {
         }
       ]
     },
-    scenarios: [],
+    scenarios: [{ id: "main", name: "Main", isMain: true, overrides: [], createdAt: timestamp, updatedAt: timestamp }],
     dataSources: [],
-    aiSettings: { providerId: "mock", model: "mock" },
+    aiSettings: { defaultProviderId: "mock" },
     aiReview: {
       assumptions: [],
       questionsForUser: [],
@@ -851,27 +897,6 @@ async function findWrappedRowSlotIndex(page: Page): Promise<number | null> {
 async function readNodePositions(page: Page, nodeIds: string[]) {
   const entries = await Promise.all(nodeIds.map(async (id) => [id, await readNodePosition(page, id)] as const));
   return Object.fromEntries(entries);
-}
-
-async function writePersistedNodePositions(
-  page: Page,
-  positionsById: Record<string, { x: number; y: number }>
-) {
-  await page.evaluate((positions) => {
-    const raw = localStorage.getItem("vdt-studio-state");
-    if (!raw) {
-      throw new Error("Missing persisted VDT state");
-    }
-    const persisted = JSON.parse(raw) as PersistedVdtState;
-    const nodes = persisted.state?.project?.graph?.nodes ?? [];
-    for (const node of nodes) {
-      const position = positions[node.id];
-      if (position) {
-        node.position = position;
-      }
-    }
-    localStorage.setItem("vdt-studio-state", JSON.stringify(persisted));
-  }, positionsById);
 }
 
 async function countNodeOverlaps(page: Page) {
@@ -1205,21 +1230,12 @@ test("renders the workspace without invoking a mock provider", { tag: "@chromium
   expect(consoleErrors).toEqual([]);
 });
 
-test("shows chat-first agent progress after mock VDT generation", { tag: "@chromium" }, async ({ page }, testInfo) => {
+test("shows chat-first agent progress after mock VDT generation", { tag: "@chromium" }, async ({ page, productionWorkspace }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Generate activity smoke runs on desktop viewport.");
 
   await page.route("**/api/agent/runs", async (route) => {
     if (route.request().method() === "GET") return route.fallback();
-    const snapshot = { ...mockRuntimeAgentSnapshot(), request: route.request().postDataJSON() };
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        runId: snapshot.runId,
-        snapshot
-      })
-    });
+    await completeMockStoredAgentRun(route, page, productionWorkspace);
   });
 
   await sendMockAgentInstruction(page, "Build a revenue model.");
@@ -1758,7 +1774,7 @@ test("shows a real Local CLI connection error without falling back to mock", { t
   await expect(page.getByText("Claude Code: CLI access verified. The provider reports an active session.")).toHaveCount(0);
 });
 
-test("restores and removes encrypted BYOK keys while excluding plaintext from preferences", async ({ page }) => {
+test("restores and removes encrypted BYOK keys while excluding plaintext from preferences", async ({ page, productionWorkspace }) => {
 
   let agentRunRequestBody: {
     executionBindingId?: string;
@@ -1800,18 +1816,7 @@ test("restores and removes encrypted BYOK keys while excluding plaintext from pr
   await page.route("**/api/agent/runs", async (route) => {
     if (route.request().method() === "GET") return route.fallback();
     agentRunRequestBody = route.request().postDataJSON() as typeof agentRunRequestBody;
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        runId: "agent-run-e2e",
-        snapshot: {
-          ...mockRuntimeAgentSnapshot(),
-          request: agentRunRequestBody
-        }
-      })
-    });
+    await completeMockStoredAgentRun(route, page, productionWorkspace);
   });
 
   await page.keyboard.press("Escape");
@@ -1823,6 +1828,7 @@ test("restores and removes encrypted BYOK keys while excluding plaintext from pr
   expect(agentRunRequestBody).not.toHaveProperty("providerConfig");
   expect(JSON.stringify(agentRunRequestBody)).not.toContain("session-only-key");
 
+  await expect(page.getByRole("heading", { name: "Revenue Driver Model" })).toBeVisible();
   await page.reload();
 
   const persistedAfterReload = await readPersistedExecutionSettings(page);
@@ -2574,9 +2580,7 @@ test("dismisses scenario and settings modals cleanly in sequence", { tag: "@chro
   await expect(page.getByTestId("settings-modal")).toHaveCount(0);
 });
 
-test("auto-distributes nodes without overlap", { tag: "@chromium" }, async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "chromium", "Auto-distribute runs on desktop viewport.");
-
+test.describe("saved overlapping layout", () => {
   const ids = [
     "calendar_time",
     "planned_downtime",
@@ -2584,27 +2588,30 @@ test("auto-distributes nodes without overlap", { tag: "@chromium" }, async ({ pa
     "nominal_rate",
     "yield_factor"
   ];
-
-  await page.getByTestId("auto-distribute-layout").click();
-  await expect.poll(async () => readPersistedState(page)).not.toBeNull();
-
-  await writePersistedNodePositions(
-    page,
-    Object.fromEntries(ids.map((id) => [id, { x: 900, y: 240 }]))
-  );
-  await page.reload();
-  await page.getByTestId("vdt-canvas").waitFor();
-  await expect.poll(async () => countNodeOverlaps(page)).toBeGreaterThan(0);
-  const before = await readNodePositions(page, ids);
-
-  await page.getByTestId("auto-distribute-layout").click();
-  await expect.poll(async () => page.locator(".react-flow__node").count()).toBeGreaterThan(0);
-  await expect.poll(async () => countNodeOverlaps(page)).toBe(0);
-  const after = await readNodePositions(page, ids);
-  expect(after).not.toEqual(before);
-  for (const id of ids) {
-    expectPositionMoved(before[id], after[id], 10);
+  const overlapPosition = { x: 900, y: 240 };
+  const overlappingModel = cloneProject(productionVolumeProject);
+  for (const node of overlappingModel.graph.nodes) {
+    if (ids.includes(node.id)) node.position = overlapPosition;
   }
+  test.use({ productionModel: overlappingModel });
+
+  test("auto-distributes nodes without overlap", { tag: "@chromium" }, async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Auto-distribute runs on desktop viewport.");
+    await expect.poll(async () => countNodeOverlaps(page)).toBeGreaterThan(0);
+    const before = await readNodePositions(page, ids);
+    for (const id of ids) {
+      expect(before[id]).toEqual(overlapPosition);
+    }
+
+    await page.getByTestId("auto-distribute-layout").click();
+    await expect.poll(async () => page.locator(".react-flow__node").count()).toBeGreaterThan(0);
+    await expect.poll(async () => countNodeOverlaps(page)).toBe(0);
+    const after = await readNodePositions(page, ids);
+    expect(after).not.toEqual(before);
+    for (const id of ids) {
+      expectPositionMoved(before[id], after[id], 10);
+    }
+  });
 });
 
 test("KPI spacing settings affect auto-distributed layout and persist", { tag: "@chromium" }, async ({ page }, testInfo) => {
@@ -3041,7 +3048,7 @@ test("shows usage limits copy on subscription CLI cards", { tag: "@chromium" }, 
   await expect(usageNote).toContainText("Provider limits and billing apply.");
 });
 
-test("sends Cursor generation through the server-managed session binding", { tag: "@chromium" }, async ({ page }, testInfo) => {
+test("sends Cursor generation through the server-managed session binding", { tag: "@chromium" }, async ({ page, productionWorkspace }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Cursor session binding smoke runs on desktop viewport.");
 
   let agentRunRequestBody:
@@ -3101,18 +3108,7 @@ test("sends Cursor generation through the server-managed session binding", { tag
     });
     expect(agentRunRequestBody).not.toHaveProperty("providerId");
     expect(agentRunRequestBody).not.toHaveProperty("providerConfig");
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        runId: "agent-run-e2e",
-        snapshot: {
-          ...mockRuntimeAgentSnapshot(),
-          request: agentRunRequestBody
-        }
-      })
-    });
+    await completeMockStoredAgentRun(route, page, productionWorkspace);
   });
 
   await openSettingsModal(page);
