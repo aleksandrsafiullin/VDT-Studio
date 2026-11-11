@@ -2,6 +2,8 @@ import { parseFormula } from "../formula/parser";
 import { validAiPersonalisation } from "../personalisation";
 import { extractReferencesFromAst } from "../formula/evaluator";
 import type { FormulaExpression } from "../formula/ast";
+import { KPI_SUGGESTION_RECIPES } from "./recipes";
+import { findAncestorRecipeOperand, repeatsRecipeOperand } from "./recipe-scope";
 import { KPI_SUGGESTION_LIMITS, KPI_SUGGESTION_SCHEMA, KPI_SUGGESTION_VALIDATOR } from "./types";
 import type { KpiSuggestionContext, KpiSuggestionGroup, KpiSuggestionSelection, KpiSuggestionSet } from "./types";
 
@@ -223,11 +225,20 @@ export function validateKpiSuggestionDecomposition(proposal: KpiSuggestionSet, c
     const direct = new Set(context.children.filter(node => node.status !== "rejected").map(node => node.id));
     const normalize = (name: string) => name.normalize("NFKC").trim().toLocaleLowerCase("en").replace(/[\p{P}\p{Z}\s_]+/gu, " ");
     const contextOnly = [context.root, context.target, ...context.ancestors, ...context.siblings].filter(node => !direct.has(node.id));
-    for (const group of proposal.groups) for (const child of group.children) {
-      smartAssert(!child.existingNodeId || direct.has(child.existingNodeId), "UNSAFE_DECOMPOSITION",
-        "Suggested components cannot reuse a sibling, ancestor or unrelated KPI. Decompose the target into its own lower-level inputs; refresh suggestions.");
-      smartAssert(child.existingNodeId || !contextOnly.some(node => normalize(node.name) === normalize(child.name)), "UNSAFE_DECOMPOSITION",
-        "A copy of the target, a sibling or an ancestor is not a lower-level component. Refresh suggestions.");
+    const ancestorRecipes = KPI_SUGGESTION_RECIPES.recipes.flatMap(recipe => {
+      const operand = findAncestorRecipeOperand(context, recipe);
+      return operand ? [{ recipeId: recipe.id, operand }] : [];
+    });
+    for (const group of proposal.groups) {
+      for (const child of group.children) {
+        smartAssert(!child.existingNodeId || direct.has(child.existingNodeId), "UNSAFE_DECOMPOSITION",
+          "Suggested components cannot reuse a sibling, ancestor or unrelated KPI. Decompose the target into its own lower-level inputs; refresh suggestions.");
+        smartAssert(child.existingNodeId || !contextOnly.some(node => normalize(node.name) === normalize(child.name)), "UNSAFE_DECOMPOSITION",
+          "A copy of the target, a sibling or an ancestor is not a lower-level component. Refresh suggestions.");
+      }
+      smartAssert(!ancestorRecipes.some(({ recipeId, operand }) => group.recipeBinding?.recipeId === recipeId
+        || group.children.some(child => repeatsRecipeOperand(context, child, operand))), "UNSAFE_DECOMPOSITION",
+        "The suggestion repeats the target's operand in an ancestor recipe. Decompose the target into its own lower-level inputs.");
     }
   }
   return proposal;

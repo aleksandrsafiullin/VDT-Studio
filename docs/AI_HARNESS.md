@@ -403,7 +403,7 @@ of a fixed unit conversion itself.
 
 ## Incoming formula and legacy deepen version
 
-Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v16` with the bounded one-call wire. Each alternative requires at least two substantive components; the six-component product limit is removed across schema/runtime/cache admission, preview and Add. A 64-row processing ceiling and formula/output bounds remain. The exact Context-selected Skill participates in context/cache identity and supplies applicable direct-factor definitions, including causes restricted to an existing target subset. Optional measurement detail does not replace a defined causal layer. Context-aware preparation admits reused sources only from active direct children and rejects exact normalized contextual-metric copies. The prompt prohibits inverse ancestor/sibling identities and new aliases that disguise them; an Input without a defensible lower-level split may return empty. Missing measurements alone do not require empty. Generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no model admission or inference. Historical wire/journal replay does not apply this new preparation policy retroactively.
+Smart uses validator `smart-kpi-validator.v2` and preparation policy `smart-kpi-preparation.v17` with the bounded one-call wire. Each alternative requires at least two substantive components; the six-component product limit is removed across schema/runtime/cache admission, preview and Add. A 64-row processing ceiling and formula/output bounds remain. The exact Context-selected Skill participates in context/cache identity and supplies applicable direct-factor definitions, including causes restricted to an existing target subset. Optional measurement detail does not replace a defined causal layer. Context-aware preparation admits reused sources only from active direct children and rejects exact normalized contextual-metric copies. The prompt prohibits inverse ancestor/sibling identities and new aliases that disguise them; an Input without a defensible lower-level split may return empty. Missing measurements alone do not require empty. Generic formulas need no arbitrary canonical recipe match. No numeric weights, fabricated baselines or formula repair call is introduced. Edited proposal drafts retain their original model/backend/credential lineage; manual-only previews/Add perform no model admission or inference. Historical wire/journal replay does not apply this new preparation policy retroactively.
 
 The strict OpenAI schema constrains reused IDs to the eligible direct children
 from the current context and pairs recipe references with their exact units.
@@ -411,6 +411,13 @@ For an undecomposed input the schema requires a null reused ID. The prompt
 describes scoped totals using independent measurements of the same population
 and period. Host validation checks the reference, unit, formula and context
 before a proposal can be applied.
+
+Preparation excludes a recipe when the target label identifies one of its
+operands and the saved ancestor formula uses the target in that operand's
+slot. The model receives the detected operand in `ancestorRecipeOperands`.
+Materialization, cache admission and new Add reject a new factor with the same
+operand label or recognized alias and unit. The structure check recognizes
+explicit percentage normalization in the saved ancestor.
 
 The registered `deepen_node` task now selects `deepen-node-v2`: `schemaVersion=deepen_node.v2`, required `targetFormula`, exact `retainedNodeIds` and one layer of primitive children. Mapping requires the actual project/root and emits formula, calculated/root type and accepted plan delta together. Historical `deepen-node-v1` output remains a readable compatibility schema but cannot apply a new child-only graph mutation. This does not affect exact replay of an already committing Smart v1 request. Both selected-layer agent finish implementations require the target definition and every new input; unknown measured values may remain unavailable. Default full-tree finish remains strict.
 

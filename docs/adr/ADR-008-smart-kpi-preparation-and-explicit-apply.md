@@ -72,11 +72,16 @@ empty result. This bounded direction check does not prove arbitrary semantic
 equivalence or business correctness. Explicit manual shared-reference formulas
 and already committing receipts retain their separate compiler/replay contract.
 
-Preparation v16 projects the active direct-child IDs into the strict OpenAI
+Preparation v17 projects the active direct-child IDs into the strict OpenAI
 schema, using null when there are no eligible references and exact unit pairs
-for recipe rows. Reopening a draft can reuse a successful preview for the same
-draft, project and Smart scope while the proposal is current. Add recompiles the
-draft and verifies the current execution lineage and storage revision.
+for recipe rows. Preparation excludes a recipe when the target label identifies
+an operand and the saved ancestor formula uses the target in the corresponding
+operator and unit slot. The detected operand is part of the response contract.
+Materialization, cache admission and new Add also reject new factors that
+repeat the evidenced operand label or a recognized alias at the same unit.
+Reopening a draft can reuse a successful preview for the same draft, project
+and Smart scope while the proposal is current. Add recompiles the draft and
+verifies the current execution lineage and storage revision.
 
 Quota/count amendment 2026-10-25: the Add count includes selected new and reused
 KPIs, with an explicit mixed-batch breakdown. If normal editor persistence hits

@@ -3,6 +3,7 @@ import { KPI_SUGGESTION_LIMITS } from "./types";
 import { INCOMING_KPI_LIMITS, INCOMING_KPI_UNIT_POLICY } from "./incoming-types";
 import { INCOMING_KPI_UNIT_GRAMMAR, parseIncomingKpiUnit } from "./incoming-unit-contract";
 import { KPI_SUGGESTION_RECIPES } from "./recipes";
+import { findAncestorRecipeOperand } from "./recipe-scope";
 import { resolveKpiRecipeUnits } from "./units";
 
 /** Model-owned acceptance rules. Identity, credentials, TTL and revision CAS
@@ -11,6 +12,14 @@ export function buildKpiSuggestionResponseContract(context: KpiSuggestionContext
   let targetUnit;
   try { targetUnit = context.target.unit ? parseIncomingKpiUnit(context.target.unit, context.period) : null; }
   catch { targetUnit = null; }
+  const compatibleRecipes = KPI_SUGGESTION_RECIPES.recipes.flatMap(recipe => {
+    try {
+      const units = resolveKpiRecipeUnits(recipe, context);
+      return [{ recipe, units, ancestorOperand: findAncestorRecipeOperand(context, recipe, units) }];
+    } catch {
+      return [];
+    }
+  });
   return {
     version: "smart-kpi-response-contract.v1",
     limits: { outputBytes: KPI_SUGGESTION_LIMITS.outputBytes, outputTokens: KPI_SUGGESTION_LIMITS.outputTokens,
@@ -52,12 +61,13 @@ export function buildKpiSuggestionResponseContract(context: KpiSuggestionContext
         "Do not name a new factor as a normalized copy of the root, target, ancestor or sibling. Name equality normalizes NFKC, case, punctuation, spaces and underscores."
       ]
     },
-    recipes: KPI_SUGGESTION_RECIPES.recipes.flatMap(recipe => {
-      try { const units = resolveKpiRecipeUnits(recipe, context);
-        return [{ id: recipe.id, formula: recipe.formula, children: recipe.children.map(child => ({ key: child.key, conceptKey: child.conceptKey, unit: units[child.key]! })) }];
-      } catch { return []; }
-    }),
-    recipeRule: "These recipes have compatible units, not proven business applicability. Use recipeId only when the definition applies and ALL listed keys, concepts, formula and units match. For any custom factor/formula use recipeId:null. Other recipe IDs are ineligible."
+    recipes: compatibleRecipes.flatMap(({ recipe, units, ancestorOperand }) => ancestorOperand ? [] : [{
+      id: recipe.id, formula: recipe.formula, children: recipe.children.map(child => ({ key: child.key, conceptKey: child.conceptKey, unit: units[child.key]! }))
+    }]),
+    ancestorRecipeOperands: compatibleRecipes.flatMap(({ recipe, ancestorOperand }) => ancestorOperand ? [{
+      recipeId: recipe.id, targetNodeId: context.targetNodeId, operandName: ancestorOperand.name, unit: context.target.unit
+    }] : []),
+    recipeRule: "Use only a listed recipe whose business definition applies to context.target and matches ALL listed keys, concepts, formula and units. If ancestorRecipeOperands identifies the target as an ancestor recipe's input, deepen that operand. Do not propose a new factor with the same operand meaning and unit under another label or key. For a genuine target-specific custom formula use recipeId:null."
   };
 }
 
