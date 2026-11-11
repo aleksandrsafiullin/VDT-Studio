@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {calculationsWithoutPlannedInputs,decompositionPlanErrors,decompositionPlanGroupingErrors,inspectDecompositionHierarchy,plannedAdditionErrors,type VdtChangeSet} from "@vdt-studio/vdt-core";
+import {calculationsWithoutPlannedInputs,decompositionPlanErrors,decompositionPlanGroupingErrors,inspectDecompositionHierarchy,plannedAdditionErrors,plannedFactorTypeConflicts,type VdtChangeSet,type VdtNodeType} from "@vdt-studio/vdt-core";
 import {AgentToolError,type AgentTool,type AgentToolContext} from "../tool-registry";
 import {proposeAndMaybeApplyMutation} from "../mutation-pipeline";
 import {cloneBuilder,requireBuilder,requireChangeSet} from "./builder-mutation-utils";
@@ -9,10 +9,10 @@ const planSchema=z.object({version:z.literal(1),goal:z.string().min(1).max(500),
  nodeId:id,parentNodeId:id,kind:z.enum(["calculated","input","context"]),rationale:z.string().min(1).max(300).optional(),sharedWith:z.array(id).max(20).optional()
 }).strict()).min(1).max(160)}).strict();
 
-export function requirePlannedAdditions(context:AgentToolContext,additions:Array<{nodeId?:string;parentNodeId:string}>) {
+export function requirePlannedAdditions(context:AgentToolContext,additions:Array<{nodeId?:string|undefined;parentNodeId:string;type?:VdtNodeType|undefined}>) {
  if(!context.requireDecompositionPlan)return;
- const errors=plannedAdditionErrors(requireBuilder(context.builder).getProject(),additions);
- if(errors.length)throw new AgentToolError("DECOMPOSITION_PLAN_VIOLATION",errors.slice(0,8).join(" "));
+ const errors=plannedAdditionErrors(requireBuilder(context.builder).getProject(),additions,context.requirePlanOperands);
+ if(errors.length)throw new AgentToolError("DECOMPOSITION_PLAN_VIOLATION",errors.slice(0,8).join(" "),{issues:errors.slice(0,8)});
 }
 
 export function createHierarchyTools():AgentTool[]{return [setPlan,inspectHierarchy,reparentBranch];}
@@ -31,6 +31,10 @@ const setPlan:AgentTool={
   if (missingOperands.length) throw new AgentToolError("INVALID_DECOMPOSITION_PLAN",
     `Calculated nodes without planned factor inputs: ${missingOperands.slice(0, 8).join(", ")}. Revise the plan with real direct factors or declared shared inputs. Remove any duplicate of the requested root result.`,
     { calculatedNodesWithoutFactors: missingOperands.slice(0, 20) });
+  const kindConflicts = context.requirePlanOperands ? plannedFactorTypeConflicts(project.graph, input.plan) : [];
+  if (kindConflicts.length) throw new AgentToolError("INVALID_DECOMPOSITION_PLAN",
+    `Plan kinds disagree with existing node types: ${kindConflicts.slice(0, 8).map(({ nodeId, plannedKind, actualType }) => `${nodeId} (${plannedKind} planned, ${actualType} actual)`).join(", ")}. Keep grounded inputs in their actual roles and revise the factor links.`,
+    { kindConflicts: kindConflicts.slice(0, 12) });
   const preview=cloneBuilder(context);const change=preview.updateNode({nodeId:project.rootNodeId,patch:{decompositionPlan:input.plan}});
   const mutation=proposeAndMaybeApplyMutation(context,{title:"Decomposition plan set",summary:`Recorded ${input.plan.nodes.length} planned nodes; create shallower factor layers before deeper layers.`,changeSet:requireChangeSet(change.changeSet),targetNodeId:project.rootNodeId});
   return {revision:mutation.revision,plannedNodes:input.plan.nodes.length,plan:input.plan,nextStep:"Create the planned first layer, then deeper factor layers; write values and formulas separately.",mutationProposal:{id:mutation.proposal.id,status:mutation.proposal.status}};

@@ -1170,7 +1170,10 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
     const payload = buildModelProviderTurnPayload(request, continuation);
     const personalisation = this.personalisation?.();
     if (personalisation) payload.userPrompt = JSON.stringify({ ...JSON.parse(payload.userPrompt), personalisation });
-    const observation = this.workingContext?.();
+    const currentObservation = this.workingContext?.();
+    const constructionPlan = constructionPlanAfterUnchangedFormula(currentObservation?.constructionPlan, request.delta);
+    const observation = currentObservation && (constructionPlan !== currentObservation.constructionPlan
+      ? { ...currentObservation, constructionPlan } : currentObservation);
     if (this.workingContext) {
       this.knowledge.observePrompt(payload.userPrompt);
       const confirmedKnowledge = this.knowledge.context();
@@ -1222,8 +1225,10 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
     }
     if (native && verifiedFinalText === undefined) {
       payload.userPrompt = JSON.stringify({ ...JSON.parse(payload.userPrompt), originalBrief: brief, availableTools: native.toolGuidance,
-        ...(observation?.constructionPlan?.pendingFactors ? {
-          construction: "Add the earliest pending factors from hostObservation.constructionPlan.additions before deeper factors. Use a sibling batch for one parent, or revise an invalid plan. Formula targets in calculatedIds already have their planned operands. Use vdt.set_formula for formulas and vdt.update_node only for node properties and source values."
+        ...(observation?.constructionPlan?.kindConflicts?.length ? {
+          construction: "The plan and actual node types differ in hostObservation.constructionPlan.kindConflicts. Preserve existing grounded input values and units. Revise the plan to give those IDs their actual roles and attach pending factors to their real calculated parents. Independent additions listed in additions are still ready."
+        } : observation?.constructionPlan?.pendingFactors ? {
+          construction: "Add the earliest pending factors from hostObservation.constructionPlan.additions with the required node kinds before deeper factors. Use a sibling batch for one parent, or revise an invalid plan. Formula targets in calculatedIds have their planned operands. Write a formula only when it adds or changes the calculation. Use vdt.update_node for node properties and source values."
         } : observation?.constructingTree && observation.needsStructure && observation.nodeCount > 0 ? {
           construction: observation.hasDecompositionPlan
             ? "Create the first planned factor layer now using its existing parent and exact planned IDs. Observe the returned leaves before writing their values and formulas."
@@ -1345,6 +1350,18 @@ class AiProviderStructuredTurnTransport implements ModelAgentTurnTransport {
 }
 
 const MAX_MODEL_TURN_PROMPT_BYTES = 512 * 1024;
+
+function constructionPlanAfterUnchangedFormula(plan: ReturnType<typeof openAiConstructionPlan>, delta: ModelAgentTurnDelta) {
+  if (!plan?.pendingFactors || !plan.additions.length || !plan.settledFormulaIds?.length || delta.type !== "tool_results") return plan;
+  const unchanged = new Set(delta.results.flatMap((result) => {
+    if (result.resultCode !== "FORMULA_UNCHANGED") return [];
+    const nodeId = (result.payload as { error?: { details?: { nodeId?: unknown } } } | undefined)?.error?.details?.nodeId;
+    return typeof nodeId === "string" ? [nodeId] : [];
+  }));
+  const deferred = plan.settledFormulaIds.filter((id) => unchanged.has(id));
+  return deferred.length ? { ...plan, calculatedIds: plan.calculatedIds.filter((id) => !deferred.includes(id)) } : plan;
+}
+
 const OPENAI_HIERARCHY_REPAIR_PROMPT = [
   "You are the VDT Model Agent. The current formulas produce a finite result. The visual hierarchy or a duplicate root output needs correction. The formulas, inputs, diagnostics and checked tool calls are in hostObservation.",
   "Check that the current formulas implement the user's brief. If the checked repair matches the brief, select action.type apply_hierarchy_repair. The Gateway validates its exact calls. An identity repair promotes the existing expression to the root and keeps source values, units and useful subtotals. Observe the result before completing any remaining hierarchy correction.",

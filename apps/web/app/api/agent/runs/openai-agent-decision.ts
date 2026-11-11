@@ -1,8 +1,9 @@
 import { getRegisteredJsonSchema } from "@vdt-studio/model-bridge";
 import type { AgentDecisionContext, LiteralUserQuantity } from "@vdt-studio/vdt-agent-runtime";
 import {
-  calculationsWithoutPlannedInputs, decompositionPlanErrors, decompositionPlanGroupingErrors,
-  plannedAdditionCandidates, plannedFormulaTargets, plannedOrphanLinks, type VdtDecompositionPlan, type VdtProject
+  calculationsWithoutPlannedInputs, constructionNodeUpdateTypes, decompositionPlanErrors, decompositionPlanGroupingErrors,
+  plannedAdditionCandidates, plannedFactorNodeTypes, plannedFactorTypeConflicts, plannedFormulaTargets, plannedOrphanLinks,
+  type VdtDecompositionPlan, type VdtNodeType, type VdtProject
 } from "@vdt-studio/vdt-core";
 import { boundConstructionArguments, groundExistingIds, groundLiteralValues, groundNodeIds } from "./local-model-output-schema";
 import type { HierarchyRepairCall } from "./openai-hierarchy-repair";
@@ -240,12 +241,12 @@ export function buildOpenAiModelTurn(
       : groundExistingIds(name, tool.inputJsonSchema, observation);
     const args = constructionLink ? orphanLinkArguments(tool.inputJsonSchema, constructionLink.orphanLinks ?? [])
       : plan && ["vdt.add_driver", "vdt.add_drivers_batch"].includes(name)
-      ? plannedDriverArguments(name, tool.inputJsonSchema, plan.additions, observation)
+      ? plannedDriverArguments(name, tool.inputJsonSchema, plan, observation)
       : groundLiteralValues(name, boundConstructionArguments(name, ids, observation), observation, observation?.allowAssumptions === true);
     if (!args) continue;
     const projected = name === "vdt.set_decomposition_plan" && buildingFirstLayer
       ? firstPlanArguments(args, observation.rootNodeId)
-      : name === "vdt.update_node" && observation?.constructingTree === true ? constructionUpdateArguments(args) : args;
+      : name === "vdt.update_node" && observation?.constructingTree === true ? constructionUpdateArguments(args, plan?.nodeUpdateTypes) : args;
     const strict = strictSchema(projected);
     if (!strict) { encoded.push(name); continue; }
     typed.set(name, projected);
@@ -348,20 +349,38 @@ function resolveImplicitRoot(args: unknown, rootId: unknown): void {
   }
 }
 
-function constructionUpdateArguments(schema: JsonObject): JsonObject {
+type NodeUpdateTypes = { nodeIds: string[]; types?: readonly VdtNodeType[] };
+
+function constructionUpdateArguments(schema: JsonObject, groups?: NodeUpdateTypes[]): JsonObject {
   const copy = structuredClone(schema);
   const patch = record(copy.properties) && copy.properties.patch;
-  if (record(patch) && record(patch.properties) && "formula" in patch.properties) {
+  if (!record(patch) || !record(patch.properties)) return copy;
+  if ("formula" in patch.properties) {
     delete patch.properties.formula;
     if (Array.isArray(patch.required)) patch.required = patch.required.filter((field) => field !== "formula");
   }
-  return copy;
+  if (!groups?.length) return copy;
+  const variants = groups.map(({ nodeIds, types }) => {
+    const option = structuredClone(copy);
+    const fields = option.properties as JsonObject;
+    fields.nodeId = { type: "string", enum: nodeIds };
+    if (types) {
+      const patch = fields.patch as JsonObject;
+      (patch.properties as JsonObject).type = types.length === 1 ? tag(types[0]!) : { type: "string", enum: types };
+    }
+    return option;
+  });
+  return variants.length === 1 ? variants[0]! : { anyOf: variants };
 }
 
 type OpenAiConstructionPlan = {
   additions: Array<{ parentNodeId: string; nodeIds: string[] }>;
   calculatedIds: string[];
   pendingFactors: boolean;
+  plannedKinds?: Record<string, VdtDecompositionPlan["nodes"][number]["kind"]>;
+  settledFormulaIds?: string[];
+  kindConflicts?: ReturnType<typeof plannedFactorTypeConflicts>;
+  nodeUpdateTypes?: NodeUpdateTypes[];
   orphanLinks?: Array<Pick<VdtDecompositionPlan["nodes"][number], "nodeId" | "parentNodeId" | "kind">>;
 };
 
@@ -393,19 +412,36 @@ export function openAiConstructionPlan(project: VdtProject): OpenAiConstructionP
   if (!plan) return undefined;
   if (decompositionPlanErrors(plan, rootNodeId).length) return { additions: [], calculatedIds: [], pendingFactors: true };
   const byParent = new Map<string, string[]>();
+  const plannedKinds: NonNullable<OpenAiConstructionPlan["plannedKinds"]> = {};
   const driverIdPattern = new RegExp(newDriverId);
-  for (const { parentNodeId, nodeId } of plannedAdditionCandidates(project)) {
+  for (const { parentNodeId, nodeId, kind } of plannedAdditionCandidates(project)) {
     if (!driverIdPattern.test(nodeId)) continue;
     const siblings = byParent.get(parentNodeId) ?? [];
     siblings.push(nodeId);
     byParent.set(parentNodeId, siblings);
+    plannedKinds[nodeId] = kind;
   }
   const existing = new Set(graph.nodes.map(({ id }) => id));
   const factors = plan.nodes.filter(({ kind }) => kind !== "context");
+  const kindConflicts = plannedFactorTypeConflicts(graph, plan);
+  const kindById = new Map(plan.nodes.map(({ nodeId, kind }) => [nodeId, kind]));
+  const updateGroups = new Map<string, NodeUpdateTypes>();
+  for (const node of graph.nodes) {
+    const types = constructionNodeUpdateTypes(node, rootNodeId, kindById.get(node.id));
+    const key = types?.join(",") ?? "";
+    const group = updateGroups.get(key) ?? { nodeIds: [], ...(types ? { types } : {}) };
+    group.nodeIds.push(node.id);
+    updateGroups.set(key, group);
+  }
   const additions = [...byParent].map(([parentNodeId, nodeIds]) => ({ parentNodeId, nodeIds }));
   const orphanLinks = plannedOrphanLinks(project).slice(0, 12).map(({ nodeId, parentNodeId, kind }) => ({ nodeId, parentNodeId, kind }));
-  return { calculatedIds: plannedFormulaTargets(project), additions,
-    pendingFactors: factors.some(({ nodeId }) => !existing.has(nodeId)), ...(orphanLinks.length ? { orphanLinks } : {}) };
+  const calculatedIds = plannedFormulaTargets(project);
+  const pendingFactors = factors.some(({ nodeId }) => !existing.has(nodeId));
+  const unfinished = pendingFactors && additions.length ? new Set(plannedFormulaTargets(project, true)) : undefined;
+  const settledFormulaIds = unfinished ? calculatedIds.filter((id) => !unfinished.has(id)) : [];
+  return { calculatedIds, additions, pendingFactors, nodeUpdateTypes: [...updateGroups.values()],
+    ...(additions.length ? { plannedKinds } : {}), ...(orphanLinks.length ? { orphanLinks } : {}),
+    ...(kindConflicts.length ? { kindConflicts } : {}), ...(settledFormulaIds.length ? { settledFormulaIds } : {}) };
 }
 
 function orphanLinkArguments(schema: JsonObject, links: NonNullable<OpenAiConstructionPlan["orphanLinks"]>): JsonObject | undefined {
@@ -424,19 +460,38 @@ function orphanLinkArguments(schema: JsonObject, links: NonNullable<OpenAiConstr
 }
 
 function plannedDriverArguments(
-  name: string, schema: JsonObject, additions: OpenAiConstructionPlan["additions"], observation: JsonObject | undefined
+  name: string, schema: JsonObject, plan: OpenAiConstructionPlan, observation: JsonObject | undefined
 ): JsonObject | undefined {
   const batch = name === "vdt.add_drivers_batch";
-  const variants = additions.flatMap(({ parentNodeId: parent, nodeIds: ids }) => {
+  const variants = plan.additions.flatMap(({ parentNodeId: parent, nodeIds: ids }) => {
     if (batch && ids.length < 2) return [];
     const option = boundConstructionArguments(name, groundNodeIds(name, schema, [parent], [], []), observation);
     if (!record(option.properties)) return [];
     const drivers = option.properties.drivers;
     const driver = batch && record(drivers) ? drivers.items : option;
     if (!record(driver) || !record(driver.properties)) return [];
-    driver.properties.parentNodeId = { type: "string", const: parent };
-    driver.properties.nodeId = { type: "string", enum: ids };
-    if (batch && record(drivers) && typeof drivers.maxItems === "number") drivers.maxItems = Math.min(ids.length, drivers.maxItems);
+    const byKind = new Map<VdtDecompositionPlan["nodes"][number]["kind"] | undefined, string[]>();
+    for (const id of ids) {
+      const kind = plan.plannedKinds?.[id];
+      const group = byKind.get(kind) ?? [];
+      group.push(id);
+      byKind.set(kind, group);
+    }
+    const typedDrivers = [...byKind].map(([kind, nodeIds]) => {
+      const args = structuredClone(driver);
+      const fields = args.properties as JsonObject;
+      fields.parentNodeId = tag(parent);
+      fields.nodeId = { type: "string", enum: nodeIds };
+      const types = kind && plannedFactorNodeTypes(kind);
+      if (types) {
+        fields.type = types.length === 1 ? tag(types[0]!) : { type: "string", enum: types };
+        args.required = [...new Set([...(Array.isArray(args.required) ? args.required : []), "type"])];
+      }
+      return args;
+    });
+    if (!batch || !record(drivers)) return typedDrivers;
+    drivers.items = typedDrivers.length > 1 ? { anyOf: typedDrivers } : typedDrivers[0];
+    if (typeof drivers.maxItems === "number") drivers.maxItems = Math.min(ids.length, drivers.maxItems);
     return [option];
   });
   return variants.length > 1 ? { anyOf: variants } : variants[0];

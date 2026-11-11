@@ -1,7 +1,10 @@
 import { z } from "zod";
 import {
+  constructionNodeUpdateTypes,
   extractFormulaReferences,
   inspectDecompositionHierarchy,
+  plannedAdditionCandidates,
+  plannedFactorNodeTypes,
   plannedFormulaTargets,
   plannedOrphanLinks,
   serializeFormulaTokens,
@@ -609,6 +612,19 @@ const updateNodeTool: AgentTool = {
         );
       }
     }
+    if (context.requirePlanOperands && input.patch.type && input.nodeId !== project.rootNodeId) {
+      const root = project.graph.nodes.find(({ id }) => id === project.rootNodeId);
+      const kind = root?.decompositionPlan?.nodes.find(({ nodeId }) => nodeId === node.id)?.kind;
+      const allowedTypes = constructionNodeUpdateTypes(node, project.rootNodeId, kind);
+      if (allowedTypes && !allowedTypes.includes(input.patch.type)) {
+        const declaredTypes = kind && plannedFactorNodeTypes(kind);
+        const sourceProtected = !declaredTypes || declaredTypes.includes(input.patch.type);
+        throw new AgentToolError(sourceProtected ? "SOURCE_INPUT_TYPE_PROTECTED" : "PLANNED_NODE_KIND_MISMATCH",
+          sourceProtected ? "Keep the sourced input in its measured role. Revise the decomposition plan around its existing type and value."
+            : `Node ${node.id} is planned as ${kind}. Use a compatible type or revise the plan without changing its sourced inputs.`,
+          { nodeId: node.id, plannedKind: kind, actualType: node.type, allowedTypes });
+      }
+    }
     assertFormulaReferencesIfPresent(project, input.patch.formula, input.nodeId);
     const patch: VdtNodePatch = { ...input.patch };
     let correction: ReturnType<typeof sourceUnitCorrection>;
@@ -820,13 +836,21 @@ const setFormulaTool: AgentTool = {
   run(context, input) {
     const builder = requireBuilder(context.builder);
     const project = builder.getProject();
-    if (!project.graph.nodes.some((node) => node.id === input.nodeId)) {
+    const node = project.graph.nodes.find(({ id }) => id === input.nodeId);
+    if (!node) {
       throw new AgentToolError("NODE_NOT_FOUND", `Node "${input.nodeId}" was not found.`);
     }
     if (context.requirePlanOperands) {
+      if (node.formula?.trim() && node.formula.trim() === input.formula.trim()) {
+        const nextAdditions = plannedAdditionCandidates(project).slice(0, 12)
+          .map(({ nodeId, parentNodeId, kind }) => ({ nodeId, parentNodeId, kind }));
+        throw new AgentToolError("FORMULA_UNCHANGED", "This formula is already recorded. Continue with an unfinished factor or use a changed formula after correcting the plan.", {
+          nodeId: input.nodeId, nextAdditions
+        });
+      }
       const readyTargets = plannedFormulaTargets(project);
       if (!readyTargets.includes(input.nodeId)) {
-        throw new AgentToolError("FORMULA_TARGET_NOT_READY", "Formula writes require the root or a planned calculated node whose declared factors all exist. Add missing factors, correct the node type, or revise the plan before writing this formula.", {
+        throw new AgentToolError("FORMULA_TARGET_NOT_READY", "Formula writes require the root or a planned calculation with all its declared factors present in their planned types. Add missing factors, correct the node type, or revise the plan before writing this formula.", {
           nodeId: input.nodeId, readyTargets
         });
       }

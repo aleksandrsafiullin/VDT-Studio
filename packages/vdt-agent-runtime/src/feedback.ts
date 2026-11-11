@@ -238,6 +238,9 @@ function suggestedToolsForToolError(code: string, context?: AgentFeedbackContext
   if (code === "INVALID_DECOMPOSITION_PLAN") return ["vdt.set_decomposition_plan"];
   if (code === "FORMULA_TOOL_REQUIRED") return ["vdt.set_formula"];
   if (code === "FORMULA_TARGET_NOT_READY") return ["vdt.add_driver", "vdt.add_drivers_batch", "vdt.update_node", "vdt.set_decomposition_plan"];
+  if (code === "FORMULA_UNCHANGED") return ["vdt.add_driver", "vdt.add_drivers_batch", "vdt.fill_input_values_batch", "vdt.set_decomposition_plan"];
+  if (code === "DECOMPOSITION_PLAN_VIOLATION") return ["vdt.set_decomposition_plan", "vdt.add_driver", "vdt.add_drivers_batch"];
+  if (code === "PLANNED_NODE_KIND_MISMATCH" || code === "SOURCE_INPUT_TYPE_PROTECTED") return ["vdt.set_decomposition_plan", "vdt.update_node"];
   if (code === "CONSTRUCTION_EDGE_NOT_ADMITTED") return ["vdt.inspect_hierarchy", "vdt.reparent_branch", "vdt.set_decomposition_plan"];
   if (code === "SOURCE_PROVENANCE_INCOMPLETE") return ["vdt.set_decomposition_plan", "vdt.add_drivers_batch", "vdt.add_driver", "vdt.fill_input_values_batch"];
   if (["DUPLICATE_SOURCE_FACT", "SOURCE_UNIT_MISMATCH", "AMBIGUOUS_SOURCE_QUOTE", "SOURCE_GROUNDING_CONFLICT"].includes(code)) {

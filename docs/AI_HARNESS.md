@@ -22,12 +22,21 @@ typed source facts observed. The agent decides which facts the formula uses.
 The model can select it or submit its own revision. Both execute through the
 plan tool, which rejects a remaining operandless calculation. Native additions
 offer the earliest layer admitted by the same rule as the Gateway. A driver
-addition creates its visual link. The standalone link tool can restore a
+addition creates its visual link and uses the planned calculated or input
+kind. A revised plan retains the kinds of existing nodes. If an older draft
+has a mismatch, the model receives the actual type and the independent next
+additions. Type updates follow the same rule. An empty node can be corrected
+to its planned type. A sourced input retains its measured role while the
+model revises an incompatible plan. The standalone link tool can restore a
 declared orphan to its planned parent in new construction. Shared formula
 users are declared in the plan. The
 dedicated formula tool is available for a calculated target when its planned
 direct and shared operands exist. The schema and canonical tool use the same
-readiness rule. Construction creates nodes and writes properties and source
+readiness rule. Repeating a stored formula with the same trimmed text leaves
+the revision unchanged and returns the eligible next additions. An already
+recorded formula that covers its declared factors can be deferred for one
+decision after that response while other additions are ready. Construction
+creates nodes and writes properties and source
 values separately from formulas. Existing-tree edits retain their tool contract.
 
 For a calculable new draft with a hierarchy mismatch, including a run that

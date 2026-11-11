@@ -1,4 +1,4 @@
-import type { VdtDecompositionPlan, VdtGraph, VdtProject } from "../types";
+import type { VdtDecompositionPlan, VdtGraph, VdtNode, VdtNodeType, VdtProject } from "../types";
 import { extractFormulaReferences } from "../formula/evaluator";
 import type { FormulaExpression } from "../formula/ast";
 import { parseFormula } from "../formula/parser";
@@ -151,18 +151,63 @@ export function inspectDecompositionHierarchy(project: VdtProject, purpose: "age
   return { valid: errors.length === 0, errors, constructionWarnings, plannedNodes: plan.nodes.length, maxDepth };
 }
 
+type PlannedKind = VdtDecompositionPlan["nodes"][number]["kind"];
+const inputFactorNodeTypes: readonly VdtNodeType[] = ["input", "assumption", "external_factor", "data_mapped"];
+
+export function plannedFactorNodeTypes(kind: PlannedKind): readonly VdtNodeType[] | undefined {
+  if (kind === "calculated") return ["calculated"];
+  if (kind === "input") return inputFactorNodeTypes;
+}
+
+export function constructionNodeUpdateTypes(node: VdtNode, rootNodeId: string, kind: PlannedKind | undefined): readonly VdtNodeType[] | undefined {
+  if (node.id === rootNodeId) return ["root_kpi"];
+  const plannedTypes = kind && plannedFactorNodeTypes(kind);
+  const sourcedInput = inputFactorNodeTypes.includes(node.type) && (node.dataMapping
+    || (Number.isFinite(node.baselineValue ?? node.value)
+      && (node.valueStatus === "user_provided_value" || node.valueSource?.acceptedByUserInDialog === true)));
+  if (!sourcedInput) return plannedTypes;
+  // A drifted plan must be corrected around an existing measurement.
+  return kind === "calculated" ? [node.type] : inputFactorNodeTypes;
+}
+
+export function plannedFactorTypeConflicts(graph: VdtGraph, plan: VdtDecompositionPlan) {
+  const nodes = new Map(graph.nodes.map(({ id, type }) => [id, type]));
+  return plan.nodes.flatMap(({ nodeId, kind }) => {
+    const actualType = nodes.get(nodeId);
+    if (!actualType || kind === "context" || plannedFactorNodeTypes(kind)?.includes(actualType)) return [];
+    return [{ nodeId, plannedKind: kind, actualType }];
+  });
+}
+
+function permitsPlannedChild(parentType: VdtNodeType, kind: PlannedKind): boolean {
+  return kind === "context" || parentType === "calculated" || parentType === "root_kpi";
+}
+
 /** Layer-by-layer construction: all planned factors at shallower depths must
  * exist first. Context observations do not block the analytical frontier. */
-export function plannedAdditionErrors(project: VdtProject, additions: Array<{ nodeId?: string; parentNodeId: string }>): string[] {
+export function plannedAdditionErrors(
+  project: VdtProject, additions: Array<{ nodeId?: string | undefined; parentNodeId: string; type?: VdtNodeType | undefined }>, enforceKind = false
+): string[] {
   const plan = project.graph.nodes.find(n => n.id === project.rootNodeId)?.decompositionPlan;
   if (!plan) return ["DECOMPOSITION_PLAN_REQUIRED: call vdt.set_decomposition_plan first."];
   const invalid = decompositionPlanErrors(plan, project.rootNodeId); if (invalid.length) return invalid;
-  const existing = new Set(project.graph.nodes.map(n => n.id));
+  const nodes = new Map(project.graph.nodes.map((node) => [node.id, node]));
+  const existing = new Set(nodes.keys());
   const { entries, missingEarlierFactors } = plannedAdditionLayer(plan, project.rootNodeId, existing);
   const errors: string[] = [];
   for (const a of additions) {
     const e = a.nodeId ? entries.get(a.nodeId) : undefined;
     if (!e || e.parentNodeId !== a.parentNodeId) { errors.push(`ADDITION_NOT_IN_PLAN: ${a.nodeId ?? "<missing nodeId>"} under ${a.parentNodeId}.`); continue; }
+    if (enforceKind) {
+      const types = plannedFactorNodeTypes(e.kind);
+      if (types && !types.includes(a.type ?? "input")) {
+        errors.push(`PLANNED_NODE_KIND_MISMATCH: ${e.nodeId} is planned as ${e.kind}; use ${types.join(" or ")} or revise the plan before adding it.`);
+      }
+      const parent = nodes.get(e.parentNodeId);
+      if (parent && !permitsPlannedChild(parent.type, e.kind)) {
+        errors.push(`PLANNED_PARENT_KIND_MISMATCH: ${e.parentNodeId} is ${parent.type}; put ${e.nodeId} under its actual calculation or revise the plan.`);
+      }
+    }
     if (e.kind !== "context") {
       const missing = missingEarlierFactors(e.nodeId);
       if (missing.length) errors.push(`EARLIER_LAYER_INCOMPLETE: create ${missing.slice(0,8).map(n=>n.nodeId).join(", ")} first.`);
@@ -176,9 +221,11 @@ export function plannedAdditionErrors(project: VdtProject, additions: Array<{ no
 export function plannedAdditionCandidates(project: VdtProject): VdtDecompositionPlan["nodes"] {
   const plan = project.graph.nodes.find(({ id }) => id === project.rootNodeId)?.decompositionPlan;
   if (!plan || decompositionPlanErrors(plan, project.rootNodeId).length) return [];
-  const existing = new Set(project.graph.nodes.map(({ id }) => id));
+  const nodes = new Map(project.graph.nodes.map((node) => [node.id, node]));
+  const existing = new Set(nodes.keys());
   const { missingEarlierFactors } = plannedAdditionLayer(plan, project.rootNodeId, existing);
   return plan.nodes.filter((entry) => !existing.has(entry.nodeId) && existing.has(entry.parentNodeId)
+    && permitsPlannedChild(nodes.get(entry.parentNodeId)!.type, entry.kind)
     && (entry.kind === "context" || missingEarlierFactors(entry.nodeId).length === 0));
 }
 
@@ -187,25 +234,26 @@ export function plannedAdditionCandidates(project: VdtProject): VdtDecomposition
 export function plannedOrphanLinks(project: VdtProject): VdtDecompositionPlan["nodes"] {
   const plan = project.graph.nodes.find(({ id }) => id === project.rootNodeId)?.decompositionPlan;
   if (!plan || decompositionPlanErrors(plan, project.rootNodeId).length) return [];
-  const existing = new Set(project.graph.nodes.map(({ id }) => id));
+  const nodes = new Map(project.graph.nodes.map((node) => [node.id, node]));
   const linked = new Set(project.graph.edges.map(({ targetNodeId }) => targetNodeId));
-  return plan.nodes.filter(({ nodeId, parentNodeId }) => existing.has(nodeId) && existing.has(parentNodeId) && !linked.has(nodeId));
+  return plan.nodes.filter(({ nodeId, parentNodeId, kind }) => nodes.has(nodeId) && nodes.has(parentNodeId) && !linked.has(nodeId)
+    && permitsPlannedChild(nodes.get(parentNodeId)!.type, kind));
 }
 
 /** Formula writes can begin when the target and all of its planned factors
  * exist. The formula may still be revised before the final hierarchy check. */
-export function plannedFormulaTargets(project: VdtProject): string[] {
+export function plannedFormulaTargets(project: VdtProject, excludeMatchingFormulas = false): string[] {
   const { graph, rootNodeId } = project;
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
   const root = nodes.get(rootNodeId);
   const plan = root?.decompositionPlan;
   if (root?.type !== "root_kpi" || !plan || decompositionPlanErrors(plan, rootNodeId).length) return [];
-  const operands = new Map<string, string[]>();
+  const operands = new Map<string, VdtDecompositionPlan["nodes"]>();
   for (const factor of plan.nodes) {
     if (factor.kind === "context") continue;
     for (const user of [factor.parentNodeId, ...(factor.sharedWith ?? [])]) {
       const references = operands.get(user) ?? [];
-      references.push(factor.nodeId);
+      references.push(factor);
       operands.set(user, references);
     }
   }
@@ -213,7 +261,18 @@ export function plannedFormulaTargets(project: VdtProject): string[] {
     && nodes.get(nodeId)?.type === "calculated").map(({ nodeId }) => nodeId)];
   return targets.filter((id) => {
     const references = operands.get(id);
-    return references?.length && references.every((reference) => nodes.has(reference));
+    if (!references?.length || !references.every(({ nodeId, kind }) => {
+      const node = nodes.get(nodeId);
+      return node && plannedFactorNodeTypes(kind)?.includes(node.type);
+    })) return false;
+    if (!excludeMatchingFormulas) return true;
+    const formula = nodes.get(id)?.formula;
+    if (!formula?.trim()) return true;
+    try {
+      const actual = new Set(effectiveReferences(parseFormula(formula)).refs);
+      const declared = new Set(references.map(({ nodeId }) => nodeId));
+      return actual.size !== declared.size || [...declared].some((nodeId) => !actual.has(nodeId));
+    } catch { return true; }
   });
 }
 

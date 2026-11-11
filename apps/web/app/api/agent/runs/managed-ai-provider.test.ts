@@ -110,9 +110,10 @@ it("uses the actual root and accepted plan IDs for construction calls", () => {
   expect(planned.toolGuidance.map((tool) => tool.name)).toEqual(["vdt.add_driver", "vdt.add_drivers_batch"]);
   const tools = planned.schema.$defs as { toolCall: { anyOf: unknown[] } };
   expect(tools.toolCall.anyOf[1]).toMatchObject({ properties: { args: { properties: {
-    drivers: { maxItems: 2, items: { properties: {
-      nodeId: { enum: ["net_sales", "discount"] }, parentNodeId: { const: rootNodeId }
-    } } }
+    drivers: { maxItems: 2, items: { anyOf: [
+      { properties: { nodeId: { enum: ["net_sales"] }, parentNodeId: { const: rootNodeId }, type: { const: "calculated" } } },
+      { properties: { nodeId: { enum: ["discount"] }, parentNodeId: { const: rootNodeId }, type: { enum: expect.arrayContaining(["input"]) } } }
+    ] } }
   } } } });
   builder.addDriver({ parentNodeId: rootNodeId, nodeId: "net_sales", name: "Net sales", type: "calculated" });
   const observation = () => ({ ...rootOnly, needsStructure: false, nodeCount: builder.getProject().graph.nodes.length,
@@ -126,19 +127,81 @@ it("uses the actual root and accepted plan IDs for construction calls", () => {
   expect(partialTools.toolCall.anyOf[1]).toMatchObject({ properties: { args: { properties: {
     nodeId: { enum: ["discount"] }, parentNodeId: { const: rootNodeId }
   } } } });
-  expect(partialTools.toolCall.anyOf[2]).not.toHaveProperty("properties.args.properties.patch.properties.formula");
+  expect(JSON.stringify(partialTools.toolCall.anyOf[2])).not.toContain('"formula"');
   builder.addDriver({ parentNodeId: rootNodeId, nodeId: "discount", name: "Discount" });
-  expect(openAiConstructionPlan(builder.getProject())).toEqual({
-    additions: [{ parentNodeId: "net_sales", nodeIds: ["price_per_item"] }], calculatedIds: [], pendingFactors: true
+  expect(openAiConstructionPlan(builder.getProject())).toMatchObject({
+    additions: [{ parentNodeId: "net_sales", nodeIds: ["price_per_item"] }], calculatedIds: [], pendingFactors: true,
+    plannedKinds: { price_per_item: "input" }
   });
   builder.addDriver({ parentNodeId: "net_sales", nodeId: "price_per_item", name: "Price" });
-  expect(openAiConstructionPlan(builder.getProject())).toEqual({
+  expect(openAiConstructionPlan(builder.getProject())).toMatchObject({
     additions: [], calculatedIds: [rootNodeId, "net_sales"], pendingFactors: false
   });
   expect(projectTurn().toolGuidance.map((tool) => tool.name)).toContain("vdt.set_formula");
   const existing = buildOpenAiModelTurn(schema, catalog, { ...observation(), constructingTree: false }, "exchange-existing", undefined)!;
   const existingTools = existing.schema.$defs as { toolCall: { anyOf: unknown[] } };
   expect(existingTools.toolCall.anyOf[3]).toHaveProperty("properties.args.properties.patch.properties.formula", string);
+});
+
+it("projects direct update types without restricting ordinary property patches", () => {
+  const builder = new VdtBuilderSession();
+  builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
+  const root = builder.getProject().rootNodeId;
+  builder.addDriver({ parentNodeId: root, nodeId: "subtotal", name: "Subtotal", type: "calculated" });
+  builder.addDriver({ parentNodeId: root, nodeId: "measured", name: "Measured input", unit: "%", baselineValue: 10 });
+  builder.updateNode({ nodeId: "measured", patch: { valueStatus: "user_provided_value", valueSource: { note: "Discount was 10%" } } });
+  builder.addDriver({ parentNodeId: root, nodeId: "empty", name: "Empty", type: "input" });
+  builder.addDriver({ parentNodeId: root, nodeId: "basis", name: "Basis", type: "input" });
+  const nodes: VdtDecompositionPlan["nodes"] = [
+    ...["subtotal", "measured", "empty"].map((nodeId) => ({ nodeId, parentNodeId: root, kind: "calculated" as const })),
+    { nodeId: "basis", parentNodeId: root, kind: "input", sharedWith: ["subtotal", "measured", "empty"] }
+  ];
+  builder.updateNode({ nodeId: root, patch: { decompositionPlan: { version: 1, goal: "Calculate revenue", nodes } } });
+  const catalog = [createDefaultToolRegistry().getSpec("vdt.update_node")!];
+  const schema = toProviderJsonSchema(modelAgentStructuredTurnSchema);
+  const project = builder.getProject();
+  const native = buildOpenAiModelTurn(schema, catalog, { constructingTree: true, nodeCount: 5 }, "type-updates", undefined,
+    { constructionPlan: openAiConstructionPlan(project)! })!;
+  const projected = native.schema.$defs as { toolCall: { anyOf: Array<{ properties: { args: { anyOf: Array<{
+    properties: { nodeId: { enum: string[] }; patch: { properties: Record<string, unknown> } }
+  }> } } }> } };
+  const patchFor = (nodeId: string) => projected.toolCall.anyOf[0]!.properties.args.anyOf
+    .find(({ properties }) => properties.nodeId.enum.includes(nodeId))!.properties.patch.properties;
+  for (const [id, expected] of [[root, "root_kpi"], ["subtotal", "calculated"], ["empty", "calculated"], ["measured", "input"]]) {
+    expect(patchFor(id!).type).toEqual({ anyOf: [{ type: "string", const: expected }, { type: "null" }] });
+    expect(patchFor(id!)).toHaveProperty("description");
+    expect(patchFor(id!)).not.toHaveProperty("formula");
+  }
+  expect(patchFor("basis").type).toMatchObject({ anyOf: [{ enum: ["input", "assumption", "external_factor", "data_mapped"] }, { type: "null" }] });
+  const legacy = buildOpenAiModelTurn(schema, catalog, { constructingTree: false, nodeCount: 5 }, "legacy-updates", undefined)!;
+  expect(legacy.schema.$defs).toMatchObject({ toolCall: { anyOf: [{ properties: { args: { properties: {
+    patch: { properties: { formula: expect.anything() } }
+  } } } }] } });
+});
+
+it("projects the independent addition and the real node type when a prior plan drifted", () => {
+  const builder = new VdtBuilderSession();
+  builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
+  const root = builder.getProject().rootNodeId;
+  for (const nodeId of ["gross", "net"]) builder.addDriver({ parentNodeId: root, nodeId, name: nodeId, type: "calculated", unit: "USD" });
+  builder.addDriver({ parentNodeId: "gross", nodeId: "sales", name: "Sales", unit: "USD" });
+  builder.addDriver({ parentNodeId: "gross", nodeId: "discount", name: "Discount", unit: "%" });
+  builder.setFormula({ nodeId: "gross", formula: "sales" });
+  const nodes: VdtDecompositionPlan["nodes"] = [
+    { nodeId: "gross", parentNodeId: root, kind: "calculated" }, { nodeId: "net", parentNodeId: root, kind: "calculated" },
+    { nodeId: "sales", parentNodeId: "gross", kind: "input" }, { nodeId: "discount", parentNodeId: "gross", kind: "calculated" },
+    { nodeId: "rate", parentNodeId: "discount", kind: "input" }, { nodeId: "refunds", parentNodeId: "net", kind: "input" }
+  ];
+  const recordPlan = (entries: VdtDecompositionPlan["nodes"]) => builder.updateNode({ nodeId: root,
+    patch: { decompositionPlan: { version: 1, goal: "Revenue", nodes: entries } } });
+  recordPlan(nodes);
+  expect(openAiConstructionPlan(builder.getProject())).toMatchObject({ calculatedIds: [root],
+    additions: [{ parentNodeId: "net", nodeIds: ["refunds"] }], plannedKinds: { refunds: "input" },
+    kindConflicts: [{ nodeId: "discount", plannedKind: "calculated", actualType: "input" }] });
+  recordPlan(nodes.filter(({ nodeId }) => nodeId !== "rate").map((entry) => entry.nodeId === "discount" ? { ...entry, kind: "input" } : entry));
+  expect(openAiConstructionPlan(builder.getProject())?.settledFormulaIds).toBeUndefined();
+  builder.setFormula({ nodeId: "gross", formula: "sales * (1 - discount / 100)" });
+  expect(openAiConstructionPlan(builder.getProject())).toMatchObject({ calculatedIds: [root, "gross"], settledFormulaIds: ["gross"] });
 });
 
 it("reviews an intermediate without factors and accepts direct or shared operands", () => {

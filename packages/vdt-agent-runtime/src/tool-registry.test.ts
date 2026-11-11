@@ -563,12 +563,94 @@ describe("ToolRegistry", () => {
     expect(await registry.run("vdt.add_driver", fee, context)).toMatchObject({ ok: true });
     expect(await registry.run("vdt.set_formula", { nodeId: "subtotal", formula: "sales + fee" }, context)).toMatchObject({ ok: true });
     expect(await registry.run("vdt.set_formula", { nodeId: root, formula: "subtotal - rebate" }, context)).toMatchObject({ ok: true });
+    const finished = builder.getProject();
+    const finishedRevision = builder.getRevision();
+    const proposalCount = context.store.getState(context.runId).mutationProposals?.length;
+    for (const formula of ["subtotal - rebate", "  subtotal - rebate  "]) {
+      expect(await registry.run("vdt.set_formula", { nodeId: root, formula }, context)).toMatchObject({
+        ok: false, projectChanged: false, error: { code: "FORMULA_UNCHANGED", details: { nodeId: root, nextAdditions: [] } }
+      });
+    }
+    expect(builder.getRevision()).toBe(finishedRevision);
+    expect(builder.getProject()).toEqual(finished);
+    expect(context.store.getState(context.runId).mutationProposals).toHaveLength(proposalCount!);
+    expect(await registry.run("vdt.set_formula", { nodeId: root, formula: "subtotal-rebate" }, context)).toMatchObject({ ok: true });
     for (const formula of ["", "  ", "rebate"]) {
       expect(await registry.run("vdt.update_node", { nodeId: "subtotal", patch: { formula } }, context)).toMatchObject({
         ok: false, error: { code: "FORMULA_TOOL_REQUIRED" }
       });
     }
     expect(builder.calculate().calculation?.rootValue).toBe(85);
+  });
+
+  it("enforces direct construction node kinds on additions and stops an older drifted plan from being recorded again", async () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
+    const root = builder.getProject().rootNodeId;
+    const quote = "Discount was 10%";
+    const { registry, context } = sourceUnitContext(builder, `Calculate revenue. ${quote}.`);
+    context.requirePlanOperands = true;
+    context.requireDecompositionPlan = true;
+    const plan = { version: 1, goal: "Revenue", nodes: [
+      { nodeId: "subtotal", parentNodeId: root, kind: "calculated" },
+      { nodeId: "rebate", parentNodeId: root, kind: "input" },
+      { nodeId: "sales", parentNodeId: "subtotal", kind: "input" }
+    ] };
+    expect(await registry.run("vdt.set_decomposition_plan", { plan }, context)).toMatchObject({ ok: true });
+    const subtotal = { nodeId: "subtotal", parentNodeId: root, name: "Subtotal", unit: "USD" };
+    const rebate = { nodeId: "rebate", parentNodeId: root, name: "Rebate", type: "input", unit: "USD" };
+    const before = builder.getProject();
+    for (const [name, args] of [["vdt.add_driver", { ...subtotal, type: "input" }],
+      ["vdt.add_drivers_batch", { drivers: [subtotal, rebate] }]] as const) {
+      expect(await registry.run(name, args, context)).toMatchObject({ ok: false, error: {
+        code: "DECOMPOSITION_PLAN_VIOLATION", details: { issues: [expect.stringContaining("PLANNED_NODE_KIND_MISMATCH: subtotal")] }
+      } });
+    }
+    expect(builder.getProject()).toEqual(before);
+    expect(await registry.run("vdt.add_drivers_batch", { drivers: [{ ...subtotal, type: "calculated" }, rebate] }, context))
+      .toMatchObject({ ok: true });
+    const proposedMeasurement = { unit: "%", baselineValue: 10, valueStatus: "user_provided_value", valueSource: { note: quote } };
+    const typedProject = builder.getProject();
+    const typedRevision = builder.getRevision();
+    const proposals = context.store.getState(context.runId).mutationProposals?.length;
+    expect(await registry.run("vdt.update_node", { nodeId: "subtotal", patch: { ...proposedMeasurement, type: "input" } }, context))
+      .toMatchObject({ ok: false, projectChanged: false, error: { code: "PLANNED_NODE_KIND_MISMATCH", details: {
+        nodeId: "subtotal", plannedKind: "calculated", actualType: "calculated", allowedTypes: ["calculated"]
+      } } });
+    expect(builder.getProject()).toEqual(typedProject);
+    expect(builder.getRevision()).toBe(typedRevision);
+    expect(context.store.getState(context.runId).mutationProposals).toHaveLength(proposals!);
+    expect(await registry.run("vdt.update_node", { nodeId: "rebate", patch: { type: "external_factor", description: "Source scope" } }, context))
+      .toMatchObject({ ok: true });
+    // Simulate an earlier draft persisted before type admission was enforced.
+    builder.updateNode({ nodeId: "subtotal", patch: { type: "input" } });
+    const drifted = builder.getProject();
+    expect(await registry.run("vdt.add_driver", { nodeId: "sales", parentNodeId: "subtotal", name: "Sales", type: "input" }, context))
+      .toMatchObject({ ok: false, error: { code: "DECOMPOSITION_PLAN_VIOLATION", details: {
+        issues: [expect.stringContaining("PLANNED_PARENT_KIND_MISMATCH: subtotal")]
+      } } });
+    expect(await registry.run("vdt.set_decomposition_plan", { plan }, context)).toMatchObject({ ok: false, error: {
+      code: "INVALID_DECOMPOSITION_PLAN", details: { kindConflicts: [{ nodeId: "subtotal", plannedKind: "calculated", actualType: "input" }] }
+    } });
+    expect(builder.getProject()).toEqual(drifted);
+    expect(await registry.run("vdt.update_node", { nodeId: "subtotal", patch: { type: "calculated" } }, context)).toMatchObject({ ok: true });
+    builder.updateNode({ nodeId: "subtotal", patch: { ...proposedMeasurement, type: "input", valueStatus: "user_provided_value" } });
+    const grounded = builder.getProject();
+    const groundedRevision = builder.getRevision();
+    expect(await registry.run("vdt.update_node", { nodeId: "subtotal", patch: { type: "calculated" } }, context))
+      .toMatchObject({ ok: false, projectChanged: false, error: { code: "SOURCE_INPUT_TYPE_PROTECTED" } });
+    expect(builder.getProject()).toEqual(grounded);
+    expect(builder.getRevision()).toBe(groundedRevision);
+    expect(await registry.run("vdt.update_node", { nodeId: "subtotal", patch: { description: "Measured discount" } }, context))
+      .toMatchObject({ ok: true });
+    const corrected = { ...plan, nodes: plan.nodes.map((entry) => ({ ...entry, kind: "input", parentNodeId: root })) };
+    expect(await registry.run("vdt.set_decomposition_plan", { plan: corrected }, context)).toMatchObject({ ok: true });
+    expect(await registry.run("vdt.add_driver", { nodeId: "sales", parentNodeId: root, name: "Sales", type: "input" }, context))
+      .toMatchObject({ ok: true });
+    expect(builder.getProject().graph.nodes.find(({ id }) => id === "subtotal")).toMatchObject(proposedMeasurement);
+    const legacy = sourceUnitContext(builder, `Calculate revenue. ${quote}.`);
+    expect(await legacy.registry.run("vdt.update_node", { nodeId: "sales", patch: { type: "calculated" } }, legacy.context))
+      .toMatchObject({ ok: true });
   });
 
   it("creates only a declared orphan link during new construction, including shared factors", async () => {
