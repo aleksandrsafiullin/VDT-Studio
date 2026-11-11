@@ -13,6 +13,12 @@ reports incomplete structured output without replaying the exhausted
 request. The adapter does not silently change model or effort. Smart KPI
 retains its separate 2,048-token cap.
 
+For Settings **Test connection**, the OpenAI-compatible adapter uses a
+4,096-token completion cap for GPT-5, GPT-6 and recognized o-series models
+with Default reasoning. Reasoning and the structured reply share that cap.
+The request uses the selected model and leaves its reasoning effort to the
+provider. Other Default connection probes retain their 1,024-token cap.
+
 ## Original GPT-5 effort discovery (2026-11-11)
 
 Original released GPT-5/mini/nano IDs retain documented Minimal/Low/Medium/High

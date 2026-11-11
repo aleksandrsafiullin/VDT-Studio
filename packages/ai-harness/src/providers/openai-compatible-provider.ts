@@ -8,10 +8,14 @@ function parseJsonResponse(raw: string) {
   return JSON.parse(fenced?.[1] ?? trimmed) as unknown;
 }
 
+export function isOpenAiReasoningModel(model: string): boolean {
+  return /^(?:o[134](?:-|$)|gpt-(?:5|6)(?:[.-]|$))/i.test(model);
+}
+
 function completionParameters(model: string, params: AiCompletionParams<unknown>, reasoningEffort?: string) {
   // Reasoning model families reject legacy max_tokens and can reject sampling
   // overrides at their default reasoning effort. Keep the provider's effort.
-  if (reasoningEffort !== undefined || /^(?:o[134](?:-|$)|gpt-(?:5|6)(?:[.-]|$))/i.test(model)) {
+  if (reasoningEffort !== undefined || isOpenAiReasoningModel(model)) {
     // Agent decisions can contain a full bounded driver layer. Reasoning and
     // its JSON share this limit; an explicit caller limit always takes priority.
     return { max_completion_tokens: params.maxTokens ?? (params.taskType === "agent_decision" ? 4096 : 2200) };

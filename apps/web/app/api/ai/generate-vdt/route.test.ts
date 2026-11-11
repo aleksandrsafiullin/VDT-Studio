@@ -34,6 +34,32 @@ async function readJson(response: Response) {
 }
 
 describe("generate VDT API route", () => {
+  it("leaves Default reasoning unset and allows room for the connection result on GPT-5 nano", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.max_completion_tokens < 4096) {
+        return Response.json({
+          choices: [{ finish_reason: "length", message: { content: null } }],
+          usage: { completion_tokens: 1024, completion_tokens_details: { reasoning_tokens: 1024 } }
+        });
+      }
+      return Response.json({ choices: [{ finish_reason: "stop", message: { content: '{"ok":true}' } }] });
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    const response = await POST(jsonRequest({ operation: "connection_test", providerId: "openai_compatible",
+      providerConfig: { apiKey: "test-key", model: "gpt-5-nano" } }));
+
+    expect(response.status).toBe(200);
+    expect(await readJson(response)).toEqual({ ok: true });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({ model: "gpt-5-nano", max_completion_tokens: 4096 });
+    expect(body).not.toHaveProperty("reasoning_effort");
+    expect(body).not.toHaveProperty("temperature");
+    expect(body).not.toHaveProperty("max_tokens");
+  });
+
   it("tests the exact selected API reasoning instead of silently using its default", async () => {
     const fetcher = vi.fn<typeof fetch>(async (url) => String(url).includes("/models/")
       ? Response.json({ supported_reasoning_efforts: ["low", "high"] })
@@ -280,7 +306,7 @@ describe("generate VDT API route", () => {
   });
 
   it("performs a dashscope connection test through openai_compatible", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
       choices: [{ message: { content: '{"ok":true}' } }]
     }), { status: 200, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
@@ -301,6 +327,10 @@ describe("generate VDT API route", () => {
       "https://coding.dashscope.aliyuncs.com/v1/chat/completions",
       expect.objectContaining({ method: "POST" })
     );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({ model: "qwen3-coder-plus", max_tokens: 1024, temperature: 0 });
+    expect(body).not.toHaveProperty("max_completion_tokens");
   });
 
   it("disables request-supplied provider URLs in production unless explicitly allowed", async () => {

@@ -4,6 +4,7 @@ import {
   AzureOpenAiProvider,
   GeminiProvider,
   isLocalRunnerConnectionFailure,
+  isOpenAiReasoningModel,
   LocalRunnerProvider,
   localRunnerOfflineMessage,
   MockProvider,
@@ -30,6 +31,7 @@ const GENERATE_VDT_DEPRECATED_MESSAGE =
 const MODEL_LIST_TIMEOUT_MS = 15_000;
 const MODEL_LIST_MAX_RESPONSE_BYTES = 1_000_000;
 const MODEL_LIST_MAX_ITEMS = 2_000;
+const REASONING_PROBE_MAX_TOKENS = 4_096;
 
 const MAX_FIELD_LENGTHS: Partial<Record<keyof GenerateVdtInput, number>> = {
   rootKpi: 140,
@@ -367,6 +369,7 @@ export async function POST(request: Request) {
     }
 
     let probeReasoning: Record<string, unknown> = {};
+    let defaultProbeMaxTokens = 1_024;
     const selectedReasoning = body.providerConfig?.modelReasoning;
     if (connectionTest && selectedReasoning !== undefined && ["openai_compatible", "anthropic", "gemini", "azure_openai"].includes(body.providerId ?? "")) {
       const connection = providerConnectionSchema.safeParse({ providerId: body.providerId, providerConfig: {
@@ -410,11 +413,14 @@ export async function POST(request: Request) {
         return modelListResponse(openAiOrAnthropicModelIds(payload));
       }
 
+      const model = providerConfig.model ?? process.env.OPENAI_COMPATIBLE_MODEL ?? DEFAULT_OPENAI_COMPATIBLE_FALLBACK_MODEL;
+      // Reasoning tokens share the completion cap with the probe's JSON reply.
+      if (isOpenAiReasoningModel(model)) defaultProbeMaxTokens = REASONING_PROBE_MAX_TOKENS;
       provider = new OpenAiCompatibleProvider({
         ...probeReasoning,
         baseUrl: requestBaseUrl ?? envBaseUrl,
         apiKey,
-        model: providerConfig.model ?? process.env.OPENAI_COMPATIBLE_MODEL ?? DEFAULT_OPENAI_COMPATIBLE_FALLBACK_MODEL
+        model
       });
     } else if (body.providerId === "anthropic") {
       const providerConfig = readProviderConfig(body.providerConfig);
@@ -550,7 +556,9 @@ export async function POST(request: Request) {
           systemPrompt: "Return only structured JSON. Do not add commentary.",
           userPrompt: 'Connection test. Return exactly {"ok":true}.',
           temperature: 0,
-          maxTokens: selectedReasoning === undefined ? 1024 : typeof selectedReasoning === "number" ? Math.min(32768, selectedReasoning + 1024) : 4096
+          maxTokens: selectedReasoning === undefined
+            ? defaultProbeMaxTokens
+            : typeof selectedReasoning === "number" ? Math.min(32768, selectedReasoning + 1024) : REASONING_PROBE_MAX_TOKENS
       }) as { ok?: unknown };
       if (output?.ok !== true) {
         throw new Error("Provider responded, but did not return the expected connection-test JSON.");
