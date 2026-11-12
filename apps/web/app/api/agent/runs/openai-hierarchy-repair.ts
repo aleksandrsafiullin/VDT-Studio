@@ -1,6 +1,6 @@
 import {
   calculateGraph, calculationsWithoutPlannedInputs, decompositionPlanErrors, extractFormulaReferences, inspectDecompositionHierarchy,
-  parseFormula, validateGraph, type VdtDecompositionPlan, type VdtNode, type VdtProject
+  parseFormula, parseValidationUnit, validateGraph, type VdtDecompositionPlan, type VdtNode, type VdtProject
 } from "@vdt-studio/vdt-core";
 import { requiresDerivedRootForRun, type VdtAgentRunState, type VdtAgentStartRequest } from "@vdt-studio/vdt-agent-runtime";
 
@@ -48,6 +48,13 @@ function hasIndependentValue(project: VdtProject, node: VdtNode): boolean {
     || project.graph.nodes.some(({ goalSeek }) => goalSeek?.targetNodeId === node.id));
 }
 
+function sameDeclaredUnit(first: string | undefined, second: string | undefined): boolean {
+  if (!first?.trim() || !second?.trim()) return false;
+  if (first.trim() === second.trim()) return true;
+  const a = parseValidationUnit(first, true), b = parseValidationUnit(second, true);
+  return Boolean(a && b && JSON.stringify(a) === JSON.stringify(b));
+}
+
 /** A wrapper is the single same-unit child that calculates the root's whole
  * result. Established, edited and independently owned calculations are outside
  * this construction repair. */
@@ -62,7 +69,7 @@ export function rootIdentityWrapper(project: VdtProject, request: VdtAgentStartR
   if (planned?.kind !== "calculated" || planned.parentNodeId !== root.id || planned.sharedWith?.length
     || child?.type !== "calculated" || !child.aiGenerated || !child.formula?.trim()
     || (child.status !== "ai_suggested" && child.status !== "accepted")
-    || child.unit !== root.unit || hasIndependentValue(project, child)
+    || !sameDeclaredUnit(child.unit, root.unit) || hasIndependentValue(project, child)
     || !untouchedAddition(ownership, id)
     || project.graph.edges.filter(({ targetNodeId }) => targetNodeId === id).length !== 1) return undefined;
   const affectedEdges = [...rootEdges, ...project.graph.edges.filter(({ sourceNodeId }) => sourceNodeId === id)];
@@ -144,21 +151,25 @@ export function suggestHierarchyRepair(
   for (const node of graph.nodes) {
     const entry = entries.get(node.id);
     if (active.has(node.id) || entry?.kind === "context") continue;
-    // Only an unreferenced, AI-created leaf duplicating the root expression
-    // can be proposed for removal. Any retained fact needs the model's care.
+    // An inactive duplicate may still own factors used directly by the root.
+    // Move those active factors before deleting the empty duplicate.
+    const children = graph.edges.filter(({ sourceNodeId }) => sourceNodeId === node.id);
     if (entry?.kind !== "calculated" || node.type !== "calculated" || !node.aiGenerated
       || (node.status !== "ai_suggested" && (!ownership || node.status !== "accepted"))
       || (ownership && !untouchedAddition(ownership, node.id))
-      || node.unit !== root.unit || !node.formula?.trim()
+      || !sameDeclaredUnit(node.unit, root.unit) || !node.formula?.trim()
       || JSON.stringify(parseFormula(node.formula)) !== rootExpression
       || hasIndependentValue(project, node)
-      || graph.edges.some((edge) => edge.sourceNodeId === node.id)
+      || children.some((edge) => edge.relation === "contextual_influence"
+        || !references.get(rootNodeId)?.includes(edge.targetNodeId))
       || [...references.values()].some((refs) => refs.includes(node.id))) return;
     duplicateIds.add(node.id);
   }
 
-  const calls: HierarchyRepairCall[] = [...duplicateIds].map((nodeId) =>
-    ({ toolName: "vdt.delete_node", args: { nodeId, cascadeEdges: true } }));
+  const duplicateDeletion = (nodeId: string): HierarchyRepairCall =>
+    ({ toolName: "vdt.delete_node", args: { nodeId, cascadeEdges: true } });
+  const duplicateParents = new Set(graph.edges.filter(({ sourceNodeId }) => duplicateIds.has(sourceNodeId)).map(({ sourceNodeId }) => sourceNodeId));
+  const calls = [...duplicateIds].filter((id) => !duplicateParents.has(id)).map(duplicateDeletion);
   const affectedNodes = new Set(duplicateIds);
   const affectedEdges = new Set<string>();
   for (const edge of graph.edges) {
@@ -199,6 +210,7 @@ export function suggestHierarchyRepair(
     const fromParentNodeId = graph.edges.find((edge) => edge.targetNodeId === nodeId)!.sourceNodeId;
     calls.push({ toolName: "vdt.reparent_branch", args: { nodeId, parentNodeId, fromParentNodeId } });
   }
+  calls.push(...[...duplicateParents].map(duplicateDeletion));
   const revised = { ...plan, nodes: plan.nodes.filter(({ nodeId }) => byId.has(nodeId) && !duplicateIds.has(nodeId))
     .map((entry) => parentsByNode.get(entry.nodeId) ?? entry) };
   if (JSON.stringify(revised) !== JSON.stringify(plan)) {

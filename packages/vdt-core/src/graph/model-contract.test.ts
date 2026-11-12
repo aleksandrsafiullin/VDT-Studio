@@ -32,7 +32,7 @@ describe("F-05 model contract", () => {
   it.each([
     ["x * 60", "min", "h"], ["x / 60", "min", "s"],
     ["x * 1000", "kg", "t"], ["x * (60 - 0)", "min", "h"],
-    ["x * 24", "h", "day"], ["x * 3600", "t/h", "t/s"]
+    ["x * 24", "h", "day"], ["x * 3600", "t/h", "t/s"], ["(x + x) / 60", "h", "min"]
   ])("checks the explicit numeric scale in %s", (formula, output, unit) => {
     expect(validateGraph(model(formula, output, unit)).errors).toEqual([]);
   });

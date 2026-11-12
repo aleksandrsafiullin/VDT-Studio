@@ -250,11 +250,13 @@ removed entry fails instead of restoring it. Legacy publish/clone APIs retain
 compatibility but have no management UI. No Tauri plugin, command or sidecar
 bundle is changed; packaged-native and non-macOS launches remain unqualified.
 
-Context and the main runtime use this same library. Root-KPI recall is
-provisional; the universal default applies only if its file is available. An
-absent default leaves explicit Context selection available. Version/hash pins,
-run-local catalog snapshots and read-before-select behavior remain intact.
-Legacy compatibility recipe/topology activation remains explicitly separate.
+Context and the main runtime use this same library. Context's Root-KPI recall
+can show a provisional choice when the file is available. The local Supervisor
+resolves new-tree requests against a run-local catalog snapshot unless the
+user has already pinned a version. Catalog and read operations preserve
+selection. An explicit selection binds a receipt for the read version and
+hash. A recorded gap lets the run build from user facts. Durable V2 selection
+authority remains part of the corrective program.
 See [ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md).
 
 ## Personalisation and user instructions
@@ -668,7 +670,7 @@ SQLite metadata field, with no follow-up PATCH or schema migration. Home search
 filters the loaded project summaries in the browser; the query is transient and
 does not change saved project data.
 
-`WorkspaceNavigationLink` intercepts normal client navigation through those two editor links and awaits the existing `saveActiveWorkspaceVdt` CAS/idempotency operation. A failure preserves the editor and displays a navigation error; a save covering an older in-flight snapshot also blocks leaving. Successful Back navigation uses the route-sync hook's explicit project intent, superseding any pending creation route. This closes the link-driven edit-loss path without adding a new revision API or changing the remaining W0.5 draft/durable-ownership boundary.
+`WorkspaceNavigationLink` intercepts normal client navigation through those two editor links and awaits the existing `saveActiveWorkspaceVdt` CAS/idempotency operation. The manual revision route reuses the active revision when the expected head and runtime match and the submitted canonical payload equals the verified stored payload. That path creates no revision file, journal entry or generation change. Changed snapshots use the existing atomic commit. A failure preserves the editor and displays a navigation error. A save covering an older in-flight snapshot also blocks leaving. Successful Back navigation uses the route-sync hook's explicit project intent, superseding any pending creation route.
 
 ### Scenario comments and presentation
 
@@ -842,6 +844,10 @@ All V2 feature flags are server-owned, fail closed and default to disabled. Proj
 
 This separate experimental local harness accepts provider-assisted table/category/additive-value suggestions through `createManagedAwareAiProvider`. The deterministic incoming compiler supports complete additive hierarchies (up to four category levels and 200 nodes) from numeric values in confirmed target-compatible units, direct durations or explicit start/end timestamps, and confirmed total/per-day normalization. A declared reporting period describes the full source extract/denominator; it is not a row-filter query. All required mapping and provider clarification questions remain apply blockers. Structured edits reload immutable full bytes; final staging reruns against the server-retained initial project basis after validating the client's current semantic target and immediate children. Each generated KPI Description carries source hash/reference, table, columns, filters, calculation, reporting period and row coverage. The core calculator consumes materialized Baselines and parent sum formulas; it does not execute or refresh `dataMapping`.
 
+The optional event ID column is part of the reviewed mapping. The compiler checks uniqueness over the selected retained table during preview and staging. It includes the checked column in calculation provenance. Provider suggestions have no authority to set or clear the event ID mapping.
+
+The general discovery path separately materializes complete scalar observations during preview, review and staging. Unbound metrics use contextual edges. An explicitly selected compatible metric can supply an empty target through a single formula dependency in the same source-aware change-set. Recompilation validates the target basis and reads the retained bytes, so a column or aggregation edit replaces the previous baseline and lineage.
+
 Upload/list/download/library-edit/run routes require trusted local app mode and strict IDs. File operations require a real SQLite project and validate any supplied tree's `vdt.projectId`; analysis/run operations require the actual tree as well. VDT reads require a current or historical explicit association; project library reads can open any source owned by that project. `VdtProject.id` is the original graph snapshot identity; it may differ from both the SQLite workspace owner and selected VDT record ID. The selected VDT's stored active revision supplies the expected graph identity for request validation. Imported graph IDs are preserved without rewrites or migrations. Sources are write-once at `projectDir(database.dataDir, projectId)/files/<datasetId>/`, with original name metadata, exact bytes and checked SHA-256/size. Runs retain file ownership plus explicit `workspaceProjectId`/`vdtId` and a separate initial project context. File/run reads use persistent storage instead of trusting an in-memory cache; scope mismatches, unsafe IDs and symlink paths fail closed. Old global `data-discovery` records are retained for trusted-local compatibility and never used as scoped fallbacks. Browser discard leaves source files intact. Hosted multi-user authorization, parser isolation, permanent retention/erasure, encryption and general refresh remain open. See `DATA_INGESTION.md`.
 
 ### Model execution flow
@@ -978,9 +984,24 @@ The native local transport retains bounded read evidence across semantic deltas:
 
 Native new-tree creation presents bounded structural-only arguments: model-authored lowercase IDs, at most four nodes per singleton batch and short metadata. Separate existing-input and formula tools remain model controlled; no business formulas or values are synthesized by the transport. Literal source projections are marked truncated and cease to constrain decoding when incomplete.
 
-Native Ollama construction of a new blank tree now requires a successful model-selected skill read before structural tools unlock. Confirmed failure output cannot satisfy that gate. List/search/read schemas are upfront; the initial native phase offers discovery, then a read constrained to actual returned skill IDs, before introspection/construction unlocks. The model still chooses the search and skill. A sibling batch uses per-parent schema alternatives when the working graph view is complete: the model chooses the parent, but every item must use that same ID. Truncated graph views retain canonical scope checks without claiming an exhaustive parent list. A bounded read-only calculationAssumptions projection retains up to eight calculated/root nodes, two notes of 160 characters each, with explicit truncation; it neither supplies new facts nor chooses formulas.
+Native Ollama construction for a new tree uses the Supervisor's skill resolution
+state. The decoder offers catalog discovery, then a read constrained to
+discovered IDs and an explicit selection bound to a confirmed read receipt.
+A confirmed gap also unlocks ordinary construction. A trusted pin can use
+its matching read. The Gateway validates actual tool results. A sibling batch
+uses per-parent schema alternatives when the working graph view is complete,
+and every item must use the same model-selected parent ID. Truncated views
+retain canonical scope checks. A bounded read-only calculationAssumptions
+projection retains up to eight calculated/root nodes, two notes of 160
+characters each, with explicit truncation.
 
-Initial goal clarification remains available. After discovery begins in a new blank tree, native questions wait until the chosen skill is actually read; planning the decomposition stays the model's responsibility. A final action is available only after an admitted successful/replayed finish receipt with a valid hash. That receipt fixes the native final ID and closes tool choices; new human work, stale-revision feedback or a committed graph mutation invalidates the native receipt projection. Canonical Supervisor verification remains authoritative.
+Initial goal clarification remains available. After discovery begins in a new
+blank tree, native questions wait for skill resolution. Planning the
+decomposition stays the model's responsibility. A final action is available
+only after an admitted successful/replayed finish receipt with a valid hash.
+That receipt fixes the native final ID and closes tool choices. New human work,
+stale-revision feedback or a committed graph mutation invalidates the native
+receipt projection. Canonical Supervisor verification remains authoritative.
 
 For a fully visible new-tree input set, native Ollama numeric batches use a values object keyed by model-selected input IDs from one bounded page (up to eight keys). This prevents repeated targets in a generated batch. A pure wire decoder restores the canonical values array in stable ID order before engine/Gateway validation; it preserves every selected target, value, provenance and note, performs no arithmetic and changes no formulas. Other tools, existing-tree/partial-view fallbacks, canonical API arguments, receipts and approval/scope/revision checks retain their contracts.
 

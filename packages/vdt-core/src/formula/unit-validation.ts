@@ -6,7 +6,7 @@ type InferredUnit = { unit: Unit | undefined; literal: boolean; coefficient: num
 const aliases: Record<string, string> = {
   hour: "h", hours: "h", minute: "min", minutes: "min", second: "s", seconds: "s", sec: "s",
   tonne: "t", tonnes: "t", kilogram: "kg", kilograms: "kg", metre: "m", metres: "m", meter: "m", meters: "m",
-  units: "count", unit: "count", item: "count", items: "count", trips: "trip",
+  units: "count", unit: "count", counts: "count", item: "count", items: "count", trips: "trip",
   days: "day", weeks: "week", months: "month", quarters: "quarter", years: "year", shifts: "shift"
 };
 const scalar = new Set(["1", "%", "fraction", "ratio", "percent", "percentage"]);
@@ -52,8 +52,7 @@ function physical(unit: Unit) {
 function compatible(actual: Unit, expected: Unit, coefficient: number | undefined): boolean | undefined {
   if (same(actual, expected)) return true;
   const from = physical(actual), to = physical(expected);
-  if (!from.known || !to.known) return undefined;
-  if (!same(from.dimensions, to.dimensions)) return false;
+  if (!same(from.dimensions, to.dimensions)) return from.known && to.known ? false : undefined;
   if (!Number.isFinite(from.scale) || !Number.isFinite(to.scale) || from.scale <= 0 || to.scale <= 0) return undefined;
   const ratio = from.scale / to.scale;
   return coefficient !== undefined && Number.isFinite(coefficient) && Math.abs(Math.abs(coefficient) - ratio) <= 1e-12 * Math.max(ratio, Math.abs(coefficient), 1e-12);
@@ -105,15 +104,26 @@ function formatUnit(unit: Unit): string {
 }
 
 export function validateFormulaUnits(
-  node: VdtNode, expression: FormulaExpression, nodes: ReadonlyMap<string, VdtNode>, enforcePercentageScale = false
+  node: VdtNode, expression: FormulaExpression, nodes: ReadonlyMap<string, VdtNode>, enforcePercentageScale = false,
+  requireTimeInputUnits = false
 ): VdtWarning[] {
   const issues: VdtWarning[] = [];
+  const declaredUnit = node.unit ? parseValidationUnit(node.unit, true) : undefined;
+  const verifyTime = requireTimeInputUnits && declaredUnit && (physical(declaredUnit).dimensions.time ?? 0) > 0;
+  const matchUnits = (actual: Unit, expected: Unit, coefficient: number | undefined) => {
+    const scaled = compatible(actual, expected, coefficient);
+    if (enforcePercentageScale || verifyTime || scaled === true || (!actual["%"] && !expected["%"])) return scaled;
+    // Legacy formulas may use percentages as scalars. They also need to
+    // recognize explicit percentage conversion inside a physical scale change.
+    return compatible(combine(actual, { "%": actual["%"] ?? 0 }, -1),
+      combine(expected, { "%": expected["%"] ?? 0 }, -1), coefficient);
+  };
   const report = (key: string, message: string, severity: VdtWarning["severity"] = "error") => {
     issues.push({ id: `validation-unit-${node.id}-${key}`, type: "unit_mismatch", severity, nodeId: node.id, message });
   };
   const readUnit = (target: VdtNode, key: string) => {
-    const unit = target.unit ? parseValidationUnit(target.unit, enforcePercentageScale) : undefined;
-    if (!unit) report(key, `The unit of “${target.name}” is missing or cannot be checked. Set a unit to verify the formula for “${node.name}”.`, "warning");
+    const unit = target.unit ? parseValidationUnit(target.unit, true) : undefined;
+    if (!unit) report(key, `The unit of “${target.name}” is missing or cannot be checked. Set a unit to verify the formula for “${node.name}”.`, verifyTime ? "error" : "warning");
     return unit;
   };
   const add = (left: InferredUnit, right: InferredUnit, path: string, operator: string): InferredUnit => {
@@ -127,13 +137,14 @@ export function validateFormulaUnits(
     if (left.literal) return right;
     if (right.literal) return left;
     if (left.unit && right.unit && !same(left.unit, right.unit)) {
-      const rightToLeft = compatible(right.unit, left.unit, right.coefficient);
-      const leftToRight = compatible(left.unit, right.unit, left.coefficient);
+      const rightToLeft = matchUnits(right.unit, left.unit, right.coefficient);
+      const leftToRight = matchUnits(left.unit, right.unit, left.coefficient);
       if (rightToLeft === true || leftToRight === true) return { unit: rightToLeft ? left.unit : right.unit, literal: false, coefficient: undefined };
-      const scaleHint = left.unit["%"] !== right.unit["%"] ? percentScaleHint : "";
-      report(path, `Formula for “${node.name}” combines ${rightToLeft === undefined ? "unverified custom" : "incompatible"} units with ${operator}: “${formatUnit(left.unit)}” and “${formatUnit(right.unit)}”.${scaleHint}`, rightToLeft === undefined ? "warning" : "error");
+      const scaleHint = (enforcePercentageScale || verifyTime) && left.unit["%"] !== right.unit["%"] ? percentScaleHint : "";
+      report(path, `Formula for “${node.name}” combines ${rightToLeft === undefined ? "unverified custom" : "incompatible"} units with ${operator}: “${formatUnit(left.unit)}” and “${formatUnit(right.unit)}”.${scaleHint}`, rightToLeft === undefined && !verifyTime ? "warning" : "error");
     }
-    return { unit: left.unit && right.unit ? left.unit : undefined, literal: false, coefficient: undefined };
+    return { unit: left.unit && right.unit ? left.unit : undefined, literal: false,
+      coefficient: left.coefficient === right.coefficient ? left.coefficient : undefined };
   };
   const visit = (ast: FormulaExpression, path: string): InferredUnit => {
     if (ast.type === "number") return { unit: {}, literal: true, coefficient: ast.value };
@@ -167,10 +178,15 @@ export function validateFormulaUnits(
   if (!inferred.literal) {
     const declared = readUnit(node, "result-missing");
     if (declared && inferred.unit) {
-      const matches = compatible(inferred.unit, declared, inferred.coefficient);
-      const scaleHint = inferred.unit["%"] !== declared["%"] ? percentScaleHint : "";
-      if (matches === false) report("result", `The output unit of “${node.name}” is “${node.unit}”, but its formula produces “${formatUnit(inferred.unit)}”. Correct the unit or formula.${scaleHint}`);
-      if (matches === undefined) report("result", `The output unit of “${node.name}” is “${node.unit}”, while its formula produces “${formatUnit(inferred.unit)}”. Define the custom unit or per-entity basis to verify this relationship.`, "warning");
+      const matches = matchUnits(inferred.unit, declared, inferred.coefficient);
+      const scaleHint = (enforcePercentageScale || verifyTime) && inferred.unit["%"] !== declared["%"] ? percentScaleHint : "";
+      const from = physical(inferred.unit), to = physical(declared);
+      const timeHint = same(from.dimensions, to.dimensions) && from.dimensions.time && from.scale !== to.scale
+        ? ` The explicit conversion multiplier for these units is ${from.scale / to.scale}.` : "";
+      const countHint = same(combine(from.dimensions, { count: 1 }, -1), to.dimensions)
+        ? " If the other factors describe one identical entity, use unit 1 for the number of copies. For an explicit count, use a matching per-item amount or rate." : "";
+      if (matches === false) report("result", `The output unit of “${node.name}” is “${node.unit}”, but its formula produces “${formatUnit(inferred.unit)}”. Correct the unit or formula.${scaleHint}${timeHint}${countHint}`);
+      if (matches === undefined) report("result", `The output unit of “${node.name}” is “${node.unit}”, while its formula produces “${formatUnit(inferred.unit)}”. Define the custom unit or per-entity basis to verify this relationship.`, verifyTime ? "error" : "warning");
     }
   }
   return [...new Map(issues.map(item => [item.id, item])).values()];

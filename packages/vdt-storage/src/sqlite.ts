@@ -462,8 +462,10 @@ export class SqliteVdtDatabase implements VdtDatabase {
     return record;
   }
 
-  commitVdtRevision(input: RevisionCommitInputV2): RevisionCommitResultV2 {
-    return this.atomicRevisions.commitVdtRevision(input);
+  commitVdtRevision(input: RevisionCommitInputV2, options?: { reuseUnchangedRevision?: boolean }): RevisionCommitResultV2 {
+    return this.atomicRevisions.commitVdtRevision(input, options?.reuseUnchangedRevision
+      ? (revision) => this.readVdtRevision(revision)
+      : undefined);
   }
 
   createVdtWithInitialSnapshot(

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createHash } from "node:crypto";
-import { lstat, readdir, realpath } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { lstat, mkdir, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type CheckpointActionBatch } from "./action-batch";
 import { omittedCheckpointStreamEvidence, recordCheckpointEventType } from "./checkpoint-protocol-reporting";
@@ -9,6 +9,8 @@ import {
   sameCanonicalWorkspacePath,
   wrapSpawnCountingRunner,
   attachSessionIdToError,
+  errorCodeOf,
+  sessionIdFromError,
   type SpawnCountableRunner
 } from "./checkpoint-transport-common";
 import { parseCheckpointTurn, type CheckpointTurn } from "./checkpoint-turn";
@@ -17,10 +19,41 @@ import {
   inspectCursorStreamToolCall,
   NativeWebSearchCollector,
   attachNativeWebSearchToError,
+  nativeWebSearchFromError,
   type NativeWebSearchRecord
 } from "./native-web-search";
 
 export const CURSOR_CHECKPOINT_PROTOCOL_VERSION = "vdt-cursor-checkpoint-v1" as const;
+const CURSOR_CHECKPOINT_PROMPT_HEADER = [
+  "You are the structured VDT Studio checkpoint backend.",
+  "Reply immediately with one JSON object containing protocolVersion, assistantMessage and action. Put any user-facing text inside the object.",
+  "VDT tools are requests in action.calls. The host dispatches those requests after you return the JSON.",
+  "If a VDT argument or enum is unclear, return tools.describe with args.toolNames in action.calls. Do not search the filesystem for schemas. Use only fields and values from the returned schema; omit optional arguments you do not need.",
+  "Never use Cursor's native Grep, Glob, Read, Write, Shell, Todos, MCP or messaging tools to inspect schemas, make a plan, or send, validate or correct JSON. The private workspace is empty. Use VDT skill.read for guidance and data.list_sources for attachments. Public web research follows the VDT research policy."
+].join(" ");
+
+export function cursorCheckpointPrompt(body: string): string {
+  return `${CURSOR_CHECKPOINT_PROMPT_HEADER}\n${body}\nReturn the JSON directly as your reply. Do not call a Cursor tool or write the reply to a file.`;
+}
+
+export function cursorCheckpointBatchExample(allowedToolNames: readonly string[]) {
+  const describe = allowedToolNames.includes("tools.describe") && allowedToolNames.includes("vdt.add_drivers_batch");
+  const toolName = describe ? "tools.describe" : allowedToolNames.includes("project.get_current") ? "project.get_current" : allowedToolNames[0]!;
+  const args = describe ? { toolNames: ["vdt.add_drivers_batch"] } : {};
+  return {
+    protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+    assistantMessage: null,
+    action: { type: "action_batch", calls: [{ externalCallId: "unique-call-1", toolName, args }] }
+  };
+}
+
+export function cursorCheckpointFinalExample(finishReceiptId: string) {
+  return {
+    protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+    assistantMessage: null,
+    action: { type: "final", finishReceiptId, messageId: "final-1", text: "Brief final result in the user's language, using the verified calculation." }
+  };
+}
 
 const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_PROMPT_BYTES = 1024 * 1024;
@@ -54,6 +87,21 @@ const ALLOWED_CURSOR_EVENT_TYPES = new Set([
   "system",
   "thinking",
   "user"
+]);
+const CURSOR_NATIVE_TOOL_LABELS = new Map([
+  ["globToolCall", "Glob"],
+  ["grepToolCall", "Grep"],
+  ["readToolCall", "Read"],
+  ["lsToolCall", "List files"],
+  ["shellToolCall", "Shell"],
+  ["mcpToolCall", "MCP"],
+  ["updateTodosToolCall", "Todos"],
+  ["todoWriteToolCall", "Todos"],
+  ["sendToCallToolCall", "SendToCall"],
+  ["writeToolCall", "Write"],
+  ["editToolCall", "Edit"],
+  ["taskToolCall", "Subagent"],
+  ["webFetchToolCall", "WebFetch"]
 ]);
 
 export interface CursorCheckpointCredentialEnvironmentEntry {
@@ -137,6 +185,7 @@ export interface CursorResumeCheckpointSegmentInput {
   readonly model: string;
   readonly prompt: string;
   readonly expectedSessionId?: string;
+  readonly verifiedFinishReceiptId?: string;
   readonly signal: AbortSignal;
 }
 
@@ -149,6 +198,7 @@ export interface CursorResumeCheckpointSegmentResult {
   readonly processSpawnCount?: number;
   readonly inferenceMs?: number;
   readonly outputBytes?: number;
+  readonly envelopeRepaired?: true;
 }
 
 export interface CursorResumeCheckpointTransportOptions {
@@ -210,7 +260,8 @@ function parseTurn(raw: string, allowedToolNames: readonly string[]): CursorChec
   const turn = parseCheckpointTurn(raw, {
     protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
     allowedToolNames,
-    errorPrefix: "CURSOR_CHECKPOINT"
+    errorPrefix: "CURSOR_CHECKPOINT",
+    includeInlineNarration: false
   });
   return turn as CursorCheckpointTurn;
 }
@@ -293,10 +344,8 @@ function buildEnvironment(
   const output: Record<string, string> = Object.create(null) as Record<string, string>;
   output.HOME = authHome ?? state;
   output.USERPROFILE = authHome ?? state;
-  if (!authHome) {
-    output.CURSOR_CONFIG_DIR = path.join(state, "cursor-config");
-    output.XDG_CONFIG_HOME = path.join(state, "xdg-config");
-  }
+  output.CURSOR_CONFIG_DIR = path.join(state, "cursor-config");
+  output.XDG_CONFIG_HOME = path.join(state, "xdg-config");
   const names = new Set<string>();
   for (const entry of entries) {
     if (
@@ -314,6 +363,27 @@ function buildEnvironment(
     output[entry.name] = entry.value;
   }
   return Object.freeze(output);
+}
+
+async function writeCursorCheckpointPolicy(state: string): Promise<void> {
+  const configDir = path.join(state, "cursor-config");
+  await mkdir(configDir, { recursive: true, mode: 0o700 });
+  if (await canonicalDirectory(configDir, "Cursor checkpoint config directory") !== configDir) {
+    throw checkpointError("CURSOR_CHECKPOINT_UNSAFE_ENVIRONMENT", "Cursor checkpoint config directory escaped private state.");
+  }
+  const staged = path.join(configDir, `cli-config-${randomUUID()}.json`);
+  await writeFile(staged, JSON.stringify({
+    version: 1,
+    editor: { vimMode: false },
+    approvalMode: "allowlist",
+    permissions: { allow: [], deny: ["Shell(*)", "Read(**)", "Read(/**)", "Write(**)", "Write(/**)", "Mcp(*:*)", "WebFetch(*)"] },
+    sandbox: { mode: "enabled", readBoundary: "workspace" }
+  }), { flag: "wx", mode: 0o600 });
+  try {
+    await rename(staged, path.join(configDir, "cli-config.json"));
+  } finally {
+    await rm(staged, { force: true });
+  }
 }
 
 function containsCredentialLeak(
@@ -380,9 +450,13 @@ function parseCursorOutput(input: {
         });
         continue;
       }
+      const tool = isRecord(event.tool_call) ? Object.keys(event.tool_call)
+        .map((key) => CURSOR_NATIVE_TOOL_LABELS.get(key)).find(Boolean) : undefined;
       throw checkpointError(
         "SECURITY_BOUNDARY_BREACH",
-        "Cursor attempted a built-in or foreign tool during checkpoint execution."
+        tool
+          ? `Cursor attempted the prohibited built-in tool ${tool} during checkpoint execution.`
+          : "Cursor attempted a built-in or foreign tool during checkpoint execution."
       );
     }
     if (!isRecord(event) || typeof event.type !== "string" || !ALLOWED_CURSOR_EVENT_TYPES.has(event.type)) {
@@ -458,10 +532,20 @@ function parseCursorOutput(input: {
     });
     throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", omitted.message, omitted.details);
   }
+  let turn: CursorCheckpointTurn;
+  try {
+    turn = parseTurn(terminal.result as string, input.allowedToolNames);
+  } catch (error) {
+    const code = errorCodeOf(error);
+    if (typeof error === "object" && error !== null && code === "CURSOR_CHECKPOINT_PROTOCOL_INVALID") {
+      Object.assign(error, { checkpointEnvelopeRepairable: true });
+    }
+    throw error;
+  }
   const nativeWebSearch = webSearches.snapshot();
   return {
     sessionId,
-    turn: parseTurn(terminal.result as string, input.allowedToolNames),
+    turn,
     ...(nativeWebSearch ? { nativeWebSearch } : {})
   };
   } catch (error) {
@@ -525,7 +609,7 @@ export class NodeCursorResumeProcessRunner implements CursorResumeProcessRunner 
       child.stdout.on("data", (chunk: Buffer | string) => append("stdout", chunk));
       child.stderr.on("data", (chunk: Buffer | string) => append("stderr", chunk));
       child.once("error", (error) => terminate("CURSOR_CHECKPOINT_PROCESS_ERROR", `Cursor checkpoint process failed: ${error.message}`));
-      child.once("exit", (exitCode, exitSignal) => {
+      child.once("close", (exitCode, exitSignal) => {
         if (settled) return;
         settled = true;
         cleanup();
@@ -549,8 +633,8 @@ export class NodeCursorResumeProcessRunner implements CursorResumeProcessRunner 
  * the exact opaque session with the aggregated results.
  *
  * This transport is intentionally not evidence of hard isolation: Cursor print
- * mode still ships built-in tools. Any observed tool event is therefore a
- * security breach and the external capability remains unverified/default-off.
+ * mode still ships built-in tools. A tool event other than native web search
+ * stops execution and the external capability remains unverified/default-off.
  */
 export class CursorResumeCheckpointTransport {
   readonly validatedCliVersion: string;
@@ -585,6 +669,15 @@ export class CursorResumeCheckpointTransport {
     input: CursorResumeCheckpointSegmentInput,
     allowedToolNames: readonly string[]
   ): Promise<CursorResumeCheckpointSegmentResult> {
+    return this.#executeSegment(input, allowedToolNames, this.#timeoutMs, true);
+  }
+
+  async #executeSegment(
+    input: CursorResumeCheckpointSegmentInput,
+    allowedToolNames: readonly string[],
+    timeoutMs: number,
+    allowEnvelopeRepair: boolean
+  ): Promise<CursorResumeCheckpointSegmentResult> {
     input.signal.throwIfAborted();
     if (!input.model.trim() || input.model.startsWith("-") || input.model.includes("\0") || input.model.length > 160) {
       throw checkpointError("CURSOR_CHECKPOINT_CONFIGURATION_INVALID", "Cursor model is invalid.");
@@ -600,6 +693,7 @@ export class CursorResumeCheckpointTransport {
     const resolved = await assertPrivateEnvironment(input.environment, input.mode === "open");
     const credentials = input.environment.credentialEnvironment ?? [];
     const environment = buildEnvironment(resolved.state, resolved.authHome, credentials);
+    await writeCursorCheckpointPolicy(resolved.state);
     const args = [
       "--print",
       "--output-format",
@@ -616,6 +710,7 @@ export class CursorResumeCheckpointTransport {
     if (args.some((arg) => FORBIDDEN_ARGUMENTS.has(arg))) {
       throw checkpointError("SECURITY_BOUNDARY_BREACH", "Cursor checkpoint arguments enabled a forbidden trust mode.");
     }
+    const deadline = Date.now() + timeoutMs;
     const spawned = await invokeCountedCheckpointRunner(this.#runner, {
       executable: this.#executable,
       args: Object.freeze(args),
@@ -623,7 +718,7 @@ export class CursorResumeCheckpointTransport {
       environment,
       stdin: input.prompt,
       signal: input.signal,
-      timeoutMs: this.#timeoutMs,
+      timeoutMs,
       maxOutputBytes: this.#maxOutputBytes
     });
     const result = spawned.result;
@@ -633,15 +728,52 @@ export class CursorResumeCheckpointTransport {
         "Cursor wrote to the private checkpoint workspace; the run was stopped."
       );
     }
-    const parsed = parseCursorOutput({
-      result,
-      workspace: resolved.workspace,
-      ...(input.expectedSessionId !== undefined ? { expectedSessionId: input.expectedSessionId } : {}),
-      maxBytes: this.#maxOutputBytes,
-      maxLines: this.#maxLines,
-      allowedToolNames,
-      credentials
-    });
+    let parsed: ReturnType<typeof parseCursorOutput>;
+    try {
+      parsed = parseCursorOutput({
+        result,
+        workspace: resolved.workspace,
+        ...(input.expectedSessionId !== undefined ? { expectedSessionId: input.expectedSessionId } : {}),
+        maxBytes: this.#maxOutputBytes,
+        maxLines: this.#maxLines,
+        allowedToolNames,
+        credentials
+      });
+    } catch (error) {
+      const sessionId = sessionIdFromError(error);
+      const remainingMs = deadline - Date.now();
+      if (!allowEnvelopeRepair || !sessionId || remainingMs <= 0 || typeof error !== "object" || error === null
+        || !("checkpointEnvelopeRepairable" in error) || error.checkpointEnvelopeRepairable !== true) throw error;
+      const repaired = await this.#executeSegment({
+        ...input,
+        mode: "resume",
+        expectedSessionId: sessionId,
+        prompt: cursorCheckpointPrompt(JSON.stringify({
+          protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+          type: "checkpoint_envelope_correction",
+          instruction: input.verifiedFinishReceiptId
+            ? "The host has verified the calculation. Use exactly the final action fields shown, with the supplied receipt ID. Replace only the text with a short summary in the user's language using the confirmed result."
+            : "The previous response failed the checkpoint format check. The host executed none of its calls. Continue the same task. Use the flat action.calls shape in the example, with one valid VDT call. Use final only with a verified finish receipt from the host. This is the sole format retry.",
+          example: input.verifiedFinishReceiptId
+            ? cursorCheckpointFinalExample(input.verifiedFinishReceiptId)
+            : cursorCheckpointBatchExample(allowedToolNames),
+          allowedToolNames
+        }))
+      }, allowedToolNames, remainingMs, false);
+      const firstSearch = nativeWebSearchFromError(error);
+      return Object.freeze({
+        ...repaired,
+        inputHash: hashText(input.prompt),
+        inferenceMs: spawned.inferenceMs + (repaired.inferenceMs ?? 0),
+        outputBytes: spawned.outputBytes + (repaired.outputBytes ?? 0),
+        processSpawnCount: spawned.processSpawnCount + (repaired.processSpawnCount ?? 0),
+        envelopeRepaired: true,
+        ...(firstSearch ? { nativeWebSearch: {
+          count: firstSearch.count + (repaired.nativeWebSearch?.count ?? 0),
+          queries: [...firstSearch.queries, ...(repaired.nativeWebSearch?.queries ?? [])]
+        } } : {})
+      });
+    }
     return Object.freeze({
       sessionId: parsed.sessionId,
       inputHash: hashText(input.prompt),

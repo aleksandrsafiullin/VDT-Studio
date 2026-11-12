@@ -17,8 +17,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
     if (!snapshot) return jsonError("Discovery run was not found.", 404, "DATA_DISCOVERY_RUN_NOT_FOUND");
     const file = await readDatasetFile(snapshot.datasetId, owner);
     if (!file || file.metadata.contentHash !== snapshot.file.contentHash) throw new DataApiError("The retained source does not match this discovery run.", 409, "DATA_SOURCE_INTEGRITY_FAILED");
-    if (snapshot.incomingKpi) {
-      const project = await reviewProject(snapshot, owner, body.project, Boolean(owner));
+    if (snapshot.semanticModel && snapshot.proposal) {
+      const project = await reviewProject(snapshot, owner, body.project, Boolean(snapshot.incomingKpi && owner));
       snapshot = await reanalyzeDiscoveryWithUserEdits({ datasetId: snapshot.datasetId, file: file.metadata, bytes: file.bytes, project, entryContext: snapshot.entryContext }, snapshot, {});
     }
     const validationResults = validateDiscoveryApply(snapshot);

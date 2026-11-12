@@ -45,6 +45,13 @@ confidence. If the default was removed, Context still allows explicit selection.
 The agent can read a candidate and explicitly call skill.select with a reason;
 read alone is selection-neutral.
 
+Local Supervisor amendment 2026-11-12. Context's preliminary match is available
+to the editor. For new-tree construction without a manual pin, the model uses
+the full request and run catalog, reads an exact version and selects it
+explicitly with a receipt. A no-applicable-skill outcome permits ordinary tree
+construction from the brief. Durable V2 grants and selection state remain in
+the corrective program.
+
 This user-requested local V1 workflow supersedes ADR-003's no-universal-
 preselection and read-only supplied-skill rules for V1. It does not implement V2
 selection commands, receipts, grants, framed canonical hashes, certification or

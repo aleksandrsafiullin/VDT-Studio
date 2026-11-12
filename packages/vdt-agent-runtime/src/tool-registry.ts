@@ -150,6 +150,10 @@ export class ToolRegistry {
     });
 
     try {
+      const skillResolution = context.store.getState(context.runId).request.skillResolution;
+      if (tool.mutatesProject && skillResolution && !skillResolution.outcome) {
+        throw new AgentToolError("SKILL_RESOLUTION_REQUIRED", "Resolve the skill first: browse, read and select a matching skill, or report a gap after browsing.");
+      }
       if (tool.requiresDraftProject && !context.builder?.getProject().graph.nodes.length) {
         throw new AgentToolError("NO_DRAFT_PROJECT", "This tool requires an existing draft. Create the draft and use the root ID returned by the tool.");
       }

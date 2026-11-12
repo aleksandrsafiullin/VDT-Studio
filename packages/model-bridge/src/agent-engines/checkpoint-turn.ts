@@ -41,6 +41,7 @@ export interface ParseCheckpointTurnOptions {
   readonly allowedToolNames: readonly string[];
   readonly errorPrefix: string;
   readonly maxPromptBytes?: number;
+  readonly includeInlineNarration?: boolean;
 }
 
 function checkpointTurnError(code: string, message: string): Error {
@@ -83,6 +84,25 @@ function assertText(
   if (typeof value !== "string" || !value.trim() || byteLength(value) > maxBytes || value.includes("\0")) {
     throw checkpointTurnError(`${errorPrefix}_PROTOCOL_INVALID`, `${field} is invalid.`);
   }
+}
+
+function parseCheckpointAssistantMessage(value: unknown, errorPrefix: string): CheckpointAssistantMessage | null {
+  if (value === null) return null;
+  if (typeof value === "string") {
+    assertText(value, "assistantMessage", errorPrefix, 8_000);
+    return Object.freeze({
+      messageId: `message-${createHash("sha256").update(value, "utf8").digest("hex").slice(0, 24)}`,
+      text: value
+    });
+  }
+  if (!isRecord(value)) {
+    throw checkpointTurnError(`${errorPrefix}_PROTOCOL_INVALID`,
+      `assistantMessage is invalid; received ${Array.isArray(value) ? "array" : typeof value}.`);
+  }
+  assertExactKeys(value, ["messageId", "text"], "assistantMessage", errorPrefix);
+  assertSafeId(value.messageId, "assistantMessage.messageId", errorPrefix);
+  assertText(value.text, "assistantMessage.text", errorPrefix, 8_000);
+  return Object.freeze({ messageId: value.messageId, text: value.text });
 }
 
 interface NormalizedCheckpointQuestions {
@@ -189,7 +209,8 @@ export function parseCheckpointTurn(raw: string, options: ParseCheckpointTurnOpt
     );
   }
   if (parsed.length === 1) {
-    return withInlineNarration(parsed[0]!.turn, trimmed, parsed[0]!.candidate);
+    const { turn, candidate } = parsed[0]!;
+    return options.includeInlineNarration === false ? turn : withInlineNarration(turn, trimmed, candidate);
   }
   if (candidates.length === 1) {
     return parseUnwrappedCheckpointTurn(candidates[0]!.payload, options);
@@ -235,29 +256,7 @@ function parseUnwrappedCheckpointTurn(unwrapped: string, options: ParseCheckpoin
         `checkpoint result action must contain exactly type plus batch or calls; received: ${actionKeys.join(", ") || "<none>"}.`
       );
     }
-    let assistantMessage: CheckpointAssistantMessage | null = null;
-    if (parsed.assistantMessage !== null) {
-      if (typeof parsed.assistantMessage === "string") {
-        assertText(parsed.assistantMessage, "assistantMessage", errorPrefix, 8_000);
-        assistantMessage = Object.freeze({
-          messageId: `message-${createHash("sha256").update(parsed.assistantMessage, "utf8").digest("hex").slice(0, 24)}`,
-          text: parsed.assistantMessage
-        });
-      } else if (!isRecord(parsed.assistantMessage)) {
-        throw checkpointTurnError(
-          `${errorPrefix}_PROTOCOL_INVALID`,
-          `assistantMessage is invalid; received ${Array.isArray(parsed.assistantMessage) ? "array" : typeof parsed.assistantMessage}.`
-        );
-      } else {
-        assertExactKeys(parsed.assistantMessage, ["messageId", "text"], "assistantMessage", errorPrefix);
-        assertSafeId(parsed.assistantMessage.messageId, "assistantMessage.messageId", errorPrefix);
-        assertText(parsed.assistantMessage.text, "assistantMessage.text", errorPrefix, 8_000);
-        assistantMessage = Object.freeze({
-          messageId: parsed.assistantMessage.messageId,
-          text: parsed.assistantMessage.text
-        });
-      }
-    }
+    const assistantMessage = parseCheckpointAssistantMessage(parsed.assistantMessage, errorPrefix);
     const batch = parseCheckpointActionBatch(
       normalizeCheckpointActionBatch(usesWrappedBatch ? parsed.action.batch : { calls: parsed.action.calls }),
       { allowedToolNames }
@@ -271,12 +270,7 @@ function parseUnwrappedCheckpointTurn(unwrapped: string, options: ParseCheckpoin
 
   if (actionType === "user.ask") {
     assertExactKeys(parsed.action, ["questions", "type"], "checkpoint user.ask action", errorPrefix);
-    if (parsed.assistantMessage !== null && typeof parsed.assistantMessage !== "string") {
-      throw checkpointTurnError(`${errorPrefix}_PROTOCOL_INVALID`, "user.ask assistantMessage must be text or null.");
-    }
-    if (typeof parsed.assistantMessage === "string") {
-      assertText(parsed.assistantMessage, "assistantMessage", errorPrefix, 8_000);
-    }
+    const assistantMessage = parseCheckpointAssistantMessage(parsed.assistantMessage, errorPrefix);
     const askArgs = attachNormalizedUserAskArgs({ questions: parsed.action.questions });
     const controlHash = createHash("sha256")
       .update(JSON.stringify(askArgs.questions), "utf8")
@@ -291,12 +285,7 @@ function parseUnwrappedCheckpointTurn(unwrapped: string, options: ParseCheckpoin
     }, { allowedToolNames });
     return Object.freeze({
       protocolVersion,
-      assistantMessage: typeof parsed.assistantMessage === "string"
-        ? Object.freeze({
-            messageId: `message-${createHash("sha256").update(parsed.assistantMessage, "utf8").digest("hex").slice(0, 24)}`,
-            text: parsed.assistantMessage
-          })
-        : null,
+      assistantMessage,
       action: Object.freeze({ type: "action_batch", batch })
     });
   }
@@ -311,7 +300,7 @@ function parseUnwrappedCheckpointTurn(unwrapped: string, options: ParseCheckpoin
     const compactFinal = finalKeys.length === 2
       && finalKeys[0] === "finishReceiptId"
       && finalKeys[1] === "type"
-      && typeof parsed.assistantMessage === "string";
+      && parsed.assistantMessage !== null;
     if (!canonicalFinal && !compactFinal) {
       throw checkpointTurnError(
         `${errorPrefix}_PROTOCOL_INVALID`,
@@ -321,11 +310,10 @@ function parseUnwrappedCheckpointTurn(unwrapped: string, options: ParseCheckpoin
     if (canonicalFinal && parsed.assistantMessage !== null) {
       throw checkpointTurnError(`${errorPrefix}_PROTOCOL_INVALID`, "Final cannot duplicate assistantMessage.");
     }
-    const finalText = compactFinal ? parsed.assistantMessage : parsed.action.text;
+    const compactMessage = compactFinal ? parseCheckpointAssistantMessage(parsed.assistantMessage, errorPrefix) : null;
+    const finalText = compactMessage?.text ?? parsed.action.text;
     assertText(finalText, "final.text", errorPrefix, 8_000);
-    const finalMessageId = compactFinal
-      ? `message-${createHash("sha256").update(finalText, "utf8").digest("hex").slice(0, 24)}`
-      : parsed.action.messageId;
+    const finalMessageId = compactMessage?.messageId ?? parsed.action.messageId;
     assertSafeId(finalMessageId, "final.messageId", errorPrefix);
     assertSafeId(parsed.action.finishReceiptId, "final.finishReceiptId", errorPrefix);
     return Object.freeze({

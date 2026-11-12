@@ -51,6 +51,40 @@ function workbookInput(rows: Array<Array<string | number>>, options: IncomingKpi
 }
 
 describe("complete incoming KPI file breakdown", () => {
+  it("blocks a repeated event_id before and after confirmation without staging a partial calculation", async () => {
+    const input = inputFor("event_id,Reason,Minutes\nDT-01,Repair,60\nDT-02,Waiting,45\nDT-02,Waiting,45", { confirmed: false });
+    const initial = await runRawDataDiscovery(input);
+    expect(initial.incomingKpi?.options.eventIdColumn).toBe("event_id");
+    expect(initial.incomingKpi?.blockingReasons).toEqual([expect.stringMatching(/Duplicate event IDs.*DT-02.*data rows 2 and 3/)]);
+
+    const confirmed = await reanalyzeDiscoveryWithUserEdits(input, initial, { incomingKpiOptions: { confirmed: true } });
+    expect(confirmed.status).toBe("needs_user_input");
+    expect(confirmed.incomingKpi?.coverage.complete).toBe(false);
+    expect(confirmed.changeSetPreview).toMatchObject({ additions: [], updates: [] });
+    expect(validateDiscoveryApply(confirmed)).toContainEqual(expect.objectContaining({ status: "error", message: expect.stringMatching(/Duplicate event IDs.*DT-02/) }));
+  });
+
+  it("reports conflicting and missing IDs in the confirmed source column", async () => {
+    const input = inputFor("Record,Reason,Minutes\nX1,Repair,60\nX1,Waiting,30\n,Repair,30", { eventIdColumn: "Record" });
+    const snapshot = await runRawDataDiscovery(input);
+    expect(snapshot.incomingKpi?.blockingReasons).toEqual([
+      expect.stringMatching(/Duplicate event IDs.*X1.*data rows 1 and 2/),
+      expect.stringMatching(/Missing event IDs.*data rows 3/)
+    ]);
+    expect(snapshot.changeSetPreview).toMatchObject({ additions: [], updates: [] });
+  });
+
+  it("counts separate events with equal measures, including rows that share an asset ID", async () => {
+    const input = inputFor("asset_id,event_id,Reason,Minutes\nA,DT-01,Repair,60\nA,DT-02,Repair,60", { eventIdColumn: "event_id" });
+    const snapshot = await runRawDataDiscovery(input);
+    expect(snapshot.incomingKpi?.coverage).toMatchObject({ includedRows: 2, complete: true });
+    expect(snapshot.changeSetPreview?.additions).toEqual([expect.objectContaining({ baselineValue: 2, description: expect.stringContaining("unique event IDs checked in event_id") })]);
+
+    const noEventId = await runRawDataDiscovery(inputFor("asset_id,Reason,Minutes\nA,Repair,60\nA,Repair,60"));
+    expect(noEventId.status).toBe("waiting_review");
+    expect(noEventId.changeSetPreview?.additions).toEqual([expect.objectContaining({ baselineValue: 2 })]);
+  });
+
   it.each([false, true])("reconciles the actual accepted file hierarchy for a planned context=%s target", async contextOnly => {
     const input = inputFor("Kind,Reason,Minutes\nMechanical,Repair,60\nMechanical,Waiting,120\nOperational,Repair,180", { categoryColumns: ["Kind", "Reason"] });
     const root = input.project.graph.nodes[0]!, target = { ...structuredClone(root), id: "planned_input", name: "Planned measured downtime", type: "input" as const, baselineValue: 17 };

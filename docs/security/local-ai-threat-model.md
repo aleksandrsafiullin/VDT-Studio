@@ -331,10 +331,18 @@ Local voice input adds microphone audio and downloaded recognition assets to thi
 - Managed Cursor authentication deliberately inherits the host environment so the provider CLI can use its own browser/keychain flow, but the frontend supplies only `cursor_subscription`; the runtime fixes `agent login`, bounds execution, verifies the resulting session and never returns raw login output or one-time challenges.
 - Subscription backends remain at the status in `release/provider-certification.json`; fake tests are not live evidence.
 - Tool-capable Cursor receives a fresh ephemeral workspace, not the repository cwd or VDT MCP configuration.
-- The experimental checkpoint/resume Cursor engine additionally uses a stable
-  private empty workspace, a private HOME/config root and an explicit
-  credential environment allowlist; any observed Cursor tool event, workspace
-  write, session drift or unknown stream event stops the run. Because Cursor
+- The experimental checkpoint/resume Cursor engine uses a stable empty
+  workspace and a private permissions config, including when authentication
+  uses the trusted subscription home. The config restricts workspace reads and
+  denies shell, file, MCP and WebFetch permissions. The explicit credential
+  environment allowlist still applies. A prohibited Cursor tool event,
+  workspace write, session drift or unknown stream event stops the run. The
+  native web-search exception requires an unambiguous search event. A mixed
+  tool payload is rejected. The failure message can name an allowlisted tool
+  family and omits its arguments, paths and output. Schema lookup uses
+  `tools.describe` via the VDT Gateway. The
+  same-session format correction is available only after validating the stream
+  and confirming the workspace is empty. Because Cursor
   print mode still contains built-in tools and no credentialed adversarial
   sandbox evidence exists, this is an unverified default-off canary, not a
   hard-isolation or public-capability claim.

@@ -19,7 +19,7 @@ const nativeTools = new Set([
   "vdt.fill_input_values_batch", "vdt.update_node", "vdt.set_formula", "vdt.inspect_hierarchy",
   "vdt.reparent_branch", "vdt.delete_node",
   "vdt.validate", "vdt.calculate", "project.get_node", "project.get_current", "project.read_current",
-  "skill.list", "skill.read", "skill.search", "skill.select",
+  "skill.list", "skill.read", "skill.search", "skill.select", "skill.report_gap",
   "tools.describe", "run.request_finish"
 ]);
 const statusMessage = { type: "string", minLength: 1, maxLength: 500 };
@@ -184,8 +184,10 @@ export function buildOpenAiModelTurn(
     continueWithoutQuestion?: boolean;
     requireOpeningMessage?: boolean;
     planRecorded?: boolean;
+    allowPlanRevision?: boolean;
     constructionPlan?: OpenAiConstructionPlan;
     hierarchyRepair?: HierarchyRepairCall[];
+    reviewInitialPlan?: boolean;
     initialPlanRepair?: VdtDecompositionPlan;
     verifiedFinalText?: string;
   } = {}
@@ -206,17 +208,38 @@ export function buildOpenAiModelTurn(
   const calls = batchProperties.calls as JsonObject;
   const buildingFirstLayer = observation?.constructingTree === true && observation.needsStructure === true
     && observation.nodeCount === 1;
+  const resolution = record(observation?.skillResolution) && !observation.skillResolution.outcome ? observation.skillResolution : undefined;
+  const reads = resolution && Array.isArray(resolution.reads) ? resolution.reads.filter(record) : [];
+  const scopeExcludedIds = Array.isArray(resolution?.scopeExcludedSkillIds) ? resolution.scopeExcludedSkillIds : [];
+  const selectableReads = reads.filter(({ skillId }) => !scopeExcludedIds.includes(skillId));
+  const pinnedId = typeof resolution?.pinnedSkillId === "string" ? resolution.pinnedSkillId : undefined;
+  const unreadIds = pinnedId ? [pinnedId] : Array.isArray(resolution?.candidateIds)
+    ? resolution.candidateIds.filter((id): id is string => typeof id === "string" && !reads.some((receipt) => receipt.skillId === id))
+    : [];
   const repair = !finishReceiptId && options.hierarchyRepair?.length && options.hierarchyRepair.every(({ toolName }) =>
     catalog.some((tool) => record(tool) && tool.name === toolName)) ? options.hierarchyRepair : undefined;
   const plan = options.constructionPlan;
+  const executablePlanLayer = plan?.pendingFactors && plan.additions.length > 0 && !plan.kindConflicts?.length
+    && !repair && !options.allowPlanRevision && !(Array.isArray(observation?.unboundSourceFacts) && observation.unboundSourceFacts.length);
   const typed = new Map<string, JsonObject>();
   const encoded: string[] = [];
   const choices: JsonObject[] = [];
   for (const tool of catalog) {
     if (!record(tool) || typeof tool.name !== "string") continue;
     const name = tool.name;
-    if (name === "user.ask") continue;
-    if (options.initialPlanRepair && buildingFirstLayer && name !== "vdt.set_decomposition_plan") continue;
+    if (name === "user.ask" || (!resolution && name === "skill.report_gap")) continue;
+    if (observation?.constructingTree === true && record(observation.skillResolution) && observation.skillResolution.outcome
+      && observation.skillResolution.selectedSkillId !== "mining.excavation" && name.startsWith("excavation.")) continue;
+    if (resolution) {
+      const available = pinnedId ? name === "skill.read"
+        : !resolution.catalogBrowsed ? name === "skill.list"
+        : (name === "skill.report_gap" && !scopeExcludedIds.length && (resolution.catalogComplete || resolution.scopedSearchReviewed))
+          || (name === "skill.list" && typeof resolution.nextOffset === "number")
+          || name === "skill.search"
+          || (name === "skill.read" && unreadIds.length > 0) || (name === "skill.select" && selectableReads.length > 0);
+      if (!available) continue;
+    }
+    if (options.reviewInitialPlan && buildingFirstLayer && name !== "vdt.set_decomposition_plan") continue;
     if (repair && ["vdt.inspect_hierarchy", "vdt.validate", "vdt.calculate"].includes(name)) continue;
     if (buildingFirstLayer && !["vdt.set_decomposition_plan", "vdt.add_driver", "vdt.add_drivers_batch", "tools.describe"].includes(name)
       && !name.startsWith("skill.") && !name.startsWith("data.") && !name.startsWith("research.")) continue;
@@ -231,6 +254,7 @@ export function buildOpenAiModelTurn(
       && observation?.hasDecompositionPlan === false && tool.mutatesProject
       && name !== "vdt.create_draft" && name !== "vdt.set_decomposition_plan") continue;
     if (observation?.needsStructure === true && ["vdt.set_formula", "vdt.update_node", "vdt.validate", "vdt.calculate"].includes(name)) continue;
+    if (executablePlanLayer && name === "vdt.set_decomposition_plan") continue;
     if (buildingFirstLayer && options.planRecorded && plan?.additions.length && name === "vdt.set_decomposition_plan") continue;
     if (name === "vdt.set_formula" && plan && !plan.calculatedIds.length) continue;
     const constructionLink = name === "vdt.add_edge" && observation?.constructingTree === true && plan;
@@ -244,17 +268,37 @@ export function buildOpenAiModelTurn(
       ? plannedDriverArguments(name, tool.inputJsonSchema, plan, observation)
       : groundLiteralValues(name, boundConstructionArguments(name, ids, observation), observation, observation?.allowAssumptions === true);
     if (!args) continue;
-    const projected = name === "vdt.set_decomposition_plan" && buildingFirstLayer
-      ? firstPlanArguments(args, observation.rootNodeId)
+    let projected = name === "vdt.set_decomposition_plan" && observation?.constructingTree === true
+      ? constructionPlanArguments(args, observation.rootNodeId, buildingFirstLayer)
       : name === "vdt.update_node" && observation?.constructingTree === true ? constructionUpdateArguments(args, plan?.nodeUpdateTypes) : args;
+    if (resolution && record(projected.properties)) {
+      const properties = { ...projected.properties };
+      projected = { ...projected, properties };
+      if (name === "skill.read") {
+        properties.skillId = { ...properties.skillId as JsonObject, enum: unreadIds };
+      } else if (name === "skill.list" && typeof resolution.nextOffset === "number") {
+        properties.offset = { type: "integer", const: resolution.nextOffset };
+        projected.required = ["offset"];
+      } else if (name === "skill.select") {
+        properties.skillId = { ...properties.skillId as JsonObject, enum: [...new Set(selectableReads.map((receipt) => receipt.skillId))] };
+        properties.readReceiptId = { ...properties.readReceiptId as JsonObject, enum: selectableReads.map((receipt) => receipt.readReceiptId) };
+        projected.required = ["skillId", "reason", "readReceiptId"];
+      }
+    }
     const strict = strictSchema(projected);
     if (!strict) { encoded.push(name); continue; }
     typed.set(name, projected);
-    choices.push(object({ toolName: tag(name), args: strict }));
+    const exactRead = name === "skill.select" && selectableReads.length && record(strict.properties)
+      ? { anyOf: selectableReads.map(({ skillId, readReceiptId }) => ({
+          ...strict, properties: { ...strict.properties as JsonObject, skillId: { type: "string", const: skillId },
+            readReceiptId: { type: "string", const: readReceiptId } }
+        })) }
+      : strict;
+    choices.push(object({ toolName: tag(name), args: exactRead }));
   }
   if (encoded.length) choices.push(object({ toolName: { type: "string", enum: encoded },
     argsJson: { type: "string", maxLength: 12_000 } }));
-  batchProperties.calls = { ...calls, ...(observation?.nodeCount === 0 || buildingFirstLayer || plan?.pendingFactors || options.continueWithoutQuestion ? { maxItems: 1 } : {}),
+  batchProperties.calls = { ...calls, ...(resolution || observation?.nodeCount === 0 || buildingFirstLayer || plan?.pendingFactors || options.continueWithoutQuestion ? { maxItems: 1 } : {}),
     items: { $ref: "#/$defs/toolCall" } };
   action.anyOf = action.anyOf.filter((item) => {
     const kind = (item.properties as { type: { const: string } }).type.const;
@@ -301,8 +345,15 @@ export function buildOpenAiModelTurn(
       const args = typed.get(call.toolName);
       if (args && record(call.args)) {
         const canonicalArgs = omitAbsentFields(call.args, args);
-        if (call.toolName === "vdt.set_decomposition_plan" && buildingFirstLayer) {
+        if (call.toolName === "vdt.set_decomposition_plan" && observation?.constructingTree === true) {
           resolveImplicitRoot(canonicalArgs, observation.rootNodeId);
+        }
+        if (call.toolName === "vdt.set_formula" && observation?.constructingTree === true && record(canonicalArgs)
+          && typeof canonicalArgs.formula === "string") {
+          const assignment = /^\s*([a-z_][a-z_0-9]*)?\s*=\s*/i.exec(canonicalArgs.formula);
+          if (assignment && (!assignment[1] || assignment[1] === canonicalArgs.nodeId)) {
+            canonicalArgs.formula = canonicalArgs.formula.slice(assignment[0].length);
+          }
         }
         return { ...call, externalCallId, args: canonicalArgs };
       }
@@ -325,17 +376,24 @@ export function buildOpenAiModelTurn(
   return { schema, decode, toolGuidance, hasHierarchyRepair: !!repair, hasInitialPlanRepair: !!initialPlanRepair };
 }
 
-function firstPlanArguments(schema: JsonObject, rootId: unknown): JsonObject {
+function constructionPlanArguments(schema: JsonObject, rootId: unknown, firstLayer: boolean): JsonObject {
   if (typeof rootId !== "string") return schema;
   const copy = structuredClone(schema);
   const plan = record(copy.properties) && copy.properties.plan;
   const nodes = record(plan) && record(plan.properties) && plan.properties.nodes;
   const fields = record(nodes) && record(nodes.items) && nodes.items.properties;
   if (!record(fields) || !record(fields.nodeId) || !record(fields.parentNodeId)) return schema;
-  fields.nodeId = { ...fields.nodeId, pattern: newDriverId, maxLength: 80,
-    description: "A new lowercase identifier for a descendant. The root is implicit." };
-  fields.parentNodeId = { ...fields.parentNodeId,
-    description: `Use ${String(rootId)} for direct children of the root, or the exact ID of a planned parent.` };
+  fields.nodeId = { ...fields.nodeId, ...(firstLayer ? { pattern: newDriverId, maxLength: 80 } : {}),
+    description: "The ID of an existing or new descendant. The root is implicit." };
+  fields.parentNodeId = { anyOf: [{ type: "null", description: "A direct child of the existing root." }, {
+    ...fields.parentNodeId, description: `Use ${rootId} or the exact ID of a planned calculated parent. Context entries may use a context parent.`
+  }] };
+  if (record(fields.rationale)) fields.rationale = {
+    ...fields.rationale, description: "Required for context entries. Omit for ordinary formula operands."
+  };
+  if (record(fields.sharedWith)) fields.sharedWith = {
+    ...fields.sharedWith, description: "Only additional calculations that actually use this factor. Omit when its own parent is its only formula user."
+  };
   return copy;
 }
 
@@ -345,7 +403,7 @@ function resolveImplicitRoot(args: unknown, rootId: unknown): void {
   const ids = new Set(nodes.map((node) => node.nodeId));
   for (const node of nodes) {
     const parent = node.parentNodeId;
-    if (typeof parent === "string" && /^root(?:_kpi)?$/i.test(parent) && !ids.has(parent)) node.parentNodeId = rootId;
+    if (parent === null || (typeof parent === "string" && /^root(?:_kpi)?$/i.test(parent) && !ids.has(parent))) node.parentNodeId = rootId;
   }
 }
 
@@ -384,23 +442,41 @@ type OpenAiConstructionPlan = {
   orphanLinks?: Array<Pick<VdtDecompositionPlan["nodes"][number], "nodeId" | "parentNodeId" | "kind">>;
 };
 
-/** Offer a corrected initial proposal only when deleting the operandless
- * leaves keeps every other authored entry and produces an executable plan. */
+export function initialPlanIssues(proposal: unknown, rootNodeId: string): string[] {
+  const shape = decompositionPlanErrors(proposal, rootNodeId);
+  if (shape.length) return shape;
+  const plan = proposal as VdtDecompositionPlan;
+  return [
+    ...decompositionPlanGroupingErrors(plan, rootNodeId),
+    ...calculationsWithoutPlannedInputs(plan).map((id) => `CALCULATION_NEEDS_FACTORS: ${id}`),
+    ...(!plan.nodes.some(({ parentNodeId, kind, sharedWith }) => kind !== "context"
+      && (parentNodeId === rootNodeId || sharedWith?.includes(rootNodeId)))
+      ? ["ROOT_NEEDS_FACTORS: the existing root needs at least one direct or shared formula operand."] : [])
+  ];
+}
+
+/** Offer a corrected initial proposal only when the same factors and their
+ * links survive removal of a redundant root entry or operandless leaves. */
 export function checkedInitialPlanRepair(
   proposal: unknown, rootNodeId: string, facts: readonly LiteralUserQuantity[] = []
 ): VdtDecompositionPlan | undefined {
-  if (decompositionPlanErrors(proposal, rootNodeId).length) return;
-  const plan = proposal as VdtDecompositionPlan;
+  if (!record(proposal) || !Array.isArray(proposal.nodes) || !proposal.nodes.every(record)) return;
+  const duplicateRoot = proposal.nodes.filter(({ nodeId }) => nodeId === rootNodeId);
+  const root = duplicateRoot[0];
+  const withoutRoot = duplicateRoot.length === 1 && root?.kind === "calculated" && root.parentNodeId === rootNodeId
+    && root.rationale === undefined && (root.sharedWith === undefined || (Array.isArray(root.sharedWith) && !root.sharedWith.length))
+    ? { ...proposal, nodes: proposal.nodes.filter((entry) => entry !== root) } : proposal;
+  if (decompositionPlanErrors(withoutRoot, rootNodeId).length) return;
+  const plan = withoutRoot as unknown as VdtDecompositionPlan;
   const operandless = new Set(calculationsWithoutPlannedInputs(plan));
   const parentsAndSharedUsers = new Set(plan.nodes.flatMap(({ parentNodeId, sharedWith }) => [parentNodeId, ...(sharedWith ?? [])]));
   const nodes = plan.nodes.filter(({ nodeId, sharedWith }) =>
     !operandless.has(nodeId) || parentsAndSharedUsers.has(nodeId) || sharedWith?.length);
   const typedFacts = new Set(facts.filter(({ unit }) => unit).map(({ value, quote }) => JSON.stringify([value, quote])));
   const inputCount = nodes.filter(({ kind }) => kind === "input").length;
-  if (nodes.length === plan.nodes.length || inputCount < Math.max(1, typedFacts.size)) return;
+  if (nodes.length === proposal.nodes.length || inputCount < Math.max(1, typedFacts.size)) return;
   const repaired = { ...plan, nodes };
-  if (calculationsWithoutPlannedInputs(repaired).length || decompositionPlanErrors(repaired, rootNodeId).length
-    || decompositionPlanGroupingErrors(repaired, rootNodeId).length) return;
+  if (initialPlanIssues(repaired, rootNodeId).length) return;
   return repaired;
 }
 

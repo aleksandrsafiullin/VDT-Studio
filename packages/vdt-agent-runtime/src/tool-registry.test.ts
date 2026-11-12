@@ -5,6 +5,7 @@ import { AgentRunStore } from "./run-store";
 import { ToolRegistry, type AgentToolContext } from "./tool-registry";
 import { SCHEMA_ISSUE_SUMMARY_MAX_CHARS } from "./schema-issue-summary";
 import { createDefaultToolRegistry } from "./tools";
+import { excavationDowntimeCoverage, excludedExcavationSkillIds } from "./construction-source-facts";
 
 describe("ToolRegistry", () => {
   it("publishes the same argument bounds and required fields that built-in tools enforce", () => {
@@ -653,7 +654,7 @@ describe("ToolRegistry", () => {
       .toMatchObject({ ok: true });
   });
 
-  it("creates only a declared orphan link during new construction, including shared factors", async () => {
+  it.each(["requirePlanOperands", "requireDecompositionPlan"] as const)("creates only a declared orphan link with %s, including shared factors", async (policy) => {
     const builder = new VdtBuilderSession();
     builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
     const root = builder.getProject().rootNodeId;
@@ -665,9 +666,9 @@ describe("ToolRegistry", () => {
     ] } } });
     const initial = builder.getProject();
     const { registry, context } = sourceUnitContext(builder, "Model revenue.");
-    context.requirePlanOperands = true;
+    context[policy] = true;
     const link = { sourceNodeId: "gross", targetNodeId: "sales", relation: "formula_dependency" };
-    for (const input of [link, { ...link, sourceNodeId: root }]) {
+    for (const input of [link, { ...link, sourceNodeId: root }, { ...link, sourceNodeId: "sales", targetNodeId: "gross" }]) {
       expect(await registry.run("vdt.add_edge", input, context)).toMatchObject({ ok: false,
         error: { code: "CONSTRUCTION_EDGE_NOT_ADMITTED", details: { orphanLinks: [] } } });
     }
@@ -677,7 +678,7 @@ describe("ToolRegistry", () => {
     orphan.graph.edges = orphan.graph.edges.filter(({ targetNodeId }) => targetNodeId !== "sales");
     const orphanBuilder = new VdtBuilderSession({ project: orphan });
     const repairing = sourceUnitContext(orphanBuilder, "Model revenue.");
-    repairing.context.requirePlanOperands = true;
+    repairing.context[policy] = true;
     for (const input of [{ ...link, sourceNodeId: root }, { ...link, relation: "contextual_influence" }]) {
       expect(await repairing.registry.run("vdt.add_edge", input, repairing.context)).toMatchObject({ ok: false,
         error: { code: "CONSTRUCTION_EDGE_NOT_ADMITTED", details: { orphanLinks: [{ nodeId: "sales", parentNodeId: "gross", kind: "input" }] } } });
@@ -763,6 +764,84 @@ describe("ToolRegistry", () => {
     ]));
   });
 
+  it("keeps the original time basis on agent-created inputs for a planned tree", async () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Review time", rootKpi: "Review time", unit: "h" });
+    const parentNodeId = builder.getProject().rootNodeId;
+    const note = "Checking each takes 12 minutes";
+    const { registry, context } = sourceUnitContext(builder, note);
+    context.requireDecompositionPlan = true;
+    expect(await registry.run("vdt.set_decomposition_plan", { plan: { version: 1, goal: "Review time", nodes: [
+      { nodeId: "duration", parentNodeId, kind: "input" }
+    ] } }, context)).toMatchObject({ ok: true });
+    expect(await registry.run("vdt.add_driver", {
+      nodeId: "duration", parentNodeId, name: "Time per document", unit: "h"
+    }, context)).toMatchObject({ ok: true });
+    const fill = () => registry.run("vdt.fill_input_values_batch", {
+      values: [{ nodeId: "duration", value: 12, note, provenance: "user_provided_value" }]
+    }, context);
+    expect(await fill()).toMatchObject({ ok: false, error: { code: "SOURCE_UNIT_MISMATCH" } });
+    expect(await registry.run("vdt.update_node", { nodeId: "duration", patch: { unit: "minutes" } }, context)).toMatchObject({ ok: true });
+    expect(await fill()).toMatchObject({ ok: true, output: { sourceUnitCorrections: [
+      { nodeId: "duration", previousUnit: "minutes", unit: "min/item" }
+    ] } });
+    expect(await registry.run("vdt.update_node", { nodeId: "duration", patch: { unit: "h/item" } }, context))
+      .toMatchObject({ ok: false, error: { code: "SOURCE_UNIT_MISMATCH" } });
+    expect(builder.getProject().graph.nodes.find(({ id }) => id === "duration")).toMatchObject({ baselineValue: 12, unit: "min/item" });
+  });
+
+  it("requires separately quoted excavation losses in the output dependency tree", async () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ projectTitle: "Face output", rootKpi: "Face output", unit: "t" });
+    const parentNodeId = builder.getProject().rootNodeId;
+    const facts = [
+      { nodeId: "schedule", unit: "h", value: 80, note: "Each loader is scheduled for 80 hours" },
+      { nodeId: "repairs", unit: "h", value: 5, note: "Repairs take 5 hours" },
+      { nodeId: "stoppages", unit: "h", value: 3, note: "Stoppages take 3 hours" },
+      { nodeId: "fleet", unit: "count", value: 2, note: "There are 2 identical loaders" },
+      { nodeId: "frequency", unit: "h", value: 15, note: "Each loader performs 15 cycles per hour" },
+      { nodeId: "mass", unit: "t", value: 4, note: "Each loader moves 4 tonnes per cycle" }
+    ];
+    const { registry, context } = sourceUnitContext(builder, facts.map(({ note }) => note).join(". "));
+    const state = context.store.getState(context.runId);
+    context.store.updateRun(context.runId, {
+      request: { ...state.request, input: { ...state.request.input, unit: "t", rootKpi: "Face output" } },
+      selectedSkills: [{ id: "mining.excavation", title: "Excavation", path: "excavation", score: 100, reason: "Face output", matchedTerms: [] }]
+    });
+    context.requirePlanOperands = true;
+    expect(await registry.run("vdt.add_drivers_batch", { drivers: facts.map(({ nodeId, unit }) => ({
+      parentNodeId, nodeId, name: nodeId, unit
+    })) }, context)).toMatchObject({ ok: true });
+    expect(await registry.run("vdt.fill_input_values_batch", { values: facts.map(({ nodeId, value, note }) => ({
+      nodeId, value, note, provenance: "user_provided_value"
+    })) }, context)).toMatchObject({ ok: true });
+    expect(builder.getProject().graph.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "fleet", baselineValue: 2, unit: "1" }),
+      expect.objectContaining({ id: "frequency", baselineValue: 15, unit: "cycle/h" }),
+      expect.objectContaining({ id: "mass", baselineValue: 4, unit: "t/cycle" })
+    ]));
+    const inspect = () => excavationDowntimeCoverage(builder.getProject(), context.store.getState(context.runId));
+    builder.setFormula({ nodeId: parentNodeId, formula: "schedule" });
+    expect(inspect()?.missing.map(({ value }) => value)).toEqual([5, 3]);
+    builder.setFormula({ nodeId: parentNodeId, formula: "schedule - repairs - stoppages" });
+    expect(inspect()).toMatchObject({ required: [expect.objectContaining({ value: 5 }), expect.objectContaining({ value: 3 })], missing: [] });
+    const current = context.store.getState(context.runId).request;
+    context.store.updateRun(context.runId, { request: { ...current, input: { ...current.input,
+      prompt: current.input.prompt + ". Total downtime is 8 hours." } } });
+    expect(inspect()).toBeUndefined();
+  });
+
+  it("limits broader mining choices only for a stated face output and a matching catalog skill", () => {
+    const request = { mode: "generate_vdt" as const, providerId: "mock", input: {
+      unit: "t", prompt: "Calculate ore removed from the working face. Each loader makes 18 cycles per hour at 5 tonnes per cycle. Transport does not limit this stage."
+    } };
+    const catalog = ["mining.production_volume", "mining.excavation", "user.site_excavation"];
+    expect(excludedExcavationSkillIds(request, catalog)).toEqual(["mining.production_volume"]);
+    expect(excludedExcavationSkillIds(request, catalog.filter((id) => id !== "mining.excavation"))).toEqual([]);
+    expect(excludedExcavationSkillIds({ ...request, input: { ...request.input,
+      prompt: request.input.prompt.replace("does not limit", "limits") } }, catalog)).toEqual([]);
+  });
+
   it("reserves the hundred divisor for actual percent scaling during formula admission", async () => {
     const builder = new VdtBuilderSession();
     builder.createDraft({ projectTitle: "Revenue", rootKpi: "Revenue", unit: "USD" });
@@ -813,6 +892,24 @@ describe("ToolRegistry", () => {
     store.getState(context.runId).request.input.selectedNodeId = "truck_count";
     expect(await registry.run("vdt.fill_input_values_batch", { values: [{ ...input.values[0], nodeId: "truck_working_time" }] }, context)).toMatchObject({ ok: false, error: { code: "MUTATION_SCOPE_VIOLATION" } });
     expect(JSON.stringify(builder.getProject())).toBe(before);
+  });
+
+  it("rejects unapproved estimate writes without changing the draft", async () => {
+    const { registry, context, builder, store } = inputBatchContext();
+    store.getState(context.runId).request.options!.continueWithAssumptions = false;
+    const before = builder.getRevision();
+    expect(await registry.run("vdt.fill_input_values_batch", { values: [
+      { nodeId: "truck_count", value: 2, provenance: "user_provided_value", note: "2 trucks" },
+      { nodeId: "truck_working_time", value: 60, provenance: "default_assumption", note: "Minutes per hour" }
+    ] }, context)).toMatchObject({ ok: false, error: { code: "ASSUMPTIONS_NOT_AUTHORIZED" } });
+    expect(await registry.run("vdt.update_node", { nodeId: "truck_working_time", patch: {
+      baselineValue: 60, valueStatus: "default_assumption", valueSource: { note: "Minutes per hour" }
+    } }, context)).toMatchObject({ ok: false, error: { code: "ASSUMPTIONS_NOT_AUTHORIZED" } });
+    expect(builder.getRevision()).toBe(before);
+    expect(builder.getProject().graph.nodes.find((node) => node.id === "truck_count")?.baselineValue).toBeUndefined();
+    expect(await registry.run("vdt.fill_input_values_batch", { values: [
+      { nodeId: "truck_count", value: 2, provenance: "user_provided_value", note: "2 trucks" }
+    ] }, context)).toMatchObject({ ok: true });
   });
 
   it("reports all ungrounded batch values together and allows a valid selected-node-only fill", async () => {

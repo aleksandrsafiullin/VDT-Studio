@@ -138,9 +138,10 @@ the same server budget. These limits do not alter chat or Suggested KPI waits.
 **Context → Skill** selects from the same uncategorized library. Creation uses
 provisional Unicode Root-KPI recall and the universal skill when available; if
 the user removed that default, explicit selection remains possible. KPI edits
-reconsider automatic choices; explicit choices remain pinned. The main agent
-can read and explicitly select another skill with a reason. The selector is
-disabled during an active run.
+reconsider automatic choices; explicit choices remain pinned. For a new tree
+without a manual pin, the main agent can explicitly select a skill from the
+whole request or continue from the brief after recording that none fits. The
+selector is disabled during an active run.
 
 This local V1 workflow amends the earlier read-only supplied-skill and
 no-universal-preselection rules. V2 grants/read receipts/CAS, Smart Suggested
@@ -339,7 +340,7 @@ The root KPI appears on the left and drivers expand to the right. The canvas is 
 - A cached project opens from its saved summary while only that project's metadata refreshes in the background; returning home also preserves existing cards during refresh. Background metadata refresh does not replace edits in the project form. Direct VDT links load the requested VDT and its owner summary without first fetching the complete project library. Superseded refresh responses cannot switch the selected project back.
 - Cold project routes use **Loading project…** until the selected project is ready, without unselected-project or creation prompts. Fetch failures and missing projects provide Retry and Back to projects. Retry explicitly reloads the project; a background refresh failure remains visible alongside the cached workspace.
 - Project summaries omit the AI-run counter. Other counters use SQL aggregates rather than loading conversation, run or proposal payloads. Stored AI sessions and history are preserved.
-- The editor's Home and Back to project links wait for the current revision save before leaving. A failed save keeps the editor open. A conflict keeps the draft visible and blocks another save, including after a summary refresh. **Discard local edits and reload** opens the stored revision so the user can reapply changes. The back link supersedes a still-pending newly created VDT route.
+- The editor's Home and Back to project links wait for save confirmation before leaving. A payload identical to the active saved revision reuses that revision. A failed save keeps the editor open. A conflict keeps the draft visible and blocks another save, including after a summary refresh. **Discard local edits and reload** opens the stored revision so the user can reapply changes. The back link supersedes a still-pending newly created VDT route.
 
 Current status: implemented as an alpha foundation. W0.1 atomic revision conflict handling is implemented: manual/create/agent writers use one strict CAS/idempotency boundary and an exclusive-create no-clobber final path. Conflicts preserve local unsaved work, and failed auto-save blocks navigation. A single durable source-of-truth policy and metadata/revision ownership remain W0.5 blockers; Windows durability is unverified.
 
@@ -525,6 +526,11 @@ turn/failure counters are checkpointed. Single-driver batch feedback points to
 `vdt.add_driver`. Both retry-limit and turn-limit termination currently require
 an explicit new run; same-session turn-budget continuation remains unfinished.
 
+For new trees, the agent compares the requested process scope with catalog
+guidance before reading and selecting an exact skill version. A sourced duration
+keeps its original unit and value. The finish check for a duration calculation
+requires compatible operand units and the scale conversion in the formula.
+
 ### Local voice input
 
 Implemented alpha: a microphone beside the chat model/provider selector dictates into the editable draft using local whisper.cpp. Provisional text appears during recording, Stop finishes recognition and Send remains manual. Settings → Voice input selects the multilingual model/language and requires explicit download confirmation. Model installation supports Apple silicon/Intel macOS and Windows x64; hosted web fails closed. Native packaged/Windows verification remains open. See [Voice input](VOICE_INPUT.md).
@@ -542,7 +548,7 @@ do not imply instantaneous word-by-word recognition or a transcription-quality g
 - Detect no applicable skill explicitly and, with user permission, ask, research or create a versioned user specification.
 - Preserve selected skill IDs, versions, hashes, assumptions and evidence in the run record.
 
-The V2 target excludes translated skill copies, language-alias registries and lexical scores as semantic selection decisions. Local V1 now has immutable user versions, Unicode-preserving provisional recall, universal preselection and explicit agent reselection under ADR-010. V2 SQLite metadata, grants, durable read receipts, run-state CAS/idempotent selection and auditable process research remain unimplemented. See [ADR-003](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) and [ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md).
+The V2 target excludes translated skill copies, language-alias registries and lexical scores as semantic selection decisions. Local V1 has immutable user versions and provisional Context recall. The local Supervisor records explicit agent selection or a gap when resolving a new-tree request. V2 SQLite metadata, grants, durable read receipts, run-state CAS/idempotent selection and auditable process research remain target work. See [ADR-003](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) and [ADR-010](adr/ADR-010-local-skill-library-and-context-selection.md).
 
 ### Benchmarks
 
@@ -562,7 +568,7 @@ Current status: planned. Search snippets exist, but source opening, structured b
 
 Current status: the local alpha project workspace provides **VDTs / Files** tabs, project uploads without a tree, search, display-name editing, exact-byte download and archive/restore. **Files for** filters attachments by tree; the editor has a **Files** dialog with **This VDT / Add from project**. One immutable project source can be attached to multiple trees without duplicating its bytes. Detach removes current availability; archive hides a file from new selections. Both retain originals and historical reads, rather than permanently deleting client data. Library uploads accept any file up to 50 MB; unsupported formats remain download-only.
 
-**From file** and the composer paperclip open experimental local discovery for a selected undecomposed KPI. Computer selection saves the source immediately, and saved-source selection immediately attaches it to that tree, independently of analysis or staging. The chooser lists analyzable active sources from the entire project, including uploads from other trees. Explicitly attached structured data is available through existing owner-scoped agent `data.*` tools. Original metadata, filename and bytes remain immutable; library labels and associations are separate. The configured provider can suggest tables, ordered category columns and additive value mapping; required mapping and model questions must be answered before staging. Full-source deterministic reruns support additive numeric values in confirmed KPI-compatible units, numeric duration or explicit start/end timestamps, confirmed period-total or per-day normalization, at most four category levels and 200 nodes, and complete row/category coverage. The reporting period describes the full extract and denominator rather than applying an implicit date filter. Every generated KPI Description identifies its file/hash, table/columns, filters, calculation, reporting period and covered rows. Staging verifies source integrity and unchanged semantic target state, then returns the normal review preview. Other proposals remain metadata-only mappings; general executable bindings, refresh/reconciliation, production-trusted baselines, complex report layouts, PDF/OCR and connectors are not implemented.
+**From file** and the composer paperclip open experimental local discovery for a selected undecomposed KPI. Computer selection saves the source immediately, and saved-source selection immediately attaches it to that tree, independently of analysis or staging. The chooser lists analyzable active sources from the entire project, including uploads from other trees. Explicitly attached structured data is available through existing owner-scoped agent `data.*` tools. Original metadata, filename and bytes remain immutable; library labels and associations are separate. The configured provider can suggest tables, ordered category columns and additive value mapping; required mapping and model questions must be answered before staging. Full-source deterministic reruns support additive numeric values in confirmed KPI-compatible units, numeric duration or explicit start/end timestamps, confirmed period-total or per-day normalization, at most four category levels and 200 nodes, and complete row/category coverage. When the reviewed mapping identifies a unique event ID column, blank or repeated IDs block staging until the user supplies a corrected extract. The reporting period describes the full extract and denominator rather than applying an implicit date filter. Every generated KPI Description identifies its file/hash, table/columns, filters, calculation, reporting period and covered rows. Staging verifies source integrity and unchanged semantic target state, then returns the normal review preview. The general discovery API materializes supported scalar mappings from complete retained tables. It keeps unrelated results as contextual references and can bind one explicitly reviewed metric to an empty KPI with the same unit. Automatic refresh, complex report layouts, PDF/OCR and connectors remain outside the implemented scope.
 
 ### Model providers and local execution
 
@@ -685,7 +691,12 @@ Known Scenario Mode parity boundary: duplicate imported overrides use the last v
 
 The application must not be described as production-ready until the blockers in `PRODUCTION_READINESS.md` are closed. The authoritative target and order are defined in [`VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md`](VDT_STUDIO_CORRECTIVE_IMPLEMENTATION_PLAN.md), [`ADR-003`](adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md) and the [`corrective execution log`](implementation/VDT_CORRECTIVE_EXECUTION_LOG.md); `ROADMAP.md` is the operational summary. Frozen target contracts are not implementation evidence.
 
-For a new blank VDT, native Ollama construction first discovers and reads a model-selected library skill, then builds in bounded steps. For a newly built VDT, completion requires actual drivers and a root formula that references them. Replacing an empty root with a number cannot mark the build complete. Existing inputs are filled in bounded atomic batches with provenance; already populated values use explicit updates. Formula assignment preserves the root KPI role. These checks do not certify the business assumptions.
+For a new blank VDT, native Ollama construction starts after skill resolution.
+The model can choose a library skill, read a trusted pin or report that no
+skill applies. Completion requires drivers and a root formula that references
+them. Empty inputs are filled in bounded atomic batches with provenance.
+Already populated values use explicit updates. Formula assignment preserves
+the root KPI role. Business assumptions still require review.
 
 Experimental complete library topologies: a local Model Agent may explicitly select `mining.load_and_haul` through `skill.seed_topology`, accept individually named illustrative defaults, fill supplied facts, and use the normal calculation/finish gates. The single canonical skill artifact contains the annual joint excavation/haulage formulas; defaults are editable assumptions, not site facts or verified benchmarks. Seeding preserves the existing root and cannot replace existing drivers. A fresh local `qwen3.5:4b-q4_K_M` run on 2026-10-17 completed this library workflow with 35 calculable nodes in 10 turns, without operator formula/value edits. See [the live evidence and its limits](AI_HARNESS.md#local-library-completion-evidence-2026-10-17); production/provider qualification is unchanged.
 

@@ -10,7 +10,6 @@ const MAX_QUERY_CHARS = 160;
 const MAX_QUERIES = 8;
 const NATIVE_WEB_SEARCH_TOOL_NAME = /^(web_search|web\.search|websearch)$/i;
 const CURSOR_WEB_SEARCH_TOOL_KEY = /^(webSearchToolCall|web_search_tool_call|webSearch|web_search)$/i;
-const CURSOR_FORBIDDEN_TOOL_KEY = /^(readToolCall|editToolCall|shellToolCall|bashToolCall|grepToolCall|deleteToolCall|webFetchToolCall|mcpToolCall|lsToolCall|writeToolCall|applyPatchToolCall|taskToolCall|terminalToolCall)$/i;
 const FORBIDDEN_ACP_KINDS = new Set(["delete", "edit", "execute", "move", "read"]);
 
 export const FORBIDDEN_CODEX_NATIVE_ITEM_TYPES = Object.freeze([
@@ -72,23 +71,23 @@ export function inspectCursorStreamToolCall(event: Record<string, unknown>):
   | { kind: "native_web_search"; id?: string; query?: string }
   | { kind: "forbidden" } {
   const id = cursorToolCallId(event);
-  const named = [event.name, event.tool, event.tool_name, event.subtype, event.toolName]
+  const named = [event.name, event.tool, event.tool_name, event.toolName]
     .filter((candidate): candidate is string => typeof candidate === "string");
-  if (named.some((name) => NATIVE_WEB_SEARCH_TOOL_NAME.test(name))) {
-    return { kind: "native_web_search", ...(id ? { id } : {}), ...(queryFrom(event)) };
+  if (named.some((name) => !NATIVE_WEB_SEARCH_TOOL_NAME.test(name) && !CURSOR_WEB_SEARCH_TOOL_KEY.test(name))) {
+    return { kind: "forbidden" };
   }
-  const payload = isRecord(event.tool_call) ? event.tool_call : undefined;
-  if (!payload) return { kind: "forbidden" };
-  const keys = Object.keys(payload);
-  const hasWebSearch = keys.some((key) => CURSOR_WEB_SEARCH_TOOL_KEY.test(key));
-  const hasForbidden = keys.some((key) => CURSOR_FORBIDDEN_TOOL_KEY.test(key));
-  if (hasWebSearch && !hasForbidden) {
-    const webKey = keys.find((key) => CURSOR_WEB_SEARCH_TOOL_KEY.test(key));
+  if (event.tool_call !== undefined) {
+    if (!isRecord(event.tool_call)) return { kind: "forbidden" };
+    const keys = Object.keys(event.tool_call);
+    if (keys.length !== 1 || !CURSOR_WEB_SEARCH_TOOL_KEY.test(keys[0]!)) return { kind: "forbidden" };
     return {
       kind: "native_web_search",
       ...(id ? { id } : {}),
-      ...(queryFrom(webKey ? payload[webKey] : payload))
+      ...queryFrom(event.tool_call[keys[0]!])
     };
+  }
+  if (named.length > 0 || (typeof event.subtype === "string" && NATIVE_WEB_SEARCH_TOOL_NAME.test(event.subtype))) {
+    return { kind: "native_web_search", ...(id ? { id } : {}), ...queryFrom(event) };
   }
   return { kind: "forbidden" };
 }

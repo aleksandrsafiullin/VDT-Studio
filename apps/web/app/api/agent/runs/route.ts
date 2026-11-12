@@ -1,9 +1,10 @@
 import { isCurrentHarnessSession } from "./harness-session-bindings";
 import {
   agentStartRequestSchema,
+  requiresDerivedRootForRun,
   type VdtAgentPublicStartRequest
 } from "@vdt-studio/vdt-agent-runtime";
-import { VdtStorageError } from "@vdt-studio/storage";
+import { LocalSkillRepository, SkillLibraryError, VdtStorageError } from "@vdt-studio/storage";
 import { readMaxTokens } from "@/lib/ai-route-provider";
 import {
   resolveTrustedStorageWriteMode,
@@ -29,7 +30,7 @@ import {
   isStructuredModelExecutionBinding
 } from "./execution-bindings";
 import { compactPublicAgentSnapshot } from "./public-snapshot";
-import { resolveVdtSkill } from "@vdt-studio/vdt-agent";
+import { pinAvailableSkill, resolveVdtSkill } from "@vdt-studio/vdt-agent";
 import { requireVdt } from "../../skills/service";
 import { bindUserInstructions } from "./personalisation";
 import { isOpenAiSessionBinding, openAiSessionBindings } from "./byok-bindings";
@@ -100,11 +101,25 @@ export async function POST(request: Request) {
     const workspace = resolved.request.workspace;
     if (workspace?.vdtId) requireVdt(workspace.projectId, workspace.vdtId);
     resolved.request.input.personalisation = bindUserInstructions(resolved.request.input.personalisation);
-    const { pin } = await resolveVdtSkill({
-      ...(workspace?.vdtId ? { projectId: workspace.projectId, vdtId: workspace.vdtId } : {}),
-      rootKpi: resolved.request.input.rootKpi ?? resolved.request.input.prompt ?? "Value driver tree"
-    });
-    resolved.request.input.skillSelection = pin;
+    if (resolved.binding && (isStructuredModelExecutionBinding(resolved.binding) || isExternalCliExecutionBinding(resolved.binding))
+      && requiresDerivedRootForRun(resolved.request)) {
+      const repository = new LocalSkillRepository();
+      const selection = workspace?.vdtId ? repository.getSelection(workspace.projectId, workspace.vdtId) : null;
+      resolved.request.skillResolution = { selectionRevision: selection?.revision ?? 0 };
+      if (selection?.source === "user") {
+        const pin = await pinAvailableSkill(selection.skillId, selection.source, selection.reason, selection.version, repository);
+        if (pin.contentHash !== selection.contentHash) {
+          throw new SkillLibraryError("SKILL_VERSION_CHANGED", "The selected skill content changed. Choose a skill again in Context.");
+        }
+        resolved.request.input.skillSelection = pin;
+      }
+    } else {
+      const { pin } = await resolveVdtSkill({
+        ...(workspace?.vdtId ? { projectId: workspace.projectId, vdtId: workspace.vdtId } : {}),
+        rootKpi: resolved.request.input.rootKpi ?? resolved.request.input.prompt ?? "Value driver tree"
+      });
+      resolved.request.input.skillSelection = pin;
+    }
   } catch (error) {
     if (error instanceof AgentExecutionBindingError) {
       return jsonError(

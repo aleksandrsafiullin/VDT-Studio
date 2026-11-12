@@ -1,19 +1,40 @@
 import { LocalModelVerification, type LocalModelVerificationProgress } from "./local-model-verification";
+import type { LocalSkillResolution } from "./local-model-knowledge";
 
 type JsonObject = Record<string, unknown>;
 const isObject = (value: unknown): value is JsonObject => !!value && typeof value === "object" && !Array.isArray(value);
 export const LOCAL_MODEL_UPFRONT_TOOLS = new Set([
   "tools.describe", "data.list_sources", "data.inspect", "data.read_rows", "data.aggregate", "data.write_inputs", "run.request_finish", "vdt.update_node", "vdt.set_formula",
   "vdt.fill_input_values_batch", "vdt.add_driver", "vdt.add_drivers_batch", "vdt.validate", "vdt.calculate",
-  "skill.list", "skill.search", "skill.read", "skill.select", "skill.compile_recipe", "skill.seed_draft_from_recipe", "skill.seed_topology", "excavation.seed_topology"
+  "skill.list", "skill.search", "skill.read", "skill.select", "skill.report_gap", "skill.compile_recipe", "skill.seed_draft_from_recipe", "skill.seed_topology", "excavation.seed_topology"
   ,"vdt.set_decomposition_plan", "vdt.inspect_hierarchy", "vdt.reparent_branch"
 ]);
 const singletonTools = new Set([
   "run.request_finish", "user.ask", "user.request_approval", "approval.request",
-  "tools.describe", "skill.search", "skill.list", "skill.read", "skill.select", "skill.compile_recipe", "skill.seed_topology",
+  "tools.describe", "skill.search", "skill.list", "skill.read", "skill.select", "skill.report_gap", "skill.compile_recipe", "skill.seed_topology",
   "vdt.create_draft", "skill.seed_draft_from_recipe", "excavation.seed_topology", "vdt.fill_input_values_batch", "vdt.add_drivers_batch", "data.list_sources", "data.inspect", "data.read_rows", "data.aggregate", "data.write_inputs"
   ,"vdt.set_decomposition_plan", "vdt.reparent_branch"
 ]);
+
+type NativeSkillChoices = {
+  resolution: LocalSkillResolution;
+  readableIds: string[];
+  selectableReads: LocalSkillResolution["readReceipts"];
+};
+
+function nativeSkillChoices(observation?: JsonObject): NativeSkillChoices | undefined {
+  const candidate = observation?.skillResolution;
+  if (!isObject(candidate) || !Array.isArray(candidate.readReceipts)) return;
+  const resolution = candidate as LocalSkillResolution;
+  const readIds = new Set(resolution.readReceipts.map((receipt) => receipt.skillId));
+  const discoveredIds = Array.isArray(observation?.discoveredSkillIds)
+    ? observation.discoveredSkillIds.filter((id): id is string => typeof id === "string") : [];
+  const readableIds = resolution.pinnedSkillId
+    ? (resolution.selectedSkillId ? [] : [resolution.pinnedSkillId])
+    : discoveredIds.filter((id) => !readIds.has(id));
+  const selectableReads = resolution.pinnedSkillId ? [] : resolution.readReceipts.filter(({ skillId }) => skillId !== resolution.selectedSkillId);
+  return { resolution, readableIds, selectableReads };
+}
 
 /** Native constrained decoding must know each tool's argument shape, not just
  * the outer turn envelope. Keep the immutable public catalog across turns;
@@ -36,6 +57,15 @@ export class LocalModelOutputSchema {
     try { input = JSON.parse(prompt); } catch { /* Ordinary provider calls have no tool catalog. */ }
     if (isObject(input) && isObject(input.delta)) this.observe(input.delta);
     const observation = isObject(workingContext) ? workingContext : undefined;
+    const skills = nativeSkillChoices(observation);
+    const buildingStructure = observation?.constructingTree === true && observation.needsStructure === true;
+    const awaitingSkillResolution = skills
+      ? !skills.resolution.selectedSkillId && !skills.resolution.gapReported
+      : buildingStructure && observation.hasReadSkill === false;
+    const topologies = Array.isArray(observation?.readTopologyDefinitions)
+      ? observation.readTopologyDefinitions.filter((entry) =>
+        !skills || Boolean(skills.resolution.selectedSkillId) && isObject(entry) && entry.skillId === skills.resolution.selectedSkillId)
+      : [];
     this.verification.observe(isObject(input) ? input.delta : undefined, observation?.revision, this.admittedNames);
     const verification = observation?.constructingTree === true && observation.projectReadyForFinish === true
       ? this.verification.progress() : undefined;
@@ -49,12 +79,29 @@ export class LocalModelOutputSchema {
       if(["data.read_rows","data.aggregate","data.write_inputs"].includes(name)&&![...this.datasets.values()].some(t=>t.size))return false;
       if(name==="data.write_inputs"&&observation?.unfilledInputCount===0)return false;
       if (this.finishReceiptId) return false;
-      if (name === "skill.seed_topology" && (!Array.isArray(observation?.readTopologyDefinitions) || !observation.readTopologyDefinitions.length)) return false;
-      if (observation?.constructingTree === true && observation.needsStructure === true && observation.hasReadSkill === false) {
-        const foundSkills = Array.isArray(observation.discoveredSkillIds) && observation.discoveredSkillIds.length > 0;
+      if (name === "skill.seed_topology" && !topologies.length) return false;
+      if (name === "skill.report_gap" && !skills) return false;
+      if (skills) {
+        const { catalogBrowsed, nextCatalogOffset, gapAvailable, pinnedSkillId, selectedSkillId } = skills.resolution;
+        if (awaitingSkillResolution) {
+          if (pinnedSkillId) return name === "skill.read";
+          if (!catalogBrowsed) return name === "skill.list";
+          return (name === "skill.list" && nextCatalogOffset !== undefined)
+            || (name === "skill.report_gap" && gapAvailable) || name === "skill.search"
+            || (name === "skill.read" && skills.readableIds.length > 0)
+            || (name === "skill.select" && skills.selectableReads.length > 0);
+        }
+        if (name === "skill.report_gap" || (buildingStructure && ["skill.list", "skill.search"].includes(name))) return false;
+        if (name === "skill.read" && !skills.readableIds.length) return false;
+        if (name === "skill.select" && !skills.selectableReads.length) return false;
+        if (["skill.compile_recipe", "skill.seed_draft_from_recipe"].includes(name) && !selectedSkillId) return false;
+        if (name === "excavation.seed_topology" && selectedSkillId !== "mining.excavation") return false;
+      }
+      if (!skills && awaitingSkillResolution) {
+        const foundSkills = Array.isArray(observation?.discoveredSkillIds) && observation.discoveredSkillIds.length > 0;
         return foundSkills ? name === "skill.read" : ["skill.list", "skill.search"].includes(name);
       }
-      if (observation?.constructingTree === true && observation.needsStructure === true && observation.hasReadSkill === true) {
+      if (!skills && buildingStructure && observation.hasReadSkill === true) {
         if (["skill.list", "skill.search"].includes(name)) return false;
         if (name === "skill.read" && (!Array.isArray(observation.readSkillIds) || !Array.isArray(observation.discoveredSkillIds)
           || observation.discoveredSkillIds.every((id) => (observation.readSkillIds as unknown[]).includes(id)))) return false;
@@ -103,9 +150,8 @@ export class LocalModelOutputSchema {
       // business clarification is needed. Once checked, real questions remain
       // available; calculability alone does not establish business completeness.
       if (kind === "question" && verification?.pending.length) return [];
-      if (isObject(alternative.properties.type) && alternative.properties.type.const === "question"
-        && observation?.constructingTree === true && observation.needsStructure === true && observation.hasReadSkill === false
-        && isObject(input) && isObject(input.delta) && (input.delta.type !== "initial_context" || observation.canClarifyBeforeDiscovery === false)) return [];
+      if (kind === "question" && awaitingSkillResolution && isObject(input) && isObject(input.delta)
+        && (input.delta.type !== "initial_context" || observation?.canClarifyBeforeDiscovery === false)) return [];
       if (exchangeId && isObject(alternative.properties.messageId)) alternative.properties.messageId.const = `${exchangeId}:message`;
       if (exchangeId && isObject(alternative.properties.questionSetId)) alternative.properties.questionSetId.const = `${exchangeId}:questions`;
       if (isObject(alternative.properties.text)) alternative.properties.text.maxLength = 1_000;
@@ -124,9 +170,16 @@ export class LocalModelOutputSchema {
         const option = structuredClone(alternative);
         const optionBatch = (option.properties as JsonObject).batch as JsonObject;
         if (exchangeId && isObject((optionBatch.properties as JsonObject).batchId)) ((optionBatch.properties as JsonObject).batchId as JsonObject).const = `${exchangeId}:batch`;
-        const choices = selected.map(([name, args]) => ({
-          ...call, properties: { ...properties, toolName: { type: "string", const: name }, args: this.groundDataArguments(name,projectNativeInputBatchSchema(name, groundLiteralValues(name, boundConstructionArguments(name, groundExistingIds(name, args, observation), observation), observation), observation)) }
-        }));
+        const choices = selected.map(([name, args]) => {
+          const grounded = groundNativeSkillArguments(name, args, skills)
+            ?? groundExistingIds(name, args, name === "skill.seed_topology" ? { ...observation, readTopologyDefinitions: topologies } : observation);
+          const bounded = boundConstructionArguments(name, grounded, observation);
+          const literal = groundLiteralValues(name, bounded, observation);
+          const projected = projectNativeInputBatchSchema(name, literal, observation);
+          return {
+            ...call, properties: { ...properties, toolName: { type: "string", const: name }, args: this.groundDataArguments(name, projected) }
+          };
+        });
         // Tuple positions give every call a stable unique ID in this exchange.
         // Only transport identifiers are host-namespaced; the model still
         // chooses every tool, argument, node, formula and value.
@@ -217,6 +270,40 @@ export class LocalModelOutputSchema {
       }
     }
     return variants.length===1?variants[0]!:variants.length?{anyOf:variants}:schema;
+  }
+}
+
+function groundNativeSkillArguments(name: string, schema: JsonObject, choices?: NativeSkillChoices): JsonObject | undefined {
+  if (!choices || !isObject(schema.properties)) return;
+  const properties = schema.properties;
+  if (name === "skill.list" && isObject(properties.offset)) {
+    const offset = choices.resolution.nextCatalogOffset;
+    return {
+      ...schema,
+      properties: { ...properties, offset: { ...properties.offset, const: offset ?? 0 } },
+      ...(offset !== undefined ? { required: [...new Set([...(Array.isArray(schema.required) ? schema.required : []), "offset"])] } : {})
+    };
+  }
+  const skillIdSchema = properties.skillId;
+  if (!isObject(skillIdSchema)) return;
+  if (name === "skill.select" && isObject(properties.readReceiptId)) {
+    const readReceiptSchema = properties.readReceiptId;
+    const variants = choices.selectableReads.map(({ skillId, readReceiptId }) => ({
+      ...schema,
+      properties: {
+        ...properties,
+        skillId: { ...skillIdSchema, const: skillId },
+        readReceiptId: { ...readReceiptSchema, const: readReceiptId }
+      },
+      required: [...new Set([...(Array.isArray(schema.required) ? schema.required : []), "readReceiptId"])]
+    }));
+    return variants.length === 1 ? variants[0] : { anyOf: variants };
+  }
+  if (name === "skill.read") {
+    return { ...schema, properties: { ...properties, skillId: { ...skillIdSchema, enum: choices.readableIds } } };
+  }
+  if (["skill.compile_recipe", "skill.seed_draft_from_recipe"].includes(name) && choices.resolution.selectedSkillId) {
+    return { ...schema, properties: { ...properties, skillId: { ...skillIdSchema, const: choices.resolution.selectedSkillId } } };
   }
 }
 

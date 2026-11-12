@@ -377,13 +377,25 @@ the next process only at that durable checkpoint, a human pause or recovery.
 Every later process uses `--resume` with the exact opaque session ID. The
 adapter requires an exact server-probed CLI version, a stable private
 environment ID, an empty non-repository workspace and a small environment
-allowlist. API-key mode uses a private HOME/config root; the trusted-local
-subscription canary uses the authenticated user's Cursor home and supplies
+allowlist. API-key mode uses a private HOME root. The trusted-local subscription
+canary keeps the authenticated user's Cursor home for auth and uses a separate
+private CLI config. This config restricts the read boundary to the workspace
+and denies file, shell, MCP and WebFetch permissions. The canary supplies
 `--trust` only after verifying that the private workspace is empty. It fails
 closed on session drift, unknown
 stream protocol, workspace writes, credential output or any Cursor
 `tool_call` other than native web search (which is recorded on the run).
 It never uses `--force` or `--yolo`.
+
+Each prompt illustrates the compact VDT action envelope and directs schema
+lookup and file access through the Gateway. `tools.describe` supplies exact
+argument schemas and enums, including driver relations. For a new calculated
+tree with a known English or Russian
+report language, the host formats the verified result and completes through
+the existing final event. Model-authored finals use the exact verified receipt.
+If a completed tool-clean stream contains an invalid envelope, one
+same-session format retry may use the remaining segment deadline. Ambiguous
+output, an invalid stream or a prohibited native tool blocks dispatch.
 
 Cursor documents that print mode still has built-in write and bash tools.
 These local negative tests are therefore boundary diagnostics, not proof that

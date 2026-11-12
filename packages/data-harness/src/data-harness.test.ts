@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import { applyChangeSet, calculateGraph, productionVolumeProject } from "@vdt-studio/vdt-core";
-import { applyDiscoveryUserEdits, runRawDataDiscovery, validateDiscoveryApply, type DataDiscoveryStructuredProvider } from "./index";
+import { applyDiscoveryUserEdits, reanalyzeDiscoveryWithUserEdits, runRawDataDiscovery, validateDiscoveryApply, type DataDiscoveryStructuredProvider } from "./index";
 
 describe("raw data discovery harness", () => {
   it("retains distinct provider warnings with the same long prefix and collapses only exact semantic duplicates", async () => {
@@ -349,8 +349,7 @@ describe("raw data discovery harness", () => {
     expect(snapshot.changeSetPreview?.dataSourceChanges?.[0]?.action).toBe("add");
   });
 
-  // Remove `.fails` in W5 when an accepted mapping has a materialized baseline and executable tree lineage.
-  it.fails("[known defect F-06] does not report metadata-only mappings as calculated KPI inputs", async () => {
+  it("calculates general file mappings without attaching unrelated sales to the production formula", async () => {
     const csv = [
       "Revenue,Orders",
       "100,4",
@@ -383,23 +382,54 @@ describe("raw data discovery harness", () => {
     const mappedNodes = applied.project.graph.nodes.filter((node) => node.type === "data_mapped");
     const mappedNodeIds = new Set(mappedNodes.map((node) => node.id));
     const calculation = calculateGraph(applied.project);
-    const rootTrace = calculation.trace.find((item) => item.nodeId === applied.project.rootNodeId);
-
-    expect({
-      applied: applied.success,
-      mappedNodesPresent: mappedNodes.length > 0,
-      materialized: mappedNodes.every((node) => Number.isFinite(node.baselineValue ?? node.value)),
-      noMissingMappedValues: calculation.errors.every((error) =>
-        error.type !== "missing_value" || !error.nodeId || !mappedNodeIds.has(error.nodeId)
-      ),
-      linkedToRootCalculation: rootTrace?.inputs.some((input) => mappedNodeIds.has(input.nodeId)) ?? false
-    }).toEqual({
-      applied: true,
-      mappedNodesPresent: true,
-      materialized: true,
-      noMissingMappedValues: true,
-      linkedToRootCalculation: true
+    expect(applied.success).toBe(true);
+    expect(calculation.errors).toEqual([]);
+    expect(calculation.rootValue).toBe(calculateGraph(productionVolumeProject).rootValue);
+    expect(Object.fromEntries(mappedNodes.map((node) => [`${node.dataMapping!.aggregation}:${node.dataMapping!.field}`, node.baselineValue]))).toEqual({
+      "count:*": 3, "sum:Revenue": 600, "avg:Revenue": 200, "sum:Orders": 15, "avg:Orders": 5
     });
+    expect(mappedNodes.every((node) => node.valueStatus === "calculated" && node.valueSource?.note?.includes("rows: 3/3"))).toBe(true);
+    expect(applied.project.graph.edges.filter((edge) => mappedNodeIds.has(edge.targetNodeId))
+      .every((edge) => edge.relation === "contextual_influence")).toBe(true);
+  });
+
+  it("replays an explicitly reviewed F-06 binding into the target formula and rejects stale or unsupported baselines", async () => {
+    const text = "Revenue,Other,Invalid\n100,0,not-a-number\n200,0,2\n300,0,3";
+    const project = structuredClone(productionVolumeProject);
+    const target = project.graph.nodes.find((node) => node.id === project.rootNodeId)!;
+    Object.assign(target, { name: "Total revenue", unit: "USD", formula: undefined, baselineValue: undefined, value: undefined, decompositionPlan: undefined });
+    project.graph = { nodes: [target], edges: [] };
+    const input = { datasetId: "sales_binding", text, project, entryContext: { purpose: "data_mapping" as const, targetNodeId: target.id },
+      file: { fileName: "sales.csv", mimeType: "text/csv", sizeBytes: text.length, contentHash: "sha256:sales", storageRef: "sales_binding", uploadedAt: "2026-07-23T00:00:00.000Z" } };
+    const initial = await runRawDataDiscovery(input);
+    const metricId = initial.proposal!.metrics.find((metric) => metric.aggregation === "sum" && metric.sourceColumns[0] === "Revenue")!.id;
+    const edits = { metricEdits: [{ metricId, enabled: true, unit: "USD", name: "File revenue" }] };
+    expect(validateDiscoveryApply(applyDiscoveryUserEdits(initial, edits))).toContainEqual(expect.objectContaining({ status: "error" }));
+    const reviewed = await reanalyzeDiscoveryWithUserEdits(input, initial, edits);
+    expect(reviewed.validationResults.filter((item) => item.status === "error")).toEqual([]);
+    const patch = reviewed.changeSetPreview!;
+    expect(patch.additions).toEqual([expect.objectContaining({ name: "File revenue", baselineValue: 600, valueStatus: "calculated",
+      dataMapping: expect.objectContaining({ tableId: "table_1", field: "Revenue", aggregation: "sum" }) })]);
+    expect(applyChangeSet(project, patch, new Set([patch.additions[0]!.id])).success).toBe(false);
+    const selectedIds = new Set([
+      ...patch.additions,
+      ...patch.updates,
+      ...(patch.dataSourceChanges ?? []),
+      ...(patch.dataMappingChanges ?? []),
+      ...(patch.taxonomyChanges ?? [])
+    ].map((entry) => entry.id));
+    const applied = applyChangeSet(project, patch, selectedIds);
+    expect(applied.success).toBe(true);
+    expect(calculateGraph(applied.project)).toMatchObject({ rootValue: 600, errors: [], trace: expect.arrayContaining([
+      expect.objectContaining({ nodeId: target.id, inputs: [expect.objectContaining({ nodeId: patch.additions[0]!.nodeId, value: 600 })] })
+    ]) });
+    for (const sourceColumns of [["Invalid"], ["Revenue", "Other"]]) {
+      const invalid = await reanalyzeDiscoveryWithUserEdits(input, reviewed, { metricEdits: [{ metricId, sourceColumns }] });
+      expect(invalid.changeSetPreview).toMatchObject({ additions: [], updates: [] });
+      expect(validateDiscoveryApply(invalid).some((item) => item.status === "error")).toBe(true);
+    }
+    const zero = await reanalyzeDiscoveryWithUserEdits(input, reviewed, { metricEdits: [{ metricId, sourceColumns: ["Other"], aggregation: "avg" }] });
+    expect(zero.changeSetPreview?.additions[0]).toMatchObject({ baselineValue: 0, valueStatus: "calculated" });
   });
 
   it("fails unsupported files without producing a change-set preview", async () => {

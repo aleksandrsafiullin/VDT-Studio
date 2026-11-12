@@ -1,5 +1,5 @@
 import { readExecutableSkillTopology } from "@vdt-studio/vdt-agent";
-import { activateRunSkill, loadRunSkillLibrary } from "./run-skill-library";
+import { activateRunSkill, loadRunSkillLibrary, requireSelectedRunSkill } from "./run-skill-library";
 import { extractFormulaReferences, type VdtChangeSet, type VdtDecompositionPlan } from "@vdt-studio/vdt-core";
 import { z } from "zod";
 import { proposeAndMaybeApplyMutation } from "../mutation-pipeline";
@@ -19,6 +19,7 @@ export const skillSeedTopologyTool: AgentTool = {
   }).strict(),
   outputSchema: z.record(z.string(), z.unknown()), mutatesProject: true, requiresDraftProject: true, phase: "building_graph",
   async run(context, input) {
+    requireSelectedRunSkill(context, input.skillId);
     const library = await loadRunSkillLibrary(context);
     const skill = library.byId.get(input.skillId);
     if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", `Skill "${input.skillId}" was not found.`);

@@ -1,5 +1,4 @@
 import {
-  applyDiscoveryUserEdits,
   reanalyzeDiscoveryWithUserEdits,
   type DataDiscoveryUserEdits
 } from "@vdt-studio/data-harness";
@@ -34,13 +33,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
     const snapshot = await readDiscoveryRun(runId, owner);
     if (!snapshot) return jsonError("Discovery run was not found.", 404, "DATA_DISCOVERY_RUN_NOT_FOUND");
     const edits = readUserEdits(body.edits ?? body);
-    let next;
-    if (snapshot.incomingKpi) {
-      const file = await readDatasetFile(snapshot.datasetId, owner);
-      if (!file || file.metadata.contentHash !== snapshot.file.contentHash) throw new DataApiError("The retained source does not match this discovery run.", 409, "DATA_SOURCE_INTEGRITY_FAILED");
-      const project = await reviewProject(snapshot, owner, body.project);
-      next = await reanalyzeDiscoveryWithUserEdits({ datasetId: snapshot.datasetId, file: file.metadata, bytes: file.bytes, project, entryContext: snapshot.entryContext }, snapshot, edits);
-    } else next = applyDiscoveryUserEdits(snapshot, edits);
+    const file = await readDatasetFile(snapshot.datasetId, owner);
+    if (!file || file.metadata.contentHash !== snapshot.file.contentHash) throw new DataApiError("The retained source does not match this discovery run.", 409, "DATA_SOURCE_INTEGRITY_FAILED");
+    const project = await reviewProject(snapshot, owner, body.project);
+    const next = await reanalyzeDiscoveryWithUserEdits({ datasetId: snapshot.datasetId, file: file.metadata, bytes: file.bytes, project, entryContext: snapshot.entryContext }, snapshot, edits);
     if (owner) { next.workspaceProjectId = owner.projectId; next.vdtId = owner.vdtId; }
     await saveDiscoveryRun(next, owner);
     return Response.json({ ok: true, snapshot: next });
@@ -51,10 +47,10 @@ function readUserEdits(value: unknown): DataDiscoveryUserEdits {
   const input = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
   return {
     ...(input.incomingKpiOptions === undefined ? {} : { incomingKpiOptions: readIncomingKpiOptions(input.incomingKpiOptions) }),
-    disabledColumns: arrayOfRecords(input.disabledColumns).map((entry) => ({
+    ...(input.disabledColumns === undefined ? {} : { disabledColumns: arrayOfRecords(input.disabledColumns).map((entry) => ({
       tableId: readString(entry.tableId),
       columnName: readString(entry.columnName)
-    })).filter((entry) => entry.tableId && entry.columnName),
+    })).filter((entry) => entry.tableId && entry.columnName) }),
     columnRoles: arrayOfRecords(input.columnRoles).map((entry) => {
       const logicalType = readString(entry.logicalType);
       return {

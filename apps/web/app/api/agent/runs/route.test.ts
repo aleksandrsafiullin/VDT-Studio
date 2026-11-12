@@ -6,6 +6,7 @@ import { createLocalRuntimeContext, AGENT_DECISION_TIMEOUT_FLOOR_MS } from "@vdt
 import type { AgentCapabilityProfile } from "@vdt-studio/vdt-agent-runtime";
 import { VdtBuilderSession } from "@vdt-studio/vdt-core";
 import { VdtStorageError } from "@vdt-studio/storage";
+import { loadDefaultSkillLibrary, retrieveSkills } from "@vdt-studio/vdt-agent";
 import { openVdtStorageDatabase } from "../../vdt/storage-database";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as getExecutionBindings, POST as startRun } from "./route";
@@ -48,6 +49,24 @@ function openAiStructuredResponse(output: unknown): Response {
   }), {
     status: 200,
     headers: { "content-type": "application/json" }
+  });
+}
+
+function skillResolutionResponse(init: RequestInit | undefined, skillId?: string): Response | undefined {
+  const body = JSON.parse(String(init?.body));
+  const prompt = JSON.parse(body.messages.filter((message: { role: string }) => message.role === "user").at(-1).content);
+  const resolution = prompt.hostObservation?.skillResolution;
+  if (!resolution || resolution.outcome) return undefined;
+  const read = resolution.reads?.find((receipt: { skillId: string }) => receipt.skillId === skillId);
+  const call = !resolution.catalogBrowsed ? { toolName: "skill.list", args: {} }
+    : !skillId ? { toolName: "skill.report_gap", args: { reason: "No catalog skill covers the requested process." } }
+    : !read ? { toolName: "skill.read", args: { skillId } }
+    : { toolName: "skill.select", args: { skillId, readReceiptId: read.readReceiptId, reason: "The skill covers the requested process." } };
+  return openAiStructuredResponse({
+    turnId: body.response_format?.json_schema?.schema?.properties?.turnId?.const ?? prompt.exchangeId,
+    sessionState: "Resolving the skill before construction.",
+    assistantMessage: { messageId: `${prompt.exchangeId}:summary`, text: "I’ll review the catalog and build the requested factor tree." },
+    action: { type: "action_batch", batch: { calls: [{ ...call, externalCallId: `${prompt.exchangeId}:skill` }] } }
   });
 }
 
@@ -330,9 +349,132 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       expect(agentRuntime.store.getState(body.runId!).executionSummary).toMatchObject(
         body.snapshot?.executionSummary ?? {}
       );
+      expect(agentRuntime.store.getState(body.runId!).request.skillResolution).toBeUndefined();
     } finally {
       dispose();
     }
+  });
+
+  it("resolves marker-free F-08 requests in English and Russian and builds after an explicit catalog gap", async () => {
+    const cases = [
+      {
+        rootKpi: "Monthly face-loading output",
+        industry: "Surface resource extraction",
+        businessContext: "Mass removed from the working face by primary loading machines, governed by fleet availability, pass size, and cycles per hour.",
+        skillId: "mining.excavation"
+      },
+      {
+        rootKpi: "Месячный объем выемки с забоя",
+        industry: "Открытая разработка месторождения",
+        businessContext: "Масса, забираемая из рабочего забоя погрузочными машинами, зависит от доступности парка, объема одного прохода и числа циклов в час.",
+        skillId: "mining.excavation"
+      },
+      {
+        rootKpi: "Archive preparation hours",
+        businessContext: "Add the time archivists spend tagging donated tapes and checking the digitized recordings.",
+        skillId: undefined
+      }
+    ];
+    const library = await loadDefaultSkillLibrary();
+    for (const request of cases.slice(0, 2)) {
+      expect(retrieveSkills(request, library).map(({ skill }) => skill.id)).not.toContain(request.skillId);
+    }
+
+    const bindingId = "f08-model-agent";
+    const dispose = agentExecutionBindingRegistry.register({
+      bindingId, enabled: true, modelId: "f08-test-model",
+      capability: {
+        schemaVersion: 1, executionProfile: "model_agent", engineId: "in-product-model-agent",
+        engineAdapterId: "http-direct-openai-test-v1", backendId: "openai_compatible",
+        protocolVersion: "structured-turn-v1", sessionStrategy: "structured_turn",
+        toolCatalogHash: currentModelAgentToolCatalogHash(), toolIsolation: "permission_only",
+        qualification: {
+          status: "unverified", platform: { os: "test", arch: "test", runtimeVersion: "node-test" },
+          testedAt: null, evidenceHash: null
+        },
+        supportsNativeSession: false, supportsResume: false, supportsStructuredEvents: true,
+        supportsToolBridge: true, supportsQuestions: true, supportsCancellation: true, supportsUsageMetrics: false, cli: null
+      },
+      modelEngineAdapter: { providerId: "openai_compatible", providerConfig: { baseUrl: "https://api.openai.com/v1", apiKey: "test-key" } }
+    });
+    const selections = [];
+    try {
+      for (const { skillId, ...input } of cases) {
+        const builder = new VdtBuilderSession();
+        const { project } = builder.createDraft({ rootKpi: input.rootKpi, projectTitle: input.rootKpi });
+        const plan = {
+          version: 1, goal: input.rootKpi,
+          nodes: ["first_factor", "second_factor"].map((nodeId) => ({ nodeId, parentNodeId: project.rootNodeId, kind: "input" }))
+        };
+        let planSent = false;
+        let firstBrief: unknown;
+        vi.stubGlobal("fetch", async (_url: unknown, init?: RequestInit) => {
+          const body = JSON.parse(String(init?.body));
+          const turnId = body.response_format.json_schema.schema.properties.turnId.const;
+          const prompt = JSON.parse(body.messages.find((message: { role: string }) => message.role === "user").content);
+          firstBrief ??= prompt.originalBrief;
+          const resolution = skillResolutionResponse(init, skillId);
+          if (resolution) return resolution;
+          if (!planSent) {
+            planSent = true;
+            return openAiStructuredResponse({
+              turnId, sessionState: "Record the original request’s factors.", assistantMessage: null,
+              action: { type: "action_batch", batch: { calls: [{ toolName: "vdt.set_decomposition_plan", args: { plan } }] } }
+            });
+          }
+          return new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!signal || signal.aborted) reject(signal?.reason ?? new Error("Fixture provider was interrupted."));
+            else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        });
+        const started = await startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
+          mode: "continue_project",
+          input: { ...input, prompt: input.businessContext, project },
+          executionBindingId: bindingId,
+          options: { researchMode: "off", autoApplyPatches: true }
+        }));
+        expect(started.status).toBe(200);
+        const { runId } = await readJson(started);
+        expect(runId).toBeDefined();
+        const state = () => agentRuntime.store.getState(runId!);
+        try {
+          await waitForRunSnapshot(runId!, () => Boolean(state().builder?.getProject().graph.nodes[0]?.decompositionPlan));
+          expect(firstBrief).toMatchObject({ rootKpi: input.rootKpi, prompt: input.businessContext, skillResolution: "agent_semantic" });
+          expect(firstBrief).not.toHaveProperty("selectedSkill");
+          expect(state().events.find((event) => event.type === "skill_search")?.metadata).toMatchObject({
+            toolName: "skill.list", candidateIds: expect.arrayContaining(["mining.excavation"]), nextOffset: null
+          });
+          if (skillId) {
+            const [selected] = state().selectedSkills;
+            const read = state().events.find((event) => event.type === "skill_read")!;
+            const decision = state().events.find((event) => event.type === "skill_selected")!;
+            expect(selected).toMatchObject({ id: skillId, version: expect.any(Number), contentHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) });
+            expect(read.metadata).toMatchObject({
+              id: skillId, version: selected!.version, contentHash: selected!.contentHash, readReceiptId: expect.any(String),
+              selectionChanged: false, selectedSkillIdsBefore: [], selectedSkillIdsAfter: []
+            });
+            expect(decision.metadata).toMatchObject({
+              toolName: "skill.select", readReceiptIds: [read.metadata?.readReceiptId],
+              resolutionMode: "agent_semantic", usedLegacyMarkers: false, usedLanguageAliases: false
+            });
+            const browse = state().events.find((event) => event.metadata?.toolName === "skill.list" && event.type === "skill_search")!;
+            expect([browse.seq, read.seq, decision.seq]).toEqual([browse.seq, read.seq, decision.seq].sort((a, b) => a - b));
+            selections.push({ id: selected!.id, version: selected!.version, contentHash: selected!.contentHash });
+          } else {
+            expect(state().selectedSkills).toEqual([]);
+            expect(state().events).toContainEqual(expect.objectContaining({
+              metadata: expect.objectContaining({ toolName: "skill.report_gap", outcome: "no_applicable_skill", catalogComplete: true })
+            }));
+          }
+        } finally {
+          await cancelRun(new Request(`http://localhost:3000/api/agent/runs/${runId}/cancel`, { method: "POST" }), { params: Promise.resolve({ runId: runId! }) });
+          await waitForSupervisorReleased(runId!);
+        }
+      }
+      expect(selections).toHaveLength(2);
+      expect(selections[0]).toEqual(selections[1]);
+    } finally { dispose(); }
   });
 
   it.each(["grounded", "estimated", "identity wrapper", "checked plan"] as const)("publishes only the verified calculation in direct OpenAI construction (%s)", async (scenario) => {
@@ -361,7 +503,11 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     const inputs = factors.map(({ nodeId }) => ({ nodeId, parentNodeId: factorParent, kind: "input" }));
     const plan = { version: 1, goal: rootKpi, nodes: [...(identity ? [wrapper] : []), ...inputs] };
     const invalidPlan = { toolName: "vdt.set_decomposition_plan", args: {
-      plan: { ...plan, nodes: checkedPlan ? [...inputs, wrapper, ...["gross_revenue", "discounted_revenue"].map((nodeId) => ({ ...wrapper, nodeId }))] : [wrapper] }
+      plan: { ...plan, nodes: checkedPlan ? [
+        { ...wrapper, nodeId: parentNodeId, parentNodeId: null },
+        ...inputs.map((input) => ({ ...input, parentNodeId: null })), wrapper,
+        ...["gross_revenue", "discounted_revenue"].map((nodeId) => ({ ...wrapper, nodeId }))
+      ] : [wrapper] }
     } };
     const sourcedValues = factors.map(({ nodeId, value, note }) => ({ nodeId, value, note,
       provenance: estimatedRefunds && nodeId === "returns_amount" ? "default_assumption" : "user_provided_value" }));
@@ -418,7 +564,8 @@ describe("agent runs API", { timeout: 30_000 }, () => {
         }
       });
     });
-    vi.stubGlobal("fetch", providerFetch);
+    vi.stubGlobal("fetch", (url: unknown, init?: RequestInit) =>
+      skillResolutionResponse(init, "finance.revenue_profit") ?? providerFetch(url, init));
     const bindingId = `direct-openai-verified-calculation-${scenario.replaceAll(" ", "-")}`;
     const dispose = agentExecutionBindingRegistry.register({
       bindingId, enabled: true, modelId: "gpt-5-nano",
@@ -475,12 +622,14 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       if (checkedPlan) {
         const observations = requests.map((item) =>
           JSON.parse(item.messages.find((message: { role: string }) => message.role === "user").content));
-        expect(observations[0].delta.context).not.toHaveProperty("tools");
+        expect(observations[0].delta).not.toHaveProperty("context");
+        expect(observations[0].delta.results[0]).toMatchObject({ toolName: "skill.select", resultCode: "OK" });
         expect(observations[0].originalBrief).toMatchObject({ prompt, rootKpi, unit: "USD" });
         expect(observations[0].confirmedKnowledge.literalUserQuantities.map(({ value }: { value: number }) => value))
           .toEqual([120, 50, 10, 500]);
         expect(requests[0].messages[0].content).toContain("Start with the source quantities at confirmedKnowledge.literalUserQuantities");
-        expect(observations[1].planReview).toMatchObject({ checkedPlan: plan });
+        expect(observations[1].planReview).toMatchObject({ checkedPlan: plan,
+          issues: expect.arrayContaining([`PLAN_DUPLICATE_NODE: ${parentNodeId}`]) });
         expect(observations[1].hostObservation).toMatchObject({ revision: 0, hasDecompositionPlan: false });
         expect(JSON.stringify(requests[0].response_format.json_schema.schema)).not.toContain("apply_plan_repair");
         expect(JSON.stringify(requests[1].response_format.json_schema.schema)).toContain("apply_plan_repair");
@@ -508,7 +657,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       if (identity) {
         const observations = requests.map((item) =>
           JSON.parse(item.messages.find((message: { role: string }) => message.role === "user").content));
-        expect(observations[1].planReview).toMatchObject({ calculatedNodesWithoutFactors: [factorParent] });
+        expect(observations[1].planReview).toMatchObject({ issues: [`CALCULATION_NEEDS_FACTORS: ${factorParent}`] });
         expect(observations[2].delta.results[0]).toMatchObject({
           resultCode: "INVALID_DECOMPOSITION_PLAN",
           payload: { error: { details: { calculatedNodesWithoutFactors: [factorParent] } } }
@@ -742,8 +891,8 @@ describe("agent runs API", { timeout: 30_000 }, () => {
           .toMatchObject({ inputSchemaEnforcedBy: "native format" });
         expect(firstPrompt.delta.context?.tools?.find((tool) => (tool as { name?: string }).name === "skill.compile_recipe"))
           .toMatchObject({ inputSchemaEnforcedBy: "native format" });
-        expect(JSON.stringify(firstProviderBody.format)).toContain('"toolName":{"type":"string","const":"skill.search"}');
-        expect(JSON.stringify(firstProviderBody.format)).toContain('"maxSkills":{"type":"integer","minimum":3,"maximum":6}');
+        expect(JSON.stringify(firstProviderBody.format)).toContain('"toolName":{"type":"string","const":"skill.list"}');
+        expect(JSON.stringify(firstProviderBody.format)).not.toContain('"toolName":{"type":"string","const":"skill.search"}');
         expect(JSON.stringify(firstProviderBody.format)).not.toContain('"toolName":{"type":"string","const":"vdt.add_driver"}');
         expect(firstPrompt.delta.context?.tools?.find((tool) => (tool as { name?: string }).name === "vdt.layout"))
           .toMatchObject({ inputSchemaAvailableVia: "tools.describe" });
@@ -1246,7 +1395,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
           }]
         }
       }));
-    vi.stubGlobal("fetch", providerFetch);
+    vi.stubGlobal("fetch", (url: unknown, init?: RequestInit) => skillResolutionResponse(init) ?? providerFetch(url, init));
 
     const bindingId = `structured_approved_proposal_${Date.now()}`;
     const dispose = agentExecutionBindingRegistry.register({

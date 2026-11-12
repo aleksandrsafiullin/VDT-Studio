@@ -7,6 +7,7 @@ export const INCOMING_KPI_LIMITS = { maxDepth: 4, maxNodes: 200 } as const;
 export interface IncomingKpiOptions {
   tableId?: string | undefined;
   categoryColumns?: string[] | undefined;
+  eventIdColumn?: string | null | undefined;
   duration?:
     | { mode: "column"; column: string; unit: "seconds" | "minutes" | "hours" | "days" | "target" }
     | { mode: "timestamps"; startColumn: string; endColumn: string; format?: "iso" | "excel_serial" | "dmy" | "mdy" | undefined; timezoneOffsetMinutes?: number | undefined }
@@ -25,6 +26,7 @@ export interface IncomingKpiOptions {
 export const incomingKpiOptionsSchema: z.ZodType<IncomingKpiOptions> = z.object({
   tableId: z.string().min(1).max(200).optional(),
   categoryColumns: z.array(z.string().min(1).max(500)).max(80).optional(),
+  eventIdColumn: z.string().min(1).max(500).nullable().optional(),
   duration: z.discriminatedUnion("mode", [
     z.object({ mode: z.literal("column"), column: z.string().min(1).max(500), unit: z.enum(["seconds", "minutes", "hours", "days", "target"]) }),
     z.object({ mode: z.literal("timestamps"), startColumn: z.string().min(1).max(500), endColumn: z.string().min(1).max(500), format: z.enum(["iso", "excel_serial", "dmy", "mdy"]).optional(), timezoneOffsetMinutes: z.number().finite().int().min(-840).max(840).optional() })
@@ -93,6 +95,11 @@ export function buildIncomingKpiBreakdown(
     if (!questions.some((question) => question.field === field)) questions.push({ id: `incoming_${field}`, field, message, required: true });
   };
   const table = tables.find((candidate) => candidate.tableId === options.tableId);
+  if (table && options.eventIdColumn === undefined) {
+    const candidates = table.columns.filter((column) => /^event[ _-]?id$/i.test(column));
+    if (candidates.length === 1) options.eventIdColumn = candidates[0];
+    if (candidates.length > 1) ask("eventIdColumn", "Choose which column identifies a unique event, or confirm that the source has no unique event ID.");
+  }
   const excelEncoding = options.duration?.mode === "column" ? table?.columnEncodings?.[options.duration.column] : undefined;
   if (excelEncoding === "excel_duration_days" && options.duration?.mode === "column") {
     // Excel time/duration cells serialize as fractions of a day regardless of
@@ -151,8 +158,13 @@ export function buildIncomingKpiBreakdown(
   if (table && categoryColumns.some((column) => table.rows.some((row) => !(row[column] ?? "").trim())) && options.missingCategoryPolicy !== "include_unknown") {
     ask("missingCategoryPolicy", "Some category cells are blank. Confirm that these rows belong in an explicit Unspecified category.");
   }
-  if (!options.confirmed) ask("confirmed", "Review and confirm the detected table, hierarchy order, calculation and reporting period before staging.");
-  if (!target || !table || blockingReasons.length > 0 || categoryColumns.length === 0 || !options.duration) return result;
+  if (!options.confirmed) ask("confirmed", "Review and confirm the table, hierarchy order, event ID, calculation and reporting period before staging.");
+  const validMapping = blockingReasons.length === 0;
+  const eventIdIssues = table && options.eventIdColumn && !table.truncated && !table.layoutIssue
+    ? checkEventIds(table, options.eventIdColumn)
+    : [];
+  blockingReasons.push(...eventIdIssues);
+  if (!target || !table || !validMapping || categoryColumns.length === 0 || !options.duration) return result;
 
   const values: number[] = [];
   let invalidRows = 0;
@@ -162,7 +174,7 @@ export function buildIncomingKpiBreakdown(
   for (const row of table.rows) {
     let hours: number | undefined;
     if (options.duration.mode === "column") {
-      const parsed = parseDurationNumber(row[options.duration.column] ?? "", table.numericColumns?.includes(options.duration.column) ? "decimal_dot" : options.numberFormat);
+      const parsed = parseDatasetNumber(row[options.duration.column] ?? "", table.numericColumns?.includes(options.duration.column) ? "decimal_dot" : options.numberFormat);
       ambiguousNumbers ||= parsed.ambiguous;
       hours = parsed.value === undefined ? undefined : parsed.value * DURATION_HOURS[options.duration.unit];
     } else {
@@ -180,8 +192,10 @@ export function buildIncomingKpiBreakdown(
     if (hours === undefined || !Number.isFinite(hours) || hours < 0 && !additiveNumeric) invalidRows += 1;
     values.push(hours ?? NaN);
   }
-  review.coverage.includedRows = table.rows.length - invalidRows;
-  review.coverage.excludedRows = invalidRows;
+  if (eventIdIssues.length === 0) {
+    review.coverage.includedRows = table.rows.length - invalidRows;
+    review.coverage.excludedRows = invalidRows;
+  }
   if (ambiguousNumbers) ask("numberFormat", "Confirm decimal-dot or decimal-comma number format. Thousands separators and mixed numeric formats are not inferred.");
   if (ambiguousTimestamps) ask("timestampFormat", "Confirm the date format and timezone offset for timestamps without an explicit offset. Invalid dates and overnight rollover are not inferred.");
   if (invalidRows > 0) blockingReasons.push(`${invalidRows} of ${table.rows.length} rows have missing, invalid, negative or ambiguous duration values. Correct the file or mapping; no rows are silently excluded.`);
@@ -196,7 +210,7 @@ export function buildIncomingKpiBreakdown(
       ? `SUM(${options.duration.column} [${target.unit?.split("/")[0]?.trim() || "target KPI base unit"}]); no unit conversion`
       : `SUM(${options.duration.column} [${options.duration.unit}]) converted to ${outputUnit?.label ?? "hours"} (factor ${DURATION_HOURS[options.duration.unit] * factor})`
     : `SUM((${options.duration.endColumn} - ${options.duration.startColumn}) / 3600000) hours converted to ${outputUnit?.label ?? "hours"} (factor ${factor}); timestamp format ${options.duration.format ?? "unconfirmed"}${options.duration.format === "excel_serial" ? `; Excel ${table.excelDateSystem ?? "1900"} date system` : ""}${options.duration.timezoneOffsetMinutes !== undefined ? `; UTC offset ${options.duration.timezoneOffsetMinutes} minutes` : ""}`;
-  review.calculation = `${durationText}${perDay ? ` / ${denominator} ${perDay.basis}` : " (period total)"}${excelEncoding === "excel_duration_days" ? "; Excel duration encoding: serialized days across all relevant cells" : ""}; all source rows, reporting dates do not filter rows`;
+  review.calculation = `${durationText}${perDay ? ` / ${denominator} ${perDay.basis}` : " (period total)"}${excelEncoding === "excel_duration_days" ? "; Excel duration encoding: serialized days across all relevant cells" : ""}; all source rows, reporting dates do not filter rows${options.eventIdColumn && eventIdIssues.length === 0 ? `; unique event IDs checked in ${options.eventIdColumn}` : ""}`;
   if (blockingReasons.length > 0 || !outputUnit || !options.normalization) return result;
   const paths = new Map<string, { path: Array<{ column: string; value: string }>; rows: number[]; parentKey: string }>();
   for (let rowIndex = 0; rowIndex < table.rows.length; rowIndex += 1) {
@@ -264,6 +278,34 @@ export function buildIncomingKpiBreakdown(
     patch: { type: targetNodeId === input.project.rootNodeId ? "root_kpi" : "calculated", formula: rootChildren.map((addition) => addition.nodeId).join(" + "), ...(target.unit !== outputUnit.label ? { unit: outputUnit.label } : {}), aiRationale: `Complete file breakdown from ${input.file.fileName}.` }
   });
   return result;
+}
+
+function checkEventIds(table: DataTable, column: string): string[] {
+  if (!table.columns.includes(column)) return ["The selected event ID column does not exist in the chosen table."];
+  const firstRowById = new Map<string, number>();
+  const repeatedRows: string[] = [];
+  const missingRows: number[] = [];
+  let repeats = 0;
+  let missing = 0;
+  for (const [index, row] of table.rows.entries()) {
+    const id = (row[column] ?? "").trim();
+    const rowNumber = index + 1;
+    if (!id) {
+      missing += 1;
+      if (missingRows.length < 5) missingRows.push(rowNumber);
+      continue;
+    }
+    const firstRow = firstRowById.get(id);
+    if (firstRow === undefined) firstRowById.set(id, rowNumber);
+    else {
+      repeats += 1;
+      if (repeatedRows.length < 5) repeatedRows.push(`${JSON.stringify(id.length > 100 ? `${id.slice(0, 100)}…` : id)} (data rows ${firstRow} and ${rowNumber})`);
+    }
+  }
+  const issues: string[] = [];
+  if (repeats) issues.push(`Duplicate event IDs in "${column}". ${repeats} repeated row${repeats === 1 ? "" : "s"} after the first occurrence: ${repeatedRows.join(", ")}. Review the repeated records and upload a corrected extract.`);
+  if (missing) issues.push(`Missing event IDs in "${column}". ${missing} row${missing === 1 ? "" : "s"} without an ID (data rows ${missingRows.join(", ")}${missing > missingRows.length ? ", …" : ""}). Fill in the IDs in the source extract before staging.`);
+  return issues;
 }
 
 function inferIncomingOptions(tables: DataTable[], model: VdtSemanticDatasetModel, target: VdtNode | undefined): IncomingKpiOptions {
@@ -347,7 +389,7 @@ function resolveOutputUnit(target: VdtNode, normalization: string | undefined, n
   return { label: normalization === "per_day" ? (hasRate ? label : `${label}/day`) : label, factor: numericInTargetUnit ? 1 : 1 / DURATION_HOURS[unit!] };
 }
 
-function parseDurationNumber(value: string, format: IncomingKpiOptions["numberFormat"]): { value?: number; ambiguous: boolean } {
+export function parseDatasetNumber(value: string, format?: IncomingKpiOptions["numberFormat"]): { value?: number; ambiguous: boolean } {
   const trimmed = value.trim();
   if (!trimmed) return { ambiguous: false };
   if (!format && /,|\s/.test(trimmed)) return { ambiguous: true };

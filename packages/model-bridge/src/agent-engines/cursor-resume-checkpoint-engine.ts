@@ -23,6 +23,9 @@ import {
 import {
   CURSOR_CHECKPOINT_PROTOCOL_VERSION,
   CursorResumeCheckpointTransport,
+  cursorCheckpointBatchExample,
+  cursorCheckpointFinalExample,
+  cursorCheckpointPrompt,
   cursorCheckpointEnvironmentFingerprint,
   isCursorCheckpointHash,
   type CursorCheckpointTurn,
@@ -45,6 +48,13 @@ import { isModelContractViolation, sessionIdFromError } from "./checkpoint-trans
 const SAFE_HASH = /^sha256:[a-f0-9]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
 const MAX_SEGMENTS = 240;
+const CURSOR_DATA_PROMPT_RULE = SHARED_PROMPT_RULES.data
+  + " For a file total per category over a stated calendar period, get one grouped sum and set metrics[].scale to the exact unit conversion divided by the inclusive calendar day count (minutes to hours per day: 1 / (60 * inclusiveDays), passed as a JSON number). Include zero-event days between the stated start and end dates; do not substitute a distinct count of event dates. Bind the scaled category results with data.write_inputs and sum those inputs in the tree. Explain the units and period in their descriptions. Exact conversion constants and day counts derived from stated dates belong in the query or formula, never in editable default_assumption inputs. If a required reporting date or unit is missing, ask for it.";
+const CURSOR_LINK_PROMPT_RULE = "Visual links point from parent to factor. Formula dependencies are maintained by vdt.set_formula. For a shared input, record its extra formula users in the plan's sharedWith and reference the same ID in each formula. Never add or reparent visual edges to repair formula dependency links.";
+const CURSOR_BUILD_PROMPT_RULE = [
+  "Adapt skill and recipe templates to the brief. Use supplied actual or net quantities directly. Actual tonnes per trip already include any payload adjustment; time already net of downtime needs no availability factor. Omit redundant adjustments from the plan and formulas. Never ask for a coefficient solely to complete a generic recipe.",
+  "After the plan is recorded, create only the next planned siblings under one existing parent with vdt.add_drivers_batch (args.drivers), or use vdt.add_driver for one driver. Use the planned nodeId and parentNodeId, with a compatible type, name and unit. Omit the optional relation for ordinary formula dependencies. For context or other explicit relations use the exact schema enum from tools.describe. Set formulas separately after their references exist."
+].join(" ");
 
 type CursorCheckpointCapability = Extract<AgentCapabilityProfile, { executionProfile: "external_cli_agent" }>;
 
@@ -297,11 +307,13 @@ export function buildCursorResumeCheckpointInitialPrompt(
   start: AgentEngineStart,
   allowedToolNames: readonly string[]
 ): string {
-  return canonicalJson({
+  return cursorCheckpointPrompt(canonicalJson({
     protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
     constraints: {
       response: `${CHECKPOINT_RESPONSE_ENVELOPE_PROMPT_RULE} The object must contain protocolVersion, assistantMessage, and action.`,
       envelope: CHECKPOINT_RESPONSE_ENVELOPE_PROMPT_RULE,
+      example: cursorCheckpointBatchExample(allowedToolNames),
+      exampleScope: "The example shows the output shape only. Select the next VDT operation and use its actual arguments from the catalog.",
       actionTypes: CHECKPOINT_ACTION_TYPE_PROMPT_RULE,
       actionBatch: SHARED_PROMPT_RULES.actionBatch,
       final: `${SHARED_PROMPT_RULES.finishOrder} ${AGENT_FINISH_MISSING_VALUE_PROMPT_RULE}`,
@@ -311,7 +323,11 @@ export function buildCursorResumeCheckpointInitialPrompt(
       research: SHARED_PROMPT_RULES.research,
       questions: AGENT_QUESTION_PROMPT_RULE,
       finishMissingValues: AGENT_FINISH_MISSING_VALUE_PROMPT_RULE,
-      fullCatalog: "Use the whole tool catalog — skills, excavation, research, validation, calculation, layout, repair, memory — not only vdt.* mutations."
+      fullCatalog: SHARED_PROMPT_RULES.fullCatalog,
+      data: CURSOR_DATA_PROMPT_RULE,
+      structure: CURSOR_BUILD_PROMPT_RULE,
+      links: CURSOR_LINK_PROMPT_RULE,
+      sourceInputs: SHARED_PROMPT_RULES.sourceInputs
     },
     toolCatalog: {
       hash: start.binding.toolCatalogHash,
@@ -322,15 +338,24 @@ export function buildCursorResumeCheckpointInitialPrompt(
       contextHash: start.initialContextHash,
       context: start.initialContext
     }
-  });
+  }));
 }
 
-function buildResumePrompt(delta: CursorCheckpointDelta): string {
-  return canonicalJson({
+function buildResumePrompt(delta: CursorCheckpointDelta, finishReceiptId: string | undefined, allowedToolNames: readonly string[]): string {
+  return cursorCheckpointPrompt(canonicalJson({
     protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
-    constraints: SHARED_RESUME_CONSTRAINTS,
+    constraints: finishReceiptId ? {
+      response: "The host has verified the calculation. Return only the final JSON shown. Replace only the text with the confirmed result in the user's language. Keep the fields flat and the receipt ID exact.",
+      example: cursorCheckpointFinalExample(finishReceiptId)
+    } : {
+      ...SHARED_RESUME_CONSTRAINTS,
+      example: cursorCheckpointBatchExample(allowedToolNames),
+      data: CURSOR_DATA_PROMPT_RULE,
+      structure: CURSOR_BUILD_PROMPT_RULE,
+      links: CURSOR_LINK_PROMPT_RULE
+    },
     delta
-  });
+  }));
 }
 
 function validateAllowedToolNames(names: readonly string[]): readonly string[] {
@@ -492,6 +517,7 @@ class CursorResumeCheckpointSession implements AgentRunSession {
       ...(result.inferenceMs !== undefined ? { inferenceMs: result.inferenceMs } : {}),
       ...(result.outputBytes !== undefined ? { outputBytes: result.outputBytes } : {})
     });
+    if (result.envelopeRepaired) counters.repairCount += 1;
     const binding = Object.freeze({ ...input.start.binding, externalSessionId: result.sessionId });
     return new CursorResumeCheckpointSession({
       binding,
@@ -703,7 +729,8 @@ class CursorResumeCheckpointSession implements AgentRunSession {
               mode: "resume",
               environment: this.#environment,
               model: this.#binding.modelId,
-              prompt: buildResumePrompt(delta),
+              prompt: buildResumePrompt(delta, this.#finishReceipt?.receiptId, this.#allowedToolNames),
+              ...(this.#finishReceipt ? { verifiedFinishReceiptId: this.#finishReceipt.receiptId } : {}),
               expectedSessionId: this.#binding.externalSessionId!,
               signal: this.#abortController.signal
             }, this.#allowedToolNames);
@@ -719,6 +746,7 @@ class CursorResumeCheckpointSession implements AgentRunSession {
               ...(result.inferenceMs !== undefined ? { inferenceMs: result.inferenceMs } : {}),
               ...(result.outputBytes !== undefined ? { outputBytes: result.outputBytes } : {})
             });
+            if (result.envelopeRepaired) this.#counters.repairCount += 1;
             this.#segmentCount = nextSegment;
             this.#lastInput = {
               cursor: segmentCursor(this.#environment, "input", nextSegment),
@@ -856,6 +884,16 @@ class CursorResumeCheckpointSession implements AgentRunSession {
           results: execution.results
         };
         yield { type: "checkpoint_requested", reason: "cursor_action_batch_completed" };
+        if (execution.verifiedFinalText && this.#finishReceipt) {
+          this.#terminal = true;
+          yield {
+            type: "final",
+            messageId: `cursor-final-${hashText(this.#finishReceipt.receiptId).slice(7, 31)}`,
+            finishReceiptId: this.#finishReceipt.receiptId,
+            text: execution.verifiedFinalText
+          };
+          return;
+        }
         if (execution.pause === "waiting_approval") {
           this.#paused = true;
           return;
@@ -870,10 +908,12 @@ class CursorResumeCheckpointSession implements AgentRunSession {
     results: readonly VdtGatewayToolResult[];
     pause: "waiting_user" | "waiting_approval" | null;
     pausedCall: VdtGatewayToolCall | null;
+    verifiedFinalText: string | undefined;
   }> {
     const results: VdtGatewayToolResult[] = [];
     let pause: "waiting_user" | "waiting_approval" | null = null;
     let pausedCall: VdtGatewayToolCall | null = null;
+    let verifiedFinalText: string | undefined;
     for (const call of batch.calls) {
       this.#counters.toolCallCount += 1;
       this.#activeToolCall = {
@@ -918,6 +958,10 @@ class CursorResumeCheckpointSession implements AgentRunSession {
             state: "verified",
             receiptHash: payload.receiptHash
           };
+          if (result.resultCode === "FINISH_VERIFIED" && typeof payload.verifiedFinalText === "string" && payload.verifiedFinalText.trim()
+            && Buffer.byteLength(payload.verifiedFinalText, "utf8") <= 8_000 && !payload.verifiedFinalText.includes("\0")) {
+            verifiedFinalText = payload.verifiedFinalText;
+          }
         }
       }
       if (result.status === "waiting_user" || result.status === "waiting_approval") {
@@ -928,7 +972,7 @@ class CursorResumeCheckpointSession implements AgentRunSession {
       if (result.status === "failed") break;
     }
     this.#activeToolCall = null;
-    return { results: Object.freeze(results), pause, pausedCall };
+    return { results: Object.freeze(results), pause, pausedCall, verifiedFinalText };
   }
 }
 

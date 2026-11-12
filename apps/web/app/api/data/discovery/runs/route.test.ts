@@ -5,7 +5,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openVdtDatabase, projectDir } from "@vdt-studio/storage";
 import type { DataDiscoveryRunSnapshot, IncomingKpiOptions } from "@vdt-studio/data-harness";
-import { productionVolumeProject } from "@vdt-studio/vdt-core";
+import { applyChangeSet, calculateGraph, productionVolumeProject, type VdtChangeSet, type VdtProject } from "@vdt-studio/vdt-core";
+import { revisionCasFromHead, runtimeCasFromState } from "@/lib/vdt-storage-client";
+import { GET as loadVdt } from "@/app/api/vdt/vdts/[vdtId]/route";
+import { POST as commitRevision } from "@/app/api/vdt/vdts/[vdtId]/revisions/route";
 import { GET as listFiles, POST as uploadFile } from "../../files/route";
 import { GET as downloadFile } from "../../files/[datasetId]/route";
 import { readDatasetFile, saveDatasetFile, saveDiscoveryRun } from "../../store";
@@ -43,6 +46,19 @@ function uploadRequest(file: File) {
 
 async function readJson<T>(response: Response): Promise<T> {
   return await response.json() as T;
+}
+
+function applyReviewedChanges(project: VdtProject, changeSet: VdtChangeSet) {
+  const selectedIds = new Set([
+    ...changeSet.additions,
+    ...changeSet.updates,
+    ...changeSet.deletions,
+    ...changeSet.edgeChanges,
+    ...(changeSet.dataSourceChanges ?? []),
+    ...(changeSet.dataMappingChanges ?? []),
+    ...(changeSet.taxonomyChanges ?? [])
+  ].map((entry) => entry.id));
+  return applyChangeSet(project, changeSet, selectedIds);
 }
 
 function clearStoreCache() {
@@ -124,11 +140,18 @@ describe("data discovery run API lifecycle", () => {
     const applyResponse = await applyRun(jsonRequest(`http://localhost:3000/api/data/discovery/runs/${runBody.runId}/apply`, {}), {
       params: Promise.resolve({ runId: runBody.runId })
     });
-    const applyBody = await readJson<{ ok: boolean; snapshot: { status: string }; changeSet?: unknown }>(applyResponse);
+    const applyBody = await readJson<{ ok: boolean; snapshot: { status: string }; changeSet: VdtChangeSet }>(applyResponse);
     expect(applyResponse.status).toBe(200);
     expect(applyBody.ok).toBe(true);
     expect(applyBody.snapshot.status).toBe("succeeded");
-    expect(applyBody.changeSet).toBeTruthy();
+    expect(applyBody.changeSet.additions).toContainEqual(expect.objectContaining({
+      baselineValue: 30, valueStatus: "calculated", unit: "minute", relation: "contextual_influence",
+      dataMapping: expect.objectContaining({ tableId: "table_1", field: "Minutes", aggregation: "sum" }),
+      valueSource: expect.objectContaining({ note: expect.stringContaining("rows: 2/2") }),
+    }));
+    const applied = applyReviewedChanges(testProject, applyBody.changeSet);
+    expect(applied.success).toBe(true);
+    expect(calculateGraph(applied.project)).toMatchObject({ rootValue: calculateGraph(testProject).rootValue, errors: [] });
   });
 
   it("analyzes every row in a CSV larger than the 4096-byte UI preview", async () => {
@@ -145,7 +168,7 @@ describe("data discovery run API lifecycle", () => {
       project: testProject
     }));
     const runBody = await readJson<{
-      snapshot: { tables: Array<{ rowCount: number; truncated: boolean }> };
+      snapshot: { tables: Array<{ rowCount: number; truncated: boolean }>; changeSetPreview: VdtChangeSet };
     }>(runResponse);
 
     expect(runResponse.status).toBe(200);
@@ -153,6 +176,58 @@ describe("data discovery run API lifecycle", () => {
       rowCount: 1_000,
       truncated: false
     });
+    expect(runBody.snapshot.changeSetPreview.additions).toContainEqual(expect.objectContaining({
+      baselineValue: 100_499_500, valueStatus: "calculated",
+      dataMapping: expect.objectContaining({ field: "value", aggregation: "sum" }),
+    }));
+  });
+
+  it("rebuilds a stored F-06 preview, stages the reviewed metric and reopens its saved formula", async () => {
+    const project = structuredClone(testProject);
+    const target = project.graph.nodes.find((node) => node.id === project.rootNodeId)!;
+    Object.assign(target, { name: "Revenue", unit: "USD", formula: undefined, baselineValue: undefined, value: undefined, decompositionPlan: undefined });
+    project.graph = { nodes: [target], edges: [] };
+    const db = openVdtDatabase(tempDir!, { dataDir: tempDir! });
+    db.saveVdtRevision({ id: "revision_empty_mapping", projectId, vdtId, revisionNo: 2, source: "user", project });
+    const expectedHead = revisionCasFromHead(db.getVdtRevisionHead(vdtId)!);
+    const expectedRuntime = runtimeCasFromState(db.getProjectRuntimeState(projectId)!);
+    db.close();
+
+    const { datasetId } = await readJson<{ datasetId: string }>(await uploadFile(uploadRequest(new File(["Revenue,Orders\n100,4\n200,5\n300,6"], "sales.csv"))));
+    const run = await readJson<{ runId: string; snapshot: DataDiscoveryRunSnapshot }>(await createRun(jsonRequest("http://localhost:3000/analysis", {
+      datasetId, project, entryContext: { purpose: "data_mapping", targetNodeId: target.id },
+    })));
+    const metricId = run.snapshot.proposal!.metrics.find((metric) => metric.aggregation === "sum" && metric.sourceColumns[0] === "Revenue")!.id;
+    for (const node of run.snapshot.changeSetPreview!.additions) {
+      delete node.baselineValue;
+      node.valueStatus = "unknown";
+    }
+    await saveDiscoveryRun(run.snapshot, { ...scope, dataDir: tempDir! });
+    clearStoreCache();
+    const params = { params: Promise.resolve({ runId: run.runId }) };
+    const review = await saveUserInput(jsonRequest("http://localhost:3000/edit", {
+      edits: { metricEdits: [{ metricId, enabled: true, unit: "USD" }] },
+    }), params);
+    expect(review.status).toBe(200);
+    const stage = await applyRun(jsonRequest("http://localhost:3000/apply", {}), params);
+    expect(stage.status).toBe(200);
+    const { changeSet } = await readJson<{ changeSet: VdtChangeSet }>(stage);
+    const applied = applyReviewedChanges(project, changeSet);
+    expect(applied.success).toBe(true);
+    const storageUrl = `http://localhost:3000/api/vdt/vdts/${vdtId}`;
+    const vdtParams = { params: Promise.resolve({ vdtId }) };
+    const saved = await commitRevision(new Request(storageUrl + "/revisions", {
+      method: "POST", body: JSON.stringify({ schemaVersion: "manual_vdt_revision_commit_request.v1",
+        idempotencyKey: "manual-save:reviewed-sales", expectedHead, expectedRuntime, summary: "Review revenue", project: applied.project }),
+    }), vdtParams);
+    expect(saved.status).toBe(201);
+    const reopened = await readJson<{ activeProject: VdtProject }>(await loadVdt(new Request(storageUrl), vdtParams));
+    expect(calculateGraph(reopened.activeProject)).toMatchObject({ rootValue: 600, errors: [] });
+    expect(reopened.activeProject.graph.nodes).toContainEqual(expect.objectContaining({ type: "data_mapped", unit: "USD",
+      baselineValue: 600, valueSource: expect.objectContaining({ note: expect.stringContaining("sales.csv") }) }));
+    const stale = await applyRun(jsonRequest("http://localhost:3000/apply", {}), params);
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ error: { code: "DATA_TARGET_CHANGED" } });
   });
 
   it("blocks apply for failed unsupported discovery runs", async () => {
@@ -290,6 +365,30 @@ describe("data discovery run API lifecycle", () => {
     expect(staged.status).toBe(200);
     expect(await staged.json()).toMatchObject({ ok: true, changeSet: { additions: expect.any(Array) } });
     expect((await readDatasetFile(datasetId, { ...scope, dataDir: tempDir! }))?.bytes.byteLength).toBeGreaterThan(4096);
+  });
+
+  it("refuses to stage a confirmed event log with duplicate IDs after reloading its source", async () => {
+    const project = incomingProject();
+    const { datasetId } = await readJson<{ datasetId: string }>(await uploadFile(uploadRequest(new File([
+      "event_id,Reason,Minutes\nDT-01,Mechanical,60\nDT-02,Electrical,45\nDT-02,Electrical,45"
+    ], "duplicate-events.csv"))));
+    const { runId } = await readJson<{ runId: string }>(await createRun(jsonRequest("http://localhost:3000/api/data/discovery/runs", {
+      datasetId, project, entryContext: { purpose: "incoming_kpis", targetNodeId: "unplanned_downtime" },
+      incomingKpiOptions: {
+        tableId: "table_1", eventIdColumn: "event_id", categoryColumns: ["Reason"],
+        duration: { mode: "column", column: "Minutes", unit: "minutes" },
+        normalization: { mode: "per_day", basis: "calendar_days", denominator: 1 },
+        period: { start: "2026-11-02", end: "2026-11-02" }, confirmed: true
+      }
+    })));
+    clearStoreCache();
+    const response = await applyRun(jsonRequest("http://localhost:3000/apply", { project }), { params: Promise.resolve({ runId }) });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      error: { code: "DATA_DISCOVERY_VALIDATION_FAILED", message: expect.stringMatching(/Duplicate event IDs.*DT-02/) },
+      snapshot: { status: "needs_user_input", changeSetPreview: { additions: [], updates: [] } }
+    });
   });
 
   it("stages additive numeric KPI values in the confirmed target unit without imposing duration semantics", async () => {

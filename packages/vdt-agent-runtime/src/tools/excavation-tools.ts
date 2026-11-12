@@ -19,6 +19,7 @@ import { AgentToolError, type AgentTool, type AgentToolContext } from "../tool-r
 import { summarizeValidation } from "../summaries";
 import { requireBuilder } from "./builder-mutation-utils";
 import { assertUserProvidedValueGrounded } from "./value-provenance";
+import { requireSelectedRunSkill } from "./run-skill-library";
 
 type MaterialMode = "ore_tonnes" | "rock_solid_m3" | "mixed_ore_tonnes_and_rock_m3";
 type ExcavationScope = "output" | "productivity";
@@ -134,6 +135,7 @@ const excavationSeedTopologyTool: AgentTool = {
   mutatesProject: true,
   phase: "building_graph",
   run(context, input) {
+    requireSelectedRunSkill(context, "mining.excavation");
     const builder = requireBuilder(context.builder);
     let project = builder.getProject();
     const rootKpi = input.rootKpi ?? defaultRootKpi(input.materialMode, input.scope, input.splitMode);

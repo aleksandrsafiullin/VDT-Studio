@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -61,7 +61,7 @@ function directCallsWithStringMessageResult(): string {
 function userAskResult(): string {
   return JSON.stringify({
     protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
-    assistantMessage: "I need one topology choice.",
+    assistantMessage: { messageId: "ask-1", text: "I need one topology choice." },
     action: {
       type: "user.ask",
       questions: [{
@@ -219,7 +219,7 @@ async function executeOpen(
     model: "auto",
     prompt: "open",
     signal: new AbortController().signal
-  }, ["vdt.echo"]).then(() => undefined, (value: unknown) => value);
+  }, ["vdt.echo"]).catch((value: unknown) => value);
 }
 
 describe("CursorResumeCheckpointTransport", () => {
@@ -278,7 +278,11 @@ describe("CursorResumeCheckpointTransport", () => {
     expect(opened.turn.action.type).toBe("action_batch");
   });
 
-  it("fails closed on Cursor built-in tool activity", async () => {
+  it.each([
+    ["globToolCall", "Glob"],
+    ["grepToolCall", "Grep"],
+    ["writeToolCall", "Write"]
+  ])("fails closed on Cursor %s activity even with a valid checkpoint reply", async (tool, label) => {
     const isolated = await environment();
     const runner = new FakeRunner((request) => processResult(stream({
       cwd: request.cwd,
@@ -287,7 +291,7 @@ describe("CursorResumeCheckpointTransport", () => {
         type: "tool_call",
         subtype: "started",
         call_id: "foreign-call",
-        tool_call: { readToolCall: { args: { path: "/etc/passwd" } } },
+        tool_call: { [tool]: { args: { privateDetail: "private-placeholder" } } },
         session_id: "cursor-session-1"
       }]
     })));
@@ -303,7 +307,56 @@ describe("CursorResumeCheckpointTransport", () => {
       model: "auto",
       prompt: "open",
       signal: new AbortController().signal
-    }, ["vdt.echo"])).rejects.toMatchObject({ code: "SECURITY_BOUNDARY_BREACH" });
+    }, ["vdt.echo"])).rejects.toMatchObject({
+      code: "SECURITY_BOUNDARY_BREACH",
+      message: `Cursor attempted the prohibited built-in tool ${label} during checkpoint execution.`
+    });
+    expect(runner.requests).toHaveLength(1);
+  });
+
+  it("corrects a plain-text terminal result once in the same session", async () => {
+    const isolated = await environment();
+    const runner = new FakeRunner((request, index) => processResult(stream({
+      cwd: request.cwd,
+      sessionId: "cursor-session-1",
+      ...(index === 0 ? { result: "I can outline the calculation for you." } : {})
+    })));
+    const transport = new CursorResumeCheckpointTransport({
+      executable: "/opt/cursor/cursor-agent", validatedCliVersion: "2026.08.1", runner
+    });
+    const result = await transport.executeSegment({
+      mode: "open", environment: isolated, model: "composer-2.5", prompt: "open", signal: new AbortController().signal
+    }, ["vdt.echo"]);
+
+    expect(result).toMatchObject({ sessionId: "cursor-session-1", processSpawnCount: 2, envelopeRepaired: true });
+    expect(result.turn.action).toMatchObject({ type: "action_batch", batch: { calls: [{ externalCallId: "call-1" }] } });
+    expect(runner.requests[1]?.args).toEqual(expect.arrayContaining(["--model", "composer-2.5", "--resume", "cursor-session-1"]));
+    expect(runner.requests[1]?.stdin).toContain("The host executed none of its calls.");
+    expect(runner.requests[1]?.stdin).toContain('"action":{"type":"action_batch","calls":[');
+    expect(runner.requests[1]?.timeoutMs).toBeLessThanOrEqual(runner.requests[0]!.timeoutMs);
+  });
+
+  it("uses the validated envelope without projecting stray CLI prose into chat", async () => {
+    const isolated = await environment();
+    const runner = new FakeRunner((request) => processResult(stream({
+      cwd: request.cwd, sessionId: "cursor-session-1",
+      result: `CLI narration\n${actionBatchResult("cursor-session-1")}\nJSON delivery note`
+    })));
+    await expect(executeOpen(isolated, runner)).resolves.toMatchObject({
+      turn: { assistantMessage: { messageId: "message-1", text: "I will inspect the VDT graph." } }
+    });
+  });
+
+  it.each([
+    ["A second plain-text answer.", "CURSOR_CHECKPOINT_PROTOCOL_INVALID", 2],
+    [actionBatchResult("cursor-session-1").repeat(2), "CURSOR_CHECKPOINT_PROTOCOL_AMBIGUOUS", 1]
+  ] as const)("bounds repairs and rejects ambiguous output", async (invalid, code, attempts) => {
+    const isolated = await environment();
+    const runner = new FakeRunner((request) => processResult(stream({
+      cwd: request.cwd, sessionId: "cursor-session-1", result: invalid
+    })));
+    await expect(executeOpen(isolated, runner)).resolves.toMatchObject({ code });
+    expect(runner.requests).toHaveLength(attempts);
   });
 
   it("records Cursor native web search tool_calls instead of treating them as SECURITY_BOUNDARY_BREACH", async () => {
@@ -338,7 +391,7 @@ describe("CursorResumeCheckpointTransport", () => {
     });
   });
 
-  it("uses an explicit trusted subscription auth home without exposing the private state as config", async () => {
+  it("uses the trusted subscription auth home with a separate restricted config", async () => {
     const isolated = await environment();
     const authHome = await temporaryDirectory("vdt-cursor-auth-home-");
     const runner = new FakeRunner((request) => processResult(stream({
@@ -369,15 +422,23 @@ describe("CursorResumeCheckpointTransport", () => {
     }, ["vdt.echo"]);
 
     const canonicalAuthHome = await realpath(authHome);
+    const canonicalState = await realpath(isolated.privateStatePath);
+    const configDir = path.join(canonicalState, "cursor-config");
     expect(runner.requests[0]?.environment).toEqual({
       HOME: canonicalAuthHome,
       USERPROFILE: canonicalAuthHome,
+      CURSOR_CONFIG_DIR: configDir,
+      XDG_CONFIG_HOME: path.join(canonicalState, "xdg-config"),
       PATH: "/usr/bin:/bin",
       USER: "trusted-user",
       LOGNAME: "trusted-user"
     });
-    expect(runner.requests[0]?.environment).not.toHaveProperty("CURSOR_CONFIG_DIR");
-    expect(runner.requests[0]?.environment).not.toHaveProperty("XDG_CONFIG_HOME");
+    expect(JSON.parse(await readFile(path.join(configDir, "cli-config.json"), "utf8"))).toMatchObject({
+      approvalMode: "allowlist",
+      permissions: { allow: [], deny: expect.arrayContaining(["Shell(*)", "Read(/**)", "Write(/**)", "Mcp(*:*)"]) },
+      sandbox: { mode: "enabled", readBoundary: "workspace" }
+    });
+    expect(await readdir(authHome)).toEqual([]);
     expect(runner.requests[0]?.args).toContain("--trust");
   });
 
@@ -409,7 +470,7 @@ describe("CursorResumeCheckpointTransport", () => {
     await expect(transport.executeSegment(common, ["vdt.echo"])).resolves.toMatchObject({
       sessionId: "cursor-session-thinking"
     });
-    await expect(transport.executeSegment(common, ["vdt.echo"]))
+    await expect(transport.executeSegment({ ...common, mode: "resume", expectedSessionId: "cursor-session-thinking" }, ["vdt.echo"]))
       .rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_PROTOCOL_MISMATCH" });
   });
 
@@ -511,10 +572,14 @@ describe("CursorResumeCheckpointTransport", () => {
 
   it("normalizes Cursor's compact final while keeping exactly one durable final message", async () => {
     const isolated = await environment();
-    const runner = new FakeRunner((request) => processResult(stream({
+    const runner = new FakeRunner((request, index) => processResult(stream({
       cwd: request.cwd,
       sessionId: "cursor-session-compact-final",
-      result: compactFinalResult()
+      result: index === 0 ? JSON.stringify({
+        protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+        assistantMessage: null,
+        action: { type: "final", final: { finishReceiptId: "finish-receipt-1" } }
+      }) : compactFinalResult()
     })));
     const transport = new CursorResumeCheckpointTransport({
       executable: "/opt/cursor/cursor-agent",
@@ -528,9 +593,12 @@ describe("CursorResumeCheckpointTransport", () => {
       model: "auto",
       prompt: "finish",
       expectedSessionId: "cursor-session-compact-final",
+      verifiedFinishReceiptId: "finish-receipt-1",
       signal: new AbortController().signal
     }, ["run.request_finish"]);
 
+    expect(result.envelopeRepaired).toBe(true);
+    expect(runner.requests[1]?.stdin).toContain('"action":{"type":"final","finishReceiptId":"finish-receipt-1"');
     expect(result.turn).toEqual({
       protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
       assistantMessage: null,
@@ -755,7 +823,7 @@ describe("CursorResumeCheckpointTransport", () => {
     };
     await expect(transport.executeSegment(common, ["vdt.echo"]))
       .rejects.toMatchObject({ code: "SECURITY_BOUNDARY_BREACH" });
-    await expect(transport.executeSegment(common, ["vdt.echo"]))
+    await expect(transport.executeSegment({ ...common, environment: await environment() }, ["vdt.echo"]))
       .rejects.toMatchObject({ code: "SECURITY_BOUNDARY_BREACH" });
   });
 });

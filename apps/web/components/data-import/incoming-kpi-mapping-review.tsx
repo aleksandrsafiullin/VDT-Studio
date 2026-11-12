@@ -61,7 +61,17 @@ export function IncomingKpiMappingReview({ snapshot, options, running, mappingCh
         <h3 className="text-sm font-semibold text-ink">Source and mapping</h3>
         <p className="mt-1 break-all text-xs leading-5 text-muted">{snapshot.file.fileName} · {snapshot.file.sizeBytes.toLocaleString()} bytes · {snapshot.file.contentHash}</p>
         {review.calculation?.includes("Excel duration encoding:") ? <p className="mt-2 rounded-md border border-blue-200 bg-blue-50 p-2 text-xs leading-5 text-blue-950">Excel stores formatted durations as fractions of a day. The Days unit follows the original cell encoding, before conversion to the KPI unit.</p> : null}
-        <Field label="Source table"><select aria-label="Source table" className={INPUT} value={options.tableId ?? ""} disabled={running} onChange={(event) => patch({ tableId: event.target.value, categoryColumns: [], duration: undefined })}><option value="">Select a source table</option>{snapshot.tables.map((entry) => <option key={entry.tableId} value={entry.tableId}>{entry.name} · {entry.rowCount} rows · {entry.columnCount} columns{entry.truncated ? " · TRUNCATED" : ""}</option>)}</select></Field>
+        <Field label="Source table"><select aria-label="Source table" className={INPUT} value={options.tableId ?? ""} disabled={running} onChange={(event) => patch({ tableId: event.target.value, categoryColumns: [], duration: undefined, eventIdColumn: undefined })}><option value="">Select a source table</option>{snapshot.tables.map((entry) => <option key={entry.tableId} value={entry.tableId}>{entry.name} · {entry.rowCount} rows · {entry.columnCount} columns{entry.truncated ? " · TRUNCATED" : ""}</option>)}</select></Field>
+        <div className="mt-3">
+          <Field label="Unique event ID">
+            <select aria-label="Unique event ID" className={INPUT} disabled={running || !table} value={options.eventIdColumn === null ? "none" : options.eventIdColumn === undefined ? "" : `column:${options.eventIdColumn}`} onChange={(event) => patch({ eventIdColumn: event.target.value === "none" ? null : event.target.value.slice("column:".length) })}>
+              <option value="" disabled>Select a column if available</option>
+              <option value="none">Source has no unique event ID</option>
+              {columns.map((column) => <option key={column} value={`column:${column}`}>{column}</option>)}
+            </select>
+          </Field>
+          <p className="mt-1 text-xs leading-5 text-muted">Choose the column the source guarantees is unique for each event. Repeated or missing IDs block staging.</p>
+        </div>
         <div className="mt-3">
           <div className="text-xs font-semibold text-ink">Category levels, from parent to child</div>
           <p className="mt-1 text-xs leading-5 text-muted">Choose up to four columns. Every distinct category will be included; more than 200 resulting KPIs requires a smaller or simpler extract.</p>
@@ -105,7 +115,7 @@ export function IncomingKpiMappingReview({ snapshot, options, running, mappingCh
       {clarificationQuestions.length ? <section className="space-y-3 rounded-md border border-line p-3"><p className="text-xs leading-5 text-muted">Record your decisions below. Update the mapping controls above if an answer changes the calculation.</p>{clarificationQuestions.map((question) => { const key = question.field.slice("clarificationAnswers.".length); return <Field key={question.id} label={question.message}><textarea aria-label={question.message} className={INPUT} rows={2} value={options.clarificationAnswers?.[key] ?? ""} disabled={running} onChange={(event) => patch({ clarificationAnswers: { ...options.clarificationAnswers, [key]: event.target.value } })} /></Field>; })}</section> : null}
 
       <div className="rounded-md border border-line p-3">
-        <label className="flex items-start gap-2 text-xs font-semibold leading-5 text-ink"><input type="checkbox" className="mt-1" checked={options.confirmed === true} disabled={running} data-testid="data-import-confirm-mapping" onChange={(event) => onOptionsChange({ ...options, confirmed: event.target.checked })} />I confirm the category order, value / duration calculation, units and reporting period / denominator.</label>
+        <label className="flex items-start gap-2 text-xs font-semibold leading-5 text-ink"><input type="checkbox" className="mt-1" checked={options.confirmed === true} disabled={running} data-testid="data-import-confirm-mapping" onChange={(event) => onOptionsChange({ ...options, confirmed: event.target.checked })} />I confirm the category order, event ID, calculation, units and reporting period / denominator.</label>
         <Button type="button" size="sm" variant="primary" className="mt-3" icon={running ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined} disabled={running || !options.confirmed} data-testid="data-import-calculate-preview" onClick={onCalculate}>{running ? "Calculating…" : "Calculate preview"}</Button>
         {mappingChanged ? <p className="mt-2 text-xs text-amber-800" data-testid="data-import-mapping-dirty">Mapping changed. Calculate the preview before staging.</p> : null}
       </div>

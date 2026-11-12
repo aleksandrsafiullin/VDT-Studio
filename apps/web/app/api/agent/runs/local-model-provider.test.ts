@@ -138,6 +138,35 @@ describe("local Model Agent structured transport", () => {
     expect(request.messages).toHaveLength(4);
   });
 
+  it("opens ordinary native construction after a confirmed no-applicable-skill result", async () => {
+    const steps = ["skill.list", "skill.report_gap", "skill.report_gap", "vdt.add_driver"];
+    let turn = 0;
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ done: true, message: { content: JSON.stringify({
+      turnId: "turn", sessionState: "Resolve guidance", assistantMessage: null, action: { type: "action_batch", batch: {
+        batchId: "batch", calls: [{ externalCallId: "call", toolName: steps[turn++], args: {} }]
+      } }
+    }) } }));
+    vi.stubGlobal("fetch", fetcher);
+    const provider = createLocalModelAgentProvider(createLocalModelAgentBinding("ollama", "test-model", `sha256:${"d".repeat(64)}`),
+      () => ({ constructingTree: true, needsStructure: true }));
+    const complete = (delta: unknown) => provider.completeStructured({ taskType: "agent_decision", input: {}, schema: modelAgentStructuredTurnSchema,
+      systemPrompt: "VDT", userPrompt: JSON.stringify({ delta }) });
+    const toolResult = (toolName: string, status: string, output: unknown) =>
+      ({ type: "tool_results", results: [{ toolName, status, payload: { output } }] });
+    await complete({ type: "initial_context", context: {
+      brief: { mode: "generate_vdt", skillResolution: "agent_semantic", rootKpi: "Available benches", unit: "benches", timePeriod: "shift" },
+      tools: ["skill.list", "skill.report_gap", "skill.compile_recipe", "vdt.add_driver"].map((name) => ({ name, inputJsonSchema: { type: "object" } }))
+    } });
+    await complete(toolResult("skill.list", "succeeded", { skills: [], nextOffset: null }));
+    await complete(toolResult("skill.report_gap", "failed", { outcome: "no_applicable_skill" }));
+    await complete(toolResult("skill.report_gap", "succeeded", { outcome: "no_applicable_skill" }));
+    const requests = fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+    const current = requests.map((body) => JSON.parse(body.messages.at(-1).content));
+    expect(current.map((prompt) => prompt.toolSchemasAvailable)).toEqual(steps.map((step) => [step]));
+    expect(current[3].hostObservation.skillResolution).toMatchObject({ catalogBrowsed: true, gapReported: true });
+    expect(JSON.stringify(requests[3].format)).not.toContain('"const":"skill.compile_recipe"');
+  });
+
   it("reviews a redundant construction confirmation once and returns the model's own repair without a user answer", async () => {
     const question = { turnId: "turn", sessionState: "Ask", assistantMessage: null, action: { type: "question", messageId: "ask", questionSetId: "questions", questions: [{
       id: "plan", question: "Should I repair my plan to match your request?", required: true

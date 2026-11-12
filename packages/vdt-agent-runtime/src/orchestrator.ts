@@ -783,7 +783,7 @@ export class VdtAgentRuntime {
       selectedNode: project && selectedNodeId ? summarizeNode(project, selectedNodeId) : undefined,
       selectedSkills: state.selectedSkills,
       domainPolicies: policySummaryForRun(state),
-      availableTools: this.tools.listSpecs().filter((tool) => (!tool.requiresDraftProject || project !== undefined)
+      availableTools: this.tools.listSpecs().filter((tool) => tool.name !== "skill.report_gap" && (!tool.requiresDraftProject || project !== undefined)
         && (rootConstruction?.needs !== "plan" || !tool.mutatesProject || tool.name === "vdt.set_decomposition_plan")),
       recentEvents: summarizeEvents(state.events),
       visibleContext: state.visibleContext,

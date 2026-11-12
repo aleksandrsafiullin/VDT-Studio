@@ -1,37 +1,78 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   classifyVdtRequest,
   compileSkillRecipe,
   rankSkillCandidates,
   readSkillExcerpts,
-  readExecutableSkillTopology
+  readExecutableSkillTopology,
+  skillCard,
+  UNIVERSAL_SKILL_ID,
+  type VdtSkill
 } from "@vdt-studio/vdt-agent";
 import { skillContentHash } from "@vdt-studio/storage";
 import { extractFormulaReferences, stableSnakeId, type VdtChangeSet, type VdtProject } from "@vdt-studio/vdt-core";
 import { createStructuredFeedback } from "../feedback";
+import { excludedExcavationSkillIds } from "../construction-source-facts";
 import { proposeAndMaybeApplyMutation } from "../mutation-pipeline";
 import { AgentToolError, type AgentTool } from "../tool-registry";
 import { summarizeValidation } from "../summaries";
 import { cloneBuilder, combineChangeSets, requireChangeSet } from "./builder-mutation-utils";
 import { skillSeedTopologyTool } from "./skill-topology-tool";
-import { activateRunSkill, loadRunSkillLibrary } from "./run-skill-library";
+import { activateRunSkill, loadRunSkillLibrary, requireSelectedRunSkill, skillCatalogProgress } from "./run-skill-library";
 
 export function createSkillTools(): AgentTool[] {
-  return [skillListTool, skillSearchTool, skillReadTool, skillSelectTool, skillCompileRecipeTool, skillSeedDraftFromRecipeTool, skillSeedTopologyTool];
+  return [skillListTool, skillSearchTool, skillReadTool, skillSelectTool, skillReportGapTool, skillCompileRecipeTool, skillSeedDraftFromRecipeTool, skillSeedTopologyTool];
+}
+
+const SKILL_CATALOG_PAGE_SIZE = 16;
+
+function semanticSkillCard(skill: VdtSkill) {
+  const { id, title, description, domain, version, contentHash } = skillCard(skill);
+  const scopeGuidance = skill.body.split(/^##\s+/m).slice(1).flatMap((section) => {
+    const [heading, ...lines] = section.split(/\r?\n/);
+    return /^(?:when to use|scope boundary)$/i.test(heading?.trim() ?? "")
+      ? [lines.join(" ").replace(/\s+/g, " ").trim().slice(0, 320)] : [];
+  }).slice(0, 2);
+  return {
+    id, version, contentHash, title: title.slice(0, 160), description: description.slice(0, 300), domain: domain.slice(0, 80),
+    scope: skill.frontmatter.kpiPatterns.slice(0, 4).map((value) => value.slice(0, 80)),
+    ...(scopeGuidance.length ? { scopeGuidance } : {}),
+    requiredInputs: skill.frontmatter.requires.slice(0, 4).map((value) => value.slice(0, 80)),
+    outputs: skill.frontmatter.outputs.slice(0, 4).map((value) => value.slice(0, 80))
+  };
 }
 
 const skillListTool: AgentTool = {
   name: "skill.list",
-  description: "List available VDT skills without reading full markdown.",
-  inputSchema: z.object({}),
+  description: "Browse VDT skill cards to decide which guidance fits the full request.",
+  inputSchema: z.object({ offset: z.number().int().min(0).max(2_000).optional() }).strict(),
   outputSchema: z.record(z.string(), z.unknown()),
   phase: "retrieving_skills",
-  async run(context) {
+  async run(context, input) {
     const library = await loadRunSkillLibrary(context);
-    const current = context.getRun().selectedSkills[0];
+    const state = context.store.getState(context.runId);
+    const current = state.selectedSkills[0];
+    const catalog = [...library.skills].sort((a, b) => Number(b.id === current?.id) - Number(a.id === current?.id));
+    if (state.request.skillResolution) {
+      const offset = input.offset ?? 0;
+      if (offset && !state.events.some((event) => event.type === "skill_search" && event.metadata?.toolName === "skill.list"
+        && event.metadata.nextOffset === offset)) {
+        throw new AgentToolError("SKILL_CATALOG_OFFSET_UNKNOWN", "Use the nextOffset from a previous skill.list result.");
+      }
+      const applicable = catalog.filter((skill) => skill.id !== UNIVERSAL_SKILL_ID || skill.id === current?.id);
+      const skills = applicable.slice(offset, offset + SKILL_CATALOG_PAGE_SIZE).map(semanticSkillCard);
+      const nextOffset = offset + skills.length < applicable.length ? offset + skills.length : null;
+      context.emit({
+        type: "skill_search", title: "Skill catalog browsed",
+        message: `Available skill cards reviewed: ${skills.length}.`,
+        metadata: { toolName: "skill.list", candidateIds: skills.map((skill) => skill.id), nextOffset }
+      });
+      return { selectedSkill: current, skills, nextOffset };
+    }
     return {
       selectedSkill: current,
-      skills: [...library.skills].sort((a, b) => Number(b.id === current?.id) - Number(a.id === current?.id)).map((skill) => ({
+      skills: catalog.map((skill) => ({
         id: skill.id,
         title: skill.title,
         domain: skill.domain,
@@ -60,8 +101,15 @@ const skillSearchTool: AgentTool = {
   phase: "retrieving_skills",
   async run(context, input) {
     const library = await loadRunSkillLibrary(context);
-    const classification = classifyVdtRequest(input);
-    const candidates = rankSkillCandidates([input.rootKpi, input.industry, input.businessContext, input.goal].filter(Boolean).join(" "), library).slice(0, input.maxSkills ?? 3).map((candidate) => ({
+    const state = context.store.getState(context.runId);
+    const semantic = Boolean(state.request.skillResolution);
+    if (semantic && !skillCatalogProgress(state).catalogBrowsed) {
+      throw new AgentToolError("SKILL_DISCOVERY_REQUIRED", "Browse the skill catalog before a scoped search.");
+    }
+    const classification = semantic ? undefined : classifyVdtRequest(input);
+    const candidates = rankSkillCandidates([input.rootKpi, input.industry, input.businessContext, input.goal].filter(Boolean).join(" "), library)
+      .filter(({ skill }) => !semantic || skill.id !== UNIVERSAL_SKILL_ID)
+      .slice(0, input.maxSkills ?? 3).map((candidate) => semantic ? semanticSkillCard(candidate.skill) : {
       id: candidate.skill.id,
       path: candidate.skill.path,
       title: candidate.skill.title,
@@ -73,15 +121,15 @@ const skillSearchTool: AgentTool = {
       outputs: candidate.skill.frontmatter.outputs,
       referenceFiles: candidate.skill.frontmatter.referenceFiles,
       runtimePolicy: candidate.skill.frontmatter.runtimePolicy
-    }));
+    });
     context.emit({
       type: "skill_search",
       phase: "retrieving_skills",
       title: "Skill search completed",
       message: `Found ${candidates.length} candidate skill${candidates.length === 1 ? "" : "s"}.`,
-      metadata: { candidateIds: candidates.map((candidate) => candidate.id), classification }
+      metadata: { toolName: "skill.search", candidateIds: candidates.map((candidate) => candidate.id), ...(semantic ? {} : { classification }) }
     });
-    return { classification, candidates };
+    return semantic ? { candidates } : { classification, candidates };
   }
 };
 
@@ -98,24 +146,42 @@ const skillReadTool: AgentTool = {
     const library = await loadRunSkillLibrary(context);
     const skill = library.byId.get(input.skillId);
     if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", `Skill "${input.skillId}" was not found.`);
+    const state = context.store.getState(context.runId);
+    const pinned = state.request.input.skillSelection;
+    if (state.request.skillResolution && pinned?.id !== skill.id && !state.events.some((event) => event.type === "skill_search"
+      && Array.isArray(event.metadata?.candidateIds) && event.metadata.candidateIds.includes(skill.id))) {
+      throw new AgentToolError("SKILL_DISCOVERY_REQUIRED", "Browse the skill catalog before reading an unpinned candidate.");
+    }
     const [excerpt] = readSkillExcerpts([skill], input.maxChars);
     if (!excerpt) throw new AgentToolError("SKILL_READ_FAILED", `Skill "${input.skillId}" could not be read.`);
     const recipe = compileSkillRecipe(skill);
     const topology = readExecutableSkillTopology(skill);
+    const contentHash = skillContentHash(skill.raw);
+    const version = skill.frontmatter.version ?? 1;
+    const readReceiptId = randomUUID();
+    const selectedSkillIds = state.selectedSkills.map(({ id }) => id);
     context.emit({
       type: "skill_read",
       phase: "reading_skills",
       title: "Skill read",
       message: `Read ${skill.id}: ${skill.title}.`,
-      metadata: { id: skill.id, path: skill.path, outputs: skill.frontmatter.outputs, contentHash: skillContentHash(skill.raw), version: skill.frontmatter.version ?? 1 }
+      metadata: {
+        toolName: "skill.read", id: skill.id, path: skill.path, outputs: skill.frontmatter.outputs, contentHash, version, readReceiptId,
+        selectedSkillIdsBefore: selectedSkillIds, selectedSkillIdsAfter: selectedSkillIds, selectionChanged: false
+      }
     });
+    if (state.request.skillResolution && !state.request.skillResolution.outcome && pinned?.source === "user"
+      && pinned.id === skill.id && pinned.version === version && pinned.contentHash === contentHash) {
+      context.updateRun({ request: { ...state.request, skillResolution: { ...state.request.skillResolution, outcome: "selected" } } });
+    }
     return {
       id: excerpt.id,
       path: excerpt.path,
       title: excerpt.title,
       domain: excerpt.domain,
-      version: skill.frontmatter.version ?? 1,
-      contentHash: skillContentHash(skill.raw),
+      version,
+      contentHash,
+      readReceiptId,
       excerpt: excerpt.excerpt,
       requiredInputs: skill.frontmatter.requires,
       outputs: excerpt.outputs ?? [],
@@ -136,18 +202,72 @@ const skillReadTool: AgentTool = {
 
 const skillSelectTool: AgentTool = {
   name: "skill.select",
-  description: "Select the primary VDT skill after reading it. Replaces the preliminary or previous selection when the request context warrants a different skill. Does not change the graph.",
-  inputSchema: z.object({ skillId: z.string().min(1).max(160), reason: z.string().trim().min(1).max(500) }).strict(),
+  description: "Choose the primary VDT skill using its exact readReceiptId and a brief reason.",
+  inputSchema: z.object({
+    skillId: z.string().min(1).max(160),
+    reason: z.string().trim().min(1).max(500),
+    readReceiptId: z.string().min(1).max(100).optional()
+  }).strict(),
   outputSchema: z.record(z.string(), z.unknown()), phase: "reading_skills",
   async run(context, input) {
     const library = await loadRunSkillLibrary(context), skill = library.byId.get(input.skillId);
     if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", "Skill was not found in this run's catalog.");
     const state = context.store.getState(context.runId), contentHash = skillContentHash(skill.raw);
-    if (!state.events.some(event => event.type === "skill_read" && event.metadata?.id === skill.id && event.metadata.contentHash === contentHash))
-      throw new AgentToolError("SKILL_READ_REQUIRED", "Read this skill before selecting it.");
+    const resolution = state.request.skillResolution;
+    const read = state.events.find((event) => event.type === "skill_read" && event.metadata?.id === skill.id && event.metadata.contentHash === contentHash
+      && event.metadata.version === (skill.frontmatter.version ?? 1)
+      && (!resolution && input.readReceiptId === undefined || event.metadata.readReceiptId === input.readReceiptId && typeof input.readReceiptId === "string"));
+    if (!read) throw new AgentToolError("SKILL_READ_REQUIRED", "Read this exact skill version and pass its readReceiptId before selecting it.");
+    const pinned = state.request.input.skillSelection;
+    if (resolution && pinned?.source === "user") {
+      if (pinned.id !== skill.id) throw new AgentToolError("SKILL_USER_PINNED", "Keep the skill selected by the user in Context.");
+      return { selectedSkill: state.selectedSkills[0] };
+    }
+    if (resolution && context.requirePlanOperands
+      && excludedExcavationSkillIds(state.request, skillCatalogProgress(state).candidateIds).includes(input.skillId)) {
+      throw new AgentToolError("SKILL_SCOPE_MISMATCH", "The brief limits this output to the working face and excludes downstream transport. Select an applicable face-output skill using its exact read receipt.");
+    }
     const selected = activateRunSkill(context, skill, input.reason);
-    context.emit({ type: "skill_selected", title: "Skill selected", message: `${skill.title}: ${input.reason}`, metadata: selected });
+    context.emit({
+      type: "skill_selected", title: "Skill selected", message: `${skill.title}: ${input.reason}`,
+      metadata: {
+        ...selected, toolName: "skill.select", readReceiptIds: [read.metadata?.readReceiptId],
+        ...(resolution ? { resolutionMode: "agent_semantic", usedLegacyMarkers: false, usedLanguageAliases: false } : {})
+      }
+    });
     return { selectedSkill: selected };
+  }
+};
+
+const skillReportGapTool: AgentTool = {
+  name: "skill.report_gap",
+  description: "Record that no catalog skill applies and continue with the supplied facts.",
+  inputSchema: z.object({ reason: z.string().trim().min(1).max(500) }).strict(),
+  outputSchema: z.record(z.string(), z.unknown()),
+  phase: "planning_decomposition",
+  run(context, input) {
+    const state = context.store.getState(context.runId);
+    const resolution = state.request.skillResolution;
+    if (!resolution || state.selectedSkills.length) throw new AgentToolError("SKILL_GAP_NOT_ALLOWED", "A skill gap is available only for a new tree without a selected skill.");
+    const { catalogBrowsed, catalogComplete, scopedSearchReviewed, searchCandidateIds, candidateIds } = skillCatalogProgress(state);
+    if (!catalogBrowsed) {
+      throw new AgentToolError("SKILL_DISCOVERY_REQUIRED", "Browse the skill catalog before reporting a gap.");
+    }
+    if (!catalogComplete && !scopedSearchReviewed) {
+      throw new AgentToolError("SKILL_CATALOG_REVIEW_REQUIRED", "Review additional catalog pages, or search for the requested process and read the returned candidates before reporting a gap.");
+    }
+    if (context.requirePlanOperands && excludedExcavationSkillIds(state.request, candidateIds).length) {
+      throw new AgentToolError("SKILL_SCOPE_MATCH_AVAILABLE", "The catalog contains a skill for the explicitly requested face output. Read its exact version before selecting it.");
+    }
+    const outcome = "no_applicable_skill";
+    if (resolution.outcome !== outcome) {
+      context.updateRun({ request: { ...state.request, skillResolution: { ...resolution, outcome } } });
+      context.emit({
+        type: "skill_search", title: "No applicable skill", message: input.reason,
+        metadata: { toolName: "skill.report_gap", outcome, catalogComplete, scopedSearchReviewed, searchCandidateIds }
+      });
+    }
+    return { outcome };
   }
 };
 
@@ -160,6 +280,7 @@ const skillCompileRecipeTool: AgentTool = {
   outputSchema: z.record(z.string(), z.unknown()),
   phase: "planning_decomposition",
   async run(context, input) {
+    requireSelectedRunSkill(context, input.skillId);
     const library = await loadRunSkillLibrary(context);
     const skill = library.byId.get(input.skillId);
     if (!skill) throw new AgentToolError("SKILL_NOT_FOUND", `Skill "${input.skillId}" was not found.`);
@@ -217,6 +338,7 @@ const skillSeedDraftFromRecipeTool: AgentTool = {
   mutatesProject: true,
   phase: "building_graph",
   async run(context, input) {
+    requireSelectedRunSkill(context, input.skillId);
     const builder = context.builder;
     if (!builder) throw new AgentToolError("NO_DRAFT_PROJECT", "VDT builder session is not available for this run.");
     const state = context.store.getState(context.runId);

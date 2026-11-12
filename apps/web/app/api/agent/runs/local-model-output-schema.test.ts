@@ -111,6 +111,71 @@ describe("native local tool argument constraints", () => {
     expect(names(context.forPrompt(envelope, JSON.stringify({ delta: { type: "tool_results", results: [] } }), { constructingTree: false, needsStructure: true, hasReadSkill: false }))).toEqual(["skill.list", "skill.read", "skill.search", "tools.describe", "vdt.add_driver"]);
   });
 
+  it("grounds native selection in exact read receipts and allows ordinary construction after a catalog gap", () => {
+    const context = new LocalModelOutputSchema();
+    const skillId = { type: "string" };
+    const skillTool = { type: "object", properties: { skillId }, required: ["skillId"] };
+    const select = {
+      type: "object", properties: { skillId, readReceiptId: { type: "string" }, reason: { type: "string" } },
+      required: ["skillId", "reason"]
+    };
+    const tools = [
+      ...["tools.describe", "run.request_finish", "skill.search", "skill.report_gap", "excavation.seed_topology"]
+        .map((name) => ({ name, inputJsonSchema: { type: "object" } })),
+      { name: "skill.list", inputJsonSchema: { type: "object", properties: { offset: { type: "integer" } } } },
+      ...["skill.read", "skill.compile_recipe", "skill.seed_topology", "skill.seed_draft_from_recipe"]
+        .map((name) => ({ name, inputJsonSchema: skillTool })),
+      { name: "skill.select", inputJsonSchema: select }, { name: "vdt.add_driver", inputJsonSchema: addSchema }
+    ];
+    const original = JSON.stringify({ delta: { type: "initial_context", context: { tools } } });
+    const later = JSON.stringify({ delta: { type: "tool_results", results: [] } });
+    const unresolved = { catalogBrowsed: false, gapAvailable: false, gapReported: false, readReceipts: [] };
+    const observation = { constructingTree: true, needsStructure: true, projectReadyForFinish: false };
+    const format = (skillResolution: Record<string, unknown>, extra = {}) =>
+      context.forPrompt(envelope, later, { ...observation, ...extra, skillResolution });
+    const args = (schema: unknown, toolName: string) => allCalls(schema)
+      .flatMap((batch) => batch.items.anyOf).find((tool) => tool.properties.toolName.const === toolName)!.properties.args;
+    const start = context.forPrompt(envelope, original, { ...observation, skillResolution: unresolved });
+    expect(names(start)).toEqual(["skill.list"]);
+    expect(args(start, "skill.list")).toMatchObject({ properties: { offset: { const: 0 } } });
+    const pinned = format({ ...unresolved, pinnedSkillId: "exact.pin" });
+    expect(names(pinned)).toEqual(["skill.read"]);
+    expect(args(pinned, "skill.read")).toMatchObject({ properties: { skillId: { enum: ["exact.pin"] } } });
+
+    const catalog = { ...unresolved, catalogBrowsed: true, gapAvailable: true };
+    const discovered = { discoveredSkillIds: ["actual.first", "actual.second"] };
+    const firstPage = format({ ...catalog, nextCatalogOffset: 16, gapAvailable: false }, discovered);
+    expect(names(firstPage)).toEqual(["skill.list", "skill.read", "skill.search"]);
+    expect(args(firstPage, "skill.list")).toMatchObject({ properties: { offset: { const: 16 } }, required: ["offset"] });
+    expect(names(format(catalog, discovered))).toEqual(["skill.read", "skill.report_gap", "skill.search"]);
+    const suppliedDraft = { ...discovered, needsStructure: false, projectReadyForFinish: true };
+    expect(names(format(catalog, suppliedDraft))).toEqual(["skill.read", "skill.report_gap", "skill.search"]);
+    expect(names(format({ ...catalog, gapReported: true }, suppliedDraft))).toContain("run.request_finish");
+    const receipts = [
+      { skillId: "actual.first", readReceiptId: "receipt-first" },
+      { skillId: "actual.second", readReceiptId: "receipt-second" }
+    ];
+    const pending = format({ ...catalog, readReceipts: receipts }, { ...discovered, hasReadSkill: true });
+    expect(names(pending)).toEqual(["skill.report_gap", "skill.search", "skill.select"]);
+    expect(args(pending, "skill.select")).toMatchObject({ anyOf: [
+      { properties: { skillId: { const: "actual.first" }, readReceiptId: { const: "receipt-first" } }, required: ["skillId", "reason", "readReceiptId"] },
+      { properties: { skillId: { const: "actual.second" }, readReceiptId: { const: "receipt-second" } }, required: ["skillId", "reason", "readReceiptId"] }
+    ] });
+    const topology = (skillId: string) => ({ skillId, defaultInputIds: ["duration"] });
+    const readTopologyDefinitions = ["actual.first", "actual.second"].map(topology);
+    const selected = format({ ...catalog, readReceipts: receipts, selectedSkillId: "actual.first" },
+      { ...discovered, readTopologyDefinitions });
+    expect(names(selected)).toContain("vdt.add_driver");
+    expect(names(selected)).not.toContain("excavation.seed_topology");
+    expect(names(format({ ...catalog, selectedSkillId: "mining.excavation" }))).toContain("excavation.seed_topology");
+    expect(args(selected, "skill.compile_recipe")).toMatchObject({ properties: { skillId: { const: "actual.first" } } });
+    expect(args(selected, "skill.seed_topology")).toMatchObject({ anyOf: [{ properties: { skillId: { const: "actual.first" } } }] });
+    expect(names(format({ ...catalog, gapReported: true }, { readTopologyDefinitions }))).toEqual(["tools.describe", "vdt.add_driver"]);
+    const continuation = context.forPrompt(envelope, later, { constructingTree: false, needsStructure: false });
+    expect(names(continuation)).toContain("vdt.add_driver");
+    expect(names(continuation)).not.toContain("skill.report_gap");
+  });
+
   it("uses returned skill IDs for read/compile arguments without inventing a library selection", () => {
     const context = new LocalModelOutputSchema();
     const prompt = JSON.stringify({ delta: { type: "initial_context", context: { tools: [{ name: "skill.read", inputJsonSchema: {

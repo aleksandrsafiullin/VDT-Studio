@@ -25,13 +25,13 @@ describe("Smart through real SQLite revision routes", () => {
     const created = await createVdt(request(`/api/vdt/projects/${owner}/vdts`, { schemaVersion: "create_vdt_with_initial_http_request.v1", idempotencyKey: "synthetic-smart-create",
       expectedRuntime: runtimeCasFromState(projectBody.summary.runtimeState), vdt: { requestedVdtId: "synthetic_smart_stored", name: "Synthetic KPI", rootKpi: "Output", unit: "t/month", timePeriod: "month", status: "draft", metadata: null }, project }), { params: Promise.resolve({ projectId: owner }) });
     expect(created.status).toBe(201); const body = await created.json() as { summary: StoredProjectSummary; vdt: { id: string } }; const vdtId = body.vdt.id;
-    let loseResponse = true; const posted: string[] = [];
+    let loseResponse = true; const posted: string[] = []; const statuses: number[] = [];
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       expect(String(url)).toBe(`/api/vdt/vdts/${vdtId}/revisions`);
       const params = { params: Promise.resolve({ vdtId }) };
       if (init?.method === "POST") {
         posted.push(String(init.body)); const response = await commit(new Request(`http://localhost:3000${url}`, init), params);
-        expect(response.status).toBe(201);
+        statuses.push(response.status);
         if (loseResponse) { loseResponse = false; throw new Error("Synthetic response loss after actual SQLite commit"); }
         return response;
       }
@@ -57,5 +57,9 @@ describe("Smart through real SQLite revision routes", () => {
     expect(list.revisions).toHaveLength(3); expect(posted[2]).toContain("smart-undo:"); expect(store.getState().project.versions[0]?.taskType).toBe("suggest_incoming_kpis");
     expect(await store.getState().saveActiveWorkspaceVdt()).toBe(true);
     expect(JSON.parse(posted[3]!).expectedHead.commitGeneration).toBe(3);
+    expect(statuses).toEqual([201, 201, 201, 200]);
+    const unchanged = await (await revisions(new Request("http://localhost:3000"), { params: Promise.resolve({ vdtId }) })).json();
+    expect(unchanged.head).toEqual(list.head);
+    expect(unchanged.revisions).toHaveLength(3);
   });
 });

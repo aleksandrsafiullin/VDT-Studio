@@ -97,7 +97,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ vdt
         }
       },
       project: body.project
-    });
+    }, { reuseUnchangedRevision: true });
     const project = database.getProject(vdt.projectId);
     if (!project) {
       throw new VdtStorageError("PROJECT_NOT_FOUND", "Project not found after revision commit.");
@@ -115,7 +115,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ vdt
       head: result.head,
       runtimeState: summary.runtimeState,
       summary
-    }, { status: 201 });
+    }, { status: result.revision.id === body.expectedHead.activeRevisionId ? 200 : 201 });
   } catch (error) {
     return storageWriteErrorResponse(error, "VDT revision could not be saved.");
   } finally {

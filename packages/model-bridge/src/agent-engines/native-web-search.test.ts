@@ -65,6 +65,15 @@ describe("native web search helpers", () => {
     expect(isNativeWebSearchTool("web.fetch", "fetch")).toBe(false);
   });
 
+  it("rejects native tool activity when a stream event mixes it with a web-search marker", () => {
+    expect(inspectCursorStreamToolCall({
+      type: "tool_call", name: "web_search", tool_call: { grepToolCall: {} }
+    })).toEqual({ kind: "forbidden" });
+    expect(inspectCursorStreamToolCall({
+      type: "tool_call", tool_call: { webSearchToolCall: {}, globToolCall: {} }
+    })).toEqual({ kind: "forbidden" });
+  });
+
   it("forces --search only when researchMode is on", () => {
     expect(researchModeForcesNativeWebSearch({
       brief: { options: { researchMode: "on" } }

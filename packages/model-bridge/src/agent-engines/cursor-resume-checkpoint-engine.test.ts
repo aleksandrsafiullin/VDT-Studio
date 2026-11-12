@@ -224,14 +224,22 @@ describe("buildCursorResumeCheckpointInitialPrompt", () => {
       },
       initialContext: { brief: "prompt-coverage" },
       initialContextHash: hashText(JSON.stringify({ brief: "prompt-coverage" }))
-    }, ["vdt.echo", "user.ask", "run.request_finish"]);
-    const parsed = JSON.parse(prompt) as {
+    }, ["tools.describe", "vdt.add_drivers_batch", "user.ask", "run.request_finish"]);
+    const [instruction, context] = prompt.split("\n", 2);
+    expect(instruction).toContain("VDT tools are requests in action.calls.");
+    expect(instruction).toContain("return tools.describe with args.toolNames");
+    expect(instruction).toContain("Never use Cursor's native Grep");
+    const parsed = JSON.parse(context!) as {
       constraints: {
         questions: string;
         finishMissingValues: string;
         final: string;
         actionBatch: string;
         actionTypes: string;
+        data: string;
+        example: unknown;
+        structure: string;
+        sourceInputs: string;
       };
     };
     expect(parsed.constraints.questions).toBe(AGENT_QUESTION_PROMPT_RULE);
@@ -244,6 +252,16 @@ describe("buildCursorResumeCheckpointInitialPrompt", () => {
     expect(parsed.constraints.final).toContain(CHECKPOINT_FINISH_ORDER_PROMPT_RULE);
     expect(parsed.constraints.final).toContain(AGENT_FINISH_MISSING_VALUE_PROMPT_RULE);
     expect(parsed.constraints.final).not.toMatch(/request_finish first/i);
+    expect(parsed.constraints.data).toContain("data.list_sources");
+    expect(parsed.constraints.data).toContain("data.write_inputs");
+    expect(parsed.constraints.data).toContain("inclusive calendar day count");
+    expect(parsed.constraints.data).toContain("never in editable default_assumption inputs");
+    expect(parsed.constraints.structure).toContain("Omit the optional relation for ordinary formula dependencies.");
+    expect(parsed.constraints.structure).toContain("Actual tonnes per trip already include any payload adjustment");
+    expect(parsed.constraints.example).toMatchObject({
+      action: { type: "action_batch", calls: [{ toolName: "tools.describe", args: { toolNames: ["vdt.add_drivers_batch"] } }] }
+    });
+    expect(parsed.constraints.sourceInputs).toContain("literalUserQuantities");
   });
 });
 
@@ -420,6 +438,48 @@ describe("CursorResumeCheckpointEngine", () => {
     expect(opened.binding.externalSessionId).toBe("opaque-cursor-session");
   });
 
+  it("publishes the host's verified calculation after a finish receipt without another model call", async () => {
+    const environment = await createEnvironment();
+    const runner = new ScriptedRunner([
+      (request) => stream(request, turn({
+        type: "action_batch",
+        calls: [{ externalCallId: "inspect", toolName: "vdt.inspect", args: {} }]
+      }, { messageId: "start", text: "Проверяю дерево." })),
+      (request) => stream(request, turn({
+        type: "action_batch",
+        calls: [{ externalCallId: "finish", toolName: "run.request_finish", args: {} }]
+      }))
+    ]);
+    const h = harness({
+      runner,
+      environment,
+      executeTool: async (call) => call.toolName === "run.request_finish"
+        ? gatewayResult(call, {
+            resultCode: "FINISH_VERIFIED",
+            payload: {
+              receiptId: "finish-receipt-verified",
+              receiptHash: hashText("finish-receipt-verified"),
+              verifiedFinalText: "Итог расчёта — 4 900 USD."
+            }
+          })
+        : gatewayResult(call)
+    });
+    const session = await h.engine.openSession({
+      binding: bindingFor(h.engine),
+      initialContext: { brief: "host-final" },
+      initialContextHash: hashText(JSON.stringify({ brief: "host-final" }))
+    }, h.host);
+    const events = await collect(session.events());
+
+    expect(runner.requests).toHaveLength(2);
+    expect(events.at(-2)).toMatchObject({ type: "checkpoint_requested" });
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      finishReceiptId: "finish-receipt-verified",
+      text: "Итог расчёта — 4 900 USD."
+    });
+  });
+
   it("normalizes non-plain gateway error details before the next Cursor resume", async () => {
     const environment = await createEnvironment();
     const runner = new ScriptedRunner([
@@ -464,6 +524,9 @@ describe("CursorResumeCheckpointEngine", () => {
     expect(runner.requests[1]?.stdin).toContain(CHECKPOINT_FINISH_ORDER_PROMPT_RULE);
     expect(runner.requests[1]?.stdin).toContain(AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE);
     expect(runner.requests[1]?.stdin).toContain("assistantMessage only");
+    expect(runner.requests[1]?.stdin).toContain("return tools.describe with args.toolNames");
+    expect(runner.requests[1]?.stdin).toContain("inclusive calendar day count");
+    expect(runner.requests[1]?.stdin).toContain("Omit the optional relation");
     expect(runner.requests[1]?.stdin).not.toContain("or stated assumptions");
     expect(events.at(-1)).toMatchObject({
       type: "transport_error",

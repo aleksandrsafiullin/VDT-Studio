@@ -17,7 +17,7 @@ export const AGENT_QUESTION_SCHEMA_KEYS = new Set([
 ]);
 
 export const AGENT_QUESTION_WHEN_TO_ASK =
-  "Ask only for missing data, a required business choice, scope conflict, ambiguous logic, low confidence, or formula ambiguity. When one of those applies, use user.ask with 1-5 precise questions.";
+  "Ask only for missing data, a required business choice, scope conflict, ambiguous logic, low confidence, or formula ambiguity. A rejected value write does not make a supplied fact missing. First retry with the matching exact quote in literalUserQuantities or the source excerpts in the tool error. When clarification is still needed, use user.ask with 1-5 precise questions.";
 
 export const AGENT_QUESTION_OBJECT_CONTRACT =
   "Each question object may use only: required id, question, reason, required; optional expectedAnswerType (text|number|single_choice|multi_choice), answerKind (text|number|single_choice|multi_choice|field_group), options (string or {id,label,value,revealsFields?,requiresFreeText?}), fields ({id,label,kind text|number,unit?,required?,placeholder?}), freeTextAllowed, placeholder, defaultValue. No other keys permitted — use expectedAnswerType for answer type, never type, responseType, or label.";

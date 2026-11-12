@@ -38,6 +38,65 @@ describe("confirmed local model read knowledge", () => {
     expect(knowledge.context()).toMatchObject({ readSkills: [{ executableTopology: output.executableTopology }] });
   });
 
+  it("tracks semantic selection, an explicit catalog gap, and the exact pinned version per run", () => {
+    const skill = { id: "mining.excavation", version: 2, contentHash: `sha256:${"a".repeat(64)}` };
+    const read = { ...skill, readReceiptId: "read-mining", excerpt: "Face loading guidance" };
+    const gap = { outcome: "no_applicable_skill" };
+    function start(selectedSkill?: typeof skill) {
+      const knowledge = new LocalModelKnowledge();
+      knowledge.observePrompt(JSON.stringify({ delta: { type: "initial_context", context: {
+        tools: ["skill.list", "skill.search", "skill.read", "skill.select", "skill.report_gap"].map((name) => ({ name })),
+        brief: { skillResolution: "agent_semantic", selectedSkill }
+      } } }));
+      return knowledge;
+    }
+    const knowledge = start();
+    observe(knowledge, [result("skill.report_gap", gap), result("skill.list", { skills: [skill] }, "failed")]);
+    expect(knowledge.skillResolution()).toMatchObject({ catalogBrowsed: false, gapReported: false });
+    observe(knowledge, [result("skill.list", { skills: [{ ...skill, description: "Working-face loading" }], nextOffset: null }),
+      result("skill.read", read)]);
+    expect(knowledge.skillResolution()).toMatchObject({
+      catalogBrowsed: true, selectedSkillId: undefined, readReceipts: [{ skillId: skill.id, readReceiptId: read.readReceiptId }]
+    });
+    observe(knowledge, [result("skill.select", { selectedSkill: skill }, "failed"),
+      result("skill.select", { selectedSkill: { ...skill, version: 3 } })]);
+    expect(knowledge.skillResolution()?.selectedSkillId).toBeUndefined();
+    knowledge.observePrompt(JSON.stringify({ delta: { type: "checkpoint_inputs", inputs: [],
+      checkpointDelta: { type: "tool_results", results: [result("skill.select", { selectedSkill: skill }, "replayed")] }
+    } }));
+    expect(knowledge.skillResolution()).toMatchObject({ selectedSkillId: skill.id, gapReported: false });
+    expect(knowledge.context()).toMatchObject({ discoveredSkills: { entries: [{ description: "Working-face loading" }] } });
+
+    const unmatched = start();
+    observe(unmatched, [result("skill.list", { skills: [], nextOffset: null }), result("skill.report_gap", gap, "failed")]);
+    expect(unmatched.skillResolution()?.gapReported).toBe(false);
+    observe(unmatched, [result("skill.report_gap", gap)]);
+    expect(unmatched.skillResolution()).toMatchObject({ selectedSkillId: undefined, gapReported: true });
+    const paged = start();
+    const firstPage = result("skill.list", { skills: [skill], nextOffset: 16 });
+    observe(paged, [firstPage, result("skill.report_gap", gap)]);
+    expect(paged.skillResolution()).toMatchObject({ nextCatalogOffset: 16, gapAvailable: false, gapReported: false });
+    observe(paged, [result("skill.search", { candidates: [] }, "failed")]);
+    expect(paged.skillResolution()?.gapAvailable).toBe(false);
+    observe(paged, [result("skill.search", { candidates: [] })]);
+    expect(paged.skillResolution()).toMatchObject({ nextCatalogOffset: 16, gapAvailable: true });
+    const other = { ...skill, id: "actual.other" };
+    observe(paged, [result("skill.search", { candidates: [skill] }), result("skill.search", { candidates: [other] })]);
+    expect(paged.skillResolution()?.gapAvailable).toBe(false);
+    observe(paged, [result("skill.read", read), result("skill.read", { ...other, readReceiptId: "receipt-other" }, "failed")]);
+    expect(paged.skillResolution()?.gapAvailable).toBe(false);
+    expect(paged.discoveredSkillIds()).toContain(other.id);
+    observe(paged, [result("skill.read", { ...other, readReceiptId: "receipt-other" })]);
+    expect(paged.skillResolution()?.gapAvailable).toBe(true);
+    observe(paged, [result("skill.list", { skills: [], nextOffset: null }), { ...firstPage, status: "replayed" }]);
+    expect(paged.skillResolution()).toMatchObject({ nextCatalogOffset: undefined, gapAvailable: true });
+    const pinned = start(skill);
+    observe(pinned, [result("skill.read", { ...read, version: 3 })]);
+    expect(pinned.skillResolution()).toMatchObject({ pinnedSkillId: skill.id, selectedSkillId: undefined });
+    observe(pinned, [result("skill.read", read)]);
+    expect(pinned.skillResolution()).toMatchObject({ pinnedSkillId: skill.id, selectedSkillId: skill.id, gapReported: false });
+  });
+
   it("does not turn a truncated literal projection into an exhaustive source allowlist", () => {
     const knowledge = new LocalModelKnowledge();
     knowledge.observePrompt(JSON.stringify({ delta: { type: "initial_context", context: { tools: [], brief: {
@@ -54,7 +113,7 @@ describe("confirmed local model read knowledge", () => {
       prompt: "У нас 4 экскаватора; ремонт 10 дней/год.", businessContext: "Откатка 2,5 км; 10 самосвалов."
     } } } }));
     expect(knowledge.literalUserQuantities()).toEqual(expect.arrayContaining([
-      { value: 4, quote: "У нас 4 экскаватора" }, { value: 10, quote: "ремонт 10 дней/год" },
+      { value: 4, quote: "У нас 4 экскаватора" }, { value: 10, quote: "ремонт 10 дней/год", unit: "day/year" },
       { value: 2.5, quote: "Откатка 2,5 км" }, { value: 10, quote: "10 самосвалов" }
     ]));
     expect(knowledge.literalUserQuantities()!.some((item) => item.value === 365)).toBe(false);

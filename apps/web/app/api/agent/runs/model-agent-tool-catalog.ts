@@ -9,6 +9,7 @@ export const TARGET_MODEL_AGENT_TOOLS = [
   "skill.search",
   "skill.read",
   "skill.select",
+  "skill.report_gap",
   "skill.compile_recipe",
   "skill.seed_draft_from_recipe",
   "skill.seed_topology",

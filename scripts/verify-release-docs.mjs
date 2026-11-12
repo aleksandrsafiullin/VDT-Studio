@@ -659,7 +659,7 @@ const REQUIRED_DOCS = [
     snippets: [
       "Capability Status Summary",
       "Data and reports",
-      "metadata-only mappings",
+      "materializes supported scalar mappings",
       "one immutable canonical artifact",
       "agent-owned single-copy target not implemented",
       "Hosted/public upload remains disabled",
@@ -727,7 +727,7 @@ const REQUIRED_DOCS = [
   },
   {
     file: "docs/DATA_INGESTION.md",
-    snippets: ["metadata only", "4096-byte", "MetricBinding"]
+    snippets: ["General scalar mappings", "4096-byte", "MetricBinding"]
   },
   {
     file: "docs/PRODUCTION_READINESS.md",

@@ -3,6 +3,7 @@ import { VdtBuilderSession } from "@vdt-studio/vdt-core";
 import { AgentRunStore } from "../run-store";
 import { AgentToolError, type AgentToolContext } from "../tool-registry";
 import { groundedAnswerRecord } from "../chat-messages";
+import { collectLiteralUserQuantities } from "../value-provenance-contract";
 import { assertUserProvidedValueGrounded, runHasUserAnswerForNode } from "./value-provenance";
 
 describe("value provenance", () => {
@@ -93,6 +94,60 @@ describe("value provenance", () => {
       expect((error as Error).message).not.toContain("10 самосвалов");
     }
     expect(() => assertUserProvidedValueGrounded(context, "target", { value: 4, quote: 'Источник: "10 самосвалов"' })).toThrow(AgentToolError);
+  });
+
+  it("sends and accepts a verbatim written cardinal as a supplied value", () => {
+    const { context, store, runId } = provenanceContext();
+    const prompt = "Пять одинаковых самосвалов. Плечо 3 км. Погрузка 3 минуты. Available time: 9 hours.";
+    store.getState(runId).request.input.prompt = prompt;
+    expect(collectLiteralUserQuantities([prompt]).quantities).toEqual([
+      { value: 5, quote: "Пять одинаковых самосвалов" },
+      { value: 3, quote: "Плечо 3 км" },
+      { value: 3, quote: "Погрузка 3 минуты", unit: "min" },
+      { value: 9, quote: "Available time: 9 hours", unit: "h" }
+    ]);
+    expect(() => assertUserProvidedValueGrounded(context, "trucks", { value: 5, quote: "Пять одинаковых самосвалов" })).not.toThrow();
+    expect(() => assertUserProvidedValueGrounded(context, "trucks", { value: 4, quote: "Пять одинаковых самосвалов" })).toThrow(AgentToolError);
+    expect(() => assertUserProvidedValueGrounded(context, "trucks", { value: 5, quote: "5 одинаковых самосвалов" })).toThrow(/Пять одинаковых самосвалов/);
+  });
+
+  it.each([
+    ["Relabeling each takes 12 minutes", 12, "min/item"],
+    ["На одну повторную расшифровку уходит в среднем 20 минут", 20, "min/item"],
+    ["Edit time is 2.5 minutes per document", 2.5, "min/item"],
+    ["250 recordings were checked", 250, "items"],
+    ["Проверили 180 рукописей", 180, "items"],
+    ["12 minutes each month", 12, "min"],
+    ["Ремонт занимает 10 дней/год", 10, "day/year"],
+    ["The loader makes 20 lifts per hour", 20, "lift/h"],
+    ["The bucket lifts 2 tonnes per lift", 2, "t/lift"],
+    ["За цикл забирает 2 тонны", 2, "t/cycle"],
+    ["Доступно 3 с опцией резервирования", 3, undefined],
+    ["The allowance is 8 hours per installation", 8, undefined]
+  ])("retains only the literal time or count basis in %s", (quote, value, unit) => {
+    expect(collectLiteralUserQuantities([quote]).quantities).toEqual([{ quote, value, ...(unit ? { unit } : {}) }]);
+  });
+
+  it("retains a cycle rate when the time basis precedes a singular machine", () => {
+    const prompt = "За чистый час одна машина делает 25 рабочих циклов";
+    expect(collectLiteralUserQuantities([prompt]).quantities).toContainEqual({
+      value: 25, quote: "машина делает 25 рабочих циклов", unit: "cycle/h"
+    });
+  });
+
+  it("does not ground a partial quote of a larger quantity", () => {
+    const { context, store, runId } = provenanceContext();
+    const prompt = "Двадцать пять самосвалов. 40 тонн за рейс. Twenty-five trucks and a one-way distance of 3 km. Work lasts пять с половиной часов. Net change is minus five vehicles.";
+    store.getState(runId).request.input.prompt = prompt;
+    for (const evidence of [
+      { value: 5, quote: "пять самосвалов" },
+      { value: 5, quote: "five trucks" },
+      { value: 5, quote: "five vehicles" },
+      { value: 5, quote: "Work lasts пять" },
+      { value: 0, quote: "0 тонн за рейс" },
+      { value: 1, quote: "a one-way distance" }
+    ]) expect(() => assertUserProvidedValueGrounded(context, "trucks", evidence)).toThrow(AgentToolError);
+    expect(collectLiteralUserQuantities([prompt]).quantities.map(({ value }) => value)).toEqual([40, 3]);
   });
 
   it("never treats an assistant message or a tool output as quoted user evidence", () => {

@@ -208,6 +208,14 @@ native-package and live-inference qualification remain separate gates. See
 
 The web-hosted Codex session transport places `--search` before `exec`/`exec resume`, pins the native shell feature off and supplies a private per-segment `--output-schema`. The strict wire uses `argsJson` for model-authored Gateway argument objects and at most three calls; decoding is followed by canonical argument, scope, mutation and finish validation. One envelope-only same-session correction is bounded and never retries native tool violations or ambiguous output. Each temporary schema file is removed after the child exits. These changes do not certify CLI hard isolation, native packaging or the standalone runner's separate execution path.
 
+Managed structured data discovery supplies Codex an object-root strict schema.
+It decodes the nested decision before dispatching a typed data-harness tool.
+The development Cursor checkpoint supplies compact `action.calls` and
+verified-finish examples and uses a private CLI permissions config even with
+subscription authentication. Request uncertain schemas and enums via
+`tools.describe` in the returned JSON. The transport can correct one invalid
+envelope after a successful, tool-clean stream within the segment deadline.
+See [CLI compatibility](provider-compatibility.md#cursor-external-profile-canaries).
 
 Last reviewed against the working tree: **2026-07-23**.
 
@@ -315,17 +323,43 @@ The native local transport retains bounded read evidence across semantic deltas:
 
 Native local response schemas namespace opaque turn/message/batch IDs by the server exchange ID. Call arrays use positional tuple schemas with a distinct stable externalCallId per exchange/position, preventing a small model from reusing a prior call ID for changed arguments. Exact-exchange retry IDs remain stable. Tool names, graph IDs, formulas, estimates and other business arguments remain model-authored and pass the unchanged Gateway authority/revision/idempotency checks. A live native format probe confirmed tuple-position ID constraints on Ollama.
 
-New-tree native construction also exposes generic single/batch driver creation schemas upfront. Once a skill has actually been read and the root still has no structure, repeated listing/searching and rereading are withheld; additional unread discovered skills remain available so the actor can cover the full process scope. Compilation, schema discovery and model-chosen structural tools remain available. Review/deepen runs retain their ordinary discovery access. This generic progress gate selects no domain, recipe, business parameter or formula.
+New-tree native construction exposes generic single/batch driver creation
+schemas upfront. The skill-resolution gate controls when those tools become
+callable. Read receipts and gap outcomes come from confirmed Gateway results.
+Review/deepen runs retain their ordinary discovery access.
 
 Native new-tree driver batches run alone, contain at most four nodes and require short model-authored lowercase formula identifiers, with bounded optional metadata. Native structural additions omit formulas and numeric baselines; the model fills inputs and assigns formulas in subsequent calls against observed IDs. Canonical tool schemas remain unchanged. The initial prompt and business context are both retained; exact numeric excerpts guide user-source claims, while estimates and semantic mapping remain the model's responsibility. A fresh brief/root-dependency review precedes finish but does not certify business completeness.
 
-Native Ollama construction of a new blank tree now requires a successful model-selected skill read before structural tools unlock. Confirmed failure output cannot satisfy that gate. List/search/read schemas are upfront; the initial native phase offers discovery, then a read constrained to actual returned skill IDs, before introspection/construction unlocks. The model still chooses the search and skill. A sibling batch uses per-parent schema alternatives when the working graph view is complete: the model chooses the parent, but every item must use that same ID. Truncated graph views retain canonical scope checks without claiming an exhaustive parent list. A bounded read-only calculationAssumptions projection retains up to eight calculated/root nodes, two notes of 160 characters each, with explicit truncation; it neither supplies new facts nor chooses formulas.
+Native Ollama construction for a new tree follows the Supervisor's skill
+resolution. The model can read a discovered candidate and explicitly select it
+using the matching confirmed receipt. A trusted pin uses its exact read.
+When the model records a gap, ordinary construction unlocks without a recipe.
+A sibling batch uses per-parent schema alternatives when the working graph
+view is complete, and every item must use the same model-selected parent ID.
+Truncated views retain canonical scope checks. The read-only
+calculationAssumptions projection retains up to eight calculated/root nodes,
+two notes of 160 characters each, with explicit truncation.
 
-Initial goal clarification remains available. After discovery begins in a new blank tree, native questions wait until the chosen skill is actually read; planning the decomposition stays the model's responsibility. A final action is available only after an admitted successful/replayed finish receipt with a valid hash. That receipt fixes the native final ID and closes tool choices; new human work, stale-revision feedback or a committed graph mutation invalidates the native receipt projection. Canonical Supervisor verification remains authoritative.
+Initial goal clarification remains available. After discovery begins in a new
+blank tree, native questions wait for skill resolution. Planning the
+decomposition stays the model's responsibility. A final action requires an
+admitted successful/replayed finish receipt with a valid hash. That receipt
+fixes the native final ID and closes tool choices. New human work,
+stale-revision feedback or a committed graph mutation invalidates the native
+receipt projection. Canonical Supervisor verification remains authoritative.
 
 For a fully visible new-tree input set, native Ollama numeric batches use a values object keyed by model-selected input IDs from one bounded page (up to eight keys). This prevents repeated targets in a generated batch. A pure wire decoder restores the canonical values array in stable ID order before engine/Gateway validation; it preserves every selected target, value, provenance and note, performs no arithmetic and changes no formulas. Other tools, existing-tree/partial-view fallbacks, canonical API arguments, receipts and approval/scope/revision checks retain their contracts.
 
-The experimental local Model Agent can explicitly select `skill.seed_topology` after reading a skill with a complete `vdt-topology` block. The canonical English artifact owns the declarative formulas; the host does not select a domain or skill from keywords. The actor selects the skill and each illustrative reference estimate with `defaults:{inputId:true}`. Defaults require `continueWithAssumptions=true`, remain editable `default_assumption` values, and are never user facts or verified benchmarks. Unselected inputs stay unknown. The tool accepts only a blank root with a matching unit/period, validates bounded IDs, parents, formula references/cycles and root dependency coverage, and proposes one atomic mutation through the existing approval/CAS pipeline. Its skill-defined depth exception never bypasses selected-node decomposition scope. Existing work cannot be overwritten.
+The experimental local Model Agent can call `skill.seed_topology` for a
+selected skill with a complete `vdt-topology` block. The canonical artifact
+owns the declarative formulas. The actor chooses each illustrative reference
+estimate with `defaults:{inputId:true}`. Defaults require
+`continueWithAssumptions=true` and remain editable `default_assumption`
+values. Unselected inputs stay unknown. The tool accepts a blank root with a
+matching unit/period, validates bounded IDs, parents, formula references/cycles
+and root dependency coverage, and proposes one atomic mutation through the
+existing approval/CAS pipeline. Selected-node scope checks apply to the
+skill-defined depth exception.
 
 `mining.load_and_haul` supplies an annual joint excavation/truck-haulage topology: both fleet counts, separate annual repair/shift/unplanned losses, bucket loading productivity, payload-dependent loading time, loaded and empty travel over one route, dumping/positioning/queue time, and the minimum of both capacities. It is a steady-state draft model with continuous equivalent bucket loading, not dispatch simulation. Its numeric reference values are illustrative estimates accepted explicitly by the actor. Site fleet counts, distance, both speeds and truck planned repair have no reference defaults. Formula and sensitivity unit tests do not certify arbitrary model-authored trees or production readiness.
 

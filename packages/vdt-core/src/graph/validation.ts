@@ -49,6 +49,8 @@ export interface ValidateGraphOptions {
   purpose?: "model" | "draft" | "import";
   /** Require an explicit scale for calculations using percent units. */
   enforcePercentageScale?: boolean;
+  /** Completion of a new agent tree must verify the units of duration formulas. */
+  requireTimeInputUnits?: boolean;
 }
 
 export function validateGraph(input: GraphInput, rootNodeId?: string, options: ValidateGraphOptions = {}): ValidationResult {
@@ -169,7 +171,7 @@ export function validateGraph(input: GraphInput, rootNodeId?: string, options: V
         }
       }
 
-      if (options.purpose !== "import") for (const item of validateFormulaUnits(node, expression, nodeById, options.enforcePercentageScale)) {
+      if (options.purpose !== "import") for (const item of validateFormulaUnits(node, expression, nodeById, options.enforcePercentageScale, options.requireTimeInputUnits)) {
         (item.severity === "error" ? errors : warnings).push(item);
       }
     } catch (caught) {

@@ -77,7 +77,10 @@ export class AtomicRevisionStore {
     probeStorageCapabilities(dataDir, this.idFactory);
   }
 
-  commitVdtRevision(input: RevisionCommitInputV2): RevisionCommitResultV2 {
+  commitVdtRevision(
+    input: RevisionCommitInputV2,
+    readExistingProject?: (revision: VdtRevisionRecord) => VdtProject
+  ): RevisionCommitResultV2 {
     assertSafeId(input.projectId, "projectId");
     assertSafeId(input.vdtId, "vdtId");
     validateActor(input.actor, input.projectId);
@@ -102,6 +105,22 @@ export class AtomicRevisionStore {
     }
     let attempt: RevisionCommitAttemptV1;
     try {
+      const expected = input.command.expectedActiveContentIdentity;
+      if (readExistingProject && input.command.expectedActiveRevisionId && expected
+        && (expected.scheme === "legacy_graph_sha256" || contentIdentityEqual(expected, payload.contentIdentity))) {
+        const unchanged = this.transaction(() => {
+          // A concurrent retry of a journaled request must use the original receipt.
+          if (this.findIdempotency(input.vdtId, "revision.commit", input.command.idempotencyKey)) return;
+          const head = this.assertProjectAndHeadPreflight(input.projectId, input.vdtId, input.command);
+          const row = this.db.prepare("SELECT * FROM vdt_revisions WHERE id = ? AND vdt_id = ?")
+            .get(head.activeRevisionId, input.vdtId) as Row | undefined;
+          if (!row) throw new VdtStorageError("VDT_REVISION_HEAD_MISSING", "The current VDT revision is unavailable.");
+          const revision = revisionFromRow(row);
+          if (canonicalizeJson(readExistingProject(revision) as unknown as JsonValue) !== payload.canonicalJson) return;
+          return { schemaVersion: "revision_commit_result.v2", status: "committed", revision, head } as const;
+        });
+        if (unchanged) return unchanged;
+      }
       attempt = this.reserveRevisionAttempt({
         operation: "revision.commit",
         projectId: input.projectId,
@@ -1309,7 +1328,7 @@ export class AtomicRevisionStore {
     projectId: string,
     vdtId: string,
     command: RevisionCommitCommandV2
-  ): void {
+  ): VdtRevisionHeadV2 {
     this.requireWritableProject(
       projectId,
       command.expectedRuntimeGeneration,
@@ -1345,6 +1364,7 @@ export class AtomicRevisionStore {
         "The supplied revision CAS does not match the current VDT head."
       );
     }
+    return head;
   }
 
   private requireWritableProject(

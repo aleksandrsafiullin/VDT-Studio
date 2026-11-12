@@ -197,6 +197,16 @@ Smart incoming proposals. Missing/unparseable units and unresolved custom or
 per-entity bases produce review warnings rather than invented dimensions.
 Custom symbols can still cancel formally when spelled identically.
 
+For a new agent tree, a duration formula needs verifiable operand units before
+the finish receipt. Recognized source durations keep their original magnitude
+and unit. For example, a count in `items` times `min/item` gives minutes,
+which the formula divides by 60 to report hours. This check also applies when
+the formula converts a percent input to a fraction.
+Explicit lift and cycle rates retain their respective per-hour or per-cycle
+bases. When an excavation brief supplies one schedule and rate basis for
+identical machines, the machine quantity can enter the formula as a
+dimensionless multiplier.
+
 For new trees built through the direct OpenAI Model Agent or the structured
 OpenAI-compatible decision adapter,
 the finish gate checks the scale of explicit percent units. An input quoted as

@@ -16,6 +16,7 @@ const rootEntry = /^(?:\s*(?:enter|provide|set|specify)\s+(?:the\s+)?(?:formula|
 const formulaEntry = /^\s*(?:(?:confirm|specify|provide|enter|set)\b.{0,80}\bformula\b|(?:подтвердите|укажите|задайте).{0,80}формул)/iu;
 const directReference = /(?:\bdirectly reference\b|\breference\b.{1,80}\bdirectly\b|ссылаться напрямую|прям[а-яё]* ссылк)/iu;
 const unfinishedFormula = /(?:\b(?:missing formula|no formula|formula backlog|formula is missing|placeholder)\b|нет формулы|формул\p{L}* отсутств|формул\p{L}* ещё не задан)/iu;
+const toolSyntaxQuestion = /\b(?:formula syntax|assignment syntax|parentheses allowed|syntax for the formula)\b|синтаксис формул|можно ли (?:использовать|ставить) скобки/iu;
 const hierarchyRepairCodes = ["PARENT_FORMULA_MISMATCH", "WRONG_VISUAL_PARENT", "UNDECLARED_FORMULA_DEPENDENCY"];
 
 function numericTargets(question: Question): string[] {
@@ -82,6 +83,7 @@ export function constructionQuestionReview(
     if (confirmation.test(text) && (routineStep.test(text) || /^confirm_(?:decomposition_)?plan$/.test(id))) return false;
     if (rootDesign.test(id) && rootEntry.test(text)) return false;
     const targets = numericTargets(question);
+    if (!targets.length && !question.fields?.length && toolSyntaxQuestion.test(text)) return false;
     if (targets.length && targets.every((target) => sourcedIds.has(target))) return false;
     const calculationId = calculationField.exec(id)?.[1];
     if (calculationId && !targets.length && !question.fields?.length) {

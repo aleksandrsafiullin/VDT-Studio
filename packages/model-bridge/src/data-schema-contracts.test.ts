@@ -119,12 +119,19 @@ describe("canonical data task contracts", () => {
     const preview = { type: "tool_call", toolName: "table.preview", rationale: "Inspect ambiguous timestamp examples.", input: { tableId: "table_1", limit: 8 } };
     valid("data-agent-decision-v1", preview);
     const strict = getStrictResponseJsonSchema("data-agent-decision-v1");
-    expect(strict).not.toHaveProperty("properties");
-    const strictPreview = (strict.anyOf as Array<{ properties: { toolName?: { enum: string[] }; input: unknown } }>).find((branch) => branch.properties.toolName?.enum.includes("table.preview"));
+    expect(strict).toMatchObject({ type: "object", required: ["decision"], additionalProperties: false });
+    const { decision } = strict.properties as { decision: { anyOf: Array<{ properties: { toolName?: { enum: string[] }; input: unknown } }> } };
+    const strictPreview = decision.anyOf.find((branch) => branch.properties.toolName?.enum.includes("table.preview"));
     expect(strictPreview?.properties.input).toMatchObject({ properties: { tableId: { type: "string" }, limit: expect.any(Object) } });
-    const optionalLimit = normalizeRegisteredSchemaOutput("data-agent-decision-v1", { ...preview, input: { tableId: "table_1", limit: null } });
-    expect(optionalLimit).toMatchObject({ input: { tableId: "table_1" } });
-    valid("data-agent-decision-v1", optionalLimit);
+    const optionalLimit = { ...preview, input: { tableId: "table_1", limit: null } };
+    for (const wire of [optionalLimit, { decision: optionalLimit }]) {
+      const canonical = normalizeRegisteredSchemaOutput("data-agent-decision-v1", wire);
+      expect(canonical).toEqual({ ...preview, input: { tableId: "table_1" } });
+      valid("data-agent-decision-v1", canonical);
+    }
+    for (const wire of [{ decision: preview, toolName: "shell.exec" }, { decision: null }, { decision: { ...preview, toolName: "shell.exec" } }]) {
+      expect(validateRegisteredSchema("data-agent-decision-v1", normalizeRegisteredSchemaOutput("data-agent-decision-v1", wire))).toBe(false);
+    }
     for (const input of [{ tableId: "table_1", limit: 1.5 }, { tableId: "table_1", limit: 0 }, { tableId: "table_1", limit: 51 }, { tableId: "" }, { tableId: null }, { tableId: "table_1", unknown: null }]) {
       expect(validateRegisteredSchema("data-agent-decision-v1", normalizeRegisteredSchemaOutput("data-agent-decision-v1", { ...preview, input }))).toBe(false);
     }

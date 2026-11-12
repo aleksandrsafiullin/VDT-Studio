@@ -319,6 +319,11 @@ export interface VdtAgentStartRequest extends VdtAgentStartRequestBase {
   providerId: string;
   providerConfig?: Record<string, unknown> | undefined;
   executionBindingId?: string | undefined;
+  /** Server-owned skill resolution for a new tree, with its initial Context revision. */
+  skillResolution?: {
+    selectionRevision: number;
+    outcome?: "selected" | "no_applicable_skill";
+  };
 }
 
 export interface VdtBuildPlan {

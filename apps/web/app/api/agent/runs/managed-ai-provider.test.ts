@@ -122,12 +122,16 @@ it("uses the actual root and accepted plan IDs for construction calls", () => {
     constructionPlan: openAiConstructionPlan(builder.getProject())!
   })!;
   const partial = projectTurn();
-  expect(partial.toolGuidance.map((tool) => tool.name)).toEqual(["vdt.set_decomposition_plan", "vdt.add_driver", "vdt.update_node"]);
+  expect(partial.toolGuidance.map((tool) => tool.name)).toEqual(["vdt.add_driver", "vdt.update_node"]);
+  const steered = buildOpenAiModelTurn(schema, catalog, observation(), "exchange-steered", undefined, {
+    constructionPlan: openAiConstructionPlan(builder.getProject())!, allowPlanRevision: true
+  })!;
+  expect(steered.toolGuidance.map((tool) => tool.name)).toContain("vdt.set_decomposition_plan");
   const partialTools = partial.schema.$defs as { toolCall: { anyOf: unknown[] } };
-  expect(partialTools.toolCall.anyOf[1]).toMatchObject({ properties: { args: { properties: {
+  expect(partialTools.toolCall.anyOf[0]).toMatchObject({ properties: { args: { properties: {
     nodeId: { enum: ["discount"] }, parentNodeId: { const: rootNodeId }
   } } } });
-  expect(JSON.stringify(partialTools.toolCall.anyOf[2])).not.toContain('"formula"');
+  expect(JSON.stringify(partialTools.toolCall.anyOf[1])).not.toContain('"formula"');
   builder.addDriver({ parentNodeId: rootNodeId, nodeId: "discount", name: "Discount" });
   expect(openAiConstructionPlan(builder.getProject())).toMatchObject({
     additions: [{ parentNodeId: "net_sales", nodeIds: ["price_per_item"] }], calculatedIds: [], pendingFactors: true,
@@ -138,6 +142,18 @@ it("uses the actual root and accepted plan IDs for construction calls", () => {
     additions: [], calculatedIds: [rootNodeId, "net_sales"], pendingFactors: false
   });
   expect(projectTurn().toolGuidance.map((tool) => tool.name)).toContain("vdt.set_formula");
+  const formulaTurn = (formula: string) => projectTurn().decode({
+    turnId: "exchange-3", sessionState: "{}", assistantMessage: null,
+    action: { type: "action_batch", batch: { calls: [
+      { toolName: "vdt.set_formula", args: { nodeId: rootNodeId, formula } }
+    ] } }
+  });
+  expect(formulaTurn(`${rootNodeId} = net_sales - discount`)).toMatchObject({
+    action: { batch: { calls: [{ args: { formula: "net_sales - discount" } }] } }
+  });
+  expect(formulaTurn("other_kpi = net_sales - discount")).toMatchObject({
+    action: { batch: { calls: [{ args: { formula: "other_kpi = net_sales - discount" } }] } }
+  });
   const existing = buildOpenAiModelTurn(schema, catalog, { ...observation(), constructingTree: false }, "exchange-existing", undefined)!;
   const existingTools = existing.schema.$defs as { toolCall: { anyOf: unknown[] } };
   expect(existingTools.toolCall.anyOf[3]).toHaveProperty("properties.args.properties.patch.properties.formula", string);

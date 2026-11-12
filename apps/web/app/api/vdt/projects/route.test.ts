@@ -403,8 +403,17 @@ describe("VDT project storage APIs", () => {
       expectedHead: revisionCas(createVdtPayload.head),
       expectedRuntime: runtimeCas(createVdtPayload.runtimeState),
       summary: "Manual save",
-      project: productionVolumeProject
+      project: { ...productionVolumeProject, description: "Edited in the workspace" }
     };
+    const unchanged = await saveVdtRevision(jsonRequest(
+      "http://localhost:3000/api/vdt/vdts/vdt_manual/revisions",
+      { ...revisionRequest, idempotencyKey: "manual-save:vdt_manual:unchanged", project: productionVolumeProject }
+    ), { params: Promise.resolve({ vdtId: "vdt_manual" }) });
+    expect(unchanged.status).toBe(200);
+    expect(await unchanged.json()).toMatchObject({
+      revision: { id: createVdtPayload.revision.id, revisionNo: 1 },
+      head: createVdtPayload.head
+    });
     const rejectedRevision = await saveVdtRevision(jsonRequest(
       "http://localhost:3000/api/vdt/vdts/vdt_manual/revisions",
       { ...revisionRequest, source: "agent" }
@@ -456,13 +465,20 @@ describe("VDT project storage APIs", () => {
       revision: { id: revisionPayload.revision.id, revisionNo: 2 },
       head: revisionPayload.head
     });
+    const reopened = await getVdt(new Request("http://localhost:3000/api/vdt/vdts/vdt_manual"), {
+      params: Promise.resolve({ vdtId: "vdt_manual" })
+    });
+    const reopenedPayload = await reopened.json();
+    expect(reopenedPayload.activeProject.description).toBe("Edited in the workspace");
+    expect(reopenedPayload.revisions).toHaveLength(2);
 
     const staleCasResponse = await saveVdtRevision(jsonRequest(
       "http://localhost:3000/api/vdt/vdts/vdt_manual/revisions",
       {
         ...revisionRequest,
         idempotencyKey: "manual-save:vdt_manual:stale",
-        summary: "Stale overwrite"
+        summary: "Stale overwrite",
+        project: productionVolumeProject
       }
     ), {
       params: Promise.resolve({ vdtId: "vdt_manual" })

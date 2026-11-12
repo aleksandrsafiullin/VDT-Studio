@@ -7,6 +7,7 @@ import {
   plannedFactorNodeTypes,
   plannedFormulaTargets,
   plannedOrphanLinks,
+  parseValidationUnit,
   serializeFormulaTokens,
   stableSnakeId,
   tokenizeFormula,
@@ -23,7 +24,7 @@ import {
 import { defaultProgressiveBuildPolicy, proposeAndMaybeApplyMutation } from "../mutation-pipeline";
 import { unboundQuotedFormulaFacts } from "../model-acceptance-contract";
 import { constructionSourceFacts, isRunCreatedInputLeaf, matchesQuotedSourceUnit, sourceBindingIssue } from "../construction-source-facts";
-import { normalizeQuotedCountUnit } from "../value-provenance-contract";
+import { normalizeQuotedInputUnit } from "../value-provenance-contract";
 import { AgentToolError, isAgentToolError, type AgentTool, type AgentToolContext } from "../tool-registry";
 import type { VdtAgentRunState } from "../types";
 import { summarizeCalculation, summarizeValidation } from "../summaries";
@@ -522,11 +523,12 @@ const addEdgeTool: AgentTool = {
     const nodeIds = new Set(project.graph.nodes.map((node) => node.id));
     if (!nodeIds.has(input.sourceNodeId)) throw new AgentToolError("SOURCE_NOT_FOUND", `Source node "${input.sourceNodeId}" was not found.`);
     if (!nodeIds.has(input.targetNodeId)) throw new AgentToolError("TARGET_NOT_FOUND", `Target node "${input.targetNodeId}" was not found.`);
-    if (context.requirePlanOperands) {
+    const hasPlan = project.graph.nodes.some((node) => node.id === project.rootNodeId && node.decompositionPlan);
+    if (context.requirePlanOperands || (context.requireDecompositionPlan && hasPlan)) {
       const links = plannedOrphanLinks(project);
       if (!links.some(({ nodeId, parentNodeId, kind }) => nodeId === input.targetNodeId && parentNodeId === input.sourceNodeId
         && (kind === "context") === (input.relation === "contextual_influence"))) {
-        throw new AgentToolError("CONSTRUCTION_EDGE_NOT_ADMITTED", "A construction link can restore only an orphan to its declared parent with the planned relation kind. Driver additions already create links. Use vdt.reparent_branch for an existing visual link and sharedWith for extra formula users.", {
+        throw new AgentToolError("CONSTRUCTION_EDGE_NOT_ADMITTED", "A construction link can restore only an orphan to its declared parent with the planned relation kind. Driver additions already create visual links. Use vdt.reparent_branch to change the primary parent, and sharedWith in the plan plus vdt.set_formula for extra formula users.", {
           sourceNodeId: input.sourceNodeId, targetNodeId: input.targetNodeId,
           orphanLinks: links.slice(0, 12).map(({ nodeId, parentNodeId, kind }) => ({ nodeId, parentNodeId, kind }))
         });
@@ -569,19 +571,30 @@ function sourceUnitCorrection(
   if (node.status !== "ai_suggested" || Number.isFinite(node.baselineValue ?? node.value)
     || !isAgentOwnedConstructionLeaf(state, project, node)) return undefined;
   const unit = sourceUnit ?? groundedQuotedInputUnit(context, evidence, state.visibleContext.brief.unit);
-  return provisionalSourceUnitCorrection(node.id, proposedUnit, unit, context.requirePlanOperands);
+  return provisionalSourceUnitCorrection(node.id, proposedUnit, unit, context.requirePlanOperands || context.requireDecompositionPlan);
 }
 
-function provisionalSourceUnitCorrection(nodeId: string, current: string | undefined, unit: string | undefined, normalizeCountAlias = false) {
+function provisionalSourceUnitCorrection(nodeId: string, current: string | undefined, unit: string | undefined, normalizeAlias = false) {
   if (!unit) return undefined;
   const currentUnit = current?.trim();
   if (currentUnit?.toUpperCase() === unit.toUpperCase()) return undefined;
-  const countAlias = normalizeCountAlias && currentUnit && normalizeQuotedCountUnit(currentUnit) !== currentUnit
-    && matchesQuotedSourceUnit(currentUnit, unit);
-  const provisional = countAlias || (unit === "%" ? /^(1|fraction|ratio|decimal(?: fraction)?)$/i.test(currentUnit ?? "")
-    : currentUnit?.toUpperCase() === unit.split("/")[0]);
+  const equivalentAlias = normalizeAlias && currentUnit && matchesQuotedSourceUnit(currentUnit, unit)
+    && JSON.stringify(parseValidationUnit(currentUnit, true)) !== JSON.stringify(parseValidationUnit(normalizeQuotedInputUnit(currentUnit), true));
+  const [numerator = unit, denominator] = unit.split("/");
+  const rateBasisOnly = denominator === "h" && /^(?:cycle|lift)$/.test(numerator) && matchesQuotedSourceUnit(currentUnit, denominator);
+  const replicatedMachineCount = unit === "1" && (matchesQuotedSourceUnit(currentUnit, "count")
+    || /^(?:machines?|loaders?|excavators?|shovels?|машин(?:а|ы)?|экскаватор(?:а|ов|ы)?|погрузчик(?:а|ов|и)?)$/iu.test(currentUnit ?? ""));
+  const provisional = equivalentAlias || replicatedMachineCount || (unit === "%" ? /^(1|fraction|ratio|decimal(?: fraction)?)$/i.test(currentUnit ?? "")
+    : rateBasisOnly || (denominator !== undefined && matchesQuotedSourceUnit(currentUnit, numerator)));
   if (currentUnit && !provisional) return undefined;
   return { nodeId, previousUnit: currentUnit || null, unit };
+}
+
+function assertDraftEstimateAllowed(context: AgentToolContext, nodeId: string): void {
+  if (context.getRun().request.options?.continueWithAssumptions === false) {
+    throw new AgentToolError("ASSUMPTIONS_NOT_AUTHORIZED",
+      `The user did not authorize an estimate for "${nodeId}". Use grounded source values and exact formulas or file queries for derived quantities. Ask only for a genuinely missing fact.`);
+  }
 }
 
 const updateNodeTool: AgentTool = {
@@ -627,8 +640,15 @@ const updateNodeTool: AgentTool = {
     }
     assertFormulaReferencesIfPresent(project, input.patch.formula, input.nodeId);
     const patch: VdtNodePatch = { ...input.patch };
+    const writesEstimate = patch.valueStatus === "default_assumption"
+      || (patch.valueStatus === undefined && node.valueStatus === "default_assumption"
+        && (patch.baselineValue !== undefined || patch.value !== undefined));
+    if (writesEstimate && (patch.valueSource ?? node.valueSource)?.sourceTier !== "native_web_search") {
+      assertDraftEstimateAllowed(context, node.id);
+    }
     let correction: ReturnType<typeof sourceUnitCorrection>;
-    const sourceFacts = context.requirePlanOperands ? constructionSourceFacts(project, context.store.getState(context.runId)) : undefined;
+    const sourceFacts = context.requirePlanOperands || context.requireDecompositionPlan
+      ? constructionSourceFacts(project, context.store.getState(context.runId)) : undefined;
     const checksSourceWrite = sourceFacts?.inputIds.has(node.id) && (patch.valueStatus ?? node.valueStatus) === "user_provided_value"
       && (patch.valueStatus !== undefined || patch.value !== undefined || patch.baselineValue !== undefined
         || patch.valueSource !== undefined || patch.unit !== undefined);
@@ -683,7 +703,7 @@ interface InputValueWrite {
 
 const setInputValuesBatchTool: AgentTool<{ values: InputValueWrite[] }> = {
   name: "vdt.fill_input_values_batch",
-  description: "Fill 1-8 UNPOPULATED existing numeric input leaves atomically. Copy the exact source value and quote from literalUserQuantities. In new direct construction each quoted measurement belongs to one input, with its explicit source unit. Use vdt.update_node for intentional edits of populated inputs.",
+  description: "Fill 1-8 UNPOPULATED existing numeric input leaves atomically. Copy the exact source value and quote from literalUserQuantities. In new construction each quoted measurement belongs to one input, with its explicit source unit. Use vdt.update_node for intentional edits of populated inputs.",
   inputSchema: z.object({ values: z.array(z.object({
     nodeId: vdtNodeIdSchema,
     value: z.number().finite(),
@@ -716,6 +736,7 @@ const setInputValuesBatchTool: AgentTool<{ values: InputValueWrite[] }> = {
       if (Number.isFinite(node.baselineValue ?? node.value)) {
         throw new AgentToolError("INPUT_ALREADY_POPULATED", `Input "${item.nodeId}" already has a value. Fill remaining unresolved inputs; use vdt.update_node for an intentional edit.`);
       }
+      if (item.provenance === "default_assumption") assertDraftEstimateAllowed(context, node.id);
       if (item.provenance === "user_provided_value") {
         try { assertUserProvidedValueGrounded(context, item.nodeId, { value: item.value, quote: item.note }); }
         catch (error) {
@@ -728,7 +749,8 @@ const setInputValuesBatchTool: AgentTool<{ values: InputValueWrite[] }> = {
     if (groundingErrors.length > 1) throw new AgentToolError("USER_PROVIDED_VALUE_UNGROUNDED",
       `No values were applied. Correct all ${groundingErrors.length} ungrounded entries: ${groundingErrors.map(({ nodeId, error }) => `${nodeId}: ${error.message}`).join("\n")}`,
       { issues: groundingErrors.map(({ nodeId, error }) => ({ nodeId, code: error.code, message: error.message })) });
-    const sourceFacts = context.requirePlanOperands ? constructionSourceFacts(project, context.store.getState(context.runId)) : undefined;
+    const sourceFacts = context.requirePlanOperands || context.requireDecompositionPlan
+      ? constructionSourceFacts(project, context.store.getState(context.runId)) : undefined;
     const bindings = [...(sourceFacts?.bindings ?? [])];
     const sourceUnitCorrections = values.flatMap((item) => {
       if (item.provenance !== "user_provided_value") return [];
@@ -824,10 +846,10 @@ const deleteNodeTool: AgentTool = {
 
 const setFormulaTool: AgentTool = {
   name: "vdt.set_formula",
-  description: "Set a formula on one node after parser and reference validation.",
+  description: "Set one node's formula. Send only the expression, such as quantity * rate. The node ID is a separate argument.",
   inputSchema: z.object({
     nodeId: z.string().min(1).max(160),
-    formula: z.string().min(1).max(500)
+    formula: z.string().min(1).max(500).describe("Formula expression without a leading equals sign or a node assignment. Parentheses group operations.")
   }),
   outputSchema: z.record(z.string(), z.unknown()),
   mutatesProject: true,

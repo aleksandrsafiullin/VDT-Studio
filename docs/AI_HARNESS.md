@@ -112,7 +112,9 @@ response format. Encoded tools retain their textual argument schemas.
 The model chooses exact number and quote pairs for a complete original brief.
 When a run constructs a new tree from a blank draft or a saved empty root, the
 first sourced write to a new agent-owned input can replace a provisional unit
-with the explicit per-item rate or percentage from the grounded excerpt. The
+with the explicit rate, duration or percentage from the grounded excerpt. A
+time per item keeps the original magnitude and a unit such as `min/item`.
+Converting the result to hours belongs in the formula. The
 unit, value and source enter the same mutation preview. Tool output lists the
 unit corrections. When a formula fails unit validation, the tool can return a
 repair call for a referenced provisional input whose exact quote supplies the
@@ -121,6 +123,12 @@ intervening manual edit. Retained and manually edited inputs receive the normal
 validation diagnostic. The agent submits a suggested repair through the usual
 validation and approval controls.
 Before finish, the adapter receives current graph and plan validation results.
+A rejected initial OpenAI plan is reviewed with its original brief, source
+quantities and exact diagnostics. The model may select a checked repair that
+removes redundant plan rows while retaining the inputs and their links.
+When an excavation output uses a stated schedule and separate downtime
+durations, the OpenAI planner receives those quoted losses as required
+operands. The finish check verifies that the saved result uses them.
 The host checks the plan against the saved graph and requires explicit scaling
 when a percent input is used as a fraction. The verification is recorded in the
 [response contract follow-up](implementation/AI_RESPONSE_CONTRACT_2026-11-11.md#native-arguments-and-explicit-source-units).
@@ -296,15 +304,25 @@ native-package certification.
 
 ## Managed skills and Skill Author
 
-The main agent receives the VDT's host-resolved provisional or explicit skill,
-including its exact version/hash. Local tools use the single on-disk catalog;
-`skill.read` remains selection-neutral. `skill.select` requires a successful read
-of that same content in the run, replaces the primary choice and persists the
-agent's reason for Context. Root-KPI recall is provisional, supports Unicode and
-uses the universal skill when no specific pattern matches. It is not model
-confidence or a full semantic resolver. Compatibility compile/topology tools
-retain legacy activation; replacing a user choice through recipe compilation
-requires explicit reselection.
+Local Supervisor construction uses the original request and one on-disk skill
+catalog. Context can show a provisional Root-KPI match, including the available
+universal skill. An explicitly pinned Context selection is available to the run
+by exact version and hash. Otherwise the model inspects bounded `skill.list` pages,
+compares the scope excerpts with the requested process boundary, reads a
+candidate and binds the version/hash receipt through `skill.select`. The
+excavation method covers the removal cycle at the working face. The general
+production-volume method covers aggregate or unspecified production scope.
+For a face-output request with matching cycle rates and explicitly excluded
+transport, OpenAI Direct excludes overlapping broader mining choices when the
+excavation skill is present. The agent still reads and selects an exact
+version. A manual Context pin takes precedence.
+Reading preserves the current selection. Selection stores the agent's reason
+for Context. When no skill fits, `skill.report_gap` records
+`no_applicable_skill` and construction can proceed from the user brief.
+The gap records whether browsing reached the last page or the model reviewed
+all candidates returned by a scoped search.
+Recipe tools on this path use the selected skill. Legacy compatibility
+generation retains its earlier retrieval and activation behavior.
 
 Skill Author is a dedicated, bounded prompt over the existing `agent_decision`
 transport, with expected `skill.author_draft` creation or `skill.author_update`
@@ -690,9 +708,23 @@ commas without globally replacing commas or changing `min(a,b)` semantics.
   tests and a credentialed local smoke prove one opaque session ID,
   ActionBatch-before-resume sequencing and fail-closed parsing, but not hard
   provider isolation. Subscription authentication uses the trusted user's
-  Cursor home while execution remains in an empty private workspace; the
-  canary acknowledges trust only for that verified empty workspace and never
-  enables force/yolo. Codex checkpoint/resume is also executable in this
+  Cursor home with a separate host-written private config. The config limits
+  read scope to the empty workspace and denies native file, shell, MCP and
+  WebFetch permissions. Each Cursor checkpoint prompt shows a compact
+  `action.calls` example. For schema questions, the model requests
+  `tools.describe` through the Gateway. Driver creation can omit optional
+  relations for ordinary dependencies. Skill templates use supplied actual or
+  net quantities directly and omit adjustment factors those quantities already
+  include. Only the structured `assistantMessage`
+  reaches chat from an action envelope. Uploaded files use the VDT data tools
+  with deterministic unit and date normalization in the query or formula.
+  For new calculated
+  trees with a known English or Russian report language, the verified receipt
+  lets the application format the result and complete the run in the same
+  session. A clean completed
+  stream with an invalid envelope gets one bounded correction in the same
+  session before any VDT call is dispatched. Native tool violations, ambiguous
+  output and session drift stop that exchange. Codex checkpoint/resume is also executable in this
   unverified development path. Its default binding uses the provider default
   unless the host pins a model; additional immutable model bindings come only
   from the authenticated host CLI catalog. The composer checks backend/model
@@ -716,15 +748,16 @@ qualification and the cold/warm live benchmark remain explicit `NO-GO` gates.
 
 The source library is `packages/vdt-agent/skills/`; the sidecar copy is generated.
 
-The bundled registry covers mining, finance, SaaS and generic decomposition. Retrieval combines deterministic domain classification and term matching. Recipe compilation can seed graph structure and known numeric inputs.
+The bundled registry covers mining, finance, SaaS and generic decomposition.
+Compatibility retrieval combines deterministic domain classification and term
+matching. Recipe compilation can seed graph structure and known numeric inputs.
 
-Known limitations:
+Known limitations of compatibility retrieval and recipes:
 
 - classification domains are limited to `mining`, `finance`, `saas` and `generic`;
 - normalization is effectively English/ASCII and does not reliably classify Russian or Kazakh requests;
-- `skill.read` is selection-neutral; the V1 compatibility runtime currently
-  activates selection only when `skill.compile_recipe` is called, because the
-  revision-aware `skill.select` command is not implemented yet;
+- `skill.read` is selection-neutral; compatibility compilation may activate a
+  skill before the full revision-aware selection command is available;
 - no-match can select the generic skill automatically;
 - a recipe can be labelled complete without executable formula closure;
 - per-skill evaluation coverage is incomplete.
@@ -740,8 +773,11 @@ The accepted corrective target is documented in [`ADR-003`](adr/ADR-003-single-c
 - translated copies, language aliases and keyword/regex/marker classifiers are not the multilingual architecture;
 - publishable recipe artifacts in Wave 1B depend on the strict metric/formula/input/recipe schemas from Wave 1A.1.
 
-Only the selection-neutral `skill.read` behavior is implemented from this
-target. Actor and authorization context must be server-issued; model/tool/request data cannot choose principal, tenant, workspace, project, roles or approval authority. Corrective feature flags remain server-owned, fail-closed and default OFF.
+Local Supervisor construction implements the run-local catalog, neutral read,
+explicit selection and gap behavior described under Managed skills and Skill
+Author. Durable V2 read and selection state, grants and revocation remain target
+work. Actor and authorization context must be server-issued.
+Corrective feature flags remain server-owned, fail-closed and default OFF.
 
 Skill changes must keep source registry, recipe mappings, tests and generated sidecar resources aligned. Run:
 
@@ -847,7 +883,7 @@ multilingual, benchmark or data-mapping certification. No qualifying live
 session sample was produced during this implementation review. Required future
 agent evaluations are listed in `ROADMAP.md` and `PRODUCTION_READINESS.md`.
 
-For the structured Model Agent, `brief.options.continueWithAssumptions=true` directs the model to select missing numeric estimates, record explicit editable `default_assumption` provenance and continue to calculation. Questions are reserved for unresolved goals or scope changes, rather than repeating permission for already authorized estimates. This is a prompt rule; the model remains responsible for obeying it and choosing defensible values.
+For the structured Model Agent, `brief.options.continueWithAssumptions=true` directs the model to select missing numeric estimates, record explicit editable `default_assumption` provenance and continue to calculation. Questions address genuinely missing facts or unresolved scope. When the option is explicitly `false`, `vdt.fill_input_values_batch` and `vdt.update_node` reject draft estimate writes. Native web-search provenance follows its separate contract. Exact conversions and calendar counts derived from stated dates belong in the calculation.
 
 The generic `vdt.fill_input_values_batch` fills 1–8 existing unpopulated non-calculated input leaves in one atomic mutation with a finite number, explicit user/default provenance and a source note. User values require the same trusted quote/answer grounding as single writes. Unknown IDs, duplicate writes, computed/root nodes, non-leaf nodes, ungrounded user values and invalid arguments reject the whole batch. It cannot add nodes, change formulas or bypass mutation approval, scoped `deepen_node` checks, revision fencing or finish verification. Single/batch driver additions reject collisions in their normalized IDs instead of silently suffixing a copied input ID; distinct quantities require explicit unique IDs.
 
@@ -867,13 +903,27 @@ The native local transport retains bounded read evidence across semantic deltas:
 
 Native local response schemas namespace opaque turn/message/batch IDs by the server exchange ID. Call arrays use positional tuple schemas with a distinct stable externalCallId per exchange/position, preventing a small model from reusing a prior call ID for changed arguments. Exact-exchange retry IDs remain stable. Tool names, graph IDs, formulas, estimates and other business arguments remain model-authored and pass the unchanged Gateway authority/revision/idempotency checks. A live native format probe confirmed tuple-position ID constraints on Ollama.
 
-New-tree native construction also exposes generic single/batch driver creation schemas upfront. Once a skill has actually been read and the root still has no structure, repeated listing/searching and rereading are withheld; additional unread discovered skills remain available so the actor can cover the full process scope. Compilation, schema discovery and model-chosen structural tools remain available. Review/deepen runs retain their ordinary discovery access. This generic progress gate selects no domain, recipe, business parameter or formula.
+New-tree native construction exposes generic single/batch driver creation
+schemas upfront. The skill resolution gate controls when they become callable.
+Review/deepen runs retain their ordinary discovery access.
 
 Native new-tree driver batches run alone, contain at most four nodes and require short model-authored lowercase formula identifiers, with bounded optional metadata. Native structural additions omit formulas and numeric baselines; the model fills inputs and assigns formulas in subsequent calls against observed IDs. Canonical driver tools retain their full schemas. Collision protection preserves automatic unique fallback IDs for distinct non-Latin names when no ID was supplied; an explicit normalized ID collision still rejects the mutation. These bounds reduce oversized local responses without writing or selecting business formulas.
 
-Native Ollama construction of a new blank tree now requires a successful model-selected skill read before structural tools unlock. Confirmed failure output cannot satisfy that gate. List/search/read schemas are upfront; the initial native phase offers discovery, then a read constrained to actual returned skill IDs, before introspection/construction unlocks. The model still chooses the search and skill. A sibling batch uses per-parent schema alternatives when the working graph view is complete: the model chooses the parent, but every item must use that same ID. Truncated graph views retain canonical scope checks without claiming an exhaustive parent list. A bounded read-only calculationAssumptions projection retains up to eight calculated/root nodes, two notes of 160 characters each, with explicit truncation; it neither supplies new facts nor chooses formulas.
+Native Ollama construction uses the Supervisor's skill resolution state. The
+decoder offers catalog discovery, read and explicit selection with a confirmed
+receipt. The exact read of a trusted pin or a confirmed no-applicable-skill
+outcome can also unlock construction. In a complete graph view every item in a
+sibling batch must use the same model-selected parent ID. Truncated views retain
+canonical scope checks. The bounded read-only calculationAssumptions projection
+retains up to eight calculated/root nodes and two notes of 160 characters each.
 
-Initial goal clarification remains available. After discovery begins in a new blank tree, native questions wait until the chosen skill is actually read; planning the decomposition stays the model's responsibility. A final action is available only after an admitted successful/replayed finish receipt with a valid hash. That receipt fixes the native final ID and closes tool choices; new human work, stale-revision feedback or a committed graph mutation invalidates the native receipt projection. Canonical Supervisor verification remains authoritative.
+Initial goal clarification remains available. After discovery begins in a new
+blank tree, native questions wait for skill resolution. A final action is
+available only after an admitted successful/replayed finish receipt with a
+valid hash. That receipt fixes the native final ID and closes tool choices.
+New human work, stale-revision feedback or a committed graph mutation
+invalidates the native receipt projection. Canonical Supervisor verification
+remains authoritative.
 
 For a fully visible new-tree input set, native Ollama numeric batches use a values object keyed by model-selected input IDs from one bounded page (up to eight keys). This prevents repeated targets in a generated batch. A pure wire decoder restores the canonical values array in stable ID order before engine/Gateway validation; it preserves every selected target, value, provenance and note, performs no arithmetic and changes no formulas. Other tools, existing-tree/partial-view fallbacks, canonical API arguments, receipts and approval/scope/revision checks retain their contracts.
 

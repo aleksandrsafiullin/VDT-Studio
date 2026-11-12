@@ -90,6 +90,21 @@ describe("openVdtDatabase", () => {
         ])
       }
     });
+    const head = reopened.getVdtRevisionHead(vdt.id)!;
+    const runtime = reopened.getProjectRuntimeState(project.id)!;
+    const same = reopened.commitVdtRevision({
+      projectId: project.id, vdtId: vdt.id,
+      actor: { schemaVersion: "actor_context.v1", principalId: "local_user", projectId: project.id, roles: ["vdt_writer"],
+        authSource: "desktop_local", sessionId: "test_session", issuedAt: "2026-06-29T05:00:00.000Z" },
+      command: { schemaVersion: "revision_commit.v2", expectedActiveRevisionId: head.activeRevisionId,
+        expectedActiveContentIdentity: head.activeContentIdentity, expectedCommitGeneration: head.commitGeneration,
+        expectedRuntimeGeneration: runtime.runtimeGeneration, expectedGenerationVersion: runtime.generationVersion,
+        idempotencyKey: "unchanged-legacy-draft", intent: { source: "user", summary: null, validation: null, calculation: null } },
+      project: reopened.readVdtRevision(reloadedRevision!)
+    }, { reuseUnchangedRevision: true });
+    expect(same.head).toEqual(head);
+    expect(same.revision.id).toBe(revision.id);
+    expect(reopened.listVdtRevisions(vdt.id)).toHaveLength(1);
     expect(reopened.listConversations(project.id)).toEqual([
       expect.objectContaining({
         id: "conversation_mining",

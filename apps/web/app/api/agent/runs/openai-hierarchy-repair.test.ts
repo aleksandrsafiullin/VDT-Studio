@@ -70,6 +70,32 @@ describe("checked hierarchy repair", () => {
     expect(suggestHierarchyRepair(independent.builder.getProject(), generate)).toBeUndefined();
   });
 
+  it("moves a sourced factor before removing the unused copy of the root duration", () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ rootKpi: "Review time", projectTitle: "Review time", unit: "h" });
+    const root = builder.getProject().rootNodeId;
+    const formula = "quantity * minutes_per_item / 60";
+    builder.addDriver({ parentNodeId: root, nodeId: "duplicate", name: "Duplicate", type: "calculated", unit: "hours", formula });
+    builder.addDriver({ parentNodeId: root, nodeId: "quantity", name: "Quantity", unit: "items", baselineValue: 40 });
+    builder.addDriver({ parentNodeId: "duplicate", nodeId: "minutes_per_item", name: "Time per item", unit: "min/item", baselineValue: 12 });
+    builder.setFormula({ nodeId: root, formula });
+    builder.updateNode({ nodeId: root, patch: { decompositionPlan: { version: 1, goal: "Review time", nodes: [
+      { nodeId: "duplicate", parentNodeId: root, kind: "calculated" },
+      { nodeId: "quantity", parentNodeId: root, kind: "input", sharedWith: ["duplicate"] },
+      { nodeId: "minutes_per_item", parentNodeId: "duplicate", kind: "input" }
+    ] } } });
+    const before = builder.getProject();
+    expect(calculateGraph(before).rootValue).toBe(8);
+    expect(suggestHierarchyRepair(before, generate)).toMatchObject([
+      { toolName: "vdt.reparent_branch", args: { nodeId: "minutes_per_item", fromParentNodeId: "duplicate", parentNodeId: root } },
+      { toolName: "vdt.delete_node", args: { nodeId: "duplicate" } },
+      { toolName: "vdt.set_decomposition_plan", args: { plan: { nodes: [
+        { nodeId: "quantity", parentNodeId: root }, { nodeId: "minutes_per_item", parentNodeId: root }
+      ] } } }
+    ]);
+    expect(builder.getProject()).toEqual(before);
+  });
+
   it("omits an unbuilt intermediate with no planned inputs from a complete direct calculation", () => {
     const { builder, root, plan, initialProject } = draft();
     for (const nodeId of ["gross", "adjustment", "duplicate"]) builder.deleteNode({ nodeId, cascadeEdges: true });

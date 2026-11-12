@@ -116,7 +116,9 @@ version and selection history separate and unchanged.
 External saves update immutable history and the current catalog; removed files
 leave the catalog, while pinned versions remain readable. Context uses that
 same library. Provisional Root-KPI recall uses the universal skill when present;
-users can select another file after removing the default. Skill Author prepares
+users can select another file after removing the default. The local Supervisor
+resolves new-tree requests through explicit skill selection or an applicable-skill
+gap. Skill Author prepares
 a value-free draft from the 2–80-node open VDT and explicit Create and open saves
 it for external review.
 
@@ -354,7 +356,7 @@ This roadmap is the operational summary of the authoritative [`VDT_STUDIO_CORREC
 
 Implemented at alpha level:
 
-- project/VDT workspace and local SQLite revision storage, with Home/back links that wait for a successful save and synchronize browser Back/Forward selection. A conflict preserves the open draft and requires an explicit reload of the saved revision before further saves;
+- project/VDT workspace and local SQLite revision storage, with Home/back links that wait for save confirmation and synchronize browser Back/Forward selection. Identical snapshots reuse the current revision. A conflict preserves the open draft and requires an explicit reload of the saved revision before further saves;
 - compact Projects home with consistent-width cards in one to four columns, a revealable search across project field values, and modal creation that saves name/client/site/year together;
 - immediate cached-project/home rendering with scoped background refresh, direct VDT loading without a project-library fetch, stale-response guards and preserved form drafts; cold-route loading and retryable errors remain;
 - SQL-only summary counters without an AI-run counter, and bounded immutable-backup verification retention for ready-state opens; migration/recovery still verifies backup bytes in full;

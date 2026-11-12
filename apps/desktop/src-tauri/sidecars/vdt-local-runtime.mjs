@@ -256,7 +256,8 @@ function isDataDiscoverySchemaId(value) {
   return DATA_DISCOVERY_SCHEMA_IDS.includes(value);
 }
 function strictDataDiscoverySchema(schemaId) {
-  return strictSchema(DATA_DISCOVERY_JSON_SCHEMAS[schemaId]);
+  const schema = strictSchema(DATA_DISCOVERY_JSON_SCHEMAS[schemaId]);
+  return schemaId === "data-agent-decision-v1" ? object({ decision: schema }) : schema;
 }
 function strictSchema(schema) {
   if (Array.isArray(schema.anyOf)) return { ...schema, anyOf: schema.anyOf.map((branch) => strictSchema(branch)) };
@@ -270,6 +271,9 @@ function strictSchema(schema) {
   ])));
 }
 function normalizeDataDiscoveryOutput(schemaId, output2) {
+  if (schemaId === "data-agent-decision-v1" && record(output2) && Object.keys(output2).length === 1 && Object.hasOwn(output2, "decision")) {
+    output2 = output2.decision;
+  }
   return normalizeOptionalNulls(DATA_DISCOVERY_JSON_SCHEMAS[schemaId], output2);
 }
 function normalizeOptionalNulls(schema, value) {
@@ -642,6 +646,7 @@ var aliases = {
   meters: "m",
   units: "count",
   unit: "count",
+  counts: "count",
   item: "count",
   items: "count",
   trips: "trip",
@@ -696,8 +701,7 @@ function physical(unit) {
 function compatible(actual, expected, coefficient) {
   if (same(actual, expected)) return true;
   const from = physical(actual), to = physical(expected);
-  if (!from.known || !to.known) return void 0;
-  if (!same(from.dimensions, to.dimensions)) return false;
+  if (!same(from.dimensions, to.dimensions)) return from.known && to.known ? false : void 0;
   if (!Number.isFinite(from.scale) || !Number.isFinite(to.scale) || from.scale <= 0 || to.scale <= 0) return void 0;
   const ratio = from.scale / to.scale;
   return coefficient !== void 0 && Number.isFinite(coefficient) && Math.abs(Math.abs(coefficient) - ratio) <= 1e-12 * Math.max(ratio, Math.abs(coefficient), 1e-12);
@@ -745,14 +749,25 @@ function formatUnit(unit) {
   const numerator = terms(1) || "1", denominator = terms(-1);
   return denominator ? `${numerator} / (${denominator})` : numerator;
 }
-function validateFormulaUnits(node3, expression, nodes, enforcePercentageScale = false) {
+function validateFormulaUnits(node3, expression, nodes, enforcePercentageScale = false, requireTimeInputUnits = false) {
   const issues = [];
+  const declaredUnit = node3.unit ? parseValidationUnit(node3.unit, true) : void 0;
+  const verifyTime = requireTimeInputUnits && declaredUnit && (physical(declaredUnit).dimensions.time ?? 0) > 0;
+  const matchUnits = (actual, expected, coefficient) => {
+    const scaled = compatible(actual, expected, coefficient);
+    if (enforcePercentageScale || verifyTime || scaled === true || !actual["%"] && !expected["%"]) return scaled;
+    return compatible(
+      combine(actual, { "%": actual["%"] ?? 0 }, -1),
+      combine(expected, { "%": expected["%"] ?? 0 }, -1),
+      coefficient
+    );
+  };
   const report = (key2, message, severity = "error") => {
     issues.push({ id: `validation-unit-${node3.id}-${key2}`, type: "unit_mismatch", severity, nodeId: node3.id, message });
   };
   const readUnit = (target, key2) => {
-    const unit = target.unit ? parseValidationUnit(target.unit, enforcePercentageScale) : void 0;
-    if (!unit) report(key2, `The unit of \u201C${target.name}\u201D is missing or cannot be checked. Set a unit to verify the formula for \u201C${node3.name}\u201D.`, "warning");
+    const unit = target.unit ? parseValidationUnit(target.unit, true) : void 0;
+    if (!unit) report(key2, `The unit of \u201C${target.name}\u201D is missing or cannot be checked. Set a unit to verify the formula for \u201C${node3.name}\u201D.`, verifyTime ? "error" : "warning");
     return unit;
   };
   const add = (left, right, path12, operator) => {
@@ -763,13 +778,17 @@ function validateFormulaUnits(node3, expression, nodes, enforcePercentageScale =
     if (left.literal) return right;
     if (right.literal) return left;
     if (left.unit && right.unit && !same(left.unit, right.unit)) {
-      const rightToLeft = compatible(right.unit, left.unit, right.coefficient);
-      const leftToRight = compatible(left.unit, right.unit, left.coefficient);
+      const rightToLeft = matchUnits(right.unit, left.unit, right.coefficient);
+      const leftToRight = matchUnits(left.unit, right.unit, left.coefficient);
       if (rightToLeft === true || leftToRight === true) return { unit: rightToLeft ? left.unit : right.unit, literal: false, coefficient: void 0 };
-      const scaleHint = left.unit["%"] !== right.unit["%"] ? percentScaleHint : "";
-      report(path12, `Formula for \u201C${node3.name}\u201D combines ${rightToLeft === void 0 ? "unverified custom" : "incompatible"} units with ${operator}: \u201C${formatUnit(left.unit)}\u201D and \u201C${formatUnit(right.unit)}\u201D.${scaleHint}`, rightToLeft === void 0 ? "warning" : "error");
+      const scaleHint = (enforcePercentageScale || verifyTime) && left.unit["%"] !== right.unit["%"] ? percentScaleHint : "";
+      report(path12, `Formula for \u201C${node3.name}\u201D combines ${rightToLeft === void 0 ? "unverified custom" : "incompatible"} units with ${operator}: \u201C${formatUnit(left.unit)}\u201D and \u201C${formatUnit(right.unit)}\u201D.${scaleHint}`, rightToLeft === void 0 && !verifyTime ? "warning" : "error");
     }
-    return { unit: left.unit && right.unit ? left.unit : void 0, literal: false, coefficient: void 0 };
+    return {
+      unit: left.unit && right.unit ? left.unit : void 0,
+      literal: false,
+      coefficient: left.coefficient === right.coefficient ? left.coefficient : void 0
+    };
   };
   const visit2 = (ast, path12) => {
     if (ast.type === "number") return { unit: {}, literal: true, coefficient: ast.value };
@@ -800,10 +819,13 @@ function validateFormulaUnits(node3, expression, nodes, enforcePercentageScale =
   if (!inferred.literal) {
     const declared = readUnit(node3, "result-missing");
     if (declared && inferred.unit) {
-      const matches = compatible(inferred.unit, declared, inferred.coefficient);
-      const scaleHint = inferred.unit["%"] !== declared["%"] ? percentScaleHint : "";
-      if (matches === false) report("result", `The output unit of \u201C${node3.name}\u201D is \u201C${node3.unit}\u201D, but its formula produces \u201C${formatUnit(inferred.unit)}\u201D. Correct the unit or formula.${scaleHint}`);
-      if (matches === void 0) report("result", `The output unit of \u201C${node3.name}\u201D is \u201C${node3.unit}\u201D, while its formula produces \u201C${formatUnit(inferred.unit)}\u201D. Define the custom unit or per-entity basis to verify this relationship.`, "warning");
+      const matches = matchUnits(inferred.unit, declared, inferred.coefficient);
+      const scaleHint = (enforcePercentageScale || verifyTime) && inferred.unit["%"] !== declared["%"] ? percentScaleHint : "";
+      const from = physical(inferred.unit), to = physical(declared);
+      const timeHint = same(from.dimensions, to.dimensions) && from.dimensions.time && from.scale !== to.scale ? ` The explicit conversion multiplier for these units is ${from.scale / to.scale}.` : "";
+      const countHint = same(combine(from.dimensions, { count: 1 }, -1), to.dimensions) ? " If the other factors describe one identical entity, use unit 1 for the number of copies. For an explicit count, use a matching per-item amount or rate." : "";
+      if (matches === false) report("result", `The output unit of \u201C${node3.name}\u201D is \u201C${node3.unit}\u201D, but its formula produces \u201C${formatUnit(inferred.unit)}\u201D. Correct the unit or formula.${scaleHint}${timeHint}${countHint}`);
+      if (matches === void 0) report("result", `The output unit of \u201C${node3.name}\u201D is \u201C${node3.unit}\u201D, while its formula produces \u201C${formatUnit(inferred.unit)}\u201D. Define the custom unit or per-entity basis to verify this relationship.`, verifyTime ? "error" : "warning");
     }
   }
   return [...new Map(issues.map((item) => [item.id, item])).values()];
@@ -1073,7 +1095,7 @@ function validateGraph(input2, rootNodeId, options = {}) {
           );
         }
       }
-      if (options.purpose !== "import") for (const item of validateFormulaUnits(node3, expression, nodeById, options.enforcePercentageScale)) {
+      if (options.purpose !== "import") for (const item of validateFormulaUnits(node3, expression, nodeById, options.enforcePercentageScale, options.requireTimeInputUnits)) {
         (item.severity === "error" ? errors : warnings).push(item);
       }
     } catch (caught) {

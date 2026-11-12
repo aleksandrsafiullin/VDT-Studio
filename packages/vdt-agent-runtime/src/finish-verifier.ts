@@ -79,7 +79,7 @@ export function verifyDeterministicRunFinish(
   if (!input.project) blockers.push({ code: "PROJECT_MISSING", detail: "No draft VDT exists." });
   if (input.unboundSourceFacts?.length) blockers.push({
     code: "SOURCE_PROVENANCE_INCOMPLETE",
-    detail: `Use each quoted amount or percentage as an input leaf in the dependency tree. ${input.unboundSourceFacts.map(({ quote }) => quote).join(". ")}`
+    detail: `Use each quoted measurement as an input leaf in the result's dependency tree. ${input.unboundSourceFacts.map(({ quote }) => quote).join(". ")}`
   });
   if (input.sourceGroundingIssues?.length) blockers.push({
     code: "SOURCE_GROUNDING_CONFLICT", detail: input.sourceGroundingIssues.slice(0, 8).map(({ detail }) => detail).join(" ")
@@ -107,7 +107,9 @@ export function verifyDeterministicRunFinish(
     catch (error) { return rejected([{ code: "TARGET_FORMULA_REQUIRED", detail: error instanceof Error ? error.message : "Check the selected incoming formula." }]); }
   }
 
-  const validation = validateGraph(project, undefined, { enforcePercentageScale: input.enforcePercentageScale === true });
+  const validation = validateGraph(project, undefined, {
+    enforcePercentageScale: input.enforcePercentageScale === true, requireTimeInputUnits: input.requireDerivedRoot === true
+  });
   const validationSummary = summarizeValidation(validation);
   if (!validation.valid) {
     return rejected([{

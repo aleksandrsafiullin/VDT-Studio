@@ -3,6 +3,30 @@ import { collectLiteralUserQuantities, type LiteralUserQuantity } from "@vdt-stu
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): value is RecordValue => !!value && typeof value === "object" && !Array.isArray(value);
 
+type SkillVersion = { id: string; version: number; contentHash: string };
+type SkillReadReceipt = SkillVersion & { readReceiptId: string };
+
+export type LocalSkillResolution = {
+  catalogBrowsed: boolean;
+  nextCatalogOffset: number | undefined;
+  gapAvailable: boolean;
+  pinnedSkillId: string | undefined;
+  selectedSkillId: string | undefined;
+  gapReported: boolean;
+  readReceipts: Array<{ skillId: string; readReceiptId: string }>;
+};
+
+function skillVersion(value: unknown): SkillVersion | undefined {
+  if (!record(value) || typeof value.id !== "string" || typeof value.version !== "number"
+    || !Number.isSafeInteger(value.version) || value.version < 1
+    || typeof value.contentHash !== "string" || !/^sha256:[a-f0-9]{64}$/.test(value.contentHash)) return;
+  return { id: value.id, version: value.version, contentHash: value.contentHash };
+}
+
+function matchesVersion(version: SkillVersion, receipt?: SkillReadReceipt): boolean {
+  return receipt?.id === version.id && receipt.version === version.version && receipt.contentHash === version.contentHash;
+}
+
 /** Bounded, run-local read evidence. A semantic checkpoint is not a substitute
  * for exact tool fields or discovered skill IDs. These are confirmed Gateway
  * results only; retaining them cannot select a skill or mutate a project. */
@@ -18,13 +42,35 @@ export class LocalModelKnowledge {
   private receivedHumanInput = false;
   private readonly topologies = new Map<string, { skillId: string; defaultInputIds: string[] }>();
   private readonly readIds = new Set<string>();
+  private nextCatalogOffset: number | null | undefined;
+  private catalogSearchConfirmed = false;
+  private readonly pendingCatalogSearchReads = new Set<string>();
+  private readonly skillReadReceipts = new Map<string, SkillReadReceipt>();
+  private selectedSkillId: string | undefined;
+  private gapReported = false;
   private readonly dataEvidence = new Map<string, RecordValue>();
   private readonly researchEvidence = new Map<string, RecordValue>();
 
   hasReadSkill(): boolean { return this.excerpts.size > 0; }
-  discoveredSkillIds(): string[] { return [...this.skills.keys()]; }
+  discoveredSkillIds(): string[] { return [...new Set([...this.skills.keys(), ...this.pendingCatalogSearchReads])]; }
   readTopologyDefinitions(): Array<{ skillId: string; defaultInputIds: string[] }> { return [...this.topologies.values()]; }
   readSkillIds(): string[] { return [...this.readIds]; }
+  skillResolution(): LocalSkillResolution | undefined {
+    if (this.brief?.skillResolution !== "agent_semantic") return;
+    const pin = skillVersion(this.brief.selectedSkill);
+    return {
+      catalogBrowsed: this.nextCatalogOffset !== undefined,
+      nextCatalogOffset: this.nextCatalogOffset ?? undefined,
+      gapAvailable: !pin && this.canReportSkillGap(),
+      pinnedSkillId: pin?.id,
+      selectedSkillId: pin ? (matchesVersion(pin, this.skillReadReceipts.get(pin.id)) ? pin.id : undefined) : this.selectedSkillId,
+      gapReported: !pin && this.gapReported,
+      readReceipts: [...this.skillReadReceipts.values()].map(({ id, readReceiptId }) => ({ skillId: id, readReceiptId }))
+    };
+  }
+  private canReportSkillGap(): boolean {
+    return this.nextCatalogOffset === null || (this.catalogSearchConfirmed && this.pendingCatalogSearchReads.size === 0);
+  }
   originalBrief(): RecordValue | undefined { return this.brief; }
   literalUserQuantities(): LiteralUserQuantity[] | undefined { return this.receivedHumanInput || this.quantitiesTruncated ? undefined : this.quantities; }
 
@@ -48,7 +94,10 @@ export class LocalModelKnowledge {
     const result: RecordValue = {};
     if (entries.length || omittedToolNames.length) result.toolArgumentGuides = { entries, omittedToolNames };
     if (this.skills.size) result.discoveredSkills = { entries: [...this.skills.values()].slice(-30), truncated: this.skills.size > 30 };
-    if (this.excerpts.size) result.readSkills = [...this.excerpts.values()].slice(-1);
+    if (this.excerpts.size) {
+      const selected = this.selectedSkillId && this.excerpts.get(this.selectedSkillId);
+      result.readSkills = selected ? [selected] : [...this.excerpts.values()].slice(-1);
+    }
     if (this.quantities.length) result.literalUserQuantities = this.quantities;
     if (this.quantitiesTruncated) result.literalUserQuantitiesTruncated = true;
     if (JSON.stringify(result).length > 10_000) { delete result.readSkills; result.readSkillsOmitted = true; }
@@ -116,11 +165,32 @@ export class LocalModelKnowledge {
         }
         if (result.toolName === "skill.list" || result.toolName === "skill.search") {
           const candidates = output.skills ?? output.candidates;
-          if (Array.isArray(candidates)) for (const skill of candidates.slice(0, 50)) this.rememberSkill(skill);
+          if (Array.isArray(candidates)) {
+            if (result.toolName === "skill.list") {
+              const nextOffset = output.nextOffset;
+              if (nextOffset === null || (this.nextCatalogOffset !== null && typeof nextOffset === "number"
+                && Number.isSafeInteger(nextOffset) && nextOffset > (this.nextCatalogOffset ?? 0))) {
+                this.nextCatalogOffset = nextOffset;
+                if (nextOffset === null) this.pendingCatalogSearchReads.clear();
+              }
+            }
+            const scopedSearch = result.toolName === "skill.search" && typeof this.nextCatalogOffset === "number";
+            if (scopedSearch) this.catalogSearchConfirmed = true;
+            for (const skill of candidates.slice(0, 50)) {
+              const id = this.rememberSkill(skill);
+              if (scopedSearch && id && !this.skillReadReceipts.has(id)) this.pendingCatalogSearchReads.add(id);
+            }
+          }
         }
         if (result.toolName === "skill.read" && typeof output.id === "string") {
           this.readIds.add(output.id);
           this.rememberSkill(output);
+          const version = skillVersion(output);
+          if (version && typeof output.readReceiptId === "string" && output.readReceiptId.length > 0 && output.readReceiptId.length <= 200) {
+            this.skillReadReceipts.set(output.id, { ...version, readReceiptId: output.readReceiptId });
+            this.pendingCatalogSearchReads.delete(output.id);
+            while (this.skillReadReceipts.size > 50) this.skillReadReceipts.delete(this.skillReadReceipts.keys().next().value!);
+          }
           const excerpt = typeof output.excerpt === "string" ? output.excerpt : "";
           this.excerpts.delete(output.id);
           this.excerpts.set(output.id, {
@@ -135,17 +205,34 @@ export class LocalModelKnowledge {
           }
           while (this.excerpts.size > 2) this.excerpts.delete(this.excerpts.keys().next().value!);
         }
+        if (result.toolName === "skill.select") {
+          const selected = skillVersion(output.selectedSkill);
+          if (selected && matchesVersion(selected, this.skillReadReceipts.get(selected.id))) {
+            this.selectedSkillId = selected.id;
+            this.gapReported = false;
+          }
+        }
+        if (result.toolName === "skill.report_gap" && this.canReportSkillGap() && output.outcome === "no_applicable_skill") {
+          this.selectedSkillId = undefined;
+          this.gapReported = true;
+        }
       }
     }
   }
 
-  private rememberSkill(value: unknown): void {
+  private rememberSkill(value: unknown): string | undefined {
     if (!record(value) || typeof value.id !== "string" || value.id.length > 160) return;
     this.skills.set(value.id, {
+      ...this.skills.get(value.id),
       id: value.id,
       ...(typeof value.title === "string" ? { title: value.title.slice(0, 200) } : {}),
-      ...(typeof value.domain === "string" ? { domain: value.domain.slice(0, 100) } : {})
+      ...(typeof value.domain === "string" ? { domain: value.domain.slice(0, 100) } : {}),
+      ...(this.brief?.skillResolution === "agent_semantic" && typeof value.description === "string"
+        ? { description: value.description.slice(0, 240) } : {}),
+      ...(this.brief?.skillResolution === "agent_semantic" && Array.isArray(value.scopeGuidance)
+        ? { scopeGuidance: value.scopeGuidance.filter((line): line is string => typeof line === "string").slice(0, 2).map((line) => line.slice(0, 320)) } : {})
     });
     while (this.skills.size > 50) this.skills.delete(this.skills.keys().next().value!);
+    return value.id;
   }
 }

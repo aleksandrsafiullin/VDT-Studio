@@ -1,7 +1,7 @@
-import { parseValidationUnit, type VdtNode, type VdtProject } from "@vdt-studio/vdt-core";
+import { extractFormulaReferences, parseValidationUnit, type VdtNode, type VdtProject } from "@vdt-studio/vdt-core";
 import { requiresDerivedRootForRun } from "./model-acceptance-contract";
-import type { VdtAgentRunState } from "./types";
-import { collectLiteralUserQuantities, normalizeQuotedCountUnit, type LiteralUserQuantity } from "./value-provenance-contract";
+import type { VdtAgentRunState, VdtAgentStartRequest } from "./types";
+import { collectLiteralUserQuantities, normalizeQuotedInputUnit, type LiteralUserQuantity } from "./value-provenance-contract";
 
 type SourceBinding = LiteralUserQuantity & { nodeId: string };
 
@@ -36,7 +36,7 @@ function sameFact(first: LiteralUserQuantity, second: LiteralUserQuantity): bool
 }
 
 export function matchesQuotedSourceUnit(actual: string | undefined, source: string): boolean {
-  const parsed = actual && parseValidationUnit(normalizeQuotedCountUnit(actual), true);
+  const parsed = actual && parseValidationUnit(normalizeQuotedInputUnit(actual), true);
   return !!parsed && JSON.stringify(parsed) === JSON.stringify(parseValidationUnit(source, true));
 }
 
@@ -67,8 +67,11 @@ export function sourceBindingIssue(
 
 export function constructionSourceFacts(project: VdtProject, state: VdtAgentRunState) {
   const { prompt, businessContext, unit } = state.request.input;
-  const { quantities } = collectLiteralUserQuantities([prompt, businessContext,
+  const { quantities: observed } = collectLiteralUserQuantities([prompt, businessContext,
     ...state.chatMessages.filter(({ role }) => role === "user").map(({ text }) => text)], unit);
+  const multiplier = state.selectedSkills[0]?.id === "mining.excavation" && excavationOutputUnit.test(unit?.trim() ?? "")
+    ? identicalMachineMultiplier(observed) : undefined;
+  const quantities = multiplier ? observed.map((fact) => fact === multiplier ? { ...fact, unit: "1" } : fact) : observed;
   const inputIds = new Set<string>();
   const bindings: SourceBinding[] = [];
   const issues: ConstructionSourceIssue[] = [];
@@ -88,9 +91,78 @@ export function constructionSourceFacts(project: VdtProject, state: VdtAgentRunS
     if (issue) issues.push(issue);
     bindings.push(binding);
   }
-  return { bindings, issues, inputIds, resolve: (value: number, note: string) => resolveFact(quantities, value, note) };
+  return { bindings, issues, inputIds, quantities, resolve: (value: number, note: string) => resolveFact(quantities, value, note) };
 }
 
 export function unusedConstructionSourceFacts(facts: readonly LiteralUserQuantity[], bindings: readonly SourceBinding[]): LiteralUserQuantity[] {
   return facts.filter((fact) => !bindings.some((binding) => sameFact(fact, binding)));
+}
+
+const durationUnit = /^(?:h|min|s|day)$/;
+const excavationOutputUnit = /^(?:t|tonnes?|kg|bcm|m[³3]|т|тонн[аы]?|м[³3])$/iu;
+const scheduledTime = /\bscheduled\b|запланир|по графику/iu;
+const downtime = /\b(?:downtime|stops?|stoppages?|breakdowns?|repairs?|interruptions?|maintenance)\b|просто[йяиев]|останов|ремонт|перерыв/iu;
+const overlappingBasis = /\b(?:net|effective|productive|actual working) (?:time|hours?)\b|\b(?:total|combined) downtime\b|already (?:deducted|excluded|included)|\boverlap|(?:чист|эффективн|фактическ)\p{L}* (?:время|час)|(?:суммарн|общ)\p{L}* (?:время )?просто|уже (?:вычт|исключ|включ)|пересека/iu;
+const contextOnly = /\b(?:example|benchmark|previous|last month|reference only)\b|например|эталон|прошл|справоч/iu;
+const faceOutput = /\b(?:from|at) (?:the )?(?:(?:working|mine) )?face\b|(?:с|из|на)\s+(?:рабоч\p{L}*\s+)?забо/iu;
+const transport = /\b(?:transport|haulage)\b|транспорт|откатк/iu;
+const excludedLimit = /\b(?:does not limit|is not (?:a|the) (?:bottleneck|constraint)|outside (?:the )?scope|not limiting)\b|не огранич|вне расч[её]та|не является огранич/iu;
+const broadMiningSkills = ["mining.production_volume", "mining.mine_production_system", "mining.load_and_haul",
+  "mining.haulage_truck_cycle", "mining.underground_production_cycle"];
+const identicalMachineCount = /\bidentical (?:[a-z-]+ ){0,2}(?:machines|loaders|excavators|shovels)\b|одинаков\p{L}*\s+(?:машин|экскаватор|погрузчик)/iu;
+const perMachineSchedule = /\b(?:each is scheduled|each (?:machine|loader|excavator)|per (?:machine|loader|excavator))\b|на каждую|на кажд[оы]\p{L}* (?:машин|экскаватор|погрузчик)/iu;
+
+function hasCycleProductionRates(facts: readonly LiteralUserQuantity[]): boolean {
+  return ["cycle", "lift"].some((action) =>
+    facts.some(({ unit }) => unit === `${action}/h`) && facts.some(({ unit }) => unit === `t/${action}`));
+}
+
+function identicalMachineMultiplier(facts: readonly LiteralUserQuantity[]): LiteralUserQuantity | undefined {
+  if (!hasCycleProductionRates(facts) || !facts.some(({ quote, unit }) => durationUnit.test(unit ?? "")
+    && perMachineSchedule.test(quote) && scheduledTime.test(quote))) return;
+  const machines = facts.filter(({ quote, unit, value }) =>
+    !unit && Number.isSafeInteger(value) && value > 0 && identicalMachineCount.test(quote) && !contextOnly.test(quote));
+  return machines.length === 1 ? machines[0] : undefined;
+}
+
+/** Eligibility guard for a stated face-only output with measured cycle rates.
+ * A neutral read is still allowed. A manual selection has precedence. */
+export function excludedExcavationSkillIds(request: VdtAgentStartRequest, catalogIds: readonly string[]): string[] {
+  const { prompt, businessContext, unit, skillSelection } = request.input;
+  if (skillSelection?.source === "user" || !requiresDerivedRootForRun(request)
+    || !excavationOutputUnit.test(unit?.trim() ?? "") || !catalogIds.includes("mining.excavation")) return [];
+  const brief = [prompt, businessContext].filter(Boolean).join("\n");
+  if (!faceOutput.test(brief) || !brief.split(/[.!?;\n]/u).some((clause) => transport.test(clause) && excludedLimit.test(clause))) return [];
+  if (!hasCycleProductionRates(collectLiteralUserQuantities([prompt, businessContext], unit).quantities)) return [];
+  return broadMiningSkills.filter((id) => catalogIds.includes(id));
+}
+
+/** An excavation-output plan with a quoted schedule and separate loss
+ * durations must use those losses. A stated net/combined/overlapping basis
+ * belongs to the model's scope analysis, since adding categories can double count. */
+export function excavationDowntimeCoverage(
+  project: VdtProject, state: VdtAgentRunState, sourceFacts = constructionSourceFacts(project, state)
+) {
+  const { unit } = state.request.input;
+  if (!requiresDerivedRootForRun(state.request) || state.selectedSkills[0]?.id !== "mining.excavation"
+    || !unit || !excavationOutputUnit.test(unit.trim())) return;
+  const durations = sourceFacts.quantities.filter((fact) => durationUnit.test(fact.unit ?? "") && !contextOnly.test(fact.quote));
+  if (!durations.some((fact) => scheduledTime.test(fact.quote)) || durations.some((fact) => overlappingBasis.test(fact.quote))) return;
+  const required = durations.filter((fact) => downtime.test(fact.quote) && !scheduledTime.test(fact.quote));
+  if (!required.length) return;
+
+  const nodes = new Map(project.graph.nodes.map((node) => [node.id, node]));
+  const active = new Set<string>();
+  const pending = [project.rootNodeId];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (active.has(id)) continue;
+    active.add(id);
+    const formula = nodes.get(id)?.formula;
+    if (formula?.trim()) {
+      try { pending.push(...extractFormulaReferences(formula)); }
+      catch { /* Formula validation reports the malformed expression. */ }
+    }
+  }
+  return { required, missing: unusedConstructionSourceFacts(required, sourceFacts.bindings.filter(({ nodeId }) => active.has(nodeId))) };
 }

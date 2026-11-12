@@ -38,6 +38,14 @@ describe("OpenAI construction questions", () => {
     });
   });
 
+  it("resolves tool formula syntax without asking the user", () => {
+    const observation = localModelWorkingContext(new VdtBuilderSession().getProject(), 0, true, true);
+    const syntax = question("formula_syntax", "Please confirm the exact formula syntax.");
+    const parens = question("syntax_parens", "Are parentheses allowed in the formula?");
+    const business = question("discount_basis", "Should shipping count toward the discount basis?");
+    expect(constructionQuestionReview([syntax, parens, business], brief, observation, facts).remaining).toEqual([business]);
+  });
+
   it("keeps the observed formula and parent-link repairs inside the construction protocol", () => {
     const builder = new VdtBuilderSession();
     builder.createDraft({ projectTitle: "Выручка", rootKpi: "Чистая выручка", unit: "USD" });

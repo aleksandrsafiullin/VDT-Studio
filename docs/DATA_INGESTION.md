@@ -36,6 +36,8 @@ The main Supervisor catalog now includes `data.list_sources`, `data.inspect`, `d
 
 Aggregation supports exact filters, up to three grouping columns and twelve named sum/average/min/max/count/distinct-count/ratio-of-sums metrics, optionally scaled. It fails on truncated/invalid tables, ambiguous numeric strings, missing required values, non-finite results, zero denominators and empty coverage. It does not execute SQL, joins or arbitrary code. The actor remains responsible for units, grain, period, denominator and metric semantics; full coverage alone does not establish correctness.
 
+For a per-calendar-day duration over a stated inclusive period, the Cursor session prompt directs the actor to combine the exact unit conversion and day count in the grouped query's `metrics[].scale`. Count the entire stated period, including dates with zero events. The saved file input retains the scale in its replayable query and the model describes the units and period in the KPI. Use draft estimate provenance only for missing values the user authorized the actor to estimate.
+
 `data.write_inputs` accepts the query and at most eight node/metric/group bindings, never model-supplied numeric results. It re-reads and aggregates the source, then uses the normal revision/approval/mutation pipeline to fill existing empty input leaves. Root, computed, populated and non-leaf targets are rejected. Values carry uploaded-data provenance with dataset/file hash, table, full query/hash, metric, group and full/matched row counts. These are materialized observations; refresh and executable `dataMapping` remain unimplemented. The parser's existing dependency, layout, privacy and resource-isolation limitations still apply.
 
 
@@ -43,11 +45,11 @@ Last reviewed against the working tree: **2026-08-10**.
 
 ## Status
 
-Raw-data discovery is an **experimental local-only semantic-proposal workflow with a bounded deterministic incoming-KPI breakdown**. It is not a general or production-trusted KPI calculation pipeline.
+Raw-data discovery is **experimental and local-only**. It prepares bounded scalar mappings and additive incoming-KPI breakdowns from retained source files.
 
 The current checkout parses supported files, profiles rows and accepts provider-assisted table, category and additive value suggestions. The selected KPI's **From file** workflow can build a complete hierarchy from ordered category columns, using additive numeric values in a confirmed KPI-compatible unit, a numeric duration or explicit start/end timestamp columns. Required mapping, format, period, denominator and model clarification decisions block staging. The local deterministic compiler reads the complete retained source, calculates each category Baseline and records its provenance in the generated KPI's Description.
 
-The core formula engine still does not execute `dataMapping`. General metrics, refresh, joins, automatic reconciliation and recurring calculations remain unimplemented. Truncated tables, invalid numeric/duration rows, incomplete partitions and hierarchies above the configured limits do not produce a stageable partial breakdown.
+The formula engine reads materialized Baselines. Joins, automatic refresh, reconciliation and recurring calculations remain unimplemented. Truncated tables, invalid numeric/duration rows, incomplete partitions and hierarchies above the configured limits block a partial breakdown.
 
 Do not use current import results for operational KPI decisions.
 
@@ -60,9 +62,11 @@ Do not use current import results for operational KPI decisions.
 5. Structured mapping edits reload the immutable full source and rebuild the hierarchy deterministically. Metadata-only edits cannot answer required mapping or model clarification questions. Empty categories require an explicit Unspecified-category decision; invalid or ambiguous numeric values/durations are never silently excluded.
 6. A complete partition may contain at most four category levels and 200 generated KPI nodes. Limits block the whole proposal instead of omitting extra categories. Each parent sums its immediate children, and the selected target sums the first layer.
 7. Every generated KPI Description records the original file, retained dataset reference/hash, source table/columns, category path, calculation, reporting period and row coverage. Values, mapping evidence and `valueSource` retain the same source lineage.
-8. Staging reloads and checks the source again, validates current semantic target/child state against the analysis basis, re-executes the deterministic incoming breakdown and rejects unresolved questions or incomplete coverage. It stages the complete change set in the chat's **Patch ready** block, where **Apply** commits it and **Discard** clears it. Apply failures remain visible in the chat. Staging opens the chat panel without changing the inspector tab; the former AI inspector preview is removed. Moving a card does not invalidate the semantic basis.
+8. Staging reloads and checks the source again, validates current semantic target/child state against the analysis basis, re-executes the deterministic incoming breakdown and rejects unresolved questions or incomplete coverage. In the chat's **Patch ready** block, **Apply** updates the editor and **Discard** clears the preview. Return to the project workspace to save the edited tree. Apply failures remain visible in the chat. Staging opens the chat panel without changing the inspector tab. Moving a card does not invalidate the semantic basis.
 
-Provider-assisted discovery uses the same three canonical data-task contracts in the managed CLI runtime and data harness. Tool argument schemas and full final-analysis fields remain visible to the model; incoming mapping proposals survive canonical validation rather than being dropped as unknown fields. The provider may leave optional mapping decisions unknown, but cannot set human confirmation or clarification answers. Canonical data validation rejects malformed enum values, fractional timezone offsets/tool limits and nonpositive denominators before the deterministic compiler. Synthetic fake-CLI transport tests are contract evidence only; they do not qualify a live provider or establish production support.
+For event logs, use **Unique event ID** to select the column that the source guarantees is unique for each event. A single header such as `event_id` is suggested for review. The compiler checks every retained row for blank or repeated IDs after trimming surrounding whitespace. The review names repeated IDs and shows representative one-based data row positions. A blank or repeated ID blocks staging, including when rows with the same ID disagree. Resolve those records with the source owner and upload the corrected extract. Imports without a unique event ID continue to aggregate each source row.
+
+Provider-assisted discovery uses the same three canonical data-task contracts in the managed CLI runtime and data harness. Strict response schemas put the decision union inside the root object's decision field, as required by Codex. The transport unwraps it before canonical validation of the chosen tool and its arguments. Incoming mapping proposals can supply observed columns and duration settings. Human review owns event identity, the decision to include blank categories, mapping confirmation and clarification answers. Canonical data validation rejects malformed enum values, fractional timezone offsets/tool limits and nonpositive denominators before the deterministic compiler. Synthetic fake-CLI transport tests establish the contract only.
 
 Warning IDs include a hash of the complete severity, type and message rather than only a truncated readable prefix. Exact semantic warning duplicates are still collapsed by the harness; the mapping review preserves every warning occurrence in older snapshots even when their stored IDs collide.
 
@@ -71,6 +75,14 @@ If the selected provider reaches its usage limit, file discovery returns an acti
 Original source bytes remain after closing or discarding a review. `GET /api/data/files?projectId=...&vdtId=...` lists retained sources; `GET /api/data/files/<datasetId>?projectId=...&vdtId=...` downloads the original bytes. The same retained source can be analysed again after browser reload or server cache reset. Project, VDT, dataset and run identifiers are strict safe IDs, never sanitized aliases; cross-owner reads and symlink paths are rejected.
 
 Scoped sources live at `<database.dataDir>/projects/<projectId>/files/<datasetId>/{payload.bin,metadata.json}`. Scoped run snapshots and their initial project context live in that project's `data-discovery/runs/<runId>/`. The old global `data-discovery/datasets` and `data-discovery/runs` directories are preserved without migration or deletion. Trusted local legacy run APIs can still read unscoped legacy records; an unscoped lookup never falls back to a scoped project source or run. All new HTTP uploads are project-scoped.
+
+## General scalar mappings
+
+The general discovery API materializes row count and complete single-column count, sum, average, minimum, maximum and distinct count over a retained table. An input's Baseline, `calculated` status, mapping and source evidence identify its file/hash, table, column, operation and row coverage. Default proposals attach as contextual references and preserve the existing KPI formula.
+
+To bind one reviewed metric, use `entryContext.purpose = "data_mapping"`, an explicit `targetNodeId`, and `metricEdits` with `enabled: true` on that metric. The target must be empty, with the same explicit unit and without an existing formula, inputs or mapping. The preview includes the mapped leaf, source and target formula together. A unit edit declares the source unit. Conversion uses the incoming-KPI workflow.
+
+Review edits and staging reread the retained bytes and recompile supported mappings. Empty or malformed numeric cells, workbook serial formats, truncated tables, multi-column metrics, filters and custom expressions cannot yield a partial or fabricated Baseline. An explicitly selected unsupported metric blocks staging. Persisted legacy previews with unknown values require recompilation from their retained source and analysis context.
 
 ## Supported Inputs
 
@@ -93,16 +105,11 @@ The API stores a 4096-byte `textPreview` for UI only. Initial analysis, structur
 
 The snapshot does not yet preserve separate original, parsed and sampled row counts for every adapter, so W0.3 remains partial rather than complete.
 
-### General mappings are not executable
-
-General mappings remain metadata only. General proposed nodes still use `valueStatus: unknown`; applying those changes can succeed structurally while calculation reports `missing_value`. The exception is the incoming-KPI path described above: it materializes finite `baselineValue` values during analysis/review and proposes additive parent formulas only for a compatible additive value unit and normalization. The mapping itself cannot be re-executed after apply or on source refresh.
-
 ### Metric semantics are incomplete
 
-- Generic row count, sum and average are proposed for numeric columns.
+- Scalar candidates can be calculated over a complete single source table.
 - General ratios, numerator/denominator models, joins and multi-column formulas are not represented correctly. The incoming workflow supports additive sums and a separately confirmed per-day divisor only; it does not infer whether an arbitrary KPI is additive.
-- Mapping stores only the first source column for multi-column candidates.
-- Every candidate is attached as a positive driver regardless of causal/formula meaning.
+- Multi-column candidates require a richer binding contract before they can become calculated inputs.
 
 ### Real report layouts are not handled
 
@@ -125,7 +132,7 @@ General mappings remain metadata only. General proposed nodes still use `valueSt
 
 ### Generic proposal edits remain limited
 
-The incoming-KPI workflow uses structured options and full-source deterministic reruns; required questions remain server-side apply blockers. The older generic semantic proposal editor still does not compile reusable query plans or execute arbitrary edited metric/taxonomy filters. These generic metadata proposals must not be treated as the incoming workflow's calculated, complete partition.
+The incoming-KPI workflow uses structured options and full-source deterministic reruns. Required questions remain server-side apply blockers. General scalar reviews recalculate source-column and aggregation edits. Reusable query plans and arbitrary metric or taxonomy filters remain outside the scalar path.
 
 ## Security And Privacy Gaps
 

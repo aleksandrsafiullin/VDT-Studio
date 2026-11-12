@@ -95,7 +95,9 @@ export function isDataDiscoverySchemaId(value: string): value is DataDiscoverySc
 
 /** Nullable optional fields carry missing knowledge without inventing a mapping. */
 export function strictDataDiscoverySchema(schemaId: DataDiscoverySchemaId): JsonSchema {
-  return strictSchema(DATA_DISCOVERY_JSON_SCHEMAS[schemaId]);
+  const schema = strictSchema(DATA_DISCOVERY_JSON_SCHEMAS[schemaId]);
+  // Strict structured-output providers require an object at the root.
+  return schemaId === "data-agent-decision-v1" ? object({ decision: schema }) : schema;
 }
 function strictSchema(schema: JsonSchema): JsonSchema {
   if (Array.isArray(schema.anyOf)) return { ...schema, anyOf: schema.anyOf.map((branch) => strictSchema(branch as JsonSchema)) };
@@ -110,6 +112,9 @@ function strictSchema(schema: JsonSchema): JsonSchema {
 
 /** Only known optional properties may lose null; unknown and required nulls survive rejection. */
 export function normalizeDataDiscoveryOutput(schemaId: DataDiscoverySchemaId, output: unknown): unknown {
+  if (schemaId === "data-agent-decision-v1" && record(output) && Object.keys(output).length === 1 && Object.hasOwn(output, "decision")) {
+    output = output.decision;
+  }
   return normalizeOptionalNulls(DATA_DISCOVERY_JSON_SCHEMAS[schemaId], output);
 }
 function normalizeOptionalNulls(schema: JsonSchema, value: unknown): unknown {

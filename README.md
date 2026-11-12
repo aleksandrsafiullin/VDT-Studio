@@ -65,10 +65,10 @@ and [implementation/review evidence](docs/implementation/SKILL_WORKFLOW_2026-11-
 
 The left panel's **Context → Skill** selects from this same library. A Root KPI
 receives a provisional matching skill or the available universal skill. If the
-default was removed, the user can choose another file. The main agent can read
-and select another skill with a reason as context changes. This local capability
-does not qualify hosted access, native packaging or Smart Suggested skill
-binding. See [ADR-010](docs/adr/ADR-010-local-skill-library-and-context-selection.md).
+default was removed, the user can choose another file. For a new tree without a
+user pin, the main agent considers the whole request, reads a candidate and
+explicitly selects its version, or records that no skill fits. See
+[ADR-010](docs/adr/ADR-010-local-skill-library-and-context-selection.md).
 
 ### Smart KPI suggestions
 
@@ -397,13 +397,19 @@ The editor's Home and Back to project links save the current model as a revision
 
 The dedicated node-card **Add incoming KPIs with AI** button is removed. Use Suggested on an undecomposed Input or make an explicit request in the VDT Agent chat. The compatibility `deepen_node` action retains its existing bounded one-layer runtime contract; removing its card shortcut does not change that contract.
 
-The current agent loop uses local skills and bounded tools. Its live selection path is narrow, mostly English and still relies on deterministic classification/term matching. The corrective target keeps one canonical copy of each skill and makes multilingual understanding and explicit selection an agent responsibility; it does not create translated skill copies, language aliases or an automatic generic fallback.
+The local Supervisor lets the model inspect the skill catalog and choose a
+version for the request. With no applicable skill it can build from the user's
+facts and the usual graph tools. The durable V2 target keeps one canonical copy of each skill
+and does not create translated skill copies. See
+[ADR-003](docs/adr/ADR-003-single-copy-skills-and-agent-owned-resolution.md).
 
 ### Discover data candidates
 
 The project workspace has a **Files** tab. Upload client data before creating a tree, search and rename library entries, download originals, or archive/restore files. Select a VDT in **Files for** to manage its attachments; the editor's **Files** button opens the same library for the current tree. **Add from project** reuses an existing source without copying its bytes. Removing an attachment or archiving a file preserves originals needed by saved revisions and reviews; this is not permanent deletion. Library storage accepts files up to 50 MB each; only supported structured formats can be analyzed.
 
 **From file** and the composer paperclip can choose supported sources from the entire project. A computer upload is retained immediately on selection, before analysis, and an existing source is attached to the selected tree when chosen. Closing the review does not undo that retention or attachment. Explicitly attached structured files are also available to the existing owner-scoped `data.*` agent tools.
+
+The general discovery API calculates reviewed scalar file mappings from complete retained tables and saves their source evidence with the Baseline. [Mapping contract](docs/DATA_INGESTION.md#general-scalar-mappings)
 
 Choose **From file** for the selected KPI, or use the VDT Agent composer paperclip, to upload a supported extract or reopen a retained project source. The configured provider can suggest its table, category hierarchy and additive value mapping, including duration columns or start/end timestamps. Confirm required units, formats, reporting period and any per-day denominator before deterministic code sums all rows and builds up to four category levels and 200 nodes. The normal change-set preview includes Baselines and source provenance in every generated KPI Description. Original bytes remain available in the project source list for download and repeat analysis after reload or discard. Unresolved questions, invalid/truncated data, stale target definitions and incomplete coverage block staging. The reporting period describes the full supplied extract and normalization denominator; it does not silently filter event rows. This remains a local experimental workflow; general ratios, refresh, joins and production-trusted calculations are not implemented.
 

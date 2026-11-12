@@ -13,10 +13,10 @@ import {
 const period = { start: "2026-11-02", end: "2026-11-05" };
 const cleanHours = { Mechanical: 4.5, Electrical: 2.5, Planned: 4 };
 const reviewedHours = { Mechanical: 2, Electrical: 2, Planned: 3.25, "Unspecified (blank)": 0.5 };
-const csv = { categoryColumns: ["stop_type"], duration: { mode: "column", column: "duration_minutes", unit: "minutes" } };
-const tsv = { categoryColumns: ["stop_type"], duration: { mode: "column", column: "duration_hours", unit: "hours" }, numberFormat: "decimal_comma" };
-const xlsx = { tableId: "sheet_1", categoryColumns: ["stop_type"], duration: { mode: "column", column: "elapsed", unit: "days" } };
-const json = { categoryColumns: ["cause"], duration: { mode: "timestamps", startColumn: "start_utc", endColumn: "end_utc", format: "iso" } };
+const csv = { eventIdColumn: "event_id", categoryColumns: ["stop_type"], duration: { mode: "column", column: "duration_minutes", unit: "minutes" } };
+const tsv = { eventIdColumn: "record_id", categoryColumns: ["stop_type"], duration: { mode: "column", column: "duration_hours", unit: "hours" }, numberFormat: "decimal_comma" };
+const xlsx = { tableId: "sheet_1", eventIdColumn: "event_id", categoryColumns: ["stop_type"], duration: { mode: "column", column: "elapsed", unit: "days" } };
+const json = { eventIdColumn: "incident", categoryColumns: ["cause"], duration: { mode: "timestamps", startColumn: "start_utc", endColumn: "end_utc", format: "iso" } };
 
 async function source(fileName, mimeType, options) {
   const bytes = await readFile(new URL(`./fixtures/${fileName}`, import.meta.url));
@@ -125,7 +125,8 @@ await verifyImport("FILE-03", jsonInput, 10, cleanHours);
 const dirtyInput = await source("downtime-exceptions.tsv", "text/tab-separated-values", tsv);
 const dirty = await runRawDataDiscovery(dirtyInput);
 assert.equal(dirty.incomingKpi.coverage.totalRows, 9);
-assert.equal(dirty.incomingKpi.coverage.excludedRows, 3);
+assert.ok(dirty.incomingKpi.blockingReasons.some((message) => /3 of 9 rows have missing, invalid/.test(message)));
+assert.ok(dirty.incomingKpi.blockingReasons.some((message) => /Duplicate event IDs.*Q-02/.test(message)));
 assert.ok(dirty.incomingKpi.questions.some((item) => item.field === "missingCategoryPolicy"));
 assert.ok(validateDiscoveryApply(dirty).some((issue) => issue.status === "error"));
 assert.equal(dirty.changeSetPreview?.additions.length ?? 0, 0);
@@ -141,13 +142,14 @@ const repeated = duplicateTable.rows.filter((row) => row.event_id === "DT-02");
 assert.equal(repeated.length, 2);
 assert.deepEqual(repeated[0], repeated[1]);
 const duplicate = await runRawDataDiscovery(duplicateInput);
-const problems = [
-  ...duplicate.incomingKpi.blockingReasons,
-  ...duplicate.incomingKpi.questions.map((question) => question.message)
-];
+const problems = duplicate.incomingKpi.blockingReasons;
 if (validateDiscoveryApply(duplicate).some((issue) => issue.status === "error") &&
-    problems.some((message) => /duplicat|repeat|повтор|дубликат/i.test(message))) {
+    problems.some((message) => /Duplicate event IDs.*DT-02/.test(message)) &&
+    duplicate.changeSetPreview.additions.length === 0 && duplicate.changeSetPreview.updates.length === 0) {
   console.log(JSON.stringify({ caseId: "FILE-05", status: "PASS", applyBlocked: true, problems }));
+  const repeatedIndex = duplicateTable.rows.lastIndexOf(repeated[1]);
+  assert.deepEqual(duplicateTable.rows.filter((_row, index) => index !== repeatedIndex), csvTable.rows);
+  await verifyImport("FILE-05 reviewed", csvInput, 10, cleanHours);
 } else {
   const actual = duplicate.changeSetPreview?.additions.length
     ? calculateGraph(applyPreview(duplicateInput, duplicate)).rootValue

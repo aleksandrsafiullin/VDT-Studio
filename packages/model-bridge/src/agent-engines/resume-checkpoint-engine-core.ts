@@ -497,6 +497,7 @@ function parseSegmentNumber(checkpoint: AgentEngineCheckpoint, descriptor: Resum
 
 export const SHARED_PROMPT_RULES = Object.freeze({
   openingSummary: "The first user-facing assistant message must restate the accepted task in the user's language and outline the intended plan in 3-6 short steps before or alongside the first tool batch.",
+  sourceInputs: "For a supplied quantity, copy its exact value and quote from literalUserQuantities, including small numbers written as words. If a write is rejected, use the exact source excerpts from the tool result and fix the call before asking. Use one input per measurement and share its node ID across formulas with sharedWith. Keep distinct measurements separate even when their values match.",
   research: `When the domain, KPI, or decomposition boundary is unfamiliar, or the user asks for standards/best practice, prefer research.search_web (purpose standards, best_practices, process_components, benchmarks, or regulations) before building. Respect options.researchMode from the brief: never call research.search_web when it is off. Native CLI web search may still occur; ${AGENT_NATIVE_WEB_SEARCH_PROVENANCE_PROMPT_RULE} Surface sources used; never fabricate citations. ${AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE} ${AGENT_RESEARCH_PROVIDER_FAILED_PROMPT_RULE}`,
   questions: AGENT_QUESTION_PROMPT_RULE,
   finishMissingValues: AGENT_FINISH_MISSING_VALUE_PROMPT_RULE,
@@ -511,8 +512,9 @@ export const SHARED_PROMPT_RULES = Object.freeze({
 /** Restated on every resume delta so a tool refusal cannot collapse the JSON envelope. */
 export const SHARED_RESUME_CONSTRAINTS = Object.freeze({
   response: `${SHARED_PROMPT_RULES.envelope} ${SHARED_PROMPT_RULES.actionTypes} After a recoverable tool result, continue with action.type action_batch, user.ask, or final. Write any stated assumptions in assistantMessage only — never as action.type.`,
-  research: `${AGENT_NATIVE_WEB_SEARCH_PROVENANCE_PROMPT_RULE} ${AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE} ${AGENT_RESEARCH_PROVIDER_FAILED_PROMPT_RULE}`
-  ,data: SHARED_PROMPT_RULES.data
+  research: `${AGENT_NATIVE_WEB_SEARCH_PROVENANCE_PROMPT_RULE} ${AGENT_RESEARCH_UNCONFIGURED_PROMPT_RULE} ${AGENT_RESEARCH_PROVIDER_FAILED_PROMPT_RULE}`,
+  data: SHARED_PROMPT_RULES.data,
+  sourceInputs: SHARED_PROMPT_RULES.sourceInputs
 });
 
 function buildInitialPrompt(
@@ -542,8 +544,9 @@ function buildInitialPrompt(
       research: SHARED_PROMPT_RULES.research,
       questions: SHARED_PROMPT_RULES.questions,
       finishMissingValues: SHARED_PROMPT_RULES.finishMissingValues,
-      fullCatalog: SHARED_PROMPT_RULES.fullCatalog
-      ,data: SHARED_PROMPT_RULES.data
+      fullCatalog: SHARED_PROMPT_RULES.fullCatalog,
+      data: SHARED_PROMPT_RULES.data,
+      sourceInputs: SHARED_PROMPT_RULES.sourceInputs
     },
     toolCatalog: {
       hash: start.binding.toolCatalogHash,

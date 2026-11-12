@@ -1,5 +1,5 @@
 import { incomingKpiOptionsSchema, type DataDiscoveryRunSnapshot, type IncomingKpiOptions } from "@vdt-studio/data-harness";
-import { validateStrictVdtProjectCommit } from "@vdt-studio/storage";
+import { canonicalizeJson, validateStrictVdtProjectCommit, type JsonValue } from "@vdt-studio/storage";
 import type { VdtProject } from "@vdt-studio/vdt-core";
 import { openVdtStorageDatabase } from "../vdt/storage-database";
 import { jsonError } from "../vdt/storage-response";
@@ -95,25 +95,37 @@ export async function reviewProject(
 ): Promise<VdtProject> {
   const initial = await readDiscoveryProject(snapshot.runId, owner);
   if (!initial) throw new DataApiError("The analysis project context is missing. Analyze the retained source again.", 409, "DATA_PROJECT_CONTEXT_MISSING");
-  const current = value === undefined && !requireCurrent ? initial : readProject(value, owner);
-  const targetNodeId = snapshot.entryContext?.targetNodeId;
-  if (targetNodeId) {
-    requireTarget(current, targetNodeId);
-    if (targetBasis(initial, targetNodeId) !== targetBasis(current, targetNodeId)) {
-      throw new DataApiError("The selected KPI or its incoming structure changed after analysis. Analyze the retained source again.", 409, "DATA_TARGET_CHANGED");
-    }
+  const current = value === undefined && !requireCurrent
+    ? owner && !snapshot.incomingKpi ? readActiveProject(owner) : initial
+    : readProject(value, owner);
+  const targetNodeId = snapshot.entryContext?.targetNodeId ?? initial.rootNodeId;
+  requireTarget(current, targetNodeId);
+  if (targetBasis(initial, targetNodeId) !== targetBasis(current, targetNodeId)) {
+    throw new DataApiError("The selected KPI or its incoming structure changed after analysis. Analyze the retained source again.", 409, "DATA_TARGET_CHANGED");
   }
-  return initial;
+  return snapshot.incomingKpi ? initial : current;
+}
+
+function readActiveProject(owner: DataOwner): VdtProject {
+  const database = openVdtStorageDatabase(process.cwd());
+  try {
+    const head = database.getVdtRevisionHead(owner.vdtId);
+    const revision = head?.activeRevisionId ? database.getVdtRevision(head.activeRevisionId) : null;
+    if (!revision || revision.vdtId !== owner.vdtId || head?.projectId !== owner.projectId) {
+      throw new DataApiError("The selected VDT's active revision is unavailable.", 409, "DATA_PROJECT_CONTEXT_MISSING");
+    }
+    return readProject(database.readVdtRevision(revision), owner);
+  } finally { database.close(); }
 }
 
 function targetBasis(project: VdtProject, targetNodeId: string): string {
   const edges = project.graph.edges.filter((edge) => edge.sourceNodeId === targetNodeId);
   const adjacent = new Set(edges.flatMap((edge) => [edge.sourceNodeId, edge.targetNodeId]));
   adjacent.add(targetNodeId);
-  return JSON.stringify({
+  return canonicalizeJson({
     nodes: project.graph.nodes.filter((node) => adjacent.has(node.id)).sort((a, b) => a.id.localeCompare(b.id)).map((node) => Object.fromEntries(Object.entries(node).filter(([key]) => key !== "position" && key !== "updatedAt"))),
     edges: [...edges].sort((a, b) => a.id.localeCompare(b.id))
-  });
+  } as unknown as JsonValue);
 }
 
 export function dataApiErrorResponse(error: unknown): Response {

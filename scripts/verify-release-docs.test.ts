@@ -97,7 +97,7 @@ const fixtureDocs: Record<string, string> = {
   "docs/implementation/VDT_CORRECTIVE_EXECUTION_LOG.md":
     "VDT Studio Corrective Program Execution Log\nGate A\nGO_WITH_FINDINGS\nw0-1-go-2026-07-24\nW0.1 — Atomic Revisions Implementation Acceptance\n120 files passed, 5 skipped\n182/182\n59/59\n26/26\n103/103\n91/91\n3 pre-existing warnings\nO_CREAT | O_EXCL\n6 high\n5 moderate\nW0.2 — Corrective Contract Review `STOP`\nruntime and migration sequence-3\nW0.2 remains `STOP`\nNo sequence-3 SQL, DDL or production hash is frozen\nGeneralized migration-runner first code review — `STOP`\nraw SQLite `BUSY`\nrunner does not have implementation `GO`\n",
   "docs/PRODUCT_SPEC.md":
-    "Capability Status Summary\nData and reports\nmetadata-only mappings\none immutable canonical artifact\nagent-owned single-copy target not implemented\nHosted/public upload remains disabled\nW0.1 atomic commit implemented with independent `GO`\nWindows durability unverified\n",
+    "Capability Status Summary\nData and reports\nmaterializes supported scalar mappings\none immutable canonical artifact\nagent-owned single-copy target not implemented\nHosted/public upload remains disabled\nW0.1 atomic commit implemented with independent `GO`\nWindows durability unverified\n",
   "docs/ARCHITECTURE.md":
     "packages/vdt-storage\npackages/data-harness\nCorrective V2 boundary (target, default-off)\nserver-issued actor context\nSingle-copy repository\nKnown Architectural Gaps\ncommitVdtRevision()\nO_CREAT | O_EXCL\nWindows storage durability is not verified\n",
   "docs/AI_HARNESS.md":
@@ -108,7 +108,7 @@ const fixtureDocs: Record<string, string> = {
     "Корректирующий контракт Gate A\nselection-neutral; append-only receipt\nGeneric не выбирается автоматически\nОдин `skillId + versionId`\n",
   "docs/VDT_AgentDecision_ToolLoop_TZ.md":
     "Корректирующий контракт Gate A\nidempotent append-only receipt\nexplicit `skill.select`\nавтоматический generic fallback запрещены\n",
-  "docs/DATA_INGESTION.md": "metadata only\n4096-byte\nMetricBinding\n",
+  "docs/DATA_INGESTION.md": "General scalar mappings\n4096-byte\nMetricBinding\n",
   "docs/PRODUCTION_READINESS.md":
     "No-Go for production\nDependency audit evidence\n`pnpm security:audit`\nHosted/public uploads must remain disabled\nP0 Correctness Blockers\nW0.1 Atomic Revision Closure\n120 files passed, 5 skipped\n182/182\nWindows W0.1 storage durability is unverified\n",
   "docs/RELEASE.md":

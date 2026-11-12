@@ -5,21 +5,37 @@ for (const destination of ["project", "home"] as const) {
   test(`retains manual model edits after leaving for ${destination} and reopening the VDT`, async ({ page, productionWorkspace }) => {
     await page.route("**/api/ai/detect-clis**", (route) => route.fulfill({ json: { agents: [], modelsByAgent: {} } }));
     await page.goto(`/projects/${productionWorkspace.projectId}?vdt=${productionWorkspace.vdtId}`);
+    await expect(page.getByTestId("vdt-canvas")).toBeVisible();
+    const storageUrl = `/api/vdt/vdts/${productionWorkspace.vdtId}`;
+    const storedModel = async () => {
+      const loaded = await page.request.get(storageUrl, { maxRetries: 1 });
+      expect(loaded.ok()).toBeTruthy();
+      return loaded.json();
+    };
+    async function leaveAndReopen() {
+      await page.getByTestId(destination === "project" ? "back-to-project-workspace" : "workspace-home").click();
+      if (destination === "home") {
+        await expect(page.getByTestId("projects-home")).toBeVisible();
+        await page.getByTestId(`open-project-${productionWorkspace.projectId}`).click();
+      }
+      await expect(page.getByTestId("project-vdt-list")).toBeVisible();
+      await page.getByTestId(`project-vdt-card-${productionWorkspace.vdtId}`).getByRole("button", { name: "Open Production Volume Driver Model", exact: true }).click();
+      await expect(page.getByTestId("vdt-canvas")).toBeVisible();
+    }
+    const initial = await storedModel();
+    await leaveAndReopen();
+    const unchanged = await storedModel();
+    expect(unchanged.head).toEqual(initial.head);
+    expect(unchanged.revisions).toHaveLength(initial.revisions.length);
     await selectCanvasKpi(page, "Nominal Rate");
     const input = page.getByTestId("right-panel").getByRole("spinbutton", { name: "Baseline value", exact: true });
     await input.fill("250");
-    await page.getByTestId(destination === "project" ? "back-to-project-workspace" : "workspace-home").click();
-    if (destination === "home") {
-      await expect(page.getByTestId("projects-home")).toBeVisible();
-      await page.getByTestId(`open-project-${productionWorkspace.projectId}`).click();
-    }
-    await expect(page.getByTestId("project-vdt-list")).toBeVisible();
-    await page.getByTestId(`project-vdt-card-${productionWorkspace.vdtId}`).getByRole("button", { name: "Open Production Volume Driver Model", exact: true }).click();
+    await leaveAndReopen();
     await selectCanvasKpi(page, "Nominal Rate");
     await expect(input).toHaveValue("250");
-    const loaded = await page.request.get(`/api/vdt/vdts/${productionWorkspace.vdtId}`, { maxRetries: 1 });
-    expect(loaded.ok()).toBeTruthy();
-    const stored = await loaded.json();
+    const stored = await storedModel();
+    expect(stored.revisions).toHaveLength(initial.revisions.length + 1);
+    expect(stored.head.commitGeneration).toBe(initial.head.commitGeneration + 1);
     expect(stored.activeProject.graph.nodes.find((node: { id: string }) => node.id === "nominal_rate").baselineValue).toBe(250);
   });
 }

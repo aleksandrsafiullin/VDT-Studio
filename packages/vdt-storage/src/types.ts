@@ -476,7 +476,7 @@ export interface VdtDatabase {
    * New production writers must use commitVdtRevision().
    */
   saveVdtRevision(input: CreateVdtRevisionInput): VdtRevisionRecord;
-  commitVdtRevision(input: RevisionCommitInputV2): RevisionCommitResultV2;
+  commitVdtRevision(input: RevisionCommitInputV2, options?: { reuseUnchangedRevision?: boolean }): RevisionCommitResultV2;
   createVdtWithInitialSnapshot(
     input: CreateVdtWithInitialSnapshotInputV1
   ): CreateVdtWithInitialSnapshotResultV1;

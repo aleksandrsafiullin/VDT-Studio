@@ -83,7 +83,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * in its semantic checkpoint. The Gateway still fences every actual write. */
 export function localModelWorkingContext(project: VdtProject, revision: number, requireDerivedRoot = false, requireHierarchy = false, enforcePercentageScale = false) {
   const calculation = calculateGraph(project.graph, { rootNodeId: project.rootNodeId });
-  const validation = validateGraph(project, undefined, { enforcePercentageScale });
+  const validation = validateGraph(project, undefined, { enforcePercentageScale, requireTimeInputUnits: requireDerivedRoot });
   const root = project.graph.nodes.find((node) => node.id === project.rootNodeId);
   const hierarchy=inspectDecompositionHierarchy(project);
   const contextGroups=getDecompositionContextGroupIds(project.graph,project.rootNodeId);

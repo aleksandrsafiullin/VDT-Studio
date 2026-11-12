@@ -1,16 +1,45 @@
 # Production Readiness
 
-## Expected failures and opt-in tests
+## Regression coverage and opt-in tests
 
-Two Vitest cases mark reproducible defects with `it.fails`. Remove that
-marker when the regression passes with the corresponding repair.
+F-08 is covered by the local Supervisor's skill selection path. For a new
+tree without a manual pin, the model browses the catalog and explicitly selects
+the read version or records `no_applicable_skill`. Local Cursor acceptance on
+`composer-2.5` used ordinary English and Russian prompts. Both mining requests
+selected the same `mining.excavation` version and calculated 12,000 t and 13,500 t.
+Both archive requests recorded a gap and calculated 8 h and 9 h from the brief.
+Saved trees retained their formulas and values after reopening.
 
-- F-06 exercises raw-data mappings whose metadata suggests a calculated
-  input before the baseline and source lineage have been materialized.
-  Apply the mapping and verify the resulting value and tree dependency.
-- F-08 exercises skill selection for natural English and Russian requests
-  outside the legacy marker rules. Route those requests through the V2
-  catalog, read and explicit selection lifecycle.
+The 12 November OpenAI Direct follow-up on `gpt-5-nano` / Low passed all
+four scenarios across six fresh runs. The first English excavation run
+asked for a derived working-time value. The first English archive run was
+stopped by duplicate source validation. Both passed their fresh repeat.
+The verified excavation results were 12,000 t and 13,500 t. The archive
+results were 8 h and 9 h with the original `min/item` inputs. All four
+successful saved trees passed formula, unit and hierarchy validation after
+reopening. Repeatability on the first run, live local models, durable V2
+selection and installed-DMG acceptance remain open.
+[Open alpha checks](OPEN_ALPHA_PLAN.md)
+
+F-06 is a passing regression for complete scalar file mappings. The retained
+source is evaluated before staging. The checked sales fixture has a 600 USD
+Baseline and a source-aware dependency for a compatible empty target.
+Unrelated sales metrics remain contextual in the production tree.
+
+The incoming-KPI compiler checks uniqueness when the reviewed mapping specifies
+an event ID column. FILE-05 blocks the repeated event before staging and checks
+the corrected extract against the expected 2.75 h/day. [Import acceptance](OPEN_ALPHA_PLAN.md)
+
+The strict data-discovery decision schema is accepted by Codex. The live
+local web run passed FILE-01–05 with mapping review. Codex also completed
+TREE-02 without repeating supplied inputs. The Cursor canary completed
+TREE-07 on composer-2.5. The live follow-up on that model passed TREE-02
+with 6,000 t/shift and no native tool calls or extra questions. FILE-06
+saved 2.75 h/day and three calculated category inputs with complete file
+lineage and the exact conversion scale. Both saved payloads matched after
+reopening in the local browser.
+Installed-build and provider-wide qualification remain open.
+[Live acceptance status](OPEN_ALPHA_PLAN.md)
 
 The F-03 regression now checks that the manual deletion survives an in-flight
 agent mutation. The stored-editor regression also checks revision handoff,

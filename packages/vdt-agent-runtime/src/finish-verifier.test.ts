@@ -43,6 +43,27 @@ describe("verifyDeterministicRunFinish", () => {
     expect(verifyDeterministicRunFinish({ ...input, project: b.getProject() })).toMatchObject({ accepted: true, payload: { rootValue: 90 } });
   });
 
+  it("withholds the finish receipt for minutes presented as hours, including a missing operand unit", () => {
+    const builder = new VdtBuilderSession();
+    builder.createDraft({ rootKpi: "Review time", projectTitle: "Review time", unit: "h" });
+    const parentNodeId = builder.getProject().rootNodeId;
+    builder.addDriver({ nodeId: "documents", parentNodeId, name: "Documents", baselineValue: 250 });
+    builder.addDriver({ nodeId: "share", parentNodeId, name: "Share", unit: "%", baselineValue: 16 });
+    builder.addDriver({ nodeId: "duration", parentNodeId, name: "Time per document", unit: "min/item", baselineValue: 12 });
+    const minutes = "documents * (share / 100) * duration";
+    builder.setFormula({ nodeId: parentNodeId, formula: minutes });
+    const input = { ...readyInput(), requireDerivedRoot: true };
+    const verify = () => verifyDeterministicRunFinish({ ...input, project: builder.getProject() });
+    expect(verify()).toMatchObject({ accepted: false, code: "GRAPH_INVALID" });
+    builder.updateNode({ nodeId: "documents", patch: { unit: "items" } });
+    expect(verify()).toMatchObject({ accepted: false, code: "GRAPH_INVALID" });
+    builder.setFormula({ nodeId: parentNodeId, formula: "documents * share * duration / 60" });
+    expect(verify()).toMatchObject({ accepted: false, code: "GRAPH_INVALID" });
+    builder.setFormula({ nodeId: parentNodeId, formula: `(${minutes}) / 60` });
+    expect(validateGraph(builder.getProject()).valid).toBe(true);
+    expect(verify()).toMatchObject({ accepted: true, code: "FINISH_VERIFIED", payload: { rootValue: 8 } });
+  });
+
   it("requires a sourced input when a quoted amount appears as a formula literal", () => {
     const b = new VdtBuilderSession();
     b.createDraft({ rootKpi: "Revenue", projectTitle: "Revenue", unit: "USD" });

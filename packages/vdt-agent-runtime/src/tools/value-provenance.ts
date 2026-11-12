@@ -1,5 +1,5 @@
 import { AgentToolError, type AgentToolContext } from "../tool-registry";
-import { explicitQuotedInputUnit, USER_VALUE_QUOTE_LIMITS } from "../value-provenance-contract";
+import { explicitQuotedInputUnit, literalUserNumberSpans, USER_VALUE_QUOTE_LIMITS } from "../value-provenance-contract";
 
 type QuoteEvidence = { value?: number | undefined; quote?: string | undefined };
 
@@ -39,7 +39,7 @@ export function quoteGroundsValue(context: AgentToolContext, evidence: QuoteEvid
  * excerpt cannot supply a unit. */
 export function groundedQuotedInputUnit(context: AgentToolContext, evidence: QuoteEvidence, currencyContext?: string): string | undefined {
   const units = new Set(groundedQuoteExcerpts(context, evidence)
-    .filter((excerpt) => [...excerpt.matchAll(numberPattern())].length === 1)
+    .filter((excerpt) => literalUserNumberSpans(excerpt).length === 1)
     .map((excerpt) => explicitQuotedInputUnit(excerpt, currencyContext)));
   return units.size === 1 ? units.values().next().value : undefined;
 }
@@ -47,23 +47,23 @@ export function groundedQuotedInputUnit(context: AgentToolContext, evidence: Quo
 function groundedQuoteExcerpts(context: AgentToolContext, evidence: QuoteEvidence): string[] {
   const quote = evidence.quote?.trim();
   if (!quote || quote.length < USER_VALUE_QUOTE_LIMITS.minCharacters || quote.length > USER_VALUE_QUOTE_LIMITS.maxCharacters || !/\p{L}/u.test(quote) || !Number.isFinite(evidence.value)) return [];
-  const texts = userSourceTexts(context);
+  const sources = userSourceTexts(context).map((text) => ({ text, numbers: literalUserNumberSpans(text) }));
   // Notes may contain an explicitly quoted excerpt with surrounding attribution.
   // Only the verbatim excerpt can ground the value, never its surrounding prose.
   const excerpts = [quote, ...[...quote.matchAll(/["«“]([^"»”\n]+)["»”]/g)].map((match) => match[1]!)];
   return excerpts.filter((excerpt) => {
-    if (excerpt.length < 4 || !/\p{L}/u.test(excerpt)) return false;
-    const numbers = [...excerpt.matchAll(numberPattern())].map((match) => numericValue(match[0]));
-  // A short, single-quantity quote avoids accepting an unrelated number from
-  // a copied paragraph. Interpretation of what that quantity represents stays
-  // with the agent; tools cannot promote their own output to user evidence.
-    if (numbers.length === 0 || numbers.some((value) => value !== evidence.value)) return false;
-    return texts.some((text) => text.includes(excerpt));
+    if (excerpt.length < USER_VALUE_QUOTE_LIMITS.minCharacters || !/\p{L}/u.test(excerpt)) return false;
+    return sources.some(({ text, numbers }) => {
+      for (let start = text.indexOf(excerpt); start !== -1; start = text.indexOf(excerpt, start + 1)) {
+        const end = start + excerpt.length;
+        const overlapping = numbers.filter((number) => number.start < end && number.end > start);
+        if (overlapping.length && overlapping.every((number) =>
+          number.start >= start && number.end <= end && number.value === evidence.value)) return true;
+      }
+      return false;
+    });
   });
 }
-
-function numberPattern(): RegExp { return /[-+]?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?/g; }
-function numericValue(value: string): number { return Number(value.replace(",", ".")); }
 
 function userSourceTexts(context: AgentToolContext): string[] {
   const state = context.store.getState(context.runId);
@@ -77,14 +77,12 @@ function userSourceTexts(context: AgentToolContext): string[] {
 function sourceQuoteHints(context: AgentToolContext, value: number): string[] {
   const hints = new Set<string>();
   for (const text of userSourceTexts(context)) {
-    const matches = [...text.matchAll(numberPattern())];
+    const matches = literalUserNumberSpans(text);
     for (const [index, match] of matches.entries()) {
-      if (numericValue(match[0]) !== value) continue;
-      const start = match.index!;
-      const after = start + match[0].length;
-      const next = Math.min(matches[index + 1]?.index ?? text.length, after + 100);
-      const right = text.slice(after, next).split(/[,;.!?\n]/u)[0]!;
-      const excerpt = text.slice(start, after + right.length).trim();
+      if (match.value !== value) continue;
+      const next = Math.min(matches[index + 1]?.start ?? text.length, match.end + 100);
+      const right = text.slice(match.end, next).split(/[,;.!?\n]/u)[0]!;
+      const excerpt = text.slice(match.start, match.end + right.length).trim();
       if (excerpt.length >= 4 && /\p{L}/u.test(excerpt)) hints.add(excerpt);
       if (hints.size === 4) return [...hints];
     }
