@@ -39,7 +39,10 @@ const nextConfig = {
   // Keep unused Sharp/libvips native libraries out of both standalone layouts.
   images: { unoptimized: true },
   outputFileTracingExcludes: {
-    "*": ["**/node_modules/sharp/**/*", "**/node_modules/@img/sharp-*/**/*"]
+    "*": [
+      "**/node_modules/sharp", "**/node_modules/sharp/**/*",
+      "**/node_modules/@img/sharp-*", "**/node_modules/@img/sharp-*/**/*"
+    ]
   },
   webpack(config, { isServer }) {
     if (isServer) config.plugins.push(new PreserveParserWorkerAsset());
