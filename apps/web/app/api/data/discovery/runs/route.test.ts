@@ -141,7 +141,11 @@ describe("data discovery run API lifecycle", () => {
     expect(concurrentRead.status).toBe(200);
     const { runId, snapshot } = await readJson<{ runId: string; snapshot: DataDiscoveryRunSnapshot }>(await pending);
     expect(snapshot.status).toBe("failed");
-    expect(snapshot.warnings.some((warning) => warning.message.includes("dimensions exceed"))).toBe(true);
+    expect(snapshot.warnings).toContainEqual(expect.objectContaining({
+      severity: "error", type: "data_discovery_validation_failed",
+      message: expect.stringMatching(/Workbook dimensions exceed .*Upload a smaller table extract/)
+    }));
+    expect(snapshot.incomingKpi).toBeUndefined();
     expect(snapshot.changeSetPreview).toBeUndefined();
     expect((await applyRun(jsonRequest(url, {}), { params: Promise.resolve({ runId }) })).status).not.toBe(200);
 

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -10,6 +10,7 @@ import { VdtBuilderSession } from "@vdt-studio/vdt-core";
 import { openVdtDatabase, type VdtDatabase } from "@vdt-studio/storage";
 import { createStorageWriteActor } from "../../vdt/storage-write-adapter";
 import { createSqliteAgentRunPersistence } from "./persistence";
+import { supervisorOwnerDeath } from "./supervisor-controller-owner";
 import { SqliteAgentSupervisorPersistence } from "./sqlite-supervisor-persistence";
 
 const directories: string[] = [];
@@ -63,6 +64,37 @@ describe("orphaned Supervisor terminal recovery", { timeout: 30_000 }, () => {
     const results = await Promise.all([runRecoveryChild(fixture), runRecoveryChild(fixture)]);
     expect(results).toEqual([{ ok: true, epoch: 2, events: 1 }, { ok: true, epoch: 2, events: 1 }]);
     expect(fixture.database.getAgentRunSupervisorFence(fixture.runId)).toMatchObject({ sessionEpoch: 2, orphanTerminated: true });
+  });
+
+  it("replays when another process commits between the observed run and fence reads", async () => {
+    const fixture = createFixture("running"), owner = await startOwner(fixture);
+    await stopChild(owner);
+    const contender = authority(fixture.database.databasePath, {
+      orphanRecoveryFaultInjector(point) {
+        if (point !== "observation") return;
+        const child = spawnSync(process.execPath, ["--import", "tsx",
+          path.resolve("apps/web/app/api/agent/runs/fixtures/supervisor-orphan-child.ts"),
+          fixture.database.databasePath, JSON.stringify(fixture.binding), "recover"], {
+          encoding: "utf8", timeout: 10_000, env: {
+            ...process.env, TSX_TSCONFIG_PATH: path.resolve("apps/web/tsconfig.json")
+          }
+        });
+        // Snapshot isolation must preserve the original epoch even after the
+        // other connection has committed. See the lookup assertions below.
+        expect(child.status, child.stdout + child.stderr).toBe(0);
+      },
+      ownerDeath(token) {
+        expect(supervisorOwnerDeath(token)).toBe("dead");
+        // The snapshot must contain the epoch-one owner, rather than the
+        // recovering child's epoch-two owner (now also dead).
+        expect(token).toBe(originalFence?.ownerToken);
+        return "dead";
+      }
+    });
+    const originalFence = fixture.database.getAgentRunSupervisorFence(fixture.runId);
+    const terminal = await contender.cancelOrphanedRun(fixture.runId);
+    expect(terminal.binding.sessionEpoch).toBe(2);
+    expect(terminal.eventOutbox).toHaveLength(1);
   });
 
   it.each(["epoch", "event", "projection"] as const)("rolls back a failure after the %s write and permits a complete retry", async point => {
@@ -184,7 +216,7 @@ async function runRecoveryChild(fixture: ReturnType<typeof createFixture>) {
   const value = child(fixture, "recover");
   const result = await firstLine(value);
   await exited(value);
-  expect(value.exitCode).toBe(0);
+  expect(value.exitCode, JSON.stringify(result)).toBe(0);
   return result;
 }
 
@@ -201,7 +233,7 @@ function firstLine(value: ChildProcessWithoutNullStreams): Promise<unknown> {
       }
     });
     value.once("error", error => { clearTimeout(timeout); reject(error); });
-    value.once("exit", code => { clearTimeout(timeout); if (!stdout.includes("\n")) reject(new Error(`Child exited ${code}: ${stderr}`)); });
+    value.once("close", code => { clearTimeout(timeout); if (!stdout.includes("\n")) reject(new Error(`Child exited ${code}: ${stderr}`)); });
   });
 }
 

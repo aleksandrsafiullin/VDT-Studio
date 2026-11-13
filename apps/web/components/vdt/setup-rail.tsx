@@ -441,7 +441,7 @@ export function SetupRail() {
               <div className={clsx("mt-3 border border-neutral-200 bg-white p-3", styles.actionCard)} data-testid="agent-patch-ready">
                 <div className="text-xs font-semibold uppercase tracking-normal text-neutral-700">Patch ready</div>
                 <p className="mt-1 text-sm leading-5 text-ink">
-                  AI prepared {pendingChangeCount} graph change{pendingChangeCount === 1 ? "" : "s"}. Review or apply them.
+                  {pendingChangeCount} graph change{pendingChangeCount === 1 ? "" : "s"} ready for review.
                 </p>
                 <div className="mt-3 flex gap-2">
                   <Button

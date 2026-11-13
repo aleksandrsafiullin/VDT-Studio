@@ -2214,6 +2214,27 @@ describe("generalized append-only storage migration plans", { timeout: 60_000 },
     30_000
   );
 
+  it("releases a failed exclusive acquisition so the existing reader can take the write lock", () => {
+    const fixture = storageFixture("existing");
+    const reader = new DatabaseSync(fixture.databasePath, { timeout: 0 });
+    const contender = new DatabaseSync(fixture.databasePath, { timeout: 0 });
+    try {
+      reader.exec("PRAGMA journal_mode = DELETE; BEGIN; SELECT * FROM migration_state;");
+      expect(() => __runStorageMigrationsWithPlanForTests(
+        contender,
+        fixture.dataDir,
+        migrationOptions({ busyTimeoutMs: 0 }),
+        TEST_MIGRATION_PLAN_4
+      )).toThrow(expect.objectContaining({ code: "MIGRATION_IN_PROGRESS", retryable: true }));
+      // Keep the unsuccessful contender connection open. Closing it would
+      // release a leaked pending lock and conceal the contention regression.
+      reader.exec("UPDATE migration_state SET status = status;");
+    } finally {
+      contender.close();
+      reader.close();
+    }
+  });
+
   it("normalizes a preliminary SQLite lock and succeeds after close/reopen", () => {
     const fixture = storageFixture("existing");
     const blocker = new DatabaseSync(fixture.databasePath, { timeout: 0 });

@@ -56,6 +56,30 @@ Acceptance requires focused before/after regressions, independent review, integr
 
 This ledger will be updated with implementation and integrated acceptance evidence. No full native release package has been accepted yet.
 
+## Current consolidated finding ledger
+
+The original assessment remains historical. This table is the current closure
+record, including defects found during installed acceptance. The latest packaged
+source is `261741e88070aa6e55317fae5dbb327bfd5798b9`. Its source gate failed two
+concurrency tests; independently reviewed corrections await a refreshed candidate.
+An implemented fix is not automatically an accepted installed workflow.
+
+| Finding | Current implementation and evidence | Remaining acceptance |
+| --- | --- | --- |
+| RA-01 Unbounded upload/workbook parsing | Bounded admission and isolated parsing are reviewed. Sonoma 14.0 installed `261741e` imported the CSV oracle and rejected an extreme workbook without changing the graph. The hidden parser-error message is corrected and source-reviewed. | Corrected installed error; remaining formats, cancellation and Windows cases. |
+| RA-02 Interrupted agent cannot terminate | Durable owner verification/fencing and saved-copy recovery implemented and reviewed; two real-storage browser cases pass. | Controlled-provider native process-loss checks; live-provider cases remain separate. |
+| RA-03 Current Mac distribution | Exact `261741e` Developer-ID DMG/resources verified. Sonoma 14.0 manual import, reopen, scenarios, version restore, export structure and native Quit passed. Earlier `8c60019` Tahoe clean/alpha.0 upgrade preserved values, revisions and CSV bytes. | Refreshed candidate checks, notarization and public-download trust; exported Excel formulas were not recalculated by a spreadsheet engine. |
+| RA-04 Live AI reliability | Historical evidence retained without promoting providers. New guests have no real provider credentials. | User-selected access and fresh installed per-provider attempts, including failures. |
+| RA-05 Hosted containment | Explicitly outside the agreed GitHub/source/desktop scope; local-only guidance retained. | A separate hosted-service task if requested. |
+| RA-06 Feedback/diagnostics | Safe local preview/export implemented and reviewed; Mac and Windows `8c60019` UI/download observations recorded. | Remaining keyboard, sizing/scaling and final-build identity checks. |
+| RA-07 Reproducible release verification | Full source gate passed at `8c60019`. At `261741e`, 3,808 tests passed, two concurrency tests failed and 45 skipped. W1 coherent-read and W7 pending-lock corrections have focused tests and independent source acceptance; exact prior CI interleavings remain unconfirmed. | Fresh complete source/browser and Windows native workflows on the corrected immutable candidate. Do not waive or relabel the failed run. |
+| RA-08 Documentation/support claims | Current execution/acceptance/support ledgers and contributor corrections implemented; historical claims retained with scope. | Final reconciliation against the exact accepted artifacts and remaining limits. |
+| RA-09 Windows storage | Native adapter reviewed; 34 tests and all 65 frozen cases independently accepted at `8c60019`. New common migration fix acquires the exclusive transaction before enabling lock retention, with unchanged deadlines/frozen assets and a retained-fence regression. | Repeat native 34/65 checks and installed persistence/upgrade/fault acceptance on the corrected candidate. Direct Windows source development remains outside packaged admission. |
+| RA-10 Windows application | Installer, bundled runtime, authority and storage wired. Missing Next dependency fixed and compiled server smoke passed at `8c60019`. A further installed sidecar entry-point defect was fixed in `261741e`, with an actual-bundle handshake gate. | New installed cold start, sidecar readiness, persistence/lifecycle and signing/trust. The first `8c60019` web cold-start timeout remains an observed failed attempt. |
+| RA-11 GitHub delivery | First-use docs, issue forms, release template and asset-verification procedure prepared. Only dedicated validation branches were pushed. | Accepted same-source installers, final checksums/support summary and owner-directed publication. |
+| RA-12 Offline file analysis (new P1) | Explicit local analysis plus separate AI action implemented in `261741e`. Installed Sonoma imported all ten CSV rows without provider credentials, applied 2.75 h/day and retained source provenance after reopen. | Refreshed compiled browser and Windows local-file checks; corrected malformed-input message and neutral staged-change copy. |
+| RA-13 Unused native image resources/notices (new packaging gap) | Both actual `261741e` packages exclude Sharp/libvips with image optimization disabled. Windows compiled smoke returned 200 for the authenticated static favicon and 404 for the unused optimizer. Supplemental upstream notices are retained conservatively. | Preserve these artifact gates on the final candidate. No blanket legal-clearance claim. |
+
 ## Sol continuation and independent review
 
 - W1: 129 focused tests passed and nine real-process tests passed after the final

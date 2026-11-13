@@ -41,7 +41,13 @@ export function IncomingKpiMappingReview({ snapshot, options, running, mappingCh
     [next[index], next[index + direction]] = [next[index + direction]!, next[index]!];
     patch({ categoryColumns: next });
   }
-  if (!review) return <p role="alert" className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">This analysis has no incoming KPI mapping. Analyze the source again.</p>;
+  if (!review) {
+    const failure = snapshot.status === "failed"
+      ? snapshot.warnings.find((item) => item.severity === "error")?.message
+        ?? snapshot.validationResults.find((item) => item.status === "error")?.message
+      : undefined;
+    return <p role="alert" className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" data-testid="data-import-analysis-failure">{failure ?? "This analysis has no incoming KPI mapping. Analyze the source again."}</p>;
+  }
   const messages = [...review.blockingReasons, ...review.questions.map((question) => question.message)];
   const validation = snapshot.validationResults.filter((item) => item.status !== "ok");
   const occurrences = new Map<string, number>();

@@ -39,7 +39,7 @@ interface SqliteAgentSupervisorPersistenceOptions {
   fenceTokenFactory?: (() => string) | undefined;
   /** Test seam: production always uses positive OS owner-death evidence. */
   ownerDeath?: ((token: string) => SupervisorOwnerDeath) | undefined;
-  orphanRecoveryFaultInjector?: ((point: "epoch" | "event" | "projection") => void) | undefined;
+  orphanRecoveryFaultInjector?: ((point: "observation" | "epoch" | "event" | "projection") => void) | undefined;
 }
 
 interface EpochFence {
@@ -781,9 +781,18 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
   /** Explicit terminal recovery only. No engine/session is opened, no ambiguous
    * tool is replayed, and no project/revision row or file is written. */
   async cancelOrphanedRun(runId: string): Promise<AgentSupervisorPersistenceStateV2> {
-    const observed = this.requireState(runId);
-    if (isOrphanCancellation(observed.eventOutbox?.at(-1))) return this.requireCancelledProjection(runId);
-    const observedFence = this.currentEpoch(runId);
+    // Load the event chain and owner fence from the same SQLite snapshot.
+    // A concurrent terminal commit must not look like a new live owner of
+    // an old, nonterminal run.
+    const { observed, observedFence, cancelled } = this.transaction(() => {
+      const observed = this.requireState(runId);
+      this.orphanRecoveryFaultInjector?.("observation");
+      const cancelled = isOrphanCancellation(observed.eventOutbox?.at(-1))
+        ? this.requireCancelledProjection(runId)
+        : undefined;
+      return { observed, observedFence: this.currentEpoch(runId), cancelled };
+    }, "read");
+    if (cancelled) return cancelled;
     this.assertOrphanAdmission(observed, observedFence);
     const timestamp = new Date(Math.max(Date.parse(this.now()), Date.parse(observed.updatedAt) + 1)).toISOString();
     const event = await new AgentRunEventOutbox(runId, {
@@ -1181,8 +1190,8 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
     };
   }
 
-  private transaction<T>(operation: () => T): T {
-    this.db.exec("BEGIN IMMEDIATE;");
+  private transaction<T>(operation: () => T, mode: "read" | "write" = "write"): T {
+    this.db.exec(mode === "read" ? "BEGIN;" : "BEGIN IMMEDIATE;");
     try {
       const result = operation();
       this.db.exec("COMMIT;");

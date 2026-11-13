@@ -373,3 +373,29 @@ The [standard-user Windows x64 execution and self-termination probe](https://git
 For the exact linked foreign-key block-finalization CAS, the raw namespace snapshots may show only the root `app.sqlite-journal` disappearing when SQLite completes rollback-journal recovery. The verifier requires a regular, natively verified prior journal and compares all other namespace entries byte-for-byte apart from the root database itself. It compares the normalized logical database hash outside the allowed CAS fields and verifies unchanged attempt and fence identity. Raw database and journal observations remain in evidence. The no-write branches retain their exact comparisons.
 
 The run passed 60 of 65 cases under the prior verifier. The other five reached the expected linked-CAS state and exposed this SQLite journal difference. The maintained reruns at `2767958` and `110c24c` passed all 65 under the reviewed verifier, with frozen cases and expected outcomes intact.
+
+## SQLite migration fence contention follow-up
+
+The [full-source Linux run at `261741e`](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43513510104)
+failed the fresh two-process migration test after one child exhausted its
+lock attempts. A separate two-connection reproduction showed that a failed
+`BEGIN EXCLUSIVE` could retain a pending write lock when the contender had
+already selected exclusive locking mode. That pending lock prevented the
+existing reader from upgrading to a writer. The fix enables exclusive
+locking mode after `BEGIN EXCLUSIVE` succeeds, retaining the acquired fence
+across commit. Independent source review accepted the change. The original
+Linux interleaving remains unconfirmed.
+
+Four focused Node 24 tests passed on Mac. They cover cleanup after failed
+acquisition, preliminary lock error normalization, release of the retained
+fence after actual process termination, and repeated later-migration
+contention. Eight post-fix runs of the fresh two-process test also passed,
+along with both journaled-backup denial cases on each run. The migration
+deadlines, concurrency assertions and frozen assets were unchanged.
+
+The SSD audit retains `source-release-43513510104-failed.log` under
+`output/release/audits/2026-11-14-alpha2-integration.ovcmf2lk` and
+`concurrency-repro.log`, `concurrency-after.log`, `concurrency-fence.log`
+and `concurrency-fence-related.log` under
+`output/release/audits/2026-11-13-remediation-w7`. Owned temporary files were
+cleaned after the child processes exited.

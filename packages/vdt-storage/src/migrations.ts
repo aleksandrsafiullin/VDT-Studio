@@ -687,7 +687,6 @@ function runBootstrapMigrations(
   }
 
   db.exec(`PRAGMA busy_timeout = ${positiveInteger(options.busyTimeoutMs, "busyTimeoutMs")};`);
-  db.exec("PRAGMA locking_mode = EXCLUSIVE;");
   try {
     acquireExclusiveMigrationFence(db, options.busyTimeoutMs);
     options.faultInjector?.("after_admission_fence_acquired");
@@ -779,6 +778,10 @@ function acquireExclusiveMigrationFence(db: DatabaseSync, busyTimeoutMs: number)
     for (;;) {
       try {
         db.exec("BEGIN EXCLUSIVE;");
+        // A failed BEGIN in EXCLUSIVE locking mode can retain a pending
+        // write lock even though there is no transaction to roll back.
+        // Enable lock retention only after SQLite has granted the fence.
+        db.exec("PRAGMA locking_mode = EXCLUSIVE;");
         db.exec("COMMIT;");
         db.exec(`PRAGMA busy_timeout = ${timeout};`);
         return;
@@ -958,7 +961,6 @@ function persistReservedSequence3ChecksumFailure(
     targetSequence: 3, targetUserVersion: 3
   };
   try {
-    db.exec("PRAGMA locking_mode = EXCLUSIVE;");
     acquireExclusiveMigrationFence(db, options.busyTimeoutMs);
     return transaction(db, () => {
       if (migrationForeignKeyBlockDirectoryHasEntries(dataDir)) return false;
@@ -1845,7 +1847,6 @@ function runLaterMigrations(
   db.exec(
     `PRAGMA busy_timeout = ${positiveInteger(options.busyTimeoutMs, "busyTimeoutMs")};`
   );
-  db.exec("PRAGMA locking_mode = EXCLUSIVE;");
   try {
     acquireExclusiveMigrationFence(db, options.busyTimeoutMs);
     options.faultInjector?.("after_admission_fence_acquired");
