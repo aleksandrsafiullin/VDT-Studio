@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, symlinkSync,
   realpathSync, rmSync, statfsSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pnpmInvocation } from "./package-manager.mjs";
 
@@ -33,16 +33,41 @@ export function buildEnvironment({ stage, version, sourceCommit, buildTime, inhe
   return env;
 }
 
-export function verifyResourceTree(root) {
+function inside(root, file) {
+  const name = relative(root, file);
+  return name !== ".." && !name.startsWith(`..${sep}`) && !isAbsolute(name);
+}
+
+export function verifyResourceTree(root, archivedSource) {
   const base = realpathSync(root);
+  const source = archivedSource && realpathSync(archivedSource);
   for (const entry of readdirSync(base, { withFileTypes: true, recursive: true })) {
     const file = join(entry.parentPath, entry.name);
+    const name = relative(base, file);
     if ([".env", ".vdt", ".npmrc", ".git"].includes(entry.name) || entry.name.startsWith(".env.")) {
-      throw new Error(`Private resource must not enter a Windows package: ${entry.name}`);
+      throw new Error(`Private resource must not enter a Windows package: ${name}`);
     }
-    if (lstatSync(file).isSymbolicLink()) {
-      const target = realpathSync(file);
-      if (target !== base && !target.startsWith(base + sep)) throw new Error("Package resource link escapes its root.");
+    if (!entry.isSymbolicLink()) continue;
+    const target = resolve(dirname(file), readlinkSync(file));
+    if (inside(base, target)) continue;
+    // Next recreates traced pnpm junctions using their original absolute
+    // checkout targets. Relocate only to a counterpart already traced.
+    const relocated = source && inside(source, target) ? join(base, relative(source, target)) : null;
+    if (!relocated || !inside(base, relocated) || !existsSync(relocated)) {
+      throw new Error(`Package resource link escapes its root: ${name}`);
+    }
+    const type = lstatSync(relocated).isDirectory() ? "junction" : "file";
+    rmSync(file);
+    symlinkSync(relocated, file, type);
+  }
+  for (const entry of readdirSync(base, { withFileTypes: true, recursive: true })) {
+    if (!entry.isSymbolicLink()) continue;
+    const file = join(entry.parentPath, entry.name);
+    let target;
+    try { target = realpathSync(file); }
+    catch { throw new Error(`Package resource link cannot be resolved: ${relative(base, file)}`); }
+    if (target === base || !inside(base, target) || inside(target, dirname(file))) {
+      throw new Error(`Package resource link escapes its root or creates a cycle: ${relative(base, file)}`);
     }
   }
 }
@@ -147,9 +172,9 @@ export async function packageWindows(args = process.argv.slice(2)) {
     pnpm(["build:web"], { cwd: source, env: webEnv });
     const web = join(source, "apps/web");
     for (const resource of ["public", ".next/static", ".next/server/chunks/static"]) {
-      cpSync(join(web, resource), join(web, ".next/standalone/apps/web", resource), { recursive: true, dereference: false });
+      cpSync(join(web, resource), join(web, ".next/standalone/apps/web", resource), { recursive: true, dereference: false, verbatimSymlinks: true });
     }
-    verifyResourceTree(join(web, ".next/standalone"));
+    verifyResourceTree(join(web, ".next/standalone"), source);
     const response = await fetch(`https://nodejs.org/dist/v${WINDOWS_NODE.version}/${WINDOWS_NODE.archive}`, {
       signal: AbortSignal.timeout(120_000)
     });

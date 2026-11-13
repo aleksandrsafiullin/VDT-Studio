@@ -139,3 +139,21 @@ it("marks packaged web storage activation only after the private startup frame",
   expect((await closed)[0]).toBe(0);
   expect(JSON.parse(output)).toEqual({ runtimeDirectory: "verified-runtime", profilePath: "profile" });
 });
+
+
+it("relocates absolute traced junctions only to an already present standalone counterpart", async () => {
+  const source = await temp();
+  const standalone = path.join(source, "apps/web/.next/standalone");
+  const original = path.join(source, "node_modules/package");
+  const traced = path.join(standalone, "node_modules/package");
+  const link = path.join(standalone, "node_modules/alias");
+  await mkdir(original, { recursive: true });
+  await mkdir(traced, { recursive: true });
+  await symlink(original, link, process.platform === "win32" ? "junction" : "dir");
+  verifyResourceTree(standalone, source);
+  verifyResourceTree(standalone);
+  const missing = path.join(source, "node_modules/untraced");
+  await mkdir(missing);
+  await symlink(missing, path.join(standalone, "untraced"), process.platform === "win32" ? "junction" : "dir");
+  expect(() => verifyResourceTree(standalone, source)).toThrow(/escapes its root: untraced/);
+});
