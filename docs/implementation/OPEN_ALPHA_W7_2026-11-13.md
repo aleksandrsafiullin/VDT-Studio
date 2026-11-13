@@ -223,6 +223,32 @@ The addon `dumpbin /DEPENDENTS` result listed `node.exe`,
 `KERNEL32.dll`. The compiler CRT configuration was unchanged. Exact evidence
 is stored with CI run 43488859286.
 
+The first [literal frozen matrix](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43491337150)
+matched 51 of 65 cases. It exposed fixture errors and two audit gaps. The
+production repair terminalizes an exact expired Sequence 3 attempt after
+observed backup or checksum failure, only when it can bind the existing
+attempt, its genuine backup evidence and the still-ready v2 prefix under
+the migration fence. It leaves pre-reservation failures without an invented
+attempt or backup.
+
+The final candidate adds six native negative regressions, each exercising
+both reserved checksum and backup failure paths. They cover an active lease,
+tampering with the owner record, backup path, evidence binding or attempt
+binding, and failure before reservation. The regressions compare exact
+migration audit rows before and after the denied operation. Execution in the
+maintained standard-user lane is pending.
+
+The [second literal run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43492558516)
+matched 60 cases, including the checksum and backup failures. The five
+remaining cases had the expected logical linked-evidence recovery state and
+differed only when SQLite removed its transient rollback journal. The
+independently reviewed verifier preserves the raw journal observations and
+allows that disappearance only during the exact linked-evidence recovery
+transition. The final same-source run remains pending. A separate Windows
+probe recorded self-kill as exit status 1 with no signal. The matrix captures
+the child's exact fault marker and the parent-observed SIGKILL from
+`ChildProcess.kill("SIGKILL")`, implemented by Windows process termination.
+
 Native SQLite preflight validates DB, WAL, SHM and rollback journal leaf types
 and private ACLs. SQLite uses the canonical volume GUID path returned by the
 retained directory and creates its sidecars inside that private namespace.
@@ -314,6 +340,7 @@ Evidence directory:
 | Legacy v1 adoption and observed open timing | 25 tests passed in 43487949023; timings listed above |
 | Packaged Windows admission candidate | 26 passed in 43488859286, including positive/negative admission and addon PE imports |
 | Activated launcher, W1 native identity, W2 native store and core | 28 passed in 43489054401 and 43489659489; second run adds binding ABI and substituted-drive checks |
+| Literal 65-case frozen Sequence 3 evidence | 51/65 in 43491337150, then 60/65 in 43492558516; final same-source retry pending |
 | Installed Windows execution | Pending compiled standalone and installer qualification |
 
 The tests clean only their own `vdt-storage-platform-*` temporary directories.
@@ -331,3 +358,12 @@ large artifacts were retained by this slice.
 Documentation impact: this report records the implemented packaged
 candidate and native evidence. The coordinator owns integrated release
 readiness and the final Windows support statement.
+
+
+## Windows Gate R2 execution addendum
+
+The [standard-user Windows x64 execution and self-termination probe](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43492558516) observed exit code 1 and a null signal when the child called `process.kill(process.pid, "SIGKILL")`. The parent-driven Windows execution uses Node's `ChildProcess.kill("SIGKILL")` and the native abrupt process termination it invokes. A child first records its PID, exact fault point and adoption index synchronously, then blocks without unwinding or cleanup. The parent checks that marker, terminates the child, waits for the observed `SIGKILL` and null exit code, and starts a separate reopen process. Companion evidence retains the actual mechanism and self-termination probe. This Windows execution allowance leaves the frozen cases, expected outcomes and Section 10 evidence schema intact.
+
+For the exact linked foreign-key block-finalization CAS, the raw namespace snapshots may show only the root `app.sqlite-journal` disappearing when SQLite completes rollback-journal recovery. The verifier requires a regular, natively verified prior journal and compares all other namespace entries byte-for-byte apart from the root database itself. It compares the normalized logical database hash outside the allowed CAS fields and verifies unchanged attempt and fence identity. Raw database and journal observations remain in evidence. The no-write branches retain their exact comparisons.
+
+The run passed 60 of 65 cases under the prior verifier. The other five reached the expected linked-CAS state and exposed this SQLite journal difference. A successful rerun under the reviewed verifier is required before claiming the complete native gate.

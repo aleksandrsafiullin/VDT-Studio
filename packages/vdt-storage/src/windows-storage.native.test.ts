@@ -9,7 +9,8 @@ import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vitest";
 import { __openWindowsVdtDatabaseForTests, admitPackagedWindowsStorage, openVdtDatabase, readProjectManifestFromDatabaseLocation } from "./sqlite";
-import { openWindowsStorage } from "./windows-storage";
+import { __runBootstrapStorageMigrationsForTests, __runSequence3StorageMigrationsForNativeTests } from "./migrations";
+import { acquireWindowsStorageProfile, openWindowsStorage } from "./windows-storage";
 import { scanProjectLocation } from "./project-files";
 
 function observedOpen(workspace: string, dataDir: string, label: string) {
@@ -302,3 +303,81 @@ test.runIf(process.platform === "win32" && Boolean(runtime && parent))(
     }
   }, 60_000
 );
+
+test.runIf(process.platform === "win32" && Boolean(runtime && parent)).each([
+  "active lease", "owner binding", "backup path", "evidence binding", "attempt binding", "pre-reservation"
+])("does not terminalize an unproven reserved migration failure (%s)", (scenario) => {
+  const workspace = fs.mkdtempSync(path.join(parent!, "failure-authority-"));
+  try {
+    for (const reason of ["checksum", "backup"]) {
+      const profile = path.join(workspace, reason);
+      const lease = acquireWindowsStorageProfile(profile, () => openWindowsStorage(runtime!, profile, true));
+      const db = new DatabaseSync(lease.directory.sqlitePath());
+      try {
+        const options = {
+          now: () => "2026-11-13T00:00:00.000Z",
+          busyTimeoutMs: 5_000,
+          leaseMs: 30_000
+        };
+        __runBootstrapStorageMigrationsForTests(db, profile, options);
+        if (scenario !== "pre-reservation") {
+          const stopped = "stop after genuine reservation";
+          let reached = false;
+          expect(() => __runSequence3StorageMigrationsForNativeTests(db, profile, {
+            ...options,
+            faultInjector(point) {
+              if (point === "after_later_applying_persisted") {
+                reached = true;
+                throw new Error(stopped);
+              }
+            }
+          })).toThrow();
+          expect(reached, stopped).toBe(true);
+          const backup = db.prepare(`
+            SELECT b.backup_relative_path AS name FROM migration_backup_evidence b
+            JOIN migration_attempts a ON a.backup_evidence_id = b.backup_evidence_id
+            WHERE a.status = 'applying'
+          `).get();
+          expect(typeof backup?.name).toBe("string");
+          const filename = path.join(profile, String(backup!.name));
+          if (scenario === "owner binding") fs.writeFileSync(path.join(path.dirname(filename), "owner.json"), "{}");
+          if (scenario === "backup path") db.exec("UPDATE migration_backup_evidence SET backup_relative_path = backup_relative_path || '.moved' WHERE from_user_version = 2");
+          if (scenario === "evidence binding") db.exec("UPDATE migration_backup_evidence SET database_id = 'foreign' WHERE from_user_version = 2");
+          if (scenario === "attempt binding") db.exec("UPDATE migration_attempts SET backup_evidence_id = 'foreign' WHERE status = 'applying'");
+          if (reason === "backup") fs.appendFileSync(filename, "corruption");
+        }
+        const snapshot = () => ({
+          state: db.prepare("SELECT * FROM migration_state").all(),
+          attempts: db.prepare("SELECT * FROM migration_attempts ORDER BY attempt_id").all(),
+          backups: db.prepare("SELECT * FROM migration_backup_evidence ORDER BY backup_evidence_id").all()
+        });
+        const before = snapshot();
+        let earlyBackupReached = false;
+        expect(() => __runSequence3StorageMigrationsForNativeTests(db, profile, {
+          ...options,
+          now: () => scenario === "active lease" ? options.now() : "2026-11-13T00:02:00.000Z",
+          faultInjector(point) {
+            if (scenario === "pre-reservation" && reason === "backup" && point === "after_later_backup_owner_fsynced") {
+              earlyBackupReached = true;
+              throw new Error("backup unavailable before reservation");
+            }
+          }
+        }, { corruptSqlChecksum: reason === "checksum" })).toThrow(expect.objectContaining({ code: "MIGRATION_RECOVERY_REQUIRED" }));
+        if (scenario === "pre-reservation" && reason === "backup") expect(earlyBackupReached).toBe(true);
+        const after = snapshot();
+        expect(after.attempts).toEqual(before.attempts);
+        expect(after.backups).toEqual(before.backups);
+        if (scenario === "pre-reservation" && reason === "checksum") {
+          expect(after.state).toEqual(before.state.map((row) => ({ ...row, status: "blocked", blocked_reason: "checksum_mismatch" })));
+        } else {
+          expect(after.state).toEqual(before.state);
+        }
+      } finally {
+        db.close();
+        lease.release();
+      }
+    }
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+}, 60_000);

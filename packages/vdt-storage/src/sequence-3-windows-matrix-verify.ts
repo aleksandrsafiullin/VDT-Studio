@@ -149,8 +149,16 @@ export function verifyMatrixCase(
     assert.equal(first.attempt?.lease_generation, post.attempt?.lease_generation);
     assert.match(first.immutableOutsideBlockCasHash, /^sha256:[0-9a-f]{64}$/);
     assert.equal(first.immutableOutsideBlockCasHash, post.immutableOutsideBlockCasHash);
-    assert.deepEqual(first.directoryEntries.filter(({ relativePath }) => relativePath !== "app.sqlite"),
-      post.directoryEntries.filter(({ relativePath }) => relativePath !== "app.sqlite"));
+    const journalPath = "app.sqlite-journal";
+    const crashedJournal = post.directoryEntries.find(({ relativePath }) => relativePath === journalPath);
+    const reopenedJournal = first.directoryEntries.find(({ relativePath }) => relativePath === journalPath);
+    const sqliteRemovedJournal = post.nativeNamespaceVerified && first.nativeNamespaceVerified
+      && crashedJournal?.kind === "regular_file" && reopenedJournal === undefined;
+    // SQLite may delete its root rollback journal while finalizing this exact
+    // linked block CAS. Keep both raw inventories in the evidence.
+    const unchanged = ({ relativePath }: { relativePath: string }) =>
+      relativePath !== "app.sqlite" && !(sqliteRemovedJournal && relativePath === journalPath);
+    assert.deepEqual(first.directoryEntries.filter(unchanged), post.directoryEntries.filter(unchanged));
   }
   if (post.database.userVersion === 2 && first.database.userVersion === 3 && post.attempt) {
     assert(first.application);

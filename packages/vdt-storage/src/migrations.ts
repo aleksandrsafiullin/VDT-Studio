@@ -963,8 +963,13 @@ function persistReservedSequence3ChecksumFailure(
     return transaction(db, () => {
       if (migrationForeignKeyBlockDirectoryHasEntries(dataDir)) return false;
       const verified = verifyDatabaseForPlanSnapshot(db, dataDir, auditPlan);
-      return verified.activeAttempt !== null &&
-        blockReservedSequence3Failure(db, verified.activeAttempt, "checksum_mismatch", options);
+      const attempt = verified.activeAttempt;
+      if (!attempt) return false;
+      const backup = db.prepare("SELECT backup_relative_path, created_at FROM migration_backup_evidence WHERE backup_evidence_id = ?").get(attempt.backupEvidenceId);
+      return backup !== undefined && reservedSequence3BackupOwnerMatches(dataDir, {
+        ...attempt, backupPath: backup.backup_relative_path, createdAt: Number(backup.created_at)
+      }) &&
+        blockReservedSequence3Failure(db, attempt, "checksum_mismatch", options);
     });
   } catch {
     return false;
@@ -1667,14 +1672,10 @@ function verifyDatabaseForPlanSnapshot(
           targetManifestHash !== EXPECTED_SEQUENCE_3_MANIFEST_HASH ||
           (status !== "backed_up" && status !== "applying") ||
           !(error instanceof ReservedMigrationBackupInvalid)) throw error;
-      const ownedDirectory = path.join(dataDir, "migrations", "backups", `.later-owned-${attemptId}`);
-      const owner = readLaterMigrationBackupOwner(dataDir, ownedDirectory);
-      const expectedBackup = path.relative(dataDir, path.join(ownedDirectory, "backup.sqlite"));
-      if (!owner || owner.databaseId !== databaseId || owner.attemptId !== attemptId ||
-          owner.backupEvidenceId !== backupEvidenceId || owner.targetManifestHash !== targetManifestHash ||
-          owner.fromUserVersion !== expectedFromVersion || owner.backupRelativePath !== expectedBackup ||
-          backup.backup_relative_path !== expectedBackup ||
-          Date.parse(owner.createdAt) !== Number(backup.created_at)) throw error;
+      if (!reservedSequence3BackupOwnerMatches(dataDir, {
+        databaseId, attemptId, backupEvidenceId, targetManifestHash,
+        backupPath: backup.backup_relative_path, createdAt: Number(backup.created_at)
+      })) throw error;
       failedBackup.attemptId = attemptId;
     }
     const expectedAppliedEnd =
@@ -4255,6 +4256,25 @@ function finalizeForeignKeyBlockedAttempt(
     options.faultInjector?.("before_foreign_key_block_commit", context);
   });
   options.faultInjector?.("after_foreign_key_block_committed", context);
+}
+
+function reservedSequence3BackupOwnerMatches(dataDir: string, binding: {
+  databaseId: string;
+  attemptId: string;
+  backupEvidenceId: string;
+  targetManifestHash: Sha256;
+  backupPath: unknown;
+  createdAt: number;
+}): boolean {
+  if (!/^migration_attempt_[A-Za-z0-9_-]+$/.test(binding.attemptId)) return false;
+  const directory = path.join(dataDir, "migrations", "backups", `.later-owned-${binding.attemptId}`);
+  const backupPath = path.relative(dataDir, path.join(directory, "backup.sqlite"));
+  if (binding.backupPath !== backupPath) return false;
+  const owner = readLaterMigrationBackupOwner(dataDir, directory);
+  return owner !== null && owner.databaseId === binding.databaseId &&
+    owner.attemptId === binding.attemptId && owner.backupEvidenceId === binding.backupEvidenceId &&
+    owner.targetManifestHash === binding.targetManifestHash && owner.fromUserVersion === 2 &&
+    owner.backupRelativePath === backupPath && Date.parse(owner.createdAt) === binding.createdAt;
 }
 
 /** Terminalize only an expired attempt whose independently verified v2 prefix still owns the failure. */

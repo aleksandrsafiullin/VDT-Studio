@@ -61,8 +61,8 @@ try {
   $testProcess = Start-Process -FilePath (Join-Path $stage 'node.exe') -ArgumentList $arguments -WorkingDirectory $repository -Credential $credential -RedirectStandardOutput $testReport -RedirectStandardError $testStderr -Wait -PassThru
   if ($testProcess.ExitCode -ne 0) { throw "Standard user storage tests failed with exit code $($testProcess.ExitCode)" }
   $summary = Get-Content -Raw $testReport
-  if ($summary -notmatch '(?m)^\s*Tests\s+28 passed \(28\)\s*$') {
-    throw 'All 28 native tests must execute without skips'
+  if ($summary -notmatch '(?m)^\s*Tests\s+34 passed \(34\)\s*$') {
+    throw 'All 34 native tests must execute without skips'
   }
   $matrixOutput = Join-Path $native 'sequence-3-windows-evidence.json'
   $matrixReport = Join-Path $evidence 'sequence-3-windows-matrix.log'

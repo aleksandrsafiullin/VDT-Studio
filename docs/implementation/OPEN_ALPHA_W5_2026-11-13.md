@@ -35,6 +35,6 @@ The host has one valid Developer ID Application identity for Aleksandr Safiullin
 
 The maintained Windows native storage gate is `.github/workflows/windows-storage-native.yml`.
 It reuses the tested disposable standard-user helper and captures both
-28-test native regression output and the literal 65-vector evidence. It runs
+34-test native regression output and the literal 65-vector evidence. It runs
 on pull requests and main and is dispatchable against an exact candidate ref.
 The repository workflow's first full run is pending the final matrix fixes.

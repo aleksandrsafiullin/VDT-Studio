@@ -82,3 +82,5 @@ Native Windows x64 fixture run 43477247699 recorded eight passing tests, includi
 Findings and conditions were sent directly to `runtime_recovery`, `windows_storage`, `windows_native` and the coordinator. The implementation review resumed for W1, W2 and W4. Findings were sent to the coordinator and the W2 implementation owner.
 
 Documentation impact: this review ledger only. No provider qualification, Windows support or release GO is claimed. No native build was run.
+
+The independent reviewer accepts the narrow [Windows Gate R2 execution addendum](OPEN_ALPHA_W7_2026-11-13.md#windows-gate-r2-execution-addendum) for the observed Windows process and SQLite journal mechanics under [Section 10](../architecture/SEQUENCE_3_MANIFEST_PACKAGING_AND_FAULT_CONTRACT.md#10-future-gate-r2-execution-evidence). Native rerun remains required. The frozen contract remains byte-identical.

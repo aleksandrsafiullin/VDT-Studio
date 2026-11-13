@@ -64,7 +64,7 @@ cannot inherit the identity of an enclosing checkout.
 The **Windows Native Storage** workflow runs on pull requests and pushes to
 `main`. It can also be dispatched for a candidate ref. The hosted Windows
 runner builds the native add-on and runs it under a disposable standard-user
-account with an owner-protected NTFS directory. It requires all 28 native
+account with an owner-protected NTFS directory. It requires all 34 native
 tests to execute and verifies the full frozen 65-vector Sequence 3 matrix
 against its evidence contract. The job retains the exact source SHA,
 environment, add-on dependency report, logs, matrix evidence and cleanup
