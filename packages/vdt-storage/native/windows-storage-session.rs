@@ -141,6 +141,16 @@ impl StorageSession {
         })
     }
 
+    pub fn list(&self) -> io::Result<Vec<crate::windows_directory_entries::DirectoryEntry>> {
+        self.validate()?;
+        self.directory.list()
+    }
+
+    pub fn remove_empty_child(&self, name: &str) -> io::Result<()> {
+        self.validate()?;
+        self.directory.remove_empty_child(name)
+    }
+
     pub fn ensure_child(&self, name: &str) -> io::Result<()> {
         self.validate()?;
         self.directory.ensure_child(name)

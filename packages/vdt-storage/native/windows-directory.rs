@@ -191,6 +191,30 @@ impl FlushableDirectory {
     }
 
     #[cfg(vdt_storage_addon)]
+    pub(crate) fn list(&self) -> io::Result<Vec<crate::windows_directory_entries::DirectoryEntry>> {
+        self.validate_private_descendant()?;
+        unsafe { crate::windows_directory_entries::list(self.0.raw) }
+    }
+
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn remove_empty_child(&self, name: &str) -> io::Result<()> {
+        self.validate_private_descendant()?;
+        let handle = open_relative(
+            self.0.raw,
+            name,
+            DELETE_FILE_ACCESS,
+            0,
+            FILE_OPEN,
+            FILE_DIRECTORY_FILE,
+        )?;
+        handle.reject_reparse_point()?;
+        crate::windows_security::validate_private_descendant(handle.raw)?;
+        unsafe { crate::windows_directory_entries::remove_empty_directory(handle.raw)? };
+        drop(handle);
+        self.flush()
+    }
+
+    #[cfg(vdt_storage_addon)]
     pub(crate) fn unlink(&self, name: &str) -> io::Result<()> {
         let handle = open_relative(
             self.0.raw,
@@ -407,6 +431,8 @@ impl OwnedHandle {
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 let child = self.open_flushable_directory(name)?;
                 child.validate_private_dacl()?;
+                child.flush()?;
+                self.flush()?;
                 Ok(child)
             }
             Err(error) => Err(error),

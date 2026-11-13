@@ -8,6 +8,9 @@ extern uint32_t vdt_storage_open_child(StorageSession *, const char *, size_t, S
 extern uint32_t vdt_storage_write(StorageSession *, const char *, size_t, const void *, size_t);
 extern uint32_t vdt_storage_publish(StorageSession *, const char *, size_t, const char *, size_t, const void *, size_t);
 extern uint32_t vdt_storage_read(StorageSession *, const char *, size_t, void *, size_t, uint8_t, size_t *);
+typedef uint8_t (*EntryCallback)(void *, const char *, size_t, uint8_t, uint8_t);
+extern uint32_t vdt_storage_list(StorageSession *, void *, EntryCallback);
+extern uint32_t vdt_storage_remove_empty_child(StorageSession *, const char *, size_t);
 extern uint32_t vdt_storage_ensure_child(StorageSession *, const char *, size_t);
 extern uint32_t vdt_storage_unlink(StorageSession *, const char *, size_t);
 extern uint32_t vdt_storage_flush(StorageSession *);
@@ -36,6 +39,7 @@ static napi_value win32_fail(napi_env env, uint32_t error) {
     case 50: code = "ENOTSUP"; break;
     case 80: case 183: code = "EEXIST"; break;
     case 87: code = "EINVAL"; break;
+    case 145: code = "ENOTEMPTY"; break;
     case 112: code = "ENOSPC"; break;
   }
   napi_value message, kind, exception, number;
@@ -183,12 +187,53 @@ static napi_value read_file(napi_env env, napi_callback_info info) {
   return result_value;
 }
 
+typedef struct {
+  napi_env env;
+  napi_value array;
+  uint32_t index;
+} EntryResult;
+
+static uint8_t append_entry(void *context, const char *name, size_t length, uint8_t directory, uint8_t reparse) {
+  EntryResult *result = context;
+  napi_env env = result->env;
+  napi_value object, value;
+  return napi_create_object(env, &object) == napi_ok &&
+      napi_create_string_utf8(env, name, length, &value) == napi_ok &&
+      napi_set_named_property(env, object, "name", value) == napi_ok &&
+      napi_get_boolean(env, directory != 0, &value) == napi_ok &&
+      napi_set_named_property(env, object, "directory", value) == napi_ok &&
+      napi_get_boolean(env, reparse != 0, &value) == napi_ok &&
+      napi_set_named_property(env, object, "reparse", value) == napi_ok &&
+      napi_set_element(env, result->array, result->index++, object) == napi_ok;
+}
+
+static napi_value list_entries(napi_env env, napi_callback_info info) {
+  napi_value arg;
+  size_t argc = 1;
+  if (napi_get_cb_info(env, info, &argc, &arg, NULL, NULL) != napi_ok || argc != 1) {
+    return fail(env, "EINVAL", "Expected one Windows storage session");
+  }
+  Session *session = get_session(env, arg);
+  if (session == NULL || session->native == NULL) {
+    return fail(env, "EBADF", "Expected an open Windows storage session");
+  }
+  EntryResult entries = {env, NULL, 0};
+  if (napi_create_array(env, &entries.array) != napi_ok) return fail(env, "EIO", "Could not allocate storage entries");
+  uint32_t error = vdt_storage_list(session->native, &entries, append_entry);
+  return error == 0 ? entries.array : win32_fail(env, error);
+}
+
+typedef uint32_t (*NamedOperation)(StorageSession *, const char *, size_t);
+static NamedOperation unlink_operation = vdt_storage_unlink;
+static NamedOperation ensure_child_operation = vdt_storage_ensure_child;
+static NamedOperation remove_empty_child_operation = vdt_storage_remove_empty_child;
+
 static napi_value named_operation(napi_env env, napi_callback_info info) {
   napi_value args[2];
   size_t argc = 2, length;
   char name[1021];
-  void *ensure_child = NULL;
-  if (napi_get_cb_info(env, info, &argc, args, NULL, &ensure_child) != napi_ok || argc != 2 ||
+  void *operation = NULL;
+  if (napi_get_cb_info(env, info, &argc, args, NULL, &operation) != napi_ok || argc != 2 ||
       napi_get_value_string_utf8(env, args[1], NULL, 0, &length) != napi_ok ||
       length == 0 || length >= sizeof(name) ||
       napi_get_value_string_utf8(env, args[1], name, sizeof(name), &length) != napi_ok) {
@@ -198,9 +243,7 @@ static napi_value named_operation(napi_env env, napi_callback_info info) {
   if (session == NULL || session->native == NULL) {
     return fail(env, "EBADF", "Expected an open Windows storage session");
   }
-  uint32_t error = ensure_child == NULL
-      ? vdt_storage_unlink(session->native, name, length)
-      : vdt_storage_ensure_child(session->native, name, length);
+  uint32_t error = (*(NamedOperation *)operation)(session->native, name, length);
   return result(env, error);
 }
 
@@ -242,7 +285,7 @@ static napi_value flush_or_close(napi_env env, napi_callback_info info) {
 }
 
 NAPI_MODULE_INIT() {
-  static int close_marker, ensure_child_marker, create_marker;
+  static int close_marker, create_marker;
   napi_property_descriptor properties[] = {
     {"open", NULL, open_session, NULL, NULL, NULL, napi_default, NULL},
     {"initialize", NULL, open_session, NULL, NULL, NULL, napi_default, &create_marker},
@@ -250,8 +293,10 @@ NAPI_MODULE_INIT() {
     {"writeExclusive", NULL, write_exclusive, NULL, NULL, NULL, napi_default, NULL},
     {"publish", NULL, publish_file, NULL, NULL, NULL, napi_default, NULL},
     {"read", NULL, read_file, NULL, NULL, NULL, napi_default, NULL},
-    {"unlink", NULL, named_operation, NULL, NULL, NULL, napi_default, NULL},
-    {"ensureChild", NULL, named_operation, NULL, NULL, NULL, napi_default, &ensure_child_marker},
+    {"list", NULL, list_entries, NULL, NULL, NULL, napi_default, NULL},
+    {"unlink", NULL, named_operation, NULL, NULL, NULL, napi_default, &unlink_operation},
+    {"ensureChild", NULL, named_operation, NULL, NULL, NULL, napi_default, &ensure_child_operation},
+    {"removeEmptyChild", NULL, named_operation, NULL, NULL, NULL, napi_default, &remove_empty_child_operation},
     {"flush", NULL, flush_or_close, NULL, NULL, NULL, napi_default, NULL},
     {"close", NULL, flush_or_close, NULL, NULL, NULL, napi_default, &close_marker}
   };

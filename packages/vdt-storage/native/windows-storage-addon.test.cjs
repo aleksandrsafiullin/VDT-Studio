@@ -51,6 +51,20 @@ try {
   assert.throws(() => fs.renameSync(privateRoot, privateRoot + ".moved"));
   addon.close(secondChild);
   addon.close(child);
+  const entries = addon.openChild(session, "managed");
+  for (let index = 0; index < 250; index++) {
+    fs.writeFileSync(path.join(privateRoot, "managed", `данные-${index}.txt`), bytes);
+  }
+  fs.symlinkSync(privateRoot, path.join(privateRoot, "managed", "junction"), "junction");
+  const list = addon.list(entries);
+  assert.equal(list.length, 251);
+  assert.deepEqual(list.find((entry) => entry.name === "junction"), { name: "junction", directory: true, reparse: true });
+  assert(list.some((entry) => entry.name === "данные-249.txt"));
+  addon.close(entries);
+  assert.throws(() => addon.removeEmptyChild(session, "managed"), { code: "ENOTEMPTY" });
+  addon.ensureChild(session, "empty");
+  addon.removeEmptyChild(session, "empty");
+  assert.equal(fs.existsSync(path.join(privateRoot, "empty")), false);
   fs.mkdirSync(path.join(privateRoot, "inherited-only"));
   assert.throws(() => addon.ensureChild(session, "inherited-only"), { code: "EACCES" });
   const inherited = addon.openChild(session, "inherited-only");

@@ -1,5 +1,7 @@
 #[path = "windows-directory.rs"]
 mod windows_directory;
+#[path = "windows-directory-entries.rs"]
+mod windows_directory_entries;
 #[path = "windows-security.rs"]
 mod windows_security;
 #[path = "windows-storage-session.rs"]
@@ -100,6 +102,42 @@ unsafe extern "C" fn vdt_storage_open_child(
         unsafe { *output = Box::into_raw(Box::new(Rc::new(child))) };
         Ok(())
     })
+}
+
+type EntryCallback = unsafe extern "C" fn(*mut std::ffi::c_void, *const u8, usize, u8, u8) -> u8;
+
+#[no_mangle]
+extern "C" fn vdt_storage_list(
+    session: &Session,
+    context: *mut std::ffi::c_void,
+    callback: EntryCallback,
+) -> u32 {
+    status(|| {
+        for entry in session.list()? {
+            if unsafe {
+                callback(
+                    context,
+                    entry.name.as_ptr(),
+                    entry.name.len(),
+                    entry.is_directory.into(),
+                    entry.is_reparse.into(),
+                )
+            } == 0
+            {
+                return Err(io::Error::other("could not return storage directory entry"));
+            }
+        }
+        Ok(())
+    })
+}
+
+#[no_mangle]
+unsafe extern "C" fn vdt_storage_remove_empty_child(
+    session: &Session,
+    name: *const u8,
+    length: usize,
+) -> u32 {
+    status(|| session.remove_empty_child(utf8(name, length)?))
 }
 
 #[no_mangle]
