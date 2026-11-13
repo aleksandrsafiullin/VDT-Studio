@@ -19,11 +19,12 @@ export interface MatrixCase {
 export type MatrixObservation = ReturnType<typeof observeMatrixDatabase> & {
   directoryEntries: ReturnType<typeof observeMatrixDirectory>;
   artifacts: ReturnType<typeof inspectMatrixArtifacts>;
+  nativeNamespaceVerified: boolean;
   pid: number;
 };
 export type MatrixResult =
   | { kind: "success"; pid: number }
-  | { kind: "storage_error"; code: string; retryable: boolean; pid: number }
+  | { kind: "storage_error"; code: string; retryable: boolean; pid: number; exitCode: number | null }
   | { kind: "signal"; signal: "SIGKILL"; exitCode: null; marker: { pid: number; point: string; adoptionIndex: number | null } };
 
 function verifyObservation(value: MatrixObservation) {
@@ -52,10 +53,14 @@ function verifyObservation(value: MatrixObservation) {
     }
     previous = entry.relativePath;
   }
-  for (const [artifact, raw] of Object.entries(value.artifacts)) {
+  for (const artifact of ["pending", "evidence"] as const) {
+    const raw = value.artifacts[artifact];
     const match = value.directoryEntries.filter((entry) => entry.relativePath.endsWith(`.${artifact}.json`));
     assert.equal(match.length, raw === null ? 0 : 1);
-    if (raw !== null) assert.equal(match[0]?.rawSha256, matrixSha(raw));
+    if (raw !== null) {
+      assert.equal(match[0]?.rawSha256, matrixSha(raw));
+      assert.equal(match[0]?.relativePath, value.artifacts[`${artifact}Path`]);
+    }
   }
 }
 
@@ -63,7 +68,7 @@ function observationState(observation: MatrixObservation, result: MatrixResult):
   const { logicalDatabaseHash: _logical, schemaHash: _schema, ...rest } = observation.database;
   return {
     ...rest,
-    ...classifyMatrixArtifacts(observation.artifacts),
+    ...classifyMatrixArtifacts(observation.artifacts, observation.attempt),
     publicCode: result.kind === "storage_error" ? result.code : null,
     retryable: result.kind === "storage_error" ? result.retryable : null
   };
@@ -75,6 +80,14 @@ export function verifyMatrixCase(
 ) {
   for (const observation of [pre, post, first, final]) verifyObservation(observation);
   assert.equal(pre.database.userVersion, 2);
+  assert.equal(pre.database.schemaHash, "sha256:b3eda62829523baced9238894eaabbb3cad30721b75bf02a59166bf4d759bb02");
+  for (const observed of [post, first, final]) {
+    if (observed.database.userVersion === 3) {
+      assert.equal(observed.database.schemaHash, "sha256:c4206299c5399b4ee113c920f02af650aa39ad6af452f5c46330dcec10adbb5a");
+    } else if (spec.fixture !== "schema_precondition_mismatch") {
+      assert.equal(observed.database.schemaHash, pre.database.schemaHash);
+    }
+  }
   assert.equal(pre.database.appliedSequence3Count, 0);
   assert.equal(pre.database.transformApplicationCount, 0);
   assert.equal(pre.database.adoptionCount, 0);
@@ -98,10 +111,11 @@ export function verifyMatrixCase(
     assert.equal(result.code, spec.expectedProcessResult);
     assert.equal(result.retryable, result.code === "MIGRATION_IN_PROGRESS");
     assert(reopen.kind !== "signal" && reopen.pid !== result.pid);
-    processResult = { kind: "storage_error", signal: null, exitCode: 1, code: result.code, retryable: result.retryable };
+    assert.equal(result.exitCode, 1);
+    processResult = { kind: "storage_error", signal: null, exitCode: result.exitCode, code: result.code, retryable: result.retryable };
   }
   const branch = spec.expectedRestart;
-  const artifacts = classifyMatrixArtifacts(post.artifacts);
+  const artifacts = classifyMatrixArtifacts(post.artifacts, post.attempt);
   const expected = branch.kind === "fixed" ? branch.state
     : branch.kind === "pending_namespace" ? artifacts.pendingArtifact === "absent" ? branch.pendingAbsent : branch.pendingPresent
       : artifacts.evidenceArtifact === "valid_linked" ? branch.linkedEvidenceValid : branch.linkedEvidenceNotValid;
@@ -114,9 +128,22 @@ export function verifyMatrixCase(
     assert.deepEqual(post.database, pre.database);
     assert.deepEqual(post.directoryEntries, pre.directoryEntries);
   }
-  if (post.database.userVersion === 3 || (expected.publicCode && post.database.attemptStatus === expected.attemptStatus)) {
+  const linkedBlockCas = spec.kind === "crash"
+    && artifacts.evidenceArtifact === "valid_linked"
+    && expected.attemptStatus === "blocked"
+    && !["after_foreign_key_block_committed"].includes(spec.faultPoint ?? "");
+  if (post.database.userVersion === 3 || expected.publicCode && !linkedBlockCas) {
     assert.deepEqual(first.database, post.database);
     assert.deepEqual(first.directoryEntries, post.directoryEntries);
+  }
+  if (linkedBlockCas) {
+    assert.equal(post.database.attemptStatus, "applying");
+    assert.equal(post.database.migrationStateStatus, "ready");
+    assert.equal(first.attempt?.attempt_id, post.attempt?.attempt_id);
+    assert.equal(first.attempt?.owner_token, post.attempt?.owner_token);
+    assert.equal(first.attempt?.lease_generation, post.attempt?.lease_generation);
+    assert.deepEqual(first.directoryEntries.filter(({ relativePath }) => relativePath !== "app.sqlite"),
+      post.directoryEntries.filter(({ relativePath }) => relativePath !== "app.sqlite"));
   }
   if (post.database.userVersion === 2 && first.database.userVersion === 3 && post.attempt) {
     assert(first.application);

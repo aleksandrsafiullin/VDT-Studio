@@ -15,8 +15,12 @@ const frozen = JSON.parse(specification.toString()) as { cases: MatrixCase[] };
 assert.equal(frozen.cases.length, 65);
 const childPath = fileURLToPath(new URL("./sequence-3-windows-matrix-child.ts", import.meta.url));
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
-const [runtime, parent, output] = process.argv.slice(2).map((value) => path.resolve(value));
-assert(process.platform === "win32" && process.arch === "x64" && /^v24\./.test(process.version), "Windows x64 Node 24 required");
+const [runtimeInput, parentInput, outputInput] = process.argv.slice(2);
+const smoke = process.platform === "darwin" && runtimeInput === "--mac-smoke";
+const runtime = runtimeInput && (smoke ? runtimeInput : path.resolve(runtimeInput));
+const parent = parentInput && path.resolve(parentInput);
+const output = outputInput && path.resolve(outputInput);
+assert((smoke || process.platform === "win32" && process.arch === "x64") && /^v24\./.test(process.version), "Windows x64 Node 24 required unless running explicit Mac smoke");
 assert(runtime && parent && output, "Usage: matrix RUNTIME_DIRECTORY PRIVATE_NTFS_PARENT EVIDENCE_FILE");
 const workspace = fs.mkdtempSync(path.join(parent, "sequence3-matrix-"));
 const failures: unknown[] = [];
@@ -36,10 +40,10 @@ function invoke(root: string, mode: string, fixture: string) {
   });
   assert.ifError(child.error);
   assert(child.stdout.trim(), child.stderr);
-  const result = JSON.parse(child.stdout.trim()) as MatrixResult & MatrixObservation;
+  const result = JSON.parse(child.stdout.trim()) as Exclude<MatrixResult, { kind: "signal" }> & MatrixObservation;
   assert.equal(child.signal, null);
   assert.equal(child.status, result.kind === "storage_error" ? 1 : 0, child.stderr);
-  return result;
+  return { ...result, exitCode: child.status };
 }
 
 async function crash(root: string, fixture: string, fault: string, index: number | null, mode = "execute") {
@@ -70,7 +74,7 @@ async function crash(root: string, fixture: string, fault: string, index: number
     const [exitCode, signal] = await exit;
     assert.equal(exitCode, null, "Node/libuv did not report the required SIGKILL termination");
     assert.equal(signal, "SIGKILL");
-    return { kind: "signal" as const, exitCode, signal, marker, mechanism: "Node ChildProcess.kill(SIGKILL) via Windows TerminateProcess" };
+    return { kind: "signal" as const, exitCode, signal, marker, mechanism: smoke ? "Node ChildProcess.kill(SIGKILL) on macOS" : "Node ChildProcess.kill(SIGKILL) via Windows TerminateProcess" };
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     await exit;
@@ -79,15 +83,23 @@ async function crash(root: string, fixture: string, fault: string, index: number
 }
 
 try {
-  for (const spec of frozen.cases) {
+  const windowsOnly = new Set(["windows_unsupported", "artifact_checksum_mismatch", "invalid_transform_output"]);
+  const selected = smoke ? frozen.cases.filter((spec) => spec.kind !== "crash" && !windowsOnly.has(spec.fixture)) : frozen.cases;
+  for (const spec of selected) {
     const caseFolder = fs.mkdtempSync(path.join(workspace, "case-"));
     const root = path.join(caseFolder, "profile");
     let observation: Record<string, unknown> = { caseId: spec.caseId };
     try {
       assert.equal(invoke(root, "seed", spec.fixture).kind, "success");
-      if (spec.fixture === "partial_pending" || spec.fixture === "partial_evidence") {
-        const point = spec.fixture === "partial_pending" ? "after_foreign_key_pending_created" : "after_foreign_key_evidence_created";
+      if (["partial_pending", "partial_evidence", "backup_failure", "artifact_checksum_mismatch"].includes(spec.fixture)) {
+        observation.pristineSeed = invoke(root, "inspect", spec.fixture);
+        const point = spec.fixture === "partial_pending" ? "after_foreign_key_pending_created"
+          : spec.fixture === "partial_evidence" ? "after_foreign_key_evidence_created" : "after_later_applying_persisted";
         observation.preparation = await crash(root, spec.fixture, point, null, "prepare");
+        observation.preparedState = invoke(root, "inspect", spec.fixture);
+        if (spec.fixture === "backup_failure") {
+          assert.equal(invoke(root, "corrupt_backup", spec.fixture).kind, "success");
+        }
       }
       const pre = invoke(root, "inspect", spec.fixture);
       const result = spec.kind === "crash" ? await crash(root, spec.fixture, spec.faultPoint!, spec.adoptionIndex) : invoke(root, "execute", spec.fixture);
@@ -98,6 +110,7 @@ try {
       const finalReopen = invoke(root, "final", spec.fixture);
       const final = invoke(root, "inspect", spec.fixture);
       observation = { ...observation, post, reopen, first, finalReopen, final };
+      if (!smoke) for (const snapshot of [pre, post, first, final]) assert.equal(snapshot.nativeNamespaceVerified, true);
       cases.push(verifyMatrixCase(spec, pre, result, post, reopen, first, finalReopen, final));
       console.log(JSON.stringify({ caseId: spec.caseId, matchedExpectedPolicy: true }));
     } catch (error) {
@@ -108,10 +121,10 @@ try {
       fs.rmSync(caseFolder, { recursive: true, force: true });
     }
   }
-  fs.writeFileSync(output + ".observations.json", JSON.stringify({ failures, observations }, null, 2) + "\n", { flag: "wx" });
+  fs.writeFileSync(output + ".observations.json", JSON.stringify({ platform: process.platform, smoke, failures, observations }, null, 2) + "\n", { flag: "wx" });
   assert.equal(failures.length, 0, `${failures.length} frozen cases did not match; see observations`);
-  assert.equal(cases.length, 65);
-  fs.writeFileSync(output, JSON.stringify({
+  if (!smoke) assert.equal(cases.length, 65);
+  if (!smoke) fs.writeFileSync(output, JSON.stringify({
     schemaVersion: "sequence_3_gate_r2_fault_execution_evidence.v1", migrationSequence: 3, migrationId: MATRIX_MIGRATION_ID,
     manifestHash: MATRIX_MANIFEST, faultSpecRawSha256: matrixSha(specification),
     faultVectorsHash: hashFramed("vdt-studio/migration-fault-vectors", "migration_fault_vectors_hash.v1",

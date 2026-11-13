@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { canonicalizeJson, hashFramed } from "./canonical";
 import { computeSchemaHash } from "./migrations";
 import type { JsonValue } from "./types";
+import type { WindowsStorageDirectory } from "./windows-storage";
 import { MATRIX_MANIFEST, MATRIX_MIGRATION_ID } from "./sequence-3-windows-matrix-fixtures";
 
 export const matrixSha = (value: string | Uint8Array) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -69,6 +70,34 @@ export function observeMatrixDirectory(root: string) {
   return result.sort((a, b) => utf8Order(a.relativePath, b.relativePath));
 }
 
+export function verifyMatrixNativeNamespace(root: WindowsStorageDirectory, entries: ReturnType<typeof observeMatrixDirectory>): void {
+  const expected = new Map(entries.map((entry) => [entry.relativePath, entry]));
+  function walk(directory: WindowsStorageDirectory, parent: string): void {
+    for (const entry of directory.list()) {
+      const relative = parent ? parent + "/" + entry.name : entry.name;
+      assert(!entry.reparse, `Native observer found reparse point: ${relative}`);
+      const recorded = expected.get(relative);
+      assert(recorded, `Native observer found unrecorded entry: ${relative}`);
+      assert.equal(entry.directory, recorded.kind === "directory");
+      expected.delete(relative);
+      if (entry.directory) {
+        const child = directory.openChild(entry.name);
+        try { walk(child, relative); }
+        finally { child.close(); }
+      } else {
+        const bound = Number(recorded.byteLengthDecimal);
+        assert(Number.isSafeInteger(bound) && bound >= 0 && bound <= 256 * 1024 * 1024);
+        const nativeBytes = directory.read(entry.name, bound);
+        assert.equal(nativeBytes.byteLength, bound);
+        assert.equal(matrixSha(nativeBytes), recorded.rawSha256);
+      }
+    }
+  }
+  root.validate();
+  walk(root, "");
+  assert.equal(expected.size, 0, "Native observer did not verify every recorded entry");
+}
+
 function framed(domain: string, schema: string, value: JsonValue): string {
   return hashFramed(domain, schema, {}, Buffer.from(canonicalizeJson(value)));
 }
@@ -80,10 +109,10 @@ export function inspectMatrixArtifacts(root: string, entries: ReturnType<typeof 
   const raw = (entry: (typeof entries)[number]) => fs.readFileSync(path.join(root, entry.relativePath), "utf8");
   const pendingRaw = pending[0] ? raw(pending[0]) : null;
   const evidenceRaw = evidence[0] ? raw(evidence[0]) : null;
-  return { pending: pendingRaw, evidence: evidenceRaw };
+  return { pending: pendingRaw, evidence: evidenceRaw, pendingPath: pending[0]?.relativePath ?? null, evidencePath: evidence[0]?.relativePath ?? null };
 }
 
-export function classifyMatrixArtifacts(artifacts: ReturnType<typeof inspectMatrixArtifacts>) {
+export function classifyMatrixArtifacts(artifacts: ReturnType<typeof inspectMatrixArtifacts>, attempt: ReturnType<typeof observeMatrixDatabase>["attempt"]) {
   let pending: Record<string, JsonValue> | undefined;
   let identityHash: string | undefined;
   const checkIdentity = (value: JsonValue): string => {
@@ -95,6 +124,11 @@ export function classifyMatrixArtifacts(artifacts: ReturnType<typeof inspectMatr
     assert.equal(value.targetManifestHash, MATRIX_MANIFEST);
     assert(Number.isSafeInteger(value.fenceLeaseGeneration) && Number(value.fenceLeaseGeneration) > 0);
     for (const key of ["attemptId", "databaseId", "fenceOwnerToken"]) assert(typeof value[key] === "string" && value[key]);
+    assert(attempt);
+    assert.equal(value.databaseId, attempt.database_id);
+    assert.equal(value.attemptId, attempt.attempt_id);
+    assert.equal(value.fenceOwnerToken, attempt.owner_token);
+    assert.equal(value.fenceLeaseGeneration, attempt.lease_generation);
     return framed("vdt-studio/migration-foreign-key-check-identity", "migration_foreign_key_check_identity_hash.v1", value);
   };
   if (artifacts.pending !== null) {
@@ -105,6 +139,8 @@ export function classifyMatrixArtifacts(artifacts: ReturnType<typeof inspectMatr
       assert.equal(body.schemaVersion, "migration_foreign_key_pending_latch.v1");
       const hash = checkIdentity(body.identity!);
       assert.equal(body.identityHash, hash);
+      assert.equal(artifacts.pendingPath, `migrations/migration-blocks/${hash.slice(7)}.pending.json`);
+      assert(typeof body.createdAt === "string" && new Date(body.createdAt).toISOString() === body.createdAt);
       assert.equal(pendingLatchHash, framed("vdt-studio/migration-foreign-key-pending-latch", "migration_foreign_key_pending_latch_hash.v1", body));
       assert.equal(canonicalizeJson(value), artifacts.pending);
       pending = value;
@@ -121,9 +157,20 @@ export function classifyMatrixArtifacts(artifacts: ReturnType<typeof inspectMatr
       assert.equal(checkIdentity(body.identity!), identityHash);
       assert.equal(body.identityHash, identityHash);
       assert.equal(body.pendingLatchHash, pending.pendingLatchHash);
+      assert.equal(artifacts.evidencePath, `migrations/migration-blocks/${identityHash!.slice(7)}.evidence.json`);
+      assert(typeof body.createdAt === "string" && new Date(body.createdAt).toISOString() === body.createdAt);
       assert(Number.isSafeInteger(body.violationCount) && Number(body.violationCount) > 0 && Array.isArray(body.violations));
       assert.equal(body.violations.length, Math.min(50, Number(body.violationCount)));
       assert.equal(body.truncated, Number(body.violationCount) > 50);
+      // The fixture creates one orphan with a known relation and a real rowid.
+      assert.equal(body.violationCount, 1);
+      const [violation] = body.violations;
+      assert(violation && typeof violation === "object" && !Array.isArray(violation));
+      assert.deepEqual(Object.keys(violation).sort(), ["foreignKeyIndex", "parent", "rowIdDecimal", "table"]);
+      assert.equal(violation.table, "agent_runs");
+      assert.equal(violation.parent, "projects");
+      assert(typeof violation.rowIdDecimal === "string" && /^-?\d+$/.test(violation.rowIdDecimal));
+      assert(Number.isSafeInteger(violation.foreignKeyIndex) && Number(violation.foreignKeyIndex) >= 0);
       assert.equal(evidenceHash, framed("vdt-studio/migration-foreign-key-check", "migration_foreign_key_check_evidence_hash.v1", body));
       assert.equal(canonicalizeJson(value), artifacts.evidence);
       linked = true;

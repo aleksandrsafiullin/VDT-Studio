@@ -55,6 +55,12 @@ try {
   $testProcess = Start-Process -FilePath (Join-Path $stage 'node.exe') -ArgumentList $arguments -WorkingDirectory $repository -Credential $credential -RedirectStandardOutput $testReport -RedirectStandardError $testStderr -Wait -PassThru
   if ($testProcess.ExitCode -ne 0) { throw "Standard user storage tests failed with exit code $($testProcess.ExitCode)" }
   if ((Get-Content -Raw $testReport) -notmatch 'Tests\s+28 passed') { throw 'All native tests must execute without skips' }
+  $selfKillOutput = Join-Path $native 'sequence-3-windows-self-kill.json'
+  $selfKillScript = Join-Path $repository 'packages\vdt-storage\src\sequence-3-windows-self-kill-probe.ts'
+  $selfKillArgs = @('--import', 'tsx', $selfKillScript, $native, $selfKillOutput)
+  $selfKill = Start-Process -FilePath (Join-Path $stage 'node.exe') -ArgumentList $selfKillArgs -WorkingDirectory $repository -Credential $credential -RedirectStandardOutput (Join-Path $evidence 'sequence-3-windows-self-kill.log') -RedirectStandardError (Join-Path $evidence 'sequence-3-windows-self-kill.stderr.log') -Wait -PassThru
+  if (Test-Path -LiteralPath $selfKillOutput) { Copy-Item -LiteralPath $selfKillOutput -Destination $evidence }
+  if ($selfKill.ExitCode -ne 0) { throw "Native self-kill probe failed with exit code $($selfKill.ExitCode)" }
   $matrixOutput = Join-Path $native 'sequence-3-windows-evidence.json'
   $matrixReport = Join-Path $evidence 'sequence-3-windows-matrix.log'
   $matrixStderr = Join-Path $evidence 'sequence-3-windows-matrix.stderr.log'

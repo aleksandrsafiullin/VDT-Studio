@@ -498,7 +498,7 @@ function runStorageMigrationsForPlatform(
     ) {
       throw error;
     }
-    persistProductionPreflightChecksumBlockWhenSafe(db, dataDir);
+    persistProductionPreflightChecksumBlockWhenSafe(db, dataDir, options);
     throw migrationRecoveryRequired(
       "Production migration runtime artifact verification failed."
     );
@@ -550,7 +550,7 @@ export function __runSequence3StorageMigrationsForNativeTests(
       __verifyCorruptSequence3SqlForTests();
     } catch (error) {
       if (!(error instanceof Error) || error.message !== "sequence3_asset_hash_invalid:sql") throw error;
-      persistProductionPreflightChecksumBlockWhenSafe(db, dataDir);
+      persistProductionPreflightChecksumBlockWhenSafe(db, dataDir, options);
       throw migrationRecoveryRequired("Production migration runtime artifact verification failed.");
     }
   }
@@ -862,7 +862,8 @@ function normalizeProductionMigrationBoundaryError(error: unknown): unknown {
 
 function persistProductionPreflightChecksumBlockWhenSafe(
   db: DatabaseSync,
-  dataDir: string
+  dataDir: string,
+  options: StorageMigrationOptions
 ): void {
   const version = userVersion(db);
   if (version === 3 || version === 4 || version === 5) {
@@ -875,6 +876,7 @@ function persistProductionPreflightChecksumBlockWhenSafe(
     );
     return;
   }
+  if (version === 2 && persistReservedSequence3ChecksumFailure(db, dataDir, options)) return;
   persistSequence3PreflightChecksumBlockWhenSafe(db, dataDir);
 }
 
@@ -927,6 +929,48 @@ function persistReadyPreflightChecksumBlockWhenSafe(
       } catch {
         // No exact audit CAS could be proven.
       }
+    }
+  }
+}
+
+/**
+ * Audit-only target identity. No executable Sequence 3 SQL or transform is
+ * available on checksum failure. Only the exact v2 snapshot may be inspected.
+ */
+function persistReservedSequence3ChecksumFailure(
+  db: DatabaseSync, dataDir: string, options: StorageMigrationOptions
+): boolean {
+  const target = EXPECTED_SEQUENCE_3_MANIFEST_HASH;
+  const auditPlan: ValidatedStorageMigrationTestPlan = {
+    ...BOOTSTRAP_MIGRATION_PLAN,
+    entries: [...BOOTSTRAP_MIGRATION_PLAN.entries, {
+      manifestEntry: {
+        ...ENTRIES[1]!, sequence: 3, migrationId: SEQUENCE_3_MIGRATION_ID,
+        fromUserVersion: 2, toUserVersion: 3,
+        preconditionSchemaHash: ATOMIC_REVISION_SCHEMA_HASH,
+        postconditionSchemaHash: EXPECTED_SEQUENCE_3_POSTCONDITION_SCHEMA_HASH,
+        sqlChecksum: EXPECTED_SEQUENCE_3_CHECKSUM
+      },
+      sqlBytes: Buffer.alloc(0)
+    }],
+    prefixHashes: [...BOOTSTRAP_MIGRATION_PLAN.prefixHashes, target],
+    prefixSequenceByHash: new Map([...BOOTSTRAP_MIGRATION_PLAN.prefixSequenceByHash, [target, 3]]),
+    targetSequence: 3, targetUserVersion: 3
+  };
+  try {
+    db.exec("PRAGMA locking_mode = EXCLUSIVE;");
+    acquireExclusiveMigrationFence(db, options.busyTimeoutMs);
+    return transaction(db, () => {
+      if (migrationForeignKeyBlockDirectoryHasEntries(dataDir)) return false;
+      const verified = verifyDatabaseForPlanSnapshot(db, dataDir, auditPlan);
+      return verified.activeAttempt !== null &&
+        blockReservedSequence3Failure(db, verified.activeAttempt, "checksum_mismatch", options);
+    });
+  } catch {
+    return false;
+  } finally {
+    try { db.exec("PRAGMA locking_mode = NORMAL;"); } catch {
+      // The caller closes the connection when preflight fails.
     }
   }
 }
@@ -1309,7 +1353,8 @@ function verifyDatabaseForPlanSnapshot(
   dataDir: string,
   plan: ValidatedStorageMigrationPlan,
   recoveryIdentity?: MigrationForeignKeyCheckIdentityV1,
-  retainBackupVerification = false
+  retainBackupVerification = false,
+  failedBackup?: { attemptId?: string }
 ): VerifiedMigrationPlanState {
   const currentUserVersion = userVersion(db);
   if (currentUserVersion < 2) {
@@ -1603,19 +1648,35 @@ function verifyDatabaseForPlanSnapshot(
     ) {
       throw migrationBlocked(`Later migration backup ${backupEvidenceId} is not bound to its attempt.`);
     }
-    verifyLaterBackupEvidence(
-      dataDir,
-      {
-        databaseId,
-        fromUserVersion: expectedFromVersion,
-        targetManifestHash,
-        sourceDatabaseHash: String(backup.source_database_hash) as Sha256,
-        backupHash: String(backup.backup_hash) as Sha256,
-        backupRelativePath: String(backup.backup_relative_path)
-      },
-      plan.entries[startSequence - 1]!.manifestEntry.preconditionSchemaHash,
-      retainBackupVerification
-    );
+    try {
+      verifyLaterBackupEvidence(
+        dataDir,
+        {
+          databaseId,
+          fromUserVersion: expectedFromVersion,
+          targetManifestHash,
+          sourceDatabaseHash: String(backup.source_database_hash) as Sha256,
+          backupHash: String(backup.backup_hash) as Sha256,
+          backupRelativePath: String(backup.backup_relative_path)
+        },
+        plan.entries[startSequence - 1]!.manifestEntry.preconditionSchemaHash,
+        retainBackupVerification
+      );
+    } catch (error) {
+      if (!failedBackup || failedBackup.attemptId || currentSequence !== 2 ||
+          targetManifestHash !== EXPECTED_SEQUENCE_3_MANIFEST_HASH ||
+          (status !== "backed_up" && status !== "applying") ||
+          !(error instanceof ReservedMigrationBackupInvalid)) throw error;
+      const ownedDirectory = path.join(dataDir, "migrations", "backups", `.later-owned-${attemptId}`);
+      const owner = readLaterMigrationBackupOwner(dataDir, ownedDirectory);
+      const expectedBackup = path.relative(dataDir, path.join(ownedDirectory, "backup.sqlite"));
+      if (!owner || owner.databaseId !== databaseId || owner.attemptId !== attemptId ||
+          owner.backupEvidenceId !== backupEvidenceId || owner.targetManifestHash !== targetManifestHash ||
+          owner.fromUserVersion !== expectedFromVersion || owner.backupRelativePath !== expectedBackup ||
+          backup.backup_relative_path !== expectedBackup ||
+          Date.parse(owner.createdAt) !== Number(backup.created_at)) throw error;
+      failedBackup.attemptId = attemptId;
+    }
     const expectedAppliedEnd =
       status === "completed" ? targetSequence : nextSequence - 1;
     const expectedAppliedSequences = Array.from(
@@ -1730,6 +1791,24 @@ function verifyDatabaseForPlanSnapshot(
   };
 }
 
+function verifyLaterMigrationStateUnderFence(
+  db: DatabaseSync, dataDir: string, plan: ValidatedStorageMigrationPlan, options: StorageMigrationOptions
+): VerifiedMigrationPlanState {
+  const failedBackup: { attemptId?: string } = {};
+  const verified = transaction(db, () => {
+    const state = verifyDatabaseForPlanSnapshot(db, dataDir, plan, undefined, false, failedBackup);
+    if (failedBackup.attemptId && state.activeAttempt?.attemptId === failedBackup.attemptId &&
+        !migrationForeignKeyBlockDirectoryHasEntries(dataDir)) {
+      blockReservedSequence3Failure(db, state.activeAttempt, "backup_failed", options);
+    }
+    return state;
+  });
+  if (failedBackup.attemptId) {
+    throw migrationRecoveryRequired("Verified Sequence 3 backup is missing or corrupt.");
+  }
+  return verified;
+}
+
 function runLaterMigrations(
   db: DatabaseSync,
   dataDir: string,
@@ -1780,7 +1859,7 @@ function runLaterMigrations(
       );
     }
     for (;;) {
-      const verified = verifyDatabaseForPlan(db, dataDir, plan);
+      const verified = verifyLaterMigrationStateUnderFence(db, dataDir, plan, options);
       reconcileOwnedLaterBackupDirectories(
         db,
         dataDir,
@@ -4178,6 +4257,41 @@ function finalizeForeignKeyBlockedAttempt(
   options.faultInjector?.("after_foreign_key_block_committed", context);
 }
 
+/** Terminalize only an expired attempt whose independently verified v2 prefix still owns the failure. */
+function blockReservedSequence3Failure(
+  db: DatabaseSync,
+  attempt: LaterMigrationAttemptSnapshot,
+  reason: "backup_failed" | "checksum_mismatch",
+  options: StorageMigrationOptions
+): boolean {
+  const now = migrationTimestamp(options.now).millis;
+  if (attempt.targetManifestHash !== EXPECTED_SEQUENCE_3_MANIFEST_HASH ||
+      attempt.nextSequence !== 3 || attempt.leaseExpiresAt > now || userVersion(db) !== 2) return false;
+  const changed = db.prepare(`
+    UPDATE migration_attempts
+    SET status = 'blocked', updated_at = ?, completed_at = NULL
+    WHERE attempt_id = ? AND database_id = ? AND target_manifest_hash = ?
+      AND backup_evidence_id = ? AND next_sequence = 3 AND owner_token = ?
+      AND lease_generation = ? AND lease_expires_at = ? AND status = ?
+      AND active_migration_id IS ?
+  `).run(now, attempt.attemptId, attempt.databaseId, attempt.targetManifestHash,
+    attempt.backupEvidenceId, attempt.ownerToken, attempt.leaseGeneration,
+    attempt.leaseExpiresAt, attempt.status, attempt.activeMigrationId).changes;
+  if (changed !== 1) throw lostMigrationLease(attempt.attemptId);
+  const state = db.prepare(`
+    UPDATE migration_state SET status = 'blocked', blocked_reason = ?
+    WHERE database_id = ? AND schema_version = 'migration_state.v1' AND manifest_hash = ?
+      AND current_user_version = 2 AND last_applied_sequence = 2
+      AND status = 'ready' AND blocked_reason IS NULL
+  `).run(reason, attempt.databaseId, EXPECTED_MANIFEST_HASH).changes;
+  if (state !== 1) throw lostMigrationLease(attempt.attemptId);
+  return true;
+}
+
+class ReservedMigrationBackupInvalid extends Error {
+  override name = "StorageMigrationBlockedError";
+}
+
 function durablyBlockLaterMigrationAttempt(
   db: DatabaseSync,
   attempt: LaterMigrationAttemptSnapshot,
@@ -4302,7 +4416,15 @@ function verifyLaterBackupEvidence(
       verifyLaterBackupEvidence(dataDir, evidence, expectedSchemaHash);
     });
   }
-  const bytes = readMigrationFile(dataDir, backupPath, MAX_WINDOWS_MIGRATION_FILE_BYTES, true);
+  let bytes: Buffer;
+  try {
+    bytes = readMigrationFile(dataDir, backupPath, MAX_WINDOWS_MIGRATION_FILE_BYTES, true);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new ReservedMigrationBackupInvalid("Verified migration backup is missing.");
+    }
+    throw error;
+  }
   const actualHash = hashFramed(
     "vdt-studio/sqlite-backup",
     "sqlite_backup_hash.v1",
@@ -4316,7 +4438,7 @@ function verifyLaterBackupEvidence(
     actualHash !== evidence.backupHash ||
     actualHash !== evidence.sourceDatabaseHash
   ) {
-    throw migrationBlocked(
+    throw new ReservedMigrationBackupInvalid(
       `Later migration backup hash mismatch: ${evidence.backupRelativePath}.`
     );
   }
@@ -6907,13 +7029,13 @@ function manifestEntry(input: {
   });
 }
 
-function transaction(
+function transaction<T>(
   db: DatabaseSync,
-  fn: () => void
-): void {
+  fn: () => T
+): T {
   db.exec("BEGIN IMMEDIATE;");
   try {
-    fn();
+    const result = fn();
     assertForeignKeyEnforcement(db);
     const violations = readMigrationForeignKeyViolations(db);
     if (violations.length > 0) {
@@ -6923,6 +7045,7 @@ function transaction(
       );
     }
     db.exec("COMMIT;");
+    return result;
   } catch (error) {
     db.exec("ROLLBACK;");
     throw error;

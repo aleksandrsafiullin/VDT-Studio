@@ -29,6 +29,7 @@ assert.equal(frozen.cases.length, 65);
 const cases = frozen.cases.map((spec, index) => {
   const row = raw.observations[index]!;
   assert.equal(row.caseId, spec.caseId);
+  for (const snapshot of [row.pre, row.post, row.first, row.final]) assert.equal(snapshot.nativeNamespaceVerified, true);
   return verifyMatrixCase(spec, row.pre, row.result, row.post, row.reopen, row.first, row.finalReopen, row.final);
 });
 const platform = reported.platform;

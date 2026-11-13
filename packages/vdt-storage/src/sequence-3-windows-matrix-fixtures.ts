@@ -50,9 +50,6 @@ export function injectMatrixCondition(db: DatabaseSync, fixture: string, point: 
   }
   if (fixture === "foreign_key_violation" && point === "sequence3_before_foreign_key_check") {
     db.exec("PRAGMA defer_foreign_keys = ON");
-    db.prepare("UPDATE agent_runs SET project_id='matrix_missing_parent' WHERE id='run_a'").run();
-  }
-  if (fixture === "backup_failure" && point === "after_later_backup_owner_fsynced") {
-    throw new Error("Matrix injection at owned backup boundary");
+    db.prepare("INSERT INTO agent_runs (id,project_id,status,phase,request_json,created_at,updated_at) VALUES ('matrix_orphan','matrix_missing_parent','running','applying_graph','{}',0,0)").run();
   }
 }
