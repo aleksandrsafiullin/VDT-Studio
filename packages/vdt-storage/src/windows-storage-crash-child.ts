@@ -20,7 +20,10 @@ const database = __openWindowsVdtDatabaseForTests(path.dirname(dataDir), {
   revisionLeaseMs: 0,
   migrationLeaseMs: 0,
   faultInjector: reached,
-  migrationFaultInjector: reached
+  migrationFaultInjector(point, context) {
+    if (fault.startsWith("sequence3_") && context?.sequence !== 3) return;
+    reached(point);
+  }
 }, runtime);
 try {
   const projectId = "native";

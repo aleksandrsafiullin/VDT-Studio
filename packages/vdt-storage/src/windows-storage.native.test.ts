@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { productionVolumeProject } from "@vdt-studio/vdt-core";
+import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vitest";
 import { __openWindowsVdtDatabaseForTests, openVdtDatabase } from "./sqlite";
 
@@ -93,3 +94,65 @@ test.runIf(process.platform === "win32" && Boolean(runtime && parent)).each([
     } finally { reopened.close(); }
   } finally { fs.rmSync(workspace, { recursive: true, force: true }); }
 }, 60_000);
+
+test.runIf(process.platform === "win32" && Boolean(runtime && parent)).each([
+  ["sequence3_before_foreign_key_pending_create", "recover"],
+  ["sequence3_before_foreign_key_pending_file_fsync", "block"],
+  ["sequence3_before_foreign_key_pending_directory_fsync", "block"],
+  ["sequence3_before_foreign_key_check", "block"],
+  ["sequence3_before_foreign_key_pending_unlink", "block"],
+  ["sequence3_before_foreign_key_pending_unlink_directory_fsync", "recover"],
+  ["sequence3_after_foreign_key_pending_unlink_directory_fsynced", "recover"],
+  ["sequence3_before_post_commit_cleanup", "recover"],
+  ["sequence3_after_post_commit_cleanup", "recover"]
+] as const)("preserves migration state after Windows process termination at %s", async (fault, outcome) => {
+  const workspace = fs.mkdtempSync(path.join(parent!, "migration-crash-"));
+  const profile = path.join(workspace, "profile");
+  try {
+    await terminateAtFault(workspace, profile, fault);
+    if (outcome === "block") {
+      expect(() => __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile, migrationLeaseMs: 0 }, runtime!))
+        .toThrow(expect.objectContaining({ code: "MIGRATION_RECOVERY_REQUIRED" }));
+      const db = new DatabaseSync(path.join(profile, "app.sqlite"), { readOnly: true });
+      try { expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 2 }); }
+      finally { db.close(); }
+    } else {
+      const reopened = __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile, migrationLeaseMs: 0 }, runtime!);
+      try {
+        const db = new DatabaseSync(reopened.databasePath, { readOnly: true });
+        try { expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 5 }); }
+        finally { db.close(); }
+      } finally { reopened.close(); }
+    }
+  } finally { fs.rmSync(workspace, { recursive: true, force: true }); }
+}, 60_000);
+
+test.runIf(process.platform === "win32" && Boolean(runtime && parent))(
+  "rejects unsafe pre-existing SQLite leaves and ancestor junctions without changing their targets",
+  () => {
+    const workspace = fs.mkdtempSync(path.join(parent!, "storage-reject-"));
+    const profile = path.join(workspace, "profile");
+    try {
+      const db = __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile }, runtime!);
+      db.close();
+      const sqlite = path.join(profile, "app.sqlite");
+      const before = fs.readFileSync(sqlite);
+      for (const name of ["app.sqlite-wal", "app.sqlite-shm", "app.sqlite-journal"]) {
+        const artifact = path.join(profile, name);
+        fs.linkSync(sqlite, artifact);
+        try {
+          expect(() => __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile }, runtime!))
+            .toThrow(expect.objectContaining({ code: "EACCES" }));
+          expect(fs.readFileSync(sqlite)).toEqual(before);
+        } finally { fs.unlinkSync(artifact); }
+      }
+      const junction = path.join(workspace, "alias");
+      fs.symlinkSync(workspace, junction, "junction");
+      try {
+        expect(() => __openWindowsVdtDatabaseForTests(workspace, { dataDir: path.join(junction, "profile") }, runtime!))
+          .toThrow();
+        expect(fs.readFileSync(sqlite)).toEqual(before);
+      } finally { fs.unlinkSync(junction); }
+    } finally { fs.rmSync(workspace, { recursive: true, force: true }); }
+  }
+);

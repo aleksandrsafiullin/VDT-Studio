@@ -294,15 +294,20 @@ export function withWindowsStorageParent<T>(
   try {
     let directory = profile;
     for (const component of components) {
+      const parent = directory;
       if (createParents) {
         try {
-          directory = directory.createChild(component);
+          directory = parent.createChild(component);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-          directory = directory.openChild(component);
+          directory = parent.openChild(component);
+          opened.push(directory);
+          directory.flush();
+          parent.flush();
+          continue;
         }
       } else {
-        directory = directory.openChild(component);
+        directory = parent.openChild(component);
       }
       opened.push(directory);
     }
