@@ -35,7 +35,7 @@ try {
   assert.deepEqual(fs.readFileSync(path.join(privateRoot, final)), bytes);
   const replacement = Buffer.from("replacement");
   addon.writeExclusive(session, stage, replacement);
-  assert.throws(() => addon.replace(session, stage, final, replacement, Buffer.from("wrong")), { code: "EBADMSG" });
+  assert.throws(() => addon.replace(session, stage, final, replacement, Buffer.from("wrong")), { code: "ESTALE" });
   assert.deepEqual(fs.readFileSync(path.join(privateRoot, final)), bytes);
   addon.replace(session, stage, final, replacement, bytes);
   assert.deepEqual(fs.readFileSync(path.join(privateRoot, final)), replacement);
@@ -78,6 +78,23 @@ try {
   addon.writeExclusive(inherited, "owned.dat", bytes);
   addon.unlink(inherited, "owned.dat");
   addon.close(inherited);
+  const { DatabaseSync } = require("node:sqlite");
+  const database = addon.sqlitePath(session);
+  assert(database.startsWith(String.raw`\\?\Volume{`));
+  const db = new DatabaseSync(database);
+  try {
+    db.exec("PRAGMA journal_mode=WAL; CREATE TABLE example(value); INSERT INTO example VALUES(1);");
+    const second = new DatabaseSync(addon.sqlitePath(session));
+    try {
+      assert.equal(second.prepare("SELECT value FROM example").get().value, 1);
+      assert(fs.existsSync(path.join(privateRoot, "app.sqlite-wal")));
+      assert(fs.existsSync(path.join(privateRoot, "app.sqlite-shm")));
+    } finally { second.close(); }
+  } finally { db.close(); }
+  assert(fs.existsSync(path.join(privateRoot, "app.sqlite")));
+  fs.linkSync(path.join(privateRoot, "app.sqlite"), path.join(privateRoot, "sqlite-alias"));
+  assert.throws(() => addon.sqlitePath(session), { code: "EACCES" });
+  fs.unlinkSync(path.join(privateRoot, "sqlite-alias"));
   const lock = addon.acquireLock(session, ".skill-write.lock");
   assert.throws(() => addon.acquireLock(session, ".skill-write.lock"), { code: "EBUSY" });
   assert.throws(() => addon.releaseLock(session), { code: "EBADF" });

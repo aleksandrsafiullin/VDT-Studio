@@ -10,6 +10,8 @@ extern uint32_t vdt_storage_publish(StorageSession *, const char *, size_t, cons
 extern uint32_t vdt_storage_replace(StorageSession *, const char *, size_t, const char *, size_t, const void *, size_t, const void *, size_t);
 extern uint32_t vdt_storage_read(StorageSession *, const char *, size_t, void *, size_t, uint8_t, size_t *);
 typedef uint8_t (*EntryCallback)(void *, const char *, size_t, uint8_t, uint8_t);
+typedef uint8_t (*TextCallback)(void *, const char *, size_t);
+extern uint32_t vdt_storage_sqlite_path(StorageSession *, void *, TextCallback);
 extern uint32_t vdt_storage_list(StorageSession *, void *, EntryCallback);
 extern uint32_t vdt_storage_remove_empty_child(StorageSession *, const char *, size_t);
 extern uint32_t vdt_storage_ensure_child(StorageSession *, const char *, size_t);
@@ -53,6 +55,7 @@ static napi_value win32_fail(napi_env env, uint32_t error) {
     case 50: code = "ENOTSUP"; break;
     case 80: case 183: code = "EEXIST"; break;
     case 87: code = "EINVAL"; break;
+    case 1306: code = "ESTALE"; break;
     case 145: code = "ENOTEMPTY"; break;
     case 112: code = "ENOSPC"; break;
   }
@@ -232,6 +235,29 @@ static uint8_t append_entry(void *context, const char *name, size_t length, uint
       napi_set_element(env, result->array, result->index++, object) == napi_ok;
 }
 
+typedef struct {
+  napi_env env;
+  napi_value value;
+} TextResult;
+
+static uint8_t return_text(void *context, const char *text, size_t length) {
+  TextResult *result = context;
+  return napi_create_string_utf8(result->env, text, length, &result->value) == napi_ok;
+}
+
+static napi_value sqlite_path(napi_env env, napi_callback_info info) {
+  napi_value arg;
+  size_t argc = 1;
+  if (napi_get_cb_info(env, info, &argc, &arg, NULL, NULL) != napi_ok || argc != 1) {
+    return fail(env, "EINVAL", "Expected one Windows storage session");
+  }
+  Session *session = get_session(env, arg);
+  if (session == NULL || session->native == NULL) return fail(env, "EBADF", "Expected an open Windows storage session");
+  TextResult output = {env, NULL};
+  uint32_t error = vdt_storage_sqlite_path(session->native, &output, return_text);
+  return error == 0 ? output.value : win32_fail(env, error);
+}
+
 static napi_value list_entries(napi_env env, napi_callback_info info) {
   napi_value arg;
   size_t argc = 1;
@@ -372,6 +398,7 @@ NAPI_MODULE_INIT() {
     {"publish", NULL, publish_file, NULL, NULL, NULL, napi_default, NULL},
     {"replace", NULL, publish_file, NULL, NULL, NULL, napi_default, &replace_marker},
     {"read", NULL, read_file, NULL, NULL, NULL, napi_default, NULL},
+    {"sqlitePath", NULL, sqlite_path, NULL, NULL, NULL, napi_default, NULL},
     {"list", NULL, list_entries, NULL, NULL, NULL, napi_default, NULL},
     {"unlink", NULL, named_operation, NULL, NULL, NULL, napi_default, &unlink_operation},
     {"ensureChild", NULL, named_operation, NULL, NULL, NULL, napi_default, &ensure_child_operation},

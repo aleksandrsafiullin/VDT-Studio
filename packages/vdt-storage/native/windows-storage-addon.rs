@@ -171,6 +171,23 @@ unsafe extern "C" fn vdt_storage_release_lock(lock: *mut StorageLock) {
     }
 }
 
+type TextCallback = unsafe extern "C" fn(*mut std::ffi::c_void, *const u8, usize) -> u8;
+
+#[no_mangle]
+extern "C" fn vdt_storage_sqlite_path(
+    session: &Session,
+    context: *mut std::ffi::c_void,
+    callback: TextCallback,
+) -> u32 {
+    status(|| {
+        let path = session.sqlite_path()?;
+        if unsafe { callback(context, path.as_ptr(), path.len()) } == 0 {
+            return Err(io::Error::other("could not return native SQLite path"));
+        }
+        Ok(())
+    })
+}
+
 type EntryCallback = unsafe extern "C" fn(*mut std::ffi::c_void, *const u8, usize, u8, u8) -> u8;
 
 #[no_mangle]

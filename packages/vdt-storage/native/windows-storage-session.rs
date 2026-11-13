@@ -153,6 +153,11 @@ impl StorageSession {
         })
     }
 
+    pub fn sqlite_path(&self) -> io::Result<String> {
+        self.validate()?;
+        self.directory.sqlite_path("app.sqlite")
+    }
+
     pub fn acquire_lock(&self, name: &str) -> io::Result<OwnedHandle> {
         self.validate()?;
         self.directory.acquire_lock(name)

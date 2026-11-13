@@ -5,11 +5,11 @@ use std::{ffi::c_void, io, mem, ptr};
 type Handle = *mut c_void;
 const FILE_SHARE_READ_WRITE: u32 = 3;
 const DIRECTORY_FLUSH_ACCESS: u32 = 0x0012_0187;
-const FILE_OPEN: u32 = 1;
+pub(crate) const FILE_OPEN: u32 = 1;
 const FILE_CREATE: u32 = 2;
 const FILE_WRITE_THROUGH: u32 = 2;
-const FILE_NON_DIRECTORY_FILE: u32 = 0x40;
-const FILE_ACCESS: u32 = 0x4013_0080; // GENERIC_WRITE | DELETE | READ_CONTROL | SYNCHRONIZE | READ_ATTRIBUTES
+pub(crate) const FILE_NON_DIRECTORY_FILE: u32 = 0x40;
+pub(crate) const FILE_ACCESS: u32 = 0x4013_0080; // GENERIC_WRITE | DELETE | READ_CONTROL | SYNCHRONIZE | READ_ATTRIBUTES
 const FILE_DISPOSITION_INFO_CLASS: u32 = 4;
 #[cfg(vdt_storage_addon)]
 const DELETE_FILE_ACCESS: u32 = 0x0013_0080;
@@ -17,7 +17,7 @@ const DELETE_FILE_ACCESS: u32 = 0x0013_0080;
 const FILE_RENAME_INFO_CLASS: u32 = 10;
 #[cfg(vdt_storage_addon)]
 const FILE_RENAME_INFORMATION_EX: u32 = 65;
-const FILE_DIRECTORY_FILE: u32 = 0x1;
+pub(crate) const FILE_DIRECTORY_FILE: u32 = 0x1;
 const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x20;
 const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 const OBJ_CASE_INSENSITIVE: u32 = 0x40;
@@ -59,7 +59,7 @@ struct FileRenameInfo {
 
 #[cfg(vdt_storage_addon)]
 #[repr(C)]
-struct FileStandardInfo {
+pub(crate) struct FileStandardInfo {
     allocation_size: i64,
     end_of_file: i64,
     number_of_links: u32,
@@ -101,6 +101,8 @@ unsafe extern "system" {
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
+    #[cfg(vdt_storage_addon)]
+    fn GetFinalPathNameByHandleW(handle: Handle, path: *mut u16, size: u32, flags: u32) -> u32;
     fn CloseHandle(handle: Handle) -> i32;
     fn FlushFileBuffers(handle: Handle) -> i32;
     #[cfg(vdt_storage_addon)]
@@ -136,11 +138,11 @@ pub(crate) struct OwnedHandle {
     pub(crate) raw: Handle,
 }
 
-pub struct FlushableDirectory(OwnedHandle);
+pub struct FlushableDirectory(pub(crate) OwnedHandle);
 
 pub struct CreatedFile<'a> {
-    handle: OwnedHandle,
-    parent: &'a FlushableDirectory,
+    pub(crate) handle: OwnedHandle,
+    pub(crate) parent: &'a FlushableDirectory,
 }
 
 impl Drop for OwnedHandle {
@@ -190,6 +192,53 @@ impl FlushableDirectory {
             handle,
             parent: self,
         })
+    }
+
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn sqlite_path(&self, name: &str) -> io::Result<String> {
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let artifact = format!("{name}{suffix}");
+            match open_relative(
+                self.0.raw,
+                &artifact,
+                0x0012_0080,
+                7,
+                FILE_OPEN,
+                FILE_NON_DIRECTORY_FILE,
+            ) {
+                Ok(handle) => {
+                    handle.validate_private_file()?;
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let mut path = vec![0u16; 32768];
+        let length = unsafe {
+            GetFinalPathNameByHandleW(self.0.raw, path.as_mut_ptr(), path.len() as u32, 1)
+        };
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if length as usize >= path.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "native storage path exceeds its bound",
+            ));
+        }
+        let path = String::from_utf16(&path[..length as usize]).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "native storage path is invalid Unicode",
+            )
+        })?;
+        if !path.starts_with(r"\\?\Volume{") {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "storage requires an NTFS volume GUID path",
+            ));
+        }
+        Ok(format!(r"{path}\{name}"))
     }
 
     #[cfg(vdt_storage_addon)]
@@ -350,12 +399,18 @@ impl FlushableDirectory {
                 self.0.raw,
                 destination,
                 0x8012_0080,
-                0,
+                4,
                 FILE_OPEN,
                 FILE_NON_DIRECTORY_FILE,
             )?;
             handle.validate_private_file()?;
-            handle.verify_exact_bytes(previous)?;
+            handle.verify_exact_bytes(previous).map_err(|error| {
+                if error.kind() == io::ErrorKind::InvalidData {
+                    io::Error::from_raw_os_error(1306)
+                } else {
+                    error
+                }
+            })?;
             Some(handle)
         } else {
             None
@@ -377,7 +432,7 @@ impl FlushableDirectory {
     }
 
     #[cfg(vdt_storage_addon)]
-    fn rename_handle(
+    pub(crate) fn rename_handle(
         &self,
         source: &OwnedHandle,
         destination: &str,
@@ -532,7 +587,7 @@ impl OwnedHandle {
     }
 
     #[cfg(vdt_storage_addon)]
-    fn validate_private_file(&self) -> io::Result<FileStandardInfo> {
+    pub(crate) fn validate_private_file(&self) -> io::Result<FileStandardInfo> {
         self.reject_reparse_point()?;
         let mut info = FileStandardInfo {
             allocation_size: 0,
@@ -584,7 +639,7 @@ impl OwnedHandle {
     }
 
     #[cfg(vdt_storage_addon)]
-    fn verify_exact_bytes(&self, expected: &[u8]) -> io::Result<()> {
+    pub(crate) fn verify_exact_bytes(&self, expected: &[u8]) -> io::Result<()> {
         let mut buffer = [0u8; 8192];
         let mut offset = 0;
         loop {
@@ -603,7 +658,7 @@ impl OwnedHandle {
         }
     }
 
-    fn flush(&self) -> io::Result<()> {
+    pub(crate) fn flush(&self) -> io::Result<()> {
         if unsafe { FlushFileBuffers(self.raw) } == 0 {
             return Err(io::Error::last_os_error());
         }
@@ -666,7 +721,7 @@ impl CreatedFile<'_> {
     }
 }
 
-fn open_relative(
+pub(crate) fn open_relative(
     parent: Handle,
     name: &str,
     access: u32,
