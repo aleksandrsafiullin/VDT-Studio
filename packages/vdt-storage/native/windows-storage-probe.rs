@@ -19,6 +19,10 @@ fn main() {
 }
 
 #[cfg(windows)]
+#[path = "windows-directory.rs"]
+mod windows_directory;
+
+#[cfg(windows)]
 mod windows {
     use std::{
         ffi::{c_void, OsStr},
@@ -442,10 +446,40 @@ mod windows {
                 Ok(()) => (0, Some(open_real_directory(&alias).is_err())),
                 Err(error) => (error.raw_os_error().unwrap_or(-1), None),
             };
+        let native_directory = unsafe {
+            super::windows_directory::FlushableDirectory::open_relative(root_handle.0, "retained")
+        }?;
+        native_directory.flush()?;
+        let rejected_alias = reparse_rejected.map(|_| {
+            unsafe {
+                super::windows_directory::FlushableDirectory::open_relative(
+                    root_handle.0,
+                    "reparse",
+                )
+            }
+            .is_err()
+        });
+        if rejected_alias == Some(false) {
+            return Err(io::Error::other(
+                "root-relative directory primitive followed a reparse point",
+            ));
+        }
+        if unsafe {
+            super::windows_directory::FlushableDirectory::open_relative(root_handle.0, "..")
+        }
+        .is_ok()
+        {
+            return Err(io::Error::other(
+                "root-relative directory primitive accepted traversal",
+            ));
+        }
+        let relative_reparse_json = rejected_alias
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".into());
         let reparse_json = reparse_rejected
             .map(|value| value.to_string())
             .unwrap_or_else(|| "null".into());
-        println!("{{\"schemaVersion\":\"windows_storage_primitive_probe.v1\",\"processArch\":\"{}\",\"productionAdmission\":false,\"certifiesCrashDurability\":false,\"filesystem\":\"{filesystem}\",\"filesystemFlags\":{filesystem_flags},\"tokenElevated\":{token_elevated},\"retainedIdentityStable\":{identity_stable},\"ownerMatchesToken\":{owner_matches_token},\"daclProtected\":{dacl_protected},\"daclPolicyCertified\":false,\"fileFlushWin32Error\":{file_flush_error},\"exclusiveCreateCollisionWin32Error\":{collision},\"exclusiveCreatePreservedBytes\":{collision_preserved},\"retainedDirectoryRenameWin32Error\":{rename_error},\"reparseSetupWin32Error\":{reparse_setup_error},\"reparseRejected\":{reparse_json},\"afterPublication\":{published_flushes},\"afterUnlink\":{unlink_flushes}}}", std::env::consts::ARCH);
+        println!("{{\"schemaVersion\":\"windows_storage_primitive_probe.v1\",\"processArch\":\"{}\",\"productionAdmission\":false,\"certifiesCrashDurability\":false,\"filesystem\":\"{filesystem}\",\"filesystemFlags\":{filesystem_flags},\"tokenElevated\":{token_elevated},\"retainedIdentityStable\":{identity_stable},\"ownerMatchesToken\":{owner_matches_token},\"daclProtected\":{dacl_protected},\"daclPolicyCertified\":false,\"fileFlushWin32Error\":{file_flush_error},\"exclusiveCreateCollisionWin32Error\":{collision},\"exclusiveCreatePreservedBytes\":{collision_preserved},\"retainedDirectoryRenameWin32Error\":{rename_error},\"reparseSetupWin32Error\":{reparse_setup_error},\"reparseRejected\":{reparse_json},\"relativeDirectoryFlushSucceeded\":true,\"relativeReparseRejected\":{relative_reparse_json},\"afterPublication\":{published_flushes},\"afterUnlink\":{unlink_flushes}}}", std::env::consts::ARCH);
         Ok(())
     }
 }
