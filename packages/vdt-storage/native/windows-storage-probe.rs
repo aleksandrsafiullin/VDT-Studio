@@ -450,6 +450,26 @@ mod windows {
             super::windows_directory::FlushableDirectory::open_relative(root_handle.0, "retained")
         }?;
         native_directory.flush()?;
+        let mut relative_file = native_directory.create_file("relative.dat")?;
+        relative_file.write_all(bytes)?;
+        relative_file.flush()?;
+        drop(relative_file);
+        if native_directory
+            .create_file("relative.dat")
+            .err()
+            .map(|error| error.kind())
+            != Some(io::ErrorKind::AlreadyExists)
+            || fs::read(retained_dir.join("relative.dat"))? != bytes
+        {
+            return Err(io::Error::other(
+                "root-relative file create did not preserve existing bytes",
+            ));
+        }
+        let removable = native_directory.create_file("removable.dat")?;
+        removable.remove()?;
+        if retained_dir.join("removable.dat").try_exists()? {
+            return Err(io::Error::other("handle-based unlink left an entry behind"));
+        }
         let rejected_alias = reparse_rejected.map(|_| {
             unsafe {
                 super::windows_directory::FlushableDirectory::open_relative(
@@ -479,7 +499,7 @@ mod windows {
         let reparse_json = reparse_rejected
             .map(|value| value.to_string())
             .unwrap_or_else(|| "null".into());
-        println!("{{\"schemaVersion\":\"windows_storage_primitive_probe.v1\",\"processArch\":\"{}\",\"productionAdmission\":false,\"certifiesCrashDurability\":false,\"filesystem\":\"{filesystem}\",\"filesystemFlags\":{filesystem_flags},\"tokenElevated\":{token_elevated},\"retainedIdentityStable\":{identity_stable},\"ownerMatchesToken\":{owner_matches_token},\"daclProtected\":{dacl_protected},\"daclPolicyCertified\":false,\"fileFlushWin32Error\":{file_flush_error},\"exclusiveCreateCollisionWin32Error\":{collision},\"exclusiveCreatePreservedBytes\":{collision_preserved},\"retainedDirectoryRenameWin32Error\":{rename_error},\"reparseSetupWin32Error\":{reparse_setup_error},\"reparseRejected\":{reparse_json},\"relativeDirectoryFlushSucceeded\":true,\"relativeReparseRejected\":{relative_reparse_json},\"afterPublication\":{published_flushes},\"afterUnlink\":{unlink_flushes}}}", std::env::consts::ARCH);
+        println!("{{\"schemaVersion\":\"windows_storage_primitive_probe.v1\",\"processArch\":\"{}\",\"productionAdmission\":false,\"certifiesCrashDurability\":false,\"filesystem\":\"{filesystem}\",\"filesystemFlags\":{filesystem_flags},\"tokenElevated\":{token_elevated},\"retainedIdentityStable\":{identity_stable},\"ownerMatchesToken\":{owner_matches_token},\"daclProtected\":{dacl_protected},\"daclPolicyCertified\":false,\"fileFlushWin32Error\":{file_flush_error},\"exclusiveCreateCollisionWin32Error\":{collision},\"exclusiveCreatePreservedBytes\":{collision_preserved},\"retainedDirectoryRenameWin32Error\":{rename_error},\"reparseSetupWin32Error\":{reparse_setup_error},\"reparseRejected\":{reparse_json},\"relativeFilePrimitivesSucceeded\":true,\"relativeDirectoryFlushSucceeded\":true,\"relativeReparseRejected\":{relative_reparse_json},\"afterPublication\":{published_flushes},\"afterUnlink\":{unlink_flushes}}}", std::env::consts::ARCH);
         Ok(())
     }
 }
