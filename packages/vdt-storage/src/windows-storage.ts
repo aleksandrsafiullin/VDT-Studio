@@ -42,6 +42,13 @@ export interface WindowsStorageEntry {
 }
 
 const require = createRequire(import.meta.url);
+const bindingMethods = [
+  "open", "initialize", "openChild", "createChild", "ensureChild", "list", "removeEmptyChild",
+  "read", "createFile", "writeFile", "flushFile", "fileIdentity", "writeExclusive",
+  "publish", "replace", "moveFile", "moveDirectory", "unlink", "unlinkExpected",
+  "unlinkIdentified", "validate", "flush", "sqlitePath", "editorDirectoryPath",
+  "openEditorLeaf", "editorPath", "acquireLock", "releaseLock", "close"
+] as const satisfies readonly (keyof WindowsStorageBinding)[];
 
 /**
  * Adapter for the fixed installed Windows runtime resource. The desktop host
@@ -57,6 +64,9 @@ export function openWindowsStorage(
     throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Windows storage requires the bundled x64 native runtime.");
   }
   const binding = require(path.join(trustedRuntimeDirectory, "windows-storage.node")) as WindowsStorageBinding;
+  if (!binding || !bindingMethods.every((method) => typeof binding[method] === "function")) {
+    throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Bundled Windows storage capability has an incompatible ABI.");
+  }
   const session = initialize ? binding.initialize(profilePath) : binding.open(profilePath);
   return new WindowsStorageDirectory(binding, session);
 }
@@ -97,6 +107,9 @@ export class WindowsStorageDirectory {
   }
 
   read(name: string, maximumBytes: number, durable = false): Buffer {
+    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0 || maximumBytes > 0xffffffff) {
+      throw new RangeError("Invalid Windows storage read bound.");
+    }
     const bytes = Buffer.alloc(maximumBytes);
     const length = this.binding.read(this.session, name, bytes, durable);
     return bytes.subarray(0, length);
@@ -287,7 +300,6 @@ export function withWindowsStorageParent<T>(
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
           directory = directory.openChild(component);
-          directory.flush();
         }
       } else {
         directory = directory.openChild(component);
@@ -298,4 +310,42 @@ export function withWindowsStorageParent<T>(
   } finally {
     for (const directory of opened.reverse()) directory.close();
   }
+}
+
+export function writeWindowsStorageFile(directory: WindowsStorageDirectory, name: string, bytes: Buffer, maxPreviousBytes: number): void {
+  const lock = directory.acquireLock(".vdt-mutation.lock");
+  const stage = `.vdt-stage-${randomUUID()}.tmp`;
+  try {
+    let previous: Buffer | undefined;
+    try {
+      previous = directory.read(name, maxPreviousBytes);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    directory.writeExclusive(stage, bytes);
+    if (previous === undefined) directory.publish(stage, name, bytes);
+    else directory.replace(stage, name, previous, bytes);
+  } finally {
+    lock.close();
+  }
+}
+
+export function removeWindowsStorageTree(directory: WindowsStorageDirectory, name: string): void {
+  let child: WindowsStorageDirectory;
+  try {
+    child = directory.openChild(name);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  try {
+    for (const entry of child.list()) {
+      if (entry.reparse) throw new Error("Windows storage tree contains a reparse entry.");
+      if (entry.directory) removeWindowsStorageTree(child, entry.name);
+      else child.unlink(entry.name);
+    }
+  } finally {
+    child.close();
+  }
+  directory.removeEmptyChild(name);
 }

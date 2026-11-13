@@ -8,7 +8,7 @@ import type { VdtProject } from "@vdt-studio/vdt-core";
 import { AtomicRevisionStore } from "./atomic-revisions";
 import { defined, decodeJson, encodeJson, toIso, toMillis } from "./json";
 import { runStorageMigrations, __runNativeStorageMigrationsForTests } from "./migrations";
-import { acquireWindowsStorageProfile, openWindowsStorage, withWindowsStorageParent, type WindowsStorageDirectory } from "./windows-storage";
+import { acquireWindowsStorageProfile, openWindowsStorage, removeWindowsStorageTree, withWindowsStorageParent, writeWindowsStorageFile, type WindowsStorageDirectory } from "./windows-storage";
 import { assertStoragePlatformCapability } from "./storage-platform";
 import { deleteProjectAgentData } from "./project-deletion";
 import {
@@ -121,6 +121,28 @@ export class SqliteVdtDatabase implements VdtDatabase {
     this.releaseProfile?.();
   }
 
+  private ensureWindowsDirectory(relativePath: string): void {
+    withWindowsStorageParent(this.windows!, relativePath, true, (directory, name) => {
+      directory.ensureChild(name).close();
+    });
+  }
+
+  private writeWindowsManifest(project: ProjectRecord): void {
+    const relative = path.join("projects", project.id, ".vdt-studio", "project.json");
+    const bytes = Buffer.from(`${JSON.stringify(manifestFromProject(project), null, 2)}\n`, "utf8");
+    withWindowsStorageParent(this.windows!, relative, true,
+      (directory, name) => writeWindowsStorageFile(directory, name, bytes, 1_048_576));
+  }
+
+  private removeWindowsDirectory(relativePath: string): void {
+    try {
+      withWindowsStorageParent(this.windows!, relativePath, false,
+        (directory, name) => removeWindowsStorageTree(directory, name));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+
   createProject(input: CreateProjectInput): ProjectRecord {
     assertSafeId(input.id, "projectId");
     const createdAt = this.now();
@@ -152,8 +174,15 @@ export class SqliteVdtDatabase implements VdtDatabase {
         VALUES (?, 'project_runtime_state.v1', 'v1', 1, 'shadow_ready', 'enabled', ?)
       `).run(record.id, toMillis(record.createdAt));
     });
-    const dir = createProjectDir(this.dataDir, record.id);
-    writeProjectManifest(dir, manifestFromProject(record));
+    if (this.windows) {
+      for (const relative of [".vdt-studio", "vdts", "files", "comparisons"]) {
+        this.ensureWindowsDirectory(path.join("projects", record.id, relative));
+      }
+      this.writeWindowsManifest(record);
+    } else {
+      const dir = createProjectDir(this.dataDir, record.id);
+      writeProjectManifest(dir, manifestFromProject(record));
+    }
     return record;
   }
 
@@ -195,7 +224,8 @@ export class SqliteVdtDatabase implements VdtDatabase {
       toMillis(next.updatedAt),
       next.id
     );
-    writeProjectManifest(projectDir(this.dataDir, next.id), manifestFromProject(next));
+    if (this.windows) this.writeWindowsManifest(next);
+    else writeProjectManifest(projectDir(this.dataDir, next.id), manifestFromProject(next));
     return next;
   }
 
@@ -222,9 +252,12 @@ export class SqliteVdtDatabase implements VdtDatabase {
       return this.db.prepare("DELETE FROM projects WHERE id = ?").run(projectId).changes > 0;
     });
     if (deleted) {
-      const dir = projectDir(this.dataDir, projectId);
-      assertInside(this.dataDir, dir);
-      fs.rmSync(dir, { recursive: true, force: true });
+      if (this.windows) this.removeWindowsDirectory(path.join("projects", projectId));
+      else {
+        const dir = projectDir(this.dataDir, projectId);
+        assertInside(this.dataDir, dir);
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     }
     return deleted;
   }
@@ -279,8 +312,14 @@ export class SqliteVdtDatabase implements VdtDatabase {
         VALUES (?, ?, 'ready', NULL, ?)
       `).run(record.id, record.projectId, toMillis(record.createdAt));
     });
-    vdtRevisionDir(this.dataDir, record.projectId, record.id);
-    vdtPreviewDir(this.dataDir, record.projectId, record.id);
+    if (this.windows) {
+      const relative = path.join("projects", record.projectId, "vdts", record.id);
+      this.ensureWindowsDirectory(path.join(relative, "revisions"));
+      this.ensureWindowsDirectory(path.join(relative, "previews"));
+    } else {
+      vdtRevisionDir(this.dataDir, record.projectId, record.id);
+      vdtPreviewDir(this.dataDir, record.projectId, record.id);
+    }
     return record;
   }
 
@@ -366,9 +405,12 @@ export class SqliteVdtDatabase implements VdtDatabase {
       return this.db.prepare("DELETE FROM vdts WHERE id = ?").run(vdtId).changes > 0;
     });
     if (deleted) {
-      const dir = path.join(projectDir(this.dataDir, current.projectId), "vdts", current.id);
-      assertInside(this.dataDir, dir);
-      fs.rmSync(dir, { recursive: true, force: true });
+      if (this.windows) this.removeWindowsDirectory(path.join("projects", current.projectId, "vdts", current.id));
+      else {
+        const dir = path.join(projectDir(this.dataDir, current.projectId), "vdts", current.id);
+        assertInside(this.dataDir, dir);
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
       const updatedAt = this.now();
       this.db.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").run(toMillis(updatedAt), current.projectId);
     }

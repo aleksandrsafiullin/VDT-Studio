@@ -6163,8 +6163,8 @@ function createBackupAndJournal(
   const backupPath = path.join(backupDir, backupName);
   assertInside(dataDir, backupPath);
   withMigrationSqlitePath(dataDir, backupPath, (filename) => db.exec(`VACUUM INTO '${escapeSqlLiteral(filename)}';`));
-  const backupBytes = readMigrationFile(dataDir, backupPath, MAX_WINDOWS_MIGRATION_FILE_BYTES, true);
-  input.faultInjector?.("after_backup_fsynced");
+  const backupBytes = readMigrationFile(dataDir, backupPath, MAX_WINDOWS_MIGRATION_FILE_BYTES, true,
+    () => input.faultInjector?.("after_backup_fsynced"));
   const backupHash = hashFramed(
     "vdt-studio/sqlite-backup",
     "sqlite_backup_hash.v1",
@@ -7087,15 +7087,18 @@ function ensureMigrationDirectory(dataDir: string, candidate: string, exclusive 
   });
 }
 
-function readMigrationFile(dataDir: string, candidate: string, maxBytes: number, durable = false): Buffer {
+function readMigrationFile(dataDir: string, candidate: string, maxBytes: number, durable = false, afterFlush?: () => void): Buffer {
   if (process.platform === "win32") {
-    return withNativeMigrationParent(dataDir, candidate, false, (directory, name) => directory.read(name, maxBytes, durable));
+    const bytes = withNativeMigrationParent(dataDir, candidate, false, (directory, name) => directory.read(name, maxBytes, durable));
+    afterFlush?.();
+    return bytes;
   }
   const stat = fs.lstatSync(candidate);
   if (stat.isSymbolicLink() || !stat.isFile()) {
     throw migrationBlocked(`Migration file is not an in-root regular file: ${path.relative(dataDir, candidate)}.`);
   }
   if (durable) fsyncFileAndDirectory(candidate);
+  afterFlush?.();
   return fs.readFileSync(candidate);
 }
 
