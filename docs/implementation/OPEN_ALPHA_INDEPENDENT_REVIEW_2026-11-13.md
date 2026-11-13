@@ -51,7 +51,7 @@ The report is assembled as a detached allowlisted object. The metadata route ret
 
 ## W7: Windows storage support
 
-**Status: packaged x64 admission implementation ready for native qualification with a verified addon and private local NTFS profile. Production Windows admission remains blocked.**
+**Status: the complete W7 native gate passed for candidate `2767958` on Windows x64 with a verified addon and private local NTFS. Later source and installed candidates require their own qualification.**
 
 The initial public entrypoint could create a directory and open SQLite before rejecting Windows. The corrected path checks admission before opening storage. An ordinary Windows open can only retain the process-approved profile.
 
@@ -76,6 +76,12 @@ The initial native matrix runner executes the frozen cases and uses a child faul
 The implementation replaced the named-pipe proposal, which had unresolved locality and ACL requirements, with a retained exclusive IPv4 loopback listener and a private loopback backend. The host checks the established server-side TCP tuple and owner PID before forwarding each connection, including bootstrap bytes. It retains the original child handle for the proxy lifetime. The listener remains held independently of the accept thread, so accept-thread failure does not release the trusted WebView origin. A private activation frame permits Node to enter runtime startup only after assignment to a non-inheritable kill-on-close Job Object.
 
 Native Windows x64 fixture run 43477247699 recorded eight passing tests, including wrong-owner rejection before bytes, port conflict, listener retention after accept-thread panic, activation failure cleanup, explicit Job close and abrupt host loss with descendant cleanup. The run used an elevated Windows Server 2025 x64 runner. The fixture does not build or execute the complete Tauri proxy or WebView. Installed startup, runtime crash, quit, port reuse, signature, offline and upgrade checks remain open. Production Windows storage remains separately gated by W7.
+
+## Integrated source and packaging checkpoint
+
+Source release verification passed at `64e12277ee5d4a9f7a0d10b987d5bde9119a8821`. The run recorded 3,799 passing tests and 45 skips across 330 passing and nine skipped files. The retained Playwright report recorded 157 expected outcomes and zero unexpected, flaky or skipped outcomes. The dedicated saved-copy gate passed both tests. Lint, types, parser asset verification, build, release audit and CLI packaging gates passed. The reviewer independently verified the downloaded evidence archive SHA-256 `d2c203a3dacca6eb5044a33accc2c37c4c2618bfc45b965d7499ea07b178951d`. [Source release verification run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43497496850)
+
+The source gate predates the Windows native-addon loader and compiled-startup smoke change at `8aeb97d` and the short packaging stage at `ebfad67`. The Windows executable compiled at `8aeb97d`, and NSIS stopped on a 270-character resource source path. The short-stage retry is a separate packaging run. This checkpoint does not establish an accepted installer or installed startup result.
 
 ## Handoff
 

@@ -37,9 +37,10 @@ The local package has a Developer ID signature. Apple notarization and Gatekeepe
 The repository also includes a Windows x64 NSIS candidate build path. For
 builder commands, Authenticode requirements, and evidence limits, see
 [W8](implementation/OPEN_ALPHA_W8_2026-11-13.md). Native Windows storage and
-private packaged startup are implemented. Production admission still requires
-the complete 65-case fault matrix and independent review; the build path alone
-does not qualify an installed Windows application.
+private packaged startup are implemented. The scoped standard-user x64/NTFS
+storage gate passed 34 focused tests and the complete 65-case fault matrix with
+independent evidence review. Compiled application startup and installed-app
+qualification remain separate; the build path alone does not establish them.
 
 The repository contains the Tauri desktop shell under `apps/desktop`, native commands and local AI runtime sidecar launchers for POSIX and Windows. The checked-in sidecar contains bundled JavaScript; the alpha packagers supply and verify its embedded Node executable. A future Node-free sidecar binary has a separate production contract.
 

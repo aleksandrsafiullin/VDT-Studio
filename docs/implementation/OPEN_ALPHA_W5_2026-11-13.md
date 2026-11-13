@@ -37,6 +37,10 @@ The maintained Windows native storage gate is `.github/workflows/windows-storage
 It reuses the tested disposable standard-user helper and captures both
 34-test native regression output and the literal 65-vector evidence. It runs
 on pull requests and main and is dispatchable against an exact candidate ref.
-The repository workflow's first full run is pending the final matrix fixes.
+The maintained workflow passed all 34 native tests and all 65 frozen vectors
+on both `2767958` and `110c24c`. These runs qualify the native storage gate
+on Windows x64. Installer acceptance remains separate.
+[Run 43494781381](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43494781381) ·
+[Run 43496336060](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43496336060)
 
 The signed arm64 diagnostic DMG from `64e12277ee5d4a9f7a0d10b987d5bde9119a8821` passed disk image, Developer ID, and packaged resource verification. Its SHA-256 is `30998987394a04fdc79e249e778b865b0e7e70eb2010eadeec9568186cf1c2dc`. The SSD output is `/Volumes/Corsair-SSD/vdt-alpha2-mac-64e122-lRsUIh/artifact`. This candidate is unnotarized and has no installed qualification. The outer shell returned 1 after packaging completed because the wrapper assigned zsh's read-only `status` variable. Use `build_rc=$?` in the next wrapper. Independent artifact verification passed after the packaging script cleaned its temporary source and Cargo directories.

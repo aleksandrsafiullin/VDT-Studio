@@ -14,8 +14,10 @@ acceptance. Legacy or ambiguous runs retain their original history and can use
 a verified saved copy when committed source data is available. That continuation
 has source review and a passing two-case production-browser gate; installed
 recovery remains unqualified. Parser isolation, bounded uploads and local
-diagnostic preview/export have source and scoped browser acceptance; final
-aggregate and native acceptance are still in progress.
+diagnostic preview/export have source and browser acceptance. The full source
+gate at `64e12277ee5d` passed 3,799 tests with 45 platform/opt-in skips, all 157
+browser cases and both saved-copy cases. Later Windows loader/packaging changes
+and installed native acceptance remain under verification.
 Release tooling separates source/fixture results, packaged-byte/trust checks and
 installed user workflows. The isolated Windows process fixture and standard-user
 NTFS primitive checks provide real Windows evidence, but do not qualify the

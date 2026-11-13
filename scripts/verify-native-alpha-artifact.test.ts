@@ -46,6 +46,15 @@ async function fixture(platform: "darwin" | "win32" = "darwin", signed = true) {
   }
   await put(path.join(resources, "web/apps/web/server.js"), "Next server fixture");
   await put(path.join(resources, "web/apps/web/.next/required-server-files.json"), "{}");
+  const noticeBytes = "upstream notice";
+  const noticeHash = sha(noticeBytes);
+  const noticePath = path.join(resources, "THIRD-PARTY-NOTICES/texts", `${noticeHash}.txt`);
+  await put(noticePath, noticeBytes);
+  await put(path.join(resources, "THIRD-PARTY-NOTICES/inventory.json"), JSON.stringify({
+    schemaVersion: 1, packages: ["npm", "cargo"].map(ecosystem => ({
+      ecosystem, name: "fixture", version: "1.0.0", notices: [{ path: "LICENSE", sha256: noticeHash }]
+    }))
+  }));
   const workerPath = path.join(resources, "web/apps/web/.next/server/chunks/static/media/worker-hash.cjs");
   await put(workerPath, "parser worker fixture");
   await put(path.join(resources, "parser-worker.manifest.json"), JSON.stringify({ schemaVersion: 1, entrypoint: "parser-worker.cjs", sha256: sha("parser worker fixture"), byteLength: Buffer.byteLength("parser worker fixture") }));
@@ -58,7 +67,7 @@ async function fixture(platform: "darwin" | "win32" = "darwin", signed = true) {
     if (name === "codesign" && args.includes("--display")) return "Authority=Developer ID Application: Fixture\nTeamIdentifier=FIXTURE123";
     return "passed";
   });
-  return { root, resources, installer, metadata, metadataPath, workerPath, command };
+  return { root, resources, installer, metadata, metadataPath, workerPath, noticePath, command };
 }
 
 describe("native alpha artifact verification", () => {
@@ -74,6 +83,21 @@ describe("native alpha artifact verification", () => {
     expect(f.command.mock.calls.some(([name]) => name === "pwsh.exe")).toBe(true);
     const command = (name: string, args: string[]) => { if (name === "pwsh.exe") throw new Error("Authenticode failed"); return f.command(name, args); };
     expect(() => verifyNativeAlphaArtifact(f.root, { sourceCommit, platform: "win32", command })).toThrow(/Authenticode failed/);
+  });
+  it("fails when the packaged Windows Node cannot resolve Next dependencies", async () => {
+    const f = await fixture("win32");
+    const command = (name: string, args: string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv }) => {
+      if (args[0] === "-e" && args[1].includes("styled-jsx/package.json")) {
+        expect(name).toBe(path.join(f.resources, "runtime/node.exe"));
+        expect(args[2]).toBe(path.join(f.resources, "web"));
+        expect(options?.cwd).toBe(path.join(f.resources, "web/apps/web"));
+        expect(options?.env?.NODE_PATH).toBeUndefined();
+        throw new Error("missing packaged styled-jsx");
+      }
+      return f.command(name, args);
+    };
+    expect(() => verifyNativeAlphaArtifact(f.root, { sourceCommit, platform: "win32", command }))
+      .toThrow(/missing packaged styled-jsx/);
   });
   it("rejects altered Windows storage addon bytes before loading the addon", async () => {
     const f = await fixture("win32");
@@ -111,6 +135,13 @@ describe("native alpha artifact verification", () => {
   it("rejects altered sidecar resources", async () => {
     const f = await fixture(); await writeFile(path.join(f.resources, "sidecars/vdt-local-runtime.cmd"), "different launcher");
     expect(() => verifyNativeAlphaArtifact(f.root, { sourceCommit, platform: "darwin", command: f.command })).toThrow(/sidecar hash mismatch/);
+  });
+  it("rejects a changed upstream notice before loading the embedded runtime", async () => {
+    const f = await fixture();
+    await writeFile(f.noticePath, "altered notice");
+    expect(() => verifyNativeAlphaArtifact(f.root, { sourceCommit, platform: "darwin", command: f.command }))
+      .toThrow(/notice hash mismatch/);
+    expect(f.command).not.toHaveBeenCalled();
   });
   it("rejects a runtime that reports a different Node version", async () => {
     const f = await fixture();

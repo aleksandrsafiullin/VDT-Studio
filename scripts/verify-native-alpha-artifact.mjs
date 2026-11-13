@@ -32,6 +32,32 @@ function run(command, args, options = {}) {
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
 }
 
+function verifyNotices(resources) {
+  const directory = join(resources, "THIRD-PARTY-NOTICES");
+  const inventoryFile = file(resources, "THIRD-PARTY-NOTICES/inventory.json");
+  if (lstatSync(inventoryFile).size > 4 * 1024 * 1024) fail("third-party notice inventory is too large");
+  const inventory = JSON.parse(readFileSync(inventoryFile, "utf8"));
+  if (inventory.schemaVersion !== 1 || !Array.isArray(inventory.packages)) fail("invalid third-party notice inventory");
+  const hashes = new Set();
+  const ecosystems = new Set();
+  for (const entry of inventory.packages) {
+    if (!["npm", "cargo"].includes(entry?.ecosystem) || typeof entry.name !== "string" ||
+        typeof entry.version !== "string" || !Array.isArray(entry.notices)) fail("invalid third-party notice entry");
+    ecosystems.add(entry.ecosystem);
+    for (const notice of entry.notices) {
+      if (typeof notice?.path !== "string" || !SHA.test(notice.sha256)) fail("invalid third-party notice text reference");
+      hashes.add(notice.sha256);
+    }
+  }
+  if (ecosystems.size !== 2 || !hashes.size) fail("incomplete third-party notice inventory");
+  const entries = readdirSync(join(directory, "texts"));
+  if (entries.length !== hashes.size) fail("unexpected third-party notice text count");
+  for (const hash of hashes) {
+    if (digest(file(resources, `THIRD-PARTY-NOTICES/texts/${hash}.txt`)) !== hash) fail("third-party notice hash mismatch");
+  }
+  return { thirdPartyNoticeInventorySha256: digest(inventoryFile), thirdPartyNoticeTextCount: hashes.size };
+}
+
 function verifyResources(resources) {
   file(resources, "packaged-web.cjs");
   file(resources, "web/apps/web/server.js");
@@ -56,6 +82,28 @@ function verifyResources(resources) {
 }
 
 /** Checks packaged bytes and OS trust. This does not certify installed user flows. */
+const VERIFY_WINDOWS_NEXT = `
+const fs = require("node:fs");
+const path = require("node:path");
+const Module = require("node:module");
+const root = fs.realpathSync(process.argv[1]);
+const app = path.join(root, "apps/web");
+const load = Module.createRequire(path.join(app, "server.js"));
+function requireInside(file) {
+  const relative = path.relative(root, fs.realpathSync(file));
+  if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
+    throw new Error("Next runtime resolved outside the packaged web tree");
+  }
+}
+const hook = load.resolve("next/dist/server/require-hook");
+requireInside(hook);
+const nextLoad = Module.createRequire(hook);
+requireInside(nextLoad.resolve("styled-jsx/package.json"));
+nextLoad(hook);
+requireInside(load.resolve("next"));
+if (typeof load("next") !== "function") throw new Error("Packaged Next cannot be loaded");
+`;
+
 export function verifyNativeAlphaArtifact(directory, {
   sourceCommit, platform = process.platform, allowUnsignedValidation = false, command = run
 } = {}) {
@@ -80,7 +128,7 @@ export function verifyNativeAlphaArtifact(directory, {
   const identity = json(resources, "build-info.json");
   if (identity.sourceCommit !== sourceCommit || identity.version !== metadata.version || identity.dirty !== false || identity.platform !== platform || identity.architecture !== architecture || !Number.isFinite(Date.parse(identity.buildTime))) fail("packaged application build identity mismatch");
   const node = platform === "darwin" ? file(application, "Contents/Helpers/node") : file(application, "runtime/node.exe");
-  const resourcesResult = verifyResources(resources);
+  const resourcesResult = { ...verifyResources(resources), ...verifyNotices(resources) };
   let trustVerified = false;
   let storageAddon;
   if (platform === "darwin") {
@@ -126,6 +174,12 @@ export function verifyNativeAlphaArtifact(directory, {
   const nodeVersion = command(node, ["--version"]).trim();
   if (nodeVersion !== `v${metadata.nodeVersion}`) fail("embedded Node version does not match package metadata");
   if (storageAddon) {
+    const web = join(resources, "web");
+    const env = { ...process.env, NODE_ENV: "production" };
+    for (const name of Object.keys(env)) {
+      if (/^NODE_(?:OPTIONS|PATH)$/i.test(name)) delete env[name];
+    }
+    command(node, ["-e", VERIFY_WINDOWS_NEXT, web], { cwd: join(web, "apps/web"), env });
     const addon = file(application, "runtime/windows-storage.node");
     const loadedAbi = command(node, ["-e", "require(process.argv[1]); process.stdout.write(process.versions.napi)", addon]);
     if (!/^\d+$/.test(loadedAbi) || Number(loadedAbi) < storageAddon.nodeApiVersion) {

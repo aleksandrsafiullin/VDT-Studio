@@ -130,9 +130,13 @@ This ledger will be updated with implementation and integrated acceptance eviden
   fresh installation is proceeding on a separate disk with a private unattended
   account configuration. The original disk is detached and retained. The user
   accepted the fresh installer EULA and authorized routine VM configuration.
-  The fresh guest reached its desktop with local admin `vdtsetup`. Direct
-  password entry is handed to the user; the standard test account and Guest
-  Tools remain pending. Windows Arm with
+  The fresh guest reached its desktop with local admin `vdtsetup`. Optional
+  password creation was canceled while its fields were empty; the existing
+  account state was preserved. Optional Guest Tools were also canceled without
+  accepting their separate license; console and read-only optical transfer
+  remain available. The observed console was elevated; normal account/UAC
+  configuration must be checked after the guest finishes its pending updates.
+  Windows Arm with
   x64 emulation remains distinct from native x64 evidence.
 - Native Mac preparation: a valid Developer ID Application certificate and
   historical signed alpha.0/alpha.1 DMGs were found. The prior Tart QA scratch VM
@@ -143,9 +147,12 @@ This ledger will be updated with implementation and integrated acceptance eviden
   to retain both VM configurations for future work. A pinned separate Mac QA
   baseline is provisioned and stopped on Corsair-SSD. A disposable retained
   clone booted headlessly and was verified as Tahoe 26.6.2 (25G83), arm64,
-  with 18 GiB guest space; it is stopped. The source image had Gatekeeper
-  assessments disabled, so the clone must enable and verify them before app
-  acceptance. The persistent, local-only VM registry is
+  with 18 GiB guest space; it is stopped. Gatekeeper assessments were enabled
+  and verified in the clone. The diagnostic alpha.2 DMG matched its host hash
+  and passed signature verification, but Gatekeeper rejected it as unnotarized.
+  SCP did not create a quarantine attribute, so this is not Safari/Finder
+  installation evidence. A separate retained upgrade clone is stopped.
+  The persistent, local-only VM registry is
   `/Volumes/Corsair-SSD/VDT-Studio-QA/VM-REGISTRY.md`, with separate JSON records
   for each guest and a saved memory pointer. These environments are retained
   across task cleanup. Preserve the Mac baseline and clone it before installing
@@ -155,12 +162,17 @@ This ledger will be updated with implementation and integrated acceptance eviden
 - Alpha.2 packaging preparation: the prescribed sidecar generation and integrity
   checks passed under Node 24.15.0. Mac packaging now skips Tauri's duplicate web
   build and requires an Apple `Accepted` result before stapling. No alpha.2
-  installer has been accepted. A Developer-ID-signed Mac build is running from
-  `64e12277ee5d`; Windows packaging has exposed and prompted fixes for Next
+  installer has been accepted. The Developer-ID-signed Mac build from
+  `64e12277ee5d` passed disk image and resource verification. Its DMG SHA-256
+  is `30998987394a04fdc79e249e778b865b0e7e70eb2010eadeec9568186cf1c2dc`;
+  it is unnotarized, with 318 MiB of retained app/DMG/evidence on the SSD and
+  owned native/source staging removed. Windows packaging has exposed fixes for Next
   profile tracing, standalone dependency junction relocation and the child
   PowerShell host. Compiled output also exposed a Webpack transformation of
   the external native-addon loader; its correction requires actual bundled
-  Windows startup verification. Both native packages must use the final same SHA;
+  Windows startup verification. The actual Windows Rust executable compiled
+  at `8aeb97dc6127`, but NSIS hit a 270-character source path; a short owned
+  stage is being checked at `ebfad678759f`. Both native packages must use the final same SHA;
   unsigned Windows CI output is validation evidence, not signed distribution.
 
 The [candidate acceptance matrix](OPEN_ALPHA_ACCEPTANCE_MATRIX_2026-11-13.md)
@@ -181,6 +193,15 @@ The full local source gate at `2767958849bf` passed lint/typecheck/parser checks
 and ended with 3,797 tests passed, 45 skipped and one failure. The failure was
 the missing-bootstrap-backup error message; the corrected fail-closed wrapper
 passed three focused regressions and is included in `110c24c762c8`. This is not
-a passing aggregate result. Fresh source release workflow `43497496850` runs
-from `64e12277ee5d`. An earlier run with an incorrectly shared `VDT_DATA_DIR`
-was invalidated and its diagnostics retained separately.
+a passing aggregate result. Fresh source release workflow `43497496850` passed
+from `64e12277ee5d`: 3,799 tests passed and 45 skipped (330 passing files,
+nine skipped), all 157 browser cases passed without skips/retries/flakiness,
+and both dedicated saved-copy cases passed. The complete release command,
+production build, dependency audit, CLI package checks and SBOM stage passed.
+Independent review verified the retained archive hash
+`d2c203a3dacca6eb5044a33accc2c37c4c2618bfc45b965d7499ea07b178951d`.
+Later Windows loader/packaging deltas remain separately qualified. An earlier
+run with an incorrectly shared `VDT_DATA_DIR` was invalidated and its diagnostics
+retained separately. The coordinator removed its completed 1.8 GiB owned
+integration stage after child-process and open-file checks; evidence remains in
+`output/release/audits/2026-11-14-alpha2-integration.ovcmf2lk`.

@@ -162,7 +162,9 @@ export async function packageWindows(args = process.argv.slice(2)) {
     const buildTime = new Date().toISOString();
     const env = buildEnvironment({ stage, version, sourceCommit, buildTime });
     const buildInfo = { version, sourceCommit, dirty: false, buildTime, platform: "win32", architecture: "x64" };
-    pnpm(["install", "--frozen-lockfile", "--store-dir", join(stage, "pnpm-store")], { cwd: source, env });
+    // Hoisted pnpm keeps Next's dependency lookup valid after copying the
+    // standalone tree into an installer that cannot preserve pnpm junctions.
+    pnpm(["install", "--frozen-lockfile", "--node-linker=hoisted", "--store-dir", join(stage, "pnpm-store")], { cwd: source, env });
     pnpm(["desktop:sidecar:prepare"], { cwd: source, env });
     pnpm(["desktop:verify"], { cwd: source, env });
     // NFT resolves Windows profile-relative paths while tracing. Keep its
@@ -192,6 +194,10 @@ export async function packageWindows(args = process.argv.slice(2)) {
     run("tar.exe", ["-xf", archive, "-C", stage]);
     const native = join(source, "apps/desktop/src-tauri");
     const resources = JSON.parse(readFileSync(join(native, "tauri.windows.conf.json"), "utf8")).bundle.resources;
+    run("cargo", ["fetch", "--locked", "--target", "x86_64-pc-windows-msvc",
+      "--manifest-path", join(native, "Cargo.toml")], { cwd: source, env });
+    run(process.execPath, [join(source, "scripts/collect-third-party-notices.mjs"),
+      join(native, "THIRD-PARTY-NOTICES"), "x86_64-pc-windows-msvc"], { cwd: source, env });
     mkdirSync(join(native, "runtime"));
     const nodeRoot = join(stage, WINDOWS_NODE.archive.slice(0, -4));
     cpSync(join(nodeRoot, "node.exe"), join(native, "runtime/node.exe"));

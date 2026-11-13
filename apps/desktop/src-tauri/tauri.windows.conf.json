@@ -16,7 +16,7 @@
       "sidecars/vdt-agent-skills", "runtime/node.exe", "runtime/LICENSE-Node.txt",
       "runtime/windows-storage.node", "runtime/windows-storage.manifest.json",
       "web", "packaged-web.cjs", "windows-runtime.cjs", "build-info.json",
-      "parser-worker.manifest.json", "LICENSE-VDT-Studio.txt"
+      "parser-worker.manifest.json", "LICENSE-VDT-Studio.txt", "THIRD-PARTY-NOTICES"
     ],
     "windows": {
       "webviewInstallMode": { "type": "offlineInstaller", "silent": true },

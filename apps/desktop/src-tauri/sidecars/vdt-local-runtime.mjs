@@ -28365,8 +28365,6 @@ var executableSkillTopologySchema = external_exports.object({
 }).strict();
 
 // ../vdt-storage/src/windows-storage.ts
-import { createRequire } from "node:module";
-var loadNativeBinding = createRequire(import.meta.url);
 var profileRegistryKey = /* @__PURE__ */ Symbol.for("vdt-studio.windows-storage.profiles.v1");
 var processGlobal = globalThis;
 var admittedProfiles = processGlobal[profileRegistryKey] ??= /* @__PURE__ */ new Map();

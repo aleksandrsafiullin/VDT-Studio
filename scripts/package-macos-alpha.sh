@@ -111,6 +111,8 @@ curl --fail --silent --show-error --location --retry 2 \
 )
 app="$CARGO_TARGET_DIR/aarch64-apple-darwin/release/bundle/macos/VDT Studio.app"
 contents="$app/Contents"
+cargo fetch --locked --target aarch64-apple-darwin --manifest-path apps/desktop/src-tauri/Cargo.toml
+node scripts/collect-third-party-notices.mjs "$contents/Resources/THIRD-PARTY-NOTICES" aarch64-apple-darwin
 mkdir "$contents/Helpers"
 install -m 755 "$stage/$node_archive/bin/node" "$contents/Helpers/node"
 install -m 644 "$stage/$node_archive/LICENSE" "$contents/Resources/LICENSE-Node.txt"
