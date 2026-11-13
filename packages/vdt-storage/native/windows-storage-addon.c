@@ -6,6 +6,7 @@ typedef struct StorageSession StorageSession;
 extern uint32_t vdt_storage_open(const char *, size_t, StorageSession **);
 extern uint32_t vdt_storage_write(StorageSession *, const char *, size_t, const void *, size_t);
 extern uint32_t vdt_storage_publish(StorageSession *, const char *, size_t, const char *, size_t, const void *, size_t);
+extern uint32_t vdt_storage_read(StorageSession *, const char *, size_t, void *, size_t, uint8_t, size_t *);
 extern uint32_t vdt_storage_unlink(StorageSession *, const char *, size_t);
 extern uint32_t vdt_storage_flush(StorageSession *);
 extern void vdt_storage_close(StorageSession *);
@@ -147,6 +148,33 @@ static napi_value publish_file(napi_env env, napi_callback_info info) {
   return result(env, vdt_storage_publish(session->native, stage, stage_length, destination, destination_length, bytes, byte_length));
 }
 
+static napi_value read_file(napi_env env, napi_callback_info info) {
+  napi_value args[4], result_value;
+  size_t argc = 4, length, capacity, read = 0;
+  char name[1021];
+  bool is_buffer = false, durable = false;
+  void *bytes;
+  if (napi_get_cb_info(env, info, &argc, args, NULL, NULL) != napi_ok || argc != 4 ||
+      napi_get_value_string_utf8(env, args[1], NULL, 0, &length) != napi_ok ||
+      length == 0 || length >= sizeof(name) ||
+      napi_get_value_string_utf8(env, args[1], name, sizeof(name), &length) != napi_ok ||
+      napi_is_buffer(env, args[2], &is_buffer) != napi_ok || !is_buffer ||
+      napi_get_buffer_info(env, args[2], &bytes, &capacity) != napi_ok || capacity > UINT32_MAX ||
+      napi_get_value_bool(env, args[3], &durable) != napi_ok) {
+    return fail(env, "EINVAL", "Expected a session, file name, bounded Buffer, and flush flag");
+  }
+  Session *session = get_session(env, args[0]);
+  if (session == NULL || session->native == NULL) {
+    return fail(env, "EBADF", "Expected an open Windows storage session");
+  }
+  uint32_t error = vdt_storage_read(session->native, name, length, bytes, capacity, durable ? 1 : 0, &read);
+  if (error != 0) return win32_fail(env, error);
+  if (napi_create_uint32(env, (uint32_t)read, &result_value) != napi_ok) {
+    return fail(env, "EIO", "Could not return Windows storage read result");
+  }
+  return result_value;
+}
+
 static napi_value unlink_file(napi_env env, napi_callback_info info) {
   napi_value args[2];
   size_t argc = 2, length;
@@ -187,6 +215,7 @@ NAPI_MODULE_INIT() {
     {"open", NULL, open_session, NULL, NULL, NULL, napi_default, NULL},
     {"writeExclusive", NULL, write_exclusive, NULL, NULL, NULL, napi_default, NULL},
     {"publish", NULL, publish_file, NULL, NULL, NULL, napi_default, NULL},
+    {"read", NULL, read_file, NULL, NULL, NULL, napi_default, NULL},
     {"unlink", NULL, unlink_file, NULL, NULL, NULL, napi_default, NULL},
     {"flush", NULL, flush_or_close, NULL, NULL, NULL, napi_default, NULL},
     {"close", NULL, flush_or_close, NULL, NULL, NULL, napi_default, &close_marker}

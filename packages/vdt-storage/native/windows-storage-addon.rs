@@ -64,6 +64,28 @@ unsafe extern "C" fn vdt_storage_publish(
 }
 
 #[no_mangle]
+unsafe extern "C" fn vdt_storage_read(
+    session: &StorageSession,
+    name: *const u8,
+    name_len: usize,
+    bytes: *mut u8,
+    capacity: usize,
+    durable: u8,
+    read: *mut usize,
+) -> u32 {
+    status(|| {
+        let output = if capacity == 0 {
+            &mut []
+        } else {
+            unsafe { slice::from_raw_parts_mut(bytes, capacity) }
+        };
+        let length = session.read(utf8(name, name_len)?, output, durable != 0)?;
+        unsafe { *read = length };
+        Ok(())
+    })
+}
+
+#[no_mangle]
 unsafe extern "C" fn vdt_storage_unlink(
     session: &StorageSession,
     name: *const u8,

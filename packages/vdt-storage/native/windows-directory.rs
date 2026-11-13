@@ -209,6 +209,56 @@ impl FlushableDirectory {
         .remove()
     }
 
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn read_verified(
+        &self,
+        name: &str,
+        bytes: &mut [u8],
+        durable: bool,
+    ) -> io::Result<usize> {
+        let access = 0x8012_0080 | if durable { 0x4000_0000 } else { 0 };
+        let handle = open_relative(
+            self.0.raw,
+            name,
+            access,
+            0,
+            FILE_OPEN,
+            FILE_NON_DIRECTORY_FILE,
+        )?;
+        let info = handle.validate_private_file()?;
+        let length = usize::try_from(info.end_of_file)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid file size"))?;
+        if length > bytes.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "file exceeds its byte bound",
+            ));
+        }
+        let mut offset = 0;
+        while offset < length {
+            let end = length.min(offset.saturating_add(64 * 1024));
+            let read = handle.read(&mut bytes[offset..end])?;
+            if read == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "file truncated while reading",
+                ));
+            }
+            offset += read;
+        }
+        if handle.read(&mut [0u8; 1])? != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "file grew while reading",
+            ));
+        }
+        if durable {
+            handle.flush()?;
+            self.flush()?;
+        }
+        Ok(length)
+    }
+
     /// Publish an already verified same-directory stage. The source handle
     /// excludes concurrent writers and namespace changes during rename.
     #[cfg(vdt_storage_addon)]
@@ -339,7 +389,7 @@ impl OwnedHandle {
     }
 
     #[cfg(vdt_storage_addon)]
-    fn validate_private_file(&self) -> io::Result<()> {
+    fn validate_private_file(&self) -> io::Result<FileStandardInfo> {
         self.reject_reparse_point()?;
         let mut info = FileStandardInfo {
             allocation_size: 0,
@@ -365,7 +415,29 @@ impl OwnedHandle {
                 "expected a single-link regular file",
             ));
         }
-        crate::windows_security::validate_private_file(self.raw)
+        crate::windows_security::validate_private_file(self.raw)?;
+        Ok(info)
+    }
+
+    #[cfg(vdt_storage_addon)]
+    fn read(&self, buffer: &mut [u8]) -> io::Result<usize> {
+        let mut read = 0;
+        if unsafe {
+            ReadFile(
+                self.raw,
+                buffer.as_mut_ptr().cast(),
+                buffer.len() as u32,
+                &mut read,
+                ptr::null_mut(),
+            )
+        } == 0
+        {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(38) {
+                return Err(error);
+            }
+        }
+        Ok(read as usize)
     }
 
     #[cfg(vdt_storage_addon)]
@@ -373,27 +445,12 @@ impl OwnedHandle {
         let mut buffer = [0u8; 8192];
         let mut offset = 0;
         loop {
-            let mut read = 0;
-            if unsafe {
-                ReadFile(
-                    self.raw,
-                    buffer.as_mut_ptr().cast(),
-                    buffer.len() as u32,
-                    &mut read,
-                    ptr::null_mut(),
-                )
-            } == 0
-            {
-                let error = io::Error::last_os_error();
-                if error.raw_os_error() != Some(38) {
-                    return Err(error);
-                }
-            }
-            let end = offset + read as usize;
+            let read = self.read(&mut buffer)?;
+            let end = offset + read;
             if read == 0 && offset == expected.len() {
                 return Ok(());
             }
-            if read == 0 || expected.get(offset..end) != Some(&buffer[..read as usize]) {
+            if read == 0 || expected.get(offset..end) != Some(&buffer[..read]) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "stage content differs from expected bytes",
