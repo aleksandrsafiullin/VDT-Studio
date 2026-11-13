@@ -44,6 +44,26 @@ unsafe extern "C" fn vdt_storage_write(
 }
 
 #[no_mangle]
+unsafe extern "C" fn vdt_storage_publish(
+    session: &StorageSession,
+    stage: *const u8,
+    stage_len: usize,
+    destination: *const u8,
+    dest_len: usize,
+    expected: *const u8,
+    length: usize,
+) -> u32 {
+    status(|| {
+        let bytes = if length == 0 {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(expected, length) }
+        };
+        session.publish(utf8(stage, stage_len)?, utf8(destination, dest_len)?, bytes)
+    })
+}
+
+#[no_mangle]
 unsafe extern "C" fn vdt_storage_unlink(
     session: &StorageSession,
     name: *const u8,
@@ -77,6 +97,7 @@ fn status(operation: impl FnOnce() -> io::Result<()>) -> u32 {
                 io::ErrorKind::PermissionDenied => 5,
                 io::ErrorKind::InvalidInput => 87,
                 io::ErrorKind::Unsupported => 50,
+                io::ErrorKind::InvalidData => 13,
                 _ => 31,
             },
             |code| code as u32,

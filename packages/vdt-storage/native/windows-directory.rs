@@ -13,6 +13,8 @@ const FILE_ACCESS: u32 = 0x4013_0080; // GENERIC_WRITE | DELETE | READ_CONTROL |
 const FILE_DISPOSITION_INFO_CLASS: u32 = 4;
 #[cfg(vdt_storage_addon)]
 const DELETE_FILE_ACCESS: u32 = 0x0013_0080;
+#[cfg(vdt_storage_addon)]
+const FILE_RENAME_INFO_CLASS: u32 = 3;
 const FILE_DIRECTORY_FILE: u32 = 0x1;
 const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x20;
 const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
@@ -42,6 +44,15 @@ struct ObjectAttributes {
 struct IoStatusBlock {
     status: usize,
     information: usize,
+}
+
+#[cfg(vdt_storage_addon)]
+#[repr(C)]
+struct FileRenameInfo {
+    replace_if_exists: u32,
+    root_directory: Handle,
+    file_name_length: u32,
+    file_name: [u16; 1],
 }
 
 #[cfg(vdt_storage_addon)]
@@ -82,6 +93,14 @@ unsafe extern "system" {
 unsafe extern "system" {
     fn CloseHandle(handle: Handle) -> i32;
     fn FlushFileBuffers(handle: Handle) -> i32;
+    #[cfg(vdt_storage_addon)]
+    fn ReadFile(
+        handle: Handle,
+        buffer: *mut c_void,
+        length: u32,
+        read: *mut u32,
+        overlapped: *mut c_void,
+    ) -> i32;
     fn WriteFile(
         handle: Handle,
         buffer: *const c_void,
@@ -182,6 +201,64 @@ impl FlushableDirectory {
         .remove()
     }
 
+    /// Publish an already verified same-directory stage. The source handle
+    /// excludes concurrent writers and namespace changes during rename.
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn publish(
+        &self,
+        stage: &str,
+        destination: &str,
+        expected: &[u8],
+    ) -> io::Result<()> {
+        let name = encode_component(destination)?;
+        if stage.eq_ignore_ascii_case(destination) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "stage and destination must differ",
+            ));
+        }
+        let source = open_relative(
+            self.0.raw,
+            stage,
+            FILE_ACCESS | 0x8000_0000,
+            0,
+            FILE_OPEN,
+            FILE_NON_DIRECTORY_FILE,
+        )?;
+        source.validate_private_file()?;
+        source.verify_exact_bytes(expected)?;
+        source.flush()?;
+        self.reject_reparse_point()?;
+        let name_bytes = name.len() * mem::size_of::<u16>();
+        let bytes = mem::offset_of!(FileRenameInfo, file_name) + name_bytes;
+        let mut aligned = vec![
+            0usize;
+            bytes
+                .max(mem::size_of::<FileRenameInfo>())
+                .div_ceil(mem::size_of::<usize>())
+        ];
+        let info = aligned.as_mut_ptr().cast::<FileRenameInfo>();
+        unsafe {
+            (*info).root_directory = self.0.raw;
+            (*info).file_name_length = name_bytes as u32;
+            ptr::copy_nonoverlapping(
+                name.as_ptr(),
+                ptr::addr_of_mut!((*info).file_name).cast(),
+                name.len(),
+            );
+            if SetFileInformationByHandle(
+                source.raw,
+                FILE_RENAME_INFO_CLASS,
+                info.cast(),
+                bytes as u32,
+            ) == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        self.flush()
+    }
+
     fn reject_reparse_point(&self) -> io::Result<()> {
         self.0.reject_reparse_point()
     }
@@ -274,6 +351,41 @@ impl OwnedHandle {
             ));
         }
         crate::windows_security::validate_private_file(self.raw)
+    }
+
+    #[cfg(vdt_storage_addon)]
+    fn verify_exact_bytes(&self, expected: &[u8]) -> io::Result<()> {
+        let mut buffer = [0u8; 8192];
+        let mut offset = 0;
+        loop {
+            let mut read = 0;
+            if unsafe {
+                ReadFile(
+                    self.raw,
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len() as u32,
+                    &mut read,
+                    ptr::null_mut(),
+                )
+            } == 0
+            {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() != Some(38) {
+                    return Err(error);
+                }
+            }
+            let end = offset + read as usize;
+            if read == 0 && offset == expected.len() {
+                return Ok(());
+            }
+            if read == 0 || expected.get(offset..end) != Some(&buffer[..read as usize]) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "stage content differs from expected bytes",
+                ));
+            }
+            offset = end;
+        }
     }
 
     fn flush(&self) -> io::Result<()> {

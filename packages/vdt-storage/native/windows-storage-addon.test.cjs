@@ -19,6 +19,17 @@ try {
   assert.deepEqual(fs.readFileSync(path.join(privateRoot, name)), bytes);
   assert.throws(() => addon.writeExclusive(session, "CON.txt", bytes), { code: "EINVAL" });
   assert.throws(() => addon.writeExclusive(session, "embedded\0NUL", bytes), { code: "EINVAL" });
+  const stage = "addon-proof.stage";
+  const final = "addon-proof.final";
+  addon.writeExclusive(session, stage, bytes);
+  assert.throws(() => addon.publish(session, stage, name, bytes), { code: "EEXIST" });
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, name)), bytes);
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, stage)), bytes);
+  assert.throws(() => addon.publish(session, stage, final, Buffer.from("wrong")), { code: "EBADMSG" });
+  addon.publish(session, stage, final, bytes);
+  assert.equal(fs.existsSync(path.join(privateRoot, stage)), false);
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, final)), bytes);
+  addon.unlink(session, final);
   const link = path.join(privateRoot, "alias.dat");
   fs.linkSync(path.join(privateRoot, name), link);
   assert.throws(() => addon.unlink(session, name), { code: "EACCES" });

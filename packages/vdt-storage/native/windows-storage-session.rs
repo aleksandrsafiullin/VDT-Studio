@@ -104,6 +104,11 @@ impl StorageSession {
         file.flush()
     }
 
+    pub fn publish(&self, stage: &str, destination: &str, expected: &[u8]) -> io::Result<()> {
+        self.validate()?;
+        self.directory.publish(stage, destination, expected)
+    }
+
     pub fn unlink(&self, name: &str) -> io::Result<()> {
         self.validate()?;
         self.directory.unlink(name)
