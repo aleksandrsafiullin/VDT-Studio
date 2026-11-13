@@ -110,6 +110,18 @@ try {
   fs.linkSync(path.join(privateRoot, "app.sqlite"), path.join(privateRoot, "sqlite-alias"));
   assert.throws(() => addon.sqlitePath(session), { code: "EACCES" });
   fs.unlinkSync(path.join(privateRoot, "sqlite-alias"));
+  addon.validate(session);
+  const pending = addon.createFile(session, "pending.json");
+  addon.writeFile(pending, bytes);
+  addon.flushFile(pending);
+  const identity = addon.fileIdentity(pending);
+  addon.flush(session);
+  addon.releaseLock(pending);
+  assert.equal(identity.length, 24);
+  assert.throws(() => addon.unlinkIdentified(session, "pending.json", Buffer.alloc(24)), { code: "ESTALE" });
+  addon.unlinkIdentified(session, "pending.json", identity);
+  addon.flush(session);
+  assert.equal(fs.existsSync(path.join(privateRoot, "pending.json")), false);
   const lock = addon.acquireLock(session, ".skill-write.lock");
   assert.throws(() => addon.acquireLock(session, ".skill-write.lock"), { code: "EBUSY" });
   assert.throws(() => addon.releaseLock(session), { code: "EBADF" });

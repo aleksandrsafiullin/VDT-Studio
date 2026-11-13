@@ -120,6 +120,11 @@ impl StorageSession {
         })
     }
 
+    pub fn create_exclusive_handle(&self, name: &str) -> io::Result<OwnedHandle> {
+        self.validate()?;
+        self.directory.create_exclusive_handle(name)
+    }
+
     pub fn write_exclusive(&self, name: &str, bytes: &[u8]) -> io::Result<()> {
         self.validate()?;
         let mut file = self.directory.create_file(name)?;
@@ -224,6 +229,11 @@ impl StorageSession {
         self.directory.read_verified(name, bytes, durable)
     }
 
+    pub fn unlink_identified(&self, name: &str, identity: &[u8]) -> io::Result<()> {
+        self.validate()?;
+        self.directory.unlink_identified(name, identity)
+    }
+
     pub fn unlink(&self, name: &str) -> io::Result<()> {
         self.validate()?;
         self.directory.unlink(name)
@@ -234,7 +244,7 @@ impl StorageSession {
         self.directory.flush()
     }
 
-    fn validate(&self) -> io::Result<()> {
+    pub fn validate(&self) -> io::Result<()> {
         match &self.namespace {
             Namespace::Root(ancestors) => {
                 for ancestor in ancestors {

@@ -17,6 +17,8 @@ const DELETE_FILE_ACCESS: u32 = 0x0013_0080;
 const FILE_RENAME_INFO_CLASS: u32 = 10;
 #[cfg(vdt_storage_addon)]
 const FILE_RENAME_INFORMATION_EX: u32 = 65;
+#[cfg(vdt_storage_addon)]
+const FILE_ID_INFO_CLASS: u32 = 18;
 pub(crate) const FILE_DIRECTORY_FILE: u32 = 0x1;
 const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x20;
 const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
@@ -195,6 +197,21 @@ impl FlushableDirectory {
     }
 
     #[cfg(vdt_storage_addon)]
+    pub(crate) fn create_exclusive_handle(&self, name: &str) -> io::Result<OwnedHandle> {
+        self.reject_reparse_point()?;
+        let handle = open_relative(
+            self.0.raw,
+            name,
+            FILE_ACCESS,
+            0,
+            FILE_CREATE,
+            FILE_NON_DIRECTORY_FILE | FILE_WRITE_THROUGH,
+        )?;
+        handle.validate_private_file()?;
+        Ok(handle)
+    }
+
+    #[cfg(vdt_storage_addon)]
     pub(crate) fn sqlite_path(&self, name: &str) -> io::Result<String> {
         for suffix in ["", "-wal", "-shm", "-journal"] {
             let artifact = format!("{name}{suffix}");
@@ -264,6 +281,27 @@ impl FlushableDirectory {
         unsafe { crate::windows_directory_entries::remove_empty_directory(handle.raw)? };
         drop(handle);
         self.flush()
+    }
+
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn unlink_identified(&self, name: &str, identity: &[u8]) -> io::Result<()> {
+        let handle = open_relative(
+            self.0.raw,
+            name,
+            DELETE_FILE_ACCESS,
+            0,
+            FILE_OPEN,
+            FILE_NON_DIRECTORY_FILE,
+        )?;
+        handle.validate_private_file()?;
+        if handle.identity()?.as_slice() != identity {
+            return Err(io::Error::from_raw_os_error(1306));
+        }
+        CreatedFile {
+            handle,
+            parent: self,
+        }
+        .remove_without_parent_flush()
     }
 
     #[cfg(vdt_storage_addon)]
@@ -600,6 +638,22 @@ impl OwnedHandle {
     }
 
     #[cfg(vdt_storage_addon)]
+    pub(crate) fn identity(&self) -> io::Result<[u8; 24]> {
+        let mut info = [0u64; 3];
+        if unsafe {
+            GetFileInformationByHandleEx(self.raw, FILE_ID_INFO_CLASS, info.as_mut_ptr().cast(), 24)
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let mut bytes = [0u8; 24];
+        for (chunk, number) in bytes.chunks_exact_mut(8).zip(info) {
+            chunk.copy_from_slice(&number.to_ne_bytes());
+        }
+        Ok(bytes)
+    }
+
+    #[cfg(vdt_storage_addon)]
     pub(crate) fn final_path(&self, flags: u32) -> io::Result<String> {
         let mut path = vec![0u16; 32768];
         let length = unsafe {
@@ -663,22 +717,13 @@ impl OwnedHandle {
         }
     }
 
-    pub(crate) fn flush(&self) -> io::Result<()> {
-        if unsafe { FlushFileBuffers(self.raw) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
-    }
-}
-
-impl CreatedFile<'_> {
-    pub fn write_all(&mut self, mut bytes: &[u8]) -> io::Result<()> {
+    pub(crate) fn write_all(&self, mut bytes: &[u8]) -> io::Result<()> {
         while !bytes.is_empty() {
             let count = bytes.len().min(u32::MAX as usize) as u32;
             let mut written = 0;
             if unsafe {
                 WriteFile(
-                    self.handle.raw,
+                    self.raw,
                     bytes.as_ptr().cast(),
                     count,
                     &mut written,
@@ -699,6 +744,19 @@ impl CreatedFile<'_> {
         Ok(())
     }
 
+    pub(crate) fn flush(&self) -> io::Result<()> {
+        if unsafe { FlushFileBuffers(self.raw) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
+
+impl CreatedFile<'_> {
+    pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.handle.write_all(bytes)
+    }
+
     pub fn flush(&self) -> io::Result<()> {
         self.handle.flush()?;
         self.parent.flush()
@@ -707,6 +765,12 @@ impl CreatedFile<'_> {
     /// Schedule deletion on this exclusive handle, close it, then flush its
     /// retained parent. A flush failure means deletion durability is unknown.
     pub fn remove(self) -> io::Result<()> {
+        let parent = self.parent;
+        self.remove_without_parent_flush()?;
+        parent.flush()
+    }
+
+    fn remove_without_parent_flush(self) -> io::Result<()> {
         // FILE_DISPOSITION_INFO.DeleteFile is a one-byte BOOLEAN.
         let delete: u8 = 1;
         if unsafe {
@@ -720,9 +784,8 @@ impl CreatedFile<'_> {
         {
             return Err(io::Error::last_os_error());
         }
-        let parent = self.parent;
         drop(self);
-        parent.flush()
+        Ok(())
     }
 }
 

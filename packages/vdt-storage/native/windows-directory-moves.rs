@@ -109,7 +109,7 @@ pub(crate) fn open_editor_leaf(
     let handle = open_relative(
         directory.0.raw,
         name,
-        READ_ATTRIBUTES_READ_CONTROL_SYNCHRONIZE,
+        GENERIC_READ | READ_ATTRIBUTES_READ_CONTROL_SYNCHRONIZE,
         SHARE_READ_WRITE,
         FILE_OPEN,
         FILE_NON_DIRECTORY_FILE,

@@ -167,6 +167,81 @@ unsafe extern "C" fn vdt_storage_acquire_lock(
 }
 
 #[no_mangle]
+unsafe extern "C" fn vdt_storage_create_file(
+    session: &Session,
+    name: *const u8,
+    length: usize,
+    output: *mut *mut StorageLock,
+) -> u32 {
+    status(|| {
+        let handle = session.create_exclusive_handle(utf8(name, length)?)?;
+        unsafe {
+            *output = Box::into_raw(Box::new(StorageLock {
+                _handle: handle,
+                _session: Rc::clone(session),
+            }))
+        };
+        Ok(())
+    })
+}
+
+#[no_mangle]
+unsafe extern "C" fn vdt_storage_write_file(
+    file: &StorageLock,
+    bytes: *const u8,
+    length: usize,
+) -> u32 {
+    status(|| {
+        let bytes = if length == 0 {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(bytes, length) }
+        };
+        file._handle.write_all(bytes)
+    })
+}
+
+#[no_mangle]
+unsafe extern "C" fn vdt_storage_file_identity(file: &StorageLock, output: *mut u8) -> u32 {
+    status(|| {
+        file._handle.validate_private_file()?;
+        let identity = file._handle.identity()?;
+        unsafe { ptr::copy_nonoverlapping(identity.as_ptr(), output, identity.len()) };
+        Ok(())
+    })
+}
+
+#[no_mangle]
+unsafe extern "C" fn vdt_storage_unlink_identified(
+    session: &Session,
+    name: *const u8,
+    length: usize,
+    bytes: *const u8,
+    byte_length: usize,
+) -> u32 {
+    status(|| {
+        if byte_length != 24 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid file identity",
+            ));
+        }
+        session.unlink_identified(utf8(name, length)?, unsafe {
+            slice::from_raw_parts(bytes, byte_length)
+        })
+    })
+}
+
+#[no_mangle]
+extern "C" fn vdt_storage_flush_file(file: &StorageLock) -> u32 {
+    status(|| {
+        file._handle.flush()?;
+        file._handle.validate_private_file()?;
+        Ok(())
+    })
+}
+
+#[no_mangle]
 unsafe extern "C" fn vdt_storage_open_editor_leaf(
     session: &Session,
     name: *const u8,
@@ -342,6 +417,11 @@ unsafe extern "C" fn vdt_storage_ensure_child(
 #[no_mangle]
 unsafe extern "C" fn vdt_storage_unlink(session: &Session, name: *const u8, length: usize) -> u32 {
     status(|| session.unlink(utf8(name, length)?))
+}
+
+#[no_mangle]
+extern "C" fn vdt_storage_validate(session: &Session) -> u32 {
+    status(|| session.validate())
 }
 
 #[no_mangle]

@@ -22,6 +22,7 @@ extern uint32_t vdt_storage_remove_empty_child(StorageSession *, const char *, s
 extern uint32_t vdt_storage_ensure_child(StorageSession *, const char *, size_t);
 extern uint32_t vdt_storage_unlink(StorageSession *, const char *, size_t);
 extern uint32_t vdt_storage_flush(StorageSession *);
+extern uint32_t vdt_storage_validate(StorageSession *);
 extern void vdt_storage_close(StorageSession *);
 
 typedef struct {
@@ -29,12 +30,23 @@ typedef struct {
 } Session;
 
 extern uint32_t vdt_storage_acquire_lock(StorageSession *, const char *, size_t, StorageLock **);
+extern uint32_t vdt_storage_create_file(StorageSession *, const char *, size_t, StorageLock **);
+extern uint32_t vdt_storage_write_file(StorageLock *, const void *, size_t);
+extern uint32_t vdt_storage_file_identity(StorageLock *, void *);
+extern uint32_t vdt_storage_unlink_identified(StorageSession *, const char *, size_t, const void *, size_t);
+extern uint32_t vdt_storage_flush_file(StorageLock *);
 extern uint32_t vdt_storage_open_editor_leaf(StorageSession *, const char *, size_t, StorageLock **);
 extern void vdt_storage_release_lock(StorageLock *);
 
 typedef struct {
   StorageLock *native;
+  bool writable_file;
 } Lock;
+
+typedef uint32_t (*OpenLease)(StorageSession *, const char *, size_t, StorageLock **);
+static OpenLease lock_operation = vdt_storage_acquire_lock;
+static OpenLease editor_operation = vdt_storage_open_editor_leaf;
+static OpenLease create_file_operation = vdt_storage_create_file;
 
 static const napi_type_tag lock_tag = {
   UINT64_C(0x683ac3ab803849a0), UINT64_C(0xb932ed133266e291)
@@ -230,14 +242,17 @@ static napi_value unlink_expected(napi_env env, napi_callback_info info) {
   napi_value args[3];
   size_t argc = 3, length, byte_length;
   char name[1021];
-  void *bytes;
-  if (napi_get_cb_info(env, info, &argc, args, NULL, NULL) != napi_ok || argc != 3 ||
+  void *bytes, *identity = NULL;
+  if (napi_get_cb_info(env, info, &argc, args, NULL, &identity) != napi_ok || argc != 3 ||
       !read_name(env, args[1], name, &length) || !read_buffer(env, args[2], &bytes, &byte_length)) {
     return fail(env, "EINVAL", "Expected an open session, file name, and expected bytes");
   }
   Session *session = get_session(env, args[0]);
   if (session == NULL || session->native == NULL) return fail(env, "EBADF", "Expected an open Windows storage session");
-  return result(env, vdt_storage_unlink_expected(session->native, name, length, bytes, byte_length));
+  uint32_t error = identity == NULL
+      ? vdt_storage_unlink_expected(session->native, name, length, bytes, byte_length)
+      : vdt_storage_unlink_identified(session->native, name, length, bytes, byte_length);
+  return result(env, error);
 }
 
 static napi_value read_file(napi_env env, napi_callback_info info) {
@@ -386,8 +401,8 @@ static napi_value acquire_lock(napi_env env, napi_callback_info info) {
   napi_value args[2], object;
   size_t argc = 2, length;
   char name[1021];
-  void *editor = NULL;
-  if (napi_get_cb_info(env, info, &argc, args, NULL, &editor) != napi_ok || argc != 2 ||
+  void *operation = NULL;
+  if (napi_get_cb_info(env, info, &argc, args, NULL, &operation) != napi_ok || argc != 2 ||
       napi_get_value_string_utf8(env, args[1], NULL, 0, &length) != napi_ok ||
       length == 0 || length >= sizeof(name) ||
       napi_get_value_string_utf8(env, args[1], name, sizeof(name), &length) != napi_ok) {
@@ -397,9 +412,8 @@ static napi_value acquire_lock(napi_env env, napi_callback_info info) {
   if (session == NULL || session->native == NULL) return fail(env, "EBADF", "Expected an open Windows storage session");
   Lock *lock = calloc(1, sizeof(*lock));
   if (lock == NULL) return fail(env, "ENOMEM", "Could not allocate Windows storage lock");
-  uint32_t error = editor == NULL
-      ? vdt_storage_acquire_lock(session->native, name, length, &lock->native)
-      : vdt_storage_open_editor_leaf(session->native, name, length, &lock->native);
+  lock->writable_file = operation == &create_file_operation;
+  uint32_t error = (*(OpenLease *)operation)(session->native, name, length, &lock->native);
   if (error != 0) {
     free(lock);
     return win32_fail(env, error);
@@ -428,6 +442,41 @@ static napi_value editor_path(napi_env env, napi_callback_info info) {
   return error == 0 ? output.value : win32_fail(env, error);
 }
 
+static napi_value file_operation(napi_env env, napi_callback_info info) {
+  napi_value args[2];
+  size_t argc = 2, length = 0;
+  void *write = NULL, *bytes = NULL;
+  bool valid = false;
+  Lock *file = NULL;
+  if (napi_get_cb_info(env, info, &argc, args, NULL, &write) != napi_ok ||
+      argc != (write == NULL ? 1 : 2) ||
+      napi_check_object_type_tag(env, args[0], &lock_tag, &valid) != napi_ok || !valid ||
+      napi_unwrap(env, args[0], (void **)&file) != napi_ok || file == NULL || file->native == NULL || !file->writable_file ||
+      (write != NULL && !read_buffer(env, args[1], &bytes, &length))) {
+    return fail(env, "EBADF", "Expected an open Windows writable file");
+  }
+  return result(env, write == NULL ? vdt_storage_flush_file(file->native) : vdt_storage_write_file(file->native, bytes, length));
+}
+
+static napi_value file_identity(napi_env env, napi_callback_info info) {
+  napi_value arg, output;
+  size_t argc = 1;
+  bool valid = false;
+  Lock *file = NULL;
+  unsigned char identity[24];
+  if (napi_get_cb_info(env, info, &argc, &arg, NULL, NULL) != napi_ok || argc != 1 ||
+      napi_check_object_type_tag(env, arg, &lock_tag, &valid) != napi_ok || !valid ||
+      napi_unwrap(env, arg, (void **)&file) != napi_ok || file == NULL || file->native == NULL || !file->writable_file) {
+    return fail(env, "EBADF", "Expected an open Windows writable file");
+  }
+  uint32_t error = vdt_storage_file_identity(file->native, identity);
+  if (error != 0) return win32_fail(env, error);
+  if (napi_create_buffer_copy(env, sizeof(identity), identity, NULL, &output) != napi_ok) {
+    return fail(env, "EIO", "Could not return Windows file identity");
+  }
+  return output;
+}
+
 static napi_value release_lock(napi_env env, napi_callback_info info) {
   napi_value arg;
   size_t argc = 1;
@@ -443,25 +492,36 @@ static napi_value release_lock(napi_env env, napi_callback_info info) {
   return result(env, 0);
 }
 
-static napi_value flush_or_close(napi_env env, napi_callback_info info) {
+static napi_value validate_session(napi_env env, napi_callback_info info) {
   napi_value arg;
   size_t argc = 1;
-  void *close = NULL;
-  if (napi_get_cb_info(env, info, &argc, &arg, NULL, &close) != napi_ok || argc != 1) {
+  if (napi_get_cb_info(env, info, &argc, &arg, NULL, NULL) != napi_ok || argc != 1) {
     return fail(env, "EINVAL", "Expected one Windows storage session");
   }
   Session *session = get_session(env, arg);
-  if (session == NULL || (close == NULL && session->native == NULL)) {
+  if (session == NULL || session->native == NULL) return fail(env, "EBADF", "Expected an open Windows storage session");
+  return result(env, vdt_storage_validate(session->native));
+}
+
+static napi_value flush_or_close(napi_env env, napi_callback_info info) {
+  napi_value arg;
+  size_t argc = 1;
+  void *operation = NULL;
+  if (napi_get_cb_info(env, info, &argc, &arg, NULL, &operation) != napi_ok || argc != 1) {
+    return fail(env, "EINVAL", "Expected one Windows storage session");
+  }
+  Session *session = get_session(env, arg);
+  if (session == NULL || (operation == NULL && session->native == NULL)) {
     return fail(env, "EBADF", "Expected an open Windows storage session");
   }
-  if (close == NULL) return result(env, vdt_storage_flush(session->native));
+  if (operation == NULL) return result(env, vdt_storage_flush(session->native));
   vdt_storage_close(session->native);
   session->native = NULL;
   return result(env, 0);
 }
 
 NAPI_MODULE_INIT() {
-  static int close_marker, create_marker, create_child_marker, replace_marker, move_file_marker, editor_marker, editor_directory_marker;
+  static int close_marker, create_marker, create_child_marker, replace_marker, move_file_marker, editor_directory_marker, write_file_marker, identified_marker;
   napi_property_descriptor properties[] = {
     {"open", NULL, open_session, NULL, NULL, NULL, napi_default, NULL},
     {"initialize", NULL, open_session, NULL, NULL, NULL, napi_default, &create_marker},
@@ -476,13 +536,19 @@ NAPI_MODULE_INIT() {
     {"list", NULL, list_entries, NULL, NULL, NULL, napi_default, NULL},
     {"moveFile", NULL, move_entry, NULL, NULL, NULL, napi_default, &move_file_marker},
     {"moveDirectory", NULL, move_entry, NULL, NULL, NULL, napi_default, NULL},
+    {"unlinkIdentified", NULL, unlink_expected, NULL, NULL, NULL, napi_default, &identified_marker},
     {"unlinkExpected", NULL, unlink_expected, NULL, NULL, NULL, napi_default, NULL},
     {"unlink", NULL, named_operation, NULL, NULL, NULL, napi_default, &unlink_operation},
     {"ensureChild", NULL, named_operation, NULL, NULL, NULL, napi_default, &ensure_child_operation},
     {"removeEmptyChild", NULL, named_operation, NULL, NULL, NULL, napi_default, &remove_empty_child_operation},
+    {"validate", NULL, validate_session, NULL, NULL, NULL, napi_default, NULL},
     {"flush", NULL, flush_or_close, NULL, NULL, NULL, napi_default, NULL},
-    {"acquireLock", NULL, acquire_lock, NULL, NULL, NULL, napi_default, NULL},
-    {"openEditorLeaf", NULL, acquire_lock, NULL, NULL, NULL, napi_default, &editor_marker},
+    {"acquireLock", NULL, acquire_lock, NULL, NULL, NULL, napi_default, &lock_operation},
+    {"openEditorLeaf", NULL, acquire_lock, NULL, NULL, NULL, napi_default, &editor_operation},
+    {"createFile", NULL, acquire_lock, NULL, NULL, NULL, napi_default, &create_file_operation},
+    {"writeFile", NULL, file_operation, NULL, NULL, NULL, napi_default, &write_file_marker},
+    {"fileIdentity", NULL, file_identity, NULL, NULL, NULL, napi_default, NULL},
+    {"flushFile", NULL, file_operation, NULL, NULL, NULL, napi_default, NULL},
     {"editorPath", NULL, editor_path, NULL, NULL, NULL, napi_default, NULL},
     {"releaseLock", NULL, release_lock, NULL, NULL, NULL, napi_default, NULL},
     {"close", NULL, flush_or_close, NULL, NULL, NULL, napi_default, &close_marker}
