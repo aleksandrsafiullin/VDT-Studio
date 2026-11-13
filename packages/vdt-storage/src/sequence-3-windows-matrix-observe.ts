@@ -25,7 +25,7 @@ export function observeMatrixDatabase(db: DatabaseSync) {
   });
   const count = (name: string, where = "") => schema.some((row) => row.type === "table" && row.name === name)
     ? Number(db.prepare(`SELECT count(*) AS count FROM ${quote(name)} ${where}`).get()?.count) : 0;
-  const attempt = db.prepare("SELECT status,attempt_id,owner_token,lease_generation,lease_expires_at,database_id FROM migration_attempts WHERE target_manifest_hash=? ORDER BY created_at DESC LIMIT 1").get(MATRIX_MANIFEST) ?? null;
+  const attempt = db.prepare("SELECT status,attempt_id,owner_token,lease_generation,lease_expires_at,database_id FROM migration_attempts WHERE target_manifest_hash=? ORDER BY started_at DESC, attempt_id DESC LIMIT 1").get(MATRIX_MANIFEST) ?? null;
   const state = db.prepare("SELECT status,blocked_reason FROM migration_state").get();
   const application = schema.some((row) => row.name === "migration_transform_applications_v1")
     ? db.prepare("SELECT migration_application_id, fence_owner_token, fence_lease_generation FROM migration_transform_applications_v1").get() ?? null : null;

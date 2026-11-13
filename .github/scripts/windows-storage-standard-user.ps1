@@ -63,6 +63,12 @@ try {
   $matrixProcess = Start-Process -FilePath (Join-Path $stage 'node.exe') -ArgumentList $matrixArgs -WorkingDirectory $repository -Credential $credential -RedirectStandardOutput $matrixReport -RedirectStandardError $matrixStderr -Wait -PassThru
   Get-ChildItem -LiteralPath $native -Filter 'sequence-3-windows-evidence.json*' | Copy-Item -Destination $evidence
   if ($matrixProcess.ExitCode -ne 0) { throw "Native frozen Sequence 3 matrix failed with exit code $($matrixProcess.ExitCode)" }
+  $matrixVerify = Join-Path $repository 'packages\vdt-storage\src\sequence-3-windows-matrix-evidence.ts'
+  $verifyReport = Join-Path $evidence 'sequence-3-windows-matrix.verify.log'
+  $verifyStderr = Join-Path $evidence 'sequence-3-windows-matrix.verify.stderr.log'
+  $verifyArgs = @('--import', 'tsx', $matrixVerify, $matrixOutput)
+  $verifyProcess = Start-Process -FilePath (Join-Path $stage 'node.exe') -ArgumentList $verifyArgs -WorkingDirectory $repository -Credential $credential -RedirectStandardOutput $verifyReport -RedirectStandardError $verifyStderr -Wait -PassThru
+  if ($verifyProcess.ExitCode -ne 0) { throw "Native frozen Sequence 3 evidence verification failed with exit code $($verifyProcess.ExitCode)" }
 } finally {
   if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
   if (Get-LocalUser -Name $name -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $name }
