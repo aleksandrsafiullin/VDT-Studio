@@ -129,12 +129,24 @@ impl StorageSession {
 
     pub fn publish(&self, stage: &str, destination: &str, expected: &[u8]) -> io::Result<()> {
         self.validate()?;
-        self.directory.publish(stage, destination, expected)
+        self.directory.publish(stage, destination, expected, None)
     }
 
-    pub fn open_child(parent: Rc<Self>, name: &str) -> io::Result<Self> {
+    pub fn replace(
+        &self,
+        stage: &str,
+        destination: &str,
+        previous: &[u8],
+        expected: &[u8],
+    ) -> io::Result<()> {
+        self.validate()?;
+        self.directory
+            .publish(stage, destination, expected, Some(previous))
+    }
+
+    pub fn open_child(parent: Rc<Self>, name: &str, create: bool) -> io::Result<Self> {
         parent.validate()?;
-        let directory = parent.directory.open_child(name)?;
+        let directory = parent.directory.open_child(name, create)?;
         Ok(Self {
             directory,
             namespace: Namespace::Child(parent),

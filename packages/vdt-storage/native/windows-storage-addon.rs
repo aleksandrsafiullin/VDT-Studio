@@ -71,6 +71,38 @@ unsafe extern "C" fn vdt_storage_publish(
 }
 
 #[no_mangle]
+unsafe extern "C" fn vdt_storage_replace(
+    session: &Session,
+    stage: *const u8,
+    stage_len: usize,
+    destination: *const u8,
+    dest_len: usize,
+    previous: *const u8,
+    prev_len: usize,
+    expected: *const u8,
+    length: usize,
+) -> u32 {
+    status(|| {
+        let old = if prev_len == 0 {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(previous, prev_len) }
+        };
+        let bytes = if length == 0 {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(expected, length) }
+        };
+        session.replace(
+            utf8(stage, stage_len)?,
+            utf8(destination, dest_len)?,
+            old,
+            bytes,
+        )
+    })
+}
+
+#[no_mangle]
 unsafe extern "C" fn vdt_storage_read(
     session: &Session,
     name: *const u8,
@@ -97,10 +129,12 @@ unsafe extern "C" fn vdt_storage_open_child(
     session: &Session,
     name: *const u8,
     length: usize,
+    create: u8,
     output: *mut *mut Session,
 ) -> u32 {
     status(|| {
-        let child = StorageSession::open_child(Rc::clone(session), utf8(name, length)?)?;
+        let child =
+            StorageSession::open_child(Rc::clone(session), utf8(name, length)?, create != 0)?;
         unsafe { *output = Box::into_raw(Box::new(Rc::new(child))) };
         Ok(())
     })

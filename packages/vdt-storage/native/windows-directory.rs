@@ -15,6 +15,8 @@ const FILE_DISPOSITION_INFO_CLASS: u32 = 4;
 const DELETE_FILE_ACCESS: u32 = 0x0013_0080;
 #[cfg(vdt_storage_addon)]
 const FILE_RENAME_INFO_CLASS: u32 = 10;
+#[cfg(vdt_storage_addon)]
+const FILE_RENAME_INFORMATION_EX: u32 = 65;
 const FILE_DIRECTORY_FILE: u32 = 0x1;
 const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x20;
 const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
@@ -259,9 +261,13 @@ impl FlushableDirectory {
     }
 
     #[cfg(vdt_storage_addon)]
-    pub(crate) fn open_child(&self, name: &str) -> io::Result<Self> {
+    pub(crate) fn open_child(&self, name: &str, create: bool) -> io::Result<Self> {
         self.validate_private_descendant()?;
-        let child = self.0.open_flushable_directory(name)?;
+        let child = if create {
+            self.0.create_private_directory(name)?
+        } else {
+            self.0.open_flushable_directory(name)?
+        };
         child.validate_private_descendant()?;
         Ok(child)
     }
@@ -323,22 +329,37 @@ impl FlushableDirectory {
         Ok(length)
     }
 
-    /// Publish an already verified same-directory stage. The source handle
-    /// excludes concurrent writers and namespace changes during rename.
+    /// Publish a verified same-directory stage, optionally replacing an
+    /// exclusively retained destination with the exact expected bytes.
     #[cfg(vdt_storage_addon)]
     pub(crate) fn publish(
         &self,
         stage: &str,
         destination: &str,
         expected: &[u8],
+        replace: Option<&[u8]>,
     ) -> io::Result<()> {
-        let name = encode_component(destination)?;
         if stage.eq_ignore_ascii_case(destination) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "stage and destination must differ",
             ));
         }
+        let target = if let Some(previous) = replace {
+            let handle = open_relative(
+                self.0.raw,
+                destination,
+                0x8012_0080,
+                0,
+                FILE_OPEN,
+                FILE_NON_DIRECTORY_FILE,
+            )?;
+            handle.validate_private_file()?;
+            handle.verify_exact_bytes(previous)?;
+            Some(handle)
+        } else {
+            None
+        };
         let source = open_relative(
             self.0.raw,
             stage,
@@ -351,6 +372,18 @@ impl FlushableDirectory {
         source.verify_exact_bytes(expected)?;
         source.flush()?;
         self.reject_reparse_point()?;
+        self.rename_handle(&source, destination, target.is_some())?;
+        self.flush()
+    }
+
+    #[cfg(vdt_storage_addon)]
+    fn rename_handle(
+        &self,
+        source: &OwnedHandle,
+        destination: &str,
+        replace: bool,
+    ) -> io::Result<()> {
+        let name = encode_component(destination)?;
         let name_bytes = name.len() * mem::size_of::<u16>();
         let bytes = mem::offset_of!(FileRenameInfo, file_name) + name_bytes;
         let mut aligned = vec![
@@ -360,7 +393,14 @@ impl FlushableDirectory {
                 .div_ceil(mem::size_of::<usize>())
         ];
         let info = aligned.as_mut_ptr().cast::<FileRenameInfo>();
-        unsafe {
+        let mut status = IoStatusBlock {
+            status: 0,
+            information: 0,
+        };
+        let result = unsafe {
+            // REPLACE_IF_EXISTS | POSIX_SEMANTICS preserves the existing open
+            // object's handle while moving the verified stage to its name.
+            (*info).replace_if_exists = if replace { 3 } else { 0 };
             (*info).root_directory = self.0.raw;
             (*info).file_name_length = name_bytes as u32;
             ptr::copy_nonoverlapping(
@@ -368,24 +408,24 @@ impl FlushableDirectory {
                 ptr::addr_of_mut!((*info).file_name).cast(),
                 name.len(),
             );
-            let mut status = IoStatusBlock {
-                status: 0,
-                information: 0,
-            };
-            let result = NtSetInformationFile(
+            NtSetInformationFile(
                 source.raw,
                 &mut status,
                 info.cast(),
                 bytes as u32,
-                FILE_RENAME_INFO_CLASS,
-            );
-            if result < 0 {
-                return Err(io::Error::from_raw_os_error(
-                    RtlNtStatusToDosError(result) as i32
-                ));
-            }
+                if replace {
+                    FILE_RENAME_INFORMATION_EX
+                } else {
+                    FILE_RENAME_INFO_CLASS
+                },
+            )
+        };
+        if result < 0 {
+            return Err(io::Error::from_raw_os_error(
+                unsafe { RtlNtStatusToDosError(result) } as i32,
+            ));
         }
-        self.flush()
+        Ok(())
     }
 
     fn reject_reparse_point(&self) -> io::Result<()> {
@@ -429,9 +469,9 @@ impl OwnedHandle {
     }
 
     #[cfg(vdt_storage_addon)]
-    pub(crate) fn ensure_private_directory(&self, name: &str) -> io::Result<FlushableDirectory> {
+    fn create_private_directory(&self, name: &str) -> io::Result<FlushableDirectory> {
         let descriptor = crate::windows_security::private_directory_descriptor()?;
-        match open_relative_with_security(
+        let handle = open_relative_with_security(
             self.raw,
             name,
             DIRECTORY_FLUSH_ACCESS,
@@ -439,14 +479,17 @@ impl OwnedHandle {
             FILE_CREATE,
             FILE_DIRECTORY_FILE,
             descriptor.0,
-        ) {
-            Ok(handle) => {
-                let directory = FlushableDirectory(handle);
-                directory.validate_private_dacl()?;
-                directory.flush()?;
-                self.flush()?;
-                Ok(directory)
-            }
+        )?;
+        let directory = FlushableDirectory(handle);
+        directory.validate_private_dacl()?;
+        directory.flush()?;
+        self.flush()?;
+        Ok(directory)
+    }
+
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn ensure_private_directory(&self, name: &str) -> io::Result<FlushableDirectory> {
+        match self.create_private_directory(name) {
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 let child = self.open_flushable_directory(name)?;
                 child.validate_private_dacl()?;
@@ -454,7 +497,7 @@ impl OwnedHandle {
                 self.flush()?;
                 Ok(child)
             }
-            Err(error) => Err(error),
+            result => result,
         }
     }
 

@@ -33,6 +33,12 @@ try {
   addon.publish(session, stage, final, bytes);
   assert.equal(fs.existsSync(path.join(privateRoot, stage)), false);
   assert.deepEqual(fs.readFileSync(path.join(privateRoot, final)), bytes);
+  const replacement = Buffer.from("replacement");
+  addon.writeExclusive(session, stage, replacement);
+  assert.throws(() => addon.replace(session, stage, final, replacement, Buffer.from("wrong")), { code: "EBADMSG" });
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, final)), bytes);
+  addon.replace(session, stage, final, replacement, bytes);
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, final)), replacement);
   addon.unlink(session, final);
   const link = path.join(privateRoot, "alias.dat");
   fs.linkSync(path.join(privateRoot, name), link);
@@ -62,7 +68,8 @@ try {
   assert(list.some((entry) => entry.name === "данные-249.txt"));
   addon.close(entries);
   assert.throws(() => addon.removeEmptyChild(session, "managed"), { code: "ENOTEMPTY" });
-  addon.ensureChild(session, "empty");
+  addon.close(addon.createChild(session, "empty"));
+  assert.throws(() => addon.createChild(session, "empty"), { code: "EEXIST" });
   addon.removeEmptyChild(session, "empty");
   assert.equal(fs.existsSync(path.join(privateRoot, "empty")), false);
   fs.mkdirSync(path.join(privateRoot, "inherited-only"));
