@@ -141,6 +141,11 @@ impl StorageSession {
         })
     }
 
+    pub fn acquire_lock(&self, name: &str) -> io::Result<OwnedHandle> {
+        self.validate()?;
+        self.directory.acquire_lock(name)
+    }
+
     pub fn list(&self) -> io::Result<Vec<crate::windows_directory_entries::DirectoryEntry>> {
         self.validate()?;
         self.directory.list()

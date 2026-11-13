@@ -71,6 +71,13 @@ try {
   addon.writeExclusive(inherited, "owned.dat", bytes);
   addon.unlink(inherited, "owned.dat");
   addon.close(inherited);
+  const lock = addon.acquireLock(session, ".skill-write.lock");
+  assert.throws(() => addon.acquireLock(session, ".skill-write.lock"), { code: "EBUSY" });
+  assert.throws(() => addon.releaseLock(session), { code: "EBADF" });
+  addon.releaseLock(lock);
+  addon.releaseLock(lock);
+  const reacquired = addon.acquireLock(session, ".skill-write.lock");
+  addon.releaseLock(reacquired);
   addon.flush(session);
   assert.throws(() => fs.renameSync(privateRoot, privateRoot + ".moved"));
 } finally {

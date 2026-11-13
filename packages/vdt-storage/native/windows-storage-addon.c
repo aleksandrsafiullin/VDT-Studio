@@ -20,6 +20,18 @@ typedef struct {
   StorageSession *native;
 } Session;
 
+typedef struct StorageLock StorageLock;
+extern uint32_t vdt_storage_acquire_lock(StorageSession *, const char *, size_t, StorageLock **);
+extern void vdt_storage_release_lock(StorageLock *);
+
+typedef struct {
+  StorageLock *native;
+} Lock;
+
+static const napi_type_tag lock_tag = {
+  UINT64_C(0x683ac3ab803849a0), UINT64_C(0xb932ed133266e291)
+};
+
 static const napi_type_tag session_tag = {
   UINT64_C(0x3448519ba74ed10b), UINT64_C(0xaf2346be09ea85fd)
 };
@@ -35,6 +47,7 @@ static napi_value win32_fail(napi_env env, uint32_t error) {
     case 2: case 3: code = "ENOENT"; break;
     case 5: code = "EACCES"; break;
     case 13: code = "EBADMSG"; break;
+    case 33:
     case 32: code = "EBUSY"; break;
     case 50: code = "ENOTSUP"; break;
     case 80: case 183: code = "EEXIST"; break;
@@ -267,6 +280,57 @@ static napi_value open_child(napi_env env, napi_callback_info info) {
   return wrap_session(env, child, error);
 }
 
+static void finalize_lock(napi_env env, void *data, void *hint) {
+  (void)env;
+  (void)hint;
+  Lock *lock = data;
+  vdt_storage_release_lock(lock->native);
+  free(lock);
+}
+
+static napi_value acquire_lock(napi_env env, napi_callback_info info) {
+  napi_value args[2], object;
+  size_t argc = 2, length;
+  char name[1021];
+  if (napi_get_cb_info(env, info, &argc, args, NULL, NULL) != napi_ok || argc != 2 ||
+      napi_get_value_string_utf8(env, args[1], NULL, 0, &length) != napi_ok ||
+      length == 0 || length >= sizeof(name) ||
+      napi_get_value_string_utf8(env, args[1], name, sizeof(name), &length) != napi_ok) {
+    return fail(env, "EINVAL", "Expected a session and one lock name");
+  }
+  Session *session = get_session(env, args[0]);
+  if (session == NULL || session->native == NULL) return fail(env, "EBADF", "Expected an open Windows storage session");
+  Lock *lock = calloc(1, sizeof(*lock));
+  if (lock == NULL) return fail(env, "ENOMEM", "Could not allocate Windows storage lock");
+  uint32_t error = vdt_storage_acquire_lock(session->native, name, length, &lock->native);
+  if (error != 0) {
+    free(lock);
+    return win32_fail(env, error);
+  }
+  if (napi_create_object(env, &object) != napi_ok ||
+      napi_type_tag_object(env, object, &lock_tag) != napi_ok ||
+      napi_wrap(env, object, lock, finalize_lock, NULL, NULL) != napi_ok) {
+    finalize_lock(env, lock, NULL);
+    return fail(env, "EIO", "Could not wrap Windows storage lock");
+  }
+  return object;
+}
+
+static napi_value release_lock(napi_env env, napi_callback_info info) {
+  napi_value arg;
+  size_t argc = 1;
+  bool valid = false;
+  Lock *lock = NULL;
+  if (napi_get_cb_info(env, info, &argc, &arg, NULL, NULL) != napi_ok || argc != 1 ||
+      napi_check_object_type_tag(env, arg, &lock_tag, &valid) != napi_ok || !valid ||
+      napi_unwrap(env, arg, (void **)&lock) != napi_ok || lock == NULL) {
+    return fail(env, "EBADF", "Expected a Windows storage lock");
+  }
+  vdt_storage_release_lock(lock->native);
+  lock->native = NULL;
+  return result(env, 0);
+}
+
 static napi_value flush_or_close(napi_env env, napi_callback_info info) {
   napi_value arg;
   size_t argc = 1;
@@ -298,6 +362,8 @@ NAPI_MODULE_INIT() {
     {"ensureChild", NULL, named_operation, NULL, NULL, NULL, napi_default, &ensure_child_operation},
     {"removeEmptyChild", NULL, named_operation, NULL, NULL, NULL, napi_default, &remove_empty_child_operation},
     {"flush", NULL, flush_or_close, NULL, NULL, NULL, napi_default, NULL},
+    {"acquireLock", NULL, acquire_lock, NULL, NULL, NULL, napi_default, NULL},
+    {"releaseLock", NULL, release_lock, NULL, NULL, NULL, napi_default, NULL},
     {"close", NULL, flush_or_close, NULL, NULL, NULL, napi_default, &close_marker}
   };
   if (napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties) != napi_ok) {

@@ -4,6 +4,8 @@ mod windows_directory;
 mod windows_directory_entries;
 #[path = "windows-security.rs"]
 mod windows_security;
+#[path = "windows-skill-lock.rs"]
+mod windows_skill_lock;
 #[path = "windows-storage-session.rs"]
 mod windows_storage_session;
 
@@ -102,6 +104,37 @@ unsafe extern "C" fn vdt_storage_open_child(
         unsafe { *output = Box::into_raw(Box::new(Rc::new(child))) };
         Ok(())
     })
+}
+
+struct StorageLock {
+    _handle: windows_directory::OwnedHandle,
+    _session: Session,
+}
+
+#[no_mangle]
+unsafe extern "C" fn vdt_storage_acquire_lock(
+    session: &Session,
+    name: *const u8,
+    length: usize,
+    output: *mut *mut StorageLock,
+) -> u32 {
+    status(|| {
+        let handle = session.acquire_lock(utf8(name, length)?)?;
+        unsafe {
+            *output = Box::into_raw(Box::new(StorageLock {
+                _handle: handle,
+                _session: Rc::clone(session),
+            }))
+        };
+        Ok(())
+    })
+}
+
+#[no_mangle]
+unsafe extern "C" fn vdt_storage_release_lock(lock: *mut StorageLock) {
+    if !lock.is_null() {
+        drop(unsafe { Box::from_raw(lock) });
+    }
 }
 
 type EntryCallback = unsafe extern "C" fn(*mut std::ffi::c_void, *const u8, usize, u8, u8) -> u8;

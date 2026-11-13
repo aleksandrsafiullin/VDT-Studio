@@ -191,6 +191,25 @@ impl FlushableDirectory {
     }
 
     #[cfg(vdt_storage_addon)]
+    pub(crate) fn acquire_lock(&self, name: &str) -> io::Result<OwnedHandle> {
+        self.validate_private_descendant()?;
+        // FILE_OPEN_IF preserves the fixed lock inode across owners and restarts.
+        let handle = open_relative(
+            self.0.raw,
+            name,
+            0xc012_0080,
+            FILE_SHARE_READ_WRITE,
+            3,
+            FILE_NON_DIRECTORY_FILE,
+        )?;
+        handle.validate_private_file()?;
+        unsafe { crate::windows_skill_lock::acquire_write_lock(handle.raw)? };
+        handle.flush()?;
+        self.flush()?;
+        Ok(handle)
+    }
+
+    #[cfg(vdt_storage_addon)]
     pub(crate) fn list(&self) -> io::Result<Vec<crate::windows_directory_entries::DirectoryEntry>> {
         self.validate_private_descendant()?;
         unsafe { crate::windows_directory_entries::list(self.0.raw) }
