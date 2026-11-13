@@ -108,3 +108,77 @@ test("a stale second tab keeps its draft and cannot overwrite another tab's save
     await second.close();
   }
 });
+
+test("cold Home launch restores an unsaved draft in its original VDT", async ({ page, productionWorkspace, request }) => {
+  const { projectId, vdtId } = productionWorkspace;
+  const saved = async () => (await request.get(`/api/vdt/vdts/${vdtId}`)).json();
+  await page.goto(`/projects/${projectId}?vdt=${vdtId}`);
+  await selectCanvasKpi(page, "Nominal Rate");
+  const input = page.getByTestId("right-panel").getByRole("spinbutton", { name: "Baseline value", exact: true });
+  const before = await saved();
+  await input.fill("250");
+  await expect(input).toHaveValue("250");
+  const versions = page.getByTestId("version-history-panel");
+  await page.getByTestId("version-history-button").click();
+  await versions.getByRole("button", { name: "Save version", exact: true }).click();
+  await versions.getByRole("textbox", { name: "New version name", exact: true }).fill("Draft milestone");
+  await versions.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(versions.getByRole("heading", { name: "Draft milestone", exact: true })).toBeVisible();
+  await versions.getByRole("button", { name: "Close versions", exact: true }).click();
+  await page.goto("/");
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}\\?vdt=${vdtId}$`));
+  await selectCanvasKpi(page, "Nominal Rate");
+  await expect(input).toHaveValue("250");
+  expect((await saved()).head).toEqual(before.head);
+  await page.getByTestId("version-history-button").click();
+  await expect(versions.getByRole("button", { name: /^Draft milestone/ })).toBeVisible();
+  await versions.getByRole("button", { name: "Close versions", exact: true }).click();
+  await page.getByTestId("workspace-home").click();
+  await expect(page.getByTestId("projects-home")).toBeVisible();
+  expect((await saved()).activeProject.graph.nodes.find((node: { id: string }) => node.id === "nominal_rate").baselineValue).toBe(250);
+});
+
+
+test("cold Home launch keeps a deleted VDT draft available for explicit download", async ({ page, productionWorkspace, request }) => {
+  const { projectId, vdtId } = productionWorkspace;
+  await page.goto(`/projects/${projectId}?vdt=${vdtId}`);
+  await selectCanvasKpi(page, "Nominal Rate");
+  const input = page.getByTestId("right-panel").getByRole("spinbutton", { name: "Baseline value", exact: true });
+  await input.fill("250");
+  expect((await request.delete(`/api/vdt/vdts/${vdtId}`)).ok()).toBeTruthy();
+  await page.goto("/");
+  const download = page.getByRole("button", { name: "Download local draft" });
+  await expect(download).toBeVisible();
+  const downloaded = page.waitForEvent("download");
+  await download.click();
+  expect((await downloaded).suggestedFilename()).toBe("recovered-vdt-draft.json");
+  await expect(page).toHaveURL(/\/$/);
+});
+
+test("cold Home launch retains a stale draft without replacing the newer saved VDT", async ({ page, context, productionWorkspace, request }) => {
+  const { projectId, vdtId } = productionWorkspace;
+  const url = `/projects/${projectId}?vdt=${vdtId}`;
+  const baseline = (editor: Page) => editor.getByTestId("right-panel").getByRole("spinbutton", { name: "Baseline value", exact: true });
+  await page.goto(url);
+  const otherContext = await context.browser()!.newContext({ baseURL: new URL(page.url()).origin });
+  try {
+    const other = await otherContext.newPage();
+    await other.goto(url);
+    await selectCanvasKpi(other, "Nominal Rate");
+    await baseline(other).fill("275");
+    await other.getByTestId("workspace-home").click();
+    await expect(other.getByTestId("projects-home")).toBeVisible();
+    await selectCanvasKpi(page, "Nominal Rate");
+    await baseline(page).fill("250");
+    await page.goto("/");
+    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}\\?vdt=${vdtId}$`));
+    await selectCanvasKpi(page, "Nominal Rate");
+    await expect(baseline(page)).toHaveValue("250");
+    await page.getByTestId("workspace-home").click();
+    await expect(page.getByTestId("workspace-navigation-error")).toBeVisible();
+    const saved = await (await request.get(`/api/vdt/vdts/${vdtId}`)).json();
+    expect(saved.activeProject.graph.nodes.find((node: { id: string }) => node.id === "nominal_rate").baselineValue).toBe(275);
+  } finally {
+    await otherContext.close();
+  }
+});

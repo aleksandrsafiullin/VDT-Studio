@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, type ComponentProps } from "react";
-import { navigateAfterWorkspaceSave } from "./workspace-navigation";
+import { markDeliberateHomeNavigation, navigateAfterWorkspaceSave } from "./workspace-navigation";
 import { useVdtStudioStore } from "./vdt-store";
 
 export function WorkspaceNavigationLink({ href, onSavedNavigate, ...props }: Omit<ComponentProps<typeof Link>, "href" | "onNavigate"> & { href: string; onSavedNavigate?: (() => void) | undefined }) {
@@ -39,7 +39,11 @@ export function WorkspaceNavigationLink({ href, onSavedNavigate, ...props }: Omi
       saving.current = true;
       setBusy(true);
       setError(undefined);
-      void navigateAfterWorkspaceSave(href, useVdtStudioStore.getState(), (destination) => onSavedNavigate ? onSavedNavigate() : router.push(destination))
+      void navigateAfterWorkspaceSave(href, useVdtStudioStore.getState(), (destination) => {
+        if (destination === "/") markDeliberateHomeNavigation(useVdtStudioStore.getState());
+        if (onSavedNavigate) onSavedNavigate();
+        else router.push(destination);
+      })
         .then((navigated) => {
           if (!navigated) setError(useVdtStudioStore.getState().workspace.error ?? "Could not save your changes. Stay in this VDT and retry.");
         })

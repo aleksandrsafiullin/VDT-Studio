@@ -377,6 +377,8 @@ The root KPI appears on the left and drivers expand to the right. The canvas is 
 - Project summaries omit the AI-run counter. Other counters use SQL aggregates rather than loading conversation, run or proposal payloads. Stored AI sessions and history are preserved.
 - The editor's Home and Back to project links wait for save confirmation before leaving. A payload identical to the active saved revision reuses that revision. A failed save keeps the editor open. A conflict keeps the draft visible and blocks another save, including after a summary refresh. **Discard local edits and reload** opens the stored revision so the user can reapply changes. The back link supersedes a still-pending newly created VDT route.
 
+Manual editor edits are saved to the project with **Save active VDT** or normal in-app navigation. The app also keeps a local draft. On startup it reopens the draft in its original VDT with the saved revision it was based on. If that revision changed, the draft stays open and the normal conflict checks protect the saved graph. If the VDT cannot be reopened, the Home screen offers to download the local draft or discard it.
+
 Current status: implemented as an alpha foundation. W0.1 atomic revision conflict handling is implemented: manual/create/agent writers use one strict CAS/idempotency boundary and an exclusive-create no-clobber final path. Conflicts preserve local unsaved work, and failed auto-save blocks navigation. A single durable source-of-truth policy and metadata/revision ownership remain W0.5 blockers; Windows durability is unverified.
 
 ### Factor-tree editing and calculation

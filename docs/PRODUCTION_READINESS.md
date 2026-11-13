@@ -25,7 +25,9 @@ That candidate's full source run passed 3,808 tests, failed two concurrency test
 and skipped 45. Reviewed corrections address a mixed recovery-state snapshot
 and a retained pending SQLite lock after failed fence acquisition. Their
 focused regressions pass, but the original CI interleavings remain unconfirmed
-and a fresh complete gate is required.
+and the fresh complete gate passed at `8e303593cabc`: 3,813 tests, 45 skips,
+157 browser cases and both saved-copy cases. The native Windows probe timed out
+in rustc before its tests, leaving that separate gate open.
 Release tooling separates source/fixture results, packaged-byte/trust checks and
 installed user workflows. The isolated Windows process fixture and standard-user
 NTFS primitive checks provide real Windows evidence, but do not qualify the
@@ -36,8 +38,9 @@ to the verified packaged runtime boundary. At `8c60019c512d`, the actual compile
 Windows standalone server also passed standard-user startup, storage, identity,
 session rejection and graceful shutdown checks. `261741e88070` additionally passed
 actual packaged sidecar activation, handshake and EOF shutdown after installed
-QA exposed a missing entry-point invocation. Its Windows installed cold-launch
-and persistence retest remains in progress. Both actual packages exclude the
+QA exposed a missing entry-point invocation. Windows installed `261741e88070`
+then passed its first shortcut launch and reopened an ordinary saved 64-tonne
+revision. Back still produced an unresolved newer-edits warning. Both packages exclude the
 unused native image backend. Mac clean and upgrade checks on Tahoe 26.6.2 preserved
 formulas, manual values, revision history and original-file bytes; local
 diagnostic download and normal native Quit passed. Sonoma 14.0 at `261741e88070`
@@ -48,7 +51,12 @@ and the Windows installer unsigned; distribution trust is not accepted.
 The complete per-platform live-provider matrix remains unqualified. The next
 candidate version is `0.1.0-alpha.2`; `261741e88070` is an immutable QA checkpoint,
 not the final release candidate. Corrected concurrency code requires refreshed
-source, native storage and installed evidence.
+source, native storage and installed evidence. Subsequent Windows QA also exposed
+default Home startup clearing an unsaved draft's identity. Scoped restoration
+and deliberate navigation protection have source review and targeted production
+browser evidence; final full and installed checks remain open. The original
+42-tonne draft and a later named milestone were not ordinary committed revisions;
+loss of a committed revision is not established.
 
 Details: [W1](implementation/OPEN_ALPHA_W1_2026-11-13.md),
 [W2](implementation/OPEN_ALPHA_W2_2026-11-13.md),

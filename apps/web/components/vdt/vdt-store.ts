@@ -2266,8 +2266,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           set((state) => ({
             workspace: {
               ...state.workspace,
-              activePanel: "vdt",
-              error: undefined
+              activePanel: "vdt"
             }
           }));
           return true;

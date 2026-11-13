@@ -11,13 +11,13 @@ and the exact bytes prepared for distribution.
 The remediation checkout is based on `4fc92513f8df347620edff982ce25d11bcac5cc5`.
 Changes remain under integration. The next candidate version is
 `0.1.0-alpha.2`. The latest immutable packaged snapshot is
-`261741e88070aa6e55317fae5dbb327bfd5798b9`; it is **not the final candidate**.
-Its full source gate failed two concurrency tests. Reviewed corrections and the
-installed malformed-workbook error message require a refreshed candidate.
+`8e303593cabc27482b9ffcda569c29f2e722664a`; it is **not the final candidate**.
+Its full source gate passed after the concurrency fixes. The subsequent reviewed
+draft-startup restoration requires a refreshed candidate and installed retests.
 Its signed, unnotarized Mac DMG has SHA-256
-`041840f72ed9b0cff249e02128e45d0e47dba9e0eaff095f3e139f5fb1461643`;
+`6616a1653277b19a46f83695345634031e3e08a60c62e43ef1f18f473e577f0f`;
 its unsigned Windows x64 installer has SHA-256
-`4e917132d62a17a751b3d94e0623c1eb11b2e8d482700fa3653deec0205fa6ce`.
+`84890d7532792969da8ea25f11542648cbd0744e79f6958b546fc9058489e9ee`.
 Existing `alpha.1` installer
 evidence describes an earlier candidate. Dirty-source manifests in the execution
 ledger identify interim source tests only.
@@ -72,8 +72,10 @@ The subsequent `261741e` packages passed artifact verification and the Windows
 actual-bundle sidecar activation/handshake/shutdown check. Its full source run
 failed migration/recovery concurrency tests before browser execution. Focused
 regressions reproduce separate pending-lock and inconsistent-snapshot defects;
-the reviewed fixes require a complete new gate, without assuming the original
-CI failure causes are fully established.
+the reviewed fixes passed the complete source gate at `8e30359`: 3,813 tests,
+45 skips, all 157 browser cases and both saved-copy cases. This does not prove
+the original CI interleavings. The Windows native probe at that SHA timed out
+in the compiler before its tests began; no native pass is inferred.
 See the execution and independent-review
 ledgers for current results rather than treating this queue as a test report.
 
