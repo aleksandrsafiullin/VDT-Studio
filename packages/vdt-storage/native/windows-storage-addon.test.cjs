@@ -8,6 +8,7 @@ assert.equal(process.arch, "x64");
 assert.equal(process.version, "v24.22.2");
 const addon = require(addonPath);
 const session = addon.open(privateRoot);
+assert.equal(addon.editorDirectoryPath(session).toLowerCase(), privateRoot.toLowerCase());
 const name = "addon-proof.dat";
 const bytes = Buffer.from("vdt storage addon");
 try {
@@ -39,7 +40,12 @@ try {
   assert.deepEqual(fs.readFileSync(path.join(privateRoot, final)), bytes);
   addon.replace(session, stage, final, replacement, bytes);
   assert.deepEqual(fs.readFileSync(path.join(privateRoot, final)), replacement);
-  addon.unlink(session, final);
+  assert.throws(() => addon.unlinkExpected(session, final, bytes), { code: "ESTALE" });
+  const leaf = addon.openEditorLeaf(session, final);
+  assert.equal(addon.editorPath(leaf).toLowerCase(), path.join(privateRoot, final).toLowerCase());
+  assert.throws(() => fs.renameSync(path.join(privateRoot, final), path.join(privateRoot, "elsewhere")));
+  addon.releaseLock(leaf);
+  addon.unlinkExpected(session, final, replacement);
   const link = path.join(privateRoot, "alias.dat");
   fs.linkSync(path.join(privateRoot, name), link);
   assert.throws(() => addon.unlink(session, name), { code: "EACCES" });
@@ -58,12 +64,21 @@ try {
   addon.close(secondChild);
   addon.close(child);
   const entries = addon.openChild(session, "managed");
+  addon.writeExclusive(session, "move.dat", bytes);
+  addon.moveFile(session, "move.dat", entries, "moved.dat", bytes);
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, "managed", "moved.dat")), bytes);
+  addon.unlinkExpected(entries, "moved.dat", bytes);
+  const directoryToMove = addon.createChild(session, "move-directory");
+  addon.writeExclusive(directoryToMove, "nested.dat", bytes);
+  addon.close(directoryToMove);
+  addon.moveDirectory(session, "move-directory", entries, "moved-directory");
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, "managed", "moved-directory", "nested.dat")), bytes);
   for (let index = 0; index < 250; index++) {
     fs.writeFileSync(path.join(privateRoot, "managed", `данные-${index}.txt`), bytes);
   }
   fs.symlinkSync(privateRoot, path.join(privateRoot, "managed", "junction"), "junction");
   const list = addon.list(entries);
-  assert.equal(list.length, 251);
+  assert.equal(list.length, 252);
   assert.deepEqual(list.find((entry) => entry.name === "junction"), { name: "junction", directory: true, reparse: true });
   assert(list.some((entry) => entry.name === "данные-249.txt"));
   addon.close(entries);

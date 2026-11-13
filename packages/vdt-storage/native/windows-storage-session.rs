@@ -153,6 +153,16 @@ impl StorageSession {
         })
     }
 
+    pub fn editor_directory_path(&self) -> io::Result<String> {
+        self.validate()?;
+        self.directory.0.final_path(0)
+    }
+
+    pub fn open_editor_leaf(&self, name: &str) -> io::Result<OwnedHandle> {
+        self.validate()?;
+        crate::windows_directory_moves::open_editor_leaf(&self.directory, name)
+    }
+
     pub fn sqlite_path(&self) -> io::Result<String> {
         self.validate()?;
         self.directory.sqlite_path("app.sqlite")
@@ -176,6 +186,37 @@ impl StorageSession {
     pub fn ensure_child(&self, name: &str) -> io::Result<()> {
         self.validate()?;
         self.directory.ensure_child(name)
+    }
+
+    pub fn move_entry(
+        &self,
+        name: &str,
+        target: &Self,
+        target_name: &str,
+        expected: Option<&[u8]>,
+    ) -> io::Result<()> {
+        self.validate()?;
+        target.validate()?;
+        match expected {
+            Some(bytes) => crate::windows_directory_moves::move_file(
+                &self.directory,
+                name,
+                &target.directory,
+                target_name,
+                bytes,
+            ),
+            None => crate::windows_directory_moves::move_dir(
+                &self.directory,
+                name,
+                &target.directory,
+                target_name,
+            ),
+        }
+    }
+
+    pub fn unlink_expected(&self, name: &str, bytes: &[u8]) -> io::Result<()> {
+        self.validate()?;
+        crate::windows_directory_moves::unlink_expected(&self.directory, name, bytes)
     }
 
     pub fn read(&self, name: &str, bytes: &mut [u8], durable: bool) -> io::Result<usize> {

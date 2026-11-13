@@ -213,25 +213,7 @@ impl FlushableDirectory {
                 Err(error) => return Err(error),
             }
         }
-        let mut path = vec![0u16; 32768];
-        let length = unsafe {
-            GetFinalPathNameByHandleW(self.0.raw, path.as_mut_ptr(), path.len() as u32, 1)
-        };
-        if length == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        if length as usize >= path.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "native storage path exceeds its bound",
-            ));
-        }
-        let path = String::from_utf16(&path[..length as usize]).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "native storage path is invalid Unicode",
-            )
-        })?;
+        let path = self.0.final_path(1)?;
         if !path.starts_with(r"\\?\Volume{") {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -615,6 +597,29 @@ impl OwnedHandle {
         }
         crate::windows_security::validate_private_file(self.raw)?;
         Ok(info)
+    }
+
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn final_path(&self, flags: u32) -> io::Result<String> {
+        let mut path = vec![0u16; 32768];
+        let length = unsafe {
+            GetFinalPathNameByHandleW(self.raw, path.as_mut_ptr(), path.len() as u32, flags)
+        };
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if length as usize >= path.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "native storage path exceeds its bound",
+            ));
+        }
+        String::from_utf16(&path[..length as usize]).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "native storage path is invalid Unicode",
+            )
+        })
     }
 
     #[cfg(vdt_storage_addon)]

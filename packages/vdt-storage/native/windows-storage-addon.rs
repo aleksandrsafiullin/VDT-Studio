@@ -2,6 +2,8 @@
 mod windows_directory;
 #[path = "windows-directory-entries.rs"]
 mod windows_directory_entries;
+#[path = "windows-directory-moves.rs"]
+mod windows_directory_moves;
 #[path = "windows-security.rs"]
 mod windows_security;
 #[path = "windows-skill-lock.rs"]
@@ -165,6 +167,25 @@ unsafe extern "C" fn vdt_storage_acquire_lock(
 }
 
 #[no_mangle]
+unsafe extern "C" fn vdt_storage_open_editor_leaf(
+    session: &Session,
+    name: *const u8,
+    length: usize,
+    output: *mut *mut StorageLock,
+) -> u32 {
+    status(|| {
+        let handle = session.open_editor_leaf(utf8(name, length)?)?;
+        unsafe {
+            *output = Box::into_raw(Box::new(StorageLock {
+                _handle: handle,
+                _session: Rc::clone(session),
+            }))
+        };
+        Ok(())
+    })
+}
+
+#[no_mangle]
 unsafe extern "C" fn vdt_storage_release_lock(lock: *mut StorageLock) {
     if !lock.is_null() {
         drop(unsafe { Box::from_raw(lock) });
@@ -172,6 +193,44 @@ unsafe extern "C" fn vdt_storage_release_lock(lock: *mut StorageLock) {
 }
 
 type TextCallback = unsafe extern "C" fn(*mut std::ffi::c_void, *const u8, usize) -> u8;
+
+fn return_editor_path(
+    path: String,
+    context: *mut std::ffi::c_void,
+    callback: TextCallback,
+) -> io::Result<()> {
+    let path = path
+        .strip_prefix(r"\\?\")
+        .filter(|path| path.as_bytes().get(1..3) == Some(b":\\"))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "editor object does not have a canonical local drive path",
+            )
+        })?;
+    if unsafe { callback(context, path.as_ptr(), path.len()) } == 0 {
+        return Err(io::Error::other("could not return native editor path"));
+    }
+    Ok(())
+}
+
+#[no_mangle]
+extern "C" fn vdt_storage_editor_path(
+    lock: &StorageLock,
+    context: *mut std::ffi::c_void,
+    callback: TextCallback,
+) -> u32 {
+    status(|| return_editor_path(lock._handle.final_path(0)?, context, callback))
+}
+
+#[no_mangle]
+extern "C" fn vdt_storage_editor_directory_path(
+    session: &Session,
+    context: *mut std::ffi::c_void,
+    callback: TextCallback,
+) -> u32 {
+    status(|| return_editor_path(session.editor_directory_path()?, context, callback))
+}
 
 #[no_mangle]
 extern "C" fn vdt_storage_sqlite_path(
@@ -185,6 +244,53 @@ extern "C" fn vdt_storage_sqlite_path(
             return Err(io::Error::other("could not return native SQLite path"));
         }
         Ok(())
+    })
+}
+
+#[no_mangle]
+unsafe extern "C" fn vdt_storage_move_entry(
+    session: &Session,
+    name: *const u8,
+    length: usize,
+    target: &Session,
+    target_name: *const u8,
+    target_length: usize,
+    bytes: *const u8,
+    byte_length: usize,
+    file: u8,
+) -> u32 {
+    status(|| {
+        let expected = if file == 0 {
+            None
+        } else if byte_length == 0 {
+            Some(&[][..])
+        } else {
+            Some(unsafe { slice::from_raw_parts(bytes, byte_length) })
+        };
+        session.move_entry(
+            utf8(name, length)?,
+            target,
+            utf8(target_name, target_length)?,
+            expected,
+        )
+    })
+}
+
+#[no_mangle]
+unsafe extern "C" fn vdt_storage_unlink_expected(
+    session: &Session,
+    name: *const u8,
+    length: usize,
+    bytes: *const u8,
+    byte_length: usize,
+) -> u32 {
+    status(|| {
+        let expected = if byte_length == 0 {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(bytes, byte_length) }
+        };
+        session.unlink_expected(utf8(name, length)?, expected)
     })
 }
 
