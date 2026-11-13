@@ -335,6 +335,13 @@ export function writeWindowsStorageFile(directory: WindowsStorageDirectory, name
   }
 }
 
+export function writeWindowsStorageProfileFile(
+  dataDir: string, relativePath: string, bytes: Buffer, maximumPreviousBytes: number
+): void {
+  withWindowsStorageParent(getWindowsStorageForProfile(dataDir), relativePath, true,
+    (directory, name) => writeWindowsStorageFile(directory, name, bytes, maximumPreviousBytes));
+}
+
 export function removeWindowsStorageTree(directory: WindowsStorageDirectory, name: string): void {
   let child: WindowsStorageDirectory;
   try {

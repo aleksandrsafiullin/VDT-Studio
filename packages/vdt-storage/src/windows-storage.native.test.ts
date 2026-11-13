@@ -28,6 +28,25 @@ test.runIf(process.platform === "win32" && Boolean(runtime && parent))(
           id: "revision_native", projectId: "native", vdtId: "tree", revisionNo: 1,
           source: "user", project: productionVolumeProject
         });
+        const create = {
+          actor: {
+            schemaVersion: "actor_context.v1" as const, principalId: "desktop_native_test",
+            projectId: "native", roles: ["vdt_writer"], authSource: "desktop_local" as const,
+            sessionId: "native_test", issuedAt: "2026-11-13T00:00:00.000Z"
+          },
+          command: {
+            schemaVersion: "create_vdt_with_initial_snapshot.v1" as const, projectId: "native",
+            expectedRuntimeGeneration: "v1" as const, expectedGenerationVersion: 1,
+            idempotencyKey: "native-initial",
+            vdt: { requestedVdtId: "atomic_tree", name: "Atomic tree", rootKpi: "Production",
+              unit: null, timePeriod: null, status: "draft" as const, metadata: null },
+            revisionIntent: { source: "user" as const, summary: null, validation: null, calculation: null }
+          },
+          project: productionVolumeProject
+        };
+        const initial = first.createVdtWithInitialSnapshot(create);
+        expect(first.createVdtWithInitialSnapshot(create)).toEqual(initial);
+        expect(first.readVdtRevision(initial.revision)).toEqual(productionVolumeProject);
         const second = __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile }, runtime!);
         try { expect(second.getProject("native")?.name).toBe("Native storage"); }
         finally { second.close(); }
@@ -36,15 +55,18 @@ test.runIf(process.platform === "win32" && Boolean(runtime && parent))(
       try {
         expect(reopened.getVdt("tree")?.activeRevisionId).toBe("revision_native");
         expect(reopened.readVdtRevision(reopened.getVdtRevision("revision_native")!)).toEqual(productionVolumeProject);
+        expect(reopened.getVdt("atomic_tree")).not.toBeNull();
+        expect(reopened.deleteVdt("atomic_tree")).toBe(true);
+        expect(reopened.deleteProject("native")).toBe(true);
       } finally { reopened.close(); }
     } finally {
       fs.rmSync(workspace, { recursive: true, force: true });
     }
-  }
+  }, 60_000
 );
 
 
-async function terminateAtFault(workspace: string, profile: string, fault: string): Promise<void> {
+async function pauseAtFault(workspace: string, profile: string, fault: string): Promise<() => Promise<void>> {
   const ready = path.join(workspace, "fault-ready");
   const child = spawn(process.execPath, [
     "--import", "tsx", fileURLToPath(new URL("./windows-storage-crash-child.ts", import.meta.url)),
@@ -53,6 +75,10 @@ async function terminateAtFault(workspace: string, profile: string, fault: strin
   let stderr = "";
   child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
   const exit = once(child, "exit");
+  const terminate = async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await exit;
+  };
   try {
     const deadline = Date.now() + 30_000;
     while (!fs.existsSync(ready)) {
@@ -62,12 +88,16 @@ async function terminateAtFault(workspace: string, profile: string, fault: strin
       await delay(20);
     }
     expect(fs.readFileSync(ready, "utf8")).toBe(fault);
-    expect(child.kill("SIGKILL")).toBe(true);
-    await exit;
-  } finally {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    await exit;
+    return terminate;
+  } catch (error) {
+    await terminate();
+    throw error;
   }
+}
+
+async function terminateAtFault(workspace: string, profile: string, fault: string): Promise<void> {
+  const terminate = await pauseAtFault(workspace, profile, fault);
+  await terminate();
 }
 
 test.runIf(process.platform === "win32" && Boolean(runtime && parent)).each([
@@ -111,13 +141,13 @@ test.runIf(process.platform === "win32" && Boolean(runtime && parent)).each([
   try {
     await terminateAtFault(workspace, profile, fault);
     if (outcome === "block") {
-      expect(() => __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile, migrationLeaseMs: 0 }, runtime!))
+      expect(() => __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile, migrationLeaseMs: 0, now: () => "2026-11-13T00:00:01.000Z" }, runtime!))
         .toThrow(expect.objectContaining({ code: "MIGRATION_RECOVERY_REQUIRED" }));
       const db = new DatabaseSync(path.join(profile, "app.sqlite"), { readOnly: true });
       try { expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 2 }); }
       finally { db.close(); }
     } else {
-      const reopened = __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile, migrationLeaseMs: 0 }, runtime!);
+      const reopened = __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile, migrationLeaseMs: 0, now: () => "2026-11-13T00:00:01.000Z" }, runtime!);
       try {
         const db = new DatabaseSync(reopened.databasePath, { readOnly: true });
         try { expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 5 }); }
@@ -154,5 +184,45 @@ test.runIf(process.platform === "win32" && Boolean(runtime && parent))(
         expect(fs.readFileSync(sqlite)).toEqual(before);
       } finally { fs.unlinkSync(junction); }
     } finally { fs.rmSync(workspace, { recursive: true, force: true }); }
-  }
+  }, 60_000
+);
+
+test.runIf(process.platform === "win32" && Boolean(runtime && parent)).each([
+  "after_foreign_key_violation_rollback",
+  "after_foreign_key_evidence_created",
+  "after_foreign_key_evidence_file_fsynced",
+  "after_foreign_key_evidence_fsynced",
+  "before_foreign_key_block_commit",
+  "after_foreign_key_block_committed"
+])("preserves foreign-key failure evidence after Windows process termination at %s", async (fault) => {
+  const workspace = fs.mkdtempSync(path.join(parent!, "foreign-key-crash-"));
+  const profile = path.join(workspace, "profile");
+  try {
+    await terminateAtFault(workspace, profile, `invalid:${fault}`);
+    expect(() => __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile, migrationLeaseMs: 0, now: () => "2026-11-13T00:00:01.000Z" }, runtime!))
+      .toThrow(expect.objectContaining({ code: "MIGRATION_RECOVERY_REQUIRED" }));
+    const db = new DatabaseSync(path.join(profile, "app.sqlite"), { readOnly: true });
+    try {
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 2 });
+      expect(db.prepare("SELECT name FROM sqlite_schema WHERE name = 'migration_fk_child'").get()).toBeUndefined();
+    } finally { db.close(); }
+  } finally { fs.rmSync(workspace, { recursive: true, force: true }); }
+}, 60_000);
+
+test.runIf(process.platform === "win32" && Boolean(runtime && parent))(
+  "fences a concurrent migration and recovers the admitted profile after owner termination",
+  async () => {
+    const workspace = fs.mkdtempSync(path.join(parent!, "migration-contention-"));
+    const profile = path.join(workspace, "profile");
+    try {
+      const terminate = await pauseAtFault(workspace, profile, "after_admission_fence_acquired");
+      try {
+        expect(() => __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile, busyTimeoutMs: 100 }, runtime!))
+          .toThrow(expect.objectContaining({ code: "MIGRATION_IN_PROGRESS", retryable: true }));
+      } finally { await terminate(); }
+      const recovered = __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile, migrationLeaseMs: 0, now: () => "2026-11-13T00:00:01.000Z" }, runtime!);
+      try { expect(recovered.listProjects()).toEqual([]); }
+      finally { recovered.close(); }
+    } finally { fs.rmSync(workspace, { recursive: true, force: true }); }
+  }, 60_000
 );

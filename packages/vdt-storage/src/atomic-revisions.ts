@@ -276,7 +276,7 @@ export class AtomicRevisionStore {
       }
       throw error;
     }
-    vdtRevisionDir(this.dataDir, attempt.projectId, attempt.vdtId);
+    if (!this.windows) vdtRevisionDir(this.dataDir, attempt.projectId, attempt.vdtId);
     this.inject("after_attempt_reserved", attempt);
     return this.advanceAttempt<CreateVdtWithInitialSnapshotResultV1>(attempt);
   }
