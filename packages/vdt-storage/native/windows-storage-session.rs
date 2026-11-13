@@ -104,6 +104,11 @@ impl StorageSession {
         file.flush()
     }
 
+    pub fn unlink(&self, name: &str) -> io::Result<()> {
+        self.validate()?;
+        self.directory.unlink(name)
+    }
+
     pub fn flush(&self) -> io::Result<()> {
         self.validate()?;
         self.directory.flush()

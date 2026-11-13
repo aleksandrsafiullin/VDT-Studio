@@ -94,6 +94,14 @@ fn token_user() -> io::Result<Vec<usize>> {
 }
 
 pub fn validate_private_dacl(handle: Pointer) -> io::Result<()> {
+    validate_acl(handle, true)
+}
+
+pub fn validate_private_file(handle: Pointer) -> io::Result<()> {
+    validate_acl(handle, false)
+}
+
+fn validate_acl(handle: Pointer, directory: bool) -> io::Result<()> {
     let token = token_user()?;
     let user = token[0] as *const c_void;
     let mut descriptor = ptr::null_mut();
@@ -128,7 +136,7 @@ pub fn validate_private_dacl(handle: Pointer) -> io::Result<()> {
     if unsafe { GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) } == 0 {
         return Err(io::Error::last_os_error());
     }
-    if control & 0x1000 == 0 {
+    if directory && control & 0x1000 == 0 {
         return Err(denied(
             "storage directory DACL must be protected from inheritance",
         ));
@@ -174,14 +182,17 @@ pub fn validate_private_dacl(handle: Pointer) -> io::Result<()> {
         if !(is_user || is_system || is_admins) || ace.mask & !FILE_ALL_ACCESS != 0 {
             return Err(denied("storage directory grants unsupported access rights"));
         }
-        if is_user && ace.flags == ACCESS_INHERIT_BOTH && ace.mask == FILE_ALL_ACCESS {
+        let expected_flags = if directory {
+            ace.flags == ACCESS_INHERIT_BOTH
+        } else {
+            ace.flags == 0 || ace.flags == 0x10
+        };
+        if is_user && expected_flags && ace.mask == FILE_ALL_ACCESS {
             user_full_access = true;
         }
     }
     if !user_full_access {
-        return Err(denied(
-            "storage directory requires inheritable full access for its owner",
-        ));
+        return Err(denied("storage object requires full access for its owner"));
     }
     Ok(())
 }

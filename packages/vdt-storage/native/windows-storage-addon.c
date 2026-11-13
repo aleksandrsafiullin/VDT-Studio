@@ -5,6 +5,7 @@
 typedef struct StorageSession StorageSession;
 extern uint32_t vdt_storage_open(const char *, size_t, StorageSession **);
 extern uint32_t vdt_storage_write(StorageSession *, const char *, size_t, const void *, size_t);
+extern uint32_t vdt_storage_unlink(StorageSession *, const char *, size_t);
 extern uint32_t vdt_storage_flush(StorageSession *);
 extern void vdt_storage_close(StorageSession *);
 
@@ -120,6 +121,23 @@ static napi_value write_exclusive(napi_env env, napi_callback_info info) {
   return result(env, vdt_storage_write(session->native, name, name_length, bytes, byte_length));
 }
 
+static napi_value unlink_file(napi_env env, napi_callback_info info) {
+  napi_value args[2];
+  size_t argc = 2, length;
+  char name[1021];
+  if (napi_get_cb_info(env, info, &argc, args, NULL, NULL) != napi_ok || argc != 2 ||
+      napi_get_value_string_utf8(env, args[1], NULL, 0, &length) != napi_ok ||
+      length == 0 || length >= sizeof(name) ||
+      napi_get_value_string_utf8(env, args[1], name, sizeof(name), &length) != napi_ok) {
+    return fail(env, "EINVAL", "Expected a session and one file name");
+  }
+  Session *session = get_session(env, args[0]);
+  if (session == NULL || session->native == NULL) {
+    return fail(env, "EBADF", "Expected an open Windows storage session");
+  }
+  return result(env, vdt_storage_unlink(session->native, name, length));
+}
+
 static napi_value flush_or_close(napi_env env, napi_callback_info info) {
   napi_value arg;
   size_t argc = 1;
@@ -142,6 +160,7 @@ NAPI_MODULE_INIT() {
   napi_property_descriptor properties[] = {
     {"open", NULL, open_session, NULL, NULL, NULL, napi_default, NULL},
     {"writeExclusive", NULL, write_exclusive, NULL, NULL, NULL, napi_default, NULL},
+    {"unlink", NULL, unlink_file, NULL, NULL, NULL, napi_default, NULL},
     {"flush", NULL, flush_or_close, NULL, NULL, NULL, napi_default, NULL},
     {"close", NULL, flush_or_close, NULL, NULL, NULL, napi_default, &close_marker}
   };

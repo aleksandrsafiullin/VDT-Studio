@@ -11,6 +11,8 @@ const FILE_WRITE_THROUGH: u32 = 2;
 const FILE_NON_DIRECTORY_FILE: u32 = 0x40;
 const FILE_ACCESS: u32 = 0x4013_0080; // GENERIC_WRITE | DELETE | READ_CONTROL | SYNCHRONIZE | READ_ATTRIBUTES
 const FILE_DISPOSITION_INFO_CLASS: u32 = 4;
+#[cfg(vdt_storage_addon)]
+const DELETE_FILE_ACCESS: u32 = 0x0013_0080;
 const FILE_DIRECTORY_FILE: u32 = 0x1;
 const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x20;
 const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
@@ -40,6 +42,16 @@ struct ObjectAttributes {
 struct IoStatusBlock {
     status: usize,
     information: usize,
+}
+
+#[cfg(vdt_storage_addon)]
+#[repr(C)]
+struct FileStandardInfo {
+    allocation_size: i64,
+    end_of_file: i64,
+    number_of_links: u32,
+    delete_pending: u8,
+    directory: u8,
 }
 
 #[repr(C)]
@@ -143,10 +155,31 @@ impl FlushableDirectory {
             FILE_CREATE,
             FILE_NON_DIRECTORY_FILE | FILE_WRITE_THROUGH,
         )?;
+        #[cfg(vdt_storage_addon)]
+        handle.validate_private_file()?;
         Ok(CreatedFile {
             handle,
             parent: self,
         })
+    }
+
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn unlink(&self, name: &str) -> io::Result<()> {
+        let handle = open_relative(
+            self.0.raw,
+            name,
+            DELETE_FILE_ACCESS,
+            0,
+            FILE_OPEN,
+            FILE_NON_DIRECTORY_FILE,
+        )?;
+        handle.validate_private_file()?;
+        self.0.reject_reparse_point()?;
+        CreatedFile {
+            handle,
+            parent: self,
+        }
+        .remove()
     }
 
     fn reject_reparse_point(&self) -> io::Result<()> {
@@ -211,6 +244,36 @@ impl OwnedHandle {
             ));
         }
         Ok(())
+    }
+
+    #[cfg(vdt_storage_addon)]
+    fn validate_private_file(&self) -> io::Result<()> {
+        self.reject_reparse_point()?;
+        let mut info = FileStandardInfo {
+            allocation_size: 0,
+            end_of_file: 0,
+            number_of_links: 0,
+            delete_pending: 0,
+            directory: 0,
+        };
+        if unsafe {
+            GetFileInformationByHandleEx(
+                self.raw,
+                1,
+                (&mut info as *mut FileStandardInfo).cast(),
+                mem::size_of::<FileStandardInfo>() as u32,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if info.number_of_links != 1 || info.delete_pending != 0 || info.directory != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "expected a single-link regular file",
+            ));
+        }
+        crate::windows_security::validate_private_file(self.raw)
     }
 
     fn flush(&self) -> io::Result<()> {
@@ -333,12 +396,30 @@ fn open_relative(
     Ok(OwnedHandle { raw: handle })
 }
 
+fn reserved_dos_name(name: &str) -> bool {
+    let base = name.split('.').next().unwrap_or("").trim_end_matches(' ');
+    let base = base.to_ascii_uppercase();
+    matches!(
+        base.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ["COM", "LPT"].iter().any(|prefix| {
+        base.strip_prefix(prefix).is_some_and(|suffix| {
+            matches!(
+                suffix,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        })
+    })
+}
+
 fn encode_component(name: &str) -> io::Result<Vec<u16>> {
     let encoded: Vec<_> = name.encode_utf16().collect();
     if encoded.is_empty()
         || encoded.len() > 255
         || name.ends_with(['.', ' '])
-        || name.contains(['\\', '/', ':', '\0'])
+        || name.contains(['\\', '/', ':', '<', '>', '"', '|', '?', '*'])
+        || name.chars().any(|character| character < ' ')
+        || reserved_dos_name(name)
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,

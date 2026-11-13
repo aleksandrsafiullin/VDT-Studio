@@ -17,6 +17,15 @@ try {
   assert.deepEqual(fs.readFileSync(path.join(privateRoot, name)), bytes);
   assert.throws(() => addon.writeExclusive(session, name, Buffer.from("collision")), { code: "EEXIST" });
   assert.deepEqual(fs.readFileSync(path.join(privateRoot, name)), bytes);
+  assert.throws(() => addon.writeExclusive(session, "CON.txt", bytes), { code: "EINVAL" });
+  assert.throws(() => addon.writeExclusive(session, "embedded\0NUL", bytes), { code: "EINVAL" });
+  const link = path.join(privateRoot, "alias.dat");
+  fs.linkSync(path.join(privateRoot, name), link);
+  assert.throws(() => addon.unlink(session, name), { code: "EACCES" });
+  fs.unlinkSync(link);
+  addon.unlink(session, name);
+  assert.equal(fs.existsSync(path.join(privateRoot, name)), false);
+  assert.throws(() => addon.unlink(session, name), { code: "ENOENT" });
   addon.flush(session);
   assert.throws(() => fs.renameSync(privateRoot, privateRoot + ".moved"));
 } finally {
@@ -25,4 +34,8 @@ try {
 addon.close(session);
 assert.throws(() => addon.flush(session), { code: "EBADF" });
 assert.throws(() => addon.open(path.dirname(privateRoot)), { code: "EACCES" });
+const alias = path.join(privateRoot, "junction");
+fs.symlinkSync(privateRoot, alias, "junction");
+assert.throws(() => addon.open(path.join(alias, "nested")));
+fs.unlinkSync(alias);
 console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, node: process.version, assertionsPassed: true }));

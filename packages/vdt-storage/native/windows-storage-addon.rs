@@ -44,6 +44,15 @@ unsafe extern "C" fn vdt_storage_write(
 }
 
 #[no_mangle]
+unsafe extern "C" fn vdt_storage_unlink(
+    session: &StorageSession,
+    name: *const u8,
+    length: usize,
+) -> u32 {
+    status(|| session.unlink(utf8(name, length)?))
+}
+
+#[no_mangle]
 extern "C" fn vdt_storage_flush(session: &StorageSession) -> u32 {
     status(|| session.flush())
 }
