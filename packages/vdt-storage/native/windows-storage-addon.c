@@ -16,7 +16,7 @@ typedef uint8_t (*EntryCallback)(void *, const char *, size_t, uint8_t, uint8_t)
 typedef uint8_t (*TextCallback)(void *, const char *, size_t);
 extern uint32_t vdt_storage_editor_path(StorageLock *, void *, TextCallback);
 extern uint32_t vdt_storage_editor_directory_path(StorageSession *, void *, TextCallback);
-extern uint32_t vdt_storage_sqlite_path(StorageSession *, void *, TextCallback);
+extern uint32_t vdt_storage_sqlite_path(StorageSession *, const char *, size_t, void *, TextCallback);
 extern uint32_t vdt_storage_list(StorageSession *, void *, EntryCallback);
 extern uint32_t vdt_storage_remove_empty_child(StorageSession *, const char *, size_t);
 extern uint32_t vdt_storage_ensure_child(StorageSession *, const char *, size_t);
@@ -313,17 +313,20 @@ static uint8_t return_text(void *context, const char *text, size_t length) {
 }
 
 static napi_value directory_path(napi_env env, napi_callback_info info) {
-  napi_value arg;
+  napi_value args[2];
+  size_t argc = 2, length = 10;
+  char name[1021] = "app.sqlite";
   void *editor = NULL;
-  size_t argc = 1;
-  if (napi_get_cb_info(env, info, &argc, &arg, NULL, &editor) != napi_ok || argc != 1) {
-    return fail(env, "EINVAL", "Expected one Windows storage session");
+  if (napi_get_cb_info(env, info, &argc, args, NULL, &editor) != napi_ok || argc < 1 ||
+      (editor != NULL && argc != 1) ||
+      (editor == NULL && argc == 2 && !read_name(env, args[1], name, &length))) {
+    return fail(env, "EINVAL", "Expected a Windows storage session and optional SQLite name");
   }
-  Session *session = get_session(env, arg);
+  Session *session = get_session(env, args[0]);
   if (session == NULL || session->native == NULL) return fail(env, "EBADF", "Expected an open Windows storage session");
   TextResult output = {env, NULL};
   uint32_t error = editor == NULL
-      ? vdt_storage_sqlite_path(session->native, &output, return_text)
+      ? vdt_storage_sqlite_path(session->native, name, length, &output, return_text)
       : vdt_storage_editor_directory_path(session->native, &output, return_text);
   return error == 0 ? output.value : win32_fail(env, error);
 }

@@ -168,9 +168,9 @@ impl StorageSession {
         crate::windows_directory_moves::open_editor_leaf(&self.directory, name)
     }
 
-    pub fn sqlite_path(&self) -> io::Result<String> {
+    pub fn sqlite_path(&self, name: &str) -> io::Result<String> {
         self.validate()?;
-        self.directory.sqlite_path("app.sqlite")
+        self.directory.sqlite_path(name)
     }
 
     pub fn acquire_lock(&self, name: &str) -> io::Result<OwnedHandle> {

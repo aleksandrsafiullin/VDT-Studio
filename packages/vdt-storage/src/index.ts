@@ -12,5 +12,10 @@ export type { StorageMigrationOptions } from "./migrations";
 export * from "./project-files";
 export * from "./skill-library";
 export * from "./skill-files";
-export * from "./sqlite";
+export {
+  openVdtDatabase, SqliteVdtDatabase, readProjectManifestFromDatabaseLocation
+} from "./sqlite";
 export * from "./types";
+
+export { getWindowsStorageForProfile, publishWindowsStorageFileIfAbsent, retainWindowsStorageForProfile } from "./windows-storage";
+export type { WindowsStorageDirectory } from "./windows-storage";

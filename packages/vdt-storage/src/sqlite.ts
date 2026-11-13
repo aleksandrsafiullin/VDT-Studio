@@ -2,10 +2,14 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { VdtStorageError } from "./types";
+import { flushDirectory as fsyncDirectory, writeExclusiveDurable } from "./durable-files";
 import type { VdtProject } from "@vdt-studio/vdt-core";
 import { AtomicRevisionStore } from "./atomic-revisions";
 import { defined, decodeJson, encodeJson, toIso, toMillis } from "./json";
-import { runStorageMigrations } from "./migrations";
+import { runStorageMigrations, __runNativeStorageMigrationsForTests } from "./migrations";
+import { acquireWindowsStorageProfile, openWindowsStorage, withWindowsStorageParent, type WindowsStorageDirectory } from "./windows-storage";
+import { assertStoragePlatformCapability } from "./storage-platform";
 import { deleteProjectAgentData } from "./project-deletion";
 import {
   assertInside,
@@ -49,12 +53,35 @@ import type {
 type Row = Record<string, unknown>;
 
 export function openVdtDatabase(projectRoot: string, options: OpenVdtDatabaseOptions = {}): VdtDatabase {
-  const dataDir = ensureProjectLocation(options.dataDir ?? process.env.VDT_DATA_DIR ?? path.join(projectRoot, ".vdt"));
-  const databasePath = path.join(dataDir, "app.sqlite");
-  assertInside(dataDir, databasePath);
-  const db = new DatabaseSync(databasePath, { timeout: options.busyTimeoutMs ?? 5_000 });
+  assertStoragePlatformCapability(process.platform);
+  return openVdtDatabaseWithProfile(projectRoot, options);
+}
+
+/** Native qualification only. Intentionally absent from the package entrypoint. */
+export function __openWindowsVdtDatabaseForTests(projectRoot: string, options: OpenVdtDatabaseOptions, runtimeDirectory: string): VdtDatabase {
+  if (process.platform !== "win32") throw new Error("Native Windows qualification is required.");
+  return openVdtDatabaseWithProfile(projectRoot, options, runtimeDirectory);
+}
+
+function openVdtDatabaseWithProfile(projectRoot: string, options: OpenVdtDatabaseOptions, qualificationRuntime?: string): VdtDatabase {
+  const requestedDataDir = options.dataDir ?? process.env.VDT_DATA_DIR ?? path.join(projectRoot, ".vdt");
+  const profile = process.platform === "win32"
+    ? acquireWindowsStorageProfile(requestedDataDir, () => {
+        const runtime = qualificationRuntime ?? process.env.VDT_WINDOWS_STORAGE_RUNTIME_DIR;
+        if (!runtime || (!qualificationRuntime && process.env.VDT_APP_MODE !== "desktop")) {
+          throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Windows storage requires the verified desktop runtime.");
+        }
+        return openWindowsStorage(runtime, requestedDataDir, true);
+      })
+    : undefined;
+  let db: DatabaseSync | undefined;
   try {
-    runStorageMigrations(db, dataDir, {
+    const dataDir = profile ? path.resolve(requestedDataDir) : ensureProjectLocation(requestedDataDir);
+    const databasePath = profile ? profile.directory.sqlitePath() : path.join(dataDir, "app.sqlite");
+    if (!profile) assertInside(dataDir, databasePath);
+    db = new DatabaseSync(databasePath, { timeout: options.busyTimeoutMs ?? 5_000 });
+    const migrate = qualificationRuntime ? __runNativeStorageMigrationsForTests : runStorageMigrations;
+    migrate(db, dataDir, {
       now: options.now ?? (() => new Date().toISOString()),
       busyTimeoutMs: options.busyTimeoutMs ?? 5_000,
       leaseMs: options.migrationLeaseMs ?? 30_000,
@@ -64,11 +91,11 @@ export function openVdtDatabase(projectRoot: string, options: OpenVdtDatabaseOpt
     });
     db.exec("PRAGMA journal_mode = WAL;");
     db.exec("PRAGMA foreign_keys = ON;");
-    const result = new SqliteVdtDatabase(db, dataDir, databasePath, options);
+    const result = new SqliteVdtDatabase(db, dataDir, databasePath, options, profile?.directory, profile?.release);
     result.recoverRevisionCommits();
     return result;
   } catch (error) {
-    db.close();
+    try { db?.close(); } finally { profile?.release(); }
     throw error;
   }
 }
@@ -81,14 +108,17 @@ export class SqliteVdtDatabase implements VdtDatabase {
     private readonly db: DatabaseSync,
     readonly dataDir: string,
     readonly databasePath: string,
-    options: OpenVdtDatabaseOptions
+    options: OpenVdtDatabaseOptions,
+    private readonly windows?: WindowsStorageDirectory,
+    private readonly releaseProfile?: () => void
   ) {
     this.now = options.now ?? (() => new Date().toISOString());
-    this.atomicRevisions = new AtomicRevisionStore(db, dataDir, options);
+    this.atomicRevisions = new AtomicRevisionStore(db, dataDir, options, windows);
   }
 
   close(): void {
     this.db.close();
+    this.releaseProfile?.();
   }
 
   createProject(input: CreateProjectInput): ProjectRecord {
@@ -361,7 +391,10 @@ export class SqliteVdtDatabase implements VdtDatabase {
     assertSafeId(input.projectId, "projectId");
     assertSafeId(input.vdtId, "vdtId");
     const createdAt = this.now();
-    const revisionFile = path.join(vdtRevisionDir(this.dataDir, input.projectId, input.vdtId), `${String(input.revisionNo).padStart(6, "0")}.vdt.json`);
+    const revisionDirectory = this.windows
+      ? path.join(this.dataDir, "projects", input.projectId, "vdts", input.vdtId, "revisions")
+      : vdtRevisionDir(this.dataDir, input.projectId, input.vdtId);
+    const revisionFile = path.join(revisionDirectory, `${String(input.revisionNo).padStart(6, "0")}.vdt.json`);
     assertInside(this.dataDir, revisionFile);
     const payload = `${JSON.stringify(input.project, null, 2)}\n`;
     const filePath = path.relative(this.dataDir, revisionFile);
@@ -399,14 +432,12 @@ export class SqliteVdtDatabase implements VdtDatabase {
         if (!head || head.pendingRevisionId !== null) {
           throw new Error(`VDT revision head is unavailable or pending: ${record.vdtId}.`);
         }
-        const descriptor = fs.openSync(revisionFile, "wx", 0o600);
-        try {
-          fs.writeFileSync(descriptor, payload, "utf8");
-          fs.fsyncSync(descriptor);
-        } finally {
-          fs.closeSync(descriptor);
+        if (this.windows) {
+          withWindowsStorageParent(this.windows, filePath, true,
+            (directory, name) => directory.writeExclusive(name, Buffer.from(payload, "utf8")));
+        } else {
+          writeExclusiveDurable(revisionFile, Buffer.from(payload, "utf8"));
         }
-        fsyncDirectory(path.dirname(revisionFile));
         createdFile = true;
         this.db.prepare(`
           INSERT INTO vdt_revisions (id, vdt_id, revision_no, parent_revision_id, source, summary, file_path, graph_hash, validation_json, calculation_json, created_at)
@@ -453,9 +484,14 @@ export class SqliteVdtDatabase implements VdtDatabase {
         this.db.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").run(toMillis(createdAt), input.projectId);
       });
     } catch (error) {
-      if (createdFile && fs.existsSync(revisionFile)) {
-        fs.unlinkSync(revisionFile);
-        fsyncDirectory(path.dirname(revisionFile));
+      if (createdFile) {
+        if (this.windows) {
+          withWindowsStorageParent(this.windows, filePath, false,
+            (directory, name) => directory.unlinkExpected(name, Buffer.from(payload, "utf8")));
+        } else if (fs.existsSync(revisionFile)) {
+          fs.unlinkSync(revisionFile);
+          fsyncDirectory(path.dirname(revisionFile));
+        }
       }
       throw error;
     }
@@ -466,6 +502,10 @@ export class SqliteVdtDatabase implements VdtDatabase {
     return this.atomicRevisions.commitVdtRevision(input, options?.reuseUnchangedRevision
       ? (revision) => this.readVdtRevision(revision)
       : undefined);
+  }
+
+  getCommittedVdtCreation(projectId: string, principalId: string, key: string): CreateVdtWithInitialSnapshotResultV1 | null {
+    return this.atomicRevisions.getCommittedVdtCreation(projectId, principalId, key);
   }
 
   createVdtWithInitialSnapshot(
@@ -493,12 +533,22 @@ export class SqliteVdtDatabase implements VdtDatabase {
   readVdtRevision(record: VdtRevisionRecord): VdtProject {
     const file = path.resolve(this.dataDir, record.filePath);
     assertInside(this.dataDir, file);
-    const stat = fs.lstatSync(file);
-    if (stat.isSymbolicLink() || !stat.isFile()) {
-      throw new Error(`Revision file is not a regular file: ${record.filePath}`);
+    let bytes: Buffer;
+    if (this.windows) {
+      const committed = this.db.prepare("SELECT payload_byte_length FROM revision_commit_records WHERE revision_id = ?").get(record.id) as Row | undefined;
+      const attested = committed ?? this.db.prepare("SELECT payload_byte_length FROM legacy_revision_attestations WHERE revision_id = ?").get(record.id) as Row | undefined;
+      const maximumBytes = attested ? Number(attested.payload_byte_length) : 256 * 1024 * 1024;
+      bytes = withWindowsStorageParent(this.windows, path.relative(this.dataDir, file), false,
+        (directory, name) => directory.read(name, maximumBytes));
+    } else {
+      const stat = fs.lstatSync(file);
+      if (stat.isSymbolicLink() || !stat.isFile()) {
+        throw new Error(`Revision file is not a regular file: ${record.filePath}`);
+      }
+      bytes = fs.readFileSync(file);
     }
-    const raw = fs.readFileSync(file, "utf8");
-    const hash = createHash("sha256").update(raw).digest("hex");
+    const raw = bytes.toString("utf8");
+    const hash = createHash("sha256").update(this.windows ? bytes : raw).digest("hex");
     if (hash !== record.graphHash) {
       throw new Error(`Revision graph hash mismatch for ${record.id}.`);
     }
@@ -692,6 +742,20 @@ export class SqliteVdtDatabase implements VdtDatabase {
     assertSafeId(runId, "agentRunId");
     const row = this.db.prepare("SELECT * FROM agent_runs WHERE id = ?").get(runId) as Row | undefined;
     return row ? agentRunFromRow(row) : null;
+  }
+
+  getAgentRunSupervisorFence(runId: string): { sessionEpoch: number; ownerToken: string; orphanTerminated: boolean } | null {
+    assertSafeId(runId, "agentRunId");
+    const row = this.db.prepare(`
+      SELECT epoch.session_epoch, epoch.write_fence_token, EXISTS (
+        SELECT 1 FROM agent_run_event_outbox_v2 event
+        WHERE event.run_id = epoch.run_id AND event.event_type = 'runtime_status'
+          AND json_extract(event.payload_canonical_json, '$.code') = 'RUN_ORPHAN_CANCELLED'
+          AND json_extract(event.payload_canonical_json, '$.state') = 'cancelled'
+      ) AS orphan_terminated
+      FROM agent_current_session_epochs_v2 epoch WHERE epoch.run_id = ?
+    `).get(runId) as Row | undefined;
+    return row ? { sessionEpoch: number(row.session_epoch), ownerToken: string(row.write_fence_token), orphanTerminated: number(row.orphan_terminated) === 1 } : null;
   }
 
   listAgentRuns(projectId: string): AgentRunRecord[] {
@@ -1058,15 +1122,6 @@ function redactSecrets(value: unknown): unknown {
       isSecretKey(key) ? "[redacted]" : redactSecrets(entry)
     ])
   );
-}
-
-function fsyncDirectory(directoryPath: string): void {
-  const descriptor = fs.openSync(directoryPath, "r");
-  try {
-    fs.fsyncSync(descriptor);
-  } finally {
-    fs.closeSync(descriptor);
-  }
 }
 
 function isSecretKey(key: string): boolean {

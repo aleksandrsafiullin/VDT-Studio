@@ -36,6 +36,20 @@ try {
   $addonStderr = Join-Path $evidence 'standard-user-addon.stderr.log'
   $addonProcess = Start-Process -FilePath (Join-Path $stage 'node.exe') -ArgumentList $arguments -WorkingDirectory $stage -Credential $credential -RedirectStandardOutput $addonReport -RedirectStandardError $addonStderr -Wait -PassThru
   if ($addonProcess.ExitCode -ne 0) { throw "Standard user addon failed with exit code $($addonProcess.ExitCode)" }
+  $repository = (Get-Location).Path
+  & icacls $repository /grant "$($account):(OI)(CI)(RX)" /T /Q | Out-Null
+  if ($LASTEXITCODE) { throw 'Could not grant probe repository read access' }
+  $env:VDT_WINDOWS_DATA_TEST_RUNTIME = $addon
+  $env:VDT_WINDOWS_DATA_TEST_PRIVATE_PARENT = $native
+  $env:TEMP = $native
+  $env:TMP = $native
+  $testReport = Join-Path $evidence 'standard-user-vitest.log'
+  $testStderr = Join-Path $evidence 'standard-user-vitest.stderr.log'
+  $vitest = Join-Path $repository 'node_modules\vitest\vitest.mjs'
+  $arguments = @($vitest, 'run', 'packages/vdt-storage/src/windows-storage.native.test.ts', 'apps/web/app/api/data/store.windows-native.test.ts', '--maxWorkers=1', '--retry=0', '--cache=false')
+  $testProcess = Start-Process -FilePath (Join-Path $stage 'node.exe') -ArgumentList $arguments -WorkingDirectory $repository -Credential $credential -RedirectStandardOutput $testReport -RedirectStandardError $testStderr -Wait -PassThru
+  if ($testProcess.ExitCode -ne 0) { throw "Standard user storage tests failed with exit code $($testProcess.ExitCode)" }
+  if ((Get-Content -Raw $testReport) -notmatch 'Tests\s+2 passed') { throw 'Both native suites must execute without skips' }
 } finally {
   if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
   if (Get-LocalUser -Name $name -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $name }

@@ -3,7 +3,10 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { flushDirectory as fsyncDirectory, writeAll, writeExclusiveDurable } from "./durable-files";
 import { verifyRetainedBackup } from "./verified-backup-cache";
+import { getWindowsStorageForProfile, withWindowsStorageParent, type WindowsStorageDirectory } from "./windows-storage";
+import { assertStoragePlatformCapability } from "./storage-platform";
 import { fileURLToPath } from "node:url";
 import {
   assertDensePlainJson,
@@ -374,7 +377,7 @@ interface MigrationForeignKeyCheckEvidenceV1 {
 interface PreparedMigrationForeignKeyPendingLatch {
   latch: MigrationForeignKeyPendingLatchV1;
   path: string;
-  fileIdentity?: MigrationForeignKeyFilesystemIdentity;
+  fileIdentity?: MigrationForeignKeyFilesystemIdentity | Buffer;
 }
 
 interface MigrationForeignKeyRecoveryPair {
@@ -391,7 +394,14 @@ interface MigrationForeignKeyFilesystemIdentity {
   linkCount: bigint;
 }
 
-interface MigrationForeignKeyBlockDirectoryHandle {
+type MigrationForeignKeyBlockDirectoryHandle = PosixMigrationForeignKeyBlockDirectory | WindowsMigrationForeignKeyBlockDirectory;
+
+interface WindowsMigrationForeignKeyBlockDirectory {
+  path: string;
+  native: WindowsStorageDirectory;
+}
+
+interface PosixMigrationForeignKeyBlockDirectory {
   path: string;
   descriptor: number;
   effectiveUid: bigint;
@@ -450,13 +460,24 @@ export function __runStorageMigrationsForPlatformTests(
   runStorageMigrationsForPlatform(db, dataDir, options, platform);
 }
 
+export function __runNativeStorageMigrationsForTests(
+  db: DatabaseSync,
+  dataDir: string,
+  options: StorageMigrationOptions
+): void {
+  if (process.platform !== "win32") throw new Error("Native Windows qualification is required.");
+  getWindowsStorageForProfile(dataDir).validate();
+  runStorageMigrationsForPlatform(db, dataDir, options, process.platform, true);
+}
+
 function runStorageMigrationsForPlatform(
   db: DatabaseSync,
   dataDir: string,
   options: StorageMigrationOptions,
-  platform: NodeJS.Platform
+  platform: NodeJS.Platform,
+  nativeQualification = false
 ): void {
-  assertSequence3PlatformCapability(platform);
+  if (!nativeQualification) assertSequence3PlatformCapability(platform);
   let sequence3Plan: ValidatedStorageProductionPlanV2;
   let sequence4Plan: ValidatedStorageProductionPlanV3;
   let sequence5Plan: ValidatedStorageProductionPlanV4;
@@ -545,12 +566,7 @@ export function __assertSequence3PlatformCapabilityForTests(
 }
 
 function assertSequence3PlatformCapability(platform: NodeJS.Platform): void {
-  if (platform !== "win32") return;
-  throw new VdtStorageError(
-    "STORAGE_CAPABILITY_UNSUPPORTED",
-    "Sequence 3 migration requires reviewed Windows no-follow directory identity and durable directory fsync support.",
-    false
-  );
+  assertStoragePlatformCapability(platform);
 }
 
 export function __runStorageMigrationsWithPlanForTests(
@@ -1941,14 +1957,14 @@ function createLaterMigrationAttempt(
   const leaseExpiresAt =
     timestamp.millis + effectiveLaterMigrationLeaseMs(options.leaseMs);
   const backupDir = path.join(dataDir, "migrations", "backups");
-  fs.mkdirSync(backupDir, { recursive: true });
+  ensureMigrationDirectory(dataDir, backupDir);
   const ownedBackupDir = path.join(
     backupDir,
     `.later-owned-${attemptId}`
   );
   assertInside(dataDir, ownedBackupDir);
-  fs.mkdirSync(ownedBackupDir, { mode: 0o700 });
-  fsyncDirectory(backupDir);
+  ensureMigrationDirectory(dataDir, ownedBackupDir, true);
+  if (process.platform !== "win32") fsyncDirectory(backupDir);
   const backupPath = path.join(ownedBackupDir, "backup.sqlite");
   assertInside(dataDir, backupPath);
   const backupRelativePath = path.relative(dataDir, backupPath);
@@ -1961,8 +1977,8 @@ function createLaterMigrationAttempt(
     backupRelativePath,
     createdAt: timestamp.iso
   });
-  writeExclusiveDurable(
-    path.join(ownedBackupDir, "owner.json"),
+  writeMigrationFile(
+    dataDir, path.join(ownedBackupDir, "owner.json"),
     Buffer.from(canonicalizeJson(owner as unknown as JsonValue), "utf8")
   );
   const context = laterMigrationFaultContext(
@@ -1973,9 +1989,8 @@ function createLaterMigrationAttempt(
     leaseGeneration
   );
   options.faultInjector?.("after_later_backup_owner_fsynced", context);
-  db.exec(`VACUUM INTO '${escapeSqlLiteral(backupPath)}';`);
-  fsyncFileAndDirectory(backupPath);
-  const backupBytes = fs.readFileSync(backupPath);
+  withMigrationSqlitePath(dataDir, backupPath, (filename) => db.exec(`VACUUM INTO '${escapeSqlLiteral(filename)}';`));
+  const backupBytes = readMigrationFile(dataDir, backupPath, MAX_WINDOWS_MIGRATION_FILE_BYTES, true);
   const backupHash = hashFramed(
     "vdt-studio/sqlite-backup",
     "sqlite_backup_hash.v1",
@@ -2061,7 +2076,8 @@ function reconcileOwnedLaterBackupDirectories(
   plan: ValidatedStorageMigrationPlan
 ): void {
   const backupDir = path.join(dataDir, "migrations", "backups");
-  if (!fs.existsSync(backupDir)) return;
+  const backupEntries = migrationDirectoryEntries(dataDir, backupDir);
+  if (!backupEntries) return;
   const evidenceRows = db.prepare(`
     SELECT backup_evidence_id, database_id, from_user_version, manifest_hash,
            backup_relative_path
@@ -2080,7 +2096,7 @@ function reconcileOwnedLaterBackupDirectories(
   const attemptByBackupId = new Map(
     attemptRows.map((row) => [String(row.backup_evidence_id), row])
   );
-  for (const entry of fs.readdirSync(backupDir, { withFileTypes: true })) {
+  for (const entry of backupEntries) {
     if (
       !entry.isDirectory() ||
       !/^\.later-owned-migration_attempt_[A-Za-z0-9_-]+$/.test(entry.name)
@@ -2088,7 +2104,7 @@ function reconcileOwnedLaterBackupDirectories(
       continue;
     }
     const ownedDir = path.join(backupDir, entry.name);
-    const owner = readLaterMigrationBackupOwner(ownedDir);
+    const owner = readLaterMigrationBackupOwner(dataDir, ownedDir);
     if (
       !owner ||
       owner.databaseId !== databaseId ||
@@ -2112,7 +2128,7 @@ function reconcileOwnedLaterBackupDirectories(
       path.normalize(owner.backupRelativePath) !== expectedRelativePath ||
       path.isAbsolute(owner.backupRelativePath) ||
       !boundaryIsKnown ||
-      !hasExactOwnedBackupContents(ownedDir)
+      !hasExactOwnedBackupContents(dataDir, ownedDir)
     ) {
       continue;
     }
@@ -2162,13 +2178,12 @@ function createLaterMigrationBackupOwner(
 }
 
 function readLaterMigrationBackupOwner(
+  dataDir: string,
   ownedDir: string
 ): LaterMigrationBackupOwner | null {
   const ownerPath = path.join(ownedDir, "owner.json");
   try {
-    const stat = fs.lstatSync(ownerPath);
-    if (stat.isSymbolicLink() || !stat.isFile()) return null;
-    const raw = fs.readFileSync(ownerPath, "utf8");
+    const raw = readMigrationFile(dataDir, ownerPath, 1_048_576).toString("utf8");
     const parsed: unknown = JSON.parse(raw);
     assertDensePlainJson(parsed);
     if (!isPlainRecord(parsed)) return null;
@@ -2231,8 +2246,9 @@ function readLaterMigrationBackupOwner(
   }
 }
 
-function hasExactOwnedBackupContents(ownedDir: string): boolean {
-  const entries = fs.readdirSync(ownedDir, { withFileTypes: true });
+function hasExactOwnedBackupContents(dataDir: string, ownedDir: string): boolean {
+  const entries = migrationDirectoryEntries(dataDir, ownedDir);
+  if (!entries) return false;
   if (
     entries.some(
       (entry) => entry.name !== "owner.json" && entry.name !== "backup.sqlite"
@@ -2257,6 +2273,15 @@ function quarantineOwnedLaterBackupDirectory(
     "migrations",
     "orphaned-backups"
   );
+  if (process.platform === "win32") {
+    ensureMigrationDirectory(dataDir, quarantineDir);
+    withNativeMigrationParent(dataDir, ownedDir, false, (source, leaf) => {
+      withNativeMigrationParent(dataDir, path.join(quarantineDir, leaf), false, (target, name) => {
+        source.moveDirectory(leaf, target, name);
+      });
+    });
+    return;
+  }
   const quarantineParent = path.dirname(quarantineDir);
   const quarantineExisted = fs.existsSync(quarantineDir);
   fs.mkdirSync(quarantineDir, { recursive: true });
@@ -4229,27 +4254,17 @@ function verifyLaterBackupEvidence(
   assertSha256(evidence.backupHash, "later backup hash");
   const backupPath = path.resolve(dataDir, evidence.backupRelativePath);
   assertInside(dataDir, backupPath);
-  if (
-    path.isAbsolute(evidence.backupRelativePath) ||
-    !fs.existsSync(backupPath)
-  ) {
+  if (path.isAbsolute(evidence.backupRelativePath)) {
     throw migrationBlocked(
       `Later migration backup is missing: ${evidence.backupRelativePath}.`
     );
   }
-  const stat = fs.lstatSync(backupPath);
-  if (stat.isSymbolicLink() || !stat.isFile()) {
-    throw migrationBlocked(
-      `Later migration backup is not a regular file: ${evidence.backupRelativePath}.`
-    );
-  }
-  if (retainVerification) {
+  if (retainVerification && process.platform !== "win32") {
     return verifyRetainedBackup(backupPath, JSON.stringify([evidence, expectedSchemaHash]), () => {
       verifyLaterBackupEvidence(dataDir, evidence, expectedSchemaHash);
     });
   }
-  fsyncFileAndDirectory(backupPath);
-  const bytes = fs.readFileSync(backupPath);
+  const bytes = readMigrationFile(dataDir, backupPath, MAX_WINDOWS_MIGRATION_FILE_BYTES, true);
   const actualHash = hashFramed(
     "vdt-studio/sqlite-backup",
     "sqlite_backup_hash.v1",
@@ -4267,47 +4282,49 @@ function verifyLaterBackupEvidence(
       `Later migration backup hash mismatch: ${evidence.backupRelativePath}.`
     );
   }
-  let backupDb: DatabaseSync | undefined;
-  try {
-    backupDb = new DatabaseSync(backupPath, { readOnly: true, timeout: 5_000 });
-    enableAndVerifyForeignKeyEnforcement(backupDb);
-    const integrity = backupDb.prepare("PRAGMA integrity_check").get() as Record<
-      string,
-      unknown
-    >;
-    if (integrity.integrity_check !== "ok") {
+  withMigrationSqlitePath(dataDir, backupPath, (filename) => {
+    let backupDb: DatabaseSync | undefined;
+    try {
+      backupDb = new DatabaseSync(filename, { readOnly: true, timeout: 5_000 });
+      enableAndVerifyForeignKeyEnforcement(backupDb);
+      const integrity = backupDb.prepare("PRAGMA integrity_check").get() as Record<
+        string,
+        unknown
+      >;
+      if (integrity.integrity_check !== "ok") {
+        throw migrationBlocked(
+          `Later migration backup integrity check failed: ${String(
+            integrity.integrity_check
+          )}.`
+        );
+      }
+      if (
+        userVersion(backupDb) !== evidence.fromUserVersion ||
+        computeSchemaHash(backupDb, evidence.fromUserVersion) !==
+          expectedSchemaHash
+      ) {
+        throw migrationBlocked(
+          "Later migration backup does not match its exact manifest precondition."
+        );
+      }
+      verifyNoForeignKeyViolations(backupDb);
+    } catch (error) {
+      if (isSqliteBusy(error)) throw error;
+      if (
+        error instanceof Error &&
+        error.name === "StorageMigrationBlockedError"
+      ) {
+        throw error;
+      }
       throw migrationBlocked(
-        `Later migration backup integrity check failed: ${String(
-          integrity.integrity_check
-        )}.`
+        `Later migration backup could not be reopened and verified: ${
+          error instanceof Error ? error.message : String(error)
+        }.`
       );
+    } finally {
+      backupDb?.close();
     }
-    if (
-      userVersion(backupDb) !== evidence.fromUserVersion ||
-      computeSchemaHash(backupDb, evidence.fromUserVersion) !==
-        expectedSchemaHash
-    ) {
-      throw migrationBlocked(
-        "Later migration backup does not match its exact manifest precondition."
-      );
-    }
-    verifyNoForeignKeyViolations(backupDb);
-  } catch (error) {
-    if (isSqliteBusy(error)) throw error;
-    if (
-      error instanceof Error &&
-      error.name === "StorageMigrationBlockedError"
-    ) {
-      throw error;
-    }
-    throw migrationBlocked(
-      `Later migration backup could not be reopened and verified: ${
-        error instanceof Error ? error.message : String(error)
-      }.`
-    );
-  } finally {
-    backupDb?.close();
-  }
+  });
 }
 
 function verifyLegacyAttestationCompleteness(db: DatabaseSync, dataDir: string): void {
@@ -4338,14 +4355,7 @@ function verifyLegacyAttestationCompleteness(db: DatabaseSync, dataDir: string):
     const relativePath = String(row.file_path);
     const absolutePath = path.resolve(dataDir, relativePath);
     assertInside(dataDir, absolutePath);
-    if (!fs.existsSync(absolutePath)) {
-      throw migrationBlocked(`Attested legacy revision file is missing: ${relativePath}.`);
-    }
-    const stat = fs.lstatSync(absolutePath);
-    if (stat.isSymbolicLink() || !stat.isFile()) {
-      throw migrationBlocked(`Attested legacy revision is not a regular file: ${relativePath}.`);
-    }
-    const bytes = fs.readFileSync(absolutePath);
+    const bytes = readMigrationFile(dataDir, absolutePath, MAX_WINDOWS_MIGRATION_FILE_BYTES);
     const rawHash = createHash("sha256").update(bytes).digest("hex");
     if (
       row.schema_version !== "legacy_revision_attestation.v1" ||
@@ -4616,11 +4626,7 @@ function verifyLegacyRevisionState(
     const relativePath = String(row.file_path);
     const absolutePath = path.resolve(dataDir, relativePath);
     assertInside(dataDir, absolutePath);
-    const stat = fs.lstatSync(absolutePath);
-    if (stat.isSymbolicLink() || !stat.isFile()) {
-      throw migrationBlocked(`Legacy revision is not an in-root regular file: ${relativePath}.`);
-    }
-    const bytes = fs.readFileSync(absolutePath);
+    const bytes = readMigrationFile(dataDir, absolutePath, MAX_WINDOWS_MIGRATION_FILE_BYTES);
     const storedHash = String(row.graph_hash);
     if (!/^[0-9a-f]{64}$/.test(storedHash)) {
       throw migrationBlocked(`Legacy revision ${String(row.id)} has a non-canonical graph hash.`);
@@ -4964,7 +4970,7 @@ function prepareAndInspectMigrationBlockSidecars(
       }.`
     );
   } finally {
-    if (directory) fs.closeSync(directory.descriptor);
+    if (directory) closeMigrationForeignKeyBlockDirectory(directory);
   }
 }
 
@@ -4980,14 +4986,18 @@ function inspectMigrationBlockSidecars(
       evidence?: MigrationForeignKeyCheckEvidenceV1;
     }
   >();
-  const entries = fs
-    .readdirSync(directory.path, { withFileTypes: true })
-    .sort((left, right) => compareUtf8Strings(left.name, right.name));
+  const entries = ("native" in directory
+    ? directory.native.list().map(({ name, directory, reparse }) => ({
+        name, regular: !directory && !reparse
+      }))
+    : fs.readdirSync(directory.path, { withFileTypes: true }).map((entry) => ({
+        name: entry.name, regular: entry.isFile() && !entry.isSymbolicLink()
+      }))).sort((left, right) => compareUtf8Strings(left.name, right.name));
   validateMigrationForeignKeyBlockDirectory(directory);
   for (const entry of entries) {
     const match =
       /^([0-9a-f]{64})\.(pending|evidence)\.json$/.exec(entry.name);
-    if (!match || !entry.isFile() || entry.isSymbolicLink()) {
+    if (!match || !entry.regular) {
       throw new TypeError(
         `migration block artifact has an unknown or non-regular entry: ${entry.name}`
       );
@@ -5354,7 +5364,7 @@ function migrationForeignKeyBlockDirectoryHasEntries(
   try {
     directory = openMigrationForeignKeyBlockDirectory(dataDir);
     validateMigrationForeignKeyBlockDirectory(directory);
-    const entries = fs.readdirSync(directory.path);
+    const entries = "native" in directory ? directory.native.list() : fs.readdirSync(directory.path);
     validateMigrationForeignKeyBlockDirectory(directory);
     return entries.length > 0;
   } catch (error) {
@@ -5370,13 +5380,22 @@ function migrationForeignKeyBlockDirectoryHasEntries(
       }.`
     );
   } finally {
-    if (directory) fs.closeSync(directory.descriptor);
+    if (directory) closeMigrationForeignKeyBlockDirectory(directory);
   }
 }
 
 function openMigrationForeignKeyBlockDirectory(
   dataDir: string
 ): MigrationForeignKeyBlockDirectoryHandle {
+  if (process.platform === "win32") {
+    const profile = getWindowsStorageForProfile(dataDir);
+    const migrations = profile.ensureChild("migrations");
+    try {
+      return { path: migrationForeignKeyBlockDirectory(dataDir), native: migrations.ensureChild("migration-blocks") };
+    } finally {
+      migrations.close();
+    }
+  }
   const effectiveUid = migrationForeignKeyEffectiveUid();
   const { directoryFlag, noFollowFlag } =
     requiredMigrationForeignKeyOpenFlags();
@@ -5612,9 +5631,18 @@ function fsyncOwnedMigrationDirectory(
   }
 }
 
+function closeMigrationForeignKeyBlockDirectory(directory: MigrationForeignKeyBlockDirectoryHandle): void {
+  if ("native" in directory) directory.native.close();
+  else fs.closeSync(directory.descriptor);
+}
+
 function validateMigrationForeignKeyBlockDirectory(
   directory: MigrationForeignKeyBlockDirectoryHandle
 ): void {
+  if ("native" in directory) {
+    directory.native.validate();
+    return;
+  }
   const pathStat = fs.lstatSync(directory.path, { bigint: true });
   const descriptorStat = fs.fstatSync(directory.descriptor, {
     bigint: true
@@ -5624,7 +5652,7 @@ function validateMigrationForeignKeyBlockDirectory(
 }
 
 function assertFrozenMigrationDirectoryStat(
-  directory: MigrationForeignKeyBlockDirectoryHandle,
+  directory: PosixMigrationForeignKeyBlockDirectory,
   stat: fs.BigIntStats
 ): void {
   if (
@@ -5678,6 +5706,12 @@ function readMigrationForeignKeyArtifact(
 ): string {
   assertMigrationForeignKeyArtifactChild(directory, filePath);
   validateMigrationForeignKeyBlockDirectory(directory);
+  if ("native" in directory) {
+    const maximumBytes = filePath.endsWith(".pending.json") ? 32_768 : 1_048_576;
+    const bytes = directory.native.read(path.basename(filePath), maximumBytes);
+    if (bytes.byteLength === 0) throw new TypeError("Migration block artifact is empty.");
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  }
   const lstat = fs.lstatSync(filePath, { bigint: true });
   const maximumBytes = filePath.endsWith(".pending.json")
     ? 32_768n
@@ -5777,7 +5811,7 @@ function writeMigrationForeignKeyArtifactDurable(
     fileFsynced: StorageMigrationFaultPoint;
     directoryFsynced: StorageMigrationFaultPoint;
   }
-): MigrationForeignKeyFilesystemIdentity {
+): MigrationForeignKeyFilesystemIdentity | Buffer {
   assertMigrationForeignKeyArtifactChild(directory, filePath);
   const maximumBytes = filePath.endsWith(".pending.json")
     ? 32_768
@@ -5786,6 +5820,30 @@ function writeMigrationForeignKeyArtifactDurable(
     throw new TypeError(
       `migration block artifact exceeds its byte bound: ${path.basename(filePath)}`
     );
+  }
+  if ("native" in directory) {
+    const artifact = filePath.endsWith(".pending.json") ? "pending" : "evidence";
+    const fault = (suffix: "create" | "file_fsync" | "directory_fsync") => {
+      if (context?.sequence === 3) {
+        options.faultInjector?.(`sequence3_before_foreign_key_${artifact}_${suffix}`, context);
+      }
+    };
+    fault("create");
+    const file = directory.native.createFile(path.basename(filePath));
+    try {
+      options.faultInjector?.(faultPoints.created, context);
+      file.write(bytes);
+      fault("file_fsync");
+      file.flush();
+      const identity = file.identity();
+      options.faultInjector?.(faultPoints.fileFsynced, context);
+      fault("directory_fsync");
+      directory.native.flush();
+      options.faultInjector?.(faultPoints.directoryFsynced, context);
+      return identity;
+    } finally {
+      file.close();
+    }
   }
   let descriptor: number | undefined;
   const { noFollowFlag } = requiredMigrationForeignKeyOpenFlags();
@@ -5877,6 +5935,17 @@ function unlinkMigrationForeignKeyPendingLatch(
     );
   }
   validateMigrationForeignKeyBlockDirectory(directory);
+  if ("native" in directory) {
+    if (!Buffer.isBuffer(pending.fileIdentity)) throw new TypeError("Invalid Windows pending latch identity.");
+    if (context?.sequence === 3) options.faultInjector?.("sequence3_before_foreign_key_pending_unlink", context);
+    directory.native.unlinkIdentified(path.basename(pending.path), pending.fileIdentity);
+    options.faultInjector?.("after_foreign_key_pending_unlinked", context);
+    if (context?.sequence === 3) options.faultInjector?.("sequence3_before_foreign_key_pending_unlink_directory_fsync", context);
+    directory.native.flush();
+    if (context?.sequence === 3) options.faultInjector?.("sequence3_after_foreign_key_pending_unlink_directory_fsynced", context);
+    return;
+  }
+  if (Buffer.isBuffer(pending.fileIdentity)) throw new TypeError("Invalid POSIX pending latch identity.");
   const pathStat = fs.lstatSync(pending.path, { bigint: true });
   assertExactMigrationForeignKeyFileIdentity(
     pathStat,
@@ -6088,15 +6157,14 @@ function createBackupAndJournal(
   const migrationDir = path.join(dataDir, "migrations");
   const backupDir = path.join(migrationDir, "backups");
   const journalDir = path.join(migrationDir, "bootstrap-journal");
-  fs.mkdirSync(backupDir, { recursive: true });
-  fs.mkdirSync(journalDir, { recursive: true });
+  ensureMigrationDirectory(dataDir, backupDir);
+  ensureMigrationDirectory(dataDir, journalDir);
   const backupName = `backup-${input.journalGeneration}-${id(input.idFactory)}.sqlite`;
   const backupPath = path.join(backupDir, backupName);
   assertInside(dataDir, backupPath);
-  db.exec(`VACUUM INTO '${escapeSqlLiteral(backupPath)}';`);
-  fsyncFileAndDirectory(backupPath);
+  withMigrationSqlitePath(dataDir, backupPath, (filename) => db.exec(`VACUUM INTO '${escapeSqlLiteral(filename)}';`));
+  const backupBytes = readMigrationFile(dataDir, backupPath, MAX_WINDOWS_MIGRATION_FILE_BYTES, true);
   input.faultInjector?.("after_backup_fsynced");
-  const backupBytes = fs.readFileSync(backupPath);
   const backupHash = hashFramed(
     "vdt-studio/sqlite-backup",
     "sqlite_backup_hash.v1",
@@ -6151,22 +6219,23 @@ function createBackupAndJournal(
     canonicalizeJson({ ...withoutHash, journalHash } as unknown as JsonValue),
     "utf8"
   );
-  writeExclusiveDurable(journalPath, bytes);
+  writeMigrationFile(dataDir, journalPath, bytes);
   input.faultInjector?.("after_bootstrap_journal_fsynced");
   return journal;
 }
 
 function readLatestValidJournal(dataDir: string): MigrationBootstrapJournal | null {
   const dir = path.join(dataDir, "migrations", "bootstrap-journal");
-  if (!fs.existsSync(dir)) return null;
-  const files = fs.readdirSync(dir).filter((file) => file.endsWith(".json")).sort();
+  const entries = migrationDirectoryEntries(dataDir, dir);
+  if (!entries) return null;
+  const files = entries.map((entry) => entry.name).filter((file) => file.endsWith(".json")).sort();
   let previous: MigrationBootstrapJournal | null = null;
   for (const file of files) {
     const relativePath = path.join("migrations", "bootstrap-journal", file);
     const absolutePath = path.join(dataDir, relativePath);
     assertInside(dataDir, absolutePath);
     const current = parseBootstrapJournal(
-      fs.readFileSync(absolutePath, "utf8"),
+      readMigrationFile(dataDir, absolutePath, 1_048_576).toString("utf8"),
       relativePath,
       file,
       previous
@@ -6354,15 +6423,7 @@ function verifyJournalBackup(dataDir: string, journal: MigrationBootstrapJournal
   }
   const backupPath = path.resolve(dataDir, evidence.backupRelativePath);
   assertInside(dataDir, backupPath);
-  if (!fs.existsSync(backupPath)) {
-    throw migrationBlocked(`Durable migration backup is missing: ${evidence.backupRelativePath}.`);
-  }
-  const stat = fs.lstatSync(backupPath);
-  if (stat.isSymbolicLink() || !stat.isFile()) {
-    throw migrationBlocked(`Migration backup is not a regular file: ${evidence.backupRelativePath}.`);
-  }
-  fsyncFileAndDirectory(backupPath);
-  const bytes = fs.readFileSync(backupPath);
+  const bytes = readMigrationFile(dataDir, backupPath, MAX_WINDOWS_MIGRATION_FILE_BYTES, true);
   const actualHash = hashFramed(
     "vdt-studio/sqlite-backup",
     "sqlite_backup_hash.v1",
@@ -6379,40 +6440,42 @@ function verifyJournalBackup(dataDir: string, journal: MigrationBootstrapJournal
     throw migrationBlocked(`Migration backup hash mismatch: ${evidence.backupRelativePath}.`);
   }
 
-  let backupDb: DatabaseSync | undefined;
-  try {
-    backupDb = new DatabaseSync(backupPath, { readOnly: true, timeout: 5_000 });
-    enableAndVerifyForeignKeyEnforcement(backupDb);
-    const integrity = backupDb.prepare("PRAGMA integrity_check").get() as Record<string, unknown>;
-    if (integrity.integrity_check !== "ok") {
-      throw migrationBlocked(`Migration backup integrity check failed: ${String(integrity.integrity_check)}.`);
+  withMigrationSqlitePath(dataDir, backupPath, (filename) => {
+    let backupDb: DatabaseSync | undefined;
+    try {
+      backupDb = new DatabaseSync(filename, { readOnly: true, timeout: 5_000 });
+      enableAndVerifyForeignKeyEnforcement(backupDb);
+      const integrity = backupDb.prepare("PRAGMA integrity_check").get() as Record<string, unknown>;
+      if (integrity.integrity_check !== "ok") {
+        throw migrationBlocked(`Migration backup integrity check failed: ${String(integrity.integrity_check)}.`);
+      }
+      if (userVersion(backupDb) !== evidence.fromUserVersion) {
+        throw migrationBlocked("Migration backup user_version does not match its evidence.");
+      }
+      const expectedSchemaHash =
+        evidence.fromUserVersion === 0
+          ? EMPTY_SCHEMA_HASH
+          : evidence.fromUserVersion === 1
+            ? LEGACY_V1_SCHEMA_HASH
+            : undefined;
+      if (
+        !expectedSchemaHash ||
+        computeSchemaHash(backupDb, evidence.fromUserVersion) !== expectedSchemaHash
+      ) {
+        throw migrationBlocked("Migration backup schema does not match its frozen precondition.");
+      }
+    } catch (error) {
+      if (isSqliteBusy(error)) throw error;
+      if (error instanceof Error && error.name === "StorageMigrationBlockedError") throw error;
+      throw migrationBlocked(
+        `Migration backup could not be reopened and verified: ${
+          error instanceof Error ? error.message : String(error)
+        }.`
+      );
+    } finally {
+      backupDb?.close();
     }
-    if (userVersion(backupDb) !== evidence.fromUserVersion) {
-      throw migrationBlocked("Migration backup user_version does not match its evidence.");
-    }
-    const expectedSchemaHash =
-      evidence.fromUserVersion === 0
-        ? EMPTY_SCHEMA_HASH
-        : evidence.fromUserVersion === 1
-          ? LEGACY_V1_SCHEMA_HASH
-          : undefined;
-    if (
-      !expectedSchemaHash ||
-      computeSchemaHash(backupDb, evidence.fromUserVersion) !== expectedSchemaHash
-    ) {
-      throw migrationBlocked("Migration backup schema does not match its frozen precondition.");
-    }
-  } catch (error) {
-    if (isSqliteBusy(error)) throw error;
-    if (error instanceof Error && error.name === "StorageMigrationBlockedError") throw error;
-    throw migrationBlocked(
-      `Migration backup could not be reopened and verified: ${
-        error instanceof Error ? error.message : String(error)
-      }.`
-    );
-  } finally {
-    backupDb?.close();
-  }
+  });
 }
 
 function createValidatedMigrationPlan(
@@ -6912,7 +6975,7 @@ function migrationApplicationTransaction(
           "sequence3_before_post_commit_cleanup",
           context
         );
-        fs.closeSync(directory.descriptor);
+        closeMigrationForeignKeyBlockDirectory(directory);
         directory = undefined;
         options.faultInjector?.(
           "sequence3_after_post_commit_cleanup",
@@ -6972,21 +7035,86 @@ function migrationApplicationTransaction(
       }.`
     );
   } finally {
-    if (directory) fs.closeSync(directory.descriptor);
+    if (directory) closeMigrationForeignKeyBlockDirectory(directory);
   }
 }
 
-function writeExclusiveDurable(filePath: string, bytes: Buffer): void {
-  let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(filePath, "wx", 0o600);
-    writeAll(descriptor, bytes);
-    fs.fsyncSync(descriptor);
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-  }
-  fsyncDirectory(path.dirname(filePath));
+interface MigrationDirectoryEntry {
+  name: string;
+  isFile(): boolean;
+  isDirectory(): boolean;
+  isSymbolicLink(): boolean;
 }
+
+function withNativeMigrationParent<T>(
+  dataDir: string, candidate: string, create: boolean,
+  operation: (directory: WindowsStorageDirectory, name: string) => T
+): T {
+  assertInside(dataDir, candidate);
+  return withWindowsStorageParent(getWindowsStorageForProfile(dataDir), path.relative(dataDir, candidate), create, operation);
+}
+
+function migrationDirectoryEntries(dataDir: string, candidate: string): MigrationDirectoryEntry[] | null {
+  if (process.platform !== "win32") {
+    return fs.existsSync(candidate) ? fs.readdirSync(candidate, { withFileTypes: true }) : null;
+  }
+  try {
+    return withNativeMigrationParent(dataDir, candidate, false, (directory, name) => {
+      const child = directory.openChild(name);
+      try {
+        return child.list().map((entry) => ({
+          name: entry.name,
+          isFile: () => !entry.directory && !entry.reparse,
+          isDirectory: () => entry.directory && !entry.reparse,
+          isSymbolicLink: () => entry.reparse
+        }));
+      } finally { child.close(); }
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function ensureMigrationDirectory(dataDir: string, candidate: string, exclusive = false): void {
+  if (process.platform !== "win32") {
+    fs.mkdirSync(candidate, exclusive ? { mode: 0o700 } : { recursive: true });
+    return;
+  }
+  withNativeMigrationParent(dataDir, candidate, true, (directory, name) => {
+    const child = exclusive ? directory.createChild(name) : directory.ensureChild(name);
+    child.close();
+  });
+}
+
+function readMigrationFile(dataDir: string, candidate: string, maxBytes: number, durable = false): Buffer {
+  if (process.platform === "win32") {
+    return withNativeMigrationParent(dataDir, candidate, false, (directory, name) => directory.read(name, maxBytes, durable));
+  }
+  const stat = fs.lstatSync(candidate);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw migrationBlocked(`Migration file is not an in-root regular file: ${path.relative(dataDir, candidate)}.`);
+  }
+  if (durable) fsyncFileAndDirectory(candidate);
+  return fs.readFileSync(candidate);
+}
+
+function writeMigrationFile(dataDir: string, candidate: string, bytes: Buffer): void {
+  if (process.platform === "win32") {
+    withNativeMigrationParent(dataDir, candidate, false, (directory, name) => directory.writeExclusive(name, bytes));
+  } else {
+    writeExclusiveDurable(candidate, bytes);
+  }
+}
+
+function withMigrationSqlitePath<T>(dataDir: string, candidate: string, operation: (filename: string) => T): T {
+  if (process.platform === "win32") {
+    return withNativeMigrationParent(dataDir, candidate, false, (directory, name) => operation(directory.sqlitePath(name)));
+  }
+  return operation(candidate);
+}
+
+const MAX_WINDOWS_MIGRATION_FILE_BYTES = 256 * 1024 * 1024;
 
 function fsyncFileAndDirectory(filePath: string): void {
   const descriptor = fs.openSync(filePath, "r");
@@ -6996,22 +7124,6 @@ function fsyncFileAndDirectory(filePath: string): void {
     fs.closeSync(descriptor);
   }
   fsyncDirectory(path.dirname(filePath));
-}
-
-function fsyncDirectory(directoryPath: string): void {
-  const descriptor = fs.openSync(directoryPath, "r");
-  try {
-    fs.fsyncSync(descriptor);
-  } finally {
-    fs.closeSync(descriptor);
-  }
-}
-
-function writeAll(descriptor: number, bytes: Buffer): void {
-  let offset = 0;
-  while (offset < bytes.byteLength) {
-    offset += fs.writeSync(descriptor, bytes, offset, bytes.byteLength - offset);
-  }
 }
 
 function userVersion(db: DatabaseSync): number {

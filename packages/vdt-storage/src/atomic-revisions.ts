@@ -12,6 +12,8 @@ import {
   isPlainRecord,
   validateStrictVdtProjectCommit
 } from "./canonical";
+import { flushDirectory as fsyncDirectory, writeAll, writeExclusiveDurable as writeExclusiveFile } from "./durable-files";
+import { withWindowsStorageParent, type WindowsStorageDirectory } from "./windows-storage";
 import { defined, decodeJson, toIso, toMillis } from "./json";
 import { assertInside, assertSafeId, vdtRevisionDir } from "./project-files";
 import type {
@@ -64,7 +66,8 @@ export class AtomicRevisionStore {
   constructor(
     private readonly db: DatabaseSync,
     private readonly dataDir: string,
-    options: OpenVdtDatabaseOptions
+    options: OpenVdtDatabaseOptions,
+    private readonly windows?: WindowsStorageDirectory
   ) {
     this.now = options.now ?? (() => new Date().toISOString());
     this.idFactory = options.idFactory ?? randomUUID;
@@ -74,7 +77,7 @@ export class AtomicRevisionStore {
       throw new RangeError("revisionLeaseMs must be a safe non-negative integer.");
     }
     this.faultInjector = options.faultInjector;
-    probeStorageCapabilities(dataDir, this.idFactory);
+    probeStorageCapabilities(dataDir, this.idFactory, this.windows);
   }
 
   commitVdtRevision(
@@ -156,6 +159,12 @@ export class AtomicRevisionStore {
     }
     this.inject("after_attempt_reserved", attempt);
     return this.advanceAttempt<RevisionCommitResultV2>(attempt);
+  }
+
+  getCommittedVdtCreation(projectId: string, principalId: string, key: string): CreateVdtWithInitialSnapshotResultV1 | null {
+    const record = this.findIdempotency(projectId, "vdt.create_with_initial", key);
+    if (record?.status !== "succeeded" || record.actor_principal_id !== principalId) return null;
+    return this.verifyTerminalIdempotencyResult(record, "succeeded", "create_vdt_with_initial_snapshot_result.v1");
   }
 
   createVdtWithInitialSnapshot(
@@ -489,21 +498,31 @@ export class AtomicRevisionStore {
         this.dataDir,
         attempt.stagedPayloadRelativePath,
         attempt.payloadByteLength,
-        attempt.payloadContentIdentity
+        attempt.payloadContentIdentity,
+        this.windows
       );
       const finalEvidence = inspectFile(
         this.dataDir,
         attempt.finalRelativePath,
         attempt.payloadByteLength,
-        attempt.payloadContentIdentity
+        attempt.payloadContentIdentity,
+        this.windows
       );
       if (finalEvidence !== "missing") this.quarantine(attempt, "ambiguous_recovery");
       if (stageEvidence === "mismatch") this.quarantine(attempt, "staged_payload_mismatch");
       if (stageEvidence === "missing") {
-        writeExclusiveDurable(
-          absoluteOwnedPath(this.dataDir, attempt.stagedPayloadRelativePath),
-          payload.bytes
+        if (this.windows) {
+          withWindowsStorageParent(this.windows, attempt.stagedPayloadRelativePath, true,
+            (directory, name) => directory.writeExclusive(name, payload.bytes));
+        } else {
+          writeExclusiveDurable(absoluteOwnedPath(this.dataDir, attempt.stagedPayloadRelativePath), payload.bytes);
+        }
+      } else if (this.windows) {
+        const durableStage = readAndFsyncVerifiedFile(
+          this.dataDir, attempt.stagedPayloadRelativePath, attempt.payloadByteLength,
+          attempt.payloadContentIdentity, this.windows
         );
+        if (durableStage.evidence !== "match") this.quarantine(attempt, "staged_payload_mismatch");
       }
       attempt = this.transition(attempt, "reserved", "staged");
       this.inject("after_stage_fsynced", attempt);
@@ -514,7 +533,8 @@ export class AtomicRevisionStore {
         this.dataDir,
         attempt.stagedPayloadRelativePath,
         attempt.payloadByteLength,
-        attempt.payloadContentIdentity
+        attempt.payloadContentIdentity,
+        this.windows
       );
       if (stageEvidence === "missing") this.quarantine(attempt, "staged_payload_missing");
       if (stageEvidence === "mismatch") this.quarantine(attempt, "staged_payload_mismatch");
@@ -527,28 +547,40 @@ export class AtomicRevisionStore {
         this.dataDir,
         attempt.stagedPayloadRelativePath,
         attempt.payloadByteLength,
-        attempt.payloadContentIdentity
+        attempt.payloadContentIdentity,
+        this.windows
       );
       const finalEvidence = inspectFile(
         this.dataDir,
         attempt.finalRelativePath,
         attempt.payloadByteLength,
-        attempt.payloadContentIdentity
+        attempt.payloadContentIdentity,
+        this.windows
       );
       if (finalEvidence === "mismatch") this.quarantine(attempt, "published_hash_mismatch");
       if (finalEvidence === "missing") {
         if (stageEvidence === "missing") this.quarantine(attempt, "staged_payload_missing");
         if (stageEvidence === "mismatch") this.quarantine(attempt, "staged_payload_mismatch");
-        publishExclusive(
-          absoluteOwnedPath(this.dataDir, attempt.stagedPayloadRelativePath),
-          absoluteOwnedPath(this.dataDir, attempt.finalRelativePath)
-        );
+        if (this.windows) {
+          const stage = withWindowsStorageParent(this.windows, attempt.stagedPayloadRelativePath, false,
+            (directory, name) => directory.read(name, attempt.payloadByteLength, true));
+          if (!stage.equals(payload.bytes)) this.quarantine(attempt, "staged_payload_mismatch");
+          // Keep the verified stage for the fenced recovery path.
+          withWindowsStorageParent(this.windows, attempt.finalRelativePath, true,
+            (directory, name) => directory.writeExclusive(name, stage));
+        } else {
+          publishExclusive(
+            absoluteOwnedPath(this.dataDir, attempt.stagedPayloadRelativePath),
+            absoluteOwnedPath(this.dataDir, attempt.finalRelativePath)
+          );
+        }
       } else {
         const durable = readAndFsyncVerifiedFile(
           this.dataDir,
           attempt.finalRelativePath,
           attempt.payloadByteLength,
-          attempt.payloadContentIdentity
+          attempt.payloadContentIdentity,
+          this.windows
         );
         if (durable.evidence !== "match") {
           this.quarantine(attempt, "published_hash_mismatch");
@@ -563,7 +595,8 @@ export class AtomicRevisionStore {
         this.dataDir,
         attempt.finalRelativePath,
         attempt.payloadByteLength,
-        attempt.payloadContentIdentity
+        attempt.payloadContentIdentity,
+        this.windows
       );
       if (finalEvidence !== "match") {
         this.quarantine(
@@ -656,7 +689,10 @@ export class AtomicRevisionStore {
           error.code === "PROJECT_WRITE_DISABLED")
       ) {
         const removed = removeDurable(
-          absoluteOwnedPath(this.dataDir, attempt.stagedPayloadRelativePath)
+          this.dataDir,
+          attempt.stagedPayloadRelativePath,
+          this.windows,
+          Buffer.from(attempt.payloadCanonicalJson, "utf8")
         );
         if (!removed) this.quarantine(attempt, "ambiguous_recovery");
         this.reject(attempt, error.code, error.message);
@@ -734,7 +770,8 @@ export class AtomicRevisionStore {
         this.dataDir,
         attempt.finalRelativePath,
         attempt.payloadByteLength,
-        attempt.payloadContentIdentity
+        attempt.payloadContentIdentity,
+        this.windows
       );
       if (verifiedFinal.evidence !== "match") {
         rejection = new VdtStorageError(
@@ -1752,8 +1789,12 @@ function inspectFile(
   dataDir: string,
   relativePath: string,
   expectedLength: number,
-  expectedIdentity: RevisionContentIdentityV1
+  expectedIdentity: RevisionContentIdentityV1,
+  windows?: WindowsStorageDirectory
 ): "missing" | "match" | "mismatch" {
+  if (windows) {
+    return readWindowsRevision(windows, relativePath, expectedLength, expectedIdentity, false).evidence;
+  }
   const absolutePath = absoluteOwnedPath(dataDir, relativePath);
   if (!fs.existsSync(absolutePath)) return "missing";
   const stat = fs.lstatSync(absolutePath);
@@ -1776,8 +1817,12 @@ function readAndFsyncVerifiedFile(
   dataDir: string,
   relativePath: string,
   expectedLength: number,
-  expectedIdentity: RevisionContentIdentityV1
+  expectedIdentity: RevisionContentIdentityV1,
+  windows?: WindowsStorageDirectory
 ): { evidence: "missing" | "match" | "mismatch"; rawHash: string } {
+  if (windows) {
+    return readWindowsRevision(windows, relativePath, expectedLength, expectedIdentity, true);
+  }
   const absolutePath = absoluteOwnedPath(dataDir, relativePath);
   let descriptor: number;
   try {
@@ -1840,6 +1885,33 @@ function readAndFsyncVerifiedFile(
   }
 }
 
+function readWindowsRevision(
+  windows: WindowsStorageDirectory,
+  relativePath: string,
+  expectedLength: number,
+  expectedIdentity: RevisionContentIdentityV1,
+  durable: boolean
+): { evidence: "missing" | "match" | "mismatch"; rawHash: string } {
+  try {
+    return withWindowsStorageParent(windows, relativePath, false, (directory, name) => {
+      const bytes = directory.read(name, expectedLength, durable);
+      const framedHash = hashFramed(
+        "vdt-studio/vdt-revision-payload",
+        "vdt_revision_payload_hash.v1",
+        { mediaType: "application/vnd.vdt-studio.vdt-project+json", serialization: "rfc8785" },
+        bytes
+      );
+      return bytes.byteLength === expectedLength && framedHash === expectedIdentity.hash
+        ? { evidence: "match", rawHash: createHash("sha256").update(bytes).digest("hex") }
+        : { evidence: "mismatch", rawHash: "" };
+    });
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return { evidence: "missing", rawHash: "" };
+    if (isErrno(error, "EBADMSG") || isErrno(error, "EACCES")) return { evidence: "mismatch", rawHash: "" };
+    throw error;
+  }
+}
+
 function publishExclusive(stagePath: string, finalPath: string): void {
   fs.mkdirSync(path.dirname(finalPath), { recursive: true });
   const source = fs.openSync(stagePath, "r");
@@ -1862,19 +1934,16 @@ function publishExclusive(stagePath: string, finalPath: string): void {
 
 function writeExclusiveDurable(filePath: string, bytes: Buffer): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(filePath, "wx", 0o600);
-    writeAll(descriptor, bytes);
-    fs.fsyncSync(descriptor);
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-  }
-  fsyncDirectory(path.dirname(filePath));
+  writeExclusiveFile(filePath, bytes);
 }
 
-function removeDurable(filePath: string): boolean {
+function removeDurable(dataDir: string, relativePath: string, windows: WindowsStorageDirectory | undefined, expected: Buffer): boolean {
   try {
+    if (windows) {
+      withWindowsStorageParent(windows, relativePath, false, (directory, name) => directory.unlinkExpected(name, expected));
+      return true;
+    }
+    const filePath = absoluteOwnedPath(dataDir, relativePath);
     fs.unlinkSync(filePath);
     fsyncDirectory(path.dirname(filePath));
     return true;
@@ -1883,7 +1952,25 @@ function removeDurable(filePath: string): boolean {
   }
 }
 
-function probeStorageCapabilities(dataDir: string, idFactory: () => string): void {
+function probeStorageCapabilities(dataDir: string, idFactory: () => string, windows?: WindowsStorageDirectory): void {
+  if (windows) {
+    const name = path.join(".storage-capabilities", `exclusive-${safeGeneratedId(idFactory())}`);
+    withWindowsStorageParent(windows, name, true, (directory, leaf) => {
+      const bytes = Buffer.from("vdt-storage-capability-v1");
+      directory.writeExclusive(leaf, bytes);
+      try {
+        try {
+          directory.writeExclusive(leaf, bytes);
+          throw new Error("Exclusive create unexpectedly replaced an existing target.");
+        } catch (error) {
+          if (!isErrno(error, "EEXIST")) throw error;
+        }
+      } finally {
+        directory.unlinkExpected(leaf, bytes);
+      }
+    });
+    return;
+  }
   const probeDir = path.join(dataDir, ".storage-capabilities");
   fs.mkdirSync(probeDir, { recursive: true });
   const probe = path.join(probeDir, `exclusive-${safeGeneratedId(idFactory())}`);
@@ -1913,22 +2000,6 @@ function probeStorageCapabilities(dataDir: string, idFactory: () => string): voi
       fs.unlinkSync(probe);
       fsyncDirectory(probeDir);
     }
-  }
-}
-
-function fsyncDirectory(directoryPath: string): void {
-  const descriptor = fs.openSync(directoryPath, "r");
-  try {
-    fs.fsyncSync(descriptor);
-  } finally {
-    fs.closeSync(descriptor);
-  }
-}
-
-function writeAll(descriptor: number, bytes: Buffer): void {
-  let offset = 0;
-  while (offset < bytes.byteLength) {
-    offset += fs.writeSync(descriptor, bytes, offset, bytes.byteLength - offset);
   }
 }
 

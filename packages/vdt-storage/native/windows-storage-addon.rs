@@ -310,11 +310,13 @@ extern "C" fn vdt_storage_editor_directory_path(
 #[no_mangle]
 extern "C" fn vdt_storage_sqlite_path(
     session: &Session,
+    name: *const u8,
+    length: usize,
     context: *mut std::ffi::c_void,
     callback: TextCallback,
 ) -> u32 {
     status(|| {
-        let path = session.sqlite_path()?;
+        let path = session.sqlite_path(utf8(name, length)?)?;
         if unsafe { callback(context, path.as_ptr(), path.len()) } == 0 {
             return Err(io::Error::other("could not return native SQLite path"));
         }
