@@ -3,6 +3,7 @@ use std::{
     io,
     path::{Component, Path, Prefix},
     ptr,
+    rc::Rc,
 };
 
 use crate::windows_directory::{FlushableDirectory, OwnedHandle};
@@ -39,11 +40,16 @@ unsafe extern "system" {
 
 pub struct StorageSession {
     directory: FlushableDirectory,
-    ancestors: Vec<OwnedHandle>,
+    namespace: Namespace,
+}
+
+enum Namespace {
+    Root(Vec<OwnedHandle>),
+    Child(Rc<StorageSession>),
 }
 
 impl StorageSession {
-    pub fn open(path: &Path) -> io::Result<Self> {
+    pub fn open(path: &Path, create: bool) -> io::Result<Self> {
         let mut components = path.components();
         let Some(Component::Prefix(prefix)) = components.next() else {
             return Err(unsupported("storage requires a local drive path"));
@@ -89,11 +95,28 @@ impl StorageSession {
             ancestors.push(parent.open_directory(name)?);
         }
         let parent = ancestors.last().expect("drive handle retained");
-        let directory = parent.open_flushable_directory(name)?;
+        let directory = if create {
+            // Re-open the immediate parent with proven write/flush access.
+            // The first traversal remains pinned while this handle is acquired.
+            if ancestors.len() < 2 {
+                return Err(unsupported(
+                    "cannot initialize storage directly under a drive root",
+                ));
+            }
+            let parent_name = path
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| unsupported("invalid storage parent name"))?;
+            let parent = ancestors[ancestors.len() - 2].open_flushable_directory(parent_name)?;
+            parent.ensure_bootstrap_directory(name)?
+        } else {
+            parent.open_flushable_directory(name)?
+        };
         directory.validate_private_dacl()?;
         Ok(Self {
             directory,
-            ancestors,
+            namespace: Namespace::Root(ancestors),
         })
     }
 
@@ -107,6 +130,15 @@ impl StorageSession {
     pub fn publish(&self, stage: &str, destination: &str, expected: &[u8]) -> io::Result<()> {
         self.validate()?;
         self.directory.publish(stage, destination, expected)
+    }
+
+    pub fn open_child(parent: Rc<Self>, name: &str) -> io::Result<Self> {
+        parent.validate()?;
+        let directory = parent.directory.open_child(name)?;
+        Ok(Self {
+            directory,
+            namespace: Namespace::Child(parent),
+        })
     }
 
     pub fn ensure_child(&self, name: &str) -> io::Result<()> {
@@ -130,8 +162,13 @@ impl StorageSession {
     }
 
     fn validate(&self) -> io::Result<()> {
-        for ancestor in &self.ancestors {
-            ancestor.reject_reparse_point()?;
+        match &self.namespace {
+            Namespace::Root(ancestors) => {
+                for ancestor in ancestors {
+                    ancestor.reject_reparse_point()?;
+                }
+            }
+            Namespace::Child(parent) => parent.validate()?,
         }
         self.directory.validate_private_dacl()
     }

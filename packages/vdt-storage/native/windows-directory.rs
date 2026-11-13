@@ -210,30 +210,24 @@ impl FlushableDirectory {
     }
 
     #[cfg(vdt_storage_addon)]
+    pub(crate) fn ensure_bootstrap_directory(&self, name: &str) -> io::Result<Self> {
+        self.reject_reparse_point()?;
+        self.0.ensure_private_directory(name)
+    }
+
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn open_child(&self, name: &str) -> io::Result<Self> {
+        self.validate_private_dacl()?;
+        let child = self.0.open_flushable_directory(name)?;
+        child.validate_private_dacl()?;
+        Ok(child)
+    }
+
+    #[cfg(vdt_storage_addon)]
     pub(crate) fn ensure_child(&self, name: &str) -> io::Result<()> {
         self.validate_private_dacl()?;
-        let descriptor = crate::windows_security::private_directory_descriptor()?;
-        match open_relative_with_security(
-            self.0.raw,
-            name,
-            DIRECTORY_FLUSH_ACCESS,
-            FILE_SHARE_READ_WRITE,
-            FILE_CREATE,
-            FILE_DIRECTORY_FILE,
-            descriptor.0,
-        ) {
-            Ok(handle) => {
-                let directory = Self(handle);
-                directory.validate_private_dacl()?;
-                directory.flush()?;
-                self.flush()
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                let child = self.0.open_flushable_directory(name)?;
-                child.validate_private_dacl()
-            }
-            Err(error) => Err(error),
-        }
+        self.0.ensure_private_directory(name)?;
+        Ok(())
     }
 
     #[cfg(vdt_storage_addon)]
@@ -383,6 +377,34 @@ impl OwnedHandle {
         )?;
         directory.reject_reparse_point()?;
         Ok(directory)
+    }
+
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn ensure_private_directory(&self, name: &str) -> io::Result<FlushableDirectory> {
+        let descriptor = crate::windows_security::private_directory_descriptor()?;
+        match open_relative_with_security(
+            self.raw,
+            name,
+            DIRECTORY_FLUSH_ACCESS,
+            FILE_SHARE_READ_WRITE,
+            FILE_CREATE,
+            FILE_DIRECTORY_FILE,
+            descriptor.0,
+        ) {
+            Ok(handle) => {
+                let directory = FlushableDirectory(handle);
+                directory.validate_private_dacl()?;
+                directory.flush()?;
+                self.flush()?;
+                Ok(directory)
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                let child = self.open_flushable_directory(name)?;
+                child.validate_private_dacl()?;
+                Ok(child)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     #[cfg(vdt_storage_addon)]

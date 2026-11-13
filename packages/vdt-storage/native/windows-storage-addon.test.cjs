@@ -43,7 +43,13 @@ try {
   assert.throws(() => addon.unlink(session, name), { code: "ENOENT" });
   addon.ensureChild(session, "managed");
   addon.ensureChild(session, "managed");
-  const child = addon.open(path.join(privateRoot, "managed"));
+  const child = addon.openChild(session, "managed");
+  const secondParent = addon.open(privateRoot);
+  const secondChild = addon.openChild(secondParent, "managed");
+  addon.close(secondParent);
+  addon.flush(secondChild);
+  assert.throws(() => fs.renameSync(privateRoot, privateRoot + ".moved"));
+  addon.close(secondChild);
   addon.close(child);
   fs.mkdirSync(path.join(privateRoot, "inherited-only"));
   assert.throws(() => addon.ensureChild(session, "inherited-only"), { code: "EACCES" });
@@ -55,6 +61,10 @@ try {
 addon.close(session);
 assert.throws(() => addon.flush(session), { code: "EBADF" });
 assert.throws(() => addon.open(path.dirname(privateRoot)), { code: "EACCES" });
+const bootstrap = addon.initialize(path.join(privateRoot, "bootstrap"));
+addon.flush(bootstrap);
+addon.close(bootstrap);
+assert.throws(() => addon.initialize(path.join(privateRoot, "inherited-only")), { code: "EACCES" });
 const alias = path.join(privateRoot, "junction");
 fs.symlinkSync(privateRoot, alias, "junction");
 assert.throws(() => addon.open(path.join(alias, "nested")));

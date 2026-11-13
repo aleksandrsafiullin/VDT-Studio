@@ -3,7 +3,8 @@
 #include <stdlib.h>
 
 typedef struct StorageSession StorageSession;
-extern uint32_t vdt_storage_open(const char *, size_t, StorageSession **);
+extern uint32_t vdt_storage_open(const char *, size_t, uint8_t, StorageSession **);
+extern uint32_t vdt_storage_open_child(StorageSession *, const char *, size_t, StorageSession **);
 extern uint32_t vdt_storage_write(StorageSession *, const char *, size_t, const void *, size_t);
 extern uint32_t vdt_storage_publish(StorageSession *, const char *, size_t, const char *, size_t, const void *, size_t);
 extern uint32_t vdt_storage_read(StorageSession *, const char *, size_t, void *, size_t, uint8_t, size_t *);
@@ -76,24 +77,12 @@ static napi_value result(napi_env env, uint32_t error) {
   return undefined;
 }
 
-static napi_value open_session(napi_env env, napi_callback_info info) {
-  napi_value arg, object;
-  size_t argc = 1;
-  size_t length;
-  char path[32768];
-  if (napi_get_cb_info(env, info, &argc, &arg, NULL, NULL) != napi_ok || argc != 1 ||
-      napi_get_value_string_utf8(env, arg, NULL, 0, &length) != napi_ok ||
-      length == 0 || length >= sizeof(path) ||
-      napi_get_value_string_utf8(env, arg, path, sizeof(path), &length) != napi_ok) {
-    return fail(env, "EINVAL", "Expected a bounded Windows storage root path");
-  }
-  Session *session = calloc(1, sizeof(*session));
-  if (session == NULL) return fail(env, "ENOMEM", "Could not allocate Windows storage session");
-  uint32_t error = vdt_storage_open(path, length, &session->native);
+static napi_value wrap_session(napi_env env, Session *session, uint32_t error) {
   if (error != 0) {
     free(session);
     return win32_fail(env, error);
   }
+  napi_value object;
   if (napi_create_object(env, &object) != napi_ok ||
       napi_type_tag_object(env, object, &session_tag) != napi_ok ||
       napi_wrap(env, object, session, finalize, NULL, NULL) != napi_ok) {
@@ -101,6 +90,24 @@ static napi_value open_session(napi_env env, napi_callback_info info) {
     return fail(env, "EIO", "Could not wrap Windows storage session");
   }
   return object;
+}
+
+static napi_value open_session(napi_env env, napi_callback_info info) {
+  napi_value arg;
+  void *create = NULL;
+  size_t argc = 1;
+  size_t length;
+  char path[32768];
+  if (napi_get_cb_info(env, info, &argc, &arg, NULL, &create) != napi_ok || argc != 1 ||
+      napi_get_value_string_utf8(env, arg, NULL, 0, &length) != napi_ok ||
+      length == 0 || length >= sizeof(path) ||
+      napi_get_value_string_utf8(env, arg, path, sizeof(path), &length) != napi_ok) {
+    return fail(env, "EINVAL", "Expected a bounded Windows storage root path");
+  }
+  Session *session = calloc(1, sizeof(*session));
+  if (session == NULL) return fail(env, "ENOMEM", "Could not allocate Windows storage session");
+  uint32_t error = vdt_storage_open(path, length, create != NULL, &session->native);
+  return wrap_session(env, session, error);
 }
 
 static napi_value write_exclusive(napi_env env, napi_callback_info info) {
@@ -197,6 +204,26 @@ static napi_value named_operation(napi_env env, napi_callback_info info) {
   return result(env, error);
 }
 
+static napi_value open_child(napi_env env, napi_callback_info info) {
+  napi_value args[2];
+  size_t argc = 2, length;
+  char name[1021];
+  if (napi_get_cb_info(env, info, &argc, args, NULL, NULL) != napi_ok || argc != 2 ||
+      napi_get_value_string_utf8(env, args[1], NULL, 0, &length) != napi_ok ||
+      length == 0 || length >= sizeof(name) ||
+      napi_get_value_string_utf8(env, args[1], name, sizeof(name), &length) != napi_ok) {
+    return fail(env, "EINVAL", "Expected a session and one directory name");
+  }
+  Session *parent = get_session(env, args[0]);
+  if (parent == NULL || parent->native == NULL) {
+    return fail(env, "EBADF", "Expected an open Windows storage session");
+  }
+  Session *child = calloc(1, sizeof(*child));
+  if (child == NULL) return fail(env, "ENOMEM", "Could not allocate Windows storage session");
+  uint32_t error = vdt_storage_open_child(parent->native, name, length, &child->native);
+  return wrap_session(env, child, error);
+}
+
 static napi_value flush_or_close(napi_env env, napi_callback_info info) {
   napi_value arg;
   size_t argc = 1;
@@ -215,9 +242,11 @@ static napi_value flush_or_close(napi_env env, napi_callback_info info) {
 }
 
 NAPI_MODULE_INIT() {
-  static int close_marker, ensure_child_marker;
+  static int close_marker, ensure_child_marker, create_marker;
   napi_property_descriptor properties[] = {
     {"open", NULL, open_session, NULL, NULL, NULL, napi_default, NULL},
+    {"initialize", NULL, open_session, NULL, NULL, NULL, napi_default, &create_marker},
+    {"openChild", NULL, open_child, NULL, NULL, NULL, napi_default, NULL},
     {"writeExclusive", NULL, write_exclusive, NULL, NULL, NULL, napi_default, NULL},
     {"publish", NULL, publish_file, NULL, NULL, NULL, napi_default, NULL},
     {"read", NULL, read_file, NULL, NULL, NULL, napi_default, NULL},

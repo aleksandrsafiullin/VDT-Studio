@@ -5,8 +5,10 @@ mod windows_security;
 #[path = "windows-storage-session.rs"]
 mod windows_storage_session;
 
-use std::{io, path::Path, ptr, slice, str};
+use std::{io, path::Path, ptr, rc::Rc, slice, str};
 use windows_storage_session::StorageSession;
+
+type Session = Rc<StorageSession>;
 
 // The Node shim passes only valid memory ranges for the duration of a call.
 // The native handle is owned exclusively by the wrapped Node-API object.
@@ -14,19 +16,20 @@ use windows_storage_session::StorageSession;
 unsafe extern "C" fn vdt_storage_open(
     path: *const u8,
     length: usize,
-    output: *mut *mut StorageSession,
+    create: u8,
+    output: *mut *mut Session,
 ) -> u32 {
     status(|| {
         let path = utf8(path, length)?;
-        let session = StorageSession::open(Path::new(path))?;
-        unsafe { *output = Box::into_raw(Box::new(session)) };
+        let session = StorageSession::open(Path::new(path), create != 0)?;
+        unsafe { *output = Box::into_raw(Box::new(Rc::new(session))) };
         Ok(())
     })
 }
 
 #[no_mangle]
 unsafe extern "C" fn vdt_storage_write(
-    session: &StorageSession,
+    session: &Session,
     name: *const u8,
     name_len: usize,
     bytes: *const u8,
@@ -45,7 +48,7 @@ unsafe extern "C" fn vdt_storage_write(
 
 #[no_mangle]
 unsafe extern "C" fn vdt_storage_publish(
-    session: &StorageSession,
+    session: &Session,
     stage: *const u8,
     stage_len: usize,
     destination: *const u8,
@@ -65,7 +68,7 @@ unsafe extern "C" fn vdt_storage_publish(
 
 #[no_mangle]
 unsafe extern "C" fn vdt_storage_read(
-    session: &StorageSession,
+    session: &Session,
     name: *const u8,
     name_len: usize,
     bytes: *mut u8,
@@ -86,8 +89,22 @@ unsafe extern "C" fn vdt_storage_read(
 }
 
 #[no_mangle]
+unsafe extern "C" fn vdt_storage_open_child(
+    session: &Session,
+    name: *const u8,
+    length: usize,
+    output: *mut *mut Session,
+) -> u32 {
+    status(|| {
+        let child = StorageSession::open_child(Rc::clone(session), utf8(name, length)?)?;
+        unsafe { *output = Box::into_raw(Box::new(Rc::new(child))) };
+        Ok(())
+    })
+}
+
+#[no_mangle]
 unsafe extern "C" fn vdt_storage_ensure_child(
-    session: &StorageSession,
+    session: &Session,
     name: *const u8,
     length: usize,
 ) -> u32 {
@@ -95,21 +112,17 @@ unsafe extern "C" fn vdt_storage_ensure_child(
 }
 
 #[no_mangle]
-unsafe extern "C" fn vdt_storage_unlink(
-    session: &StorageSession,
-    name: *const u8,
-    length: usize,
-) -> u32 {
+unsafe extern "C" fn vdt_storage_unlink(session: &Session, name: *const u8, length: usize) -> u32 {
     status(|| session.unlink(utf8(name, length)?))
 }
 
 #[no_mangle]
-extern "C" fn vdt_storage_flush(session: &StorageSession) -> u32 {
+extern "C" fn vdt_storage_flush(session: &Session) -> u32 {
     status(|| session.flush())
 }
 
 #[no_mangle]
-unsafe extern "C" fn vdt_storage_close(session: *mut StorageSession) {
+unsafe extern "C" fn vdt_storage_close(session: *mut Session) {
     if !ptr::eq(session, ptr::null_mut()) {
         drop(unsafe { Box::from_raw(session) });
     }
