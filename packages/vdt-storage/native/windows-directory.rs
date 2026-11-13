@@ -14,7 +14,7 @@ const FILE_DISPOSITION_INFO_CLASS: u32 = 4;
 #[cfg(vdt_storage_addon)]
 const DELETE_FILE_ACCESS: u32 = 0x0013_0080;
 #[cfg(vdt_storage_addon)]
-const FILE_RENAME_INFO_CLASS: u32 = 3;
+const FILE_RENAME_INFO_CLASS: u32 = 10;
 const FILE_DIRECTORY_FILE: u32 = 0x1;
 const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x20;
 const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
@@ -85,6 +85,14 @@ unsafe extern "system" {
         options: u32,
         ea_buffer: *const c_void,
         ea_length: u32,
+    ) -> i32;
+    #[cfg(vdt_storage_addon)]
+    fn NtSetInformationFile(
+        handle: Handle,
+        status: *mut IoStatusBlock,
+        information: *const c_void,
+        length: u32,
+        class: u32,
     ) -> i32;
     fn RtlNtStatusToDosError(status: i32) -> u32;
 }
@@ -246,14 +254,21 @@ impl FlushableDirectory {
                 ptr::addr_of_mut!((*info).file_name).cast(),
                 name.len(),
             );
-            if SetFileInformationByHandle(
+            let mut status = IoStatusBlock {
+                status: 0,
+                information: 0,
+            };
+            let result = NtSetInformationFile(
                 source.raw,
-                FILE_RENAME_INFO_CLASS,
+                &mut status,
                 info.cast(),
                 bytes as u32,
-            ) == 0
-            {
-                return Err(io::Error::last_os_error());
+                FILE_RENAME_INFO_CLASS,
+            );
+            if result < 0 {
+                return Err(io::Error::from_raw_os_error(
+                    RtlNtStatusToDosError(result) as i32
+                ));
             }
         }
         self.flush()
