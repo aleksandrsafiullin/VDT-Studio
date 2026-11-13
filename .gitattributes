@@ -5,3 +5,8 @@ apps/desktop/src-tauri/sidecars/vdt-local-runtime text eol=lf
 apps/desktop/src-tauri/sidecars/vdt-local-runtime.cmd text eol=lf
 apps/desktop/src-tauri/sidecars/vdt-local-runtime.mjs text eol=lf
 apps/desktop/src-tauri/sidecars/vdt-local-runtime.manifest.json text eol=lf
+packages/vdt-storage/src/migrations/** text eol=lf
+packages/data-harness/src/parser-worker.cjs text eol=lf
+packages/data-harness/src/parser-worker.manifest.json text eol=lf
+packages/vdt-storage/src/migrations/**/*.wasm -text
+packages/vdt-storage/src/migrations/**/*.gz -text

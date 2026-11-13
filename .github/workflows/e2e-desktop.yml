@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-latest]
+        os: [macos-15, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -24,3 +24,33 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm desktop:verify
       - run: pnpm vitest run scripts/verify-desktop-shell.test.ts scripts/verify-desktop-sidecar.test.ts packages/local-runner/src/server/runtime.test.ts
+      - name: Verify Windows native process and loopback ownership
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force output/desktop-foundation | Out-Null
+          node scripts/verify-windows-native-runtime.mjs 2>&1 | Tee-Object output/desktop-foundation/windows-native-runtime.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify the Windows storage admission boundary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force output/desktop-foundation | Out-Null
+          pnpm exec vitest run packages/vdt-storage/src/storage-platform.test.ts packages/vdt-storage/src/sequence-3-migration.test.ts -t 'Windows storage admission|fails win32' --maxWorkers=1 2>&1 | Tee-Object output/desktop-foundation/windows-storage-admission.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Observe Windows native filesystem prerequisites (diagnostic only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force output/desktop-foundation | Out-Null
+          $report = Join-Path $env:GITHUB_WORKSPACE 'output/desktop-foundation/windows-storage-probe.json'
+          node packages/vdt-storage/scripts/probe-windows-storage.mjs --output $report
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve foundation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-foundation-${{ matrix.os }}-${{ github.sha }}
+          path: output/desktop-foundation/
+          if-no-files-found: ignore
+          retention-days: 14

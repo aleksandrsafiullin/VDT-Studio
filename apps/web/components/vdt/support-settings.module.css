@@ -1,0 +1,22 @@
+.root { display: grid; gap: 16px; }
+.card { min-width: 0; padding: 18px; border: 1px solid var(--settings-line-soft, #e5e5ea); border-radius: 14px; background: var(--settings-field, #fafafa); }
+.card h3 { margin: 0 0 9px; }
+.card p, .steps, .guidance { color: var(--settings-muted, #6e6e73); font-size: 12px; line-height: 1.65; }
+.card p + p { margin-top: 7px; }
+.card .identity { color: var(--settings-ink, #1d1d1f); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.steps { padding-left: 19px; list-style: decimal; }
+.steps li + li { margin-top: 6px; }
+.address { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; margin-block: 15px; }
+.address label { display: grid; min-width: 0; gap: 5px; font-size: 11px; color: var(--settings-muted, #6e6e73); }
+.address input { width: 100%; }
+.address button { margin-bottom: 3px; }
+.notice { min-height: 1.4em; grid-column: 1 / -1; font-size: 11px; color: var(--settings-muted, #6e6e73); }
+.modelOption { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 9px; margin-block: 14px; }
+.previewLabel { display: grid; gap: 7px; font-size: 12px; }
+.preview { width: 100%; min-height: 230px; max-height: 420px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+.guidance { margin-top: 10px; }
+.guidance h4 { color: var(--settings-ink, #1d1d1f); font-weight: 550; }
+.guidance ul { padding-left: 17px; list-style: disc; }
+.guidance li + li { margin-top: 7px; }
+@container (max-width: 480px) { .address { grid-template-columns: minmax(0, 1fr); } .address button { justify-self: start; } }

@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { LocalSkillFiles } from "./skill-files";
+import { windowsSkillPathParts, withWindowsSkillDirectory } from "./windows-skill-files";
+import type { WindowsStorageDirectory } from "./windows-storage";
 
 /** Local V1 library. Immutable, atomically published records; no V2 migrations. */
 export interface StoredSkillVersion {
@@ -51,23 +53,30 @@ const safeSegment = (id: string) => {
 
 export class LocalSkillRepository {
   private readonly root: string;
+  private readonly dataDir: string;
   private readonly ownedWriteLocks = new Set<string>();
   readonly files: LocalSkillFiles;
   constructor(dataDir = localSkillDataDir()) {
-    this.root = path.resolve(dataDir, "skill-library-v1");
+    this.dataDir = path.resolve(dataDir);
+    this.root = path.join(this.dataDir, "skill-library-v1");
     this.files = new LocalSkillFiles(path.resolve(dataDir, "skills"), () => {
       this.directory();
       this.migrateWorkingDirectory();
     });
   }
 
-  get filesInitialized(): boolean { return fs.existsSync(path.join(this.directory(), ".files-initialized")); }
+  get filesInitialized(): boolean { return this.hasMarker(this.directory(), ".files-initialized"); }
   initializeFiles(): void {
-    try { fs.writeFileSync(path.join(this.directory(), ".files-initialized"), "1\n", { flag: "wx", mode: 0o600 }); }
+    const directory = this.directory();
+    if (process.platform === "win32") {
+      this.writeWindowsMarker(directory, ".files-initialized", "1\n");
+      return;
+    }
+    try { fs.writeFileSync(path.join(directory, ".files-initialized"), "1\n", { flag: "wx", mode: 0o600 }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
   }
 
-  hasSeed(id: string): boolean { return fs.existsSync(path.join(this.directory("seeded"), `${safeSegment(id)}.json`)); }
+  hasSeed(id: string): boolean { return this.hasMarker(this.directory("seeded"), `${safeSegment(id)}.json`); }
 
   /** Install the shipped version verbatim so previously pinned hashes remain
    * readable. Seed markers prevent reinstating files the owner later removes. */
@@ -85,14 +94,23 @@ export class LocalSkillRepository {
   }
 
   markSeed(id: string): void {
-    try { fs.writeFileSync(path.join(this.directory("seeded"), `${safeSegment(id)}.json`), JSON.stringify({ id }), { flag: "wx", mode: 0o600 }); }
+    const dir = this.directory("seeded"), name = `${safeSegment(id)}.json`;
+    if (process.platform === "win32") {
+      this.writeWindowsMarker(dir, name, JSON.stringify({ id }));
+      return;
+    }
+    try { fs.writeFileSync(path.join(dir, name), JSON.stringify({ id }), { flag: "wx", mode: 0o600 }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
   }
 
   list(): StoredSkillVersion[] {
     const root = this.directory("skills");
-    return fs.readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory() && !entry.isSymbolicLink())
-      .map(entry => this.get(entry.name)).filter((entry): entry is StoredSkillVersion => entry !== null);
+    const names = process.platform === "win32"
+      ? this.withWindowsDirectory(root, directory => directory.list()
+          .filter(entry => entry.directory && !entry.reparse).map(entry => entry.name))
+      : fs.readdirSync(root, { withFileTypes: true })
+          .filter(entry => entry.isDirectory() && !entry.isSymbolicLink()).map(entry => entry.name);
+    return names.map(name => this.get(name)).filter((entry): entry is StoredSkillVersion => entry !== null);
   }
 
   get(id: string, version?: number): StoredSkillVersion | null {
@@ -139,6 +157,24 @@ export class LocalSkillRepository {
 
   private withWriteLock<T>(directory: string, key: string, operation: () => T): T {
     if (this.ownedWriteLocks.has(key)) return operation();
+    if (process.platform === "win32") {
+      return this.withWindowsDirectory(directory, native => {
+        let lock;
+        try { lock = native.acquireLock(".write-lock"); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "EBUSY") {
+            throw new SkillLibraryError("SKILL_CONFLICT", "Another process is updating this skill. Retry after it finishes.");
+          }
+          throw error;
+        }
+        this.ownedWriteLocks.add(key);
+        try { return operation(); }
+        finally {
+          this.ownedWriteLocks.delete(key);
+          lock.close();
+        }
+      });
+    }
     const lock = path.join(directory, ".write-lock");
     const marker = `owner-${process.pid}-${randomUUID()}.json`;
     let acquired = false;
@@ -218,6 +254,29 @@ export class LocalSkillRepository {
   /** Rename the complete working tree, preserving editor bytes and companion
    * resources. Runtime history and VDT selections stay in their existing root. */
   private migrateWorkingDirectory(): void {
+    if (process.platform === "win32") {
+      this.withWindowsDirectory(this.root, library => {
+        const legacy = library.list().find(entry => entry.name.toLowerCase() === "files");
+        if (!legacy) return;
+        if (!legacy.directory || legacy.reparse) {
+          throw new SkillLibraryError("UNSAFE_SKILL_PATH", "The previous skills folder must be an ordinary directory.");
+        }
+        withWindowsSkillDirectory(this.dataDir, [], false, profile => {
+          try { library.moveDirectory(legacy.name, profile, "skills"); }
+          catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code === "ENOENT" && !library.list().some(entry => entry.name.toLowerCase() === "files")) {
+              const migrated = profile.openChild("skills");
+              migrated.close();
+              return;
+            }
+            if (code !== "EEXIST") throw error;
+            throw new SkillLibraryError("SKILL_PATH_CONFLICT", "Both skills and skill-library-v1/files exist. Move their contents into skills before removing the old empty folder.");
+          }
+        });
+      });
+      return;
+    }
     const legacy = path.join(this.root, "files");
     const existing = (filename: string) => {
       try { return fs.lstatSync(filename); }
@@ -241,6 +300,10 @@ export class LocalSkillRepository {
   }
 
   private directory(...segments: string[]): string {
+    if (process.platform === "win32") {
+      withWindowsSkillDirectory(this.dataDir, ["skill-library-v1", ...segments], true, () => {});
+      return path.join(this.root, ...segments);
+    }
     // The application owns this subtree. Reject symlinks at every level.
     fs.mkdirSync(path.dirname(this.root), { recursive: true });
     let dir = this.root;
@@ -253,15 +316,51 @@ export class LocalSkillRepository {
     return dir;
   }
 
+  private hasMarker(dir: string, name: string): boolean {
+    if (process.platform !== "win32") return fs.existsSync(path.join(dir, name));
+    return this.withWindowsDirectory(dir, directory => {
+      const entry = directory.list().find(item => item.name.toLowerCase() === name.toLowerCase());
+      if (!entry) return false;
+      if (entry.reparse || entry.directory) {
+        throw new SkillLibraryError("UNSAFE_SKILL_PATH", "Skill markers must be ordinary files.");
+      }
+      directory.read(entry.name, 1024);
+      return true;
+    });
+  }
+
+  private writeWindowsMarker(dir: string, name: string, text: string): void {
+    this.withWindowsDirectory(dir, directory => {
+      try { directory.writeExclusive(name, Buffer.from(text)); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !this.hasMarker(dir, name)) throw error;
+        return;
+      }
+      directory.flush();
+    });
+  }
+
+  private withWindowsDirectory<T>(dir: string, operation: (directory: WindowsStorageDirectory) => T): T {
+    return withWindowsSkillDirectory(this.dataDir, windowsSkillPathParts(this.dataDir, dir), false, operation);
+  }
+
   private latest(dir: string): number {
-    return fs.readdirSync(dir).reduce((version, name) => /^\d{9}\.json$/.test(name) ? Math.max(version, Number(name.slice(0, 9))) : version, 0);
+    const names = process.platform === "win32"
+      ? this.withWindowsDirectory(dir, directory => directory.list()
+          .filter(entry => !entry.reparse && !entry.directory).map(entry => entry.name))
+      : fs.readdirSync(dir);
+    return names.reduce((version, name) => /^\d{9}\.json$/.test(name) ? Math.max(version, Number(name.slice(0, 9))) : version, 0);
   }
 
   private read<T>(dir: string, version: number): T | null {
     if (!version) return null;
     if (!Number.isSafeInteger(version) || version < 1 || version > 999_999_999) throw new SkillLibraryError("INVALID_VERSION", "Invalid skill version.");
-    const filename = path.join(dir, `${String(version).padStart(9, "0")}.json`);
+    const name = `${String(version).padStart(9, "0")}.json`;
+    const filename = path.join(dir, name);
     try {
+      if (process.platform === "win32") {
+        return this.withWindowsDirectory(dir, directory => JSON.parse(directory.read(name, 1024 * 1024).toString("utf8")) as T);
+      }
       const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
       try {
         if (fs.fstatSync(fd).size > 1024 * 1024) throw new SkillLibraryError("SKILL_TOO_LARGE", "Stored skill exceeds its size limit.");
@@ -271,8 +370,23 @@ export class LocalSkillRepository {
   }
 
   private publishRecord(dir: string, version: number, record: unknown): void {
-    const temporary = path.join(dir, `.publish-${randomUUID()}`);
-    const filename = path.join(dir, `${String(version).padStart(9, "0")}.json`);
+    const stage = `.publish-${randomUUID()}`;
+    const name = `${String(version).padStart(9, "0")}.json`;
+    if (process.platform === "win32") {
+      this.withWindowsDirectory(dir, directory => {
+        const bytes = Buffer.from(JSON.stringify(record));
+        directory.writeExclusive(stage, bytes);
+        try { directory.publish(stage, name, bytes); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          directory.unlinkExpected(stage, bytes);
+          throw new SkillLibraryError("SKILL_CONFLICT", "A newer skill version was saved. Refresh and try again.");
+        }
+      });
+      return;
+    }
+    const temporary = path.join(dir, stage);
+    const filename = path.join(dir, name);
     try {
       const fd = fs.openSync(temporary, "wx", 0o600);
       try { fs.writeFileSync(fd, JSON.stringify(record), "utf8"); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }

@@ -1,0 +1,158 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+
+const [addonPath, privateRoot] = process.argv.slice(2);
+assert.equal(process.platform, "win32");
+assert.equal(process.arch, "x64");
+assert.equal(process.version, "v24.22.2");
+const addon = require(addonPath);
+assert.equal(addon.abiVersion(), 1);
+const session = addon.open(privateRoot);
+assert.equal(addon.editorDirectoryPath(session).toLowerCase(), privateRoot.toLowerCase());
+const name = "addon-proof.dat";
+const bytes = Buffer.from("vdt storage addon");
+try {
+  assert.throws(() => addon.flush({}), { code: "EBADF" });
+  assert.throws(() => addon.writeExclusive(session, "../outside.dat", bytes), { code: "EINVAL" });
+  addon.writeExclusive(session, name, bytes);
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, name)), bytes);
+  assert.throws(() => addon.writeExclusive(session, name, Buffer.from("collision")), { code: "EEXIST" });
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, name)), bytes);
+  assert.throws(() => addon.writeExclusive(session, "CON.txt", bytes), { code: "EINVAL" });
+  assert.throws(() => addon.writeExclusive(session, "embedded\0NUL", bytes), { code: "EINVAL" });
+  assert.deepEqual(addon.read(session, name, 256 * 1024 * 1024, true), bytes);
+  assert.throws(() => addon.read(session, name, 1, false), { code: "EBADMSG" });
+  const stage = "addon-proof.stage";
+  const final = "addon-proof.final";
+  addon.writeExclusive(session, stage, bytes);
+  assert.throws(() => addon.publish(session, stage, name, bytes), { code: "EEXIST" });
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, name)), bytes);
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, stage)), bytes);
+  assert.throws(() => addon.publish(session, stage, final, Buffer.from("wrong")), { code: "EBADMSG" });
+  addon.publish(session, stage, final, bytes);
+  assert.equal(fs.existsSync(path.join(privateRoot, stage)), false);
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, final)), bytes);
+  const replacement = Buffer.from("replacement");
+  addon.writeExclusive(session, stage, replacement);
+  assert.throws(() => addon.replace(session, stage, final, replacement, Buffer.from("wrong")), { code: "ESTALE" });
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, final)), bytes);
+  addon.replace(session, stage, final, replacement, bytes);
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, final)), replacement);
+  assert.throws(() => addon.unlinkExpected(session, final, bytes), { code: "ESTALE" });
+  const leaf = addon.openEditorLeaf(session, final);
+  assert.equal(addon.editorPath(leaf).toLowerCase(), path.join(privateRoot, final).toLowerCase());
+  assert.throws(() => fs.renameSync(path.join(privateRoot, final), path.join(privateRoot, "elsewhere")));
+  addon.releaseLock(leaf);
+  addon.unlinkExpected(session, final, replacement);
+  const link = path.join(privateRoot, "alias.dat");
+  fs.linkSync(path.join(privateRoot, name), link);
+  assert.throws(() => addon.unlink(session, name), { code: "EACCES" });
+  fs.unlinkSync(link);
+  addon.unlink(session, name);
+  assert.equal(fs.existsSync(path.join(privateRoot, name)), false);
+  assert.throws(() => addon.unlink(session, name), { code: "ENOENT" });
+  addon.ensureChild(session, "managed");
+  addon.ensureChild(session, "managed");
+  const child = addon.openChild(session, "managed");
+  const secondParent = addon.open(privateRoot);
+  const secondChild = addon.openChild(secondParent, "managed");
+  addon.close(secondParent);
+  addon.flush(secondChild);
+  assert.throws(() => fs.renameSync(privateRoot, privateRoot + ".moved"));
+  addon.close(secondChild);
+  addon.close(child);
+  const entries = addon.openChild(session, "managed");
+  addon.writeExclusive(session, "move.dat", bytes);
+  addon.moveFile(session, "move.dat", entries, "moved.dat", bytes);
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, "managed", "moved.dat")), bytes);
+  addon.unlinkExpected(entries, "moved.dat", bytes);
+  const directoryToMove = addon.createChild(session, "move-directory");
+  addon.writeExclusive(directoryToMove, "nested.dat", bytes);
+  addon.close(directoryToMove);
+  addon.moveDirectory(session, "move-directory", entries, "moved-directory");
+  assert.deepEqual(fs.readFileSync(path.join(privateRoot, "managed", "moved-directory", "nested.dat")), bytes);
+  for (let index = 0; index < 250; index++) {
+    fs.writeFileSync(path.join(privateRoot, "managed", `данные-${index}.txt`), bytes);
+  }
+  fs.symlinkSync(privateRoot, path.join(privateRoot, "managed", "junction"), "junction");
+  const list = addon.list(entries);
+  assert.equal(list.length, 252);
+  assert.deepEqual(list.find((entry) => entry.name === "junction"), { name: "junction", directory: true, reparse: true });
+  assert(list.some((entry) => entry.name === "данные-249.txt"));
+  addon.close(entries);
+  assert.throws(() => addon.removeEmptyChild(session, "managed"), { code: "ENOTEMPTY" });
+  addon.close(addon.createChild(session, "empty"));
+  assert.throws(() => addon.createChild(session, "empty"), { code: "EEXIST" });
+  addon.removeEmptyChild(session, "empty");
+  assert.equal(fs.existsSync(path.join(privateRoot, "empty")), false);
+  fs.mkdirSync(path.join(privateRoot, "inherited-only"));
+  assert.throws(() => addon.ensureChild(session, "inherited-only"), { code: "EACCES" });
+  const inherited = addon.openChild(session, "inherited-only");
+  addon.writeExclusive(inherited, "owned.dat", bytes);
+  addon.unlink(inherited, "owned.dat");
+  addon.close(inherited);
+  const { DatabaseSync } = require("node:sqlite");
+  const database = addon.sqlitePath(session);
+  assert(database.startsWith(String.raw`\\?\Volume{`));
+  const db = new DatabaseSync(database);
+  try {
+    db.exec("PRAGMA journal_mode=WAL; CREATE TABLE example(value); INSERT INTO example VALUES(1);");
+    const second = new DatabaseSync(addon.sqlitePath(session));
+    try {
+      assert.equal(second.prepare("SELECT value FROM example").get().value, 1);
+      assert(fs.existsSync(path.join(privateRoot, "app.sqlite-wal")));
+      assert(fs.existsSync(path.join(privateRoot, "app.sqlite-shm")));
+    } finally { second.close(); }
+  } finally { db.close(); }
+  assert(fs.existsSync(path.join(privateRoot, "app.sqlite")));
+  fs.linkSync(path.join(privateRoot, "app.sqlite"), path.join(privateRoot, "sqlite-alias"));
+  assert.throws(() => addon.sqlitePath(session), { code: "EACCES" });
+  fs.unlinkSync(path.join(privateRoot, "sqlite-alias"));
+  addon.validate(session);
+  const pending = addon.createFile(session, "pending.json");
+  addon.writeFile(pending, bytes);
+  addon.flushFile(pending);
+  const identity = addon.fileIdentity(pending);
+  addon.flush(session);
+  addon.releaseLock(pending);
+  assert.equal(identity.length, 24);
+  assert.throws(() => addon.unlinkIdentified(session, "pending.json", Buffer.alloc(24)), { code: "ESTALE" });
+  addon.unlinkIdentified(session, "pending.json", identity);
+  addon.flush(session);
+  assert.equal(fs.existsSync(path.join(privateRoot, "pending.json")), false);
+  const lock = addon.acquireLock(session, ".skill-write.lock");
+  assert.throws(() => addon.acquireLock(session, ".skill-write.lock"), { code: "EBUSY" });
+  assert.throws(() => addon.releaseLock(session), { code: "EBADF" });
+  addon.releaseLock(lock);
+  addon.releaseLock(lock);
+  const reacquired = addon.acquireLock(session, ".skill-write.lock");
+  addon.releaseLock(reacquired);
+  addon.flush(session);
+  assert.throws(() => fs.renameSync(privateRoot, privateRoot + ".moved"));
+} finally {
+  addon.close(session);
+}
+addon.close(session);
+assert.throws(() => addon.flush(session), { code: "EBADF" });
+assert.throws(() => addon.open(path.dirname(privateRoot)), { code: "EACCES" });
+const bootstrap = addon.initialize(path.join(privateRoot, "bootstrap"));
+addon.flush(bootstrap);
+addon.close(bootstrap);
+assert.throws(() => addon.initialize(path.join(privateRoot, "inherited-only")), { code: "EACCES" });
+const alias = path.join(privateRoot, "junction");
+fs.symlinkSync(privateRoot, alias, "junction");
+assert.throws(() => addon.open(path.join(alias, "nested")));
+fs.unlinkSync(alias);
+const drive = ["Q:", "R:", "S:", "T:"].find((candidate) => !fs.existsSync(candidate + "\\"));
+assert(drive, "expected an unused diagnostic drive letter");
+const subst = path.join(process.env.SystemRoot, "System32", "subst.exe");
+execFileSync(subst, [drive, path.dirname(privateRoot)], { windowsHide: true });
+try {
+  assert.throws(() => addon.open(path.join(drive + "\\", path.basename(privateRoot))), { code: "ENOTSUP" });
+} finally {
+  execFileSync(subst, [drive, "/D"], { windowsHide: true });
+}
+
+console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, node: process.version, assertionsPassed: true }));

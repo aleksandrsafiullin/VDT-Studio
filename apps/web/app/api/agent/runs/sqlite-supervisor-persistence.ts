@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
   AgentRunEventOutbox,
@@ -25,6 +25,7 @@ import {
 } from "@vdt-studio/vdt-agent-runtime";
 import { canonicalizeJson, type JsonValue } from "@vdt-studio/storage";
 import { openAgentRunPersistenceDatabase } from "./persistence";
+import { supervisorControllerFenceToken, supervisorOwnerDeath, type SupervisorOwnerDeath } from "./supervisor-controller-owner";
 
 type Row = Record<string, unknown>;
 
@@ -36,6 +37,9 @@ interface SqliteAgentSupervisorPersistenceOptions {
   fenceLeaseMs?: number | undefined;
   attemptLeaseMs?: number | undefined;
   fenceTokenFactory?: (() => string) | undefined;
+  /** Test seam: production always uses positive OS owner-death evidence. */
+  ownerDeath?: ((token: string) => SupervisorOwnerDeath) | undefined;
+  orphanRecoveryFaultInjector?: ((point: "epoch" | "event" | "projection") => void) | undefined;
 }
 
 interface EpochFence {
@@ -57,6 +61,8 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
   private readonly attemptLeaseMs: number;
   private readonly fenceTokenFactory: () => string;
   private readonly expectedEventEpochs = new Map<string, number>();
+  private readonly ownerDeath: (token: string) => SupervisorOwnerDeath;
+  private readonly orphanRecoveryFaultInjector?: SqliteAgentSupervisorPersistenceOptions["orphanRecoveryFaultInjector"];
   private closed = false;
 
   constructor(
@@ -69,7 +75,9 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
     this.now = options.now ?? (() => new Date().toISOString());
     this.fenceLeaseMs = options.fenceLeaseMs ?? DEFAULT_FENCE_LEASE_MS;
     this.attemptLeaseMs = options.attemptLeaseMs ?? DEFAULT_ATTEMPT_LEASE_MS;
-    this.fenceTokenFactory = options.fenceTokenFactory ?? (() => `agent-fence:${randomUUID()}`);
+    this.fenceTokenFactory = options.fenceTokenFactory ?? supervisorControllerFenceToken;
+    this.ownerDeath = options.ownerDeath ?? supervisorOwnerDeath;
+    this.orphanRecoveryFaultInjector = options.orphanRecoveryFaultInjector;
     if (!Number.isSafeInteger(this.fenceLeaseMs) || this.fenceLeaseMs <= 0) {
       this.db.close();
       throw new TypeError("fenceLeaseMs must be a positive safe integer.");
@@ -191,96 +199,98 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
 
   async saveCheckpoint(rawCheckpoint: AgentEngineCheckpoint): Promise<void> {
     const checkpoint = agentEngineCheckpointSchema.parse(rawCheckpoint);
-    this.transaction(() => {
-      const binding = this.requireBinding(checkpoint.runId);
-      assertCheckpointBinding(checkpoint, binding);
-      const existing = this.db.prepare(`
-        SELECT checkpoint_canonical_json
-        FROM agent_engine_checkpoints_v2
-        WHERE checkpoint_id = ?
-      `).get(checkpoint.checkpointId) as Row | undefined;
-      const canonical = canonicalJson(checkpoint);
-      if (existing) {
-        if (requiredString(existing.checkpoint_canonical_json) === canonical) return;
+    this.transaction(() => this.saveCheckpointInTransaction(checkpoint));
+    this.expectedEventEpochs.set(checkpoint.runId, checkpoint.sessionEpoch);
+  }
+
+  private saveCheckpointInTransaction(checkpoint: AgentEngineCheckpoint, reason: "checkpoint_resume" | "crash_recovery" = "checkpoint_resume"): void {
+    const binding = this.requireBinding(checkpoint.runId);
+    assertCheckpointBinding(checkpoint, binding);
+    const existing = this.db.prepare(`
+      SELECT checkpoint_canonical_json
+      FROM agent_engine_checkpoints_v2
+      WHERE checkpoint_id = ?
+    `).get(checkpoint.checkpointId) as Row | undefined;
+    const canonical = canonicalJson(checkpoint);
+    if (existing) {
+      if (requiredString(existing.checkpoint_canonical_json) === canonical) return;
+      throw persistenceError(
+        "CHECKPOINT_CONFLICT",
+        `Checkpoint ${checkpoint.checkpointId} is already bound to different content.`
+      );
+    }
+
+    const current = this.currentEpoch(checkpoint.runId);
+    if (checkpoint.sessionEpoch === current.sessionEpoch + 1) {
+      this.insertRecoveryEpoch(checkpoint, current, reason);
+    } else if (checkpoint.sessionEpoch !== current.sessionEpoch) {
+      throw persistenceError(
+        "SESSION_EPOCH_MISMATCH",
+        `Checkpoint epoch ${checkpoint.sessionEpoch} is not current or the exact next recovery epoch.`
+      );
+    }
+    const fence = this.acquireWriteAttemptFence(checkpoint.runId, checkpoint.sessionEpoch);
+    const latest = this.db.prepare(`
+      SELECT checkpoint_id, created_at, checkpoint_canonical_json
+      FROM agent_latest_engine_checkpoint_v2
+      WHERE run_id = ?
+    `).get(checkpoint.runId) as Row | undefined;
+    if (latest) {
+      const latestAt = requiredString(latest.created_at);
+      if (compareTimestamp(checkpoint.createdAt, latestAt) < 0) {
+        throw persistenceError(
+          "CHECKPOINT_REGRESSION",
+          `Checkpoint ${checkpoint.checkpointId} predates the durable checkpoint.`
+        );
+      }
+      if (
+        compareTimestamp(checkpoint.createdAt, latestAt) === 0
+        && requiredString(latest.checkpoint_canonical_json) !== canonical
+      ) {
         throw persistenceError(
           "CHECKPOINT_CONFLICT",
-          `Checkpoint ${checkpoint.checkpointId} is already bound to different content.`
+          `Checkpoint timestamp ${checkpoint.createdAt} is already bound to different content.`
         );
       }
-
-      const current = this.currentEpoch(checkpoint.runId);
-      if (checkpoint.sessionEpoch === current.sessionEpoch + 1) {
-        this.insertRecoveryEpoch(checkpoint, current);
-      } else if (checkpoint.sessionEpoch !== current.sessionEpoch) {
-        throw persistenceError(
-          "SESSION_EPOCH_MISMATCH",
-          `Checkpoint epoch ${checkpoint.sessionEpoch} is not current or the exact next recovery epoch.`
-        );
-      }
-      const fence = this.acquireWriteAttemptFence(checkpoint.runId, checkpoint.sessionEpoch);
-      const latest = this.db.prepare(`
-        SELECT checkpoint_id, created_at, checkpoint_canonical_json
-        FROM agent_latest_engine_checkpoint_v2
-        WHERE run_id = ?
-      `).get(checkpoint.runId) as Row | undefined;
-      if (latest) {
-        const latestAt = requiredString(latest.created_at);
-        if (compareTimestamp(checkpoint.createdAt, latestAt) < 0) {
-          throw persistenceError(
-            "CHECKPOINT_REGRESSION",
-            `Checkpoint ${checkpoint.checkpointId} predates the durable checkpoint.`
-          );
-        }
-        if (
-          compareTimestamp(checkpoint.createdAt, latestAt) === 0
-          && requiredString(latest.checkpoint_canonical_json) !== canonical
-        ) {
-          throw persistenceError(
-            "CHECKPOINT_CONFLICT",
-            `Checkpoint timestamp ${checkpoint.createdAt} is already bound to different content.`
-          );
-        }
-      }
-      this.db.prepare(`
-        INSERT INTO agent_engine_checkpoints_v2
-        (checkpoint_id, schema_version, run_id, binding_id, session_epoch,
-         external_session_id, last_confirmed_input_cursor,
-         last_confirmed_input_hash, last_confirmed_output_cursor,
-         last_confirmed_output_hash, active_exchange_id,
-         active_exchange_stable_call_key, active_exchange_state,
-         active_tool_external_call_id, active_tool_name, active_tool_state,
-         finish_receipt_id, finish_receipt_state, finish_receipt_hash,
-         write_fence_token, write_fence_generation, write_fence_expires_at,
-         checkpoint_canonical_json, checkpoint_hash, created_at)
-        VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        checkpoint.checkpointId,
-        checkpoint.runId,
-        checkpoint.bindingId,
-        checkpoint.sessionEpoch,
-        checkpoint.externalSessionId,
-        checkpoint.lastConfirmedInput?.cursor ?? null,
-        checkpoint.lastConfirmedInput?.contentHash ?? null,
-        checkpoint.lastConfirmedOutput?.cursor ?? null,
-        checkpoint.lastConfirmedOutput?.contentHash ?? null,
-        checkpoint.activeExchange?.exchangeId ?? null,
-        checkpoint.activeExchange?.stableCallKey ?? null,
-        checkpoint.activeExchange?.state ?? null,
-        checkpoint.activeToolCall?.externalCallId ?? null,
-        checkpoint.activeToolCall?.toolName ?? null,
-        checkpoint.activeToolCall?.state ?? null,
-        checkpoint.finishReceipt?.receiptId ?? null,
-        checkpoint.finishReceipt?.state ?? null,
-        checkpoint.finishReceipt?.receiptHash ?? null,
-        fence.token,
-        fence.generation,
-        fence.expiresAt,
-        canonical,
-        authorityHash("vdt.agent.checkpoint.v2", canonical),
-        checkpoint.createdAt
-      );
-    });
-    this.expectedEventEpochs.set(checkpoint.runId, checkpoint.sessionEpoch);
+    }
+    this.db.prepare(`
+      INSERT INTO agent_engine_checkpoints_v2
+      (checkpoint_id, schema_version, run_id, binding_id, session_epoch,
+       external_session_id, last_confirmed_input_cursor,
+       last_confirmed_input_hash, last_confirmed_output_cursor,
+       last_confirmed_output_hash, active_exchange_id,
+       active_exchange_stable_call_key, active_exchange_state,
+       active_tool_external_call_id, active_tool_name, active_tool_state,
+       finish_receipt_id, finish_receipt_state, finish_receipt_hash,
+       write_fence_token, write_fence_generation, write_fence_expires_at,
+       checkpoint_canonical_json, checkpoint_hash, created_at)
+      VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      checkpoint.checkpointId,
+      checkpoint.runId,
+      checkpoint.bindingId,
+      checkpoint.sessionEpoch,
+      checkpoint.externalSessionId,
+      checkpoint.lastConfirmedInput?.cursor ?? null,
+      checkpoint.lastConfirmedInput?.contentHash ?? null,
+      checkpoint.lastConfirmedOutput?.cursor ?? null,
+      checkpoint.lastConfirmedOutput?.contentHash ?? null,
+      checkpoint.activeExchange?.exchangeId ?? null,
+      checkpoint.activeExchange?.stableCallKey ?? null,
+      checkpoint.activeExchange?.state ?? null,
+      checkpoint.activeToolCall?.externalCallId ?? null,
+      checkpoint.activeToolCall?.toolName ?? null,
+      checkpoint.activeToolCall?.state ?? null,
+      checkpoint.finishReceipt?.receiptId ?? null,
+      checkpoint.finishReceipt?.state ?? null,
+      checkpoint.finishReceipt?.receiptHash ?? null,
+      fence.token,
+      fence.generation,
+      fence.expiresAt,
+      canonical,
+      authorityHash("vdt.agent.checkpoint.v2", canonical),
+      checkpoint.createdAt
+    );
   }
 
   async appendExchangeReceipt(
@@ -694,67 +704,69 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
 
   async appendEvent(rawEvent: AgentRunEventV2): Promise<void> {
     const event = agentRunEventV2Schema.parse(rawEvent);
-    this.transaction(() => {
-      const binding = this.requireBinding(event.runId);
-      const events = this.eventsForRun(event.runId);
-      const existing = events[event.seq - 1];
-      if (existing) {
-        if (canonicalJson(existing) === canonicalJson(event)) return;
-        throw persistenceError(
-          "EVENT_SEQUENCE_CONFLICT",
-          `Sequence ${event.seq} is already bound to another durable event.`
-        );
-      }
-      if (event.type === "final" && events.some((candidate) => candidate.type === "final")) {
-        throw persistenceError(
-          "DUPLICATE_DURABLE_FINAL",
-          "A run may persist exactly one final event."
-        );
-      }
-      // Hydration recalculates every hash and validates the full predecessor chain.
-      new AgentRunEventOutbox(event.runId, { initialEvents: [...events, event] });
-      const expectedEpoch = this.expectedEventEpochs.get(event.runId)
-        ?? this.currentEpoch(event.runId).sessionEpoch;
-      // Stopping the current owner must remain possible after a long human
-      // pause. Only its terminal cancellation fact gets a fresh audit fence;
-      // execution authority is never renewed and older epochs still fail.
-      const terminalCancellation = event.type === "runtime_status"
-        && event.source === "runtime"
-        && event.payload.code === "RUN_CANCELLED"
-        && event.payload.state === "cancelled"
-        && !events.some(previous => previous.type === "final");
-      const fence = this.acquireWriteAttemptFence(event.runId, expectedEpoch, terminalCancellation);
-      const canonical = canonicalJson(event);
-      this.db.prepare(`
-        INSERT INTO agent_run_event_outbox_v2
-        (event_id, schema_version, run_id, binding_id, session_epoch,
-         sequence, previous_hash, event_hash, event_type, source, session_id,
-         turn_id, correlation_id, message_id, payload_canonical_json,
-         event_canonical_json, write_fence_token, write_fence_generation,
-         write_fence_expires_at, created_at)
-        VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        event.id,
-        event.runId,
-        binding.bindingId,
-        expectedEpoch,
-        event.seq,
-        event.previousHash,
-        event.hash,
-        event.type,
-        event.source,
-        event.sessionId ?? null,
-        event.turnId ?? null,
-        event.correlationId ?? null,
-        event.messageId ?? null,
-        canonicalJson(event.payload),
-        canonical,
-        fence.token,
-        fence.generation,
-        fence.expiresAt,
-        event.timestamp
+    this.transaction(() => this.appendEventInTransaction(event));
+  }
+
+  private appendEventInTransaction(event: AgentRunEventV2, epochOverride?: number): void {
+    const binding = this.requireBinding(event.runId);
+    const events = this.eventsForRun(event.runId);
+    const existing = events[event.seq - 1];
+    if (existing) {
+      if (canonicalJson(existing) === canonicalJson(event)) return;
+      throw persistenceError(
+        "EVENT_SEQUENCE_CONFLICT",
+        `Sequence ${event.seq} is already bound to another durable event.`
       );
-    });
+    }
+    if (event.type === "final" && events.some((candidate) => candidate.type === "final")) {
+      throw persistenceError(
+        "DUPLICATE_DURABLE_FINAL",
+        "A run may persist exactly one final event."
+      );
+    }
+    // Hydration recalculates every hash and validates the full predecessor chain.
+    new AgentRunEventOutbox(event.runId, { initialEvents: [...events, event] });
+    const expectedEpoch = epochOverride ?? this.expectedEventEpochs.get(event.runId)
+      ?? this.currentEpoch(event.runId).sessionEpoch;
+    // Stopping the current owner must remain possible after a long human
+    // pause. Only its terminal cancellation fact gets a fresh audit fence;
+    // execution authority is never renewed and older epochs still fail.
+    const terminalCancellation = event.type === "runtime_status"
+      && event.source === "runtime"
+      && event.payload.code === "RUN_CANCELLED"
+      && event.payload.state === "cancelled"
+      && !events.some(previous => previous.type === "final");
+    const fence = this.acquireWriteAttemptFence(event.runId, expectedEpoch, terminalCancellation);
+    const canonical = canonicalJson(event);
+    this.db.prepare(`
+      INSERT INTO agent_run_event_outbox_v2
+      (event_id, schema_version, run_id, binding_id, session_epoch,
+       sequence, previous_hash, event_hash, event_type, source, session_id,
+       turn_id, correlation_id, message_id, payload_canonical_json,
+       event_canonical_json, write_fence_token, write_fence_generation,
+       write_fence_expires_at, created_at)
+      VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      event.id,
+      event.runId,
+      binding.bindingId,
+      expectedEpoch,
+      event.seq,
+      event.previousHash,
+      event.hash,
+      event.type,
+      event.source,
+      event.sessionId ?? null,
+      event.turnId ?? null,
+      event.correlationId ?? null,
+      event.messageId ?? null,
+      canonicalJson(event.payload),
+      canonical,
+      fence.token,
+      fence.generation,
+      fence.expiresAt,
+      event.timestamp
+    );
   }
 
   async getEvents(runId: string): Promise<AgentRunEventV2[]> {
@@ -764,6 +776,106 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
   async getExecutionSummary(runId: string): Promise<AgentExecutionSummaryV2 | null> {
     const state = this.loadState(runId);
     return state ? summarizeAgentSupervisorPersistenceState(state) : null;
+  }
+
+  /** Explicit terminal recovery only. No engine/session is opened, no ambiguous
+   * tool is replayed, and no project/revision row or file is written. */
+  async cancelOrphanedRun(runId: string): Promise<AgentSupervisorPersistenceStateV2> {
+    const observed = this.requireState(runId);
+    if (isOrphanCancellation(observed.eventOutbox?.at(-1))) return this.requireCancelledProjection(runId);
+    const observedFence = this.currentEpoch(runId);
+    this.assertOrphanAdmission(observed, observedFence);
+    const timestamp = new Date(Math.max(Date.parse(this.now()), Date.parse(observed.updatedAt) + 1)).toISOString();
+    const event = await new AgentRunEventOutbox(runId, {
+      initialEvents: observed.eventOutbox,
+      now: () => timestamp
+    }).append({
+      type: "runtime_status", source: "runtime",
+      payload: { code: "RUN_ORPHAN_CANCELLED", message: "Interrupted run ended. Your saved draft has been kept.", state: "cancelled" }
+    });
+    const state = this.transaction(() => {
+      const current = this.requireState(runId);
+      if (isOrphanCancellation(current.eventOutbox?.at(-1))) return this.requireCancelledProjection(runId);
+      const fence = this.currentEpoch(runId);
+      if (canonicalJson(current.binding) !== canonicalJson(observed.binding)
+        || fence.sessionEpoch !== observedFence.sessionEpoch || fence.token !== observedFence.token
+        || fence.generation !== observedFence.generation || fence.expiresAt !== observedFence.expiresAt
+        || current.eventOutbox?.at(-1)?.hash !== observed.eventOutbox?.at(-1)?.hash) {
+        throw persistenceError("MODEL_AGENT_RECOVERY_CONFLICT", "Run ownership changed. Refresh the run before retrying.");
+      }
+      // Liveness is checked again under the SQLite write transaction. Expiry
+      // alone never authorizes takeover of a still-live process.
+      this.assertOrphanAdmission(current, fence);
+      const row = this.db.prepare("SELECT status, internal_state_json FROM agent_runs WHERE id = ?").get(runId) as Row | undefined;
+      if (!row || !["queued", "running", "needs_user_input", "waiting_approval", "recovery_required"].includes(requiredString(row.status))) {
+        throw persistenceError("MODEL_AGENT_FINAL_COMMITTED", "This run already has a terminal outcome and cannot be reclassified as cancelled.");
+      }
+      const internal = parseJson(row.internal_state_json) as Record<string, unknown>;
+      const saved = internal?.snapshot as Record<string, unknown> | undefined;
+      if (internal?.schemaVersion !== 2 || saved?.runId !== runId || typeof saved.status !== "string") {
+        throw persistenceError("MODEL_AGENT_RECOVERY_UNVERIFIED", "The saved run snapshot could not be verified. Your stored project has not been changed.");
+      }
+      const nextEpoch = fence.sessionEpoch + 1;
+      if (!Number.isSafeInteger(nextEpoch)) throw persistenceError("SESSION_EPOCH_MISMATCH", "The next session epoch is out of range.");
+      const checkpoint: AgentEngineCheckpoint = {
+        schemaVersion: 2,
+        checkpointId: `orphan-stop:${current.binding.bindingId}:${nextEpoch}`,
+        runId, bindingId: current.binding.bindingId, sessionEpoch: nextEpoch,
+        externalSessionId: current.checkpoint?.externalSessionId ?? current.binding.externalSessionId,
+        lastConfirmedInput: current.checkpoint?.lastConfirmedInput ?? null,
+        lastConfirmedOutput: current.checkpoint?.lastConfirmedOutput ?? null,
+        activeExchange: null, activeToolCall: null, finishReceipt: null, createdAt: timestamp
+      };
+      this.saveCheckpointInTransaction(checkpoint, "crash_recovery");
+      this.orphanRecoveryFaultInjector?.("epoch");
+      this.appendEventInTransaction(event, nextEpoch);
+      this.orphanRecoveryFaultInjector?.("event");
+      const terminal = this.requireState(runId);
+      const snapshot = { ...saved,
+        status: "cancelled", phase: "reporting", completedAt: timestamp, updatedAt: timestamp,
+        publicStatus: { phase: "building_draft", message: "Interrupted run ended. Your saved draft has been kept.", updatedAt: timestamp },
+        executionSummary: summarizeAgentSupervisorPersistenceState(terminal)
+      };
+      for (const field of ["pendingQuestions", "pendingPlan", "pendingChangeSet", "pendingMutationProposal", "error", "retryableError"]) {
+        delete (snapshot as Record<string, unknown>)[field];
+      }
+      // Preserve all graph bytes, receipts, retained files, messages, replay
+      // records and committed revision identities. Only run control state ends.
+      this.db.prepare(`UPDATE agent_runs SET status = 'cancelled', phase = 'reporting',
+        public_snapshot_json = ?, internal_state_json = ?, updated_at = ?, completed_at = ? WHERE id = ?`
+      ).run(JSON.stringify(snapshot), JSON.stringify({ ...internal, snapshot, supervisorPersistenceV2: terminal }), Date.parse(timestamp), Date.parse(timestamp), runId);
+      this.orphanRecoveryFaultInjector?.("projection");
+      return terminal;
+    });
+    this.expectedEventEpochs.set(runId, state.binding.sessionEpoch);
+    return structuredClone(state);
+  }
+
+  private assertOrphanAdmission(state: AgentSupervisorPersistenceStateV2, fence: EpochFence): void {
+    if (state.binding.executionProfile !== "model_agent") {
+      throw persistenceError("MODEL_AGENT_OWNER_UNVERIFIED", "Interrupted external sessions need verified process cleanup. Your saved draft is unchanged.");
+    }
+    const death = this.ownerDeath(fence.token);
+    if (death !== "dead") {
+      throw persistenceError(death === "alive" ? "MODEL_AGENT_OWNER_ALIVE" : "MODEL_AGENT_OWNER_UNVERIFIED",
+        death === "alive" ? "The run is still owned by another active app process. End it there, or close that app before retrying."
+          : "This run has no verifiable local owner. Your saved draft is intact; export diagnostics for recovery assistance.");
+    }
+    if (state.finishReceipt || state.checkpoint?.finishReceipt || state.eventOutbox?.some(event => event.type === "final")) {
+      throw persistenceError("MODEL_AGENT_FINAL_COMMITTED", "The run reached its verified finish boundary. Its final result must be recovered without changing it to cancelled.");
+    }
+    const latestTools = new Map(state.toolOperationReceipts.map(receipt => [receipt.externalCallId, receipt]));
+    const activeTool = state.checkpoint?.activeToolCall;
+    if ([...latestTools.values()].some(receipt => !["completed", "failed"].includes(receipt.state))
+      || (activeTool && !["completed", "failed"].includes(latestTools.get(activeTool.externalCallId)?.state ?? activeTool.state))) {
+      throw persistenceError("MODEL_AGENT_RECOVERY_AMBIGUOUS", "An interrupted change has an unverified outcome. Your saved project is preserved; export diagnostics before recovery.");
+    }
+  }
+
+  private requireCancelledProjection(runId: string): AgentSupervisorPersistenceStateV2 {
+    const row = this.db.prepare("SELECT status FROM agent_runs WHERE id = ?").get(runId) as Row | undefined;
+    if (row?.status !== "cancelled") throw persistenceError("MODEL_AGENT_RECOVERY_UNVERIFIED", "The terminal run projection does not match its durable event.");
+    return this.requireState(runId);
   }
 
   private loadState(runId: string): AgentSupervisorPersistenceStateV2 | null {
@@ -883,6 +995,11 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
         `Callback epoch ${sessionEpoch} does not match current epoch ${epochFence.sessionEpoch}.`
       );
     }
+    if (this.db.prepare(`SELECT 1 FROM agent_run_event_outbox_v2 WHERE run_id = ?
+      AND event_type = 'runtime_status' AND json_extract(payload_canonical_json, '$.code') = 'RUN_ORPHAN_CANCELLED'
+      AND json_extract(payload_canonical_json, '$.state') = 'cancelled' LIMIT 1`).get(runId)) {
+      throw persistenceError("RUN_TERMINATED", "An interrupted run cannot accept writes after its durable terminal recovery.");
+    }
     const now = this.now();
     if (!terminalCancellation && compareTimestamp(epochFence.expiresAt, now) < 0) {
       throw persistenceError(
@@ -900,7 +1017,8 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
 
   private insertRecoveryEpoch(
     checkpoint: AgentEngineCheckpoint,
-    previous: EpochFence
+    previous: EpochFence,
+    reason: "checkpoint_resume" | "crash_recovery" = "checkpoint_resume"
   ): void {
     const fence = this.newEpochFence(checkpoint.sessionEpoch, previous.generation + 1);
     const epochId = `epoch:${checkpoint.bindingId}:${checkpoint.sessionEpoch}`;
@@ -912,7 +1030,7 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
       bindingId: checkpoint.bindingId,
       sessionEpoch: checkpoint.sessionEpoch,
       predecessorEpoch: previous.sessionEpoch,
-      startReason: "checkpoint_resume",
+      startReason: reason,
       writeFenceToken: fence.token,
       writeFenceGeneration: fence.generation,
       writeFenceExpiresAt: fence.expiresAt,
@@ -926,13 +1044,14 @@ export class SqliteAgentSupervisorPersistence implements AgentSupervisorPersiste
        predecessor_epoch, start_reason, write_fence_token,
        write_fence_generation, write_fence_expires_at,
        epoch_canonical_json, epoch_hash, started_at)
-      VALUES (?, 2, ?, ?, ?, ?, 'checkpoint_resume', ?, ?, ?, ?, ?, ?)
+      VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       epochId,
       checkpoint.runId,
       checkpoint.bindingId,
       checkpoint.sessionEpoch,
       previous.sessionEpoch,
+      reason,
       fence.token,
       fence.generation,
       fence.expiresAt,
@@ -1178,6 +1297,13 @@ export class ProjectedAgentSupervisorPersistence implements AgentSupervisorPersi
   getEvents(runId: string) { return this.primary.getEvents(runId); }
   getExecutionSummary(runId: string) { return this.primary.getExecutionSummary(runId); }
 
+  cancelOrphanedRun(runId: string) {
+    if (!this.primary.cancelOrphanedRun) throw persistenceError("MODEL_AGENT_OWNER_UNVERIFIED", "This persistence has no verified local recovery authority.");
+    // Primary commits both normalized authority and the legacy terminal JSON in
+    // one transaction; a separate projection write could revive a stale draft.
+    return this.primary.cancelOrphanedRun(runId);
+  }
+
   async close(): Promise<void> {
     try {
       await this.primary.close?.();
@@ -1253,6 +1379,7 @@ export function createLazySqliteAgentSupervisorPersistence(
     appendEvent: (event) => persistence().appendEvent(event),
     getEvents: (runId) => persistence().getEvents(runId),
     getExecutionSummary: (runId) => persistence().getExecutionSummary(runId),
+    cancelOrphanedRun: (runId) => persistence().cancelOrphanedRun(runId),
     close: () => {
       if (closed) return;
       closed = true;
@@ -1300,12 +1427,18 @@ export function createLazyProjectedSqliteAgentSupervisorPersistence(
     appendEvent: (event) => persistence().appendEvent(event),
     getEvents: (runId) => persistence().getEvents(runId),
     getExecutionSummary: (runId) => persistence().getExecutionSummary(runId),
+    cancelOrphanedRun: (runId) => persistence().cancelOrphanedRun(runId),
     close: async () => {
       if (closed) return;
       closed = true;
       await delegate?.close();
     }
   };
+}
+
+function isOrphanCancellation(event: AgentRunEventV2 | undefined): boolean {
+  return event?.type === "runtime_status" && event.source === "runtime"
+    && event.payload.code === "RUN_ORPHAN_CANCELLED" && event.payload.state === "cancelled";
 }
 
 function assertCheckpointBinding(

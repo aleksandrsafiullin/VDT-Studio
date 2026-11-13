@@ -138,6 +138,15 @@ export class AgentRunStore {
     return snapshotFromState(this.getState(runId));
   }
 
+  /** Discard only a disposable cache after an out-of-band authoritative
+   * transaction. This never writes a graph or reuses the old controller. */
+  reloadPersistedRun(runId: string): VdtAgentRunState {
+    const state = this.persistence?.getState(runId);
+    if (!state) throw new Error(`Persisted agent run "${runId}" was not found.`);
+    this.runs.set(runId, state);
+    return state;
+  }
+
   updateRun(runId: string, patch: Partial<Omit<VdtAgentRunState, "runId" | "events" | "createdAt" | "seq" | "abortController">>): VdtAgentRunState {
     const state = this.getState(runId);
     const updatedBase: VdtAgentRunState = {

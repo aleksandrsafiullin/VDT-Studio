@@ -149,6 +149,8 @@ export function SetupRail() {
   const continueAgentRun = useVdtStudioStore((state) => state.continueAgentRun);
   const sendAgentApproval = useVdtStudioStore((state) => state.sendAgentApproval);
   const sendAgentInstruction = useVdtStudioStore((state) => state.sendAgentInstruction);
+  const continueFromSavedCopy = useVdtStudioStore((state) => state.continueFromSavedCopy);
+  const hasSavedCopySource = useVdtStudioStore((state) => Boolean(state.workspace.draftRevisionBase?.expectedHead.activeRevisionId));
   const cancelGenerate = useVdtStudioStore((state) => state.cancelGenerate);
   const applyPendingChangeSet = useVdtStudioStore((state) => state.applyPendingChangeSet);
   const discardPendingChangeSet = useVdtStudioStore((state) => state.discardPendingChangeSet);
@@ -424,6 +426,7 @@ export function SetupRail() {
               <GenerateActivityPanel
                 activity={generateActivity}
                 onCancel={cancelGenerate}
+                onSavedCopy={hasSavedCopySource ? () => void continueFromSavedCopy() : undefined}
                 onAnswer={(answers) => void sendAgentAnswers(answers)}
                 onContinueRun={() => void continueAgentRun()}
                 onApproval={(approved, selectedChangeIds, proposalId) => void sendAgentApproval(

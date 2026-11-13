@@ -100,6 +100,16 @@ export function verifyDesktopShell(root = DEFAULT_ROOT) {
   ) {
     fail("packaged macOS capability must match only the owned loopback origin and reviewed commands.");
   }
+  const windowsCapability = JSON.parse(read(root, "apps/desktop/src-tauri/capabilities/windows-local-web.json"));
+  if (
+    windowsCapability.local !== false ||
+    JSON.stringify(windowsCapability.platforms) !== '["windows"]' ||
+    JSON.stringify(windowsCapability.windows) !== '["main"]' ||
+    JSON.stringify(windowsCapability.remote?.urls) !== '["http://127.0.0.1:37541/*"]' ||
+    JSON.stringify(windowsCapability.permissions) !== '["vdt-runtime"]'
+  ) {
+    fail("packaged Windows capability must match only the owned loopback origin and reviewed commands.");
+  }
 
   const rustSource = read(root, "apps/desktop/src-tauri/src/lib.rs");
   for (const command of REQUIRED_COMMANDS) {

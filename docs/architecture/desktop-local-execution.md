@@ -65,6 +65,19 @@ Settings `ai_test_backend` checks subscription CLI/session readiness using the r
 
 Codex detection and default execution share the node-only installed-executable selector. It chooses the newest recognizable safe Codex CLI already on the host's `PATH`, using bounded isolated `--version` probes; model discovery and detected session-binding wiring then use that selected executable. Equivalent versions retain `PATH` priority, and a stable version outranks its same-core prereleases. No app-specific executable path, installation/update step, model catalog or frontend executable override is introduced. Native Windows process-tree cleanup and packaged desktop execution of this selection path still need platform evidence.
 
+## Windows packaged web host
+
+The Windows x64 build path bundles Node and the production Next server. The
+Tauri host reserves its WebView origin with an exclusive IPv4 loopback listener,
+retains the listener independently of its proxy thread, and verifies the
+private server's process on each connected socket before forwarding data.
+The origin and one-use bootstrap are checked by the shared HTTP guard. The
+Windows host uses a private activation pipe and kill-on-close Job Objects for
+the web runtime and sidecar. This implementation is not an installed-platform
+support claim; Windows project storage admission and native qualification are
+tracked in [W7](../implementation/OPEN_ALPHA_W7_2026-11-13.md) and
+[W8](../implementation/OPEN_ALPHA_W8_2026-11-13.md).
+
 ## Packaged macOS Alpha Web Host
 
 A macOS release build creates its WebKit window after the app-owned Next.js server

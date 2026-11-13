@@ -1,5 +1,31 @@
 # Release Checklist
 
+## Current GitHub + Mac + Windows feedback release
+
+Use the [active execution ledger](implementation/OPEN_ALPHA_EXECUTION_2026-11-13.md)
+to distinguish source, fixture, artifact and installed acceptance. Source-only
+fixes or a successful Windows primitive probe do not close the broad release.
+
+- [ ] Freeze one reviewed source commit and verify generated parser/sidecar assets.
+- [ ] Pass source gates and built browser matrix with recorded failures and retries.
+- [ ] Close bounded parser and diagnostic privacy review; accept new-run recovery
+  and explicitly resolve or document unsupported legacy/ambiguous cases.
+- [ ] Complete Windows storage adapter, standard-user capability and crash tests
+  before permitting project storage on Windows.
+- [ ] Verify both installers with `desktop:artifact:verify`, including actual
+  embedded runtime, parser, skills, source identity and platform trust.
+- [ ] Test clean install/upgrade, persistence, cancellation/recovery, import/export
+  and reviewed diagnostic download in the exact installed Mac and Windows bytes.
+- [ ] Qualify each advertised OS/provider/model/reasoning combination live.
+- [ ] Assemble [GitHub delivery](release/github-delivery.md) from accepted assets,
+  with checksums, support matrix, notices and sanitized public evidence.
+
+Unsigned manual-CI artifacts and tag verification do not publish or qualify a
+release. An embedded verified Node runtime is sufficient for this alpha without
+requiring a separately installed interpreter; the generic production gates below
+retain their own scope. New local tooling/images/large staging for this task must
+stay on Corsair-SSD, with owned cleanup and diagnostics retained.
+
 ## Local harness integration (2026-11-01)
 
 Verify the seven-preset structured-task/Smart matrix, custom ACP and JSONL conformance, model/configuration pinning, strict profile admission and terminal cancellation. Regenerate/verify the sidecar after runtime changes. Do not promote new/custom integrations without live and native qualification. See [Harness connections](HARNESS_CONNECTIONS.md).
@@ -22,6 +48,7 @@ Run on Node `>=24 <25` with pnpm `10.33.2`:
 ```bash
 pnpm lint
 pnpm typecheck
+pnpm data:parser:verify
 pnpm test
 pnpm build
 pnpm ci:verify
@@ -34,9 +61,11 @@ pnpm package:alpha
 pnpm release:bundle:verify
 pnpm package:verify
 pnpm test:e2e
+pnpm test:e2e:saved-copy
 ```
 
-`pnpm release:verify` covers the non-browser sequence through `package:verify`. Browser E2E remains explicit.
+`pnpm release:verify` covers the non-browser sequence through `package:verify`.
+Both the full browser matrix and the separate saved-copy storage gate remain explicit.
 
 - [ ] For the macOS source launcher, verify Start, Open, Stop, Restart and Ctrl+C with an owned server. With an unrelated HTTP listener on port 3000, verify that the launcher reports the conflict, the listener survives and no browser opens for it. Include a stale legacy PID file and an unrelated listener that takes the port during shutdown.
 

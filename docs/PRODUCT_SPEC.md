@@ -1,5 +1,40 @@
 # Product Specification
 
+## Feedback-alpha recovery and support (2026-11-13)
+
+For a structured Model Agent run whose local controller is unavailable, the
+activity panel offers **End interrupted run**. The server can terminate a newly
+owned run only after proving the controller is dead and committing a fenced
+terminal outcome. The saved draft and revision history remain intact. The editor
+releases its pending stop state only after verifying that terminal outcome.
+Legacy owner-less, external and ambiguous runs remain outside this terminalization
+path; automatic resumption is not implemented. When a verified committed revision
+exists, **Continue from saved copy** creates a separate VDT in the same project
+with that graph and access to its retained source files. It preserves the
+original run, history and stop marker. If the open draft contains unsaved edits,
+it stays open and the copy appears in the project list. Missing or unverifiable
+retained sources block publication of the copy. Source review and regression
+checks passed; browser and installed qualification are tracked separately.
+See [W1](implementation/OPEN_ALPHA_W1_2026-11-13.md).
+
+**Settings → Help & feedback** provides setup/report addresses and a local
+diagnostic workflow: prepare, preview, then download the exact reviewed snapshot.
+No report is sent automatically. The report uses an allowlist of build/platform,
+execution status, opaque run/revision identifiers and bounded error codes; raw
+messages, project/file contents and credentials are excluded. The current
+diagnostic privacy review and native/browser qualification are tracked in
+[W4](implementation/OPEN_ALPHA_W4_2026-11-13.md) and the
+[independent review](implementation/OPEN_ALPHA_INDEPENDENT_REVIEW_2026-11-13.md).
+Model names are omitted by default because custom identifiers can contain private
+names or paths. Explicit opt-in requires a fresh preview; changing that choice
+invalidates the previous export. Credential exclusion remains active with opt-in.
+
+Local file analysis has byte-counted upload admission and a separately bounded
+parser process. Controlled size/format/resource failures retain the source and
+do not apply a partial baseline. Exact limits and remaining qualification are
+defined in [Data Ingestion](DATA_INGESTION.md). Windows project storage and both
+current native release candidates remain under qualification.
+
 ## Local harness integration (2026-11-02)
 
 The local AI catalog has thirteen current harness presets plus custom ACP/VDT JSONL profiles. The added presets are Kimi Code, Mistral Vibe, Kilo Code, Qwen Code, Grok Build and Pi. Suggested KPI independently selects its model and reasoning under Settings → Execution mode, with Same as chat model and explicit Off reasoning defaults. Unsupported Off is explained before preparation; Provider default requires an explicit choice. It has no legacy connection records or historical adapter variants. All registered structured tasks include Suggested KPI; chat uses an immutable external session binding. New/custom adapters remain experimental pending live/native qualification. See [Harness connections](HARNESS_CONNECTIONS.md).

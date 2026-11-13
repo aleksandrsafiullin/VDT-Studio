@@ -446,7 +446,7 @@ function ActivityStatusRow({
           onClick={onCancel}
           data-testid="cancel-generate"
         >
-          {activity.cancelRequested ? "Cancelling" : "Cancel"}
+          {activity.cancelRequested ? "Cancelling" : isRecoverable ? "End interrupted run" : "Cancel"}
         </Button>
       ) : null}
       {status?.message && activity.status !== "cancelled" && (activity.status !== "ready" || status.phase === "ready") ? (
@@ -773,6 +773,7 @@ function pendingGenericApprovalRequest(
 export function GenerateActivityPanel({
   activity,
   onCancel,
+  onSavedCopy,
   onAnswer,
   onContinueRun,
   onApproval,
@@ -780,6 +781,7 @@ export function GenerateActivityPanel({
 }: {
   activity: GenerateActivityState;
   onCancel: () => void;
+  onSavedCopy?: (() => void) | undefined;
   onAnswer?: (answers: AgentAnswerSubmission) => void;
   onContinueRun?: () => void;
   onApproval?: (approved: boolean, selectedChangeIds?: string[] | undefined, proposalId?: string | undefined) => void;
@@ -842,6 +844,15 @@ export function GenerateActivityPanel({
         elapsed={elapsed}
         onCancel={onCancel}
       />
+
+      {activity.status === "recovery_required" && onSavedCopy ? (
+        <div>
+          <Button size="sm" variant="ghost" onClick={onSavedCopy}>Continue from saved copy</Button>
+          {activity.savedCopyOutcome
+            ? <p className="mt-1 text-sm font-medium" role="status" data-testid="saved-copy-outcome">{activity.savedCopyOutcome}</p>
+            : <p className="text-xs">Copies the saved graph and links its retained sources. The original run and history stay in the original VDT.</p>}
+        </div>
+      ) : null}
 
       {events.length > 0 ? (
         <details className={styles.workLog} data-testid="agent-work-log">

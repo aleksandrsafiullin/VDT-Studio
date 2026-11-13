@@ -1,5 +1,61 @@
 # VDT Studio
 
+VDT Studio is a local-first workspace for building and calculating Value Driver
+Trees: connect business KPIs, edit formulas, compare scenarios and review the
+assumptions behind a result. Start with manual modeling; AI assistance is optional
+and uses the provider you configure.
+
+## Get the app
+
+**The public Mac and Windows feedback release is being prepared.** Accepted
+installers for the current candidate are not published yet. The
+[GitHub Releases page](https://github.com/aleksandrsafiullin/VDT-Studio/releases)
+will carry the installers, supported OS versions, checksums and known limitations
+when qualification is complete. The repository's source archive and CLI tarball
+are development tools, not desktop installers.
+
+| Platform | Current availability |
+| --- | --- |
+| Mac with Apple Silicon | A local desktop packaging path exists; the current public candidate still needs installed-app acceptance. See [desktop build and installation](docs/desktop-installation.md#local-apple-silicon-alpha). |
+| Windows | Public installer and Windows storage/native qualification are pending. The source checkout is not yet a supported Windows application. |
+| Other architectures | No support claim; use only the architectures listed in an accepted release. |
+
+The [current readiness assessment](docs/implementation/OPEN_ALPHA_READINESS_2026-11-13.md)
+tracks the remaining gates. Developers can use the [source quickstart](#quickstart)
+and [contribution guide](CONTRIBUTING.md).
+
+## First project
+
+Once you have an accepted desktop build or a working development setup:
+
+1. Create a project and a VDT, then enter a root KPI with its unit and reporting period.
+2. Add or edit inputs and formulas manually. Check the model's warnings before relying on a result.
+3. Compare scenarios and save a named milestone in **Versions**. Reopen the VDT to check your saved work.
+4. If you want AI assistance, open **Settings → Execution mode**, choose a CLI, local model or API provider, and complete that provider's setup. A successful connection test does not certify every model or workflow; use the support matrix in the release notes.
+
+Projects are stored locally. AI requests can be sent to the selected provider;
+review the provider setup and the data you include. The source development server
+binds to loopback by default. Public hosted deployment is not supported by this
+release.
+
+## Feedback and help
+
+Use [GitHub Issues](https://github.com/aleksandrsafiullin/VDT-Studio/issues/new/choose)
+to report a problem or suggest an improvement. Include the app version or source
+commit, OS and architecture, steps to reproduce, expected result and actual
+result. For an AI issue, include the selected provider, model and reasoning setting.
+In **Settings → Help & feedback**, prepare and preview a diagnostic report before
+downloading it. Model names are omitted by default; include them only if you are
+comfortable sharing those identifiers and review the new preview. Attach the
+file only if it helps explain the problem. Reports are public: exclude credentials,
+private projects, source files, personal paths and unreviewed logs or screenshots.
+
+Detailed workflow and implementation notes follow. Start with the
+[product workflows](#product-workflows) or [documentation map](docs/README.md)
+when you need more detail.
+
+## Selected-Skill behavior
+
 Suggested KPI uses the exact modelling Skill selected in Context, including its
 pinned version and content. It preserves applicable direct factors and scoped
 cause categories. The six-component limit is removed throughout preparation,
@@ -325,6 +381,10 @@ implemented cross-instance execute-once guard.
 
 ## Quickstart
 
+This section runs the source development workspace. It does not install the
+desktop app. Windows project storage remains gated until Windows capability and
+installed-app checks pass; these commands are not a Windows support claim.
+
 Requirements: Node `>=24 <25`, pnpm `10.33.2`.
 
 ```bash
@@ -487,7 +547,11 @@ The corrective skill and migration boundary is recorded in [ADR-003](docs/adr/AD
 
 ## Alpha Packaging
 
-`pnpm package:alpha` builds the Node 24 CLI/runner tarball under `output/release/`. Signed desktop installers and a Node-free self-contained sidecar remain open gates.
+`pnpm package:alpha` builds the Node 24 CLI/runner tarball under `output/release/`.
+The requested public alpha needs separately qualified Mac and Windows installers.
+An embedded Node runtime is acceptable for this alpha when users do not need to
+install Node themselves. A CLI package or desktop foundation check does not
+establish native installation support.
 
 ```bash
 pnpm package:alpha
@@ -495,7 +559,8 @@ pnpm release:bundle:verify
 pnpm package:verify
 ```
 
-See [Alpha release](docs/RELEASE.md) and the [release checklist](docs/release-checklist.md).
+See [Alpha release](docs/RELEASE.md), the [release checklist](docs/release-checklist.md)
+and the [GitHub delivery guide](docs/release/github-delivery.md).
 
 ## Documentation
 

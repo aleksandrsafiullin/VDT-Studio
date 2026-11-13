@@ -477,6 +477,7 @@ export interface VdtDatabase {
    */
   saveVdtRevision(input: CreateVdtRevisionInput): VdtRevisionRecord;
   commitVdtRevision(input: RevisionCommitInputV2, options?: { reuseUnchangedRevision?: boolean }): RevisionCommitResultV2;
+  getCommittedVdtCreation(projectId: string, principalId: string, key: string): CreateVdtWithInitialSnapshotResultV1 | null;
   createVdtWithInitialSnapshot(
     input: CreateVdtWithInitialSnapshotInputV1
   ): CreateVdtWithInitialSnapshotResultV1;
@@ -505,6 +506,7 @@ export interface VdtDatabase {
   createAgentRun(input: Omit<AgentRunRecord, "createdAt" | "updatedAt">): AgentRunRecord;
   updateAgentRun(runId: string, patch: Partial<Omit<AgentRunRecord, "id" | "projectId" | "createdAt">>): AgentRunRecord;
   getAgentRun(runId: string): AgentRunRecord | null;
+  getAgentRunSupervisorFence(runId: string): { sessionEpoch: number; ownerToken: string; orphanTerminated: boolean } | null;
   listAgentRuns(projectId: string): AgentRunRecord[];
   appendAgentEvent(input: Omit<AgentEventRecord, "id" | "createdAt"> & { id?: string | undefined }): AgentEventRecord;
   listAgentEvents(runId: string): AgentEventRecord[];

@@ -6,6 +6,7 @@ import { Download, FileText, Loader2, Sparkles, X } from "lucide-react";
 import type { DataDiscoveryRunSnapshot, IncomingKpiOptions } from "@vdt-studio/data-harness";
 import { Button } from "@/components/ui/button";
 import { resolveExecutionSettings } from "@/lib/execution-mode-resolver";
+import { recordSupportError } from "@/lib/support-error-events";
 import { canAnalyzeProjectFile, DATA_FILE_ACCEPT, listProjectFiles, updateProjectFile, uploadProjectFile, type ProjectFileSource } from "@/lib/project-files-client";
 import { useVdtStudioStore } from "@/components/vdt/vdt-store";
 import { IncomingKpiMappingReview } from "./incoming-kpi-mapping-review";
@@ -324,5 +325,8 @@ export function DataImportWizard() {
 function message(caught: unknown): string { return caught instanceof Error ? caught.message : "File import could not be completed."; }
 async function readJson<T>(response: Response): Promise<T> {
   if (!(response.headers.get("content-type") ?? "").includes("application/json")) throw new Error(`Server returned a non-JSON response (${response.status}).`);
-  return await response.json() as T;
+  const payload = await response.json() as T & { error?: { code?: unknown }; ok?: boolean; snapshot?: { status?: string } };
+  if (!response.ok || payload.ok === false) recordSupportError(payload.error?.code);
+  else if (payload.snapshot?.status === "failed") recordSupportError("DATA_DISCOVERY_VALIDATION_FAILED");
+  return payload;
 }

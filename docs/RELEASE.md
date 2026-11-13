@@ -6,11 +6,23 @@ bundle target uses the valid scalar `"all"`; this configuration change does not
 qualify installers or supply missing native icon/signing assets. See
 [harness connections and qualification limits](HARNESS_CONNECTIONS.md).
 
-Last reviewed: **2026-10-19**.
+Last reviewed (release process): **2026-11-13**. Candidate qualification is recorded separately.
 
-VDT Studio `0.1.0-alpha.1` packages the Node 24 product CLI and paired localhost runner as a tarball. The web workspace remains source-deployed. The local Apple Silicon alpha also has a signed [desktop packaging path](desktop-installation.md#local-apple-silicon-alpha) with a bundled Node runtime.
+The next VDT Studio candidate is `0.1.0-alpha.2`, pending integration and native acceptance. It packages the Node 24 product CLI and paired localhost runner as a tarball. The web workspace remains source-deployed. The local Apple Silicon alpha also has a signed [desktop packaging path](desktop-installation.md#local-apple-silicon-alpha) with a bundled Node runtime.
 
 ## Current Release Status
+
+The current [remediation execution](implementation/OPEN_ALPHA_EXECUTION_2026-11-13.md)
+covers GitHub source plus Mac and Windows applications. Both installers from one
+accepted commit are required. The broad release remains on HOLD while native
+storage, installation, recovery and live-provider acceptance are incomplete.
+
+Source/tag verification retains build and browser artifacts; it no longer
+automatically creates an incomplete CLI-only public release. The manual Desktop
+Package workflow builds validation artifacts for both native platforms and
+records integrity evidence. Unsigned validation output is not releasable. Use
+the [GitHub delivery guide](release/github-delivery.md) to prepare the exact
+accepted bytes, checksums and public evidence for a separately directed release.
 
 The [Mac open-alpha plan](OPEN_ALPHA_PLAN.md) tracks the next candidate, supported scenarios, and the QA cases for Codex or Cursor.
 
@@ -38,7 +50,26 @@ pnpm test:e2e
 
 For PowerShell use `$env:VDT_RELEASE_DIR = Join-Path $PWD 'output/release/candidates/<unique-candidate>'`. Replace `<unique-candidate>` with a fresh directory name. Run scripts through pnpm so Windows uses the package manager's JavaScript entrypoint through Node, without a shell or `.cmd` execution. A direct Node invocation on Windows without that entrypoint fails with instructions to use pnpm.
 
-`release:verify` runs lint, typecheck, tests, build, CI/phase/docs verification, dependency audit, provider certification, deterministic evaluation, alpha packaging, bundle verification and clean-install checks. It must complete in one release run; historical passes do not substitute for a current failing dependency audit. Native preflight and browser E2E remain distinct checks.
+`release:verify` runs lint, typecheck, generated parser verification, tests, build, CI/phase/docs verification, dependency audit, provider certification, deterministic evaluation, alpha packaging, bundle verification and clean-install checks. It must complete in one release run; historical passes do not substitute for a current failing dependency audit. Native preflight and browser E2E remain distinct checks. The default unit-file scheduling is serial; request deadlines/assertions are unchanged.
+
+`data:parser:prepare` deterministically regenerates the bundled parser before
+development and product builds. `data:parser:verify` must pass before packaging;
+CLI and native artifacts must include the verified worker and manifest. Next
+build identity includes actual version, source SHA, dirty state and build time.
+Archive packagers supply their independently resolved commit; a source archive
+cannot inherit the identity of an enclosing checkout.
+
+### Windows native storage gate
+
+The **Windows Native Storage** workflow runs on pull requests and pushes to
+`main`. It can also be dispatched for a candidate ref. The hosted Windows
+runner builds the native add-on and runs it under a disposable standard-user
+account with an owner-protected NTFS directory. It requires all 28 native
+tests to execute and verifies the full frozen 65-vector Sequence 3 matrix
+against its evidence contract. The job retains the exact source SHA,
+environment, add-on dependency report, logs, matrix evidence and cleanup
+results, including when checks fail. Installed Windows desktop qualification
+runs separately against the exact NSIS installer bytes.
 
 ### macOS source launcher
 
@@ -57,6 +88,7 @@ and standalone runner UI enabled.
 ```bash
 NEXT_PUBLIC_VDT_APP_MODE=development_web NEXT_PUBLIC_VDT_ENABLE_STANDALONE_RUNNER=true pnpm build:web
 VDT_E2E_USE_BUILD=1 pnpm test:e2e --workers=1
+pnpm test:e2e:saved-copy
 ```
 
 Built mode uses the same temporary-store setup with `next start` and enables
@@ -67,6 +99,15 @@ matrix and test deadlines. The release job builds the browser bundle after
 `release:verify` with the development-web and standalone-runner build settings
 scoped to that browser build.
 
+The separate saved-copy gate uses the same production build, an exclusive
+launcher-owned profile, real storage routes and a persisted interrupted-run
+fixture. It checks clean and dirty drafts and retained-source downloads. Both
+the E2E and source-release workflows execute it with bundled Chromium. On this
+Mac, set `TMPDIR` to an owned location on Corsair-SSD outside the checkout;
+`VDT_E2E_SAVED_COPY_BROWSER=chrome` optionally selects installed Chrome. The
+runner stops its server before removing its profile and keeps evidence under
+`output/playwright/saved-copy/`.
+
 Existing engine/viewport restrictions are applied through collection tags before fixture creation, so tests for another viewport do not create and delete unused projects. HTML and JSON reports are written to `output/playwright/report/` and `output/playwright/results.json`, with per-server temporary-store cleanup records alongside them; failure screenshots/traces are retained under `test-results/`. CI uploads both output directories even on failure, with seven-day retention. Inspect retained failures before removing their artifacts.
 
 ## Artifacts
@@ -74,7 +115,7 @@ Existing engine/viewport restrictions are applied through collection tags before
 By default successful packaging writes the following files. `VDT_RELEASE_DIR` selects an alternative empty directory consistently for packaging, SBOM generation, bundle verification and clean-install verification:
 
 ```text
-output/release/v0.1.0-alpha.1/
+output/release/v0.1.0-alpha.2/
   SHA256SUMS
   manifest.json
   sbom.spdx.json
@@ -91,6 +132,27 @@ checks quoted values, literal fallbacks and subsequent assignments for embedded
 credentials, and applies its key signatures across the scanned text.
 
 ## Support Boundary
+
+For this bounded feedback alpha, an embedded verified Node runtime satisfies the
+no-separate-user-runtime requirement. The generic Node-free production target
+below is a separate future contract. The artifact-aware alpha verifier is:
+
+```text
+pnpm desktop:artifact:verify OUTPUT_DIR --source-commit FULL_SHA
+```
+
+It checks candidate resources and platform trust, leaving installed-app and live
+provider qualification explicitly unverified. `--allow-unsigned-validation`
+permits CI artifact inspection only. The Windows packaging entrypoint is
+`pnpm desktop:package:windows EMPTY_OUTPUT_DIR FULL_SHA`; its current code does
+not bypass the Windows storage guard. See [W5](implementation/OPEN_ALPHA_W5_2026-11-13.md)
+and [W8](implementation/OPEN_ALPHA_W8_2026-11-13.md).
+
+On this task's Mac, all new installs, downloads, VM disks and substantial staging
+must be on Corsair-SSD. Native packaging uses an owned stage on the output volume;
+use an SSD output directory and SSD temp/cache roots. Preserve old evidence and
+user profiles, check 10 GiB free before heavy work, and clean only owned artifacts
+after processes exit.
 
 Local voice input is an alpha capability with opt-in, SHA-256 pinned model/engine downloads. The community-built whisper.cpp executables and MIT model/engine license notices must be included in release provenance; they are not bundled into the source CLI tarball. Native microphone/Windows/clean-machine qualification remains open. See [VOICE_INPUT.md](VOICE_INPUT.md).
 

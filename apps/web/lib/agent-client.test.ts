@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentClient } from "./agent-client";
+import { clearSupportErrors, readSupportErrors } from "./support-error-events";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); clearSupportErrors(); });
+
+it("records only a known recovery code for diagnostics while preserving the request error", async () => {
+  const fetcher = vi.fn(async () => Response.json({ error: { code: "MODEL_AGENT_OWNER_ALIVE", message: "Private owner data /Users/person/profile" } }, { status: 409 }));
+  await expect(createAgentClient(fetcher).cancel("run")).rejects.toThrow("Private owner data");
+  expect(readSupportErrors()).toEqual([{ code: "MODEL_AGENT_OWNER_ALIVE", at: expect.any(String) }]);
+  expect(JSON.stringify(readSupportErrors())).not.toContain("/Users/person");
+});
 
 it("signals Supervisor snapshot changes and forwards legacy events directly", () => {
   const source = Object.assign(new EventTarget(), { close: vi.fn() });

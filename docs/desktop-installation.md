@@ -8,6 +8,13 @@ Last reviewed: **2026-07-23**.
 
 VDT Studio Desktop is the target distribution for seamless subscription CLI and local-model execution.
 
+The current GitHub + Mac + Windows feedback candidate is `0.1.0-alpha.2`, still
+under qualification. Its [acceptance matrix](implementation/OPEN_ALPHA_ACCEPTANCE_MATRIX_2026-11-13.md)
+and [release procedure](RELEASE.md) distinguish installed-app acceptance from
+source checks. A verified Node runtime embedded in the installer satisfies this
+alpha's requirement that users need no separate interpreter. The future
+Node-free production target below remains a separate gate.
+
 ## Local Apple Silicon Alpha
 
 The local arm64 package uses the Tauri WebKit window, a bundled production Next.js server and Node 24. The app starts and stops the web server and the private AI sidecar together. SQLite and host settings default to the app's local Application Support directory. The user signs in to subscription CLIs through the provider's normal workflow. The app can admit a configured API provider for the selected model through its authenticated desktop session.
@@ -27,7 +34,14 @@ The local package has a Developer ID signature. Apple notarization and Gatekeepe
 
 ## Production Distribution Boundary
 
-The repository contains the Tauri desktop shell foundation under `apps/desktop`, reviewed native commands and embedded local AI runtime sidecar launchers for POSIX and Windows. The current checked-in sidecar is a bundled Node runtime, not a final production sidecar binary.
+The repository also includes a Windows x64 NSIS candidate build path. For
+builder commands, Authenticode requirements, and evidence limits, see
+[W8](implementation/OPEN_ALPHA_W8_2026-11-13.md). Native Windows storage and
+private packaged startup are implemented. Production admission still requires
+the complete 65-case fault matrix and independent review; the build path alone
+does not qualify an installed Windows application.
+
+The repository contains the Tauri desktop shell under `apps/desktop`, native commands and local AI runtime sidecar launchers for POSIX and Windows. The checked-in sidecar contains bundled JavaScript; the alpha packagers supply and verify its embedded Node executable. A future Node-free sidecar binary has a separate production contract.
 
 The shared Tauri bundle configuration retains cross-platform desktop bundle targets. Production distribution still requires notarization, native toolchain verification, the production sidecar gate and platform qualification.
 

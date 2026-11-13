@@ -4,7 +4,7 @@ import {
 } from "@vdt-studio/data-harness";
 import type { SemanticLogicalType } from "@vdt-studio/vdt-core";
 import { jsonError, readJsonObject } from "../../../../../vdt/storage-response";
-import { DataApiError, readDatasetFile, readDiscoveryRun, requireDataId, saveDiscoveryRun } from "../../../../store";
+import { checkAnalysisCancellation, DataApiError, withRetainedDatasetForAnalysis, readDiscoveryRun, requireDataId, saveDiscoveryRun } from "../../../../store";
 import { dataApiErrorResponse, readDataOwner, readIncomingKpiOptions, reviewProject } from "../../../../request-context";
 
 export const runtime = "nodejs";
@@ -33,13 +33,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
     const snapshot = await readDiscoveryRun(runId, owner);
     if (!snapshot) return jsonError("Discovery run was not found.", 404, "DATA_DISCOVERY_RUN_NOT_FOUND");
     const edits = readUserEdits(body.edits ?? body);
-    const file = await readDatasetFile(snapshot.datasetId, owner);
-    if (!file || file.metadata.contentHash !== snapshot.file.contentHash) throw new DataApiError("The retained source does not match this discovery run.", 409, "DATA_SOURCE_INTEGRITY_FAILED");
-    const project = await reviewProject(snapshot, owner, body.project);
-    const next = await reanalyzeDiscoveryWithUserEdits({ datasetId: snapshot.datasetId, file: file.metadata, bytes: file.bytes, project, entryContext: snapshot.entryContext }, snapshot, edits);
-    if (owner) { next.workspaceProjectId = owner.projectId; next.vdtId = owner.vdtId; }
-    await saveDiscoveryRun(next, owner);
-    return Response.json({ ok: true, snapshot: next });
+    return await withRetainedDatasetForAnalysis(snapshot.datasetId, owner, request.signal, async (file) => {
+      if (!file || file.metadata.contentHash !== snapshot.file.contentHash) throw new DataApiError("The retained source does not match this discovery run.", 409, "DATA_SOURCE_INTEGRITY_FAILED");
+      const project = await reviewProject(snapshot, owner, body.project);
+      const next = await reanalyzeDiscoveryWithUserEdits({ datasetId: snapshot.datasetId, file: file.metadata, bytes: file.bytes, project, signal: request.signal, entryContext: snapshot.entryContext }, snapshot, edits);
+      if (owner) { next.workspaceProjectId = owner.projectId; next.vdtId = owner.vdtId; }
+      checkAnalysisCancellation(request.signal);
+      await saveDiscoveryRun(next, owner);
+      return Response.json({ ok: true, snapshot: next });
+    });
   } catch (error) { return dataApiErrorResponse(error); }
 }
 

@@ -1,5 +1,21 @@
 # Roadmap
 
+## GitHub + Mac + Windows feedback release (2026-11-13)
+
+The [active remediation plan](implementation/OPEN_ALPHA_REMEDIATION_PLAN_2026-11-13.md)
+is being executed through scoped implementation and independent acceptance.
+The [execution ledger](implementation/OPEN_ALPHA_EXECUTION_2026-11-13.md) is the
+current status record. New-run orphan recovery has scoped source acceptance;
+bounded ingestion and diagnostic export have implementation plus review fixes
+underway. Native packaging/CI and first-use/feedback documentation are prepared.
+
+Remaining release gates include full Windows storage adaptation and fault tests,
+installed Mac/Windows preservation/recovery, clean install/upgrade, signed
+same-commit artifacts, the declared per-platform provider matrix and final
+GitHub delivery assets. Existing Mac VMs are preserved; a separate Windows VM is
+being provisioned on Corsair-SSD. A narrower Mac-only milestone does not complete
+the agreed release. Hosted service work remains outside this scope.
+
 ## Suggested KPI selected guidance (2026-11-03)
 
 Implemented locally: Suggested KPI receives the full immutable Skill selected in

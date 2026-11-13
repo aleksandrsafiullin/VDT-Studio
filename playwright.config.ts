@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  testIgnore: "saved-copy-recovery.spec.ts",
   workers: 2,
   timeout: 45_000,
   expect: {

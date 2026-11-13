@@ -1,8 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
+allow_unsigned=false
+if [[ "${*: -1}" == "--allow-unsigned-validation" ]]; then
+  allow_unsigned=true
+  set -- "${@:1:$#-1}"
+fi
 if (( $# < 1 || $# > 2 )); then
-  echo "Usage: scripts/package-macos-alpha.sh EMPTY_OUTPUT_DIR [GIT_REF]" >&2
+  echo "Usage: scripts/package-macos-alpha.sh EMPTY_OUTPUT_DIR [GIT_REF] [--allow-unsigned-validation]" >&2
   exit 2
 fi
 [[ "$(uname -sm)" == "Darwin arm64" ]]
@@ -11,8 +16,9 @@ repo="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 output="$(cd "$1" && pwd -P)"
 test -z "$(ls -A "$output")"
 commit="$(git -C "$repo" rev-parse --verify "${2:-HEAD}^{commit}")"
-internal_root="${TMPDIR:-/private/tmp}"
-for volume in "$output" "$internal_root"; do
+build_root="${VDT_NATIVE_BUILD_ROOT:-$output}"
+[[ "$build_root" == /* && -d "$build_root" ]]
+for volume in "$output" "$build_root"; do
   if ! df -Pk "$volume" | awk 'NR == 2 { if ($4 >= 10485760) ok = 1 } END { exit !ok }'; then
     echo "The native build requires 10 GiB free on $volume." >&2
     exit 1
@@ -20,36 +26,59 @@ for volume in "$output" "$internal_root"; do
 done
 
 identity="${VDT_MACOS_SIGNING_IDENTITY:-}"
-if [[ -z "$identity" ]]; then
+if [[ "$allow_unsigned" == true ]]; then
+  identity="-"
+elif [[ -z "$identity" ]]; then
   identity="$(security find-identity -v -p codesigning | awk '/Developer ID Application/ {print $2}')"
 fi
-if [[ ! "$identity" =~ ^[0-9A-Fa-f]{40}$ ]] || ! security find-identity -v -p codesigning |
-    awk -v hash="$identity" '$2 == hash && /Developer ID Application/ { found = 1 } END { exit !found }'; then
+if [[ "$allow_unsigned" != true ]] && { [[ ! "$identity" =~ ^[0-9A-Fa-f]{40}$ ]] || ! security find-identity -v -p codesigning |
+    awk -v hash="$identity" '$2 == hash && /Developer ID Application/ { found = 1 } END { exit !found }'; }; then
   echo "Set VDT_MACOS_SIGNING_IDENTITY to one Developer ID Application certificate fingerprint." >&2
   exit 1
 fi
+sign_code() {
+  if [[ "$allow_unsigned" == true ]]; then
+    codesign --force --sign - --options runtime "$@"
+  else
+    codesign --force --sign "$identity" --options runtime --timestamp "$@"
+  fi
+}
 
 stage="$(mktemp -d "$output/.vdt-stage.XXXXXX")"
 cargo_stage=""
 cleanup() {
   # Both paths were created by mktemp for this foreground build only.
-  if [[ -n "$cargo_stage" ]]; then find "$cargo_stage" -xdev -depth -delete; fi
-  find "$stage" -xdev -depth -delete
+  for owned_path in "$cargo_stage" "$stage"; do
+    [[ -n "$owned_path" && -d "$owned_path" ]] || continue
+    if lsof -t +D "$owned_path" >/dev/null 2>&1; then
+      echo "Retained owned build directory still used by a process: $owned_path" >&2
+    else
+      find "$owned_path" -xdev -depth -delete
+    fi
+  done
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-cargo_stage="$(mktemp -d "$internal_root/vdt-native-cargo.XXXXXX")"
-mkdir "$stage/source" "$stage/data"
+cargo_stage="$(mktemp -d "$build_root/vdt-native-cargo.XXXXXX")"
+mkdir "$stage/source" "$stage/data" "$stage/tmp" "$stage/cache" "$stage/cargo-home" "$stage/corepack"
 git -C "$repo" archive "$commit" | tar -xf - -C "$stage/source"
 cd "$stage/source"
 version="$(node -p 'require("./apps/desktop/package.json").version')"
+root_version="$(node -p 'require("./package.json").version')"
+[[ "$version" == "$root_version" ]] || { echo "Root and desktop candidate versions differ." >&2; exit 1; }
 export CI=true CARGO_TARGET_DIR="$cargo_stage/target"
+export TMPDIR="$stage/tmp/" TEMP="$stage/tmp" TMP="$stage/tmp"
+export CARGO_HOME="$stage/cargo-home" COREPACK_HOME="$stage/corepack"
+export XDG_CACHE_HOME="$stage/cache" npm_config_cache="$stage/cache/npm"
+export NEXT_PUBLIC_VDT_BUILD_VERSION="$version" NEXT_PUBLIC_VDT_BUILD_COMMIT="$commit"
+export NEXT_PUBLIC_VDT_BUILD_DIRTY=false
+export NEXT_PUBLIC_VDT_BUILD_TIME="$(node -p 'new Date().toISOString()')"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}" CARGO_INCREMENTAL=0
 export NEXT_TELEMETRY_DISABLED=1 VDT_NEXT_STANDALONE=1
 export VDT_DATA_DIR="$stage/data" VDT_APP_MODE=desktop NEXT_PUBLIC_VDT_APP_MODE=desktop
 unset VDT_NEXT_DIST_DIR VDT_DESKTOP_SELF_CONTAINED_SIDECAR
-corepack pnpm install --frozen-lockfile
+corepack pnpm install --frozen-lockfile --store-dir "$stage/pnpm-store"
 corepack pnpm desktop:sidecar:prepare
 corepack pnpm desktop:verify
 corepack pnpm build:web
@@ -74,7 +103,11 @@ curl --fail --silent --show-error --location --retry 2 \
   corepack pnpm exec tauri icon ../web/public/favicon.svg --output "$stage/icons"
   mkdir -p src-tauri/icons
   cp "$stage/icons/icon.png" "$stage/icons/icon.icns" src-tauri/icons/
-  corepack pnpm exec tauri build --bundles app --no-sign --ci --target aarch64-apple-darwin -- --locked
+  # The production server was already built with this candidate's identity.
+  # Skip Tauri's default source-build hook to avoid rebuilding it in place.
+  printf '%s\n' '{"build":{"beforeBuildCommand":null}}' > "$stage/macos-build-config.json"
+  corepack pnpm exec tauri build --bundles app --no-sign --ci --target aarch64-apple-darwin \
+    --config "$stage/macos-build-config.json" -- --locked
 )
 app="$CARGO_TARGET_DIR/aarch64-apple-darwin/release/bundle/macos/VDT Studio.app"
 contents="$app/Contents"
@@ -83,6 +116,16 @@ install -m 755 "$stage/$node_archive/bin/node" "$contents/Helpers/node"
 install -m 644 "$stage/$node_archive/LICENSE" "$contents/Resources/LICENSE-Node.txt"
 install -m 644 LICENSE "$contents/Resources/LICENSE-VDT-Studio.txt"
 install -m 644 apps/desktop/packaged-web.cjs "$contents/Resources/packaged-web.cjs"
+install -m 644 packages/data-harness/src/parser-worker.manifest.json "$contents/Resources/parser-worker.manifest.json"
+node --input-type=module - "$contents/Resources/build-info.json" <<'JS'
+import { writeFileSync } from "node:fs";
+writeFileSync(process.argv[2], JSON.stringify({
+  version: process.env.NEXT_PUBLIC_VDT_BUILD_VERSION,
+  sourceCommit: process.env.NEXT_PUBLIC_VDT_BUILD_COMMIT,
+  dirty: false, buildTime: process.env.NEXT_PUBLIC_VDT_BUILD_TIME,
+  platform: "darwin", architecture: "arm64"
+}, null, 2) + "\n");
+JS
 ditto --norsrc --noextattr "$web/.next/standalone" "$contents/Resources/web"
 test -x "$contents/Resources/sidecars/vdt-local-runtime"
 node --input-type=module - "$contents/Resources/web" <<'JS'
@@ -100,12 +143,12 @@ for (const entry of readdirSync(root, { withFileTypes: true, recursive: true }))
 }
 JS
 while IFS= read -r -d '' code; do
-  codesign --force --sign "$identity" --options runtime --timestamp "$code"
+  sign_code "$code"
 done < <(find "$contents/Resources/web" -type f \( -name '*.node' -o -name '*.dylib' \) -print0)
-codesign --force --sign "$identity" --options runtime --timestamp --identifier com.vdtstudio.desktop.node \
+sign_code --identifier com.vdtstudio.desktop.node \
   --entitlements apps/desktop/src-tauri/NodeEntitlements.plist "$contents/Helpers/node"
 "$contents/Helpers/node" --version
-codesign --force --sign "$identity" --options runtime --timestamp \
+sign_code \
   --entitlements apps/desktop/src-tauri/Entitlements.plist "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
 
@@ -114,9 +157,23 @@ mkdir "$stage/disk"
 ditto "$app" "$stage/disk/VDT Studio.app"
 ln -s /Applications "$stage/disk/Applications"
 hdiutil create -quiet -srcfolder "$stage/disk" -volname "VDT Studio $version" -fs HFS+ -format UDZO "$stage/$disk_name"
-codesign --force --sign "$identity" --timestamp --identifier com.vdtstudio.desktop.alpha-disk "$stage/$disk_name"
+if [[ "$allow_unsigned" == true ]]; then
+  codesign --force --sign - --identifier com.vdtstudio.desktop.alpha-disk "$stage/$disk_name"
+else
+  codesign --force --sign "$identity" --timestamp --identifier com.vdtstudio.desktop.alpha-disk "$stage/$disk_name"
+fi
 codesign --verify --strict --verbose=2 "$stage/$disk_name"
 hdiutil verify "$stage/$disk_name"
+notarized=false
+if [[ "$allow_unsigned" != true && -n "${VDT_MACOS_NOTARY_PROFILE:-}" ]]; then
+  xcrun notarytool submit "$stage/$disk_name" --keychain-profile "$VDT_MACOS_NOTARY_PROFILE" \
+    --wait --output-format json > "$output/notarization.json"
+  node -e 'if (JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).status !== "Accepted") process.exit(1)' \
+    "$output/notarization.json"
+  xcrun stapler staple "$stage/$disk_name"
+  xcrun stapler validate "$stage/$disk_name"
+  notarized=true
+fi
 ditto "$app" "$output/VDT Studio.app"
 mv "$stage/$disk_name" "$output/$disk_name"
 (
@@ -124,3 +181,16 @@ mv "$stage/$disk_name" "$output/$disk_name"
   shasum -a 256 "$disk_name" > SHA256SUMS
   printf '%s\n' "$commit" > SOURCE_COMMIT
 )
+node --input-type=module - "$output" "$version" "$commit" "$disk_name" "$allow_unsigned" "$notarized" <<'JS'
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const [output, version, sourceCommit, fileName, unsigned, notarized] = process.argv.slice(2);
+const signed = unsigned !== "true";
+writeFileSync(join(output, "macos-package.json"), JSON.stringify({
+  schemaVersion: 1, platform: "darwin", architecture: "arm64", version, sourceCommit,
+  nodeVersion: "24.22.2", signed, notarized: notarized === "true", qualification: "unverified",
+  installer: { fileName, sha256: createHash("sha256").update(readFileSync(join(output, fileName))).digest("hex"),
+    signatureStatus: signed ? "developer-id" : "ad-hoc-validation" }
+}, null, 2) + "\n");
+JS

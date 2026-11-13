@@ -40,6 +40,10 @@ The previously referenced `Technical Specification for Codex.docx` is not presen
 | [`provider-compatibility.md`](provider-compatibility.md) | Provider status mirrored from certification metadata |
 | [`RELEASE.md`](RELEASE.md) and [`release-checklist.md`](release-checklist.md) | Alpha packaging and required gates |
 | [`OPEN_ALPHA_PLAN.md`](OPEN_ALPHA_PLAN.md) | Mac open-alpha plan, live provider matrix and executable QA cases |
+| [`Open alpha assessment`](implementation/OPEN_ALPHA_READINESS_2026-11-13.md) and [`remediation assignments`](implementation/OPEN_ALPHA_REMEDIATION_PLAN_2026-11-13.md) | 13 November GitHub + Mac + Windows review, consolidated findings and agent acceptance plan |
+| [`Remediation execution`](implementation/OPEN_ALPHA_EXECUTION_2026-11-13.md) and [`independent review`](implementation/OPEN_ALPHA_INDEPENDENT_REVIEW_2026-11-13.md) | Current implementation ownership, evidence and acceptance decisions |
+| [`Candidate acceptance matrix`](implementation/OPEN_ALPHA_ACCEPTANCE_MATRIX_2026-11-13.md) | Pending source, native installation, upgrade and live-provider acceptance for both OS families |
+| [`GitHub delivery`](release/github-delivery.md) | Prepare accepted Mac/Windows assets, public evidence and release body without publishing |
 | [`desktop-installation.md`](desktop-installation.md) | Desktop support boundary and native blockers |
 | [`architecture/desktop-local-execution.md`](architecture/desktop-local-execution.md) | Tauri command and sidecar host boundary |
 | [`architecture/runtime-protocol.md`](architecture/runtime-protocol.md) | Private framed sidecar protocol |

@@ -1,5 +1,40 @@
 # Production Readiness
 
+## GitHub, Mac and Windows remediation (2026-11-13)
+
+The current user-confirmed feedback-release scope includes the public repository
+and both desktop platforms. Its decision remains **HOLD**. Follow the
+[execution ledger](implementation/OPEN_ALPHA_EXECUTION_2026-11-13.md) and
+[independent review](implementation/OPEN_ALPHA_INDEPENDENT_REVIEW_2026-11-13.md)
+for current integration status; the [baseline audit](implementation/OPEN_ALPHA_READINESS_2026-11-13.md)
+retains its original findings and evidence.
+
+Source recovery for newly owned structured runs has independent scoped
+acceptance. Legacy or ambiguous runs retain their original history and can use
+a verified saved copy when committed source data is available. That continuation
+has source review and a passing two-case production-browser gate; installed
+recovery remains unqualified. Parser isolation, bounded uploads and local
+diagnostic preview/export have source and scoped browser acceptance; final
+aggregate and native acceptance are still in progress.
+Release tooling separates source/fixture results, packaged-byte/trust checks and
+installed user workflows. The isolated Windows process fixture and standard-user
+NTFS primitive checks provide real Windows evidence, but do not qualify the
+application. Native storage and private packaged startup are wired and have
+focused Windows evidence, but production admission remains blocked pending the
+complete 65-case fault matrix and independent evidence review. Neither current
+signed installers nor the complete per-platform live-provider matrix are
+accepted yet. The next candidate version is `0.1.0-alpha.2`; its commit and
+installer hashes are not frozen.
+
+Details: [W1](implementation/OPEN_ALPHA_W1_2026-11-13.md),
+[W2](implementation/OPEN_ALPHA_W2_2026-11-13.md),
+[W4](implementation/OPEN_ALPHA_W4_2026-11-13.md),
+[W5](implementation/OPEN_ALPHA_W5_2026-11-13.md),
+[W7](implementation/OPEN_ALPHA_W7_2026-11-13.md),
+[W8](implementation/OPEN_ALPHA_W8_2026-11-13.md) and
+[GitHub delivery](release/github-delivery.md). Dated evidence below keeps its
+original source, environment and acceptance scope.
+
 ## Regression coverage and opt-in tests
 
 F-08 is covered by the local Supervisor's skill selection path. For a new

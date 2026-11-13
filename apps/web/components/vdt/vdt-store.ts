@@ -212,6 +212,7 @@ export interface GenerateActivityState {
   appMode: ReturnType<typeof resolveVdtAppMode>;
   canCancel: boolean;
   cancelRequested: boolean;
+  savedCopyOutcome?: string | undefined;
   message?: string | undefined;
   summary?: string | undefined;
   agentRun?: VdtAgentRun | undefined;
@@ -392,6 +393,7 @@ export interface VdtStudioState {
   smartKpiFencedRunIds: string[];
   /** Runtime-only selected guidance; never persists the library in editor state. */
   smartKpiSkill?: SmartKpiSkillState | undefined;
+  savedCopyStopMarkers?: Record<string, NonNullable<VdtStudioState["pendingIncomingKpiRestart"]>> | undefined;
   pendingIncomingKpiRestart?: { runId: string; workspaceId: string; vdtId: string | null; terminalCleanupConfirmed?: true } | undefined;
   buildIncomingKpiContext: SmartKpiIncomingActions["buildIncomingKpiContext"];
   previewIncomingKpiBatch: SmartKpiIncomingActions["previewIncomingKpiBatch"];
@@ -469,7 +471,7 @@ export interface VdtStudioState {
   deleteWorkspaceProject: (projectId: string) => Promise<boolean>;
   createWorkspaceVdt: (input?: string | CreateWorkspaceVdtParams) => Promise<boolean>;
   selectWorkspaceProject: (projectId: string) => Promise<boolean>;
-  selectWorkspaceVdt: (vdtId: string, options?: { expectedProjectId?: string | undefined; discardLocalEdits?: boolean }) => Promise<boolean>;
+  selectWorkspaceVdt: (vdtId: string, options?: { expectedProjectId?: string | undefined; discardLocalEdits?: boolean; savedCopySource?: VdtStudioState }) => Promise<boolean>;
   renameWorkspaceVdt: (vdtId: string, name: string) => Promise<boolean>;
   setWorkspaceVdtStatus: (vdtId: string, status: StoredVdtStatus) => Promise<boolean>;
   deleteWorkspaceVdt: (vdtId: string) => Promise<boolean>;
@@ -502,6 +504,7 @@ export interface VdtStudioState {
   requestIncomingKpisWithAi: (nodeId: string) => Promise<boolean>;
   applyAgentGraphPatch: (snapshot: RuntimeAgentRunSnapshot) => void;
   cancelAgentRun: () => Promise<void>;
+  continueFromSavedCopy: () => Promise<void>;
   generateWithAi: () => Promise<void>;
   cancelGenerate: () => void;
   loadExample: (exampleId?: ExampleProjectId) => void;
@@ -1282,7 +1285,9 @@ function applyAgentSnapshot(
 ) {
   set((state) => {
     if (state.smartKpiOperation || state.smartKpiFencedRunIds.includes(snapshot.runId)) return {};
-    if (!allowIncomingStopSnapshot && state.pendingIncomingKpiRestart?.runId === snapshot.runId) return {};
+    if (Object.values(state.savedCopyStopMarkers ?? {}).some(marker => marker.runId === snapshot.runId)) return {};
+    const pendingStop = !allowIncomingStopSnapshot && state.pendingIncomingKpiRestart?.runId === snapshot.runId;
+    if (pendingStop && snapshot.status !== "recovery_required") return {};
     if (state.activeAgentRunId && state.activeAgentRunId !== snapshot.runId) {
       return {};
     }
@@ -1340,7 +1345,7 @@ function applyAgentSnapshot(
         snapshot.request.workspace?.vdtId === state.workspace.activeVdtId
       )
     );
-    const project = rawProject
+    const project = rawProject && !pendingStop
       ? ensureScenario(
           shouldPreserveProjectId && !canAdoptRevision
             ? { ...rawProject, id: state.project.id }
@@ -2233,6 +2238,17 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         const initial = get();
         const rebaseRequired = hasSmartKpiRebase(initial);
         const discardLocalEdits = options?.discardLocalEdits === true;
+        const copySource = options?.savedCopySource;
+        const stillOnCopySource = () => {
+          const current = get();
+          return !copySource || current.project === copySource.project && current.projectRevision === copySource.projectRevision
+            && current.workspace.activeVdtId === copySource.workspace.activeVdtId
+            && current.workspace.activeProjectId === copySource.workspace.activeProjectId
+            && current.workspace.draftRevisionBase === copySource.workspace.draftRevisionBase
+            && !current.workspace.pendingRevisionCommit && !current.workspace.isMutating
+            && current.generateActivity?.runId === copySource.generateActivity?.runId;
+        };
+        if (!stillOnCopySource()) return false;
         if (discardLocalEdits && (initial.workspace.activeVdtId !== vdtId || initial.workspace.isMutating
           || initial.workspace.isLoading || initial.workspace.pendingRevisionCommit)) {
           return false;
@@ -2265,7 +2281,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           }
         }));
         try {
-          if (!discardLocalEdits && !rebaseRequired && hasActiveWorkspaceVdt(get().workspace) && !(await get().saveActiveWorkspaceVdt())) {
+          if (!copySource && !discardLocalEdits && !rebaseRequired && hasActiveWorkspaceVdt(get().workspace) && !(await get().saveActiveWorkspaceVdt())) {
             set((state) => ({
               workspace: {
                 ...state.workspace,
@@ -2275,6 +2291,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             return false;
           }
           const loaded = await loadStoredVdt(vdtId);
+          if (!stillOnCopySource()) throw new Error("The source draft changed while opening the copy.");
           if (!loaded.activeProject) {
             throw new Error("Selected VDT does not have a saved revision yet.");
           }
@@ -2285,33 +2302,62 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             throw new Error("The local draft changed while reloading. Review it before discarding.");
           }
           const project = ensureScenario(loaded.activeProject);
-          set((state) => ({
-            project,
-            ...(state.smartKpiRebaseRequired?.workspaceId === loaded.summary.project.id && state.smartKpiRebaseRequired.vdtId === loaded.vdt.id
-              ? { smartKpiRebaseRequired: undefined, smartKpiOperation: undefined, smartKpiMutation: { status: "idle" as const, canUndo: false } } : {}),
-            selectedNodeId: project.rootNodeId,
-            activeScenarioId: resolveMainScenarioId(project),
-            brief: briefFromProject(project),
-            generateActivity: undefined,
-            activeAgentRunId: undefined,
-            agentWorkspaceDraft: undefined,
-            agentRun: undefined,
-            agentEvents: [],
-            agentPendingQuestions: undefined,
-            agentError: undefined,
-            isGenerating: false,
-            workspace: {
-              ...state.workspace,
-              projectSummaries: upsertProjectSummary(state.workspace.projectSummaries, loaded.summary),
-              activePanel: "vdt",
-              activeProjectId: loaded.summary.project.id,
-              activeVdtId: loaded.vdt.id,
-              draftRevisionBase: workspaceDraftBase(loaded.head, runtimeCasFromState(loaded.runtimeState)),
-              isLoading: false,
-              error: undefined
-            },
-            ...clearPendingAiActionState()
-          }));
+          if (copySource) {
+            if (kpiCanonicalJson(project) !== kpiCanonicalJson(copySource.project)) {
+              throw new Error("The saved copy is in this project's VDT list. Your open draft was kept.");
+            }
+            activeAgentEventUnsubscribe?.();
+            activeAgentEventUnsubscribe = undefined;
+          }
+          set((state) => {
+            const retainedStops = { ...state.savedCopyStopMarkers };
+            const currentStop = state.pendingIncomingKpiRestart;
+            const targetStop = currentStop?.vdtId === loaded.vdt.id ? currentStop : retainedStops[loaded.vdt.id];
+            if (currentStop?.vdtId && currentStop.vdtId !== loaded.vdt.id) retainedStops[currentStop.vdtId] = currentStop;
+            if (copySource?.workspace.activeVdtId && copySource.generateActivity
+              && !retainedStops[copySource.workspace.activeVdtId]) {
+              retainedStops[copySource.workspace.activeVdtId] = {
+                runId: copySource.generateActivity.runId,
+                workspaceId: loaded.summary.project.id,
+                vdtId: copySource.workspace.activeVdtId
+              };
+            }
+            delete retainedStops[loaded.vdt.id];
+            return {
+              project,
+              ...(copySource ? {
+                agentConnectionStatus: "disconnected" as const,
+                aiError: undefined,
+                agentChatHistory: upsertAgentChatHistory(state.agentChatHistory, state.generateActivity, copySource.workspace.activeVdtId)
+              } : {}),
+              savedCopyStopMarkers: retainedStops,
+              pendingIncomingKpiRestart: currentStop?.vdtId === null ? currentStop : targetStop,
+              ...(state.smartKpiRebaseRequired?.workspaceId === loaded.summary.project.id && state.smartKpiRebaseRequired.vdtId === loaded.vdt.id
+                ? { smartKpiRebaseRequired: undefined, smartKpiOperation: undefined, smartKpiMutation: { status: "idle" as const, canUndo: false } } : {}),
+              selectedNodeId: project.rootNodeId,
+              activeScenarioId: resolveMainScenarioId(project),
+              brief: briefFromProject(project),
+              generateActivity: undefined,
+              activeAgentRunId: undefined,
+              agentWorkspaceDraft: undefined,
+              agentRun: undefined,
+              agentEvents: [],
+              agentPendingQuestions: undefined,
+              agentError: undefined,
+              isGenerating: false,
+              workspace: {
+                ...state.workspace,
+                projectSummaries: upsertProjectSummary(state.workspace.projectSummaries, loaded.summary),
+                activePanel: "vdt",
+                activeProjectId: loaded.summary.project.id,
+                activeVdtId: loaded.vdt.id,
+                draftRevisionBase: workspaceDraftBase(loaded.head, runtimeCasFromState(loaded.runtimeState)),
+                isLoading: false,
+                error: undefined
+              },
+              ...clearPendingAiActionState()
+            };
+          });
           return true;
         } catch (error) {
           set((state) => ({
@@ -3706,6 +3752,40 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         });
       },
       applyAgentGraphPatch: (snapshot) => applyAgentSnapshot(set, snapshot),
+      continueFromSavedCopy: async () => {
+        const source = get();
+        const { activeProjectId: projectId, activeVdtId: vdtId, draftRevisionBase: base } = source.workspace;
+        const runId = source.generateActivity?.runId;
+        const revisionId = base?.expectedHead.activeRevisionId;
+        if (source.generateActivity?.status !== "recovery_required" || !runId || !projectId || !vdtId || !revisionId
+          || source.workspace.isMutating || source.workspace.isLoading || source.workspace.pendingRevisionCommit
+          || source.smartKpiOperation || incomingKpiRestarts.has(runId)) return;
+        const scopeStillOpen = () => get().workspace.activeVdtId === vdtId && get().workspace.activeProjectId === projectId;
+        const showOutcome = (savedCopyOutcome: string) => set(current => ({
+          generateActivity: current.generateActivity?.runId === runId
+            ? { ...current.generateActivity, savedCopyOutcome }
+            : current.generateActivity
+        }));
+        incomingKpiRestarts.add(runId);
+        showOutcome("Creating saved copy…");
+        try {
+          const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/saved-copy`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projectId, vdtId, revisionId })
+          });
+          const result = await response.json() as { vdtId?: string; error?: { message?: string } };
+          if (!response.ok || !result.vdtId) throw new Error(result.error?.message ?? "The saved VDT could not be copied.");
+          if (!scopeStillOpen()) return;
+          if (!(await get().selectWorkspaceVdt(result.vdtId, { expectedProjectId: projectId, savedCopySource: source })) && scopeStillOpen()) {
+            showOutcome("The saved copy is in this project's VDT list. Your open draft was kept.");
+            await get().refreshWorkspace({ scopedProjectId: projectId }).catch(() => undefined);
+          }
+        } catch (error) {
+          if (scopeStillOpen()) showOutcome(error instanceof Error ? error.message : "The saved VDT could not be copied.");
+        } finally {
+          incomingKpiRestarts.delete(runId);
+        }
+      },
       cancelAgentRun: async () => {
         const state = get(), scope = incomingRestartScope(state);
         const runId = resumableAgentRunId(state);
@@ -4366,6 +4446,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         smartKpiConflictOperation: state.smartKpiConflictOperation,
         smartKpiFencedRunIds: state.smartKpiFencedRunIds,
         pendingIncomingKpiRestart: state.pendingIncomingKpiRestart,
+        savedCopyStopMarkers: state.savedCopyStopMarkers,
         workspace: {
           activePanel: state.workspace.activePanel,
           projectSummaries: state.workspace.projectSummaries,

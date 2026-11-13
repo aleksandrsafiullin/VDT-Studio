@@ -95,13 +95,17 @@ Review edits and staging reread the retained bytes and recompile supported mappi
 | XLSB | Not supported |
 | PDF/image/OCR | Not supported |
 
-Current configurable limits include 50 MB file size, 25,000 parsed rows, 80 columns and 25 sheets, but several limits are applied after request/parser materialization and therefore are not a production resource boundary.
+The trusted-local upload route counts stream bytes before multipart decoding. It accepts one file up to 50 MiB plus 64 KiB for multipart overhead and limits the upload read to 30 seconds. It also bounds multipart headers and metadata fields and matches case-sensitive delimiters before extracting the original file bytes. A rejected upload does not create a retained file.
+
+Analysis of an accepted, retained source runs in a separate Node process with a 256 MiB V8 old-generation heap limit, a 15-second deadline and a 16 MiB result limit. The server admits up to two retained-source analysis requests before reading their payloads and up to two parser children at a time. Analysis verifies file size from the open descriptor, caps the read and checks the full SHA-256. The server releases the input bytes with the request instead of retaining a cache of full payloads. If both slots are in use, wait for an analysis to finish and retry. Workbook parsing caps ZIP expansion at 64 MiB and 512 entries and rejects unsupported ZIP64 layouts. It checks sheet count and dimensions before rectangular conversion. The default limits are 25,000 data rows, 80 columns, 25 sheets and 2,000,080 workbook cells across all sheets. Adapter limits may be lower. The parser receives bytes through a pipe and creates no temporary source file.
+
+Analysis rejection or cancellation preserves the previously uploaded original and its hash. Use a smaller or structurally valid table extract if a source exceeds the supported limits.
 
 ## Confirmed Correctness Gaps
 
 ### Source preview is UI-only
 
-The API stores a 4096-byte `textPreview` for UI only. Initial analysis, structured mapping reruns and final incoming-KPI staging use retained full bytes, verified against size and SHA-256 metadata. Parsed sources that exceed the row/column/sheet limits are marked `truncated`; the incoming hierarchy cannot be staged from a truncated selected table.
+The API stores a 4096-byte `textPreview` for UI only. Initial analysis, structured mapping reruns and final incoming-KPI staging use retained full bytes, verified against size and SHA-256 metadata. The incoming hierarchy cannot be staged from an incomplete table. Workbooks with unsupported dimensions or sheet counts fail before producing a preview. Other adapters may return a truncated table summary with a blocking warning.
 
 The snapshot does not yet preserve separate original, parsed and sampled row counts for every adapter, so W0.3 remains partial rather than complete.
 
@@ -136,12 +140,11 @@ The incoming-KPI workflow uses structured options and full-source deterministic 
 
 ## Security And Privacy Gaps
 
-- Excel parsing uses the official SheetJS `0.20.3` tarball, pinned by URL and lockfile integrity following [upstream installation guidance](https://docs.sheetjs.com/docs/getting-started/installation/nodejs/). This replaces the unmaintained npm `xlsx@0.18.5` dependency affected by prototype-pollution and ReDoS advisories. Production dependency audit passed on 2026-10-19; this does not provide parser isolation or resource-budget guarantees.
+- Excel parsing uses the official SheetJS `0.20.3` tarball, pinned by URL and lockfile integrity following [upstream installation guidance](https://docs.sheetjs.com/docs/getting-started/installation/nodejs/). This replaces the unmaintained npm `xlsx@0.18.5` dependency affected by prototype-pollution and ReDoS advisories. Production dependency audit passed on 2026-10-19. Separate process and resource limits are described above.
 - Incoming-KPI parsing retains original numeric worksheet serials after SheetJS matrix conversion. Date/time display formats must not convert a duration into a timezone-dependent `Date`; the original cell formats and the confirmed duration/timestamp options still determine units. Regression coverage includes both XLSX and legacy XLS.
-- Request bodies and workbook matrices can be materialized before effective resource limits.
 - Scoped files enforce project ownership and explicit current/historical tree associations; runs retain their own VDT identity. They remain plaintext. Reversible archive/detach does not provide a permanent retention/delete or encryption policy.
 - The local ownership check is not authenticated hosted multi-user authorization. Legacy global records remain trusted-local compatibility data.
-- MIME magic, archive expansion limits, quarantine and parser process isolation are absent.
+- Upload quarantine and comprehensive MIME validation remain open. The parser child uses application-level process and resource limits. Native lifecycle qualification remains pending.
 - Model-facing redaction is partial; explicit outbound-provider consent and egress audit are absent.
 
 Hosted/public upload must remain disabled until these controls and the dependency audit are remediated.

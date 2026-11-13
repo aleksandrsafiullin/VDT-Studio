@@ -1,94 +1,70 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { verifyCiWorkflows } from "./verify-ci-workflows.mjs";
 
 const tempDirs: string[] = [];
-const browserE2eSteps = `- run: pnpm build:web
-- run: pnpm exec playwright install --with-deps chromium webkit
-- run: pnpm test:e2e
-  env:
-    VDT_E2E_USE_BUILD: "1"
-`;
-
-async function writeWorkflow(root: string, file: string, text: string) {
-  const filePath = path.join(root, file);
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, text);
-}
-
-async function createFixture(overrides: Record<string, string> = {}) {
-  const root = await mkdtemp(path.join(os.tmpdir(), "vdt-ci-workflows-"));
-  tempDirs.push(root);
-
-  const workflows: Record<string, string> = {
-    ".github/workflows/quality.yml":
-      "name: Quality\nsteps:\n- run: pnpm lint\n- run: pnpm typecheck\n- run: pnpm test\n- run: pnpm build\n- run: pnpm ci:verify\n- run: pnpm phase7:verify\n- run: pnpm docs:verify\n- run: pnpm evaluation:verify\n- run: pnpm desktop:verify\n",
-    ".github/workflows/e2e.yml":
-      `name: E2E\nsteps:\n${browserE2eSteps}`,
-    ".github/workflows/e2e-desktop.yml":
-      "name: Desktop E2E Foundation\nstrategy:\n  matrix:\n    os: [macos-14, windows-latest]\nruns-on: ${{ matrix.os }}\nsteps:\n- run: pnpm desktop:verify\n- run: pnpm vitest run scripts/verify-desktop-shell.test.ts scripts/verify-desktop-sidecar.test.ts\n",
-    ".github/workflows/package.yml":
-      "name: Package\nmatrix:\n  os: [ubuntu-latest, macos-14, windows-latest]\nsteps:\n- run: pnpm package:alpha\n- run: pnpm release:bundle:verify\n- run: pnpm package:verify\n",
-    ".github/workflows/package-desktop.yml":
-      "name: Desktop Package\non:\n  workflow_dispatch:\nstrategy:\n  matrix:\n    os: [macos-14, windows-latest]\nruns-on: ${{ matrix.os }}\nsteps:\n- run: pnpm desktop:sidecar:prepare\n- run: pnpm desktop:verify\n- run: pnpm desktop:native:preflight\n",
-    ".github/workflows/security.yml": "name: Security\nsteps:\n- run: pnpm security:audit\n- run: pnpm certification:verify\n",
-    ".github/workflows/release.yml":
-      `name: Release\nsteps:\n- run: pnpm release:verify\n${browserE2eSteps}files:\n  output/release/v*/vdt-studio-cli-*.tgz\n  output/release/v*/SHA256SUMS\n  output/release/v*/manifest.json\n  output/release/v*/sbom.spdx.json\n`
-  };
-
-  for (const [file, text] of Object.entries({ ...workflows, ...overrides })) {
-    await writeWorkflow(root, file, text);
+const names = ["quality", "e2e", "e2e-desktop", "windows-storage-native", "package", "package-desktop", "security", "release"];
+async function createFixture(change?: { name: string; transform: (text: string) => string }) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vdt-ci-workflows-")); tempDirs.push(root);
+  await mkdir(path.join(root, ".github/workflows"), { recursive: true });
+  for (const name of names) {
+    const source = await readFile(new URL(`../.github/workflows/${name}.yml`, import.meta.url), "utf8");
+    await writeFile(path.join(root, `.github/workflows/${name}.yml`), change?.name === name ? change.transform(source) : source);
   }
-
+  await mkdir(path.join(root, ".github/scripts"), { recursive: true });
+  const helper = await readFile(new URL("../.github/scripts/windows-storage-standard-user.ps1", import.meta.url), "utf8");
+  await writeFile(path.join(root, ".github/scripts/windows-storage-standard-user.ps1"),
+    change?.name === "windows-storage-standard-user" ? change.transform(helper) : helper);
   return root;
 }
+afterEach(async () => { await Promise.all(tempDirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-describe("verify-ci-workflows", () => {
-  it("passes when CI contains the required release and desktop gates", async () => {
-    const root = await createFixture();
-
-    expect(verifyCiWorkflows(root).workflows).toContain(".github/workflows/package-desktop.yml");
+describe("workflow structure verification", () => {
+  it("accepts the actual workflows without claiming installed-app qualification", async () => {
+    const result = verifyCiWorkflows(await createFixture());
+    expect(result.workflows).toHaveLength(8);
+    expect(result.scope).toContain("installed qualification is separate");
   });
-
-  it("fails when browser E2E does not use the built web app", async () => {
-    const root = await createFixture({
-      ".github/workflows/e2e.yml":
-        `name: E2E\nsteps:\n${browserE2eSteps.replace('  env:\n    VDT_E2E_USE_BUILD: "1"\n', "")}`
-    });
-
+  it("requires the built-app environment on the actual browser test step", async () => {
+    const root = await createFixture({ name: "e2e", transform: text => text.replace('VDT_E2E_USE_BUILD: "1"', 'VDT_E2E_USE_BUILD: "0"') });
     expect(() => verifyCiWorkflows(root)).toThrow(/VDT_E2E_USE_BUILD/);
   });
-
-  it("fails when the desktop native preflight gate is not wired", async () => {
-    const root = await createFixture({
-      ".github/workflows/package-desktop.yml":
-        "name: Desktop Package\non:\n  workflow_dispatch:\nstrategy:\n  matrix:\n    os: [macos-14, windows-latest]\nruns-on: ${{ matrix.os }}\nsteps:\n- run: pnpm desktop:sidecar:prepare\n- run: pnpm desktop:verify\n"
-    });
-
-    expect(() => verifyCiWorkflows(root)).toThrow(/desktop:native:preflight/);
+  it("does not accept the saved-copy subset as the full browser gate", async () => {
+    const root = await createFixture({ name: "e2e", transform: text => text.replace("run: pnpm test:e2e\n", "run: pnpm test:e2e:saved-copy\n") });
+    expect(() => verifyCiWorkflows(root)).toThrow(/browser test step/);
   });
-
-  it("fails when package verification does not scan the release bundle", async () => {
-    const root = await createFixture({
-      ".github/workflows/package.yml":
-        "name: Package\nmatrix:\n  os: [ubuntu-latest, macos-14, windows-latest]\nsteps:\n- run: pnpm package:alpha\n- run: pnpm package:verify\n"
-    });
-
-    expect(() => verifyCiWorkflows(root)).toThrow(/release:bundle:verify/);
+  it("does not accept a commented-out native builder as executable coverage", async () => {
+    const root = await createFixture({ name: "package-desktop", transform: text => text.replace("          scripts/package-macos-alpha.sh", "          # scripts/package-macos-alpha.sh") });
+    expect(() => verifyCiWorkflows(root)).toThrow(/executable gate/);
   });
-
-  it("fails when the Phase 7 verification gate is not wired", async () => {
-    const root = await createFixture({
-      ".github/workflows/quality.yml":
-        "name: Quality\nsteps:\n- run: pnpm lint\n- run: pnpm typecheck\n- run: pnpm test\n- run: pnpm build\n- run: pnpm ci:verify\n- run: pnpm docs:verify\n- run: pnpm evaluation:verify\n- run: pnpm desktop:verify\n"
-    });
-
+  it("requires retained native installers and failure evidence", async () => {
+    const root = await createFixture({ name: "package-desktop", transform: text => text.replace("if: always()", "if: success()") });
+    expect(() => verifyCiWorkflows(root)).toThrow(/retain installers/);
+  });
+  it("rejects a candidate verification step detached from source identity", async () => {
+    const root = await createFixture({ name: "package-desktop", transform: text => text.replaceAll("--source-commit", "--unverified-commit") });
+    expect(() => verifyCiWorkflows(root)).toThrow(/against the source commit/);
+  });
+  it("rejects publication permissions in a build-only workflow", async () => {
+    const root = await createFixture({ name: "release", transform: text => text.replace("contents: read", "contents: write") });
+    expect(() => verifyCiWorkflows(root)).toThrow(/must not publish/);
+  });
+  it("rejects the retired macOS runner in the platform matrix", async () => {
+    const root = await createFixture({ name: "package", transform: text => text.replace("macos-15", "macos-14") });
+    expect(() => verifyCiWorkflows(root)).toThrow(/active Mac and Windows/);
+  });
+  it("requires Windows storage evidence even on failure", async () => {
+    const root = await createFixture({ name: "windows-storage-native", transform: text => text.replace("if: always()", "if: success()") });
+    expect(() => verifyCiWorkflows(root)).toThrow(/Windows storage must preserve failure evidence/);
+  });
+  it("rejects a Windows storage helper that no longer runs the literal migration matrix", async () => {
+    const root = await createFixture({ name: "windows-storage-standard-user", transform: text => text.replaceAll("sequence-3-windows-matrix.ts", "storage-probe.ts") });
+    expect(() => verifyCiWorkflows(root)).toThrow(/missing required gate: sequence-3-windows-matrix/);
+  });
+  it("still requires the phase 7 executable gate", async () => {
+    const root = await createFixture({ name: "quality", transform: text => text.replace("pnpm phase7:verify", "echo phase7:verify") });
     expect(() => verifyCiWorkflows(root)).toThrow(/phase7:verify/);
   });
 });

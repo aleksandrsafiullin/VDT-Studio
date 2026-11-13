@@ -111,8 +111,19 @@ const assetReadCounts: Record<keyof typeof ASSET_URLS, number> = {
 
 export function loadVerifiedSequence3Assets(): VerifiedSequence3Assets {
   if (retainedRuntime) return retainedRuntime;
+  retainedRuntime = loadSequence3Runtime(false);
+  return retainedRuntime;
+}
+
+/** Intentionally verify a corrupt copy of the SQL bytes through the real loader. */
+export function __verifyCorruptSequence3SqlForTests(): never {
+  loadSequence3Runtime(true);
+  throw new Error("Corrupt Sequence 3 SQL unexpectedly passed verification.");
+}
+
+function loadSequence3Runtime(corruptSqlForTest: boolean): VerifiedSequence3Assets {
   const manifestBytes = readExact("manifest");
-  const sqlBytes = readExact("sql");
+  const sqlBytes = readExact("sql", corruptSqlForTest);
   const moduleBytes = readExact("module");
   const abiBytes = readExact("abi");
 
@@ -126,7 +137,7 @@ export function loadVerifiedSequence3Assets(): VerifiedSequence3Assets {
   const entry = asRecord(sequence3.entry, "entry.entry");
   const transform = asRecord(sequence3.transform, "entry.transform");
   const sqlText = new TextDecoder("utf-8", { fatal: true }).decode(sqlBytes);
-  retainedRuntime = Object.freeze({
+  return Object.freeze({
     identity: TRANSFORM_IDENTITY,
     sqlText,
     module: compiled,
@@ -137,7 +148,6 @@ export function loadVerifiedSequence3Assets(): VerifiedSequence3Assets {
     goldenVectorsChecksum: transform.goldenVectorsChecksum as Sha256,
     postconditionSchemaHash: entry.postconditionSchemaHash as Sha256
   });
-  return retainedRuntime;
 }
 
 /**
@@ -273,7 +283,7 @@ function resolveSequence3AssetPath(
   throw new Error(`sequence3_asset_path_invalid:${kind}`);
 }
 
-function readExact(kind: keyof typeof ASSET_URLS): Buffer {
+function readExact(kind: keyof typeof ASSET_URLS, corruptForTest = false): Buffer {
   assetReadCounts[kind] += 1;
   const url = ASSET_URLS[kind];
   const expected = EXPECTED[kind];
@@ -329,6 +339,7 @@ function readExact(kind: keyof typeof ASSET_URLS): Buffer {
     ) {
       throw new Error(`sequence3_asset_changed:${kind}`);
     }
+    if (corruptForTest) bytes[0] = bytes[0]! ^ 1;
     if (hashRawBytes(bytes) !== expected.raw) {
       throw new Error(`sequence3_asset_hash_invalid:${kind}`);
     }

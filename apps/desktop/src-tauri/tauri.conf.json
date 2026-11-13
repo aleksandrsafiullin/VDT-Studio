@@ -1,13 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "VDT Studio",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "identifier": "com.vdtstudio.desktop",
   "build": {
     "beforeDevCommand": "NEXT_PUBLIC_VDT_APP_MODE=desktop pnpm --filter @vdt-studio/web dev",
     "devUrl": "http://localhost:3000",
     "beforeBuildCommand": "NEXT_PUBLIC_VDT_APP_MODE=desktop pnpm --filter @vdt-studio/web build",
-    "frontendDist": "../web/.next"
+    "frontendDist": null
   },
   "app": {
     "withGlobalTauri": true,

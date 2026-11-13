@@ -3583,14 +3583,16 @@ dependencies = [
 
 [[package]]
 name = "vdt-studio-desktop"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "libc",
  "serde",
  "serde_json",
  "sha2",
+ "socket2",
  "tauri",
  "tauri-build",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

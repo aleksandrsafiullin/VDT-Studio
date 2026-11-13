@@ -11,6 +11,7 @@ import { POST as createRun } from "../discovery/runs/route";
 import { GET as download, PATCH as modify } from "./[datasetId]/route";
 import { GET as list, POST as upload } from "./route";
 import type { ProjectFileSource } from "@/lib/project-files-client";
+import { MAX_MULTIPART_BYTES } from "../bounded-upload";
 
 const projectId = "project_library";
 const firstVdt = "vdt_library_first";
@@ -89,6 +90,21 @@ describe("project file library", () => {
     const source = await uploadSource(undefined, "project_library_empty");
     expect(source.file.vdtId).toBeUndefined();
     expect(await sources({ projectId: "project_library_empty" })).toMatchObject([{ datasetId: source.datasetId, vdtIds: [] }]);
+  });
+
+  it("rejects an oversized stream before retaining bytes or changing the project library", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } });
+    const response = await upload(new Request("http://localhost:3000/api/data/files", {
+      method: "POST", body: stream, duplex: "half",
+      headers: { "content-type": "multipart/form-data; boundary=bounded", "content-length": String(MAX_MULTIPART_BYTES + 1) }
+    } as RequestInit));
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: { code: "DATA_FILE_TOO_LARGE" } });
+    expect(cancelled).toBe(true);
+    expect(await sources()).toEqual([]);
+    await uploadSource();
+    expect(await sources()).toHaveLength(1);
   });
 
   it("automatically lists a builder upload in its project and original VDT", async () => {

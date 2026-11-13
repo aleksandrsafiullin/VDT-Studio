@@ -8,6 +8,7 @@ import {
   openVdtDatabase,
   validateStrictVdtProjectCommit,
   vdtPreviewDir,
+  writeWindowsStorageProfileFile,
   VdtStorageError,
   type ActorContextV1,
   type CreateVdtWithInitialSnapshotCommandV1,
@@ -38,6 +39,7 @@ import {
 import type { VdtProject } from "@vdt-studio/vdt-core";
 import { createStorageWriteActor } from "@/app/api/vdt/storage-write-adapter";
 import { defaultAgentRunDataDir, resolveConfiguredDataDir } from "./agent-data-dir";
+import { supervisorFenceOwnership } from "./supervisor-controller-owner";
 
 const DEFAULT_AGENT_PROJECT_ID = "project_agent_workspace";
 const DEFAULT_AGENT_PROJECT_NAME = "VDT Studio workspace";
@@ -216,6 +218,7 @@ export function createSqliteAgentRunPersistence(
       }
     },
     updateRun(state) {
+      assertLegacySupervisorWrite(database, state);
       const projectContext = storageProjectContextFromState(state);
       const actor = actorFactory(projectContext.projectId);
       ensureStorageProject(database, state, projectContext);
@@ -237,6 +240,7 @@ export function createSqliteAgentRunPersistence(
       return artifacts.workspaceRevision;
     },
     appendEvent(event, state) {
+      assertLegacySupervisorWrite(database, state);
       const projectContext = storageProjectContextFromState(state);
       const actor = actorFactory(projectContext.projectId);
       ensureStorageProject(database, state, projectContext);
@@ -293,6 +297,22 @@ function persistedRunPayload(
       ...(replayState ? { [STORAGE_REPLAY_STATE_KEY]: replayState } : {})
     } as unknown as Record<string, unknown>
   };
+}
+
+function assertLegacySupervisorWrite(database: VdtDatabase, state: VdtAgentRunState): void {
+  const fence = database.getAgentRunSupervisorFence(state.runId);
+  if (!fence) return;
+  if (fence.orphanTerminated) {
+    throw new VdtStorageError("STALE_SUPERVISOR_CALLBACK", "The interrupted run has already been durably ended.");
+  }
+  if (supervisorFenceOwnership(fence.ownerToken) === "foreign") {
+    throw new VdtStorageError("STALE_SUPERVISOR_CALLBACK", "Only the original controller process may mutate this run projection.");
+  }
+  const expectedEpoch = state.supervisorPersistenceV2?.checkpoint?.sessionEpoch
+    ?? state.supervisorPersistenceV2?.binding.sessionEpoch;
+  if (expectedEpoch !== undefined && expectedEpoch !== fence.sessionEpoch) {
+    throw new VdtStorageError("SESSION_EPOCH_MISMATCH", "The run projection no longer owns the current Supervisor epoch.");
+  }
 }
 
 function persistRunArtifacts(
@@ -1216,6 +1236,10 @@ function reconcilePersistedReplayState(
   actorFactory: (projectId: string) => ActorContextV1
 ): VdtAgentRunState {
   if (!replayState) return state;
+  // A restored normalized run has no reconstructed controller here. Reading its
+  // history must not replay graph effects before owner/receipt recovery checks.
+  // Live controllers keep their reconciled state in the run-store cache.
+  if (database.getAgentRunSupervisorFence(state.runId)) return state;
 
   if (state.request.workspace?.expectedRevision && (
     state.status === "succeeded" || state.status === "failed" || state.status === "cancelled" || state.status === "recovery_required"
@@ -1417,9 +1441,20 @@ function jsonOrNull(value: unknown): JsonValue | null {
 }
 
 function writePreviewProject(database: VdtDatabase, projectId: string, vdtId: string, proposal: MutationProposal): string {
+  const filename = `${storageProposalId(proposal)}.vdt.json`;
+  const json = `${JSON.stringify(proposal.previewProject, null, 2)}\n`;
+  if (process.platform === "win32") {
+    const relative = path.join("projects", assertSafeId(projectId, "projectId"), "vdts",
+      assertSafeId(vdtId, "vdtId"), "previews", filename);
+    const bytes = Buffer.from(json, "utf8");
+    // A replay can update an existing preview. Bound its read without imposing
+    // a smaller ceiling than the snapshot we are publishing.
+    writeWindowsStorageProfileFile(database.dataDir, relative, bytes, Math.max(bytes.length, 16 * 1024 * 1024));
+    return relative;
+  }
   const previewDir = vdtPreviewDir(database.dataDir, projectId, vdtId);
-  const file = path.join(previewDir, `${storageProposalId(proposal)}.vdt.json`);
-  fs.writeFileSync(file, `${JSON.stringify(proposal.previewProject, null, 2)}\n`, "utf8");
+  const file = path.join(previewDir, filename);
+  fs.writeFileSync(file, json, "utf8");
   return path.relative(database.dataDir, file);
 }
 

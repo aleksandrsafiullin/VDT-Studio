@@ -1,0 +1,26 @@
+{
+  "build": { "beforeBuildCommand": null, "frontendDist": null },
+  "app": {
+    "windows": [{
+      "title": "VDT Studio", "width": 1440, "height": 960,
+      "minWidth": 1100, "minHeight": 760, "resizable": true,
+      "fullscreen": false, "create": false
+    }]
+  },
+  "bundle": {
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "resources": [
+      "sidecars/vdt-local-runtime", "sidecars/vdt-local-runtime.cmd",
+      "sidecars/vdt-local-runtime.mjs", "sidecars/vdt-local-runtime.manifest.json",
+      "sidecars/vdt-agent-skills", "runtime/node.exe", "runtime/LICENSE-Node.txt",
+      "runtime/windows-storage.node", "runtime/windows-storage.manifest.json",
+      "web", "packaged-web.cjs", "windows-runtime.cjs", "build-info.json",
+      "parser-worker.manifest.json", "LICENSE-VDT-Studio.txt"
+    ],
+    "windows": {
+      "webviewInstallMode": { "type": "offlineInstaller", "silent": true },
+      "nsis": { "installMode": "currentUser", "displayLanguageSelector": false }
+    }
+  }
+}

@@ -1,0 +1,58 @@
+name: Windows Native Storage
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  standard-user-storage:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.2
+          architecture: x64
+      - name: Install pinned workspace dependencies
+        shell: pwsh
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+      - name: Prepare diagnostic evidence
+        shell: pwsh
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP "vdt-storage-evidence-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Path $evidence -ErrorAction Stop | Out-Null
+          "VDT_STORAGE_PROBE_EVIDENCE=$evidence" >> $env:GITHUB_ENV
+          [ordered]@{
+            runId = $env:GITHUB_RUN_ID
+            sourceCommit = $env:GITHUB_SHA
+            osDescription = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+            osArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+            processArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+            administrator = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+            rustc = (rustc --version)
+            node = (node --version)
+          } | ConvertTo-Json | Set-Content (Join-Path $evidence 'environment.json')
+      - name: Record host filesystem capabilities
+        shell: pwsh
+        run: |
+          $report = Join-Path $env:VDT_STORAGE_PROBE_EVIDENCE 'windows-storage-probe.json'
+          $log = Join-Path $env:VDT_STORAGE_PROBE_EVIDENCE 'probe.log'
+          node packages/vdt-storage/scripts/probe-windows-storage.mjs --parent $env:RUNNER_TEMP --output $report 2>&1 | Tee-Object -FilePath $log
+          $probeExit = $LASTEXITCODE
+          "exitCode=$probeExit" | Set-Content (Join-Path $env:VDT_STORAGE_PROBE_EVIDENCE 'exit-code.txt')
+          exit $probeExit
+      - name: Run native storage regressions as a standard user
+        shell: pwsh
+        run: ./.github/scripts/windows-storage-standard-user.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-native-storage-${{ github.sha }}
+          path: ${{ env.VDT_STORAGE_PROBE_EVIDENCE }}
+          if-no-files-found: error
+          retention-days: 7

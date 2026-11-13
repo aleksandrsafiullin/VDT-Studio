@@ -1,5 +1,23 @@
 # Local AI And Data Threat Model
 
+## Local diagnostics and build identity (2026-11-13)
+
+Support reports are explicit local allowlisted snapshots with preview before
+download. They do not transmit telemetry or submit issues. Default reports omit
+model identifiers, credential fields, raw errors/prompts, project/file content
+and personal paths. Model identifiers require an unchecked opt-in with a
+private-name warning and a fresh preview; configured secrets and recognized key
+signatures remain excluded. The metadata endpoint exposes only compiled
+version/commit/build time and bounded platform/runtime fields through local
+admission. See [W4](../implementation/OPEN_ALPHA_W4_2026-11-13.md).
+
+Interrupted structured run recovery requires verified process death and an exact
+durable owner/epoch/binding transaction. Host/boot evidence remains internal;
+absence from a process-local map does not authorize takeover. Unsupported legacy,
+external or ambiguous states remain blocked pending a separate safe continuation
+path. See [W1](../implementation/OPEN_ALPHA_W1_2026-11-13.md) and the
+[independent review](../implementation/OPEN_ALPHA_INDEPENDENT_REVIEW_2026-11-13.md).
+
 ## Packaged macOS Alpha Boundary
 
 The signed Apple Silicon alpha serves its web interface over an app-owned
@@ -110,7 +128,10 @@ of the machine. An OS-launch POST must pass the same local/same-origin JSON
 guard. It resolves a skill ID or a validated relative file/folder only under the
 repository; no arbitrary URL, command, application or shell is accepted. Launch
 uses `/usr/bin/open`, `/usr/bin/xdg-open` or the fixed Windows Explorer executable
-with one absolute-path argument and a deadline. The supplied library is copied
+with one absolute-path argument and a deadline. The Windows path retains the
+validated profile and item handles through dispatch to Explorer. The external
+application then reads and edits the working file using its normal filesystem
+access. The supplied library is copied
 once into writable packages with declared relative resources (at most 1 MiB
 each), using exclusive no-overwrite writes.
 Seed markers prevent later overwrites/restoration after user edits/deletion.
@@ -252,7 +273,7 @@ BYOK retention uses the separate encrypted origin-local vault in [ADR-007](../ad
 
 ## Retained-source and ephemeral research amendment (2026-10-17)
 
-The host derives file ownership from the admitted run and validates immutable retained bytes/hash; `data.*` arguments cannot carry filesystem, project or execution authority. Full-table bounded aggregation uses no SQL/eval. Numeric materialization accepts a query and empty-leaf bindings only and enters the existing approval/revision Gateway. File cells and search results are untrusted observations, never instructions. Semantic units/grain and existing parser/privacy weaknesses remain unresolved.
+The host derives file ownership from the admitted run and validates immutable retained bytes/hash; `data.*` arguments cannot carry filesystem, project or execution authority. Full-table bounded aggregation uses no SQL/eval. Numeric materialization accepts a query and empty-leaf bindings only and enters the existing approval/revision Gateway. File cells and search results are untrusted observations, never instructions. Semantic units/grain and file retention/privacy gaps remain unresolved. The trusted-local upload route enforces a streamed byte and read-time limit before multipart decoding. Retained sources are parsed in a separate child with bounded input, V8 heap, time, output and concurrency. Workbook checks cover archive expansion, sheet count and rectangular dimensions. The V8 cap covers the managed heap. Buffers and native allocations remain outside that cap. Child termination and watchdog behavior still require packaged-app qualification on both platforms.
 
 An explicitly admitted OpenAI research session retains its key only inside a provider closure in trusted-local process memory for at most one hour (timer plus lazy expiry), with fixed Responses endpoint, `store:false`, required search and cited-result checks. No env/file key writes or public key projection are introduced. Explicit environment research configuration takes precedence. This is not hosted multi-user credential authorization. Codex private output-schema files contain only the public wire contract/allowlisted tool names, use owner-only creation and are removed after child completion. Serialized arguments still face canonical validation. Shell feature disabling and schema framing do not establish hard native tool isolation.
 

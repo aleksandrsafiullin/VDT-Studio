@@ -1,15 +1,22 @@
-name: Desktop Package
+name: Desktop Candidate Build
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Native validation build (unsigned; never publishes)
+        type: choice
+        options: [both, macos, windows]
+        default: both
 permissions:
   contents: read
+concurrency:
+  group: desktop-candidate-${{ github.ref }}-${{ inputs.platform }}
+  cancel-in-progress: false
 jobs:
-  native-preflight:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-14, windows-latest]
-    runs-on: ${{ matrix.os }}
+  macos-candidate:
+    if: inputs.platform == 'both' || inputs.platform == 'macos'
+    runs-on: macos-15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -18,8 +25,58 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm desktop:sidecar:prepare
-      - run: pnpm desktop:verify
-      - run: pnpm desktop:native:preflight
+      - name: Build archived Mac candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output/release/native/macos output/release/native/logs
+          scripts/package-macos-alpha.sh output/release/native/macos HEAD --allow-unsigned-validation 2>&1 | tee output/release/native/logs/macos-build.log
+      - name: Verify actual Mac resources and validation signature
+        run: node scripts/verify-native-alpha-artifact.mjs output/release/native/macos --source-commit "${{ github.sha }}" --allow-unsigned-validation
+      - name: Preserve Mac candidate and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-macos-validation-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            output/release/native/macos/*.dmg
+            output/release/native/macos/*.json
+            output/release/native/macos/SHA256SUMS
+            output/release/native/macos/SOURCE_COMMIT
+            output/release/native/logs/
+  windows-candidate:
+    if: inputs.platform == 'both' || inputs.platform == 'windows'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build archived Windows candidate
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force output/release/native/windows, output/release/native/logs | Out-Null
+          pnpm desktop:package:windows output/release/native/windows HEAD --allow-unsigned-validation 2>&1 | Tee-Object output/release/native/logs/windows-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify actual Windows resources
+        run: node scripts/verify-native-alpha-artifact.mjs output/release/native/windows --source-commit "${{ github.sha }}" --allow-unsigned-validation
+      - name: Preserve Windows candidate and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-windows-validation-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            output/release/native/windows/*.exe
+            output/release/native/windows/*.json
+            output/release/native/windows/SHA256SUMS
+            output/release/native/windows/SOURCE_COMMIT
+            output/release/native/windows/windows-storage-dependents.txt
+            output/release/native/logs/

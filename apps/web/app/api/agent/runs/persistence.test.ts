@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as storage from "@vdt-studio/storage";
 import { openVdtDatabase, VdtStorageError } from "@vdt-studio/storage";
 import { previewChangeSet, VdtBuilderSession, type VdtChangeSet } from "@vdt-studio/vdt-core";
 import { AgentRunStore, createDefaultToolRegistry, type MutationProposal } from "@vdt-studio/vdt-agent-runtime";
@@ -326,6 +327,25 @@ describe("SQLite agent run persistence", { timeout: 30_000 }, () => {
         (_, index) => updateProposalSpy.mock.calls[index]?.[1].status === "applied"
       )!
     );
+    const nativeWrite = vi.spyOn(storage, "writeWindowsStorageProfileFile").mockImplementation(() => undefined);
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    try {
+      store.updateRun(run.runId, { mutationProposals: [proposal] });
+      expect(nativeWrite).toHaveBeenCalledWith(database.dataDir, persistedProposal!.previewFilePath,
+        Buffer.from(`${JSON.stringify(previewProject, null, 2)}\n`), expect.any(Number));
+      const fence = vi.spyOn(database, "getAgentRunSupervisorFence").mockReturnValue({
+        sessionEpoch: 2, ownerToken: "unused", orphanTerminated: true
+      });
+      try {
+        nativeWrite.mockClear();
+        expect(() => store.updateRun(run.runId, { mutationProposals: [proposal] })).toThrow(/durably ended/);
+        expect(nativeWrite).not.toHaveBeenCalled();
+      } finally { fence.mockRestore(); }
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      nativeWrite.mockRestore();
+    }
     database.close();
   });
 

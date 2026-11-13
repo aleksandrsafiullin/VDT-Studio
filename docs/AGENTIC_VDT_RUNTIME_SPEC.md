@@ -1,5 +1,17 @@
 # Agentic VDT Runtime Implementation Spec
 
+## Current bounded recovery implementation (2026-11-13)
+
+The structured Model Agent has an explicit terminal recovery action for newly
+owned runs with verified controller death. It atomically appends an exact
+successor epoch/checkpoint and cancellation event with the compatibility run
+projection, while preserving the saved graph. This narrow implementation does
+not replace the broader durable coordination target below or enable V2 flags.
+Missing local controller state alone never permits takeover. Legacy owner-less,
+external and ambiguous/final-commit cases remain fail-closed. The exact scope,
+process tests and pending installed acceptance are in
+[W1](implementation/OPEN_ALPHA_W1_2026-11-13.md).
+
 ## Response requirements amendment (2026-11-11)
 
 Existing agents receive complete argument schemas from their actual validators.

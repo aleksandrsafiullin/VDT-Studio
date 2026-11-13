@@ -128,7 +128,7 @@ impl DesktopRuntime {
         Ok(())
     }
 
-    #[cfg(all(target_os = "macos", not(debug_assertions)))]
+    #[cfg(all(any(target_os = "macos", target_os = "windows"), not(debug_assertions)))]
     pub fn set_bundled_runtime(&self, node: PathBuf, data_dir: PathBuf, path: OsString) -> Result<(), RuntimeError> {
         self.bundled_runtime.set(BundledRuntime { node, data_dir, path })
             .map_err(|_| RuntimeError::new("SIDECAR_ALREADY_CONFIGURED", "Bundled runtime was already configured."))
@@ -367,6 +367,8 @@ fn prune_crashes(crashes: &mut Vec<SystemTime>) {
 
 struct SidecarProcess {
     child: Child,
+    #[cfg(windows)]
+    _job: Option<crate::windows_process::ProcessJob>,
     stdin: Arc<Mutex<ChildStdin>>,
     stdout: BufReader<ChildStdout>,
     seen_request_ids: HashSet<String>,
@@ -376,7 +378,14 @@ impl SidecarProcess {
     fn start(resource_dir: Option<PathBuf>, bundled: Option<&BundledRuntime>) -> Result<Self, RuntimeError> {
         let binary = sidecar_binary_path(resource_dir.as_deref())?;
         verify_sidecar_integrity(&binary)?;
+        #[cfg(not(windows))]
         let mut command = Command::new(&binary);
+        #[cfg(windows)]
+        let mut command = match bundled {
+            Some(bundled) => crate::windows_process::sidecar_command(&bundled.node, &binary)
+                .map_err(|error| RuntimeError::new("SIDECAR_START_FAILED", error.to_string()))?,
+            None => Command::new(&binary),
+        };
         if let Some(bundled) = bundled {
             command
                 .env("VDT_NODE", &bundled.node)
@@ -392,6 +401,11 @@ impl SidecarProcess {
             .stderr(Stdio::inherit())
             .spawn()
             .map_err(|error| RuntimeError::new("SIDECAR_START_FAILED", error.to_string()))?;
+        #[cfg(windows)]
+        let job = if bundled.is_some() {
+            Some(crate::windows_process::ProcessJob::attach_and_activate(&mut child)
+                .map_err(|error| RuntimeError::new("SIDECAR_START_FAILED", error.to_string()))?)
+        } else { None };
         let stdin = child
             .stdin
             .take()
@@ -428,6 +442,8 @@ impl SidecarProcess {
 
         let mut sidecar = Self {
             child,
+            #[cfg(windows)]
+            _job: job,
             stdin: Arc::new(Mutex::new(stdin)),
             stdout,
             seen_request_ids: HashSet::new(),

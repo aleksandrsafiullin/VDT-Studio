@@ -1,17 +1,17 @@
-import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openVdtDatabase, projectDir } from "@vdt-studio/storage";
-import type { DataDiscoveryRunSnapshot, IncomingKpiOptions } from "@vdt-studio/data-harness";
+import { PARSER_RESOURCE_LIMITS, type DataDiscoveryRunSnapshot, type IncomingKpiOptions } from "@vdt-studio/data-harness";
 import { applyChangeSet, calculateGraph, productionVolumeProject, type VdtChangeSet, type VdtProject } from "@vdt-studio/vdt-core";
 import { revisionCasFromHead, runtimeCasFromState } from "@/lib/vdt-storage-client";
 import { GET as loadVdt } from "@/app/api/vdt/vdts/[vdtId]/route";
 import { POST as commitRevision } from "@/app/api/vdt/vdts/[vdtId]/revisions/route";
 import { GET as listFiles, POST as uploadFile } from "../../files/route";
 import { GET as downloadFile } from "../../files/[datasetId]/route";
-import { readDatasetFile, saveDatasetFile, saveDiscoveryRun } from "../../store";
+import { readDatasetFile, saveDatasetFile, saveDiscoveryRun, withRetainedDatasetForAnalysis } from "../../store";
 import { GET as getRun } from "./[runId]/route";
 import { POST as applyRun } from "./[runId]/apply/route";
 import { POST as saveUserInput } from "./[runId]/user-input/route";
@@ -25,9 +25,10 @@ const testProject = { ...structuredClone(productionVolumeProject), id: graphProj
 const scope = { projectId, vdtId };
 const query = new URLSearchParams(scope).toString();
 
-function jsonRequest(url: string, body: unknown) {
+function jsonRequest(url: string, body: unknown, signal?: AbortSignal) {
   return new Request(url, {
     method: "POST",
+    ...(signal ? { signal } : {}),
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ ...scope, ...(body as object) })
   });
@@ -94,6 +95,64 @@ describe("data discovery run API lifecycle", () => {
       await rm(tempDir, { recursive: true, force: true });
       tempDir = undefined;
     }
+  });
+
+  it("rejects an oversized retained payload from its descriptor before reading or parsing it", async () => {
+    const upload = await uploadFile(uploadRequest(new File(["Label,Value\nA,1"], "small.csv")));
+    expect(upload.status).toBe(200);
+    const { datasetId } = await readJson<{ datasetId: string }>(upload);
+    const payload = path.join(projectDir(tempDir!, projectId), "files", datasetId, "payload.bin");
+    await truncate(payload, PARSER_RESOURCE_LIMITS.fileBytes + 1);
+    const response = await createRun(jsonRequest("http://localhost:3000/api/data/discovery/runs", { datasetId, project: testProject }));
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: { code: "DATA_FILE_TOO_LARGE" } });
+  });
+
+  it("admits two retained sources and rejects further reads before invoking their consumer", async () => {
+    const jobs = Array.from({ length: PARSER_RESOURCE_LIMITS.concurrent }, () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const pending = withRetainedDatasetForAnalysis("dataset_missing", { ...scope, dataDir: tempDir! }, undefined, async () => gate);
+      return { release, pending };
+    });
+    const consume = vi.fn();
+    try {
+      await expect(withRetainedDatasetForAnalysis("dataset_missing", { ...scope, dataDir: tempDir! }, undefined, consume))
+        .rejects.toMatchObject({ code: "DATA_PARSER_BUSY" });
+      expect(consume).not.toHaveBeenCalled();
+    } finally {
+      for (const job of jobs) job.release();
+      await Promise.all(jobs.map((job) => job.pending));
+    }
+  });
+
+  it("keeps the project responsive and retains the original without staging a rejected or cancelled workbook", async () => {
+    const bytes = await readFile(path.resolve("packages/data-harness/src/fixtures/oversized-dimension.xlsx"));
+    const upload = await uploadFile(uploadRequest(new File([bytes], "oversized-dimension.xlsx")));
+    expect(upload.status).toBe(200);
+    const { datasetId } = await readJson<{ datasetId: string }>(upload);
+    const url = "http://localhost:3000/api/data/discovery/runs";
+    const projectUrl = `http://localhost:3000/api/vdt/vdts/${vdtId}`;
+    const readProject = () => loadVdt(new Request(projectUrl), { params: Promise.resolve({ vdtId }) });
+    const projectBefore = await (await readProject()).json();
+    const input = { datasetId, project: testProject };
+    const pending = createRun(jsonRequest(url, input));
+    const concurrentRead = await readProject();
+    expect(concurrentRead.status).toBe(200);
+    const { runId, snapshot } = await readJson<{ runId: string; snapshot: DataDiscoveryRunSnapshot }>(await pending);
+    expect(snapshot.status).toBe("failed");
+    expect(snapshot.warnings.some((warning) => warning.message.includes("dimensions exceed"))).toBe(true);
+    expect(snapshot.changeSetPreview).toBeUndefined();
+    expect((await applyRun(jsonRequest(url, {}), { params: Promise.resolve({ runId }) })).status).not.toBe(200);
+
+    const controller = new AbortController();
+    const cancelled = createRun(jsonRequest(url, input, controller.signal));
+    controller.abort();
+    const response = await cancelled;
+    expect(response.status).toBe(499);
+    expect(await response.json()).toMatchObject({ error: { code: "DATA_PARSER_CANCELLED" } });
+    expect(await (await readProject()).json()).toMatchObject({ activeProject: projectBefore.activeProject });
+    expect((await readDatasetFile(datasetId, { ...scope, dataDir: tempDir! }))?.bytes).toEqual(new Uint8Array(bytes));
   });
 
   it("completes a persisted lifecycle with distinct workspace, VDT record and graph identities", async () => {

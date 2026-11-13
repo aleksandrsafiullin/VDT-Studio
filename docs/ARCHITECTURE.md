@@ -1,5 +1,37 @@
 # Architecture
 
+## Feedback-alpha remediation boundaries (2026-11-13)
+
+Structured run recovery adds process-owner evidence to the existing immutable
+epoch token and a transactional terminalization path; it does not enable V2 or
+implement a general controller lease. Exact owner/epoch/binding comparison and
+durable terminal guards protect normalized and legacy writes. Saved revisions
+are not rewritten by recovery. The bounded source acceptance and excluded cases
+are recorded in [W1](implementation/OPEN_ALPHA_W1_2026-11-13.md).
+
+Saved-copy continuation uses an independently identified VDT in the same project.
+It verifies the committed source revision and stages access to referenced retained
+files before atomic VDT creation. The existing per-file association store is not
+part of SQLite's transaction; stage-first ordering and idempotent link validation
+prevent activation of an incomplete copy. Replays require a committed creation
+receipt under a reserved command namespace and the immutable initial revision,
+not caller-controlled metadata alone. Source stop markers remain scoped to their
+VDTs, and switching to a copy checks the editor's revision and unsaved state.
+
+`data-harness` runs supported file decoders in a verified generated child asset,
+with resource admission, a host deadline and a separate watchdog. CLI and native
+packages must carry the exact worker and manifest. The architecture and limit
+contract is in [Data Ingestion](DATA_INGESTION.md); review follow-ups remain in
+the [execution ledger](implementation/OPEN_ALPHA_EXECUTION_2026-11-13.md).
+
+Diagnostic exports are explicit local snapshots of allowlisted fields. Build
+identity is fixed by the Next build configuration and verified source metadata,
+not inferred from arbitrary runtime environment or a user's file path. The
+support metadata route exposes only build/runtime platform information through
+local admission. Windows packaged host/process ownership is separate from
+Windows storage capability admission; native process fixture success does not
+authorize the still-disabled Windows storage path.
+
 ## Selected Skill in Suggested KPI (2026-11-03)
 
 The trusted-local `GET /api/ai/suggestions/skill` reuses the existing Context
