@@ -4,6 +4,7 @@
 
 typedef struct StorageSession StorageSession;
 typedef struct StorageLock StorageLock;
+extern uint32_t vdt_storage_abi_version(void);
 extern uint32_t vdt_storage_open(const char *, size_t, uint8_t, StorageSession **);
 extern uint32_t vdt_storage_open_child(StorageSession *, const char *, size_t, uint8_t, StorageSession **);
 extern uint32_t vdt_storage_write(StorageSession *, const char *, size_t, const void *, size_t);
@@ -528,9 +529,19 @@ static napi_value flush_or_close(napi_env env, napi_callback_info info) {
   return result(env, 0);
 }
 
+static napi_value abi_version(napi_env env, napi_callback_info info) {
+  (void)info;
+  napi_value value;
+  if (napi_create_uint32(env, vdt_storage_abi_version(), &value) != napi_ok) {
+    return fail(env, "EIO", "Could not return Windows storage ABI version");
+  }
+  return value;
+}
+
 NAPI_MODULE_INIT() {
   static int close_marker, create_marker, create_child_marker, replace_marker, move_file_marker, editor_directory_marker, write_file_marker, identified_marker;
   napi_property_descriptor properties[] = {
+    {"abiVersion", NULL, abi_version, NULL, NULL, NULL, napi_default, NULL},
     {"open", NULL, open_session, NULL, NULL, NULL, napi_default, NULL},
     {"initialize", NULL, open_session, NULL, NULL, NULL, napi_default, &create_marker},
     {"openChild", NULL, open_child, NULL, NULL, NULL, napi_default, NULL},

@@ -88,6 +88,20 @@ impl StorageSession {
         };
         let root = unsafe { OwnedHandle::adopt_win32(handle)? };
         root.reject_reparse_point()?;
+        let actual_root = root.final_path(1)?;
+        let volume = actual_root
+            .strip_prefix(r"\\?\Volume{")
+            .and_then(|path| path.trim_end_matches('\\').strip_suffix('}'))
+            .ok_or_else(|| {
+                unsupported("storage requires a direct local volume, not a substituted drive")
+            })?;
+        if volume.len() != 36
+            || !volume
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+        {
+            return Err(unsupported("storage requires a direct local volume GUID"));
+        }
         verify_ntfs(&root)?;
         let mut ancestors = vec![root];
         for name in children {

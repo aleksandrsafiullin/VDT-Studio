@@ -16,6 +16,11 @@ use windows_storage_session::StorageSession;
 
 type Session = Rc<StorageSession>;
 
+#[no_mangle]
+extern "C" fn vdt_storage_abi_version() -> u32 {
+    1
+}
+
 // The Node shim passes only valid memory ranges for the duration of a call.
 // The native handle is owned exclusively by the wrapped Node-API object.
 #[no_mangle]

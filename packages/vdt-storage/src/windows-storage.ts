@@ -5,6 +5,7 @@ import path from "node:path";
 import { VdtStorageError } from "./types";
 
 interface WindowsStorageBinding {
+  abiVersion(): number;
   open(root: string): object;
   initialize(root: string): object;
   openChild(parent: object, name: string): object;
@@ -44,7 +45,7 @@ export interface WindowsStorageEntry {
 
 const loadNativeBinding = createRequire(import.meta.url);
 const bindingMethods = [
-  "open", "initialize", "openChild", "createChild", "ensureChild", "list", "removeEmptyChild",
+  "abiVersion", "open", "initialize", "openChild", "createChild", "ensureChild", "list", "removeEmptyChild",
   "read", "createFile", "writeFile", "flushFile", "fileIdentity", "writeExclusive",
   "publish", "replace", "moveFile", "moveDirectory", "unlink", "unlinkExpected",
   "unlinkIdentified", "validate", "flush", "sqlitePath", "editorDirectoryPath",
@@ -65,7 +66,7 @@ export function openWindowsStorage(
     throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Windows storage requires the bundled x64 native runtime.");
   }
   const binding = loadNativeBinding(path.join(trustedRuntimeDirectory, "windows-storage.node")) as WindowsStorageBinding;
-  if (!binding || !bindingMethods.every((method) => typeof binding[method] === "function")) {
+  if (!binding || !bindingMethods.every((method) => typeof binding[method] === "function") || binding.abiVersion() !== 1) {
     throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Bundled Windows storage capability has an incompatible ABI.");
   }
   const session = initialize ? binding.initialize(profilePath) : binding.open(profilePath);

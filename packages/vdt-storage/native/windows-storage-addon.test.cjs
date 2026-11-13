@@ -1,12 +1,14 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 
 const [addonPath, privateRoot] = process.argv.slice(2);
 assert.equal(process.platform, "win32");
 assert.equal(process.arch, "x64");
 assert.equal(process.version, "v24.22.2");
 const addon = require(addonPath);
+assert.equal(addon.abiVersion(), 1);
 const session = addon.open(privateRoot);
 assert.equal(addon.editorDirectoryPath(session).toLowerCase(), privateRoot.toLowerCase());
 const name = "addon-proof.dat";
@@ -143,4 +145,14 @@ const alias = path.join(privateRoot, "junction");
 fs.symlinkSync(privateRoot, alias, "junction");
 assert.throws(() => addon.open(path.join(alias, "nested")));
 fs.unlinkSync(alias);
+const drive = ["Q:", "R:", "S:", "T:"].find((candidate) => !fs.existsSync(candidate + "\\"));
+assert(drive, "expected an unused diagnostic drive letter");
+const subst = path.join(process.env.SystemRoot, "System32", "subst.exe");
+execFileSync(subst, [drive, path.dirname(privateRoot)], { windowsHide: true });
+try {
+  assert.throws(() => addon.open(path.join(drive + "\\", path.basename(privateRoot))), { code: "ENOTSUP" });
+} finally {
+  execFileSync(subst, [drive, "/D"], { windowsHide: true });
+}
+
 console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, node: process.version, assertionsPassed: true }));
