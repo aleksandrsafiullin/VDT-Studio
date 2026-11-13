@@ -137,6 +137,10 @@ export async function packageWindows(args = process.argv.slice(2)) {
   mkdirSync(output, { recursive: true });
   if (readdirSync(output).length) throw new Error("The Windows output directory must be empty.");
   freeSpace(output);
+  // makensis resolves resource source filenames via Win32 MAX_PATH. Keep the
+  // native stage short and separate from the retained artifact directory.
+  const buildRoot = resolve(process.env.VDT_NATIVE_BUILD_ROOT || output);
+  freeSpace(buildRoot);
   const sourceCommit = run("git", ["rev-parse", "--verify", `${positional[1] || "HEAD"}^{commit}`], {
     cwd: REPO, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8"
   }).trim();
@@ -144,7 +148,7 @@ export async function packageWindows(args = process.argv.slice(2)) {
   if (!unsigned && !/^[a-f0-9]{40}$/i.test(thumbprint || "")) {
     throw new Error("Set VDT_WINDOWS_CERTIFICATE_THUMBPRINT for a signed candidate, or explicitly select --allow-unsigned-validation.");
   }
-  const stage = mkdtempSync(join(output, ".vdt-windows-stage-"));
+  const stage = mkdtempSync(join(buildRoot, "vdt-"));
   const marker = join(stage, ".owned-by-vdt-windows-package");
   writeFileSync(marker, sourceCommit);
   try {
@@ -250,7 +254,7 @@ export async function packageWindows(args = process.argv.slice(2)) {
   } finally {
     // All build subprocesses are synchronous and have returned before cleanup.
     // Never remove an existing/shared cache, profile or another build's stage.
-    if (existsSync(marker) && readFileSync(marker, "utf8") === sourceCommit && dirname(stage) === output) {
+    if (existsSync(marker) && readFileSync(marker, "utf8") === sourceCommit && dirname(stage) === buildRoot) {
       rmSync(stage, { recursive: true, force: true });
     }
   }
