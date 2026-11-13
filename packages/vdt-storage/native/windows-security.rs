@@ -1,4 +1,4 @@
-use std::{ffi::c_void, io, mem, ptr};
+use std::{ffi::c_void, io, mem, ptr, slice};
 
 type Pointer = *mut c_void;
 const ACCESS_ALLOWED_ACE: u8 = 0;
@@ -58,10 +58,17 @@ unsafe extern "system" {
     fn IsValidAcl(acl: Pointer) -> i32;
     fn IsValidSid(sid: *const c_void) -> i32;
     fn EqualSid(a: *const c_void, b: *const c_void) -> i32;
+    fn ConvertSidToStringSidW(sid: *const c_void, result: *mut *mut u16) -> i32;
+    fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        sddl: *const u16,
+        revision: u32,
+        descriptor: *mut Pointer,
+        size: *mut u32,
+    ) -> i32;
     fn IsWellKnownSid(sid: *const c_void, kind: u32) -> i32;
 }
 
-struct Descriptor(Pointer);
+pub(crate) struct Descriptor(pub(crate) Pointer);
 
 impl Drop for Descriptor {
     fn drop(&mut self) {
@@ -91,6 +98,38 @@ fn token_user() -> io::Result<Vec<usize>> {
     })();
     unsafe { CloseHandle(token) };
     result
+}
+
+pub(crate) fn private_directory_descriptor() -> io::Result<Descriptor> {
+    let token = token_user()?;
+    let mut sid = ptr::null_mut();
+    if unsafe { ConvertSidToStringSidW(token[0] as *const c_void, &mut sid) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let sid_text = Descriptor(sid.cast());
+    let length = (0..256)
+        .find(|&offset| unsafe { *sid.add(offset) == 0 })
+        .ok_or_else(|| denied("invalid SID text"))?;
+    let sid = String::from_utf16(unsafe { slice::from_raw_parts(sid, length) })
+        .map_err(|_| denied("invalid SID text"))?;
+    drop(sid_text);
+    let sddl: Vec<u16> = format!("O:{sid}D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+        .encode_utf16()
+        .chain([0])
+        .collect();
+    let mut descriptor = ptr::null_mut();
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            1,
+            &mut descriptor,
+            ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(Descriptor(descriptor))
 }
 
 pub fn validate_private_dacl(handle: Pointer) -> io::Result<()> {

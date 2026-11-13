@@ -41,6 +41,12 @@ try {
   addon.unlink(session, name);
   assert.equal(fs.existsSync(path.join(privateRoot, name)), false);
   assert.throws(() => addon.unlink(session, name), { code: "ENOENT" });
+  addon.ensureChild(session, "managed");
+  addon.ensureChild(session, "managed");
+  const child = addon.open(path.join(privateRoot, "managed"));
+  addon.close(child);
+  fs.mkdirSync(path.join(privateRoot, "inherited-only"));
+  assert.throws(() => addon.ensureChild(session, "inherited-only"), { code: "EACCES" });
   addon.flush(session);
   assert.throws(() => fs.renameSync(privateRoot, privateRoot + ".moved"));
 } finally {

@@ -210,6 +210,33 @@ impl FlushableDirectory {
     }
 
     #[cfg(vdt_storage_addon)]
+    pub(crate) fn ensure_child(&self, name: &str) -> io::Result<()> {
+        self.validate_private_dacl()?;
+        let descriptor = crate::windows_security::private_directory_descriptor()?;
+        match open_relative_with_security(
+            self.0.raw,
+            name,
+            DIRECTORY_FLUSH_ACCESS,
+            FILE_SHARE_READ_WRITE,
+            FILE_CREATE,
+            FILE_DIRECTORY_FILE,
+            descriptor.0,
+        ) {
+            Ok(handle) => {
+                let directory = Self(handle);
+                directory.validate_private_dacl()?;
+                directory.flush()?;
+                self.flush()
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                let child = self.0.open_flushable_directory(name)?;
+                child.validate_private_dacl()
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    #[cfg(vdt_storage_addon)]
     pub(crate) fn read_verified(
         &self,
         name: &str,
@@ -531,6 +558,26 @@ fn open_relative(
     disposition: u32,
     options: u32,
 ) -> io::Result<OwnedHandle> {
+    open_relative_with_security(
+        parent,
+        name,
+        access,
+        share,
+        disposition,
+        options,
+        ptr::null(),
+    )
+}
+
+fn open_relative_with_security(
+    parent: Handle,
+    name: &str,
+    access: u32,
+    share: u32,
+    disposition: u32,
+    options: u32,
+    security_descriptor: *const c_void,
+) -> io::Result<OwnedHandle> {
     if parent.is_null() || parent == -1isize as Handle {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -549,7 +596,7 @@ fn open_relative(
         root_directory: parent,
         object_name: &name,
         attributes: OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE,
-        security_descriptor: ptr::null(),
+        security_descriptor,
         security_quality_of_service: ptr::null(),
     };
     let mut handle = ptr::null_mut();

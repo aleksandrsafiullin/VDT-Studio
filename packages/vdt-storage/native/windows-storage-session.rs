@@ -109,6 +109,11 @@ impl StorageSession {
         self.directory.publish(stage, destination, expected)
     }
 
+    pub fn ensure_child(&self, name: &str) -> io::Result<()> {
+        self.validate()?;
+        self.directory.ensure_child(name)
+    }
+
     pub fn read(&self, name: &str, bytes: &mut [u8], durable: bool) -> io::Result<usize> {
         self.validate()?;
         self.directory.read_verified(name, bytes, durable)

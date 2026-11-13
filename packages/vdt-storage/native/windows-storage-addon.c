@@ -7,6 +7,7 @@ extern uint32_t vdt_storage_open(const char *, size_t, StorageSession **);
 extern uint32_t vdt_storage_write(StorageSession *, const char *, size_t, const void *, size_t);
 extern uint32_t vdt_storage_publish(StorageSession *, const char *, size_t, const char *, size_t, const void *, size_t);
 extern uint32_t vdt_storage_read(StorageSession *, const char *, size_t, void *, size_t, uint8_t, size_t *);
+extern uint32_t vdt_storage_ensure_child(StorageSession *, const char *, size_t);
 extern uint32_t vdt_storage_unlink(StorageSession *, const char *, size_t);
 extern uint32_t vdt_storage_flush(StorageSession *);
 extern void vdt_storage_close(StorageSession *);
@@ -175,11 +176,12 @@ static napi_value read_file(napi_env env, napi_callback_info info) {
   return result_value;
 }
 
-static napi_value unlink_file(napi_env env, napi_callback_info info) {
+static napi_value named_operation(napi_env env, napi_callback_info info) {
   napi_value args[2];
   size_t argc = 2, length;
   char name[1021];
-  if (napi_get_cb_info(env, info, &argc, args, NULL, NULL) != napi_ok || argc != 2 ||
+  void *ensure_child = NULL;
+  if (napi_get_cb_info(env, info, &argc, args, NULL, &ensure_child) != napi_ok || argc != 2 ||
       napi_get_value_string_utf8(env, args[1], NULL, 0, &length) != napi_ok ||
       length == 0 || length >= sizeof(name) ||
       napi_get_value_string_utf8(env, args[1], name, sizeof(name), &length) != napi_ok) {
@@ -189,7 +191,10 @@ static napi_value unlink_file(napi_env env, napi_callback_info info) {
   if (session == NULL || session->native == NULL) {
     return fail(env, "EBADF", "Expected an open Windows storage session");
   }
-  return result(env, vdt_storage_unlink(session->native, name, length));
+  uint32_t error = ensure_child == NULL
+      ? vdt_storage_unlink(session->native, name, length)
+      : vdt_storage_ensure_child(session->native, name, length);
+  return result(env, error);
 }
 
 static napi_value flush_or_close(napi_env env, napi_callback_info info) {
@@ -210,13 +215,14 @@ static napi_value flush_or_close(napi_env env, napi_callback_info info) {
 }
 
 NAPI_MODULE_INIT() {
-  static int close_marker;
+  static int close_marker, ensure_child_marker;
   napi_property_descriptor properties[] = {
     {"open", NULL, open_session, NULL, NULL, NULL, napi_default, NULL},
     {"writeExclusive", NULL, write_exclusive, NULL, NULL, NULL, napi_default, NULL},
     {"publish", NULL, publish_file, NULL, NULL, NULL, napi_default, NULL},
     {"read", NULL, read_file, NULL, NULL, NULL, napi_default, NULL},
-    {"unlink", NULL, unlink_file, NULL, NULL, NULL, napi_default, NULL},
+    {"unlink", NULL, named_operation, NULL, NULL, NULL, napi_default, NULL},
+    {"ensureChild", NULL, named_operation, NULL, NULL, NULL, napi_default, &ensure_child_marker},
     {"flush", NULL, flush_or_close, NULL, NULL, NULL, napi_default, NULL},
     {"close", NULL, flush_or_close, NULL, NULL, NULL, napi_default, &close_marker}
   };

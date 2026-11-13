@@ -86,6 +86,15 @@ unsafe extern "C" fn vdt_storage_read(
 }
 
 #[no_mangle]
+unsafe extern "C" fn vdt_storage_ensure_child(
+    session: &StorageSession,
+    name: *const u8,
+    length: usize,
+) -> u32 {
+    status(|| session.ensure_child(utf8(name, length)?))
+}
+
+#[no_mangle]
 unsafe extern "C" fn vdt_storage_unlink(
     session: &StorageSession,
     name: *const u8,
