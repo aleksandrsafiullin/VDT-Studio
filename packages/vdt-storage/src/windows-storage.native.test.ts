@@ -7,7 +7,16 @@ import path from "node:path";
 import { productionVolumeProject } from "@vdt-studio/vdt-core";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vitest";
-import { __openWindowsVdtDatabaseForTests, openVdtDatabase } from "./sqlite";
+import { __openWindowsVdtDatabaseForTests, openVdtDatabase, readProjectManifestFromDatabaseLocation } from "./sqlite";
+import { openWindowsStorage } from "./windows-storage";
+import { scanProjectLocation } from "./project-files";
+
+function observedOpen(workspace: string, dataDir: string, label: string) {
+  const started = performance.now();
+  const database = __openWindowsVdtDatabaseForTests(workspace, { dataDir }, runtime!);
+  console.log(JSON.stringify({ storageOpen: label, elapsedMs: Math.round(performance.now() - started) }));
+  return database;
+}
 
 const runtime = process.env.VDT_WINDOWS_DATA_TEST_RUNTIME;
 const parent = process.env.VDT_WINDOWS_DATA_TEST_PRIVATE_PARENT;
@@ -20,7 +29,7 @@ test.runIf(process.platform === "win32" && Boolean(runtime && parent))(
     try {
       expect(() => openVdtDatabase(workspace, { dataDir: profile })).toThrow(/reviewed Windows/);
       expect(fs.existsSync(profile)).toBe(false);
-      const first = __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile }, runtime!);
+      const first = observedOpen(workspace, profile, "fresh");
       try {
         first.createProject({ id: "native", name: "Native storage" });
         first.createVdt({ id: "tree", projectId: "native", name: "Tree", rootKpi: "Production" });
@@ -47,15 +56,17 @@ test.runIf(process.platform === "win32" && Boolean(runtime && parent))(
         const initial = first.createVdtWithInitialSnapshot(create);
         expect(first.createVdtWithInitialSnapshot(create)).toEqual(initial);
         expect(first.readVdtRevision(initial.revision)).toEqual(productionVolumeProject);
-        const second = __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile }, runtime!);
+        const second = observedOpen(workspace, profile, "concurrent");
         try { expect(second.getProject("native")?.name).toBe("Native storage"); }
         finally { second.close(); }
       } finally { first.close(); }
-      const reopened = __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile }, runtime!);
+      const reopened = observedOpen(workspace, profile, "reopen");
       try {
         expect(reopened.getVdt("tree")?.activeRevisionId).toBe("revision_native");
         expect(reopened.readVdtRevision(reopened.getVdtRevision("revision_native")!)).toEqual(productionVolumeProject);
         expect(reopened.getVdt("atomic_tree")).not.toBeNull();
+        expect(readProjectManifestFromDatabaseLocation(profile, "native").name).toBe("Native storage");
+        expect(scanProjectLocation(profile)).toHaveLength(1);
         expect(reopened.deleteVdt("atomic_tree")).toBe(true);
         expect(reopened.deleteProject("native")).toBe(true);
       } finally { reopened.close(); }
@@ -223,6 +234,28 @@ test.runIf(process.platform === "win32" && Boolean(runtime && parent))(
       const recovered = __openWindowsVdtDatabaseForTests(workspace, { dataDir: profile, migrationLeaseMs: 0, now: () => "2026-11-13T00:00:01.000Z" }, runtime!);
       try { expect(recovered.listProjects()).toEqual([]); }
       finally { recovered.close(); }
+    } finally { fs.rmSync(workspace, { recursive: true, force: true }); }
+  }, 60_000
+);
+
+test.runIf(process.platform === "win32" && Boolean(runtime && parent))(
+  "adopts frozen legacy v1 schema and preserves its project rows",
+  () => {
+    const workspace = fs.mkdtempSync(path.join(parent!, "legacy-storage-"));
+    const profile = path.join(workspace, "profile");
+    try {
+      const capability = openWindowsStorage(runtime!, profile, true);
+      try {
+        const legacy = new DatabaseSync(capability.sqlitePath());
+        try {
+          legacy.exec(fs.readFileSync(new URL("./migrations/001-legacy-v1-bootstrap.sql", import.meta.url), "utf8"));
+          legacy.exec("INSERT INTO schema_migrations(version, applied_at) VALUES (1, 1); PRAGMA user_version=1;");
+          legacy.exec(`INSERT INTO projects (id,name,created_at,updated_at) VALUES ('legacy','Legacy project',1,1);`);
+        } finally { legacy.close(); }
+      } finally { capability.close(); }
+      const database = observedOpen(workspace, profile, "legacy-v1-adoption");
+      try { expect(database.getProject("legacy")?.name).toBe("Legacy project"); }
+      finally { database.close(); }
     } finally { fs.rmSync(workspace, { recursive: true, force: true }); }
   }, 60_000
 );

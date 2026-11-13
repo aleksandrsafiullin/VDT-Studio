@@ -51,7 +51,7 @@ try {
   $arguments = @($vitest, 'run', 'packages/vdt-storage/src/windows-storage.native.test.ts', 'apps/web/app/api/data/store.windows-native.test.ts', '--maxWorkers=1', '--retry=0', '--cache=false', '--reporter=dot')
   $testProcess = Start-Process -FilePath (Join-Path $stage 'node.exe') -ArgumentList $arguments -WorkingDirectory $repository -Credential $credential -RedirectStandardOutput $testReport -RedirectStandardError $testStderr -Wait -PassThru
   if ($testProcess.ExitCode -ne 0) { throw "Standard user storage tests failed with exit code $($testProcess.ExitCode)" }
-  if ((Get-Content -Raw $testReport) -notmatch 'Tests\s+24 passed') { throw 'All native tests must execute without skips' }
+  if ((Get-Content -Raw $testReport) -notmatch 'Tests\s+25 passed') { throw 'All native tests must execute without skips' }
 } finally {
   if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
   if (Get-LocalUser -Name $name -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $name }

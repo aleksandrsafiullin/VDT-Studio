@@ -18,6 +18,7 @@ import {
   ensureProjectLocation,
   projectDir,
   readProjectManifest,
+  readWindowsProjectManifest,
   vdtPreviewDir,
   vdtRevisionDir,
   writeProjectManifest
@@ -1171,5 +1172,6 @@ function isSecretKey(key: string): boolean {
 }
 
 export function readProjectManifestFromDatabaseLocation(dataDir: string, projectId: string): ProjectManifest {
+  if (process.platform === "win32") return readWindowsProjectManifest(dataDir, projectId);
   return readProjectManifest(path.join(ensureProjectLocation(dataDir), "projects", assertSafeId(projectId, "projectId")));
 }
