@@ -37,6 +37,7 @@ const profile = path.join(work, "profile");
 let child;
 let closed;
 let gracefulExit;
+let sidecarExit;
 let timedOut = false;
 const origin = "http://127.0.0.1:37541";
 let stderrBytes = 0;
@@ -63,6 +64,77 @@ function send(port, pathname, cookie, host = "127.0.0.1:37541", body) {
     req.on("error", reject);
     req.end(body);
   });
+}
+
+async function verifySidecar(env) {
+  const sidecar = spawn(path.join(runtime, "node.exe"), [path.join(application, "windows-runtime.cjs"), "sidecar"], {
+    cwd: web, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true
+  });
+  const complete = new Promise(resolve => sidecar.once("close", (code, signal) => resolve({ code, signal })));
+  let rejectFailure;
+  const failure = new Promise((_, reject) => { rejectFailure = reject; });
+  failure.catch(() => undefined);
+  sidecar.on("error", () => rejectFailure(new Error("Could not spawn packaged sidecar")));
+  sidecar.stdin.on("error", () => rejectFailure(new Error("Packaged sidecar input pipe failed")));
+  sidecar.stderr.resume();
+  let activated = false;
+  let pending = Buffer.alloc(0);
+  let resolveFrame;
+  sidecar.stdout.on("data", bytes => {
+    if (!activated) {
+      rejectFailure(new Error("Packaged sidecar produced output before activation"));
+      return;
+    }
+    if (bytes.length + pending.length > 4096) {
+      rejectFailure(new Error("Packaged sidecar handshake exceeded its byte bound"));
+      return;
+    }
+    pending = Buffer.concat([pending, bytes]);
+    const newline = pending.indexOf(10);
+    if (newline === -1) return;
+    if (!resolveFrame || newline !== pending.length - 1) {
+      rejectFailure(new Error("Unexpected packaged sidecar handshake output"));
+      return;
+    }
+    try {
+      resolveFrame(JSON.parse(pending.toString("utf8")));
+    } catch {
+      rejectFailure(new Error("Invalid packaged sidecar handshake frame"));
+    }
+    resolveFrame = undefined;
+    pending = Buffer.alloc(0);
+  });
+  const earlyExit = complete.then(() => { throw new Error("Packaged sidecar exited before completing its handshake"); });
+  earlyExit.catch(() => undefined);
+  const nextFrame = () => Promise.race([new Promise(resolve => { resolveFrame = resolve; }), failure, earlyExit]);
+  let timeout;
+  try {
+    await Promise.race([new Promise(resolve => setTimeout(resolve, 200)), failure, earlyExit]);
+    const helloFrame = nextFrame();
+    activated = true;
+    timeout = setTimeout(() => rejectFailure(new Error("Packaged sidecar handshake timed out")), 5_000);
+    sidecar.stdin.write("start\n");
+    const hello = await helloFrame;
+    if (hello.type !== "hello" || hello.protocolVersion !== 1 || typeof hello.nonce !== "string") {
+      throw new Error("Invalid packaged sidecar hello");
+    }
+    const readyFrame = nextFrame();
+    sidecar.stdin.write(JSON.stringify({ protocolVersion: 1, type: "ready", nonce: hello.nonce }) + "\n");
+    const ready = await readyFrame;
+    if (ready.protocolVersion !== 1 || ready.type !== "event" || ready.event !== "runtime_ready") {
+      throw new Error("Packaged sidecar did not acknowledge readiness");
+    }
+    clearTimeout(timeout);
+    timeout = setTimeout(() => sidecar.kill(), 5_000);
+    sidecar.stdin.end();
+    const exit = await Promise.race([complete, failure]);
+    assert.deepEqual(exit, { code: 0, signal: null });
+    return exit;
+  } finally {
+    clearTimeout(timeout);
+    if (sidecar.exitCode === null && sidecar.signalCode === null) sidecar.kill();
+    await complete;
+  }
 }
 
 try {
@@ -107,6 +179,9 @@ try {
   assert.equal(bootstrap.headers.location, "/");
   assert.match(bootstrap.headers["set-cookie"]?.[0] ?? "", /^vdt_desktop_session=[a-f0-9]{64}; HttpOnly; SameSite=Strict; Path=\/$/);
   const cookie = bootstrap.headers["set-cookie"][0].split(";")[0];
+  assert.equal((await send(port, "/favicon.svg", cookie)).status, 200);
+  assert.equal((await send(port, "/_next/image?url=%2Ffavicon.svg&w=64&q=75", cookie)).status, 404,
+    "Unused image optimization must be disabled in the authenticated compiled server");
   assert.equal((await send(port, `/__vdt_start/${frame.bootstrap}`)).status, 403);
   assert.equal((await send(port, "/api/vdt/projects", cookie, "localhost:37541")).status, 403);
   const projects = await send(port, "/api/vdt/projects", cookie);
@@ -133,6 +208,10 @@ try {
   try { gracefulExit = await closed; }
   finally { clearTimeout(stop); }
   assert.deepEqual(gracefulExit, { code: 0, signal: null });
+  sidecarExit = await verifySidecar({ ...env,
+    VDT_BUNDLED_SKILLS_DIR: path.join(application, "sidecars/vdt-agent-skills"),
+    VDT_HARNESS_CONFIG: path.join(profile, "harnesses.json"),
+  });
 } finally {
   if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   if (closed) await closed;
@@ -140,4 +219,5 @@ try {
   assert(!existsSync(work), "Smoke directory was retained");
 }
 console.log(JSON.stringify({ sourceCommit: expectedCommit, addonSha256, nodeVersion: manifest.nodeVersion,
-  standardUser: true, compiledStandalone: true, storageRouteStatus: 200, storageWriteStatus: 201, bootstrapOneUse: true, gracefulExit, retainedWork: false }));
+  standardUser: true, compiledStandalone: true, storageRouteStatus: 200, storageWriteStatus: 201, bootstrapOneUse: true,
+  staticAssetStatus: 200, imageOptimizationStatus: 404, gracefulExit, sidecarPreActivationQuiet: true, sidecarReady: true, sidecarExit, retainedWork: false }));

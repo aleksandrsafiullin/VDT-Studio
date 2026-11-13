@@ -18,6 +18,8 @@ const CODE_GUIDANCE: Record<string, string> = {
   DATA_UPLOAD_TIMEOUT: "The upload took too long. Keep the original file and retry with a smaller table.",
   DATA_UPLOAD_BUSY: "Another upload is in progress. Wait for it to finish, then retry.",
   DATA_PARSER_FAILED: "The file could not be inspected. Try a clean table extract; if even small valid files fail, reinstall the same or a newer verified app and keep your profile.",
+  DATA_DISCOVERY_PROVIDER_KEY_REQUIRED: "Configure the selected OpenAI provider in Settings, or choose Analyze file locally to review the retained file without AI.",
+  DATA_DISCOVERY_PROVIDER_UNREACHABLE: "Check the selected AI provider's connection, or choose Analyze file locally. The failed analysis has not been applied.",
   DATA_DISCOVERY_VALIDATION_FAILED: "The imported table needs review. Correct its mapping or export a clean table; do not use a partial result as the baseline."
 };
 

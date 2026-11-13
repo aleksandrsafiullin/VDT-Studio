@@ -1,5 +1,5 @@
 import { runRawDataDiscovery, type AnalyzeRawDatasetInput, type DataDiscoveryStructuredProvider } from "@vdt-studio/data-harness";
-import type { AiRouteProviderRequest } from "@/lib/ai-route-provider";
+import { readProviderConfig, type AiRouteProviderRequest } from "@/lib/ai-route-provider";
 import { jsonError, readJsonObject } from "../../../vdt/storage-response";
 import { createManagedAwareAiProvider } from "../../../agent/runs/managed-ai-provider";
 import { dataApiErrorResponse, readDataOwner, readIncomingKpiOptions, readProject, requireTarget } from "../../request-context";
@@ -25,8 +25,23 @@ export async function POST(request: Request) {
       const incomingKpiOptions = readIncomingKpiOptions(body.incomingKpiOptions);
       let provider: DataDiscoveryStructuredProvider | undefined;
       if (typeof body.providerId === "string" && body.providerId.trim()) {
-        try { provider = createManagedAwareAiProvider(body as AiRouteProviderRequest, request.url); }
-        catch (error) {
+        try {
+          if (body.providerId === "openai_compatible" && missingDirectOpenAiKey(body.providerConfig)) {
+            return jsonError("Configure an OpenAI API key in Settings, or choose Analyze file locally.", 400, "DATA_DISCOVERY_PROVIDER_KEY_REQUIRED");
+          }
+          const configured = createManagedAwareAiProvider(body as AiRouteProviderRequest, request.url);
+          provider = {
+            async completeStructured(params) {
+              try { return await configured.completeStructured(params); }
+              catch (error) {
+                if (error instanceof TypeError && error.message === "fetch failed") {
+                  throw new DataApiError("Could not reach the selected AI provider. Check its connection, or choose Analyze file locally.", 502, "DATA_DISCOVERY_PROVIDER_UNREACHABLE");
+                }
+                throw error;
+              }
+            }
+          };
+        } catch (error) {
           const status = typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : 400;
           return jsonError(error instanceof Error ? error.message : "Data discovery provider could not be created.", status, "DATA_DISCOVERY_PROVIDER_ERROR");
         }
@@ -45,6 +60,18 @@ export async function POST(request: Request) {
       return Response.json({ ok: true, runId: snapshot.runId, snapshot });
     });
   } catch (error) { return dataApiErrorResponse(error); }
+}
+
+function missingDirectOpenAiKey(value: unknown): boolean {
+  const settings = readProviderConfig(value);
+  const defaultUrl = process.env.OPENAI_COMPATIBLE_BASE_URL ?? "https://api.openai.com/v1";
+  const effectiveUrl = settings.baseUrl ?? defaultUrl;
+  let origin: string;
+  try { origin = new URL(effectiveUrl).origin; }
+  catch { return false; } // The provider factory validates URL configuration.
+  if (origin !== "https://api.openai.com") return false;
+  const effectiveKey = effectiveUrl === defaultUrl ? settings.apiKey ?? process.env.OPENAI_COMPATIBLE_API_KEY : settings.apiKey;
+  return !effectiveKey?.trim();
 }
 
 function readEntryContext(value: unknown): AnalyzeRawDatasetInput["entryContext"] {

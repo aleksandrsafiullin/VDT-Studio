@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
 import { createRequire } from "node:module";
@@ -80,7 +81,7 @@ describe("Windows process activation barrier", () => {
     const root = await temp(); await mkdir(path.join(root, "sidecars"));
     await cp(path.resolve("apps/desktop/windows-runtime.cjs"), path.join(root, "windows-runtime.cjs"));
     await writeFile(path.join(root, "sidecars/vdt-local-runtime.mjs"),
-      'process.stdout.write("activated\\n"); process.stdin.on("end",()=>process.exit(0)); process.stdin.resume();');
+      'export function runLocalRuntimeSidecar() { process.stdout.write("activated\\n"); process.stdin.on("end",()=>process.exit(0)); }');
     const child = spawn(process.execPath, [path.join(root, "windows-runtime.cjs"), "sidecar"], { stdio: ["pipe", "pipe", "pipe"] });
     children.push(child); let output = ""; child.stdout!.on("data", (data) => output += data);
     return { child, output: () => output };
@@ -92,6 +93,40 @@ describe("Windows process activation barrier", () => {
     const ready = once(child.stdout!, "data"); child.stdin!.write("rt\n"); await ready;
     expect(output()).toBe("activated\n");
     const closed = once(child, "close"); child.stdin!.end(); expect((await closed)[0]).toBe(0);
+  });
+  it("starts the generated sidecar after activation and completes hello, ready and EOF", async () => {
+    const root = await temp();
+    await mkdir(path.join(root, "sidecars"));
+    await cp(path.resolve("apps/desktop/windows-runtime.cjs"), path.join(root, "windows-runtime.cjs"));
+    await cp(path.resolve("apps/desktop/src-tauri/sidecars/vdt-local-runtime.mjs"), path.join(root, "sidecars/vdt-local-runtime.mjs"));
+    const child = spawn(process.execPath, [path.join(root, "windows-runtime.cjs"), "sidecar"], {
+      cwd: root,
+      env: { ...process.env, VDT_DATA_DIR: path.join(root, "profile"), VDT_HARNESS_CONFIG: path.join(root, "harnesses.json") },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    children.push(child);
+    const closed = once(child, "close");
+    const lines = createInterface({ input: child.stdout! });
+    const readFrame = async () => JSON.parse((await Promise.race([
+      once(lines, "line").then(([line]) => line),
+      closed.then(([code]) => { throw new Error(`Sidecar exited before its frame: ${code}`); }),
+    ])) as string);
+    let bytesBeforeActivation = 0;
+    const countOutput = (bytes: Buffer) => { bytesBeforeActivation += bytes.length; };
+    child.stdout!.on("data", countOutput);
+    await new Promise(resolve => setTimeout(resolve, 75));
+    expect(bytesBeforeActivation).toBe(0);
+    child.stdout!.off("data", countOutput);
+    const hello = readFrame();
+    child.stdin!.write("start\n");
+    const frame = await hello;
+    expect(frame).toMatchObject({ type: "hello", protocolVersion: 1, nonce: expect.any(String) });
+    const ready = readFrame();
+    child.stdin!.write(JSON.stringify({ type: "ready", protocolVersion: 1, nonce: frame.nonce }) + "\n");
+    expect(await ready).toMatchObject({ type: "event", event: "runtime_ready", protocolVersion: 1 });
+    child.stdin!.end();
+    expect(await closed).toEqual([0, null]);
+    lines.close();
   });
   it("rejects an invalid frame without loading the runtime", async () => {
     const { child, output } = await launch();

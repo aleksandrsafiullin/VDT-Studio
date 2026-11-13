@@ -45,7 +45,7 @@ async function fixture(platform: "darwin" | "win32" = "darwin", signed = true) {
     }));
   }
   await put(path.join(resources, "web/apps/web/server.js"), "Next server fixture");
-  await put(path.join(resources, "web/apps/web/.next/required-server-files.json"), "{}");
+  await put(path.join(resources, "web/apps/web/.next/required-server-files.json"), JSON.stringify({ config: { images: { unoptimized: true } } }));
   const noticeBytes = "upstream notice";
   const noticeHash = sha(noticeBytes);
   const noticePath = path.join(resources, "THIRD-PARTY-NOTICES/texts", `${noticeHash}.txt`);
@@ -71,6 +71,24 @@ async function fixture(platform: "darwin" | "win32" = "darwin", signed = true) {
 }
 
 describe("native alpha artifact verification", () => {
+  it("rejects enabled image optimization before loading executable resources", async () => {
+    const f = await fixture();
+    await writeFile(path.join(f.resources, "web/apps/web/.next/required-server-files.json"), JSON.stringify({ config: { images: { unoptimized: false } } }));
+    expect(() => verifyNativeAlphaArtifact(f.root, { sourceCommit, platform: "darwin", command: f.command })).toThrow(/image optimization must be disabled/);
+    expect(f.command).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["darwin", "node_modules/.pnpm/sharp@0.35.5/node_modules/sharp/package.json"],
+    ["win32", "node_modules/@img/sharp-win32-x64/package.json"],
+    ["darwin", "apps/web/lib/libvips-cpp.8.18.7.dylib"]
+  ] as const)("rejects unused native image resources in %s packaging at %s", async (platform, relative) => {
+    const f = await fixture(platform);
+    const unexpected = path.join(f.resources, "web", relative);
+    await mkdir(path.dirname(unexpected), { recursive: true });
+    await writeFile(unexpected, "unneeded image resource");
+    expect(() => verifyNativeAlphaArtifact(f.root, { sourceCommit, platform, command: f.command })).toThrow(/unused native image resource/);
+    expect(f.command).not.toHaveBeenCalled();
+  });
   it("checks actual Mac trust commands while keeping installed/live qualification unverified", async () => {
     const f = await fixture();
     expect(verifyNativeAlphaArtifact(f.root, { sourceCommit, platform: "darwin", command: f.command })).toMatchObject({ artifactIntegrity: "passed", distributionTrust: "passed", installedApplicationQualification: "unverified", liveProviderQualification: "unverified", releaseReady: false });

@@ -148,6 +148,14 @@ permits CI artifact inspection only. The Windows packaging entrypoint is
 not bypass the Windows storage guard. See [W5](implementation/OPEN_ALPHA_W5_2026-11-13.md)
 and [W8](implementation/OPEN_ALPHA_W8_2026-11-13.md).
 
+The UI serves static SVG/assets directly. Native candidates disable Next image
+optimization and exclude the unused Sharp/libvips platform packages from their
+standalone traces. Artifact verification checks the actual configuration and
+rejects those remaining runtime resources. The Windows compiled-server smoke
+also checks an authenticated static-asset request and disabled image endpoint,
+then exercises the actual packaged sidecar handshake and EOF shutdown. These
+checks supplement installed-app acceptance; they do not replace it.
+
 On this task's Mac, all new installs, downloads, VM disks and substantial staging
 must be on Corsair-SSD. Native packaging uses an owned stage on the output volume;
 use an SSD output directory and SSD temp/cache roots. Preserve old evidence and

@@ -395,6 +395,62 @@ describe("data discovery run API lifecycle", () => {
     expect(legacyRun.status).toBe(200);
   });
 
+  it("offers a deterministic review without contacting the unavailable default provider", async () => {
+    const bytes = await readFile(path.resolve("eval/open-alpha/fixtures/downtime-minutes.csv"));
+    const upload = await uploadFile(uploadRequest(new File([bytes], "downtime-minutes.csv", { type: "text/csv" })));
+    expect(upload.status).toBe(200);
+    const { datasetId } = await readJson<{ datasetId: string }>(upload);
+    const project = incomingProject();
+    const body = { datasetId, project, entryContext: { purpose: "incoming_kpis", targetNodeId: "unplanned_downtime" } };
+    const url = "http://localhost:3000/api/data/discovery/runs";
+    vi.stubEnv("OPENAI_COMPATIBLE_API_KEY", "");
+    vi.stubEnv("OPENAI_COMPATIBLE_BASE_URL", "https://api.openai.com/v1");
+    const offlineFetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+    vi.stubGlobal("fetch", offlineFetch);
+    try {
+      const offline = await createRun(jsonRequest(url, body));
+      expect(offline.status).toBe(200);
+      const { snapshot } = await readJson<{ snapshot: DataDiscoveryRunSnapshot }>(offline);
+      expect(snapshot.incomingKpi?.coverage.totalRows).toBe(10);
+      expect(offlineFetch).not.toHaveBeenCalled();
+
+      const assisted = await createRun(jsonRequest(url, {
+        ...body,
+        providerId: "openai_compatible",
+        providerConfig: { baseUrl: "https://api.openai.com/v1", model: "gpt-5.5" }
+      }));
+      expect(assisted.status).toBe(400);
+      expect(await assisted.json()).toMatchObject({ error: { code: "DATA_DISCOVERY_PROVIDER_KEY_REQUIRED" } });
+      expect(offlineFetch).not.toHaveBeenCalled();
+
+      vi.stubEnv("OPENAI_COMPATIBLE_API_KEY", "qa-test-provider-key");
+      const whitespace = await createRun(jsonRequest(url, {
+        ...body,
+        providerId: "openai_compatible",
+        providerConfig: { baseUrl: "https://api.openai.com/v1", model: "gpt-5.5", apiKey: "  " }
+      }));
+      expect(whitespace.status).toBe(400);
+      expect(await whitespace.json()).toMatchObject({ error: { code: "DATA_DISCOVERY_PROVIDER_KEY_REQUIRED" } });
+      expect(offlineFetch).not.toHaveBeenCalled();
+
+      const unreachable = await createRun(jsonRequest(url, {
+        ...body,
+        providerId: "openai_compatible",
+        providerConfig: { baseUrl: "https://api.openai.com/v1", model: "gpt-5.5" }
+      }));
+      expect(unreachable.status).toBe(502);
+      const failure = await unreachable.json();
+      expect(failure).toMatchObject({ error: { code: "DATA_DISCOVERY_PROVIDER_UNREACHABLE" } });
+      expect(failure).not.toHaveProperty("snapshot");
+      expect(failure).not.toHaveProperty("changeSet");
+      expect(offlineFetch).toHaveBeenCalledOnce();
+      const active = await loadVdt(new Request(`http://localhost:3000/api/vdt/vdts/${vdtId}`), { params: Promise.resolve({ vdtId }) });
+      expect(await active.json()).toMatchObject({ activeProject: testProject });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("recomputes full retained rows with timestamp, hierarchy and per-day decisions, then stages only the complete preview", async () => {
     const project = incomingProject();
     const csv = ["System,Reason,Minutes,Start,End", ...Array.from({ length: 1000 }, (_, index) =>

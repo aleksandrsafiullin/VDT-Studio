@@ -165,3 +165,51 @@ collection from the checkout succeeded. The fixture checks deterministic
 inventory output, byte preservation, hash deduplication, nested notice files,
 explicit Cargo license paths, empty notice lists and version-specific supplemental hashes. The Mac collection had a nonempty notice list for every resolved external Cargo package. No installer was
 rebuilt by this audit. The temporary collector output was cleaned.
+
+### Embedded libvips release evidence
+
+The 8c60019 Mac application's traced runtime contains the platform package
+manifest and `libvips-cpp.8.18.7.dylib`. The corresponding Windows x64 input
+is the lockfile-verified Sharp package inspected above. Both are mapped to
+the exact [upstream third-party notice](https://github.com/lovell/sharp-libvips/blob/ebb95f8add54eee8bed840e3fb587e4cbec857d7/THIRD-PARTY-NOTICES.md)
+in addition to the package README and already indexed root and libnsgif
+license files.
+
+The [official v1.3.4 npm workspace archive](https://github.com/lovell/sharp-libvips/releases/tag/v1.3.4)
+matched published SHA-256
+`a40fc59e3aa3635177613fa63f29ceecb28b5ad99e7919def47a61f6ca06f0ee`.
+Its Darwin ARM64 and Windows x64 package directories supplied
+`README.md` and `versions.json` as the notice and component inventory.
+They contained no separate per-component license files or source offer.
+The [pinned Windows packaging script](https://github.com/lovell/sharp-libvips/blob/ebb95f8add54eee8bed840e3fb587e4cbec857d7/build/win.sh)
+uses the [8.18.7 x64 static web ZIP](https://github.com/libvips/build-win64-mxe/releases/tag/v8.18.7).
+That ZIP matched published SHA-256
+`a736af61d3b46499760efa606e469cb14e060445b1f6fd36a1fa2e75009e1197`
+and supplied a root `LICENSE` with the binaries and headers. Its archive
+file list contained no separate component notice or source offer.
+
+The tables name licenses but do not supply individual texts for the
+following other reported components:
+
+- aom, libarchive, cairo, cgif, expat, fontconfig, freetype, fribidi, glib,
+  harfbuzz, highway, lcms, libexif, libffi, libheif and libimagequant.
+- libpng, librsvg, libtiff, libultrahdr, libwebp, libxml2, mozjpeg,
+  pango, pixman, proxy-libintl and zlib-ng.
+
+The component-level text, corresponding source or offer, and any applicable
+relinking or redistribution materials for the actual binaries remain a
+release review item. The source repository, build scripts and upstream
+component version table are available as provenance. A rebuilt installer
+containing the added supplemental notice was outside this audit. The two
+focused collector tests passed; the temporary archives were removed.
+
+The coordinator's next-candidate correction disables Next image optimization
+and excludes Sharp platform packages from standalone tracing. The application
+has no `next/image` or Sharp runtime imports and serves its SVG directly. The
+artifact verifier requires the disabled configuration and rejects remaining
+Sharp/libvips runtime resources; the Windows compiled-server check verifies
+the static SVG still returns 200 and the authenticated optimizer endpoint 404.
+Both real package trees must pass before treating the embedded-library gap as
+inapplicable to the next candidate. The conservative dependency notice inventory
+may still describe these build inputs. This does not change the retained
+8c60019 packages or claim legal clearance for their embedded binaries.

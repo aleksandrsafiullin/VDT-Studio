@@ -35,6 +35,12 @@ const nextConfig = {
   // development keeps its existing cache and generated TypeScript files.
   distDir: process.env.VDT_NEXT_DIST_DIR?.trim() || ".next",
   devIndicators: false,
+  // The UI serves its SVG/assets directly and has no image-optimization use.
+  // Keep unused Sharp/libvips native libraries out of both standalone layouts.
+  images: { unoptimized: true },
+  outputFileTracingExcludes: {
+    "*": ["**/node_modules/sharp/**/*", "**/node_modules/@img/sharp-*/**/*"]
+  },
   webpack(config, { isServer }) {
     if (isServer) config.plugins.push(new PreserveParserWorkerAsset());
     return config;

@@ -172,9 +172,12 @@ test("creates and reviews every Excel category, reloads and reuses its original 
       let postData: string | undefined;
       if (new URL(route.request().url()).pathname === "/api/data/discovery/runs" && route.request().method() === "POST") {
         const body = route.request().postDataJSON() as Record<string, unknown> & { entryContext: { targetNodeId: string } };
+        if (body.providerId) {
+          await route.fulfill({ status: 502, json: { error: { code: "DATA_DISCOVERY_PROVIDER_UNREACHABLE", message: "Could not reach the selected AI provider." } } });
+          return;
+        }
         observedTargets.push(body.entryContext.targetNodeId);
-        delete body.providerId;
-        delete body.providerConfig;
+        expect(body).not.toHaveProperty("providerConfig");
         postData = JSON.stringify(body);
       }
       const response = await route.fetch({ timeout: SERVER_TIMEOUT, ...(postData ? { postData } : {}) });
@@ -199,6 +202,13 @@ test("creates and reviews every Excel category, reloads and reuses its original 
     await requireOk(uploaded);
     expect((await uploaded.json()).file).toMatchObject({ sizeBytes: original.length, contentHash: `sha256:${createHash("sha256").update(original).digest("hex")}` });
     await expect(page.getByTestId("data-import-retained")).toContainText("downtime-events.xlsx");
+    const assisted = waitForDataResponse(page, "/api/data/discovery/runs", "POST");
+    await page.getByTestId("data-import-analyze-ai").click();
+    const assistedResponse = await assisted;
+    expect(assistedResponse.request().postDataJSON()).toMatchObject({ providerId: expect.any(String), providerConfig: expect.any(Object) });
+    expect(assistedResponse.status()).toBe(502);
+    await expect(page.getByTestId("data-import-error")).toContainText("Could not reach the selected AI provider.");
+    await expect(page.getByTestId("data-import-stage-preview")).toBeDisabled();
     await analyzeAndWait(page);
     await expect(page.getByTestId("data-import-stage-preview")).toBeDisabled();
     await confirmNestedMapping(page);
@@ -303,8 +313,8 @@ test("keeps colliding legacy warnings and exact duplicates visible without React
       let postData: string | undefined;
       if (pathname === "/api/data/discovery/runs" && route.request().method() === "POST") {
         const body = route.request().postDataJSON() as Record<string, unknown>;
-        delete body.providerId;
-        delete body.providerConfig;
+        expect(body).not.toHaveProperty("providerId");
+        expect(body).not.toHaveProperty("providerConfig");
         postData = JSON.stringify(body);
       }
       const response = await route.fetch({ timeout: SERVER_TIMEOUT, ...(postData ? { postData } : {}) });

@@ -61,7 +61,16 @@ function verifyNotices(resources) {
 function verifyResources(resources) {
   file(resources, "packaged-web.cjs");
   file(resources, "web/apps/web/server.js");
-  json(resources, "web/apps/web/.next/required-server-files.json");
+  const serverFiles = json(resources, "web/apps/web/.next/required-server-files.json");
+  if (serverFiles.config?.images?.unoptimized !== true) fail("unused image optimization must be disabled");
+  const webRoot = join(resources, "web");
+  for (const entry of readdirSync(webRoot, { withFileTypes: true, recursive: true })) {
+    const relative = join(entry.parentPath, entry.name).slice(webRoot.length + 1).split(sep).join("/");
+    if (/(?:^|\/)node_modules\/(?:sharp|@img\/sharp-[^/]+)(?:\/|$)/.test(relative) ||
+        /(?:^|\/)(?:lib)?vips[^/]*\.(?:dll|dylib|so(?:\.[0-9.]+)?)$/i.test(relative)) {
+      fail(`unused native image resource remains packaged: ${relative}`);
+    }
+  }
   const sidecar = json(resources, "sidecars/vdt-local-runtime.manifest.json");
   if (sidecar.schemaVersion !== 1 || sidecar.protocolVersion !== 1 || sidecar.kind !== "node-runtime-bundle") fail("unexpected alpha sidecar contract");
   for (const [name, key] of [["vdt-local-runtime", "launcherSha256"], ["vdt-local-runtime.cmd", "windowsLauncherSha256"], ["vdt-local-runtime.mjs", "bundleSha256"]]) {
@@ -78,7 +87,8 @@ function verifyResources(resources) {
     if (lstatSync(target).size === worker.byteLength && digest(target) === worker.sha256) workerFound = true;
   }
   if (!workerFound) fail("the traced server has no parser worker matching the packaged manifest");
-  return { sidecarSha256: sidecar.bundleSha256, skillLibrarySha256: sidecar.skillLibrarySha256, parserWorkerSha256: worker.sha256 };
+  return { sidecarSha256: sidecar.bundleSha256, skillLibrarySha256: sidecar.skillLibrarySha256, parserWorkerSha256: worker.sha256,
+    imageOptimization: "disabled", unusedNativeImageResources: "absent" };
 }
 
 /** Checks packaged bytes and OS trust. This does not certify installed user flows. */

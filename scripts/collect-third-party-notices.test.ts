@@ -56,14 +56,15 @@ it("indexes exact upstream bytes deterministically and records packages with no 
       expect(createHash("sha256").update(bytes).digest("hex")).toBe(notice.sha256);
     }
     const windows = packages.find((pkg: { name: string }) => pkg.name === "@img/sharp-win32-x64");
-    expect(windows.notices).toHaveLength(4);
+    expect(windows.notices).toHaveLength(5);
     expect(windows.notices).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: "README.md", supplemental: true }),
+      expect.objectContaining({ source: expect.stringContaining("/THIRD-PARTY-NOTICES.md") }),
       expect.objectContaining({ source: expect.stringContaining("libvips/libvips/24ad4d042940e6bf99a68871ba886ca8847c9c82/LICENSE") }),
       expect.objectContaining({ source: expect.stringContaining("libnsgif/COPYING") }),
       expect.objectContaining({ source: expect.stringContaining("lovell/sharp-libvips/ebb95f8add54eee8bed840e3fb587e4cbec857d7/LICENSE") })
     ]));
-    expect(readdirSync(join(output, "texts"))).toHaveLength(8);
+    expect(readdirSync(join(output, "texts"))).toHaveLength(9);
     expect(readFileSync(join(output, "texts", sha + ".txt"))).toEqual(license);
   } finally {
     rmSync(fixture, { recursive: true, force: true });

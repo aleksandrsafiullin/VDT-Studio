@@ -20,6 +20,11 @@ The preview includes a compact build/platform identity, selected chat and Sugges
 
 W1 recovery codes and W2 ingestion codes have fixed next-action guidance. The diagnostic path cannot authorize recovery, mutate a project, change providers, upload source data or bypass the desktop loopback boundary.
 
+The installed-QA import follow-up adds two fixed discovery codes for missing
+OpenAI credentials and unreachable AI. Their diagnostic guidance points to
+provider setup or the explicit local analysis action. The allowlist still accepts
+only fixed codes and never exports provider error messages or configuration.
+
 ## Changed paths
 
 - Settings navigation/modal and new `support-settings.tsx` / CSS module.

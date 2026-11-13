@@ -10,16 +10,22 @@ and the exact bytes prepared for distribution.
 
 The remediation checkout is based on `4fc92513f8df347620edff982ce25d11bcac5cc5`.
 Changes remain under integration. The next candidate version is
-`0.1.0-alpha.2`; its source commit and Mac/Windows installer hashes are **not
-frozen**. Existing `alpha.1` installer
+`0.1.0-alpha.2`. The latest immutable packaged snapshot is
+`8c60019c512d686715a19a0050ffd4bdcd2b3d4f`; it is **not the final candidate**
+because installed QA exposed an offline file-analysis defect now being fixed.
+Its signed, unnotarized Mac DMG has SHA-256
+`f33befb00c9e4d9d9e88f9d4ec74921b3c1313494fada0f6f641cf04b7c48199`;
+its unsigned Windows x64 installer has SHA-256
+`5e46fd0099ceca1ad57e0ed7ab7e00dd4ddba2c2f69441c2e0047b933e459a9c`.
+Existing `alpha.1` installer
 evidence describes an earlier candidate. Dirty-source manifests in the execution
 ledger identify interim source tests only.
 
 | Environment | Intended evidence | Current limitation |
 | --- | --- | --- |
-| macOS Apple Silicon | Signed/notarized candidate, clean profile, offline manual workflow, upgrade and live providers | Signed diagnostic `64e1227` built and verified; enabled Gatekeeper in Tahoe 26.6.2 rejected it as unnotarized. Configured deployment floor macOS 14 remains untested. |
-| Windows 11 Arm VM, x64 application under emulation | New standard-user installation, bundled runtime, persistence, UI and lifecycle | Separate SSD guest reached a local-account desktop; optional password/Guest Tools setup canceled. Elevated console observed; normal token verification follows pending Windows updates. Emulation does not establish native Windows x64 UI compatibility. |
-| Windows x64 GitHub runner | Native storage/ownership fixtures and full installer build | Reviewed standard-user native gate passed 34 tests and all 65 frozen cases at `2767958849bf`, repeated at `110c24c762c8`. Compiled application startup and installed UI remain pending. |
+| macOS Apple Silicon | Signed/notarized candidate, clean profile, offline manual workflow, upgrade and live providers | Exact `8c60019` clean/upgrade manual workflows, original-file retention, local diagnostic download and native Quit passed on Tahoe 26.6.2. Gatekeeper is enabled; explicit assessment rejects the unnotarized app. SCP transfer has no quarantine and does not qualify public-download trust. macOS 14 remains untested. |
+| Windows 11 Arm VM, x64 application under emulation | New standard-user installation, bundled runtime, persistence, UI and lifecycle | Windows 11 Home 26H2 build 26300.9974, UAC enabled; normal local administrator token is medium integrity with Administrators deny-only. Exact `8c60019` installed QA is in progress after an earlier candidate's missing `styled-jsx` startup failure was fixed. This is not a distinct standard account or native x64 UI environment. |
+| Windows x64 GitHub runner | Native storage/ownership fixtures and full installer build | At exact `8c60019`, independently reviewed standard-user native gate passed 34 tests and all 65 frozen cases. NSIS build, installed-resource verification and actual compiled Next standard-user startup/read/write/session/shutdown smoke passed. Tauri/WebView installed UI is a separate gate. |
 | Local source development | Documented fresh setup and usable offline project workflow on declared development platforms | Development-runtime evidence does not qualify a packaged app. |
 
 ## Required installed-app cases
@@ -31,14 +37,14 @@ installer SHA-256, version/commit, result and evidence per attempt.
 
 | Gate | Mac | Windows | Required observation |
 | --- | --- | --- | --- |
-| Artifact identity and trust | Pending | Pending | Exact commit/version, embedded Node, sidecar, worker and storage assets; signature/trust results and actual first-launch prompts. |
-| Clean offline installation | Pending | Pending | Launch without a checkout or separate developer runtime; create, calculate, edit, save, close and reopen. |
-| Upgrade with retained data | Pending | Pending | Copy an earlier test profile; preserve formulas, manual values, history and downloadable original-file hashes. Windows uses an earlier test candidate, not a fictitious prior public release. |
+| Artifact identity and trust | Identity/resources passed at `8c60019`; notarization/public-download trust open | Identity/resources passed at `8c60019`; Authenticode/public-download trust open | Exact commit/version, embedded Node, sidecar, worker and storage assets; signature/trust results and actual first-launch prompts. |
+| Clean offline installation | Manual create/calculate/edit/save/reopen passed at `8c60019`; local file-analysis defect open | In progress | Launch without a checkout or separate developer runtime; create, calculate, edit, save, close and reopen. |
+| Upgrade with retained data | Passed alpha.0 fixture to `8c60019`: 750 preserved, changed to 900 and reopened; history and CSV hash retained | In progress from prior failed validation candidate | Copy an earlier test profile; preserve formulas, manual values, history and downloadable original-file hashes. Windows uses an earlier test candidate, not a fictitious prior public release. |
 | Recovery after process loss | Pending | Pending | Generation, question and approval interruption; accurate durable termination or a usable saved copy; unchanged source and preserved dirty edits. |
 | Bounded import | Pending | Pending | Valid CSV/XLSX/JSON/TSV oracles; malformed/oversized rejection; responsive app; no partial baseline; parser exits after cancellation and app termination. |
 | Storage faults and permissions | Pending | Pending | Read-only failures, stale revisions and restart integrity; Windows additionally needs reviewed no-reparse/ACL/namespace durability and SQLite file-identity coverage. |
-| Help and diagnostics | Pending | Pending | Keyboard access, minimum window size, scaling, clipboard and file download; default privacy and exact preview/download correspondence. |
-| Process and loopback ownership | Pending | Pending | Port conflict/start failure; normal and abrupt quit; no owned web/sidecar/parser survivors; rejected wrong session/origin/peer. |
+| Help and diagnostics | Preview and local JSON download passed at `8c60019`; keyboard/minimum-size/scaling/clipboard scope incomplete | Pending | Keyboard access, minimum window size, scaling, clipboard and file download; default privacy and exact preview/download correspondence. |
+| Process and loopback ownership | Native menu Quit and red-window close released processes/port at `8c60019`; fault cases pending | Compiled backend smoke passed; installed shell checks pending | Port conflict/start failure; normal and abrupt quit; no owned web/sidecar/parser survivors; rejected wrong session/origin/peer. |
 | Live AI matrix | Pending | Pending | Natural tree, follow-up, Smart and file workflows with saved results; exact backend/model/reasoning and every attempt recorded. |
 
 The initial live evaluation queue is OpenAI Direct `gpt-5-nano` / Low, Codex
@@ -55,9 +61,13 @@ Source/unit/browser checks, native API fixtures and installed-app results are
 separate evidence categories. The full pre-review source snapshot passed 3,771
 tests with 11 skips. After the later missing-backup error-message regression
 was corrected, the full gate at `64e12277ee5d` passed 3,799 tests with 45
-platform/opt-in skips, all 157 browser cases and both saved-copy cases. Evidence
-was independently reviewed. Later Windows loader and packaging deltas require
-their own native acceptance. See the execution and independent-review
+platform/opt-in skips, all 157 browser cases and both saved-copy cases. The later
+exact `8c60019` full source gate passed 3,804 tests with 45 skips, 157 browser
+cases and both saved-copy cases. Its archive SHA-256 is
+`93fe048f8dc42795c7c4699cadbcf6be0ab7c99422f7118113b8ff075463c8bc`.
+Evidence was independently reviewed. Installed QA nevertheless found the offline
+file-analysis defect described above; a green source gate does not close it.
+See the execution and independent-review
 ledgers for current results rather than treating this queue as a test report.
 
 The final decision remains **HOLD** until required source changes are reviewed,

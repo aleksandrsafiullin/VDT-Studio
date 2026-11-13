@@ -205,3 +205,79 @@ run with an incorrectly shared `VDT_DATA_DIR` was invalidated and its diagnostic
 retained separately. The coordinator removed its completed 1.8 GiB owned
 integration stage after child-process and open-file checks; evidence remains in
 `output/release/audits/2026-11-14-alpha2-integration.ovcmf2lk`.
+
+## Integration checkpoint: exact 8c60019
+
+The immutable snapshot `8c60019c512d686715a19a0050ffd4bdcd2b3d4f`
+supersedes the earlier integration/package attempts above for current evidence.
+Both native packages were built from this same source snapshot. Main, its index,
+release tags and public releases remain unchanged.
+
+- Source run `43505518463` passed 3,804 tests with 45 platform/opt-in skips,
+  331 passing files and nine skipped files, all 157 browser cases and both
+  saved-copy cases. The complete release command, production build and SBOM
+  stage passed. Independent review accepted the exact archive/source match;
+  retained archive SHA-256 is
+  `93fe048f8dc42795c7c4699cadbcf6be0ab7c99422f7118113b8ff075463c8bc`.
+- Native Windows run `43505508575` passed 34 tests and all 65 frozen cases,
+  independently recomputed and accepted. No test account or owned CI stage
+  remained after cleanup.
+- Windows package run `43505509645` built the actual NSIS installer, verified
+  installed resources, and passed the actual compiled Next server smoke under
+  a standard user. It created/read a project, checked private activation and
+  denied invalid sessions, then exited cleanly. The preceding installed build
+  failed because materialized Next dependencies could not resolve `styled-jsx`;
+  using a hoisted isolated Windows install and verifying actual Next resolution
+  fixed that packaging defect. The unsigned installer SHA-256 is
+  `5e46fd0099ceca1ad57e0ed7ab7e00dd4ddba2c2f69441c2e0047b933e459a9c`.
+- The Developer-ID-signed Mac DMG and all bundled resources passed verification;
+  445 Mac and 443 Windows notice files were collected and checked. Mac DMG
+  SHA-256 is
+  `f33befb00c9e4d9d9e88f9d4ec74921b3c1313494fada0f6f641cf04b7c48199`.
+  Mac notarization and Windows Authenticode remain open. Mechanical notice
+  collection is not a complete embedded-component license review.
+- Mac clean and alpha.0 upgrade checks passed on Tahoe 26.6.2 arm64: retained
+  values/formulas/history, an edit from 750 to 900 USD, save/reopen, and the
+  original CSV checksum. Local diagnostic preview/download and verified native
+  menu Quit passed; the app and subprocesses stopped and port 37541 was free.
+  Earlier coordinate-only Quit attempts were inconclusive, not a product bug.
+  The coordinator inspected the reopened tree and diagnostic screenshots.
+  Gatekeeper was enabled, but the local SCP transfer had no quarantine;
+  explicit assessment rejected the unnotarized app. Public download trust is
+  not qualified. Evidence is retained in the external VM registry's Mac path.
+- Windows installed UI checks are in progress on Windows 11 Home 26H2 Arm64
+  build 26300.9974 with x64 emulation. UAC is enabled; the normal `vdtsetup`
+  token is medium integrity with Administrators deny-only. It is distinct from
+  the true standard-user native/packaged-server CI evidence.
+
+Installed Mac QA found another actionable defect: **From File → Analyze**
+always sends the configured provider, so a clean offline installation shows
+`fetch failed` instead of exposing the existing local parsing/manual mapping
+path. The saved baseline remained unchanged and staging disabled. A route-level
+reproduction matches an unavailable default OpenAI endpoint, but no guest HTTP
+trace was captured. W2 is adding explicit local analysis, separate opt-in AI
+analysis and scoped credential/connection messages. Focused source tests passed;
+independent review, compiled browser checks and installed retests remain required.
+Accordingly, `8c60019` is a tested checkpoint, not the final release candidate.
+
+The offline import correction subsequently passed independent source review and
+19 route tests. It preserves an explicit AI action with no silent fallback,
+including the mock-provider edge case. The diagnostic allowlist adds only its
+two fixed credential/connection codes; 21 diagnostic tests passed.
+
+Windows installed QA then reproduced a separate sidecar startup defect: the
+wrapper imported the bundle without invoking its guarded entry point. A private
+diagnostic observed no hello for 90 seconds, while the exact web runtime reached
+readiness in 7.756 seconds in a warmed run. The wrapper now explicitly starts
+the sidecar after activation and resumes stdin after protocol handlers attach;
+the actual generated-bundle handshake regression passed. Deadlines were not
+increased. The initial cold web timeout is not explained by that sidecar fix
+and still requires a new installed cold-launch observation.
+
+The next candidate also disables unused Next image optimization and excludes
+Sharp/libvips from its runtime trace. The app has no runtime dependency on these
+image operations. Actual package verification must prove their absence and the
+authenticated compiled-server test must observe the disabled endpoint. This
+removes unused native resources without treating notice tables as complete
+redistribution clearance. The combined focused resource/runtime/notice suite
+passed 28 tests; compiled and installed next-candidate checks remain pending.

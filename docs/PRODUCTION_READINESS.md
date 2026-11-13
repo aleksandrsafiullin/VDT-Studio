@@ -15,21 +15,29 @@ a verified saved copy when committed source data is available. That continuation
 has source review and a passing two-case production-browser gate; installed
 recovery remains unqualified. Parser isolation, bounded uploads and local
 diagnostic preview/export have source and browser acceptance. The full source
-gate at `64e12277ee5d` passed 3,799 tests with 45 platform/opt-in skips, all 157
-browser cases and both saved-copy cases. Later Windows loader/packaging changes
-and installed native acceptance remain under verification.
+gate at `8c60019c512d` passed 3,804 tests with 45 platform/opt-in skips, all 157
+browser cases and both saved-copy cases; independent review verified the retained
+artifact and exact source identity. Installed Mac QA then exposed a separate
+offline file-analysis defect: the UI always selects an AI provider even though
+the backend supports local parsing and manual mapping. Explicit local analysis
+and actionable AI errors are being corrected and require a subsequent candidate.
 Release tooling separates source/fixture results, packaged-byte/trust checks and
 installed user workflows. The isolated Windows process fixture and standard-user
 NTFS primitive checks provide real Windows evidence, but do not qualify the
 application. The reviewed native storage gate passed 34 focused tests and all
 65 frozen fault cases on standard-user Windows x64/NTFS at commit `2767958849bf`,
-and passed again at `110c24c762c8`. That acceptance is limited to the verified
-packaged runtime boundary. Compiled application startup and installed workflows
-remain unqualified; packaging checks have exposed additional build/runtime
-defects that are being corrected. Neither current
-signed installers nor the complete per-platform live-provider matrix are
-accepted yet. The next candidate version is `0.1.0-alpha.2`; its commit and
-installer hashes are not frozen.
+and passed again at `110c24c762c8` and `8c60019c512d`. That acceptance is limited
+to the verified packaged runtime boundary. At `8c60019c512d`, the actual compiled
+Windows standalone server also passed standard-user startup, storage, identity,
+session rejection and graceful shutdown checks. Windows installed UI remains
+under verification. Mac clean and upgrade checks on Tahoe 26.6.2 preserved
+formulas, manual values, revision history and original-file bytes; local
+diagnostic download and normal native Quit passed. These functional observations
+used a local SCP transfer without quarantine. The signed Mac DMG is unnotarized
+and the Windows installer unsigned; distribution trust is not accepted.
+The complete per-platform live-provider matrix remains unqualified. The next
+candidate version is `0.1.0-alpha.2`; `8c60019c512d` is an immutable tested
+snapshot, not the final release candidate while the offline import fix is open.
 
 Details: [W1](implementation/OPEN_ALPHA_W1_2026-11-13.md),
 [W2](implementation/OPEN_ALPHA_W2_2026-11-13.md),

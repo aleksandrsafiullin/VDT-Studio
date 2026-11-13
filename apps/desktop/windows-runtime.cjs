@@ -25,7 +25,7 @@ function activate(chunk) {
   process.stdin.removeListener("end", stop);
   process.stdin.removeListener("error", stop);
   process.stdin.pause();
-  Promise.resolve().then(() => {
+  Promise.resolve().then(async () => {
     if (mode === "web") {
       const storageActivation = Symbol.for("vdt-studio.packaged-windows-storage.activation.v1");
       globalThis[storageActivation] = Object.freeze({
@@ -34,7 +34,9 @@ function activate(chunk) {
       });
       return require("./packaged-web.cjs").start();
     }
-    return import(pathToFileURL(join(__dirname, "sidecars/vdt-local-runtime.mjs")).href);
+    const { runLocalRuntimeSidecar } = await import(pathToFileURL(join(__dirname, "sidecars/vdt-local-runtime.mjs")).href);
+    runLocalRuntimeSidecar();
+    process.stdin.resume();
   }).catch(() => {
     process.stderr.write("The packaged runtime could not start.\n");
     process.exit(1);

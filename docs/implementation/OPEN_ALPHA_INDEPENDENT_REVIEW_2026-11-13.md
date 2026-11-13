@@ -51,7 +51,7 @@ The report is assembled as a detached allowlisted object. The metadata route ret
 
 ## W7: Windows storage support
 
-**Status: the complete W7 native gate passed for candidate `2767958` on Windows x64 with a verified addon and private local NTFS. Later source and installed candidates require their own qualification.**
+**Status: the complete W7 native gate passed for candidate `8c60019` on Windows x64 with a verified addon and private local NTFS. Later source and installed candidates require their own qualification.**
 
 The initial public entrypoint could create a directory and open SQLite before rejecting Windows. The corrected path checks admission before opening storage. An ordinary Windows open can only retain the process-approved profile.
 
@@ -94,3 +94,19 @@ The independent reviewer accepts the narrow [Windows Gate R2 execution addendum]
 ### Native Windows gate result for candidate 2767958
 
 The maintained standard-user x64 NTFS workflow passed 34 native tests and all 65 frozen Gate R2 cases on Node 24.22.2. The reviewer recomputed the closed evidence from the retained observations and frozen vectors. The verifier reproduced all 65 cases and evidence SHA-256 `e162ae75664b8555713c5cbf8984dbf743395928871ce1334e492e63dc4ba6f0`. The downloaded archive SHA-256 was `95c6b76f0570dcf471190493873400851d357acfd53ef88c42f722e482508970`. Runner cleanup reported neither owned staging nor the test account retained. This satisfies the native W7 gate for the exact tested source and scoped packaged x64 private local NTFS profile. Installer, installed app and a refreshed source commit require separate evidence. The post-candidate backup-read change restores the existing fail-closed error classification for ENOENT and leaves all other errors intact. [Maintained Windows run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43494781381)
+
+### Native Windows rerun for candidate 8c60019
+
+The exact source `8c60019c512d686715a19a0050ffd4bdcd2b3d4f` passed 34 native tests across four files and all 65 frozen Gate R2 cases. The reviewer verified the archive SHA-256 `af120ef5c145634499b06e51c605f5394d74c0b8b9b1911b0f200d9e808a6bbf` against the workflow artifact digest and recomputed all 65 closed cases from the raw observations and frozen vectors. The recomputed evidence SHA-256 is `70ced72c3c0cb9d8deeb54157a8e1e13c7e5463f7b4e14f006a28a1be603c642`. Cleanup reported no retained staging directory or account. Scoped acceptance covers the Windows x64 native gate on the tested private local NTFS configuration with Node 24.22.2 and verified native resources. The compiled packaged startup and installed app remain separate. [Maintained Windows run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43505508575)
+
+### Full source gate for candidate 8c60019
+
+Accepted the source release gate for `8c60019c512d686715a19a0050ffd4bdcd2b3d4f`. The job log records 3,804 passing and 45 skipped tests in 331 passing and nine skipped files. The browser report records 157 expected outcomes with zero unexpected, flaky or skipped. The dedicated saved-copy gate passed two tests. The reviewer verified evidence artifact 14077700309 against SHA-256 `93fe048f8dc42795c7c4699cadbcf6be0ab7c99422f7118113b8ff075463c8bc`, checked its Playwright report and matched the source commit to checkout and upload logs. In installed Mac QA, From File invoked configured AI unconditionally and surfaced a raw fetch failure without credentials or network. That installed workflow remains blocked pending a provider-free UI path and error-boundary regression evidence. [Source release verification run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43505518463)
+
+### Offline From File correction
+
+Accepted the source delta after reviewing both analysis entry points. **Analyze file locally** omits provider configuration and retains the existing full-row mapping and confirmation gates. **Analyze with AI** is explicit and is hidden for the mock setting, with a click-time guard if the setting changes during upload. The direct OpenAI key check uses the shared config parser and the same request-versus-environment precedence as the provider factory. It applies only to the official OpenAI origin. The transport mapping applies only to the provider call. Provider failure returns no discovery snapshot or change set and leaves the saved graph intact. Focused route regressions and web typechecking passed according to the implementation evidence. Installed offline and live-provider checks remain separate.
+
+### Packaged startup and resource follow-up
+
+The Windows sidecar wrapper explicitly starts the generated export after private activation and resumes stdin after protocol handlers are installed. The compiled standalone smoke checks the exact bundled executable and launcher, no output before activation, a bounded hello frame, nonce acknowledgment, readiness and clean EOF. The image configuration disables the unused optimizer and narrowly excludes Sharp and its native packages from tracing. The artifact verifier checks both actual package layouts for the disabled configuration and absence of those assets. The authenticated smoke checks a static favicon and optimizer 404. The new ingestion guidance adds only fixed allowlisted error codes. Focused implementation evidence supports source acceptance. The next native package and installed app checks remain open.

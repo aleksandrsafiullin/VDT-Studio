@@ -30,6 +30,7 @@ export function DataImportWizard() {
   const projectId = useVdtStudioStore((state) => state.workspace.activeProjectId);
   const vdtId = useVdtStudioStore((state) => state.workspace.activeVdtId);
   const project = useVdtStudioStore((state) => state.project);
+  const executionSettings = useVdtStudioStore((state) => state.executionSettings);
   const [session, setSession] = useState<ImportSession>();
   const [file, setFile] = useState<File>();
   const [sources, setSources] = useState<ProjectFileSource[]>([]);
@@ -202,7 +203,7 @@ export function DataImportWizard() {
     } catch (caught) { finishOperation(operation, caught); }
   }
 
-  async function analyze() {
+  async function analyze(useAi: boolean) {
     if (!session || running || (!file && !selectedSourceId)) return;
     const { context } = session;
     const { operation, controller } = startOperation(file ? "uploading" : "analyzing");
@@ -219,7 +220,8 @@ export function DataImportWizard() {
         state = assertCurrent(context, operation);
       }
       setStatus("analyzing");
-      const { providerId, providerConfig } = resolveExecutionSettings(state.executionSettings);
+      const { providerId, providerConfig } = useAi ? resolveExecutionSettings(state.executionSettings) : { providerId: undefined, providerConfig: undefined };
+      if (useAi && providerId === "mock") throw new Error("Select an AI provider in Settings, or choose Analyze file locally.");
       const response = await fetch("/api/data/discovery/runs", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -228,7 +230,7 @@ export function DataImportWizard() {
           projectId: context.projectId, vdtId: context.vdtId, targetNodeId: context.targetNodeId, datasetId,
           entryContext: { source: session.source, cardName: session.targetName, targetNodeId: context.targetNodeId, purpose: "incoming_kpis" },
           project: state.project,
-          ...(providerId === "mock" ? {} : { providerId, providerConfig: providerId === "local_runner" && state.runnerPairingToken ? { ...providerConfig, pairingToken: state.runnerPairingToken } : providerConfig })
+          ...(providerId === undefined ? {} : { providerId, providerConfig: providerId === "local_runner" && state.runnerPairingToken ? { ...providerConfig, pairingToken: state.runnerPairingToken } : providerConfig })
         })
       });
       const payload = await readJson<DiscoveryResponse>(response);
@@ -281,6 +283,7 @@ export function DataImportWizard() {
   const contextError = fileImportContextError(session.context, project, { activeProjectId: projectId, activeVdtId: vdtId });
   const selectedSource = sources.find((source) => source.datasetId === selectedSourceId);
   const review = snapshot?.incomingKpi;
+  const analysisDisabled = (!file && !selectedSourceId) || running || Boolean(contextError);
   const canStage = Boolean(snapshot?.changeSetPreview && review && review.questions.length === 0 && review.blockingReasons.length === 0 && review.coverage.complete && review.options.confirmed && !mappingChanged && !contextError && snapshot.validationResults.every((item) => item.status !== "error") && (snapshot.status === "waiting_review" || snapshot.status === "succeeded"));
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/25 p-3 sm:p-6">
@@ -309,7 +312,10 @@ export function DataImportWizard() {
               {sourceError ? <p role="alert" className="mt-2 text-xs text-red-700">{sourceError}</p> : null}
             </div>
           </div>
-          <Button type="button" className="mt-3" size="sm" variant="primary" icon={running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} disabled={(!file && !selectedSourceId) || running || Boolean(contextError)} onClick={() => void analyze()} data-testid="data-import-analyze">{status === "uploading" ? "Uploading…" : status === "attaching" ? "Attaching…" : status === "analyzing" ? "Analyzing…" : snapshot || selectedSource ? "Analyze again" : "Analyze file"}</Button>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button type="button" size="sm" variant="primary" icon={running ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />} disabled={analysisDisabled} onClick={() => void analyze(false)} data-testid="data-import-analyze">{status === "uploading" ? "Uploading…" : status === "attaching" ? "Attaching…" : status === "analyzing" ? "Analyzing…" : "Analyze file locally"}</Button>
+            {resolveExecutionSettings(executionSettings).providerId !== "mock" ? <Button type="button" size="sm" variant="secondary" icon={<Sparkles className="h-4 w-4" />} disabled={analysisDisabled} onClick={() => void analyze(true)} data-testid="data-import-analyze-ai">Analyze with AI</Button> : null}
+          </div>
           {contextError || error ? <div role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" data-testid="data-import-error">{contextError ?? error}</div> : null}
           {snapshot ? <IncomingKpiMappingReview snapshot={snapshot} options={options} running={running} mappingChanged={mappingChanged} onOptionsChange={(next) => { setOptions(next); setMappingChanged(true); }} onCalculate={() => void calculatePreview()} /> : null}
         </div>

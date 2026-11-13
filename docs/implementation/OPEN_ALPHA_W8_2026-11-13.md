@@ -59,3 +59,18 @@ Next with bundled Node and checks its dependency resolution stays inside the
 copied web tree. The rebuilt artifact and unchanged standard-user startup gate
 must pass before this correction is accepted. The original installer is retained
 with the failure evidence, separate from any later candidate.
+
+On the installed `8c60019` Windows x64 build under Windows 11 Arm emulation,
+a fresh disposable web profile returned a valid startup frame after 7,756 ms.
+The sidecar received its activation write at 300 ms and produced no hello
+before the diagnostic stopped it at 90 seconds. The launcher imported the
+verified bundle while its entry guard checked whether Node had run that bundle
+directly. The wrapper now calls the exported entry point after activation and
+resumes stdin after the sidecar installs its protocol handlers. The host's
+20-second web and 5-second sidecar deadlines are unchanged.
+
+The packaged standard-user smoke now checks preactivation silence, bounded
+hello, ready acknowledgement, and EOF exit from the actual staged runtime.
+The generated bundle passed this protocol through the wrapper in a local
+Node fixture. The next Windows installer still needs cold startup and
+provider qualification through the Tauri host.
