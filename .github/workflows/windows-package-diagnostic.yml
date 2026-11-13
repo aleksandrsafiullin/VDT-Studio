@@ -2,6 +2,8 @@ name: Diagnose verified Windows package startup
 
 on:
   workflow_dispatch:
+  push:
+    branches: ["codex/windows-package-diagnostic-*"]
 
 permissions:
   contents: read
