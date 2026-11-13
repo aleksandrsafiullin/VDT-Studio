@@ -19,6 +19,7 @@ import {
 import { assertInside } from "./project-files";
 import {
   loadVerifiedSequence3Assets,
+  __verifyCorruptSequence3SqlForTests,
   type VerifiedSequence3Assets
 } from "./sequence-3-assets";
 import {
@@ -525,6 +526,40 @@ export function __runSequence3StorageMigrationsForTests(
   options: StorageMigrationOptions
 ): void {
   assertSequence3PlatformCapability(process.platform);
+  runSequence3MigrationForTests(db, dataDir, options);
+}
+
+interface NativeSequence3FaultFixture {
+  corruptVerifiedTransformApplicationId?: boolean;
+  corruptSqlChecksum?: boolean;
+}
+
+const corruptSequence3TransformForOptions = new WeakSet<StorageMigrationOptions>();
+
+/** Test-only exact Sequence 3 boundary using a real, retained Windows profile. */
+export function __runSequence3StorageMigrationsForNativeTests(
+  db: DatabaseSync,
+  dataDir: string,
+  options: StorageMigrationOptions,
+  fixture: NativeSequence3FaultFixture = {}
+): void {
+  if (process.platform !== "win32") throw new Error("Native Windows storage is required.");
+  getWindowsStorageForProfile(dataDir).validate();
+  if (fixture.corruptSqlChecksum) {
+    try {
+      __verifyCorruptSequence3SqlForTests();
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "sequence3_asset_hash_invalid:sql") throw error;
+      persistProductionPreflightChecksumBlockWhenSafe(db, dataDir);
+      throw migrationRecoveryRequired("Production migration runtime artifact verification failed.");
+    }
+  }
+  const exactOptions = { ...options };
+  if (fixture.corruptVerifiedTransformApplicationId) corruptSequence3TransformForOptions.add(exactOptions);
+  runSequence3MigrationForTests(db, dataDir, exactOptions);
+}
+
+function runSequence3MigrationForTests(db: DatabaseSync, dataDir: string, options: StorageMigrationOptions): void {
   try {
     runStorageMigrationsWithPlan(
       db,
@@ -2593,11 +2628,14 @@ function applySequence3InsideTransaction(
   }
   options.faultInjector?.("sequence3_after_sql", context);
   options.faultInjector?.("sequence3_before_transform_invocation", context);
-  const transformed = validateLegacyAgentRunsForSequence3(
+  const verifiedTransform = validateLegacyAgentRunsForSequence3(
     db,
     identity,
     commitTimestamp.iso
   );
+  const transformed = verifiedTransform.outcome === "accepted" && corruptSequence3TransformForOptions.has(options)
+    ? { ...verifiedTransform, migrationApplicationId: "test_mismatched_application_id" }
+    : verifiedTransform;
   if (transformed.outcome === "blocked") {
     throw sequence3PostconditionFailure(
       `Sequence 3 legacy adoption validation failed with ${transformed.code}.`

@@ -55,6 +55,14 @@ try {
   $testProcess = Start-Process -FilePath (Join-Path $stage 'node.exe') -ArgumentList $arguments -WorkingDirectory $repository -Credential $credential -RedirectStandardOutput $testReport -RedirectStandardError $testStderr -Wait -PassThru
   if ($testProcess.ExitCode -ne 0) { throw "Standard user storage tests failed with exit code $($testProcess.ExitCode)" }
   if ((Get-Content -Raw $testReport) -notmatch 'Tests\s+28 passed') { throw 'All native tests must execute without skips' }
+  $matrixOutput = Join-Path $native 'sequence-3-windows-evidence.json'
+  $matrixReport = Join-Path $evidence 'sequence-3-windows-matrix.log'
+  $matrixStderr = Join-Path $evidence 'sequence-3-windows-matrix.stderr.log'
+  $matrix = Join-Path $repository 'packages\vdt-storage\src\sequence-3-windows-matrix.ts'
+  $matrixArgs = @('--import', 'tsx', $matrix, $addon, $native, $matrixOutput)
+  $matrixProcess = Start-Process -FilePath (Join-Path $stage 'node.exe') -ArgumentList $matrixArgs -WorkingDirectory $repository -Credential $credential -RedirectStandardOutput $matrixReport -RedirectStandardError $matrixStderr -Wait -PassThru
+  Get-ChildItem -LiteralPath $native -Filter 'sequence-3-windows-evidence.json*' | Copy-Item -Destination $evidence
+  if ($matrixProcess.ExitCode -ne 0) { throw "Native frozen Sequence 3 matrix failed with exit code $($matrixProcess.ExitCode)" }
 } finally {
   if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
   if (Get-LocalUser -Name $name -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $name }
