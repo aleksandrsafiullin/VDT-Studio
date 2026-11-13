@@ -51,7 +51,7 @@ The report is assembled as a detached allowlisted object. The metadata route ret
 
 ## W7: Windows storage support
 
-**Status: the complete W7 native gate passed for candidate `8c60019` on Windows x64 with a verified addon and private local NTFS. Later source and installed candidates require their own qualification.**
+**Status: the complete W7 native gate passed for candidate `7a08fff` on Windows x64 with a verified addon and private local NTFS. Later source and installed candidates require their own qualification.**
 
 The initial public entrypoint could create a directory and open SQLite before rejecting Windows. The corrected path checks admission before opening storage. An ordinary Windows open can only retain the process-approved profile.
 
@@ -122,3 +122,15 @@ Run 43516553230 checked out `8e303593cabc27482b9ffcda569c29f2e722664a` and stopp
 ### Cold-start draft recovery
 
 Reviewed the local Home restore, deliberate Home navigation, same-VDT selection and real-storage browser regressions. Home holds project navigation and mutation controls inert during recovery, verifies the exact saved scope before reopening, and keeps the local revision base when the server head moved. An unavailable saved VDT offers local graph download or confirmed discard. Pending immutable commits remain with the existing reconciliation path. Six production-browser cases passed after correcting deliberate Home navigation ordering, including cold draft, deleted target and stale head cases. Source acceptance covers these reviewed paths. The deliberate intent should remain tied to the saved scope across failed navigation. Installed retests and the false newer-local-edits warning observed on an older Windows candidate remain open.
+
+### Source gate for candidate 8e30359
+
+Accepted the full source gate for `8e303593cabc27482b9ffcda569c29f2e722664a`. The retained report records 3,813 passing and 45 skipped tests, 157 expected browser outcomes with zero unexpected, flaky or skipped, and two passing saved-copy tests. The reviewer verified the downloaded archive SHA-256 `8d28aeccc99a96180f033d7aee7f4bf119a510a021f04112a5fbc3f1509aaf64` and matched the run and artifact to the exact commit. This source pass predates the startup draft change. The native attempt for the same commit stopped before the standard-user gate. [Source release verification run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43516552059)
+
+### Native Windows gate for candidate 7a08fff
+
+Accepted the scoped native gate for `7a08fffc0ddef0618cb9c4dfd2ed0d1903718779` on standard-user Windows x64 with a verified addon and private local NTFS. The reviewed artifact confirms a non-elevated token, matching owner and protected DACL. All 34 focused tests passed across four files. The reviewer recomputed all 65 closed cases from the retained observations and frozen vectors, obtaining evidence SHA-256 `91ae839fd427a8826e95aaa8e083f0bc84ad2983ec3576507ad7ac5d945a8723`. The archive matched workflow SHA-256 `4dade6353da3d04d1d0767127b2f51fd1ca6517808f8f9ba625418ba7df1c49a`. Cleanup reported no retained test stage or account. This result follows the separate compiler timeout at `8e30359`. Installed app qualification remains separate. [Maintained Windows run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43519191187)
+
+### Candidate 7a08fff source fixture follow-up
+
+The source run recorded 3,816 passing tests, 45 skips, and 165 passing browser cases with one Home smoke failure. The Home fixture had opened an editor before the test's initial Home load, which now correctly enters cold draft restoration. The reviewed test-only change skips that eager editor setup for the Home smoke alone. It retains all Home-to-editor and return assertions. Separate cold draft recovery cases passed in the same run across desktop Chromium, mobile Chromium and WebKit. The corrected fixture still needs its run. The exact `7a08fff` source gate remains failed. [Source run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43519193120)

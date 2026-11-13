@@ -10,53 +10,61 @@ for current integration status; the [baseline audit](implementation/OPEN_ALPHA_R
 retains its original findings and evidence.
 
 Source recovery for newly owned structured runs has independent scoped
-acceptance. Legacy or ambiguous runs retain their original history and can use
-a verified saved copy when committed source data is available. That continuation
-has source review and a passing two-case production-browser gate; installed
-recovery remains unqualified. Parser isolation, bounded uploads and local
-diagnostic preview/export have source and browser acceptance. The full source
-gate at `8c60019c512d` passed 3,804 tests with 45 platform/opt-in skips, all 157
-browser cases and both saved-copy cases; independent review verified the retained
-artifact and exact source identity. Installed Mac QA then exposed an offline
-file-analysis defect. The explicit local action in `261741e88070` passed a
-provider-free Sonoma 14.0 import/reopen at 2.75 h/day. An extreme workbook was
-rejected without graph changes; its hidden error message has a reviewed fix.
-That candidate's full source run passed 3,808 tests, failed two concurrency tests
-and skipped 45. Reviewed corrections address a mixed recovery-state snapshot
-and a retained pending SQLite lock after failed fence acquisition. Their
-focused regressions pass, but the original CI interleavings remain unconfirmed
-and the fresh complete gate passed at `8e303593cabc`: 3,813 tests, 45 skips,
-157 browser cases and both saved-copy cases. The native Windows probe timed out
-in rustc before its tests, leaving that separate gate open.
-Release tooling separates source/fixture results, packaged-byte/trust checks and
-installed user workflows. The isolated Windows process fixture and standard-user
-NTFS primitive checks provide real Windows evidence, but do not qualify the
-application. The reviewed native storage gate passed 34 focused tests and all
-65 frozen fault cases on standard-user Windows x64/NTFS at commit `2767958849bf`,
-and passed again at `110c24c762c8` and `8c60019c512d`. That acceptance is limited
-to the verified packaged runtime boundary. At `8c60019c512d`, the actual compiled
-Windows standalone server also passed standard-user startup, storage, identity,
-session rejection and graceful shutdown checks. `261741e88070` additionally passed
-actual packaged sidecar activation, handshake and EOF shutdown after installed
-QA exposed a missing entry-point invocation. Windows installed `261741e88070`
-then passed its first shortcut launch and reopened an ordinary saved 64-tonne
-revision. Back still produced an unresolved newer-edits warning. Both packages exclude the
-unused native image backend. Mac clean and upgrade checks on Tahoe 26.6.2 preserved
-formulas, manual values, revision history and original-file bytes; local
-diagnostic download and normal native Quit passed. Sonoma 14.0 at `261741e88070`
-also passed scenarios, version restore and native Quit; Excel export structure
-was checked without spreadsheet-engine recalculation. These functional observations
-used a local SCP transfer without quarantine. The signed Mac DMG is unnotarized
-and the Windows installer unsigned; distribution trust is not accepted.
-The complete per-platform live-provider matrix remains unqualified. The next
-candidate version is `0.1.0-alpha.2`; `261741e88070` is an immutable QA checkpoint,
-not the final release candidate. Corrected concurrency code requires refreshed
-source, native storage and installed evidence. Subsequent Windows QA also exposed
-default Home startup clearing an unsaved draft's identity. Scoped restoration
-and deliberate navigation protection have source review and targeted production
-browser evidence; final full and installed checks remain open. The original
-42-tonne draft and a later named milestone were not ordinary committed revisions;
-loss of a committed revision is not established.
+acceptance. Legacy or ambiguous runs retain their history and can use a verified
+saved copy when committed source data is available. That continuation has source
+review and a passing two-case production-browser gate at `8e303593cabc`; installed
+process-loss recovery remains unqualified. Parser isolation, bounded uploads and
+private local diagnostic preview/export have source and browser acceptance.
+
+The latest same-source packages are `7a08fffc0ddef0618cb9c4dfd2ed0d1903718779`,
+version `0.1.0-alpha.2`. Its full source run passed 3,816 tests with 45
+platform/opt-in skips and 165 of 166 browser cases, including all nine new
+cold-restoration cases. A stale Home-test fixture failed after its shared setup
+opened an editor; the separate saved-copy stage did not execute. Independent
+review accepted the test-only fixture correction, with all navigation assertions
+preserved, but the corrected gate still needs to run. The prior complete source
+gate at `8e303593cabc` passed 3,813 tests, 45 skips, 157 browser cases and both
+saved-copy cases after reviewed coherent-read and SQLite pending-lock fixes.
+The earlier failures remain recorded; their exact CI interleavings were not
+proven by the focused regressions.
+
+At exact `7a08fff`, the standard-user Windows x64/NTFS native gate passed 34 tests
+and all 65 frozen cases; independent review recomputed the raw evidence. Actual
+compiled Next startup, storage, private session rejection and graceful shutdown,
+plus bundled sidecar activation, handshake and EOF shutdown, passed in package
+CI. This qualifies the tested packaged runtime boundary, not native installed
+UI or power-loss behavior. The earlier `8e30359` compiler timeout is retained as
+an infrastructure failure before native tests.
+
+Installed Windows 11 Home 26H2 Arm64 (build 26300.9974), using x64 emulation and
+a normal medium-integrity local-administrator token, launched exact `7a08fff`
+from its shortcut and reached the shell in 18.1 seconds. It reopened a committed
+64-tonne head, then preserved a new unsaved Baseline value 73 and named milestone
+after full close/relaunch. Back committed 73 and a later edit to 77 without the
+previous newer-edits warning in these observations. The older warning's cause
+is unconfirmed; Home and the remaining installed cases are still under test.
+The earlier 42-tonne draft and missing named milestone were not ordinary
+committed revisions; loss of a committed revision was not established.
+
+Installed Sonoma 14.0 arm64 restored an unsaved label edit and named version
+from `7a08fff` after native Quit. However, its retained QA profile repeatedly
+stalled while listing Files, followed by timeouts on valid backend routes.
+A live Node sample showed active promise execution; the loopback inspector did
+not respond. The cause remains unconfirmed, and RA-16 is an open P1. A fresh
+clone comparison was interrupted by an unexpected guest reboot and is
+inconclusive. Bounded compiled-runtime profiling uses a copy of the synthetic
+profile, preserving the original. Earlier `261741e` Sonoma checks passed a
+provider-free CSV import/reopen at 2.75 h/day, scenarios, version restore, export
+structure and Quit. Its extreme-workbook rejection preserved the graph but had
+an incorrect generic message, now source-corrected. Earlier `8c60019` Tahoe
+26.6.2 clean/upgrade checks preserved formulas, values, history and source bytes.
+Excel exports were not recalculated by a spreadsheet engine.
+
+Both current packages exclude the unused native image backend and pass resource
+verification. The Mac DMG is Developer-ID signed but unnotarized; Windows is
+unsigned. The Mac SCP transfer had no quarantine, so public-download trust
+remains unqualified. The complete per-platform live-provider matrix and final
+installed recovery/fault cases remain open. No public release has been made.
 
 Details: [W1](implementation/OPEN_ALPHA_W1_2026-11-13.md),
 [W2](implementation/OPEN_ALPHA_W2_2026-11-13.md),
