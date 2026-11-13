@@ -136,7 +136,15 @@ export async function packageWindows(args = process.argv.slice(2)) {
     pnpm(["install", "--frozen-lockfile", "--store-dir", join(stage, "pnpm-store")], { cwd: source, env });
     pnpm(["desktop:sidecar:prepare"], { cwd: source, env });
     pnpm(["desktop:verify"], { cwd: source, env });
-    pnpm(["build:web"], { cwd: source, env });
+    // NFT resolves Windows profile-relative paths while tracing. Keep its
+    // profile inside the owned stage and leave native tool discovery alone.
+    const buildProfile = join(stage, "build-profile");
+    const webEnv = { ...env, USERPROFILE: buildProfile,
+      LOCALAPPDATA: join(buildProfile, "AppData", "Local"),
+      APPDATA: join(buildProfile, "AppData", "Roaming") };
+    mkdirSync(webEnv.LOCALAPPDATA, { recursive: true });
+    mkdirSync(webEnv.APPDATA, { recursive: true });
+    pnpm(["build:web"], { cwd: source, env: webEnv });
     const web = join(source, "apps/web");
     for (const resource of ["public", ".next/static", ".next/server/chunks/static"]) {
       cpSync(join(web, resource), join(web, ".next/standalone/apps/web", resource), { recursive: true, dereference: false });

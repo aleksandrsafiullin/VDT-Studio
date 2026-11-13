@@ -6607,7 +6607,15 @@ function verifyJournalBackup(dataDir: string, journal: MigrationBootstrapJournal
   }
   const backupPath = path.resolve(dataDir, evidence.backupRelativePath);
   assertInside(dataDir, backupPath);
-  const bytes = readMigrationFile(dataDir, backupPath, MAX_WINDOWS_MIGRATION_FILE_BYTES, true);
+  let bytes: Buffer;
+  try {
+    bytes = readMigrationFile(dataDir, backupPath, MAX_WINDOWS_MIGRATION_FILE_BYTES, true);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw migrationBlocked(`Durable migration backup is missing: ${evidence.backupRelativePath}.`);
+    }
+    throw error;
+  }
   const actualHash = hashFramed(
     "vdt-studio/sqlite-backup",
     "sqlite_backup_hash.v1",
