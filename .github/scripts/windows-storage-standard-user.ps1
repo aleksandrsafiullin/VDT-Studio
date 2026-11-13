@@ -27,6 +27,15 @@ try {
   if ($probe.tokenElevated -or !$probe.ownerMatchesToken -or !$probe.daclProtected) {
     throw 'Probe did not use a non-elevated token and a user-owned protected directory'
   }
+  $addon = Join-Path $stage 'addon'
+  & ./packages/vdt-storage/native/build-windows-storage-addon.ps1 -OutputDirectory $addon
+  Copy-Item (Get-Command node.exe).Source (Join-Path $stage 'node.exe')
+  Copy-Item ./packages/vdt-storage/native/windows-storage-addon.test.cjs (Join-Path $stage 'addon.test.cjs')
+  $arguments = @((Join-Path $stage 'addon.test.cjs'), (Join-Path $addon 'windows-storage.node'), $native)
+  $addonReport = Join-Path $evidence 'standard-user-addon.json'
+  $addonStderr = Join-Path $evidence 'standard-user-addon.stderr.log'
+  $addonProcess = Start-Process -FilePath (Join-Path $stage 'node.exe') -ArgumentList $arguments -WorkingDirectory $stage -Credential $credential -RedirectStandardOutput $addonReport -RedirectStandardError $addonStderr -Wait -PassThru
+  if ($addonProcess.ExitCode -ne 0) { throw "Standard user addon failed with exit code $($addonProcess.ExitCode)" }
 } finally {
   if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
   if (Get-LocalUser -Name $name -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $name }

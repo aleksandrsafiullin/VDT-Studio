@@ -91,7 +91,9 @@ unsafe extern "system" {
     ) -> i32;
 }
 
-struct OwnedHandle(Handle);
+pub(crate) struct OwnedHandle {
+    pub(crate) raw: Handle,
+}
 
 pub struct FlushableDirectory(OwnedHandle);
 
@@ -102,7 +104,7 @@ pub struct CreatedFile<'a> {
 
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
-        unsafe { CloseHandle(self.0) };
+        unsafe { CloseHandle(self.raw) };
     }
 }
 
@@ -134,7 +136,7 @@ impl FlushableDirectory {
     pub fn create_file(&self, name: &str) -> io::Result<CreatedFile<'_>> {
         self.reject_reparse_point()?;
         let handle = open_relative(
-            self.0 .0,
+            self.0.raw,
             name,
             FILE_ACCESS,
             0,
@@ -148,13 +150,52 @@ impl FlushableDirectory {
     }
 
     fn reject_reparse_point(&self) -> io::Result<()> {
+        self.0.reject_reparse_point()
+    }
+
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn validate_private_dacl(&self) -> io::Result<()> {
+        self.reject_reparse_point()?;
+        crate::windows_security::validate_private_dacl(self.0.raw)
+    }
+}
+
+impl OwnedHandle {
+    #[cfg(vdt_storage_addon)]
+    pub(crate) unsafe fn adopt_win32(raw: Handle) -> io::Result<Self> {
+        if raw == -1isize as Handle {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self { raw })
+    }
+
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn open_directory(&self, name: &str) -> io::Result<Self> {
+        let directory = open_relative(
+            self.raw,
+            name,
+            0x0012_00a0,
+            FILE_SHARE_READ_WRITE,
+            FILE_OPEN,
+            FILE_DIRECTORY_FILE,
+        )?;
+        directory.reject_reparse_point()?;
+        Ok(directory)
+    }
+
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn open_flushable_directory(&self, name: &str) -> io::Result<FlushableDirectory> {
+        unsafe { FlushableDirectory::open_relative(self.raw, name) }
+    }
+
+    pub(crate) fn reject_reparse_point(&self) -> io::Result<()> {
         let mut info = FileAttributeTagInfo {
             attributes: 0,
             reparse_tag: 0,
         };
         if unsafe {
             GetFileInformationByHandleEx(
-                self.0 .0,
+                self.raw,
                 FILE_ATTRIBUTE_TAG_INFO_CLASS,
                 (&mut info as *mut FileAttributeTagInfo).cast(),
                 mem::size_of::<FileAttributeTagInfo>() as u32,
@@ -171,11 +212,9 @@ impl FlushableDirectory {
         }
         Ok(())
     }
-}
 
-impl OwnedHandle {
     fn flush(&self) -> io::Result<()> {
-        if unsafe { FlushFileBuffers(self.0) } == 0 {
+        if unsafe { FlushFileBuffers(self.raw) } == 0 {
             return Err(io::Error::last_os_error());
         }
         Ok(())
@@ -189,7 +228,7 @@ impl CreatedFile<'_> {
             let mut written = 0;
             if unsafe {
                 WriteFile(
-                    self.handle.0,
+                    self.handle.raw,
                     bytes.as_ptr().cast(),
                     count,
                     &mut written,
@@ -222,7 +261,7 @@ impl CreatedFile<'_> {
         let delete: u8 = 1;
         if unsafe {
             SetFileInformationByHandle(
-                self.handle.0,
+                self.handle.raw,
                 FILE_DISPOSITION_INFO_CLASS,
                 (&delete as *const u8).cast(),
                 mem::size_of::<u8>() as u32,
@@ -245,6 +284,12 @@ fn open_relative(
     disposition: u32,
     options: u32,
 ) -> io::Result<OwnedHandle> {
+    if parent.is_null() || parent == -1isize as Handle {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "expected a retained parent handle",
+        ));
+    }
     let component = encode_component(name)?;
     let byte_length = (component.len() * mem::size_of::<u16>()) as u16;
     let name = UnicodeString {
@@ -285,7 +330,7 @@ fn open_relative(
             unsafe { RtlNtStatusToDosError(result) } as i32,
         ));
     }
-    Ok(OwnedHandle(handle))
+    Ok(OwnedHandle { raw: handle })
 }
 
 fn encode_component(name: &str) -> io::Result<Vec<u16>> {
