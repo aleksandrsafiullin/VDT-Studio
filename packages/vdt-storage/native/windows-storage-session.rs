@@ -167,10 +167,13 @@ impl StorageSession {
                 for ancestor in ancestors {
                     ancestor.reject_reparse_point()?;
                 }
+                self.directory.validate_private_dacl()
             }
-            Namespace::Child(parent) => parent.validate()?,
+            Namespace::Child(parent) => {
+                parent.validate()?;
+                self.directory.validate_private_descendant()
+            }
         }
-        self.directory.validate_private_dacl()
     }
 }
 

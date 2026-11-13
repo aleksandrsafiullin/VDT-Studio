@@ -53,6 +53,10 @@ try {
   addon.close(child);
   fs.mkdirSync(path.join(privateRoot, "inherited-only"));
   assert.throws(() => addon.ensureChild(session, "inherited-only"), { code: "EACCES" });
+  const inherited = addon.openChild(session, "inherited-only");
+  addon.writeExclusive(inherited, "owned.dat", bytes);
+  addon.unlink(inherited, "owned.dat");
+  addon.close(inherited);
   addon.flush(session);
   assert.throws(() => fs.renameSync(privateRoot, privateRoot + ".moved"));
 } finally {

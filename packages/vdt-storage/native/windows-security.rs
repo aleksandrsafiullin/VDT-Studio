@@ -133,14 +133,18 @@ pub(crate) fn private_directory_descriptor() -> io::Result<Descriptor> {
 }
 
 pub fn validate_private_dacl(handle: Pointer) -> io::Result<()> {
-    validate_acl(handle, true)
+    validate_acl(handle, true, true)
 }
 
 pub fn validate_private_file(handle: Pointer) -> io::Result<()> {
-    validate_acl(handle, false)
+    validate_acl(handle, false, false)
 }
 
-fn validate_acl(handle: Pointer, directory: bool) -> io::Result<()> {
+pub fn validate_private_descendant(handle: Pointer) -> io::Result<()> {
+    validate_acl(handle, true, false)
+}
+
+fn validate_acl(handle: Pointer, directory: bool, require_protected: bool) -> io::Result<()> {
     let token = token_user()?;
     let user = token[0] as *const c_void;
     let mut descriptor = ptr::null_mut();
@@ -175,7 +179,7 @@ fn validate_acl(handle: Pointer, directory: bool) -> io::Result<()> {
     if unsafe { GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) } == 0 {
         return Err(io::Error::last_os_error());
     }
-    if directory && control & 0x1000 == 0 {
+    if require_protected && control & 0x1000 == 0 {
         return Err(denied(
             "storage directory DACL must be protected from inheritance",
         ));
@@ -223,6 +227,7 @@ fn validate_acl(handle: Pointer, directory: bool) -> io::Result<()> {
         }
         let expected_flags = if directory {
             ace.flags == ACCESS_INHERIT_BOTH
+                || (!require_protected && ace.flags == (ACCESS_INHERIT_BOTH | 0x10))
         } else {
             ace.flags == 0 || ace.flags == 0x10
         };

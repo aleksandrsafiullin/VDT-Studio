@@ -217,15 +217,15 @@ impl FlushableDirectory {
 
     #[cfg(vdt_storage_addon)]
     pub(crate) fn open_child(&self, name: &str) -> io::Result<Self> {
-        self.validate_private_dacl()?;
+        self.validate_private_descendant()?;
         let child = self.0.open_flushable_directory(name)?;
-        child.validate_private_dacl()?;
+        child.validate_private_descendant()?;
         Ok(child)
     }
 
     #[cfg(vdt_storage_addon)]
     pub(crate) fn ensure_child(&self, name: &str) -> io::Result<()> {
-        self.validate_private_dacl()?;
+        self.validate_private_descendant()?;
         self.0.ensure_private_directory(name)?;
         Ok(())
     }
@@ -347,6 +347,12 @@ impl FlushableDirectory {
 
     fn reject_reparse_point(&self) -> io::Result<()> {
         self.0.reject_reparse_point()
+    }
+
+    #[cfg(vdt_storage_addon)]
+    pub(crate) fn validate_private_descendant(&self) -> io::Result<()> {
+        self.reject_reparse_point()?;
+        crate::windows_security::validate_private_descendant(self.0.raw)
     }
 
     #[cfg(vdt_storage_addon)]
