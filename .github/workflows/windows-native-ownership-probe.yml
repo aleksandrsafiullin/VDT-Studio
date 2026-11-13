@@ -1,0 +1,43 @@
+name: Isolated Windows Native Ownership Fixture
+on:
+  push:
+    branches: ['codex/windows-native-probe-20261113-*']
+permissions:
+  contents: read
+jobs:
+  ownership:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Record environment and exercise native ownership
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force output/native-probe | Out-Null
+          $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+          $system = Get-CimInstance -ClassName Win32_OperatingSystem
+          [ordered]@{
+            os = $system.Caption
+            version = $system.Version
+            build = $system.BuildNumber
+            architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+            elevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+            node = (node -p 'JSON.stringify({version:process.version,arch:process.arch})' | ConvertFrom-Json)
+            rustc = (rustc --version)
+            commit = $env:GITHUB_SHA
+          } | ConvertTo-Json | Tee-Object output/native-probe/environment.json
+          node scripts/verify-windows-native-runtime.mjs 2>&1 | Tee-Object output/native-probe/ownership.log
+          $status = $LASTEXITCODE
+          $count = @(Get-ChildItem output/release/windows-native-checks -Filter 'owned-*' -ErrorAction SilentlyContinue).Count
+          "Retained owned temporary build directories: $count" | Tee-Object output/native-probe/cleanup.log
+          if ($status -ne 0) { exit $status }
+          if ($count -ne 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-native-ownership-evidence
+          path: output/native-probe
+          retention-days: 14
