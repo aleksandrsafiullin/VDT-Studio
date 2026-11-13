@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { VdtStorageError } from "./types";
 
@@ -43,7 +42,6 @@ export interface WindowsStorageEntry {
   reparse: boolean;
 }
 
-const loadNativeBinding = createRequire(import.meta.url);
 const bindingMethods = [
   "abiVersion", "open", "initialize", "openChild", "createChild", "ensureChild", "list", "removeEmptyChild",
   "read", "createFile", "writeFile", "flushFile", "fileIdentity", "writeExclusive",
@@ -65,6 +63,13 @@ export function openWindowsStorage(
   if (process.platform !== "win32" || process.arch !== "x64" || !path.isAbsolute(trustedRuntimeDirectory)) {
     throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Windows storage requires the bundled x64 native runtime.");
   }
+  // Resolve through Node at runtime so the standalone bundle cannot turn
+  // the installed native resource into a webpack context dependency.
+  const nodeModule = process.getBuiltinModule?.("node:module");
+  if (!nodeModule) {
+    throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Windows storage requires the bundled Node runtime loader.");
+  }
+  const loadNativeBinding = nodeModule.createRequire(path.join(trustedRuntimeDirectory, "windows-storage.manifest.json"));
   const binding = loadNativeBinding(path.join(trustedRuntimeDirectory, "windows-storage.node")) as WindowsStorageBinding;
   if (!binding || !bindingMethods.every((method) => typeof binding[method] === "function") || binding.abiVersion() !== 1) {
     throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Bundled Windows storage capability has an incompatible ABI.");

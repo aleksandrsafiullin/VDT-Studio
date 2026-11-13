@@ -89,7 +89,7 @@ function freeSpace(path) {
 function signature(path, env) {
   const script = "$s=Get-AuthenticodeSignature -LiteralPath $env:VDT_VERIFY_FILE; " +
     "@{status=$s.Status.ToString();thumbprint=$s.SignerCertificate.Thumbprint}|ConvertTo-Json -Compress";
-  return JSON.parse(run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+  return JSON.parse(run("pwsh.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
     env: { ...env, VDT_VERIFY_FILE: path }, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8"
   }));
 }
@@ -97,7 +97,7 @@ function signature(path, env) {
 function stageStorageAddon({ source, stage, native, env, thumbprint, unsigned }) {
   const output = join(stage, "storage-addon");
   const build = join(source, "packages/vdt-storage/native/build-windows-storage-addon.ps1");
-  run("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+  run("pwsh.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
     "-File", build, "-OutputDirectory", output], { cwd: source, env });
   const binary = join(native, "runtime/windows-storage.node");
   cpSync(join(output, "windows-storage.node"), binary);

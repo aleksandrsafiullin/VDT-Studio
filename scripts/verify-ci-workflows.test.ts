@@ -39,6 +39,11 @@ describe("workflow structure verification", () => {
     const root = await createFixture({ name: "package-desktop", transform: text => text.replace("          scripts/package-macos-alpha.sh", "          # scripts/package-macos-alpha.sh") });
     expect(() => verifyCiWorkflows(root)).toThrow(/executable gate/);
   });
+  it("requires an executable Windows standalone smoke gate", async () => {
+    const root = await createFixture({ name: "package-desktop", transform: text =>
+      text.replace("run: ./.github/scripts/windows-standalone-standard-user.ps1", "run: echo missing-smoke # ./.github/scripts/windows-standalone-standard-user.ps1") });
+    expect(() => verifyCiWorkflows(root)).toThrow(/standard-user standalone smoke gate/);
+  });
   it("requires retained native installers and failure evidence", async () => {
     const root = await createFixture({ name: "package-desktop", transform: text => text.replace("if: always()", "if: success()") });
     expect(() => verifyCiWorkflows(root)).toThrow(/retain installers/);

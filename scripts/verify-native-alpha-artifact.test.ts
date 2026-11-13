@@ -71,8 +71,8 @@ describe("native alpha artifact verification", () => {
   it("checks Windows Authenticode independently of the metadata signed flag", async () => {
     const f = await fixture("win32");
     verifyNativeAlphaArtifact(f.root, { sourceCommit, platform: "win32", command: f.command });
-    expect(f.command.mock.calls.some(([name]) => name === "powershell.exe")).toBe(true);
-    const command = (name: string, args: string[]) => { if (name === "powershell.exe") throw new Error("Authenticode failed"); return f.command(name, args); };
+    expect(f.command.mock.calls.some(([name]) => name === "pwsh.exe")).toBe(true);
+    const command = (name: string, args: string[]) => { if (name === "pwsh.exe") throw new Error("Authenticode failed"); return f.command(name, args); };
     expect(() => verifyNativeAlphaArtifact(f.root, { sourceCommit, platform: "win32", command })).toThrow(/Authenticode failed/);
   });
   it("rejects altered Windows storage addon bytes before loading the addon", async () => {

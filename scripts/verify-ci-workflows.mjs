@@ -119,6 +119,10 @@ export function verifyCiWorkflows(root = DEFAULT_ROOT) {
         const nativeSteps = job.steps ?? [];
         if (!nativeSteps.some((step) => step.run?.includes(builder) && step.run.includes("--allow-unsigned-validation"))) fail(`${name} must execute its native validation builder`);
         if (!nativeSteps.some((step) => step.run?.includes("scripts/verify-native-alpha-artifact.mjs") && step.run.includes("--source-commit") && step.run.includes("github.sha"))) fail(`${name} must verify its produced artifact against the source commit`);
+        if (name === "windows-candidate" && !nativeSteps.some((step) =>
+          step.shell === "pwsh" && /^\s*\.\/\.github\/scripts\/windows-standalone-standard-user\.ps1\s+.*-Application\s+output\/release\/native\/windows\/application\s+.*-SourceCommit\s+.*github\.sha/m.test(step.run ?? "") &&
+          step.if === undefined && step["continue-on-error"] !== true
+        )) fail("windows-candidate must execute the standard-user standalone smoke gate");
         if (!nativeSteps.some((step) => step.uses?.startsWith("actions/upload-artifact@") && step.if === "always()" && step.with?.path?.includes(extension) && step.with.path.includes(".json"))) fail(`${name} must retain installers and failure diagnostics`);
       }
     }

@@ -119,7 +119,7 @@ export function verifyNativeAlphaArtifact(directory, {
       fail("native Windows storage addon is not an x64 PE DLL");
     }
     if (metadata.signed) {
-      command("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", join(dirname(SCRIPT_PATH), "verify-windows-artifact-signatures.ps1"), "-ArtifactDirectory", output, "-InstallerFile", installerName]);
+      command("pwsh.exe", ["-NoProfile", "-NonInteractive", "-File", join(dirname(SCRIPT_PATH), "verify-windows-artifact-signatures.ps1"), "-ArtifactDirectory", output, "-InstallerFile", installerName]);
       trustVerified = !allowUnsignedValidation;
     }
   }

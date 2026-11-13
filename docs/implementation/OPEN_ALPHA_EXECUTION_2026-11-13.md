@@ -93,12 +93,14 @@ This ledger will be updated with implementation and integrated acceptance eviden
   flush, root-relative no-reparse traversal, exclusive creation and handle-based
   unlink on NTFS under a protected DACL and non-elevated user. The native adapter
   is wired into storage, migration, file, skill and packaged-startup paths.
-  The latest focused run passed 28/28, including actual private activation and
-  live/dead controller discovery. These fixtures establish implementation
-  readiness only. Production admission remains blocked until the complete
-  literal 65-case Sequence 3 matrix and its independent evidence review pass.
-  That matrix is now running; checksum/backup semantic failure handling and
-  Windows termination-evidence representation remain under review. See
+  The maintained native gate passed 34/34 and all 65 frozen Sequence 3 cases
+  at `2767958849bf` in run `43494781381`. Independent review recomputed the
+  evidence and accepted that exact native storage scope. Run `43496336060`
+  repeated 34/34 and 65/65 at `110c24c762c8`; retained raw evidence has no
+  runner failures, and cleanup reports no test account or staging retained.
+  The narrowly reviewed Windows termination/journal representation is recorded
+  without changing the frozen contract. Installed-app acceptance and actual
+  compiled Next startup remain pending. See
   [W7](OPEN_ALPHA_W7_2026-11-13.md) for exact probe commits/runs and limitations.
 - Integration: the first immutable dirty-source snapshot passed 3,771 unit
   tests with 11 skips (328 passing files, four skipped), one worker and no retry.
@@ -128,7 +130,9 @@ This ledger will be updated with implementation and integrated acceptance eviden
   fresh installation is proceeding on a separate disk with a private unattended
   account configuration. The original disk is detached and retained. The user
   accepted the fresh installer EULA and authorized routine VM configuration.
-  Account creation and guest readiness remain unverified. Windows Arm with
+  The fresh guest reached its desktop with local admin `vdtsetup`. Direct
+  password entry is handed to the user; the standard test account and Guest
+  Tools remain pending. Windows Arm with
   x64 emulation remains distinct from native x64 evidence.
 - Native Mac preparation: a valid Developer ID Application certificate and
   historical signed alpha.0/alpha.1 DMGs were found. The prior Tart QA scratch VM
@@ -137,8 +141,11 @@ This ledger will be updated with implementation and integrated acceptance eviden
   has now been provisioned as recorded below; notarization access remains open.
 - The user confirmed the old Mac VM may have been deleted and explicitly asked
   to retain both VM configurations for future work. A pinned separate Mac QA
-  baseline is provisioned and stopped on Corsair-SSD; first boot and guest OS
-  verification remain pending. The persistent, local-only VM registry is
+  baseline is provisioned and stopped on Corsair-SSD. A disposable retained
+  clone booted headlessly and was verified as Tahoe 26.6.2 (25G83), arm64,
+  with 18 GiB guest space; it is stopped. The source image had Gatekeeper
+  assessments disabled, so the clone must enable and verify them before app
+  acceptance. The persistent, local-only VM registry is
   `/Volumes/Corsair-SSD/VDT-Studio-QA/VM-REGISTRY.md`, with separate JSON records
   for each guest and a saved memory pointer. These environments are retained
   across task cleanup. Preserve the Mac baseline and clone it before installing
@@ -148,16 +155,32 @@ This ledger will be updated with implementation and integrated acceptance eviden
 - Alpha.2 packaging preparation: the prescribed sidecar generation and integrity
   checks passed under Node 24.15.0. Mac packaging now skips Tauri's duplicate web
   build and requires an Apple `Accepted` result before stapling. No alpha.2
-  installer has been built. Both native packages must use the final same SHA;
+  installer has been accepted. A Developer-ID-signed Mac build is running from
+  `64e12277ee5d`; Windows packaging has exposed and prompted fixes for Next
+  profile tracing, standalone dependency junction relocation and the child
+  PowerShell host. Compiled output also exposed a Webpack transformation of
+  the external native-addon loader; its correction requires actual bundled
+  Windows startup verification. Both native packages must use the final same SHA;
   unsigned Windows CI output is validation evidence, not signed distribution.
 
 The [candidate acceptance matrix](OPEN_ALPHA_ACCEPTANCE_MATRIX_2026-11-13.md)
 tracks the remaining installed-app gates. The selected candidate version is
 `0.1.0-alpha.2`; its commit and both installer hashes are still unfrozen.
 
-Only dedicated isolated diagnostic branches have been pushed:
+Only dedicated diagnostic/candidate branches have been pushed:
 `codex/windows-storage-probe-20261113-5c3a14` and
-`codex/windows-native-probe-20261113-ownership`. Their commits contain scoped
-probe/fixture code and workflows. Main and release tags/settings were unchanged;
+`codex/windows-native-probe-20261113-ownership`, followed by
+`codex/open-alpha-candidate-20261114-kugjukgp` and
+`codex/windows-package-validation-20261114-kugjukgp`. Candidate snapshots use an
+alternate Git index and do not stage or switch the shared checkout. Main and
+release tags/settings were unchanged;
 no public release or issue was created. The shared implementation remains in the
 existing checkout pending complete integration and review.
+
+The full local source gate at `2767958849bf` passed lint/typecheck/parser checks
+and ended with 3,797 tests passed, 45 skipped and one failure. The failure was
+the missing-bootstrap-backup error message; the corrected fail-closed wrapper
+passed three focused regressions and is included in `110c24c762c8`. This is not
+a passing aggregate result. Fresh source release workflow `43497496850` runs
+from `64e12277ee5d`. An earlier run with an incorrectly shared `VDT_DATA_DIR`
+was invalidated and its diagnostics retained separately.

@@ -19,9 +19,12 @@ aggregate and native acceptance are still in progress.
 Release tooling separates source/fixture results, packaged-byte/trust checks and
 installed user workflows. The isolated Windows process fixture and standard-user
 NTFS primitive checks provide real Windows evidence, but do not qualify the
-application. Native storage and private packaged startup are wired and have
-focused Windows evidence, but production admission remains blocked pending the
-complete 65-case fault matrix and independent evidence review. Neither current
+application. The reviewed native storage gate passed 34 focused tests and all
+65 frozen fault cases on standard-user Windows x64/NTFS at commit `2767958849bf`,
+and passed again at `110c24c762c8`. That acceptance is limited to the verified
+packaged runtime boundary. Compiled application startup and installed workflows
+remain unqualified; packaging checks have exposed additional build/runtime
+defects that are being corrected. Neither current
 signed installers nor the complete per-platform live-provider matrix are
 accepted yet. The next candidate version is `0.1.0-alpha.2`; its commit and
 installer hashes are not frozen.

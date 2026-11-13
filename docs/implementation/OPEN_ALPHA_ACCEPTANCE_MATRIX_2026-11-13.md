@@ -17,9 +17,9 @@ ledger identify interim source tests only.
 
 | Environment | Intended evidence | Current limitation |
 | --- | --- | --- |
-| macOS Apple Silicon | Signed/notarized candidate, clean profile, offline manual workflow, upgrade and live providers | Current changed candidate has not been built and installed. Configured deployment floor is macOS 14; it is not a tested support claim. |
-| Windows 11 Arm VM, x64 application under emulation | New standard-user installation, bundled runtime, persistence, UI and lifecycle | Separate VM is being installed on Corsair-SSD. Emulation evidence must be labelled; it does not establish native Windows x64 UI compatibility. |
-| Windows x64 GitHub runner | Native storage/ownership fixtures and later full installer build | Existing fixture runs are not installed-app qualification. Record standard-user versus elevated execution for every run. |
+| macOS Apple Silicon | Signed/notarized candidate, clean profile, offline manual workflow, upgrade and live providers | Candidate build in progress. Retained Tahoe 26.6.2 clone booted; enable its Gatekeeper assessments before acceptance. Configured deployment floor macOS 14 remains untested. |
+| Windows 11 Arm VM, x64 application under emulation | New standard-user installation, bundled runtime, persistence, UI and lifecycle | Separate SSD guest reached a local-account desktop; password handoff, standard account and Guest Tools remain pending. Emulation does not establish native Windows x64 UI compatibility. |
+| Windows x64 GitHub runner | Native storage/ownership fixtures and full installer build | Reviewed standard-user native gate passed 34 tests and all 65 frozen cases at `2767958849bf`, repeated at `110c24c762c8`. Compiled application startup and installed UI remain pending. |
 | Local source development | Documented fresh setup and usable offline project workflow on declared development platforms | Development-runtime evidence does not qualify a packaged app. |
 
 ## Required installed-app cases
@@ -53,8 +53,10 @@ operator repair and provider substitution do not count as passes.
 
 Source/unit/browser checks, native API fixtures and installed-app results are
 separate evidence categories. The full pre-review source snapshot passed 3,771
-tests with 11 skips; later corrections and the saved-copy feature still require
-their recorded integration checks. See the execution and independent-review
+tests with 11 skips. A later full source run at `2767958849bf` passed 3,797,
+skipped 45 and failed one missing-backup error-message regression; its focused
+fix passed, and fresh aggregate CI is in progress. Saved-copy browser coverage
+passed 2/2 separately. See the execution and independent-review
 ledgers for current results rather than treating this queue as a test report.
 
 The final decision remains **HOLD** until required source changes are reviewed,
