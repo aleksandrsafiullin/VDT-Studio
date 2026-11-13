@@ -13,7 +13,7 @@ export * from "./project-files";
 export * from "./skill-library";
 export * from "./skill-files";
 export {
-  openVdtDatabase, SqliteVdtDatabase, readProjectManifestFromDatabaseLocation
+  admitPackagedWindowsStorage, openVdtDatabase, SqliteVdtDatabase, readProjectManifestFromDatabaseLocation
 } from "./sqlite";
 export * from "./types";
 

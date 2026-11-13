@@ -224,9 +224,9 @@ impl StorageSession {
         crate::windows_directory_moves::unlink_expected(&self.directory, name, bytes)
     }
 
-    pub fn read(&self, name: &str, bytes: &mut [u8], durable: bool) -> io::Result<usize> {
+    pub fn read(&self, name: &str, maximum_bytes: usize, durable: bool) -> io::Result<Vec<u8>> {
         self.validate()?;
-        self.directory.read_verified(name, bytes, durable)
+        self.directory.read_verified(name, maximum_bytes, durable)
     }
 
     pub fn unlink_identified(&self, name: &str, identity: &[u8]) -> io::Result<()> {

@@ -36,6 +36,9 @@ call "$developer" -arch=x64 -host_arch=x64 >nul
 if errorlevel 1 exit /b 1
 cd /d "$out"
 cl /nologo /std:c11 /W4 /WX /LD /DNAPI_VERSION=8 /I"$headers" "$source" vdt_storage.lib node.lib advapi32.lib ntdll.lib ws2_32.lib userenv.lib bcrypt.lib ncrypt.lib secur32.lib shell32.lib ole32.lib /link /OUT:windows-storage.node
+if errorlevel 1 exit /b 1
+dumpbin /DEPENDENTS windows-storage.node > windows-storage-dependents.txt
+if errorlevel 1 exit /b 1
 "@ | Set-Content -Encoding ascii -LiteralPath $build
 & cmd.exe /d /c $build
 if ($LASTEXITCODE) { throw 'Windows storage Node-API shim linking failed' }

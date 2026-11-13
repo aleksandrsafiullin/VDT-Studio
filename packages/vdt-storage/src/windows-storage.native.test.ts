@@ -5,9 +5,10 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { productionVolumeProject } from "@vdt-studio/vdt-core";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vitest";
-import { __openWindowsVdtDatabaseForTests, openVdtDatabase, readProjectManifestFromDatabaseLocation } from "./sqlite";
+import { __openWindowsVdtDatabaseForTests, admitPackagedWindowsStorage, openVdtDatabase, readProjectManifestFromDatabaseLocation } from "./sqlite";
 import { openWindowsStorage } from "./windows-storage";
 import { scanProjectLocation } from "./project-files";
 
@@ -257,5 +258,47 @@ test.runIf(process.platform === "win32" && Boolean(runtime && parent))(
       try { expect(database.getProject("legacy")?.name).toBe("Legacy project"); }
       finally { database.close(); }
     } finally { fs.rmSync(workspace, { recursive: true, force: true }); }
+  }, 60_000
+);
+
+test.runIf(process.platform === "win32" && Boolean(runtime && parent))(
+  "admits only a verified packaged profile and rejects environment-only and tampered runtime requests",
+  () => {
+    const workspace = fs.mkdtempSync(path.join(parent!, "packaged-storage-"));
+    const profile = path.join(workspace, "profile");
+    const otherProfile = path.join(workspace, "other");
+    const runtimeCopy = runtime!;
+    const oldRuntime = process.env.VDT_WINDOWS_STORAGE_RUNTIME_DIR;
+    const oldMode = process.env.VDT_APP_MODE;
+    try {
+      const filename = "windows-storage.node";
+      const addon = path.join(runtimeCopy, filename);
+      const sha256 = createHash("sha256").update(fs.readFileSync(addon)).digest("hex");
+      const manifestPath = path.join(runtimeCopy, "windows-storage.manifest.json");
+      const manifest = { schemaVersion: 1, fileName: filename, architecture: "x64", nodeApiVersion: 8,
+        nodeVersion: process.versions.node, sha256 };
+      fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, sha256: "0".repeat(64) }));
+      process.env.VDT_WINDOWS_STORAGE_RUNTIME_DIR = runtimeCopy;
+      process.env.VDT_APP_MODE = "desktop";
+      expect(() => openVdtDatabase(workspace, { dataDir: profile })).toThrow(/reviewed Windows/);
+      expect(() => admitPackagedWindowsStorage(runtimeCopy, profile)).toThrow(/resource verification failed/);
+      expect(fs.existsSync(profile)).toBe(false);
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+      const admission = admitPackagedWindowsStorage(runtimeCopy, profile);
+      try {
+        const database = openVdtDatabase(workspace, { dataDir: profile });
+        try { expect(database.listProjects()).toEqual([]); }
+        finally { database.close(); }
+        expect(() => openVdtDatabase(workspace, { dataDir: otherProfile })).toThrow(/reviewed Windows/);
+        expect(fs.existsSync(otherProfile)).toBe(false);
+      } finally { admission.close(); }
+      expect(() => openVdtDatabase(workspace, { dataDir: profile })).toThrow(/reviewed Windows/);
+    } finally {
+      if (oldRuntime === undefined) delete process.env.VDT_WINDOWS_STORAGE_RUNTIME_DIR;
+      else process.env.VDT_WINDOWS_STORAGE_RUNTIME_DIR = oldRuntime;
+      if (oldMode === undefined) delete process.env.VDT_APP_MODE;
+      else process.env.VDT_APP_MODE = oldMode;
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
   }, 60_000
 );

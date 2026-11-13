@@ -460,12 +460,12 @@ export function __runStorageMigrationsForPlatformTests(
   runStorageMigrationsForPlatform(db, dataDir, options, platform);
 }
 
-export function __runNativeStorageMigrationsForTests(
+export function runStorageMigrationsForNativeProfile(
   db: DatabaseSync,
   dataDir: string,
   options: StorageMigrationOptions
 ): void {
-  if (process.platform !== "win32") throw new Error("Native Windows qualification is required.");
+  if (process.platform !== "win32") throw new Error("Native Windows storage is required.");
   getWindowsStorageForProfile(dataDir).validate();
   runStorageMigrationsForPlatform(db, dataDir, options, process.platform, true);
 }
@@ -475,9 +475,9 @@ function runStorageMigrationsForPlatform(
   dataDir: string,
   options: StorageMigrationOptions,
   platform: NodeJS.Platform,
-  nativeQualification = false
+  nativeProfile = false
 ): void {
-  if (!nativeQualification) assertSequence3PlatformCapability(platform);
+  if (!nativeProfile) assertSequence3PlatformCapability(platform);
   let sequence3Plan: ValidatedStorageProductionPlanV2;
   let sequence4Plan: ValidatedStorageProductionPlanV3;
   let sequence5Plan: ValidatedStorageProductionPlanV4;

@@ -352,9 +352,9 @@ impl FlushableDirectory {
     pub(crate) fn read_verified(
         &self,
         name: &str,
-        bytes: &mut [u8],
+        maximum_bytes: usize,
         durable: bool,
-    ) -> io::Result<usize> {
+    ) -> io::Result<Vec<u8>> {
         let access = 0x8012_0080 | if durable { 0x4000_0000 } else { 0 };
         let handle = open_relative(
             self.0.raw,
@@ -367,12 +367,15 @@ impl FlushableDirectory {
         let info = handle.validate_private_file()?;
         let length = usize::try_from(info.end_of_file)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid file size"))?;
-        if length > bytes.len() {
+        if length > maximum_bytes {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "file exceeds its byte bound",
             ));
         }
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(length).map_err(io::Error::other)?;
+        bytes.resize(length, 0);
         let mut offset = 0;
         while offset < length {
             let end = length.min(offset.saturating_add(64 * 1024));
@@ -395,7 +398,7 @@ impl FlushableDirectory {
             handle.flush()?;
             self.flush()?;
         }
-        Ok(length)
+        Ok(bytes)
     }
 
     /// Publish a verified same-directory stage, optionally replacing an

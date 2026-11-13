@@ -109,19 +109,16 @@ unsafe extern "C" fn vdt_storage_read(
     session: &Session,
     name: *const u8,
     name_len: usize,
-    bytes: *mut u8,
-    capacity: usize,
+    maximum: usize,
     durable: u8,
-    read: *mut usize,
+    context: *mut std::ffi::c_void,
+    callback: TextCallback,
 ) -> u32 {
     status(|| {
-        let output = if capacity == 0 {
-            &mut []
-        } else {
-            unsafe { slice::from_raw_parts_mut(bytes, capacity) }
-        };
-        let length = session.read(utf8(name, name_len)?, output, durable != 0)?;
-        unsafe { *read = length };
+        let bytes = session.read(utf8(name, name_len)?, maximum, durable != 0)?;
+        if unsafe { callback(context, bytes.as_ptr(), bytes.len()) } == 0 {
+            return Err(io::Error::other("could not return Windows storage bytes"));
+        }
         Ok(())
     })
 }

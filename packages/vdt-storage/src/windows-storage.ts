@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { VdtStorageError } from "./types";
@@ -13,7 +14,7 @@ interface WindowsStorageBinding {
   list(directory: object): WindowsStorageEntry[];
   removeEmptyChild(parent: object, name: string): void;
   ensureChild(parent: object, name: string): void;
-  read(directory: object, name: string, buffer: Buffer, durable: boolean): number;
+  read(directory: object, name: string, maximumBytes: number, durable: boolean): Buffer;
   createFile(directory: object, name: string): object;
   writeFile(file: object, bytes: Buffer): void;
   flushFile(file: object): void;
@@ -41,7 +42,7 @@ export interface WindowsStorageEntry {
   reparse: boolean;
 }
 
-const require = createRequire(import.meta.url);
+const loadNativeBinding = createRequire(import.meta.url);
 const bindingMethods = [
   "open", "initialize", "openChild", "createChild", "ensureChild", "list", "removeEmptyChild",
   "read", "createFile", "writeFile", "flushFile", "fileIdentity", "writeExclusive",
@@ -63,12 +64,41 @@ export function openWindowsStorage(
   if (process.platform !== "win32" || process.arch !== "x64" || !path.isAbsolute(trustedRuntimeDirectory)) {
     throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Windows storage requires the bundled x64 native runtime.");
   }
-  const binding = require(path.join(trustedRuntimeDirectory, "windows-storage.node")) as WindowsStorageBinding;
+  const binding = loadNativeBinding(path.join(trustedRuntimeDirectory, "windows-storage.node")) as WindowsStorageBinding;
   if (!binding || !bindingMethods.every((method) => typeof binding[method] === "function")) {
     throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Bundled Windows storage capability has an incompatible ABI.");
   }
   const session = initialize ? binding.initialize(profilePath) : binding.open(profilePath);
   return new WindowsStorageDirectory(binding, session);
+}
+
+export function verifyPackagedWindowsStorageRuntime(runtimeDirectory: string): void {
+  if (process.platform !== "win32" || process.arch !== "x64" || !path.isAbsolute(runtimeDirectory)) {
+    throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Windows storage requires the bundled x64 native runtime.");
+  }
+  try {
+    const manifestPath = path.join(runtimeDirectory, "windows-storage.manifest.json");
+    const addonPath = path.join(runtimeDirectory, "windows-storage.node");
+    const manifestStat = fs.lstatSync(manifestPath);
+    const addonStat = fs.lstatSync(addonPath);
+    if (!manifestStat.isFile() || !addonStat.isFile() ||
+        manifestStat.size > 4096 || addonStat.size > 64 * 1024 * 1024) {
+      throw new Error("Unexpected Windows storage resource file type or size.");
+    }
+    const manifest: unknown = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const expected = {
+      schemaVersion: 1, fileName: "windows-storage.node", architecture: "x64",
+      nodeApiVersion: 8, nodeVersion: process.versions.node,
+      sha256: createHash("sha256").update(fs.readFileSync(addonPath)).digest("hex")
+    };
+    if (typeof manifest !== "object" || manifest === null ||
+        Object.keys(manifest).length !== Object.keys(expected).length ||
+        !Object.entries(expected).every(([key, value]) => (manifest as Record<string, unknown>)[key] === value)) {
+      throw new Error("Unexpected Windows storage resource manifest.");
+    }
+  } catch {
+    throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Bundled Windows storage resource verification failed.");
+  }
 }
 
 export class WindowsStorageDirectory {
@@ -110,9 +140,7 @@ export class WindowsStorageDirectory {
     if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0 || maximumBytes > 0xffffffff) {
       throw new RangeError("Invalid Windows storage read bound.");
     }
-    const bytes = Buffer.alloc(maximumBytes);
-    const length = this.binding.read(this.session, name, bytes, durable);
-    return bytes.subarray(0, length);
+    return this.binding.read(this.session, name, maximumBytes, durable);
   }
 
   createFile(name: string): { write(bytes: Buffer): void; flush(): void; identity(): Buffer; close(): void } {
@@ -190,6 +218,32 @@ const profileRegistryKey = Symbol.for("vdt-studio.windows-storage.profiles.v1");
 type ProfileRegistry = Map<string, { directory: WindowsStorageDirectory; users: number }>;
 const processGlobal = globalThis as typeof globalThis & { [profileRegistryKey]?: ProfileRegistry };
 const admittedProfiles = processGlobal[profileRegistryKey] ??= new Map();
+
+const packagedProfileKey = Symbol.for("vdt-studio.windows-storage.packaged-profile.v1");
+interface PackagedProfileAdmission { profilePath: string; }
+const admissionGlobal = globalThis as typeof globalThis & { [packagedProfileKey]?: PackagedProfileAdmission };
+
+export function assertPackagedWindowsProfile(profilePath: string): void {
+  const admitted = admissionGlobal[packagedProfileKey];
+  if (!admitted || profileKey(admitted.profilePath) !== profileKey(profilePath)) {
+    throw new VdtStorageError(
+      "STORAGE_CAPABILITY_UNSUPPORTED",
+      "Sequence 3 migration requires reviewed Windows no-follow directory identity and durable directory fsync support.",
+      false
+    );
+  }
+}
+
+export function publishPackagedWindowsProfileAdmission(profilePath: string): () => void {
+  if (admissionGlobal[packagedProfileKey]) {
+    throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Packaged Windows storage already has an admitted profile.");
+  }
+  const admission = { profilePath };
+  admissionGlobal[packagedProfileKey] = admission;
+  return () => {
+    if (admissionGlobal[packagedProfileKey] === admission) delete admissionGlobal[packagedProfileKey];
+  };
+}
 
 function profileKey(profilePath: string): string {
   return path.win32.normalize(profilePath).toLowerCase();

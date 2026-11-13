@@ -20,10 +20,8 @@ try {
   assert.deepEqual(fs.readFileSync(path.join(privateRoot, name)), bytes);
   assert.throws(() => addon.writeExclusive(session, "CON.txt", bytes), { code: "EINVAL" });
   assert.throws(() => addon.writeExclusive(session, "embedded\0NUL", bytes), { code: "EINVAL" });
-  const destination = Buffer.alloc(bytes.length + 1);
-  assert.equal(addon.read(session, name, destination, true), bytes.length);
-  assert.deepEqual(destination.subarray(0, bytes.length), bytes);
-  assert.throws(() => addon.read(session, name, Buffer.alloc(1), false), { code: "EBADMSG" });
+  assert.deepEqual(addon.read(session, name, 256 * 1024 * 1024, true), bytes);
+  assert.throws(() => addon.read(session, name, 1, false), { code: "EBADMSG" });
   const stage = "addon-proof.stage";
   const final = "addon-proof.final";
   addon.writeExclusive(session, stage, bytes);

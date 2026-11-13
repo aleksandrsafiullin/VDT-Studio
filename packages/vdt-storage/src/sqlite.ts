@@ -2,13 +2,17 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { VdtStorageError } from "./types";
 import { flushDirectory as fsyncDirectory, writeExclusiveDurable } from "./durable-files";
 import type { VdtProject } from "@vdt-studio/vdt-core";
 import { AtomicRevisionStore } from "./atomic-revisions";
 import { defined, decodeJson, encodeJson, toIso, toMillis } from "./json";
-import { runStorageMigrations, __runNativeStorageMigrationsForTests } from "./migrations";
-import { acquireWindowsStorageProfile, openWindowsStorage, removeWindowsStorageTree, withWindowsStorageParent, writeWindowsStorageFile, type WindowsStorageDirectory } from "./windows-storage";
+import { runStorageMigrations, runStorageMigrationsForNativeProfile } from "./migrations";
+import {
+  acquireWindowsStorageProfile, assertPackagedWindowsProfile, openWindowsStorage,
+  publishPackagedWindowsProfileAdmission, removeWindowsStorageTree, retainWindowsStorageForProfile,
+  verifyPackagedWindowsStorageRuntime, withWindowsStorageParent, writeWindowsStorageFile,
+  type WindowsStorageDirectory
+} from "./windows-storage";
 import { assertStoragePlatformCapability } from "./storage-platform";
 import { deleteProjectAgentData } from "./project-deletion";
 import {
@@ -54,34 +58,58 @@ import type {
 type Row = Record<string, unknown>;
 
 export function openVdtDatabase(projectRoot: string, options: OpenVdtDatabaseOptions = {}): VdtDatabase {
-  assertStoragePlatformCapability(process.platform);
-  return openVdtDatabaseWithProfile(projectRoot, options);
+  const dataDir = resolveRequestedDataDir(projectRoot, options);
+  if (process.platform !== "win32") {
+    assertStoragePlatformCapability(process.platform);
+    return openVdtDatabaseWithProfile(dataDir, options);
+  }
+  assertPackagedWindowsProfile(dataDir);
+  return openVdtDatabaseWithProfile(dataDir, options, retainWindowsStorageForProfile(dataDir));
+}
+
+/** Called by the activated packaged server after native host verification. */
+export function admitPackagedWindowsStorage(runtimeDirectory: string, profilePath: string): { close(): void } {
+  verifyPackagedWindowsStorageRuntime(runtimeDirectory);
+  const retained = acquireWindowsStorageProfile(profilePath, () => openWindowsStorage(runtimeDirectory, profilePath, true));
+  let clearAdmission: (() => void) | undefined;
+  try {
+    const database = openVdtDatabaseWithProfile(profilePath, {}, retainWindowsStorageForProfile(profilePath));
+    database.close();
+    clearAdmission = publishPackagedWindowsProfileAdmission(profilePath);
+  } catch (error) {
+    retained.release();
+    throw error;
+  }
+  return { close() {
+    clearAdmission?.();
+    retained.release();
+  } };
 }
 
 /** Native qualification only. Intentionally absent from the package entrypoint. */
 export function __openWindowsVdtDatabaseForTests(projectRoot: string, options: OpenVdtDatabaseOptions, runtimeDirectory: string): VdtDatabase {
   if (process.platform !== "win32") throw new Error("Native Windows qualification is required.");
-  return openVdtDatabaseWithProfile(projectRoot, options, runtimeDirectory);
+  const dataDir = resolveRequestedDataDir(projectRoot, options);
+  return openVdtDatabaseWithProfile(dataDir, options,
+    acquireWindowsStorageProfile(dataDir, () => openWindowsStorage(runtimeDirectory, dataDir, true)));
 }
 
-function openVdtDatabaseWithProfile(projectRoot: string, options: OpenVdtDatabaseOptions, qualificationRuntime?: string): VdtDatabase {
-  const requestedDataDir = options.dataDir ?? process.env.VDT_DATA_DIR ?? path.join(projectRoot, ".vdt");
-  const profile = process.platform === "win32"
-    ? acquireWindowsStorageProfile(requestedDataDir, () => {
-        const runtime = qualificationRuntime ?? process.env.VDT_WINDOWS_STORAGE_RUNTIME_DIR;
-        if (!runtime || (!qualificationRuntime && process.env.VDT_APP_MODE !== "desktop")) {
-          throw new VdtStorageError("STORAGE_CAPABILITY_UNSUPPORTED", "Windows storage requires the verified desktop runtime.");
-        }
-        return openWindowsStorage(runtime, requestedDataDir, true);
-      })
-    : undefined;
+function resolveRequestedDataDir(projectRoot: string, options: OpenVdtDatabaseOptions): string {
+  return options.dataDir ?? process.env.VDT_DATA_DIR ?? path.join(projectRoot, ".vdt");
+}
+
+function openVdtDatabaseWithProfile(
+  requestedDataDir: string,
+  options: OpenVdtDatabaseOptions,
+  profile?: { directory: WindowsStorageDirectory; release: () => void }
+): VdtDatabase {
   let db: DatabaseSync | undefined;
   try {
     const dataDir = profile ? path.resolve(requestedDataDir) : ensureProjectLocation(requestedDataDir);
     const databasePath = profile ? profile.directory.sqlitePath() : path.join(dataDir, "app.sqlite");
     if (!profile) assertInside(dataDir, databasePath);
     db = new DatabaseSync(databasePath, { timeout: options.busyTimeoutMs ?? 5_000 });
-    const migrate = qualificationRuntime ? __runNativeStorageMigrationsForTests : runStorageMigrations;
+    const migrate = profile ? runStorageMigrationsForNativeProfile : runStorageMigrations;
     migrate(db, dataDir, {
       now: options.now ?? (() => new Date().toISOString()),
       busyTimeoutMs: options.busyTimeoutMs ?? 5_000,

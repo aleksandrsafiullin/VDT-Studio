@@ -9,11 +9,11 @@ extern uint32_t vdt_storage_open_child(StorageSession *, const char *, size_t, u
 extern uint32_t vdt_storage_write(StorageSession *, const char *, size_t, const void *, size_t);
 extern uint32_t vdt_storage_publish(StorageSession *, const char *, size_t, const char *, size_t, const void *, size_t);
 extern uint32_t vdt_storage_replace(StorageSession *, const char *, size_t, const char *, size_t, const void *, size_t, const void *, size_t);
-extern uint32_t vdt_storage_read(StorageSession *, const char *, size_t, void *, size_t, uint8_t, size_t *);
+typedef uint8_t (*TextCallback)(void *, const char *, size_t);
+extern uint32_t vdt_storage_read(StorageSession *, const char *, size_t, size_t, uint8_t, void *, TextCallback);
 extern uint32_t vdt_storage_move_entry(StorageSession *, const char *, size_t, StorageSession *, const char *, size_t, const void *, size_t, uint8_t);
 extern uint32_t vdt_storage_unlink_expected(StorageSession *, const char *, size_t, const void *, size_t);
 typedef uint8_t (*EntryCallback)(void *, const char *, size_t, uint8_t, uint8_t);
-typedef uint8_t (*TextCallback)(void *, const char *, size_t);
 extern uint32_t vdt_storage_editor_path(StorageLock *, void *, TextCallback);
 extern uint32_t vdt_storage_editor_directory_path(StorageSession *, void *, TextCallback);
 extern uint32_t vdt_storage_sqlite_path(StorageSession *, const char *, size_t, void *, TextCallback);
@@ -255,31 +255,36 @@ static napi_value unlink_expected(napi_env env, napi_callback_info info) {
   return result(env, error);
 }
 
+typedef struct {
+  napi_env env;
+  napi_value buffer;
+} ReadResult;
+
+static uint8_t return_read_buffer(void *context, const char *bytes, size_t length) {
+  ReadResult *output = context;
+  return napi_create_buffer_copy(output->env, length, bytes, NULL, &output->buffer) == napi_ok;
+}
+
 static napi_value read_file(napi_env env, napi_callback_info info) {
-  napi_value args[4], result_value;
-  size_t argc = 4, length, capacity, read = 0;
+  napi_value args[4];
+  size_t argc = 4, length;
   char name[1021];
-  bool is_buffer = false, durable = false;
-  void *bytes;
+  double maximum;
+  bool durable = false;
   if (napi_get_cb_info(env, info, &argc, args, NULL, NULL) != napi_ok || argc != 4 ||
-      napi_get_value_string_utf8(env, args[1], NULL, 0, &length) != napi_ok ||
-      length == 0 || length >= sizeof(name) ||
-      napi_get_value_string_utf8(env, args[1], name, sizeof(name), &length) != napi_ok ||
-      napi_is_buffer(env, args[2], &is_buffer) != napi_ok || !is_buffer ||
-      napi_get_buffer_info(env, args[2], &bytes, &capacity) != napi_ok || capacity > UINT32_MAX ||
+      !read_name(env, args[1], name, &length) ||
+      napi_get_value_double(env, args[2], &maximum) != napi_ok ||
+      !(maximum >= 0 && maximum <= UINT32_MAX && maximum == (uint32_t)maximum) ||
       napi_get_value_bool(env, args[3], &durable) != napi_ok) {
-    return fail(env, "EINVAL", "Expected a session, file name, bounded Buffer, and flush flag");
+    return fail(env, "EINVAL", "Expected a session, file name, byte bound, and flush flag");
   }
   Session *session = get_session(env, args[0]);
   if (session == NULL || session->native == NULL) {
     return fail(env, "EBADF", "Expected an open Windows storage session");
   }
-  uint32_t error = vdt_storage_read(session->native, name, length, bytes, capacity, durable ? 1 : 0, &read);
-  if (error != 0) return win32_fail(env, error);
-  if (napi_create_uint32(env, (uint32_t)read, &result_value) != napi_ok) {
-    return fail(env, "EIO", "Could not return Windows storage read result");
-  }
-  return result_value;
+  ReadResult output = {env, NULL};
+  uint32_t error = vdt_storage_read(session->native, name, length, (size_t)maximum, durable ? 1 : 0, &output, return_read_buffer);
+  return error == 0 ? output.buffer : win32_fail(env, error);
 }
 
 typedef struct {
