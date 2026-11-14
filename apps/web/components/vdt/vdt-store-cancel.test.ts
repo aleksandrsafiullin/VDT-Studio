@@ -56,6 +56,22 @@ beforeEach(() => {
 afterEach(() => { store.getState().startNewAgentChat(); });
 
 describe("ordinary Cancel and Smart availability", () => {
+  it("strips legacy copy progress from hydrated active activity and reselected history", async () => {
+    const key = "vdt-studio-state";
+    const persisted = JSON.parse(memory.get(key)!);
+    const activity = { ...persisted.state.generateActivity, savedCopyOutcome: "Creating saved copy…" };
+    persisted.state.generateActivity = activity;
+    persisted.state.agentChatHistory = [{ ...persisted.state.agentChatHistory[0], activity }];
+    memory.set(key, JSON.stringify(persisted));
+    await store.persist.rehydrate();
+    expect(store.getState().generateActivity?.savedCopyOutcome).toBeUndefined();
+    expect(store.getState().openAgentChat("paused_agent")).toBe(true);
+    expect(store.getState().generateActivity?.savedCopyOutcome).toBeUndefined();
+    store.setState({ generateActivity: { ...activity, savedCopyOutcome: "The copy failed." } });
+    await store.persist.rehydrate();
+    expect(store.getState().generateActivity?.savedCopyOutcome).toBe("The copy failed.");
+  });
+
   it("keeps compatibility-agent Cancel usable without requiring a Supervisor cleanup receipt", async () => {
     const run = store.getState().agentRun!;
     store.setState({ agentRun: { ...run, executionSummary: { ...run.executionSummary!, engineAdapterId: "http-compatibility-v1" } } });
@@ -112,7 +128,7 @@ describe("ordinary Cancel and Smart availability", () => {
     expect(smartKpiBlockedReason(store.getState())).toBeUndefined();
   });
 
-  it.each(["clean", "dirty", "late edit"] as const)("keeps the original scoped when opening a saved copy from a %s draft", async variant => {
+  it.each(["clean", "dirty", "late edit", "scope changed"] as const)("keeps the original scoped when opening a saved copy from a %s draft", async variant => {
     const interrupted = { ...snapshot("needs_user_input"), status: "recovery_required" as const };
     store.getState().applyAgentGraphPatch(interrupted);
     const source = store.getState();
@@ -134,6 +150,13 @@ describe("ordinary Cancel and Smart availability", () => {
     const mockFetch = vi.fn()
       .mockImplementationOnce(async () => {
         if (variant === "late edit") store.getState().updateNodeBaselineValue("target", 99);
+        if (variant === "scope changed") {
+          expect(store.getState().openAgentChat(interrupted.runId)).toBe(true);
+          expect(store.getState().generateActivity?.savedCopyOutcome).toBe("Creating saved copy…");
+          await store.getState().continueFromSavedCopy();
+          expect(mockFetch).toHaveBeenCalledTimes(1);
+          store.setState(current => ({ workspace: { ...current.workspace, activeVdtId: "elsewhere" } }));
+        }
         return Response.json({ ok: true, vdtId: "copy" });
       })
       .mockResolvedValueOnce(Response.json({ ok: true, schemaVersion: "vdt_load_response.v1", vdt, head, runtimeState,
@@ -141,6 +164,13 @@ describe("ordinary Cancel and Smart availability", () => {
     vi.stubGlobal("fetch", mockFetch);
     try {
       await store.getState().continueFromSavedCopy();
+      if (variant === "scope changed") {
+        expect(store.getState().workspace.activeVdtId).toBe("elsewhere");
+        expect(store.getState().generateActivity?.savedCopyOutcome).toBeUndefined();
+        expect(store.getState().pendingIncomingKpiRestart?.runId).toBe(interrupted.runId);
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        return;
+      }
       if (variant !== "clean") {
         expect(store.getState().workspace.activeVdtId).toBe("original");
         expect(kpiCanonicalJson(store.getState().project)).not.toBe(kpiCanonicalJson(source.project));

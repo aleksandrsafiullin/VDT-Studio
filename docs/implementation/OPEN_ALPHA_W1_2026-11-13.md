@@ -69,10 +69,36 @@ The mark now captures active scope, graph reference/revision, revision base and
 both pending save/create journals. Metadata refresh alone is tolerated; protected
 identity changes still reject and consume the mark. Independent review accepted
 the source and independently passed 12 focused navigation/agent-revision tests
-on Node 24. Product/browser/package refresh remains pending for this delta.
+on Node 24. Exact `4001c2e` packages include this correction. Focused installed
+Home and unsaved-draft cold restoration passed on Tahoe and Windows Arm/x64
+emulation. The aggregate source gate failed two separate WebKit timing cases;
+the correction has not received a complete passing source gate at that commit.
 This race is not established as the cause of the isolated Windows cancelled-
 editor Home observation; normal clean editor Home later passed there.
 
 Installed Windows 7a failed End interrupted run after controller termination. The read-only diagnostic reported an owner-less epoch-one token, a five-second PowerShell identity lookup that returned ETIMEDOUT, and ESRCH for the terminated controller PID. A PID alone cannot attach identity to that stored run. The owner-less run retains the saved-copy path.
 
 New Windows runs use version 2 owner evidence from the admitted native addon. The Windows path validates the machine and boot GUIDs and hashes them before persistence. It avoids the PowerShell subprocess. Reboot proof compares equal token versions only, so a native boot GUID cannot be mistaken for a reboot when compared to an older CIM timestamp. Four portable identity tests passed, and the Windows-only test awaits the verified native addon in the standard-user lane.
+
+## Transient saved-copy progress follow-up
+
+Installed Windows `4001c2e` displayed "Creating saved copy…" after selecting old
+history before a new click. A passive trace of the subsequent actual click
+recorded a successful idempotent POST in 1,210 ms and VDT GET in 262 ms. The
+earlier d4 two-minute UI observation has no request timing and is not proof of
+a backend copy hang. The separate Windows Running End delay remains unexplained.
+
+The editor now keeps copy progress process-local. Persistence, cold hydration
+and history sanitize legacy progress; a genuine active request can restore its
+indicator when the same run is reselected. The duplicate guard remains through
+workspace refresh, while settlement clears the indicator even after a scope
+change. Real outcome/error text and source stop markers are preserved.
+
+The new hydration regression fails against exact `4001c2e`, then passes when
+only the fixed store replaces the old source. Both use the same test in isolated
+Node 24 archives. Independent review accepted all 11 focused cancellation/copy
+tests, including history reselection, duplicate suppression and scope-change
+cleanup. [Red/green evidence](../../output/release/audits/w1-progress-before-after.3vYJjPH5/)
+retains logs and source hashes; temporary stages were removed. The next candidate
+requires the unchanged full source gate and refreshed installed checks on both
+platforms. Ordinary Windows dirty-copy behavior remains unverified.

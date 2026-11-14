@@ -212,6 +212,7 @@ export interface GenerateActivityState {
   appMode: ReturnType<typeof resolveVdtAppMode>;
   canCancel: boolean;
   cancelRequested: boolean;
+  savedCopyInFlight?: true | undefined;
   savedCopyOutcome?: string | undefined;
   message?: string | undefined;
   summary?: string | undefined;
@@ -1201,13 +1202,33 @@ function historyEntryFromActivity(
   };
 }
 
+const activeSavedCopies = new Set<string>();
+const SAVED_COPY_PROGRESS = "Creating saved copy…";
+
+function withoutSavedCopyProgress(activity: GenerateActivityState): GenerateActivityState {
+  return activity.savedCopyInFlight || activity.savedCopyOutcome === SAVED_COPY_PROGRESS
+    ? { ...activity, savedCopyInFlight: undefined, savedCopyOutcome: undefined }
+    : activity;
+}
+
+function withLiveSavedCopyProgress(activity: GenerateActivityState): GenerateActivityState {
+  const saved = withoutSavedCopyProgress(activity);
+  return activeSavedCopies.has(saved.runId)
+    ? { ...saved, savedCopyInFlight: true, savedCopyOutcome: SAVED_COPY_PROGRESS }
+    : saved;
+}
+
+function withoutSavedCopyHistoryProgress(history: AgentChatHistoryEntry[]): AgentChatHistoryEntry[] {
+  return history.map(entry => ({ ...entry, activity: withoutSavedCopyProgress(entry.activity) }));
+}
+
 function upsertAgentChatHistory(
   history: AgentChatHistoryEntry[],
   activity: GenerateActivityState | undefined,
   activeVdtId?: string | undefined
 ): AgentChatHistoryEntry[] {
   if (!activity) return history;
-  const next = historyEntryFromActivity(activity, activeVdtId);
+  const next = historyEntryFromActivity(withoutSavedCopyProgress(activity), activeVdtId);
   const withoutDuplicate = history.filter((entry) => entry.runId !== next.runId);
   const sameScope = [next, ...withoutDuplicate.filter((entry) => entry.vdtId === next.vdtId)]
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
@@ -3172,7 +3193,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         activeAgentEventUnsubscribe = undefined;
         set((current) => ({
           agentChatHistory: upsertAgentChatHistory(current.agentChatHistory, current.generateActivity, current.workspace.activeVdtId),
-          generateActivity: entry.activity,
+          generateActivity: withLiveSavedCopyProgress(entry.activity),
           activeAgentRunId: active ? runId : undefined,
           agentWorkspaceDraft: undefined,
           agentRun: snapshot,
@@ -3760,13 +3781,14 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           || source.workspace.isMutating || source.workspace.isLoading || source.workspace.pendingRevisionCommit
           || source.smartKpiOperation || incomingKpiRestarts.has(runId)) return;
         const scopeStillOpen = () => get().workspace.activeVdtId === vdtId && get().workspace.activeProjectId === projectId;
-        const showOutcome = (savedCopyOutcome: string) => set(current => ({
+        const showOutcome = (savedCopyOutcome: string, savedCopyInFlight?: true) => set(current => ({
           generateActivity: current.generateActivity?.runId === runId
-            ? { ...current.generateActivity, savedCopyOutcome }
+            ? { ...current.generateActivity, savedCopyOutcome, savedCopyInFlight }
             : current.generateActivity
         }));
         incomingKpiRestarts.add(runId);
-        showOutcome("Creating saved copy…");
+        activeSavedCopies.add(runId);
+        showOutcome(SAVED_COPY_PROGRESS, true);
         try {
           const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/saved-copy`, {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -3776,13 +3798,19 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           if (!response.ok || !result.vdtId) throw new Error(result.error?.message ?? "The saved VDT could not be copied.");
           if (!scopeStillOpen()) return;
           if (!(await get().selectWorkspaceVdt(result.vdtId, { expectedProjectId: projectId, savedCopySource: source })) && scopeStillOpen()) {
+            activeSavedCopies.delete(runId);
             showOutcome("The saved copy is in this project's VDT list. Your open draft was kept.");
             await get().refreshWorkspace({ scopedProjectId: projectId }).catch(() => undefined);
           }
         } catch (error) {
+          activeSavedCopies.delete(runId);
           if (scopeStillOpen()) showOutcome(error instanceof Error ? error.message : "The saved VDT could not be copied.");
         } finally {
+          activeSavedCopies.delete(runId);
           incomingKpiRestarts.delete(runId);
+          set(current => current.generateActivity?.runId === runId && current.generateActivity.savedCopyInFlight
+            ? { generateActivity: withoutSavedCopyProgress(current.generateActivity) }
+            : {});
         }
       },
       cancelAgentRun: async () => {
@@ -4466,8 +4494,8 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         executionSettings: persistedExecutionSettings(state.executionSettings),
         removedCliAgentIds: state.removedCliAgentIds,
         ui: state.ui,
-        generateActivity: state.generateActivity,
-        agentChatHistory: state.agentChatHistory,
+        generateActivity: state.generateActivity && withoutSavedCopyProgress(state.generateActivity),
+        agentChatHistory: withoutSavedCopyHistoryProgress(state.agentChatHistory),
         activeAgentRunId: state.activeAgentRunId,
         agentRun: state.agentRun,
         agentEvents: state.agentEvents,
@@ -4507,7 +4535,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         };
         const savedActivity = persisted?.generateActivity;
         const generateActivity = savedActivity ? {
-          ...savedActivity,
+          ...withLiveSavedCopyProgress(savedActivity),
           cancelRequested: false,
           canCancel: isCancellableActivityStatus(savedActivity.status)
         } : undefined;
@@ -4537,7 +4565,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
           removedCliAgentIds,
           ui,
           generateActivity,
-          agentChatHistory: persisted?.agentChatHistory ?? [],
+          agentChatHistory: withoutSavedCopyHistoryProgress(persisted?.agentChatHistory ?? []),
           activeAgentRunId,
           agentRun,
           agentEvents: persisted?.agentEvents ?? [],

@@ -160,3 +160,17 @@ RA-16, the Sonoma minimum-OS environment failure, lack of installed native x64 U
 ### Home navigation intent follow-up
 
 The one-shot navigation guard now compares saved scope, graph identity and edit revision, revision base, and pending save and create journals. Unrelated workspace metadata refreshes can replace the workspace wrapper without invalidating that intent. Changed draft authority still refuses navigation and consumes the stale intent. The reviewer independently ran 12 focused navigation and revision tests successfully on Node 24. The source race was confirmed by a focused before/after regression. Its involvement in the isolated cancelled-editor Windows observation remains unproven.
+
+### Native Windows gate for candidate 4001c2e
+
+Accepted the native gate for exact commit `4001c2e5d3e47fa036b4b53f533fe8003e6e4a0c` on Windows x64, Node 24.22.2 and private local NTFS. All 34 tests passed across four files. The reviewer confirmed the non-elevated token, matching owner and protected DACL, and recomputed all 65 frozen cases from the retained raw observations. The evidence SHA-256 was `76ed1ae94e0cd988b14507156f2f8306df3328df362db2cba9ba8c612b6305d6`. The archive matched workflow SHA-256 `142829304e96e6ff367313808350c6176a9b7ba47cb695c3282fad52b2d0b84e`. Cleanup reported no retained standard-user stage or account. Installed qualification remains separate. [Maintained Windows run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43540621897)
+
+### Failed source gate for candidate 4001c2e
+
+The source release verification and build stages passed, then the browser gate recorded 164 expected and two unexpected results, with zero flaky or skipped. The WebKit BYOK case timed out waiting for the Revenue Driver Model heading before its reload assertions. The WebKit version history case timed out waiting for the history button after returning to the project and reopening the VDT. Neither failing assertion is the Home intent or cold draft restoration check. The evidence does not establish a cause. The dedicated saved-copy stage did not execute. The retained Playwright report and traces came from the archive verified against SHA-256 `2b46b9a1f8198b4b5a6edfb1c1a3aaca0bcd502a5761b6d47b5b424c53476745`. The exact source gate failed. [Source verification run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43540657748)
+
+### Saved-copy progress and WebKit follow-up
+
+Accepted the transient saved-copy progress correction at source. A process-local copy operation can still show progress after reopening its history entry. Cold hydration and persisted history remove stale progress, scope changes cannot strand the in-flight indicator, and settled errors and cancellation markers remain intact. The independent Node 24 run passed all 11 focused tests. The retained before/after run at `output/release/audits/w1-progress-before-after.3vYJjPH5` failed the same hydration assertion against exact `4001c2e` and passed with only the corrected store implementation. The stale label does not establish a cause for earlier copy or Running latency.
+
+The exact `4001c2e` production build passed both previously failing WebKit cases locally with one worker and again with two workers, with zero retries and unchanged limits. Evidence is retained under `output/release/audits/2026-11-14-alpha2-integration.ovcmf2lk/webkit-4001-local/`. The comparator established no cause for the original Linux CI failures and leaves that aggregate outcome failed. Its saved-copy stage remains unexecuted.

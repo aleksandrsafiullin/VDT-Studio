@@ -17,6 +17,11 @@ retained sources block publication of the copy. Source review and regression
 checks passed; browser and installed qualification are tracked separately.
 See [W1](implementation/OPEN_ALPHA_W1_2026-11-13.md).
 
+Saved-copy progress describes only a request active in the current application
+process. Reopening the application or selecting an old chat clears a persisted
+"Creating saved copy…" message. Completed notices and errors remain available;
+reselecting the same chat during an actual request retains its live progress.
+
 **Settings → Help & feedback** provides setup/report addresses and a local
 diagnostic workflow: prepare, preview, then download the exact reviewed snapshot.
 No report is sent automatically. The report uses an allowlist of build/platform,

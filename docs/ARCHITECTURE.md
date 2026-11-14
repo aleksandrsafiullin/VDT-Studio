@@ -17,6 +17,11 @@ prevent activation of an incomplete copy. Replays require a committed creation
 receipt under a reserved command namespace and the immutable initial revision,
 not caller-controlled metadata alone. Source stop markers remain scoped to their
 VDTs, and switching to a copy checks the editor's revision and unsaved state.
+Copy progress is process-local and distinct from the duplicate-request guard.
+Persistence and history strip transient progress, including the legacy message;
+hydration and history selection restore it only for a matching live request.
+Settlement removes only that run's transient indicator and preserves completed
+notices, errors and the original stop marker. This changes no storage authority.
 
 `data-harness` runs supported file decoders in a verified generated child asset,
 with resource admission, a host deadline and a separate watchdog. CLI and native

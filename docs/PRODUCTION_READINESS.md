@@ -1,153 +1,85 @@
 # Production Readiness
 
-## GitHub, Mac and Windows remediation (2026-11-13)
+## GitHub, Mac and Windows remediation (2026-11-14)
 
-The current user-confirmed feedback-release scope includes the public repository
-and both desktop platforms. Its decision remains **HOLD**. Follow the
-[execution ledger](implementation/OPEN_ALPHA_EXECUTION_2026-11-13.md) and
+The user-confirmed feedback-release scope includes the public repository and both
+Mac and Windows applications. The decision remains **HOLD**. The
+[execution ledger](implementation/OPEN_ALPHA_EXECUTION_2026-11-13.md),
+[acceptance matrix](implementation/OPEN_ALPHA_ACCEPTANCE_MATRIX_2026-11-13.md) and
 [independent review](implementation/OPEN_ALPHA_INDEPENDENT_REVIEW_2026-11-13.md)
-for current integration status; the [baseline audit](implementation/OPEN_ALPHA_READINESS_2026-11-13.md)
-retains its original findings and evidence.
+separate source, native fixture, compiled-package and installed evidence. The
+[baseline audit](implementation/OPEN_ALPHA_READINESS_2026-11-13.md) retains the
+original findings. No public release has been made.
 
-Source recovery for newly owned structured runs has independent scoped
-acceptance. Legacy or ambiguous runs retain their history and can use a verified
-saved copy when committed source data is available. That continuation has source
-review and a passing two-case production-browser gate at `d4d29484ba2a`. Scoped
-Mac and Windows question process-loss checks passed; remaining Windows states
-are described below. Parser isolation, bounded uploads and
-private local diagnostic preview/export have source and browser acceptance.
+The latest packaged checkpoint is `4001c2e5d3e47fa036b4b53f533fe8003e6e4a0c`,
+version `0.1.0-alpha.2`. Both packages passed resource/integrity checks. The Mac
+DMG is Developer-ID signed but unnotarized; the Windows installer is unsigned.
+SCP and read-only local media transfers do not qualify public-download trust.
+The Windows standard-user x64/NTFS lane independently passed 34 native tests and
+all 65 frozen cases. Package CI verified actual compiled Next storage, one-use
+session bootstrap, native v2 owner issuance matching the server PID, terminal
+cleanup and bundled sidecar activation/EOF. This is not installed native x64 UI
+or power-loss qualification.
 
-The latest same-source packages are `d4d29484ba2a2293328a5b562b16efa78041d076`,
-version `0.1.0-alpha.2`. Its reviewed Windows owner-identity correction has an
-independently accepted complete source gate: 3,818 tests
-with 45 platform/opt-in skips, all 166 browser cases without unexpected/flaky/
-skipped outcomes, and both saved-copy cases. The prior narrow Home fixture
-correction at `9ca6733` preserves the navigation assertions. The earlier `7a08fff` failure remains
-recorded, and its separate saved-copy stage did not execute. The prior source
-gate at `8e303593cabc` passed 3,813 tests, 45 skips, 157 browser cases and both
-saved-copy cases after reviewed coherent-read and SQLite pending-lock fixes.
-The earlier failures remain recorded; their exact CI interleavings were not
-proven by the focused regressions.
+The exact `4001c2e` source gate failed. Release verification passed 3,824 tests
+with 45 skips and production build passed; browser results were 164 expected,
+two unexpected, zero flaky/skipped. WebKit BYOK timed out before reload while
+its real revision save took 11.438 seconds. Versions exhausted its test budget;
+fixture deletion began before its final reopen request. Neither trace establishes
+encryption or revision corruption. The dedicated saved-copy stage did not run.
+Both cases passed locally on exact source with one worker and then two, with
+zero retries and the original timeouts. This does not reproduce Linux CI load
+or waive that failure. The earlier d4 complete source gate passed 3,818 tests,
+45 skips, 166 browser cases and both saved-copy cases. Historical failures remain
+recorded. No scheduling or timeout relaxation is authorized by these results.
 
-At exact `d4d2948`, the standard-user Windows x64/NTFS native gate passed 34 tests
-and all 65 frozen cases; independent review recomputed the raw evidence. Actual
-compiled Next startup, storage, private session rejection and graceful shutdown,
-plus real v2 owner issuance matching the web PID, confirmed cancellation,
-bundled sidecar activation, handshake and EOF shutdown, passed in package
-CI. This qualifies the tested packaged runtime boundary, not native installed
-UI or power-loss behavior. The earlier `8e30359` compiler timeout is retained as
-an infrastructure failure before native tests.
+The Home metadata-refresh race is corrected in `4001c2e`. Independent focused
+source tests passed 12/12. Installed Tahoe and Windows Arm/x64 emulation passed
+Home from a cancelled editor and unsaved-draft cold restoration. Home then made
+one intended child revision; retained model values, other graphs/history and
+fresh original CSV bytes were preserved. These are focused refreshes, not the
+complete installed matrix.
 
-Installed Windows 11 Home 26H2 Arm64 (build 26300.9974), using x64 emulation and
-a normal medium-integrity local-administrator token, launched exact `7a08fff`
-from its shortcut and reached the shell in 18.1 seconds. It reopened a committed
-64-tonne head, then preserved a new unsaved Baseline value 73 and named milestone
-after full close/relaunch. Back committed 73 and a later edit to 77 without the
-previous newer-edits warning in these observations. The older warning's cause
-is unconfirmed; Home and the remaining installed cases are still under test.
-The earlier 42-tonne draft and missing named milestone were not ordinary
-committed revisions; loss of a committed revision was not established.
-Windows local analysis rejected the extreme workbook with the corrected limit
-and rejected a dimensionally incompatible target. The compatible CSV case
-applied and committed the expected 2.75 h/day on retry. Its first analysis timed
-out while both the public and private Node listeners gave five-second no-byte
-timeouts; both later resumed normal unauthenticated 403 responses. That failed
-attempt remains an open backend-availability observation.
+Installed Windows exposed another definite defect: an old chat could restore
+"Creating saved copy…" when no request was active. A subsequent instrumented
+idempotent copy succeeded (POST 1,210 ms, GET 262 ms). The earlier d4 two-minute
+UI observation lacks request timing and does not establish a backend copy hang.
+The reviewed source now makes progress transient, sanitizes persisted/history
+state, retains live same-run progress, and clears it after scope changes without
+clearing errors or stop markers. The same regression fails on 4001 and passes
+with the fixed store alone; independent focused tests passed 11/11. A new exact
+snapshot, full gate, both packages and installed refresh are still required.
 
-Installed Sonoma 14.0 arm64 restored an unsaved label edit and named version
-from `7a08fff` after native Quit. However, its retained QA profile repeatedly
-stalled while listing Files, followed by timeouts on valid backend routes.
-A live Node sample showed active promise execution; the loopback inspector did
-not respond. The cause remains unconfirmed, and RA-16 is an open P1. A fresh
-clone comparison was interrupted by an unexpected guest reboot and is
-inconclusive. The exact packaged server with complete copied synthetic storage
-answered sequential and concurrent requests on both host and affected guest;
-these healthy headless replays do not close the native UI failure. A later
-native launch kernel-panicked in the guest's `MTLCompilerServi` task before
-Files or inspector attachment. Sonoma 14.0 qualification is environment-blocked.
-A separate Tahoe 26.6.2 clone with 4 vCPUs, 6 GiB and fresh WebView state opened
-the complete copied model and both files, then preserved them through native
-Quit/Finder reopen. Home navigation also passed. This changes several environment
-variables and does not explain or close the earlier stalls. The Windows timeout
-may have a different cause. Earlier `261741e` Sonoma checks passed a
-provider-free CSV import/reopen at 2.75 h/day, scenarios, version restore, export
-structure and Quit. Its extreme-workbook rejection preserved the graph but had
-an incorrect generic message, now source-corrected. Earlier `8c60019` Tahoe
-26.6.2 clean/upgrade checks preserved formulas, values, history and source bytes.
-Excel exports were not recalculated by a spreadsheet engine.
+Recovery remains partial. Mac Tahoe `7a08fff` passed question, generation and
+approval controller-loss recovery plus clean/dirty copies; d4 refreshed question
+recovery. Windows d4 retained cancellation in all three states using native v2
+owner evidence; approval/running pre/post graph and revision digests matched.
+Running End remained pending at 56.353 seconds and was first observed Cancelled
+at 59.805 seconds. Its cause is unresolved. Legacy owner-less runs keep their
+history and safe saved-copy path; no PID-only identity is fabricated. Ordinary
+Windows dirty-copy behavior is still unverified. Controlled loopback fixtures
+do not qualify a live AI provider.
 
-On the Tahoe comparison clone, a controlled loopback provider reached a real
-waiting question through normal Settings and runtime routes. Three abrupt
-web-controller exits exercised End interrupted run and clean/dirty saved-copy
-flows. Cancellation persisted through two further restarts. The dirty flow
-preserved the open unsaved label; both copies downloaded the exact original
-CSV bytes. The original graph hash and active revision remained unchanged.
-Further Tahoe checks reached a held real generation request and actual
-Approve/Reject controls. Both verified controller deaths recovered through End;
-fresh launches and the closed database retained cancellation at epoch 2.
-The exercised copy and original graph/revision hashes remained unchanged, and
-a fresh CSV download matched. The coordinator inspected screenshots and receipts.
-Windows independently
-restored its real question and 42-tonne model after a verified controller death,
-but End refused the run because no verifiable local owner was available. Clean
-saved copy opened a fresh 42-tonne editor. A read-only diagnostic reproduced the five-second PowerShell/CIM
-timeout and confirmed an owner-less stored token. The independently reviewed
-source correction reads native machine/boot GUIDs through the admitted addon
-and versions that evidence separately from old CIM tokens. It retains safe
-saved-copy treatment of the existing owner-less run. Native compilation,
-real native owner/death checks and compiled-route issuance passed at `d4d2948`.
-Exact d4 installed Windows then passed a new question/controller-death/End and
-fresh-reopen check. A read-only receipt confirmed v2 on both epochs and durable
-cancellation, while the old legacy run stayed unchanged. The 42-tonne model
-remained usable; no pre-operation digest was taken for this question check.
-Help displayed exact d4 and downloaded a 1,460-byte diagnostic with model-name
-inclusion off. Normal exit cleared host and Node processes. End had a visible
-delay on the order of tens of seconds; precise timing and cause are unproven.
-Windows generation and approval interruptions also retained cancellation after
-fresh reopen, with unchanged active revision/graph digests. Approval was visibly
-cancelled by 5.603 seconds; Running was still Cancelling at 56.353 seconds and
-first observed Cancelled at 59.805 seconds. The delay remains unexplained. A
-repeated legacy saved-copy action remained pending for about two minutes, even
-while an unauthenticated request reached the packaged Node wrapper and returned
-403. The copy key is idempotent; its unchanged head count is expected and does
-not diagnose the UI failure. A single instrumented rerun could not establish a
-new Running target, so no timing trace was collected. Dirty-copy refresh and
-other installed cases remain open. Normal-profile 2.75 h/day and the exact
-original CSV download hash passed, as did focused keyboard Home navigation and
-schema parsing of the local diagnostic. The isolated cancelled-editor Home
-observation remains unresolved.
-These synthetic fixtures do not qualify a live AI provider. The old CIM timeout
-is not established as the cause of RA-16.
+RA-16 remains an open P1: Sonoma 14.0 repeatedly stalled on Files/backend routes;
+Windows first compatible CSV analysis separately timed out while public/private
+Node listeners returned no bytes. Healthy headless replays and successful later
+imports do not explain either failure. A subsequent Sonoma guest kernel panic
+in MTLCompilerServi blocks minimum-OS qualification. Tahoe 26.6.2 with 4 vCPUs,
+6 GiB and fresh WebView state passed retained-model/Files checks, but changes
+several variables. Windows UI testing uses Windows 11 Home 26H2 Arm64, x64
+emulation and a filtered medium-integrity local administrator, not a separate
+standard account or native x64 client. Both OS families remain required.
 
-The focused installed `d4d2948` Tahoe upgrade retained the model, Files and prior
-cancellations, displayed the exact new build in Help, and exported valid local
-diagnostic JSON. A fresh controlled question then passed controller death,
-End and another launch with cancelled epoch 2. The closed before/after database
-retained all active revisions and graph hashes. This is a scoped refresh of the
-earlier three-phase Mac recovery evidence, not a full minimum-OS qualification.
+Parser isolation, bounded uploads, explicit offline analysis and diagnostic
+preview/export have scoped source/browser acceptance. Installed valid CSV and
+extreme-workbook rejection passed on the recorded candidates; Windows compatible
+CSV applied 2.75 h/day on retry with unchanged original bytes. Remaining native
+formats, cancellation/resource/fault cases, accessibility, spreadsheet-engine
+recalculation, minimum OS, distribution trust and the per-platform live-provider
+matrix remain open. Historical live runs are not promoted as current installed
+qualification. [GitHub delivery](release/github-delivery.md) remains preparation.
 
-A later source review independently reproduced and corrected an overbroad
-Home-intent guard: a metadata-only workspace refresh no longer converts a saved
-Home navigation into cold draft restoration. Protected scope, graph, revision
-base and pending storage journals still invalidate the single-use mark. The
-new regression failed before correction; independent focused tests passed 12/12.
-That delta still needs refreshed source/package and installed checks and is not
-established as the cause of the Windows observation.
-
-Both current packages exclude the unused native image backend and pass resource
-verification. The Mac DMG is Developer-ID signed but unnotarized; Windows is
-unsigned. The Mac SCP transfer had no quarantine, so public-download trust
-remains unqualified. The complete per-platform live-provider matrix and final
-installed recovery/fault cases remain open. No public release has been made.
-
-Details: [W1](implementation/OPEN_ALPHA_W1_2026-11-13.md),
-[W2](implementation/OPEN_ALPHA_W2_2026-11-13.md),
-[W4](implementation/OPEN_ALPHA_W4_2026-11-13.md),
-[W5](implementation/OPEN_ALPHA_W5_2026-11-13.md),
-[W7](implementation/OPEN_ALPHA_W7_2026-11-13.md),
-[W8](implementation/OPEN_ALPHA_W8_2026-11-13.md) and
-[GitHub delivery](release/github-delivery.md). Dated evidence below keeps its
-original source, environment and acceptance scope.
+Dated evidence below retains its original source, environment and acceptance scope.
 
 ## Regression coverage and opt-in tests
 
