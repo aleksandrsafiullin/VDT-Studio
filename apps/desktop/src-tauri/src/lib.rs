@@ -118,17 +118,21 @@ async fn ai_detect_subscription_clis(agent_id: Option<String>, app: tauri::AppHa
 }
 
 #[tauri::command]
-fn ai_test_backend(backend_id: String, runtime: State<'_, DesktopRuntime>) -> Result<serde_json::Value, String> {
-    runtime
-        .test_backend(&backend_id)
-        .map_err(|error| error.to_string())
+async fn ai_test_backend(backend_id: String, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<DesktopRuntime>()
+            .test_backend(&backend_id)
+            .map_err(|error| error.to_string())
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn ai_list_models(backend_id: String, runtime: State<'_, DesktopRuntime>) -> Result<Vec<String>, String> {
-    runtime
-        .list_models(&backend_id)
-        .map_err(|error| error.to_string())
+async fn ai_list_models(backend_id: String, app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<DesktopRuntime>()
+            .list_models(&backend_id)
+            .map_err(|error| error.to_string())
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -179,10 +183,12 @@ fn ai_get_run(request_id: String, runtime: State<'_, DesktopRuntime>) -> Result<
 }
 
 #[tauri::command]
-fn open_provider_auth(backend_id: String, runtime: State<'_, DesktopRuntime>) -> Result<serde_json::Value, String> {
-    runtime
-        .open_provider_auth(&backend_id)
-        .map_err(|error| error.to_string())
+async fn open_provider_auth(backend_id: String, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<DesktopRuntime>()
+            .open_provider_auth(&backend_id)
+            .map_err(|error| error.to_string())
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

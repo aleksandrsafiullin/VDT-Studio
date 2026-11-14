@@ -1,5 +1,14 @@
 # Provider Compatibility
 
+## Current desktop alpha qualification
+
+No real AI configuration is yet qualified for the current Mac or Windows
+installed alpha.2 candidate. Statuses and `liveVerified` in the certification
+manifest describe only their named evidence, including historical host runs;
+they do not establish native per-platform acceptance. The deterministic mock
+is a fixture. Follow the [current acceptance matrix](implementation/OPEN_ALPHA_ACCEPTANCE_MATRIX_2026-11-13.md)
+for the pending installed live matrix.
+
 Direct OpenAI Model Agent and OpenAI-compatible compatibility runs use structured argument objects for
 closed builder schemas in the admitted tool catalog. The response schema
 ties each tool name to its own fields and bounds. Smart recipe branches use
@@ -337,7 +346,7 @@ For a cheaper auth/connection-only check on the compatibility adapters, append `
 | Maintainer live verification | **2026-06-23:** version/auth/model-list probes passed on the maintainer machine. **2026-06-24:** Cursor was switched to the open-design-style adapter posture. **2026-08-26:** two real `agent-decision-v2` qualification attempts reached Cursor but produced no schema-valid terminal result (`BACKEND_PARSE_FAILED`), so the live gate remains open. |
 | OS sandbox | Not required for Cursor in the current manifest. Cursor is constrained by a fresh VDT temp workspace rather than an OS-specific wrapper. |
 | CLI tool mode | Cursor runs in `--mode ask` for direct schema-bound JSON responses. VDT does not claim all Cursor internals are disabled; certification depends on `ephemeralWorkspaceOnly`, reviewed args, no `--force`/`--yolo`, no repo cwd, no VDT MCP injection and no browser-supplied paths/env. |
-| Platform matrix | **Beta:** macOS, Linux and Windows when `agent`/`cursor-agent` is on PATH and Cursor account auth is ready. |
+| Platform matrix | **Beta:** macOS and Linux, with source support for official per-user Windows Cursor CLI installs on PATH. Current Windows installed sign-in and agent execution remain unverified. |
 
 ### Reviewed CLI flags (manifest static args)
 

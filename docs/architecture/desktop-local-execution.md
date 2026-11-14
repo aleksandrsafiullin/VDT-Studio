@@ -63,6 +63,13 @@ The Rust command implementations route through `src-tauri/src/sidecar_host.rs`, 
 
 Settings `ai_test_backend` checks subscription CLI/session readiness using the reviewed provider probe and succeeds only for an installed backend reporting `ready`. It does not submit an additional VDT completion. Adapters without a usable status command may still use their bounded minimal connection prompt. Local HTTP backends retain the registered schema connection probe. The frontend rejects missing, malformed or unsuccessful Test/Auth responses and preserves native IPC error messages as actionable errors instead of treating an empty response as success.
 
+Backend connection tests, model listing and provider sign-in dispatch their
+blocking sidecar calls through Tauri's async runtime. The native event loop can
+continue handling window input while those calls wait. Command arguments,
+results and sidecar serialization are unchanged by this dispatch change, which
+uses the existing probe deadlines for each backend. Installed
+responsiveness during Windows Cursor CLI startup remains to be checked.
+
 Codex detection and default execution share the node-only installed-executable selector. It chooses the newest recognizable safe Codex CLI already on the host's `PATH`, using bounded isolated `--version` probes; model discovery and detected session-binding wiring then use that selected executable. Equivalent versions retain `PATH` priority, and a stable version outranks its same-core prereleases. No app-specific executable path, installation/update step, model catalog or frontend executable override is introduced. Native Windows process-tree cleanup and packaged desktop execution of this selection path still need platform evidence.
 
 ## Windows packaged web host

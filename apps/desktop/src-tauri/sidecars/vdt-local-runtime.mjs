@@ -305,39 +305,39 @@ function validateDataDiscoveryOutput(schemaId, value) {
   const errors = validate(DATA_DISCOVERY_JSON_SCHEMAS[schemaId], value, "$");
   return { valid: errors.length === 0, errors };
 }
-function validate(schema, value, path12) {
+function validate(schema, value, path14) {
   if (Array.isArray(schema.anyOf)) {
-    const results = schema.anyOf.map((branch) => validate(branch, value, path12));
+    const results = schema.anyOf.map((branch) => validate(branch, value, path14));
     return results.some((errors2) => errors2.length === 0) ? [] : results.flat().slice(0, 16);
   }
   const errors = [];
   if (schema.type === "object") {
-    if (!record(value)) return [`${path12} must be an object.`];
+    if (!record(value)) return [`${path14} must be an object.`];
     const properties = schema.properties;
-    for (const key2 of schema.required) if (!Object.hasOwn(value, key2)) errors.push(`${path12}.${key2} is required.`);
+    for (const key2 of schema.required) if (!Object.hasOwn(value, key2)) errors.push(`${path14}.${key2} is required.`);
     for (const [key2, item] of Object.entries(value)) {
-      if (!Object.hasOwn(properties, key2)) errors.push(`${path12}.${key2} is not an approved field.`);
-      else errors.push(...validate(properties[key2], item, `${path12}.${key2}`));
+      if (!Object.hasOwn(properties, key2)) errors.push(`${path14}.${key2} is not an approved field.`);
+      else errors.push(...validate(properties[key2], item, `${path14}.${key2}`));
     }
   } else if (schema.type === "array") {
-    if (!Array.isArray(value)) return [`${path12} must be an array.`];
-    if (typeof schema.minItems === "number" && value.length < schema.minItems) errors.push(`${path12} has too few items.`);
-    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) errors.push(`${path12} has too many items.`);
-    value.forEach((item, index) => errors.push(...validate(schema.items, item, `${path12}[${index}]`)));
+    if (!Array.isArray(value)) return [`${path14} must be an array.`];
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) errors.push(`${path14} has too few items.`);
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) errors.push(`${path14} has too many items.`);
+    value.forEach((item, index) => errors.push(...validate(schema.items, item, `${path14}[${index}]`)));
   } else if (schema.type === "string") {
-    if (typeof value !== "string") return [`${path12} must be a string.`];
-    if (typeof schema.minLength === "number" && value.length < schema.minLength) errors.push(`${path12} is too short.`);
-    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) errors.push(`${path12} is too long.`);
-    if (typeof schema.pattern === "string" && !new RegExp(schema.pattern).test(value)) errors.push(`${path12} has an invalid format.`);
+    if (typeof value !== "string") return [`${path14} must be a string.`];
+    if (typeof schema.minLength === "number" && value.length < schema.minLength) errors.push(`${path14} is too short.`);
+    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) errors.push(`${path14} is too long.`);
+    if (typeof schema.pattern === "string" && !new RegExp(schema.pattern).test(value)) errors.push(`${path14} has an invalid format.`);
   } else if (schema.type === "number" || schema.type === "integer") {
-    if (typeof value !== "number" || !Number.isFinite(value)) return [`${path12} must be a finite number.`];
-    if (schema.type === "integer" && !Number.isInteger(value)) errors.push(`${path12} must be an integer.`);
-    if (typeof schema.minimum === "number" && value < schema.minimum) errors.push(`${path12} is below the minimum.`);
-    if (typeof schema.maximum === "number" && value > schema.maximum) errors.push(`${path12} exceeds the maximum.`);
-    if (typeof schema.exclusiveMinimum === "number" && value <= schema.exclusiveMinimum) errors.push(`${path12} must be greater than ${schema.exclusiveMinimum}.`);
+    if (typeof value !== "number" || !Number.isFinite(value)) return [`${path14} must be a finite number.`];
+    if (schema.type === "integer" && !Number.isInteger(value)) errors.push(`${path14} must be an integer.`);
+    if (typeof schema.minimum === "number" && value < schema.minimum) errors.push(`${path14} is below the minimum.`);
+    if (typeof schema.maximum === "number" && value > schema.maximum) errors.push(`${path14} exceeds the maximum.`);
+    if (typeof schema.exclusiveMinimum === "number" && value <= schema.exclusiveMinimum) errors.push(`${path14} must be greater than ${schema.exclusiveMinimum}.`);
   }
-  if ("const" in schema && schema.const !== value) errors.push(`${path12} must equal ${String(schema.const)}.`);
-  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) errors.push(`${path12} is not an allowed value.`);
+  if ("const" in schema && schema.const !== value) errors.push(`${path14} must equal ${String(schema.const)}.`);
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) errors.push(`${path14} is not an allowed value.`);
   return errors;
 }
 
@@ -770,7 +770,7 @@ function validateFormulaUnits(node3, expression, nodes, enforcePercentageScale =
     if (!unit) report(key2, `The unit of \u201C${target.name}\u201D is missing or cannot be checked. Set a unit to verify the formula for \u201C${node3.name}\u201D.`, verifyTime ? "error" : "warning");
     return unit;
   };
-  const add = (left, right, path12, operator) => {
+  const add = (left, right, path14, operator) => {
     if (left.literal && right.literal) {
       const a = left.coefficient, b = right.coefficient;
       return { unit: {}, literal: true, coefficient: a === void 0 || b === void 0 ? void 0 : operator === "+" ? a + b : operator === "-" ? a - b : operator.startsWith("min") ? Math.min(a, b) : Math.max(a, b) };
@@ -782,7 +782,7 @@ function validateFormulaUnits(node3, expression, nodes, enforcePercentageScale =
       const leftToRight = matchUnits(left.unit, right.unit, left.coefficient);
       if (rightToLeft === true || leftToRight === true) return { unit: rightToLeft ? left.unit : right.unit, literal: false, coefficient: void 0 };
       const scaleHint = (enforcePercentageScale || verifyTime) && left.unit["%"] !== right.unit["%"] ? percentScaleHint : "";
-      report(path12, `Formula for \u201C${node3.name}\u201D combines ${rightToLeft === void 0 ? "unverified custom" : "incompatible"} units with ${operator}: \u201C${formatUnit(left.unit)}\u201D and \u201C${formatUnit(right.unit)}\u201D.${scaleHint}`, rightToLeft === void 0 && !verifyTime ? "warning" : "error");
+      report(path14, `Formula for \u201C${node3.name}\u201D combines ${rightToLeft === void 0 ? "unverified custom" : "incompatible"} units with ${operator}: \u201C${formatUnit(left.unit)}\u201D and \u201C${formatUnit(right.unit)}\u201D.${scaleHint}`, rightToLeft === void 0 && !verifyTime ? "warning" : "error");
     }
     return {
       unit: left.unit && right.unit ? left.unit : void 0,
@@ -790,19 +790,19 @@ function validateFormulaUnits(node3, expression, nodes, enforcePercentageScale =
       coefficient: left.coefficient === right.coefficient ? left.coefficient : void 0
     };
   };
-  const visit2 = (ast, path12) => {
+  const visit2 = (ast, path14) => {
     if (ast.type === "number") return { unit: {}, literal: true, coefficient: ast.value };
     if (ast.type === "reference") {
       const target = nodes.get(ast.name);
       return { unit: target ? readUnit(target, `reference-${ast.name}`) : void 0, literal: false, coefficient: 1 };
     }
     if (ast.type === "unary") {
-      const result = visit2(ast.expression, `${path12}-unary`);
+      const result = visit2(ast.expression, `${path14}-unary`);
       return { ...result, coefficient: result.coefficient === void 0 ? void 0 : -result.coefficient };
     }
-    if (ast.type === "call") return ast.args.map((arg, index) => visit2(arg, `${path12}-${index}`)).reduce((left2, right2, index) => add(left2, right2, `${path12}-${index}`, `${ast.name}(...)`));
-    const left = visit2(ast.left, `${path12}-left`), right = visit2(ast.right, `${path12}-right`);
-    if (ast.operator === "+" || ast.operator === "-") return add(left, right, path12, ast.operator);
+    if (ast.type === "call") return ast.args.map((arg, index) => visit2(arg, `${path14}-${index}`)).reduce((left2, right2, index) => add(left2, right2, `${path14}-${index}`, `${ast.name}(...)`));
+    const left = visit2(ast.left, `${path14}-left`), right = visit2(ast.right, `${path14}-right`);
+    if (ast.operator === "+" || ast.operator === "-") return add(left, right, path14, ast.operator);
     const multiply = ast.operator === "*";
     const unit = left.unit && right.unit ? combine(left.unit, right.unit, multiply ? 1 : -1) : void 0;
     const coefficient = left.coefficient === void 0 || right.coefficient === void 0 ? void 0 : multiply ? left.coefficient * right.coefficient : left.coefficient / right.coefficient;
@@ -3363,10 +3363,10 @@ function validateRegisteredSchemaDetailed(schemaId, output2) {
   }
   return { valid: true, errors: [] };
 }
-function validateJsonSchemaSubset(schema, value, path12 = "$") {
+function validateJsonSchemaSubset(schema, value, path14 = "$") {
   if (!isRecord(schema)) return { valid: true, errors: [] };
   if (Array.isArray(schema.anyOf)) {
-    const branchResults = schema.anyOf.map((branch) => validateJsonSchemaSubset(branch, value, path12));
+    const branchResults = schema.anyOf.map((branch) => validateJsonSchemaSubset(branch, value, path14));
     if (branchResults.some((result) => result.valid)) {
       return { valid: true, errors: [] };
     }
@@ -3379,57 +3379,57 @@ function validateJsonSchemaSubset(schema, value, path12 = "$") {
   const type = schema.type;
   if (type === "object") {
     if (!isRecord(value)) {
-      return { valid: false, errors: [`${path12} must be an object.`] };
+      return { valid: false, errors: [`${path14} must be an object.`] };
     }
     const properties = isRecord(schema.properties) ? schema.properties : {};
     const required2 = Array.isArray(schema.required) ? schema.required.filter((key2) => typeof key2 === "string") : [];
     for (const key2 of required2) {
-      if (!(key2 in value)) errors.push(`${path12}.${key2} is required.`);
+      if (!(key2 in value)) errors.push(`${path14}.${key2} is required.`);
     }
     if (schema.additionalProperties === false) {
       for (const key2 of Object.keys(value)) {
-        if (!(key2 in properties)) errors.push(`${path12}.${key2} is not an approved field.`);
+        if (!(key2 in properties)) errors.push(`${path14}.${key2} is not an approved field.`);
       }
     }
     for (const [key2, propertySchema] of Object.entries(properties)) {
-      if (key2 in value) errors.push(...validateJsonSchemaSubset(propertySchema, value[key2], `${path12}.${key2}`).errors);
+      if (key2 in value) errors.push(...validateJsonSchemaSubset(propertySchema, value[key2], `${path14}.${key2}`).errors);
     }
   } else if (type === "array") {
     if (!Array.isArray(value)) {
-      return { valid: false, errors: [`${path12} must be an array.`] };
+      return { valid: false, errors: [`${path14} must be an array.`] };
     }
     if (typeof schema.minItems === "number" && value.length < schema.minItems) {
-      errors.push(`${path12} must contain at least ${schema.minItems} item(s).`);
+      errors.push(`${path14} must contain at least ${schema.minItems} item(s).`);
     }
     if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
-      errors.push(`${path12} must contain at most ${schema.maxItems} item(s).`);
+      errors.push(`${path14} must contain at most ${schema.maxItems} item(s).`);
     }
     value.forEach((item, index) => {
-      errors.push(...validateJsonSchemaSubset(schema.items, item, `${path12}[${index}]`).errors);
+      errors.push(...validateJsonSchemaSubset(schema.items, item, `${path14}[${index}]`).errors);
     });
   } else if (type === "string") {
     if (typeof value !== "string") {
-      return { valid: false, errors: [`${path12} must be a string.`] };
+      return { valid: false, errors: [`${path14} must be a string.`] };
     }
     if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
-      errors.push(`${path12} must be at most ${schema.maxLength} character(s).`);
+      errors.push(`${path14} must be at most ${schema.maxLength} character(s).`);
     }
   } else if (type === "number") {
     if (typeof value !== "number" || !Number.isFinite(value)) {
-      return { valid: false, errors: [`${path12} must be a finite number.`] };
+      return { valid: false, errors: [`${path14} must be a finite number.`] };
     }
     if (typeof schema.minimum === "number" && value < schema.minimum) {
-      errors.push(`${path12} must be at least ${schema.minimum}.`);
+      errors.push(`${path14} must be at least ${schema.minimum}.`);
     }
     if (typeof schema.maximum === "number" && value > schema.maximum) {
-      errors.push(`${path12} must be at most ${schema.maximum}.`);
+      errors.push(`${path14} must be at most ${schema.maximum}.`);
     }
   } else if (type === "boolean") {
     if (typeof value !== "boolean") {
-      return { valid: false, errors: [`${path12} must be a boolean.`] };
+      return { valid: false, errors: [`${path14} must be a boolean.`] };
     }
   }
-  if ("const" in schema && value !== schema.const) errors.push(`${path12} must equal ${String(schema.const)}.`);
+  if ("const" in schema && value !== schema.const) errors.push(`${path14} must equal ${String(schema.const)}.`);
   return { valid: errors.length === 0, errors };
 }
 
@@ -3753,12 +3753,32 @@ function evaluateClaudeVersion(version2) {
   return { supported: true, status: "installed", diagnostics: [] };
 }
 
+// ../model-bridge/src/subscription-cli/executable-scope.ts
+import { lstat, realpath } from "node:fs/promises";
+import path from "node:path";
+function inside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative);
+}
+async function currentWorkspaceRoot() {
+  const cwd = await realpath(process.cwd());
+  let root = cwd;
+  let directory = cwd;
+  for (let level = 0; level < 12; level += 1) {
+    if (await lstat(path.join(directory, ".git")).catch(() => void 0) || await lstat(path.join(directory, "pnpm-workspace.yaml")).catch(() => void 0)) root = directory;
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return root;
+}
+
 // ../model-bridge/src/subscription-cli/codex/executable-selection.ts
 import { execFile as execFile2, spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import { access, lstat as lstat2, mkdtemp, realpath as realpath2, rm } from "node:fs/promises";
 import os from "node:os";
-import path from "node:path";
+import path2 from "node:path";
 import { StringDecoder } from "node:string_decoder";
 var CODEX_SELECTION_LIMITS = Object.freeze({
   maxDirectories: 128,
@@ -3796,27 +3816,11 @@ function compareVersions(left, right) {
   }
   return 0;
 }
-function inside(root, candidate) {
-  const relative = path.relative(root, candidate);
-  return relative === "" || !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative);
-}
-async function currentWorkspaceRoot() {
-  const cwd = await realpath(process.cwd());
-  let root = cwd;
-  let directory = cwd;
-  for (let level = 0; level < 12; level += 1) {
-    if (await lstat(path.join(directory, ".git")).catch(() => void 0) || await lstat(path.join(directory, "pnpm-workspace.yaml")).catch(() => void 0)) root = directory;
-    const parent = path.dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
-  }
-  return root;
-}
 async function candidatesOnPath(options) {
   const platform = options.platform ?? process.platform;
-  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const pathApi = platform === "win32" ? path2.win32 : path2.posix;
   const env = options.env ?? process.env;
-  const appDirectories = options.applicationDirectories ?? (platform === "darwin" && options.path === void 0 ? ["/Applications", ...env.HOME && path.posix.isAbsolute(env.HOME) ? [path.posix.join(env.HOME, "Applications")] : []].map((directory) => path.posix.join(directory, "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS")) : []);
+  const appDirectories = options.applicationDirectories ?? (platform === "darwin" && options.path === void 0 ? ["/Applications", ...env.HOME && path2.posix.isAbsolute(env.HOME) ? [path2.posix.join(env.HOME, "Applications")] : []].map((directory) => path2.posix.join(directory, "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS")) : []);
   const directories = [...(options.path ?? env.PATH ?? "").split(platform === "win32" ? ";" : ":"), ...appDirectories].filter((directory) => pathApi.isAbsolute(directory) && !directory.includes("\0")).slice(0, CODEX_SELECTION_LIMITS.maxDirectories);
   const extensions = platform === "win32" ? ["", ...(options.pathExt ?? env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").map((part) => part.trim().toLowerCase())] : [""];
   const workspace = await currentWorkspaceRoot();
@@ -3827,10 +3831,10 @@ async function candidatesOnPath(options) {
       const candidate = pathApi.join(directory, `codex${extension}`);
       if (inside(workspace, candidate)) continue;
       try {
-        const info = await lstat(candidate);
+        const info = await lstat2(candidate);
         if (!info.isFile() && !info.isSymbolicLink()) continue;
-        const resolved = await realpath(candidate);
-        if (!path.isAbsolute(resolved) || inside(workspace, resolved) || !(await lstat(resolved)).isFile()) continue;
+        const resolved = await realpath2(candidate);
+        if (!path2.isAbsolute(resolved) || inside(workspace, resolved) || !(await lstat2(resolved)).isFile()) continue;
         await access(resolved, constants.X_OK);
         if (options.executableCheck && !await options.executableCheck(candidate)) continue;
         seen.add(resolved);
@@ -3892,7 +3896,7 @@ async function probeOwnedCliVersion(executable, cwd, env, options, versionArgs =
       }, CODEX_SELECTION_LIMITS.terminationGraceMs);
       if (!child.pid) return;
       if (process.platform === "win32") {
-        const taskkill = path.win32.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows", "System32", "taskkill.exe");
+        const taskkill = path2.win32.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows", "System32", "taskkill.exe");
         termination = new Promise((done) => {
           let completed = false;
           let killer;
@@ -3960,7 +3964,7 @@ async function selectCodexExecutable(options = {}) {
   options.signal?.throwIfAborted();
   const candidates = await candidatesOnPath(options);
   if (!candidates.length) return null;
-  const cwd = await mkdtemp(path.join(os.tmpdir(), "vdt-codex-selection-"));
+  const cwd = await mkdtemp(path2.join(os.tmpdir(), "vdt-codex-selection-"));
   let retained = false;
   try {
     const env = versionEnvironment(options.env ?? process.env);
@@ -4703,8 +4707,105 @@ ${result.stderr}`.trim())?.raw ?? null;
   });
 }
 
+// ../model-bridge/src/subscription-cli/cursor/windows-launch.ts
+import { lstatSync, realpathSync } from "node:fs";
+import { lstat as lstat3, readdir, realpath as realpath3 } from "node:fs/promises";
+import path3 from "node:path";
+var versionName = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-\d{2}-\d{2}-\d{2})?-[a-f0-9]+$/i;
+var WINDOWS_CURSOR_VERSION_TIMEOUT_MS = 25e3;
+var WINDOWS_CURSOR_MODELS_TIMEOUT_MS = 25e3;
+var WINDOWS_CURSOR_STATUS_TIMEOUT_MS = 4e4;
+var WindowsCursorLaunchError = class extends Error {
+  constructor(issue3) {
+    super(windowsCursorLaunchIssueMessage(issue3));
+    this.issue = issue3;
+  }
+  issue;
+};
+function windowsCursorLaunchIssueMessage(issue3) {
+  if (issue3 === "pending") return "Cursor has a pending update. Finish it using Cursor's official CLI, then rescan.";
+  if (issue3 === "ambiguous") return "Cursor's latest Windows CLI version is ambiguous. Repair the official installation, then rescan.";
+  return "The Windows Cursor CLI payload could not be verified. Repair the official installation, then rescan.";
+}
+async function regular(candidate) {
+  if (!(await lstat3(candidate)).isFile() || path3.relative(candidate, await realpath3(candidate)) !== "") {
+    throw new Error("Cursor's installed Windows payload is incomplete or redirected. Repair the official Cursor CLI installation.");
+  }
+}
+async function resolveWindowsCursorShim(shim, localAppData = process.env.LOCALAPPDATA) {
+  try {
+    return await readWindowsCursorPayload(shim, localAppData);
+  } catch (error63) {
+    if (error63 instanceof WindowsCursorLaunchError) throw error63;
+    throw new WindowsCursorLaunchError("unsupported");
+  }
+}
+function isOfficialWindowsCursorShim(shim, localAppData = process.env.LOCALAPPDATA, pathApi = path3) {
+  return Boolean(localAppData && pathApi.isAbsolute(localAppData) && pathApi.relative(pathApi.join(localAppData, "cursor-agent"), pathApi.dirname(shim)) === "" && /^(?:agent|cursor-agent)\.cmd$/i.test(pathApi.basename(shim)));
+}
+async function readWindowsCursorPayload(shim, localAppData) {
+  if (!localAppData || !path3.isAbsolute(localAppData)) throw new Error("The official Cursor CLI installation directory could not be verified.");
+  const root = path3.join(localAppData, "cursor-agent");
+  if (!isOfficialWindowsCursorShim(shim, localAppData)) {
+    throw new Error("This Cursor command launcher is unsupported. Install the official Windows Cursor CLI.");
+  }
+  await regular(shim);
+  const versions = path3.join(root, "versions");
+  if (path3.relative(versions, await realpath3(versions))) throw new Error("Cursor's installed Windows versions directory is redirected.");
+  const entries = await readdir(versions, { withFileTypes: true });
+  const pending = entries.find((entry) => entry.name.toLowerCase() === "pending-launchers");
+  if (entries.some((entry) => /(?:\.new$|^\.promote-lock$)/i.test(entry.name)) || pending && (!pending.isDirectory() || (await readdir(path3.join(versions, pending.name))).some((name) => /\.pending$/i.test(name)))) {
+    throw new WindowsCursorLaunchError("pending");
+  }
+  const releases = entries.flatMap((entry) => {
+    const date6 = versionName.exec(entry.name);
+    return date6 ? [{ entry, date: Number(date6[1]) * 1e4 + Number(date6[2]) * 100 + Number(date6[3]) }] : [];
+  }).sort((left, right) => right.date - left.date);
+  const release = releases[0];
+  if (!release?.entry.isDirectory() || releases[1]?.date === release.date) {
+    throw new WindowsCursorLaunchError(releases[1]?.date === release?.date && release ? "ambiguous" : "unsupported");
+  }
+  const folder = path3.join(versions, release.entry.name);
+  const entrypoint = path3.join(folder, "index.js");
+  await regular(entrypoint);
+  await regular(path3.join(folder, "node.exe"));
+  return entrypoint;
+}
+function cursorHost() {
+  return { platform: process.platform, localAppData: process.env.LOCALAPPDATA };
+}
+function isWindowsCursorPayload(executable, host = cursorHost()) {
+  if (host.platform !== "win32" || !host.localAppData || !path3.isAbsolute(host.localAppData)) return false;
+  const version2 = path3.dirname(executable);
+  return path3.relative(path3.join(host.localAppData, "cursor-agent", "versions"), path3.dirname(version2)) === "" && versionName.test(path3.basename(version2)) && path3.basename(executable).toLowerCase() === "index.js";
+}
+function cursorLaunchTarget(executable, args, environment, host = cursorHost()) {
+  if (!isWindowsCursorPayload(executable, host)) {
+    return { executable, args: [...args], env: environment, bundled: false };
+  }
+  const node3 = path3.join(path3.dirname(executable), "node.exe");
+  try {
+    for (const candidate of [executable, node3]) {
+      if (!lstatSync(candidate).isFile() || path3.relative(candidate, realpathSync(candidate)) !== "") {
+        throw new WindowsCursorLaunchError("unsupported");
+      }
+    }
+  } catch {
+    throw new WindowsCursorLaunchError("unsupported");
+  }
+  const env = { ...environment ?? process.env };
+  for (const key2 of Object.keys(env)) {
+    if (/^(?:NODE_OPTIONS|NODE_PATH|CURSOR_INVOKED_AS)$/i.test(key2)) delete env[key2];
+  }
+  env.CURSOR_INVOKED_AS = "agent.cmd";
+  if (environment === void 0 && !Object.keys(env).some((key2) => /^NODE_COMPILE_CACHE$/i.test(key2))) {
+    env.NODE_COMPILE_CACHE = path3.join(host.localAppData, "cursor-compile-cache");
+  }
+  return { executable: node3, args: [executable, ...args], env, bundled: true };
+}
+
 // ../model-bridge/src/subscription-cli/cursor/adapter.ts
-import path4 from "node:path";
+import path6 from "node:path";
 
 // ../model-bridge/src/subscription-cli/cursor/auth.ts
 import { execFile as execFile5 } from "node:child_process";
@@ -4802,8 +4903,8 @@ function parseCursorStreamJson(stdout, limits = DEFAULT_CURSOR_STREAM_PARSE_LIMI
 // ../model-bridge/src/detection.ts
 import { execFile as execFile4 } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { access as access2 } from "node:fs/promises";
-import path3 from "node:path";
+import { access as access2, realpath as realpath4, stat } from "node:fs/promises";
+import path5 from "node:path";
 import { promisify as promisify3 } from "node:util";
 
 // ../model-bridge/src/harness/catalog.ts
@@ -4848,8 +4949,8 @@ function isHarnessBackendId(value) {
 // ../model-bridge/src/harness/profiles.ts
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import path2 from "node:path";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import path4 from "node:path";
+import { existsSync, lstatSync as lstatSync2, readFileSync } from "node:fs";
 import { chmod, mkdir, rename, rm as rm2, writeFile } from "node:fs/promises";
 var fail = (message) => Object.assign(new Error(message), { code: "INVALID_HARNESS_PROFILE" });
 function validateHarnessProfile(value) {
@@ -4860,7 +4961,7 @@ function validateHarnessProfile(value) {
   if (!isHarnessId(id3) || !id3.startsWith("custom-")) throw fail("Custom harness IDs must start with custom-.");
   if (typeof v.name !== "string" || !v.name.trim() || v.name.length > 100 || /[\x00-\x1f]/.test(v.name)) throw fail("Enter a name of at most 100 characters.");
   if (v.transport !== "acp" && v.transport !== "vdt-jsonl") throw fail("Choose ACP or the VDT JSONL adapter protocol.");
-  if (typeof v.command !== "string" || !v.command.trim() || v.command.length > 4096 || /[\x00\r\n]/.test(v.command) || /^(?:sh|bash|zsh|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh)$/i.test(path2.basename(v.command))) throw fail("Choose an executable, not a shell command.");
+  if (typeof v.command !== "string" || !v.command.trim() || v.command.length > 4096 || /[\x00\r\n]/.test(v.command) || /^(?:sh|bash|zsh|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh)$/i.test(path4.basename(v.command))) throw fail("Choose an executable, not a shell command.");
   if (!Array.isArray(v.args) || v.args.length > 64 || v.args.some((a) => typeof a !== "string" || a.length > 4096)) throw fail("Arguments must be an array of at most 64 strings.");
   assertArgsSafe(v.args);
   const refs = v.environmentRefs ?? {};
@@ -4885,12 +4986,12 @@ function validateHarnessProfile(value) {
   };
 }
 function harnessProfilesPath(env = process.env) {
-  return env.VDT_HARNESS_CONFIG ? path2.resolve(env.VDT_HARNESS_CONFIG) : path2.join(homedir(), ".vdt-studio", "harnesses.json");
+  return env.VDT_HARNESS_CONFIG ? path4.resolve(env.VDT_HARNESS_CONFIG) : path4.join(homedir(), ".vdt-studio", "harnesses.json");
 }
 function readHarnessProfiles(env = process.env) {
   const file2 = harnessProfilesPath(env);
   if (!existsSync(file2)) return [];
-  if (!lstatSync(file2).isFile() || lstatSync(file2).isSymbolicLink() || lstatSync(file2).size > 256 * 1024) throw fail("Harness configuration must be a bounded regular file.");
+  if (!lstatSync2(file2).isFile() || lstatSync2(file2).isSymbolicLink() || lstatSync2(file2).size > 256 * 1024) throw fail("Harness configuration must be a bounded regular file.");
   const parsed = JSON.parse(readFileSync(file2, "utf8"));
   if (parsed.version !== 1 || !Array.isArray(parsed.profiles) || parsed.profiles.length > 64) throw fail("Unsupported harness configuration version or size.");
   const profiles = parsed.profiles.map(validateHarnessProfile);
@@ -4931,10 +5032,10 @@ function updateHarnessProfiles(operation, env = process.env) {
     if (next.length > 64) throw fail("At most 64 custom systems can be saved.");
     const serialized = JSON.stringify({ version: 1, profiles: next }, null, 2) + "\n";
     if (Buffer.byteLength(serialized) > 256 * 1024) throw fail("Harness configuration exceeds 256 KiB.");
-    const file2 = harnessProfilesPath(env), dir = path2.dirname(file2);
+    const file2 = harnessProfilesPath(env), dir = path4.dirname(file2);
     await mkdir(dir, { recursive: true, mode: 448 });
-    if (lstatSync(dir).isSymbolicLink()) throw fail("Harness configuration directory cannot be a symbolic link.");
-    const temp = path2.join(dir, `.harnesses-${randomUUID()}.tmp`);
+    if (lstatSync2(dir).isSymbolicLink()) throw fail("Harness configuration directory cannot be a symbolic link.");
+    const temp = path4.join(dir, `.harnesses-${randomUUID()}.tmp`);
     try {
       await writeFile(temp, serialized, { mode: 384, flag: "wx" });
       await rename(temp, file2);
@@ -4968,10 +5069,12 @@ var defaultExecutableCheck = async (candidate) => {
     return false;
   }
 };
-var defaultVersionProbe = async (executable, args) => {
-  const result = await execFileAsync3(executable, [...args], {
+var defaultVersionProbe = async (id3, executable, args) => {
+  const target = id3 === "cursor-agent" ? cursorLaunchTarget(executable, args) : { executable, args: [...args], env: void 0, bundled: false };
+  const result = await execFileAsync3(target.executable, target.args, {
+    env: target.env,
     encoding: "utf8",
-    timeout: 5e3,
+    timeout: target.bundled ? WINDOWS_CURSOR_VERSION_TIMEOUT_MS : 5e3,
     maxBuffer: 64 * 1024,
     windowsHide: true,
     shell: false
@@ -4983,7 +5086,7 @@ async function findExecutableOnPath(aliases2, options = {}) {
   const pathValue = options.path ?? process.env.PATH ?? "";
   const pathExt = options.pathExt ?? process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
   const check2 = options.executableCheck ?? defaultExecutableCheck;
-  const pathApi = platform === "win32" ? path3.win32 : path3.posix;
+  const pathApi = platform === "win32" ? path5.win32 : path5.posix;
   const directories = pathValue.split(platform === "win32" ? ";" : ":").filter(Boolean);
   for (const alias of aliases2) {
     if (pathApi.basename(alias) !== alias || alias === "." || alias === "..") continue;
@@ -5005,11 +5108,37 @@ async function detectSubscriptionCli(id3, options = {}) {
     const selected = await selectCodexExecutable(options);
     return selected ? { id: id3, backendId: definition.backendId, installed: true, ...selected } : { id: id3, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
   }
-  const explicit = harness?.custom && path3.isAbsolute(harness.command) ? harness.command : void 0;
-  const match = explicit && await (options.executableCheck ?? defaultExecutableCheck)(explicit) ? { executable: explicit, alias: explicit } : await findExecutableOnPath(definition.aliases, options);
+  const explicit = harness?.custom && path5.isAbsolute(harness.command) ? harness.command : void 0;
+  const windowsCursor = id3 === "cursor-agent" && (options.platform ?? process.platform) === "win32";
+  const cursorPath = (options.path ?? process.env.PATH ?? "").split(";").filter((directory) => /^(?:[a-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)/i.test(directory)).join(";");
+  const workspace = windowsCursor && !options.executableCheck ? await currentWorkspaceRoot() : void 0;
+  const search = windowsCursor ? {
+    ...options,
+    path: cursorPath,
+    pathExt: ".EXE;.COM;.CMD",
+    executableCheck: options.executableCheck ?? (async (candidate) => {
+      try {
+        if (workspace && (inside(workspace, candidate) || inside(workspace, await realpath4(candidate)))) return false;
+        return (await stat(candidate)).isFile() && await defaultExecutableCheck(candidate);
+      } catch {
+        return false;
+      }
+    })
+  } : options;
+  let match = explicit && await (options.executableCheck ?? defaultExecutableCheck)(explicit) ? { executable: explicit, alias: explicit } : await findExecutableOnPath(definition.aliases, search);
+  if (windowsCursor && match?.executable.toLowerCase().endsWith(".cmd") && !isOfficialWindowsCursorShim(match.executable, process.env.LOCALAPPDATA, path5.win32)) {
+    const verified = await findExecutableOnPath(definition.aliases, {
+      ...search,
+      executableCheck: async (candidate) => isOfficialWindowsCursorShim(candidate, process.env.LOCALAPPDATA, path5.win32) && Boolean(await search.executableCheck?.(candidate))
+    });
+    match = verified ?? match;
+  }
   if (!match) return { id: id3, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
   try {
-    const result = await (options.versionProbe ?? defaultVersionProbe)(match.executable, definition.versionArgs);
+    if (id3 === "cursor-agent" && (options.platform ?? process.platform) === "win32" && /\.(?:cmd|bat|ps1)$/i.test(match.executable)) {
+      match.executable = await resolveWindowsCursorShim(match.executable);
+    }
+    const result = await (options.versionProbe ? options.versionProbe(match.executable, definition.versionArgs) : defaultVersionProbe(id3, match.executable, definition.versionArgs));
     const version2 = `${result.stdout}
 ${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim() || null;
     return { id: id3, backendId: definition.backendId, installed: true, executable: match.executable, alias: match.alias, version: version2 };
@@ -5021,7 +5150,8 @@ ${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim() || null;
       executable: match.executable,
       alias: match.alias,
       version: null,
-      error: error63 instanceof Error ? error63.message : String(error63)
+      ...error63 instanceof WindowsCursorLaunchError ? { cursorLaunchIssue: error63.issue } : {},
+      error: id3 === "cursor-agent" && (options.platform ?? process.platform) === "win32" ? "Cursor CLI version could not be verified. Run the official CLI, then rescan." : error63 instanceof Error ? error63.message : String(error63)
     };
   }
 }
@@ -5142,19 +5272,20 @@ function parseStatusJson3(stdout) {
 }
 async function runExec3(executable, args, options, input2) {
   const execImpl = options.execFileImpl ?? execFileAsync4;
+  const target = cursorLaunchTarget(executable, args);
   const execOptions = {
     encoding: "utf8",
-    timeout: options.timeoutMs ?? 15e3,
+    timeout: options.timeoutMs ?? (target.bundled && args[0] === "status" ? WINDOWS_CURSOR_STATUS_TIMEOUT_MS : 15e3),
     maxBuffer: 512 * 1024,
     windowsHide: true,
     shell: false,
     signal: options.signal,
     ...input2 === void 0 ? {} : { input: input2 }
   };
-  const result = await execImpl(executable, [...args], execOptions);
+  const result = await execImpl(target.executable, target.args, { ...execOptions, env: target.env });
   return { stdout: result.stdout, stderr: result.stderr };
 }
-async function probeWithStatusCommand3(executable, options) {
+async function probeCursorStatus(executable, options) {
   try {
     const result = await runExec3(executable, ["status", "--format", "json"], options);
     const mapped = parseStatusJson3(result.stdout) ?? (result.stderr ? classifyAuthFailure3(result.stderr, result.stdout, 0) : "installed");
@@ -5236,7 +5367,7 @@ async function probeCursorAuth(executable, options = {}) {
       diagnostics: [...options.versionStatus.diagnostics]
     };
   }
-  const statusProbe = await probeWithStatusCommand3(executable, options);
+  const statusProbe = await probeCursorStatus(executable, options);
   if (statusProbe) return statusProbe;
   return probeWithConnectionTest3(executable, options);
 }
@@ -5247,7 +5378,7 @@ function buildCursorDynamicArgs(input2) {
   const args = [];
   if (input2.enableWorkspaceTrust) args.push("--trust");
   if (input2.model) args.push("--model", input2.model);
-  const workspace = input2.cwd ?? (input2.promptPath ? path4.dirname(input2.promptPath) : void 0);
+  const workspace = input2.cwd ?? (input2.promptPath ? path6.dirname(input2.promptPath) : void 0);
   if (workspace) args.push("--workspace", workspace);
   assertArgsSafe(args, { allowScopedTrust: input2.enableWorkspaceTrust === true });
   return Object.freeze(args);
@@ -5312,9 +5443,11 @@ async function defaultExecFileProbe2(executable, args, options) {
 }
 async function listCursorAgentModels(executable, options = {}) {
   const execFile8 = options.execFile ?? defaultExecFileProbe2;
-  const result = await execFile8(executable, ["models"], {
+  const target = cursorLaunchTarget(executable, ["models"]);
+  const result = await execFile8(target.executable, target.args, {
+    env: target.env,
     encoding: "utf8",
-    timeout: 1e4,
+    timeout: target.bundled ? WINDOWS_CURSOR_MODELS_TIMEOUT_MS : 1e4,
     maxBuffer: 512 * 1024,
     windowsHide: true,
     shell: false,
@@ -5368,9 +5501,11 @@ async function testCursorConnection(executable, signal) {
   try {
     const { execFile: execFile8 } = await import("node:child_process");
     const { promisify: promisify7 } = await import("node:util");
-    const result = await promisify7(execFile8)(executable, ["--version"], {
+    const target = cursorLaunchTarget(executable, ["--version"]);
+    const result = await promisify7(execFile8)(target.executable, target.args, {
+      env: target.env,
       encoding: "utf8",
-      timeout: 5e3,
+      timeout: target.bundled ? WINDOWS_CURSOR_VERSION_TIMEOUT_MS : 5e3,
       maxBuffer: 64 * 1024,
       windowsHide: true,
       shell: false,
@@ -5406,9 +5541,9 @@ import { randomUUID as randomUUID4 } from "node:crypto";
 import { spawn as spawn2 } from "node:child_process";
 import { createHash as createHash2 } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { chmod as chmod2, lstat as lstat2, mkdir as mkdir2, mkdtemp as mkdtemp2, open, readFile, rename as rename2, rm as rm3, statfs, writeFile as writeFile2 } from "node:fs/promises";
+import { chmod as chmod2, lstat as lstat4, mkdir as mkdir2, mkdtemp as mkdtemp2, open, readFile, rename as rename2, rm as rm3, statfs, writeFile as writeFile2 } from "node:fs/promises";
 import os2 from "node:os";
-import path5 from "node:path";
+import path7 from "node:path";
 import { inflateRawSync } from "node:zlib";
 
 // ../local-runner/src/speech/catalog.ts
@@ -5547,9 +5682,9 @@ function parseSpeechRequest(value) {
   return body;
 }
 function speechDirectory() {
-  if (process.env.VDT_SPEECH_DATA_DIR) return path5.resolve(process.env.VDT_SPEECH_DATA_DIR);
-  const base = process.platform === "darwin" ? path5.join(os2.homedir(), "Library", "Application Support") : process.env.LOCALAPPDATA || path5.join(os2.homedir(), "AppData", "Local");
-  return path5.join(base, "VDT Studio", "speech");
+  if (process.env.VDT_SPEECH_DATA_DIR) return path7.resolve(process.env.VDT_SPEECH_DATA_DIR);
+  const base = process.platform === "darwin" ? path7.join(os2.homedir(), "Library", "Application Support") : process.env.LOCALAPPDATA || path7.join(os2.homedir(), "AppData", "Local");
+  return path7.join(base, "VDT Studio", "speech");
 }
 var SpeechRuntime = class {
   directory;
@@ -5598,22 +5733,22 @@ var SpeechRuntime = class {
     };
   }
   modelPath(id3) {
-    return path5.join(this.directory, `ggml-${id3}.bin`);
+    return path7.join(this.directory, `ggml-${id3}.bin`);
   }
   enginePath() {
-    return path5.join(this.directory, this.#engine?.file ?? "unavailable");
+    return path7.join(this.directory, this.#engine?.file ?? "unavailable");
   }
   async verifiedFile(file2, digest, size) {
     if (!/^[a-f0-9]{64}$/.test(digest)) return false;
     try {
-      const stat2 = await lstat2(file2);
-      if (!stat2.isFile() || stat2.isSymbolicLink() || size !== void 0 && stat2.size !== size) return false;
+      const stat3 = await lstat4(file2);
+      if (!stat3.isFile() || stat3.isSymbolicLink() || size !== void 0 && stat3.size !== size) return false;
       const cached2 = this.#verified.get(file2);
-      if (cached2?.size === stat2.size && cached2.mtime === stat2.mtimeMs) return true;
+      if (cached2?.size === stat3.size && cached2.mtime === stat3.mtimeMs) return true;
       const hash3 = createHash2("sha256");
       for await (const chunk of createReadStream(file2)) hash3.update(chunk);
       if (hash3.digest("hex") !== digest) return false;
-      this.#verified.set(file2, { size: stat2.size, mtime: stat2.mtimeMs });
+      this.#verified.set(file2, { size: stat3.size, mtime: stat3.mtimeMs });
       return true;
     } catch {
       return false;
@@ -5625,7 +5760,7 @@ var SpeechRuntime = class {
     this.#installController = controller;
     try {
       await mkdir2(this.directory, { recursive: true, mode: 448 });
-      if ((await lstat2(this.directory)).isSymbolicLink()) throw new SpeechError("The voice input directory must not be a symbolic link.");
+      if ((await lstat4(this.directory)).isSymbolicLink()) throw new SpeechError("The voice input directory must not be a symbolic link.");
       const model2 = SPEECH_MODELS.find((entry) => entry.id === modelId);
       const disk = await statfs(this.directory);
       if (disk.bavail * disk.bsize < model2.bytes * 2 + 256 * 1024 * 1024) throw new SpeechError("Free at least 1.5 GB of disk space before installing a speech model.");
@@ -5648,13 +5783,13 @@ var SpeechRuntime = class {
     const engine = this.#engine;
     let staging;
     try {
-      staging = await mkdtemp2(path5.join(this.directory, ".install-"));
+      staging = await mkdtemp2(path7.join(this.directory, ".install-"));
       if (!initial.engineReady) {
-        const archive = path5.join(staging, "engine.zip");
+        const archive = path7.join(staging, "engine.zip");
         const asset = engine.file.replace(/\.exe$/, "");
         await this.download("downloadUrl" in engine ? engine.downloadUrl : `${ENGINE_RELEASE}${asset}.zip`, archive, engine.bytes, engine.sha256, controller.signal);
         const binary = extractPinnedExecutable(await readFile(archive), engine.file);
-        const target = path5.join(staging, engine.file);
+        const target = path7.join(staging, engine.file);
         await writeFile2(target, binary, { flag: "wx", mode: 448 });
         await chmod2(target, 448);
         if (createHash2("sha256").update(binary).digest("hex") !== engine.binarySha256) throw new SpeechError("Speech engine verification failed.");
@@ -5664,14 +5799,14 @@ var SpeechRuntime = class {
       this.#installation.phase = "model";
       if (!initial.installedModels.includes(modelId)) {
         const model2 = SPEECH_MODELS.find((entry) => entry.id === modelId);
-        const target = path5.join(staging, "model.bin");
+        const target = path7.join(staging, "model.bin");
         await this.download(`https://huggingface.co/ggerganov/whisper.cpp/resolve/${MODEL_REVISION}/ggml-${modelId}.bin`, target, model2.bytes, MODEL_HASHES[modelId], controller.signal);
         controller.signal.throwIfAborted();
         await rename2(target, this.modelPath(modelId));
       }
       this.#installation = { ...this.#installation, state: "verifying", downloadedBytes: this.#installation.totalBytes };
       await this.recognize(this.modelPath(modelId), pcmWave(new Float32Array(SPEECH_SAMPLE_RATE)), "en", controller.signal);
-      await writeFile2(path5.join(this.directory, "LICENSES.txt"), SPEECH_LICENSE_NOTICES, { mode: 384 });
+      await writeFile2(path7.join(this.directory, "LICENSES.txt"), SPEECH_LICENSE_NOTICES, { mode: 384 });
       this.#installation = { ...this.#installation, state: "ready" };
     } catch (error63) {
       this.#installation = {
@@ -5754,9 +5889,9 @@ var SpeechRuntime = class {
     return { state: "processing" };
   }
   async recognize(model2, wav, language, signal) {
-    const directory = await mkdtemp2(path5.join(os2.tmpdir(), "vdt-speech-audio-"));
+    const directory = await mkdtemp2(path7.join(os2.tmpdir(), "vdt-speech-audio-"));
     try {
-      const input2 = path5.join(directory, "input.wav");
+      const input2 = path7.join(directory, "input.wav");
       await writeFile2(input2, wav, { flag: "wx", mode: 384 });
       const output2 = await runWhisper(this.enginePath(), ["-m", model2, "-f", input2, "-l", language, "-nt", "-np", "-t", "4", "-bs", "1", "-bo", "1", "-ng"], directory, signal);
       return output2.replace(/\[(?:BLANK_AUDIO|SILENCE|MUSIC|NO_SPEECH)\]/gi, "").trim();
@@ -5846,19 +5981,19 @@ function getSpeechRuntime() {
 
 // ../model-bridge/src/harness/rpc-session.ts
 import { spawn as spawn3 } from "node:child_process";
-import { chmod as chmod3, mkdtemp as mkdtemp3, realpath as realpath2, rm as rm4, writeFile as writeFile3 } from "node:fs/promises";
+import { chmod as chmod3, mkdtemp as mkdtemp3, realpath as realpath5, rm as rm4, writeFile as writeFile3 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import path7 from "node:path";
+import path9 from "node:path";
 import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
 
 // ../model-bridge/src/harness/credential-metadata.ts
 import { execFileSync } from "node:child_process";
-import { realpathSync, statSync } from "node:fs";
-import path6 from "node:path";
+import { realpathSync as realpathSync2, statSync } from "node:fs";
+import path8 from "node:path";
 var unavailable = () => Object.assign(new Error("Vibe credential-store changes cannot be verified on this host. Use an explicitly verified environment/.env credential source, or an inspectable macOS keychain, then rescan."), { code: "CREDENTIAL_IDENTITY_UNVERIFIED" });
 function credentialFileMetadata(file2) {
   try {
-    const canonical = realpathSync(file2), s = statSync(canonical);
+    const canonical = realpathSync2(file2), s = statSync(canonical);
     return [canonical, s.dev, s.ino, s.size, s.mtimeMs, s.ctimeMs];
   } catch {
     return null;
@@ -5880,10 +6015,10 @@ function vibeKeyringMetadata(env, options = {}) {
   } catch {
     throw unavailable();
   }
-  if (search.length === 0 || search.length > 32 || search.some((file2) => typeof file2 !== "string" || !path6.isAbsolute(file2) || file2.length > 4096 || /[\x00-\x1f]/.test(file2))) throw unavailable();
+  if (search.length === 0 || search.length > 32 || search.some((file2) => typeof file2 !== "string" || !path8.isAbsolute(file2) || file2.length > 4096 || /[\x00-\x1f]/.test(file2))) throw unavailable();
   const encryptedFileMetadata = (filename, required2) => {
     try {
-      const canonical = realpathSync(filename), s = statSync(canonical);
+      const canonical = realpathSync2(filename), s = statSync(canonical);
       if (!s.isFile()) throw unavailable();
       return [canonical, s.dev, s.ino, s.size, s.mtimeMs, s.ctimeMs];
     } catch (e) {
@@ -5905,8 +6040,8 @@ var credentialRootVariables = Object.freeze({
   kilo: ["KILO_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]
 });
 function resolveCredentialRoot(value, env) {
-  const expanded = value === "~" ? env.HOME ?? value : value.startsWith("~/") ? path6.join(env.HOME ?? "", value.slice(2)) : value;
-  return path6.resolve(expanded);
+  const expanded = value === "~" ? env.HOME ?? value : value.startsWith("~/") ? path8.join(env.HOME ?? "", value.slice(2)) : value;
+  return path8.resolve(expanded);
 }
 
 // ../model-bridge/src/harness/rpc-session.ts
@@ -6334,10 +6469,10 @@ function createHarnessSession(h, options) {
   return new HarnessRpcSession(h, options);
 }
 async function resolveHarnessExecutable(h, env = process.env) {
-  const selected = path7.isAbsolute(h.command) ? h.command : (await findExecutableOnPath([h.command], env.PATH ? { path: env.PATH } : {}))?.executable;
+  const selected = path9.isAbsolute(h.command) ? h.command : (await findExecutableOnPath([h.command], env.PATH ? { path: env.PATH } : {}))?.executable;
   if (!selected) throw fail2("BACKEND_NOT_INSTALLED", "The selected harness executable was not found.");
-  const executable = await realpath2(selected);
-  if (!path7.isAbsolute(executable) || executable === path7.parse(executable).root) throw fail2("UNSAFE_EXECUTABLE", "The harness executable must resolve to an absolute file.");
+  const executable = await realpath5(selected);
+  if (!path9.isAbsolute(executable) || executable === path9.parse(executable).root) throw fail2("UNSAFE_EXECUTABLE", "The harness executable must resolve to an absolute file.");
   return executable;
 }
 function harnessEnvironment(h, env = process.env) {
@@ -6364,7 +6499,7 @@ async function withHarnessSession(h, signal, use, options = {}) {
   signal.throwIfAborted();
   const executable = options.executable ?? await resolveHarnessExecutable(h, options.env);
   const environment = harnessEnvironment(h, options.env);
-  const cwd = await mkdtemp3(path7.join(tmpdir(), "vdt-harness-"));
+  const cwd = await mkdtemp3(path9.join(tmpdir(), "vdt-harness-"));
   await chmod3(cwd, 448);
   const session = createHarnessSession(h, { executable, cwd, environment, ...options.maxBytes ? { maxBytes: options.maxBytes } : {} });
   let retained = false;
@@ -6380,7 +6515,7 @@ async function withHarnessSession(h, signal, use, options = {}) {
       await session.close();
     } catch (e) {
       retained = true;
-      await writeFile3(path7.join(cwd, "cleanup-status.json"), JSON.stringify({ harnessId: h.id, status: "cleanup_unconfirmed", observedAt: (/* @__PURE__ */ new Date()).toISOString() }), { mode: 384 }).catch(() => {
+      await writeFile3(path9.join(cwd, "cleanup-status.json"), JSON.stringify({ harnessId: h.id, status: "cleanup_unconfirmed", observedAt: (/* @__PURE__ */ new Date()).toISOString() }), { mode: 384 }).catch(() => {
       });
       throw Object.assign(e, { retainedDirectory: cwd });
     } finally {
@@ -6397,9 +6532,9 @@ function harnessOpaqueIdentity(h, executable, version2, env = process.env, metad
   const authFiles = harnessCredentialFiles[base] ?? [];
   const roots = Object.fromEntries((credentialRootVariables[base] ?? []).map((name) => [name, childEnv[name] ?? null]));
   const prefix = { kimi: [".kimi-code/", childEnv.KIMI_CODE_HOME], vibe: [".vibe/", childEnv.VIBE_HOME], qwen: [".qwen/", childEnv.QWEN_HOME], "grok-build": [".grok/", childEnv.GROK_HOME], pi: [".pi/agent/", childEnv.PI_CODING_AGENT_DIR] }[base];
-  const resolveFile = (name) => prefix?.[1] && name.startsWith(prefix[0]) ? path7.join(prefix[1], name.slice(prefix[0].length)) : base === "kilo" && name.startsWith(".local/share/kilo/") ? path7.join(childEnv.XDG_DATA_HOME ?? path7.join(childEnv.HOME ?? "", ".local/share"), "kilo", name.slice(".local/share/kilo/".length)) : base === "kilo" && name.startsWith(".config/kilo/") ? path7.join(childEnv.XDG_CONFIG_HOME ?? path7.join(childEnv.HOME ?? "", ".config"), "kilo", name.slice(".config/kilo/".length)) : path7.join(childEnv.HOME ?? "", name);
+  const resolveFile = (name) => prefix?.[1] && name.startsWith(prefix[0]) ? path9.join(prefix[1], name.slice(prefix[0].length)) : base === "kilo" && name.startsWith(".local/share/kilo/") ? path9.join(childEnv.XDG_DATA_HOME ?? path9.join(childEnv.HOME ?? "", ".local/share"), "kilo", name.slice(".local/share/kilo/".length)) : base === "kilo" && name.startsWith(".config/kilo/") ? path9.join(childEnv.XDG_CONFIG_HOME ?? path9.join(childEnv.HOME ?? "", ".config"), "kilo", name.slice(".config/kilo/".length)) : path9.join(childEnv.HOME ?? "", name);
   const files = authFiles.map(resolveFile);
-  if (base === "kilo" && childEnv.KILO_CONFIG_DIR) files.push(...["kilo.json", "kilo.jsonc"].map((name) => path7.join(childEnv.KILO_CONFIG_DIR, name)));
+  if (base === "kilo" && childEnv.KILO_CONFIG_DIR) files.push(...["kilo.json", "kilo.jsonc"].map((name) => path9.join(childEnv.KILO_CONFIG_DIR, name)));
   const authMetadata = files.map(credentialFileMetadata);
   let storeMetadata = null;
   if (base === "vibe" && !["env", "file", "none"].includes(metadata.vibeCredentialSource ?? "unknown")) {
@@ -6434,16 +6569,16 @@ var harnessCredentialFiles = {
 
 // ../model-bridge/src/subscription-cli/codex/smart-policy.ts
 import { createHash as createHash4 } from "node:crypto";
-import { open as open2, stat } from "node:fs/promises";
+import { open as open2, stat as stat2 } from "node:fs/promises";
 import os3 from "node:os";
-import path8 from "node:path";
+import path10 from "node:path";
 var SMART_CODEX_POLICY_VERSION = "smart-codex-readonly.v2";
 var SMART_CODEX_DISABLED_FEATURES = Object.freeze(["shell_tool", "unified_exec", "apply_patch_freeform", "multi_agent", "multi_agent_v2", "apps", "plugins", "remote_plugin", "hooks", "browser_use", "browser_use_external", "in_app_browser", "computer_use", "image_generation", "view_image", "memories", "skill_search", "skill_mcp_dependency_install", "tool_suggest", "workspace_dependencies", "goals", "request_permissions_tool"]);
 var SMART_CODEX_CODE_MODE_CONFIG = Object.freeze([
   'features.code_mode={enabled=false,excluded_tool_namespaces=["functions"]}',
   "features.code_mode_host={enabled=true,disable_in_process_fallback=true}"
 ]);
-var codexSmartHome = (env) => env.CODEX_HOME ?? path8.join(env.HOME ?? os3.homedir(), ".codex");
+var codexSmartHome = (env) => env.CODEX_HOME ?? path10.join(env.HOME ?? os3.homedir(), ".codex");
 var model = (value) => {
   if (!value || value.length > 160 || value.startsWith("-") || /[\x00-\x20]/.test(value)) throw new Error("Codex selected model is invalid.");
   return value;
@@ -6487,7 +6622,7 @@ async function readCodexSmartDefaultModel(env) {
   if (env.VDT_CODEX_SESSION_MODEL?.trim() && env.VDT_CODEX_SESSION_MODEL.trim() !== "auto") return model(env.VDT_CODEX_SESSION_MODEL.trim());
   let file2;
   try {
-    file2 = await open2(path8.join(codexSmartHome(env), "config.toml"), "r");
+    file2 = await open2(path10.join(codexSmartHome(env), "config.toml"), "r");
   } catch (error63) {
     if (error63.code === "ENOENT") return void 0;
     throw new Error("Codex selected-default metadata is unreadable.");
@@ -6513,7 +6648,7 @@ async function readCodexSmartReasoningValues(env, selectedModel) {
   if (!selectedModel) return [];
   let file2;
   try {
-    file2 = await open2(path8.join(codexSmartHome(env), "models_cache.json"), "r");
+    file2 = await open2(path10.join(codexSmartHome(env), "models_cache.json"), "r");
   } catch (error63) {
     if (error63.code === "ENOENT") return [];
     throw error63;
@@ -6534,7 +6669,7 @@ async function readCodexSmartReasoningValues(env, selectedModel) {
 async function codexSmartMetadataIdentity(env, executable, version2) {
   const metadata = async (name) => {
     try {
-      const s = await stat(path8.join(codexSmartHome(env), name));
+      const s = await stat2(path10.join(codexSmartHome(env), name));
       return [s.dev, s.ino, s.size, s.mtimeMs];
     } catch (error63) {
       if (error63.code === "ENOENT") return null;
@@ -6552,7 +6687,7 @@ async function codexSmartMetadataIdentity(env, executable, version2) {
 import { createHash as createHash5 } from "node:crypto";
 import { mkdtemp as mkdtemp4, rm as rm5, writeFile as writeFile4 } from "node:fs/promises";
 import { tmpdir as tmpdir2 } from "node:os";
-import path9 from "node:path";
+import path11 from "node:path";
 var pinReasoning = (bindingVersion, value) => `sha256:${createHash5("sha256").update(JSON.stringify([bindingVersion, "smart-reasoning.v1", value ?? null])).digest("hex")}`;
 async function resolveSmartHarnessIdentity(backendId, model2, signal, env = process.env, modelReasoning) {
   const h = getHarnessDefinition(backendId, env);
@@ -6575,7 +6710,7 @@ async function resolveSmartHarnessIdentity(backendId, model2, signal, env = proc
   const js = /\.[cm]?js$/.test(executable);
   const versionArgs = [...h.custom ? h.args : [], "--version"];
   const environment = harnessEnvironment(h, env);
-  const cwd = await mkdtemp4(path9.join(tmpdir2(), "vdt-harness-metadata-"));
+  const cwd = await mkdtemp4(path11.join(tmpdir2(), "vdt-harness-metadata-"));
   let retained = false, version2, directClaudeSubscriptionVerified = false;
   try {
     const result = await probeOwnedCliVersion(js ? process.execPath : executable, cwd, environment, { signal, requireConfirmedCleanup: true }, js ? [executable, ...versionArgs] : versionArgs, 4e3);
@@ -6586,7 +6721,7 @@ ${result.stderr}`.trim().split(/\r?\n/)[0];
     const code = e?.code;
     if (code === "CLEANUP_UNCONFIRMED") {
       retained = true;
-      await writeFile4(path9.join(cwd, "cleanup-status.json"), JSON.stringify({ harnessId: h.id, status: "cleanup_unconfirmed" }), { mode: 384 });
+      await writeFile4(path11.join(cwd, "cleanup-status.json"), JSON.stringify({ harnessId: h.id, status: "cleanup_unconfirmed" }), { mode: 384 });
     }
     throw Object.assign(new Error(code === "CLEANUP_UNCONFIRMED" ? "Harness metadata process cleanup is unconfirmed." : signal.aborted ? "Harness metadata probe cancelled." : "Harness version could not be verified."), { code: code === "CLEANUP_UNCONFIRMED" ? code : signal.aborted ? "CANCELLED" : "SUGGESTIONS_UNAVAILABLE", ...retained ? { retainedDirectory: cwd } : {} });
   } finally {
@@ -6616,7 +6751,8 @@ ${result.stderr}`.trim().split(/\r?\n/)[0];
 
 // ../model-bridge/src/enrich-detection.ts
 function publicDetection(agent) {
-  return agent.error ? { ...agent, error: "CLI version probe failed." } : agent;
+  const { cursorLaunchIssue: _cursorLaunchIssue, ...display } = agent;
+  return display.error ? { ...display, error: "CLI version probe failed." } : display;
 }
 function probeDiagnostics(status) {
   switch (status) {
@@ -6642,6 +6778,10 @@ async function enrichSubscriptionCliDetection(agent, options = {}) {
       diagnostics: []
     };
   }
+  if (agent.cursorLaunchIssue) {
+    const message = windowsCursorLaunchIssueMessage(agent.cursorLaunchIssue);
+    return { ...publicDetection(agent), status: "error", authSummary: message, diagnostics: [message] };
+  }
   const harness = getHarnessDefinition(agent.backendId);
   if (harness && harness.transport !== "native") {
     try {
@@ -6657,7 +6797,7 @@ async function enrichSubscriptionCliDetection(agent, options = {}) {
   const adapter = getSubscriptionCliAdapter(agent.backendId);
   if (adapter?.probeAuth) {
     try {
-      const probe = await adapter.probeAuth(agent.executable, options.signal);
+      const probe = agent.id === "cursor-agent" && isWindowsCursorPayload(agent.executable) && agent.version ? await probeCursorAuth(agent.executable, { signal: options.signal, versionStatus: evaluateCursorVersion(agent.version) }) : await adapter.probeAuth(agent.executable, options.signal);
       return {
         ...publicDetection(agent),
         status: probe.status,
@@ -6695,7 +6835,9 @@ async function enrichSubscriptionCliDetections(agents, options = {}) {
   return Promise.all(
     agents.map(async (agent) => {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), probeTimeoutMs);
+      const bundledCursor = agent.id === "cursor-agent" && agent.executable && isWindowsCursorPayload(agent.executable);
+      const timeout = bundledCursor ? Math.max(probeTimeoutMs, WINDOWS_CURSOR_STATUS_TIMEOUT_MS) : probeTimeoutMs;
+      const timer = setTimeout(() => controller.abort(), timeout);
       try {
         return await enrichSubscriptionCliDetection(agent, { signal: controller.signal });
       } finally {
@@ -6710,15 +6852,15 @@ import { createHash as createHash6, randomUUID as randomUUID3 } from "node:crypt
 
 // ../local-runner/src/server/smart-suggestions.ts
 import { spawn as spawn4 } from "node:child_process";
-import { chmod as chmod5, copyFile as copyFile2, mkdir as mkdir4, mkdtemp as mkdtemp6, realpath as realpath4, rm as rm7, writeFile as writeFile6 } from "node:fs/promises";
+import { chmod as chmod5, copyFile as copyFile2, mkdir as mkdir4, mkdtemp as mkdtemp6, realpath as realpath7, rm as rm7, writeFile as writeFile6 } from "node:fs/promises";
 import os5 from "node:os";
-import path11 from "node:path";
+import path13 from "node:path";
 
 // ../local-runner/src/server/executor.ts
 import { execFile as execFile6, spawn as nodeSpawn } from "node:child_process";
-import { chmod as chmod4, copyFile, lstat as lstat3, mkdir as mkdir3, mkdtemp as mkdtemp5, readFile as readFile2, realpath as realpath3, rm as rm6, writeFile as writeFile5 } from "node:fs/promises";
+import { chmod as chmod4, copyFile, lstat as lstat5, mkdir as mkdir3, mkdtemp as mkdtemp5, readFile as readFile2, realpath as realpath6, rm as rm6, writeFile as writeFile5 } from "node:fs/promises";
 import os4 from "node:os";
-import path10 from "node:path";
+import path12 from "node:path";
 import { promisify as promisify5 } from "node:util";
 
 // ../local-runner/src/server/harness-completion.ts
@@ -7213,19 +7355,24 @@ async function defaultResolveExecutable(manifest, env) {
     if (selected) return selected.executable;
     throw Object.assign(new Error("Codex CLI executable was not found on a safe absolute PATH entry."), { code: "BACKEND_NOT_INSTALLED" });
   }
+  if (process.platform === "win32" && manifest.id === "cursor_subscription") {
+    const selection = await detectSubscriptionCli("cursor-agent", { path: pathValue, versionProbe: async () => ({ stdout: "", stderr: "" }) });
+    if (selection.executable && !selection.error) return selection.executable;
+    throw Object.assign(new Error(selection.cursorLaunchIssue ? windowsCursorLaunchIssueMessage(selection.cursorLaunchIssue) : selection.error ?? "Cursor CLI was not found on PATH."), { code: "BACKEND_NOT_INSTALLED" });
+  }
   for (const alias of cli.executableAliases) {
-    if (alias.includes("\0") || path10.basename(alias) !== alias || alias === "." || alias === "..") continue;
-    for (const directory of pathValue.split(path10.delimiter).filter((entry) => path10.isAbsolute(entry))) {
-      const candidate = path10.resolve(directory, alias);
+    if (alias.includes("\0") || path12.basename(alias) !== alias || alias === "." || alias === "..") continue;
+    for (const directory of pathValue.split(path12.delimiter).filter((entry) => path12.isAbsolute(entry))) {
+      const candidate = path12.resolve(directory, alias);
       try {
-        const info = await lstat3(candidate);
+        const info = await lstat5(candidate);
         if (!info.isSymbolicLink() && !info.isFile()) continue;
-        const resolved = await realpath3(candidate);
-        if (!path10.isAbsolute(resolved)) continue;
-        const resolvedInfo = await lstat3(resolved);
+        const resolved = await realpath6(candidate);
+        if (!path12.isAbsolute(resolved)) continue;
+        const resolvedInfo = await lstat5(resolved);
         if (!resolvedInfo.isFile()) continue;
-        const projectRoot = path10.resolve(process.cwd());
-        if (resolved === projectRoot || resolved.startsWith(`${projectRoot}${path10.sep}`)) continue;
+        const projectRoot = path12.resolve(process.cwd());
+        if (resolved === projectRoot || resolved.startsWith(`${projectRoot}${path12.sep}`)) continue;
         return resolved;
       } catch {
       }
@@ -7236,11 +7383,11 @@ async function defaultResolveExecutable(manifest, env) {
   });
 }
 async function normalizeResolvedExecutable(executable) {
-  if (!path10.isAbsolute(executable) || executable.includes("\0")) {
+  if (!path12.isAbsolute(executable) || executable.includes("\0")) {
     throw Object.assign(new Error("Resolved executable must be an absolute path without NUL bytes."), { code: "UNSAFE_EXECUTABLE" });
   }
   try {
-    return await realpath3(executable);
+    return await realpath6(executable);
   } catch {
     return executable;
   }
@@ -7249,8 +7396,8 @@ function isJavaScriptExecutable(executable) {
   return /\.(?:mjs|cjs|js)$/i.test(executable);
 }
 function isPathInside(root, candidate) {
-  const relative = path10.relative(path10.resolve(root), path10.resolve(candidate));
-  return relative === "" || !!relative && !relative.startsWith("..") && !path10.isAbsolute(relative);
+  const relative = path12.relative(path12.resolve(root), path12.resolve(candidate));
+  return relative === "" || !!relative && !relative.startsWith("..") && !path12.isAbsolute(relative);
 }
 function shouldLocalizeJavaScriptExecutable(executable, options) {
   return options.resolveExecutable !== void 0 && isPathInside(process.cwd(), executable);
@@ -7260,8 +7407,8 @@ function errorCode(error63) {
 }
 async function copyCodexHomeFile(sourceDir, targetDir, fileName) {
   try {
-    const targetPath = path10.join(targetDir, fileName);
-    await copyFile(path10.join(sourceDir, fileName), targetPath);
+    const targetPath = path12.join(targetDir, fileName);
+    await copyFile(path12.join(sourceDir, fileName), targetPath);
     await chmod4(targetPath, 384);
   } catch (error63) {
     if (errorCode(error63) === "ENOENT") return;
@@ -7269,9 +7416,9 @@ async function copyCodexHomeFile(sourceDir, targetDir, fileName) {
   }
 }
 async function prepareEphemeralCodexHome(cwd, envSource) {
-  const sourceCodexHome = envSource.CODEX_HOME ?? (envSource.HOME ? path10.join(envSource.HOME, ".codex") : void 0);
+  const sourceCodexHome = envSource.CODEX_HOME ?? (envSource.HOME ? path12.join(envSource.HOME, ".codex") : void 0);
   if (!sourceCodexHome) return void 0;
-  const codexHome = path10.join(cwd, "codex-home");
+  const codexHome = path12.join(cwd, "codex-home");
   await mkdir3(codexHome, { recursive: true, mode: 448 });
   await chmod4(codexHome, 448);
   for (const fileName of CODEX_HOME_COPY_FILES) {
@@ -7443,7 +7590,7 @@ var executableProbeCache = /* @__PURE__ */ new Map();
 var executableHelpCache = /* @__PURE__ */ new Map();
 async function executableProbeCacheKey(executable, operation) {
   try {
-    const metadata = await lstat3(executable);
+    const metadata = await lstat5(executable);
     return `${executable}\0${metadata.size}\0${metadata.mtimeMs}\0${operation}`;
   } catch {
     return `${executable}\0unknown\0${operation}`;
@@ -7488,13 +7635,42 @@ ${result.stderr}`.includes(needle);
     return false;
   }
 }
+var bundledCursorProbes = /* @__PURE__ */ new Map();
+async function probeBundledCursor(executable, args, signal) {
+  const target = cursorLaunchTarget(executable, args);
+  const key2 = await executableProbeCacheKey(target.executable, await executableProbeCacheKey(executable, JSON.stringify(args)));
+  signal.throwIfAborted();
+  const cached2 = bundledCursorProbes.get(key2);
+  if (cached2 !== void 0) return cached2;
+  try {
+    const result = await promisify5(execFile6)(target.executable, target.args, {
+      env: target.env,
+      encoding: "utf8",
+      timeout: 25e3,
+      maxBuffer: 256 * 1024,
+      windowsHide: true,
+      shell: false,
+      signal
+    });
+    const output2 = `${result.stdout}
+${result.stderr}`.trim();
+    if (bundledCursorProbes.size >= 64) bundledCursorProbes.clear();
+    bundledCursorProbes.set(key2, output2);
+    return output2 || void 0;
+  } catch {
+    signal.throwIfAborted();
+    return void 0;
+  }
+}
 async function executeCli(manifest, request, signal, options) {
   assertManifestSafe(manifest);
   const smart = request.taskType === "suggest_incoming_kpis";
   const ownsProcessGroup = smart && process.platform !== "win32";
   const adapter = manifest.kind === "subscription_cli" ? getSubscriptionCliAdapter(manifest.id) : void 0;
   const envSource = options.env ?? process.env;
-  const executable = await normalizeResolvedExecutable(await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource));
+  const selected = await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource);
+  const bundledCursor = manifest.id === "cursor_subscription" && isWindowsCursorPayload(selected);
+  const executable = bundledCursor ? selected : await normalizeResolvedExecutable(selected);
   const payload = JSON.stringify({
     requestId: request.requestId,
     taskType: request.taskType,
@@ -7505,29 +7681,29 @@ async function executeCli(manifest, request, signal, options) {
   if (byteLength5(payload) > EXECUTION_LIMITS.maxPromptBytes) {
     throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
   }
-  const executableVersion = manifest.cli?.versionArgs?.length && !isJavaScriptExecutable(executable) ? await probeExecutableVersion(executable, manifest.cli.versionArgs) : void 0;
+  const executableVersion = manifest.cli?.versionArgs?.length && (bundledCursor || !isJavaScriptExecutable(executable)) ? bundledCursor ? await probeBundledCursor(executable, manifest.cli.versionArgs, signal) : await probeExecutableVersion(executable, manifest.cli.versionArgs) : void 0;
   async function runCliAttempt(prompt, timeoutMs, requestJson = payload) {
     if (byteLength5(prompt) > (smart ? KPI_SUGGESTION_LIMITS.inputBytes : EXECUTION_LIMITS.maxPromptBytes)) {
       throw Object.assign(new Error("Completion request exceeds the prompt limit."), { code: "PROMPT_TOO_LARGE" });
     }
     const tempRoot = options.tempRoot ?? os4.tmpdir();
     await mkdir3(tempRoot, { recursive: true });
-    const cwd = await mkdtemp5(path10.join(tempRoot, "vdt-run-"));
+    const cwd = await mkdtemp5(path12.join(tempRoot, "vdt-run-"));
     let processStarted = false;
     try {
       await chmod4(cwd, 448);
-      const requestPath = path10.join(cwd, "request.json");
+      const requestPath = path12.join(cwd, "request.json");
       await writeFile5(requestPath, requestJson, { encoding: "utf8", mode: 384, flag: "wx" });
-      const promptPath = path10.join(cwd, "prompt.txt");
+      const promptPath = path12.join(cwd, "prompt.txt");
       await writeFile5(promptPath, prompt, { encoding: "utf8", mode: 384, flag: "wx" });
-      const schemaPath = path10.join(cwd, "schema.json");
+      const schemaPath = path12.join(cwd, "schema.json");
       await writeFile5(schemaPath, `${JSON.stringify(cliResponseSchema(request), null, 2)}
 `, {
         encoding: "utf8",
         mode: 384,
         flag: "wx"
       });
-      const outputPath = path10.join(cwd, "last-message.json");
+      const outputPath = path12.join(cwd, "last-message.json");
       const promptText = await readFile2(promptPath, "utf8");
       const staticArgs = manifest.cli?.args ?? [];
       const directClaudeSubscriptionVerified = manifest.id === "claude_subscription" && request.modelReasoning === false ? await verifyDirectClaudeSubscription(executable, cwd, safeEnvironment(envSource), signal) : false;
@@ -7540,17 +7716,28 @@ async function executeCli(manifest, request, signal, options) {
         promptText,
         schemaPath,
         outputPath,
-        enableWorkspaceTrust: manifest.id === "cursor_subscription" && manifest.safety.trustEphemeralWorkspace === true && await executableHelpIncludes(executable, "--trust")
+        enableWorkspaceTrust: manifest.id === "cursor_subscription" && manifest.safety.trustEphemeralWorkspace === true && (bundledCursor ? Boolean((await probeBundledCursor(executable, ["--help"], signal))?.includes("--trust")) : await executableHelpIncludes(executable, "--trust"))
       }) : [];
       let command = executable;
       let spawnArgs = [...staticArgs, ...dynamicArgs];
       assertArgsSafe(spawnArgs, {
         allowScopedTrust: manifest.safety.trustEphemeralWorkspace === true
       });
-      if (isJavaScriptExecutable(executable)) {
+      const childEnv = safeEnvironment(envSource);
+      if (manifest.id === "cursor_subscription") childEnv.NODE_COMPILE_CACHE = path12.join(cwd, "node-compile-cache");
+      if (bundledCursor) {
+        for (const key2 of ["LOCALAPPDATA", "APPDATA", "USERPROFILE", "SystemRoot"]) {
+          if (envSource[key2]) childEnv[key2] = envSource[key2];
+        }
+      }
+      const cursorTarget = manifest.id === "cursor_subscription" ? cursorLaunchTarget(executable, spawnArgs, childEnv) : void 0;
+      if (cursorTarget?.bundled) {
+        command = cursorTarget.executable;
+        spawnArgs = cursorTarget.args;
+      } else if (isJavaScriptExecutable(executable)) {
         let scriptPath = executable;
         if (shouldLocalizeJavaScriptExecutable(executable, options)) {
-          scriptPath = path10.join(cwd, path10.basename(executable));
+          scriptPath = path12.join(cwd, path12.basename(executable));
           await copyFile(executable, scriptPath);
           await chmod4(scriptPath, 448);
         }
@@ -7558,18 +7745,15 @@ async function executeCli(manifest, request, signal, options) {
         spawnArgs = [scriptPath, ...spawnArgs];
       }
       let finalArgs = spawnArgs;
-      const childEnv = safeEnvironment(envSource);
-      if (manifest.id === "cursor_subscription") {
-        childEnv.NODE_COMPILE_CACHE = path10.join(cwd, "node-compile-cache");
-      }
       if (manifest.id === "codex_subscription") {
         const codexHome = await prepareEphemeralCodexHome(cwd, envSource);
         if (codexHome) childEnv.CODEX_HOME = codexHome;
       }
+      signal.throwIfAborted();
       const child = (options.spawn ?? ((spawnCommand, args, spawnOptions) => nodeSpawn(spawnCommand, [...args], spawnOptions)))(
         command,
         finalArgs,
-        { cwd, env: childEnv, shell: false, windowsHide: true, ...smart ? { detached: ownsProcessGroup } : {}, stdio: ["pipe", "pipe", "pipe"] }
+        { cwd, env: cursorTarget?.env ?? childEnv, shell: false, windowsHide: true, ...smart ? { detached: ownsProcessGroup } : {}, stdio: ["pipe", "pipe", "pipe"] }
       );
       processStarted = true;
       let stdout = "";
@@ -7807,7 +7991,7 @@ async function executeCli(manifest, request, signal, options) {
         if (forceKill) clearTimeout(forceKill);
         if (cleanupDeadline) clearTimeout(cleanupDeadline);
         if (cleanupUnconfirmed) {
-          await writeFile5(path10.join(cwd, "cleanup-status.json"), JSON.stringify({ backendId: manifest.id, status: "cleanup_unconfirmed" }), { mode: 384 });
+          await writeFile5(path12.join(cwd, "cleanup-status.json"), JSON.stringify({ backendId: manifest.id, status: "cleanup_unconfirmed" }), { mode: 384 });
           child.stdout.destroy();
           child.stderr.destroy();
           child.stdin.destroy();
@@ -7819,7 +8003,7 @@ async function executeCli(manifest, request, signal, options) {
     } catch (error63) {
       if (!processStarted) {
         if (error63?.code === "CLEANUP_UNCONFIRMED") {
-          await writeFile5(path10.join(cwd, "cleanup-status.json"), JSON.stringify({ backendId: manifest.id, status: "cleanup_unconfirmed" }), { mode: 384 }).catch(() => {
+          await writeFile5(path12.join(cwd, "cleanup-status.json"), JSON.stringify({ backendId: manifest.id, status: "cleanup_unconfirmed" }), { mode: 384 }).catch(() => {
           });
           throw Object.assign(error63, { retainedDirectory: cwd });
         }
@@ -8211,8 +8395,10 @@ async function listBackendModels(manifest, signal, options = {}) {
   const adapter = getSubscriptionCliAdapter(manifest.id);
   if (!adapter?.listModels) return [];
   const envSource = options.env ?? process.env;
-  const executable = await normalizeResolvedExecutable(await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource));
-  const fixtureExecFile = isJavaScriptExecutable(executable) ? (async (_executable, args, execOptions) => {
+  const selected = await (options.resolveExecutable ?? defaultResolveExecutable)(manifest, envSource);
+  const bundledCursor = manifest.id === "cursor_subscription" && isWindowsCursorPayload(selected);
+  const executable = bundledCursor ? selected : await normalizeResolvedExecutable(selected);
+  const fixtureExecFile = isJavaScriptExecutable(executable) && !bundledCursor ? (async (_executable, args, execOptions) => {
     const result = await promisify5(execFile6)(process.execPath, [executable, ...args], execOptions);
     return { stdout: result.stdout, stderr: result.stderr };
   }) : void 0;
@@ -8413,26 +8599,26 @@ async function cliCompletion(manifest, model2, prompt, signal, options, modelRea
   const selected = options.resolveExecutable ? await options.resolveExecutable(manifest, source) : (await selectSmartCodexExecutable(source, signal))?.executable;
   signal.throwIfAborted();
   if (!selected) throw fail3("BACKEND_NOT_INSTALLED", "Selected Codex CLI is unavailable.");
-  const executable = await realpath4(selected);
-  if (!path11.isAbsolute(executable) || executable.startsWith(`${path11.resolve(process.cwd())}${path11.sep}`)) throw fail3("UNSAFE_EXECUTABLE", "Smart CLI executable must be host-owned outside the workspace.");
+  const executable = await realpath7(selected);
+  if (!path13.isAbsolute(executable) || executable.startsWith(`${path13.resolve(process.cwd())}${path13.sep}`)) throw fail3("UNSAFE_EXECUTABLE", "Smart CLI executable must be host-owned outside the workspace.");
   const tempRoot = options.tempRoot ?? os5.tmpdir();
   await mkdir4(tempRoot, { recursive: true });
-  const cwd = await mkdtemp6(path11.join(tempRoot, "vdt-smart-"));
+  const cwd = await mkdtemp6(path13.join(tempRoot, "vdt-smart-"));
   await chmod5(cwd, 448);
   let child, retained = false;
   try {
-    const home = path11.join(cwd, "codex-home");
+    const home = path13.join(cwd, "codex-home");
     await mkdir4(home, { mode: 448 });
-    const authRoot = source.CODEX_HOME ?? (source.HOME ? path11.join(source.HOME, ".codex") : void 0);
+    const authRoot = source.CODEX_HOME ?? (source.HOME ? path13.join(source.HOME, ".codex") : void 0);
     if (authRoot) for (const name of ["auth.json", "installation_id", "models_cache.json"]) {
       try {
-        await copyFile2(path11.join(authRoot, name), path11.join(home, name));
-        await chmod5(path11.join(home, name), 384);
+        await copyFile2(path13.join(authRoot, name), path13.join(home, name));
+        await chmod5(path13.join(home, name), 384);
       } catch (e) {
         if (e.code !== "ENOENT") throw e;
       }
     }
-    const schemaPath = path11.join(cwd, "schema.json");
+    const schemaPath = path13.join(cwd, "schema.json");
     await writeFile6(schemaPath, JSON.stringify(KPI_SUGGESTION_MODEL_JSON_SCHEMA), { mode: 384, flag: "wx" });
     const args = [
       "exec",
@@ -9439,10 +9625,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path12) {
-  if (!path12)
+function getElementAtPath(obj, path14) {
+  if (!path14)
     return obj;
-  return path12.reduce((acc, key2) => acc?.[key2], obj);
+  return path14.reduce((acc, key2) => acc?.[key2], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -9782,11 +9968,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path12, issues) {
+function prefixIssues(path14, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path12);
+    iss.path.unshift(path14);
     return iss;
   });
 }
@@ -10248,16 +10434,16 @@ function flattenError(error63, mapper = (issue3) => issue3.message) {
 }
 function formatError(error63, mapper = (issue3) => issue3.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error64, path12 = []) => {
+  const processError = (error64, path14 = []) => {
     for (const issue3 of error64.issues) {
       if (issue3.code === "invalid_union" && issue3.errors.length) {
-        issue3.errors.map((issues) => processError({ issues }, [...path12, ...issue3.path]));
+        issue3.errors.map((issues) => processError({ issues }, [...path14, ...issue3.path]));
       } else if (issue3.code === "invalid_key") {
-        processError({ issues: issue3.issues }, [...path12, ...issue3.path]);
+        processError({ issues: issue3.issues }, [...path14, ...issue3.path]);
       } else if (issue3.code === "invalid_element") {
-        processError({ issues: issue3.issues }, [...path12, ...issue3.path]);
+        processError({ issues: issue3.issues }, [...path14, ...issue3.path]);
       } else {
-        const fullpath = [...path12, ...issue3.path];
+        const fullpath = [...path14, ...issue3.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue3));
         } else {
@@ -10296,17 +10482,17 @@ function formatError(error63, mapper = (issue3) => issue3.message) {
 }
 function treeifyError(error63, mapper = (issue3) => issue3.message) {
   const result = { errors: [] };
-  const processError = (error64, path12 = []) => {
+  const processError = (error64, path14 = []) => {
     var _a3;
     for (const issue3 of error64.issues) {
       if (issue3.code === "invalid_union" && issue3.errors.length) {
-        issue3.errors.map((issues) => processError({ issues }, [...path12, ...issue3.path]));
+        issue3.errors.map((issues) => processError({ issues }, [...path14, ...issue3.path]));
       } else if (issue3.code === "invalid_key") {
-        processError({ issues: issue3.issues }, [...path12, ...issue3.path]);
+        processError({ issues: issue3.issues }, [...path14, ...issue3.path]);
       } else if (issue3.code === "invalid_element") {
-        processError({ issues: issue3.issues }, [...path12, ...issue3.path]);
+        processError({ issues: issue3.issues }, [...path14, ...issue3.path]);
       } else {
-        const fullpath = [...path12, ...issue3.path];
+        const fullpath = [...path14, ...issue3.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue3));
           continue;
@@ -10345,8 +10531,8 @@ function treeifyError(error63, mapper = (issue3) => issue3.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path12 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path12) {
+  const path14 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path14) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -27484,13 +27670,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path12 = ref.slice(1).split("/").filter(Boolean);
-  if (path12.length === 0) {
+  const path14 = ref.slice(1).split("/").filter(Boolean);
+  if (path14.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path12[0] === defsKey) {
-    const key2 = path12[1] === void 0 ? void 0 : decodeJSONPointerSegment(path12[1]);
+  if (path14[0] === defsKey) {
+    const key2 = path14[1] === void 0 ? void 0 : decodeJSONPointerSegment(path14[1]);
     if (!key2 || !ctx.defs[key2]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -28508,12 +28694,12 @@ function parseFrontmatter(markdown) {
     body: lines.slice(closeIndex + 1).join("\n").trim()
   };
 }
-function parseSkillMarkdown(path12, markdown) {
+function parseSkillMarkdown(path14, markdown) {
   const parsed = parseFrontmatter(markdown);
-  const frontmatter = normalizeSkillFrontmatter(parsed.attributes, path12);
+  const frontmatter = normalizeSkillFrontmatter(parsed.attributes, path14);
   return {
     id: frontmatter.id,
-    path: path12,
+    path: path14,
     title: frontmatter.title,
     domain: frontmatter.domain,
     frontmatter,
@@ -28550,8 +28736,8 @@ function loadSkillLibraryFromMemory(sources) {
     throw new Error("Skill library source map must include registry.md.");
   }
   const registry3 = parseRegistryMarkdown(registrySource);
-  const skillPaths = Object.keys(sources).filter((path12) => path12 !== "registry.md" && path12 !== "skills/registry.md");
-  const skills = skillPaths.sort().map((path12) => parseSkillMarkdown(path12, sources[path12]));
+  const skillPaths = Object.keys(sources).filter((path14) => path14 !== "registry.md" && path14 !== "skills/registry.md");
+  const skills = skillPaths.sort().map((path14) => parseSkillMarkdown(path14, sources[path14]));
   assertRegistryCoversSkills(registry3, skills);
   return {
     registry: registry3,
@@ -28560,14 +28746,14 @@ function loadSkillLibraryFromMemory(sources) {
   };
 }
 async function loadSkillLibraryFromFs(rootDir) {
-  const [{ readdir, readFile: readFile3 }, { join: join2, relative }] = await Promise.all([import("node:fs/promises"), import("node:path")]);
+  const [{ readdir: readdir2, readFile: readFile3 }, { join: join2, relative }] = await Promise.all([import("node:fs/promises"), import("node:path")]);
   const registryPath = join2(rootDir, "registry.md");
   const registrySource = await readFile3(registryPath, "utf8");
-  const markdownPaths = await collectMarkdownFiles(rootDir, readdir, join2);
+  const markdownPaths = await collectMarkdownFiles(rootDir, readdir2, join2);
   const sources = { "registry.md": registrySource };
   await Promise.all(
-    markdownPaths.filter((path12) => !path12.endsWith("registry.md")).map(async (path12) => {
-      sources[relative(rootDir, path12).replaceAll("\\", "/")] = await readFile3(path12, "utf8");
+    markdownPaths.filter((path14) => !path14.endsWith("registry.md")).map(async (path14) => {
+      sources[relative(rootDir, path14).replaceAll("\\", "/")] = await readFile3(path14, "utf8");
     })
   );
   return loadSkillLibraryFromMemory(sources);
@@ -28922,11 +29108,11 @@ function parseStringValue(value) {
   }
   return value.replace(/^["']|["']$/g, "").trim();
 }
-function normalizeSkillFrontmatter(attributes, path12) {
+function normalizeSkillFrontmatter(attributes, path14) {
   const getString = (key2) => {
     const value = attributes[key2];
     if (typeof value !== "string" || !value.trim()) {
-      throw new Error(`Skill ${path12} is missing required string frontmatter: ${key2}.`);
+      throw new Error(`Skill ${path14} is missing required string frontmatter: ${key2}.`);
     }
     return value.trim();
   };
@@ -28937,11 +29123,11 @@ function normalizeSkillFrontmatter(attributes, path12) {
   const getStringArray = (key2) => {
     const value = attributes[key2];
     if (!Array.isArray(value)) {
-      throw new Error(`Skill ${path12} is missing required list frontmatter: ${key2}.`);
+      throw new Error(`Skill ${path14} is missing required list frontmatter: ${key2}.`);
     }
     const values = value.map((item) => item.trim()).filter(Boolean);
     if (values.length === 0) {
-      throw new Error(`Skill ${path12} must define at least one value for frontmatter list: ${key2}.`);
+      throw new Error(`Skill ${path14} must define at least one value for frontmatter list: ${key2}.`);
     }
     return values;
   };
@@ -28949,7 +29135,7 @@ function normalizeSkillFrontmatter(attributes, path12) {
     const value = attributes[key2];
     if (value === void 0) return [];
     if (!Array.isArray(value)) {
-      throw new Error(`Skill ${path12} frontmatter must be a list: ${key2}.`);
+      throw new Error(`Skill ${path14} frontmatter must be a list: ${key2}.`);
     }
     return value.map((item) => item.trim()).filter(Boolean);
   };
@@ -29030,15 +29216,15 @@ function createRunEvent(runId, eventIndex, now, event) {
     ...event
   };
 }
-async function collectMarkdownFiles(rootDir, readdir, join2) {
-  const entries = await readdir(rootDir, { withFileTypes: true });
+async function collectMarkdownFiles(rootDir, readdir2, join2) {
+  const entries = await readdir2(rootDir, { withFileTypes: true });
   const nested = await Promise.all(
     entries.map(async (entry) => {
-      const path12 = join2(rootDir, entry.name);
+      const path14 = join2(rootDir, entry.name);
       if (entry.isDirectory()) {
-        return collectMarkdownFiles(path12, readdir, join2);
+        return collectMarkdownFiles(path14, readdir2, join2);
       }
-      return entry.isFile() && entry.name.endsWith(".md") ? [path12] : [];
+      return entry.isFile() && entry.name.endsWith(".md") ? [path14] : [];
     })
   );
   return nested.flat().sort();
@@ -29438,7 +29624,8 @@ async function detectRuntimeSubscriptionClis(context, agentId) {
         return;
       }
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15e3);
+      const modelTimeout = agent.id === "cursor-agent" && isWindowsCursorPayload(agent.executable) ? WINDOWS_CURSOR_MODELS_TIMEOUT_MS : 15e3;
+      const timer = setTimeout(() => controller.abort(), modelTimeout);
       try {
         modelsByAgent[agent.id] = [
           ...await listBackendModels(manifest, controller.signal, {
@@ -29455,11 +29642,18 @@ async function detectRuntimeSubscriptionClis(context, agentId) {
   );
   return { statusCode: 200, payload: { ok: true, agents, modelsByAgent, harnesses: listHarnessDefinitions(context.config.executor?.env) } };
 }
+async function verifyRuntimeProviderAuth(context, agentId) {
+  const verified = await detectRuntimeSubscriptionClis(context, agentId);
+  const verifiedPayload = isRecord8(verified.payload) ? verified.payload : void 0;
+  const agents = Array.isArray(verifiedPayload?.agents) ? verifiedPayload.agents : [];
+  return agents.find((candidate) => isRecord8(candidate) && candidate.id === agentId);
+}
 async function listRuntimeModels(backendId, context) {
   const manifest = context.manifests.get(backendId);
   if (!manifest) throw new LocalRuntimeError(404, "UNKNOWN_BACKEND", "Unknown backendId.");
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15e3);
+  const modelTimeout = process.platform === "win32" && backendId === "cursor_subscription" ? WINDOWS_CURSOR_MODELS_TIMEOUT_MS : 15e3;
+  const timeout = setTimeout(() => controller.abort(), modelTimeout);
   timeout.unref?.();
   try {
     const models = await listBackendModels(manifest, controller.signal, context.config.executor);
@@ -29972,19 +30166,21 @@ async function openRuntimeProviderAuth(backendId, context) {
       if (!detection.installed || !detection.executable) {
         throw new LocalRuntimeError(404, "BACKEND_NOT_INSTALLED", `${manifest.label} is not installed.`);
       }
+      if (detection.cursorLaunchIssue) {
+        throw new LocalRuntimeError(409, "CURSOR_LAUNCH_UNAVAILABLE", windowsCursorLaunchIssueMessage(detection.cursorLaunchIssue));
+      }
       const execImpl = context.config.providerAuth?.execFile ?? execFileAsync5;
-      await execImpl(detection.executable, [...manifest.cli.authArgs], {
+      const authEnvironment = context.config.providerAuth?.env ?? process.env;
+      const target = agentId === "cursor-agent" ? cursorLaunchTarget(detection.executable, manifest.cli.authArgs, authEnvironment) : { executable: detection.executable, args: [...manifest.cli.authArgs], env: authEnvironment, bundled: false };
+      await execImpl(target.executable, target.args, {
         encoding: "utf8",
         timeout: context.config.providerAuth?.timeoutMs ?? PROVIDER_AUTH_TIMEOUT_MS,
         maxBuffer: PROVIDER_AUTH_MAX_BUFFER_BYTES,
         windowsHide: true,
         shell: false,
-        env: context.config.providerAuth?.env ?? process.env
+        env: target.env
       });
-      const verified = await detectRuntimeSubscriptionClis(context, agentId);
-      const verifiedPayload = isRecord8(verified.payload) ? verified.payload : void 0;
-      const agents = Array.isArray(verifiedPayload?.agents) ? verifiedPayload.agents : [];
-      const verifiedAgent = agents.find((candidate) => isRecord8(candidate) && candidate.id === agentId);
+      const verifiedAgent = target.bundled ? await probeCursorStatus(detection.executable, {}) : await verifyRuntimeProviderAuth(context, agentId);
       if (!isRecord8(verifiedAgent) || verifiedAgent.status !== "ready") {
         throw new LocalRuntimeError(
           401,

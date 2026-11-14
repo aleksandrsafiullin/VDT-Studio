@@ -1,6 +1,8 @@
+import { inside, currentWorkspaceRoot } from "./subscription-cli/executable-scope";
+import { cursorLaunchTarget, isOfficialWindowsCursorShim, resolveWindowsCursorShim, WindowsCursorLaunchError, WINDOWS_CURSOR_MODELS_TIMEOUT_MS, WINDOWS_CURSOR_VERSION_TIMEOUT_MS } from "./subscription-cli/cursor/windows-launch";
 import { execFile } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { selectCodexExecutable } from "./subscription-cli/codex/executable-selection";
@@ -33,6 +35,7 @@ export interface SubscriptionCliDetectionResult {
   alias: string | null;
   version: string | null;
   error?: string;
+  cursorLaunchIssue?: "pending" | "ambiguous" | "unsupported";
 }
 
 export interface DetectionOptions {
@@ -59,10 +62,12 @@ const defaultExecutableCheck = async (candidate: string) => {
   }
 };
 
-const defaultVersionProbe = async (executable: string, args: readonly string[]) => {
-  const result = await execFileAsync(executable, [...args], {
+const defaultVersionProbe = async (id: SubscriptionCliId, executable: string, args: readonly string[]) => {
+  const target = id === "cursor-agent" ? cursorLaunchTarget(executable, args) : { executable, args: [...args], env: undefined, bundled: false };
+  const result = await execFileAsync(target.executable, target.args, {
+    env: target.env,
     encoding: "utf8",
-    timeout: 5_000,
+    timeout: target.bundled ? WINDOWS_CURSOR_VERSION_TIMEOUT_MS : 5_000,
     maxBuffer: 64 * 1024,
     windowsHide: true,
     shell: false
@@ -110,12 +115,40 @@ export async function detectSubscriptionCli(
       : { id, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
   }
   const explicit = harness?.custom && path.isAbsolute(harness.command) ? harness.command : undefined;
-  const match = explicit && await (options.executableCheck ?? defaultExecutableCheck)(explicit)
+  const windowsCursor = id === "cursor-agent" && (options.platform ?? process.platform) === "win32";
+  const cursorPath = (options.path ?? process.env.PATH ?? "").split(";")
+    .filter(directory => /^(?:[a-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)/i.test(directory)).join(";");
+  const workspace = windowsCursor && !options.executableCheck ? await currentWorkspaceRoot() : undefined;
+  const search = windowsCursor ? {
+    ...options,
+    path: cursorPath,
+    pathExt: ".EXE;.COM;.CMD",
+    executableCheck: options.executableCheck ?? (async (candidate: string) => {
+      try {
+        if (workspace && (inside(workspace, candidate) || inside(workspace, await realpath(candidate)))) return false;
+        return (await stat(candidate)).isFile() && await defaultExecutableCheck(candidate);
+      }
+      catch { return false; }
+    })
+  } : options;
+  let match = explicit && await (options.executableCheck ?? defaultExecutableCheck)(explicit)
     ? { executable: explicit, alias: explicit }
-    : await findExecutableOnPath(definition.aliases, options);
+    : await findExecutableOnPath(definition.aliases, search);
+  if (windowsCursor && match?.executable.toLowerCase().endsWith(".cmd") && !isOfficialWindowsCursorShim(match.executable, process.env.LOCALAPPDATA, path.win32)) {
+    const verified = await findExecutableOnPath(definition.aliases, {
+      ...search,
+      executableCheck: async candidate => isOfficialWindowsCursorShim(candidate, process.env.LOCALAPPDATA, path.win32) && Boolean(await search.executableCheck?.(candidate))
+    });
+    match = verified ?? match;
+  }
   if (!match) return { id, backendId: definition.backendId, installed: false, executable: null, alias: null, version: null };
   try {
-    const result = await (options.versionProbe ?? defaultVersionProbe)(match.executable, definition.versionArgs);
+    if (id === "cursor-agent" && (options.platform ?? process.platform) === "win32" && /\.(?:cmd|bat|ps1)$/i.test(match.executable)) {
+      match.executable = await resolveWindowsCursorShim(match.executable);
+    }
+    const result = await (options.versionProbe
+      ? options.versionProbe(match.executable, definition.versionArgs)
+      : defaultVersionProbe(id, match.executable, definition.versionArgs));
     const version = `${result.stdout}\n${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim() || null;
     return { id, backendId: definition.backendId, installed: true, executable: match.executable, alias: match.alias, version };
   } catch (error) {
@@ -126,7 +159,10 @@ export async function detectSubscriptionCli(
       executable: match.executable,
       alias: match.alias,
       version: null,
-      error: error instanceof Error ? error.message : String(error)
+      ...(error instanceof WindowsCursorLaunchError ? { cursorLaunchIssue: error.issue } : {}),
+      error: id === "cursor-agent" && (options.platform ?? process.platform) === "win32"
+        ? "Cursor CLI version could not be verified. Run the official CLI, then rescan."
+        : error instanceof Error ? error.message : String(error)
     };
   }
 }
@@ -199,9 +235,11 @@ export async function discoverSubscriptionCliModels(id: SubscriptionCliId, execu
       ? ["debug", "models"]
       : undefined;
   if (!args) return [];
-  const result = await execFileAsync(executable, args, {
+  const target = id === "cursor-agent" ? cursorLaunchTarget(executable, args) : { executable, args, env: undefined, bundled: false };
+  const result = await execFileAsync(target.executable, target.args, {
+    env: target.env,
     encoding: "utf8",
-    timeout: 10_000,
+    timeout: target.bundled ? WINDOWS_CURSOR_MODELS_TIMEOUT_MS : 10_000,
     maxBuffer: id === "codex" ? CODEX_MODEL_CATALOG_MAX_BYTES : 512 * 1024,
     windowsHide: true,
     shell: false

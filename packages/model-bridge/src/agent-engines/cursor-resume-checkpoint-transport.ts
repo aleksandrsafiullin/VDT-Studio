@@ -1,3 +1,4 @@
+import { cursorLaunchTarget } from "../subscription-cli/cursor/windows-launch";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
@@ -562,9 +563,10 @@ export class NodeCursorResumeProcessRunner implements CursorResumeProcessRunner 
     return new Promise<CursorResumeProcessResult>((resolve, reject) => {
       let child: ChildProcessWithoutNullStreams;
       try {
-        child = spawn(request.executable, [...request.args], {
+        const target = cursorLaunchTarget(request.executable, request.args, { ...request.environment } as NodeJS.ProcessEnv);
+        child = spawn(target.executable, target.args, {
           cwd: request.cwd,
-          env: { ...request.environment } as NodeJS.ProcessEnv,
+          env: target.env,
           stdio: ["pipe", "pipe", "pipe"],
           shell: false,
           windowsHide: true

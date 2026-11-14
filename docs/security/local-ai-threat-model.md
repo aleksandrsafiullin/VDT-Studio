@@ -456,3 +456,10 @@ OpenAI HTTP diagnostics admit only a small allowlist of protocol error codes and
 `mining.load_and_haul` supplies an annual joint excavation/truck-haulage topology: both fleet counts, separate annual repair/shift/unplanned losses, bucket loading productivity, payload-dependent loading time, loaded and empty travel over one route, dumping/positioning/queue time, and the minimum of both capacities. It is a steady-state draft model with continuous equivalent bucket loading, not dispatch simulation. Its numeric reference values are illustrative estimates accepted explicitly by the actor. Site fleet counts, distance, both speeds and truck planned repair have no reference defaults. Formula and sensitivity unit tests do not certify arbitrary model-authored trees or production readiness.
 
 Native transport retains all tool names/purposes and the immutable catalog hash while avoiding a second textual copy of schemas already enforced by `format`. Original literal quantities are sent once in the current observation. The semantic checkpoint allows 512 characters. Construction search asks for 3–6 candidates; additional unread discovered skills can be read before building so the actor can cover a broader process scope. Complete topology/default choices are constrained to successful public skill-read evidence; generic builder tools remain available. Canonical tool arguments, provenance, receipts, approval and scope authority are unchanged.
+
+The Windows Cursor launcher admits the official per-user install from a
+fully qualified PATH entry outside the workspace and checks the selected
+Node executable and entrypoint before launch. VDT supplies the entrypoint as
+a fixed argument and passes request arguments separately with shell execution
+disabled. Isolated Cursor transports retain their explicit environment and
+receive only the fixed invocation marker from launch handling.

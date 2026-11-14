@@ -436,9 +436,14 @@ async function registerCursorSessionCanary(
   });
   try {
     const adapter = getSubscriptionCliAdapter("cursor_subscription");
-    const signal = AbortSignal.timeout(10_000);
-    if ((await adapter?.probeAuth?.(detection.executable, signal))?.status === "ready") {
-      for (const modelId of new Set((await adapter?.listModels?.(detection.executable, { signal }) ?? []).slice(0, 100))) {
+    const bundled = bridge.isWindowsCursorPayload(detection.executable);
+    const signal = AbortSignal.timeout(bundled ? bridge.WINDOWS_CURSOR_STATUS_TIMEOUT_MS : 10_000);
+    const auth = bundled
+      ? await bridge.probeCursorAuth(detection.executable, { signal })
+      : await adapter?.probeAuth?.(detection.executable, signal);
+    if (auth?.status === "ready") {
+      const modelSignal = bundled ? AbortSignal.timeout(bridge.WINDOWS_CURSOR_MODELS_TIMEOUT_MS) : signal;
+      for (const modelId of new Set((await adapter?.listModels?.(detection.executable, { signal: modelSignal }) ?? []).slice(0, 100))) {
         if (!isSafeCliModelId(modelId)) continue;
         registerCliSessionBinding({ bindingId: cliSessionModelBindingId(CURSOR_SESSION_EXECUTION_BINDING_ID, modelId), engine, modelId });
       }
