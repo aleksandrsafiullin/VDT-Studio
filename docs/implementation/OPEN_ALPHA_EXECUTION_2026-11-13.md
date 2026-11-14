@@ -8,7 +8,7 @@ Required distribution: public GitHub source plus Mac and Windows applications. H
 
 Manual modeling, calculation/validation, scenarios, persistence/reopen, version restore, file import/export and safe cancellation/recovery must work offline without separately installed Node or development tools. AI support is per OS and exact backend/model/reasoning combination. Start qualification from the existing OpenAI Direct `gpt-5-nano` / Low, Codex `gpt-6-luna` and Cursor `composer-2.5` cases; only combinations with fresh installed-candidate evidence may be advertised. Other combinations retain experimental status. No credential or model availability is assumed from historical evidence.
 
-The next candidate version is `0.1.0-alpha.2`; its commit and installer hashes remain unfrozen until integration completes. The candidate identity must include source commit, dirty-state marker, version, build time, OS/architecture and installer hash. An archived source build must receive verified identity from its packaging entrypoint; unknown identity is not silently presented as a qualified release.
+The candidate version is `0.1.0-alpha.2`; the current immutable validation snapshot and installer hashes are recorded in the acceptance matrix. This is not yet a final release freeze. The candidate identity must include source commit, dirty-state marker, version, build time, OS/architecture and installer hash. An archived source build must receive verified identity from its packaging entrypoint; unknown identity is not silently presented as a qualified release.
 
 ## Dispatch and ownership
 
@@ -59,9 +59,9 @@ This ledger will be updated with implementation and integrated acceptance eviden
 ## Current consolidated finding ledger
 
 The original assessment remains historical. This table is the current closure
-record, including defects found during installed acceptance. The latest packaged
-source is `7a08fffc0ddef0618cb9c4dfd2ed0d1903718779`. The subsequent test/docs-only
-snapshot `9ca6733c3b194495365a0e5ee625891f41ad30c4` has unchanged product code and
+record, including defects found during installed acceptance. The preceding
+packaged source was `7a08fffc0ddef0618cb9c4dfd2ed0d1903718779`. Its test/docs-only
+successor `9ca6733c3b194495365a0e5ee625891f41ad30c4` had unchanged product code and
 an independently accepted complete source gate: 3,816 tests (45 skips), all 166
 browser cases and both saved-copy cases. Its Windows native gate passed 34 tests
 and all 65 frozen cases with independent raw-evidence verification. The failed
@@ -69,23 +69,53 @@ and all 65 frozen cases with independent raw-evidence verification. The failed
 compiler timeout remain recorded. Installed backend availability remains open.
 An implemented fix is not automatically an accepted installed workflow.
 
+The current immutable source snapshot for both packages is
+`d4d29484ba2a2293328a5b562b16efa78041d076`. It replaces Windows PowerShell owner
+discovery with the admitted native machine/boot-GUID getter and a separate
+version-2 owner token. Independent source review accepted the change, the
+cross-version refusal and the correction preserving POSIX failed-probe caching.
+The compiled Windows smoke now checks real route issuance of a v2 owner for the
+actual server PID and confirmed terminal cleanup. Independent verification
+accepted the complete source gate (3,818 tests, 45 skips, 166 expected browser
+outcomes and two saved-copy passes) and native gate (34 tests and all 65 frozen
+cases). Both packages passed verification. The focused installed Tahoe upgrade,
+Help/diagnostic and fresh question/End/reopen checks passed. Installed Windows
+also passed fresh question/controller-death/End/reopen with v2 ownership on
+both epochs and the 42-tonne model intact; its older legacy run remains intact.
+The question receipt is a post-operation hash baseline, not a before/after
+comparison. Running/Approval also reached durable cancellation and matched their
+pre/post active revision/graph digests. Approval was cancelled by the
+5.603-second observation; Running was still Cancelling at 56.353 seconds and
+first observed Cancelled at 59.805 seconds. This is unresolved latency, not
+accepted responsiveness. A repeated legacy saved-copy action did not complete
+in the UI during about two minutes. The copy is idempotent, so an unchanged
+head count is not proof of failed creation. Exact hashes and evidence are in
+the candidate acceptance matrix.
+
+A later source-only Home fix has independent review and 12 focused passes.
+It replaces the overbroad workspace-wrapper identity with the saved draft's
+scope/graph/base/journal identity, allowing metadata-only refresh between save
+and Home mount. It is not yet in the d4 packages; refreshed source/package and
+focused installed checks are required. It is not established as the cause of
+the isolated cancelled-editor Home observation.
+
 | Finding | Current implementation and evidence | Remaining acceptance |
 | --- | --- | --- |
 | RA-01 Unbounded upload/workbook parsing | Bounded admission and isolated parsing are reviewed. Sonoma 14.0 installed `261741e` imported the CSV oracle and rejected an extreme workbook without changing the graph. Windows installed `7a08fff` rejected the extreme workbook with the corrected 25,000-row/80-column explanation and disabled staging, through normal local analysis without AI. | Remaining valid formats, cancellation and installed resource-boundary cases. |
-| RA-02 Interrupted agent cannot terminate | Durable owner verification/fencing and saved-copy recovery implemented and reviewed; two real-storage browser cases pass. Installed `7a08fff` Tahoe 26.6.2 passed actual controller death during generation, question and approval; End persisted through further restarts, clean/dirty copies preserved data, and original graph/revision/source hashes were unchanged. The coordinator inspected receipts and screenshots. Windows restored its real question and 42-tonne model after verified web-process death, but End failed because no verifiable local owner was available; clean saved copy opened a fresh 42-tonne editor. | Windows End is an observed blocker under investigation, not a native pass. Windows generation/approval interruptions are paused until its cause is understood. Live-provider cases remain separate. |
+| RA-02 Interrupted agent cannot terminate | Installed 7a Tahoe passed all three interruption states and clean/dirty copies. Reviewed d4 native identity replaced Windows' timed-out PowerShell probe and passed native/compiled gates. Exact d4 question recovery passed on both OS families. Windows Running/Approval also retained v2 cancellation after reopen, with equal pre/post graph/revision digests. | Windows Running End completed between the 56.353-second still-pending and 59.805-second cancelled observations; cause unresolved. The repeated legacy saved-copy action stayed pending for about two minutes; dirty-copy refresh remains unverified. Legacy runs remain preserved with no fabricated identity. Live-provider cases are separate. |
 | RA-03 Current Mac distribution | Exact `7a08fff` Developer-ID DMG/resources verified. Sonoma 14.0 restored an unsaved label edit and named version after native Quit. A separate Tahoe 26.6.2 comparison passed retained-model/Files reopen, Home and question-state recovery. Earlier import, scenarios, restore, export and clean/upgrade evidence remains scoped to its candidate. | Resolve RA-16 and the environment-blocked Sonoma 14.0 minimum-OS qualification; complete remaining installed checks, notarization and public-download trust. Excel formulas were not recalculated by a spreadsheet engine. |
 | RA-04 Live AI reliability | Historical evidence retained without promoting providers. New guests have no real provider credentials. | User-selected access and fresh installed per-provider attempts, including failures. |
 | RA-05 Hosted containment | Explicitly outside the agreed GitHub/source/desktop scope; local-only guidance retained. | A separate hosted-service task if requested. |
-| RA-06 Feedback/diagnostics | Safe local preview/export implemented and reviewed; Mac and Windows `8c60019` UI/download observations recorded. | Remaining keyboard, sizing/scaling and final-build identity checks. |
-| RA-07 Reproducible release verification | Test/docs-only `9ca6733` leaves product code unchanged and passed the complete source gate: 3,816 tests, 45 skips, all 166 browser cases and both saved-copy cases, with independent archive/source verification. The narrow Home fixture correction retains all navigation assertions. | Repeat affected gates for any subsequent product fix. The failed `7a08fff` run remains failed in the historical record. |
+| RA-06 Feedback/diagnostics | Safe local preview/export implemented and reviewed. Exact d4 Help identity and local downloads observed on both OS families. Windows downloaded a 1,460-byte file with model names off and parsed `vdt_support_report.v1`, reporting only schema/top-level field names; Mac also validated its local JSON. | Remaining keyboard, sizing/scaling, clipboard and exact preview/download comparison checks. |
+| RA-07 Reproducible release verification | Exact `d4d2948` passed the complete source gate: 3,818 tests, 45 skips, all 166 browser cases and both saved-copy cases, with independent archive/source verification. The narrow Home fixture correction retains all navigation assertions. | Repeat affected gates for any subsequent product fix. The failed `7a08fff` run remains failed in the historical record. |
 | RA-08 Documentation/support claims | Current execution/acceptance/support ledgers and contributor corrections implemented; historical claims retained with scope. | Final reconciliation against the exact accepted artifacts and remaining limits. |
-| RA-09 Windows storage | Exact `7a08fff` and subsequent test/docs-only `9ca6733` standard-user native gates each passed 34 tests and all 65 frozen cases; independent review recomputed both raw evidence sets. Migration acquisition preserves deadlines/frozen assets and the retained fence. The prior `8e30359` compiler timeout remains historical. | Installed fault acceptance is separate. Direct Windows source development remains outside packaged admission; no power-loss qualification is claimed. |
-| RA-10 Windows application | Exact `7a08fff` per-user reinstall and independent shortcut launch passed on Windows Arm x64 emulation: window at 13.8 seconds and Projects shell at 18.1 seconds. Prior 64-tonne head and two named versions reopened; a new unsaved value 73 and named milestone survived full close/relaunch. Normal close released children and port. | Finish installed import/navigation/recovery checks and signing/trust. The first `8c60019` cold-start timeout remains a failed attempt; this guest is not native x64 UI evidence. |
+| RA-09 Windows storage | The latest exact `d4d2948` standard-user native gate passed 34 tests and all 65 frozen cases; independent review recomputed its raw evidence and verified the native v2 owner/death case. Migration acquisition preserves deadlines/frozen assets and the retained fence. The prior `8e30359` compiler timeout remains historical. | Installed fault acceptance is separate. Direct Windows source development remains outside packaged admission; no power-loss qualification is claimed. |
+| RA-10 Windows application | Exact `7a08fff` per-user reinstall and shortcut launch passed on Windows Arm x64 emulation: window at 13.8 seconds and Projects shell at 18.1 seconds. Prior data and a new unsaved value 73/milestone survived reopen. The d4 in-place upgrade passed question recovery, exact Help identity, local diagnostic download and ordinary process cleanup. | Finish installed import/navigation/recovery checks and signing/trust. The first `8c60019` cold-start timeout remains a failed attempt; this guest is not native x64 UI evidence. |
 | RA-11 GitHub delivery | First-use docs, issue forms, release template and asset-verification procedure prepared. Only dedicated validation branches were pushed. | Accepted same-source installers, final checksums/support summary and owner-directed publication. |
 | RA-12 Offline file analysis (new P1) | Explicit local analysis plus separate AI action implemented. Installed Sonoma `261741e` imported all ten CSV rows, applied 2.75 h/day and retained provenance after reopen. Windows `7a08fff` rejected an incompatible tonnes target, then applied the compatible CSV oracle at 2.75 h/day on retry with full ten-row coverage and event-ID checking; Back committed the result. | The first compatible Windows analysis timed out during backend unavailability (RA-16). Preserve that failed attempt; remaining formats and refreshed post-fix acceptance are open. |
 | RA-13 Unused native image resources/notices (new packaging gap) | Both actual `261741e` packages exclude Sharp/libvips with image optimization disabled. Windows compiled smoke returned 200 for the authenticated static favicon and 404 for the unused optimizer. Supplemental upstream notices are retained conservatively. | Preserve these artifact gates on the final candidate. No blanket legal-clearance claim. |
 | RA-14 Unsaved manual draft on default launch (new P1) | Scoped restoration and identity-bound Home intent have independent source acceptance; all nine new cold-restoration cases and the complete corrected `9ca6733` source gate passed. Installed Windows retained an unsaved Baseline value 73 and named milestone after full process close/shortcut reopen. Installed Sonoma retained an unsaved label edit and named version after native Quit/reopen. Loss of a committed revision was not established. | Final native evidence reconciliation remains separate. Mac's check changed a label, not a numeric value. Named versions remain distinct from ordinary revision saves. |
-| RA-15 Windows Back/save warning (open observation) | On `261741e`, Back repeatedly reported newer unsaved edits without typing during submission; the 64-tonne revision nevertheless committed and reopened. On installed `7a08fff`, Back from restored 73 and a subsequent direct edit to 77 navigated and committed revisions without the warning. No prior cause or specific fix is claimed. | Complete bounded ordinary Home/navigation checks and review evidence; initial keyboard Home observation was inconclusive. Do not attribute the old warning to separate concurrency fixes. |
+| RA-15 Windows navigation/save observations | Earlier Back warning did not prevent the 64-tonne commit and did not repeat in later 73/77 saves. At d4, normal project Home and explicitly keyboard-focused clean-editor Home passed. The isolated cancelled-editor Home remained visible for about ten seconds after focused Return. A separate source-reproduced metadata-refresh/Home-intent race is fixed and independently reviewed, with 12 focused passes. | Rebuild/package the new source delta and repeat focused Home/cold-draft checks. Neither the old Back warning nor cancelled-editor observation is proven to have this source cause. Pointer-only Windows clicks were unreliable and are not product-failure evidence. |
 | RA-16 Native backend availability (new P1) | Exact `7a08fff` repeatedly stalled on Files in Sonoma; a live Node sample showed HTTP-entered promise execution. Complete copied storage answered sequential/concurrent requests with the exact packaged server on host and guest. A later native launch kernel-panicked in `MTLCompilerServi` before inspector attachment. Tahoe 26.6.2 with 4 vCPUs, 6 GiB and fresh WebView state passed copied-model/Files reopen. Windows compatible CSV analysis separately timed out while both public and private Node listeners gave five-second no-byte timeouts, then recovered; a retry applied 2.75 h/day. | Cause remains unconfirmed. Sonoma 14.0 is environment-blocked; the Tahoe comparison changes multiple variables and does not close the failure. Windows resource comparison is in progress. Preserve failed attempts and original profiles; no guard or deadline is relaxed. |
 
 ## Sol continuation and independent review

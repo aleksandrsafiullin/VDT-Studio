@@ -62,6 +62,17 @@ The installed shell opens Home. Home previously cleared the hydrated VDT identit
 
 All six workspace navigation tests passed in 48.8 seconds in installed Chrome against a fresh isolated production web build on Node 24. The tests exercise ordinary Back and Home saves, two-editor revision conflict, cold Home restoration of a manual edit and named version before a stored commit, stale startup preservation, and export of the local graph when its VDT was deleted. The first browser run exposed a race in the Home link. A successful save now marks deliberate Home navigation, and the Home page consumes that mark when it mounts. The first-run logs and traces were retained. The server and profile closed and the 996 MB isolated build was removed. [Draft browser evidence](../../output/release/audits/w1-draft-browser.TOvNseXj/)
 
+A later source review found that comparing the entire workspace wrapper could
+refuse that intent after a metadata-only background refresh and redirect Home
+back to the editor. A new focused regression failed before the correction.
+The mark now captures active scope, graph reference/revision, revision base and
+both pending save/create journals. Metadata refresh alone is tolerated; protected
+identity changes still reject and consume the mark. Independent review accepted
+the source and independently passed 12 focused navigation/agent-revision tests
+on Node 24. Product/browser/package refresh remains pending for this delta.
+This race is not established as the cause of the isolated Windows cancelled-
+editor Home observation; normal clean editor Home later passed there.
+
 Installed Windows 7a failed End interrupted run after controller termination. The read-only diagnostic reported an owner-less epoch-one token, a five-second PowerShell identity lookup that returned ETIMEDOUT, and ESRCH for the terminated controller PID. A PID alone cannot attach identity to that stored run. The owner-less run retains the saved-copy path.
 
 New Windows runs use version 2 owner evidence from the admitted native addon. The Windows path validates the machine and boot GUIDs and hashes them before persistence. It avoids the PowerShell subprocess. Reboot proof compares equal token versions only, so a native boot GUID cannot be mistaken for a reboot when compared to an older CIM timestamp. Four portable identity tests passed, and the Windows-only test awaits the verified native addon in the standard-user lane.

@@ -12,26 +12,28 @@ retains its original findings and evidence.
 Source recovery for newly owned structured runs has independent scoped
 acceptance. Legacy or ambiguous runs retain their history and can use a verified
 saved copy when committed source data is available. That continuation has source
-review and a passing two-case production-browser gate at `9ca6733c3b19`; installed
-process-loss recovery remains unqualified. Parser isolation, bounded uploads and
+review and a passing two-case production-browser gate at `d4d29484ba2a`. Scoped
+Mac and Windows question process-loss checks passed; remaining Windows states
+are described below. Parser isolation, bounded uploads and
 private local diagnostic preview/export have source and browser acceptance.
 
-The latest same-source packages are `7a08fffc0ddef0618cb9c4dfd2ed0d1903718779`,
-version `0.1.0-alpha.2`. The test/docs-only successor `9ca6733c3b19` changes no
-product code and has an independently accepted complete source gate: 3,816 tests
+The latest same-source packages are `d4d29484ba2a2293328a5b562b16efa78041d076`,
+version `0.1.0-alpha.2`. Its reviewed Windows owner-identity correction has an
+independently accepted complete source gate: 3,818 tests
 with 45 platform/opt-in skips, all 166 browser cases without unexpected/flaky/
-skipped outcomes, and both saved-copy cases. Its narrow Home fixture correction
-preserves the navigation assertions. The earlier `7a08fff` failure remains
+skipped outcomes, and both saved-copy cases. The prior narrow Home fixture
+correction at `9ca6733` preserves the navigation assertions. The earlier `7a08fff` failure remains
 recorded, and its separate saved-copy stage did not execute. The prior source
 gate at `8e303593cabc` passed 3,813 tests, 45 skips, 157 browser cases and both
 saved-copy cases after reviewed coherent-read and SQLite pending-lock fixes.
 The earlier failures remain recorded; their exact CI interleavings were not
 proven by the focused regressions.
 
-At exact `7a08fff` and `9ca6733`, the standard-user Windows x64/NTFS native gate passed 34 tests
+At exact `d4d2948`, the standard-user Windows x64/NTFS native gate passed 34 tests
 and all 65 frozen cases; independent review recomputed the raw evidence. Actual
 compiled Next startup, storage, private session rejection and graceful shutdown,
-plus bundled sidecar activation, handshake and EOF shutdown, passed in package
+plus real v2 owner issuance matching the web PID, confirmed cancellation,
+bundled sidecar activation, handshake and EOF shutdown, passed in package
 CI. This qualifies the tested packaged runtime boundary, not native installed
 UI or power-loss behavior. The earlier `8e30359` compiler timeout is retained as
 an infrastructure failure before native tests.
@@ -88,15 +90,49 @@ a fresh CSV download matched. The coordinator inspected screenshots and receipts
 Windows independently
 restored its real question and 42-tonne model after a verified controller death,
 but End refused the run because no verifiable local owner was available. Clean
-saved copy opened a fresh 42-tonne editor. Windows End remains a blocker under
-investigation. A read-only diagnostic reproduced the five-second PowerShell/CIM
+saved copy opened a fresh 42-tonne editor. A read-only diagnostic reproduced the five-second PowerShell/CIM
 timeout and confirmed an owner-less stored token. The independently reviewed
 source correction reads native machine/boot GUIDs through the admitted addon
 and versions that evidence separately from old CIM tokens. It retains safe
-saved-copy treatment of the existing owner-less run. New native compilation,
-compiled-route issuance and installed Windows retesting are pending; Windows
-generation/approval checks remain open. These synthetic fixtures do not qualify
-a live AI provider. The timeout is not established as the cause of RA-16.
+saved-copy treatment of the existing owner-less run. Native compilation,
+real native owner/death checks and compiled-route issuance passed at `d4d2948`.
+Exact d4 installed Windows then passed a new question/controller-death/End and
+fresh-reopen check. A read-only receipt confirmed v2 on both epochs and durable
+cancellation, while the old legacy run stayed unchanged. The 42-tonne model
+remained usable; no pre-operation digest was taken for this question check.
+Help displayed exact d4 and downloaded a 1,460-byte diagnostic with model-name
+inclusion off. Normal exit cleared host and Node processes. End had a visible
+delay on the order of tens of seconds; precise timing and cause are unproven.
+Windows generation and approval interruptions also retained cancellation after
+fresh reopen, with unchanged active revision/graph digests. Approval was visibly
+cancelled by 5.603 seconds; Running was still Cancelling at 56.353 seconds and
+first observed Cancelled at 59.805 seconds. The delay remains unexplained. A
+repeated legacy saved-copy action remained pending for about two minutes, even
+while an unauthenticated request reached the packaged Node wrapper and returned
+403. The copy key is idempotent; its unchanged head count is expected and does
+not diagnose the UI failure. A single instrumented rerun could not establish a
+new Running target, so no timing trace was collected. Dirty-copy refresh and
+other installed cases remain open. Normal-profile 2.75 h/day and the exact
+original CSV download hash passed, as did focused keyboard Home navigation and
+schema parsing of the local diagnostic. The isolated cancelled-editor Home
+observation remains unresolved.
+These synthetic fixtures do not qualify a live AI provider. The old CIM timeout
+is not established as the cause of RA-16.
+
+The focused installed `d4d2948` Tahoe upgrade retained the model, Files and prior
+cancellations, displayed the exact new build in Help, and exported valid local
+diagnostic JSON. A fresh controlled question then passed controller death,
+End and another launch with cancelled epoch 2. The closed before/after database
+retained all active revisions and graph hashes. This is a scoped refresh of the
+earlier three-phase Mac recovery evidence, not a full minimum-OS qualification.
+
+A later source review independently reproduced and corrected an overbroad
+Home-intent guard: a metadata-only workspace refresh no longer converts a saved
+Home navigation into cold draft restoration. Protected scope, graph, revision
+base and pending storage journals still invalidate the single-use mark. The
+new regression failed before correction; independent focused tests passed 12/12.
+That delta still needs refreshed source/package and installed checks and is not
+established as the cause of the Windows observation.
 
 Both current packages exclude the unused native image backend and pass resource
 verification. The Mac DMG is Developer-ID signed but unnotarized; Windows is

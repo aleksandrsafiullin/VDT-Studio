@@ -704,6 +704,15 @@ does not change saved project data.
 
 `WorkspaceNavigationLink` intercepts normal client navigation through those two editor links and awaits the existing `saveActiveWorkspaceVdt` CAS/idempotency operation. The manual revision route reuses the active revision when the expected head and runtime match and the submitted canonical payload equals the verified stored payload. That path creates no revision file, journal entry or generation change. Changed snapshots use the existing atomic commit. A failure preserves the editor and displays a navigation error. A save covering an older in-flight snapshot also blocks leaving. Successful Back navigation uses the route-sync hook's explicit project intent, superseding any pending creation route.
 
+Successful Home navigation marks a single-use in-memory identity after saving.
+The identity contains the active panel/project/VDT, graph reference and revision,
+revision-base reference, and pending revision/create journal references. The
+Home page consumes it once, including on mismatch. Replacing only the workspace
+wrapper during a background summary/loading/error refresh cannot invalidate a
+saved Home intent. Changed scope, graph, base or journals still refuse it and
+retain the existing cold-draft recovery path. No persistent intent suppresses
+startup restoration.
+
 ### Scenario comments and presentation
 
 `VdtScenario.comments?: { nodeId, text }[]` stores per-KPI action notes separately

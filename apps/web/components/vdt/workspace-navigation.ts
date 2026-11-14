@@ -12,15 +12,28 @@ export async function navigateAfterWorkspaceSave(
 
 // In-memory only: a cold launch always follows draft restoration.
 type HomeDraftIdentity = Pick<VdtStudioState, "workspace" | "project" | "projectRevision">;
-let deliberateHomeNavigation: HomeDraftIdentity | undefined;
+function homeDraftIdentity({ workspace, project, projectRevision }: HomeDraftIdentity) {
+  const { activePanel, activeProjectId, activeVdtId, draftRevisionBase, pendingRevisionCommit, pendingVdtCreate } = workspace;
+  return { activePanel, activeProjectId, activeVdtId, draftRevisionBase, pendingRevisionCommit, pendingVdtCreate, project, projectRevision };
+}
 
-export function markDeliberateHomeNavigation({ workspace, project, projectRevision }: HomeDraftIdentity): void {
-  deliberateHomeNavigation = { workspace, project, projectRevision };
+let deliberateHomeNavigation: ReturnType<typeof homeDraftIdentity> | undefined;
+
+export function markDeliberateHomeNavigation(state: HomeDraftIdentity): void {
+  deliberateHomeNavigation = homeDraftIdentity(state);
 }
 
 export function consumeDeliberateHomeNavigation(current: HomeDraftIdentity): boolean {
   const saved = deliberateHomeNavigation;
   deliberateHomeNavigation = undefined;
-  return saved !== undefined && saved.workspace === current.workspace
-    && saved.project === current.project && saved.projectRevision === current.projectRevision;
+  const live = homeDraftIdentity(current);
+  return saved !== undefined
+    && saved.activePanel === live.activePanel
+    && saved.activeProjectId === live.activeProjectId
+    && saved.activeVdtId === live.activeVdtId
+    && saved.draftRevisionBase === live.draftRevisionBase
+    && saved.pendingRevisionCommit === live.pendingRevisionCommit
+    && saved.pendingVdtCreate === live.pendingVdtCreate
+    && saved.project === live.project
+    && saved.projectRevision === live.projectRevision;
 }
