@@ -51,7 +51,7 @@ The report is assembled as a detached allowlisted object. The metadata route ret
 
 ## W7: Windows storage support
 
-**Status: the complete W7 native gate passed for candidate `7a08fff` on Windows x64 with a verified addon and private local NTFS. Later source and installed candidates require their own qualification.**
+**Status: the complete W7 native gate passed for candidate `9ca6733` on Windows x64 with a verified addon and private local NTFS. Later source and installed candidates require their own qualification.**
 
 The initial public entrypoint could create a directory and open SQLite before rejecting Windows. The corrected path checks admission before opening storage. An ordinary Windows open can only retain the process-approved profile.
 
@@ -134,3 +134,11 @@ Accepted the scoped native gate for `7a08fffc0ddef0618cb9c4dfd2ed0d1903718779` o
 ### Candidate 7a08fff source fixture follow-up
 
 The source run recorded 3,816 passing tests, 45 skips, and 165 passing browser cases with one Home smoke failure. The Home fixture had opened an editor before the test's initial Home load, which now correctly enters cold draft restoration. The reviewed test-only change skips that eager editor setup for the Home smoke alone. It retains all Home-to-editor and return assertions. Separate cold draft recovery cases passed in the same run across desktop Chromium, mobile Chromium and WebKit. The corrected fixture still needs its run. The exact `7a08fff` source gate remains failed. [Source run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43519193120)
+
+### Native Windows gate for candidate 9ca6733
+
+Accepted the native gate for exact commit `9ca6733c3b194495365a0e5ee625891f41ad30c4` on Windows x64, Node 24.22.2 and private local NTFS. The retained report confirms a non-elevated token, matching owner and protected DACL. All 34 tests passed across four files. Recomputing all 65 frozen cases from the raw observations yielded evidence SHA-256 `57ffc909b938b73e29b4d8a18b48e5c34b5a25d8f7a5adfabee6652180e052d5`. The archive matched workflow SHA-256 `311e01cd167c38cd83807a501abebfb05d08a2699727ab578c6d4e25e62a5d19`. Cleanup reported no retained test stage or account. The full source run was still active at review, and the prior `7a08fff` source failure remains recorded. Installed qualification remains separate. [Maintained Windows run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43523995138)
+
+### Full source gate for candidate 9ca6733
+
+Accepted source verification for exact commit `9ca6733c3b194495365a0e5ee625891f41ad30c4`. The job logged 3,816 passing and 45 skipped tests across 332 passing and nine skipped files. The browser report recorded 166 expected outcomes with zero unexpected, flaky or skipped. The dedicated saved-copy gate passed both tests. The source-named archive matched SHA-256 `e9717359145c74f4ca9db60f81f2ce3fa8aefc12a949ef30aecfa5c424c67ef6`, and the CLI package digest matched its alpha.2 manifest. The separate `7a08fff` source failure remains recorded. Installed backend stalls and installed release acceptance remain open. [Source release verification run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/43523998889)

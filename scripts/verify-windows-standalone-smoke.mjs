@@ -3,7 +3,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { request } from "node:http";
+import { createServer, request } from "node:http";
+import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { createInterface } from "node:readline";
 
@@ -137,8 +138,90 @@ async function verifySidecar(env) {
   }
 }
 
+const fixtureModel = "w1-recovery-fixture";
+const fixtureKey = "w1-local-fixture";
+const provider = createServer(async (req, res) => {
+  function reply(status, value) {
+    res.writeHead(status, { "content-type": "application/json", connection: "close" });
+    res.end(JSON.stringify(value));
+  }
+  if (req.headers.authorization !== `Bearer ${fixtureKey}`) return reply(401, { error: "fixture authorization required" });
+  const card = { id: fixtureModel, object: "model", owned_by: "local-fixture" };
+  if (req.method === "GET" && req.url === "/v1/models") return reply(200, { object: "list", data: [card] });
+  if (req.method === "GET" && req.url === `/v1/models/${fixtureModel}`) return reply(200, card);
+  if (req.method !== "POST" || req.url !== "/v1/chat/completions") return reply(404, { error: "unknown fixture route" });
+  try {
+    const chunks = [];
+    let length = 0;
+    for await (const chunk of req) {
+      if ((length += chunk.length) > 1024 * 1024) { req.destroy(); return; }
+      chunks.push(chunk);
+    }
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (body.model !== fixtureModel) return reply(400, { error: "unknown fixture model" });
+    const probe = JSON.stringify(body.messages).includes("Connection test. Return exactly");
+    const content = probe ? JSON.stringify({ ok: true }) : body.response_format ? JSON.stringify({
+      turnId: "fixture-turn", sessionState: "Waiting for a synthetic reporting period.",
+      assistantMessage: { messageId: "fixture-message", text: "Confirm the reporting period." },
+      action: { type: "question", messageId: "fixture-question", questionSetId: "fixture-question-set", questions: [{
+        id: "period", question: "Which reporting period should be used?", reason: "Choose the time basis.",
+        required: true, expectedAnswerType: "text"
+      }] }
+    }) : "Fixture connection ready.";
+    if (body.stream === true) {
+      res.writeHead(200, { "content-type": "text/event-stream", connection: "close" });
+      res.end(`data: ${JSON.stringify({ id: "fixture-completion", choices: [{ index: 0, delta: { content }, finish_reason: null }] })}\n\ndata: [DONE]\n\n`);
+    } else {
+      reply(200, { id: "fixture-completion", model: fixtureModel,
+        choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }] });
+    }
+  } catch {
+    if (!res.headersSent) reply(400, { error: "invalid fixture request" });
+  }
+});
+provider.requestTimeout = 8_000;
+provider.headersTimeout = 5_000;
+
+async function verifyOwnerToken(port, cookie, baseUrl, controllerPid) {
+  const post = (route, body) => send(port, route, cookie, undefined, JSON.stringify(body));
+  const providerConfig = { baseUrl, apiKey: fixtureKey, model: fixtureModel };
+  for (const operation of ["capabilities", "admit"]) {
+    const response = await post("/api/agent/bindings/provider", { operation, providerId: "openai_compatible", providerConfig });
+    assert.equal(response.status, 200, `Compiled provider ${operation} failed`);
+    if (operation === "capabilities") continue;
+    const executionBindingId = JSON.parse(response.body).binding?.bindingId;
+    assert(typeof executionBindingId === "string" && executionBindingId.length > 0, "Compiled provider returned no binding");
+    const started = await post("/api/agent/runs", { mode: "generate_vdt",
+      input: { rootKpi: "Sales", prompt: "Confirm the reporting period" }, executionBindingId });
+    assert.equal(started.status, 200, "Compiled agent run failed to start");
+    const { runId } = JSON.parse(started.body);
+    assert(typeof runId === "string" && /^[A-Za-z0-9_-]+$/.test(runId), "Compiled agent run returned an invalid ID");
+    const db = new DatabaseSync(path.join(profile, "app.sqlite"), { readOnly: true });
+    try {
+      const row = db.prepare("SELECT write_fence_token FROM agent_current_session_epochs_v2 WHERE run_id = ?").get(runId);
+      const match = /^agent-process-owner:v2:([A-Za-z0-9_-]{1,512}):[a-f0-9-]{36}$/.exec(row?.write_fence_token ?? "");
+      assert(Boolean(match), "Compiled agent route did not persist a v2 controller owner");
+      const owner = JSON.parse(Buffer.from(match[1], "base64url").toString("utf8"));
+      assert(owner.version === 2 && owner.pid === controllerPid &&
+        /^[a-f0-9]{64}$/.test(owner.machine) && /^[a-f0-9]{64}$/.test(owner.boot) &&
+        /^[a-f0-9-]{36}$/.test(owner.instance), "Persisted controller owner did not match the packaged web process");
+    } finally {
+      db.close();
+    }
+    const cancelled = await post(`/api/agent/runs/${runId}/cancel`, { awaitTerminal: true });
+    assert.equal(cancelled.status, 200, "Compiled test run could not be cancelled");
+    const terminal = JSON.parse(cancelled.body);
+    assert(terminal.status === "cancelled" && terminal.terminalCleanupConfirmed === true,
+      "Compiled test run did not confirm terminal cleanup");
+  }
+}
+
 try {
-  const env = { ...process.env, VDT_APP_MODE: "desktop", NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1",
+  provider.listen(0, "127.0.0.1");
+  await once(provider, "listening");
+  const providerBase = `http://127.0.0.1:${provider.address().port}/v1`;
+  const env = { ...process.env, OPENAI_COMPATIBLE_BASE_URL: providerBase,
+    VDT_ALLOW_REQUEST_PROVIDER_URLS: "false", VDT_ALLOW_PRIVATE_PROVIDER_URLS: "false", VDT_APP_MODE: "desktop", NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1",
     VDT_DATA_DIR: profile, VDT_WINDOWS_STORAGE_RUNTIME_DIR: runtime };
   delete env.NODE_OPTIONS;
   delete env.NODE_PATH;
@@ -203,6 +286,7 @@ try {
   assert.equal(publicBuild.architecture, "x64");
   assert.equal(publicBuild.nodeVersion, `v${manifest.nodeVersion}`);
   assert(existsSync(path.join(profile, "app.sqlite")), "The activated runtime did not initialize storage");
+  await verifyOwnerToken(port, cookie, providerBase, child.pid);
   child.stdin.end();
   const stop = setTimeout(() => child.kill("SIGKILL"), 5_000);
   try { gracefulExit = await closed; }
@@ -215,9 +299,13 @@ try {
 } finally {
   if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   if (closed) await closed;
+  if (provider.listening) {
+    provider.closeAllConnections();
+    await new Promise((resolve, reject) => provider.close(error => error ? reject(error) : resolve()));
+  }
   rmSync(work, { recursive: true, force: true });
   assert(!existsSync(work), "Smoke directory was retained");
 }
 console.log(JSON.stringify({ sourceCommit: expectedCommit, addonSha256, nodeVersion: manifest.nodeVersion,
   standardUser: true, compiledStandalone: true, storageRouteStatus: 200, storageWriteStatus: 201, bootstrapOneUse: true,
-  staticAssetStatus: 200, imageOptimizationStatus: 404, gracefulExit, sidecarPreActivationQuiet: true, sidecarReady: true, sidecarExit, retainedWork: false }));
+  supervisorOwnerVersion: 2, supervisorOwnerMatchesProcess: true, staticAssetStatus: 200, imageOptimizationStatus: 404, gracefulExit, sidecarPreActivationQuiet: true, sidecarReady: true, sidecarExit, retainedWork: false }));

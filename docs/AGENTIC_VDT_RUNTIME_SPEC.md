@@ -12,6 +12,15 @@ external and ambiguous/final-commit cases remain fail-closed. The exact scope,
 process tests and pending installed acceptance are in
 [W1](implementation/OPEN_ALPHA_W1_2026-11-13.md).
 
+The Windows owner path uses machine and kernel boot GUIDs from the admitted,
+manifest-verified native addon, without spawning PowerShell. It writes owner
+token format version 2; Mac/Linux keep version 1. Death or ownership comparison
+requires matching token versions, so an old Windows CIM boot timestamp cannot
+be interpreted as a different native boot GUID. Unavailable native evidence and
+old owner-less runs remain unverified and may use the saved-copy path. Raw OS
+identifiers stay internal. This local token version does not enable V2 runtime
+features; native and installed qualification is recorded separately in W1.
+
 ## Response requirements amendment (2026-11-11)
 
 Existing agents receive complete argument schemas from their actual validators.

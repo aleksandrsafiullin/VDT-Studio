@@ -9,6 +9,16 @@ assert.equal(process.arch, "x64");
 assert.equal(process.version, "v24.22.2");
 const addon = require(addonPath);
 assert.equal(addon.abiVersion(), 1);
+const identity = addon.supervisorIdentity();
+assert.ok(identity, "Windows supervisor identity is required on the qualified runner");
+for (const value of [identity.machineGuid, identity.bootGuid]) {
+  assert.match(value, /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
+  assert.notEqual(value, "00000000-0000-0000-0000-000000000000");
+}
+assert.deepEqual(JSON.parse(execFileSync(process.execPath, [
+  "-e", "process.stdout.write(JSON.stringify(require(process.argv[1]).supervisorIdentity()))",
+  addonPath
+], { encoding: "utf8", timeout: 5000 })), identity);
 const session = addon.open(privateRoot);
 assert.equal(addon.editorDirectoryPath(session).toLowerCase(), privateRoot.toLowerCase());
 const name = "addon-proof.dat";

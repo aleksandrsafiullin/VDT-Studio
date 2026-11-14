@@ -18,6 +18,15 @@ external or ambiguous states remain blocked pending a separate safe continuation
 path. See [W1](../implementation/OPEN_ALPHA_W1_2026-11-13.md) and the
 [independent review](../implementation/OPEN_ALPHA_INDEPENDENT_REVIEW_2026-11-13.md).
 
+Windows owner evidence comes only from the admitted, manifest-verified native
+addon. Its fixed-size registry/kernel queries return no identity on unsupported,
+malformed or inaccessible OS evidence and do not block ordinary app startup.
+Native boot-GUID tokens use a distinct version from earlier CIM timestamp
+tokens; mismatched versions cannot establish process death. No request,
+environment-provided identity or legacy PID is promoted into trusted evidence.
+The failed owner-less installed run remains eligible only for saved-copy
+continuation. Mac/Linux retain their original failed-probe caching behavior.
+
 ## Packaged macOS Alpha Boundary
 
 The signed Apple Silicon alpha serves its web interface over an app-owned

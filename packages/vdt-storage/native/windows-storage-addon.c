@@ -1,6 +1,10 @@
+#include <windows.h>
+#include <winternl.h>
+#include <stdio.h>
 #include <node_api.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 typedef struct StorageSession StorageSession;
 typedef struct StorageLock StorageLock;
@@ -538,9 +542,85 @@ static napi_value abi_version(napi_env env, napi_callback_info info) {
   return value;
 }
 
+/* SystemBootEnvironmentInformation is an internal NT information class.
+ * Accept only the x64 layout exercised by the supported Windows runtime. */
+typedef struct {
+  GUID boot_identifier;
+  ULONG firmware_type;
+  ULONGLONG boot_flags;
+} StorageBootEnvironment;
+_Static_assert(sizeof(StorageBootEnvironment) == 32, "Unexpected boot environment layout");
+
+static bool canonical_machine_guid(const WCHAR input[37], char output[37]) {
+  bool nonzero = false;
+  if (input[36] != 0) return false;
+  for (size_t index = 0; index < 36; index++) {
+    WCHAR character = input[index];
+    if (index == 8 || index == 13 || index == 18 || index == 23) {
+      if (character != L'-') return false;
+    } else {
+      if (character >= L'A' && character <= L'F') character += L'a' - L'A';
+      if (!((character >= L'0' && character <= L'9') ||
+            (character >= L'a' && character <= L'f'))) return false;
+      nonzero |= character != L'0';
+    }
+    output[index] = (char)character;
+  }
+  output[36] = 0;
+  return nonzero;
+}
+
+static napi_value supervisor_identity(napi_env env, napi_callback_info info) {
+  (void)info;
+  napi_value unavailable;
+  if (napi_get_null(env, &unavailable) != napi_ok) return NULL;
+
+  WCHAR machine_value[37];
+  char machine_guid[37];
+  DWORD machine_size = sizeof(machine_value);
+  DWORD machine_type = 0;
+  HKEY cryptography;
+  if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Cryptography", 0,
+                    KEY_QUERY_VALUE | KEY_WOW64_64KEY, &cryptography) != ERROR_SUCCESS) return unavailable;
+  /* RegQueryValueExW preserves the stored length instead of adding a NUL. */
+  LSTATUS machine_status = RegQueryValueExW(cryptography, L"MachineGuid", NULL,
+                                            &machine_type, (BYTE *)machine_value, &machine_size);
+  RegCloseKey(cryptography);
+  if (machine_status != ERROR_SUCCESS || machine_type != REG_SZ ||
+      machine_size != sizeof(machine_value) ||
+      !canonical_machine_guid(machine_value, machine_guid)) return unavailable;
+
+  StorageBootEnvironment boot = {0};
+  ULONG returned_size = 0;
+  if (NtQuerySystemInformation((SYSTEM_INFORMATION_CLASS)90, &boot,
+                               sizeof(boot), &returned_size) != 0 ||
+      returned_size != sizeof(boot)) return unavailable;
+  static const GUID zero_guid = {0};
+  const GUID *id = &boot.boot_identifier;
+  if (memcmp(id, &zero_guid, sizeof(*id)) == 0) return unavailable;
+
+  char boot_guid[37];
+  if (snprintf(boot_guid, sizeof(boot_guid),
+               "%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+               id->Data1, (unsigned)id->Data2, (unsigned)id->Data3,
+               (unsigned)id->Data4[0], (unsigned)id->Data4[1],
+               (unsigned)id->Data4[2], (unsigned)id->Data4[3],
+               (unsigned)id->Data4[4], (unsigned)id->Data4[5],
+               (unsigned)id->Data4[6], (unsigned)id->Data4[7]) != 36) return unavailable;
+
+  napi_value result, machine, boot_value;
+  if (napi_create_object(env, &result) != napi_ok ||
+      napi_create_string_utf8(env, machine_guid, 36, &machine) != napi_ok ||
+      napi_create_string_utf8(env, boot_guid, 36, &boot_value) != napi_ok ||
+      napi_set_named_property(env, result, "machineGuid", machine) != napi_ok ||
+      napi_set_named_property(env, result, "bootGuid", boot_value) != napi_ok) return NULL;
+  return result;
+}
+
 NAPI_MODULE_INIT() {
   static int close_marker, create_marker, create_child_marker, replace_marker, move_file_marker, editor_directory_marker, write_file_marker, identified_marker;
   napi_property_descriptor properties[] = {
+    {"supervisorIdentity", NULL, supervisor_identity, NULL, NULL, NULL, napi_default, NULL},
     {"abiVersion", NULL, abi_version, NULL, NULL, NULL, napi_default, NULL},
     {"open", NULL, open_session, NULL, NULL, NULL, napi_default, NULL},
     {"initialize", NULL, open_session, NULL, NULL, NULL, napi_default, &create_marker},

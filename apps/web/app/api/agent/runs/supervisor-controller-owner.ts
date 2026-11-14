@@ -1,13 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, readlinkSync } from "node:fs";
-import path from "node:path";
+import { getWindowsSupervisorIdentity } from "@vdt-studio/storage";
 
 /** Internal SQLite fence metadata. Never return machine/boot identities to a
  * client or accept them from a model/request. This is death evidence, not a
  * renewable execution lease and not general cross-host recovery authority. */
 export interface SupervisorProcessOwner {
-  version: 1;
+  version: 1 | 2;
   machine: string;
   boot: string;
   pid: number;
@@ -15,16 +15,20 @@ export interface SupervisorProcessOwner {
 }
 
 export type SupervisorOwnerDeath = "dead" | "alive" | "unverified";
-const PREFIX = "agent-process-owner:v1:";
+const PREFIX = "agent-process-owner:";
 const HASH = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
 const processGlobal = globalThis as typeof globalThis & { __vdtSupervisorProcessInstance?: string };
 const processInstance = processGlobal.__vdtSupervisorProcessInstance ??= randomUUID();
-let cachedIdentity: Pick<SupervisorProcessOwner, "machine" | "boot"> | null | undefined;
+let cachedIdentity: Pick<SupervisorProcessOwner, "version" | "machine" | "boot"> | null | undefined;
 
 export function supervisorProcessOwner(): SupervisorProcessOwner | null {
-  if (cachedIdentity === undefined) cachedIdentity = readLocalIdentity();
-  return cachedIdentity ? { version: 1, ...cachedIdentity, pid: process.pid, instance: processInstance } : null;
+  // Only the cheap Windows getter can become available after admission.
+  if (cachedIdentity === undefined || (cachedIdentity === null && process.platform === "win32")) {
+    cachedIdentity = readLocalIdentity();
+  }
+  return cachedIdentity ? { ...cachedIdentity, pid: process.pid, instance: processInstance } : null;
 }
 
 export function supervisorControllerFenceToken(): string {
@@ -37,7 +41,7 @@ export function encodeSupervisorProcessOwner(owner: SupervisorProcessOwner): str
   if (!validOwner(owner)) throw new TypeError("Invalid Supervisor process owner.");
   // Every bounded write retains a distinct audit token; owner identity remains
   // stable across route modules and development reloads within this process.
-  return PREFIX + ownerPayload(owner) + ":" + randomUUID();
+  return PREFIX + `v${owner.version}:` + ownerPayload(owner) + ":" + randomUUID();
 }
 
 export function supervisorFenceOwnership(token: string, current: SupervisorProcessOwner | null = supervisorProcessOwner()): "owned" | "foreign" | "unverified" {
@@ -45,7 +49,7 @@ export function supervisorFenceOwnership(token: string, current: SupervisorProce
   if (!owner) return /^agent-fence:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(token)
     ? "unverified" : "foreign";
   if (!current || !validOwner(current)) return "foreign";
-  return owner.machine === current.machine && owner.boot === current.boot && owner.pid === current.pid && owner.instance === current.instance
+  return owner.version === current.version && owner.machine === current.machine && owner.boot === current.boot && owner.pid === current.pid && owner.instance === current.instance
     ? "owned" : "foreign";
 }
 
@@ -55,7 +59,7 @@ export function supervisorOwnerDeath(
   probe: (pid: number) => void = (pid) => { process.kill(pid, 0); }
 ): SupervisorOwnerDeath {
   const owner = decodeOwner(token);
-  if (!owner || !current || !validOwner(current) || owner.machine !== current.machine) return "unverified";
+  if (!owner || !current || !validOwner(current) || owner.version !== current.version || owner.machine !== current.machine) return "unverified";
   if (owner.boot !== current.boot) return "dead";
   try {
     probe(owner.pid);
@@ -71,10 +75,10 @@ export function supervisorOwnerDeath(
 function decodeOwner(token: string): SupervisorProcessOwner | null {
   if (!token.startsWith(PREFIX) || token.length > 1_024) return null;
   try {
-    const [raw, nonce, extra] = token.slice(PREFIX.length).split(":");
+    const [scheme, raw, nonce, extra] = token.slice(PREFIX.length).split(":");
     if (!raw || !nonce || extra !== undefined || !UUID.test(nonce) || !/^[A-Za-z0-9_-]+$/.test(raw)) return null;
     const value: unknown = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    return validOwner(value) && ownerPayload(value) === raw ? value : null;
+    return validOwner(value) && scheme === `v${value.version}` && ownerPayload(value) === raw ? value : null;
   } catch { return null; }
 }
 
@@ -84,13 +88,13 @@ function validOwner(value: unknown): value is SupervisorProcessOwner {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const owner = value as Record<string, unknown>;
   return Object.keys(owner).sort().join(",") === "boot,instance,machine,pid,version"
-    && owner.version === 1 && typeof owner.machine === "string" && HASH.test(owner.machine)
+    && (owner.version === 1 || owner.version === 2) && typeof owner.machine === "string" && HASH.test(owner.machine)
     && typeof owner.boot === "string" && HASH.test(owner.boot)
     && typeof owner.pid === "number" && Number.isSafeInteger(owner.pid) && owner.pid > 0 && owner.pid <= 0x7fffffff
     && typeof owner.instance === "string" && UUID.test(owner.instance);
 }
 
-function readLocalIdentity(): Pick<SupervisorProcessOwner, "machine" | "boot"> | null {
+function readLocalIdentity(): Pick<SupervisorProcessOwner, "version" | "machine" | "boot"> | null {
   try {
     let machine: string, boot: string;
     if (process.platform === "darwin") {
@@ -108,17 +112,16 @@ function readLocalIdentity(): Pick<SupervisorProcessOwner, "machine" | "boot"> |
       // change (including some Linux reboot/container cases) fails closed.
       machine += `:${namespace}`;
     } else if (process.platform === "win32") {
-      const systemRoot = process.env.SystemRoot;
-      if (!systemRoot || !path.win32.isAbsolute(systemRoot)) return null;
-      const executable = path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-      const raw = JSON.parse(fixedCommand(executable, ["-NoProfile", "-NonInteractive", "-Command",
-        "$ErrorActionPreference='Stop'; $m=(Get-ItemProperty -LiteralPath 'HKLM:\\SOFTWARE\\Microsoft\\Cryptography').MachineGuid; $b=(Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o'); @{machine=$m;boot=$b}|ConvertTo-Json -Compress"
-      ])) as { machine?: unknown; boot?: unknown };
-      if (typeof raw.machine !== "string" || !UUID.test(raw.machine) || typeof raw.boot !== "string"
-        || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+Z$/.test(raw.boot)) return null;
-      machine = raw.machine; boot = raw.boot;
+      const native = getWindowsSupervisorIdentity();
+      if (!native || !UUID.test(native.machineGuid) || !UUID.test(native.bootGuid)
+        || native.machineGuid === NIL_UUID || native.bootGuid === NIL_UUID) return null;
+      return {
+        version: 2,
+        machine: hash(`machine:win32:${native.machineGuid.toLowerCase()}`),
+        boot: hash(`boot:win32:native-guid:${native.bootGuid.toLowerCase()}`)
+      };
     } else return null;
-    return { machine: hash(`machine:${process.platform}:${machine.toLowerCase()}`), boot: hash(`boot:${process.platform}:${boot.toLowerCase()}`) };
+    return { version: 1, machine: hash(`machine:${process.platform}:${machine.toLowerCase()}`), boot: hash(`boot:${process.platform}:${boot.toLowerCase()}`) };
   } catch { return null; }
 }
 

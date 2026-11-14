@@ -3,7 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { VdtStorageError } from "./types";
 
+interface WindowsSupervisorIdentity { machineGuid: string; bootGuid: string; }
+
 interface WindowsStorageBinding {
+  supervisorIdentity?(): WindowsSupervisorIdentity | null;
   abiVersion(): number;
   open(root: string): object;
   initialize(root: string): object;
@@ -112,6 +115,20 @@ export class WindowsStorageDirectory {
     private readonly binding: WindowsStorageBinding,
     private readonly session: object
   ) {}
+
+  supervisorIdentity(): WindowsSupervisorIdentity | null {
+    try {
+      const identity = this.binding.supervisorIdentity?.();
+      const guid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+      const valid = (value: unknown) => typeof value === "string" && value.length === 36 &&
+        guid.test(value) && value !== "00000000-0000-0000-0000-000000000000";
+      return identity && valid(identity.machineGuid) && valid(identity.bootGuid)
+        ? { machineGuid: identity.machineGuid, bootGuid: identity.bootGuid }
+        : null;
+    } catch {
+      return null;
+    }
+  }
 
   openChild(name: string): WindowsStorageDirectory {
     return new WindowsStorageDirectory(this.binding, this.binding.openChild(this.session, name));
@@ -228,6 +245,12 @@ const admittedProfiles = processGlobal[profileRegistryKey] ??= new Map();
 const packagedProfileKey = Symbol.for("vdt-studio.windows-storage.packaged-profile.v1");
 interface PackagedProfileAdmission { profilePath: string; }
 const admissionGlobal = globalThis as typeof globalThis & { [packagedProfileKey]?: PackagedProfileAdmission };
+
+export function getWindowsSupervisorIdentity(): WindowsSupervisorIdentity | null {
+  const admitted = admissionGlobal[packagedProfileKey];
+  if (process.platform !== "win32" || !admitted) return null;
+  return admittedProfiles.get(profileKey(admitted.profilePath))?.directory.supervisorIdentity() ?? null;
+}
 
 export function assertPackagedWindowsProfile(profilePath: string): void {
   const admitted = admissionGlobal[packagedProfileKey];

@@ -12,23 +12,23 @@ retains its original findings and evidence.
 Source recovery for newly owned structured runs has independent scoped
 acceptance. Legacy or ambiguous runs retain their history and can use a verified
 saved copy when committed source data is available. That continuation has source
-review and a passing two-case production-browser gate at `8e303593cabc`; installed
+review and a passing two-case production-browser gate at `9ca6733c3b19`; installed
 process-loss recovery remains unqualified. Parser isolation, bounded uploads and
 private local diagnostic preview/export have source and browser acceptance.
 
 The latest same-source packages are `7a08fffc0ddef0618cb9c4dfd2ed0d1903718779`,
-version `0.1.0-alpha.2`. Its full source run passed 3,816 tests with 45
-platform/opt-in skips and 165 of 166 browser cases, including all nine new
-cold-restoration cases. A stale Home-test fixture failed after its shared setup
-opened an editor; the separate saved-copy stage did not execute. Independent
-review accepted the test-only fixture correction, with all navigation assertions
-preserved, but the corrected gate still needs to run. The prior complete source
+version `0.1.0-alpha.2`. The test/docs-only successor `9ca6733c3b19` changes no
+product code and has an independently accepted complete source gate: 3,816 tests
+with 45 platform/opt-in skips, all 166 browser cases without unexpected/flaky/
+skipped outcomes, and both saved-copy cases. Its narrow Home fixture correction
+preserves the navigation assertions. The earlier `7a08fff` failure remains
+recorded, and its separate saved-copy stage did not execute. The prior source
 gate at `8e303593cabc` passed 3,813 tests, 45 skips, 157 browser cases and both
 saved-copy cases after reviewed coherent-read and SQLite pending-lock fixes.
 The earlier failures remain recorded; their exact CI interleavings were not
 proven by the focused regressions.
 
-At exact `7a08fff`, the standard-user Windows x64/NTFS native gate passed 34 tests
+At exact `7a08fff` and `9ca6733`, the standard-user Windows x64/NTFS native gate passed 34 tests
 and all 65 frozen cases; independent review recomputed the raw evidence. Actual
 compiled Next startup, storage, private session rejection and graceful shutdown,
 plus bundled sidecar activation, handshake and EOF shutdown, passed in package
@@ -45,6 +45,12 @@ previous newer-edits warning in these observations. The older warning's cause
 is unconfirmed; Home and the remaining installed cases are still under test.
 The earlier 42-tonne draft and missing named milestone were not ordinary
 committed revisions; loss of a committed revision was not established.
+Windows local analysis rejected the extreme workbook with the corrected limit
+and rejected a dimensionally incompatible target. The compatible CSV case
+applied and committed the expected 2.75 h/day on retry. Its first analysis timed
+out while both the public and private Node listeners gave five-second no-byte
+timeouts; both later resumed normal unauthenticated 403 responses. That failed
+attempt remains an open backend-availability observation.
 
 Installed Sonoma 14.0 arm64 restored an unsaved label edit and named version
 from `7a08fff` after native Quit. However, its retained QA profile repeatedly
@@ -52,13 +58,45 @@ stalled while listing Files, followed by timeouts on valid backend routes.
 A live Node sample showed active promise execution; the loopback inspector did
 not respond. The cause remains unconfirmed, and RA-16 is an open P1. A fresh
 clone comparison was interrupted by an unexpected guest reboot and is
-inconclusive. Bounded compiled-runtime profiling uses a copy of the synthetic
-profile, preserving the original. Earlier `261741e` Sonoma checks passed a
+inconclusive. The exact packaged server with complete copied synthetic storage
+answered sequential and concurrent requests on both host and affected guest;
+these healthy headless replays do not close the native UI failure. A later
+native launch kernel-panicked in the guest's `MTLCompilerServi` task before
+Files or inspector attachment. Sonoma 14.0 qualification is environment-blocked.
+A separate Tahoe 26.6.2 clone with 4 vCPUs, 6 GiB and fresh WebView state opened
+the complete copied model and both files, then preserved them through native
+Quit/Finder reopen. Home navigation also passed. This changes several environment
+variables and does not explain or close the earlier stalls. The Windows timeout
+may have a different cause. Earlier `261741e` Sonoma checks passed a
 provider-free CSV import/reopen at 2.75 h/day, scenarios, version restore, export
 structure and Quit. Its extreme-workbook rejection preserved the graph but had
 an incorrect generic message, now source-corrected. Earlier `8c60019` Tahoe
 26.6.2 clean/upgrade checks preserved formulas, values, history and source bytes.
 Excel exports were not recalculated by a spreadsheet engine.
+
+On the Tahoe comparison clone, a controlled loopback provider reached a real
+waiting question through normal Settings and runtime routes. Three abrupt
+web-controller exits exercised End interrupted run and clean/dirty saved-copy
+flows. Cancellation persisted through two further restarts. The dirty flow
+preserved the open unsaved label; both copies downloaded the exact original
+CSV bytes. The original graph hash and active revision remained unchanged.
+Further Tahoe checks reached a held real generation request and actual
+Approve/Reject controls. Both verified controller deaths recovered through End;
+fresh launches and the closed database retained cancellation at epoch 2.
+The exercised copy and original graph/revision hashes remained unchanged, and
+a fresh CSV download matched. The coordinator inspected screenshots and receipts.
+Windows independently
+restored its real question and 42-tonne model after a verified controller death,
+but End refused the run because no verifiable local owner was available. Clean
+saved copy opened a fresh 42-tonne editor. Windows End remains a blocker under
+investigation. A read-only diagnostic reproduced the five-second PowerShell/CIM
+timeout and confirmed an owner-less stored token. The independently reviewed
+source correction reads native machine/boot GUIDs through the admitted addon
+and versions that evidence separately from old CIM tokens. It retains safe
+saved-copy treatment of the existing owner-less run. New native compilation,
+compiled-route issuance and installed Windows retesting are pending; Windows
+generation/approval checks remain open. These synthetic fixtures do not qualify
+a live AI provider. The timeout is not established as the cause of RA-16.
 
 Both current packages exclude the unused native image backend and pass resource
 verification. The Mac DMG is Developer-ID signed but unnotarized; Windows is

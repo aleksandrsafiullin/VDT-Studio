@@ -25,6 +25,22 @@ describe("Supervisor owner death proof", () => {
     }
   });
 
+  it("compares boot evidence only within the native Windows scheme", () => {
+    const native = { ...owner, version: 2 as const };
+    const token = encodeSupervisorProcessOwner(native);
+    const notProbed = () => { throw new Error("A mismatched identity scheme must not probe"); };
+    expect(supervisorOwnerDeath(token, { ...owner, boot: "c".repeat(64) }, notProbed)).toBe("unverified");
+    expect(supervisorOwnerDeath(encodeSupervisorProcessOwner(owner), native, notProbed)).toBe("unverified");
+    expect(supervisorOwnerDeath(token.replace(":v2:", ":v1:"), native, notProbed)).toBe("unverified");
+    expect(supervisorOwnerDeath(token, { ...native, machine: "c".repeat(64) }, notProbed)).toBe("unverified");
+    expect(supervisorOwnerDeath(token, { ...native, boot: "c".repeat(64) }, notProbed)).toBe("dead");
+    expect(supervisorOwnerDeath(token, native, () => undefined)).toBe("alive");
+    expect(supervisorOwnerDeath(token, native, () => { throw Object.assign(new Error(), { code: "EPERM" }); })).toBe("unverified");
+    expect(supervisorOwnerDeath(token, native, () => { throw Object.assign(new Error(), { code: "ESRCH" }); })).toBe("dead");
+    expect(supervisorFenceOwnership(token, owner)).toBe("foreign");
+    expect(supervisorFenceOwnership(token, native)).toBe("owned");
+  });
+
   it("keeps per-write fence tokens unique while admitting only the original process instance", () => {
     const first = encodeSupervisorProcessOwner(owner), second = encodeSupervisorProcessOwner(owner);
     expect(first).not.toBe(second);

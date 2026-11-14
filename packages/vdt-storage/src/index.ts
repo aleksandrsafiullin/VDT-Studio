@@ -17,5 +17,5 @@ export {
 } from "./sqlite";
 export * from "./types";
 
-export { getWindowsStorageForProfile, publishWindowsStorageFileIfAbsent, retainWindowsStorageForProfile, writeWindowsStorageProfileFile } from "./windows-storage";
+export { getWindowsSupervisorIdentity, getWindowsStorageForProfile, publishWindowsStorageFileIfAbsent, retainWindowsStorageForProfile, writeWindowsStorageProfileFile } from "./windows-storage";
 export type { WindowsStorageDirectory } from "./windows-storage";
