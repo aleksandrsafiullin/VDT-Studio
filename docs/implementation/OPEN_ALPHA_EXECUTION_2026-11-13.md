@@ -477,3 +477,16 @@ bundled Cursor preflight. The controlled regression failed before the correction
 and passed after it with zero child launches. The focused route and executor suite
 passed 60 tests. The corrected sidecar and exact source snapshot require fresh
 installer and source verification. [Initial source run](https://github.com/aleksandrsafiullin/VDT-Studio/actions/runs/44096667230)
+
+### Interrupted chat recovery controls
+
+In the private installed Mac `bc6b79e` build, Cursor Extra High reached an
+11-KPI excavation draft before a segment deadline. The app moved to
+`recovery_required`. A visible Retry last step action returned
+`MODEL_AGENT_RECOVERY_REQUIRED` because the run no longer had an active
+controller. Interrupted-chat presentation now preserves the original reason
+and offers End interrupted run and Continue from saved copy. The existing
+retry controls remain on live runs that await user input. Focused timeout
+and step-limit tests reproduced the inappropriate controls on the prior code
+and passed with the corrected presentation. This change addresses the user
+interface after interruption. The specific provider timeout remains recorded.

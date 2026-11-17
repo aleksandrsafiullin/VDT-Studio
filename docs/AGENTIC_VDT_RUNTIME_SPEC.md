@@ -294,6 +294,9 @@ universal repeated `AgentDecision` loop or the older minimum event shape.
   invents final prose or a replacement session. A supervisor that enters
   `recovery_required` projects that state through Event V2 `runtime_status`
   so the public run snapshot does not stay `running`.
+  The chat shows the recovery reason and the available End interrupted run
+  and Continue from saved copy actions. Step retry controls require a live
+  run waiting for user input.
 - Session binding, engine/tool receipts, finish receipt, checkpoint and Event V2
   form an additive Sequence 4 contract. Sequence 3 bytes and authority remain
   unchanged.

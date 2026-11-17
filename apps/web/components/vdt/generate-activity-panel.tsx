@@ -895,49 +895,51 @@ export function GenerateActivityPanel({
           data-testid="agent-retryable-error"
         >
           <p className="text-sm leading-5 text-ink">{activity.retryableError.message}</p>
-          <div className="relative z-10 mt-3 flex flex-wrap gap-2">
-            {activity.retryableError.code === "MAX_STEPS_EXCEEDED" ? (
-              <Button
-                size="sm"
-                variant="primary"
-                icon={<RotateCcw className="h-3.5 w-3.5" />}
-                disabled={!onContinueRun}
-                onClick={onContinueRun}
-                data-testid="continue-agent-run"
-              >
-                Continue run
-              </Button>
-            ) : (
-              <>
+          {activity.status === "needs_user_input" ? (
+            <div className="relative z-10 mt-3 flex flex-wrap gap-2">
+              {activity.retryableError.code === "MAX_STEPS_EXCEEDED" ? (
                 <Button
                   size="sm"
                   variant="primary"
                   icon={<RotateCcw className="h-3.5 w-3.5" />}
-                  disabled={!onAnswer}
-                  onClick={() => onAnswer?.({ retry: "retry_last_step" })}
-                  data-testid="retry-agent"
+                  disabled={!onContinueRun}
+                  onClick={onContinueRun}
+                  data-testid="continue-agent-run"
                 >
-                  Retry last step
+                  Continue run
                 </Button>
-                <Button
-                  size="sm"
-                  disabled={!onAnswer}
-                  onClick={() => onAnswer?.({ continue: "smaller_step" })}
-                  data-testid="continue-agent-smaller-step"
-                >
-                  Smaller step
-                </Button>
-              </>
-            )}
-            <Button
-              size="sm"
-              icon={<X className="h-3.5 w-3.5" />}
-              onClick={onCancel}
-              data-testid="cancel-generate"
-            >
-              Cancel
-            </Button>
-          </div>
+              ) : (
+                <>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    icon={<RotateCcw className="h-3.5 w-3.5" />}
+                    disabled={!onAnswer}
+                    onClick={() => onAnswer?.({ retry: "retry_last_step" })}
+                    data-testid="retry-agent"
+                  >
+                    Retry last step
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={!onAnswer}
+                    onClick={() => onAnswer?.({ continue: "smaller_step" })}
+                    data-testid="continue-agent-smaller-step"
+                  >
+                    Smaller step
+                  </Button>
+                </>
+              )}
+              <Button
+                size="sm"
+                icon={<X className="h-3.5 w-3.5" />}
+                onClick={onCancel}
+                data-testid="cancel-generate"
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : activity.status === "error" && activity.message ? (
         <div
