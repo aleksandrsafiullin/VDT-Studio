@@ -32,9 +32,11 @@ Mount the disk image on the Mac and copy VDT Studio into Applications. The built
 
 The local package has a Developer ID signature. Apple notarization and Gatekeeper acceptance of a quarantined download are separate distribution gates. The native alpha build targets Apple Silicon and configures macOS 14 as its deployment floor. Local host acceptance establishes only the tested macOS and hardware.
 
-The macOS package includes a signed Cursor process supervisor. A packaged Cursor checkpoint connection remains unavailable until the host has reviewed exact-release evidence for the CLI payload, OS, network policy and Grok model. Qualification requires a separate Cursor sign-in, an independently verified read-only vendor payload, and an installed-app test that saves and reopens a calculable tree.
+### Connect Cursor in the desktop app
 
-The Windows package omits the prototype Cursor activation by default. A private build can stage a reviewed activation module, native worker and preload as a pinned resource set. The Windows build prerequisites and qualification boundary are documented in the [worker build instructions](../apps/desktop/windows-cursor-worker/README.md).
+Install Cursor Agent CLI from [Cursor's installation guide](https://cursor.com/docs/cli/installation). In Settings, open **Your subscriptions**, find **Cursor CLI**, and choose **Sign in**. Finish the Cursor browser confirmation, then check the connection and choose a supported model in chat. VDT keeps a separate local Cursor sign-in for its confined desktop sessions. A browser or Cursor editor sign-in by itself does not establish this connection.
+
+The standard installers include VDT's isolation runtime. The Mac package uses a signed supervisor and mounts a read-only snapshot of the separately installed CLI. Windows uses an AppContainer and a Job to run a verified copy. The CLI itself is installed separately. The app admits only exact CLI payloads, native policies, and models named in the installed build's [qualification records](../release/cursor-checkpoint-qualification.json). Updating the CLI can require a VDT update with newer records. The Windows prerequisites and current qualification scope are in the [worker build instructions](../apps/desktop/windows-cursor-worker/README.md).
 
 The 17 November private installed candidates passed both exact Grok models
 through ordinary chat and reopened the same calculated trees. macOS used its

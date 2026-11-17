@@ -49,6 +49,16 @@ formula/output bounds. See the
 
 ADR-012 extends the external integration catalog to thirteen current presets and host-managed custom ACP/JSONL profiles, including Kimi Code, Mistral Vibe, Kilo Code, Qwen Code, Grok Build and Pi RPC. ADR-013 separates Suggested KPI model/reasoning settings from chat, with explicit Off reasoning by default and no unsupported-value fallback. The existing checkpoint turn, Supervisor/Gateway, immutable model/configuration binding and finish-receipt contracts apply. This amendment grants no qualification, hosted execution, recovery coordinator or direct graph-write authority. See [Harness connections](HARNESS_CONNECTIONS.md).
 
+The packaged, isolation-qualified Cursor binding allows 360 seconds per process
+segment for the exact `grok-4.7-xhigh` model ID. Other packaged Cursor model IDs
+retain the 180-second deadline and their existing binding identity. The new
+Extra High deadline participates in the binding identity so a historical run
+keeps its original execution policy. Format correction, when eligible, shares
+the remaining segment time. Timeout and cancellation still stop the owned
+process, reject incomplete output and preserve only confirmed checkpoints. This
+budget change does not establish live cross-platform model acceptance.
+
+
 ## Local F-05 implementation boundary (2026-11-01)
 
 Incremental construction may retain an unfinished draft between mutations.

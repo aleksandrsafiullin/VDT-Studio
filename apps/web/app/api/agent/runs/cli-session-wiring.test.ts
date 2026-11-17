@@ -139,7 +139,7 @@ describe("trusted-local CLI session wiring", { timeout: 45_000 }, () => {
     const summarySpy = vi.spyOn(runtime.agentExecutionBindingRegistry, "summaries").mockReturnValue(legacySummaries);
     try {
       const { GET } = await import("./route");
-      const response = await GET();
+      const response = await GET(new Request("http://localhost/api/agent/runs"));
       const body = await response.json();
       expect(body.bindings.find((binding: { bindingId: string }) => binding.bindingId === bindingId)).toMatchObject({ reasoningEffort: "high" });
     } finally { summarySpy.mockRestore(); }

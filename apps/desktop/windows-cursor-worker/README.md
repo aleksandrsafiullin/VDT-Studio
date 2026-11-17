@@ -1,4 +1,4 @@
-# Windows Cursor worker prototype
+# Windows Cursor isolation worker
 
 The worker is a native Windows host component for the Cursor checkpoint adapter. It requires the in-box .NET Framework C# compiler on a Windows x64 or ARM64 packaging host. Build into the package's private resource staging directory using the absolute path as the argument to `node apps/desktop/windows-cursor-worker/build.mjs`. The build prints SHA-256 values for the executable and fixed proxy preload so packaging can pin both assets.
 
@@ -35,13 +35,63 @@ Teardown waits for the Job and relay to stop and verifies the owner and
 absence of reparse points before deleting the private tree with long-path
 support.
 
-## Private package preparation
+## Standard installer
 
-The standard package has an empty Cursor activation manifest. Once the exact CLI, worker, egress policy and each intended model have qualified evidence for the Windows x64 app runtime, prepare the three pinned assets in an isolated candidate source tree.
+The standard Windows x64 package builds the worker and fixed preload from its
+source archive and pins their exact bytes in the activation module. The app
+discovers the separately installed official CLI from the current user's
+native Local AppData folder. The latest version must have a supported
+canonical launcher layout. A pending update, redirected folder, missing
+payload or identity mismatch leaves the connection unavailable.
 
-1. Run `node apps/desktop/windows-cursor-worker/build.mjs ABSOLUTE_WORKER_OUTPUT_DIR` using Node for the packaging host architecture and the matching in-box .NET Framework compiler. Retain the executable and preload bytes whose prefixed SHA-256 hashes appear in the reviewed profile as `workerExecutableHash` and `proxyPreloadHash`.
-2. Run `node scripts/build-windows-cursor-isolation.cjs ABSOLUTE_REVIEWED_PROFILE_JSON ABSOLUTE_WORKER_OUTPUT_DIR ABSOLUTE_ACTIVATION_OUTPUT` with the repo's locked dependencies. The reviewed JSON supplies `payloadRoot`, `systemRoot`, `privateRoot`, `egressPolicyHash`, the worker hashes, and one checkpoint qualification record in `evidence` or an `evidences` list with one record per model. The output is a self-contained activation module. The command emits the three unprefixed SHA-256 hex pins for review.
-3. Freeze the activation module at `apps/desktop/cursor-isolation/win32-x64.cjs`, the worker and preload under its `windows-cursor-worker/` sibling, and the emitted pins under `win32-x64` in `cursorIsolationResourceManifest` in `apps/desktop/packaged-web.cjs`. Keep the private vendor payload, OAuth file and review input JSON separate from the archived source. If signing the worker, review and pin the final signed bytes before freezing.
-4. Build the exact private source commit with the Windows x64 NSIS path in [W8](../../../docs/implementation/OPEN_ALPHA_W8_2026-11-13.md). Staging verifies the three digests and copies only those files. The Node web runtime checks the activation module again before evaluating it, and activation checks the worker and preload before launching the worker. Review the package manifest and SHA-256 file with the native artifact verifier.
+The v2 worker protocol measures the complete installed vendor payload. The
+worker's policy identity covers the framed native sources, fixed proxy preload
+and compiler recipe. The package also verifies the exact emitted executable
+and preload before every worker launch. Source-policy identity permits a
+reviewed policy to survive incidental variations in compiler output. A change
+to those inputs requires a new reviewed policy record and an exact installed
+artifact qualification. The build emits the measured identity without adding
+it to the qualification catalog. On a disposable Windows build account,
+`node scripts/verify-windows-cursor-worker.mjs ABSOLUTE_WORKER_OUTPUT_DIR POLICY_HASH`
+measures inert fixtures, checks path and identity denials, and opens and
+closes a native scope before the package is staged.
 
-The host must explicitly provision the dedicated file `%LOCALAPPDATA%\VDT Studio\Cursor Auth\roaming\Cursor\auth.json` with a protected current-user and SYSTEM ACL. The worker reads only that file, seeds it into the owned state after the first run's empty-state admission, and screens process output for the opaque credential values. The normal Cursor profile is outside this path. The private Windows x64 candidate passed dedicated authentication, exact Low and Extra High checkpoint/resume, saved-tree generation and cold reopen in the Windows 11 ARM64 QA guest. Public Windows activation remains unqualified.
+| v2 frame | Purpose |
+| --- | --- |
+| `locate` | Resolve native Local AppData, system and app-owned session roots. |
+| `authStatus` | Check the dedicated VDT credential file's local validity. |
+| `signIn` | Recheck the reviewed CLI bytes, stage a private copy and run the fixed official browser login. |
+| `measure`, `open`, `run`, `cancel`, `close` | Use the reviewed checkpoint identity and existing LPAC, Job and relay controls. |
+
+Users install the [official Windows CLI](https://prod.cursor.com/docs/cli/installation)
+and explicitly start sign-in from VDT Studio. The native worker opens the system
+browser for the [vendor sign-in](https://prod.cursor.com/docs/cli/reference/authentication).
+The sign-in subprocess uses only the measured vendor payload, fixed login
+arguments and an owner/SYSTEM-only disposable profile. It runs in a separate
+one-process Job assigned before execution. The native controller limits time
+and output, accepts only the reviewed HTTPS login address for browser handoff
+outside the Job, and publishes only a validated
+credential file atomically to the dedicated app role at
+`%LOCALAPPDATA%\VDT Studio\Cursor Auth\roaming\Cursor\auth.json`. The user's
+ordinary Cursor profile and Windows execution policy are outside this flow.
+Local readiness confirms the presence of compatible private credentials.
+The authorized vendor request still determines whether the session is usable.
+App shutdown cancels pending sign-in and closes owned inference scopes. The
+worker retains private staging when it cannot confirm a Job has stopped.
+
+The explicit browser credential operation runs at ordinary user integrity.
+Model execution uses the LPAC token, one-process Job, private session state
+and fixed egress broker above. Only exact reviewed CLI/runtime/model records
+can enter the model picker through this managed connection. The prior private
+Windows x64 app ran both exact models in an ARM64 Windows guest. Its policy
+and credential provisioning differ from the standard workflow. The standard
+Windows x64 installer requires fresh sign-in, live exact-model checkpoint
+and saved-tree reopen evidence before adding the v2 model records.
+
+## Prior private packages
+
+Protocol v1 remains available for the earlier private profile-based activation.
+It pins the exact compiled worker and preload in its native policy identity,
+bakes guest locations into the activation module and consumes a pre-provisioned
+dedicated credential file. That private evidence applies to the measured
+artifact and reviewed guest configuration.

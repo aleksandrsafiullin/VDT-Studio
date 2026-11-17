@@ -47,11 +47,10 @@ internal sealed class PrivateSession
         internal string Source, CliVersion, PayloadHash, PolicyHash, Preload;
     }
 
-    internal static Identity Measure(string source, string version)
+    internal static Identity Measure(string source, string version, int protocol)
     {
         if (!VersionPattern.IsMatch(version)) throw new IOException("Invalid vendor version.");
-        string official = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "cursor-agent", "versions", version);
+        string official = Path.Combine(LocalData(), "cursor-agent", "versions", version);
         official = DirectoryPath(official);
         if (!StringComparer.OrdinalIgnoreCase.Equals(DirectoryPath(source), official))
             throw new IOException("Unexpected vendor source.");
@@ -64,17 +63,18 @@ internal sealed class PrivateSession
         RequirePlainFile(executable);
         return new Identity {
             Source=official, CliVersion=version, PayloadHash=Inventory(official,null), Preload=preload,
-            PolicyHash="sha256:" + Sha(Encoding.UTF8.GetBytes(PolicyIdentity+"\n"+ShaFile(executable)+"\n"+PreloadSha+"\n"))
+            PolicyHash=protocol == 2 ? StandardPolicy.Identity :
+                "sha256:" + Sha(Encoding.UTF8.GetBytes(PolicyIdentity+"\n"+ShaFile(executable)+"\n"+PreloadSha+"\n"))
         };
     }
 
-    internal PrivateSession(Identity expected, string model, int brokerPort)
+    internal PrivateSession(Identity expected, string model, int brokerPort, int protocol)
     {
         if (!ModelPattern.IsMatch(model) || model == "auto") throw new IOException("Invalid model.");
         this.model = model;
         this.brokerPort = brokerPort;
         profile = "VdtCursorSession" + Guid.NewGuid().ToString("N");
-        root = Path.Combine(DirectoryPath(Path.GetTempPath()),profile);
+        root = Path.Combine(protocol == 2 ? SessionParent() : DirectoryPath(Path.GetTempPath()),profile);
         if (Directory.Exists(root) || File.Exists(root)) throw new IOException("Private root collision.");
 
         bool profileCreated = false;
@@ -83,7 +83,7 @@ internal sealed class PrivateSession
         {
             packageSid = AppContainerProcess.NewProfile(profile).Sid;
             profileCreated = true;
-            Directory.CreateDirectory(root);
+            Directory.CreateDirectory(root, OwnedDirectoryAcl());
             rootCreated = true;
             var sid = new SecurityIdentifier(packageSid);
             SetAcl(root,sid,FileSystemRights.Traverse);
@@ -108,7 +108,7 @@ internal sealed class PrivateSession
         }
         catch
         {
-            if (rootCreated) TryRemoveRoot();
+            if (rootCreated) TryRemoveRoot(root);
             if (profileCreated) AppContainerProcess.DeleteAppContainerProfile(profile);
             throw;
         }
@@ -172,13 +172,7 @@ internal sealed class PrivateSession
             return destination;
         }
 
-        string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        string roleRoot = DirectoryPath(Path.Combine(local,"VDT Studio","Cursor Auth"));
-        RequireOwnedAccess(Directory.GetAccessControl(roleRoot),true);
-        string roleDirectory = DirectoryPath(Path.Combine(roleRoot,"roaming","Cursor"));
-        RequireOwnedAccess(Directory.GetAccessControl(roleDirectory),false);
-        string source = Path.Combine(roleDirectory,"auth.json");
-        RequireOwnedAccess(RequirePlainFile(source).GetAccessControl(),false);
+        string source = AuthSource();
         byte[] bytes = ReadCredentialFile(source);
         using (var target = new FileStream(destination,FileMode.CreateNew,FileAccess.Write,FileShare.None))
             target.Write(bytes,0,bytes.Length);
@@ -186,7 +180,65 @@ internal sealed class PrivateSession
         return destination;
     }
 
-    private static void RequireOwnedAccess(FileSystemSecurity security,bool protectedRoot)
+    internal static string LocalData()
+    {
+        return DirectoryPath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+    }
+
+    internal static string SystemRoot()
+    {
+        return DirectoryPath(Path.GetDirectoryName(Environment.SystemDirectory));
+    }
+
+    internal static string SessionParent()
+    {
+        return OwnedDirectory(OwnedDirectory(LocalData(), "VDT Cursor"), "Sessions");
+    }
+
+    internal static DirectorySecurity OwnedDirectoryAcl()
+    {
+        var acl = new DirectorySecurity();
+        acl.SetOwner(Owner);
+        acl.SetAccessRuleProtection(true, false);
+        foreach (var sid in new[] { Owner, OperatingSystem })
+            acl.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl,
+                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        return acl;
+    }
+
+    internal static string OwnedDirectory(string parent, string name)
+    {
+        string directory = Path.Combine(DirectoryPath(parent), name);
+        Directory.CreateDirectory(directory, OwnedDirectoryAcl());
+        directory = DirectoryPath(directory);
+        RequireOwnedAccess(Directory.GetAccessControl(directory), true);
+        return directory;
+    }
+
+    internal static string AuthDirectory(bool create)
+    {
+        string product = Path.Combine(LocalData(), "VDT Studio");
+        if (create && !Directory.Exists(product)) Directory.CreateDirectory(product, OwnedDirectoryAcl());
+        product = DirectoryPath(product);
+        string current = product;
+        foreach (var name in new[] { "Cursor Auth", "roaming", "Cursor" })
+        {
+            current = Path.Combine(current, name);
+            if (create && !Directory.Exists(current)) Directory.CreateDirectory(current, OwnedDirectoryAcl());
+            current = DirectoryPath(current);
+            RequireOwnedAccess(Directory.GetAccessControl(current), name == "Cursor Auth");
+        }
+        return current;
+    }
+
+    internal static string AuthSource()
+    {
+        string source = Path.Combine(AuthDirectory(false), "auth.json");
+        RequireOwnedAccess(RequirePlainFile(source).GetAccessControl(), false);
+        return source;
+    }
+
+    internal static void RequireOwnedAccess(FileSystemSecurity security,bool protectedRoot)
     {
         if (!Owner.Equals(security.GetOwner(typeof(SecurityIdentifier))) ||
             (protectedRoot && !security.AreAccessRulesProtected))
@@ -199,6 +251,11 @@ internal sealed class PrivateSession
 
     private byte[] ReadCredentialFile(string path)
     {
+        return ReadCredentialFile(path, credentialValues);
+    }
+
+    internal static byte[] ReadCredentialFile(string path, HashSet<string> values)
+    {
         RequirePlainFile(path);
         byte[] bytes;
         using (var source = new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read))
@@ -209,32 +266,32 @@ internal sealed class PrivateSession
         var parser = new JavaScriptSerializer { MaxJsonLength=64*1024,RecursionLimit=12 };
         var raw = parser.Deserialize<Dictionary<string,object>>(Encoding.UTF8.GetString(bytes));
         int found=0;
-        CollectCredentialValues(raw,ref found);
+        CollectCredentialValues(raw, values, ref found);
         if (found==0) throw new IOException("Dedicated auth state is empty.");
         return bytes;
     }
 
-    private void CollectCredentialValues(object item,ref int found)
+    private static void CollectCredentialValues(object item, HashSet<string> values, ref int found)
     {
         var value=item as string;
         if (value!=null)
         {
             if (value.Length>=8)
             {
-                if (++found>256 || credentialValues.Count>=1024) throw new IOException("Unexpected auth format.");
-                credentialValues.Add(value);
+                if (++found>256 || values.Count>=1024) throw new IOException("Unexpected auth format.");
+                values.Add(value);
             }
             return;
         }
         var map=item as IDictionary;
         if (map!=null)
         {
-            foreach (object child in map.Values) CollectCredentialValues(child,ref found);
+            foreach (object child in map.Values) CollectCredentialValues(child, values, ref found);
             return;
         }
         var list=item as IList;
         if (list!=null)
-            foreach (object child in list) CollectCredentialValues(child,ref found);
+            foreach (object child in list) CollectCredentialValues(child, values, ref found);
     }
 
     private void RequireCheckpointArgs(string[] supplied)
@@ -257,12 +314,12 @@ internal sealed class PrivateSession
     internal bool Close()
     {
         if (launched && !AppContainerProcess.LastRunCleanupConfirmed) return false;
-        bool filesDeleted = TryRemoveRoot();
+        bool filesDeleted = TryRemoveRoot(root);
         bool profileDeleted = AppContainerProcess.DeleteAppContainerProfile(profile) == 0;
         return filesDeleted && profileDeleted;
     }
 
-    private bool TryRemoveRoot()
+    internal static bool TryRemoveRoot(string root)
     {
         try
         {
@@ -331,7 +388,7 @@ internal sealed class PrivateSession
         }
     }
 
-    private static string DirectoryPath(string value)
+    internal static string DirectoryPath(string value)
     {
         if (String.IsNullOrWhiteSpace(value) || value.Length > 260 || value.Length < 4 ||
             value[1]!=':' || (value[2]!='\\' && value[2]!='/') || value.IndexOf(':',2)>=0)
@@ -343,7 +400,7 @@ internal sealed class PrivateSession
         return absolute;
     }
 
-    private static FileInfo RequirePlainFile(string path)
+    internal static FileInfo RequirePlainFile(string path)
     {
         var info = new FileInfo(path);
         if (!info.Exists || (info.Attributes & FileAttributes.ReparsePoint) != 0)
@@ -351,7 +408,7 @@ internal sealed class PrivateSession
         return info;
     }
 
-    private static string Inventory(string source, string copy)
+    internal static string Inventory(string source, string copy, CancellationToken cancellation = default(CancellationToken))
     {
         var values = new SortedDictionary<string,string>(StringComparer.Ordinal);
         long size = 0;
@@ -363,6 +420,7 @@ internal sealed class PrivateSession
             var directory = new DirectoryInfo(directories.Dequeue());
             foreach (var child in directory.EnumerateFileSystemInfos())
             {
+                cancellation.ThrowIfCancellationRequested();
                 if (++count > 10000 || (child.Attributes & FileAttributes.ReparsePoint) != 0)
                     throw new IOException("Unexpected vendor payload entry.");
                 string relative = child.FullName.Substring(source.Length+1);

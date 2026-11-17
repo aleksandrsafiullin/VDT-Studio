@@ -3,7 +3,7 @@ use std::{
     net::{Ipv4Addr, Shutdown, SocketAddrV4, TcpListener, TcpStream},
     path::{Path, PathBuf}, process::{Child, Stdio},
     sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc, Mutex},
-    thread::{self, JoinHandle}, time::Duration,
+    thread::{self, JoinHandle}, time::{Duration, Instant},
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -11,6 +11,7 @@ use tauri::{webview::NewWindowResponse, Manager, Url, WebviewUrl, WebviewWindowB
 use crate::windows_process::{configure_proxy_client, owned_listener, runtime_command, verify_backend_peer, ProcessJob};
 
 const WEB_PORT: u16 = 37541;
+const STOP_TIMEOUT: Duration = Duration::from_secs(12);
 const START_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_CONNECTIONS: usize = 64;
 
@@ -27,9 +28,13 @@ impl Drop for WebProcess {
     fn drop(&mut self) {
         self.proxy.take();
         self.child.stdin.take();
-        for _ in 0..20 {
-            if matches!(self.child.try_wait(), Ok(Some(_))) { return; }
-            thread::sleep(Duration::from_millis(25));
+        let deadline = Instant::now() + STOP_TIMEOUT;
+        while Instant::now() < deadline {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => thread::sleep(Duration::from_millis(25)),
+                Err(_) => break,
+            }
         }
         let _ = self.child.kill();
         let _ = self.child.wait();

@@ -120,8 +120,7 @@ clang -arch arm64 -mmacosx-version-min=14.0 -O2 -Wall -Wextra -Werror \
   -o "$contents/Helpers/vdt-cursor-macos-supervisor"
 install -m 644 "$stage/$node_archive/LICENSE" "$contents/Resources/LICENSE-Node.txt"
 install -m 644 LICENSE "$contents/Resources/LICENSE-VDT-Studio.txt"
-install -m 644 apps/desktop/packaged-web.cjs "$contents/Resources/packaged-web.cjs"
-node scripts/stage-packaged-cursor-isolation.cjs "$contents/Resources" darwin arm64
+node scripts/stage-packaged-cursor-isolation.cjs "$contents/Resources" darwin arm64 > "$stage/cursor-isolation.json"
 install -m 644 packages/data-harness/src/parser-worker.manifest.json "$contents/Resources/parser-worker.manifest.json"
 node --input-type=module - "$contents/Resources/build-info.json" <<'JS'
 import { writeFileSync } from "node:fs";
@@ -188,15 +187,16 @@ mv "$stage/$disk_name" "$output/$disk_name"
   shasum -a 256 "$disk_name" > SHA256SUMS
   printf '%s\n' "$commit" > SOURCE_COMMIT
 )
-node --input-type=module - "$output" "$version" "$commit" "$disk_name" "$allow_unsigned" "$notarized" <<'JS'
+node --input-type=module - "$output" "$version" "$commit" "$disk_name" "$allow_unsigned" "$notarized" "$stage/cursor-isolation.json" <<'JS'
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-const [output, version, sourceCommit, fileName, unsigned, notarized] = process.argv.slice(2);
+const [output, version, sourceCommit, fileName, unsigned, notarized, cursorManifest] = process.argv.slice(2);
 const signed = unsigned !== "true";
 writeFileSync(join(output, "macos-package.json"), JSON.stringify({
   schemaVersion: 1, platform: "darwin", architecture: "arm64", version, sourceCommit,
   nodeVersion: "24.22.2", signed, notarized: notarized === "true", qualification: "unverified",
+  cursorIsolation: JSON.parse(readFileSync(cursorManifest, "utf8")).digests,
   installer: { fileName, sha256: createHash("sha256").update(readFileSync(join(output, fileName))).digest("hex"),
     signatureStatus: signed ? "developer-id" : "ad-hoc-validation" }
 }, null, 2) + "\n");

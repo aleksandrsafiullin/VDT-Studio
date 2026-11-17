@@ -5155,8 +5155,9 @@ ${result.stderr}`.trim().split(/\r?\n/, 1)[0]?.trim() || null;
     };
   }
 }
-async function detectSubscriptionClis(options = {}) {
-  return Promise.all(listHarnessDefinitions().map(({ id: id3 }) => detectSubscriptionCli(id3, options)));
+async function detectSubscriptionClis(options = {}, excludeCursor = false) {
+  const definitions2 = listHarnessDefinitions().filter(({ id: id3 }) => !excludeCursor || id3 !== "cursor-agent");
+  return Promise.all(definitions2.map(({ id: id3 }) => detectSubscriptionCli(id3, options)));
 }
 
 // ../model-bridge/src/subscription-cli/cursor/version.ts
@@ -29602,13 +29603,13 @@ async function runtimeHarnessSettings(payload, context) {
   const harnesses = listHarnessDefinitions(context.config.executor?.env);
   return { statusCode: 200, payload: { ok: true, harnesses, profiles: harnesses.filter((h) => h.custom) } };
 }
-async function detectRuntimeSubscriptionClis(context, agentId) {
+async function detectRuntimeSubscriptionClis(context, agentId, excludeCursor = false) {
   context.manifests = createManifestRegistry(context.config.manifests, context.config.executor?.env);
   if (agentId !== void 0 && !isSubscriptionCliId(agentId)) {
     throw new LocalRuntimeError(400, "UNKNOWN_CLI_AGENT", `Unknown CLI agent: ${agentId}`);
   }
   const detectionOptions = context.config.detection ?? {};
-  const detected = agentId ? [await detectSubscriptionCli(agentId, detectionOptions)] : await detectSubscriptionClis(detectionOptions);
+  const detected = agentId ? excludeCursor && agentId === "cursor-agent" ? [] : [await detectSubscriptionCli(agentId, detectionOptions)] : await detectSubscriptionClis(detectionOptions, excludeCursor);
   const enrichmentOptions = detectionOptions.probeTimeoutMs === void 0 ? {} : { probeTimeoutMs: detectionOptions.probeTimeoutMs };
   const agents = await enrichSubscriptionCliDetections(detected, enrichmentOptions);
   const modelsByAgent = {};
@@ -30710,8 +30711,11 @@ async function routeSidecarRequest(message, context) {
   if (message.method === "speech") return { statusCode: 200, payload: await getSpeechRuntime().request(message.payload) };
   if (message.method === "list_backends") return listRuntimeBackends(context);
   if (message.method === "detect_clis") {
-    const agentId = typeof message.payload.agentId === "string" ? message.payload.agentId : void 0;
-    return detectRuntimeSubscriptionClis(context, agentId);
+    const { agentId, excludeCursor } = message.payload;
+    if (Object.keys(message.payload).some((key2) => key2 !== "agentId" && key2 !== "excludeCursor") || agentId !== void 0 && typeof agentId !== "string" || excludeCursor !== void 0 && typeof excludeCursor !== "boolean") {
+      throw new LocalRuntimeError(400, "INVALID_CLI_DETECTION", "Invalid CLI detection request.");
+    }
+    return detectRuntimeSubscriptionClis(context, agentId, excludeCursor);
   }
   if (message.method === "test_backend") return checkRuntimeBackendReadiness(requireBackendId(message.payload), context);
   if (message.method === "complete") {

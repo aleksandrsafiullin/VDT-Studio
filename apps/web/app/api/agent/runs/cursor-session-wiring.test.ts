@@ -20,11 +20,15 @@ vi.mock("@vdt-studio/model-bridge/node", async (importOriginal) => {
 });
 
 const cursorIsolationActivationKey = Symbol.for("vdt-studio.packaged-cursor-isolation.activation.v1");
+const cursorHostKey = Symbol.for("vdt-studio.packaged-web-host.v1");
 const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtAgentRuntime?: unknown;
   __vdtAgentExecutionBindingRegistry?: unknown;
   __vdtExternalAgentEngines?: unknown;
   __vdtCursorSessionBindingProbe?: unknown;
+  __vdtPackagedCursorConnection?: unknown;
+  __vdtSqliteBackedAgentRunStores?: unknown;
+  __vdtAgentSupervisorReadAuthorities?: unknown;
 };
 
 afterEach(() => {
@@ -34,7 +38,11 @@ afterEach(() => {
   delete runtimeGlobal.__vdtAgentExecutionBindingRegistry;
   delete runtimeGlobal.__vdtExternalAgentEngines;
   delete runtimeGlobal.__vdtCursorSessionBindingProbe;
+  delete runtimeGlobal.__vdtPackagedCursorConnection;
+  delete runtimeGlobal.__vdtSqliteBackedAgentRunStores;
+  delete runtimeGlobal.__vdtAgentSupervisorReadAuthorities;
   Reflect.deleteProperty(globalThis, cursorIsolationActivationKey);
+  Reflect.deleteProperty(globalThis, cursorHostKey);
 });
 
 describe("trusted-local Cursor session wiring", { timeout: 45_000 }, () => {
@@ -51,9 +59,9 @@ describe("trusted-local Cursor session wiring", { timeout: 45_000 }, () => {
     )).toEqual([]);
   });
 
-  it.skipIf(process.platform !== "darwin" && process.platform !== "win32")(
-    "publishes each matching exact Grok model and rejects mismatched evidence from the same package",
-    async () => {
+  it.skipIf(process.platform !== "darwin" && process.platform !== "win32").each(["legacy", "standard"])(
+    "admits each matching exact Grok model and rejects mismatched evidence from the same %s package",
+    async (profileType) => {
       vi.stubEnv("NODE_ENV", "production");
       vi.stubEnv("VDT_APP_MODE", "desktop");
       const baseline = await import("./runtime");
@@ -87,17 +95,41 @@ describe("trusted-local Cursor session wiring", { timeout: 45_000 }, () => {
           sessionEnvironmentFactory: () => { throw new Error("Binding listing must never initialize a session."); }
         };
       }
+      const eligible = [
+        activation("grok-4.7-low", "Low"),
+        activation("grok-4.7-xhigh", "Extra High"),
+        activation("grok-4.7-high", "High", `sha256:${"d".repeat(64)}`)
+      ];
+      let activations = eligible;
+      let status: "ready" | "sign_in_required" = "sign_in_required";
+      const authStatus = vi.fn(async () => status);
+      const getActivations = vi.fn(async () => activations);
+      const signIn = vi.fn(async () => { status = "ready"; });
       Object.defineProperty(globalThis, cursorIsolationActivationKey, {
         configurable: true,
-        value: { activations: [
-          activation("grok-4.7-low", "Low"),
-          activation("grok-4.7-xhigh", "Extra High"),
-          activation("grok-4.7-high", "High", `sha256:${"d".repeat(64)}`)
-        ] }
+        value: profileType === "legacy" ? { activations } : { authStatus, getActivations, signIn }
       });
 
       const runtime = await import("./runtime");
       await Promise.all([runtime.ensureServerManagedExecutionBindings(), runtime.ensureServerManagedExecutionBindings()]);
+      if (profileType === "standard") {
+        const { GET } = await import("./route");
+        const unrelatedCatalog = await GET(new Request("http://localhost/api/agent/runs", {
+          headers: { "x-vdt-skip-packaged-cursor-discovery": "1" }
+        }));
+        expect((await unrelatedCatalog.json()).bindings).not.toContainEqual(expect.objectContaining({ backendId: "cursor_subscription" }));
+        expect(authStatus).not.toHaveBeenCalled();
+        expect(getActivations).not.toHaveBeenCalled();
+        expect(await runtime.refreshPackagedCursorConnection()).toEqual({ status: "sign_in_required", models: [] });
+        expect(getActivations).not.toHaveBeenCalled();
+        const [connected, duplicate] = await Promise.all([runtime.signInPackagedCursor(), runtime.signInPackagedCursor()]);
+        expect(connected).toBe(duplicate);
+        expect(connected.status).toBe("ready");
+        expect(connected.models.map(model => model.id).sort()).toEqual(["grok-4.7-low", "grok-4.7-xhigh"]);
+        expect(signIn).toHaveBeenCalledOnce();
+        expect(getActivations).toHaveBeenCalledOnce();
+        expect(await runtime.refreshPackagedCursorConnection()).toBe(connected);
+      }
       const bindings = runtime.agentExecutionBindingRegistry.summaries().filter((binding) =>
         binding.backendId === "cursor_subscription"
       );
@@ -115,8 +147,38 @@ describe("trusted-local Cursor session wiring", { timeout: 45_000 }, () => {
       }
       expect(measureIdentity).toHaveBeenCalledTimes(3);
       expect(runQualified).not.toHaveBeenCalled();
+      if (profileType === "standard") {
+        const low = bindings.find(binding => binding.modelId === "grok-4.7-low")!;
+        const lowEngine = runtime.externalAgentEngineForBinding(low.bindingId);
+        activations = eligible.filter(candidate => candidate.evidence.modelId !== low.modelId);
+        expect((await runtime.refreshPackagedCursorConnection(true)).models.map(model => model.id)).toEqual(["grok-4.7-xhigh"]);
+        expect(runtime.isCurrentPackagedCursorBinding(low.bindingId)).toBe(false);
+        expect(runtime.externalAgentEngineForBinding(low.bindingId)).toBe(lowEngine);
+        status = "sign_in_required";
+        expect(await runtime.refreshPackagedCursorConnection(true)).toEqual({ status: "sign_in_required", models: [] });
+        expect(bindings.every(binding => !runtime.isCurrentPackagedCursorBinding(binding.bindingId))).toBe(true);
+      }
     }
   );
+
+  it("protects the native sign-in route and fails closed when packaged activation is missing", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VDT_APP_MODE", "desktop");
+    const { POST } = await import("../../ai/packaged-cursor/route");
+    const request = (origin = "http://127.0.0.1:37541", body = JSON.stringify({ operation: "status" })) => new Request(
+      "http://localhost:37541/api/ai/packaged-cursor",
+      { method: "POST", body, headers: { host: "127.0.0.1:37541", origin, "content-type": "application/json" } }
+    );
+    expect(await (await POST(request())).json()).toEqual({ ok: false, legacy: true });
+    Object.defineProperty(globalThis, cursorHostKey, { configurable: true, value: true });
+    expect((await POST(request("http://127.0.0.1:37542"))).status).toBe(403);
+    expect((await POST(request("", JSON.stringify({ operation: "sign_in" })))).status).toBe(403);
+    expect((await POST(request(undefined, JSON.stringify({ operation: "sign_in", executable: "/other" })))).status).toBe(400);
+    expect((await POST(request(undefined, " ".repeat(129)))).status).toBe(413);
+    const response = await POST(request());
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ ok: true, status: "unsupported", models: [] });
+  });
 
   it("publishes one server-managed external binding and resolves it without legacy fallback", async () => {
     vi.stubEnv("VDT_APP_MODE", "development_web");

@@ -167,8 +167,9 @@ export async function detectSubscriptionCli(
   }
 }
 
-export async function detectSubscriptionClis(options: DetectionOptions = {}): Promise<SubscriptionCliDetectionResult[]> {
-  return Promise.all(listHarnessDefinitions().map(({ id }) => detectSubscriptionCli(id, options)));
+export async function detectSubscriptionClis(options: DetectionOptions = {}, excludeCursor = false): Promise<SubscriptionCliDetectionResult[]> {
+  const definitions = listHarnessDefinitions().filter(({ id }) => !excludeCursor || id !== "cursor-agent");
+  return Promise.all(definitions.map(({ id }) => detectSubscriptionCli(id, options)));
 }
 
 export function parseCursorModelList(output: string): string[] {

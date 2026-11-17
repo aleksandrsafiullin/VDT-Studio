@@ -1,7 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 type WorkerRequest = {
-  readonly op: "measure" | "open" | "run";
+  readonly op: "measure" | "open" | "run" | "locate" | "authStatus" | "signIn";
   readonly id?: string;
 } & Record<string, unknown>;
 type JsonObject = Record<string, unknown>;
@@ -13,7 +13,7 @@ type Pending = {
 };
 
 const MAX_FRAME = 26 * 1024 * 1024;
-const SHUTDOWN_MS = 3_000;
+const SHUTDOWN_MS = 8_000;
 const SAFE_WORKER_ERRORS = new Set([
   "CURSOR_CHECKPOINT_CANCELLED",
   "CURSOR_CHECKPOINT_TIMEOUT",
@@ -72,7 +72,7 @@ export class WindowsCursorWorkerClient {
     let refuse!: Pending["refuse"];
     const result = new Promise<JsonObject>((resolve, reject) => { accept = resolve; refuse = reject; });
     this.#active = { request, accept, refuse, settled: result.then(() => undefined, () => undefined) };
-    if (request.op === "open") this.#couldOwnScope = true;
+    if (request.op === "open" || request.op === "signIn") this.#couldOwnScope = true;
     this.#write(request);
     const interrupt = () => this.#interrupt(request);
     signal.addEventListener("abort", interrupt, { once: true });
@@ -116,7 +116,14 @@ export class WindowsCursorWorkerClient {
 
   #interrupt(request: WorkerRequest): void {
     if (this.#unusable || this.#active?.request !== request) return;
-    if (request.op !== "run" || !request.id) {
+    if (request.op === "open") {
+      if (this.#cancelTimer) return;
+      this.#child.stdin.end();
+      this.#cancelTimer = setTimeout(() => this.#fail("CURSOR_CHECKPOINT_CANCELLED"), SHUTDOWN_MS);
+      this.#cancelTimer.unref();
+      return;
+    }
+    if ((request.op !== "run" && request.op !== "signIn") || !request.id) {
       this.#fail("CURSOR_CHECKPOINT_CANCELLED");
       return;
     }

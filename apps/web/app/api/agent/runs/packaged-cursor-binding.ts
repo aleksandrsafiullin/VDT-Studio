@@ -8,6 +8,9 @@ import type { AgentExecutionEngine } from "@vdt-studio/vdt-agent-runtime";
 /** Native packaged bootstrap supplies this before initializing Next. This
  * authority lives in the server process and is not a renderer message,
  * environment setting, user config record or discovery result. */
+const defaultSegmentTimeoutMs = 180_000;
+const extraHighSegmentTimeoutMs = 360_000;
+
 const activationKey = Symbol.for("vdt-studio.packaged-cursor-isolation.activation.v1");
 type PackagedCursorActivation = Pick<
   QualifiedCursorResumeCheckpointOptions,
@@ -39,10 +42,14 @@ export async function createPackagedCursorBinding(input: {
 }): Promise<{ bindingId: string; modelId: string; engine: AgentExecutionEngine }> {
   const { executable, runner, sessionEnvironmentFactory } = input.activation;
   const evidence = structuredClone(input.activation.evidence);
+  const timeoutMs = evidence.modelId === "grok-4.7-xhigh"
+    ? extraHighSegmentTimeoutMs
+    : defaultSegmentTimeoutMs;
   const engine = await createQualifiedCursorResumeCheckpointEngine({
     executable,
     runner,
     evidence,
+    timeoutMs,
     cliVersion: evidence.cliVersion,
     toolCatalogHash: input.toolCatalogHash,
     allowedToolNames: input.allowedToolNames,
@@ -58,7 +65,9 @@ export async function createPackagedCursorBinding(input: {
   });
   const evidenceId = createHash("sha256").update(JSON.stringify([
     evidence.evidenceHash, evidence.modelId, evidence.catalogModelDisplayName, evidence.runtimeModelDisplayName,
-    evidence.payloadHash, evidence.policyHash, evidence.vendorPolicyHash
+    evidence.payloadHash, evidence.policyHash, evidence.vendorPolicyHash,
+    // Existing unversioned bindings already identify the 180-second policy.
+    ...(timeoutMs === defaultSegmentTimeoutMs ? [] : [timeoutMs])
   ])).digest("hex").slice(0, 32);
   return { bindingId: `cursor_desktop_${evidenceId}`, modelId: evidence.modelId, engine };
 }

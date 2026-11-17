@@ -73,6 +73,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify actual Windows resources
         run: node scripts/verify-native-alpha-artifact.mjs output/release/native/windows --source-commit "${{ github.sha }}" --allow-unsigned-validation
+      - name: Exercise packaged Cursor worker with inert fixtures
+        shell: pwsh
+        run: |
+          $package = Get-Content -Raw output/release/native/windows/windows-package.json | ConvertFrom-Json
+          $worker = (Resolve-Path output/release/native/windows/application/windows-cursor-worker).Path
+          node scripts/verify-windows-cursor-worker.mjs $worker $package.cursorWorkerPolicyHash 2>&1 | Tee-Object output/release/native/logs/windows-cursor-worker.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Start packaged standalone under a standard user
         shell: pwsh
         run: ./.github/scripts/windows-standalone-standard-user.ps1 -Application output/release/native/windows/application -SourceCommit "${{ github.sha }}" -Evidence output/release/native/logs

@@ -17,7 +17,11 @@ cold reopen on `grok-4.7-low` and `grok-4.7-xhigh`. Each exact model saved a
 2,400 USD/month calculation with the two original driver values. macOS
 used the signed Apple Silicon app. Windows used a verified `08966a5` NSIS
 x64 native baseline and measured LPAC worker in an ARM64 QA guest. The
-public activation manifest is empty, and public release stays on hold.
+ordinary package used for that checkpoint omitted Cursor activation. Standard
+packaging now builds VDT-owned isolation resources and reads exact records
+from `release/cursor-checkpoint-qualification.json`. The installed standard
+sign-in and complex saved-tree matrix still needs per-artifact evidence.
+Public release stays on hold.
 
 The latest packaged checkpoint is `08966a5861fe4f3b2e9e5214af8ed19c072843fc`,
 version `0.1.0-alpha.2`. Both packages passed resource/integrity checks. The Mac

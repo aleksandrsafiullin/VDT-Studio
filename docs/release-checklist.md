@@ -120,6 +120,14 @@ both launches to catch writes to sealed resources. For a notarized candidate,
 repeat the install and launch from a browser download that carries macOS quarantine.
 Keep notarized distribution and the production native preflight as separate gates.
 
+For standard Cursor chat, record the pinned activation, worker and CLI payload
+identities from the compiled package and installed runtime. Confirm that a
+clean profile prompts for the dedicated browser sign-in, then verify each
+advertised model with its bound CLI session. Save the full calculated tree and
+compare its active revision after a cold reopen. An unavailable or mismatched
+CLI or isolation policy must leave the model unavailable. Package and static
+checks do not establish live model acceptance.
+
 Before claiming clean-machine desktop support:
 
 - Rust Cargo and `rustc` are available;

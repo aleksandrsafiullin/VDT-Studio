@@ -94,6 +94,21 @@ function signature(path, env) {
   }));
 }
 
+function signNativeResource(binary, { source, env, thumbprint }) {
+  const sdkRoot = join(env["ProgramFiles(x86)"], "Windows Kits/10/bin");
+  const versions = readdirSync(sdkRoot)
+    .filter((version) => /^10\.0\.\d+\.\d+$/.test(version))
+    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  const signtool = versions.map((version) => join(sdkRoot, version, "x64/signtool.exe")).find(existsSync);
+  if (!signtool) throw new Error("Windows SDK x64 SignTool is required to sign native resources.");
+  run(signtool, ["sign", "/sha1", thumbprint, "/fd", "SHA256", "/tr", "http://timestamp.digicert.com",
+    "/td", "SHA256", binary], { cwd: source, env });
+  const trust = signature(binary, env);
+  if (trust.status !== "Valid" || trust.thumbprint?.toLowerCase() !== thumbprint.toLowerCase()) {
+    throw new Error("Windows native resource Authenticode verification failed.");
+  }
+}
+
 function stageStorageAddon({ source, stage, native, env, thumbprint, unsigned }) {
   const output = join(stage, "storage-addon");
   const build = join(source, "packages/vdt-storage/native/build-windows-storage-addon.ps1");
@@ -101,20 +116,7 @@ function stageStorageAddon({ source, stage, native, env, thumbprint, unsigned })
     "-File", build, "-OutputDirectory", output], { cwd: source, env });
   const binary = join(native, "runtime/windows-storage.node");
   cpSync(join(output, "windows-storage.node"), binary);
-  if (!unsigned) {
-    const sdkRoot = join(env["ProgramFiles(x86)"], "Windows Kits/10/bin");
-    const versions = readdirSync(sdkRoot)
-      .filter((version) => /^10\.0\.\d+\.\d+$/.test(version))
-      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-    const signtool = versions.map((version) => join(sdkRoot, version, "x64/signtool.exe")).find(existsSync);
-    if (!signtool) throw new Error("Windows SDK x64 SignTool is required to sign the native storage addon.");
-    run(signtool, ["sign", "/sha1", thumbprint, "/fd", "SHA256", "/tr", "http://timestamp.digicert.com",
-      "/td", "SHA256", binary], { cwd: source, env });
-    const trust = signature(binary, env);
-    if (trust.status !== "Valid" || trust.thumbprint?.toLowerCase() !== thumbprint.toLowerCase()) {
-      throw new Error("Windows native storage addon Authenticode verification failed.");
-    }
-  }
+  if (!unsigned) signNativeResource(binary, { source, env, thumbprint });
   const manifest = { schemaVersion: 1, fileName: "windows-storage.node", architecture: "x64",
     nodeApiVersion: 8, nodeVersion: WINDOWS_NODE.version, sha256: hash(binary) };
   writeFileSync(join(native, "runtime/windows-storage.manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
@@ -206,12 +208,16 @@ export async function packageWindows(args = process.argv.slice(2)) {
     delete storageEnv.PATH;
     const storageDependents = stageStorageAddon({ source, stage, native, env: storageEnv, thumbprint, unsigned });
     cpSync(join(source, "LICENSE"), join(native, "LICENSE-VDT-Studio.txt"));
-    cpSync(join(source, "apps/desktop/packaged-web.cjs"), join(native, "packaged-web.cjs"));
-    const cursorIsolationStage = run(process.execPath, [
-      join(source, "scripts/stage-packaged-cursor-isolation.cjs"), native, "win32", "x64"
-    ], { cwd: source, env, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8" }).trim();
-    const cursorIsolationResources = cursorIsolationStage ? JSON.parse(cursorIsolationStage) : [];
-    resources.push(...cursorIsolationResources);
+    const cursorWorkerDirectory = join(stage, "cursor-worker");
+    const cursorWorkerBuild = run(process.execPath, [
+      join(source, "apps/desktop/windows-cursor-worker/build.mjs"), cursorWorkerDirectory
+    ], { cwd: source, env, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8" });
+    const { policyHash: cursorWorkerPolicyHash } = JSON.parse(cursorWorkerBuild.trim().split(/\r?\n/).at(-1));
+    if (!unsigned) signNativeResource(join(cursorWorkerDirectory, "vdt-windows-cursor-worker.exe"), { source, env, thumbprint });
+    const cursorIsolation = JSON.parse(run(process.execPath, [
+      join(source, "scripts/stage-packaged-cursor-isolation.cjs"), native, "win32", "x64", cursorWorkerDirectory, cursorWorkerPolicyHash
+    ], { cwd: source, env, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8" }));
+    resources.push(...cursorIsolation.resources);
     cpSync(join(source, "apps/desktop/windows-runtime.cjs"), join(native, "windows-runtime.cjs"));
     cpSync(join(source, "packages/data-harness/src/parser-worker.manifest.json"), join(native, "parser-worker.manifest.json"));
     // Materialize only the already checked internal links, avoiding Windows
@@ -220,7 +226,7 @@ export async function packageWindows(args = process.argv.slice(2)) {
     writeFileSync(join(native, "build-info.json"), JSON.stringify(buildInfo, null, 2) + "\n");
     const signingConfig = join(stage, "windows-signing.json");
     writeFileSync(signingConfig, JSON.stringify({ bundle: {
-      ...(cursorIsolationResources.length ? { resources } : {}),
+      resources,
       windows: unsigned
       ? { certificateThumbprint: null, signCommand: null }
       : { certificateThumbprint: thumbprint, digestAlgorithm: "sha256", tsp: true,
@@ -260,6 +266,7 @@ export async function packageWindows(args = process.argv.slice(2)) {
     writeFileSync(join(output, "windows-package.json"), JSON.stringify({
       schemaVersion: 1, ...buildInfo, nodeVersion: WINDOWS_NODE.version,
       installer: { fileName: installerName, sha256, signatureStatus: installerSignature.status },
+      cursorIsolation: cursorIsolation.digests, cursorWorkerPolicyHash,
       applicationSignature, nodeSignature, signed: !unsigned, qualification: "unverified",
       validationOnly: unsigned, note: "A successful build does not qualify Windows storage or clean-machine use."
     }, null, 2) + "\n");

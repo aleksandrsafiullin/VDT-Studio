@@ -262,7 +262,7 @@ export function LocalCliSettings() {
             ) : null}
             <Button type="button" size="sm" variant="ghost" data-testid="local-cli-rescan" disabled={isRescanningClis}
               icon={isRescanningClis ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />}
-              onClick={() => void rescanClis()}>{isRescanningClis ? "Scanning…" : "Rescan"}</Button>
+              onClick={() => void rescanClis(undefined, { fresh: true })}>{isRescanningClis ? "Scanning…" : "Rescan"}</Button>
           </div>
         </div>
 
@@ -324,7 +324,7 @@ export function LocalCliSettings() {
             {showInstallOptions ? <div data-testid="local-cli-install-accordion" className="space-y-3">
               <p className="text-xs font-medium text-ink">Available to install</p>
               <CliInstallGrid agents={notInstalledAgents} isRescanningId={rescanningCliId} toastMessage={installToast}
-                onInstall={handleInstall} onCopyCommand={handleCopyCommand} onRescanAgent={(agentId) => void rescanClis(agentId)} />
+                onInstall={handleInstall} onCopyCommand={handleCopyCommand} onRescanAgent={(agentId) => void rescanClis(agentId, { fresh: true })} />
             </div> : null}
           </section>
         ) : null}

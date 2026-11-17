@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { lstatSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { directorySha256 } from "./desktop-resources.mjs";
@@ -91,6 +91,33 @@ function verifyResources(resources) {
     imageOptimization: "disabled", unusedNativeImageResources: "absent" };
 }
 
+function verifyCursorResources(resources, platform, architecture, manifest) {
+  const source = readFileSync(file(resources, "packaged-web.cjs"), "utf8");
+  const pins = /^const cursorIsolationResourceManifest = Object\.freeze\((\{[^\n]*\})\);$/m.exec(source)?.[1];
+  if (manifest === undefined) {
+    if (existsSync(join(resources, "cursor-isolation.cjs")) || pins !== "{}") fail("unlisted Cursor isolation resources");
+    return undefined;
+  }
+
+  const targets = platform === "darwin" ? { activation: "cursor-isolation.cjs" } : {
+    activation: "cursor-isolation.cjs",
+    worker: "windows-cursor-worker/vdt-windows-cursor-worker.exe",
+    preload: "windows-cursor-worker/proxy-preload.cjs"
+  };
+  if (!manifest || Object.keys(manifest).length !== Object.keys(targets).length) fail("invalid Cursor isolation metadata");
+  for (const [key, resource] of Object.entries(targets)) {
+    if (!SHA.test(manifest[key]) || digest(file(resources, resource)) !== manifest[key]) fail(`Cursor isolation hash mismatch: ${resource}`);
+  }
+  const target = `${platform}-${architecture}`;
+  const expected = {
+    [target]: platform === "darwin" ? manifest.activation : {
+      activation: manifest.activation, worker: manifest.worker, preload: manifest.preload
+    }
+  };
+  if (pins !== JSON.stringify(expected)) fail("Cursor isolation digests do not match the packaged bootstrap");
+  return manifest;
+}
+
 /** Checks packaged bytes and OS trust. This does not certify installed user flows. */
 const VERIFY_WINDOWS_NEXT = `
 const fs = require("node:fs");
@@ -139,6 +166,11 @@ export function verifyNativeAlphaArtifact(directory, {
   if (identity.sourceCommit !== sourceCommit || identity.version !== metadata.version || identity.dirty !== false || identity.platform !== platform || identity.architecture !== architecture || !Number.isFinite(Date.parse(identity.buildTime))) fail("packaged application build identity mismatch");
   const node = platform === "darwin" ? file(application, "Contents/Helpers/node") : file(application, "runtime/node.exe");
   const resourcesResult = { ...verifyResources(resources), ...verifyNotices(resources) };
+  const cursorIsolation = verifyCursorResources(resources, platform, architecture, metadata.cursorIsolation);
+  if (cursorIsolation && platform === "darwin") file(application, "Contents/Helpers/vdt-cursor-macos-supervisor");
+  if (cursorIsolation && platform === "win32" && !/^sha256:[a-f0-9]{64}$/.test(metadata.cursorWorkerPolicyHash)) {
+    fail("missing Windows Cursor worker policy identity");
+  }
   let trustVerified = false;
   let storageAddon;
   if (platform === "darwin") {
@@ -147,7 +179,8 @@ export function verifyNativeAlphaArtifact(directory, {
     command("codesign", ["--verify", "--strict", installer]);
     if (metadata.signed) {
       const teams = new Set();
-      for (const target of [application, node, installer]) {
+      const cursorHelper = cursorIsolation ? [file(application, "Contents/Helpers/vdt-cursor-macos-supervisor")] : [];
+      for (const target of [application, node, installer, ...cursorHelper]) {
         const signature = command("codesign", ["--display", "--verbose=4", target]);
         if (!signature.includes("Authority=Developer ID Application:") || !/^TeamIdentifier=\w+/m.test(signature)) fail("candidate does not carry a Developer ID signature");
         teams.add(signature.match(/^TeamIdentifier=(\w+)/m)[1]);
@@ -177,7 +210,8 @@ export function verifyNativeAlphaArtifact(directory, {
       fail("native Windows storage addon is not an x64 PE DLL");
     }
     if (metadata.signed) {
-      command("pwsh.exe", ["-NoProfile", "-NonInteractive", "-File", join(dirname(SCRIPT_PATH), "verify-windows-artifact-signatures.ps1"), "-ArtifactDirectory", output, "-InstallerFile", installerName]);
+      command("pwsh.exe", ["-NoProfile", "-NonInteractive", "-File", join(dirname(SCRIPT_PATH), "verify-windows-artifact-signatures.ps1"), "-ArtifactDirectory", output, "-InstallerFile", installerName,
+        ...(cursorIsolation ? ["-VerifyCursorWorker"] : [])]);
       trustVerified = !allowUnsignedValidation;
     }
   }
@@ -199,7 +233,9 @@ export function verifyNativeAlphaArtifact(directory, {
   return {
     schemaVersion: 1, sourceCommit, version: metadata.version, platform, architecture,
     installer: { fileName: installerName, sha256: installerSha256 }, nodeVersion: metadata.nodeVersion,
-    ...resourcesResult, ...(storageAddon && { storageAddon }), artifactIntegrity: "passed", distributionTrust: trustVerified ? "passed" : "unverified-validation-only",
+    ...resourcesResult, ...(storageAddon && { storageAddon }), ...(cursorIsolation && { cursorIsolation }),
+    ...(cursorIsolation && platform === "win32" && { cursorWorkerPolicyHash: metadata.cursorWorkerPolicyHash }),
+    artifactIntegrity: "passed", distributionTrust: trustVerified ? "passed" : "unverified-validation-only",
     installedApplicationQualification: "unverified", liveProviderQualification: "unverified",
     releaseReady: false
   };

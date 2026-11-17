@@ -58,7 +58,7 @@ export interface AgentEventHandlers {
 }
 
 export interface AgentClient {
-  getExecutionBindings(): Promise<AgentExecutionBindingSelection>;
+  getExecutionBindings(options?: { includePackagedCursor?: boolean }): Promise<AgentExecutionBindingSelection>;
   startRun(request: VdtAgentPublicStartRequest): Promise<StartAgentRunResponse>;
   getRun(runId: string): Promise<VdtAgentRunSnapshot>;
   subscribe(runId: string, handlers: AgentEventHandlers): () => void;
@@ -68,8 +68,11 @@ export interface AgentClient {
 
 export function createAgentClient(fetcher: typeof fetch = fetch): AgentClient {
   return {
-    async getExecutionBindings() {
-      const response = await fetcher("/api/agent/runs", { cache: "no-store" });
+    async getExecutionBindings(options) {
+      const response = await fetcher("/api/agent/runs", {
+        cache: "no-store",
+        ...(options?.includePackagedCursor === false ? { headers: { "x-vdt-skip-packaged-cursor-discovery": "1" } } : {})
+      });
       return readJsonResponse<AgentExecutionBindingSelection>(
         response,
         "Agent execution bindings could not be loaded."

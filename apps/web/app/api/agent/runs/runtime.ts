@@ -52,6 +52,7 @@ import { LocalModelAgentBindingRegistrar, localModelAgentBindingsEnabled } from 
 import { retainedDatasetProvider } from "./dataset-provider";
 import { resolveSessionAwareResearch } from "./session-research";
 import { createPackagedCursorBinding, packagedCursorActivations } from "./packaged-cursor-binding";
+import { standardPackagedCursorProfile, type PackagedCursorAuthStatus } from "./packaged-cursor-profile";
 
 const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtAgentRuntime?: ReturnType<typeof createVdtAgentRuntime>;
@@ -60,6 +61,7 @@ const runtimeGlobal = globalThis as typeof globalThis & {
   __vdtAgentSupervisorReadAuthorities?: WeakMap<AgentRunStore, AgentSupervisorPersistence>;
   __vdtExternalAgentEngines?: Map<string, AgentExecutionEngine>;
   __vdtCursorSessionBindingProbe?: Promise<void>;
+  __vdtPackagedCursorConnection?: PackagedCursorConnection;
   __vdtCliSessionRegistrationOutcomes?: Map<CliSessionRegistrarKey, CliSessionRegistrationOutcome>;
   __vdtCliSessionRegistrationTimes?: Map<CliSessionRegistrarKey, number>;
   __vdtCliReasoningRegistrationVersion?: number;
@@ -110,13 +112,35 @@ export const agentRuntime =
 registerModelAgentSchemaTool(agentRuntime.tools);
 
 const cliSessionCanaryEnabled = isCliSessionCanaryEnabled();
-const cursorDesktopActivations = packagedCursorActivations();
-let cursorDesktopBindingProbe: Promise<void[]> | undefined;
+const standardCursorProfile = standardPackagedCursorProfile();
+const cursorDesktopActivations = standardCursorProfile ? [] : packagedCursorActivations();
+interface PackagedCursorModel {
+  id: string;
+  label: string;
+  bindingId: string;
+}
+interface PackagedCursorSnapshot {
+  status: PackagedCursorAuthStatus;
+  models: readonly PackagedCursorModel[];
+}
+interface PackagedCursorConnection {
+  snapshot: PackagedCursorSnapshot | undefined;
+  refreshedAt: number;
+  refresh?: Promise<PackagedCursorSnapshot>;
+  signIn?: Promise<PackagedCursorSnapshot>;
+}
+const cursorDesktopConnection: PackagedCursorConnection = runtimeGlobal.__vdtPackagedCursorConnection ?? {
+  snapshot: undefined,
+  refreshedAt: 0
+};
+// A catalog load and its immediate start may share a measured snapshot.
+const packagedCursorRefreshMs = 30_000;
+let cursorDesktopBindingProbe: Promise<(PackagedCursorModel | undefined)[]> | undefined;
 
 export const agentExecutionBindingRegistry =
   runtimeGlobal.__vdtAgentExecutionBindingRegistry ?? new AgentExecutionBindingRegistry([], {
-    externalProfilesEnabled: cliSessionCanaryEnabled || cursorDesktopActivations.length > 0,
-    externalEngineWired: cliSessionCanaryEnabled || cursorDesktopActivations.length > 0,
+    externalProfilesEnabled: cliSessionCanaryEnabled || Boolean(standardCursorProfile) || cursorDesktopActivations.length > 0,
+    externalEngineWired: cliSessionCanaryEnabled || Boolean(standardCursorProfile) || cursorDesktopActivations.length > 0,
     allowUnverifiedExternalCanary: cliSessionCanaryEnabled
   });
 
@@ -128,12 +152,13 @@ const localModelBindingRegistrar = new LocalModelAgentBindingRegistrar(
 
 ensureDefaultModelAgentBinding(agentExecutionBindingRegistry);
 
-if (process.env.NODE_ENV !== "production") {
+if (process.env.NODE_ENV !== "production" || standardCursorProfile) {
   runtimeGlobal.__vdtAgentRuntime = agentRuntime;
   runtimeGlobal.__vdtAgentExecutionBindingRegistry = agentExecutionBindingRegistry;
   runtimeGlobal.__vdtSqliteBackedAgentRunStores = sqliteBackedAgentRunStores;
   runtimeGlobal.__vdtAgentSupervisorReadAuthorities = supervisorReadAuthorities;
   runtimeGlobal.__vdtExternalAgentEngines = externalAgentEngines;
+  if (standardCursorProfile) runtimeGlobal.__vdtPackagedCursorConnection = cursorDesktopConnection;
 }
 
 export const CURSOR_SESSION_EXECUTION_BINDING_ID = "cursor_session_canary";
@@ -143,29 +168,7 @@ export const CLAUDE_SESSION_EXECUTION_BINDING_ID = "claude_session_canary";
 export async function ensureServerManagedExecutionBindings(): Promise<void> {
   if (localModelAgentBindingsEnabled()) await localModelBindingRegistrar.refresh();
   if (cursorDesktopActivations.length > 0) {
-    cursorDesktopBindingProbe ??= Promise.all(cursorDesktopActivations.map(async (activation) => {
-      try {
-        const binding = await createPackagedCursorBinding({
-          activation,
-          toolCatalogHash: modelAgentToolCatalogHash(agentRuntime.tools),
-          allowedToolNames: TARGET_MODEL_AGENT_TOOLS,
-          forbiddenRoots: resolveCliSessionForbiddenRoots(),
-          resolveBinding: async ({ runId }) => {
-            const durable = await createAgentSupervisorReadPersistence().load(runId);
-            if (!durable?.binding) {
-              throw Object.assign(new Error("The durable Cursor session binding was not found."), {
-                code: "CLI_SESSION_BINDING_NOT_FOUND"
-              });
-            }
-            return durable.binding;
-          }
-        });
-        registerCliSessionBinding(binding);
-      } catch {
-        // A model remains unavailable when its evidence or trusted launcher
-        // fails, even if another exact model from the same package can run.
-      }
-    }));
+    cursorDesktopBindingProbe ??= Promise.all(cursorDesktopActivations.map(registerPackagedCursorExecution));
     await cursorDesktopBindingProbe;
   }
   if (!cliSessionCanaryEnabled) return;
@@ -186,6 +189,96 @@ export async function ensureServerManagedExecutionBindings(): Promise<void> {
   finally {
     if (runtimeGlobal.__vdtCursorSessionBindingProbe === probe) delete runtimeGlobal.__vdtCursorSessionBindingProbe;
   }
+}
+
+async function registerPackagedCursorExecution(
+  activation: Parameters<typeof createPackagedCursorBinding>[0]["activation"]
+): Promise<PackagedCursorModel | undefined> {
+  try {
+    const binding = await createPackagedCursorBinding({
+      activation,
+      toolCatalogHash: modelAgentToolCatalogHash(agentRuntime.tools),
+      allowedToolNames: TARGET_MODEL_AGENT_TOOLS,
+      forbiddenRoots: resolveCliSessionForbiddenRoots(),
+      resolveBinding: async ({ runId }) => {
+        const durable = await createAgentSupervisorReadPersistence().load(runId);
+        if (!durable?.binding) {
+          throw Object.assign(new Error("The durable Cursor session binding was not found."), {
+            code: "CLI_SESSION_BINDING_NOT_FOUND"
+          });
+        }
+        return durable.binding;
+      }
+    });
+    registerCliSessionBinding(binding);
+    if (!agentExecutionBindingRegistry.has(binding.bindingId)) return;
+    return { id: binding.modelId, label: activation.evidence.catalogModelDisplayName, bindingId: binding.bindingId };
+  } catch {
+    // A failed qualification makes only this exact model unavailable.
+  }
+}
+
+export function refreshPackagedCursorConnection(fresh = false): Promise<PackagedCursorSnapshot> {
+  const profile = standardCursorProfile;
+  if (!profile) return Promise.resolve({ status: "unsupported", models: [] });
+  if (cursorDesktopConnection.signIn) return Promise.resolve(cursorDesktopConnection.snapshot ?? { status: "sign_in_required", models: [] });
+  if (cursorDesktopConnection.refresh) return cursorDesktopConnection.refresh;
+  if (!fresh && cursorDesktopConnection.snapshot && Date.now() - cursorDesktopConnection.refreshedAt < packagedCursorRefreshMs) {
+    return Promise.resolve(cursorDesktopConnection.snapshot);
+  }
+  return startPackagedCursorRefresh(profile);
+}
+
+function startPackagedCursorRefresh(
+  profile: NonNullable<ReturnType<typeof standardPackagedCursorProfile>>
+): Promise<PackagedCursorSnapshot> {
+  const refresh = (async (): Promise<PackagedCursorSnapshot> => {
+    const status = await profile.authStatus().catch((): PackagedCursorAuthStatus => "unsupported");
+    if (status !== "ready") return { status, models: [] };
+    try {
+      const activations = await profile.getActivations();
+      const ids = activations.map(activation => activation.evidence.modelId);
+      if (new Set(ids).size !== ids.length) return { status: "ready", models: [] };
+      const bindings = await Promise.all(activations.map(registerPackagedCursorExecution));
+      return { status: "ready", models: bindings.filter(model => model !== undefined) };
+    } catch {
+      return { status: "ready", models: [] };
+    }
+  })().then((snapshot) => {
+    cursorDesktopConnection.snapshot = snapshot;
+    cursorDesktopConnection.refreshedAt = Date.now();
+    return snapshot;
+  }).finally(() => {
+    delete cursorDesktopConnection.refresh;
+  });
+  cursorDesktopConnection.refresh = refresh;
+  return refresh;
+}
+
+export function signInPackagedCursor(): Promise<PackagedCursorSnapshot> {
+  const profile = standardCursorProfile;
+  if (!profile) return Promise.resolve({ status: "unsupported", models: [] });
+  if (cursorDesktopConnection.signIn) return cursorDesktopConnection.signIn;
+  const signIn = (async () => {
+    await cursorDesktopConnection.refresh;
+    cursorDesktopConnection.snapshot = { status: "sign_in_required", models: [] };
+    try {
+      await profile.signIn();
+    } catch {
+      await startPackagedCursorRefresh(profile);
+      throw new Error("Cursor sign-in could not be completed. Recheck the connection or retry Sign in.");
+    }
+    return startPackagedCursorRefresh(profile);
+  })().finally(() => {
+    delete cursorDesktopConnection.signIn;
+  });
+  cursorDesktopConnection.signIn = signIn;
+  return signIn;
+}
+
+export function isCurrentPackagedCursorBinding(bindingId: string): boolean {
+  return !standardCursorProfile || !bindingId.startsWith("cursor_desktop_")
+    || Boolean(cursorDesktopConnection.snapshot?.models.some(model => model.bindingId === bindingId));
 }
 
 export function externalAgentEngineForBinding(bindingId: string): AgentExecutionEngine | undefined {
@@ -215,11 +308,24 @@ export function resolveAgentStartRequest(
   request: VdtAgentPublicStartRequest
 ): ResolvedAgentStartRequest {
   if (!("executionBindingId" in request)) {
+    const backendId = request.providerConfig?.backendId;
+    if (standardCursorProfile && request.providerId === "local_runner"
+      && typeof backendId === "string" && backendId.trim() === "cursor_subscription") {
+      throw new AgentExecutionBindingError(
+        "BINDING_DISABLED",
+        "Packaged Cursor Agent runs require an exact managed profile binding."
+      );
+    }
     return { request };
   }
 
   const binding = agentExecutionBindingRegistry.resolve(request.executionBindingId);
-  if (!isCurrentHarnessSession(request.executionBindingId)) throw new AgentExecutionBindingError("BINDING_DISABLED", "Harness settings changed. Refresh the connection before starting a new run.");
+  if (!isCurrentHarnessSession(request.executionBindingId)) {
+    throw new AgentExecutionBindingError("BINDING_DISABLED", "Harness settings changed. Refresh the connection before starting a new run.");
+  }
+  if (!isCurrentPackagedCursorBinding(request.executionBindingId)) {
+    throw new AgentExecutionBindingError("BINDING_DISABLED", "The selected Cursor model is unavailable in the managed profile. Recheck the connection before starting a new run.");
+  }
   const { executionBindingId, ...common } = request;
   if (isStructuredModelExecutionBinding(binding)) {
     return {

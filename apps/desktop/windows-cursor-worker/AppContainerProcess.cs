@@ -312,6 +312,113 @@ internal static class AppContainerProcess {
         }
     }
 
+    // The browser is opened by the trusted worker outside this job. The job
+    // owns every descendant of the credential-bearing CLI from before resume.
+    internal static void RunDedicatedLogin(string exe, string entrypoint, string cwd,
+        Dictionary<string,string> env, int timeoutMs, CancellationToken cancellation, Action<Stream> read)
+    {
+        IntPtr inputRead=IntPtr.Zero, inputWrite=IntPtr.Zero, outputRead=IntPtr.Zero, outputWrite=IntPtr.Zero;
+        IntPtr list=IntPtr.Zero, handles=IntPtr.Zero, envBlock=IntPtr.Zero, job=IntPtr.Zero;
+        bool initialized=false, assigned=false;
+        var process = new Pi();
+        Task reader = null;
+        try
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var sa = new Sa { size=Marshal.SizeOf(typeof(Sa)), inherit=1 };
+            Check(CreatePipe(out inputRead,out inputWrite,ref sa,0),"Login stdin pipe");
+            Check(CreatePipe(out outputRead,out outputWrite,ref sa,0),"Login output pipe");
+            Check(SetHandleInformation(outputRead,1,0),"Restrict login pipe inheritance");
+            Close(ref inputWrite);
+            UIntPtr size=UIntPtr.Zero;
+            InitializeProcThreadAttributeList(IntPtr.Zero,1,0,ref size);
+            if (size.ToUInt64()==0 || size.ToUInt64()>65536) throw new IOException("Invalid login attribute list.");
+            list=Marshal.AllocHGlobal((int)size.ToUInt64());
+            Check(InitializeProcThreadAttributeList(list,1,0,ref size),"Initialize login attributes");
+            initialized=true;
+            handles=Marshal.AllocHGlobal(2*IntPtr.Size);
+            Marshal.Copy(new[] {inputRead,outputWrite},0,handles,2);
+            Attribute(list,0x20002,handles,2*IntPtr.Size);
+            string vars=String.Join("\0",env.OrderBy(k=>k.Key,StringComparer.OrdinalIgnoreCase).Select(k=>k.Key+"="+k.Value))+"\0\0";
+            envBlock=Block(Encoding.Unicode.GetBytes(vars));
+            var startup = new StartupEx { list=list, startup=new Startup {
+                size=Marshal.SizeOf(typeof(StartupEx)), flags=0x100,
+                stdin=inputRead, stdout=outputWrite, stderr=outputWrite
+            }};
+            job=CreateJobObjectW(IntPtr.Zero,IntPtr.Zero);
+            Check(job!=IntPtr.Zero,"Create dedicated login job");
+            var limits=new JobLimits { basic=new Limits { flags=0x2000 | 0x8, activeLimit=1 } };
+            Check(SetInformationJobObject(job,9,ref limits,Marshal.SizeOf(typeof(JobLimits))),"Configure dedicated login job");
+            var args=new StringBuilder(Quote(exe)+" "+Quote(entrypoint)+" login");
+            Check(CreateProcessW(exe,args,IntPtr.Zero,IntPtr.Zero,true,0x08080404,envBlock,cwd,ref startup,out process),
+                "Create suspended dedicated login");
+            Check(AssignProcessToJobObject(job,process.process),"Assign dedicated login job");
+            assigned=true;
+            Close(ref inputRead);
+            Close(ref outputWrite);
+            IntPtr readerHandle=outputRead;
+            reader=Task.Factory.StartNew(()=>{
+                using (var handle=new SafeFileHandle(readerHandle,true))
+                using (var stream=new FileStream(handle,FileAccess.Read)) read(stream);
+            },TaskCreationOptions.LongRunning);
+            outputRead=IntPtr.Zero;
+            cancellation.ThrowIfCancellationRequested();
+            Check(ResumeThread(process.thread)!=0xffffffff,"Resume dedicated login");
+            var clock=Stopwatch.StartNew();
+            while (true)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                uint wait=WaitForSingleObject(process.process,50);
+                if (wait==0) break;
+                if (wait!=258 || reader.IsFaulted || clock.ElapsedMilliseconds>=timeoutMs)
+                    throw new IOException("Dedicated login process did not complete.");
+            }
+            uint code;
+            Check(GetExitCodeProcess(process.process,out code),"Read dedicated login exit status");
+            if (code!=0) throw new IOException("Dedicated login did not succeed.");
+        }
+        finally
+        {
+            try
+            {
+                if (process.process!=IntPtr.Zero)
+                {
+                    bool reaped;
+                    try {
+                        if (assigned)
+                        {
+                            TerminateJobObject(job,9);
+                            reaped=WaitEmpty(job);
+                        }
+                        else
+                        {
+                            TerminateProcess(process.process,9);
+                            reaped=WaitForSingleObject(process.process,3000)==0;
+                        }
+                    }
+                    catch { throw new DedicatedAuth.CleanupException(); }
+                    if (!reaped) throw new DedicatedAuth.CleanupException();
+                }
+                Close(ref outputWrite);
+                if (reader!=null && !reader.Wait(2000)) throw new DedicatedAuth.CleanupException();
+            }
+            finally
+            {
+                Close(ref inputRead);
+                Close(ref inputWrite);
+                Close(ref outputRead);
+                Close(ref outputWrite);
+                Close(ref process.process);
+                Close(ref process.thread);
+                Close(ref job);
+                if (initialized) DeleteProcThreadAttributeList(list);
+                if (list!=IntPtr.Zero) Marshal.FreeHGlobal(list);
+                if (handles!=IntPtr.Zero) Marshal.FreeHGlobal(handles);
+                if (envBlock!=IntPtr.Zero) Marshal.FreeHGlobal(envBlock);
+            }
+        }
+    }
+
     internal static bool LastRunCleanupConfirmed { get; private set; }
 
     internal static Result Run(string sid, string exe, string[] argv, string cwd, Dictionary<string,string> env,

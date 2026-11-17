@@ -75,6 +75,17 @@ fn is_smart_metadata_backend(backend: &str) -> bool {
     is_harness_backend(backend) || ["ollama", "lm_studio", "vllm"].contains(&backend)
 }
 
+const PACKAGED_WEB_DESKTOP: bool = cfg!(all(any(target_os = "macos", target_os = "windows"), not(debug_assertions)));
+
+fn check_cursor_sidecar_access(packaged: bool, backend_id: &str, task_type: Option<&str>) -> Result<(), String> {
+    let is_connection = task_type.is_none();
+    let is_agent_task = matches!(task_type, Some("generate_tree" | "agent_decision" | "agent_plan" | "data_agent_decision"));
+    if packaged && backend_id.trim() == "cursor_subscription" && (is_connection || is_agent_task) {
+        return Err("CURSOR_MANAGED_PROFILE_REQUIRED: Use the packaged Cursor connection in Settings and the Agent chat model picker.".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn ai_harness_settings(payload: serde_json::Value, runtime: State<'_, DesktopRuntime>) -> Result<serde_json::Value, String> {
     runtime.harness_settings(payload).map_err(|error| error.to_string())
@@ -109,16 +120,17 @@ fn ai_list_backends(runtime: State<'_, DesktopRuntime>) -> Result<Vec<RuntimeBac
 }
 
 #[tauri::command]
-async fn ai_detect_subscription_clis(agent_id: Option<String>, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+async fn ai_detect_subscription_clis(agent_id: Option<String>, exclude_cursor: Option<bool>, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<DesktopRuntime>()
-            .detect_subscription_clis(agent_id.as_deref())
+            .detect_subscription_clis(agent_id.as_deref(), PACKAGED_WEB_DESKTOP || exclude_cursor.unwrap_or(false))
             .map_err(|error| error.to_string())
     }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 async fn ai_test_backend(backend_id: String, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    check_cursor_sidecar_access(PACKAGED_WEB_DESKTOP, &backend_id, None)?;
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<DesktopRuntime>()
             .test_backend(&backend_id)
@@ -128,6 +140,7 @@ async fn ai_test_backend(backend_id: String, app: tauri::AppHandle) -> Result<se
 
 #[tauri::command]
 async fn ai_list_models(backend_id: String, app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    check_cursor_sidecar_access(PACKAGED_WEB_DESKTOP, &backend_id, None)?;
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<DesktopRuntime>()
             .list_models(&backend_id)
@@ -143,6 +156,7 @@ async fn ai_complete(
     if request.model_reasoning.as_ref().map_or(false, |value| !is_model_reasoning_value(value)) {
         return Err("INVALID_REASONING: modelReasoning must be a bounded provider value.".into());
     }
+    check_cursor_sidecar_access(PACKAGED_WEB_DESKTOP, &request.backend_id, Some(&request.task_type))?;
     let smart = request.task_type == "suggest_incoming_kpis";
     if smart {
         app.state::<DesktopRuntime>().reserve_smart_request(&request.request_id).map_err(|error| error.to_string())?;
@@ -184,6 +198,7 @@ fn ai_get_run(request_id: String, runtime: State<'_, DesktopRuntime>) -> Result<
 
 #[tauri::command]
 async fn open_provider_auth(backend_id: String, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    check_cursor_sidecar_access(PACKAGED_WEB_DESKTOP, &backend_id, None)?;
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<DesktopRuntime>()
             .open_provider_auth(&backend_id)
@@ -258,6 +273,19 @@ mod harness_tests {
     fn smart_completion() -> serde_json::Value {
         serde_json::json!({ "requestId": "test-request", "providerId": "local_runner", "backendId": "codex_subscription", "taskType": "suggest_incoming_kpis", "schemaId": "suggest-incoming-kpis-v1", "input": {}, "model": "selected" })
     }
+    #[test]
+    fn packaged_cursor_connection_and_chat_require_the_managed_profile() {
+        assert!(super::check_cursor_sidecar_access(true, "cursor_subscription", None).is_err());
+        for task in ["generate_tree", "agent_decision", "agent_plan", "data_agent_decision"] {
+            assert!(super::check_cursor_sidecar_access(true, "cursor_subscription", Some(task)).is_err());
+            assert!(super::check_cursor_sidecar_access(false, "cursor_subscription", Some(task)).is_ok());
+            assert!(super::check_cursor_sidecar_access(true, "codex_subscription", Some(task)).is_ok());
+        }
+        assert!(super::check_cursor_sidecar_access(false, "cursor_subscription", None).is_ok());
+        assert!(super::check_cursor_sidecar_access(true, "cursor_subscription", Some("suggest_incoming_kpis")).is_ok());
+        assert!(super::check_cursor_sidecar_access(true, "codex_subscription", None).is_ok());
+    }
+
     #[test]
     fn cancelling_an_unowned_request_does_not_start_the_sidecar() {
         let runtime = super::DesktopRuntime::default();

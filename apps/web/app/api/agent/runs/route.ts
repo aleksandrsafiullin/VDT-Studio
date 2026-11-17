@@ -17,6 +17,8 @@ import {
   ensureServerManagedExecutionBindings,
   externalAgentEngineForBinding,
   isCliSessionCanaryEnabled,
+  isCurrentPackagedCursorBinding,
+  refreshPackagedCursorConnection,
   isLegacyAgentCompatibilityEnabled,
   jsonError,
   readAgentProviderConfig,
@@ -41,10 +43,11 @@ import {
   startStructuredModelAgentRun
 } from "./supervisor-runtime";
 
-export async function GET() {
+export async function GET(request: Request) {
   await ensureServerManagedExecutionBindings();
+  if (request.headers.get("x-vdt-skip-packaged-cursor-discovery") !== "1") await refreshPackagedCursorConnection();
   const bindings = agentExecutionBindingRegistry.summaries()
-    .filter(binding => isCurrentHarnessSession(binding.bindingId))
+    .filter(binding => isCurrentHarnessSession(binding.bindingId) && isCurrentPackagedCursorBinding(binding.bindingId))
     .filter((binding) => !isOpenAiSessionBinding(binding.bindingId))
     // Development can retain an older registry instance across hot reload.
     // Serialize the current public contract from its immutable definitions.
@@ -72,8 +75,6 @@ export async function POST(request: Request) {
     ));
   }
 
-  await ensureServerManagedExecutionBindings();
-
   let raw: unknown;
   try {
     raw = await request.json();
@@ -85,6 +86,11 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     return jsonError(issue ? formatZodIssue(issue) : "Invalid agent start request.");
+  }
+
+  await ensureServerManagedExecutionBindings();
+  if ("executionBindingId" in parsed.data && parsed.data.executionBindingId.startsWith("cursor_desktop_")) {
+    await refreshPackagedCursorConnection();
   }
 
   if (!("executionBindingId" in parsed.data) && !isLegacyAgentCompatibilityEnabled()) {

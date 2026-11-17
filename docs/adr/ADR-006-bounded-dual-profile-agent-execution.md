@@ -130,8 +130,12 @@ process launch to that identity and retain the same private per-run profile
 on continuation. Every reported native tool event stops the packaged run,
 including native WebSearch. Research can use the VDT Gateway as permitted by
 the run. This profile-specific restriction leaves the development canary and
-its native web-search behavior intact. No packaged platform has accepted
-evidence in the bootstrap manifest yet.
+its native web-search behavior intact. Standard installers embed the measured
+app-owned runtime and include only the reviewed record list from the release
+archive. The desktop host resolves the separately installed payload and
+dedicated login on demand. A missing record for a target or model leaves it
+unavailable. Packaging and successful version checks alone do not establish
+native or live acceptance.
 
 ### Agent prose and runtime facts are separate
 

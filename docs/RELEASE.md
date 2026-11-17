@@ -26,6 +26,12 @@ accepted bytes, checksums and public evidence for a separately directed release.
 
 The [Mac open-alpha plan](OPEN_ALPHA_PLAN.md) tracks the next candidate, supported scenarios, and the QA cases for Codex or Cursor.
 
+The desktop packagers build and pin VDT-owned Cursor isolation resources from
+the archived source. They take no vendor installation or sign-in data from the
+build machine. Exact reviewed records control which separately installed CLI
+builds and models can run. Artifact verification checks the pinned resources
+and, on signed Windows builds, the worker's Authenticode signature.
+
 The [November macOS candidate checks](PRODUCTION_READINESS.md#mac-local-alpha-smart-kpi-and-browser-regression-checks-2026-11-09) record current Smart KPI, browser and release-gate evidence. Earlier [launcher and dependency checks](PRODUCTION_READINESS.md#mac-local-alpha-launcher-and-zod-verification-2026-11-09) and the [October local browser run](PRODUCTION_READINESS.md#local-alpha-browser-verification-2026-10-19) retain their respective results. GUI distribution, recovery, AI/business acceptance and any claimed platform support still need their own evidence. The local macOS package has a separate install and live-provider acceptance. Production native distribution and other platforms require separate qualification.
 
 ### Dependency audit evidence

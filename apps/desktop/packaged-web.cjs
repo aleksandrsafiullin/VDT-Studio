@@ -7,9 +7,10 @@ const { join } = require("node:path");
 const { compileFunction } = require("node:vm");
 
 const cursorIsolationActivationKey = Symbol.for("vdt-studio.packaged-cursor-isolation.activation.v1");
+const packagedWebHostKey = Symbol.for("vdt-studio.packaged-web-host.v1");
 const windowsStorageActivationKey = Symbol.for("vdt-studio.packaged-windows-storage.activation.v1");
-// Release-reviewed digest of the complete self-contained runtime module for
-// each qualified target. Targets without accepted evidence omit the resource.
+// The archived-source packager embeds the digests of the exact platform assets.
+// The evaluated module contains separate, reviewed vendor qualification records.
 const cursorIsolationResourceManifest = Object.freeze({});
 const cursorIsolationResourceName = "cursor-isolation.cjs";
 
@@ -59,13 +60,15 @@ async function loadPackagedCursorIsolation(directory, expectedDigest) {
 }
 
 async function activatePackagedCursorIsolation() {
-  const expectedDigest = packagedCursorIsolationDigest(process.platform, process.arch);
-  if (!expectedDigest || process.env.VDT_APP_MODE !== "desktop" || process.env.NODE_ENV !== "production") return;
+  if (process.env.VDT_APP_MODE !== "desktop" || process.env.NODE_ENV !== "production") return;
   try {
     const hasNativeAuthority = process.platform === "win32"
       ? Boolean(globalThis[windowsStorageActivationKey])
       : process.platform === "darwin" && fstatSync(3).isSocket();
     if (!hasNativeAuthority) return;
+    Object.defineProperty(globalThis, packagedWebHostKey, { value: true });
+    const expectedDigest = packagedCursorIsolationDigest(process.platform, process.arch);
+    if (!expectedDigest) return;
     const activation = await loadPackagedCursorIsolation(__dirname, expectedDigest);
     Object.defineProperty(globalThis, cursorIsolationActivationKey, { value: activation });
   } catch {
@@ -117,8 +120,20 @@ function guardedHandler(handler, host = "127.0.0.1:37541") {
 }
 
 async function start() {
-  process.stdin.on("end", () => process.exit(0));
-  process.stdin.on("error", () => process.exit(1));
+  let stopping = false;
+  const stop = async (code) => {
+    if (stopping) return;
+    stopping = true;
+    try {
+      await globalThis[cursorIsolationActivationKey]?.dispose?.();
+    } catch {
+      console.error("The packaged Cursor isolation runtime could not close its resources.");
+      code = 1;
+    }
+    process.exit(code);
+  };
+  process.stdin.on("end", () => void stop(0));
+  process.stdin.on("error", () => void stop(1));
   process.stdin.resume();
   // Standard output belongs to the private native-host startup handshake.
   globalThis.console = new Console(process.stderr, process.stderr);

@@ -151,7 +151,8 @@ export async function runtimeHarnessSettings(payload: { action?: unknown; profil
 
 export async function detectRuntimeSubscriptionClis(
   context: LocalRuntimeContext,
-  agentId?: string
+  agentId?: string,
+  excludeCursor = false
 ): Promise<RuntimeResult> {
   context.manifests = createManifestRegistry(context.config.manifests, context.config.executor?.env);
   if (agentId !== undefined && !isSubscriptionCliId(agentId)) {
@@ -160,8 +161,8 @@ export async function detectRuntimeSubscriptionClis(
 
   const detectionOptions = context.config.detection ?? {};
   const detected = agentId
-    ? [await detectSubscriptionCli(agentId as SubscriptionCliId, detectionOptions)]
-    : await detectSubscriptionClis(detectionOptions);
+    ? excludeCursor && agentId === "cursor-agent" ? [] : [await detectSubscriptionCli(agentId as SubscriptionCliId, detectionOptions)]
+    : await detectSubscriptionClis(detectionOptions, excludeCursor);
   const enrichmentOptions = detectionOptions.probeTimeoutMs === undefined
     ? {}
     : { probeTimeoutMs: detectionOptions.probeTimeoutMs };

@@ -1,0 +1,33 @@
+{
+  "darwin-arm64": [
+    {
+      "cliVersion": "2026.11.11-b912975",
+      "payloadHash": "sha256:0a63d8a4ae6f1d9bf7808b5377a2c0e1097116684aa652671d1d59f0ca2d93ca",
+      "policyHash": "sha256:f4f8cc5ca02a6b74b7074f071023e4b241da4ba257c52d2415b9ca4bfc327a62",
+      "vendorPolicyHash": "sha256:53aa09165710602c13a561bad44cb7da76b4c6ca4314af9a3be8a5c78e667e4a",
+      "evidenceHash": "sha256:feb75f2cddbdbb9c646ce92425478cb84639606ffb584f3083e96e31c1f57513",
+      "testedAt": "2026-11-16T18:22:59.511Z",
+      "protocolVersion": "vdt-cursor-checkpoint-v1",
+      "toolCatalogHash": "sha256:7df0dbbfdfc03b407517c25b5b8d8f7b06329a449ab4565f40c7f03a32ba30b8",
+      "platform": { "os": "darwin", "arch": "arm64", "runtimeVersion": "v24.22.2" },
+      "modelId": "grok-4.7-low",
+      "catalogModelDisplayName": "Grok 4.7  Low",
+      "runtimeModelDisplayName": "Grok 4.7 256K Low"
+    },
+    {
+      "cliVersion": "2026.11.11-b912975",
+      "payloadHash": "sha256:0a63d8a4ae6f1d9bf7808b5377a2c0e1097116684aa652671d1d59f0ca2d93ca",
+      "policyHash": "sha256:7c0ca5b3b9a2ad795fa8df7ced63f73ce93866285fa18d0a1b5e04155aa3c517",
+      "vendorPolicyHash": "sha256:53aa09165710602c13a561bad44cb7da76b4c6ca4314af9a3be8a5c78e667e4a",
+      "evidenceHash": "sha256:f303b9157ccf2f0d21b9154b36e52975f9ac103001d750ee151b54a4ba691315",
+      "testedAt": "2026-11-17T05:18:59.188Z",
+      "protocolVersion": "vdt-cursor-checkpoint-v1",
+      "toolCatalogHash": "sha256:7df0dbbfdfc03b407517c25b5b8d8f7b06329a449ab4565f40c7f03a32ba30b8",
+      "platform": { "os": "darwin", "arch": "arm64", "runtimeVersion": "v24.22.2" },
+      "modelId": "grok-4.7-xhigh",
+      "catalogModelDisplayName": "Grok 4.7  Extra High",
+      "runtimeModelDisplayName": "Grok 4.7 256K Extra High"
+    }
+  ],
+  "win32-x64": []
+}

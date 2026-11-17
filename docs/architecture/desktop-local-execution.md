@@ -112,9 +112,13 @@ self-contained `cursor-isolation.cjs` resource from the app bundle. This
 requires the Windows native activation or the macOS inherited listener.
 The bootstrap uses its compiled platform and architecture manifest to
 verify the resource's digest and evaluates the same measured bytes. The
-native package scripts stage a matching, self-contained target module from
-the archived release source. The module can import Node built-ins. Renderer requests, user preferences and
-environment switches supply no admission evidence.
+native package scripts build the module from archived release source and pin
+the generated resource digest into the bootstrap. Windows also pins the exact
+compiled worker and preload bytes. Module dependencies are bundled or
+restricted to Node built-ins. The archived qualification records pin the
+vendor payload and policy independently of the runtime resource digest.
+Renderer requests, user preferences and environment switches supply no
+admission evidence.
 
 The resource supplies a trusted native runner and per-run private environment
 to the server. The server compares the current complete vendor payload,
@@ -126,9 +130,18 @@ fences each launch to that identity so updates cannot replace the measured
 process. This profile retains Cursor's permission allowlist and disables its
 nested sandbox because the approved OS runner owns isolation enforcement.
 The runner verifies the exact vendor config before launch. Opaque Cursor
-state remains in one private profile across
-checkpoints. The bootstrap manifest currently has no accepted entry, so
-installed packages expose no qualified Cursor binding.
+state remains in one private profile across checkpoints. Each platform
+discovers the official per-user CLI only when a connection is requested.
+Missing CLI, unrecognized versions, policy mismatch and missing dedicated
+credentials leave admission closed. An exact model remains bound to the
+original engine and private session for its whole run.
+
+Standard desktop Settings uses the native-bootstrapped, same-origin connection
+route to read availability or start a fixed vendor browser sign-in. Its input
+contains no executable path, arguments or secret. Dedicated credentials live
+under the app's local data and enter the model runner only inside per-run
+private state. The separately installed Cursor CLI and the user's normal
+Cursor settings remain outside the delivered package.
 
 The approved-host egress broker drains the final response and releases the
 local CONNECT socket once the upstream socket fully closes. The Windows

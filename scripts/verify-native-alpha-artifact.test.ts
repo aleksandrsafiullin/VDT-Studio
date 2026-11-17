@@ -28,7 +28,7 @@ async function fixture(platform: "darwin" | "win32" = "darwin", signed = true) {
   await put(path.join(resources, "build-info.json"), JSON.stringify({ version, sourceCommit, dirty: false, buildTime: "2026-11-13T00:00:00.000Z", platform, architecture }));
   await put(path.join(application, platform === "darwin" ? "Contents/Helpers/node" : "runtime/node.exe"), "embedded runtime fixture");
   await put(path.join(application, platform === "darwin" ? "Contents/MacOS/vdt-studio-desktop" : "vdt-studio-desktop.exe"), "application fixture");
-  await put(path.join(resources, "packaged-web.cjs"), "web host fixture");
+  await put(path.join(resources, "packaged-web.cjs"), "const cursorIsolationResourceManifest = Object.freeze({});\n");
   if (platform === "win32") {
     await put(path.join(resources, "windows-runtime.cjs"), "windows host fixture");
     await put(path.join(resources, "web/apps/web/.next/server/instrumentation.js"), "storage startup fixture");
@@ -122,6 +122,30 @@ describe("native alpha artifact verification", () => {
     await writeFile(path.join(f.resources, "runtime/windows-storage.node"), "different addon");
     expect(() => verifyNativeAlphaArtifact(f.root, { sourceCommit, platform: "win32", command: f.command }))
       .toThrow(/addon metadata or checksum/);
+    expect(f.command).not.toHaveBeenCalled();
+  });
+  it("verifies the exact standard Windows Cursor resources and rejects a changed worker", async () => {
+    const f = await fixture("win32", false);
+    const workers = path.join(f.resources, "windows-cursor-worker");
+    const workerFile = path.join(workers, "vdt-windows-cursor-worker.exe");
+    const assets = { activation: "measured activation", worker: "built worker", preload: "reviewed preload" };
+    const manifest = { activation: sha(assets.activation), worker: sha(assets.worker), preload: sha(assets.preload) };
+    await mkdir(workers);
+    await Promise.all([
+      writeFile(path.join(f.resources, "cursor-isolation.cjs"), assets.activation),
+      writeFile(workerFile, assets.worker),
+      writeFile(path.join(workers, "proxy-preload.cjs"), assets.preload),
+      writeFile(f.metadataPath, JSON.stringify({ ...f.metadata, cursorIsolation: manifest, cursorWorkerPolicyHash: `sha256:${sha("reviewed policy")}` })),
+      writeFile(path.join(f.resources, "packaged-web.cjs"),
+        `const cursorIsolationResourceManifest = Object.freeze(${JSON.stringify({ "win32-x64": manifest })});\n`)
+    ]);
+    const verify = () => verifyNativeAlphaArtifact(f.root, {
+      sourceCommit, platform: "win32", command: f.command, allowUnsignedValidation: true
+    });
+    expect(verify()).toMatchObject({ cursorIsolation: manifest, liveProviderQualification: "unverified" });
+    f.command.mockClear();
+    await writeFile(workerFile, "changed worker");
+    expect(verify).toThrow(/Cursor isolation hash mismatch/);
     expect(f.command).not.toHaveBeenCalled();
   });
   it("never promotes explicitly unsigned validation to distribution trust", async () => {

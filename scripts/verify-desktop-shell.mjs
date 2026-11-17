@@ -128,7 +128,7 @@ export function verifyDesktopShell(root = DEFAULT_ROOT) {
   if (!rustSource.includes(".open_provider_auth(&backend_id)")) {
     fail("open_provider_auth must delegate to the reviewed desktop runtime sidecar host.");
   }
-  if (!rustSource.includes(".detect_subscription_clis(agent_id.as_deref())")) {
+  if (!rustSource.includes(".detect_subscription_clis(agent_id.as_deref(),")) {
     fail("ai_detect_subscription_clis must delegate to the reviewed desktop runtime sidecar host.");
   }
   if (rustSource.includes("std::process") || rustSource.includes("Command::new")) {

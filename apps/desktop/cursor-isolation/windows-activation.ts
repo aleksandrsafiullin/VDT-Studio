@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
+import { resolveWindowsCursorShim } from "../../../packages/model-bridge/src/subscription-cli/cursor/windows-launch";
 import { CURSOR_CLI_EGRESS_HOSTS, startCursorCliEgress } from "../../web/lib/cursor-cli-egress";
 import { assertCursorCheckpointVendorConfig, cursorCheckpointVendorPolicyHash } from "../../../packages/model-bridge/src/agent-engines/cursor-checkpoint-vendor-policy";
 import type {
@@ -15,14 +16,27 @@ import type { CursorResumeProcessRequest, CursorResumeProcessResult } from "../.
 import { WindowsCursorWorkerClient, wireObject, workerError } from "./windows-worker-client";
 import { createCursorModelActivations, type CursorActivationEvidence } from "./activation-profile";
 
-type WindowsCursorProfile = CursorActivationEvidence & {
-  readonly payloadRoot: string;
-  readonly systemRoot: string;
-  readonly privateRoot: string;
+type WindowsCursorResources = {
   readonly workerExecutableHash: string;
   readonly proxyPreloadHash: string;
   readonly egressPolicyHash: string;
 };
+
+type PrivateWindowsCursorProfile = WindowsCursorResources & CursorActivationEvidence & {
+  readonly standard?: never;
+  readonly payloadRoot: string;
+  readonly systemRoot: string;
+  readonly privateRoot: string;
+};
+
+type StandardWindowsCursorProfile = WindowsCursorResources & {
+  readonly standard: true;
+  readonly evidences: readonly CursorCheckpointQualificationEvidence[];
+};
+
+type WindowsCursorProfile = StandardWindowsCursorProfile | PrivateWindowsCursorProfile;
+type WorkerStarter = () => Promise<WindowsCursorWorkerClient>;
+type WindowsPaths = { systemRoot: string; privateRoot: string; resourceRoot: string; payloadRoot: string };
 
 type Scope = {
   readonly worker: WindowsCursorWorkerClient;
@@ -32,9 +46,45 @@ type Scope = {
   close(): Promise<void>;
 };
 
-// Defined only by the reviewed private packaging input. The standard artifact
-// has no bundled activation or manifest entry.
+// Defined by the trusted Windows package build.
 declare const __VDT_WINDOWS_CURSOR_PROFILE__: WindowsCursorProfile;
+
+class WindowsCursorLifetime {
+  readonly shutdown = new AbortController();
+  readonly scopes = new Set<Scope>();
+  private readonly pending = new Set<Promise<unknown>>();
+  private disposal: Promise<void> | undefined;
+
+  signal(timeout: number): AbortSignal {
+    return AbortSignal.any([this.shutdown.signal, AbortSignal.timeout(timeout)]);
+  }
+
+  track<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.shutdown.signal.aborted) return Promise.reject(workerError("CURSOR_CHECKPOINT_CANCELLED"));
+    const result = operation();
+    this.pending.add(result);
+    void result.then(() => this.pending.delete(result), () => this.pending.delete(result));
+    return result;
+  }
+
+  dispose(): Promise<void> {
+    this.disposal ??= this.close();
+    return this.disposal;
+  }
+
+  private async close(): Promise<void> {
+    this.shutdown.abort();
+    const [scopes, pending] = await Promise.all([
+      Promise.allSettled([...this.scopes].map(scope => scope.close())),
+      Promise.allSettled([...this.pending])
+    ]);
+    if (scopes.some(result => result.status === "rejected") ||
+      pending.some(result => result.status === "rejected" &&
+        result.reason?.code === "CURSOR_CHECKPOINT_CLEANUP_UNCONFIRMED")) {
+      throw workerError("CURSOR_CHECKPOINT_CLEANUP_UNCONFIRMED");
+    }
+  }
+}
 
 const windowsPath = path.win32;
 const SHA = /^sha256:[a-f0-9]{64}$/;
@@ -43,6 +93,7 @@ const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,511}$/;
 const MAX_PROMPT = 1024 * 1024;
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const WORKER_START_TIMEOUT = 30_000;
+const LOGIN_TIMEOUT = 4 * 60_000;
 const MAX_RUN_TIMEOUT = 10 * 60_000;
 
 function boundary(message: string): Error {
@@ -139,60 +190,186 @@ function parseRun(frame: Record<string, unknown>, maximum: number): CursorResume
 
 export async function createPackagedCursorActivation() {
   const profile = __VDT_WINDOWS_CURSOR_PROFILE__;
-  return createCursorModelActivations(profile, evidence => createActivation(profile, evidence));
-}
-
-async function createActivation(profile: WindowsCursorProfile, evidence: CursorCheckpointQualificationEvidence) {
-  if (process.platform !== "win32" || process.arch !== "x64" || evidence.platform.os !== process.platform
-    || evidence.platform.arch !== process.arch || evidence.platform.runtimeVersion !== process.version
-    || profile.egressPolicyHash !== sha256(JSON.stringify(CURSOR_CLI_EGRESS_HOSTS))) {
+  if (process.platform !== "win32" || process.arch !== "x64" ||
+    profile.egressPolicyHash !== sha256(JSON.stringify(CURSOR_CLI_EGRESS_HOSTS))) {
     throw boundary("The bundled Windows Cursor profile does not match this host.");
   }
-  // Tauri resolves its resource directory with Windows' extended-path prefix.
-  // Node realpath returns the ordinary drive path used by the asset checks.
-  const resourcePath = __dirname.startsWith("\\\\?\\") ? __dirname.slice(4) : __dirname;
-  const [systemRoot, privateRoot, payloadRoot, resourceRoot] = await Promise.all([
-    canonicalDirectory(profile.systemRoot), canonicalDirectory(profile.privateRoot), canonicalDirectory(profile.payloadRoot),
-    canonicalDirectory(resourcePath)
+  // Tauri's resource directory can use Windows' extended local drive prefix.
+  const resourceRoot = await canonicalDirectory(__dirname.startsWith("\\\\?\\") ? __dirname.slice(4) : __dirname);
+  if (profile.standard === true) return createStandardActivation(profile, resourceRoot);
+  const [systemRoot, privateRoot, payloadRoot] = await Promise.all([
+    canonicalDirectory(profile.systemRoot), canonicalDirectory(profile.privateRoot), canonicalDirectory(profile.payloadRoot)
   ]);
-  if (descendant(payloadRoot, privateRoot) || descendant(privateRoot, payloadRoot) || samePath(payloadRoot, privateRoot)) {
-    throw boundary("The Windows Cursor profile and vendor payload overlap.");
-  }
-  const executable = windowsPath.join(payloadRoot, "index.js");
+  const startWorker = workerStarter(profile, resourceRoot, systemRoot, privateRoot);
+  return createCursorModelActivations(profile,
+    evidence => createActivation({ systemRoot, privateRoot, payloadRoot, resourceRoot }, evidence, startWorker, 1));
+}
+
+function workerStarter(profile: WindowsCursorResources, resourceRoot: string, systemRoot?: string, privateRoot?: string): WorkerStarter {
   const workerDirectory = windowsPath.join(resourceRoot, "windows-cursor-worker");
   const workerExecutable = windowsPath.join(workerDirectory, "vdt-windows-cursor-worker.exe");
   const preloadFile = windowsPath.join(workerDirectory, "proxy-preload.cjs");
-  const active = new Map<string, Scope>();
-  const reserved = new Set<string>();
-
-  async function startWorker(): Promise<WindowsCursorWorkerClient> {
+  return async () => {
     await Promise.all([
       verifyAsset(workerExecutable, profile.workerExecutableHash), verifyAsset(preloadFile, profile.proxyPreloadHash)
     ]);
     return new WindowsCursorWorkerClient(spawn(workerExecutable, [], {
       cwd: workerDirectory,
-      env: { SystemRoot: systemRoot, WINDIR: systemRoot, TEMP: privateRoot, TMP: privateRoot },
+      env: {
+        SystemRoot: systemRoot, WINDIR: systemRoot, TEMP: privateRoot, TMP: privateRoot
+      },
       shell: false,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"]
     }));
+  };
+}
+
+async function withWorker<T>(startWorker: WorkerStarter, operate: (worker: WindowsCursorWorkerClient) => Promise<T>): Promise<T> {
+  const worker = await startWorker();
+  try {
+    return await operate(worker);
+  } finally {
+    await worker.close();
   }
+}
+
+async function measureIdentity(startWorker: WorkerStarter, payloadRoot: string, cliVersion: string, protocol: 1 | 2, signal = AbortSignal.timeout(WORKER_START_TIMEOUT)) {
+  return withWorker(startWorker, async worker => {
+    const frame = await worker.request({
+      op: "measure", version: protocol, payloadRoot, cliVersion
+    }, signal);
+    if (!wireObject(frame, ["op", "ok", "cliVersion", "payloadHash", "policyHash"])) {
+      throw boundary("The Windows Cursor worker returned an invalid measurement.");
+    }
+    return parseIdentity(frame);
+  });
+}
+
+async function dedicatedAuthReady(startWorker: WorkerStarter, signal: AbortSignal): Promise<boolean> {
+  return withWorker(startWorker, async worker => {
+    const frame = await worker.request({ op: "authStatus", version: 2 }, signal);
+    if (!wireObject(frame, ["op", "ok", "ready"]) || typeof frame.ready !== "boolean") {
+      throw boundary("The Windows Cursor worker returned an invalid sign-in status.");
+    }
+    return frame.ready;
+  });
+}
+
+function createStandardActivation(profile: StandardWindowsCursorProfile, resourceRoot: string) {
+  const lifetime = new WindowsCursorLifetime();
+  let signingIn = false;
+  const locateWorker = workerStarter(profile, resourceRoot, process.env.SystemRoot);
+
+  async function discover() {
+    const frame = await withWorker(locateWorker, worker => worker.request({
+      op: "locate", version: 2
+    }, lifetime.signal(WORKER_START_TIMEOUT)));
+    if (!wireObject(frame, ["op", "ok", "localData", "systemRoot", "privateRoot"])) {
+      throw boundary("The Windows Cursor worker returned invalid host paths.");
+    }
+    const [localData, systemRoot, privateRoot] = await Promise.all([
+      canonicalDirectory(frame.localData), canonicalDirectory(frame.systemRoot), canonicalDirectory(frame.privateRoot)
+    ]);
+    const install = windowsPath.join(localData, "cursor-agent");
+    const layout = await lstat(install).catch(error => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!layout) return undefined;
+    if (!layout.isDirectory() || !samePath(await realpath(install), install)) {
+      throw boundary("The Windows Cursor installation directory was redirected.");
+    }
+    const preferredShim = windowsPath.join(install, "agent.cmd");
+    const hasPreferred = await lstat(preferredShim).catch(error => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    const executable = await resolveWindowsCursorShim(
+      hasPreferred ? preferredShim : windowsPath.join(install, "cursor-agent.cmd"), localData
+    );
+    const payloadRoot = windowsPath.dirname(executable);
+    const cliVersion = windowsPath.basename(payloadRoot);
+    const startWorker = workerStarter(profile, resourceRoot, systemRoot, privateRoot);
+    const auditable = profile.evidences.filter(evidence =>
+      evidence.cliVersion === cliVersion && evidence.platform.os === process.platform &&
+      evidence.platform.arch === process.arch && evidence.platform.runtimeVersion === process.version);
+    if (auditable.length === 0) return { kind: "unsupported" } as const;
+    const identity = await measureIdentity(startWorker, payloadRoot, cliVersion, 2, lifetime.signal(WORKER_START_TIMEOUT));
+    const evidences = auditable.filter(evidence => identity.cliVersion === evidence.cliVersion &&
+      identity.payloadHash === evidence.payloadHash && identity.policyHash === evidence.policyHash &&
+      identity.vendorPolicyHash === evidence.vendorPolicyHash);
+    if (evidences.length === 0) return { kind: "unsupported" } as const;
+    return { kind: "qualified", paths: { systemRoot, privateRoot, payloadRoot, resourceRoot }, startWorker, evidences, identity } as const;
+  }
+
+  return Object.freeze({
+    getActivations() {
+      return lifetime.track(async () => {
+        const candidate = await discover().catch(() => undefined);
+        if (candidate?.kind !== "qualified" ||
+          !await dedicatedAuthReady(candidate.startWorker, lifetime.signal(WORKER_START_TIMEOUT)).catch(() => false)) return [];
+        return Promise.all(candidate.evidences.map(evidence =>
+          createActivation(candidate.paths, evidence, candidate.startWorker, 2, lifetime)));
+      });
+    },
+    authStatus(): Promise<"ready" | "not_installed" | "sign_in_required" | "unsupported"> {
+      return lifetime.track(async () => {
+        try {
+          const candidate = await discover();
+          if (!candidate) return "not_installed";
+          if (candidate.kind !== "qualified") return "unsupported";
+          return await dedicatedAuthReady(candidate.startWorker, lifetime.signal(WORKER_START_TIMEOUT)) ?
+            "ready" : "sign_in_required";
+        } catch {
+          return "unsupported";
+        }
+      });
+    },
+    signIn() {
+      return lifetime.track(async () => {
+        if (signingIn) throw boundary("Windows Cursor sign-in is already in progress.");
+        signingIn = true;
+        try {
+          const candidate = await discover();
+          if (candidate?.kind !== "qualified") throw boundary("This Windows Cursor CLI release is not supported.");
+          await withWorker(candidate.startWorker, async worker => {
+            const id = randomUUID();
+            const { cliVersion, payloadHash, policyHash } = candidate.identity;
+            const frame = await worker.request({
+              op: "signIn", id, version: 2, payloadRoot: candidate.paths.payloadRoot, cliVersion, payloadHash, policyHash
+            }, lifetime.signal(LOGIN_TIMEOUT));
+            if (!wireObject(frame, ["op", "ok", "id"])) throw boundary("The Windows Cursor sign-in response was invalid.");
+          });
+        } finally {
+          signingIn = false;
+        }
+      });
+    },
+    dispose: () => lifetime.dispose()
+  });
+}
+
+async function createActivation(paths: WindowsPaths, evidence: CursorCheckpointQualificationEvidence,
+  startWorker: WorkerStarter, protocol: 1 | 2, lifetime?: WindowsCursorLifetime) {
+  if (evidence.platform.os !== process.platform || evidence.platform.arch !== process.arch ||
+    evidence.platform.runtimeVersion !== process.version) {
+    throw boundary("The bundled Windows Cursor profile does not match this host.");
+  }
+  const { systemRoot, privateRoot, payloadRoot, resourceRoot } = paths;
+  if (descendant(payloadRoot, privateRoot) || descendant(privateRoot, payloadRoot) || samePath(payloadRoot, privateRoot)) {
+    throw boundary("The Windows Cursor profile and vendor payload overlap.");
+  }
+  const executable = windowsPath.join(payloadRoot, "index.js");
+  const active = new Map<string, Scope>();
+  const reserved = new Set<string>();
 
   const runner: CursorCheckpointIsolationRunner = {
     async measureIdentity(target) {
       if (target !== executable) throw boundary("The Windows Cursor executable did not match the approved payload.");
-      const worker = await startWorker();
-      try {
-        const frame = await worker.request({
-          op: "measure", version: 1, payloadRoot, cliVersion: evidence.cliVersion
-        }, AbortSignal.timeout(WORKER_START_TIMEOUT));
-        if (!wireObject(frame, ["op", "ok", "cliVersion", "payloadHash", "policyHash"])) {
-          throw boundary("The Windows Cursor worker returned an invalid measurement.");
-        }
-        return parseIdentity(frame);
-      } finally {
-        await worker.close();
-      }
+      const measure = () => measureIdentity(startWorker, payloadRoot, evidence.cliVersion, protocol,
+        lifetime?.signal(WORKER_START_TIMEOUT));
+      return lifetime ? lifetime.track(measure) : measure();
     },
 
     async runQualified(request, identity) {
@@ -215,7 +392,8 @@ async function createActivation(profile: WindowsCursorProfile, evidence: CursorC
     }
   };
 
-  const sessionEnvironmentFactory: CursorResumeCheckpointEnvironmentFactory = async ({ binding, recovery, signal }) => {
+  const openSession: CursorResumeCheckpointEnvironmentFactory = async ({ binding, recovery, signal: requestSignal }) => {
+    const signal = lifetime ? AbortSignal.any([requestSignal, lifetime.shutdown.signal]) : requestSignal;
     if (signal.aborted) throw workerError("CURSOR_CHECKPOINT_CANCELLED");
     // The native process owns and deletes its temporary scope. A different
     // process cannot reopen or manufacture the prior opaque vendor session.
@@ -228,7 +406,7 @@ async function createActivation(profile: WindowsCursorProfile, evidence: CursorC
       const sessionBroker = broker = await startCursorCliEgress();
       const sessionWorker = worker = await startWorker();
       const frame = await sessionWorker.request({
-        op: "open", version: 1, payloadRoot, cliVersion: evidence.cliVersion, payloadHash: evidence.payloadHash,
+        op: "open", version: protocol, payloadRoot, cliVersion: evidence.cliVersion, payloadHash: evidence.payloadHash,
         policyHash: evidence.policyHash, model: evidence.modelId, brokerPort: sessionBroker.port
       }, AbortSignal.any([signal, AbortSignal.timeout(WORKER_START_TIMEOUT)]));
       if (!wireObject(frame, ["op", "ok", "workspacePath", "statePath", "cliVersion", "payloadHash", "policyHash"])) {
@@ -252,12 +430,17 @@ async function createActivation(profile: WindowsCursorProfile, evidence: CursorC
           active.delete(workspace);
           cleanup ??= sessionWorker.close().finally(async () => {
             reserved.delete(binding.runId);
-            await sessionBroker.close();
+            try {
+              await sessionBroker.close();
+            } finally {
+              lifetime?.scopes.delete(scope);
+            }
           });
           return cleanup;
         }
       };
       active.set(workspace, scope);
+      lifetime?.scopes.add(scope);
       return {
         environmentId: `win-cursor-${sha256(binding.runId).slice(7)}`,
         privateWorkspacePath: workspace,
@@ -277,5 +460,7 @@ async function createActivation(profile: WindowsCursorProfile, evidence: CursorC
     }
   };
 
+  const sessionEnvironmentFactory: CursorResumeCheckpointEnvironmentFactory = request =>
+    lifetime ? lifetime.track(async () => openSession(request)) : openSession(request);
   return Object.freeze({ evidence, executable, runner, sessionEnvironmentFactory });
 }

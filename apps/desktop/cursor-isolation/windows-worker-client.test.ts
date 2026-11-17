@@ -51,6 +51,32 @@ describe("Windows Cursor worker control pipe", () => {
     await expect(result).rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_CANCELLED" });
   });
 
+  it("cancels the dedicated sign-in request by ID and waits for the native result", async () => {
+    const client = worker(`
+      if (request.op === "cancel") {
+        reply({ op: "signIn", id: request.id, ok: false, code: "CURSOR_CHECKPOINT_CANCELLED" });
+      }
+    `);
+    const controller = new AbortController();
+    const result = client.request({ op: "signIn", id: "signin-fixture", version: 2 }, controller.signal);
+    controller.abort();
+    await expect(result).rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_CANCELLED" });
+    await client.close();
+  });
+
+  it("ends stdin and waits for a pending native open to close gracefully", async () => {
+    const client = worker(`
+      if (request.op === "open") {
+        input.once("close", () => reply({ op: "open", ok: true }));
+      }
+    `);
+    const controller = new AbortController();
+    const result = client.request({ op: "open", version: 2 }, controller.signal);
+    controller.abort();
+    await expect(result).rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_CANCELLED" });
+    await client.close();
+  });
+
   it("fences a response for an unrelated or stale run", async () => {
     const client = worker(`
       reply({ op: request.op, id: "other-run", ok: true, stdout: "unexpected" });

@@ -75,6 +75,8 @@ interface MacCursorIsolationOptions {
   readonly egressPolicyHash: string;
   readonly modelId: string;
   readonly dedicatedOAuthFile: string;
+  readonly expectedIdentity?: CursorCheckpointIsolationIdentity;
+  readonly shutdown?: AbortSignal;
 }
 
 function boundary(message: string, code = "CURSOR_CHECKPOINT_UNSAFE_ENVIRONMENT"): Error {
@@ -168,8 +170,9 @@ async function verifiedCodeDirectory(executable: string): Promise<{ cdHash: stri
   throw boundary("The Cursor macOS supervisor lacks its expected Developer ID code signature.");
 }
 
-async function digestPayload(root: string, device: number): Promise<string> {
+export async function measureMacCursorPayload(root: string, device: number): Promise<{ payloadHash: string; bytes: number }> {
   const entries: string[] = [];
+  let bytes = 0;
   async function visit(relative: string): Promise<void> {
     const directory = path.join(root, relative);
     const names = (await readdir(directory)).sort();
@@ -183,6 +186,7 @@ async function digestPayload(root: string, device: number): Promise<string> {
         entries.push(JSON.stringify(["directory", child, mode]));
         await visit(child);
       } else if (info.isFile()) {
+        bytes += info.size;
         entries.push(JSON.stringify(["file", child, mode, await digestFile(absolute)]));
       } else {
         throw boundary("The read-only Cursor payload contains an unsupported filesystem entry.");
@@ -190,7 +194,7 @@ async function digestPayload(root: string, device: number): Promise<string> {
     }
   }
   await visit("");
-  return digest(entries.join("\n"));
+  return { payloadHash: digest(entries.join("\n")), bytes };
 }
 
 function contains(root: string, candidate: string): boolean {
@@ -217,7 +221,7 @@ async function readDedicatedAuthFile(file: string): Promise<Buffer> {
   try {
     const metadata = await handle.stat();
     if (!metadata.isFile() || metadata.uid !== process.getuid?.() || (metadata.mode & 0o777) !== 0o600
-      || metadata.size === 0 || metadata.size > maxAuthBytes) {
+      || metadata.nlink !== 1 || metadata.size === 0 || metadata.size > maxAuthBytes) {
       throw boundary("The dedicated Cursor OAuth file does not satisfy the private ownership and size policy.");
     }
     const bytes = Buffer.alloc(metadata.size + 1);
@@ -241,6 +245,33 @@ function authValues(auth: Buffer): readonly string[] {
     throw boundary("The dedicated Cursor OAuth file does not contain valid JSON.");
   }
   return values;
+}
+
+function assertDedicatedOAuth(bytes: Buffer): void {
+  let session: unknown;
+  try {
+    session = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw boundary("The dedicated Cursor OAuth file does not contain valid JSON.");
+  }
+  if (!session || typeof session !== "object" || Array.isArray(session)) {
+    throw boundary("The dedicated Cursor OAuth file does not contain an authenticated session.");
+  }
+  const record = session as Record<string, unknown>;
+  if (Object.keys(record).some(key => key !== "accessToken" && key !== "refreshToken")
+    || typeof record.accessToken !== "string" || record.accessToken.length < 16
+    || typeof record.refreshToken !== "string" || record.refreshToken.length < 16) {
+    throw boundary("The dedicated Cursor OAuth file does not contain an authenticated session.");
+  }
+}
+
+export async function assertMacCursorDedicatedAuth(file: string): Promise<void> {
+  const bytes = await readDedicatedAuthFile(file);
+  try {
+    assertDedicatedOAuth(bytes);
+  } finally {
+    bytes.fill(0);
+  }
 }
 
 async function verifyMount(options: MacCursorIsolationOptions): Promise<void> {
@@ -298,6 +329,27 @@ async function runSupervised(
   });
 }
 
+/** Allows the host to decline an unreviewed OS/helper policy before staging any vendor bytes. */
+export async function measureMacCursorPolicyIdentity(
+  supervisorExecutable: string, egressPolicyHash: string, modelId: string
+): Promise<Pick<CursorCheckpointIsolationIdentity, "policyHash" | "vendorPolicyHash">> {
+  const [supervisorCode, seatbeltHash] = await Promise.all([
+    verifiedCodeDirectory(supervisorExecutable), digestFile(seatbelt)
+  ]);
+  const policyHash = digest(JSON.stringify({
+    rules: buildMacCursorSeatbeltPolicy("/payload", "/workspace", "/state", 1024),
+    environment: buildMacCursorProcessEnvironment("/state", 1024),
+    privatePersistenceImport: buildMacCursorPrivatePersistenceImport("/state"),
+    supervisorCode,
+    seatbeltHash,
+    kernel: release(),
+    brokerPolicyHash: egressPolicyHash,
+    modelId,
+    authPolicy: "explicit-dedicated-mode-0600-json-to-per-run-state-v1"
+  }));
+  return { policyHash, vendorPolicyHash };
+}
+
 /** Creates a dormant launcher. The packaged host separately admits reviewed exact-release evidence. */
 export function createMacCursorIsolationRunner(options: MacCursorIsolationOptions): CursorCheckpointIsolationRunner {
   if (process.platform !== "darwin" || process.arch !== "arm64"
@@ -316,23 +368,11 @@ export function createMacCursorIsolationRunner(options: MacCursorIsolationOption
       throw boundary("The Cursor supervisor or vendor payload did not match its registered location.");
     }
     await verifyMount(settings);
-    const [payloadHash, supervisorCode, seatbeltHash] = await Promise.all([
-      digestPayload(payload, device),
-      verifiedCodeDirectory(settings.supervisorExecutable),
-      digestFile(seatbelt)
+    const [{ payloadHash }, policy] = await Promise.all([
+      measureMacCursorPayload(payload, device),
+      measureMacCursorPolicyIdentity(settings.supervisorExecutable, settings.egressPolicyHash, settings.modelId)
     ]);
-    const policyHash = digest(JSON.stringify({
-      rules: buildMacCursorSeatbeltPolicy("/payload", "/workspace", "/state", 1024),
-      environment: buildMacCursorProcessEnvironment("/state", 1024),
-      privatePersistenceImport: buildMacCursorPrivatePersistenceImport("/state"),
-      supervisorCode,
-      seatbeltHash,
-      kernel: release(),
-      brokerPolicyHash: settings.egressPolicyHash,
-      modelId: settings.modelId,
-      authPolicy: "explicit-dedicated-mode-0600-json-to-per-run-state-v1"
-    }));
-    return { payloadHash, policyHash, vendorPolicyHash };
+    return { payloadHash, ...policy };
   }
   async function launch(
     cwd: string,
@@ -353,17 +393,26 @@ export function createMacCursorIsolationRunner(options: MacCursorIsolationOption
 
   return {
     async measureIdentity(executable) {
+      settings.shutdown?.throwIfAborted();
       await ownedDirectory(settings.privateRoot);
       const mount = await open(settings.payloadMount, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
       try {
         const identity = await fingerprint(executable, (await mount.stat()).dev);
+        const expected = settings.expectedIdentity;
+        if (expected && (identity.payloadHash !== expected.payloadHash || identity.policyHash !== expected.policyHash
+          || identity.vendorPolicyHash !== expected.vendorPolicyHash)) {
+          throw boundary("The Cursor payload or macOS policy is not qualified.", "CURSOR_CHECKPOINT_QUALIFICATION_MISMATCH");
+        }
         const scratch = await mkdtemp(path.join(settings.privateRoot, "version-"));
         try {
+          const deadline = AbortSignal.timeout(10_000);
           const result = await launch(scratch, scratch, ["--version"], {
-            signal: AbortSignal.timeout(10_000), timeoutMs: 10_000, maxOutputBytes: 4_096, stdin: ""
+            signal: settings.shutdown ? AbortSignal.any([deadline, settings.shutdown]) : deadline,
+            timeoutMs: 10_000, maxOutputBytes: 4_096, stdin: ""
           });
           const cliVersion = result.stdout.trim();
-          if (result.exitCode !== 0 || !/^\d{4}\.\d{2}\.\d{2}-[a-f0-9]+$/.test(cliVersion)) {
+          if (result.exitCode !== 0 || !/^\d{4}\.\d{2}\.\d{2}-[a-f0-9]+$/.test(cliVersion)
+            || expected && cliVersion !== expected.cliVersion) {
             throw boundary("Cursor could not confirm its exact vendor CLI version.");
           }
           return { ...identity, cliVersion };
@@ -401,6 +450,7 @@ export function createMacCursorIsolationRunner(options: MacCursorIsolationOption
           await mkdir(credentialsDirectory, { mode: 0o700 });
           const source = await readDedicatedAuthFile(settings.dedicatedOAuthFile);
           try {
+            if (settings.expectedIdentity) assertDedicatedOAuth(source);
             await writeFile(authFile, source, { mode: 0o600, flag: "wx" });
           } finally {
             source.fill(0);

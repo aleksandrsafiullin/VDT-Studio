@@ -18,6 +18,7 @@ use tauri::{webview::NewWindowResponse, Manager, Url, WebviewUrl, WebviewWindowB
 
 const WEB_PORT: u16 = 37541;
 const START_TIMEOUT: Duration = Duration::from_secs(20);
+const STOP_TIMEOUT: Duration = Duration::from_secs(7);
 
 pub(crate) struct PackagedWeb {
     // Keep the bound socket until this process exits, even if Node crashes.
@@ -32,7 +33,8 @@ struct WebProcess {
 impl Drop for WebProcess {
     fn drop(&mut self) {
         self.child.stdin.take();
-        for _ in 0..20 {
+        let stop_deadline = std::time::Instant::now() + STOP_TIMEOUT;
+        while std::time::Instant::now() < stop_deadline {
             if matches!(self.child.try_wait(), Ok(Some(_))) {
                 return;
             }

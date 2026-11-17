@@ -2818,7 +2818,7 @@ export const useVdtStudioStore = create<VdtStudioState>()(
         });
 
         try {
-          const payload = await createAiExecutionClient().detectSubscriptionClis(agentId);
+          const payload = await createAiExecutionClient().detectSubscriptionClis(agentId, { fresh: options.fresh });
 
           set((state) => {
             const freshAgents = payload.agents.filter((agent) =>
@@ -3308,7 +3308,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
             }
           };
           const explicitBindingId = requestedExecutionBindingId ?? await prepareProviderAgentBinding(state.executionSettings, providerId, {...providerConfig,enableResearch:options?.researchMode==="on"});
-          const bindings = await createAgentClient().getExecutionBindings();
+          const bindings = await createAgentClient().getExecutionBindings({
+            includePackagedCursor: providerConfig?.backendId === "cursor_subscription" || explicitBindingId?.startsWith("cursor_desktop_") === true
+          });
           const startRequest = buildAgentPublicStartRequest(
             commonRequest,
             state.executionSettings,
@@ -3983,7 +3985,9 @@ export const useVdtStudioStore = create<VdtStudioState>()(
 
         try {
           const explicitBindingId = await prepareProviderAgentBinding(executionSettings, providerId, resolvedProviderConfig);
-          const bindings = await createAgentClient().getExecutionBindings();
+          const bindings = await createAgentClient().getExecutionBindings({
+            includePackagedCursor: resolvedProviderConfig?.backendId === "cursor_subscription" || explicitBindingId?.startsWith("cursor_desktop_") === true
+          });
           const startRequest = buildAgentPublicStartRequest(
             {
               mode: "generate_vdt",

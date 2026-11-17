@@ -149,8 +149,13 @@ async function routeSidecarRequest(message: SidecarRequestMessage, context: Loca
   if (message.method === "speech") return { statusCode: 200, payload: await getSpeechRuntime().request(message.payload) };
   if (message.method === "list_backends") return listRuntimeBackends(context);
   if (message.method === "detect_clis") {
-    const agentId = typeof message.payload.agentId === "string" ? message.payload.agentId : undefined;
-    return detectRuntimeSubscriptionClis(context, agentId);
+    const { agentId, excludeCursor } = message.payload;
+    if (Object.keys(message.payload).some(key => key !== "agentId" && key !== "excludeCursor")
+      || (agentId !== undefined && typeof agentId !== "string")
+      || (excludeCursor !== undefined && typeof excludeCursor !== "boolean")) {
+      throw new LocalRuntimeError(400, "INVALID_CLI_DETECTION", "Invalid CLI detection request.");
+    }
+    return detectRuntimeSubscriptionClis(context, agentId, excludeCursor);
   }
   if (message.method === "test_backend") return checkRuntimeBackendReadiness(requireBackendId(message.payload), context);
   if (message.method === "complete") {

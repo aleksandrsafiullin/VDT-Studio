@@ -75,7 +75,7 @@ export function ComposerModelPicker({ modelLabel, providerLabel, readiness, lock
     const requestSource = JSON.parse(request.sourceKey) as ProviderModelSource;
     void Promise.allSettled([
       loadProviderModelCatalog(requestSource, request.apiKey, { signal: controller.signal }),
-      requestSource.category === "cli_subscriptions" ? createAgentClient().getExecutionBindings() : Promise.resolve(undefined)
+      requestSource.category === "cli_subscriptions" ? createAgentClient().getExecutionBindings({ includePackagedCursor: requestSource.cliAgentId === "cursor-agent" }) : Promise.resolve(undefined)
     ]).then(([models, bindings]) => {
       if (cancelled) return;
       setLoaded({ identity, loading: false,

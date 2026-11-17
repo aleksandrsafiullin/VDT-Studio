@@ -65,7 +65,7 @@ internal static class Program
                     lock (mutex)
                     {
                         if (closing || active!=null) throw new IOException("Concurrent worker request.");
-                        if (op=="run")
+                        if (op=="run" || op=="signIn")
                         {
                             message.Id = ReadId(frame);
                             activeId = message.Id;
@@ -175,18 +175,37 @@ internal static class Program
         PrivateSession session=null;
         int status=0;
         string operation="open";
+        string initialId=null;
         try
         {
             Message first = control.Next();
             if (first==null) return control.Failed ? 64 : 0;
+            initialId=first.Id;
             var frame = first.Frame;
             operation=ReadString(frame,"op",16);
+            if (operation=="locate")
+            {
+                ValidateFields(frame,"op","version");
+                ReadNumber(frame,"version",2,2);
+                Write(new {ok=true,op=operation,localData=PrivateSession.LocalData(),
+                    systemRoot=PrivateSession.SystemRoot(),privateRoot=PrivateSession.SessionParent()});
+                return 0;
+            }
+            if (operation=="authStatus")
+            {
+                ValidateFields(frame,"op","version");
+                ReadNumber(frame,"version",2,2);
+                Write(new {ok=true,op=operation,ready=DedicatedAuth.Available()});
+                return 0;
+            }
             if (operation=="measure") ValidateFields(frame,"op","version","payloadRoot","cliVersion");
             else if (operation=="open")
                 ValidateFields(frame,"op","version","payloadRoot","cliVersion","payloadHash","policyHash","model","brokerPort");
-            else throw new IOException("First worker frame must open or measure.");
-            ReadNumber(frame,"version",1,1);
-            var identity = PrivateSession.Measure(ReadString(frame,"payloadRoot",260),ReadString(frame,"cliVersion",120));
+            else if (operation=="signIn")
+                ValidateFields(frame,"op","id","version","payloadRoot","cliVersion","payloadHash","policyHash");
+            else throw new IOException("Unexpected initial operation.");
+            int protocol = ReadNumber(frame,"version",operation=="signIn" ? 2 : 1,2);
+            var identity = PrivateSession.Measure(ReadString(frame,"payloadRoot",260),ReadString(frame,"cliVersion",120),protocol);
 
             if (operation=="measure")
             {
@@ -195,7 +214,24 @@ internal static class Program
             }
             if (ReadString(frame,"payloadHash",71)!=identity.PayloadHash || ReadString(frame,"policyHash",71)!=identity.PolicyHash)
                 throw new IOException("Admission identity drift.");
-            session=new PrivateSession(identity,ReadString(frame,"model",160),ReadNumber(frame,"brokerPort",1,65535));
+            if (operation=="signIn")
+            {
+                try
+                {
+                    DedicatedAuth.SignIn(identity,first.Cancellation);
+                    Write(new {ok=true,op=operation,id=first.Id});
+                }
+                catch (OperationCanceledException) { Write(Error(operation,first.Id,"CURSOR_CHECKPOINT_CANCELLED")); }
+                catch (DedicatedAuth.CleanupException)
+                {
+                    Write(Error(operation,first.Id,"CURSOR_CHECKPOINT_CLEANUP_UNCONFIRMED"));
+                    return 75;
+                }
+                catch (Exception) { Write(Error(operation,first.Id,"CURSOR_CHECKPOINT_PROCESS_ERROR")); }
+                finally { control.Complete(); }
+                return 0;
+            }
+            session=new PrivateSession(identity,ReadString(frame,"model",160),ReadNumber(frame,"brokerPort",1,65535),protocol);
             Write(new {ok=true,op="open",workspacePath=session.Workspace,statePath=session.State,
                 cliVersion=identity.CliVersion,payloadHash=identity.PayloadHash,policyHash=identity.PolicyHash});
 
@@ -240,7 +276,7 @@ internal static class Program
         }
         catch (Exception)
         {
-            Write(Error(operation=="measure" ? "measure" : "open",null,"CURSOR_CHECKPOINT_QUALIFICATION_MISMATCH"));
+            Write(Error(operation,initialId,"CURSOR_CHECKPOINT_QUALIFICATION_MISMATCH"));
             status=64;
         }
         finally

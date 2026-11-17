@@ -382,6 +382,15 @@ Local voice input adds microphone audio and downloaded recognition assets to thi
   against accepted per-model evidence, while the runner fences each vendor launch
   to that identity. The runner verifies the private vendor allowlist config
   with the nested vendor sandbox disabled under the qualified OS boundary.
+  The archived-source packager embeds digests of the VDT-owned activation and
+  Windows worker resources. Those digests do not create vendor qualification.
+  Standard setup resolves only the official per-user CLI and stages a measured
+  read-only payload away from user projects. An explicit same-origin Settings
+  action starts the fixed vendor `login` command against that measured payload
+  with a private home, outside the inference session. The provider owns browser
+  confirmation. Only an owner-protected dedicated credential file is promoted
+  to the desktop data directory. Login output stays private. The ordinary
+  Cursor login is never a source for standard packaged model runs.
   Development still enables Cursor's own sandbox. Packaged sessions use
   private state with runner-owned authentication. The stream rejects all reported native
   tools, including native WebSearch. This stream check supplements the OS

@@ -257,9 +257,16 @@ Node executable and entrypoint of the latest completed version under the
 per-user Cursor CLI installation. VDT launches the pair directly with separate
 arguments. Finish pending vendor updates in the official Cursor CLI and rescan
 in VDT. Ambiguous or incomplete installations require repair before rescan.
-Windows installed sign-in and agent execution require separate verification.
+Standard macOS and Windows packages connect Cursor Settings to the app-owned
+Cursor profile. Use **Sign in** to start the vendor login for that profile, then
+use **Test** or rescan to recheck access. A successful host CLI login does not
+supply authentication to the packaged profile. The normal Agent chat catalog
+lists only exact models that pass package admission and have a registered
+execution binding. Rechecking the connection updates availability for new runs.
+Existing runs retain their original binding. The packaged desktop bridge
+requires the managed profile for Cursor authentication and Agent chat. Native
+installed-package sign-in and Agent chat execution require separate verification.
 Windows Cursor Suggested KPI metadata is currently unsupported. Supporting
 it requires host-owned executable freshness and authenticated account proof
-within the existing five-second metadata boundary. The optional checkpoint
-canary remains outside installed qualification. Restart VDT after a Cursor update
-before using an existing checkpoint canary binding for a new session.
+within the existing five-second metadata boundary. After a Cursor update,
+rescan to check which exact models the package admits for new Agent chat runs.

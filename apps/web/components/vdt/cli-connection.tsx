@@ -28,7 +28,9 @@ export function CliConnection() {
         },
         subscribe: (listener) => useVdtStudioStore.subscribe(listener),
         rescan: (agentId) => useVdtStudioStore.getState().rescanClis(agentId),
-        getBindings: () => createAgentClient().getExecutionBindings(),
+        getBindings: () => createAgentClient().getExecutionBindings({
+          includePackagedCursor: useVdtStudioStore.getState().executionSettings.selectedCliAgentId === "cursor-agent"
+        }),
         publish: (check) => useCliConnectionCheck.setState({
           ...check, catalog: check.bindings ?? useCliConnectionCheck.getState().catalog
         }, true),

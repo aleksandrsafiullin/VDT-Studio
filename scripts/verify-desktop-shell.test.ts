@@ -105,7 +105,7 @@ async function writeFixture(options: {
       ...(options.directProcessSpawn ? ["use std::process::Command;"] : []),
       ...commands.map((command) => `fn ${command}() {}`),
       "fn checked_auth(backend_id: String, runtime: DesktopRuntime) { runtime.open_provider_auth(&backend_id); }",
-      "fn checked_detect(agent_id: Option<String>, runtime: DesktopRuntime) { runtime.detect_subscription_clis(agent_id.as_deref()); }",
+      "fn checked_detect(agent_id: Option<String>, runtime: DesktopRuntime) { runtime.detect_subscription_clis(agent_id.as_deref(), true); }",
       options.missingAutoStart
         ? "fn run() { tauri::Builder::default().manage(DesktopRuntime::default()); }"
         : "fn run() { tauri::Builder::default().manage(DesktopRuntime::default()).setup(|app| { let runtime = app.state::<DesktopRuntime>(); let resource_dir = app.path().resource_dir().unwrap(); runtime.set_resource_dir(resource_dir); runtime.start(); Ok(()) }); }"

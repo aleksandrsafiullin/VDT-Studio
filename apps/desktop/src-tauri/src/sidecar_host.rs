@@ -161,11 +161,14 @@ impl DesktopRuntime {
             .map_err(|error| RuntimeError::new("INVALID_SIDECAR_RESPONSE", error.to_string()))
     }
 
-    pub fn detect_subscription_clis(&self, agent_id: Option<&str>) -> Result<Value, RuntimeError> {
-        let payload = match agent_id {
-            Some(agent_id) => json!({ "agentId": agent_id }),
-            None => json!({}),
-        };
+    pub fn detect_subscription_clis(&self, agent_id: Option<&str>, exclude_cursor: bool) -> Result<Value, RuntimeError> {
+        let mut payload = json!({});
+        if exclude_cursor {
+            payload["excludeCursor"] = json!(true);
+        }
+        if let Some(agent_id) = agent_id {
+            payload["agentId"] = json!(agent_id);
+        }
         self.request("detect_clis", payload, None)
     }
 

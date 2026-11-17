@@ -187,7 +187,7 @@ afterEach(() => {
 
 describe("agent runs API", { timeout: 30_000 }, () => {
   it("publishes only read-only binding summaries and selects the server default by opaque ID", async () => {
-    const response = await getExecutionBindings();
+    const response = await getExecutionBindings(new Request("http://localhost/api/agent/runs"));
     const body = await response.json() as {
       schemaVersion: number;
       ok: boolean;

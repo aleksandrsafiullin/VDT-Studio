@@ -260,7 +260,7 @@ export interface AiExecutionClient {
   listModels(backendId: string): Promise<ModelOption[]>;
   complete(request: AiCompletionRequest, options?: AbortSignal | AiExecutionOptions): Promise<RunAiTaskResult>;
   cancel(requestId: string): Promise<void>;
-  detectSubscriptionClis(agentId?: CliAgentId): Promise<DetectSubscriptionClisResult>;
+  detectSubscriptionClis(agentId?: CliAgentId, options?: { fresh?: boolean | undefined }): Promise<DetectSubscriptionClisResult>;
   openProviderAuth(backendId: string): Promise<ProviderAuthActionResult>;
   generateTree(request: GenerateTreeRequest, options?: AbortSignal | AiExecutionOptions): Promise<VdtProject>;
   pairStandaloneRunner(runnerUrl: string, code: string): Promise<StandaloneRunnerPairResult>;
@@ -1415,6 +1415,39 @@ export class DevelopmentRunnerClient extends BaseWebAiExecutionClient {
   }
 }
 
+type ManagedCursorStatus = "ready" | "not_installed" | "sign_in_required" | "unsupported";
+type ManagedCursorModel = ModelOption & { bindingId: string };
+interface ManagedCursorSnapshot {
+  status: ManagedCursorStatus;
+  models: ManagedCursorModel[];
+}
+
+const managedCursorBackendId = "cursor_subscription";
+const managedCursorMessages: Record<ManagedCursorStatus, string> = {
+  ready: "Cursor sign-in is verified for the VDT Studio profile.",
+  not_installed: "The supported Cursor CLI installation could not be found.",
+  sign_in_required: "Sign in to Cursor for the VDT Studio profile.",
+  unsupported: "The installed Cursor CLI or the managed Cursor profile is unavailable in this package."
+};
+
+function managedCursorDetection(snapshot: ManagedCursorSnapshot): CliAgentDetectionSnapshot {
+  const statuses = {
+    ready: "ready",
+    not_installed: "not_installed",
+    sign_in_required: "authentication_required",
+    unsupported: "unsafe_configuration"
+  } as const;
+  return {
+    id: "cursor-agent",
+    installed: snapshot.status !== "not_installed",
+    executable: null,
+    alias: null,
+    version: null,
+    status: statuses[snapshot.status],
+    authSummary: managedCursorMessages[snapshot.status]
+  };
+}
+
 export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
   constructor(fetcher: Fetcher = createDefaultFetcher(), private readonly invoke: DesktopInvoke | undefined = resolveDesktopInvoke()) {
     super("desktop", fetcher);
@@ -1423,6 +1456,33 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
   private requireInvoke(): DesktopInvoke {
     if (!this.invoke) throw new Error(DESKTOP_LOCAL_AI_PLACEHOLDER_MESSAGE);
     return this.invoke;
+  }
+
+  private async packagedCursor(operation: "status" | "recheck" | "sign_in"): Promise<ManagedCursorSnapshot | undefined> {
+    const response = await this.fetcher("/api/ai/packaged-cursor", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation }),
+      cache: "no-store"
+    });
+    const payload = asRecord(await response.json().catch(() => undefined));
+    if (response.status === 404 && payload?.legacy === true) return undefined;
+    if (!response.ok || payload?.ok !== true) {
+      throw new Error(typeof payload?.message === "string" ? payload.message : "The managed Cursor connection could not be checked.");
+    }
+    const { status, models } = payload;
+    if ((status !== "ready" && status !== "not_installed" && status !== "sign_in_required" && status !== "unsupported")
+      || !Array.isArray(models)) {
+      throw new Error("The managed Cursor connection returned an invalid status.");
+    }
+    return {
+      status,
+      models: status === "ready" ? models.filter((entry): entry is ManagedCursorModel => {
+        const model = asRecord(entry);
+        return typeof model?.id === "string" && typeof model.label === "string"
+          && typeof model.bindingId === "string" && /^cursor_desktop_[a-f0-9]{32}$/.test(model.bindingId);
+      }) : []
+    };
   }
 
   override async listBackends(): Promise<PublicBackendStatus[]> {
@@ -1445,6 +1505,13 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
   override async testBackend(backendId: string, request: BackendTestRequest): Promise<BackendTestResult> {
     if (isApiBackendId(backendId)) return super.testBackend(backendId, request);
     try {
+      if (backendId === managedCursorBackendId) {
+        const cursor = await this.packagedCursor("recheck");
+        if (cursor) {
+          if (cursor.status !== "ready") throw new Error(managedCursorMessages[cursor.status]);
+          return { ok: true };
+        }
+      }
       return checkedBackendTestResult(await this.requireInvoke()("ai_test_backend", { backendId }));
     } catch (error) {
       throw desktopOperationError(error, "Backend test failed.");
@@ -1453,6 +1520,10 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
 
   override async listModels(backendId: string): Promise<ModelOption[]> {
     if (isApiBackendId(backendId)) return [];
+    if (backendId === managedCursorBackendId) {
+      const cursor = await this.packagedCursor("status");
+      if (cursor) return cursor.models.map(({ id, label }) => ({ id, label }));
+    }
     const models = await this.requireInvoke()("ai_list_models", { backendId }) as Array<string | ModelOption>;
     return models.map((model) => typeof model === "string" ? { id: model, label: model } : model);
   }
@@ -1691,9 +1762,17 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
     await this.requireInvoke()("ai_cancel", { requestId });
   }
 
-  async detectSubscriptionClis(agentId?: CliAgentId): Promise<DetectSubscriptionClisResult> {
+  async detectSubscriptionClis(agentId?: CliAgentId, options?: { fresh?: boolean | undefined }): Promise<DetectSubscriptionClisResult> {
     if (!this.invoke) return { agents: placeholderAgents(DESKTOP_LOCAL_AI_PLACEHOLDER_MESSAGE, agentId), modelsByAgent: {} };
-    const payload = await this.invoke("ai_detect_subscription_clis", agentId ? { agentId } : {}) as Partial<DetectSubscriptionClisResult> & {
+    const cursorOperation = options?.fresh ? "recheck" : "status";
+    const cursor = agentId === "cursor-agent"
+      ? await this.packagedCursor(cursorOperation)
+      : agentId ? undefined : await this.packagedCursor(cursorOperation).catch((): ManagedCursorSnapshot => ({ status: "unsupported", models: [] }));
+    const cursorModels = cursor?.models.map(({ id }) => id) ?? [];
+    if (cursor && agentId === "cursor-agent") {
+      return { agents: [managedCursorDetection(cursor)], modelsByAgent: { "cursor-agent": cursorModels } };
+    }
+    const payload = await this.invoke("ai_detect_subscription_clis", agentId ? { agentId } : cursor ? { excludeCursor: true } : {}) as Partial<DetectSubscriptionClisResult> & {
       ok?: boolean;
       error?: unknown;
     };
@@ -1702,11 +1781,22 @@ export class DesktopAiExecutionClient extends BaseWebAiExecutionClient {
       throw new Error(error);
     }
     if (payload.harnesses) registerHarnessCatalog(payload.harnesses);
+    if (cursor) return {
+      agents: [...payload.agents.filter(agent => agent.id !== "cursor-agent"), managedCursorDetection(cursor)],
+      modelsByAgent: { ...payload.modelsByAgent, "cursor-agent": cursorModels }
+    };
     return { agents: payload.agents, modelsByAgent: payload.modelsByAgent ?? {} };
   }
 
   override async openProviderAuth(backendId: string): Promise<ProviderAuthActionResult> {
     try {
+      if (backendId === managedCursorBackendId) {
+        const cursor = await this.packagedCursor("sign_in");
+        if (cursor) {
+          if (cursor.status !== "ready") throw new Error(managedCursorMessages[cursor.status]);
+          return { ok: true, backendId, action: "authenticated" };
+        }
+      }
       return checkedProviderAuthResult(await this.requireInvoke()("open_provider_auth", { backendId }), backendId);
     } catch (error) {
       throw desktopOperationError(error, "Provider authentication failed.");

@@ -548,11 +548,59 @@ describe("AiExecutionClient", () => {
   });
 
   it("preserves native IPC string failures as actionable errors", async () => {
-    const fetcher = vi.fn();
+    const fetcher = vi.fn(async () => jsonResponse({ ok: false, legacy: true }, { status: 404 }));
     const invoke = vi.fn(async () => { throw "AUTH_REQUIRED: Complete provider sign-in, then rescan."; });
     const client = new DesktopAiExecutionClient(fetcher as unknown as typeof fetch, invoke);
     await expect(client.testBackend("cursor_subscription", { providerId: "local_runner" })).rejects.toThrow("Complete provider sign-in");
     await expect(client.openProviderAuth("cursor_subscription")).rejects.toThrow("Complete provider sign-in");
+  });
+
+  it("uses the packaged Cursor profile for detection, test, model listing, and sign-in", async () => {
+    const bindingId = "cursor_desktop_" + "c".repeat(32);
+    const ready = { ok: true, status: "ready", models: [
+      { id: "grok-4.7-low", label: "Grok 4.7 Low", bindingId },
+      { id: "unqualified", label: "Unqualified" }
+    ] };
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ ok: true, status: "sign_in_required", models: ready.models }))
+      .mockResolvedValueOnce(jsonResponse(ready))
+      .mockResolvedValueOnce(jsonResponse(ready))
+      .mockResolvedValueOnce(jsonResponse(ready));
+    const invoke = vi.fn();
+    const client = new DesktopAiExecutionClient(fetcher, invoke);
+
+    const detection = await client.detectSubscriptionClis("cursor-agent");
+    expect(detection.agents[0]).toMatchObject({ installed: true, executable: null, status: "authentication_required" });
+    expect(detection.modelsByAgent["cursor-agent"]).toEqual([]);
+    await expect(client.openProviderAuth("cursor_subscription")).resolves.toMatchObject({ action: "authenticated" });
+    await expect(client.testBackend("cursor_subscription", { providerId: "local_runner" })).resolves.toEqual({ ok: true });
+    await expect(client.listModels("cursor_subscription")).resolves.toEqual([{ id: "grok-4.7-low", label: "Grok 4.7 Low" }]);
+    expect(fetcher.mock.calls.map(([url, options]) => [url, options?.method, JSON.parse(String(options?.body))]))
+      .toEqual(["status", "sign_in", "recheck", "status"].map(operation => ["/api/ai/packaged-cursor", "POST", { operation }]));
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("preserves native detection for other providers during a full packaged scan", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true, status: "not_installed", models: [] }));
+    const invoke = vi.fn(async () => ({
+      agents: [{ id: "codex", installed: true, status: "ready" }, { id: "cursor-agent", installed: true, status: "ready" }],
+      modelsByAgent: { codex: ["gpt-5.5"], "cursor-agent": ["host-cursor"] }
+    }));
+    const result = await new DesktopAiExecutionClient(fetcher, invoke).detectSubscriptionClis(undefined, { fresh: true });
+    expect(invoke).toHaveBeenCalledWith("ai_detect_subscription_clis", { excludeCursor: true });
+    expect(result.agents).toEqual([
+      expect.objectContaining({ id: "codex", status: "ready" }),
+      expect.objectContaining({ id: "cursor-agent", status: "not_installed" })
+    ]);
+    expect(result.modelsByAgent).toEqual({ codex: ["gpt-5.5"], "cursor-agent": [] });
+  });
+
+  it.each([403, 404, 409, 500])("never falls back to native Cursor authentication after HTTP %s", async status => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: false }, { status }));
+    const invoke = vi.fn();
+    await expect(new DesktopAiExecutionClient(fetcher, invoke).openProviderAuth("cursor_subscription"))
+      .rejects.toThrow("The managed Cursor connection could not be checked.");
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("routes desktop provider authentication through the reviewed Tauri command", async () => {
@@ -582,7 +630,7 @@ describe("AiExecutionClient", () => {
     { ok: true, backendId: "codex_subscription", action: "authenticated" }
   ])("rejects incomplete or unsuccessful desktop sign-in results: %j", async (result) => {
     const invoke = vi.fn(async () => result);
-    await expect(new DesktopAiExecutionClient(vi.fn() as unknown as typeof fetch, invoke).openProviderAuth("cursor_subscription"))
+    await expect(new DesktopAiExecutionClient(vi.fn(async () => jsonResponse({ ok: false, legacy: true }, { status: 404 })) as unknown as typeof fetch, invoke).openProviderAuth("cursor_subscription"))
       .rejects.toThrow();
   });
 
