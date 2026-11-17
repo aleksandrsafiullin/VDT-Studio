@@ -30422,7 +30422,7 @@ var MESSAGE_TYPES = /* @__PURE__ */ new Set(["hello", "ready", "request", "respo
 var EMPTY_PAYLOAD_METHODS = /* @__PURE__ */ new Set(["list_backends", "get_app_mode"]);
 var METHOD_PAYLOAD_KEYS = {
   list_backends: [],
-  detect_clis: ["agentId"],
+  detect_clis: ["agentId", "excludeCursor"],
   test_backend: ["backendId"],
   list_models: ["backendId"],
   complete: ["backendId", "taskType", "schemaId", "input", "model", "modelReasoning", "timeoutMs"],
@@ -30548,6 +30548,9 @@ function validateRequestPayload(method, payload) {
   }
   for (const key2 of ["agentId", "backendId", "taskType", "schemaId", "model", "runRequestId"]) {
     if (key2 in payload) requireBoundedString(payload[key2], key2, 180);
+  }
+  if ("excludeCursor" in payload && typeof payload.excludeCursor !== "boolean") {
+    throw new SidecarProtocolError("INVALID_PAYLOAD", "excludeCursor must be a boolean.");
   }
   if ("timeoutMs" in payload && (!Number.isSafeInteger(payload.timeoutMs) || Number(payload.timeoutMs) <= 0)) {
     throw new SidecarProtocolError("INVALID_PAYLOAD", "timeoutMs must be a positive safe integer.");

@@ -64,6 +64,19 @@ describe("sidecar protocol parser", () => {
     })), "UNKNOWN_FIELD")
   );
 
+  it("parses the packaged desktop Cursor exclusion on the native detection frame", () => {
+    const message = {
+      protocolVersion: SIDECAR_PROTOCOL_VERSION,
+      type: "request",
+      requestId,
+      method: "detect_clis",
+      payload: { excludeCursor: true }
+    };
+    expect(parseSidecarFrame(frame(message), { direction: "host-to-sidecar" })).toEqual(message);
+    expectCode(() => parseSidecarFrame(frame({ ...message, payload: { excludeCursor: "true" } })), "INVALID_PAYLOAD");
+    expectCode(() => parseSidecarFrame(frame({ ...message, method: "list_backends" })), "UNKNOWN_FIELD");
+  });
+
   it("rejects oversized frames before parsing JSON", () => {
     expectCode(() => parseSidecarFrame(frame({
       protocolVersion: SIDECAR_PROTOCOL_VERSION,

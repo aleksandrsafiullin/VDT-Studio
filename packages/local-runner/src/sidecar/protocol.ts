@@ -185,7 +185,7 @@ const MESSAGE_TYPES = new Set<string>(["hello", "ready", "request", "response", 
 const EMPTY_PAYLOAD_METHODS = new Set<SidecarRequestMethod>(["list_backends", "get_app_mode"]);
 const METHOD_PAYLOAD_KEYS = {
   list_backends: [],
-  detect_clis: ["agentId"],
+  detect_clis: ["agentId", "excludeCursor"],
   test_backend: ["backendId"],
   list_models: ["backendId"],
   complete: ["backendId", "taskType", "schemaId", "input", "model", "modelReasoning", "timeoutMs"],
@@ -326,6 +326,9 @@ function validateRequestPayload(method: SidecarRequestMethod, payload: JsonObjec
   }
   for (const key of ["agentId", "backendId", "taskType", "schemaId", "model", "runRequestId"]) {
     if (key in payload) requireBoundedString(payload[key], key, 180);
+  }
+  if ("excludeCursor" in payload && typeof payload.excludeCursor !== "boolean") {
+    throw new SidecarProtocolError("INVALID_PAYLOAD", "excludeCursor must be a boolean.");
   }
   if ("timeoutMs" in payload && (!Number.isSafeInteger(payload.timeoutMs) || Number(payload.timeoutMs) <= 0)) {
     throw new SidecarProtocolError("INVALID_PAYLOAD", "timeoutMs must be a positive safe integer.");
