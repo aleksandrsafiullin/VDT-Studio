@@ -308,6 +308,9 @@ export interface AgentSupervisorPersistence {
   appendEvent(event: AgentRunEventV2): Promise<void>;
   getEvents(runId: string): Promise<AgentRunEventV2[]>;
   getExecutionSummary(runId: string): Promise<AgentExecutionSummaryV2 | null>;
+  /** Local-only terminal recovery. Implementations must prove the previous
+   * controller dead and atomically fence it with the durable terminal fact. */
+  cancelOrphanedRun?(runId: string): Promise<AgentSupervisorPersistenceStateV2>;
   /** Releases process-local handles after the owning Supervisor has stopped.
    * Durable state remains available to a new persistence instance. */
   close?(): void | Promise<void>;
@@ -877,7 +880,12 @@ export function summarizeAgentSupervisorPersistenceState(
   let sessionStatus: AgentExecutionSessionStatus;
   let recoveryStatus: AgentExecutionRecoveryStatus;
   let pendingOperation: AgentExecutionSummaryV2["pendingOperation"] = null;
-  if (finishState === "final_persisted") {
+  const orphanCancelled = state.eventOutbox?.at(-1);
+  if (orphanCancelled?.type === "runtime_status" && orphanCancelled.payload.code === "RUN_ORPHAN_CANCELLED"
+    && orphanCancelled.payload.state === "cancelled") {
+    sessionStatus = "completed";
+    recoveryStatus = "complete";
+  } else if (finishState === "final_persisted") {
     sessionStatus = "completed";
     recoveryStatus = "complete";
   } else if (hasAmbiguousExchange || hasAmbiguousTool) {

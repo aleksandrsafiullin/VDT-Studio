@@ -1,0 +1,9 @@
+{
+  "identifier": "windows-local-web",
+  "description": "Reviewed commands for the authenticated packaged Windows web server.",
+  "platforms": ["windows"],
+  "local": false,
+  "remote": { "urls": ["http://127.0.0.1:37541/*"] },
+  "windows": ["main"],
+  "permissions": ["vdt-runtime"]
+}

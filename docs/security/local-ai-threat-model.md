@@ -1,5 +1,32 @@
 # Local AI And Data Threat Model
 
+## Local diagnostics and build identity (2026-11-13)
+
+Support reports are explicit local allowlisted snapshots with preview before
+download. They do not transmit telemetry or submit issues. Default reports omit
+model identifiers, credential fields, raw errors/prompts, project/file content
+and personal paths. Model identifiers require an unchecked opt-in with a
+private-name warning and a fresh preview; configured secrets and recognized key
+signatures remain excluded. The metadata endpoint exposes only compiled
+version/commit/build time and bounded platform/runtime fields through local
+admission. See [W4](../implementation/OPEN_ALPHA_W4_2026-11-13.md).
+
+Interrupted structured run recovery requires verified process death and an exact
+durable owner/epoch/binding transaction. Host/boot evidence remains internal;
+absence from a process-local map does not authorize takeover. Unsupported legacy,
+external or ambiguous states remain blocked pending a separate safe continuation
+path. See [W1](../implementation/OPEN_ALPHA_W1_2026-11-13.md) and the
+[independent review](../implementation/OPEN_ALPHA_INDEPENDENT_REVIEW_2026-11-13.md).
+
+Windows owner evidence comes only from the admitted, manifest-verified native
+addon. Its fixed-size registry/kernel queries return no identity on unsupported,
+malformed or inaccessible OS evidence and do not block ordinary app startup.
+Native boot-GUID tokens use a distinct version from earlier CIM timestamp
+tokens; mismatched versions cannot establish process death. No request,
+environment-provided identity or legacy PID is promoted into trusted evidence.
+The failed owner-less installed run remains eligible only for saved-copy
+continuation. Mac/Linux retain their original failed-probe caching behavior.
+
 ## Packaged macOS Alpha Boundary
 
 The signed Apple Silicon alpha serves its web interface over an app-owned
@@ -110,7 +137,10 @@ of the machine. An OS-launch POST must pass the same local/same-origin JSON
 guard. It resolves a skill ID or a validated relative file/folder only under the
 repository; no arbitrary URL, command, application or shell is accepted. Launch
 uses `/usr/bin/open`, `/usr/bin/xdg-open` or the fixed Windows Explorer executable
-with one absolute-path argument and a deadline. The supplied library is copied
+with one absolute-path argument and a deadline. The Windows path retains the
+validated profile and item handles through dispatch to Explorer. The external
+application then reads and edits the working file using its normal filesystem
+access. The supplied library is copied
 once into writable packages with declared relative resources (at most 1 MiB
 each), using exclusive no-overwrite writes.
 Seed markers prevent later overwrites/restoration after user edits/deletion.
@@ -252,7 +282,7 @@ BYOK retention uses the separate encrypted origin-local vault in [ADR-007](../ad
 
 ## Retained-source and ephemeral research amendment (2026-10-17)
 
-The host derives file ownership from the admitted run and validates immutable retained bytes/hash; `data.*` arguments cannot carry filesystem, project or execution authority. Full-table bounded aggregation uses no SQL/eval. Numeric materialization accepts a query and empty-leaf bindings only and enters the existing approval/revision Gateway. File cells and search results are untrusted observations, never instructions. Semantic units/grain and existing parser/privacy weaknesses remain unresolved.
+The host derives file ownership from the admitted run and validates immutable retained bytes/hash; `data.*` arguments cannot carry filesystem, project or execution authority. Full-table bounded aggregation uses no SQL/eval. Numeric materialization accepts a query and empty-leaf bindings only and enters the existing approval/revision Gateway. File cells and search results are untrusted observations, never instructions. Semantic units/grain and file retention/privacy gaps remain unresolved. The trusted-local upload route enforces a streamed byte and read-time limit before multipart decoding. Retained sources are parsed in a separate child with bounded input, V8 heap, time, output and concurrency. Workbook checks cover archive expansion, sheet count and rectangular dimensions. The V8 cap covers the managed heap. Buffers and native allocations remain outside that cap. Child termination and watchdog behavior still require packaged-app qualification on both platforms.
 
 An explicitly admitted OpenAI research session retains its key only inside a provider closure in trusted-local process memory for at most one hour (timer plus lazy expiry), with fixed Responses endpoint, `store:false`, required search and cited-result checks. No env/file key writes or public key projection are introduced. Explicit environment research configuration takes precedence. This is not hosted multi-user credential authorization. Codex private output-schema files contain only the public wire contract/allowlisted tool names, use owner-only creation and are removed after child completion. Serialized arguments still face canonical validation. Shell feature disabling and schema framing do not establish hard native tool isolation.
 
@@ -346,6 +376,24 @@ Local voice input adds microphone audio and downloaded recognition assets to thi
   print mode still contains built-in tools and no credentialed adversarial
   sandbox evidence exists, this is an unverified default-off canary, not a
   hard-isolation or public-capability claim.
+- Packaged Cursor checkpoint admission requires a native bootstrap and a
+  release-pinned isolation resource whose measured bytes execute in the web
+  host. The server checks the vendor payload and effective isolation policy
+  against accepted per-model evidence, while the runner fences each vendor launch
+  to that identity. The runner verifies the private vendor allowlist config
+  with the nested vendor sandbox disabled under the qualified OS boundary.
+  Development still enables Cursor's own sandbox. Packaged sessions use
+  private state with runner-owned authentication. The stream rejects all reported native
+  tools, including native WebSearch. This stream check supplements the OS
+  boundary. Credentialed adversarial proof and installed product acceptance
+  are still required for each platform.
+  Private macOS QA profiles can record bounded broker lifecycle events for
+  each segment. This records phases, elapsed time, allowlisted hosts and
+  recognized socket error codes without prompts, tokens or vendor session IDs.
+  On the Windows worker, the reviewed Cursor config remains on disk under a
+  read-only ACL. An exact atomic config transaction can update only the
+  CLI process's in-memory metadata view after all pinned policy fields
+  match. The runner supplies the exact model on every launch.
 - Codex checkpoint/resume is executable only through the explicitly unverified
   trusted-local canary. Development launchers enable it by default; production
   still rejects it. Model-specific bindings come from the authenticated host
@@ -426,3 +474,10 @@ OpenAI HTTP diagnostics admit only a small allowlist of protocol error codes and
 `mining.load_and_haul` supplies an annual joint excavation/truck-haulage topology: both fleet counts, separate annual repair/shift/unplanned losses, bucket loading productivity, payload-dependent loading time, loaded and empty travel over one route, dumping/positioning/queue time, and the minimum of both capacities. It is a steady-state draft model with continuous equivalent bucket loading, not dispatch simulation. Its numeric reference values are illustrative estimates accepted explicitly by the actor. Site fleet counts, distance, both speeds and truck planned repair have no reference defaults. Formula and sensitivity unit tests do not certify arbitrary model-authored trees or production readiness.
 
 Native transport retains all tool names/purposes and the immutable catalog hash while avoiding a second textual copy of schemas already enforced by `format`. Original literal quantities are sent once in the current observation. The semantic checkpoint allows 512 characters. Construction search asks for 3–6 candidates; additional unread discovered skills can be read before building so the actor can cover a broader process scope. Complete topology/default choices are constrained to successful public skill-read evidence; generic builder tools remain available. Canonical tool arguments, provenance, receipts, approval and scope authority are unchanged.
+
+The Windows Cursor launcher admits the official per-user install from a
+fully qualified PATH entry outside the workspace and checks the selected
+Node executable and entrypoint before launch. VDT supplies the entrypoint as
+a fixed argument and passes request arguments separately with shell execution
+disabled. Isolated Cursor transports retain their explicit environment and
+receive only the fixed invocation marker from launch handling.

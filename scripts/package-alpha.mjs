@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { generateReleaseSbom } from "./generate-release-sbom.mjs";
 import { runPnpm } from "./package-manager.mjs";
 import { claimReleaseDirectory, resolveReleaseDirectory } from "./release-paths.mjs";
+import { copyParserWorker } from "./copy-parser-worker.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_ROOT = resolve(dirname(SCRIPT_PATH), "..");
@@ -22,6 +23,7 @@ export function packageAlpha(root = DEFAULT_ROOT, { releaseDir: override } = {})
     temporary = mkdtempSync(join(tmpdir(), "vdt-alpha-package-"));
     const packageDir = join(temporary, "package");
     mkdirSync(join(packageDir, "dist"), { recursive: true });
+    copyParserWorker(join(packageDir, "dist"), root);
     const { buildSync } = createRequire(join(cliRoot, "package.json"))("esbuild");
     for (const [entry, output] of [["index.ts", "index.mjs"], ["bin.ts", "cli.mjs"]]) {
       buildSync({
@@ -47,7 +49,7 @@ export function packageAlpha(root = DEFAULT_ROOT, { releaseDir: override } = {})
       /(^|\/)(src|skills|node_modules)(\/|$)|\.DS_Store$/.test(entry)
     );
     if (forbidden.length > 0) throw new Error(`Forbidden files in release tarball:\n${forbidden.join("\n")}`);
-    for (const required of ["package/dist/cli.mjs", "package/dist/index.mjs", "package/package.json", "package/README.md"]) {
+    for (const required of ["package/dist/cli.mjs", "package/dist/index.mjs", "package/dist/parser-worker.cjs", "package/dist/parser-worker.manifest.json", "package/package.json", "package/README.md"]) {
       if (!entries.includes(required)) throw new Error(`Release tarball is missing ${required}.`);
     }
 

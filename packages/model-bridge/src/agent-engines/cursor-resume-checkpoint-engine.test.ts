@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -22,11 +22,14 @@ import {
   CursorResumeCheckpointEngine,
   buildCursorResumeCheckpointInitialPrompt,
   createCursorResumeCheckpointSessionMissingPendingDeltaForTests,
-  cursorResumeCheckpointCapabilityHash
+  cursorResumeCheckpointCapabilityHash,
+  createQualifiedCursorResumeCheckpointEngine,
+  type CursorCheckpointQualificationEvidence
 } from "./cursor-resume-checkpoint-engine";
 import {
   CURSOR_CHECKPOINT_PROTOCOL_VERSION,
   CursorResumeCheckpointTransport,
+  cursorCheckpointVendorPolicyHash,
   type CursorResumeCheckpointEnvironment,
   type CursorResumeProcessRequest,
   type CursorResumeProcessResult,
@@ -59,13 +62,14 @@ function turn(action: unknown, assistantMessage: unknown = null): string {
   });
 }
 
-function stream(request: CursorResumeProcessRequest, result: string, sessionId = "opaque-cursor-session"): string {
+function stream(request: CursorResumeProcessRequest, result: string, sessionId = "opaque-cursor-session", model = request.args.includes("--model") ? request.args[request.args.indexOf("--model") + 1] : "auto"): string {
   return [
     {
       type: "system",
       subtype: "init",
       cwd: request.cwd,
       session_id: sessionId,
+      model,
       permissionMode: "ask"
     },
     {
@@ -197,6 +201,196 @@ function harness(input: {
   };
 }
 
+describe.skipIf(process.platform !== "darwin" && process.platform !== "win32")("qualified Cursor checkpoints", () => {
+  const evidence: CursorCheckpointQualificationEvidence = {
+    evidenceHash: SHA,
+    testedAt: "2026-11-16T10:00:00.000Z",
+    cliVersion: "2026.11.11-b912975",
+    protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
+    toolCatalogHash: TOOL_CATALOG_HASH,
+    payloadHash: hashText("test vendor payload"),
+    policyHash: hashText("test isolation policy"),
+    vendorPolicyHash: cursorCheckpointVendorPolicyHash("disabled"),
+    platform: { os: process.platform, arch: process.arch, runtimeVersion: process.version },
+    modelId: "grok-4.7-low",
+    catalogModelDisplayName: "Grok 4.7  Low",
+    runtimeModelDisplayName: "Grok 4.7 256K Low"
+  };
+  const identity = {
+    cliVersion: evidence.cliVersion, payloadHash: evidence.payloadHash,
+    policyHash: evidence.policyHash, vendorPolicyHash: evidence.vendorPolicyHash
+  };
+  const executable = path.resolve("test-cursor-payload");
+  const context = { brief: "exact Grok fixture" };
+
+  function options(environment: CursorResumeCheckpointEnvironment, runner: ScriptedRunner) {
+    return {
+      executable,
+      cliVersion: evidence.cliVersion,
+      toolCatalogHash: TOOL_CATALOG_HASH,
+      allowedToolNames: ["run.request_finish"],
+      sessionEnvironmentFactory: () => environment,
+      resolveBinding: () => { throw new Error("Recovery not needed for this fixture."); },
+      evidence,
+      runner: {
+        async measureIdentity(candidate: string) {
+          expect(candidate).toBe(executable);
+          return identity;
+        },
+        async runQualified(request: CursorResumeProcessRequest, permit: typeof identity) {
+          expect(permit).toEqual(identity);
+          expect(Object.isFrozen(permit)).toBe(true);
+          expect(request.executable).toBe(executable);
+          expect(request.environment.HOME).toBe(await realpath(environment.privateStatePath));
+          const vendorPolicy = JSON.parse(await readFile(path.join(request.environment.CURSOR_CONFIG_DIR!, "cli-config.json"), "utf8"));
+          expect(vendorPolicy).toMatchObject({
+            approvalMode: "allowlist",
+            permissions: { allow: [], deny: expect.arrayContaining(["Shell(*)", "Mcp(*:*)"]) },
+            sandbox: { mode: "disabled", readBoundary: "workspace" }
+          });
+          expect(request.args).toContain("--trust");
+          const modelFlag = request.args.indexOf("--model");
+          expect(modelFlag).toBeGreaterThan(0);
+          expect(request.args[modelFlag + 1]).toBe(evidence.modelId);
+          return runner.run(request);
+        }
+      }
+    };
+  }
+
+  function start(engine: CursorResumeCheckpointEngine, modelId = evidence.modelId) {
+    return {
+      binding: {
+        ...bindingFor(engine),
+        modelId,
+        toolIsolation: engine.capability.toolIsolation,
+        qualificationStatus: engine.capability.qualification.status,
+        capabilityEvidenceHash: engine.capability.qualification.evidenceHash
+      },
+      initialContext: context,
+      initialContextHash: hashText(JSON.stringify(context))
+    };
+  }
+
+  it("pins the exact Grok model and forwards the same native identity permit on open and resume", async () => {
+    const privateEnvironment = await createEnvironment();
+    const environment = { ...privateEnvironment, preauthorizeEmptyWorkspace: true };
+    const runner = new ScriptedRunner([
+      (request) => stream(request, turn({
+        type: "action_batch",
+        calls: [{ externalCallId: "finish", toolName: "run.request_finish", args: {} }]
+      }, { messageId: "initial", text: "Checking the calculation." }), "same-cursor-session", evidence.runtimeModelDisplayName),
+      (request) => stream(request, turn({
+        type: "final",
+        messageId: "final",
+        finishReceiptId: "receipt",
+        text: "Finished."
+      }), "same-cursor-session", evidence.runtimeModelDisplayName)
+    ]);
+    const engine = await createQualifiedCursorResumeCheckpointEngine(options(environment, runner));
+    expect(engine.capability).toMatchObject({
+      toolIsolation: "hard_verified",
+      qualification: { status: "qualified", evidenceHash: evidence.evidenceHash }
+    });
+    const executed: VdtGatewayToolCall[] = [];
+    const host: AgentEngineHost = {
+      signal: new AbortController().signal,
+      executeTool: async (call) => {
+        executed.push(call);
+        return gatewayResult(call, { payload: { receiptId: "receipt", receiptHash: hashText("receipt") } });
+      }
+    };
+    await expect(engine.openSession(start(engine, "auto"), host)).rejects.toMatchObject({
+      code: "CURSOR_CHECKPOINT_BINDING_MISMATCH"
+    });
+    expect(runner.requests).toHaveLength(0);
+    const opened = await engine.openSession(start(engine), host);
+    const events = await collect(opened.events());
+    expect(events.at(-1), JSON.stringify(events)).toMatchObject({ type: "final" });
+    expect(executed.map((call) => call.toolName)).toEqual(["run.request_finish"]);
+    expect(runner.requests).toHaveLength(2);
+    const resumeFlag = runner.requests[1]!.args.indexOf("--resume");
+    expect(runner.requests[1]!.args[resumeFlag + 1]).toBe("same-cursor-session");
+    await opened.close();
+  });
+
+  it("rejects a catalog label presented as the model at runtime", async () => {
+    const environment = { ...await createEnvironment(), preauthorizeEmptyWorkspace: true };
+    const runner = new ScriptedRunner([
+      (request) => stream(request, turn({
+        type: "action_batch",
+        calls: [{ externalCallId: "finish", toolName: "run.request_finish", args: {} }]
+      }, { messageId: "initial", text: "Checking the calculation." }), "fixture-session", evidence.catalogModelDisplayName)
+    ]);
+    const engine = await createQualifiedCursorResumeCheckpointEngine(options(environment, runner));
+    await expect(engine.openSession(start(engine), {
+      signal: new AbortController().signal,
+      executeTool: async () => { throw new Error("Model mismatch must never reach the Gateway."); }
+    })).rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_MODEL_UNVERIFIED" });
+    expect(runner.requests).toHaveLength(1);
+  });
+
+  it("rejects a reported native WebSearch event before any VDT Gateway call", async () => {
+    const environment = { ...await createEnvironment(), preauthorizeEmptyWorkspace: true };
+    const runner = new ScriptedRunner([
+      (request) => {
+        const output = stream(request, turn({
+          type: "action_batch",
+          calls: [{ externalCallId: "finish", toolName: "run.request_finish", args: {} }]
+        }, { messageId: "initial", text: "Checking the calculation." }));
+        const [init, result] = output.trim().split("\n");
+        return [init, JSON.stringify({
+          type: "tool_call",
+          subtype: "started",
+          session_id: "opaque-cursor-session",
+          tool_call: { webSearchToolCall: { args: { searchTerm: "fixture" } } }
+        }), result].join("\n");
+      }
+    ]);
+    const engine = await createQualifiedCursorResumeCheckpointEngine(options(environment, runner));
+    await expect(engine.openSession(start(engine), {
+      signal: new AbortController().signal,
+      executeTool: async () => { throw new Error("Fixture must never reach the Gateway."); }
+    })).rejects.toMatchObject({ code: "SECURITY_BOUNDARY_BREACH" });
+    expect(runner.requests).toHaveLength(1);
+  });
+
+  it("rejects mismatched vendor policy bytes in evidence before the runner measures", async () => {
+    const input = options(await createEnvironment(), new ScriptedRunner([]));
+    await expect(createQualifiedCursorResumeCheckpointEngine({
+      ...input,
+      evidence: { ...input.evidence, vendorPolicyHash: cursorCheckpointVendorPolicyHash("enabled") }
+    })).rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_QUALIFICATION_MISMATCH" });
+  });
+
+  it("rejects measured policy drift before admitting a binding", async () => {
+    const input = options(await createEnvironment(), new ScriptedRunner([]));
+    await expect(createQualifiedCursorResumeCheckpointEngine({
+      ...input,
+      runner: { ...input.runner, async measureIdentity() {
+        return { ...identity, policyHash: hashText("different policy") };
+      } }
+    })).rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_QUALIFICATION_MISMATCH" });
+  });
+
+  it("rejects development auth HOME before spawning the vendor", async () => {
+    const environment = await createEnvironment();
+    const runner = new ScriptedRunner([]);
+    const engine = await createQualifiedCursorResumeCheckpointEngine(options({
+      ...environment,
+      trustedSubscriptionAuthHomePath: await temporaryDirectory("vdt-checkpoint-test-auth-")
+    }, runner));
+    const host: AgentEngineHost = {
+      signal: new AbortController().signal,
+      executeTool: async (call) => gatewayResult(call)
+    };
+    await expect(engine.openSession(start(engine), host)).rejects.toMatchObject({
+      code: "CURSOR_CHECKPOINT_UNSAFE_ENVIRONMENT"
+    });
+    expect(runner.requests).toHaveLength(0);
+  });
+});
+
 describe("buildCursorResumeCheckpointInitialPrompt", () => {
   it("embeds the shared writeback and finish constants", () => {
     const prompt = buildCursorResumeCheckpointInitialPrompt({
@@ -266,6 +460,23 @@ describe("buildCursorResumeCheckpointInitialPrompt", () => {
 });
 
 describe("CursorResumeCheckpointEngine", () => {
+  it("propagates mismatched model identity before executing the action batch", async () => {
+    const executed: VdtGatewayToolCall[] = [];
+    const runner = new ScriptedRunner([request => stream(request, turn({
+      type: "action_batch",
+      batch: { calls: [{ externalCallId: "call-1", toolName: "vdt.echo", args: { value: 1 } }] }
+    }), "opaque-cursor-session", "other-model")]);
+    const h = harness({ runner, environment: await createEnvironment(), executed });
+    const context = { brief: "model identity" };
+    await expect(h.engine.openSession({
+      binding: bindingFor(h.engine),
+      initialContext: context,
+      initialContextHash: hashText(JSON.stringify(context))
+    }, h.host)).rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_MODEL_UNVERIFIED" });
+    expect(executed).toEqual([]);
+    expect(runner.requests).toHaveLength(1);
+  });
+
   it("emits a recoverable transport_error when the pending exchange delta is missing", async () => {
     const environment = await createEnvironment();
     const transport = new CursorResumeCheckpointTransport({

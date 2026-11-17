@@ -7,6 +7,7 @@ import {
   Monitor,
   Mic,
   Palette,
+  CircleHelp,
   type LucideIcon
 } from "lucide-react";
 import { clsx } from "clsx";
@@ -18,7 +19,8 @@ export type SettingsSectionId =
   | "skills"
   | "personalisation"
   | "appearance"
-  | "display";
+  | "display"
+  | "support";
 
 export interface SettingsSectionConfig {
   id: SettingsSectionId;
@@ -33,7 +35,8 @@ export const SETTINGS_SECTIONS: SettingsSectionConfig[] = [
   { id: "skills", label: "Skills", icon: BookOpen, enabled: true },
   { id: "personalisation", label: "Personalisation", icon: SlidersHorizontal, enabled: true },
   { id: "appearance", label: "Appearance", icon: Palette, enabled: false },
-  { id: "display", label: "Display", icon: Monitor, enabled: true }
+  { id: "display", label: "Display", icon: Monitor, enabled: true },
+  { id: "support", label: "Help & feedback", icon: CircleHelp, enabled: true }
 ];
 
 export const SETTINGS_SECTION_META: Record<
@@ -63,6 +66,10 @@ export const SETTINGS_SECTION_META: Record<
   display: {
     title: "Display",
     subtitle: "Adjust font scale, panel layout and scenario highlight colors."
+  },
+  support: {
+    title: "Help & feedback",
+    subtitle: "Get started, check this installation and prepare a report you can review before sharing."
   }
 };
 

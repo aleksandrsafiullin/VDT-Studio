@@ -177,6 +177,7 @@ export function parseCreateVdtWithInitialHttpRequest(
     throw new TypeError("Create VDT request schemaVersion is invalid.");
   }
   const idempotencyKey = requireNonEmptyString(body.idempotencyKey, "idempotencyKey");
+  if (idempotencyKey.startsWith("saved-copy:")) throw new TypeError("This VDT creation key is reserved.");
   const expectedRuntime = parseRuntimeCas(body.expectedRuntime);
   const vdt = parseCreateVdtMetadata(body.vdt);
   validateStrictProjectRequest(body.project);

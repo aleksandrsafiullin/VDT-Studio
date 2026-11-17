@@ -46,6 +46,7 @@ class FakeCursorAcpTransport implements CursorAcpTransport {
   started = false;
   closed = false;
   sessionId = "cursor-session-1";
+  models: unknown = { currentModelId: "cursor-grok-4.6-medium" };
   initializeResult: unknown = {
     protocolVersion: 1,
     agentCapabilities: {
@@ -65,10 +66,10 @@ class FakeCursorAcpTransport implements CursorAcpTransport {
     this.calls.push({ method, params, ...(options ? { options } : {}) });
     if (method === "initialize") return Promise.resolve(this.initializeResult);
     if (method === "authenticate") return Promise.resolve({});
-    if (method === "session/new") return Promise.resolve({ sessionId: this.sessionId });
+    if (method === "session/new") return Promise.resolve({ sessionId: this.sessionId, models: this.models });
     if (method === "session/load" || method === "session/resume") {
       if (this.replayOnLoad) this.emit(this.replayOnLoad);
-      return Promise.resolve({});
+      return Promise.resolve({ models: this.models });
     }
     if (method === "session/close") return Promise.resolve({});
     if (method === "session/prompt") {
@@ -219,6 +220,16 @@ describe("CursorAcpEngine", () => {
       code: "CURSOR_ACP_UNSAFE_WORKSPACE"
     });
     expect(transport.started).toBe(false);
+  });
+
+  it.each([undefined, { currentModelId: "auto" }])("rejects an unconfirmed selected model before prompting (%j)", async (models) => {
+    const transport = new FakeCursorAcpTransport();
+    transport.models = models;
+    await expect(engine(transport).openSession(baseStart(await privateWorkspace()))).rejects.toMatchObject({
+      code: "CURSOR_ACP_MODEL_UNVERIFIED"
+    });
+    expect(transport.calls.some(call => call.method === "session/prompt")).toBe(false);
+    expect(transport.closed).toBe(true);
   });
 
   it("uses one persistent ACP session, streams messages, and emits a durable-safe checkpoint", async () => {

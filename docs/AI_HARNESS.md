@@ -1,5 +1,22 @@
 # AI And Agent Harness
 
+## Bounded interrupted-run termination (2026-11-13)
+
+Newly owned structured Model Agent runs can be ended after verified controller
+death using an exact owner/epoch/binding comparison and one atomic terminal
+outcome. The action preserves saved revisions and does not resume inference or
+replay tools. No general V2 controller lease is enabled. Owner-less/external runs
+and ambiguous or verified-finish states remain outside this path. See the
+[W1 contract and evidence](implementation/OPEN_ALPHA_W1_2026-11-13.md) and
+[independent review](implementation/OPEN_ALPHA_INDEPENDENT_REVIEW_2026-11-13.md).
+
+For an interrupted run with a verified committed revision, saved-copy continuation
+creates a fresh VDT and preserves the original run's authority and history. It
+does not fabricate a cancellation or resume that run. Referenced immutable
+sources must be accessible before publishing the copy, and replay requires a
+committed creation receipt plus verification of the initial revision. Late
+source-run callbacks cannot target the fresh VDT; unsaved local edits stay open.
+
 ## Typed OpenAI-compatible decisions and quoted rates (2026-11-11)
 
 The direct OpenAI Model Agent sends a strict response schema built from its

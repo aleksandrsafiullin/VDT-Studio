@@ -1,5 +1,112 @@
 # Production Readiness
 
+## GitHub, Mac and Windows remediation (2026-11-14)
+
+The user-confirmed feedback-release scope includes the public repository and both
+Mac and Windows applications. The decision remains **HOLD**. The
+[execution ledger](implementation/OPEN_ALPHA_EXECUTION_2026-11-13.md),
+[acceptance matrix](implementation/OPEN_ALPHA_ACCEPTANCE_MATRIX_2026-11-13.md) and
+[independent review](implementation/OPEN_ALPHA_INDEPENDENT_REVIEW_2026-11-13.md)
+separate source, native fixture, compiled-package and installed evidence. The
+[baseline audit](implementation/OPEN_ALPHA_READINESS_2026-11-13.md) retains the
+original findings. No public release has been made.
+
+On 17 November, private macOS and Windows Cursor checkpoint candidates with
+standalone web `f0cd622` passed installed-chat generation and persisted
+cold reopen on `grok-4.7-low` and `grok-4.7-xhigh`. Each exact model saved a
+2,400 USD/month calculation with the two original driver values. macOS
+used the signed Apple Silicon app. Windows used a verified `08966a5` NSIS
+x64 native baseline and measured LPAC worker in an ARM64 QA guest. The
+public activation manifest is empty, and public release stays on hold.
+
+The latest packaged checkpoint is `08966a5861fe4f3b2e9e5214af8ed19c072843fc`,
+version `0.1.0-alpha.2`. Both packages passed resource/integrity checks. The Mac
+DMG is Developer-ID signed but unnotarized; the Windows installer is unsigned.
+SCP and read-only local media transfers do not qualify public-download trust.
+The Windows standard-user x64/NTFS lane independently passed 34 native tests and
+all 65 frozen cases. Package CI verified actual compiled Next storage, one-use
+session bootstrap, native v2 owner issuance matching the server PID, terminal
+cleanup and bundled sidecar activation/EOF. This is not installed native x64 UI
+or power-loss qualification.
+
+The exact `08966a5` source gate independently passed 3,826 tests (45 skips), all
+166 browser cases and both saved-copy cases, without retries or changed limits.
+Both artifacts identify the same source. Exact `08966a5` Tahoe additionally passed
+old-history/cold-reopen progress, idempotent copy notice, Home, unchanged
+revisions/graphs/run states and fresh CSV bytes. Windows exact-source upgrade and stale-progress migration passed, but an actual
+fresh copy exposed prolonged backend unavailability; see the scoped results below.
+
+The earlier exact `4001c2e` source gate failed. Release verification passed 3,824 tests
+with 45 skips and production build passed; browser results were 164 expected,
+two unexpected, zero flaky/skipped. WebKit BYOK timed out before reload while
+its real revision save took 11.438 seconds. Versions exhausted its test budget;
+fixture deletion began before its final reopen request. Neither trace establishes
+encryption or revision corruption. The dedicated saved-copy stage did not run.
+Both cases passed locally on exact source with one worker and then two, with
+zero retries and the original timeouts. This does not reproduce Linux CI load
+or waive that failure. The earlier d4 complete source gate passed 3,818 tests,
+45 skips, 166 browser cases and both saved-copy cases. Historical failures remain
+recorded. No scheduling or timeout relaxation is authorized by these results.
+
+The Home metadata-refresh race is corrected in `4001c2e`. Independent focused
+source tests passed 12/12. Installed Tahoe and Windows Arm/x64 emulation passed
+Home from a cancelled editor and unsaved-draft cold restoration. Home then made
+one intended child revision; retained model values, other graphs/history and
+fresh original CSV bytes were preserved. These are focused refreshes, not the
+complete installed matrix.
+
+Installed Windows exposed another definite defect: an old chat could restore
+"Creating saved copy…" when no request was active. A subsequent instrumented
+idempotent copy succeeded (POST 1,210 ms, GET 262 ms). The earlier d4 two-minute
+UI observation lacks request timing and does not establish a backend copy hang.
+The reviewed source now makes progress transient, sanitizes persisted/history
+state, retains live same-run progress, and clears it after scope changes without
+clearing errors or stop markers. The same regression fails on 4001 and passes
+with the fixed store alone; independent focused tests passed 11/11. The exact `08966a5` full gate and both packages passed; scoped Tahoe acceptance
+also passed. Windows upgrade/stale-progress migration passed, but actual copy responsiveness
+failed. Root cause remains unresolved.
+
+Recovery remains partial. Mac Tahoe `7a08fff` passed question, generation and
+approval controller-loss recovery plus clean/dirty copies; d4 refreshed question
+recovery. Windows d4 retained cancellation in all three states using native v2
+owner evidence; approval/running pre/post graph and revision digests matched.
+Running End remained pending at 56.353 seconds and was first observed Cancelled
+at 59.805 seconds. Its cause is unresolved. Legacy owner-less runs keep their
+history and safe saved-copy path; no PID-only identity is fabricated. Ordinary
+Windows dirty-copy behavior is still unverified. Controlled loopback fixtures
+do not qualify a live AI provider.
+
+At exact `08966a5`, Windows Arm/x64-emulation testing reproduced a fresh real
+copy delay of about two minutes, with a five-second no-byte private Node probe.
+A separate passive trace measured a 17.934-second copy POST and 30.540-second
+concurrent run snapshot; the VDT GET began 9 ms after POST completion and took
+2.176 seconds. Closed receipts retained both prior revision/graph digests, with
+no active-head change from a subsequent HTTP200 no-op save. Dirty-copy and new
+Running checks were deferred. CPU diagnostics produced no profile: the revised
+preflight rejected target identity before profiling. That failure cannot identify
+the application's cause. Both VMs are stopped and app/inspector listeners cleared.
+
+RA-16 remains an open P1: Sonoma 14.0 repeatedly stalled on Files/backend routes;
+Windows first compatible CSV analysis separately timed out while public/private
+Node listeners returned no bytes. Healthy headless replays and successful later
+imports do not explain either failure. A subsequent Sonoma guest kernel panic
+in MTLCompilerServi blocks minimum-OS qualification. Tahoe 26.6.2 with 4 vCPUs,
+6 GiB and fresh WebView state passed retained-model/Files checks, but changes
+several variables. Windows UI testing uses Windows 11 Home 26H2 Arm64, x64
+emulation and a filtered medium-integrity local administrator, not a separate
+standard account or native x64 client. Both OS families remain required.
+
+Parser isolation, bounded uploads, explicit offline analysis and diagnostic
+preview/export have scoped source/browser acceptance. Installed valid CSV and
+extreme-workbook rejection passed on the recorded candidates; Windows compatible
+CSV applied 2.75 h/day on retry with unchanged original bytes. Remaining native
+formats, cancellation/resource/fault cases, accessibility, spreadsheet-engine
+recalculation, minimum OS, distribution trust and the per-platform live-provider
+matrix remain open. Historical live runs are not promoted as current installed
+qualification. [GitHub delivery](release/github-delivery.md) remains preparation.
+
+Dated evidence below retains its original source, environment and acceptance scope.
+
 ## Regression coverage and opt-in tests
 
 F-08 is covered by the local Supervisor's skill selection path. For a new

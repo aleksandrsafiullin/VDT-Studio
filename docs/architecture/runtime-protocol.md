@@ -9,6 +9,15 @@ Smart model/reasoning discovery also admits the manifest-owned `ollama`,
 `ai_smart_execution` command. Their endpoints remain owned by the host manifest;
 no relative HTTP fallback or new native command is needed in the desktop view.
 
+## Windows packaged process activation
+
+On Windows, the bundled Node process first waits for the private `start\n`
+frame. The Rust host only sends it after assigning that process to a
+kill-on-close Job Object. The activation frame is consumed by the bundled
+entrypoint; the sidecar then uses the same hello/ready and newline-framed
+JSON protocol as the other hosts. See [W8](../implementation/OPEN_ALPHA_W8_2026-11-13.md)
+for the separate Windows web host and qualification status.
+
 ## Local macOS Alpha Packaging
 
 The signed local app includes Node for both the web server and the private

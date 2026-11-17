@@ -8,6 +8,13 @@ Last reviewed: **2026-07-23**.
 
 VDT Studio Desktop is the target distribution for seamless subscription CLI and local-model execution.
 
+The current GitHub + Mac + Windows feedback candidate is `0.1.0-alpha.2`, still
+under qualification. Its [acceptance matrix](implementation/OPEN_ALPHA_ACCEPTANCE_MATRIX_2026-11-13.md)
+and [release procedure](RELEASE.md) distinguish installed-app acceptance from
+source checks. A verified Node runtime embedded in the installer satisfies this
+alpha's requirement that users need no separate interpreter. The future
+Node-free production target below remains a separate gate.
+
 ## Local Apple Silicon Alpha
 
 The local arm64 package uses the Tauri WebKit window, a bundled production Next.js server and Node 24. The app starts and stops the web server and the private AI sidecar together. SQLite and host settings default to the app's local Application Support directory. The user signs in to subscription CLIs through the provider's normal workflow. The app can admit a configured API provider for the selected model through its authenticated desktop session.
@@ -25,9 +32,27 @@ Mount the disk image on the Mac and copy VDT Studio into Applications. The built
 
 The local package has a Developer ID signature. Apple notarization and Gatekeeper acceptance of a quarantined download are separate distribution gates. The native alpha build targets Apple Silicon and configures macOS 14 as its deployment floor. Local host acceptance establishes only the tested macOS and hardware.
 
+The macOS package includes a signed Cursor process supervisor. A packaged Cursor checkpoint connection remains unavailable until the host has reviewed exact-release evidence for the CLI payload, OS, network policy and Grok model. Qualification requires a separate Cursor sign-in, an independently verified read-only vendor payload, and an installed-app test that saves and reopens a calculable tree.
+
+The Windows package omits the prototype Cursor activation by default. A private build can stage a reviewed activation module, native worker and preload as a pinned resource set. The Windows build prerequisites and qualification boundary are documented in the [worker build instructions](../apps/desktop/windows-cursor-worker/README.md).
+
+The 17 November private installed candidates passed both exact Grok models
+through ordinary chat and reopened the same calculated trees. macOS used its
+signed bundle executable with a separate SSD profile. Windows used an x64
+copy from the verified `08966a5` NSIS baseline with reviewed `f0cd622` web
+and native worker resources in the Windows 11 ARM64 guest.
+
 ## Production Distribution Boundary
 
-The repository contains the Tauri desktop shell foundation under `apps/desktop`, reviewed native commands and embedded local AI runtime sidecar launchers for POSIX and Windows. The current checked-in sidecar is a bundled Node runtime, not a final production sidecar binary.
+The repository also includes a Windows x64 NSIS candidate build path. For
+builder commands, Authenticode requirements, and evidence limits, see
+[W8](implementation/OPEN_ALPHA_W8_2026-11-13.md). Native Windows storage and
+private packaged startup are implemented. The scoped standard-user x64/NTFS
+storage gate passed 34 focused tests and the complete 65-case fault matrix with
+independent evidence review. Compiled application startup and installed-app
+qualification remain separate; the build path alone does not establish them.
+
+The repository contains the Tauri desktop shell under `apps/desktop`, native commands and local AI runtime sidecar launchers for POSIX and Windows. The checked-in sidecar contains bundled JavaScript; the alpha packagers supply and verify its embedded Node executable. A future Node-free sidecar binary has a separate production contract.
 
 The shared Tauri bundle configuration retains cross-platform desktop bundle targets. Production distribution still requires notarization, native toolchain verification, the production sidecar gate and platform qualification.
 

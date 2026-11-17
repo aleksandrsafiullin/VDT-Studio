@@ -1,6 +1,6 @@
 {
   "name": "@vdt-studio/cli",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "private": false,
   "type": "module",
   "exports": {
@@ -23,7 +23,7 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "pnpm clean && esbuild src/index.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/index.mjs && esbuild src/bin.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/cli.mjs && node -e \"require('node:fs').chmodSync('dist/cli.mjs',0o755)\"",
+    "build": "pnpm clean && esbuild src/index.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/index.mjs && esbuild src/bin.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/cli.mjs && node -e \"require('node:fs').chmodSync('dist/cli.mjs',0o755)\" && node ../../scripts/copy-parser-worker.mjs dist",
     "start": "tsx src/bin.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --root ../.. packages/cli/src"

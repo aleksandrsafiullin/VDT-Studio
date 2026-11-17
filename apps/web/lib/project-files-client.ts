@@ -1,4 +1,5 @@
 import type { DataDiscoveryFileMetadata } from "@vdt-studio/data-harness";
+import { recordSupportError } from "./support-error-events";
 
 export const PROJECT_FILES_CHANGED = "vdt:project-files-changed";
 export const DATA_FILE_ACCEPT = ".csv,.tsv,.txt,.json,.ndjson,.xlsx,.xls,.parquet";
@@ -29,7 +30,10 @@ export async function listProjectFiles(projectId: string, signal?: AbortSignal):
 }
 
 export async function uploadProjectFile(projectId: string, file: File, vdtId?: string, signal?: AbortSignal): Promise<ProjectFileSource> {
-  if (file.size > MAX_PROJECT_FILE_BYTES) throw new Error(`“${file.name}” exceeds the 50 MB file limit.`);
+  if (file.size > MAX_PROJECT_FILE_BYTES) {
+    recordSupportError("DATA_FILE_TOO_LARGE");
+    throw new Error(`“${file.name}” exceeds the 50 MB file limit.`);
+  }
   const form = new FormData();
   form.set("projectId", projectId);
   form.set("file", file);
@@ -50,8 +54,11 @@ export async function updateProjectFile(projectId: string, datasetId: string, up
 
 async function fileResponse<T = object>(response: Response): Promise<T> {
   if (!(response.headers.get("content-type") ?? "").includes("application/json")) throw new Error(`File request returned an unexpected response (${response.status}).`);
-  const payload = await response.json() as T & { ok?: boolean; error?: { message?: string } };
-  if (!response.ok || !payload.ok) throw new Error(payload.error?.message ?? "The file operation could not be completed.");
+  const payload = await response.json() as T & { ok?: boolean; error?: { code?: unknown; message?: string } };
+  if (!response.ok || !payload.ok) {
+    recordSupportError(payload.error?.code);
+    throw new Error(payload.error?.message ?? "The file operation could not be completed.");
+  }
   return payload;
 }
 

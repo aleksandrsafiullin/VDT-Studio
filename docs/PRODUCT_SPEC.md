@@ -1,5 +1,45 @@
 # Product Specification
 
+## Feedback-alpha recovery and support (2026-11-13)
+
+For a structured Model Agent run whose local controller is unavailable, the
+activity panel offers **End interrupted run**. The server can terminate a newly
+owned run only after proving the controller is dead and committing a fenced
+terminal outcome. The saved draft and revision history remain intact. The editor
+releases its pending stop state only after verifying that terminal outcome.
+Legacy owner-less, external and ambiguous runs remain outside this terminalization
+path; automatic resumption is not implemented. When a verified committed revision
+exists, **Continue from saved copy** creates a separate VDT in the same project
+with that graph and access to its retained source files. It preserves the
+original run, history and stop marker. If the open draft contains unsaved edits,
+it stays open and the copy appears in the project list. Missing or unverifiable
+retained sources block publication of the copy. Source review and regression
+checks passed; browser and installed qualification are tracked separately.
+See [W1](implementation/OPEN_ALPHA_W1_2026-11-13.md).
+
+Saved-copy progress describes only a request active in the current application
+process. Reopening the application or selecting an old chat clears a persisted
+"Creating saved copy…" message. Completed notices and errors remain available;
+reselecting the same chat during an actual request retains its live progress.
+
+**Settings → Help & feedback** provides setup/report addresses and a local
+diagnostic workflow: prepare, preview, then download the exact reviewed snapshot.
+No report is sent automatically. The report uses an allowlist of build/platform,
+execution status, opaque run/revision identifiers and bounded error codes; raw
+messages, project/file contents and credentials are excluded. The current
+diagnostic privacy review and native/browser qualification are tracked in
+[W4](implementation/OPEN_ALPHA_W4_2026-11-13.md) and the
+[independent review](implementation/OPEN_ALPHA_INDEPENDENT_REVIEW_2026-11-13.md).
+Model names are omitted by default because custom identifiers can contain private
+names or paths. Explicit opt-in requires a fresh preview; changing that choice
+invalidates the previous export. Credential exclusion remains active with opt-in.
+
+Local file analysis has byte-counted upload admission and a separately bounded
+parser process. Controlled size/format/resource failures retain the source and
+do not apply a partial baseline. Exact limits and remaining qualification are
+defined in [Data Ingestion](DATA_INGESTION.md). Windows project storage and both
+current native release candidates remain under qualification.
+
 ## Local harness integration (2026-11-02)
 
 The local AI catalog has thirteen current harness presets plus custom ACP/VDT JSONL profiles. The added presets are Kimi Code, Mistral Vibe, Kilo Code, Qwen Code, Grok Build and Pi. Suggested KPI independently selects its model and reasoning under Settings → Execution mode, with Same as chat model and explicit Off reasoning defaults. Unsupported Off is explained before preparation; Provider default requires an explicit choice. It has no legacy connection records or historical adapter variants. All registered structured tasks include Suggested KPI; chat uses an immutable external session binding. New/custom adapters remain experimental pending live/native qualification. See [Harness connections](HARNESS_CONNECTIONS.md).
@@ -342,6 +382,14 @@ The root KPI appears on the left and drivers expand to the right. The canvas is 
 - Project summaries omit the AI-run counter. Other counters use SQL aggregates rather than loading conversation, run or proposal payloads. Stored AI sessions and history are preserved.
 - The editor's Home and Back to project links wait for save confirmation before leaving. A payload identical to the active saved revision reuses that revision. A failed save keeps the editor open. A conflict keeps the draft visible and blocks another save, including after a summary refresh. **Discard local edits and reload** opens the stored revision so the user can reapply changes. The back link supersedes a still-pending newly created VDT route.
 
+Manual editor edits are saved to the project with **Save active VDT** or normal in-app navigation. The app also keeps a local draft. On startup it reopens the draft in its original VDT with the saved revision it was based on. If that revision changed, the draft stays open and the normal conflict checks protect the saved graph. If the VDT cannot be reopened, the Home screen offers to download the local draft or discard it.
+
+After a confirmed save, deliberate Home navigation survives a background refresh
+of project summaries or loading/error metadata. Its one-use intent still requires
+the same active scope, graph, revision base and pending storage operations; a
+new edit or changed scope cannot reuse it. The intent is not persisted across
+application launches.
+
 Current status: implemented as an alpha foundation. W0.1 atomic revision conflict handling is implemented: manual/create/agent writers use one strict CAS/idempotency boundary and an exclusive-create no-clobber final path. Conflicts preserve local unsaved work, and failed auto-save blocks navigation. A single durable source-of-truth policy and metadata/revision ownership remain W0.5 blockers; Windows durability is unverified.
 
 ### Factor-tree editing and calculation
@@ -568,7 +616,7 @@ Current status: planned. Search snippets exist, but source opening, structured b
 
 Current status: the local alpha project workspace provides **VDTs / Files** tabs, project uploads without a tree, search, display-name editing, exact-byte download and archive/restore. **Files for** filters attachments by tree; the editor has a **Files** dialog with **This VDT / Add from project**. One immutable project source can be attached to multiple trees without duplicating its bytes. Detach removes current availability; archive hides a file from new selections. Both retain originals and historical reads, rather than permanently deleting client data. Library uploads accept any file up to 50 MB; unsupported formats remain download-only.
 
-**From file** and the composer paperclip open experimental local discovery for a selected undecomposed KPI. Computer selection saves the source immediately, and saved-source selection immediately attaches it to that tree, independently of analysis or staging. The chooser lists analyzable active sources from the entire project, including uploads from other trees. Explicitly attached structured data is available through existing owner-scoped agent `data.*` tools. Original metadata, filename and bytes remain immutable; library labels and associations are separate. The configured provider can suggest tables, ordered category columns and additive value mapping; required mapping and model questions must be answered before staging. Full-source deterministic reruns support additive numeric values in confirmed KPI-compatible units, numeric duration or explicit start/end timestamps, confirmed period-total or per-day normalization, at most four category levels and 200 nodes, and complete row/category coverage. When the reviewed mapping identifies a unique event ID column, blank or repeated IDs block staging until the user supplies a corrected extract. The reporting period describes the full extract and denominator rather than applying an implicit date filter. Every generated KPI Description identifies its file/hash, table/columns, filters, calculation, reporting period and covered rows. Staging verifies source integrity and unchanged semantic target state, then returns the normal review preview. The general discovery API materializes supported scalar mappings from complete retained tables. It keeps unrelated results as contextual references and can bind one explicitly reviewed metric to an empty KPI with the same unit. Automatic refresh, complex report layouts, PDF/OCR and connectors remain outside the implemented scope.
+**From file** and the composer paperclip open experimental local discovery for a selected undecomposed KPI. Computer selection saves the source immediately, and saved-source selection immediately attaches it to that tree, independently of analysis or staging. The chooser lists analyzable active sources from the entire project, including uploads from other trees. Explicitly attached structured data is available through existing owner-scoped agent `data.*` tools. Original metadata, filename and bytes remain immutable; library labels and associations are separate. **Analyze file locally** uses bounded parsing and manual mapping without provider access. The separate **Analyze with AI** action allows the configured provider to suggest tables, ordered category columns and additive value mapping; required mapping and model questions must be answered before staging. Missing direct OpenAI credentials and unreachable-provider errors are explicit, without a silent local fallback or staged changes. Full-source deterministic reruns support additive numeric values in confirmed KPI-compatible units, numeric duration or explicit start/end timestamps, confirmed period-total or per-day normalization, at most four category levels and 200 nodes, and complete row/category coverage. When the reviewed mapping identifies a unique event ID column, blank or repeated IDs block staging until the user supplies a corrected extract. The reporting period describes the full extract and denominator rather than applying an implicit date filter. Every generated KPI Description identifies its file/hash, table/columns, filters, calculation, reporting period and covered rows. Staging verifies source integrity and unchanged semantic target state, then returns the normal review preview. The general discovery API materializes supported scalar mappings from complete retained tables. It keeps unrelated results as contextual references and can bind one explicitly reviewed metric to an empty KPI with the same unit. Automatic refresh, complex report layouts, PDF/OCR and connectors remain outside the implemented scope.
 
 ### Model providers and local execution
 

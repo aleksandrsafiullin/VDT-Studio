@@ -3,6 +3,13 @@ mod sidecar_host;
 #[cfg(all(target_os = "macos", not(debug_assertions)))]
 mod packaged_web;
 
+#[cfg(all(target_os = "windows", not(debug_assertions)))]
+#[path = "packaged_web_windows.rs"]
+mod packaged_web;
+
+#[cfg(windows)]
+mod windows_process;
+
 use serde::Deserialize;
 use sidecar_host::{DesktopRuntime, RuntimeBackendStatus};
 use tauri::{Manager, State};
@@ -111,17 +118,21 @@ async fn ai_detect_subscription_clis(agent_id: Option<String>, app: tauri::AppHa
 }
 
 #[tauri::command]
-fn ai_test_backend(backend_id: String, runtime: State<'_, DesktopRuntime>) -> Result<serde_json::Value, String> {
-    runtime
-        .test_backend(&backend_id)
-        .map_err(|error| error.to_string())
+async fn ai_test_backend(backend_id: String, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<DesktopRuntime>()
+            .test_backend(&backend_id)
+            .map_err(|error| error.to_string())
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn ai_list_models(backend_id: String, runtime: State<'_, DesktopRuntime>) -> Result<Vec<String>, String> {
-    runtime
-        .list_models(&backend_id)
-        .map_err(|error| error.to_string())
+async fn ai_list_models(backend_id: String, app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<DesktopRuntime>()
+            .list_models(&backend_id)
+            .map_err(|error| error.to_string())
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -172,10 +183,12 @@ fn ai_get_run(request_id: String, runtime: State<'_, DesktopRuntime>) -> Result<
 }
 
 #[tauri::command]
-fn open_provider_auth(backend_id: String, runtime: State<'_, DesktopRuntime>) -> Result<serde_json::Value, String> {
-    runtime
-        .open_provider_auth(&backend_id)
-        .map_err(|error| error.to_string())
+async fn open_provider_auth(backend_id: String, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<DesktopRuntime>()
+            .open_provider_auth(&backend_id)
+            .map_err(|error| error.to_string())
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -192,7 +205,7 @@ pub fn run() {
             let runtime = app.state::<DesktopRuntime>();
             match app.path().resource_dir() {
                 Ok(resource_dir) => {
-                    #[cfg(all(target_os = "macos", not(debug_assertions)))]
+                    #[cfg(all(any(target_os = "macos", target_os = "windows"), not(debug_assertions)))]
                     packaged_web::setup(app, &resource_dir, &runtime)?;
                     if let Err(error) = runtime.set_resource_dir(resource_dir) {
                         eprintln!("vdt_desktop_resource_dir_failed: {}", error);
@@ -202,7 +215,7 @@ pub fn run() {
                     eprintln!("vdt_desktop_resource_dir_unavailable: {}", error);
                 }
             }
-            #[cfg(all(target_os = "macos", debug_assertions))]
+            #[cfg(all(any(target_os = "macos", target_os = "windows"), debug_assertions))]
             tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?.build()?;
             if let Err(error) = runtime.start() {
                 eprintln!("vdt_desktop_sidecar_start_failed: {}", error);
@@ -227,7 +240,7 @@ pub fn run() {
         .expect("error while building VDT Studio Desktop")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
-                #[cfg(all(target_os = "macos", not(debug_assertions)))]
+                #[cfg(all(any(target_os = "macos", target_os = "windows"), not(debug_assertions)))]
                 if let Some(web) = app.try_state::<packaged_web::PackagedWeb>() {
                     web.stop();
                 }

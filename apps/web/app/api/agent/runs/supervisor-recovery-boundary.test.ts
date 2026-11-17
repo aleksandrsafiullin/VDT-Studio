@@ -1,9 +1,12 @@
 import {
   AgentRunStateSupervisorPersistence,
+  AgentSupervisorPersistenceError,
+  InMemoryAgentSupervisorPersistence,
   type AgentSessionBinding
 } from "@vdt-studio/vdt-agent-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentExecutionBindingRegistry, agentRuntime } from "./runtime";
+import * as runtimeModule from "./runtime";
 import {
   PublicSupervisorRunError,
   cancelStructuredModelAgentRun,
@@ -92,6 +95,8 @@ describe("public structured Model Agent recovery boundary", () => {
     const before = structuredClone(agentRuntime.store.getState(state.runId).supervisorPersistenceV2);
     const snapshot = await compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(state.runId));
 
+    expect(snapshot.status).toBe("recovery_required");
+    expect(snapshot.pendingQuestions).toBeUndefined();
     expect(snapshot.executionSummary).toMatchObject({
       sessionStatus: "recovery_required",
       recoveryStatus: "recovery_required",
@@ -155,5 +160,16 @@ describe("public structured Model Agent recovery boundary", () => {
     );
     expect(agentRuntime.store.getState(state.runId).status).not.toBe("cancelled");
     activeRuns!.delete(state.runId);
+  });
+
+  it.each(["MODEL_AGENT_OWNER_ALIVE", "MODEL_AGENT_OWNER_UNVERIFIED", "MODEL_AGENT_RECOVERY_AMBIGUOUS", "MODEL_AGENT_FINAL_COMMITTED"])("preserves actionable %s errors for ordinary cancellation and terminal handoff", async code => {
+    const state = agentRuntime.store.createRun({ mode: "generate_vdt", input: { rootKpi: "Revenue" }, providerId: "model_agent" });
+    const persistence = Object.assign(new InMemoryAgentSupervisorPersistence(), {
+      cancelOrphanedRun: async () => { throw new AgentSupervisorPersistenceError(code, "Actionable recovery guidance."); }
+    });
+    vi.spyOn(runtimeModule, "createAgentSupervisorPersistence").mockReturnValue(persistence);
+    await expect(cancelStructuredModelAgentRun(state.runId, false)).rejects.toMatchObject({ code, message: "Actionable recovery guidance." });
+    await expect(cancelStructuredModelAgentRun(state.runId, true)).rejects.toMatchObject({ code, status: 409, message: "Actionable recovery guidance." });
+    expect(agentRuntime.store.getState(state.runId).status).not.toBe("cancelled");
   });
 });

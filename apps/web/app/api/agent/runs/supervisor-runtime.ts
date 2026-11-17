@@ -10,6 +10,7 @@ import { VdtBuilderSession, type VdtNodePatch, type VdtProject } from "@vdt-stud
 import {
   AgentRunEventOutbox,
   AgentRunStateSupervisorPersistence,
+  AgentSupervisorPersistenceError,
   isAgentToolError,
   StructuredInProductModelAgentEngine,
   VdtRunSupervisor,
@@ -567,8 +568,19 @@ export async function isPersistedSupervisorRun(runId: string): Promise<boolean> 
 export async function compactSupervisorAwareSnapshot(
   snapshot: VdtAgentRunSnapshot
 ): Promise<PublicAgentRunSnapshot> {
-  const compact = compactPublicAgentSnapshot(snapshot);
   const durable = await loadSupervisorAuthority(snapshot.runId);
+  const terminal = durable?.eventOutbox?.at(-1);
+  // A different process may have ended this run while this reader held an
+  // older nonterminal cache. Expose the transaction's committed projection.
+  if (terminal?.type === "runtime_status" && terminal.payload.code === "RUN_ORPHAN_CANCELLED"
+    && terminal.payload.state === "cancelled" && snapshot.status !== "cancelled") {
+    const current = agentRuntime.store.reloadPersistedRun(snapshot.runId);
+    if (current.status !== "cancelled") throw new PublicSupervisorRunError(
+      "MODEL_AGENT_RECOVERY_UNVERIFIED", "The terminal run projection could not be verified.", 409
+    );
+    snapshot = agentRuntime.store.getSnapshot(snapshot.runId);
+  }
+  const compact = compactPublicAgentSnapshot(snapshot);
   if (!durable) return compact;
   compact.executionSummary = summarizeAgentSupervisorPersistenceState(durable);
   if (
@@ -576,9 +588,18 @@ export async function compactSupervisorAwareSnapshot(
     && snapshot.status !== "succeeded"
     && snapshot.status !== "failed"
     && snapshot.status !== "cancelled"
-    && snapshot.status !== "recovery_required"
     && compact.executionSummary
   ) {
+    compact.status = "recovery_required";
+    compact.pendingQuestions = undefined;
+    compact.pendingPlan = undefined;
+    compact.pendingChangeSet = undefined;
+    compact.pendingMutationProposal = undefined;
+    compact.publicStatus = {
+      phase: "retryable_error",
+      message: "This app no longer controls the run. End it to keep your saved draft, or close the other app if it still owns the run.",
+      updatedAt: compact.updatedAt
+    };
     compact.executionSummary = {
       ...compact.executionSummary,
       sessionStatus: "recovery_required",
@@ -879,6 +900,7 @@ export async function cancelStructuredModelAgentRun(runId: string, awaitTerminal
     })]);
   } catch (error) {
     if (error instanceof PublicSupervisorRunError) throw error;
+    if (error instanceof AgentSupervisorPersistenceError) throw new PublicSupervisorRunError(error.code, error.message, 409);
     throw new PublicSupervisorRunError("MODEL_AGENT_CLEANUP_PENDING", "Agent cleanup is not confirmed. Finish the current run and retry.", 409);
   } finally { if (timer) clearTimeout(timer); }
 }
@@ -886,11 +908,18 @@ async function cancelStructuredModelAgentRunInternal(runId: string, awaitTermina
   const active = activeRuns.get(runId);
   if (!active) {
     if (confirmedSupervisorClosures.has(runId)) return compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
-    throw new PublicSupervisorRunError(
-      "MODEL_AGENT_RECOVERY_REQUIRED",
-      "The persisted Model Agent run has no active fenced controller to authorize cancellation.",
-      409
-    );
+    const persistence = createAgentSupervisorPersistence(agentRuntime.store);
+    try {
+      if (!persistence.cancelOrphanedRun) {
+        throw new PublicSupervisorRunError("MODEL_AGENT_RECOVERY_REQUIRED", "The interrupted run has no verified recovery authority. Its saved draft has been preserved.", 409);
+      }
+      await persistence.cancelOrphanedRun(runId);
+      // The transaction already wrote terminal state and the preserved draft.
+      // Read that committed projection instead of saving the stale local cache.
+      agentRuntime.store.reloadPersistedRun(runId);
+      confirmedSupervisorClosures.add(runId);
+      return await compactSupervisorAwareSnapshot(agentRuntime.store.getSnapshot(runId));
+    } finally { await persistence.close?.(); }
   }
   // Retries share the owned cancellation, including a failed-projection repair.
   // A second HTTP request must not race another event chain or session close.

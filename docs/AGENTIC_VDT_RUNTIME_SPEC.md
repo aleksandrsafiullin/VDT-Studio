@@ -1,5 +1,26 @@
 # Agentic VDT Runtime Implementation Spec
 
+## Current bounded recovery implementation (2026-11-13)
+
+The structured Model Agent has an explicit terminal recovery action for newly
+owned runs with verified controller death. It atomically appends an exact
+successor epoch/checkpoint and cancellation event with the compatibility run
+projection, while preserving the saved graph. This narrow implementation does
+not replace the broader durable coordination target below or enable V2 flags.
+Missing local controller state alone never permits takeover. Legacy owner-less,
+external and ambiguous/final-commit cases remain fail-closed. The exact scope,
+process tests and pending installed acceptance are in
+[W1](implementation/OPEN_ALPHA_W1_2026-11-13.md).
+
+The Windows owner path uses machine and kernel boot GUIDs from the admitted,
+manifest-verified native addon, without spawning PowerShell. It writes owner
+token format version 2; Mac/Linux keep version 1. Death or ownership comparison
+requires matching token versions, so an old Windows CIM boot timestamp cannot
+be interpreted as a different native boot GUID. Unavailable native evidence and
+old owner-less runs remain unverified and may use the saved-copy path. Raw OS
+identifiers stay internal. This local token version does not enable V2 runtime
+features; native and installed qualification is recorded separately in W1.
+
 ## Response requirements amendment (2026-11-11)
 
 Existing agents receive complete argument schemas from their actual validators.
@@ -273,6 +294,9 @@ universal repeated `AgentDecision` loop or the older minimum event shape.
   invents final prose or a replacement session. A supervisor that enters
   `recovery_required` projects that state through Event V2 `runtime_status`
   so the public run snapshot does not stay `running`.
+  The chat shows the recovery reason and the available End interrupted run
+  and Continue from saved copy actions. Step retry controls require a live
+  run waiting for user input.
 - Session binding, engine/tool receipts, finish receipt, checkpoint and Event V2
   form an additive Sequence 4 contract. Sequence 3 bytes and authority remain
   unchanged.

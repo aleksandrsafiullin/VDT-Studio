@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
 import {
   AGENT_QUESTION_PROMPT_RULE,
   AGENT_FINISH_MISSING_VALUE_PROMPT_RULE,
@@ -27,9 +28,13 @@ import {
   cursorCheckpointFinalExample,
   cursorCheckpointPrompt,
   cursorCheckpointEnvironmentFingerprint,
+  cursorCheckpointVendorPolicyHash,
+  assertCursorCheckpointVendorConfig,
   isCursorCheckpointHash,
   type CursorCheckpointTurn,
-  type CursorResumeCheckpointEnvironment
+  type CursorResumeCheckpointEnvironment,
+  type CursorResumeProcessRequest,
+  type CursorResumeProcessResult
 } from "./cursor-resume-checkpoint-transport";
 import {
   evaluateWaitingUserAskPayload,
@@ -67,6 +72,113 @@ export interface CursorResumeCheckpointEnvironmentFactoryInput {
 export type CursorResumeCheckpointEnvironmentFactory = (
   input: CursorResumeCheckpointEnvironmentFactoryInput
 ) => CursorResumeCheckpointEnvironment | Promise<CursorResumeCheckpointEnvironment>;
+
+export interface CursorCheckpointQualificationEvidence {
+  readonly evidenceHash: string;
+  readonly testedAt: string;
+  readonly cliVersion: string;
+  readonly protocolVersion: typeof CURSOR_CHECKPOINT_PROTOCOL_VERSION;
+  readonly toolCatalogHash: string;
+  readonly payloadHash: string;
+  readonly policyHash: string;
+  readonly vendorPolicyHash: string;
+  readonly platform: { readonly os: string; readonly arch: string; readonly runtimeVersion: string };
+  readonly modelId: string;
+  readonly catalogModelDisplayName: string;
+  readonly runtimeModelDisplayName: string;
+}
+
+/** Implemented by the trusted desktop launcher. It measures the complete vendor
+ * payload and effective enforcement policy, and fences each launched process
+ * to those identities before the first vendor instruction. */
+export interface CursorCheckpointIsolationIdentity {
+  readonly cliVersion: string;
+  readonly payloadHash: string;
+  readonly policyHash: string;
+  readonly vendorPolicyHash: string;
+}
+
+export interface CursorCheckpointIsolationRunner {
+  measureIdentity(executable: string): Promise<CursorCheckpointIsolationIdentity>;
+  runQualified(
+    request: CursorResumeProcessRequest,
+    identity: CursorCheckpointIsolationIdentity
+  ): Promise<CursorResumeProcessResult>;
+}
+
+const qualifiedTransportEvidence = new WeakMap<CursorResumeCheckpointTransport, CursorCheckpointQualificationEvidence>();
+const grokModelId = /^grok[-_.][a-z0-9][a-z0-9_.-]{0,149}$/;
+const grokDisplayName = /^Grok [A-Za-z0-9 .()+_-]{1,100}$/;
+
+export interface QualifiedCursorResumeCheckpointOptions extends Omit<CursorResumeCheckpointEngineOptions, "transport" | "enableUnverifiedCanary"> {
+  readonly executable: string;
+  readonly runner: CursorCheckpointIsolationRunner;
+  readonly evidence: CursorCheckpointQualificationEvidence;
+  readonly timeoutMs?: number | undefined;
+}
+
+/** Called only with evidence accepted and compiled into the packaged host. This
+ * comparison validates current identity and cannot itself establish qualification. */
+export async function createQualifiedCursorResumeCheckpointEngine(
+  options: QualifiedCursorResumeCheckpointOptions
+): Promise<CursorResumeCheckpointEngine> {
+  const evidence = structuredClone(options.evidence);
+  // The approved OS runner owns confinement. The Windows CLI does not support
+  // its own sandbox, and the confined macOS CLI cannot start a nested sandbox.
+  const vendorSandboxMode = "disabled";
+  const vendorPolicyHash = cursorCheckpointVendorPolicyHash(vendorSandboxMode);
+  if (!path.isAbsolute(options.executable)
+    || ![evidence.evidenceHash, evidence.payloadHash, evidence.policyHash].every((hash) => SAFE_HASH.test(hash))
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(evidence.testedAt)
+    || !Number.isFinite(Date.parse(evidence.testedAt))
+    || evidence.cliVersion !== options.cliVersion
+    || evidence.protocolVersion !== CURSOR_CHECKPOINT_PROTOCOL_VERSION
+    || evidence.toolCatalogHash !== options.toolCatalogHash
+    || evidence.vendorPolicyHash !== vendorPolicyHash
+    || (process.platform !== "darwin" && process.platform !== "win32")
+    || evidence.platform.os !== process.platform
+    || evidence.platform.arch !== process.arch
+    || evidence.platform.runtimeVersion !== process.version
+    || !grokModelId.test(evidence.modelId)
+    || !grokDisplayName.test(evidence.catalogModelDisplayName)
+    || !grokDisplayName.test(evidence.runtimeModelDisplayName)) {
+    throw engineError("CURSOR_CHECKPOINT_QUALIFICATION_MISMATCH", "Cursor checkpoint evidence does not match the current execution profile.");
+  }
+
+  const { runner, executable } = options;
+  const identity = Object.freeze({
+    cliVersion: evidence.cliVersion,
+    payloadHash: evidence.payloadHash,
+    policyHash: evidence.policyHash,
+    vendorPolicyHash
+  });
+  const measured = await runner.measureIdentity(executable);
+  if (measured.cliVersion !== identity.cliVersion
+    || measured.payloadHash !== identity.payloadHash
+    || measured.policyHash !== identity.policyHash
+    || measured.vendorPolicyHash !== identity.vendorPolicyHash) {
+    throw engineError("CURSOR_CHECKPOINT_QUALIFICATION_MISMATCH", "The Cursor version, payload, or isolation policy changed since qualification.");
+  }
+
+  const transport = new CursorResumeCheckpointTransport({
+    executable,
+    validatedCliVersion: options.cliVersion,
+    modelDisplayNames: new Map([[evidence.modelId, evidence.runtimeModelDisplayName]]),
+    isolatedWorkspace: true,
+    vendorSandboxMode,
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    runner: {
+      async run(request) {
+        request.signal.throwIfAborted();
+        await assertCursorCheckpointVendorConfig(request, identity.vendorPolicyHash);
+        request.signal.throwIfAborted();
+        return runner.runQualified(request, identity);
+      }
+    }
+  });
+  qualifiedTransportEvidence.set(transport, evidence);
+  return new CursorResumeCheckpointEngine({ ...options, transport });
+}
 
 export interface CursorResumeCheckpointEngineOptions {
   readonly transport: CursorResumeCheckpointTransport;
@@ -197,6 +309,7 @@ function buildCapability(options: CursorResumeCheckpointEngineOptions): CursorCh
   if (!SAFE_HASH.test(options.toolCatalogHash)) {
     throw engineError("CURSOR_CHECKPOINT_CONFIGURATION_INVALID", "toolCatalogHash must be a sha256 hash.");
   }
+  const evidence = qualifiedTransportEvidence.get(options.transport);
   return Object.freeze({
     schemaVersion: 1,
     executionProfile: "external_cli_agent",
@@ -207,8 +320,13 @@ function buildCapability(options: CursorResumeCheckpointEngineOptions): CursorCh
     protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
     sessionStrategy: "checkpoint_resume",
     toolCatalogHash: options.toolCatalogHash,
-    toolIsolation: "unverified",
-    qualification: Object.freeze({
+    toolIsolation: evidence ? "hard_verified" : "unverified",
+    qualification: Object.freeze(evidence ? {
+      status: "qualified",
+      platform: Object.freeze({ ...evidence.platform }),
+      testedAt: evidence.testedAt,
+      evidenceHash: evidence.evidenceHash
+    } : {
       status: "unverified",
       platform: Object.freeze({ os: process.platform, arch: process.arch, runtimeVersion: process.version }),
       testedAt: null,
@@ -239,7 +357,7 @@ function assertBinding(bindingInput: AgentSessionBinding, capability: CursorChec
     || binding.cliVersion !== capability.cli.version
     || binding.toolIsolation !== capability.toolIsolation
     || binding.qualificationStatus !== capability.qualification.status
-    || binding.capabilityEvidenceHash !== null
+    || binding.capabilityEvidenceHash !== capability.qualification.evidenceHash
     || binding.toolCatalogHash !== capability.toolCatalogHash
     || binding.capabilityProfileHash !== cursorResumeCheckpointCapabilityHash(capability)
   ) {
@@ -305,7 +423,8 @@ function parseSegmentNumber(checkpoint: AgentEngineCheckpoint): number {
 
 export function buildCursorResumeCheckpointInitialPrompt(
   start: AgentEngineStart,
-  allowedToolNames: readonly string[]
+  allowedToolNames: readonly string[],
+  allowsNativeWebSearch = true
 ): string {
   return cursorCheckpointPrompt(canonicalJson({
     protocolVersion: CURSOR_CHECKPOINT_PROTOCOL_VERSION,
@@ -318,7 +437,9 @@ export function buildCursorResumeCheckpointInitialPrompt(
       actionBatch: SHARED_PROMPT_RULES.actionBatch,
       final: `${SHARED_PROMPT_RULES.finishOrder} ${AGENT_FINISH_MISSING_VALUE_PROMPT_RULE}`,
       authority: "Tool calls contain only externalCallId, toolName, and args. Never include run/project/revision/actor/permission/idempotency authority.",
-      security: "Do not use Cursor shell, file, Git, browser, subagent, project-instruction, plugin, global MCP, or approval capabilities. Native web search is allowed; write numbers from it with valueStatus default_assumption and valueSource.sourceTier native_web_search, never as user_provided_value or research.search_web citations. Use only the returned ActionBatch JSON protocol.",
+      security: allowsNativeWebSearch
+        ? "Do not use Cursor shell, file, Git, browser, subagent, project-instruction, plugin, global MCP, or approval capabilities. Native web search is allowed; write numbers from it with valueStatus default_assumption and valueSource.sourceTier native_web_search, never as user_provided_value or research.search_web citations. Use only the returned ActionBatch JSON protocol."
+        : "Use only the VDT Gateway through the returned ActionBatch JSON. Research uses research.search_web when permitted by the brief. Do not use Cursor built-in tools, including native web search.",
       openingSummary: "The first user-facing assistant message must restate the accepted task in the user's language and outline the intended plan in 3-6 short steps before or alongside the first tool batch.",
       research: SHARED_PROMPT_RULES.research,
       questions: AGENT_QUESTION_PROMPT_RULE,
@@ -463,7 +584,7 @@ class CursorResumeCheckpointSession implements AgentRunSession {
     maxSegments: number;
   }): Promise<CursorResumeCheckpointSession> {
     const counters = new CliSessionPerformanceCounters();
-    const prompt = buildCursorResumeCheckpointInitialPrompt(input.start, input.allowedToolNames);
+    const prompt = buildCursorResumeCheckpointInitialPrompt(input.start, input.allowedToolNames, input.transport.allowsNativeWebSearch);
     let result;
     try {
       result = await input.transport.executeSegment({
@@ -978,7 +1099,7 @@ class CursorResumeCheckpointSession implements AgentRunSession {
 
 /** Default-off ExternalCliAgentEngine using Cursor's opaque `--resume` session
  * across bounded ActionBatch checkpoints. It is never a public or automatic
- * fallback and always reports unverified isolation until separately qualified. */
+ * fallback. Only the independently qualified factory admits packaged execution. */
 export class CursorResumeCheckpointEngine implements ExternalCliAgentEngine {
   readonly capability: CursorCheckpointCapability;
   readonly #options: CursorResumeCheckpointEngineOptions;
@@ -1002,7 +1123,7 @@ export class CursorResumeCheckpointEngine implements ExternalCliAgentEngine {
   async openSession(startInput: AgentEngineStart, host: AgentEngineHost): Promise<AgentRunSession> {
     this.#assertEnabled();
     host.signal.throwIfAborted();
-    const binding = assertBinding(startInput.binding, this.capability);
+    const binding = this.#assertCurrentBinding(startInput.binding);
     if (binding.externalSessionId !== null) {
       throw engineError("CURSOR_CHECKPOINT_BINDING_ALREADY_OPENED", "New Cursor checkpoint binding already has a session ID.");
     }
@@ -1036,7 +1157,7 @@ export class CursorResumeCheckpointEngine implements ExternalCliAgentEngine {
     this.#assertEnabled();
     host.signal.throwIfAborted();
     const checkpoint = agentEngineCheckpointSchema.parse(checkpointInput);
-    const binding = assertBinding(await this.#options.resolveBinding(checkpoint), this.capability);
+    const binding = this.#assertCurrentBinding(await this.#options.resolveBinding(checkpoint));
     assertCheckpointBinding(checkpoint, binding);
     const environment = await this.#options.sessionEnvironmentFactory({
       binding: structuredClone(binding),
@@ -1062,8 +1183,17 @@ export class CursorResumeCheckpointEngine implements ExternalCliAgentEngine {
     }
   }
 
+  #assertCurrentBinding(input: AgentSessionBinding): AgentSessionBinding {
+    const binding = assertBinding(input, this.capability);
+    const evidence = qualifiedTransportEvidence.get(this.#options.transport);
+    if (evidence && binding.modelId !== evidence.modelId) {
+      throw engineError("CURSOR_CHECKPOINT_BINDING_MISMATCH", "Cursor model does not match the qualified binding.");
+    }
+    return binding;
+  }
+
   #assertEnabled(): void {
-    if (this.#options.enableUnverifiedCanary === true) return;
+    if (this.capability.qualification.status === "qualified" || this.#options.enableUnverifiedCanary === true) return;
     throw engineError(
       "EXTERNAL_ENGINE_NOT_QUALIFIED",
       "Cursor checkpoint/resume is an unverified default-off canary and has no public fallback authority."

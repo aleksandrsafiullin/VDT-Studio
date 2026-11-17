@@ -1,10 +1,10 @@
-name: Release
+name: Release Source Verification
 on:
+  workflow_dispatch:
   push:
     tags: ["v*-alpha.*"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   alpha:
     runs-on: ubuntu-latest
@@ -27,18 +27,27 @@ jobs:
       - run: pnpm test:e2e
         env:
           VDT_E2E_USE_BUILD: "1"
+      - name: Verify saved-copy recovery with real storage
+        run: pnpm test:e2e:saved-copy
+        env:
+          VDT_E2E_SAVED_COPY_BROWSER: chromium
       - uses: anchore/sbom-action@v0
         with:
           path: .
           format: spdx-json
           output-file: output/release/sbom.spdx.json
-      - uses: softprops/action-gh-release@v2
+      - name: Preserve source artifacts and failed verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          prerelease: true
-          generate_release_notes: true
-          files: |
+          name: source-release-verification-${{ github.sha }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
             output/release/v*/vdt-studio-cli-*.tgz
             output/release/v*/SHA256SUMS
             output/release/v*/manifest.json
             output/release/v*/sbom.spdx.json
             output/release/sbom.spdx.json
+            output/playwright/
+            test-results/

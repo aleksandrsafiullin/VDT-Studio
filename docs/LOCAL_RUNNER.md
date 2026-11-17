@@ -377,3 +377,31 @@ to native provider parameters. The older fixed-OpenAI admission is retained for
 compatibility. GPT-5/GPT-6 and o1/o3/o4 requests use `max_completion_tokens` with provider-default sampling. Default omits reasoning; validated explicit effort stays pinned. Agent exchanges allow 180 seconds; Default connection probes allow 1,024 output tokens and explicit reasoning probes reserve a larger bounded output budget. The HTTP adapter retains the initial brief/catalog and last confirmed action; runtime validation and bounded repair still apply. Hosted mode/build evaluation are excluded and production needs the host Model Agent flag. See [the 145.436-second gpt-6-luna completion and limitations](AI_HARNESS.md#openai-api-model-agent-evidence-2026-10-17).
 
 Codex private `argsJson` decoding covers both wrapped `action.batch.calls` and direct `action.calls` carriers, including the action type aliases already accepted by the canonical parser. Unknown/duplicate fields and authority arguments still fail canonical validation. One same-session envelope correction receives a bounded validation diagnostic; failed correction stops rather than retrying indefinitely.
+
+
+For the official Windows Cursor CLI, the runner binds the completed vendor
+release selected during discovery and uses its bundled executable and fixed
+entrypoint for CLI calls. Windows Cursor version and status probes allow up to
+25 and 40 seconds respectively. A single direct vendor-process observation
+for each measured 10.616 seconds for version and 16.965 seconds for status. Bundled Windows Cursor
+model discovery allows 25 seconds because the prior 10-second deadline was
+shorter than the observed vendor startup. One warmed direct model listing
+completed in 2.944 seconds. Other providers retain their existing probe deadlines.
+
+
+The private Windows installer at `467b9b4` passed Cursor CLI authentication,
+model listing and Settings **Test**. The ordinary composer still requires
+a matching production session binding. A separate Windows vendor CLI
+`2026.11.13-eacade1` probe opened and resumed a single print session using
+a private configuration with sandboxing disabled and observed no tool
+calls. Native sandbox-enabled print refused to run on Windows. Production
+composer and enforceable Windows isolation remain unqualified. See
+[Cursor compatibility](provider-compatibility.md#cursor-agent-cursor_subscription).
+
+The 17 November private installed candidates passed both exact model
+bindings, `grok-4.7-low` and `grok-4.7-xhigh`, on Apple Silicon macOS
+and on an x64 Windows app in the Windows 11 ARM64 QA guest. Each model
+used the approved CLI runner and its existing session across checkpoints.
+The same revision and calculation reopened after app restart. The
+standard package still requires a release-reviewed activation resource
+to expose the corresponding bindings.

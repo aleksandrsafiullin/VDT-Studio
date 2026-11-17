@@ -26,6 +26,21 @@ function render(snapshot = snapshotFixture(), extra: { mappingChanged?: boolean;
 }
 
 describe("incoming KPI mapping review", () => {
+  it("shows the bounded parser failure when the analysis has no mapping", () => {
+    const snapshot = snapshotFixture();
+    const message = "Workbook could not be parsed: Workbook dimensions exceed the 25000 row / 80 column limit. Upload a smaller table extract.";
+    snapshot.status = "failed";
+    snapshot.phase = "change_set_validation";
+    delete snapshot.incomingKpi;
+    snapshot.tables = [];
+    snapshot.warnings = [{ id: "dimensions", severity: "error", type: "data_discovery_validation_failed", message }];
+    snapshot.validationResults = [{ id: "dimensions", status: "error", message }];
+    const html = render(snapshot, { options: {} });
+    expect(html).toContain(message);
+    expect(html).not.toContain("Analyze the source again.");
+    expect(html).not.toContain("data-import-calculate-preview");
+  });
+
   it("renders every legacy warning and validation occurrence even when their stored IDs collide", () => {
     const snapshot = snapshotFixture();
     const first = "Legacy warning about the full reporting period.";

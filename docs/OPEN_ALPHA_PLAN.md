@@ -1,5 +1,12 @@
 # План открытой альфы VDT Studio для Mac
 
+> Scope update, 13 November 2026: this document retains the earlier Mac baseline
+> and evaluation cases. The active release requires GitHub source plus **both Mac
+> and Windows applications**, governed by the
+> [remediation plan](implementation/OPEN_ALPHA_REMEDIATION_PLAN_2026-11-13.md) and
+> [current acceptance matrix](implementation/OPEN_ALPHA_ACCEPTANCE_MATRIX_2026-11-13.md).
+> Historical DMG and provider results below do not qualify the changed candidate.
+
 Точка отсчёта — `0.1.0-alpha.1` из `6bdff52`. Этот arm64 DMG подписан и нотарифицирован. Закрытая приёмка подтвердила скачивание, установку и запуск офлайн с Gatekeeper в macOS 26.6.2 VM, сохранение правок, три расчёта чистой выручки на OpenAI Direct и применение Smart KPI. Проверки исходного кандидата включали `release:verify` и 151 браузерный E2E. [Порядок упаковки](RELEASE.md) · [Границы поддержки](desktop-installation.md)
 
 | Очерёдность | Работа | Что должно быть в отчёте |

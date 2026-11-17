@@ -34,6 +34,7 @@ import type {
 const SAFE_HASH = /^sha256:[a-f0-9]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const ACP_PROTOCOL_ID = "acp-v1";
 const GATEWAY_RESULT_STATUSES = new Set([
   "succeeded",
   "failed",
@@ -44,9 +45,17 @@ const GATEWAY_RESULT_STATUSES = new Set([
 
 type ExternalCapability = Extract<AgentCapabilityProfile, { executionProfile: "external_cli_agent" }>;
 
-export interface CursorAcpQualificationEvidenceV1 {
+interface CursorAcpLaunchIdentity {
+  readonly payloadHash: string;
+  readonly policyHash: string;
+}
+
+export interface CursorAcpQualificationEvidenceV1 extends CursorAcpLaunchIdentity {
   readonly testedAt: string;
   readonly evidenceHash: string;
+  readonly cliVersion: string;
+  readonly protocolVersion: typeof ACP_PROTOCOL_ID;
+  readonly toolCatalogHash: string;
   readonly platform: {
     readonly os: string;
     readonly arch: string;
@@ -91,6 +100,8 @@ export interface CursorAcpEngineOptions {
   ) => FinishReceiptV2 | null | Promise<FinishReceiptV2 | null>;
   readonly enableUnverifiedCanary?: boolean;
   readonly qualificationEvidence?: CursorAcpQualificationEvidenceV1;
+  /** Current pinned payload and isolation policy, independently measured by the trusted host. */
+  readonly qualificationIdentity?: Readonly<CursorAcpLaunchIdentity>;
   readonly onObservation?: (observation: CursorAcpObservation) => void;
   readonly now?: () => Date;
   readonly handshakeTimeoutMs?: number;
@@ -173,6 +184,8 @@ function buildCapability(options: CursorAcpEngineOptions): ExternalCapability {
       !ISO_TIMESTAMP.test(evidence.testedAt)
       || !Number.isFinite(Date.parse(evidence.testedAt))
       || !SAFE_HASH.test(evidence.evidenceHash)
+      || !SAFE_HASH.test(evidence.payloadHash)
+      || !SAFE_HASH.test(evidence.policyHash)
     ) {
       throw adapterError("CURSOR_ACP_QUALIFICATION_INVALID", "Cursor ACP qualification evidence is invalid.");
     }
@@ -186,6 +199,20 @@ function buildCapability(options: CursorAcpEngineOptions): ExternalCapability {
         "Cursor ACP qualification evidence does not match the current host runtime."
       );
     }
+    const identity = options.qualificationIdentity;
+    if (
+      !identity
+      || evidence.cliVersion !== options.cliVersion
+      || evidence.protocolVersion !== ACP_PROTOCOL_ID
+      || evidence.toolCatalogHash !== options.toolCatalogHash
+      || identity.payloadHash !== evidence.payloadHash
+      || identity.policyHash !== evidence.policyHash
+    ) {
+      throw adapterError(
+        "CURSOR_ACP_QUALIFICATION_MISMATCH",
+        "Cursor ACP qualification evidence does not match the current CLI, protocol, tool catalog, payload, or isolation policy."
+      );
+    }
   }
   return Object.freeze({
     schemaVersion: 1,
@@ -194,7 +221,7 @@ function buildCapability(options: CursorAcpEngineOptions): ExternalCapability {
     engineAdapterId: "cursor-acp-v1",
     backendId: "cursor",
     cli: Object.freeze({ name: "cursor-agent", version: options.cliVersion }),
-    protocolVersion: "acp-v1",
+    protocolVersion: ACP_PROTOCOL_ID,
     sessionStrategy: "native",
     toolCatalogHash: options.toolCatalogHash,
     toolIsolation: evidence ? "hard_verified" : "unverified",
@@ -805,6 +832,9 @@ export class CursorAcpEngine implements ExternalCliAgentEngine {
             })
           }
         : {}),
+      ...(options.qualificationIdentity
+        ? { qualificationIdentity: Object.freeze({ ...options.qualificationIdentity }) }
+        : {}),
       ...(options.clientInfo ? { clientInfo: Object.freeze({ ...options.clientInfo }) } : {})
     });
     this.#now = this.#options.now ?? (() => new Date());
@@ -819,12 +849,12 @@ export class CursorAcpEngine implements ExternalCliAgentEngine {
         ? {
             qualificationEvidence: {
               status: "hard_verified",
-              cliVersion: this.#options.cliVersion,
+              cliVersion: this.#options.qualificationEvidence.cliVersion,
               protocolVersion: 1,
               platform: this.#options.qualificationEvidence.platform.os,
               testedAt: this.#options.qualificationEvidence.testedAt,
               evidenceHash: this.#options.qualificationEvidence.evidenceHash,
-              toolCatalogHash: this.#options.toolCatalogHash
+              toolCatalogHash: this.#options.qualificationEvidence.toolCatalogHash
             }
           }
         : {}),

@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { SkillLibraryError, skillContentHash } from "./skill-library";
+import { openWindowsSkillDirectory } from "./windows-skill-files";
+import type { WindowsStorageDirectory } from "./windows-storage";
 
 export interface SkillFileIssue { path: string; message: string }
 export interface SkillFileSnapshot { folders: string[]; files: { path: string; raw: string }[]; issues: SkillFileIssue[] }
@@ -13,6 +15,10 @@ export class LocalSkillFiles {
 
   folder(relative = ""): string {
     const parts = this.parts(relative);
+    if (process.platform === "win32") {
+      this.withWindowsFolder(relative, () => {});
+      return path.join(this.rootPath, ...parts);
+    }
     this.ensureParent();
     try { fs.mkdirSync(this.rootPath, { mode: 0o700 }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
     let current = this.rootPath;
@@ -28,7 +34,13 @@ export class LocalSkillFiles {
     if (this.parts(name).length !== 1) throw new SkillLibraryError("INVALID_SKILL_PATH", "Enter a folder name without path separators.");
     const relative = [parent, name].filter(Boolean).join("/");
     this.parts(relative);
-    try { fs.mkdirSync(path.join(this.folder(parent), name), { mode: 0o700 }); }
+    try {
+      if (process.platform === "win32") {
+        this.withWindowsFolder(parent, directory => directory.createChild(name).close());
+      } else {
+        fs.mkdirSync(path.join(this.folder(parent), name), { mode: 0o700 });
+      }
+    }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new SkillLibraryError("SKILL_CONFLICT", "A folder with this name already exists."); throw error; }
     return relative;
   }
@@ -37,7 +49,15 @@ export class LocalSkillFiles {
     const result: SkillFileSnapshot = { folders: [""], files: [], issues: [] };
     let count = 0;
     const walk = (relative: string, inPackage = false) => {
-      const entries = fs.readdirSync(this.folder(relative), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+      const entries = (process.platform === "win32"
+        ? this.withWindowsFolder(relative, directory => directory.list().map(entry => ({
+            name: entry.name,
+            isSymbolicLink: () => entry.reparse,
+            isDirectory: () => entry.directory,
+            isFile: () => !entry.directory && !entry.reparse,
+          })))
+        : fs.readdirSync(this.folder(relative), { withFileTypes: true }))
+        .sort((a, b) => a.name.localeCompare(b.name));
       const packageFiles = inPackage || entries.some(entry => entry.isFile() && entry.name.toLocaleLowerCase() === "skill.md");
       for (const entry of entries) {
         if (entry.name.startsWith(".")) continue; // Atomic editor saves and our own staging files.
@@ -56,6 +76,12 @@ export class LocalSkillFiles {
   }
 
   read(relative: string): string {
+    if (process.platform === "win32") {
+      return this.withWindowsFile(relative, (directory, name) => {
+        const bytes = directory.read(name, 128 * 1024);
+        return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+      });
+    }
     const filename = this.filePath(relative);
     const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     try {
@@ -70,6 +96,13 @@ export class LocalSkillFiles {
     const slug = title.normalize("NFKC").replace(/[^\p{L}\p{N} _-]/gu, "").trim().replace(/\s+/g, "-").slice(0, 60) || "skill";
     const name = `${slug}-${id.replace(/^user\./, "").slice(0, 8)}-${randomUUID().slice(0, 8)}.md`;
     const relative = [folder, name].filter(Boolean).join("/");
+    if (process.platform === "win32") {
+      this.withWindowsFile(relative, (directory, file) => {
+        directory.writeExclusive(file, Buffer.from(raw));
+        directory.flush();
+      });
+      return relative;
+    }
     const fd = fs.openSync(this.filePath(relative), "wx", 0o600);
     try { fs.writeFileSync(fd, raw, "utf8"); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     return relative;
@@ -79,7 +112,14 @@ export class LocalSkillFiles {
     const slug = name.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N} _-]/gu, "").trim().replace(/[\s_]+/g, "-").slice(0, 60) || "new-skill";
     const relative = this.createFolder(folder, slug);
     try { this.writeSeedFile(`${relative}/SKILL.md`, raw); }
-    catch (error) { fs.rmdirSync(this.folder(relative)); throw error; }
+    catch (error) {
+      if (process.platform === "win32") {
+        this.withWindowsFolder(folder, directory => directory.removeEmptyChild(slug));
+      } else {
+        fs.rmdirSync(this.folder(relative));
+      }
+      throw error;
+    }
     return `${relative}/SKILL.md`;
   }
 
@@ -94,6 +134,17 @@ export class LocalSkillFiles {
       try { this.createFolder(parent, part); } catch (error) { if (!(error instanceof SkillLibraryError) || error.code !== "SKILL_CONFLICT") throw error; }
       this.folder(next); parent = next;
     }
+    if (process.platform === "win32") {
+      return this.withWindowsFolder(parent, directory => {
+        try { directory.writeExclusive(name, Buffer.from(raw)); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+          throw error;
+        }
+        directory.flush();
+        return true;
+      });
+    }
     const filename = path.join(this.folder(parent), name);
     let fd: number;
     try { fd = fs.openSync(filename, "wx", 0o600); }
@@ -103,6 +154,20 @@ export class LocalSkillFiles {
   }
 
   replace(relative: string, raw: string, expectedRaw: string): void {
+    if (process.platform === "win32") {
+      this.withWindowsFile(relative, (directory, name) => {
+        const stage = `.skill-save-${randomUUID()}`;
+        const bytes = Buffer.from(raw);
+        directory.writeExclusive(stage, bytes);
+        try { directory.replace(stage, name, Buffer.from(expectedRaw), bytes); }
+        catch (error) {
+          if (!["EBUSY", "ESTALE"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+          directory.unlinkExpected(stage, bytes);
+          throw new SkillLibraryError("SKILL_CONFLICT", "The file changed in another application. Refresh the library before saving.");
+        }
+      });
+      return;
+    }
     const filename = this.filePath(relative), temporary = path.join(path.dirname(filename), `.skill-save-${randomUUID()}`);
     try {
       const fd = fs.openSync(temporary, "wx", 0o600);
@@ -113,9 +178,19 @@ export class LocalSkillFiles {
   }
 
   moveFile(relative: string, folder: string): string {
-    this.read(relative);
+    const original = this.read(relative);
     const next = [folder, path.posix.basename(relative)].filter(Boolean).join("/");
     if (relative === next) return next;
+    if (process.platform === "win32") {
+      this.withWindowsFile(relative, (source, name) => this.withWindowsFolder(folder, target => {
+        try { source.moveFile(name, target, name, Buffer.from(original)); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          throw new SkillLibraryError("SKILL_CONFLICT", "A file with this name already exists in that folder.");
+        }
+      }));
+      return next;
+    }
     // link/unlink gives no-clobber publication even across host processes.
     try { fs.linkSync(this.filePath(relative), this.filePath(next)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new SkillLibraryError("SKILL_CONFLICT", "A file with this name already exists in that folder."); throw error; }
@@ -124,11 +199,21 @@ export class LocalSkillFiles {
   }
 
   renameFolder(relative: string, name: string): string {
-    if (!relative || this.parts(name).length !== 1) throw new SkillLibraryError("INVALID_SKILL_PATH", "Choose a folder and enter its new name.");
+    if (!this.parts(relative).length || this.parts(name).length !== 1) throw new SkillLibraryError("INVALID_SKILL_PATH", "Choose a folder and enter its new name.");
     const parent = path.posix.dirname(relative) === "." ? "" : path.posix.dirname(relative);
     const next = [parent, name].filter(Boolean).join("/");
     this.parts(next);
     if (relative === next) return next;
+    if (process.platform === "win32") {
+      this.withWindowsFolder(parent, directory => {
+        try { directory.moveDirectory(path.posix.basename(relative), directory, name); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          throw new SkillLibraryError("SKILL_CONFLICT", "A folder with this name already exists.");
+        }
+      });
+      return next;
+    }
     const source = this.folder(relative), destination = path.join(this.folder(parent), name);
     if (fs.existsSync(destination)) throw new SkillLibraryError("SKILL_CONFLICT", "A folder with this name already exists.");
     fs.renameSync(source, destination);
@@ -142,8 +227,61 @@ export class LocalSkillFiles {
   }
 
   removeIfUnchanged(relative: string, expectedRaw: string): void {
-    try { if (skillContentHash(this.read(relative)) === skillContentHash(expectedRaw)) fs.unlinkSync(this.filePath(relative)); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    try {
+      if (process.platform === "win32") {
+        this.withWindowsFile(relative, (directory, name) => directory.unlinkExpected(name, Buffer.from(expectedRaw)));
+      } else if (skillContentHash(this.read(relative)) === skillContentHash(expectedRaw)) {
+        fs.unlinkSync(this.filePath(relative));
+      }
+    }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && !(process.platform === "win32" && code === "ESTALE")) throw error;
+    }
+  }
+
+  /** Holds native path guards through OS dispatch. Once the editor takes over,
+   * its later reads and saves follow the ordinary host filesystem contract. */
+  async openInEditor(relative: string, item: "file" | "folder", open: (filename: string) => Promise<void>): Promise<void> {
+    if (process.platform !== "win32") {
+      if (item === "folder") return open(this.folder(relative));
+      this.read(relative);
+      return open(this.filePath(relative));
+    }
+    const parts = this.parts(relative);
+    const name = item === "file" ? this.markdownName(parts) : undefined;
+    const scope = this.openWindowsFolder(parts);
+    try {
+      const leaf = name ? scope.directory.openEditorLeaf(name) : undefined;
+      try { await open(leaf?.path ?? scope.directory.editorDirectoryPath()); }
+      finally { leaf?.close(); }
+    } finally {
+      scope.close();
+    }
+  }
+
+  private openWindowsFolder(parts: string[]) {
+    this.ensureParent();
+    return openWindowsSkillDirectory(path.dirname(this.rootPath), [path.basename(this.rootPath)], true, parts);
+  }
+
+  private withWindowsFolder<T>(relative: string, operation: (directory: WindowsStorageDirectory) => T): T {
+    const scope = this.openWindowsFolder(this.parts(relative));
+    try { return operation(scope.directory); }
+    finally { scope.close(); }
+  }
+
+  private withWindowsFile<T>(relative: string, operation: (directory: WindowsStorageDirectory, name: string) => T): T {
+    const parts = this.parts(relative), name = this.markdownName(parts);
+    return this.withWindowsFolder(parts.join("/"), directory => operation(directory, name));
+  }
+
+  private markdownName(parts: string[]): string {
+    const name = parts.pop();
+    if (!name || !/\.(md|markdown)$/i.test(name)) {
+      throw new SkillLibraryError("INVALID_SKILL_PATH", "Choose a Markdown file in the skills folder.");
+    }
+    return name;
   }
 
   private parts(relative: string): string[] {

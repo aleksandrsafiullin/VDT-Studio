@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { getWindowsStorageForProfile, withWindowsStorageParent } from "./windows-storage";
 import type { ProjectManifest } from "./types";
 
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
@@ -63,7 +64,18 @@ export function writeProjectManifest(projectPath: string, manifest: ProjectManif
 
 export function readProjectManifest(projectPath: string): ProjectManifest {
   const manifestPath = path.join(projectPath, ".vdt-studio", "project.json");
-  const raw = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as ProjectManifest;
+  return parseProjectManifest(fs.readFileSync(manifestPath, "utf8"));
+}
+
+export function readWindowsProjectManifest(locationPath: string, projectId: string): ProjectManifest {
+  const profile = getWindowsStorageForProfile(locationPath);
+  const relative = path.join("projects", assertSafeId(projectId, "projectId"), ".vdt-studio", "project.json");
+  return withWindowsStorageParent(profile, relative, false,
+    (directory, name) => parseProjectManifest(directory.read(name, 1_048_576).toString("utf8")));
+}
+
+function parseProjectManifest(text: string): ProjectManifest {
+  const raw = JSON.parse(text) as ProjectManifest;
   if (raw.schemaVersion !== 1) {
     throw new Error(`Unsupported project manifest schemaVersion: ${String(raw.schemaVersion)}`);
   }
@@ -72,6 +84,23 @@ export function readProjectManifest(projectPath: string): ProjectManifest {
 }
 
 export function scanProjectLocation(locationPath: string): ProjectManifest[] {
+  if (process.platform === "win32") {
+    const profile = getWindowsStorageForProfile(locationPath);
+    let projects;
+    try {
+      projects = profile.openChild("projects");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+    try {
+      return projects.list().flatMap((entry) => {
+        if (!entry.directory || entry.reparse || !SAFE_ID_PATTERN.test(entry.name)) return [];
+        try { return [readWindowsProjectManifest(locationPath, entry.name)]; }
+        catch { return []; }
+      }).sort((left, right) => left.name.localeCompare(right.name));
+    } finally { projects.close(); }
+  }
   const location = ensureProjectLocation(locationPath);
   const projectsDir = path.join(location, "projects");
   if (!fs.existsSync(projectsDir)) return [];

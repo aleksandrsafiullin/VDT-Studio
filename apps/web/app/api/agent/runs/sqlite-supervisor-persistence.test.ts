@@ -697,7 +697,7 @@ function createAuthority(databasePath: string): SqliteAgentSupervisorPersistence
   return new SqliteAgentSupervisorPersistence(databasePath, {
     now: () => NOW,
     fenceLeaseMs: 60 * 60 * 1_000,
-    fenceTokenFactory: () => `test-fence-${++fence}`
+    fenceTokenFactory: () => `agent-fence:00000000-0000-4000-a000-${String(++fence).padStart(12, "0")}`
   });
 }
 

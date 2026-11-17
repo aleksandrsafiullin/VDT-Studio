@@ -115,6 +115,7 @@ start_app() {
   read_state
   [[ "$STATE" == stopped ]] || { open_app; return; }
   ensure_install || fail "Could not install dependencies."
+  node packages/data-harness/scripts/build-parser-worker.mjs || fail "Could not prepare the file parser."
 
   print "Starting ${APP_NAME} at ${URL}"
   print "Stop with Ctrl+C in this window, or open run.command again."

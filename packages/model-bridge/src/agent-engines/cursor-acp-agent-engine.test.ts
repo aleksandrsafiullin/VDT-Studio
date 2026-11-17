@@ -19,6 +19,8 @@ import {
   CursorAcpEngine,
   cursorAcpCapabilityProfileHash,
   cursorAcpInitialContextHash,
+  type CursorAcpEngineOptions,
+  type CursorAcpQualificationEvidenceV1,
   type CursorAcpSessionEnvironmentFactoryInput
 } from "./cursor-acp-agent-engine";
 import type {
@@ -90,7 +92,8 @@ class FakeCursorAcpTransport implements CursorAcpTransport {
       });
     }
     if (method === "authenticate") return Promise.resolve({});
-    if (method === "session/new") return Promise.resolve({ sessionId: this.sessionId });
+    const models = { currentModelId: "cursor-grok-4.6-medium" };
+    if (method === "session/new") return Promise.resolve({ sessionId: this.sessionId, models });
     if (method === "session/resume") {
       if (this.resumeMessage) {
         this.emit({
@@ -106,10 +109,10 @@ class FakeCursorAcpTransport implements CursorAcpTransport {
           }
         });
       }
-      return Promise.resolve({ stopReason: "end_turn" });
+      return Promise.resolve({ stopReason: "end_turn", models });
     }
     if (method === "session/load" || method === "session/close") {
-      return Promise.resolve({});
+      return Promise.resolve({ models });
     }
     if (method === "session/prompt") {
       return new Promise((resolve) => this.#promptResolvers.push(resolve));
@@ -773,10 +776,26 @@ describe("CursorAcpEngine canonical adapter", () => {
     await session.close();
   });
 
-  it("rejects qualification evidence for a different host before exposing hard isolation", () => {
-    expect(() => new CursorAcpEngine({
-      cliVersion: "2026.08.11-e8db854",
-      toolCatalogHash: sha256("tool-catalog"),
+  describe("qualification identity", () => {
+    const cliVersion = "2026.08.11-e8db854";
+    const toolCatalogHash = sha256("tool-catalog");
+    const identity = {
+      payloadHash: sha256("cursor-payload"),
+      policyHash: sha256("cursor-isolation-policy")
+    };
+    const platform = { os: process.platform, arch: process.arch, runtimeVersion: process.version };
+    const evidence: CursorAcpQualificationEvidenceV1 = {
+      ...identity,
+      cliVersion,
+      protocolVersion: "acp-v1",
+      toolCatalogHash,
+      testedAt: "2026-08-26T00:00:00.000Z",
+      evidenceHash: sha256("fixture-evidence"),
+      platform
+    };
+    const options: CursorAcpEngineOptions = {
+      cliVersion,
+      toolCatalogHash,
       allowedToolNames: ["vdt.validate"],
       transportFactory: () => new FakeCursorAcpTransport(),
       sessionEnvironmentFactory: async () => ({
@@ -788,13 +807,43 @@ describe("CursorAcpEngine canonical adapter", () => {
         throw new Error("not used");
       },
       resolveFinishReceipt: () => null,
-      qualificationEvidence: {
-        testedAt: "2026-08-26T00:00:00.000Z",
-        evidenceHash: sha256("evidence"),
-        platform: { os: "different-os", arch: process.arch, runtimeVersion: process.version }
-      }
-    })).toThrowError(expect.objectContaining({
-      code: "CURSOR_ACP_QUALIFICATION_PLATFORM_MISMATCH"
-    }));
+      qualificationEvidence: evidence,
+      qualificationIdentity: identity
+    };
+
+    it("exposes the hard-isolation capability for a matching fixture identity", () => {
+      expect(new CursorAcpEngine(options).capability).toMatchObject({
+        toolIsolation: "hard_verified",
+        qualification: { status: "qualified", evidenceHash: evidence.evidenceHash }
+      });
+    });
+
+    it.each([
+      ["CLI version", { cliVersion: "2026.08.12-abcd" }],
+      ["tool catalog", { toolCatalogHash: sha256("stale-catalog") }],
+      ["payload", { payloadHash: sha256("stale-payload") }],
+      ["isolation policy", { policyHash: sha256("stale-policy") }],
+      ["protocol", { protocolVersion: "acp-v2" } as unknown as Partial<CursorAcpQualificationEvidenceV1>]
+    ] as const)("rejects stale %s evidence", (_field, mismatch) => {
+      expect(() => new CursorAcpEngine({ ...options, qualificationEvidence: { ...evidence, ...mismatch } }))
+        .toThrowError(expect.objectContaining({ code: "CURSOR_ACP_QUALIFICATION_MISMATCH" }));
+    });
+
+    it.each([
+      ["OS", { os: "different-os" }],
+      ["architecture", { arch: "different-arch" }],
+      ["runtime version", { runtimeVersion: "v0.0.1" }]
+    ] as const)("rejects evidence for a different host %s", (_field, mismatch) => {
+      expect(() => new CursorAcpEngine({
+        ...options,
+        qualificationEvidence: { ...evidence, platform: { ...platform, ...mismatch } }
+      })).toThrowError(expect.objectContaining({ code: "CURSOR_ACP_QUALIFICATION_PLATFORM_MISMATCH" }));
+    });
+
+    it("requires a current host launch identity independently of the evidence", () => {
+      const { qualificationIdentity: _qualificationIdentity, ...withoutIdentity } = options;
+      expect(() => new CursorAcpEngine(withoutIdentity))
+        .toThrowError(expect.objectContaining({ code: "CURSOR_ACP_QUALIFICATION_MISMATCH" }));
+    });
   });
 });

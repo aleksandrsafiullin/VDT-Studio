@@ -26,6 +26,10 @@ jobs:
       - run: pnpm test:e2e
         env:
           VDT_E2E_USE_BUILD: "1"
+      - name: Verify saved-copy recovery with real storage
+        run: pnpm test:e2e:saved-copy
+        env:
+          VDT_E2E_SAVED_COPY_BROWSER: chromium
       - uses: actions/upload-artifact@v4
         if: always()
         with:

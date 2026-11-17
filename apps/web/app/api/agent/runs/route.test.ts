@@ -157,16 +157,6 @@ async function waitForManagedRuntimeRun() {
   throw new Error("Timed out waiting for managed runtime request.");
 }
 
-async function waitForManagedRuntimeCancelled() {
-  for (let attempt = 0; attempt < 300; attempt += 1) {
-    if ([...(runtimeGlobal.__vdtStudioDevelopmentRuntime?.runs.values() ?? [])].some((run) => run.status === "cancelled")) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error("Timed out waiting for managed runtime cancellation.");
-}
-
 async function waitForProviderCalls(providerFetch: { mock: { calls: unknown[][] } }, count: number) {
   for (let attempt = 0; attempt < 300; attempt += 1) {
     if (providerFetch.mock.calls.length >= count) return;
@@ -1932,12 +1922,25 @@ describe("agent runs API", { timeout: 30_000 }, () => {
   });
 
   it("cancels the managed local runtime request when an agent run is cancelled", async () => {
-    runtimeGlobal.__vdtStudioDevelopmentRuntime = createLocalRuntimeContext({
+    let markExecutableResolutionStarted!: () => void;
+    const executableResolutionStarted = new Promise<void>(resolve => {
+      markExecutableResolutionStarted = resolve;
+    });
+    let finishExecutableResolution!: (executable: string) => void;
+    const executable = new Promise<string>(resolve => {
+      finishExecutableResolution = resolve;
+    });
+    const spawn = vi.fn();
+    const context = createLocalRuntimeContext({
       executor: {
-        env: { ...process.env, VDT_FAKE_CODEX_MODE: "slow" },
-        resolveExecutable: async () => fakeCodex
+        resolveExecutable: () => {
+          markExecutableResolutionStarted();
+          return executable;
+        },
+        spawn
       }
     });
+    runtimeGlobal.__vdtStudioDevelopmentRuntime = context;
     const previousIds = agentRunIds();
     const startPromise = startRun(jsonRequest("http://localhost:3000/api/agent/runs", {
       mode: "generate_vdt",
@@ -1956,18 +1959,25 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     }));
 
     const runId = await waitForNewAgentRun(previousIds);
-    await waitForManagedRuntimeRun();
-
-    const cancelResponse = await cancelRun(new Request(`http://localhost:3000/api/agent/runs/${runId}/cancel`, { method: "POST" }), {
-      params: Promise.resolve({ runId })
-    });
-    expect((await readJson(cancelResponse)).status).toBe("cancelled");
+    await executableResolutionStarted;
+    const [managedRun] = context.runs.values();
+    try {
+      expect(managedRun).toBeDefined();
+      const cancelResponse = await cancelRun(new Request(`http://localhost:3000/api/agent/runs/${runId}/cancel`, { method: "POST" }), {
+        params: Promise.resolve({ runId })
+      });
+      expect((await readJson(cancelResponse)).status).toBe("cancelled");
+    } finally {
+      finishExecutableResolution(fakeCodex);
+    }
 
     const startResponse = await startPromise;
     expect(startResponse.status).toBe(200);
     const cancelled = await waitForRunSnapshot(runId, (snapshot) => snapshot.status === "cancelled");
     expect(cancelled.status).toBe("cancelled");
-    await waitForManagedRuntimeCancelled();
+    await managedRun!.settled;
+    expect(managedRun).toMatchObject({ status: "cancelled", error: { code: "CANCELLED" } });
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it("maps lazy SQLite initialization failures through the frozen storage envelope", async () => {

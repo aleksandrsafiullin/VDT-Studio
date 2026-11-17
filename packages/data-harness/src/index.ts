@@ -1,7 +1,7 @@
+import { parseDatasetIsolated as parseDataset } from "./parser-isolation";
+import { textFromInput, isNumberLike, isDateLike, extensionOf, safeId, shortHash, warning } from "./parser-primitives";
 import { reconcileIncomingKpiPlan } from "@vdt-studio/vdt-core";
 import { z } from "zod";
-import { parquetMetadataAsync, parquetReadObjects, parquetSchema } from "hyparquet";
-import * as XLSX from "xlsx";
 import { buildIncomingKpiBreakdown as buildCompleteIncomingKpiBreakdown, incomingKpiOptionsSchema, parseDatasetNumber, type IncomingKpiOptions, type IncomingKpiReview } from "./incoming-kpi-breakdown";
 export { INCOMING_KPI_LIMITS, incomingKpiOptionsSchema } from "./incoming-kpi-breakdown";
 export type { IncomingKpiOptions, IncomingKpiReview, IncomingKpiQuestion } from "./incoming-kpi-breakdown";
@@ -27,6 +27,7 @@ import type {
 } from "@vdt-studio/vdt-core";
 
 export const DATA_HARNESS_VERSION = "0.1.0";
+export { DataParserError, PARSER_RESOURCE_LIMITS } from "./parser-limits";
 
 export const DEFAULT_DATA_DISCOVERY_LIMITS = {
   maxFileBytes: 50 * 1024 * 1024,
@@ -320,7 +321,7 @@ export const dataAgentDecisionSchema = z.discriminatedUnion("type", [
 
 export type DataAgentDecision = z.infer<typeof dataAgentDecisionSchema>;
 
-interface ParsedDataset {
+export interface ParsedDataset {
   tables: DataTable[];
   warnings: VdtWarning[];
 }
@@ -869,308 +870,6 @@ export async function parseRetainedDataset(input: AnalyzeRawDatasetInput): Promi
   return parseDataset(input, { ...DEFAULT_DATA_DISCOVERY_LIMITS, ...input.limits });
 }
 
-async function parseDataset(input: AnalyzeRawDatasetInput, limits: DataDiscoveryLimits): Promise<ParsedDataset> {
-  if (input.file.sizeBytes > limits.maxFileBytes) {
-    return {
-      tables: [],
-      warnings: [
-        warning("error", "data_discovery_validation_failed", `File exceeds ${limits.maxFileBytes} byte limit.`)
-      ]
-    };
-  }
-
-  const extension = extensionOf(input.file.fileName);
-  if (extension === "xlsx" || extension === "xls" || input.file.mimeType.includes("spreadsheet") || input.file.mimeType.includes("excel")) {
-    return parseWorkbookDataset(input, limits);
-  }
-
-  if (extension === "parquet" || input.file.mimeType.includes("parquet")) {
-    return await parseParquetDataset(input, limits);
-  }
-
-  if (extension === "json" || extension === "ndjson" || input.file.mimeType.includes("json")) {
-    return parseJsonDataset(textFromInput(input), limits);
-  }
-
-  if (["csv", "tsv", "txt"].includes(extension) || input.file.mimeType.includes("csv") || input.file.mimeType.includes("text")) {
-    return parseDelimitedDataset(textFromInput(input), input.file.fileName, limits, input.entryContext?.purpose === "incoming_kpis");
-  }
-
-  return {
-    tables: [],
-    warnings: [
-      warning(
-        "error",
-        "data_discovery_unsupported_format",
-        `Unsupported file format "${extension || input.file.mimeType || "unknown"}" in this local discovery slice.`
-      )
-    ]
-  };
-}
-
-function parseWorkbookDataset(input: AnalyzeRawDatasetInput, limits: DataDiscoveryLimits): ParsedDataset {
-  try {
-    const bytes = bytesFromInput(input);
-    const workbook = XLSX.read(bytes, {
-      type: "array",
-      cellDates: input.entryContext?.purpose !== "incoming_kpis",
-      cellNF: input.entryContext?.purpose === "incoming_kpis",
-      cellStyles: false
-    });
-    const warnings: VdtWarning[] = [];
-    const sheetNames = workbook.SheetNames.slice(0, limits.maxSheets);
-    if (workbook.SheetNames.length > limits.maxSheets) {
-      warnings.push(warning("warning", "data_discovery_validation_failed", `Sheets were truncated at ${limits.maxSheets} sheets.`));
-    }
-    const tables = sheetNames.flatMap((sheetName, index) => {
-      const sheet = workbook.Sheets[sheetName];
-      if (!sheet) return [];
-      const sheetRange = XLSX.utils.decode_range(sheet["!ref"] ?? "A1");
-      const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-        header: 1,
-        raw: input.entryContext?.purpose === "incoming_kpis",
-        defval: "",
-        blankrows: true
-      });
-      // SheetJS 0.20 converts date-formatted numeric cells to Date objects in
-      // sheet_to_json even with raw:true. Incoming KPI arithmetic must retain
-      // the original serial-day value; the cell format below owns its meaning.
-      if (input.entryContext?.purpose === "incoming_kpis") {
-        for (const [rowIndex, row] of matrix.entries()) {
-          for (const columnIndex of row.keys()) {
-            const cell = sheet[XLSX.utils.encode_cell({ r: sheetRange.s.r + rowIndex, c: sheetRange.s.c + columnIndex })] as XLSX.CellObject | undefined;
-            if (cell?.t === "n" && typeof cell.v === "number") row[columnIndex] = cell.v;
-          }
-        }
-      }
-      const sourceRows = matrix.map((row, matrixRowIndex) => ({ matrixRowIndex, cells: row.map((cell) => stringifyCell(cell).trim()) }))
-        .filter((row) => row.cells.some((cell) => cell.length > 0));
-      const normalized = sourceRows.map((row) => row.cells);
-      if (normalized.length === 0) {
-        warnings.push(warning("warning", "data_discovery_validation_failed", `Sheet "${sheetName}" is empty.`));
-        return [];
-      }
-      const first = normalized[0] ?? [];
-      const hasHeader = looksLikeHeader(first, normalized[1] ?? []) && (input.entryContext?.purpose !== "incoming_kpis" || isUnambiguousNamedHeader(first));
-      const columns = normalizeHeaders(hasHeader ? first : first.map((_, columnIndex) => `column_${columnIndex + 1}`), limits.maxColumns);
-      const dataRows = hasHeader ? normalized.slice(1) : normalized;
-      const layoutIssue = !hasHeader || first.some((cell) => !cell.trim()) || dataRows.some((row) => row.length > first.length)
-        ? "The sheet does not have one clear, complete header row. Upload a clean table extract with one named header row; title rows, merged headers and multiple tables are not supported by this import."
-        : undefined;
-      const columnFormats: Record<string, string> = {};
-      const columnEncodings: NonNullable<DataTable["columnEncodings"]> = {};
-      const sourceDataRows = sourceRows.slice(hasHeader ? 1 : 0);
-      for (const [columnIndex, column] of columns.entries()) {
-        let durationCells = 0;
-        let otherCells = 0;
-        let dateCells = 0;
-        for (const row of sourceDataRows) {
-          const cell = sheet[XLSX.utils.encode_cell({ r: sheetRange.s.r + row.matrixRowIndex, c: sheetRange.s.c + columnIndex })] as XLSX.CellObject | undefined;
-          if (!cell || cell.v === undefined || cell.v === null || cell.v === "") continue;
-          if (!columnFormats[column] && cell.z) columnFormats[column] = String(cell.z);
-          const encoding = typeof cell.v === "number" ? excelCellEncoding(String(cell.z ?? "General")) : "numeric";
-          if (encoding === "duration_days") durationCells += 1;
-          else if (encoding === "datetime") dateCells += 1;
-          else otherCells += 1;
-        }
-        if (dateCells > 0) columnEncodings[column] = "excel_datetime";
-        else if (durationCells > 0) columnEncodings[column] = otherCells > 0 ? "mixed_excel_duration" : "excel_duration_days";
-      }
-      if (dataRows.length > limits.maxRows) {
-        warnings.push(warning("warning", "data_discovery_validation_failed", `Rows in "${sheetName}" were sampled at ${limits.maxRows} rows.`));
-      }
-      if (first.length > limits.maxColumns) {
-        warnings.push(warning("warning", "data_discovery_validation_failed", `Columns in "${sheetName}" were truncated at ${limits.maxColumns} columns.`));
-      }
-      return [{
-        tableId: `sheet_${index + 1}`,
-        name: sheetName,
-        columns,
-        rows: dataRows.slice(0, limits.maxRows).map((row) => rowToRecord(columns, row)),
-        truncated: dataRows.length > limits.maxRows || first.length > limits.maxColumns,
-        layoutIssue,
-        columnFormats,
-        columnEncodings,
-        numericColumns: columns.filter((_, columnIndex) => {
-          const cells = sourceDataRows.map((row) => matrix[row.matrixRowIndex]?.[columnIndex]);
-          return cells.some((cell) => typeof cell === "number") && cells.every((cell) => cell === "" || cell === undefined || typeof cell === "number");
-        }),
-        excelDateSystem: workbook.Workbook?.WBProps?.date1904 ? "1904" as const : "1900" as const
-      }];
-    });
-    return { tables, warnings };
-  } catch (error) {
-    return {
-      tables: [],
-      warnings: [
-        warning(
-          "error",
-          "data_discovery_validation_failed",
-          error instanceof Error ? `Workbook could not be parsed: ${error.message}` : "Workbook could not be parsed."
-        )
-      ]
-    };
-  }
-}
-
-async function parseParquetDataset(input: AnalyzeRawDatasetInput, limits: DataDiscoveryLimits): Promise<ParsedDataset> {
-  try {
-    const bytes = bytesFromInput(input);
-    const file = asyncBufferFromBytes(bytes);
-    const metadata = await parquetMetadataAsync(file);
-    const schema = parquetSchema(metadata);
-    const columns = normalizeHeaders(
-      schema.children.map((child) => child.element.name).filter((name): name is string => typeof name === "string" && name.length > 0),
-      limits.maxColumns
-    );
-    const rows = await parquetReadObjects({
-      file,
-      metadata,
-      rowStart: 0,
-      rowEnd: Math.min(Number(metadata.num_rows), limits.maxRows),
-      columns
-    });
-    const warnings: VdtWarning[] = [];
-    if (Number(metadata.num_rows) > limits.maxRows) {
-      warnings.push(warning("warning", "data_discovery_validation_failed", `Parquet rows were sampled at ${limits.maxRows} rows.`));
-    }
-    return {
-      tables: [
-        {
-          tableId: "parquet_1",
-          name: stripExtension(input.file.fileName) || "Parquet records",
-          columns,
-          rows: rows.map((row) => {
-            const record = row as Record<string, unknown>;
-            return Object.fromEntries(columns.map((column) => [column, stringifyCell(record[column])]));
-          }),
-          truncated: Number(metadata.num_rows) > limits.maxRows
-        }
-      ],
-      warnings
-    };
-  } catch (error) {
-    return {
-      tables: [],
-      warnings: [
-        warning(
-          "error",
-          "data_discovery_validation_failed",
-          error instanceof Error ? `Parquet could not be parsed: ${error.message}` : "Parquet could not be parsed."
-        )
-      ]
-    };
-  }
-}
-
-function parseDelimitedDataset(
-  text: string,
-  fileName: string,
-  limits: DataDiscoveryLimits,
-  requireNamedHeader = false
-): ParsedDataset {
-  const delimiter = detectDelimiter(text);
-  const records = parseDelimitedRows(text, delimiter);
-  const nonEmpty = records.filter((row) => row.some((cell) => cell.trim().length > 0));
-  if (nonEmpty.length === 0) {
-    return { tables: [], warnings: [warning("error", "data_discovery_validation_failed", "The file contains no rows.")] };
-  }
-
-  const first = nonEmpty[0] ?? [];
-  const hasHeader = looksLikeHeader(first, nonEmpty[1] ?? []) && (!requireNamedHeader || isUnambiguousNamedHeader(first));
-  const columns = normalizeHeaders(hasHeader ? first : first.map((_, index) => `column_${index + 1}`), limits.maxColumns);
-  const dataRows = hasHeader ? nonEmpty.slice(1) : nonEmpty;
-  const rows = dataRows.slice(0, limits.maxRows).map((row) => rowToRecord(columns, row));
-  const warnings: VdtWarning[] = [];
-  if (dataRows.length > limits.maxRows) {
-    warnings.push(warning("warning", "data_discovery_validation_failed", `Rows were sampled at ${limits.maxRows} rows for this run.`));
-  }
-  if (first.length > limits.maxColumns) {
-    warnings.push(warning("warning", "data_discovery_validation_failed", `Columns were truncated at ${limits.maxColumns} columns.`));
-  }
-
-  return {
-    tables: [
-      {
-        tableId: "table_1",
-        name: stripExtension(fileName) || "Imported table",
-        columns,
-        rows,
-        truncated: dataRows.length > limits.maxRows || first.length > limits.maxColumns,
-        layoutIssue: !hasHeader || first.some((cell) => !cell.trim()) || dataRows.some((row) => row.length > first.length)
-          ? "The file does not have one clear, complete header row. Upload a clean table extract with one named header row; title rows and multiple tables are not supported by this import."
-          : undefined
-      }
-    ],
-    warnings
-  };
-}
-
-function parseJsonDataset(text: string, limits: DataDiscoveryLimits): ParsedDataset {
-  try {
-    const trimmed = text.trim();
-    const parsed = trimmed.includes("\n") && !trimmed.startsWith("[") && !trimmed.startsWith("{")
-      ? trimmed.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as unknown)
-      : JSON.parse(trimmed) as unknown;
-    const rows = Array.isArray(parsed)
-      ? parsed
-      : isRecord(parsed)
-        ? Array.isArray(parsed.items)
-          ? parsed.items
-          : Array.isArray(parsed.rows)
-            ? parsed.rows
-            : [parsed]
-        : [];
-    if (rows.length === 0) {
-      return {
-        tables: [],
-        warnings: [warning("error", "data_discovery_validation_failed", "JSON does not contain any object rows.")]
-      };
-    }
-    const flattened = rows
-      .filter(isRecord)
-      .slice(0, limits.maxRows)
-      .map((row) => flattenRecord(row));
-    if (flattened.length === 0 || flattened.every((row) => Object.keys(row).length === 0)) {
-      return {
-        tables: [],
-        warnings: [warning("error", "data_discovery_validation_failed", "JSON rows do not contain analyzable object fields.")]
-      };
-    }
-    const columns = normalizeHeaders([...new Set(flattened.flatMap((row) => Object.keys(row)))], limits.maxColumns);
-    return {
-      tables: [
-        {
-          tableId: "table_1",
-          name: "JSON records",
-          columns,
-          rows: flattened.map((row) => {
-            const next: Record<string, string> = {};
-            for (const column of columns) {
-              next[column] = stringifyCell(row[column]);
-            }
-            return next;
-          }),
-          truncated: rows.length > limits.maxRows
-        }
-      ],
-      warnings: rows.length > limits.maxRows
-        ? [warning("warning", "data_discovery_validation_failed", `Rows were sampled at ${limits.maxRows} rows for this run.`)]
-        : []
-    };
-  } catch (error) {
-    return {
-      tables: [],
-      warnings: [
-        warning(
-          "error",
-          "data_discovery_validation_failed",
-          error instanceof Error ? `JSON could not be parsed: ${error.message}` : "JSON could not be parsed."
-        )
-      ]
-    };
-  }
-}
 
 function profileTables(tables: DataTable[], limits: DataDiscoveryLimits): ColumnProfile[] {
   return tables.flatMap((table) => table.columns.map((column) => profileColumn(table, column, limits)));
@@ -2763,127 +2462,16 @@ function jaccard(left: Set<string>, right: Set<string>): number {
   return union === 0 ? 0 : intersection / union;
 }
 
-function textFromInput(input: AnalyzeRawDatasetInput): string {
-  const bytes = input.bytes;
-  if (bytes) return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  return input.text ?? "";
-}
 
-function bytesFromInput(input: AnalyzeRawDatasetInput): Uint8Array {
-  if (input.bytes) return input.bytes;
-  return new TextEncoder().encode(input.text ?? "");
-}
 
-function asyncBufferFromBytes(bytes: Uint8Array) {
-  return {
-    byteLength: bytes.byteLength,
-    slice(start: number, end?: number): ArrayBuffer {
-      const view = bytes.slice(start, end);
-      return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
-    }
-  };
-}
 
-function parseDelimitedRows(text: string, delimiter: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = "";
-  let quoted = false;
 
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    const next = text[index + 1];
-    if (char === "\"") {
-      if (quoted && next === "\"") {
-        cell += "\"";
-        index += 1;
-      } else {
-        quoted = !quoted;
-      }
-      continue;
-    }
-    if (!quoted && char === delimiter) {
-      row.push(cell);
-      cell = "";
-      continue;
-    }
-    if (!quoted && (char === "\n" || char === "\r")) {
-      if (char === "\r" && next === "\n") index += 1;
-      row.push(cell);
-      rows.push(row);
-      row = [];
-      cell = "";
-      continue;
-    }
-    cell += char ?? "";
-  }
-  row.push(cell);
-  rows.push(row);
-  return rows;
-}
 
-function detectDelimiter(text: string): string {
-  const sample = text.split(/\r?\n/).slice(0, 20).join("\n");
-  const candidates = [",", "\t", ";", "|"];
-  return candidates
-    .map((delimiter) => ({
-      delimiter,
-      count: [...sample].filter((char) => char === delimiter).length
-    }))
-    .sort((left, right) => right.count - left.count)[0]?.delimiter ?? ",";
-}
 
-function looksLikeHeader(first: string[], second: string[]): boolean {
-  if (first.length === 0) return false;
-  const firstTextShare = first.filter((cell) => !isNumberLike(cell.trim()) && !isDateLike(cell.trim())).length / first.length;
-  const secondDataShare = second.length === 0
-    ? 0
-    : second.filter((cell) => isNumberLike(cell.trim()) || isDateLike(cell.trim())).length / Math.max(1, second.length);
-  return firstTextShare >= 0.6 || secondDataShare >= 0.4;
-}
 
-function isUnambiguousNamedHeader(first: string[]): boolean {
-  return first.length > 0 && first.every((cell) => cell.trim().length > 0 && !isNumberLike(cell.trim()) && !isDateLike(cell.trim()) && !/^[+-]?(?:\d[\d\s.,]*|\.\d+)(?:[eE][+-]?\d+)?%?$/.test(cell.trim()) && !/^\d{1,4}[./:-]\d/.test(cell.trim()));
-}
 
-function excelCellEncoding(format: string): "duration_days" | "datetime" | "numeric" {
-  const tokens = format.replace(/"[^"]*"/g, "").replace(/\\.|_.|\*./g, "").replace(/\[(?!h+\]|m+\]|s+\])[^\]]*\]/gi, "").toLowerCase();
-  if (/[dy]/.test(tokens) || /m{3,}/.test(tokens)) return "datetime";
-  if (/\[(?:h+|m+|s+)\]|h+:m+|m+:s+/.test(tokens)) return "duration_days";
-  if (/[hms]/.test(tokens)) return "datetime";
-  return "numeric";
-}
 
-function normalizeHeaders(headers: string[], maxColumns: number): string[] {
-  const seen = new Map<string, number>();
-  return headers.slice(0, maxColumns).map((header, index) => {
-    const base = header.trim() || `column_${index + 1}`;
-    const count = seen.get(base) ?? 0;
-    seen.set(base, count + 1);
-    return count === 0 ? base : `${base}_${count + 1}`;
-  });
-}
 
-function rowToRecord(columns: string[], row: string[]): Record<string, string> {
-  const record: Record<string, string> = {};
-  columns.forEach((column, index) => {
-    record[column] = (row[index] ?? "").trim();
-  });
-  return record;
-}
-
-function flattenRecord(record: Record<string, unknown>, prefix = "", depth = 0): Record<string, unknown> {
-  const flat: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(record)) {
-    const nextKey = prefix ? `${prefix}.${key}` : key;
-    if (isRecord(value) && depth < 3) {
-      Object.assign(flat, flattenRecord(value, nextKey, depth + 1));
-    } else {
-      flat[nextKey] = value;
-    }
-  }
-  return flat;
-}
 
 function topValueDistribution(values: string[], limit: number): Array<{ value: string; count: number; share: number }> {
   const counts = new Map<string, number>();
@@ -2924,33 +2512,13 @@ function redactValue(value: string): string {
     .replace(/\b(?:\+?\d[\d\s().-]{7,}\d)\b/g, "[redacted-phone]");
 }
 
-function isNumberLike(value: string): boolean {
-  if (!value) return false;
-  const normalized = value.replace(/\s/g, "").replace(/,/g, ".");
-  return /^-?\d+(?:\.\d+)?%?$/.test(normalized);
-}
 
-function isDateLike(value: string): boolean {
-  if (!value || isNumberLike(value)) return false;
-  if (!/\d{1,4}[./:-]\d{1,2}|\d{4}-\d{1,2}-\d{1,2}/.test(value)) return false;
-  const parsed = Date.parse(value.replace(/(\d{2})\.(\d{2})\.(\d{4})/, "$3-$2-$1"));
-  return Number.isFinite(parsed);
-}
 
 function isBooleanLike(value: string): boolean {
   return /^(true|false|yes|no|y|n|да|нет|0|1)$/i.test(value.trim());
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
-function stringifyCell(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return JSON.stringify(value);
-}
 
 function requireTable(tables: DataTable[], tableId: string): DataTable {
   const table = tables.find((candidate) => candidate.tableId === tableId);
@@ -2994,41 +2562,7 @@ function uniqueNodeId(existing: Set<string>, seed: string, index: number): strin
   return candidate;
 }
 
-function safeId(value: string): string {
-  const raw = value.trim().toLowerCase();
-  const slug = raw
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\x00-\x7F]/g, "_")
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  const base = slug || "item";
-  const compactRaw = raw.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  if (base === compactRaw && base.length > 0) {
-    return base.slice(0, 80);
-  }
 
-  const suffix = shortHash(raw || value);
-  const baseMaxLength = Math.max(1, 79 - suffix.length);
-  return `${base.slice(0, baseMaxLength)}_${suffix}`;
-}
-
-function shortHash(value: string): string {
-  let hash = 0x811c9dc5;
-  for (const char of value) {
-    hash ^= char.codePointAt(0) ?? 0;
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(36).padStart(6, "0").slice(0, 8);
-}
-
-function stripExtension(fileName: string): string {
-  return fileName.replace(/\.[^.]+$/, "");
-}
-
-function extensionOf(fileName: string): string {
-  return fileName.split(".").pop()?.toLowerCase() ?? "";
-}
 
 function clamp(value: number): number {
   return Math.max(0, Math.min(1, Number(value.toFixed(2))));
@@ -3040,14 +2574,6 @@ function confidenceLabel(confidence: number): "high" | "medium" | "low" {
   return "low";
 }
 
-function warning(severity: VdtWarning["severity"], type: VdtWarning["type"], message: string): VdtWarning {
-  return {
-    id: `data_${severity}_${safeId(message)}_${shortHash(JSON.stringify([severity, type, message]))}`,
-    severity,
-    type,
-    message
-  };
-}
 
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);

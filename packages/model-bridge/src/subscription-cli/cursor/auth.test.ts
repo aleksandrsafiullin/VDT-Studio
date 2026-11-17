@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { probeCursorAuth } from "./auth";
+import { probeCursorStatus, probeCursorAuth } from "./auth";
 import type { ExecFileProbe } from "../types";
 
 type ExecResult = { stdout: string; stderr: string };
@@ -92,6 +92,18 @@ describe("probeCursorAuth", () => {
     const withRateLimit = await probeCursorAuth("/usr/bin/agent", { execFileImpl });
     expect(withRateLimit.status).toBe("rate_limited");
     expect(withRateLimit.authSummary).toMatch(/rate limit/i);
+  });
+
+  it("keeps post-login verification status-only if the status command is unavailable", async () => {
+    const calls: string[][] = [];
+    const result = await probeCursorStatus("/usr/bin/agent", {
+      execFileImpl: async (_executable, args) => {
+        calls.push([...args]);
+        throw Object.assign(new Error("unknown command"), { code: "ENOENT" });
+      }
+    });
+    expect(result).toBeNull();
+    expect(calls).toEqual([["status", "--format", "json"]]);
   });
 
   it("uses connection-test stream-json when status command is unavailable", async () => {

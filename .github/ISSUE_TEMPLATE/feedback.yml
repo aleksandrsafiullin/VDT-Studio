@@ -1,0 +1,39 @@
+name: Workflow feedback
+description: Share an improvement or a confusing part of the workflow.
+title: "[Feedback] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe what you were trying to accomplish. This report is public; use a synthetic example instead of private project data. For a reproducible failure, choose Bug report.
+  - type: input
+    id: environment
+    attributes:
+      label: App version and platform
+      description: Include the version/source commit and OS if known.
+  - type: textarea
+    id: task
+    attributes:
+      label: What were you trying to do?
+      description: Explain the goal and which part of the app you used.
+    validations:
+      required: true
+  - type: textarea
+    id: friction
+    attributes:
+      label: What was confusing or missing?
+      description: Explain where the workflow slowed you down or prevented progress.
+    validations:
+      required: true
+  - type: textarea
+    id: improvement
+    attributes:
+      label: What would make it easier?
+      description: Optional. Describe the result you want rather than a required technical implementation.
+  - type: checkboxes
+    id: public_review
+    attributes:
+      label: Public report review
+      options:
+        - label: I reviewed the report and attachments for information I do not want to publish.
+          required: true

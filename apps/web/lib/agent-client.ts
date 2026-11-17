@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReasoningEffort } from "@vdt-studio/model-bridge";
+import { recordSupportError } from "./support-error-events";
 
 import type {
   AgentRunEventV2,
@@ -134,13 +135,14 @@ export function createAgentClient(fetcher: typeof fetch = fetch): AgentClient {
 
 async function readJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
   const raw = await response.text();
-  let payload: T & { error?: { message?: unknown } | string };
+  let payload: T & { error?: { code?: unknown; message?: unknown } | string };
   try {
-    payload = (raw ? JSON.parse(raw) : {}) as T & { error?: { message?: unknown } | string };
+    payload = (raw ? JSON.parse(raw) : {}) as T & { error?: { code?: unknown; message?: unknown } | string };
   } catch {
     throw new Error(`${fallbackMessage} Server returned non-JSON response.`);
   }
   if (!response.ok) {
+    recordSupportError(typeof payload.error === "object" && payload.error !== null ? payload.error.code : undefined);
     const error = typeof payload.error === "string" ? payload.error : payload.error?.message;
     throw new Error(typeof error === "string" ? error : fallbackMessage);
   }

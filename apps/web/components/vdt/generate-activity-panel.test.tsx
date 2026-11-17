@@ -222,15 +222,15 @@ describe("GenerateActivityPanel", () => {
     expect(html).not.toContain('data-testid="cancel-generate"');
   });
 
-  it("renders recovery_required as a recoverable pause, not a hard failure", () => {
+  it.each(["TIMEOUT", "MAX_STEPS_EXCEEDED"] as const)("renders only bounded recovery actions for an interrupted %s run", (code) => {
     const html = renderToStaticMarkup(
       <GenerateActivityPanel
         activity={activity({
           status: "recovery_required",
           canCancel: true,
           retryableError: {
-            code: "RECOVERY_REQUIRED",
-            message: "Recover this run from the last durable checkpoint.",
+            code,
+            message: "The agent step could not finish.",
             retryCount: 0,
             createdAt: "2026-06-24T10:00:05.000Z"
           },
@@ -245,12 +245,21 @@ describe("GenerateActivityPanel", () => {
           agentChatMessages: []
         })}
         onCancel={() => undefined}
+        onAnswer={() => undefined}
+        onContinueRun={() => undefined}
+        onSavedCopy={() => undefined}
       />
     );
 
     expect(html).toContain("Recovery needed");
-    expect(html).toContain('data-testid="cancel-generate"');
+    expect(html).toContain("The agent step could not finish.");
+    expect(html).toContain("End interrupted run");
+    expect(html).toContain("Continue from saved copy");
+    expect(html.match(/data-testid="cancel-generate"/g)).toHaveLength(1);
     expect(html).toContain('data-testid="agent-retryable-error"');
+    expect(html).not.toContain('data-testid="retry-agent"');
+    expect(html).not.toContain('data-testid="continue-agent-smaller-step"');
+    expect(html).not.toContain('data-testid="continue-agent-run"');
     expect(html).not.toContain('data-testid="agent-hard-error"');
     expect(html).not.toContain("animate-spin");
   });

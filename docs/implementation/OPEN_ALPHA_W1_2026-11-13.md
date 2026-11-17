@@ -1,0 +1,114 @@
+# W1 — End an interrupted Model Agent run
+
+Status: implemented for newly owned structured Model Agent runs, subject to independent and installed candidate acceptance. RA-02 remains partial for upgrades and unsupported owner evidence.
+
+The run snapshot reports that recovery is needed when this process lacks the active controller. This is a public availability projection; it does not prove death, change the persisted run, or permit a takeover. The activity panel offers **End interrupted run** and no longer presents the pending answer or approval as actionable. A confirmed terminal response and a fresh terminal snapshot are required before the browser clears the stop marker and releases Smart. A failed stop or terminal read leaves the action retryable.
+
+An epoch records a locally generated process identity (hashed host and boot identity, PID, and random process instance). On Linux, host evidence also includes PID namespace identity. The owner must be provably dead: same trusted host evidence with a different boot, or an explicit `ESRCH` for the stored PID on the same boot. Live or reused PIDs, access denial, identity errors, malformed tokens and foreign hosts fail closed. Missing in-memory state and fence expiry are insufficient. The process instance distinguishes controllers for writes; it is not a death probe. Host and boot identifiers remain internal.
+
+The recovery transaction uses `BEGIN IMMEDIATE`, compares current owner/epoch and event head, then rechecks admission. The exact successor checkpoint and one terminal event commit together with the cancelled compatibility snapshot. The action does not open a model session, replay a tool, update a project or rewrite a revision. A retry returns the same terminal outcome. Normalized late writes encounter the new epoch or terminal guard, and the legacy persistence adapter checks the durable fence before graph or artifact writes. No schema, feature flag or general durable controller lease was added.
+
+Old owner-less runs, runs with unverified ownership, and external sessions remain outside this recovery path. Verified finish, final event, and ambiguous in-flight tool outcomes are refused rather than relabelled cancelled. There is no automatic inference resumption. Later Windows owner/native/compiled and installed recovery evidence is scoped below; the live provider matrix remains unverified. This document records implementation evidence; the coordinator owns readiness, product and normative documentation integration.
+
+## Verification
+
+Run from the repository root with `/opt/homebrew/opt/node@24/bin` on `PATH`, a unique SSD-local `TMPDIR`, and no Xcode build:
+
+```sh
+pnpm exec vitest run apps/web/app/api/agent/runs/{supervisor-orphan-recovery,supervisor-controller-owner,supervisor-recovery-boundary,sqlite-supervisor-persistence,supervisor-terminal-handoff}.test.ts apps/web/components/vdt/vdt-store-{cancel,incoming-entry,agent-revision}.test.ts apps/web/lib/{smart-kpi-scheduler,agent-client}.test.ts packages/vdt-agent-runtime/src/agent-supervisor-persistence.test.ts
+pnpm docs:verify
+git diff --check
+```
+
+The process fixture uses isolated on-disk SQLite databases and actual child controllers killed with SIGKILL in running, waiting-for-answer, and waiting-for-approval states. It checks live-owner denial before each kill, simultaneous recovery from two independent new processes, restart replay, rollback at each atomic write boundary, stale writes, and refusal of ambiguous tool and verified finish states. Graph evidence compares complete revision, head and commit rows and the saved draft. Editor regressions exercise manual edit preservation, pending cleanup across reload/network loss and Smart availability. These are focused fixtures and do not qualify the packaged desktop or live providers.
+
+On macOS, the combined run passed all 129 tests in 11 files. The release documentation verifier passed (31 registered documents), and `git diff --check` passed. The SSD-local test directories and SQLite fixtures were removed after child exit and database close; no large evidence or build artifacts were retained.
+
+After tightening the transaction comparison to include the full binding and fence expiration, the isolated real-process suite passed all 9 tests again.
+
+## Continue from a saved copy
+
+When a run cannot safely end, **Continue from saved copy** can open a new VDT from the editor's saved revision. The local endpoint verifies the run's persisted workspace project and VDT, then loads and verifies the named immutable revision. The copy gets its own storage identity, a fresh revision history and the same graph content. Its identity derives from the source run and revision so repeated requests converge on one copy.
+
+The server checks the bytes and hash of every retained file referenced by the graph under its original VDT scope. It stages durable access links before publishing the new VDT, including access to referenced archived sources. A source failure leaves the new VDT unpublished. A later retry uses the same target and can reuse previously staged links. The original bytes and source associations remain intact. Files associated with the original but absent from the selected revision stay in the project library. Explicit detach in a published copy survives a retry.
+
+The editor switches only while the same source and draft remain open and the saved graph matches the editor's graph. When the draft differs, the copy appears in the project list and the editor keeps the draft open. The original stop marker remains scoped to the original VDT. The copy starts without an active agent and rejects old source snapshots. This action leaves the original run unresolved. Runs without a committed revision or with unverifiable retained sources still require a separate path. Windows filesystem support for durable link staging and installed-app behavior require candidate verification.
+
+Saved-copy verification passed 75 tests in seven files covering the saved-copy and recovery-boundary APIs, file routes, cancellation, incoming entry, activity panel and setup rail. The cancellation suite subsequently passed all nine tests with added dirty-draft and edit-during-request cases. The saved-copy API test verifies missing-source and pre-existing detached-link rejection before publication, concurrent requests, original graph and run preservation, actual file download and agent dataset read on the copy, and retry after explicit detach. The web TypeScript check (`pnpm --dir apps/web exec tsc --noEmit --incremental false`), documentation verifier and diff check passed. Owned SSD test directories were removed.
+
+Saved-copy replay now requires the committed storage receipt for the route's reserved idempotency key and verifies the target's immutable initial graph against the source revision. Metadata supplied through general VDT creation does not establish this authority. The focused receipt and storage adapter run passed all 54 tests, and the web TypeScript check passed.
+
+On Windows, saved-copy link staging dispatches through the W7 native adapter registered by Windows storage admission. That adapter publishes relative to retained directory handles and flushes file and directory state. Existing links must match the staged bytes and pass the native durable read. This path requires W7 admission and remains unavailable while that gate is closed.
+
+The final focused run passed 84 tests in five files after the receipt and Windows dispatch changes. It included the saved-copy and real-process recovery tests, the storage-write adapter, retained file routes, and editor cancellation. Documentation and diff checks passed. The SSD test directory was removed.
+
+Two Playwright cases cover the clean and dirty editor paths through the visible saved-copy button, real storage routes and an interrupted run seeded into SQLite. Both download the retained CSV through the copy's Files dialog. The dirty path verifies that the original draft remains visible and opens the copy in a separate browser context. Test discovery passed with `pnpm exec playwright test --list tests/e2e/saved-copy-recovery.spec.ts --project chromium`. The coordinated execution is recorded below.
+
+The isolated production build and both saved-copy Chromium cases passed. The clean case opened the copy immediately. The dirty case kept the edited baseline and displayed the saved-copy notice. Both checked the original revision and interrupted run, downloaded the CSV from the copy's Files dialog, and confirmed the copy's scoped file access. Initial attempts exposed a fixture hydration race and an incorrect assumption about the dialog's download URL. The rerun uses an initialization script and tests the visible download separately from scoped access. The build used Node 24.15.0 on macOS and retained the Windows storage capability gate. The evidence directory contains the source hashes, build and browser logs, screenshots, and prior failure traces. The temporary build, dependencies, and fixture storage occupied 985 MB and were removed after the server closed. The retained evidence is 32 MB. [Browser evidence](../../output/release/audits/w1-browser.e5DGg4fI/)
+
+
+Run the focused regression gate with `TMPDIR=/Volumes/Corsair-SSD pnpm test:e2e:saved-copy` from a checkout or isolated snapshot with an existing production web build and the matching browser engine. The runner starts its own loopback server on port 3100 and passes the fixture the server's fresh profile. Screenshots and failure traces are written to `output/playwright/saved-copy/`. Use `--list` to verify discovery without starting a server. The gate defaults to bundled Chromium. Set `VDT_E2E_SAVED_COPY_BROWSER=chrome` to use an installed Chrome.
+
+
+The dedicated gate passed both browser tests in 17.1 seconds against a fresh macOS production build with Node 24.15.0 and installed Chrome. The dirty-case assertion requires the full notice in the viewport. The screenshot confirms both lines of the notice and the retained baseline of 250 are visible. An earlier screenshot showed a clipped notice, so the outcome now replaces the helper text. The runner removed its profile after the server closed and port 3100 was released. The isolated build and dependencies occupied 933 MB and were removed. The retained evidence is 808 KB. [Final browser evidence](../../output/release/audits/w1-viewport.7pQd2YWm/)
+
+Windows mutation preview writes now use the admitted storage profile and native publication helper. The legacy Supervisor fence is checked before file or graph effects. The persistence suite passed all 26 tests after adding a Windows dispatch regression for the exact preview bytes and verifying that an orphan-terminal run cannot reach the native write. The combined persistence and real-process recovery check passed 35 tests. This verifies dispatch on macOS with a native call spy. Installed Windows preview persistence remains part of W7 qualification.
+
+The Windows-only ownership test uses a real child, registry and CIM identity discovery, and the OS PID probe. It requires live-owner denial before terminating its own child and accepts death only after child exit. The Mac control run passed three portable tests and skipped the Windows-only case. Run the native test under the standard-user Windows qualification lane with `pnpm exec vitest run apps/web/app/api/agent/runs/supervisor-controller-owner-native.test.ts --maxWorkers=1`. Full Windows terminal recovery and graph preservation require actual production storage admission and separate installed evidence.
+
+The final source gate exposed a concurrent recovery failure whose fixture discarded the child response. Recovery now reads the event chain and current owner fence inside one SQLite snapshot. A deterministic multi-process test commits a competing terminal action between the observed run and fence queries and proves the observation retains the original owner. It then verifies replay returns the one committed terminal event. The two focused suites passed 20 tests, including the original simultaneous-child case. The original CI child's exact failure remains unknown.
+
+The installed shell opens Home. Home previously cleared the hydrated VDT identity and revision base, causing unsaved manual edits to be replaced by the last committed revision when the user reopened the VDT. Startup now verifies the stored owner and VDT before reopening the local draft. A moved head leaves the draft pinned to its original revision so ordinary save conflict handling applies. A missing or invalid source presents explicit local export or discard. Deliberate Home navigation still saves first. The existing Home and workspace suites passed 30 tests and the web TypeScript check passed. Browser cases for cold launch, stale revision and deleted source are registered for the next isolated build.
+
+All six workspace navigation tests passed in 48.8 seconds in installed Chrome against a fresh isolated production web build on Node 24. The tests exercise ordinary Back and Home saves, two-editor revision conflict, cold Home restoration of a manual edit and named version before a stored commit, stale startup preservation, and export of the local graph when its VDT was deleted. The first browser run exposed a race in the Home link. A successful save now marks deliberate Home navigation, and the Home page consumes that mark when it mounts. The first-run logs and traces were retained. The server and profile closed and the 996 MB isolated build was removed. [Draft browser evidence](../../output/release/audits/w1-draft-browser.TOvNseXj/)
+
+A later source review found that comparing the entire workspace wrapper could
+refuse that intent after a metadata-only background refresh and redirect Home
+back to the editor. A new focused regression failed before the correction.
+The mark now captures active scope, graph reference/revision, revision base and
+both pending save/create journals. Metadata refresh alone is tolerated; protected
+identity changes still reject and consume the mark. Independent review accepted
+the source and independently passed 12 focused navigation/agent-revision tests
+on Node 24. Exact `4001c2e` packages include this correction. Focused installed
+Home and unsaved-draft cold restoration passed on Tahoe and Windows Arm/x64
+emulation. The aggregate source gate failed two separate WebKit timing cases;
+the correction has not received a complete passing source gate at that commit.
+This race is not established as the cause of the isolated Windows cancelled-
+editor Home observation; normal clean editor Home later passed there.
+
+Installed Windows 7a failed End interrupted run after controller termination. The read-only diagnostic reported an owner-less epoch-one token, a five-second PowerShell identity lookup that returned ETIMEDOUT, and ESRCH for the terminated controller PID. A PID alone cannot attach identity to that stored run. The owner-less run retains the saved-copy path.
+
+New Windows runs use version 2 owner evidence from the admitted native addon. The Windows path validates the machine and boot GUIDs and hashes them before persistence. It avoids the PowerShell subprocess. Reboot proof compares equal token versions only, so a native boot GUID cannot be mistaken for a reboot when compared to an older CIM timestamp. Four portable identity tests passed. Later d4 and `08966a5` standard-user native gates passed 34 tests including native owner/death proof; compiled Windows startup issued v2 evidence matching the real web PID.
+
+## Transient saved-copy progress follow-up
+
+Installed Windows `4001c2e` displayed "Creating saved copy…" after selecting old
+history before a new click. A passive trace of the subsequent actual click
+recorded a successful idempotent POST in 1,210 ms and VDT GET in 262 ms. The
+earlier d4 two-minute UI observation has no request timing and is not proof of
+a backend copy hang. The separate Windows Running End delay remains unexplained.
+
+The editor now keeps copy progress process-local. Persistence, cold hydration
+and history sanitize legacy progress; a genuine active request can restore its
+indicator when the same run is reselected. The duplicate guard remains through
+workspace refresh, while settlement clears the indicator even after a scope
+change. Real outcome/error text and source stop markers are preserved.
+
+The new hydration regression fails against exact `4001c2e`, then passes when
+only the fixed store replaces the old source. Both use the same test in isolated
+Node 24 archives. Independent review accepted all 11 focused cancellation/copy
+tests, including history reselection, duplicate suppression and scope-change
+cleanup. [Red/green evidence](../../output/release/audits/w1-progress-before-after.3vYJjPH5/)
+retains logs and source hashes; temporary stages were removed. Exact `08966a5` passed the unchanged full source
+gate and both package checks. Scoped Tahoe history/cold-reopen/copy/Home
+acceptance passed; Windows stale-progress migration passed; actual copy latency remains a failure. Ordinary Windows dirty-copy behavior remains unverified.
+
+Exact08966 Windows migration cleared old copy progress before the new action,
+then a fresh copy remained pending about two minutes during a private Node
+no-byte timeout. A separate trace measured copy POST17.934s, snapshot30.540s and
+VDT load2.176s, with only9ms between POST completion and GET start. Closed head
+and graph digests matched the earlier baseline; a subsequent200 save did not
+create a new active revision. Ordinary dirty-copy and new Running checks were
+deferred. CPU capture did not start because target validation rejected the
+endpoint; its exact predicate remains unknown. No underlying cause or further
+product correction is claimed.

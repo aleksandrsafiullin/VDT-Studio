@@ -18,13 +18,12 @@ export async function POST(request: Request) {
     if (!hasSameLocalOrigin(request)) throw new SkillLibraryError("ORIGIN_REJECTED", "File actions require the local application's own origin.");
     const repository = new LocalSkillRepository(), library = await loadAvailableSkillLibrary(repository);
     switch (body.action) {
-      case "open.folder": await openSkillPath(repository.files.folder(body.folder)); break;
-      case "open.file": repository.files.read(body.filePath); await openSkillPath(repository.files.filePath(body.filePath)); break;
+      case "open.folder": await repository.files.openInEditor(body.folder, "folder", openSkillPath); break;
+      case "open.file": await repository.files.openInEditor(body.filePath, "file", openSkillPath); break;
       case "open.skill": {
         const filePath = library.files.paths[body.id];
         if (!filePath) throw new SkillLibraryError("SKILL_NOT_FOUND", "This skill was moved or removed. Refresh the library to see the current files.");
-        repository.files.read(filePath);
-        await openSkillPath(repository.files.filePath(filePath));
+        await repository.files.openInEditor(filePath, "file", openSkillPath);
         break;
       }
     }

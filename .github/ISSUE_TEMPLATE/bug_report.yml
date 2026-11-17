@@ -1,0 +1,66 @@
+name: Bug report
+description: Report a reproducible problem with VDT Studio.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Include only information you are comfortable publishing. Do not attach credentials, private projects, raw source files or unreviewed logs. If the app offers diagnostic export, preview the file before sharing it. A small synthetic example is enough.
+  - type: input
+    id: build
+    attributes:
+      label: App version or source commit
+      description: Copy the version/build from the app's support information, or give the Git commit for a source checkout. Write unknown if the app cannot open.
+      placeholder: "Version and commit, or unknown"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS, architecture and installation method
+      description: Include the OS version, Apple Silicon/Intel/x64/ARM64, and whether this is an installer or a source checkout. For a source checkout include browser and Node versions.
+      placeholder: "macOS version, Apple Silicon, DMG; or Windows version, x64, installer/source"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Describe the smallest sequence that shows the problem. Use invented project names and values if needed.
+      placeholder: |
+        1. Open...
+        2. Select...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result and impact
+      description: Include the visible error code, how often it happens, and whether work can continue. State whether saved work reopens; do not delete your profile to test recovery.
+    validations:
+      required: true
+  - type: input
+    id: ai_configuration
+    attributes:
+      label: AI configuration, if involved
+      description: Provider/CLI, model, reasoning setting and relevant CLI version. Leave empty for a manual-modeling issue. Do not include a key or account identifier.
+  - type: textarea
+    id: reviewed_evidence
+    attributes:
+      label: Reviewed diagnostic file or screenshot
+      description: Optional. Attach only a previewed diagnostic export or a redacted screenshot. Remove personal paths, source values, prompt text, credentials and private project details before sharing.
+  - type: checkboxes
+    id: public_review
+    attributes:
+      label: Public report review
+      options:
+        - label: I reviewed the report and attachments for information I do not want to publish.
+          required: true

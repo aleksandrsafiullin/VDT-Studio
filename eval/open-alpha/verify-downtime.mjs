@@ -99,9 +99,9 @@ const csvInput = await source("downtime-minutes.csv", "text/csv", csv);
 const xlsxInput = await source("downtime-elapsed.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xlsx);
 const jsonInput = await source("downtime-intervals.json", "application/json", json);
 
-const [csvTable, xlsxTable, jsonTable] = await Promise.all(
-  [csvInput, xlsxInput, jsonInput].map(async (input) => (await parseRetainedDataset(input)).tables[0])
-);
+const [csvTable] = (await parseRetainedDataset(csvInput)).tables;
+const [xlsxTable] = (await parseRetainedDataset(xlsxInput)).tables;
+const [jsonTable] = (await parseRetainedDataset(jsonInput)).tables;
 assert.equal(csvTable.rows.length, 10);
 assert.equal(xlsxTable.name, "Shift log");
 assert.equal(xlsxTable.rows.length, 10);

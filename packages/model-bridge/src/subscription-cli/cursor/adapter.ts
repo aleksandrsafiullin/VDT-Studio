@@ -1,3 +1,4 @@
+import { cursorLaunchTarget, WINDOWS_CURSOR_MODELS_TIMEOUT_MS, WINDOWS_CURSOR_VERSION_TIMEOUT_MS } from "./windows-launch";
 import path from "node:path";
 import type { ModelBackendDetectionResult } from "../../contract";
 import type { VdtSchemaId } from "../../schema-registry";
@@ -101,9 +102,11 @@ export async function listCursorAgentModels(
   options: SubscriptionCliModelProbeOptions = {}
 ): Promise<readonly string[]> {
   const execFile = options.execFile ?? defaultExecFileProbe;
-  const result = await execFile(executable, ["models"], {
+  const target = cursorLaunchTarget(executable, ["models"]);
+  const result = await execFile(target.executable, target.args, {
+    env: target.env,
     encoding: "utf8",
-    timeout: 10_000,
+    timeout: target.bundled ? WINDOWS_CURSOR_MODELS_TIMEOUT_MS : 10_000,
     maxBuffer: 512 * 1024,
     windowsHide: true,
     shell: false,
@@ -167,9 +170,11 @@ export async function testCursorConnection(executable: string, signal?: AbortSig
   try {
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
-    const result = await promisify(execFile)(executable, ["--version"], {
+    const target = cursorLaunchTarget(executable, ["--version"]);
+    const result = await promisify(execFile)(target.executable, target.args, {
+      env: target.env,
       encoding: "utf8",
-      timeout: 5_000,
+      timeout: target.bundled ? WINDOWS_CURSOR_VERSION_TIMEOUT_MS : 5_000,
       maxBuffer: 64 * 1024,
       windowsHide: true,
       shell: false,

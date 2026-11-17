@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { runPnpm } from "./package-manager.mjs";
 import { resolveReleaseDirectory } from "./release-paths.mjs";
+import { verifyParserWorker } from "./copy-parser-worker.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cliManifest = JSON.parse(readFileSync(join(root, "packages/cli/package.json"), "utf8"));
@@ -54,6 +55,7 @@ try {
   }));
   run(["install", "--offline", "--ignore-scripts", "--no-frozen-lockfile", "--store-dir", join(installDir, ".pnpm-store")]);
   const cliEntry = join(installDir, "node_modules", "@vdt-studio", "cli", "dist", "cli.mjs");
+  verifyParserWorker(dirname(cliEntry));
   if (!run(["exec", "vdt", "--help"]).includes("VDT Studio CLI")) throw new Error("Installed vdt --help failed.");
   const doctor = JSON.parse(run(["exec", "vdt", "doctor"]));
   if (!doctor.ok || !doctor.runner?.localOnly) throw new Error("Installed vdt doctor did not enforce a local-only runner.");

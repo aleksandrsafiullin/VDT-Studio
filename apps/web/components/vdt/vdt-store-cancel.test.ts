@@ -11,6 +11,7 @@ vi.mock("@/lib/agent-client", async original => ({
   ...await original<typeof import("@/lib/agent-client")>(),
   createAgentClient: () => ({ cancel, getRun, subscribe })
 }));
+const originalFetch = globalThis.fetch;
 const memory = new Map<string, string>();
 vi.stubGlobal("localStorage", {
   getItem: (key: string) => memory.get(key) ?? null,
@@ -55,6 +56,22 @@ beforeEach(() => {
 afterEach(() => { store.getState().startNewAgentChat(); });
 
 describe("ordinary Cancel and Smart availability", () => {
+  it("strips legacy copy progress from hydrated active activity and reselected history", async () => {
+    const key = "vdt-studio-state";
+    const persisted = JSON.parse(memory.get(key)!);
+    const activity = { ...persisted.state.generateActivity, savedCopyOutcome: "Creating saved copy…" };
+    persisted.state.generateActivity = activity;
+    persisted.state.agentChatHistory = [{ ...persisted.state.agentChatHistory[0], activity }];
+    memory.set(key, JSON.stringify(persisted));
+    await store.persist.rehydrate();
+    expect(store.getState().generateActivity?.savedCopyOutcome).toBeUndefined();
+    expect(store.getState().openAgentChat("paused_agent")).toBe(true);
+    expect(store.getState().generateActivity?.savedCopyOutcome).toBeUndefined();
+    store.setState({ generateActivity: { ...activity, savedCopyOutcome: "The copy failed." } });
+    await store.persist.rehydrate();
+    expect(store.getState().generateActivity?.savedCopyOutcome).toBe("The copy failed.");
+  });
+
   it("keeps compatibility-agent Cancel usable without requiring a Supervisor cleanup receipt", async () => {
     const run = store.getState().agentRun!;
     store.setState({ agentRun: { ...run, executionSummary: { ...run.executionSummary!, engineAdapterId: "http-compatibility-v1" } } });
@@ -89,6 +106,91 @@ describe("ordinary Cancel and Smart availability", () => {
     expect(store.getState().projectRevision).toBe(revision);
     store.getState().applyAgentGraphPatch(snapshot("needs_user_input"));
     expect(smartKpiBlockedReason(store.getState())).toBeUndefined();
+  });
+
+  it("replays a confirmed interrupted stop after the terminal read fails and the browser reloads", async () => {
+    const paused = snapshot("needs_user_input");
+    const interrupted = {
+      ...paused, status: "recovery_required" as const, pendingQuestions: undefined,
+      executionSummary: { ...paused.executionSummary!, sessionStatus: "recovery_required" as const, recoveryStatus: "recovery_required" as const }
+    };
+    store.getState().applyAgentGraphPatch(interrupted);
+    expect(store.getState().generateActivity).toMatchObject({ status: "recovery_required", canCancel: true });
+    expect(store.getState().agentPendingQuestions).toBeUndefined();
+    getRun.mockRejectedValueOnce(new Error("Network disconnected after the stop committed."));
+    await store.getState().cancelAgentRun();
+    expect(store.getState().pendingIncomingKpiRestart).toMatchObject({ terminalCleanupConfirmed: true });
+    await store.persist.rehydrate();
+    expect(smartKpiBlockedReason(store.getState())).toMatch(/cleanup/);
+    await store.getState().cancelAgentRun();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(store.getState().pendingIncomingKpiRestart).toBeUndefined();
+    expect(smartKpiBlockedReason(store.getState())).toBeUndefined();
+  });
+
+  it.each(["clean", "dirty", "late edit", "scope changed"] as const)("keeps the original scoped when opening a saved copy from a %s draft", async variant => {
+    const interrupted = { ...snapshot("needs_user_input"), status: "recovery_required" as const };
+    store.getState().applyAgentGraphPatch(interrupted);
+    const source = store.getState();
+    const owner = { id: "owner", name: "Owner" };
+    const vdt = { id: "copy", projectId: "owner", name: "Saved copy" };
+    const head = { schemaVersion: "vdt_revision_head.v2" as const, vdtId: "copy", projectId: "owner", activeRevisionId: "copy_revision",
+      activeContentIdentity: null, pendingRevisionId: null, commitGeneration: 1 };
+    const runtimeState = { schemaVersion: "project_runtime_state.v1", projectId: "owner", runtimeGeneration: "v1", generationVersion: 1,
+      migrationState: "not_started", writeState: "enabled", updatedAt: timestamp };
+    store.setState({
+      workspace: { ...source.workspace, activeVdtId: "original",
+        draftRevisionBase: { projectId: "owner", vdtId: "original", expectedHead: { schemaVersion: "vdt_revision_cas.v1",
+          activeRevisionId: "original_revision", activeContentIdentity: null, commitGeneration: 1 },
+          expectedRuntime: { schemaVersion: "project_runtime_cas.v1", runtimeGeneration: "v1", generationVersion: 1 } }
+      },
+      pendingIncomingKpiRestart: { runId: interrupted.runId, workspaceId: "owner", vdtId: "original" }
+    });
+    if (variant === "dirty") store.getState().updateNodeBaselineValue("target", 99);
+    const mockFetch = vi.fn()
+      .mockImplementationOnce(async () => {
+        if (variant === "late edit") store.getState().updateNodeBaselineValue("target", 99);
+        if (variant === "scope changed") {
+          expect(store.getState().openAgentChat(interrupted.runId)).toBe(true);
+          expect(store.getState().generateActivity?.savedCopyOutcome).toBe("Creating saved copy…");
+          await store.getState().continueFromSavedCopy();
+          expect(mockFetch).toHaveBeenCalledTimes(1);
+          store.setState(current => ({ workspace: { ...current.workspace, activeVdtId: "elsewhere" } }));
+        }
+        return Response.json({ ok: true, vdtId: "copy" });
+      })
+      .mockResolvedValueOnce(Response.json({ ok: true, schemaVersion: "vdt_load_response.v1", vdt, head, runtimeState,
+        summary: { project: owner, vdts: [{ vdt, head }], runtimeState }, revisions: [], activeProject: source.project }));
+    vi.stubGlobal("fetch", mockFetch);
+    try {
+      await store.getState().continueFromSavedCopy();
+      if (variant === "scope changed") {
+        expect(store.getState().workspace.activeVdtId).toBe("elsewhere");
+        expect(store.getState().generateActivity?.savedCopyOutcome).toBeUndefined();
+        expect(store.getState().pendingIncomingKpiRestart?.runId).toBe(interrupted.runId);
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        return;
+      }
+      if (variant !== "clean") {
+        expect(store.getState().workspace.activeVdtId).toBe("original");
+        expect(kpiCanonicalJson(store.getState().project)).not.toBe(kpiCanonicalJson(source.project));
+        expect(store.getState().pendingIncomingKpiRestart?.runId).toBe(interrupted.runId);
+        expect(mockFetch.mock.calls.every(([url, init]) => String(url).includes("saved-copy") || !init?.method)).toBe(true);
+        return;
+      }
+      expect(store.getState().workspace.activeVdtId).toBe("copy");
+      expect(store.getState().pendingIncomingKpiRestart).toBeUndefined();
+      expect(store.getState().savedCopyStopMarkers?.original?.runId).toBe(interrupted.runId);
+      await store.persist.rehydrate();
+      store.getState().applyAgentGraphPatch(interrupted);
+      expect(store.getState().agentRun).toBeUndefined();
+      expect(store.getState().savedCopyStopMarkers?.original?.runId).toBe(interrupted.runId);
+      expect(smartKpiBlockedReason(store.getState())).toBeUndefined();
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.stubGlobal("fetch", originalFetch);
+      store.setState({ savedCopyStopMarkers: undefined });
+    }
   });
 
   it("keeps cancelled SSE and reload from bypassing unconfirmed cleanup, while restoring Cancel for retry", async () => {

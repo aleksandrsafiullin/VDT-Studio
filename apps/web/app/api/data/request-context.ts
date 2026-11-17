@@ -1,4 +1,4 @@
-import { incomingKpiOptionsSchema, type DataDiscoveryRunSnapshot, type IncomingKpiOptions } from "@vdt-studio/data-harness";
+import { DataParserError, incomingKpiOptionsSchema, type DataDiscoveryRunSnapshot, type IncomingKpiOptions } from "@vdt-studio/data-harness";
 import { canonicalizeJson, validateStrictVdtProjectCommit, type JsonValue } from "@vdt-studio/storage";
 import type { VdtProject } from "@vdt-studio/vdt-core";
 import { openVdtStorageDatabase } from "../vdt/storage-database";
@@ -130,6 +130,9 @@ function targetBasis(project: VdtProject, targetNodeId: string): string {
 
 export function dataApiErrorResponse(error: unknown): Response {
   if (error instanceof DataApiError) return jsonError(error.message, error.status, error.code);
+  if (error instanceof DataParserError) return jsonError(error.message,
+    error.code === "DATA_FILE_TOO_LARGE" ? 413 : error.code === "DATA_PARSER_BUSY" ? 429 : error.code === "DATA_PARSER_CANCELLED" ? 499 : 422,
+    error.code);
   if (error instanceof TypeError || error instanceof SyntaxError) return jsonError(error.message, 400, "INVALID_DATA_REQUEST");
   if (error instanceof Error && Object.hasOwn(error, "code") && (error as { code?: unknown }).code === "RATE_LIMITED") {
     return jsonError("The selected AI model or account has reached its usage limit. Choose another available model, or try again when access is available.", 429, "RATE_LIMITED");

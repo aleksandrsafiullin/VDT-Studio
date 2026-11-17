@@ -18,6 +18,7 @@ import {
   type VdtProject
 } from "../../packages/vdt-core/src/index";
 
+const HOME_NAVIGATION_TEST_TITLE = "home page lists projects and opens workspace";
 const EXCEL_EXPORT_TEST_TITLE = "downloads editable Excel without session credentials";
 const ANTHROPIC_TEST_BINDING = "api_byok_session_e2e_anthropic";
 function readXlsxXmlEntries(bytes: Buffer) {
@@ -1183,10 +1184,14 @@ test.beforeEach(async ({ page, productionWorkspace }, testInfo) => {
   await page.goto("/");
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  await openProductionVolumeEditor(page, productionWorkspace, { viaProjectCard: testInfo.title === EXCEL_EXPORT_TEST_TITLE });
+  // This smoke test owns its whole Home-to-editor workflow. Starting it
+  // inside an editor would turn its first Home load into draft restoration.
+  if (testInfo.title !== HOME_NAVIGATION_TEST_TITLE) {
+    await openProductionVolumeEditor(page, productionWorkspace, { viaProjectCard: testInfo.title === EXCEL_EXPORT_TEST_TITLE });
+  }
 });
 
-test("home page lists projects and opens workspace", { tag: "@chromium" }, async ({ page, productionWorkspace }, testInfo) => {
+test(HOME_NAVIGATION_TEST_TITLE, { tag: "@chromium" }, async ({ page, productionWorkspace }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Home navigation smoke runs on desktop viewport.");
 
   await page.goto("/");

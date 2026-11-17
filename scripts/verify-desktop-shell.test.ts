@@ -24,6 +24,7 @@ const commands = [
 async function writeFixture(options: {
   permission?: string;
   macOrigin?: string;
+  windowsOrigin?: string;
   packageDependency?: string;
   directProcessSpawn?: boolean;
   missingAutoStart?: boolean;
@@ -47,6 +48,14 @@ async function writeFixture(options: {
       platforms: ["macOS"],
       windows: ["main"],
       remote: { urls: [options.macOrigin ?? "http://127.0.0.1:37541/*"] },
+      permissions: ["vdt-runtime"]
+    })
+  );
+  await writeFile(
+    path.join(root, "apps/desktop/src-tauri/capabilities/windows-local-web.json"),
+    JSON.stringify({
+      local: false, platforms: ["windows"], windows: ["main"],
+      remote: { urls: [options.windowsOrigin ?? "http://127.0.0.1:37541/*"] },
       permissions: ["vdt-runtime"]
     })
   );
@@ -150,6 +159,10 @@ describe("verify-desktop-shell", () => {
 
   it("rejects a broadened packaged macOS command origin", async () => {
     const root = await writeFixture({ macOrigin: "http://127.0.0.1:*/*" });
+    expect(() => verifyDesktopShell(root)).toThrow(/only the owned loopback origin/);
+  });
+  it("rejects a broadened packaged Windows command origin", async () => {
+    const root = await writeFixture({ windowsOrigin: "http://127.0.0.1:*/*" });
     expect(() => verifyDesktopShell(root)).toThrow(/only the owned loopback origin/);
   });
 

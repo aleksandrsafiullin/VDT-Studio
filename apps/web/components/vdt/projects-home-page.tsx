@@ -4,14 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Folder, Plus, Search, Trash2, X } from "lucide-react";
+import { resolveVdtAppMode } from "@/lib/app-mode";
 import { clsx } from "clsx";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "@/components/ui/field";
-import type { StoredProjectSummary } from "@/lib/vdt-storage-client";
+import { fetchStoredVdtRevisionState, revisionCasFromHead, runtimeCasFromState, type StoredProjectSummary } from "@/lib/vdt-storage-client";
 import { projectCardDetailRows, projectMatchesSearch, type ProjectCardMetadata } from "@/lib/project-metadata";
 import { CreateProjectDialog } from "./create-project-dialog";
 import { SettingsModal } from "./settings-modal";
 import { useVdtStudioStore } from "./vdt-store";
+import { consumeDeliberateHomeNavigation } from "./workspace-navigation";
 import styles from "./projects-home-page.module.css";
 
 function formatUpdatedAt(value: string): string {
@@ -163,6 +165,8 @@ export function ProjectsHomePage() {
   const deleteWorkspaceProject = useVdtStudioStore((state) => state.deleteWorkspaceProject);
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string>();
+  const [restoringDraft, setRestoringDraft] = useState(false);
+  const [unopenedDraft, setUnopenedDraft] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInput = useRef<HTMLInputElement>(null);
@@ -170,9 +174,53 @@ export function ProjectsHomePage() {
   const visibleSummaries = workspace.projectSummaries.filter((entry) => projectMatchesSearch(entry.project, searchQuery));
 
   useEffect(() => {
-    clearHomeWorkspaceContext();
-    void refreshWorkspace();
-  }, [clearHomeWorkspaceContext, refreshWorkspace]);
+    const studio = useVdtStudioStore.getState();
+    if (consumeDeliberateHomeNavigation(studio)) {
+      clearHomeWorkspaceContext();
+      void refreshWorkspace();
+      return;
+    }
+    const draft = studio.workspace;
+    const { activeVdtId, activeProjectId, draftRevisionBase, pendingRevisionCommit } = draft;
+    const local = resolveVdtAppMode() !== "hosted_web";
+    const scoped = local && activeProjectId && activeVdtId && draft.activePanel === "vdt"
+      && (draftRevisionBase?.projectId === activeProjectId && draftRevisionBase?.vdtId === activeVdtId
+        || draftRevisionBase === null
+        || pendingRevisionCommit?.vdtId === activeVdtId)
+      && draft.projectSummaries.some(entry => entry.project.id === activeProjectId
+        && entry.vdts.some(item => item.vdt.id === activeVdtId));
+    if (local && !scoped && (draftRevisionBase || pendingRevisionCommit)) {
+      setUnopenedDraft(true);
+      useVdtStudioStore.setState({ workspace: { ...draft, error: "The previous draft's VDT could not be verified. Download the draft or discard it to continue." } });
+      return;
+    }
+    if (!scoped) {
+      clearHomeWorkspaceContext();
+      void refreshWorkspace();
+      return;
+    }
+    setRestoringDraft(true);
+    let active = true;
+    void fetchStoredVdtRevisionState(activeVdtId).then(saved => {
+      if (!active) return;
+      if (useVdtStudioStore.getState().workspace !== draft) throw new Error("Draft scope changed during restore.");
+      if (saved.vdt.projectId !== activeProjectId || saved.head.vdtId !== activeVdtId
+        || saved.head.projectId !== activeProjectId) throw new Error("The previous draft's saved VDT scope changed.");
+      const stale = !pendingRevisionCommit && draftRevisionBase
+        && (JSON.stringify(draftRevisionBase.expectedHead) !== JSON.stringify(revisionCasFromHead(saved.head))
+          || JSON.stringify(draftRevisionBase.expectedRuntime) !== JSON.stringify(runtimeCasFromState(saved.runtimeState)));
+      if (stale) useVdtStudioStore.setState({ workspace: {
+        ...draft, error: "The saved VDT changed while the app was closed. Your local edits are still open."
+      } });
+      router.replace(`/projects/${encodeURIComponent(activeProjectId)}?vdt=${encodeURIComponent(activeVdtId)}`);
+    }).catch(() => {
+      if (!active) return;
+      setRestoringDraft(false);
+      setUnopenedDraft(true);
+      useVdtStudioStore.setState(current => ({ workspace: { ...current.workspace, error: "The previous draft could not be reopened. Its edits are still in this session." } }));
+    });
+    return () => { active = false; };
+  }, [clearHomeWorkspaceContext, refreshWorkspace, router]);
 
   useEffect(() => {
     if (searchOpen) searchInput.current?.focus();
@@ -231,6 +279,8 @@ export function ProjectsHomePage() {
         className={clsx(styles.content, "relative mx-auto flex flex-1 flex-col py-12 sm:py-16")}
         data-testid="projects-home"
       >
+        {restoringDraft ? <p role="status">Reopening your previous VDT…</p> : null}
+        <div inert={restoringDraft || unopenedDraft}>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <h2 className="text-3xl font-semibold tracking-tight text-ink">Projects</h2>
           <div className="flex items-center gap-3">
@@ -288,13 +338,35 @@ export function ProjectsHomePage() {
           <CreateProjectDialog isMutating={workspace.isMutating} error={createError} onCreate={handleCreateProject} onClose={() => setCreateOpen(false)} />
         ) : null}
 
+        </div>
+
         {workspace.error && !createOpen ? (
           <div className="mt-6 rounded-2xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-800">
             {workspace.error}
+            {unopenedDraft ? <div className="mt-2 flex gap-3">
+              <button type="button" className="underline" onClick={() => {
+                const project = useVdtStudioStore.getState().project;
+                const url = URL.createObjectURL(new Blob([JSON.stringify(project, null, 2)], { type: "application/json" }));
+                const download = document.createElement("a");
+                download.href = url;
+                download.download = "recovered-vdt-draft.json";
+                download.click();
+                setTimeout(() => URL.revokeObjectURL(url), 1_000);
+              }}>Download local draft</button>
+              <button type="button" className="underline" onClick={() => {
+                if (!window.confirm("Discard this local draft and return to the project list?")) return;
+                useVdtStudioStore.setState(current => ({
+                  workspace: { ...current.workspace, pendingRevisionCommit: undefined }
+                }));
+                clearHomeWorkspaceContext();
+                setUnopenedDraft(false);
+                void refreshWorkspace();
+              }}>Discard local draft</button>
+            </div> : null}
           </div>
         ) : null}
 
-        <div className="mt-8 min-h-0 flex-1" aria-busy={workspace.isLoading}>
+        <div className="mt-8 min-h-0 flex-1" aria-busy={workspace.isLoading} inert={restoringDraft || unopenedDraft}>
           {searchOpen && !workspace.isLoading ? (
             <p role="status" className="mb-4 text-sm text-muted">{visibleSummaries.length} of {workspace.projectSummaries.length} projects</p>
           ) : null}

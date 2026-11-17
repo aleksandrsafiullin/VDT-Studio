@@ -1,5 +1,42 @@
 # Architecture
 
+## Feedback-alpha remediation boundaries (2026-11-13)
+
+Structured run recovery adds process-owner evidence to the existing immutable
+epoch token and a transactional terminalization path; it does not enable V2 or
+implement a general controller lease. Exact owner/epoch/binding comparison and
+durable terminal guards protect normalized and legacy writes. Saved revisions
+are not rewritten by recovery. The bounded source acceptance and excluded cases
+are recorded in [W1](implementation/OPEN_ALPHA_W1_2026-11-13.md).
+
+Saved-copy continuation uses an independently identified VDT in the same project.
+It verifies the committed source revision and stages access to referenced retained
+files before atomic VDT creation. The existing per-file association store is not
+part of SQLite's transaction; stage-first ordering and idempotent link validation
+prevent activation of an incomplete copy. Replays require a committed creation
+receipt under a reserved command namespace and the immutable initial revision,
+not caller-controlled metadata alone. Source stop markers remain scoped to their
+VDTs, and switching to a copy checks the editor's revision and unsaved state.
+Copy progress is process-local and distinct from the duplicate-request guard.
+Persistence and history strip transient progress, including the legacy message;
+hydration and history selection restore it only for a matching live request.
+Settlement removes only that run's transient indicator and preserves completed
+notices, errors and the original stop marker. This changes no storage authority.
+
+`data-harness` runs supported file decoders in a verified generated child asset,
+with resource admission, a host deadline and a separate watchdog. CLI and native
+packages must carry the exact worker and manifest. The architecture and limit
+contract is in [Data Ingestion](DATA_INGESTION.md); review follow-ups remain in
+the [execution ledger](implementation/OPEN_ALPHA_EXECUTION_2026-11-13.md).
+
+Diagnostic exports are explicit local snapshots of allowlisted fields. Build
+identity is fixed by the Next build configuration and verified source metadata,
+not inferred from arbitrary runtime environment or a user's file path. The
+support metadata route exposes only build/runtime platform information through
+local admission. Windows packaged host/process ownership is separate from
+Windows storage capability admission; native process fixture success does not
+authorize the still-disabled Windows storage path.
+
 ## Selected Skill in Suggested KPI (2026-11-03)
 
 The trusted-local `GET /api/ai/suggestions/skill` reuses the existing Context
@@ -672,6 +709,15 @@ does not change saved project data.
 
 `WorkspaceNavigationLink` intercepts normal client navigation through those two editor links and awaits the existing `saveActiveWorkspaceVdt` CAS/idempotency operation. The manual revision route reuses the active revision when the expected head and runtime match and the submitted canonical payload equals the verified stored payload. That path creates no revision file, journal entry or generation change. Changed snapshots use the existing atomic commit. A failure preserves the editor and displays a navigation error. A save covering an older in-flight snapshot also blocks leaving. Successful Back navigation uses the route-sync hook's explicit project intent, superseding any pending creation route.
 
+Successful Home navigation marks a single-use in-memory identity after saving.
+The identity contains the active panel/project/VDT, graph reference and revision,
+revision-base reference, and pending revision/create journal references. The
+Home page consumes it once, including on mismatch. Replacing only the workspace
+wrapper during a background summary/loading/error refresh cannot invalidate a
+saved Home intent. Changed scope, graph, base or journals still refuse it and
+retain the existing cold-draft recovery path. No persistent intent suppresses
+startup restoration.
+
 ### Scenario comments and presentation
 
 `VdtScenario.comments?: { nodeId, text }[]` stores per-KPI action notes separately
@@ -840,15 +886,15 @@ All V2 feature flags are server-owned, fail closed and default to disabled. Proj
 
 ### Data discovery flow
 
-`selected KPI From file / composer paperclip -> scoped POST /api/data/files or retained-source list -> project-owned immutable bytes -> POST /api/data/discovery/runs -> full-byte parse/profile -> configured-provider semantic suggestions -> required structured decisions -> full-byte deterministic hierarchy rerun -> source/target/coverage validation -> normal VDT change-set preview`
+`selected KPI From file / composer paperclip -> scoped POST /api/data/files or retained-source list -> project-owned immutable bytes -> POST /api/data/discovery/runs -> full-byte parse/profile -> explicit local mapping or optional configured-provider semantic suggestions -> required structured decisions -> full-byte deterministic hierarchy rerun -> source/target/coverage validation -> normal VDT change-set preview`
 
-This separate experimental local harness accepts provider-assisted table/category/additive-value suggestions through `createManagedAwareAiProvider`. The deterministic incoming compiler supports complete additive hierarchies (up to four category levels and 200 nodes) from numeric values in confirmed target-compatible units, direct durations or explicit start/end timestamps, and confirmed total/per-day normalization. A declared reporting period describes the full source extract/denominator; it is not a row-filter query. All required mapping and provider clarification questions remain apply blockers. Structured edits reload immutable full bytes; final staging reruns against the server-retained initial project basis after validating the client's current semantic target and immediate children. Each generated KPI Description carries source hash/reference, table, columns, filters, calculation, reporting period and row coverage. The core calculator consumes materialized Baselines and parent sum formulas; it does not execute or refresh `dataMapping`.
+This separate experimental local harness exposes provider-free parsing/manual mapping as **Analyze file locally**. The distinct **Analyze with AI** action accepts provider-assisted table/category/additive-value suggestions through `createManagedAwareAiProvider`; credential or provider transport errors do not silently switch modes or stage a preview. The deterministic incoming compiler supports complete additive hierarchies (up to four category levels and 200 nodes) from numeric values in confirmed target-compatible units, direct durations or explicit start/end timestamps, and confirmed total/per-day normalization. A declared reporting period describes the full source extract/denominator; it is not a row-filter query. All required mapping and provider clarification questions remain apply blockers. Structured edits reload immutable full bytes; final staging reruns against the server-retained initial project basis after validating the client's current semantic target and immediate children. Each generated KPI Description carries source hash/reference, table, columns, filters, calculation, reporting period and row coverage. The core calculator consumes materialized Baselines and parent sum formulas; it does not execute or refresh `dataMapping`.
 
 The optional event ID column is part of the reviewed mapping. The compiler checks uniqueness over the selected retained table during preview and staging. It includes the checked column in calculation provenance. Provider suggestions have no authority to set or clear the event ID mapping.
 
 The general discovery path separately materializes complete scalar observations during preview, review and staging. Unbound metrics use contextual edges. An explicitly selected compatible metric can supply an empty target through a single formula dependency in the same source-aware change-set. Recompilation validates the target basis and reads the retained bytes, so a column or aggregation edit replaces the previous baseline and lineage.
 
-Upload/list/download/library-edit/run routes require trusted local app mode and strict IDs. File operations require a real SQLite project and validate any supplied tree's `vdt.projectId`; analysis/run operations require the actual tree as well. VDT reads require a current or historical explicit association; project library reads can open any source owned by that project. `VdtProject.id` is the original graph snapshot identity; it may differ from both the SQLite workspace owner and selected VDT record ID. The selected VDT's stored active revision supplies the expected graph identity for request validation. Imported graph IDs are preserved without rewrites or migrations. Sources are write-once at `projectDir(database.dataDir, projectId)/files/<datasetId>/`, with original name metadata, exact bytes and checked SHA-256/size. Runs retain file ownership plus explicit `workspaceProjectId`/`vdtId` and a separate initial project context. File/run reads use persistent storage instead of trusting an in-memory cache; scope mismatches, unsafe IDs and symlink paths fail closed. Old global `data-discovery` records are retained for trusted-local compatibility and never used as scoped fallbacks. Browser discard leaves source files intact. Hosted multi-user authorization, parser isolation, permanent retention/erasure, encryption and general refresh remain open. See `DATA_INGESTION.md`.
+Upload/list/download/library-edit/run routes require trusted local app mode and strict IDs. File operations require a real SQLite project and validate any supplied tree's `vdt.projectId`; analysis/run operations require the actual tree as well. VDT reads require a current or historical explicit association; project library reads can open any source owned by that project. `VdtProject.id` is the original graph snapshot identity; it may differ from both the SQLite workspace owner and selected VDT record ID. The selected VDT's stored active revision supplies the expected graph identity for request validation. Imported graph IDs are preserved without rewrites or migrations. Sources are write-once at `projectDir(database.dataDir, projectId)/files/<datasetId>/`, with original name metadata, exact bytes and checked SHA-256/size. Runs retain file ownership plus explicit `workspaceProjectId`/`vdtId` and a separate initial project context. File/run reads use persistent storage instead of trusting an in-memory cache; scope mismatches, unsafe IDs and symlink paths fail closed. Old global `data-discovery` records are retained for trusted-local compatibility and never used as scoped fallbacks. Browser discard leaves source files intact. Hosted multi-user authorization, permanent retention/erasure, encryption and general refresh remain open. The bounded parser child is implemented; installed-platform limit and cancellation qualification remain separate. See `DATA_INGESTION.md`.
 
 ### Model execution flow
 

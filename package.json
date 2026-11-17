@@ -1,6 +1,6 @@
 {
   "name": "vdt-studio",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "private": true,
   "description": "AI-first, local-first Value Driver Tree workspace for editable and calculable KPI driver models.",
   "license": "MIT",
@@ -22,15 +22,16 @@
     }
   },
   "scripts": {
-    "dev": "node scripts/start-development-web.mjs",
+    "dev": "corepack pnpm data:parser:prepare && node scripts/start-development-web.mjs",
     "build": "corepack pnpm build:cli && corepack pnpm build:web",
-    "build:cli": "corepack pnpm --filter @vdt-studio/cli build",
-    "build:web": "corepack pnpm --filter @vdt-studio/web build",
+    "build:cli": "corepack pnpm data:parser:prepare && corepack pnpm --filter @vdt-studio/cli build",
+    "build:web": "corepack pnpm data:parser:prepare && corepack pnpm --filter @vdt-studio/web build",
     "start": "corepack pnpm --filter @vdt-studio/web start",
     "lint": "corepack pnpm --filter @vdt-studio/web lint",
     "typecheck": "corepack pnpm -r typecheck",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:saved-copy": "node scripts/run-saved-copy-e2e.mjs",
     "test:watch": "vitest",
     "vdt": "tsx packages/cli/src/bin.ts",
     "dev:all": "concurrently \"corepack pnpm dev\" \"corepack pnpm local-runner:start\"",
@@ -66,8 +67,12 @@
     "release:bundle:verify": "node scripts/verify-release-bundle.mjs",
     "package:alpha": "node scripts/package-alpha.mjs",
     "package:verify": "node scripts/verify-cli-package.mjs",
-    "release:verify": "corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test && corepack pnpm build && corepack pnpm ci:verify && corepack pnpm phase7:verify && corepack pnpm docs:verify && corepack pnpm security:audit && corepack pnpm certification:verify && corepack pnpm evaluation:verify && corepack pnpm package:alpha && corepack pnpm release:bundle:verify && corepack pnpm package:verify",
-    "github:maintenance": "node scripts/configure-github-maintenance.mjs"
+    "release:verify": "corepack pnpm lint && corepack pnpm typecheck && corepack pnpm data:parser:verify && corepack pnpm test && corepack pnpm build && corepack pnpm ci:verify && corepack pnpm phase7:verify && corepack pnpm docs:verify && corepack pnpm security:audit && corepack pnpm certification:verify && corepack pnpm evaluation:verify && corepack pnpm package:alpha && corepack pnpm release:bundle:verify && corepack pnpm package:verify",
+    "github:maintenance": "node scripts/configure-github-maintenance.mjs",
+    "data:parser:prepare": "node packages/data-harness/scripts/build-parser-worker.mjs",
+    "data:parser:verify": "node packages/data-harness/scripts/build-parser-worker.mjs --check",
+    "desktop:artifact:verify": "node scripts/verify-native-alpha-artifact.mjs",
+    "desktop:package:windows": "node scripts/package-windows-alpha.mjs"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",
