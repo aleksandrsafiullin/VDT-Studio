@@ -19,8 +19,13 @@ used the signed Apple Silicon app. Windows used a verified `08966a5` NSIS
 x64 native baseline and measured LPAC worker in an ARM64 QA guest. The
 ordinary package used for that checkpoint omitted Cursor activation. Standard
 packaging now builds VDT-owned isolation resources and reads exact records
-from `release/cursor-checkpoint-qualification.json`. The installed standard
-sign-in and complex saved-tree matrix still needs per-artifact evidence.
+from `release/cursor-checkpoint-qualification.json`. Windows standard-worker
+transport verified the exact `2026.11.13-eacade1` payload, v2 policy, protected
+profile, and Extra High open and same-session resume on the Windows ARM64
+QA guest. A paired control reported the catalog form of the same Extra High
+label. The qualified parser recognizes that reviewed label for this binding.
+Standard installer sign-in and the complex saved-tree matrix still need
+per-artifact evidence.
 Public release stays on hold.
 
 The latest packaged checkpoint is `08966a5861fe4f3b2e9e5214af8ed19c072843fc`,

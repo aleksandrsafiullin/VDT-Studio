@@ -29,5 +29,24 @@
       "runtimeModelDisplayName": "Grok 4.7 256K Extra High"
     }
   ],
-  "win32-x64": []
+  "win32-x64": [
+    {
+      "evidenceHash": "sha256:e2f842483358584be7277603d3bfbec5c78a1906457ee48f34c5801a27b8d818",
+      "testedAt": "2026-11-17T17:55:11.734Z",
+      "cliVersion": "2026.11.13-eacade1",
+      "protocolVersion": "vdt-cursor-checkpoint-v1",
+      "toolCatalogHash": "sha256:7df0dbbfdfc03b407517c25b5b8d8f7b06329a449ab4565f40c7f03a32ba30b8",
+      "payloadHash": "sha256:f24721d9f2df50a91c6f71f6e7d1d1e7a7f6116715869a4e87cd2990f6ea4c37",
+      "policyHash": "sha256:8c9e80c92350d6f1a850d041b03bbffed46ad7d8164d80c8cc3e211a4329cb8e",
+      "vendorPolicyHash": "sha256:53aa09165710602c13a561bad44cb7da76b4c6ca4314af9a3be8a5c78e667e4a",
+      "platform": {
+        "os": "win32",
+        "arch": "x64",
+        "runtimeVersion": "v24.22.2"
+      },
+      "modelId": "grok-4.7-xhigh",
+      "catalogModelDisplayName": "Grok 4.7  Extra High",
+      "runtimeModelDisplayName": "Grok 4.7 256K Extra High"
+    }
+  ]
 }

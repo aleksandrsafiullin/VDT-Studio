@@ -216,6 +216,8 @@ export interface CursorResumeCheckpointTransportOptions {
   readonly validatedCliVersion: string;
   /** Exact model labels from the same authenticated vendor catalog as the selected CLI. */
   readonly modelDisplayNames?: ReadonlyMap<string, string>;
+  /** The independently reviewed catalog label for the qualified Extra High model. */
+  readonly qualifiedExtraHighCatalogLabel?: string;
   readonly runner?: CursorResumeProcessRunner;
   /** Desktop host supplies the OS isolation runner. The private HOME remains
    * mandatory even when the empty workspace is preauthorized. */
@@ -484,6 +486,7 @@ function parseCursorOutput(input: {
   workspace: string;
   requestedModel: string;
   modelDisplayName?: string;
+  extraHighCatalogLabel?: string;
   expectedSessionId?: string;
   maxBytes: number;
   maxLines: number;
@@ -571,7 +574,11 @@ function parseCursorOutput(input: {
         throw checkpointError("CURSOR_CHECKPOINT_PROTOCOL_INVALID", "Cursor stream has an invalid system initialization event.");
       }
       sawInit = true;
-      if (input.requestedModel !== "auto" && event.model !== input.requestedModel && (input.modelDisplayName === undefined || event.model !== input.modelDisplayName)) {
+      const confirmsCatalogLabel = input.extraHighCatalogLabel !== undefined
+        && typeof event.model === "string"
+        && event.model.replace(/ +/g, " ") === input.extraHighCatalogLabel;
+      if (input.requestedModel !== "auto" && event.model !== input.requestedModel
+        && (input.modelDisplayName === undefined || event.model !== input.modelDisplayName) && !confirmsCatalogLabel) {
         throw checkpointError("CURSOR_CHECKPOINT_MODEL_UNVERIFIED", "Cursor did not confirm the requested checkpoint model.");
       }
       if (!sameCanonicalWorkspacePath(event.cwd, input.workspace)) {
@@ -741,6 +748,7 @@ export class CursorResumeCheckpointTransport {
   readonly validatedCliVersion: string;
   readonly #executable: string;
   readonly #modelDisplayNames: ReadonlyMap<string, string>;
+  readonly #extraHighCatalogLabel: string | undefined;
   readonly #isolatedWorkspace: boolean;
   readonly #vendorSandboxMode: CursorCheckpointVendorSandboxMode;
   readonly #runner: SpawnCountableRunner<CursorResumeProcessRequest, CursorResumeProcessResult>;
@@ -765,6 +773,14 @@ export class CursorResumeCheckpointTransport {
     this.#isolatedWorkspace = options.isolatedWorkspace === true;
     this.#vendorSandboxMode = options.vendorSandboxMode ?? "enabled";
     this.#executable = options.executable;
+    if (options.qualifiedExtraHighCatalogLabel !== undefined) {
+      const catalogLabel = options.qualifiedExtraHighCatalogLabel.replace(/ +/g, " ");
+      if (!this.#isolatedWorkspace || this.#vendorSandboxMode !== "disabled"
+        || catalogLabel !== "Grok 4.7 Extra High") {
+        throw checkpointError("CURSOR_CHECKPOINT_CONFIGURATION_INVALID", "The qualified Cursor catalog label is invalid.");
+      }
+      this.#extraHighCatalogLabel = catalogLabel;
+    }
     const names = new Map(options.modelDisplayNames);
     const counts = new Map<string, number>();
     for (const label of names.values()) counts.set(label, (counts.get(label) ?? 0) + 1);
@@ -859,6 +875,9 @@ export class CursorResumeCheckpointTransport {
         workspace: resolved.workspace,
         requestedModel: input.model,
         ...(modelDisplayName ? { modelDisplayName } : {}),
+        ...(input.model === "grok-4.7-xhigh" && this.#extraHighCatalogLabel
+          ? { extraHighCatalogLabel: this.#extraHighCatalogLabel }
+          : {}),
         ...(input.expectedSessionId !== undefined ? { expectedSessionId: input.expectedSessionId } : {}),
         maxBytes: this.#maxOutputBytes,
         maxLines: this.#maxLines,

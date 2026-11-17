@@ -164,6 +164,7 @@ export async function createQualifiedCursorResumeCheckpointEngine(
     executable,
     validatedCliVersion: options.cliVersion,
     modelDisplayNames: new Map([[evidence.modelId, evidence.runtimeModelDisplayName]]),
+    ...(evidence.modelId === "grok-4.7-xhigh" ? { qualifiedExtraHighCatalogLabel: evidence.catalogModelDisplayName } : {}),
     isolatedWorkspace: true,
     vendorSandboxMode,
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),

@@ -636,7 +636,10 @@ The packaged Supervisor can register separate Grok bindings from a single
 native bootstrap. Each requires a release-pinned isolation runner and its
 own accepted platform evidence. The evidence records the exact vendor catalog
 label separately from the CLI initialization label. Each segment must report the selected model ID or its
-verified initialization label. The runner uses private session state
+verified initialization label. The qualified `grok-4.7-xhigh` binding also
+accepts its separately reviewed catalog label, `Grok 4.7 Extra High`, with
+equivalent runs of ASCII spaces between words. It checks this identity at
+both open and resume. The runner uses private session state
 and the VDT Gateway. Reported native tool activity, including native WebSearch,
 stops this profile. Usage, retry and connection stream records are ignored after their fields and
 session identity are checked. Provider interactions still stop the run.

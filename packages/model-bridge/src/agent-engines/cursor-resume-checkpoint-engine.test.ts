@@ -223,7 +223,7 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "win32")("
   const executable = path.resolve("test-cursor-payload");
   const context = { brief: "exact Grok fixture" };
 
-  function options(environment: CursorResumeCheckpointEnvironment, runner: ScriptedRunner) {
+  function options(environment: CursorResumeCheckpointEnvironment, runner: ScriptedRunner, qualification = evidence) {
     return {
       executable,
       cliVersion: evidence.cliVersion,
@@ -231,7 +231,7 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "win32")("
       allowedToolNames: ["run.request_finish"],
       sessionEnvironmentFactory: () => environment,
       resolveBinding: () => { throw new Error("Recovery not needed for this fixture."); },
-      evidence,
+      evidence: qualification,
       runner: {
         async measureIdentity(candidate: string) {
           expect(candidate).toBe(executable);
@@ -251,7 +251,7 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "win32")("
           expect(request.args).toContain("--trust");
           const modelFlag = request.args.indexOf("--model");
           expect(modelFlag).toBeGreaterThan(0);
-          expect(request.args[modelFlag + 1]).toBe(evidence.modelId);
+          expect(request.args[modelFlag + 1]).toBe(qualification.modelId);
           return runner.run(request);
         }
       }
@@ -312,6 +312,57 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "win32")("
     const resumeFlag = runner.requests[1]!.args.indexOf("--resume");
     expect(runner.requests[1]!.args[resumeFlag + 1]).toBe("same-cursor-session");
     await opened.close();
+  });
+
+  const extraHigh = {
+    ...evidence,
+    modelId: "grok-4.7-xhigh",
+    catalogModelDisplayName: "Grok 4.7  Extra High",
+    runtimeModelDisplayName: "Grok 4.7 256K Extra High"
+  };
+
+  it.each([
+    ["Grok 4.7 Extra High", "Grok 4.7  Extra High"],
+    ["Grok 4.7 256K Extra High", "grok-4.7-xhigh"]
+  ])("confirms qualified Extra High at open (%s) and same-session resume (%s)", async (openLabel, resumeLabel) => {
+    const environment = { ...await createEnvironment(), preauthorizeEmptyWorkspace: true };
+    const runner = new ScriptedRunner([
+      request => stream(request, turn({
+        type: "action_batch",
+        calls: [{ externalCallId: "finish", toolName: "run.request_finish", args: {} }]
+      }, { messageId: "initial", text: "Checking the calculation." }), "same-xhigh-session", openLabel),
+      request => stream(request, turn({
+        type: "final", messageId: "final", finishReceiptId: "receipt", text: "Finished."
+      }), "same-xhigh-session", resumeLabel)
+    ]);
+    const engine = await createQualifiedCursorResumeCheckpointEngine(options(environment, runner, extraHigh));
+    const opened = await engine.openSession(start(engine, extraHigh.modelId), {
+      signal: new AbortController().signal,
+      executeTool: async call => gatewayResult(call, { payload: { receiptId: "receipt", receiptHash: hashText("receipt") } })
+    });
+    const events = await collect(opened.events());
+    expect(events.at(-1), JSON.stringify(events)).toMatchObject({ type: "final" });
+    expect(runner.requests[1]?.args).toContain("same-xhigh-session");
+    await opened.close();
+  });
+
+  it.each([
+    "Grok 4.7 Low", "grok-4.7-low", "auto", "Grok 4.7 Extra High Preview",
+    "grok 4.7 Extra High", "Grok 4.7\tExtra High", " Grok 4.7 Extra High"
+  ])("rejects an unreviewed Extra High init label %j", async label => {
+    const environment = { ...await createEnvironment(), preauthorizeEmptyWorkspace: true };
+    const runner = new ScriptedRunner([
+      request => stream(request, turn({
+        type: "action_batch",
+        calls: [{ externalCallId: "finish", toolName: "run.request_finish", args: {} }]
+      }), "same-xhigh-session", label)
+    ]);
+    const engine = await createQualifiedCursorResumeCheckpointEngine(options(environment, runner, extraHigh));
+    await expect(engine.openSession(start(engine, extraHigh.modelId), {
+      signal: new AbortController().signal,
+      executeTool: async () => { throw new Error("An unreviewed label must never reach the Gateway."); }
+    })).rejects.toMatchObject({ code: "CURSOR_CHECKPOINT_MODEL_UNVERIFIED" });
+    expect(runner.requests).toHaveLength(1);
   });
 
   it("rejects a catalog label presented as the model at runtime", async () => {
