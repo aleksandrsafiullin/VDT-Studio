@@ -1922,14 +1922,20 @@ describe("agent runs API", { timeout: 30_000 }, () => {
   });
 
   it("cancels the managed local runtime request when an agent run is cancelled", async () => {
-    const executableResolutionStarted = Promise.withResolvers<void>();
-    const executable = Promise.withResolvers<string>();
+    let markExecutableResolutionStarted!: () => void;
+    const executableResolutionStarted = new Promise<void>(resolve => {
+      markExecutableResolutionStarted = resolve;
+    });
+    let finishExecutableResolution!: (executable: string) => void;
+    const executable = new Promise<string>(resolve => {
+      finishExecutableResolution = resolve;
+    });
     const spawn = vi.fn();
     const context = createLocalRuntimeContext({
       executor: {
         resolveExecutable: () => {
-          executableResolutionStarted.resolve();
-          return executable.promise;
+          markExecutableResolutionStarted();
+          return executable;
         },
         spawn
       }
@@ -1953,7 +1959,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
     }));
 
     const runId = await waitForNewAgentRun(previousIds);
-    await executableResolutionStarted.promise;
+    await executableResolutionStarted;
     const [managedRun] = context.runs.values();
     try {
       expect(managedRun).toBeDefined();
@@ -1962,7 +1968,7 @@ describe("agent runs API", { timeout: 30_000 }, () => {
       });
       expect((await readJson(cancelResponse)).status).toBe("cancelled");
     } finally {
-      executable.resolve(fakeCodex);
+      finishExecutableResolution(fakeCodex);
     }
 
     const startResponse = await startPromise;
